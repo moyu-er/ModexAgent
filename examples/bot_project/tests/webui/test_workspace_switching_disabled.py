@@ -13,10 +13,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from framework.workspace.control import WorkspaceController
-from framework.workspace.registry import WorkspaceRegistry
-from framework.workspace.store import GlobalWorkspaceStore
-from framework.ioc.configs.app import AppConfig
+from modex_agent.workspace.control import WorkspaceController
+from modex_agent.workspace.registry import WorkspaceRegistry
+from modex_agent.workspace.store import GlobalWorkspaceStore
+from modex_agent.ioc.configs.app import AppConfig
 
 
 def _real_project_dir() -> Path:

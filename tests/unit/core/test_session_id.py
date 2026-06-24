@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from framework.core.session_id import (
+from modex_agent.core.session_id import (
     SessionInfo,
     SessionIdFactory,
     encode_snowflake,

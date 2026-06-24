@@ -1,6 +1,6 @@
 """Tests for Node ABC and NodeTransition."""
 import pytest
-from framework.core.graph.node import Node, NodeTransition
+from modex_agent.core.graph.node import Node, NodeTransition
 
 
 class _TestNode(Node):

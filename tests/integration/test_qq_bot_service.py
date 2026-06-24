@@ -21,10 +21,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 # Add framework path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from framework.core.constants import StopReason
-from framework.core.emitter import AgentResult, ContentEmitter, EmitterConfig
-from framework.core.events import AgentEvent
-from framework.core.session_id import SessionInfo
+from modex_agent.core.constants import StopReason
+from modex_agent.core.emitter import AgentResult, ContentEmitter, EmitterConfig
+from modex_agent.core.events import AgentEvent
+from modex_agent.core.session_id import SessionInfo
 
 E = TypeVar('E', bound=AgentEvent)
 
@@ -124,7 +124,7 @@ class TestQQBotServiceIntegration:
 
     def test_streaming_aware_emitter_import(self):
         """Test that StreamingAwareEmitter can be imported."""
-        from framework import ReActEvent, StreamingAwareEmitter
+        from modex_agent import ReActEvent, StreamingAwareEmitter
 
         # Should be able to create a subclass
         class TestEmitter(StreamingAwareEmitter[ReActEvent]):
@@ -135,14 +135,14 @@ class TestQQBotServiceIntegration:
 
     def test_react_event_has_model_reasoning(self):
         """Test that ReActEvent includes MODEL_REASONING."""
-        from framework.agents.react import ReActEvent
+        from modex_agent.agents.react import ReActEvent
 
         assert hasattr(ReActEvent, "MODEL_REASONING")
         assert ReActEvent.MODEL_REASONING.value == "model_reasoning"
 
     def test_agent_result_has_reasoning_field(self):
         """Test that AgentResult has reasoning field."""
-        from framework.core.emitter import AgentResult
+        from modex_agent.core.emitter import AgentResult
 
         result = AgentResult(content="Hello", reasoning="Thinking...")
         assert result.reasoning == "Thinking..."
@@ -156,9 +156,9 @@ class TestQQBotServiceIntegration:
         try:
             from bot.adapters.qq import QQBotEmitter
 
-            from framework.agents.react import ReActEvent
-            from framework.core.emitter import AgentResult
-            from framework.core.types import ToolCall
+            from modex_agent.agents.react import ReActEvent
+            from modex_agent.core.emitter import AgentResult
+            from modex_agent.core.types import ToolCall
 
             # Create mock adapter
             mock_adapter = MagicMock()
@@ -201,10 +201,10 @@ class TestQQBotServiceIntegration:
     @pytest.mark.asyncio
     async def test_react_agent_streaming_vs_non_streaming(self):
         """Test ReActAgent correctly switches between streaming and non-streaming based on emitter."""
-        from framework.agents.react import ReActAgent, ReActEvent
-        from framework.core.agent import AgentContext
-        from framework.core.provider import StreamingLLMProvider
-        from framework.core.types import LLMResponse
+        from modex_agent.agents.react import ReActAgent, ReActEvent
+        from modex_agent.core.agent import AgentContext
+        from modex_agent.core.provider import StreamingLLMProvider
+        from modex_agent.core.types import LLMResponse
 
         # Create mock provider that tracks which API is called
         class MockProvider(StreamingLLMProvider):
@@ -228,7 +228,7 @@ class TestQQBotServiceIntegration:
         provider = MockProvider()
         agent = ReActAgent(provider=provider)
 
-        from framework.memory.history import ListMessageHistory
+        from modex_agent.memory.history import ListMessageHistory
         context = AgentContext(
             system_prompt="Test",
             history=ListMessageHistory([{"role": "user", "content": "Hi"}]),
@@ -258,7 +258,7 @@ class TestQQBotServiceIntegration:
 
     def test_output_adapter_send_delta_interface(self):
         """Test that OutputAdapter has the send_delta interface."""
-        from framework.pipeline.adapters import OutputAdapter
+        from modex_agent.pipeline.adapters import OutputAdapter
 
         # Check that send_delta method exists
         assert hasattr(OutputAdapter, "send_delta")
@@ -268,9 +268,9 @@ class TestQQBotServiceIntegration:
     @pytest.mark.asyncio
     async def test_end_to_end_event_flow(self):
         """Test complete event flow from Agent to QQ Output."""
-        from framework.agents.react import ReActAgent, ReActEvent
-        from framework.core.agent import AgentContext
-        from framework.core.emitter import StreamingAwareEmitter
+        from modex_agent.agents.react import ReActAgent, ReActEvent
+        from modex_agent.core.agent import AgentContext
+        from modex_agent.core.emitter import StreamingAwareEmitter
 
         # Track events
         events_received = []
@@ -304,7 +304,7 @@ class TestQQBotServiceIntegration:
         emitter = TestEmitter(adapter, "test_session")
 
         # Create mock provider
-        from framework.core.types import LLMResponse
+        from modex_agent.core.types import LLMResponse
         class MockProvider:
             async def chat(self, **kwargs):
                 return LLMResponse(
@@ -316,7 +316,7 @@ class TestQQBotServiceIntegration:
                 return "mock"
 
         agent = ReActAgent(provider=MockProvider())
-        from framework.memory.history import ListMessageHistory
+        from modex_agent.memory.history import ListMessageHistory
         context = AgentContext(
             system_prompt="Test",
             history=ListMessageHistory([{"role": "user", "content": "Hi"}]),
@@ -361,7 +361,7 @@ class TestQQBotServiceIntegration:
 
         from pathlib import Path
 
-        from framework.core.skills import (
+        from modex_agent.core.skills import (
             FileSkillSource,
             DefaultSkillBuilder,
             ResolutionContext,
@@ -407,9 +407,9 @@ class TestQQBotServiceIntegration:
 
         from bot.service.core import BotService
 
-        from framework.core.types import InputMessage, LLMResponse
-        from framework.adapters.platform import StreamingMode
-from framework.pipeline.adapters import InputAdapter, OutputAdapter, OutputMessage
+        from modex_agent.core.types import InputMessage, LLMResponse
+        from modex_agent.adapters.platform import StreamingMode
+        from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter, OutputMessage
 
         class _MockInputAdapter(InputAdapter):
             def __init__(self):
@@ -524,7 +524,7 @@ memory:
         output_adapter = _MockOutputAdapter()
 
         def _emitter_factory(session_id: str):
-            from framework.agents.react import ReActEvent
+            from modex_agent.agents.react import ReActEvent
             return _BufferingEmitter[ReActEvent]()
 
         with patch("bot.service.pool_builder.create_llm_provider", return_value=_MockProvider()), patch(
@@ -571,9 +571,9 @@ memory:
 
         from bot.service.core import BotService
 
-        from framework.core.types import LLMResponse
-        from framework.adapters.platform import StreamingMode
-from framework.pipeline.adapters import InputAdapter, OutputAdapter, OutputMessage
+        from modex_agent.core.types import LLMResponse
+        from modex_agent.adapters.platform import StreamingMode
+        from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter, OutputMessage
 
         class _MockInputAdapter(InputAdapter):
             @property

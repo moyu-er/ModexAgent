@@ -11,8 +11,8 @@ import sys
 
 import pytest
 
-from framework.tools.terminal.backends.windows_hidden import WindowsHiddenPtyBackend
-from framework.tools.terminal.types import Platform, TerminalVisibility
+from modex_agent.tools.terminal.backends.windows_hidden import WindowsHiddenPtyBackend
+from modex_agent.tools.terminal.types import Platform, TerminalVisibility
 
 
 @pytest.fixture

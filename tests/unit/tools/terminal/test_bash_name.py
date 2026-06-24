@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from framework.tools.terminal.subprocess_tool import SubprocessTool
+from modex_agent.tools.terminal.subprocess_tool import SubprocessTool
 
 
 class TestBashToolName:

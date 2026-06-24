@@ -6,9 +6,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from framework.core.llm_struct import RuntimeSafetyPolicy, TurnTimeoutPolicy
-from framework.multi_agent.pool import AgentPool
-from framework.multi_agent.state import AgentState
+from modex_agent.core.llm_struct import RuntimeSafetyPolicy, TurnTimeoutPolicy
+from modex_agent.multi_agent.pool import AgentPool
+from modex_agent.multi_agent.state import AgentState
 
 
 class _FakeBroker:

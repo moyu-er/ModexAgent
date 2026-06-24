@@ -18,8 +18,8 @@ from bot.service.session_store import WorkspacePoolSessionStore
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import _unwrap_envelope
 from bot.webui.server import WebUIServer
-from framework.workspace.paths import WorkspacePaths
-from framework.core.session_id import SessionIdFactory
+from modex_agent.workspace.paths import WorkspacePaths
+from modex_agent.core.session_id import SessionIdFactory
 
 
 @pytest.mark.asyncio

@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from framework.workspace.control import WorkspaceController
-from framework.workspace.registry import InMemoryRegistryStore, WorkspaceRegistry
-from framework.workspace.models import CdError
+from modex_agent.workspace.control import WorkspaceController
+from modex_agent.workspace.registry import InMemoryRegistryStore, WorkspaceRegistry
+from modex_agent.workspace.models import CdError
 
 from ._stubs import StubFactory
 

@@ -23,9 +23,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from framework.core.experience.manager import ExperienceManager
-from framework.core.experience.source import FileExperienceSource
-from framework.memory.system import MemorySystemContextManager
+from modex_agent.core.experience.manager import ExperienceManager
+from modex_agent.core.experience.source import FileExperienceSource
+from modex_agent.memory.system import MemorySystemContextManager
 
 _EXP_MD_TEMPLATE = (
     "---\n"

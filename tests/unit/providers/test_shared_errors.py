@@ -3,12 +3,12 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from framework.core.llm_struct import LLMErrorInfo, LLMErrorKind
+from modex_agent.core.llm_struct import LLMErrorInfo, LLMErrorKind
 
 
 def _make_classify():
     """Import helpers fresh for each test to get clean module state."""
-    from framework.providers.shared import errors
+    from modex_agent.providers.shared import errors
     return errors
 
 

@@ -13,11 +13,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from bot.service.pool_builder import _build_tools
-from framework.ioc.configs.agent import AgentConfig
-from framework.ioc.configs.llm import LLMConfig
-from framework.ioc.configs.mcp import MCPConfig
-from framework.ioc.configs.memory import MemoryConfig
-from framework.ioc.configs.pool import PoolConfig, TerminalConfig
+from modex_agent.ioc.configs.agent import AgentConfig
+from modex_agent.ioc.configs.llm import LLMConfig
+from modex_agent.ioc.configs.mcp import MCPConfig
+from modex_agent.ioc.configs.memory import MemoryConfig
+from modex_agent.ioc.configs.pool import PoolConfig, TerminalConfig
 
 
 class TestBuildToolsMcpResilience:

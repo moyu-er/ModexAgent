@@ -26,9 +26,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
 
-from framework.ioc.configs.memory import MemoryConfig
-from framework.ioc.factories.memory import create_memory
-from framework.memory.core.scope import MemoryContext
+from modex_agent.ioc.configs.memory import MemoryConfig
+from modex_agent.ioc.factories.memory import create_memory
+from modex_agent.memory.core.scope import MemoryContext
 from bot.service.pool_builder import ensure_long_term_defaults
 
 
@@ -87,7 +87,7 @@ async def test_does_not_overwrite_existing_nonempty(tmp_path: Path) -> None:
     await ms.initialize()
 
     # Pre-seed a non-empty SOUL.md that the user already customized.
-    from framework.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
+    from modex_agent.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
 
     ctx = MemoryContext(session_id="default", user_id="default")
     await ms.knowledge_manager.apply_update(

@@ -4,14 +4,14 @@ from __future__ import annotations
 import pytest
 from unittest.mock import AsyncMock
 
-from framework.ioc.configs.memory import (
+from modex_agent.ioc.configs.memory import (
     DreamEngineConfig,
     LongTermConfig,
     MemoryConfig,
 )
-from framework.ioc.factories.memory import _build_memory_layer_config
-from framework.memory.core.scope import MemoryContext
-from framework.memory.layers.knowledge import ScopedKnowledgeMemoryManager
+from modex_agent.ioc.factories.memory import _build_memory_layer_config
+from modex_agent.memory.core.scope import MemoryContext
+from modex_agent.memory.layers.knowledge import ScopedKnowledgeMemoryManager
 
 
 @pytest.mark.asyncio

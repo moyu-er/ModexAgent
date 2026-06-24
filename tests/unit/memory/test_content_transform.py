@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from framework.memory.content_transform import (
+from modex_agent.memory.content_transform import (
     Base64SanitizeTransformer,
     CompositeTransformer,
     ContentTransformer,

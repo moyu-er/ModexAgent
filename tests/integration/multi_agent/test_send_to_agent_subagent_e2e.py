@@ -31,24 +31,24 @@ from typing import Any
 
 import pytest
 
-from framework.core.agent import AgentContext
-from framework.core.context import InMemoryContextManager
-from framework.core.provider import StreamingLLMProvider
-from framework.core.session_id import SessionIdFactory
-from framework.core.session_registry import InMemorySessionRegistry
-from framework.core.types import LLMResponse, ToolCall
-from framework.messaging.broker_memory import InMemoryMessageBroker
-from framework.multi_agent.address import AgentAddress
-from framework.multi_agent import SessionRetentionPolicy
-from framework.multi_agent.bus import LocalAgentMessageBus
-from framework.multi_agent.comm_kind import AgentCommKind
-from framework.multi_agent.communication import AgentCommunicationService
-from framework.multi_agent.factory import DefaultAgentFactory
-from framework.multi_agent.inbox.consumer import InboxConsumer
-from framework.multi_agent.inbox.producer import InboxProducer
-from framework.multi_agent.inbox.server_memory import InMemoryInboxServer
-from framework.multi_agent.pool import AgentPool
-from framework.multi_agent.template_registry import AgentTemplateRegistry
+from modex_agent.core.agent import AgentContext
+from modex_agent.core.context import InMemoryContextManager
+from modex_agent.core.provider import StreamingLLMProvider
+from modex_agent.core.session_id import SessionIdFactory
+from modex_agent.core.session_registry import InMemorySessionRegistry
+from modex_agent.core.types import LLMResponse, ToolCall
+from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.multi_agent import SessionRetentionPolicy
+from modex_agent.multi_agent.bus import LocalAgentMessageBus
+from modex_agent.multi_agent.comm_kind import AgentCommKind
+from modex_agent.multi_agent.communication import AgentCommunicationService
+from modex_agent.multi_agent.factory import DefaultAgentFactory
+from modex_agent.multi_agent.inbox.consumer import InboxConsumer
+from modex_agent.multi_agent.inbox.producer import InboxProducer
+from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
+from modex_agent.multi_agent.pool import AgentPool
+from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 
 
 # ---------------------------------------------------------------------------
@@ -67,10 +67,10 @@ class _FakePoolData:
     """
 
     def __init__(self, runtime_dir: Path, memory_dir: Path, main_ctx_mgr: Any) -> None:
-        from framework.agents.react.state import ReActRuntimeStateCodec
-        from framework.runtime.codec import RuntimeStateCodecRegistry
-        from framework.runtime.enums import AgentKind
-        from framework.runtime.store import (
+        from modex_agent.agents.react.state import ReActRuntimeStateCodec
+        from modex_agent.runtime.codec import RuntimeStateCodecRegistry
+        from modex_agent.runtime.enums import AgentKind
+        from modex_agent.runtime.store import (
             JsonFileRuntimeCommandStore,
             JsonFileTurnStateStore,
         )
@@ -206,7 +206,7 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
     provider = _ScriptedProvider()
 
     # --- factory, wrapped to attach workspace_manager + pool_name (bot-style) ---
-    from framework.hook import HookRunner
+    from modex_agent.hook import HookRunner
 
     shared_hook_runner = HookRunner()
     factory = DefaultAgentFactory(

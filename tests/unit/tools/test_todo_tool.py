@@ -3,9 +3,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from framework.core.agent import current_agent_context
-from framework.core.types import TodoStatus
-from framework.runtime.store import JsonFileTodoStore, TodoItem
+from modex_agent.core.agent import current_agent_context
+from modex_agent.core.types import TodoStatus
+from modex_agent.runtime.store import JsonFileTodoStore, TodoItem
 
 
 def _set_ctx(session_id: str = "s1") -> object:
@@ -16,7 +16,7 @@ def _set_ctx(session_id: str = "s1") -> object:
 
 @pytest.mark.asyncio
 async def test_write_saves_full_and_returns_active(tmp_path) -> None:
-    from framework.tools.standard.todo_tool import TodoWriteTool
+    from modex_agent.tools.standard.todo_tool import TodoWriteTool
 
     store = JsonFileTodoStore(tmp_path)
     token = _set_ctx("s1")
@@ -40,7 +40,7 @@ async def test_write_saves_full_and_returns_active(tmp_path) -> None:
 async def test_write_returns_active_only_when_full_includes_completed(tmp_path) -> None:
     """write stores the full list (including completed/cancelled) but only
     returns the active subset (in_progress + pending) for confirmation."""
-    from framework.tools.standard.todo_tool import TodoWriteTool
+    from modex_agent.tools.standard.todo_tool import TodoWriteTool
 
     store = JsonFileTodoStore(tmp_path)
     token = _set_ctx("s1")
@@ -64,7 +64,7 @@ async def test_write_returns_active_only_when_full_includes_completed(tmp_path) 
 
 @pytest.mark.asyncio
 async def test_write_rejects_bad_status(tmp_path) -> None:
-    from framework.tools.standard.todo_tool import TodoWriteTool
+    from modex_agent.tools.standard.todo_tool import TodoWriteTool
 
     store = JsonFileTodoStore(tmp_path)
     token = _set_ctx("s1")
@@ -80,7 +80,7 @@ async def test_write_rejects_bad_status(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_write_without_context_returns_error(tmp_path) -> None:
-    from framework.tools.standard.todo_tool import TodoWriteTool
+    from modex_agent.tools.standard.todo_tool import TodoWriteTool
 
     # No context set at all
     result = await TodoWriteTool(JsonFileTodoStore(tmp_path)).execute(
@@ -91,7 +91,7 @@ async def test_write_without_context_returns_error(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_read_returns_active_only_in_order(tmp_path) -> None:
-    from framework.tools.standard.todo_tool import TodoReadTool
+    from modex_agent.tools.standard.todo_tool import TodoReadTool
 
     store = JsonFileTodoStore(tmp_path)
     await store.save(
@@ -114,7 +114,7 @@ async def test_read_returns_active_only_in_order(tmp_path) -> None:
 
 
 def test_tool_names_and_export(tmp_path) -> None:
-    from framework.tools.standard import TodoReadTool, TodoWriteTool
+    from modex_agent.tools.standard import TodoReadTool, TodoWriteTool
 
     store = JsonFileTodoStore(tmp_path)
     assert TodoWriteTool(store).name == "todo_write"

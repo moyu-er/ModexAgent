@@ -1,4 +1,4 @@
-"""Tests for framework.providers.openai_provider."""
+"""Tests for modex_agent.providers.openai_provider."""
 from __future__ import annotations
 
 import asyncio
@@ -6,15 +6,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from framework.core.constants import FinishReason
-from framework.core.llm_struct import (
+from modex_agent.core.constants import FinishReason
+from modex_agent.core.llm_struct import (
     LLMErrorKind,
     LLMTimeoutPolicy,
     RuntimeSafetyPolicy,
     TurnTimeoutPolicy,
 )
-from framework.core.types import LLMResponse
-from framework.providers.openai_provider import OpenAIProvider
+from modex_agent.core.types import LLMResponse
+from modex_agent.providers.openai_provider import OpenAIProvider
 
 
 class TestOpenAIProviderChat:
@@ -30,7 +30,7 @@ class TestOpenAIProviderChat:
             llm=LLMTimeoutPolicy(request_timeout_seconds=10, stream_idle_timeout_seconds=30),
             turn=TurnTimeoutPolicy(),
         )
-        with patch("framework.providers.openai_provider.AsyncOpenAI") as mock_client_cls:
+        with patch("modex_agent.providers.openai_provider.AsyncOpenAI") as mock_client_cls:
             mock_client = MagicMock()
             mock_client_cls.return_value = mock_client
             p = OpenAIProvider(model="gpt-4o", api_key="sk-test", safety=safety)
@@ -172,7 +172,7 @@ class TestBuildParamsStripsGovernanceFields:
             llm=LLMTimeoutPolicy(request_timeout_seconds=10, stream_idle_timeout_seconds=30),
             turn=TurnTimeoutPolicy(),
         )
-        with patch("framework.providers.openai_provider.AsyncOpenAI") as mock_client_cls:
+        with patch("modex_agent.providers.openai_provider.AsyncOpenAI") as mock_client_cls:
             mock_client = MagicMock()
             mock_client_cls.return_value = mock_client
             p = OpenAIProvider(model="gpt-4o", api_key="sk-test", safety=safety)
@@ -229,7 +229,7 @@ class TestOpenAIProviderChatStream:
             llm=LLMTimeoutPolicy(request_timeout_seconds=10, stream_idle_timeout_seconds=0.1),
             turn=TurnTimeoutPolicy(),
         )
-        with patch("framework.providers.openai_provider.AsyncOpenAI") as mock_client_cls:
+        with patch("modex_agent.providers.openai_provider.AsyncOpenAI") as mock_client_cls:
             mock_client = MagicMock()
             mock_client_cls.return_value = mock_client
             p = OpenAIProvider(model="gpt-4o", api_key="sk-test", safety=safety)

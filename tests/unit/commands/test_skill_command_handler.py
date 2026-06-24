@@ -10,12 +10,12 @@ from pathlib import Path
 
 import pytest
 
-from framework.commands.handlers import SkillCommandHandler
-from framework.commands.models import CommandContext, SlashCommandInvocation
-from framework.core.session_id import SessionInfo
-from framework.core.skills import FileSkillSource, DefaultSkillBuilder, SkillManager
-from framework.core.skills.cache import DirectorySkillCache
-from framework.core.types import InputMessage
+from modex_agent.commands.handlers import SkillCommandHandler
+from modex_agent.commands.models import CommandContext, SlashCommandInvocation
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.skills import FileSkillSource, DefaultSkillBuilder, SkillManager
+from modex_agent.core.skills.cache import DirectorySkillCache
+from modex_agent.core.types import InputMessage
 
 
 def _make_skill_manager(skill_dir: Path) -> SkillManager:
@@ -95,7 +95,7 @@ async def test_handle_returns_skill_content_when_found() -> None:
             skill_manager=mgr,
         )
 
-        from framework.commands.constants import CommandAction
+        from modex_agent.commands.constants import CommandAction
         result = await handler.handle(invocation, context)
         assert result.action == CommandAction.TRANSFORM_TO_USER_INPUT
         assert "test-skill" in (result.user_content or "")
@@ -110,7 +110,7 @@ async def test_build_pool_skill_manager_finds_skills() -> None:
         skills_root = _setup_skill_dir(tmp_path)
 
         # Simulate _build_pool_skill_manager logic
-        from framework.ioc.configs.agent import AgentConfig
+        from modex_agent.ioc.configs.agent import AgentConfig
 
         main_cfg = AgentConfig(name="main", role="main")
         pool_name = "main"

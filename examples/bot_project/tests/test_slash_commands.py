@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 from bot.service.core import BotService
 
-from framework.commands.processor import SlashCommandProcessor
+from modex_agent.commands.processor import SlashCommandProcessor
 
 
 def test_bot_service_can_build_main_command_processor() -> None:

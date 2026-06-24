@@ -9,8 +9,8 @@ import pytest
 import os as _os
 
 from bot.service.session_store import WorkspacePoolSessionStore
-from framework.core.session_id import SessionInfo, SessionIdFactory
-from framework.core.session_store import LocalFileSessionStore
+from modex_agent.core.session_id import SessionInfo, SessionIdFactory
+from modex_agent.core.session_store import LocalFileSessionStore
 
 
 @pytest.fixture

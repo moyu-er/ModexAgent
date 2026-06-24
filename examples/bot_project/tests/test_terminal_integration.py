@@ -15,11 +15,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import pytest
 from bot.service.core import BotService
 
-from framework.core.session_id import SessionInfo
-from framework.core.types import InputMessage
-from framework.pipeline.adapters import InputAdapter, NullOutputAdapter
-from framework.tools.terminal.subprocess_tool import SubprocessTool
-from framework.tools.terminal.tool import TerminalTool
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.types import InputMessage
+from modex_agent.pipeline.adapters import InputAdapter, NullOutputAdapter
+from modex_agent.tools.terminal.subprocess_tool import SubprocessTool
+from modex_agent.tools.terminal.tool import TerminalTool
 
 
 class _InputAdapter(InputAdapter):
@@ -73,7 +73,7 @@ class TestTerminalManagerInitialization:
         """SubprocessTool must use SubprocessExecutor regardless of terminal_manager."""
         from bot.service.builders import _make_shell_tool
 
-        from framework.tools.terminal.manager import TerminalManager
+        from modex_agent.tools.terminal.manager import TerminalManager
 
         # Even with a TerminalManager, SubprocessTool still uses SubprocessExecutor
         tm = TerminalManager(backend_factory=lambda: object())
@@ -89,7 +89,7 @@ class TestTerminalManagerInitialization:
 
     def test_terminal_tool_registered_when_terminal_manager_exists(self, service) -> None:
         """TerminalTool should be registered when a TerminalManager exists."""
-        from framework.tools.terminal.manager import TerminalManager
+        from modex_agent.tools.terminal.manager import TerminalManager
 
         tm = TerminalManager(backend_factory=lambda: object())
 
@@ -111,15 +111,15 @@ class TestTerminalToolActions:
 
     def test_terminal_tool_has_interrupt_action(self, service) -> None:
         """TerminalTool must support INTERRUPT action for agent-controlled interruption."""
-        from framework.tools.terminal.tool import TerminalAction
+        from modex_agent.tools.terminal.tool import TerminalAction
 
         assert hasattr(TerminalAction, "INTERRUPT")
         assert TerminalAction.INTERRUPT.value == "interrupt"
 
     def test_terminal_tool_interrupt_targets_default(self, service) -> None:
         """INTERRUPT should target the default terminal session."""
-        from framework.tools.terminal.manager import TerminalManager
-        from framework.tools.terminal.tool import TerminalTool
+        from modex_agent.tools.terminal.manager import TerminalManager
+        from modex_agent.tools.terminal.tool import TerminalTool
 
         tm = TerminalManager(backend_factory=lambda: object())
         tool = TerminalTool(tm)

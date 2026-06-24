@@ -25,16 +25,16 @@ from typing import Any
 from urllib.parse import urlparse
 
 from bot.utils.media_utils import download_file
-from framework.adapters.platform import StreamingMode
-from framework.agents.react import ReActEvent
-from framework.core.emitter import EmitterConfig, StreamingAwareEmitter
-from framework.pipeline.adapters import (
+from modex_agent.adapters.platform import StreamingMode
+from modex_agent.agents.react import ReActEvent
+from modex_agent.core.emitter import EmitterConfig, StreamingAwareEmitter
+from modex_agent.pipeline.adapters import (
     InputAdapter,
     InputMessage,
     OutputAdapter,
     OutputMessage,
 )
-from framework.pipeline.filters import ChainedContentFilter, WhitespaceFilter
+from modex_agent.pipeline.filters import ChainedContentFilter, WhitespaceFilter
 
 # QQ rich media file_type: 1=image, 4=file
 QQ_FILE_TYPE_IMAGE = 1
@@ -362,7 +362,7 @@ class QQInputAdapter(InputAdapter):
             self.last_input_metadata = metadata
 
             # ── S0: produce the seed envelope (adapter normalization done above) ──
-            from framework.input_pipeline.envelope import UserInputEnvelope, AttachmentRef
+            from modex_agent.input_pipeline.envelope import UserInputEnvelope, AttachmentRef
 
             seed = UserInputEnvelope(
                 external_id=user_id,
@@ -391,7 +391,7 @@ class QQInputAdapter(InputAdapter):
                 if msg_text:
                     out = self._output_adapter or self._ctrl_output_adapter
                     if out is not None:
-                        from framework.core.types import OutputMessage
+                        from modex_agent.core.types import OutputMessage
                         await out.send(OutputMessage(content=msg_text), user_id)
                     else:
                         print(f"[QQInputAdapter] Cannot send Terminate notice (no output adapter): {msg_text}")

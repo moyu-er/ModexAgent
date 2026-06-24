@@ -1,6 +1,6 @@
 """Verify terminal type enums and helpers."""
 
-from framework.tools.terminal.types import (
+from modex_agent.tools.terminal.types import (
     CommandResultStatus,
     ShellFamily,
     TerminalCommandStatus,

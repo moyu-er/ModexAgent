@@ -4,14 +4,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from framework.pipeline.pipeline import AgentPipeline
+from modex_agent.pipeline.pipeline import AgentPipeline
 
 
 class _MinimalAgent:
     name = "test-agent"
 
     async def run(self, context, emitter):
-        from framework.core.emitter import AgentResult
+        from modex_agent.core.emitter import AgentResult
         return AgentResult(content="ok")
 
 
@@ -23,7 +23,7 @@ class _MinimalToolManager:
         pass
 
     async def execute(self, *args, **kwargs):
-        from framework.core.tool_manager import ToolResult
+        from modex_agent.core.tool_manager import ToolResult
         return ToolResult(tool_name="test", result="ok")
 
     def get_tool_descriptions(self, caller_context=None):
@@ -43,8 +43,8 @@ class _MinimalInputAdapter:
     async def receive(self):
         if not self._sent:
             self._sent = True
-            from framework.core.session_id import SessionInfo
-            from framework.core.types import InputMessage
+            from modex_agent.core.session_id import SessionInfo
+            from modex_agent.core.types import InputMessage
             yield InputMessage(content="test", session=SessionInfo.from_str("s1", default_agent_name="main"))
 
 

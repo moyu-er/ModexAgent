@@ -6,9 +6,9 @@ import asyncio
 
 import pytest
 
-from framework.tools.terminal.backends.pexpect_pty import PexpectPtyBackend
-from framework.tools.terminal.results import TerminalRead, TerminalSegment
-from framework.tools.terminal.types import Platform, TerminalVisibility
+from modex_agent.tools.terminal.backends.pexpect_pty import PexpectPtyBackend
+from modex_agent.tools.terminal.results import TerminalRead, TerminalSegment
+from modex_agent.tools.terminal.types import Platform, TerminalVisibility
 
 
 class FakePexpectProcess:

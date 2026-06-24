@@ -16,16 +16,16 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from framework.workspace.context import WorkspaceContext
+from modex_agent.workspace.context import WorkspaceContext
 
-from framework.core.experience.manager import ExperienceManager
-from framework.core.experience.meta import PerFileExperienceMetaStore
-from framework.core.experience.source import FileExperienceSource
-from framework.ioc.configs.memory import MemoryConfig
-from framework.ioc.configs.pool import PoolConfig
-from framework.memory.system import MemorySystemContextManager
-from framework.pipeline.snapshot import PoolDataSnapshot
-from framework.trace import JsonFileTraceStore
+from modex_agent.core.experience.manager import ExperienceManager
+from modex_agent.core.experience.meta import PerFileExperienceMetaStore
+from modex_agent.core.experience.source import FileExperienceSource
+from modex_agent.ioc.configs.memory import MemoryConfig
+from modex_agent.ioc.configs.pool import PoolConfig
+from modex_agent.memory.system import MemorySystemContextManager
+from modex_agent.pipeline.snapshot import PoolDataSnapshot
+from modex_agent.trace import JsonFileTraceStore
 
 logger = logging.getLogger(__name__)
 
@@ -93,12 +93,12 @@ async def build_pool_data(
     # Local imports keep the module import graph thin: the codec / store
     # / experience / memory-factory modules are only needed when a pool
     # is actually built, not when this module is imported.
-    from framework.agents.react.state import ReActRuntimeStateCodec
-    from framework.ioc.factories.memory import create_memory
-    from framework.memory.injection import FullInjectionPolicy
-    from framework.runtime.codec import RuntimeStateCodecRegistry
-    from framework.runtime.enums import AgentKind
-    from framework.runtime.store import (
+    from modex_agent.agents.react.state import ReActRuntimeStateCodec
+    from modex_agent.ioc.factories.memory import create_memory
+    from modex_agent.memory.injection import FullInjectionPolicy
+    from modex_agent.runtime.codec import RuntimeStateCodecRegistry
+    from modex_agent.runtime.enums import AgentKind
+    from modex_agent.runtime.store import (
         JsonFileRuntimeCommandStore,
         JsonFileTurnStateStore,
     )

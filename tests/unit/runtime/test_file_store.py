@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import pytest
 
-from framework.memory.core.message import ChatMessage
-from framework.runtime.codec import RuntimeStateCodecRegistry
-from framework.runtime.enums import AgentKind, MessageDeltaSource, SnapshotReason, TurnPhase
-from framework.runtime.models import MessageDelta, ResumePoint, StateQueryScope, TurnIdentity, TurnSnapshot
-from framework.core.session_id import SessionInfo
+from modex_agent.memory.core.message import ChatMessage
+from modex_agent.runtime.codec import RuntimeStateCodecRegistry
+from modex_agent.runtime.enums import AgentKind, MessageDeltaSource, SnapshotReason, TurnPhase
+from modex_agent.runtime.models import MessageDelta, ResumePoint, StateQueryScope, TurnIdentity, TurnSnapshot
+from modex_agent.core.session_id import SessionInfo
 
 
 class _FakeCodec:
@@ -60,7 +60,7 @@ def registry() -> RuntimeStateCodecRegistry:
 
 
 async def test_json_file_turn_store_save_load_delete(tmp_path, registry) -> None:
-    from framework.runtime.store import JsonFileTurnStateStore
+    from modex_agent.runtime.store import JsonFileTurnStateStore
 
     store = JsonFileTurnStateStore(tmp_path, registry)
     identity = TurnIdentity(agent_id="bot", session=SessionInfo.from_str("group_1"), turn_id="t1")
@@ -94,7 +94,7 @@ async def test_json_file_turn_store_save_load_delete(tmp_path, registry) -> None
 
 
 async def test_json_file_turn_store_handles_path_sanitization(tmp_path, registry) -> None:
-    from framework.runtime.store import JsonFileTurnStateStore
+    from modex_agent.runtime.store import JsonFileTurnStateStore
 
     store = JsonFileTurnStateStore(tmp_path, registry)
 

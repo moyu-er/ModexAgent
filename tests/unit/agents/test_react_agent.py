@@ -13,21 +13,21 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from framework.adapters.platform import StreamingMode
-from framework.agents.react import ReActAgent, ReActEvent
-from framework.core.agent import AgentContext
-from framework.core.constants import StopReason
-from framework.core.emitter import AgentResult, ContentEmitter, EmitterConfig, StreamingAwareEmitter
-from framework.core.events import AgentEvent
-from framework.core.provider import StreamingLLMProvider
-from framework.core.tool_manager import ToolResult
-from framework.core.types import LLMResponse, ToolCall
-from framework.memory.history import ListMessageHistory
-from framework.runtime.enums import AgentKind, TurnPhase
-from framework.runtime.models import TurnIdentity
-from framework.runtime.services import AgentRuntime, AgentRuntimeServices
-from framework.core.session_id import SessionInfo
-from framework.agents.react.state import ReActTurnState
+from modex_agent.adapters.platform import StreamingMode
+from modex_agent.agents.react import ReActAgent, ReActEvent
+from modex_agent.core.agent import AgentContext
+from modex_agent.core.constants import StopReason
+from modex_agent.core.emitter import AgentResult, ContentEmitter, EmitterConfig, StreamingAwareEmitter
+from modex_agent.core.events import AgentEvent
+from modex_agent.core.provider import StreamingLLMProvider
+from modex_agent.core.tool_manager import ToolResult
+from modex_agent.core.types import LLMResponse, ToolCall
+from modex_agent.memory.history import ListMessageHistory
+from modex_agent.runtime.enums import AgentKind, TurnPhase
+from modex_agent.runtime.models import TurnIdentity
+from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.agents.react.state import ReActTurnState
 
 
 E = TypeVar('E', bound=AgentEvent)
@@ -243,7 +243,7 @@ class TestReActAgentUnifiedLoop:
     async def test_streaming_calls_after_llm_response_hook(self, streaming_provider, context, streaming_emitter):
         responses: list[str | None] = []
 
-        from framework.hook.abc import AfterLLMResponseHook
+        from modex_agent.hook.abc import AfterLLMResponseHook
 
         class TrackingHook(AfterLLMResponseHook):
             @property
@@ -254,7 +254,7 @@ class TestReActAgentUnifiedLoop:
                 responses.append(response.content)
 
         streaming_provider._stream_content = ["Hello ", "World"]
-        from framework.hook import HookRunner, HookSpec, HookErrorPolicy
+        from modex_agent.hook import HookRunner, HookSpec, HookErrorPolicy
         context.runtime.services.hooks = HookRunner([
             HookSpec(hook=TrackingHook(), on_error=HookErrorPolicy.LOG)
         ])
@@ -369,7 +369,7 @@ class TestReActAgentUnifiedLoop:
     async def test_non_streaming_calls_after_llm_response_hook(self, non_streaming_provider, context, emitter):
         responses: list[str | None] = []
 
-        from framework.hook.abc import AfterLLMResponseHook
+        from modex_agent.hook.abc import AfterLLMResponseHook
 
         class TrackingHook(AfterLLMResponseHook):
             @property
@@ -383,7 +383,7 @@ class TestReActAgentUnifiedLoop:
             return LLMResponse(content="Complete response")
 
         non_streaming_provider.chat = mock_chat
-        from framework.hook import HookRunner, HookSpec, HookErrorPolicy
+        from modex_agent.hook import HookRunner, HookSpec, HookErrorPolicy
         context.runtime.services.hooks = HookRunner([
             HookSpec(hook=TrackingHook(), on_error=HookErrorPolicy.LOG)
         ])
@@ -686,8 +686,8 @@ class TestReActAgentCheckpoint:
         result = await agent.run(context, streaming_emitter)
 
         # message_delta tracks both assistant and tool messages
-        from framework.runtime.services import require_runtime_state
-        from framework.agents.react.state import ReActTurnState
+        from modex_agent.runtime.services import require_runtime_state
+        from modex_agent.agents.react.state import ReActTurnState
         state = require_runtime_state(context.runtime, ReActTurnState)
         assert len(state.message_delta) >= 2, f"expected >= 2 message_delta entries, got {len(state.message_delta)}"
 
@@ -705,7 +705,7 @@ class TestReActAgentCheckpoint:
         await agent.run(context, emitter)
 
         # Turn completed successfully — phase is COMPLETED
-        from framework.runtime.enums import TurnPhase
+        from modex_agent.runtime.enums import TurnPhase
         assert context.runtime.state.phase == TurnPhase.COMPLETED
 
         # message_delta records the assistant message

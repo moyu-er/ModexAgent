@@ -4,15 +4,15 @@ import asyncio
 
 import pytest
 
-from framework.memory.archive_models import (
+from modex_agent.memory.archive_models import (
     ArchiveChannel,
     ArchiveWrite,
 )
-from framework.memory.core.scope import MemoryContext, MemoryLayerName
-from framework.memory.layers.archive import ScopedArchiveMemoryManager
-from framework.memory.layers.config import ArchiveMemoryConfig
-from framework.memory.layers.factory import MemoryLayerFactory
-from framework.memory.registry.in_memory import InMemoryStoreRegistry
+from modex_agent.memory.core.scope import MemoryContext, MemoryLayerName
+from modex_agent.memory.layers.archive import ScopedArchiveMemoryManager
+from modex_agent.memory.layers.config import ArchiveMemoryConfig
+from modex_agent.memory.layers.factory import MemoryLayerFactory
+from modex_agent.memory.registry.in_memory import InMemoryStoreRegistry
 
 
 async def test_append_bundle_writes_same_archive_id_to_both_channels() -> None:

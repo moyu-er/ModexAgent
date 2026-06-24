@@ -18,8 +18,8 @@ from pathlib import Path
 
 import pytest
 
-from framework.ioc.configs.llm import LLMConfig
-from framework.ioc.factories.llm import create_llm_provider
+from modex_agent.ioc.configs.llm import LLMConfig
+from modex_agent.ioc.factories.llm import create_llm_provider
 
 pytestmark = pytest.mark.integration
 

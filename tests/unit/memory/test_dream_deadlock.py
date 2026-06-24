@@ -6,13 +6,13 @@ from typing import Any
 
 import pytest
 
-from framework.memory.archive_models import ArchiveChannel, ArchiveWrite
-from framework.memory.core.lock import AioRWLock
-from framework.memory.core.scope import MemoryContext, MemoryLayerName
-from framework.memory.layers.archive import ScopedArchiveMemoryManager
-from framework.memory.layers.config import ArchiveMemoryConfig
-from framework.memory.layers.factory import MemoryLayerFactory
-from framework.memory.registry.in_memory import InMemoryStoreRegistry
+from modex_agent.memory.archive_models import ArchiveChannel, ArchiveWrite
+from modex_agent.memory.core.lock import AioRWLock
+from modex_agent.memory.core.scope import MemoryContext, MemoryLayerName
+from modex_agent.memory.layers.archive import ScopedArchiveMemoryManager
+from modex_agent.memory.layers.config import ArchiveMemoryConfig
+from modex_agent.memory.layers.factory import MemoryLayerFactory
+from modex_agent.memory.registry.in_memory import InMemoryStoreRegistry
 
 
 async def test_commit_cursor_race_with_append_bundle():

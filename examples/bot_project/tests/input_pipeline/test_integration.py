@@ -11,10 +11,10 @@ from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.skill_parse import ParsedSkill, SkillRegistry
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import UserMessageEvent
-from framework.core.session_id import SessionIdFactory, encode_snowflake
-from framework.core.types import InputMessage
-from framework.input_pipeline.envelope import UserInputEnvelope
-from framework.workspace.runtime import bind_workspace_root
+from modex_agent.core.session_id import SessionIdFactory, encode_snowflake
+from modex_agent.core.types import InputMessage
+from modex_agent.input_pipeline.envelope import UserInputEnvelope
+from modex_agent.workspace.runtime import bind_workspace_root
 
 
 def _sid(agent: str, conv: str) -> str:
@@ -55,7 +55,7 @@ def _make_ctx(
     # persist stage binds it so the user-message append lands under that root.
     # By default the provider mirrors the bound ctxvar root, so each test wraps
     # its write+read in bind_workspace_root(root) to route both consistently.
-    from framework.workspace.runtime import resolve_workspace_root
+    from modex_agent.workspace.runtime import resolve_workspace_root
 
     if workspace_root is None:
         current_ws_provider = resolve_workspace_root
@@ -207,8 +207,8 @@ async def test_im_cd_command_terminates_in_s2() -> None:
             cmd_adapter.save_current_ws = MagicMock()
             ctx = _make_ctx(store, enqueued, command_adapter=cmd_adapter)
             # Build a mock controller for /cd validation
-            from framework.workspace.control import WorkspaceController
-            from framework.workspace.models import CdResult
+            from modex_agent.workspace.control import WorkspaceController
+            from modex_agent.workspace.models import CdResult
 
             controller = MagicMock(spec=WorkspaceController)
             controller.home = project_dir

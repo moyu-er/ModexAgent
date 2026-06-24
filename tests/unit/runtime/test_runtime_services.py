@@ -1,11 +1,11 @@
 """Tests for AgentRuntime and AgentRuntimeServices."""
 from __future__ import annotations
 
-from framework.runtime.enums import AgentKind, TurnPhase
-from framework.runtime.models import TurnIdentity, TurnStateBase
-from framework.core.session_id import SessionInfo
-from framework.runtime.services import AgentRuntime, AgentRuntimeServices, require_runtime_state
-from framework.runtime.store import NoOpRuntimeCommandStore, NoOpTurnStateStore
+from modex_agent.runtime.enums import AgentKind, TurnPhase
+from modex_agent.runtime.models import TurnIdentity, TurnStateBase
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices, require_runtime_state
+from modex_agent.runtime.store import NoOpRuntimeCommandStore, NoOpTurnStateStore
 
 
 def test_runtime_services_are_not_part_of_turn_state() -> None:

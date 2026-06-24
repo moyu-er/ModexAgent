@@ -21,11 +21,11 @@ from bot.adapters.channels import (
 )
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.pool_router import PoolRouter, PoolSessionStore
-from framework.commands.handlers import build_default_builtin_handlers
-from framework.commands.processor import SlashCommandProcessor
-from framework.control.channel import InMemoryControlChannel
-from framework.core.types import OutputMessage
-from framework.pipeline.adapters import OutputAdapter
+from modex_agent.commands.handlers import build_default_builtin_handlers
+from modex_agent.commands.processor import SlashCommandProcessor
+from modex_agent.control.channel import InMemoryControlChannel
+from modex_agent.core.types import OutputMessage
+from modex_agent.pipeline.adapters import OutputAdapter
 
 
 class _RecordingOutputAdapter(OutputAdapter):
@@ -132,10 +132,10 @@ async def test_control_command_notice_routes_to_websocket(adapters, tmp_path: Pa
     # This test verifies the channel routing of the notice.
     from bot.input_pipeline.stages.environment_control import EnvironmentControlStage
     from bot.input_pipeline.context import BotInputContext
-    from framework.input_pipeline.envelope import UserInputEnvelope
+    from modex_agent.input_pipeline.envelope import UserInputEnvelope
     from unittest.mock import MagicMock
-    from framework.workspace.control import WorkspaceController
-    from framework.workspace.models import CdResult
+    from modex_agent.workspace.control import WorkspaceController
+    from modex_agent.workspace.models import CdResult
 
     project_dir = tmp_path / "home"
     project_dir.mkdir()
@@ -185,10 +185,10 @@ async def test_control_command_notice_routes_to_qq(adapters, tmp_path: Path):
 
     from bot.input_pipeline.stages.environment_control import EnvironmentControlStage
     from bot.input_pipeline.context import BotInputContext
-    from framework.input_pipeline.envelope import UserInputEnvelope
+    from modex_agent.input_pipeline.envelope import UserInputEnvelope
     from unittest.mock import MagicMock
-    from framework.workspace.control import WorkspaceController
-    from framework.workspace.models import CdResult
+    from modex_agent.workspace.control import WorkspaceController
+    from modex_agent.workspace.models import CdResult
 
     project_dir = tmp_path / "home"
     project_dir.mkdir()

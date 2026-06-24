@@ -10,12 +10,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from bot.service.core import BotService
 
-from framework.core.session_id import SessionInfo
-from framework.core.types import InputMessage
-from framework.interceptor.builtin import (
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.types import InputMessage
+from modex_agent.interceptor.builtin import (
     ToolResultLimitInterceptor,
 )
-from framework.pipeline.adapters import InputAdapter, NullOutputAdapter
+from modex_agent.pipeline.adapters import InputAdapter, NullOutputAdapter
 
 
 class _InputAdapter(InputAdapter):
@@ -40,7 +40,7 @@ def test_default_interceptor_chain_keeps_only_effective_defaults() -> None:
     from unittest.mock import MagicMock
 
     from bot.workspace.wiring import _build_workspace_interceptor_chain
-    from framework.tools.overflow.local import LocalFileToolOverflowStore
+    from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
 
     service = MagicMock()
     service.control_channel = MagicMock()
@@ -57,7 +57,7 @@ def test_tool_timeout_exceeds_shell_internal_timeout() -> None:
     """Outer tool timeout must strictly exceed CommandTool.timeout so the shell
     can return structured timeout XML with partial output instead of being
     cancelled by the ReAct-level asyncio.wait_for."""
-    from framework.tools.terminal import SubprocessTool
+    from modex_agent.tools.terminal import SubprocessTool
 
     service = BotService(
         config_dir=Path("examples/bot_project/config"),

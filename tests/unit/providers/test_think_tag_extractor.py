@@ -12,7 +12,7 @@
 
 import pytest
 
-from framework.utils.think_tag import ThinkTagExtractor
+from modex_agent.utils.think_tag import ThinkTagExtractor
 
 
 class TestThinkTagExtractor:
@@ -259,7 +259,7 @@ class TestThinkTagExtractor:
 
     def test_custom_non_xml_format(self):
         """A non-XML custom format works correctly (pure string matching)."""
-        from framework.utils.helpers import ThinkFormat
+        from modex_agent.utils.helpers import ThinkFormat
 
         custom_format = ThinkFormat(
             name="custom",
@@ -273,7 +273,7 @@ class TestThinkTagExtractor:
 
     def test_custom_delimited_format_split(self):
         """Custom delimited format with split chunks."""
-        from framework.utils.helpers import ThinkFormat
+        from modex_agent.utils.helpers import ThinkFormat
 
         custom_fmt = ThinkFormat(
             name="delim",
@@ -298,14 +298,14 @@ class TestThinkTagExtractor:
         With exact open_literal matching, '<think carefully...' does not
         start with '<think>' so it is correctly identified as non-think content.
         """
-        from framework.utils.helpers import extract_think_prefix
+        from modex_agent.utils.helpers import extract_think_prefix
 
         result = extract_think_prefix("<think carefully about x and y")
         assert result.cleaned == "<think carefully about x and y"
 
     def test_extract_think_prefix_custom_format(self):
         """Non-XML custom format works with extract_think_prefix."""
-        from framework.utils.helpers import ThinkFormat, extract_think_prefix
+        from modex_agent.utils.helpers import ThinkFormat, extract_think_prefix
 
         custom = ThinkFormat(
             name="custom",

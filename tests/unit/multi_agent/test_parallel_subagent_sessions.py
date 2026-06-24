@@ -19,17 +19,17 @@ import asyncio
 
 import pytest
 
-from framework.core.agent import AgentContext
-from framework.core.session_id import SessionInfo
-from framework.core.tool_manager import InMemoryToolManager
-from framework.memory.history import ListMessageHistory
-from framework.messaging.broker import BrokerMessage, MessageBroker
-from framework.multi_agent.address import AgentAddress
-from framework.multi_agent.comm_kind import AgentCommKind
-from framework.multi_agent.comm_tracker import CommunicationTracker
-from framework.multi_agent.descriptor import AgentDescriptor
-from framework.multi_agent.registry import AgentProfile
-from framework.multi_agent.communication import AgentCommunicationService
+from modex_agent.core.agent import AgentContext
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.tool_manager import InMemoryToolManager
+from modex_agent.memory.history import ListMessageHistory
+from modex_agent.messaging.broker import BrokerMessage, MessageBroker
+from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.multi_agent.comm_kind import AgentCommKind
+from modex_agent.multi_agent.comm_tracker import CommunicationTracker
+from modex_agent.multi_agent.descriptor import AgentDescriptor
+from modex_agent.multi_agent.registry import AgentProfile
+from modex_agent.multi_agent.communication import AgentCommunicationService
 
 
 # ── Shared test fixtures ──

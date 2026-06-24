@@ -1,4 +1,4 @@
-from framework.core.experience.models import Experience, ExperienceSummary
+from modex_agent.core.experience.models import Experience, ExperienceSummary
 
 
 def test_experience_summary_defaults():

@@ -1,10 +1,10 @@
 # tests/unit/multi_agent/test_template.py
 """Tests for AgentTemplate."""
 
-from framework.ioc.configs.memory import MemoryConfig
-from framework.ioc.configs.skills import SkillsConfig
-from framework.multi_agent.template import AgentTemplate
-from framework.tools.presets import ContextMode, ThinkingBudget, ToolPreset
+from modex_agent.ioc.configs.memory import MemoryConfig
+from modex_agent.ioc.configs.skills import SkillsConfig
+from modex_agent.multi_agent.template import AgentTemplate
+from modex_agent.tools.presets import ContextMode, ThinkingBudget, ToolPreset
 
 
 def test_agent_template_defaults():
@@ -36,13 +36,13 @@ def test_agent_template_full():
 
 def test_agent_template_system_prompt_mode_default() -> None:
     """Default system_prompt_mode is REPLACE."""
-    from framework.tools.presets import SystemPromptMode
+    from modex_agent.tools.presets import SystemPromptMode
     t = AgentTemplate(agent_type="test")
     assert t.system_prompt_mode == SystemPromptMode.REPLACE
 
 
 def test_agent_template_system_prompt_mode_append() -> None:
     """system_prompt_mode can be set to APPEND."""
-    from framework.tools.presets import SystemPromptMode
+    from modex_agent.tools.presets import SystemPromptMode
     t = AgentTemplate(agent_type="delegate", system_prompt_mode=SystemPromptMode.APPEND)
     assert t.system_prompt_mode == SystemPromptMode.APPEND

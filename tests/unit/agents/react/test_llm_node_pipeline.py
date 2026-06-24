@@ -5,10 +5,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from framework.agents.react.nodes.llm import LLMNode
-from framework.core.agent import AgentContext
-from framework.core.session_id import SessionInfo
-from framework.memory.history import ListMessageHistory
+from modex_agent.agents.react.nodes.llm import LLMNode
+from modex_agent.core.agent import AgentContext
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.memory.history import ListMessageHistory
 
 
 class _FakePipeline:

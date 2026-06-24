@@ -6,14 +6,14 @@ import time
 
 import pytest
 
-from framework.tools.terminal.config import TerminalRuntimeConfig
-from framework.tools.terminal.guard import (
+from modex_agent.tools.terminal.config import TerminalRuntimeConfig
+from modex_agent.tools.terminal.guard import (
     check_command_writable,
     check_process_writable,
     check_terminal_writable,
 )
-from framework.tools.terminal.results import TerminalSegment
-from framework.tools.terminal.types import TerminalCommandStatus
+from modex_agent.tools.terminal.results import TerminalSegment
+from modex_agent.tools.terminal.types import TerminalCommandStatus
 
 from tests.framework.tools.terminal.conftest import make_session
 

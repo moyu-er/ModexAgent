@@ -1,4 +1,4 @@
-from framework.core.types import TodoStatus
+from modex_agent.core.types import TodoStatus
 
 
 def test_todo_status_values() -> None:

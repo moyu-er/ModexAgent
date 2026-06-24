@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from framework.core.tool_call_accumulator import (
+from modex_agent.core.tool_call_accumulator import (
     AccumulatingToolCall,
     ToolCallAccumulator,
     ToolCallChunk,

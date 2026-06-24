@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from framework.memory.core.scope import MemoryContext
-from framework.memory.stores.file import FileStorage
+from modex_agent.memory.core.scope import MemoryContext
+from modex_agent.memory.stores.file import FileStorage
 
 
 @pytest.fixture

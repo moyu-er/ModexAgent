@@ -9,13 +9,13 @@ import pytest
 
 pytestmark = pytest.mark.integration
 
-from framework.core.emitter import AgentResult
-from framework.multi_agent import (
+from modex_agent.core.emitter import AgentResult
+from modex_agent.multi_agent import (
     AgentDescriptor,
     AgentLLMConfig,
     DefaultAgentFactory,
 )
-from framework.multi_agent.address import AgentAddress
+from modex_agent.multi_agent.address import AgentAddress
 
 
 @pytest.mark.asyncio
@@ -79,8 +79,8 @@ async def test_coder_and_planner_history_isolation():
 @pytest.mark.asyncio
 async def test_same_agent_session_concurrency_protected():
     """同一 agent_session_id 的并发请求应被串行化。"""
-    from framework.messaging.broker_memory import InMemoryMessageBroker
-    from framework.multi_agent import AgentPool
+    from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+    from modex_agent.multi_agent import AgentPool
 
     broker = InMemoryMessageBroker()
     pool = AgentPool(broker=broker, agent_factory=DefaultAgentFactory())

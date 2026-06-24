@@ -6,7 +6,7 @@ import asyncio
 from pathlib import Path
 import pytest
 
-from framework.workspace.registry import InMemoryRegistryStore, WorkspaceRegistry
+from modex_agent.workspace.registry import InMemoryRegistryStore, WorkspaceRegistry
 from ._stubs import StubFactory, StubResources
 
 

@@ -4,8 +4,8 @@
 import tempfile
 from pathlib import Path
 
-from framework.multi_agent.template_registry import AgentTemplateRegistry
-from framework.tools.presets import ToolPreset
+from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
+from modex_agent.tools.presets import ToolPreset
 
 
 def _write_yml(dir_path: Path, name: str, content: str) -> None:

@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from framework.core.skills.builder import DefaultSkillBuilder
-from framework.core.skills.cache import DirectorySkillCache, SkillCache
-from framework.core.skills.source import FileSkillSource, InlineSkillSource
+from modex_agent.core.skills.builder import DefaultSkillBuilder
+from modex_agent.core.skills.cache import DirectorySkillCache, SkillCache
+from modex_agent.core.skills.source import FileSkillSource, InlineSkillSource
 
 
 class TestSkillCacheABC:
@@ -192,7 +192,7 @@ class TestDirectorySkillCache:
 
     @pytest.mark.asyncio
     async def test_works_with_any_skill_source(self):
-        from framework.core.skills.models import Skill
+        from modex_agent.core.skills.models import Skill
         inline = InlineSkillSource(
             [Skill(name="x", content="xc")], name="test",
         )

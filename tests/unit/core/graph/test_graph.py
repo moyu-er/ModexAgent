@@ -1,8 +1,8 @@
 """Tests for Edge and Graph."""
 import pytest
-from framework.core.graph.graph import Edge, Graph
-from framework.core.graph.node import Node, NodeTransition
-from framework.core.graph.constants import GraphNode
+from modex_agent.core.graph.graph import Edge, Graph
+from modex_agent.core.graph.node import Node, NodeTransition
+from modex_agent.core.graph.constants import GraphNode
 
 
 class _NoOpNode(Node):

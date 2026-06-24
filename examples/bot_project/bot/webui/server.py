@@ -32,14 +32,14 @@ from bot.webui.events import (
     WebSocketAction,
     WebUIEventType,
 )
-from framework.core.session_id import SessionInfo, SessionIdFactory, agent_of, session_id_prefix_of
-from framework.core.session_store import SessionStore
-from framework.core.types import TodoStatus
-from framework.runtime.store import JsonFileTodoStore
-from framework.utils.timezone import get_user_timezone
-from framework.workspace.paths import WorkspacePaths
-from framework.workspace.port import WorkspaceControlPort
-from framework.workspace.runtime import resolve_workspace_root
+from modex_agent.core.session_id import SessionInfo, SessionIdFactory, agent_of, session_id_prefix_of
+from modex_agent.core.session_store import SessionStore
+from modex_agent.core.types import TodoStatus
+from modex_agent.runtime.store import JsonFileTodoStore
+from modex_agent.utils.timezone import get_user_timezone
+from modex_agent.workspace.paths import WorkspacePaths
+from modex_agent.workspace.port import WorkspaceControlPort
+from modex_agent.workspace.runtime import resolve_workspace_root
 from bot.webui.transcript_store import TranscriptStore
 
 logger = logging.getLogger(__name__)
@@ -276,7 +276,7 @@ class WebUIServer:
         Home (empty ``ws_raw``) returns the canonical ``_home_sessions_dir``;
         a non-home workspace resolves to ``<root>/<data_dir>/sessions``.
         """
-        from framework.workspace.paths import WorkspacePaths
+        from modex_agent.workspace.paths import WorkspacePaths
 
         if not ws_raw:
             return self._home_sessions_dir
@@ -294,7 +294,7 @@ class WebUIServer:
         Mirrors :meth:`_sessions_dir_of_ws` but for the ``session_index`` layer,
         so the session index is read/written per-workspace (no cross-ws leakage).
         """
-        from framework.workspace.paths import WorkspacePaths
+        from modex_agent.workspace.paths import WorkspacePaths
 
         home_index = WorkspacePaths(root=self._home_sessions_dir.parent).session_index_dir
         if not ws_raw:
@@ -1177,7 +1177,7 @@ class WebUIServer:
 
         # Run the WebUI sub-pipeline (S4..S8).
         from bot.input_pipeline.stages.resolve_pool import RoutingMeta
-        from framework.input_pipeline.envelope import UserInputEnvelope
+        from modex_agent.input_pipeline.envelope import UserInputEnvelope
 
         envelope = UserInputEnvelope(
             external_id=uuid_prefix,

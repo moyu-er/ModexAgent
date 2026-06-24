@@ -494,19 +494,23 @@ def build_discord(ctx: AdapterBuildContext):
 与 QQ、WebUI 一样，`ChannelRouterOutputAdapter` 会保证一个平台的 slash 命令回复不会串到另一个平台。
 
 ```python
-from framework import AgentPipeline
-from framework.pipeline.adapters import InputAdapter, OutputAdapter
+from modex_agent import AgentPipeline
+from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
+
 
 class DiscordInputAdapter(InputAdapter):
     @property
     def name(self): return "discord"
+
     async def receive(self):
         # 接收 Discord 消息，yield InputMessage(...)
         ...
 
+
 class DiscordOutputAdapter(OutputAdapter):
     @property
     def name(self): return "discord"
+
     async def send(self, message, session_id):
         # 发送 Discord 消息
         ...

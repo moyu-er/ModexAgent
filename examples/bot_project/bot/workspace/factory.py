@@ -11,8 +11,8 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 
 from bot.workspace.handle import PoolWorkspaceResources
-from framework.workspace.context import WorkspaceContext
-from framework.workspace.factory import ResourceFactory
+from modex_agent.workspace.context import WorkspaceContext
+from modex_agent.workspace.factory import ResourceFactory
 
 BuildResources = Callable[[WorkspaceContext], Awaitable[PoolWorkspaceResources]]
 StopResources = Callable[[PoolWorkspaceResources], Awaitable[None]]

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from framework.memory.xml_truncate import truncate_xml_safe
+from modex_agent.memory.xml_truncate import truncate_xml_safe
 
 
 XML_SHORT = "<msg><content>hello</content></msg>"
@@ -214,7 +214,7 @@ def test_empty_paths_still_bounded_via_boundary():
     )
 
 
-from framework.memory.tags import UrbTag
+from modex_agent.memory.tags import UrbTag
 
 # ── List elements: governance URB XML ────────────────────────────────────
 # The governance injection assembles <recent_messages> with multiple <entry>
@@ -330,7 +330,7 @@ def test_urb_xml_mixed_completed_unfinished():
 
 def test_truncate_for_archive_xml_content() -> None:
     """XML content is truncated preserving structure."""
-    from framework.memory.xml_truncate import truncate_for_archive
+    from modex_agent.memory.xml_truncate import truncate_for_archive
 
     xml_content = "<root><data>" + ("x" * 2000) + "</data></root>"
     result = truncate_for_archive(xml_content, max_chars=500)
@@ -343,7 +343,7 @@ def test_truncate_for_archive_xml_content() -> None:
 
 def test_truncate_for_archive_plain_text() -> None:
     """Plain text uses proportional head+tail truncation."""
-    from framework.memory.xml_truncate import truncate_for_archive
+    from modex_agent.memory.xml_truncate import truncate_for_archive
 
     text = "a" * 2000
     result = truncate_for_archive(text, max_chars=1200)
@@ -356,7 +356,7 @@ def test_truncate_for_archive_plain_text() -> None:
 
 def test_truncate_for_archive_short_content_unchanged() -> None:
     """Content under max_chars is returned unchanged."""
-    from framework.memory.xml_truncate import truncate_for_archive
+    from modex_agent.memory.xml_truncate import truncate_for_archive
 
     text = "short content"
     result = truncate_for_archive(text, max_chars=1200)

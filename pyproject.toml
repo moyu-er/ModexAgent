@@ -79,10 +79,12 @@ ast = [
 all = ["ModexAgent[llm,sandbox,gateway,skills,terminal,ast]"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["framework"]
+packages = ["src/modex_agent"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "tests_ext"]
+# src layout: resolve `modex_agent` from source without requiring an editable install.
+pythonpath = ["src"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]

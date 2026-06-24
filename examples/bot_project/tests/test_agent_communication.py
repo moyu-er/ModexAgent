@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from framework.ioc.configs.agent import AgentConfig
-from framework.ioc.configs.app import AppConfig
-from framework.ioc.configs.llm import LLMConfig
-from framework.ioc.factories.descriptors import build_subagent_descriptor
-from framework.multi_agent.comm_kind import AgentCommKind
-from framework.multi_agent.template_registry import AgentTemplateRegistry
-from framework.multi_agent.tools import SendToAgentTool
+from modex_agent.ioc.configs.agent import AgentConfig
+from modex_agent.ioc.configs.app import AppConfig
+from modex_agent.ioc.configs.llm import LLMConfig
+from modex_agent.ioc.factories.descriptors import build_subagent_descriptor
+from modex_agent.multi_agent.comm_kind import AgentCommKind
+from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
+from modex_agent.multi_agent.tools import SendToAgentTool
 
 _BOT_PROJECT_DIR = Path(__file__).resolve().parent.parent
 
@@ -28,7 +28,7 @@ def test_bot_project_subagents_are_configured_as_subagents() -> None:
 
 
 def test_bot_project_new_tool_names_are_available_and_old_names_removed() -> None:
-    import framework.multi_agent.tools as tools
+    import modex_agent.multi_agent.tools as tools
 
     assert SendToAgentTool.__name__ == "SendToAgentTool"
     assert not hasattr(tools, "SendMessageTool")
@@ -55,7 +55,7 @@ async def test_bot_project_subagent_builder_preserves_subagent_comm_kind(tmp_pat
 
 
 async def test_bot_project_subagent_descriptor_does_not_deny_communication_tools(tmp_path) -> None:
-    from framework.ioc.factories.descriptors import build_subagent_descriptor
+    from modex_agent.ioc.factories.descriptors import build_subagent_descriptor
 
     descriptor, _tools, _skills, _memory = await build_subagent_descriptor(
         AgentConfig(name="office-expert", role="subagent"),

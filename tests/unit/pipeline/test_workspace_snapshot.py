@@ -21,8 +21,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from framework.pipeline.pipeline import AgentPipeline
-from framework.pipeline.snapshot import PoolDataSnapshot
+from modex_agent.pipeline.pipeline import AgentPipeline
+from modex_agent.pipeline.snapshot import PoolDataSnapshot
 
 
 class _FakeWorkspace:
@@ -115,7 +115,7 @@ def test_resolve_pool_data_returns_snapshot_for_subagent() -> None:
     isolation is enforced one level up: ``_process_message_locked`` does
     not let the snapshot override a subagent's own context_manager.
     """
-    from framework.multi_agent.comm_kind import AgentCommKind
+    from modex_agent.multi_agent.comm_kind import AgentCommKind
 
     snapshot = _FakePoolData(
         context_manager=MagicMock(name="main_context_manager"),
@@ -142,7 +142,7 @@ def test_subagent_context_manager_not_overridden_by_pool_data() -> None:
     guard predicate directly. A subagent keeps its own context_manager even
     when pool_data is present, while a main agent adopts the pool's.
     """
-    from framework.multi_agent.comm_kind import AgentCommKind
+    from modex_agent.multi_agent.comm_kind import AgentCommKind
 
     sub_desc = MagicMock()
     sub_desc.comm_kind = AgentCommKind.SUBAGENT
@@ -161,7 +161,7 @@ def test_resolve_pool_data_returns_snapshot_for_main_agent() -> None:
     """Positive control: a non-subagent (main) pipeline still resolves the
     pool's PoolData so its turns follow workspace switches.
     """
-    from framework.multi_agent.comm_kind import AgentCommKind
+    from modex_agent.multi_agent.comm_kind import AgentCommKind
 
     snapshot = _FakePoolData(
         context_manager=MagicMock(name="main_context_manager"),
@@ -192,7 +192,7 @@ def test_resolve_pool_data_returns_snapshot_for_main_agent() -> None:
 @pytest.mark.asyncio
 async def test_build_context_uses_snapshot_turn_store_when_wired() -> None:
     """The AgentRuntime built for the turn must use the snapshot's stores."""
-    from framework.core.session_id import SessionInfo
+    from modex_agent.core.session_id import SessionInfo
 
     snap_cm = MagicMock(name="snap_cm")
     snap_turn = MagicMock(name="snap_turn_store")
@@ -255,7 +255,7 @@ async def test_build_context_uses_snapshot_turn_store_when_wired() -> None:
 @pytest.mark.asyncio
 async def test_build_context_falls_back_to_self_when_no_snapshot() -> None:
     """Without a snapshot, self.turn_store / self.command_store are used."""
-    from framework.core.session_id import SessionInfo
+    from modex_agent.core.session_id import SessionInfo
 
     self_turn = MagicMock(name="self_turn_store")
     self_cmd = MagicMock(name="self_command_store")

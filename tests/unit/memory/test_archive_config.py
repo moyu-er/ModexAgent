@@ -1,7 +1,7 @@
 """Tests for ArchiveConfig and DreamEngineConfig."""
 from __future__ import annotations
 
-from framework.ioc.configs.memory import ArchiveConfig, DreamEngineConfig
+from modex_agent.ioc.configs.memory import ArchiveConfig, DreamEngineConfig
 
 
 def test_archive_config_defaults():

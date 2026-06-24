@@ -4,26 +4,26 @@ from __future__ import annotations
 
 import pytest
 
-from framework.agents.react.approval import ApprovalRuntime
-from framework.agents.react.constants import ReActNode
-from framework.agents.react.state import ReActSnapshotPolicy, ReActTurnState
-from framework.approval.constants import ApprovalTier
-from framework.core.context import ContextState, InMemoryContextManager
-from framework.core.emitter import AgentResult
-from framework.core.graph.interrupt import GraphInterrupt
-from framework.core.tool_manager import InMemoryToolManager
-from framework.core.types import InputMessage, ToolCall
-from framework.pipeline.pipeline import AgentPipeline
-from framework.runtime.enums import AgentKind, ApprovalSubjectType, SnapshotReason, TurnPhase
-from framework.runtime.models import (
+from modex_agent.agents.react.approval import ApprovalRuntime
+from modex_agent.agents.react.constants import ReActNode
+from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
+from modex_agent.approval.constants import ApprovalTier
+from modex_agent.core.context import ContextState, InMemoryContextManager
+from modex_agent.core.emitter import AgentResult
+from modex_agent.core.graph.interrupt import GraphInterrupt
+from modex_agent.core.tool_manager import InMemoryToolManager
+from modex_agent.core.types import InputMessage, ToolCall
+from modex_agent.pipeline.pipeline import AgentPipeline
+from modex_agent.runtime.enums import AgentKind, ApprovalSubjectType, SnapshotReason, TurnPhase
+from modex_agent.runtime.models import (
     ApprovalRequestState,
     ApprovalTransaction,
     ToolArguments,
     TurnIdentity,
 )
-from framework.runtime.services import AgentRuntimeServices
-from framework.core.session_id import SessionInfo
-from framework.runtime.store import InMemoryTurnStateStore
+from modex_agent.runtime.services import AgentRuntimeServices
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.runtime.store import InMemoryTurnStateStore
 
 
 class _InputAdapter:

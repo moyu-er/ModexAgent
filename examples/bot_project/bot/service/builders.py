@@ -13,14 +13,14 @@ from typing import TYPE_CHECKING, Any
 from bot.plugins.integration import PluginIntegration
 
 if TYPE_CHECKING:
-    from framework.ioc.configs.agent import AgentConfig as IOCAgentConfig
-from framework.core.skills import SkillManager
-from framework.core.tool_manager import Tool
-from framework.ioc.configs.app import AppConfig
-from framework.messaging.broker_memory import InMemoryMessageBroker
-from framework.multi_agent import AgentMessageBus
-from framework.multi_agent.comm_tracker import CommunicationTracker
-from framework.pipeline.adapters import OutputAdapter
+    from modex_agent.ioc.configs.agent import AgentConfig as IOCAgentConfig
+from modex_agent.core.skills import SkillManager
+from modex_agent.core.tool_manager import Tool
+from modex_agent.ioc.configs.app import AppConfig
+from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.multi_agent import AgentMessageBus
+from modex_agent.multi_agent.comm_tracker import CommunicationTracker
+from modex_agent.pipeline.adapters import OutputAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ def resolve_system_prompt(agent_cfg: Any, project_dir: Path) -> str:
 
 
 def _make_file_tools() -> list[Tool]:
-    from framework.tools.standard import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+    from modex_agent.tools.standard import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 
     return [ReadFileTool(), WriteFileTool(), EditFileTool(), ListDirTool()]
 
@@ -46,13 +46,13 @@ def _make_shell_tool(
     terminal_manager: Any | None = None,
     timeout: int = 300,
 ) -> Tool:
-    from framework.tools.terminal import SubprocessExecutor, SubprocessTool
+    from modex_agent.tools.terminal import SubprocessExecutor, SubprocessTool
 
     return SubprocessTool(executor=SubprocessExecutor(), timeout=timeout)
 
 
 def _make_search_tools() -> list[Tool]:
-    from framework.tools.standard import FindFilesTool, SearchFilesTool
+    from modex_agent.tools.standard import FindFilesTool, SearchFilesTool
 
     return [SearchFilesTool(), FindFilesTool()]
 
@@ -71,10 +71,10 @@ async def _load_agent_mcp_tools(
     """
     import json
 
-    from framework.ioc.configs.app import _resolve_env_in
-    from framework.tools.mcp import MCPClientManager
-    from framework.tools.mcp_adapter import MCPToolAdapter
-    from framework.tools.registry import ToolRegistry
+    from modex_agent.ioc.configs.app import _resolve_env_in
+    from modex_agent.tools.mcp import MCPClientManager
+    from modex_agent.tools.mcp_adapter import MCPToolAdapter
+    from modex_agent.tools.registry import ToolRegistry
 
     mcp_json = project_dir / "config" / "mcp" / f"{agent_name}.json"
     if not mcp_json.exists():

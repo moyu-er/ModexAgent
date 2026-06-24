@@ -33,9 +33,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from framework.tools.terminal.backends.visible_windows import VisibleWindowsPtyBackend
-from framework.tools.terminal.prompt import _strip_ansi_and_da1
-from framework.tools.terminal.types import ShellFamily, detect_platform_shell
+from modex_agent.tools.terminal.backends.visible_windows import VisibleWindowsPtyBackend
+from modex_agent.tools.terminal.prompt import _strip_ansi_and_da1
+from modex_agent.tools.terminal.types import ShellFamily, detect_platform_shell
 
 OK, FAIL = "  OK  ", "  FAIL"
 PTY_COLS, PTY_ROWS = 120, 30

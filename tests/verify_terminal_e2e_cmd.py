@@ -22,13 +22,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from framework.tools.terminal.command_tool import CommandTool
-from framework.tools.terminal.config import TerminalRuntimeConfig
-from framework.tools.terminal.manager import TerminalManager
-from framework.tools.terminal.process_registry import ProcessRegistry
-from framework.tools.terminal.process_tool import ProcessTool
-from framework.tools.terminal.tool import TerminalTool
-from framework.tools.terminal.types import Platform, ShellFamily, ShellInfo
+from modex_agent.tools.terminal.command_tool import CommandTool
+from modex_agent.tools.terminal.config import TerminalRuntimeConfig
+from modex_agent.tools.terminal.manager import TerminalManager
+from modex_agent.tools.terminal.process_registry import ProcessRegistry
+from modex_agent.tools.terminal.process_tool import ProcessTool
+from modex_agent.tools.terminal.tool import TerminalTool
+from modex_agent.tools.terminal.types import Platform, ShellFamily, ShellInfo
 
 NORM = TerminalRuntimeConfig(default_command_timeout_seconds=3, default_yield_ms=2000,
     command_tool_outer_timeout_seconds=6, input_wait_idle_ms=800,
@@ -45,7 +45,7 @@ CMD_SHELL = ShellInfo(family=ShellFamily.CMD, path="cmd.exe", platform=Platform.
 
 
 def _mgr() -> TerminalManager:
-    from framework.tools.terminal.backends.visible_windows import VisibleWindowsPtyBackend
+    from modex_agent.tools.terminal.backends.visible_windows import VisibleWindowsPtyBackend
     return TerminalManager(storage_dir=Path("data/test_terms_cmd"), max_terminals=4,
                            backend_factory=VisibleWindowsPtyBackend, shell_info=CMD_SHELL)
 

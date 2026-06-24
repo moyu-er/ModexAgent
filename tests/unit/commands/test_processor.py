@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from framework.commands.constants import CommandAction, CommandDispatchPolicy, CommandParseStatus
-from framework.commands.models import CommandContext
-from framework.commands.processor import SlashCommandProcessor
-from framework.core.session_id import SessionInfo
-from framework.core.skills.models import Skill
-from framework.core.types import InputMessage
+from modex_agent.commands.constants import CommandAction, CommandDispatchPolicy, CommandParseStatus
+from modex_agent.commands.models import CommandContext
+from modex_agent.commands.processor import SlashCommandProcessor
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.skills.models import Skill
+from modex_agent.core.types import InputMessage
 
 
 class FakeSkillManager:

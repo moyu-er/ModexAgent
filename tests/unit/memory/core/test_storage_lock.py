@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from framework.memory.core.lock import (
+from modex_agent.memory.core.lock import (
     AioRWLock,
     FileStorageLock,
     NoOpStorageLock,

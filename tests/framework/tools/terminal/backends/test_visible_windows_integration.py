@@ -33,7 +33,7 @@ class TestVisibleWindowsPtyIntegration:
         if bash is None:
             pytest.skip("No bash (WSL or Git) available on this Windows machine")
 
-        from framework.tools.terminal.backends.visible_windows import (
+        from modex_agent.tools.terminal.backends.visible_windows import (
             VisibleWindowsPtyBackend,
         )
 
@@ -82,11 +82,11 @@ class TestVisibleWindowsPtyIntegration:
         if bash is None:
             pytest.skip("No bash available")
 
-        from framework.tools.terminal.backends.visible_windows import (
+        from modex_agent.tools.terminal.backends.visible_windows import (
             VisibleWindowsPtyBackend,
         )
-        from framework.tools.terminal.session import TerminalSession
-        from framework.tools.terminal.types import Platform, ShellFamily, ShellInfo
+        from modex_agent.tools.terminal.session import TerminalSession
+        from modex_agent.tools.terminal.types import Platform, ShellFamily, ShellInfo
 
         backend = VisibleWindowsPtyBackend()
         session = TerminalSession(

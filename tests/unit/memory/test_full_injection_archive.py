@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import pytest
 
-from framework.memory.core.scope import MemoryContext
-from framework.memory.core.system import MemorySystem
-from framework.memory.injection.full_injection import FullInjectionPolicy
-from framework.memory.stores.dir_archive import DirArchiveStorage
-from framework.memory.tags import ArchiveTag
+from modex_agent.memory.core.scope import MemoryContext
+from modex_agent.memory.core.system import MemorySystem
+from modex_agent.memory.injection.full_injection import FullInjectionPolicy
+from modex_agent.memory.stores.dir_archive import DirArchiveStorage
+from modex_agent.memory.tags import ArchiveTag
 
 
 class _FakeInjectableMemorySystem(MemorySystem):
@@ -18,7 +18,7 @@ class _FakeInjectableMemorySystem(MemorySystem):
     async def initialize(self): pass
     async def close(self): pass
     def create_message_history(self, context, initial_messages=None):
-        from framework.memory.history import MessageHistory
+        from modex_agent.memory.history import MessageHistory
         return MessageHistory()
     async def add_messages(self, context, messages): pass
     async def search(self, query, context, limit=5): return []
@@ -32,11 +32,11 @@ class _FakeInjectableMemorySystem(MemorySystem):
         return []
 
     async def get_knowledge(self, context):
-        from framework.memory.core.models import LongTermMemory
+        from modex_agent.memory.core.models import LongTermMemory
         return LongTermMemory()
 
     async def retrieve_knowledge(self, context, query=""):
-        from framework.memory.core.models import LongTermMemory
+        from modex_agent.memory.core.models import LongTermMemory
         return LongTermMemory()
 
     async def get_history_entries(self, context, limit=3, query="", channel=None):

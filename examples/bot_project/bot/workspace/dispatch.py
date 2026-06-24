@@ -14,8 +14,8 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Generic, TypeVar
 
-from framework.workspace.routing import WorkspaceResolver
-from framework.workspace.runtime import bind_workspace_root
+from modex_agent.workspace.routing import WorkspaceResolver
+from modex_agent.workspace.runtime import bind_workspace_root
 
 logger = logging.getLogger(__name__)
 

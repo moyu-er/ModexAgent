@@ -494,19 +494,23 @@ def build_discord(ctx: AdapterBuildContext):
 The same `ChannelRouterOutputAdapter` used for QQ and WebUI guarantees that slash-command replies from one platform never leak to another.
 
 ```python
-from framework import AgentPipeline
-from framework.pipeline.adapters import InputAdapter, OutputAdapter
+from modex_agent import AgentPipeline
+from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
+
 
 class DiscordInputAdapter(InputAdapter):
     @property
     def name(self): return "discord"
+
     async def receive(self):
         # Receive Discord messages, yield InputMessage(...)
         ...
 
+
 class DiscordOutputAdapter(OutputAdapter):
     @property
     def name(self): return "discord"
+
     async def send(self, message, session_id):
         # Send Discord messages
         ...

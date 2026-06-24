@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from framework.core.message_utils import (
+from modex_agent.core.message_utils import (
     normalize_agent_messages_for_llm,
 )
-from framework.core.types import MessageRole
+from modex_agent.core.types import MessageRole
 
 
 def test_normalize_agent_messages_converts_role_to_xml_format() -> None:

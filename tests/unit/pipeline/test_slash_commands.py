@@ -7,22 +7,22 @@ from typing import Any
 
 import pytest
 
-from framework.commands.constants import CommandAction, CommandDispatchPolicy
-from framework.commands.models import (
+from modex_agent.commands.constants import CommandAction, CommandDispatchPolicy
+from modex_agent.commands.models import (
     CommandContext,
     CommandHandlingResult,
     CommandParseResult,
     CommandProcessor,
     SlashCommandInvocation,
 )
-from framework.core.agent import Agent, AgentContext
-from framework.core.emitter import AgentResult, ContentEmitter
-from framework.core.session_id import SessionInfo
-from framework.core.types import InputMessage, MessageRole
-from framework.memory.history import ListMessageHistory
-from framework.pipeline.adapters import InputAdapter, NullOutputAdapter, OutputAdapter
-from framework.pipeline.adapters import OutputMessage
-from framework.pipeline.context_assembler import assemble_context
+from modex_agent.core.agent import Agent, AgentContext
+from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.types import InputMessage, MessageRole
+from modex_agent.memory.history import ListMessageHistory
+from modex_agent.pipeline.adapters import InputAdapter, NullOutputAdapter, OutputAdapter
+from modex_agent.pipeline.adapters import OutputMessage
+from modex_agent.pipeline.context_assembler import assemble_context
 
 
 class FakeContextState:
@@ -117,7 +117,7 @@ async def test_assemble_context_appends_transformed_skill_content() -> None:
 @pytest.mark.asyncio
 async def test_assemble_context_propagates_xml_format_from_input_msg() -> None:
     """When input_msg has content_format=XML, the user message must carry it."""
-    from framework.memory.core.message import ContentFormat
+    from modex_agent.memory.core.message import ContentFormat
 
     ctx_mgr = FakeContextManager()
     input_msg = InputMessage(content="/weather", session=SessionInfo.from_str("s1", default_agent_name="main"))
@@ -149,7 +149,7 @@ class FakeCommandProcessor(CommandProcessor):
         self.contexts: list[CommandContext] = []
 
     def parse(self, text: str) -> CommandParseResult:
-        from framework.commands.parser import SlashCommandParser
+        from modex_agent.commands.parser import SlashCommandParser
 
         return SlashCommandParser().parse(text)
 
@@ -222,9 +222,9 @@ class CapturingOutputAdapter(OutputAdapter):
 
 @pytest.mark.asyncio
 async def test_pipeline_continue_runs_agent_without_appending_command() -> None:
-    from framework.core.context import InMemoryContextManager
-    from framework.core.tool_manager import InMemoryToolManager
-    from framework.pipeline.pipeline import AgentPipeline
+    from modex_agent.core.context import InMemoryContextManager
+    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.pipeline.pipeline import AgentPipeline
 
     agent = FakeAgent()
     processor = FakeCommandProcessor(
@@ -251,9 +251,9 @@ async def test_pipeline_continue_runs_agent_without_appending_command() -> None:
 @pytest.mark.asyncio
 async def test_pipeline_continue_during_pending_approval_returns_notice() -> None:
     """/continue during pending approval returns notice and does not auto-deny."""
-    from framework.core.context import InMemoryContextManager
-    from framework.core.tool_manager import InMemoryToolManager
-    from framework.pipeline.pipeline import AgentPipeline
+    from modex_agent.core.context import InMemoryContextManager
+    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.pipeline.pipeline import AgentPipeline
 
     agent = FakeAgent()
     processor = FakeCommandProcessor(
@@ -285,10 +285,10 @@ async def test_pipeline_drops_slash_command_when_busy_in_queue_mode() -> None:
     """Slash commands must not be queued as raw text when agent is busy."""
     import asyncio
 
-    from framework.core.agent_runtime_config import BusyInputMode
-    from framework.core.context import InMemoryContextManager
-    from framework.core.tool_manager import InMemoryToolManager
-    from framework.pipeline.pipeline import AgentPipeline
+    from modex_agent.core.agent_runtime_config import BusyInputMode
+    from modex_agent.core.context import InMemoryContextManager
+    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.pipeline.pipeline import AgentPipeline
 
     agent = FakeAgent()
     processor = FakeCommandProcessor(
@@ -335,9 +335,9 @@ async def test_pipeline_drops_slash_command_when_busy_in_queue_mode() -> None:
 
 @pytest.mark.asyncio
 async def test_pipeline_skill_uses_transformed_user_content() -> None:
-    from framework.core.context import InMemoryContextManager
-    from framework.core.tool_manager import InMemoryToolManager
-    from framework.pipeline.pipeline import AgentPipeline
+    from modex_agent.core.context import InMemoryContextManager
+    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.pipeline.pipeline import AgentPipeline
 
     agent = FakeAgent()
     processor = FakeCommandProcessor(
@@ -368,9 +368,9 @@ async def test_pipeline_skill_uses_transformed_user_content() -> None:
 @pytest.mark.asyncio
 async def test_pipeline_skill_propagates_xml_format_to_agent_messages() -> None:
     """Skill XML content must carry content_format and truncatable_paths."""
-    from framework.core.context import InMemoryContextManager
-    from framework.core.tool_manager import InMemoryToolManager
-    from framework.pipeline.pipeline import AgentPipeline
+    from modex_agent.core.context import InMemoryContextManager
+    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.pipeline.pipeline import AgentPipeline
 
     agent = FakeAgent()
     xml_content = (
@@ -409,11 +409,11 @@ async def test_pipeline_skill_propagates_xml_format_to_agent_messages() -> None:
 
 
 def test_command_processor_exposes_dispatch_policy_before_lock() -> None:
-    from framework.commands.models import CommandContext
-    from framework.commands.processor import SlashCommandProcessor
-    from framework.runtime.enums import AgentKind, SnapshotReason, TurnPhase
-    from framework.runtime.models import ResumePoint, TurnIdentity, TurnSnapshot
-    from framework.core.session_id import SessionInfo
+    from modex_agent.commands.models import CommandContext
+    from modex_agent.commands.processor import SlashCommandProcessor
+    from modex_agent.runtime.enums import AgentKind, SnapshotReason, TurnPhase
+    from modex_agent.runtime.models import ResumePoint, TurnIdentity, TurnSnapshot
+    from modex_agent.core.session_id import SessionInfo
 
     processor = SlashCommandProcessor.default()
     parse_result = processor.parse("/approve")

@@ -28,27 +28,27 @@ from bot.workspace.handle import (
     WorkspaceResolverCell,
 )
 from bot.workspace.pool_data import build_pool_data
-from framework.workspace.context import WorkspaceContext
-from framework.workspace.control import WorkspaceController
-from framework.workspace.registry import WorkspaceRegistry
-from framework.workspace.routing import WorkspaceResolver
-from framework.workspace.store import GlobalWorkspaceStore
-from framework.approval.ui import IMUserInterface
-from framework.commands.models import CommandContext
-from framework.core.session_id import session_id_prefix_of
-from framework.core.types import InputMessage
-from framework.interceptor.builtin import ToolResultLimitInterceptor
-from framework.interceptor.chain import InterceptorChain
-from framework.messaging.broker_memory import InMemoryMessageBroker
-from framework.multi_agent.comm_tracker import CommunicationTracker
-from framework.multi_agent import SessionRetentionPolicy
-from framework.multi_agent.bus import LocalAgentMessageBus
-from framework.multi_agent.inbox.consumer import InboxConsumer
-from framework.multi_agent.inbox.producer import InboxProducer
-from framework.multi_agent.inbox.server_local import LocalFileInboxServer
-from framework.tools.overflow.cleaner import OverflowCleaner
-from framework.tools.overflow.handler import ToolResultOverflowHandler
-from framework.tools.overflow.local import LocalFileToolOverflowStore
+from modex_agent.workspace.context import WorkspaceContext
+from modex_agent.workspace.control import WorkspaceController
+from modex_agent.workspace.registry import WorkspaceRegistry
+from modex_agent.workspace.routing import WorkspaceResolver
+from modex_agent.workspace.store import GlobalWorkspaceStore
+from modex_agent.approval.ui import IMUserInterface
+from modex_agent.commands.models import CommandContext
+from modex_agent.core.session_id import session_id_prefix_of
+from modex_agent.core.types import InputMessage
+from modex_agent.interceptor.builtin import ToolResultLimitInterceptor
+from modex_agent.interceptor.chain import InterceptorChain
+from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.multi_agent.comm_tracker import CommunicationTracker
+from modex_agent.multi_agent import SessionRetentionPolicy
+from modex_agent.multi_agent.bus import LocalAgentMessageBus
+from modex_agent.multi_agent.inbox.consumer import InboxConsumer
+from modex_agent.multi_agent.inbox.producer import InboxProducer
+from modex_agent.multi_agent.inbox.server_local import LocalFileInboxServer
+from modex_agent.tools.overflow.cleaner import OverflowCleaner
+from modex_agent.tools.overflow.handler import ToolResultOverflowHandler
+from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +179,7 @@ async def _build_resources(
         pool_resolver=lambda session: service._pool_for_agent(session.agent_name),
         data_dir_name=app_config.paths.data_dir_name,
     )
-    from framework.core.session_registry import InMemorySessionRegistry
+    from modex_agent.core.session_registry import InMemorySessionRegistry
 
     session_registry = InMemorySessionRegistry(store=session_index_store)
 
@@ -348,7 +348,7 @@ def _build_workspace_interceptor_chain(
             overflow_handler=overflow_handler, max_chars=50_000
         )
     )
-    from framework.hook.builtin.control_drain import (
+    from modex_agent.hook.builtin.control_drain import (
         ControlDrainInterceptor,
         LlmCancelInterceptor,
     )
@@ -389,9 +389,9 @@ def _wire_pool_to_resources(
     if pool_data is None:
         return
 
-    from framework.agents.experience.review_agent import ExperienceReviewAgent
-    from framework.hook import HookErrorPolicy, HookSpec
-    from framework.hook.builtin.experience_review import ExperienceReviewHook
+    from modex_agent.agents.experience.review_agent import ExperienceReviewAgent
+    from modex_agent.hook import HookErrorPolicy, HookSpec
+    from modex_agent.hook.builtin.experience_review import ExperienceReviewHook
 
     review_agent = ExperienceReviewAgent(
         provider=pool_instance.provider,

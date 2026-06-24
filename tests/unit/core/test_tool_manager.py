@@ -6,7 +6,7 @@ registration, execution, and schema generation.
 
 import pytest
 
-from framework.core.tool_manager import (
+from modex_agent.core.tool_manager import (
     InMemoryToolManager,
     Tool,
     ToolResult,

@@ -4,11 +4,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from framework.hook import Hook
-from framework.plugins.abc import MemoryProvider
-from framework.plugins.context import PluginContext
-from framework.plugins.loader import PluginLoader
-from framework.plugins.manager import PluginManager
+from modex_agent.hook import Hook
+from modex_agent.plugins.abc import MemoryProvider
+from modex_agent.plugins.context import PluginContext
+from modex_agent.plugins.loader import PluginLoader
+from modex_agent.plugins.manager import PluginManager
 
 
 class FakeHook:
@@ -37,7 +37,7 @@ class FakeProvider(MemoryProvider):
         return []
 
 
-from framework.core.tool_manager import Tool
+from modex_agent.core.tool_manager import Tool
 
 
 class FakeTool(Tool):
@@ -155,7 +155,7 @@ class TestPluginLoader:
         assert result == []
 
     def test_inject_skill_sources(self):
-        from framework.core.skills.source import SkillSource
+        from modex_agent.core.skills.source import SkillSource
 
         class FakeSource(SkillSource):
             @property

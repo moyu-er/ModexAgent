@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from framework.tools.web.search import WebSearchTool
+from modex_agent.tools.web.search import WebSearchTool
 
 
 def _mock_ddgs(results: list[dict[str, str]] | None = None, *, error: Exception | None = None):

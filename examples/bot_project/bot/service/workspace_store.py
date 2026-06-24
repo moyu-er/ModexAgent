@@ -47,9 +47,9 @@ from bot.webui.transcript_store import (
     ResilientTranscriptStore,
     TranscriptStore,
 )
-from framework.core.session_id import agent_of, session_id_prefix_of
-from framework.workspace.paths import WorkspacePaths
-from framework.workspace.runtime import is_workspace_root_bound, resolve_workspace_root
+from modex_agent.core.session_id import agent_of, session_id_prefix_of
+from modex_agent.workspace.paths import WorkspacePaths
+from modex_agent.workspace.runtime import is_workspace_root_bound, resolve_workspace_root
 
 logger = logging.getLogger(__name__)
 

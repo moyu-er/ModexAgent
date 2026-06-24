@@ -9,9 +9,9 @@ import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock
 
-from framework.memory.core.scope import MemoryContext
-from framework.memory.stores.markdown_knowledge import MarkdownKnowledgeStorage
-from framework.memory.core.scope import MemoryLayerName
+from modex_agent.memory.core.scope import MemoryContext
+from modex_agent.memory.stores.markdown_knowledge import MarkdownKnowledgeStorage
+from modex_agent.memory.core.scope import MemoryLayerName
 
 
 class TestOverwriteKnowledgeUpdate:
@@ -30,7 +30,7 @@ class TestOverwriteKnowledgeUpdate:
         )
 
         # Apply overwrite update with complete new content
-        from framework.memory.core.consolidation import MemoryUpdate
+        from modex_agent.memory.core.consolidation import MemoryUpdate
 
         update = MemoryUpdate(
             file_name="USER.md",
@@ -39,8 +39,8 @@ class TestOverwriteKnowledgeUpdate:
             reason="learned user name and timezone",
         )
 
-        from framework.memory.layers.knowledge import ScopedKnowledgeMemoryManager
-        from framework.memory.layers.config import KnowledgeMemoryConfig
+        from modex_agent.memory.layers.knowledge import ScopedKnowledgeMemoryManager
+        from modex_agent.memory.layers.config import KnowledgeMemoryConfig
 
         config = KnowledgeMemoryConfig()
         manager = ScopedKnowledgeMemoryManager(
@@ -59,7 +59,7 @@ class TestOverwriteKnowledgeUpdate:
     @pytest.mark.asyncio
     async def test_memory_update_defaults_to_overwrite_mode(self):
         """MemoryUpdate should default to section_replace mode."""
-        from framework.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
+        from modex_agent.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
 
         update = MemoryUpdate(
             file_name="USER.md",
@@ -86,8 +86,8 @@ class TestOverwriteKnowledgeUpdate:
         # Template dir doesn't exist
         templates_dir = tmp_path / "nonexistent_templates"
 
-        from framework.memory.layers.knowledge import ScopedKnowledgeMemoryManager
-        from framework.memory.layers.config import KnowledgeMemoryConfig
+        from modex_agent.memory.layers.knowledge import ScopedKnowledgeMemoryManager
+        from modex_agent.memory.layers.config import KnowledgeMemoryConfig
 
         config = KnowledgeMemoryConfig(default_templates_dir=str(templates_dir))
         manager = ScopedKnowledgeMemoryManager(

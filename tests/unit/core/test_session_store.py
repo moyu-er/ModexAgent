@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from framework.core.session_id import SessionIdFactory, SessionInfo
-from framework.core.session_store import LocalFileSessionStore
+from modex_agent.core.session_id import SessionIdFactory, SessionInfo
+from modex_agent.core.session_store import LocalFileSessionStore
 
 
 @pytest.fixture

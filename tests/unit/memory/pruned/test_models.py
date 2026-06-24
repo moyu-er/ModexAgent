@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from framework.memory.pruned.models import PrunedIndexEntry
+from modex_agent.memory.pruned.models import PrunedIndexEntry
 
 
 class TestPrunedIndexEntry:

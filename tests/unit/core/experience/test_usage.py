@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from framework.core.experience.usage import ExperienceUsageTracker
+from modex_agent.core.experience.usage import ExperienceUsageTracker
 
 
 def test_bump_use_creates_entry(tmp_path: Path) -> None:

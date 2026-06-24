@@ -13,12 +13,12 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from framework.core.session_id import session_id_prefix_of
-from framework.core.session_store import safe_filename
-from framework.core.types import InputMessage
-from framework.messaging.broker import BrokerMessage
-from framework.multi_agent.address import AgentAddress
-from framework.pipeline.adapters import InputAdapter
+from modex_agent.core.session_id import session_id_prefix_of
+from modex_agent.core.session_store import safe_filename
+from modex_agent.core.types import InputMessage
+from modex_agent.messaging.broker import BrokerMessage
+from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.pipeline.adapters import InputAdapter
 
 logger = logging.getLogger(__name__)
 

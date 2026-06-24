@@ -1,11 +1,11 @@
 """Tests for shared memory utilities."""
 
-from framework.memory.utils import (
+from modex_agent.memory.utils import (
     EMPTY_MEMORY_SUMMARY_MARKERS,
     estimate_token_count,
     normalize_memory_summary,
 )
-from framework.utils.helpers import strip_think
+from modex_agent.utils.helpers import strip_think
 
 
 class TestEstimateTokenCount:

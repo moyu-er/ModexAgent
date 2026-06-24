@@ -4,12 +4,12 @@ from __future__ import annotations
 import pytest
 from pathlib import Path
 
-from framework.memory.core.scope import MemoryLayerName
+from modex_agent.memory.core.scope import MemoryLayerName
 
 
 def _make_storage(tmp_path: Path):
     """Create a MarkdownKnowledgeStorage instance."""
-    from framework.memory.stores.markdown_knowledge import MarkdownKnowledgeStorage
+    from modex_agent.memory.stores.markdown_knowledge import MarkdownKnowledgeStorage
 
     storage = MarkdownKnowledgeStorage(
         tmp_path,

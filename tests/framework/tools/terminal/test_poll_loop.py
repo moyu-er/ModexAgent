@@ -6,10 +6,10 @@ import time
 
 import pytest
 
-from framework.tools.terminal.config import TerminalRuntimeConfig
-from framework.tools.terminal.poll_loop import PollOutcome, poll_until_settled
-from framework.tools.terminal.process_registry import ProcessRegistry
-from framework.tools.terminal.results import TerminalRead, TerminalSegment
+from modex_agent.tools.terminal.config import TerminalRuntimeConfig
+from modex_agent.tools.terminal.poll_loop import PollOutcome, poll_until_settled
+from modex_agent.tools.terminal.process_registry import ProcessRegistry
+from modex_agent.tools.terminal.results import TerminalRead, TerminalSegment
 
 from tests.framework.tools.terminal.conftest import make_session
 

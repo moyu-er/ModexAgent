@@ -11,12 +11,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from framework.tools.terminal.command_tool import CommandTool
-from framework.tools.terminal.config import TerminalRuntimeConfig
-from framework.tools.terminal.manager import TerminalManager
-from framework.tools.terminal.process_registry import ProcessRegistry
-from framework.tools.terminal.process_tool import ProcessTool
-from framework.tools.terminal.types import Platform, ShellFamily, ShellInfo, detect_platform_shell
+from modex_agent.tools.terminal.command_tool import CommandTool
+from modex_agent.tools.terminal.config import TerminalRuntimeConfig
+from modex_agent.tools.terminal.manager import TerminalManager
+from modex_agent.tools.terminal.process_registry import ProcessRegistry
+from modex_agent.tools.terminal.process_tool import ProcessTool
+from modex_agent.tools.terminal.types import Platform, ShellFamily, ShellInfo, detect_platform_shell
 
 CFG = TerminalRuntimeConfig(default_command_timeout_seconds=8, default_yield_ms=500,
     command_tool_outer_timeout_seconds=12, input_wait_idle_ms=800,
@@ -27,10 +27,10 @@ OK, FAIL = "  OK  ", "  FAIL"
 
 def _mgr(visible: bool) -> TerminalManager:
     if visible:
-        from framework.tools.terminal.backends.visible_windows import VisibleWindowsPtyBackend
+        from modex_agent.tools.terminal.backends.visible_windows import VisibleWindowsPtyBackend
         backend = VisibleWindowsPtyBackend
     else:
-        from framework.tools.terminal.backends.windows_hidden import WindowsHiddenPtyBackend
+        from modex_agent.tools.terminal.backends.windows_hidden import WindowsHiddenPtyBackend
         backend = WindowsHiddenPtyBackend
     shell = detect_platform_shell() or ShellInfo(ShellFamily.BASH, "bash", Platform.WINDOWS)
     return TerminalManager(storage_dir=Path(f"data/test_int_{'v' if visible else 'h'}"),

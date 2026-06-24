@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from framework.workspace.runtime import bind_workspace_root, resolve_workspace_root
+from modex_agent.workspace.runtime import bind_workspace_root, resolve_workspace_root
 
 
 def test_resolve_defaults_to_cwd_when_unset(tmp_path: Path, monkeypatch) -> None:

@@ -36,7 +36,7 @@
 import logging
 from typing import Any
 
-from framework.plugins.context import PluginContext
+from modex_agent.plugins.context import PluginContext
 
 from .manager import ToolCallAwareSessionManager
 from .policy import ToolCallCleanupPolicy

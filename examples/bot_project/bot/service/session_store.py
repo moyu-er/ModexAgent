@@ -21,10 +21,10 @@ import logging
 from pathlib import Path
 from collections.abc import Callable
 
-from framework.core.session_id import SessionInfo, session_id_prefix_of
+from modex_agent.core.session_id import SessionInfo, session_id_prefix_of
 
 logger = logging.getLogger(__name__)
-from framework.core.session_store import LocalFileSessionStore, atomic_write_text, safe_filename
+from modex_agent.core.session_store import LocalFileSessionStore, atomic_write_text, safe_filename
 
 
 class WorkspacePoolSessionStore(LocalFileSessionStore):
@@ -62,12 +62,12 @@ class WorkspacePoolSessionStore(LocalFileSessionStore):
         """
         if index_dir is not None:
             return index_dir
-        from framework.workspace.runtime import (
+        from modex_agent.workspace.runtime import (
             is_workspace_root_bound,
             resolve_workspace_root,
         )
         if is_workspace_root_bound():
-            from framework.workspace.paths import WorkspacePaths
+            from modex_agent.workspace.paths import WorkspacePaths
             root = resolve_workspace_root()
             return WorkspacePaths(
                 root=root / self._data_dir_name
@@ -98,7 +98,7 @@ class WorkspacePoolSessionStore(LocalFileSessionStore):
         # silently lands in base_dir (home) — almost always a bug (an out-of-turn
         # registration). Surface it loudly instead of leaking the record into home.
         if index_dir is None:
-            from framework.workspace.runtime import is_workspace_root_bound
+            from modex_agent.workspace.runtime import is_workspace_root_bound
 
             if not is_workspace_root_bound():
                 logger.warning(

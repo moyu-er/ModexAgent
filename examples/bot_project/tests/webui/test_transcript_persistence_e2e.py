@@ -18,9 +18,9 @@ from bot.service.web_ui_service import WebUIService
 from bot.webui.emitter import WebBotEmitter
 from bot.webui.transcript_store import JSONLTranscriptStore
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
-from framework.agents.react.agent import ReActEvent
-from framework.core.emitter import AgentResult, EmitterConfig
-from framework.workspace.runtime import bind_workspace_root
+from modex_agent.agents.react.agent import ReActEvent
+from modex_agent.core.emitter import AgentResult, EmitterConfig
+from modex_agent.workspace.runtime import bind_workspace_root
 
 
 # Helpers — avoid full bot boot for simpler tests

@@ -2,7 +2,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 from bot.input_pipeline.assembly import build_im_pipeline, build_webui_pipeline
 from bot.input_pipeline.stages.resolve_workspace import ResolveWorkspaceStage
-from framework.input_pipeline.pipeline import UserInputPipeline
+from modex_agent.input_pipeline.pipeline import UserInputPipeline
 
 def test_im_pipeline_has_seven_stages() -> None:
     pipe = build_im_pipeline(skill_registry=MagicMock(), known_pools={"main", "coding"})

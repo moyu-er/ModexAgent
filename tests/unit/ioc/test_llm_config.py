@@ -1,4 +1,4 @@
-from framework.ioc.configs.llm import LLMConfig
+from modex_agent.ioc.configs.llm import LLMConfig
 
 
 class TestLLMConfig:

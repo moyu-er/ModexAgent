@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from framework.utils.file_io import read_json_robust, read_jsonl_robust
+from modex_agent.utils.file_io import read_json_robust, read_jsonl_robust
 
 
 # ── read_json_robust ──────────────────────────────────────────────────────

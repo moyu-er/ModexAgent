@@ -6,14 +6,14 @@ import time
 
 import pytest
 
-from framework.memory.layers.factory import MemoryLayerFactory
-from framework.memory.layers.user_buffer import (
+from modex_agent.memory.layers.factory import MemoryLayerFactory
+from modex_agent.memory.layers.user_buffer import (
     ScopedUserRetentionBuffer,
     UserRetentionBufferConfig,
 )
-from framework.memory.core.scope import MemoryContext
-from framework.memory.registry.in_memory import InMemoryStoreRegistry
-from framework.memory.user_buffer import UserBufferEntry
+from modex_agent.memory.core.scope import MemoryContext
+from modex_agent.memory.registry.in_memory import InMemoryStoreRegistry
+from modex_agent.memory.user_buffer import UserBufferEntry
 
 
 # ── UserBufferEntry tests ──
@@ -239,7 +239,7 @@ async def test_urb_replace_entries(registry: InMemoryStoreRegistry):
 async def test_urb_disabled_returns_none_from_factory():
     """When config.enabled=False, factory returns None for user_retention."""
     registry = InMemoryStoreRegistry()
-    from framework.memory.layers.config import MemoryLayerConfigSet, UserRetentionBufferConfig
+    from modex_agent.memory.layers.config import MemoryLayerConfigSet, UserRetentionBufferConfig
 
     config = MemoryLayerConfigSet(
         user_retention=UserRetentionBufferConfig(enabled=False),
@@ -252,7 +252,7 @@ async def test_urb_disabled_returns_none_from_factory():
 
 
 def test_entry_from_message_captures_content_format():
-    from framework.memory.core.message import ContentFormat
+    from modex_agent.memory.core.message import ContentFormat
 
     entry = UserBufferEntry.from_message(
         {
@@ -277,7 +277,7 @@ def test_entry_from_message_defaults_format_to_none():
 
 
 def test_entry_roundtrip_preserves_xml_format():
-    from framework.memory.core.message import ContentFormat
+    from modex_agent.memory.core.message import ContentFormat
 
     entry = UserBufferEntry.from_message(
         {
@@ -298,7 +298,7 @@ def test_entry_roundtrip_preserves_xml_format():
 @pytest.mark.asyncio
 async def test_urb_xml_truncation_preserves_structure(registry: InMemoryStoreRegistry):
     """XML entries must be truncated using XML-safe method, not plain slicing."""
-    from framework.memory.core.message import ContentFormat
+    from modex_agent.memory.core.message import ContentFormat
 
     layer_set = _make_layer_set(registry)
     ctx = MemoryContext(session_id="test-xml-trunc")
@@ -344,7 +344,7 @@ async def test_urb_mark_all_completed_truncates_assistant_content(
     registry: InMemoryStoreRegistry,
 ):
     """completing_assistant_content MUST be truncated in mark_all_completed."""
-    from framework.memory.layers.config import MemoryLayerConfigSet, UserRetentionBufferConfig
+    from modex_agent.memory.layers.config import MemoryLayerConfigSet, UserRetentionBufferConfig
 
     # Create buffer with low max_assistant_chars to force truncation
     config = MemoryLayerConfigSet(
@@ -384,7 +384,7 @@ async def test_urb_xml_truncation_fallback_when_paths_dont_cover_large_content(
     truncate_xml_safe only truncated <user_input> (small) and left <skill>
     intact — result was still ~34KB, way over max_user_chars=4000.
     """
-    from framework.memory.core.message import ContentFormat
+    from modex_agent.memory.core.message import ContentFormat
 
     layer_set = _make_layer_set(registry)
     ctx = MemoryContext(session_id="test-xml-fallback")
@@ -436,7 +436,7 @@ async def test_urb_xml_truncation_empty_paths_still_bounded(
 ):
     """When truncatable_paths is empty on an XML entry with leaf elements,
     Phase 2 leaf-element safety net still catches the large leaves."""
-    from framework.memory.core.message import ContentFormat
+    from modex_agent.memory.core.message import ContentFormat
 
     layer_set = _make_layer_set(registry)
     ctx = MemoryContext(session_id="test-xml-nopath")

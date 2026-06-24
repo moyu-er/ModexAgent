@@ -12,8 +12,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from framework.multi_agent.pool import AgentPool
-from framework.multi_agent.state import AgentState
+from modex_agent.multi_agent.pool import AgentPool
+from modex_agent.multi_agent.state import AgentState
 
 
 class _FakeBroker:
@@ -44,9 +44,9 @@ class TestDispatchMetadataPreservation:
         Before fix: metadata was overwritten to only {session_id, agent_session_id},
         dropping user_id so all sessions fell back to "default" scope.
         """
-        from framework.core.types import InputMessage
-        from framework.multi_agent.address import AgentAddress
-        from framework.messaging.broker import BrokerMessage
+        from modex_agent.core.types import InputMessage
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.messaging.broker import BrokerMessage
 
         # Create a mock pipeline that captures the InputMessage
         captured: list[InputMessage] = []
@@ -56,7 +56,7 @@ class TestDispatchMetadataPreservation:
                 captured.append(msg)
 
         # Create a descriptor for the agent
-        from framework.multi_agent.descriptor import AgentDescriptor
+        from modex_agent.multi_agent.descriptor import AgentDescriptor
 
         descriptor = AgentDescriptor(
             address=AgentAddress(kind="agent", name="main"),
@@ -106,10 +106,10 @@ class TestDispatchMetadataPreservation:
     @pytest.mark.asyncio
     async def test_raw_dispatch_metadata_falls_back_gracefully(self, pool):
         """When payload has NO metadata dict, session_id is still set."""
-        from framework.core.types import InputMessage
-        from framework.multi_agent.address import AgentAddress
-        from framework.messaging.broker import BrokerMessage
-        from framework.multi_agent.descriptor import AgentDescriptor
+        from modex_agent.core.types import InputMessage
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.messaging.broker import BrokerMessage
+        from modex_agent.multi_agent.descriptor import AgentDescriptor
 
         captured: list[InputMessage] = []
 
@@ -171,10 +171,10 @@ class TestDispatchSourceAgentClassification:
 
     @pytest.mark.asyncio
     async def test_channel_source_does_not_set_source_agent(self, pool):
-        from framework.core.types import InputMessage
-        from framework.multi_agent.address import AgentAddress
-        from framework.multi_agent.envelope import AgentMessageEnvelope
-        from framework.multi_agent.descriptor import AgentDescriptor
+        from modex_agent.core.types import InputMessage
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+        from modex_agent.multi_agent.descriptor import AgentDescriptor
 
         captured: list[InputMessage] = []
 
@@ -210,10 +210,10 @@ class TestDispatchSourceAgentClassification:
 
     @pytest.mark.asyncio
     async def test_agent_source_still_sets_source_agent(self, pool):
-        from framework.core.types import InputMessage
-        from framework.multi_agent.address import AgentAddress
-        from framework.multi_agent.envelope import AgentMessageEnvelope
-        from framework.multi_agent.descriptor import AgentDescriptor
+        from modex_agent.core.types import InputMessage
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+        from modex_agent.multi_agent.descriptor import AgentDescriptor
 
         captured: list[InputMessage] = []
 
@@ -265,12 +265,12 @@ class TestDispatchSessionInfoResolution:
     @pytest.mark.asyncio
     async def test_dispatch_uses_registry_session_info_with_parent(self, pool):
         """When registry has the child session with parent, dispatch keeps it."""
-        from framework.core.session_id import SessionInfo
-        from framework.core.session_registry import InMemorySessionRegistry
-        from framework.core.types import InputMessage
-        from framework.multi_agent.address import AgentAddress
-        from framework.multi_agent.envelope import AgentMessageEnvelope
-        from framework.multi_agent.descriptor import AgentDescriptor
+        from modex_agent.core.session_id import SessionInfo
+        from modex_agent.core.session_registry import InMemorySessionRegistry
+        from modex_agent.core.types import InputMessage
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+        from modex_agent.multi_agent.descriptor import AgentDescriptor
 
         parent_sid = "abc.coding"
         child_sid = "abc.coding.reviewer.ee11"
@@ -322,10 +322,10 @@ class TestDispatchSessionInfoResolution:
         """When no registry/store is wired, dispatch falls back to from_str —
         parent_session_id is lost (the regression we guard against by wiring
         the registry in production)."""
-        from framework.core.types import InputMessage
-        from framework.multi_agent.address import AgentAddress
-        from framework.multi_agent.envelope import AgentMessageEnvelope
-        from framework.multi_agent.descriptor import AgentDescriptor
+        from modex_agent.core.types import InputMessage
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+        from modex_agent.multi_agent.descriptor import AgentDescriptor
 
         captured: list[InputMessage] = []
 
@@ -355,10 +355,10 @@ class TestDispatchSessionInfoResolution:
         # Without a registry, parent_session_id cannot be recovered — this is
         # exactly why production must wire session_registry into the pool.
         assert captured[0].session.parent_session_id is None
-        from framework.core.types import InputMessage
-        from framework.multi_agent.address import AgentAddress
-        from framework.multi_agent.envelope import AgentMessageEnvelope
-        from framework.multi_agent.descriptor import AgentDescriptor
+        from modex_agent.core.types import InputMessage
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+        from modex_agent.multi_agent.descriptor import AgentDescriptor
 
         captured: list[InputMessage] = []
 

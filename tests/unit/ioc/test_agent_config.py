@@ -1,6 +1,6 @@
-from framework.ioc.configs.agent import DEFAULT_SYSTEM_PROMPT, AgentConfig
-from framework.ioc.configs.hooks import HooksConfig
-from framework.ioc.configs.memory import MemoryConfig
+from modex_agent.ioc.configs.agent import DEFAULT_SYSTEM_PROMPT, AgentConfig
+from modex_agent.ioc.configs.hooks import HooksConfig
+from modex_agent.ioc.configs.memory import MemoryConfig
 
 
 class TestAgentConfig:

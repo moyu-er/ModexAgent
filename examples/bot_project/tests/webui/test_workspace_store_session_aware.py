@@ -12,7 +12,7 @@ import pytest
 
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import UserMessageEvent
-from framework.workspace.runtime import bind_workspace_root
+from modex_agent.workspace.runtime import bind_workspace_root
 
 
 _DATA_DIR_NAME = ".modex"
@@ -23,7 +23,7 @@ def _store() -> WorkspaceScopedTranscriptStore:
 
 
 def _sessions_dir(root: Path) -> Path:
-    from framework.workspace.paths import WorkspacePaths
+    from modex_agent.workspace.paths import WorkspacePaths
 
     return WorkspacePaths(root=root / _DATA_DIR_NAME).sessions_dir
 

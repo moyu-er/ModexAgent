@@ -23,11 +23,11 @@ from bot.input_pipeline.stages.resolve_pool import (
     conversation_session_prefix,
     resolve_session_routing,
 )
-from framework.core.session_id import SessionInfo
-from framework.core.types import InputMessage
-from framework.input_pipeline.envelope import UserInputEnvelope
-from framework.input_pipeline.stage import Continue, InputStage, StageResult, Terminate
-from framework.workspace.control import WorkspaceController
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.types import InputMessage
+from modex_agent.input_pipeline.envelope import UserInputEnvelope
+from modex_agent.input_pipeline.stage import Continue, InputStage, StageResult, Terminate
+from modex_agent.workspace.control import WorkspaceController
 
 _POOL_RE = re.compile(r"^/([a-z][a-z0-9_-]*)$")
 

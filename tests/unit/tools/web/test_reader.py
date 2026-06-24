@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from framework.tools.web.reader import WebReaderTool
+from modex_agent.tools.web.reader import WebReaderTool
 
 
 def _mock_response(
@@ -58,7 +58,7 @@ class TestWebReaderToolExecute:
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         tool = WebReaderTool()
-        with patch("framework.tools.web.reader.httpx.AsyncClient", return_value=mock_client):
+        with patch("modex_agent.tools.web.reader.httpx.AsyncClient", return_value=mock_client):
             result = await tool.execute(url="https://example.com")
 
         assert "Title" in result
@@ -75,7 +75,7 @@ class TestWebReaderToolExecute:
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         tool = WebReaderTool()
-        with patch("framework.tools.web.reader.httpx.AsyncClient", return_value=mock_client):
+        with patch("modex_agent.tools.web.reader.httpx.AsyncClient", return_value=mock_client):
             result = await tool.execute(url="https://example.com", format="text")
 
         # Should NOT contain markdown formatting markers like # or **
@@ -106,7 +106,7 @@ class TestWebReaderToolExecute:
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         tool = WebReaderTool()
-        with patch("framework.tools.web.reader.httpx.AsyncClient", return_value=mock_client):
+        with patch("modex_agent.tools.web.reader.httpx.AsyncClient", return_value=mock_client):
             result = await tool.execute(url="https://example.com/missing")
 
         assert "Error" in result
@@ -120,7 +120,7 @@ class TestWebReaderToolExecute:
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         tool = WebReaderTool()
-        with patch("framework.tools.web.reader.httpx.AsyncClient", return_value=mock_client):
+        with patch("modex_agent.tools.web.reader.httpx.AsyncClient", return_value=mock_client):
             result = await tool.execute(url="https://example.com", timeout=5)
 
         assert "Error" in result
@@ -136,7 +136,7 @@ class TestWebReaderToolExecute:
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         tool = WebReaderTool()
-        with patch("framework.tools.web.reader.httpx.AsyncClient", return_value=mock_client):
+        with patch("modex_agent.tools.web.reader.httpx.AsyncClient", return_value=mock_client):
             result = await tool.execute(url="https://example.com/image.png")
 
         assert "Error" in result
@@ -155,7 +155,7 @@ class TestWebReaderToolExecute:
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         tool = WebReaderTool()
-        with patch("framework.tools.web.reader.httpx.AsyncClient", return_value=mock_client):
+        with patch("modex_agent.tools.web.reader.httpx.AsyncClient", return_value=mock_client):
             result = await tool.execute(url="https://example.com/readme.txt")
 
         assert "Just plain text content" in result
@@ -171,7 +171,7 @@ class TestWebReaderToolExecute:
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         tool = WebReaderTool()
-        with patch("framework.tools.web.reader.httpx.AsyncClient", return_value=mock_client):
+        with patch("modex_agent.tools.web.reader.httpx.AsyncClient", return_value=mock_client):
             result = await tool.execute(url="https://example.com/huge")
 
         assert "truncated" in result
@@ -185,7 +185,7 @@ class TestWebReaderToolExecute:
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         tool = WebReaderTool()
-        with patch("framework.tools.web.reader.httpx.AsyncClient", return_value=mock_client):
+        with patch("modex_agent.tools.web.reader.httpx.AsyncClient", return_value=mock_client):
             result = await tool.execute(url="https://unreachable.example.com")
 
         assert "Error" in result

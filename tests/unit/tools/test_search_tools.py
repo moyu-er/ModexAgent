@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from framework.tools.standard.search_tool import FindFilesTool, SearchFilesTool
+from modex_agent.tools.standard.search_tool import FindFilesTool, SearchFilesTool
 
 
 @pytest.fixture

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from framework.sandbox.guard_traversal import PathTraversalConfig, PathTraversalGuard
+from modex_agent.sandbox.guard_traversal import PathTraversalConfig, PathTraversalGuard
 
 
 class TestPathTraversalGuard:

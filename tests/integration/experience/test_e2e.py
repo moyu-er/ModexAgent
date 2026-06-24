@@ -5,11 +5,11 @@ from pathlib import Path
 @pytest.mark.integration
 async def test_full_pipeline_no_experiences(tmp_path: Path):
     """Full pipeline with no experiences — should not crash."""
-    from framework.core.experience.source import FileExperienceSource
-    from framework.core.experience.manager import ExperienceManager
-    from framework.core.experience.meta import PerFileExperienceMetaStore
-    from framework.core.experience.curator import ExperienceCurator
-    from framework.memory.tools.experience import ExperienceReadTool, ExperienceListTool
+    from modex_agent.core.experience.source import FileExperienceSource
+    from modex_agent.core.experience.manager import ExperienceManager
+    from modex_agent.core.experience.meta import PerFileExperienceMetaStore
+    from modex_agent.core.experience.curator import ExperienceCurator
+    from modex_agent.memory.tools.experience import ExperienceReadTool, ExperienceListTool
 
     exp_dir = tmp_path / "experiences"
     exp_dir.mkdir()

@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from framework.multi_agent.inbox.server_local import LocalFileInboxServer
-from framework.multi_agent.inbox.server_memory import InMemoryInboxServer
-from framework.multi_agent.inbox.types import InboxMessage
+from modex_agent.multi_agent.inbox.server_local import LocalFileInboxServer
+from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
+from modex_agent.multi_agent.inbox.types import InboxMessage
 
 
 class TestInMemoryInboxServer:

@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from framework.core.agent import AgentContext, current_agent_context
-from framework.core.emitter import AgentResult
-from framework.core.session_id import SessionInfo
-from framework.memory.history import ListMessageHistory
+from modex_agent.core.agent import AgentContext, current_agent_context
+from modex_agent.core.emitter import AgentResult
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.memory.history import ListMessageHistory
 
 
-from framework.core.tool_manager import ToolManager, ToolManagerConfig
+from modex_agent.core.tool_manager import ToolManager, ToolManagerConfig
 
 
 class FakeToolManager(ToolManager):

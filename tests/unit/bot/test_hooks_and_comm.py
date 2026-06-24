@@ -26,7 +26,7 @@ class TestHookConfiguration:
 
     def test_max_iteration_notify_hook_agent_agnostic(self):
         """MaxIterationNotifyHook has no parent_name — routes by comm_kind."""
-        from framework.hook.notification import AgentNotificationService, MaxIterationNotifyHook
+        from modex_agent.hook.notification import AgentNotificationService, MaxIterationNotifyHook
 
         svc = AgentNotificationService.__new__(AgentNotificationService)
         hook = MaxIterationNotifyHook(notification_service=svc)
@@ -38,7 +38,7 @@ class TestHookConfiguration:
         """SubagentAutoSendHook receives parent_name and optional runtime_dir."""
         from pathlib import Path
 
-        from framework.hook.builtin import SubagentAutoSendHook
+        from modex_agent.hook.builtin import SubagentAutoSendHook
 
         hook = SubagentAutoSendHook(
             agent_bus=None,
@@ -52,7 +52,7 @@ class TestHookConfiguration:
 
     def test_notification_service_no_parent_map(self):
         """AgentNotificationService no longer uses parent_map — derives parent from session_meta."""
-        from framework.hook.notification import AgentNotificationService
+        from modex_agent.hook.notification import AgentNotificationService
 
         svc = AgentNotificationService.__new__(AgentNotificationService)
         svc._output_adapter = None
@@ -63,8 +63,8 @@ class TestHookConfiguration:
 
     def test_notification_service_routing_decision(self):
         """NORMAL agent → _notify_user; SUBAGENT agent → _notify_parent."""
-        from framework.hook.notification import AgentNotificationService
-        from framework.multi_agent.comm_kind import AgentCommKind
+        from modex_agent.hook.notification import AgentNotificationService
+        from modex_agent.multi_agent.comm_kind import AgentCommKind
 
         svc = AgentNotificationService.__new__(AgentNotificationService)
 
@@ -76,7 +76,7 @@ class TestHookConfiguration:
 
     def test_xml_notification_format(self):
         """MaxIterationNotifyHook uses build_agent_result for XML format."""
-        from framework.multi_agent.message_xml import build_agent_result
+        from modex_agent.multi_agent.message_xml import build_agent_result
 
         xml = build_agent_result(
             source="test_agent",
@@ -100,8 +100,8 @@ class TestCommunicationToolScoping:
 
     def test_send_tool_dynamic_description_includes_targets(self):
         """SendToAgentTool builds dynamic description from CommunicationTargetStore."""
-        from framework.multi_agent.tools import CommunicationTarget, CommunicationTargetStore
-        from framework.multi_agent.comm_kind import AgentCommKind
+        from modex_agent.multi_agent.tools import CommunicationTarget, CommunicationTargetStore
+        from modex_agent.multi_agent.comm_kind import AgentCommKind
 
         store = CommunicationTargetStore()
         store.add(CommunicationTarget(
@@ -123,9 +123,9 @@ class TestSubagentMemoryLayers:
 
     def test_build_session_only_memory_creates_context_manager(self, tmp_path):
         """_build_session_only_memory returns a MemorySystemContextManager."""
-        from framework.ioc.factories.descriptors import build_session_only_memory as _build_session_only_memory
-        from framework.memory.core.scope import MemoryAgentRole
-        from framework.ioc.configs.memory import MemoryConfig, ShortTermConfig
+        from modex_agent.ioc.factories.descriptors import build_session_only_memory as _build_session_only_memory
+        from modex_agent.memory.core.scope import MemoryAgentRole
+        from modex_agent.ioc.configs.memory import MemoryConfig, ShortTermConfig
 
         cfg = MemoryConfig(short_term=ShortTermConfig(max_messages=80))
         memory_ctx = _build_session_only_memory(
@@ -139,11 +139,11 @@ class TestSubagentMemoryLayers:
 
     def test_archive_config_created_with_session_scope(self, tmp_path):
         """_build_session_only_memory creates ArchiveMemoryConfig(scope=SessionScope())."""
-        from framework.ioc.factories.descriptors import build_session_only_memory as _build_session_only_memory
-        from framework.memory.core.scope import MemoryAgentRole
-        from framework.memory.core.scope import SessionScope
-        from framework.memory.layers.config import ArchiveMemoryConfig
-        from framework.ioc.configs.memory import MemoryConfig
+        from modex_agent.ioc.factories.descriptors import build_session_only_memory as _build_session_only_memory
+        from modex_agent.memory.core.scope import MemoryAgentRole
+        from modex_agent.memory.core.scope import SessionScope
+        from modex_agent.memory.layers.config import ArchiveMemoryConfig
+        from modex_agent.ioc.configs.memory import MemoryConfig
 
         cfg = MemoryConfig()
         memory_ctx = _build_session_only_memory(
@@ -159,9 +159,9 @@ class TestSubagentMemoryLayers:
 
     def test_max_messages_respects_config(self, tmp_path):
         """Session layer max_messages comes from the MemoryConfig."""
-        from framework.ioc.factories.descriptors import build_session_only_memory as _build_session_only_memory
-        from framework.memory.core.scope import MemoryAgentRole
-        from framework.ioc.configs.memory import MemoryConfig, ShortTermConfig
+        from modex_agent.ioc.factories.descriptors import build_session_only_memory as _build_session_only_memory
+        from modex_agent.memory.core.scope import MemoryAgentRole
+        from modex_agent.ioc.configs.memory import MemoryConfig, ShortTermConfig
 
         cfg = MemoryConfig(short_term=ShortTermConfig(max_messages=120))
         memory_ctx = _build_session_only_memory(
@@ -173,8 +173,8 @@ class TestSubagentMemoryLayers:
 
     def test_default_max_messages_without_config(self, tmp_path):
         """Without MemoryConfig, subagent gets default 50 max_messages."""
-        from framework.ioc.factories.descriptors import build_session_only_memory as _build_session_only_memory
-        from framework.memory.core.scope import MemoryAgentRole
+        from modex_agent.ioc.factories.descriptors import build_session_only_memory as _build_session_only_memory
+        from modex_agent.memory.core.scope import MemoryAgentRole
 
         memory_ctx = _build_session_only_memory(
             None, tmp_path / "mem4", "sub",
@@ -196,8 +196,8 @@ class TestHookWiringPerAgent:
           _add_hook(main_pipeline, InboxFlushHook(...))
           _add_hook(main_pipeline, max_iter_hook)
         """
-        from framework.hook.builtin import InboxFlushHook
-        from framework.hook.notification import MaxIterationNotifyHook
+        from modex_agent.hook.builtin import InboxFlushHook
+        from modex_agent.hook.notification import MaxIterationNotifyHook
 
         # Verify these classes exist and are importable
         assert InboxFlushHook is not None
@@ -211,8 +211,8 @@ class TestHookWiringPerAgent:
           _add_hook(sub_pipeline, SubagentAutoSendHook(...))
           _add_hook(sub_pipeline, max_iter_hook)
         """
-        from framework.hook.builtin import InboxFlushHook, SubagentAutoSendHook
-        from framework.hook.notification import MaxIterationNotifyHook
+        from modex_agent.hook.builtin import InboxFlushHook, SubagentAutoSendHook
+        from modex_agent.hook.notification import MaxIterationNotifyHook
 
         assert InboxFlushHook is not None
         assert SubagentAutoSendHook is not None
@@ -222,7 +222,7 @@ class TestHookWiringPerAgent:
         """SubagentAutoSendHook receives runtime_dir for deterministic path derivation."""
         from pathlib import Path
 
-        from framework.hook.builtin import SubagentAutoSendHook
+        from modex_agent.hook.builtin import SubagentAutoSendHook
 
         hook = SubagentAutoSendHook(
             agent_bus=None,

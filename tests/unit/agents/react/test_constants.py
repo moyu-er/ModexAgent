@@ -1,5 +1,5 @@
 """Tests for ReAct graph constants."""
-from framework.agents.react.constants import ReActNode, ReActReason
+from modex_agent.agents.react.constants import ReActNode, ReActReason
 
 
 class TestReActNode:

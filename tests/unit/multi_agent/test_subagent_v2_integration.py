@@ -16,23 +16,23 @@ from unittest.mock import patch
 
 import pytest
 
-from framework.agents.react.state import ReActTurnState
-from framework.core.agent import AgentContext
-from framework.core.constants import StopReason
-from framework.core.emitter import AgentResult
-from framework.core.tool_manager import InMemoryToolManager, ToolManagerConfig
-from framework.hook.builtin.subagent_auto_send import SubagentAutoSendHook
-from framework.memory.history import ListMessageHistory
-from framework.multi_agent.bus import LocalAgentMessageBus
-from framework.multi_agent.comm_kind import AgentCommKind
-from framework.multi_agent.inbox.consumer import InboxConsumer
-from framework.multi_agent.inbox.producer import InboxProducer
-from framework.multi_agent.inbox.server_local import LocalFileInboxServer
-from framework.runtime.enums import AgentKind, OperationKind, OperationStatus, TurnPhase
-from framework.runtime.models import TurnIdentity
-from framework.runtime.services import AgentRuntime, AgentRuntimeServices
-from framework.core.session_id import SessionInfo
-from framework.trace import JsonFileTraceStore, TraceCollectorHook
+from modex_agent.agents.react.state import ReActTurnState
+from modex_agent.core.agent import AgentContext
+from modex_agent.core.constants import StopReason
+from modex_agent.core.emitter import AgentResult
+from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
+from modex_agent.hook.builtin.subagent_auto_send import SubagentAutoSendHook
+from modex_agent.memory.history import ListMessageHistory
+from modex_agent.multi_agent.bus import LocalAgentMessageBus
+from modex_agent.multi_agent.comm_kind import AgentCommKind
+from modex_agent.multi_agent.inbox.consumer import InboxConsumer
+from modex_agent.multi_agent.inbox.producer import InboxProducer
+from modex_agent.multi_agent.inbox.server_local import LocalFileInboxServer
+from modex_agent.runtime.enums import AgentKind, OperationKind, OperationStatus, TurnPhase
+from modex_agent.runtime.models import TurnIdentity
+from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.trace import JsonFileTraceStore, TraceCollectorHook
 
 
 # ---------------------------------------------------------------------------

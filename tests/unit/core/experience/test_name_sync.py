@@ -1,7 +1,7 @@
 """Tests for auto_correct_frontmatter_name()."""
 from pathlib import Path
 
-from framework.core.experience.name_sync import auto_correct_frontmatter_name
+from modex_agent.core.experience.name_sync import auto_correct_frontmatter_name
 
 
 def _write_md(exp_dir: Path, content: str) -> Path:

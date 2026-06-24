@@ -12,24 +12,24 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from framework.core.agent import AgentContext
-from framework.core.session_id import SessionInfo, SessionIdFactory
-from framework.core.emitter import AgentResult
-from framework.core.session_registry import InMemorySessionRegistry
-from framework.core.tool_manager import InMemoryToolManager
-from framework.core.types import InputMessage
-from framework.memory.history import ListMessageHistory
-from framework.messaging.broker_memory import InMemoryMessageBroker
-from framework.multi_agent.address import AgentAddress
-from framework.multi_agent import AgentDescriptor, SessionRetentionPolicy
-from framework.multi_agent.bus import LocalAgentMessageBus
-from framework.multi_agent.comm_kind import AgentCommKind
-from framework.multi_agent.communication import AgentCommunicationService
-from framework.multi_agent.inbox.consumer import InboxConsumer
-from framework.multi_agent.inbox.producer import InboxProducer
-from framework.multi_agent.inbox.server_memory import InMemoryInboxServer
-from framework.multi_agent.pool import AgentPool
-from framework.multi_agent.state import AgentState
+from modex_agent.core.agent import AgentContext
+from modex_agent.core.session_id import SessionInfo, SessionIdFactory
+from modex_agent.core.emitter import AgentResult
+from modex_agent.core.session_registry import InMemorySessionRegistry
+from modex_agent.core.tool_manager import InMemoryToolManager
+from modex_agent.core.types import InputMessage
+from modex_agent.memory.history import ListMessageHistory
+from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.multi_agent import AgentDescriptor, SessionRetentionPolicy
+from modex_agent.multi_agent.bus import LocalAgentMessageBus
+from modex_agent.multi_agent.comm_kind import AgentCommKind
+from modex_agent.multi_agent.communication import AgentCommunicationService
+from modex_agent.multi_agent.inbox.consumer import InboxConsumer
+from modex_agent.multi_agent.inbox.producer import InboxProducer
+from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
+from modex_agent.multi_agent.pool import AgentPool
+from modex_agent.multi_agent.state import AgentState
 
 
 def _make_context(
@@ -215,7 +215,7 @@ async def test_subagent_cannot_send_to_another_subagent():
     pool._agents["main"] = _make_fake_instance("main", AgentCommKind.NORMAL)[0]
     pool._agents["worker_a"] = _make_fake_instance("worker_a", AgentCommKind.SUBAGENT)[0]
     pool._agents["worker_b"] = _make_fake_instance("worker_b", AgentCommKind.SUBAGENT)[0]
-    from framework.multi_agent.state import AgentState
+    from modex_agent.multi_agent.state import AgentState
     pool._status["main"] = AgentState.IDLE
     pool._status["worker_a"] = AgentState.IDLE
     pool._status["worker_b"] = AgentState.IDLE

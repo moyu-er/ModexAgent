@@ -20,18 +20,18 @@ from bot.workspace.handle import (
     WorkspaceHandleRootProvider,
     WorkspaceResolverCell,
 )
-from framework.workspace.context import WorkspaceContext
-from framework.core.session_store import LocalFileSessionStore
-from framework.core.tool_manager import InMemoryToolManager, ToolManagerConfig
-from framework.messaging.broker_memory import InMemoryMessageBroker
-from framework.multi_agent.bus import LocalAgentMessageBus
-from framework.multi_agent.inbox.consumer import InboxConsumer
-from framework.multi_agent.inbox.producer import InboxProducer
-from framework.multi_agent.inbox.server_local import LocalFileInboxServer
-from framework.tools.overflow.local import LocalFileToolOverflowStore
-from framework.tools.presets import ToolPreset, get_preset_tools
-from framework.tools.standard import ReadFileTool, SearchFilesTool
-from framework.tools.workspace_scoped import (
+from modex_agent.workspace.context import WorkspaceContext
+from modex_agent.core.session_store import LocalFileSessionStore
+from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
+from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.multi_agent.bus import LocalAgentMessageBus
+from modex_agent.multi_agent.inbox.consumer import InboxConsumer
+from modex_agent.multi_agent.inbox.producer import InboxProducer
+from modex_agent.multi_agent.inbox.server_local import LocalFileInboxServer
+from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
+from modex_agent.tools.presets import ToolPreset, get_preset_tools
+from modex_agent.tools.standard import ReadFileTool, SearchFilesTool
+from modex_agent.tools.workspace_scoped import (
     WorkspaceRootProvider,
     WorkspaceScopedFileTool,
     WorkspaceScopedShellTool,
@@ -97,7 +97,7 @@ def test_get_preset_tools_with_provider_wraps_file_tools(tmp_path: Path) -> None
 
 
 def test_get_preset_tools_with_provider_wraps_bash_tool() -> None:
-    from framework.tools.terminal import SubprocessTool
+    from modex_agent.tools.terminal import SubprocessTool
 
     provider = _StaticRootProvider(Path("/tmp/fake_ws"))
 
@@ -128,11 +128,11 @@ def test_get_preset_tools_read_only_with_provider_wraps_and_no_bash() -> None:
 
 def test_main_agent_tools_wrapped_when_root_provider_given(tmp_path: Path) -> None:
     """Simulate _build_tools wrapping main-agent tools with a provider."""
-    from framework.tools.standard import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+    from modex_agent.tools.standard import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 
     provider = _StaticRootProvider(tmp_path)
     file_tools = [ReadFileTool(), WriteFileTool(), EditFileTool(), ListDirTool()]
-    from framework.tools.workspace_scoped import wrap_standard_tools
+    from modex_agent.tools.workspace_scoped import wrap_standard_tools
 
     wrapped = wrap_standard_tools(file_tools, provider)
     assert len(wrapped) == 4
@@ -141,7 +141,7 @@ def test_main_agent_tools_wrapped_when_root_provider_given(tmp_path: Path) -> No
 
 
 def test_main_agent_search_tools_wrapped_when_root_provider_given(tmp_path: Path) -> None:
-    from framework.tools.workspace_scoped import wrap_standard_tools
+    from modex_agent.tools.workspace_scoped import wrap_standard_tools
 
     provider = _StaticRootProvider(tmp_path)
     search_tools = [SearchFilesTool(), SearchFilesTool()]
@@ -155,9 +155,9 @@ def test_main_agent_search_tools_wrapped_when_root_provider_given(tmp_path: Path
 
 async def test_subagent_tool_manager_uses_workspace_root_provider(tmp_path: Path) -> None:
     """Verify that _build_subagent_tool_manager passes root_provider to get_preset_tools."""
-    from framework.multi_agent.address import AgentAddress
-    from framework.multi_agent.communication import AgentCommunicationService
-    from framework.multi_agent.template import AgentTemplate
+    from modex_agent.multi_agent.address import AgentAddress
+    from modex_agent.multi_agent.communication import AgentCommunicationService
+    from modex_agent.multi_agent.template import AgentTemplate
 
     provider = _StaticRootProvider(tmp_path)
     service = AgentCommunicationService(
@@ -190,17 +190,17 @@ async def test_main_agent_tool_manager_is_workspace_scoped(tmp_path: Path) -> No
     """Verify that create_pool's tool_manager contains workspace-scoped tools when handle is given."""
     from bot.service.pool_builder import create_pool
     from bot.workspace.handle import WorkspaceHandle
-    from framework.control.channel import InMemoryControlChannel
-    from framework.core.llm_struct import RuntimeSafetyPolicy
-    from framework.hook import HookRunner
-    from framework.ioc.configs.agent import AgentConfig
-    from framework.ioc.configs.llm import LLMConfig
-    from framework.ioc.configs.memory import MemoryConfig
-    from framework.ioc.configs.pool import PoolConfig
-    from framework.multi_agent.comm_tracker import CommunicationTracker
-    from framework.multi_agent import SessionRetentionPolicy
+    from modex_agent.control.channel import InMemoryControlChannel
+    from modex_agent.core.llm_struct import RuntimeSafetyPolicy
+    from modex_agent.hook import HookRunner
+    from modex_agent.ioc.configs.agent import AgentConfig
+    from modex_agent.ioc.configs.llm import LLMConfig
+    from modex_agent.ioc.configs.memory import MemoryConfig
+    from modex_agent.ioc.configs.pool import PoolConfig
+    from modex_agent.multi_agent.comm_tracker import CommunicationTracker
+    from modex_agent.multi_agent import SessionRetentionPolicy
 
-    from framework.interceptor.chain import InterceptorChain
+    from modex_agent.interceptor.chain import InterceptorChain
 
     target = tmp_path / "ws"
     target.mkdir()
@@ -263,10 +263,10 @@ async def test_main_agent_tool_manager_is_workspace_scoped(tmp_path: Path) -> No
 async def test_pool_resources_experience_dir_from_pool_data(tmp_path: Path) -> None:
     """Verify that experience_dir comes from pool_data, not hard-coded paths."""
     from bot.workspace.pool_data import build_pool_data
-    from framework.ioc.configs.agent import AgentConfig
-    from framework.ioc.configs.llm import LLMConfig
-    from framework.ioc.configs.memory import MemoryConfig
-    from framework.ioc.configs.pool import PoolConfig
+    from modex_agent.ioc.configs.agent import AgentConfig
+    from modex_agent.ioc.configs.llm import LLMConfig
+    from modex_agent.ioc.configs.memory import MemoryConfig
+    from modex_agent.ioc.configs.pool import PoolConfig
 
     target = tmp_path / "ws"
     target.mkdir()
@@ -323,8 +323,8 @@ async def test_pool_resources_background_tasks_live_on_r(tmp_path: Path) -> None
 async def test_pool_resources_background_tasks_curator_on_r(tmp_path: Path) -> None:
     """Verify that curator tasks are registered on R.background and cancel on stop."""
     from bot.workspace.background import BackgroundTaskRunner
-    from framework.core.experience.curator import ExperienceCurator
-    from framework.core.experience.meta import PerFileExperienceMetaStore
+    from modex_agent.core.experience.curator import ExperienceCurator
+    from modex_agent.core.experience.meta import PerFileExperienceMetaStore
 
     r = _build_test_resources(tmp_path)
 

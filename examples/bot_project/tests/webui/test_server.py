@@ -20,9 +20,9 @@ from bot.webui.server import (
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import DeltaEnvelope, _unwrap_envelope
 from bot.webui.transcript_store import JSONLTranscriptStore
-from framework.workspace.paths import WorkspacePaths
-from framework.core.emitter import AgentResult, EmitterConfig
-from framework.workspace.runtime import bind_workspace_root
+from modex_agent.workspace.paths import WorkspacePaths
+from modex_agent.core.emitter import AgentResult, EmitterConfig
+from modex_agent.workspace.runtime import bind_workspace_root
 
 
 async def _post_json(
@@ -98,10 +98,10 @@ async def test_ws_send_message_echoes_user_message() -> None:
 @pytest.mark.asyncio
 async def test_ws_pause_sends_cancel_turn() -> None:
     """WebSocket pause action sends CANCEL_TURN via the configured control filter."""
-    from framework.commands.handlers import build_default_builtin_handlers
-    from framework.commands.processor import SlashCommandProcessor
-    from framework.control.channel import InMemoryControlChannel
-    from framework.control.types import ControlCommandType, ControlScope
+    from modex_agent.commands.handlers import build_default_builtin_handlers
+    from modex_agent.commands.processor import SlashCommandProcessor
+    from modex_agent.control.channel import InMemoryControlChannel
+    from modex_agent.control.types import ControlCommandType, ControlScope
 
     with tempfile.TemporaryDirectory() as tmp:
         workspace_root = Path(tmp)
@@ -240,7 +240,7 @@ async def test_no_static_fallback() -> None:
 async def test_sessions_list_includes_pool() -> None:
     """GET /api/sessions returns one entry per session with session_id and pool."""
     from bot.service.session_store import WorkspacePoolSessionStore
-    from framework.core.session_id import SessionIdFactory
+    from modex_agent.core.session_id import SessionIdFactory
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
@@ -490,7 +490,7 @@ async def test_ws_attach_restores_pool_routing() -> None:
 async def test_pool_mapping_persistence_across_restart() -> None:
     """Pool mapping survives server restart via physical transcript layout."""
     from bot.service.session_store import WorkspacePoolSessionStore
-    from framework.core.session_id import SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionInfo, now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
@@ -589,7 +589,7 @@ async def test_sessions_persist_across_pool_switch_and_qq_conversation() -> None
     """
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
-    from framework.core.session_id import SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionInfo, now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
@@ -774,7 +774,7 @@ async def test_sessions_list_includes_subagent_with_parent_relation() -> None:
     """GET /api/sessions includes subagent sessions that have parent relationships."""
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
-    from framework.core.session_id import SessionInfo
+    from modex_agent.core.session_id import SessionInfo
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
@@ -840,7 +840,7 @@ async def test_api_messages_loads_subagent_transcript() -> None:
     """GET /api/sessions/{subagent_id}/messages loads subagent transcript events."""
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
-    from framework.core.session_id import SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionInfo, now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
@@ -1134,7 +1134,7 @@ async def test_ws_attach_new_conversation_uses_stable_snowflake_for_pool_agents(
     producing a different snowflake for pool-agent queues than the main
     session's transcript/delta queue, so deltas were dropped.
     """
-    from framework.core.session_id import SessionIdFactory
+    from modex_agent.core.session_id import SessionIdFactory
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
@@ -1179,7 +1179,7 @@ async def test_api_sessions_falls_back_to_transcripts_when_index_empty() -> None
     """
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
-    from framework.core.session_id import SessionIdFactory
+    from modex_agent.core.session_id import SessionIdFactory
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
@@ -1236,7 +1236,7 @@ async def test_api_sessions_falls_back_preserves_index_entries() -> None:
     """
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
-    from framework.core.session_id import SessionInfo, SessionIdFactory, now_ms
+    from modex_agent.core.session_id import SessionInfo, SessionIdFactory, now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
@@ -1304,9 +1304,9 @@ async def test_workspace_cd_switches_current_workspace() -> None:
     the binding correctly isolates writes.
     """
     from bot.service.session_store import WorkspacePoolSessionStore
-    from framework.core.session_id import SessionInfo, now_ms
-    from framework.workspace.models import CdResult
-    from framework.workspace.port import WorkspaceControlPort
+    from modex_agent.core.session_id import SessionInfo, now_ms
+    from modex_agent.workspace.models import CdResult
+    from modex_agent.workspace.port import WorkspaceControlPort
 
     home = Path(tempfile.mkdtemp())
     ws_a = home / "ws-a"
@@ -1399,7 +1399,7 @@ async def test_api_sessions_includes_subagent_sessions() -> None:
     """
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
-    from framework.core.session_id import SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionInfo, now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
@@ -1471,7 +1471,7 @@ async def test_api_sessions_includes_dynamic_subagent_instance() -> None:
     of their template type and must appear in the session list.
     """
     from bot.service.session_store import WorkspacePoolSessionStore
-    from framework.core.session_id import SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionInfo, now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
@@ -1710,8 +1710,8 @@ async def test_api_messages_sorts_with_none_timestamp() -> None:
 @pytest.mark.asyncio
 async def test_workspace_cd_returns_400_on_malformed_json() -> None:
     """Malformed JSON body is rejected with HTTP 400, not silently falling back to home."""
-    from framework.workspace.models import CdResult
-    from framework.workspace.port import WorkspaceControlPort
+    from modex_agent.workspace.models import CdResult
+    from modex_agent.workspace.port import WorkspaceControlPort
 
     home = Path(tempfile.mkdtemp())
 

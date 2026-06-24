@@ -13,9 +13,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from framework.core.experience.meta import PerFileExperienceMetaStore
-from framework.hook.builtin.experience_review import ExperienceReviewHook
-from framework.memory.history import ListMessageHistory
+from modex_agent.core.experience.meta import PerFileExperienceMetaStore
+from modex_agent.hook.builtin.experience_review import ExperienceReviewHook
+from modex_agent.memory.history import ListMessageHistory
 
 
 @pytest.fixture

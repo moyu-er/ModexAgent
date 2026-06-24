@@ -4,22 +4,22 @@ from __future__ import annotations
 
 import pytest
 
-from framework.agents.react.agent import ReActAgent
-from framework.agents.react.approval import ApprovalRuntime
-from framework.agents.react.state import ReActSnapshotPolicy, ReActTurnState
-from framework.approval.constants import ApprovalDecision, ApprovalTier
-from framework.approval.types import ApprovalAction
-from framework.core.agent import AgentContext
-from framework.core.emitter import AgentResult, ContentEmitter
-from framework.core.graph.interrupt import GraphInterrupt
-from framework.core.session_id import SessionInfo
-from framework.core.tool_manager import InMemoryToolManager, Tool
-from framework.core.types import LLMResponse, ToolCall
-from framework.memory.history import ListMessageHistory
-from framework.runtime.enums import AgentKind, ApprovalDenyPolicy, SnapshotReason, TurnPhase
-from framework.runtime.models import StateQueryScope, TurnIdentity
-from framework.runtime.services import AgentRuntime, AgentRuntimeServices
-from framework.runtime.store import InMemoryTurnStateStore
+from modex_agent.agents.react.agent import ReActAgent
+from modex_agent.agents.react.approval import ApprovalRuntime
+from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
+from modex_agent.approval.constants import ApprovalDecision, ApprovalTier
+from modex_agent.approval.types import ApprovalAction
+from modex_agent.core.agent import AgentContext
+from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.graph.interrupt import GraphInterrupt
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.tool_manager import InMemoryToolManager, Tool
+from modex_agent.core.types import LLMResponse, ToolCall
+from modex_agent.memory.history import ListMessageHistory
+from modex_agent.runtime.enums import AgentKind, ApprovalDenyPolicy, SnapshotReason, TurnPhase
+from modex_agent.runtime.models import StateQueryScope, TurnIdentity
+from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.runtime.store import InMemoryTurnStateStore
 
 
 class _DangerousClassifier:

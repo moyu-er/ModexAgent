@@ -2,21 +2,21 @@ from __future__ import annotations
 
 import pytest
 
-from framework.core.emitter import AgentResult
-from framework.core.tool_manager import (
+from modex_agent.core.emitter import AgentResult
+from modex_agent.core.tool_manager import (
     InMemoryToolManager,
     Tool,
 )
-from framework.messaging.broker import Address, BrokerMessage
-from framework.messaging.broker_memory import InMemoryMessageBroker
-from framework.multi_agent.address import AgentAddress
-from framework.core.skills.filter import AllowListFilter
-from framework.utils.context_builder import MultiAgentContextBuilder
-from framework.utils.deduplicator import MessageDeduplicator
-from framework.multi_agent.descriptor import AgentDescriptor
-from framework.multi_agent.envelope import AgentMessageEnvelope
-from framework.tools.filter import FilteredToolManager
-from framework.utils.sanitizer import ContentSanitizer
+from modex_agent.messaging.broker import Address, BrokerMessage
+from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.core.skills.filter import AllowListFilter
+from modex_agent.utils.context_builder import MultiAgentContextBuilder
+from modex_agent.utils.deduplicator import MessageDeduplicator
+from modex_agent.multi_agent.descriptor import AgentDescriptor
+from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+from modex_agent.tools.filter import FilteredToolManager
+from modex_agent.utils.sanitizer import ContentSanitizer
 
 
 class _DummyTool(Tool):
@@ -130,9 +130,9 @@ class TestFilteredToolManager:
 class TestAgentSkillManager:
     @pytest.mark.asyncio
     async def test_allow_list_filter(self) -> None:
-        from framework.core.skills import InlineSkillSource
-        from framework.core.skills.manager import SkillManager
-        from framework.core.skills.models import Skill
+        from modex_agent.core.skills import InlineSkillSource
+        from modex_agent.core.skills.manager import SkillManager
+        from modex_agent.core.skills.models import Skill
 
         python_skill = Skill(name="python", content="python skill", description="")
         source = InlineSkillSource([python_skill])

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from framework.multi_agent.address import AgentAddress
-from framework.multi_agent.descriptor import (
+from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.multi_agent.descriptor import (
     AgentDescriptor,
     AgentInstance,
     AgentLLMConfig,
     ContextGovernanceConfig,
 )
-from framework.multi_agent.state import AgentState
+from modex_agent.multi_agent.state import AgentState
 
 
 class TestAgentLLMConfig:

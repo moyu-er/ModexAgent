@@ -20,32 +20,32 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from framework.commands.processor import SlashCommandProcessor
-    from framework.runtime.codec import RuntimeStateCodecRegistry
+    from modex_agent.commands.processor import SlashCommandProcessor
+    from modex_agent.runtime.codec import RuntimeStateCodecRegistry
 
 from bot.plugins.integration import PluginIntegration
 from bot.workspace.wiring import build_single_workspace_stack, build_workspace_stack
 from bot.utils.config_loader import ConfigLoader
-from framework import (
+from modex_agent import (
     LLMProvider,
 )
-from framework.control.channel import InMemoryControlChannel
-from framework.core.emitter import ContentEmitter
-from framework.core.llm_struct import (
+from modex_agent.control.channel import InMemoryControlChannel
+from modex_agent.core.emitter import ContentEmitter
+from modex_agent.core.llm_struct import (
     LLMTimeoutPolicy,
     RuntimeSafetyPolicy,
     TurnTimeoutPolicy,
 )
-from framework.core.session_registry import SessionRegistry
-from framework.core.session_store import SessionStore
-from framework.hook import HookErrorPolicy, HookSpec
-from framework.hook.abc import Hook
-from framework.hook.runner import HookRunner
-from framework.ioc.configs.agent import AgentConfig as IOCAgentConfig
-from framework.ioc.configs.app import AppConfig
-from framework.ioc.configs.memory import MemoryConfig as IOCMemoryConfig
-from framework.ioc.factories.llm import create_llm_provider
-from framework.pipeline.adapters import InputAdapter, OutputAdapter
+from modex_agent.core.session_registry import SessionRegistry
+from modex_agent.core.session_store import SessionStore
+from modex_agent.hook import HookErrorPolicy, HookSpec
+from modex_agent.hook.abc import Hook
+from modex_agent.hook.runner import HookRunner
+from modex_agent.ioc.configs.agent import AgentConfig as IOCAgentConfig
+from modex_agent.ioc.configs.app import AppConfig
+from modex_agent.ioc.configs.memory import MemoryConfig as IOCMemoryConfig
+from modex_agent.ioc.factories.llm import create_llm_provider
+from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
 
 from .builders import AgentBuilderMixin, resolve_system_prompt
 from .pool_instance import PoolInstance
@@ -404,7 +404,7 @@ class BotService(AgentBuilderMixin):
         hooks = self.plugin_integration.collect_hooks()
         obs = self._app_config.observability
         if obs is not None and obs.run_logging:
-            from framework.hook.builtin import RunLoggingHook
+            from modex_agent.hook.builtin import RunLoggingHook
 
             level = getattr(logging, obs.level.upper(), logging.INFO)
             hooks.append(
@@ -426,8 +426,8 @@ class BotService(AgentBuilderMixin):
         Note: SubagentAutoSendHook is wired separately by _wire_subagent_hooks()
         in AgentCommunicationService, with proper agent_bus and runtime_dir args.
         """
-        from framework.hook import HookErrorPolicy, HookRunner, HookSpec
-        from framework.hook.notification import MaxIterationNotifyHook
+        from modex_agent.hook import HookErrorPolicy, HookRunner, HookSpec
+        from modex_agent.hook.notification import MaxIterationNotifyHook
 
         runner = HookRunner()
         runner.add(HookSpec(hook=MaxIterationNotifyHook(), on_error=HookErrorPolicy.LOG))
@@ -450,8 +450,8 @@ class BotService(AgentBuilderMixin):
         processor — this avoids self-blocking where the command's own
         dispatch would appear as an "active agent" in pool mode.
         """
-        from framework.commands.handlers import build_default_builtin_handlers
-        from framework.commands.processor import SlashCommandProcessor
+        from modex_agent.commands.handlers import build_default_builtin_handlers
+        from modex_agent.commands.processor import SlashCommandProcessor
 
         return SlashCommandProcessor(handlers=list(build_default_builtin_handlers()))
 

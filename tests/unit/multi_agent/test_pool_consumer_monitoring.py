@@ -13,9 +13,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from framework.messaging.broker import Address, BrokerMessage
-from framework.multi_agent.pool import AgentPool
-from framework.multi_agent.state import AgentState
+from modex_agent.messaging.broker import Address, BrokerMessage
+from modex_agent.multi_agent.pool import AgentPool
+from modex_agent.multi_agent.state import AgentState
 
 
 class _FakeBroker:
@@ -116,8 +116,8 @@ class TestConsumerTaskMonitoring:
     @pytest.mark.asyncio
     async def test_register_resident_attaches_done_callback(self, pool: AgentPool) -> None:
         """register_resident must attach _on_consumer_done to the consumer task."""
-        from framework.multi_agent.address import AgentAddress
-        from framework.multi_agent.descriptor import AgentDescriptor
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.descriptor import AgentDescriptor
 
         descriptor = AgentDescriptor(
             address=AgentAddress(kind="agent", name="test_agent"),
@@ -229,8 +229,8 @@ class TestConsumerTaskMonitoring:
     async def test_consumer_loop_breaks_after_max_errors(self, pool: AgentPool) -> None:
         """_consume_messages breaks its loop after max errors, triggering
         the done callback which transitions state."""
-        from framework.multi_agent.address import AgentAddress
-        from framework.multi_agent.descriptor import AgentDescriptor
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.descriptor import AgentDescriptor
 
         class _RaisingBroker:
             async def consume(self, address: Address) -> None:

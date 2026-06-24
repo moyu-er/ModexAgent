@@ -6,7 +6,7 @@
 - 与 content、error 等字段的兼容性
 """
 
-from framework.core.emitter import AgentResult
+from modex_agent.core.emitter import AgentResult
 
 
 class TestAgentResult:

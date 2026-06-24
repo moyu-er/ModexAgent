@@ -13,9 +13,9 @@ from pathlib import Path
 
 import pytest
 
-from framework.workspace.context import WorkspaceContext
-from framework.workspace.registry import WorkspaceRegistry, RegistryStore
-from framework.workspace.routing import WorkspaceResolver
+from modex_agent.workspace.context import WorkspaceContext
+from modex_agent.workspace.registry import WorkspaceRegistry, RegistryStore
+from modex_agent.workspace.routing import WorkspaceResolver
 
 
 class _FakeFactory:

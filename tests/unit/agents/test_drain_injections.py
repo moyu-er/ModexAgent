@@ -4,12 +4,12 @@ import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
-from framework.agents.react.agent import ReActAgent
-from framework.core.types import LLMResponse
-from framework.runtime.enums import AgentKind, TurnPhase
-from framework.runtime.models import TurnIdentity, TurnStateBase
-from framework.runtime.services import AgentRuntime, AgentRuntimeServices
-from framework.core.session_id import SessionInfo
+from modex_agent.agents.react.agent import ReActAgent
+from modex_agent.core.types import LLMResponse
+from modex_agent.runtime.enums import AgentKind, TurnPhase
+from modex_agent.runtime.models import TurnIdentity, TurnStateBase
+from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.core.session_id import SessionInfo
 
 
 class _FakeHistory:

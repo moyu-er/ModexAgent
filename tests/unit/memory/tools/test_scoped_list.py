@@ -3,7 +3,7 @@
 import pytest
 from pathlib import Path
 
-from framework.memory.tools.scoped_list import ScopedListTool
+from modex_agent.memory.tools.scoped_list import ScopedListTool
 
 
 @pytest.fixture

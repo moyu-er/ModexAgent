@@ -1,16 +1,16 @@
 """Tests for InboxProducer."""
 
-from framework.multi_agent.inbox.producer import InboxProducer
-from framework.multi_agent.inbox.server_memory import InMemoryInboxServer
-from framework.multi_agent.inbox.types import InboxMessage
+from modex_agent.multi_agent.inbox.producer import InboxProducer
+from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
+from modex_agent.multi_agent.inbox.types import InboxMessage
 
 
 class TestInboxProducer:
     async def test_send_new_message(self):
         server = InMemoryInboxServer()
         producer = InboxProducer(server=server)
-        from framework.multi_agent.envelope import AgentMessageEnvelope
-        from framework.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+        from modex_agent.multi_agent.address import AgentAddress
 
         envelope = AgentMessageEnvelope(
             payload={"content": "hello"},
@@ -24,8 +24,8 @@ class TestInboxProducer:
     async def test_send_duplicate_ignored(self):
         server = InMemoryInboxServer()
         producer = InboxProducer(server=server)
-        from framework.multi_agent.envelope import AgentMessageEnvelope
-        from framework.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+        from modex_agent.multi_agent.address import AgentAddress
 
         envelope = AgentMessageEnvelope(
             payload={"content": "hello"},
@@ -41,8 +41,8 @@ class TestInboxProducer:
     async def test_local_cache_dedup(self):
         server = InMemoryInboxServer()
         producer = InboxProducer(server=server)
-        from framework.multi_agent.envelope import AgentMessageEnvelope
-        from framework.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+        from modex_agent.multi_agent.address import AgentAddress
 
         envelope = AgentMessageEnvelope(
             payload={"content": "hello"},

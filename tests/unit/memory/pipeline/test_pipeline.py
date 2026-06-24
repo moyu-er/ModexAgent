@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from framework.memory.pipeline.abc import SystemPromptProvider
-from framework.memory.pipeline.pipeline import SystemPromptPipeline
+from modex_agent.memory.pipeline.abc import SystemPromptProvider
+from modex_agent.memory.pipeline.pipeline import SystemPromptPipeline
 
 
 class _FakeProvider(SystemPromptProvider):

@@ -18,13 +18,13 @@ from bot.service.web_ui_service import WebUIService
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import AssistantTurnEvent, UserMessageEvent, _unwrap_envelope
 from bot.webui.server import WebUIServer, _new_uuid_prefix
-from framework.workspace.control import WorkspaceController
-from framework.workspace.paths import WorkspacePaths
-from framework.workspace.registry import WorkspaceRegistry
-from framework.workspace.routing import WorkspaceResolver
-from framework.workspace.store import GlobalWorkspaceStore
-from framework.core.session_id import SessionIdFactory, SessionInfo, now_ms
-from framework.workspace.runtime import bind_workspace_root
+from modex_agent.workspace.control import WorkspaceController
+from modex_agent.workspace.paths import WorkspacePaths
+from modex_agent.workspace.registry import WorkspaceRegistry
+from modex_agent.workspace.routing import WorkspaceResolver
+from modex_agent.workspace.store import GlobalWorkspaceStore
+from modex_agent.core.session_id import SessionIdFactory, SessionInfo, now_ms
+from modex_agent.workspace.runtime import bind_workspace_root
 
 
 class _FakeFactory:
@@ -44,7 +44,7 @@ def _real_project_dir() -> Path:
 
 def _real_agent_pool_map() -> dict[str, str]:
     """Build the production agent->pool mapping from the loaded AppConfig."""
-    from framework.ioc.configs.app import AppConfig
+    from modex_agent.ioc.configs.app import AppConfig
 
     project_dir = _real_project_dir()
 

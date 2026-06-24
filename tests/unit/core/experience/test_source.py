@@ -1,6 +1,6 @@
 import pytest
 from pathlib import Path
-from framework.core.experience.source import FileExperienceSource, sanitize_name
+from modex_agent.core.experience.source import FileExperienceSource, sanitize_name
 
 
 def test_sanitize_name():

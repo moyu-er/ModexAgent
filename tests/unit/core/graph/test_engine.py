@@ -1,14 +1,14 @@
 """Tests for GraphEngine."""
 import pytest
-from framework.core.graph.engine import GraphEngine
-from framework.core.graph.graph import Graph
-from framework.core.graph.node import Node, NodeTransition
-from framework.core.graph.constants import GraphNode
-from framework.core.graph.interrupt import GraphInterrupt
-from framework.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
-from framework.runtime.models import TurnIdentity, TurnStateBase
-from framework.runtime.services import AgentRuntime, AgentRuntimeServices
-from framework.core.session_id import SessionInfo
+from modex_agent.core.graph.engine import GraphEngine
+from modex_agent.core.graph.graph import Graph
+from modex_agent.core.graph.node import Node, NodeTransition
+from modex_agent.core.graph.constants import GraphNode
+from modex_agent.core.graph.interrupt import GraphInterrupt
+from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
+from modex_agent.runtime.models import TurnIdentity, TurnStateBase
+from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.core.session_id import SessionInfo
 
 
 class _MinimalRuntime:

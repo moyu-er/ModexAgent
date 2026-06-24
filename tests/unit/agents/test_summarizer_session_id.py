@@ -17,8 +17,8 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from framework.agents.summarizer.scoped_file_agent import ScopedFileAgent
-from framework.core.provider import LLMProvider
+from modex_agent.agents.summarizer.scoped_file_agent import ScopedFileAgent
+from modex_agent.core.provider import LLMProvider
 
 
 class _CapturingReactAgent:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from framework.tools.presets import ContextMode, SystemPromptMode, ToolPreset
+from modex_agent.tools.presets import ContextMode, SystemPromptMode, ToolPreset
 
 
 class TestForkContextPersistence:
@@ -65,13 +65,13 @@ class TestForkContextTemplateFields:
     """Template fork fields are parsed correctly."""
 
     def test_fork_max_messages_default(self) -> None:
-        from framework.multi_agent.template import AgentTemplate
+        from modex_agent.multi_agent.template import AgentTemplate
 
         t = AgentTemplate(agent_type="test", context_mode=ContextMode.FORK)
         assert t.fork_max_messages == 80
 
     def test_fork_max_messages_custom(self) -> None:
-        from framework.multi_agent.template import AgentTemplate
+        from modex_agent.multi_agent.template import AgentTemplate
 
         t = AgentTemplate(
             agent_type="test",
@@ -81,7 +81,7 @@ class TestForkContextTemplateFields:
         assert t.fork_max_messages == 50
 
     def test_system_prompt_mode_replace_for_oracle(self) -> None:
-        from framework.multi_agent.template import AgentTemplate
+        from modex_agent.multi_agent.template import AgentTemplate
 
         t = AgentTemplate(
             agent_type="oracle",

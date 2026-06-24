@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from framework.core.experience.meta import ExperienceMetaStore, PerFileExperienceMetaStore
-from framework.memory.tools.experience import (
+from modex_agent.core.experience.meta import ExperienceMetaStore, PerFileExperienceMetaStore
+from modex_agent.memory.tools.experience import (
     ExperiencePathResolver,
     ExperienceReadTool,
     ExperienceWriteTool,

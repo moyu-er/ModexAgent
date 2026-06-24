@@ -22,8 +22,8 @@ from bot.webui.server import WebUIServer, _new_uuid_prefix
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import UserMessageEvent, _unwrap_envelope
 from bot.webui.transcript_store import JSONLTranscriptStore
-from framework.workspace.paths import WorkspacePaths
-from framework.workspace.runtime import bind_workspace_root
+from modex_agent.workspace.paths import WorkspacePaths
+from modex_agent.workspace.runtime import bind_workspace_root
 
 _DATA_DIR_NAME = ".modex"
 
@@ -186,7 +186,7 @@ async def test_im_conversation_stored_in_current_workspace() -> None:
     """IM messages written while on the default workspace are visible there."""
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
-    from framework.core.session_id import SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionInfo, now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     server, inp = _make_server(data_dir)
@@ -239,7 +239,7 @@ async def test_sessions_from_different_workspaces_are_isolated() -> None:
     """
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
-    from framework.core.session_id import SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionInfo, now_ms
 
     data_dir_a = Path(tempfile.mkdtemp())
     data_dir_b = Path(tempfile.mkdtemp())
@@ -426,7 +426,7 @@ def test_relation_store_follows_workspace_switch() -> None:
     import asyncio
 
     from bot.service.session_store import WorkspacePoolSessionStore
-    from framework.core.session_id import SessionInfo
+    from modex_agent.core.session_id import SessionInfo
 
     data_dir = Path(tempfile.mkdtemp())
     _ws: list[str] = ["home"]

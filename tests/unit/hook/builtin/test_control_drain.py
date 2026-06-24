@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from framework.control.channel import InMemoryControlChannel
-from framework.control.types import ControlCommand, ControlCommandType, ControlScope
-from framework.control.exceptions import AgentCancelled
-from framework.core.session_id import SessionInfo
-from framework.hook.builtin.control_drain import (
+from modex_agent.control.channel import InMemoryControlChannel
+from modex_agent.control.types import ControlCommand, ControlCommandType, ControlScope
+from modex_agent.control.exceptions import AgentCancelled
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.hook.builtin.control_drain import (
     ControlDrainInterceptor,
     LlmCancelInterceptor,
     drain_control_channel,
@@ -17,7 +17,7 @@ from framework.hook.builtin.control_drain import (
 
 class _FakeContext:
     def __init__(self, session_id="test-session.main", turn_uuid=None):
-        from framework.core.session_id import SessionInfo
+        from modex_agent.core.session_id import SessionInfo
         self.session = SessionInfo.from_str(session_id)
         self.current_turn_uuid = turn_uuid
 

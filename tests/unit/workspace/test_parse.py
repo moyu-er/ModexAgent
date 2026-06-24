@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from framework.workspace.parse import parse_user_path
+from modex_agent.workspace.parse import parse_user_path
 
 
 class TestParseUserPath:

@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from framework.runtime.enums import OperationKind, OperationStatus
-from framework.trace.store import JsonFileTraceStore
-from framework.trace.types import OperationRecord
+from modex_agent.runtime.enums import OperationKind, OperationStatus
+from modex_agent.trace.store import JsonFileTraceStore
+from modex_agent.trace.types import OperationRecord
 
 
 def _make_record(

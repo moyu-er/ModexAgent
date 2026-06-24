@@ -5,7 +5,7 @@ from __future__ import annotations
 import dataclasses
 from pathlib import Path
 
-from framework.workspace.context import WorkspaceContext
+from modex_agent.workspace.context import WorkspaceContext
 
 
 def test_from_target_builds_paths_and_home_flag(tmp_path: Path) -> None:

@@ -31,13 +31,13 @@ from bot.webui.events import _unwrap_envelope
 from bot.webui.server import WebUIServer, _new_uuid_prefix
 from bot.workspace.dispatch import WorkspaceMessageDispatcher
 from bot.workspace.handle import PoolWorkspaceResources
-from framework.workspace.context import WorkspaceContext
-from framework.workspace.registry import InMemoryRegistryStore, WorkspaceRegistry
-from framework.workspace.routing import WorkspaceResolver
-from framework.core.session_id import SessionIdFactory, SessionInfo
-from framework.core.types import InputMessage
-from framework.messaging.broker_memory import InMemoryMessageBroker
-from framework.multi_agent.address import AgentAddress
+from modex_agent.workspace.context import WorkspaceContext
+from modex_agent.workspace.registry import InMemoryRegistryStore, WorkspaceRegistry
+from modex_agent.workspace.routing import WorkspaceResolver
+from modex_agent.core.session_id import SessionIdFactory, SessionInfo
+from modex_agent.core.types import InputMessage
+from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.multi_agent.address import AgentAddress
 
 
 class _NoSkillRegistry(SkillRegistry):

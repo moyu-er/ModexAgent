@@ -5,9 +5,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from framework.core.emitter import AgentResult
-from framework.messaging.broker_memory import InMemoryMessageBroker
-from framework.multi_agent import (
+from modex_agent.core.emitter import AgentResult
+from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.multi_agent import (
     AgentDescriptor,
     AgentFactory,
     AgentLLMConfig,
@@ -15,11 +15,11 @@ from framework.multi_agent import (
     DefaultAgentFactory,
     SessionRetentionPolicy,
 )
-from framework.multi_agent.comm_tracker import CommunicationTracker
-from framework.multi_agent.state import AgentState
-from framework.multi_agent.address import AgentAddress
-from framework.multi_agent.envelope import AgentMessageEnvelope
-from framework.multi_agent.router import DefaultMeshRouter
+from modex_agent.multi_agent.comm_tracker import CommunicationTracker
+from modex_agent.multi_agent.state import AgentState
+from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+from modex_agent.multi_agent.router import DefaultMeshRouter
 
 
 @pytest.fixture

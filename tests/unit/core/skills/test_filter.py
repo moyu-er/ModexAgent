@@ -2,12 +2,12 @@
 
 import pytest
 
-from framework.core.skills.filter import (
+from modex_agent.core.skills.filter import (
     AllowListFilter,
     CompositeFilter,
     DenyListFilter,
 )
-from framework.core.skills.models import Skill
+from modex_agent.core.skills.models import Skill
 
 
 class TestAllowListFilter:

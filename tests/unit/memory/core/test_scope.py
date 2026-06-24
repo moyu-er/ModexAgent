@@ -1,7 +1,7 @@
 """Tests for memory scope abstractions."""
 
-from framework.core.session_id import SessionInfo
-from framework.memory.core.scope import (
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.memory.core.scope import (
     AgentScope,
     ChannelScope,
     ChatScope,

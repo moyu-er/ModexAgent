@@ -6,10 +6,10 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
 
-from framework.commands.processor import CommandProcessor
-from framework.control.channel import InMemoryControlChannel
-from framework.core.types import InputMessage
-from framework.pipeline.adapters import InputAdapter, OutputAdapter
+from modex_agent.commands.processor import CommandProcessor
+from modex_agent.control.channel import InMemoryControlChannel
+from modex_agent.core.types import InputMessage
+from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
 
 logger = logging.getLogger(__name__)
 

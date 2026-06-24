@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from framework.core.graph.interrupt import GraphInterrupt
-from framework.multi_agent.pool import AgentPool
-from framework.multi_agent.state import AgentState
+from modex_agent.core.graph.interrupt import GraphInterrupt
+from modex_agent.multi_agent.pool import AgentPool
+from modex_agent.multi_agent.state import AgentState
 
 
 class _FakeBroker:
@@ -83,14 +83,14 @@ class TestDispatchTaskRequestFallback:
     async def test_dispatch_falls_back_to_content_when_task_prompt_missing(self, pool):
         """When the envelope payload has ``content`` but no ``task_prompt``,
         _dispatch_task_request should still extract the task via the fallback."""
-        from framework.core.types import InputMessage
-        from framework.multi_agent.address import AgentAddress
-        from framework.multi_agent.descriptor import AgentDescriptor, AgentInstance
-        from framework.multi_agent.envelope import AgentMessageEnvelope
-        from framework.pipeline.pipeline import AgentPipeline
+        from modex_agent.core.types import InputMessage
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.descriptor import AgentDescriptor, AgentInstance
+        from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+        from modex_agent.pipeline.pipeline import AgentPipeline
 
-        from framework.core.agent import Agent
-        from framework.core.tool_manager import InMemoryToolManager
+        from modex_agent.core.agent import Agent
+        from modex_agent.core.tool_manager import InMemoryToolManager
 
         desc = AgentDescriptor(address=AgentAddress(name="worker"))
         agent_stub = MagicMock(spec=Agent)
@@ -101,7 +101,7 @@ class TestDispatchTaskRequestFallback:
 
         async def _fake_process(msg):
             processed_content.append(msg.content)
-            from framework.core.emitter import AgentResult
+            from modex_agent.core.emitter import AgentResult
             return AgentResult(content="done")
 
         pipeline_stub.process_message.side_effect = _fake_process
@@ -195,8 +195,8 @@ class TestInboxWakeupCrossPoolDefense:
     @pytest.mark.asyncio
     async def test_handle_inbox_wakeup_skips_foreign_session(self, pool):
         """Wakeup for a session whose agent is not in this pool must be dropped."""
-        from framework.multi_agent.address import AgentAddress
-        from framework.multi_agent.descriptor import AgentDescriptor
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.descriptor import AgentDescriptor
 
         desc = AgentDescriptor(address=AgentAddress(name="coding"))
         instance = MagicMock()
@@ -211,8 +211,8 @@ class TestInboxWakeupCrossPoolDefense:
     @pytest.mark.asyncio
     async def test_handle_inbox_wakeup_processes_owned_session(self, pool):
         """Wakeup for a session whose agent is in this pool proceeds to poll."""
-        from framework.multi_agent.address import AgentAddress
-        from framework.multi_agent.descriptor import AgentDescriptor
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.descriptor import AgentDescriptor
 
         desc = AgentDescriptor(address=AgentAddress(name="coding"))
         instance = MagicMock()
@@ -239,7 +239,7 @@ class TestTrackSessionNoDoubleEncode:
         external_id=session_id (a full '{prefix}.{agent}' string), causing
         encode_snowflake to double-encode the prefix and produce a different
         session_id — so two session records appeared for one subagent."""
-        from framework.core.session_id import SessionIdFactory, encode_snowflake
+        from modex_agent.core.session_id import SessionIdFactory, encode_snowflake
         from unittest.mock import MagicMock
 
         factory = SessionIdFactory()

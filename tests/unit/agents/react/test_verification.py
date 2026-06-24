@@ -5,32 +5,32 @@ event contract, engine routing, and bot_project wiring.
 """
 
 import pytest
-from framework.agents.react.approval import TieredToolApprovalClassifier
-from framework.approval.config import AgentApprovalConfig, ToolApprovalConfig
-from framework.approval.constants import ApprovalDecision, ApprovalTier, ApprovalStatus
-from framework.approval.response import parse_approval_action
-from framework.approval.types import ApprovalAction
-from framework.agents.react.constants import ReActNode, ReActReason
-from framework.agents.react.nodes.tool import ToolNode
-from framework.agents.react.nodes.start import StartNode
-from framework.agents.react.nodes.llm import LLMNode
-from framework.agents.react.nodes.end import EndNode
-from framework.agents.react.graph import ReActGraph
-from framework.agents.react.agent import ReActEvent
-from framework.core.graph.node import NodeTransition
-from framework.core.graph.graph import Graph, Edge
-from framework.core.graph.engine import GraphEngine
-from framework.core.graph.constants import GraphNode
-from framework.core.agent import AgentContext
-from framework.core.graph.interrupt import GraphInterrupt
+from modex_agent.agents.react.approval import TieredToolApprovalClassifier
+from modex_agent.approval.config import AgentApprovalConfig, ToolApprovalConfig
+from modex_agent.approval.constants import ApprovalDecision, ApprovalTier, ApprovalStatus
+from modex_agent.approval.response import parse_approval_action
+from modex_agent.approval.types import ApprovalAction
+from modex_agent.agents.react.constants import ReActNode, ReActReason
+from modex_agent.agents.react.nodes.tool import ToolNode
+from modex_agent.agents.react.nodes.start import StartNode
+from modex_agent.agents.react.nodes.llm import LLMNode
+from modex_agent.agents.react.nodes.end import EndNode
+from modex_agent.agents.react.graph import ReActGraph
+from modex_agent.agents.react.agent import ReActEvent
+from modex_agent.core.graph.node import NodeTransition
+from modex_agent.core.graph.graph import Graph, Edge
+from modex_agent.core.graph.engine import GraphEngine
+from modex_agent.core.graph.constants import GraphNode
+from modex_agent.core.agent import AgentContext
+from modex_agent.core.graph.interrupt import GraphInterrupt
 
-from framework.core.tool_manager import InMemoryToolManager
-from framework.core.types import ToolCall
-from framework.core.tool_manager import ToolResult
-from framework.core.types import LLMResponse
-from framework.core.constants import FinishReason
-from framework.memory.history import ListMessageHistory
-from framework.hook import HookPoint
-from framework.runtime.enums import ApprovalSubjectType
-from framework.runtime.models import ApprovalRequestState, ApprovalTransaction, ToolArguments
+from modex_agent.core.tool_manager import InMemoryToolManager
+from modex_agent.core.types import ToolCall
+from modex_agent.core.tool_manager import ToolResult
+from modex_agent.core.types import LLMResponse
+from modex_agent.core.constants import FinishReason
+from modex_agent.memory.history import ListMessageHistory
+from modex_agent.hook import HookPoint
+from modex_agent.runtime.enums import ApprovalSubjectType
+from modex_agent.runtime.models import ApprovalRequestState, ApprovalTransaction, ToolArguments
 

@@ -2,15 +2,15 @@
 from pathlib import Path
 
 import pytest
-from framework.agents.react.approval import TieredToolApprovalClassifier
-from framework.approval.config import AgentApprovalConfig, ToolApprovalConfig
-from framework.approval.constants import ApprovalTier
-from framework.interceptor.builtin.tool_approval import ArgumentMatcher
-from framework.core.types import ToolCall
-from framework.core.agent import AgentContext
-from framework.core.session_id import SessionInfo
-from framework.core.tool_manager import InMemoryToolManager
-from framework.memory.history import ListMessageHistory
+from modex_agent.agents.react.approval import TieredToolApprovalClassifier
+from modex_agent.approval.config import AgentApprovalConfig, ToolApprovalConfig
+from modex_agent.approval.constants import ApprovalTier
+from modex_agent.interceptor.builtin.tool_approval import ArgumentMatcher
+from modex_agent.core.types import ToolCall
+from modex_agent.core.agent import AgentContext
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.tool_manager import InMemoryToolManager
+from modex_agent.memory.history import ListMessageHistory
 
 
 def make_ctx():

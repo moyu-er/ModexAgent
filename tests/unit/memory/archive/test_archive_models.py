@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from framework.memory.archive_models import (
+from modex_agent.memory.archive_models import (
     ARCHIVE_SCHEMA,
     ArchiveBundleResult,
     ArchiveChannel,

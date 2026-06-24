@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from framework.tools.overflow.store import ToolOverflowStore
+from modex_agent.tools.overflow.store import ToolOverflowStore
 
 
 class TestToolOverflowStoreABC:

@@ -24,11 +24,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Generic, TypeVar
 
-from framework.agents.react.agent import ReActEvent
-from framework.core.emitter import AgentResult, ContentEmitter, EmitterConfig, StreamingAwareEmitter
-from framework.core.session_id import agent_of
-from framework.core.tool_manager import ToolResult
-from framework.core.types import ToolCall
+from modex_agent.agents.react.agent import ReActEvent
+from modex_agent.core.emitter import AgentResult, ContentEmitter, EmitterConfig, StreamingAwareEmitter
+from modex_agent.core.session_id import agent_of
+from modex_agent.core.tool_manager import ToolResult
+from modex_agent.core.types import ToolCall
 
 from ..adapters.web_socket import WebSocketOutputAdapter
 from .events import (

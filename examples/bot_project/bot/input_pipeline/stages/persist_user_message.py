@@ -8,9 +8,9 @@ from pathlib import Path
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from bot.webui.events import UserMessageEvent
-from framework.input_pipeline.envelope import UserInputEnvelope
-from framework.input_pipeline.stage import Continue, InputStage, StageResult
-from framework.workspace.runtime import bind_workspace_root
+from modex_agent.input_pipeline.envelope import UserInputEnvelope
+from modex_agent.input_pipeline.stage import Continue, InputStage, StageResult
+from modex_agent.workspace.runtime import bind_workspace_root
 
 logger = logging.getLogger(__name__)
 

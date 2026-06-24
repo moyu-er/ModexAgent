@@ -2,7 +2,7 @@
 
 import pytest
 
-from framework.plugins.abc import MemoryProvider
+from modex_agent.plugins.abc import MemoryProvider
 
 
 class DummyProvider(MemoryProvider):

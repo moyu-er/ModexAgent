@@ -16,10 +16,10 @@ from bot.webui.events import (
     WebUIEventType,
 )
 from bot.webui.transcript_store import JSONLTranscriptStore
-from framework.agents.react.agent import ReActEvent
-from framework.core.emitter import AgentResult, ContentEmitter, EmitterConfig
-from framework.core.tool_manager import ToolResult
-from framework.core.types import ToolCall
+from modex_agent.agents.react.agent import ReActEvent
+from modex_agent.core.emitter import AgentResult, ContentEmitter, EmitterConfig
+from modex_agent.core.tool_manager import ToolResult
+from modex_agent.core.types import ToolCall
 
 
 @pytest.mark.asyncio

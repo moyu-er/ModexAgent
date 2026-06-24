@@ -11,8 +11,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from framework.core.provider import LLMProvider, StreamingLLMProvider
-from framework.core.types import LLMResponse
+from modex_agent.core.provider import LLMProvider, StreamingLLMProvider
+from modex_agent.core.types import LLMResponse
 
 
 class MockProvider(LLMProvider):
@@ -226,7 +226,7 @@ class TestLiteLLMProviderRetryRouting:
     @pytest.fixture
     def provider(self):
         with patch.dict('os.environ', {'LITELLM_LOG': 'ERROR'}):
-            from framework.providers.litellm_provider import LiteLLMProvider
+            from modex_agent.providers.litellm_provider import LiteLLMProvider
             p = LiteLLMProvider(model="gpt-4", api_key="test-key")
             p._acompletion = AsyncMock()
             return p

@@ -7,10 +7,10 @@ from pathlib import Path
 
 from bot.service.pool_router import PoolSessionStore
 from bot.webui.transcript_store import TranscriptStore
-from framework.core.session_id import SessionIdFactory
-from framework.core.types import InputMessage
-from framework.input_pipeline.context import InputContext
-from framework.pipeline.adapters import InputAdapter
+from modex_agent.core.session_id import SessionIdFactory
+from modex_agent.core.types import InputMessage
+from modex_agent.input_pipeline.context import InputContext
+from modex_agent.pipeline.adapters import InputAdapter
 
 
 class BotInputContext(InputContext):

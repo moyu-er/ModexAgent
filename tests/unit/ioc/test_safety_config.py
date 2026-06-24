@@ -1,4 +1,4 @@
-from framework.ioc.configs.safety import LLMSafetyConfig, SafetyConfig, TurnSafetyConfig
+from modex_agent.ioc.configs.safety import LLMSafetyConfig, SafetyConfig, TurnSafetyConfig
 
 
 class TestSafetyConfig:

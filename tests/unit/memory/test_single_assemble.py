@@ -5,9 +5,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from framework.core.context import ContextState
-from framework.memory.core.message import ChatMessage
-from framework.memory.system import MemorySystemContextManager
+from modex_agent.core.context import ContextState
+from modex_agent.memory.core.message import ChatMessage
+from modex_agent.memory.system import MemorySystemContextManager
 
 
 def _make_mock_system() -> MagicMock:

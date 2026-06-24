@@ -6,12 +6,12 @@ Contains user-facing tools (SendFileToUserTool).
 import logging
 from pathlib import Path
 
-from framework.core.tool_manager import (
+from modex_agent.core.tool_manager import (
     Tool,
     ToolConfig,
 )
-from framework.workspace.runtime import resolve_workspace_root
-from framework.pipeline.adapters import OutputAdapter
+from modex_agent.workspace.runtime import resolve_workspace_root
+from modex_agent.pipeline.adapters import OutputAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -64,8 +64,8 @@ class SendFileToUserTool(Tool):
         if not path.is_file():
             return f"Error: Not a regular file: {file_path}"
 
-        from framework.core.agent import current_agent_context
-        from framework.core.types import OutputMessage
+        from modex_agent.core.agent import current_agent_context
+        from modex_agent.core.types import OutputMessage
 
         agent_ctx = current_agent_context.get(None)
         if agent_ctx is None:

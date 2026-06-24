@@ -13,31 +13,31 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from framework.agents.react.agent import (
+from modex_agent.agents.react.agent import (
     ReActAgent,
     _interrupt_reason_from,
     _persist_interrupted_partial,
 )
-from framework.agents.react.state import ReActTurnState
-from framework.control.exceptions import (
+from modex_agent.agents.react.state import ReActTurnState
+from modex_agent.control.exceptions import (
     AgentCancelled,
     AgentTimeout,
     PolicyViolation,
 )
-from framework.core.message import ContentFormat
-from framework.core.provider import StreamingLLMProvider
-from framework.core.session_id import SessionInfo
-from framework.core.types import LLMResponse, ToolCall
-from framework.interceptor.abc import LLMStreamChunk
-from framework.memory.history import ListMessageHistory
-from framework.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
-from framework.runtime.models import TurnIdentity
-from framework.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.core.message import ContentFormat
+from modex_agent.core.provider import StreamingLLMProvider
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.types import LLMResponse, ToolCall
+from modex_agent.interceptor.abc import LLMStreamChunk
+from modex_agent.memory.history import ListMessageHistory
+from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
+from modex_agent.runtime.models import TurnIdentity
+from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 
 
 def _make_ctx():
-    from framework.core.agent import AgentContext
-    from framework.core.tool_manager import InMemoryToolManager
+    from modex_agent.core.agent import AgentContext
+    from modex_agent.core.tool_manager import InMemoryToolManager
 
     state = ReActTurnState(
         identity=TurnIdentity(

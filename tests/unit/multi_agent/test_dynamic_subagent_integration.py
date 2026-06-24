@@ -4,12 +4,12 @@ import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-from framework.core.agent import AgentContext
-from framework.core.session_id import SessionInfo
-from framework.multi_agent.comm_kind import AgentCommKind
-from framework.multi_agent.message_xml import build_agent_message, build_agent_result
-from framework.multi_agent.template import AgentTemplate
-from framework.multi_agent.template_registry import AgentTemplateRegistry
+from modex_agent.core.agent import AgentContext
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.multi_agent.comm_kind import AgentCommKind
+from modex_agent.multi_agent.message_xml import build_agent_message, build_agent_result
+from modex_agent.multi_agent.template import AgentTemplate
+from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 
 
 def _write_files(base: Path, pool: str, agent_type: str, yml_content: str, md_content: str):
@@ -134,8 +134,8 @@ class TestDynamicCreationAgentAddressBug:
             template = registry.get_template("main", "helper")
             assert template is not None
 
-            from framework.multi_agent.communication import AgentCommunicationService
-            from framework.multi_agent.address import AgentAddress
+            from modex_agent.multi_agent.communication import AgentCommunicationService
+            from modex_agent.multi_agent.address import AgentAddress
 
             mock_pool = _make_mock_pool()
             mock_broker = AsyncMock()
@@ -187,9 +187,9 @@ class TestInvocationIdNullCreatesNewSubagent:
             template = registry.get_template("main", "helper")
             assert template is not None
 
-            from framework.multi_agent.communication import AgentCommunicationService
-            from framework.multi_agent.address import AgentAddress
-            from framework.core.agent import AgentContext
+            from modex_agent.multi_agent.communication import AgentCommunicationService
+            from modex_agent.multi_agent.address import AgentAddress
+            from modex_agent.core.agent import AgentContext
 
             mock_pool = _make_mock_pool()
             mock_broker = AsyncMock()
@@ -228,9 +228,9 @@ class TestInvocationIdNullCreatesNewSubagent:
 
     async def test_null_invocation_id_normal_agent(self):
         """send_to_agent(target='normal-agent', invocation_id=null) sends normally."""
-        from framework.multi_agent.communication import AgentCommunicationService
-        from framework.multi_agent.address import AgentAddress
-        from framework.core.agent import AgentContext
+        from modex_agent.multi_agent.communication import AgentCommunicationService
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.core.agent import AgentContext
 
         mock_broker = AsyncMock()
         mock_registry = MagicMock()
@@ -265,9 +265,9 @@ class TestInvocationIdNullCreatesNewSubagent:
 
     async def test_concrete_invocation_id_continues_session(self):
         """send_to_agent(target='helper', invocation_id='abc123') continues existing session."""
-        from framework.multi_agent.communication import AgentCommunicationService
-        from framework.multi_agent.address import AgentAddress
-        from framework.core.agent import AgentContext
+        from modex_agent.multi_agent.communication import AgentCommunicationService
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.core.agent import AgentContext
 
         mock_broker = AsyncMock()
         mock_registry = MagicMock()
@@ -305,14 +305,14 @@ class TestInvocationIdDescriptionHidesCommKind:
     """The invocation_id parameter description must NOT mention NORMAL/SUBAGENT."""
 
     def test_param_description_no_kind_mention(self):
-        from framework.multi_agent.tools import _NORMAL_PARAMS
+        from modex_agent.multi_agent.tools import _NORMAL_PARAMS
 
         desc = _NORMAL_PARAMS["properties"]["invocation_id"]["description"].lower()
         assert "normal" not in desc
         assert "subagent" not in desc
 
     def test_tool_description_no_kind_mention(self):
-        from framework.multi_agent.tools import CommunicationTargetStore, SendToAgentTool
+        from modex_agent.multi_agent.tools import CommunicationTargetStore, SendToAgentTool
 
         store = CommunicationTargetStore()
         tool = SendToAgentTool(
@@ -338,9 +338,9 @@ class TestSubagentIdentityResolution:
 
     async def test_subagent_send_has_correct_source(self):
         """When subagent sends via send_to_agent, envelope source must be subagent name."""
-        from framework.core.agent import AgentContext, current_agent_context
-        from framework.multi_agent.communication import AgentCommunicationService
-        from framework.multi_agent.address import AgentAddress
+        from modex_agent.core.agent import AgentContext, current_agent_context
+        from modex_agent.multi_agent.communication import AgentCommunicationService
+        from modex_agent.multi_agent.address import AgentAddress
 
         sent_envelopes: list = []
         mock_broker = AsyncMock()
@@ -402,8 +402,8 @@ class TestSubagentIsolation:
     """
 
     async def test_subagent_gets_dedicated_context_manager(self):
-        from framework.multi_agent.address import AgentAddress
-        from framework.multi_agent.communication import AgentCommunicationService
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.communication import AgentCommunicationService
 
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
@@ -445,8 +445,8 @@ class TestSubagentIsolation:
             )
 
     async def test_subagent_gets_dedicated_tool_manager(self):
-        from framework.multi_agent.address import AgentAddress
-        from framework.multi_agent.communication import AgentCommunicationService
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.communication import AgentCommunicationService
 
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
@@ -507,10 +507,10 @@ class TestSubagentMemoryCorrectness:
 
     async def test_subagent_gets_memory_system_context_manager(self):
         """Subagent must use MemorySystemContextManager."""
-        from framework.memory.system import MemorySystemContextManager
-        from framework.multi_agent.address import AgentAddress
-        from framework.multi_agent.communication import AgentCommunicationService
-        from framework.memory.core.scope import MemoryAgentRole
+        from modex_agent.memory.system import MemorySystemContextManager
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.communication import AgentCommunicationService
+        from modex_agent.memory.core.scope import MemoryAgentRole
 
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
@@ -569,9 +569,9 @@ class TestAgentMessageXmlWrapping:
 
     async def test_task_request_wraps_content_in_agent_message_xml(self):
         """First message (task_request) must be XML-wrapped."""
-        from framework.multi_agent.address import AgentAddress
-        from framework.multi_agent.communication import AgentCommunicationService
-        from framework.multi_agent.message_xml import build_agent_message
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.communication import AgentCommunicationService
+        from modex_agent.multi_agent.message_xml import build_agent_message
 
         sent_payloads: list = []
         mock_broker = AsyncMock()
@@ -624,10 +624,10 @@ class TestAgentMessageXmlWrapping:
 
     async def test_agent_message_wraps_content_in_xml(self):
         """Normal agent_message must also be XML-wrapped."""
-        from framework.core.agent import AgentContext
-        from framework.multi_agent.address import AgentAddress
-        from framework.multi_agent.communication import AgentCommunicationService
-        from framework.multi_agent.descriptor import AgentDescriptor
+        from modex_agent.core.agent import AgentContext
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.communication import AgentCommunicationService
+        from modex_agent.multi_agent.descriptor import AgentDescriptor
 
         sent_payloads: list = []
         mock_broker = AsyncMock()
@@ -682,7 +682,7 @@ class TestSessionRoutingSameAgentDifferentInvocation:
     """
 
     def test_same_agent_different_invocation_produces_different_sessions(self):
-        from framework.core.session_id import SessionIdFactory
+        from modex_agent.core.session_id import SessionIdFactory
 
         factory = SessionIdFactory()
 
@@ -699,7 +699,7 @@ class TestSessionRoutingSameAgentDifferentInvocation:
         assert sid_b.agent_name == "query-12306"
 
     def test_same_invocation_produces_same_session(self):
-        from framework.core.session_id import SessionIdFactory
+        from modex_agent.core.session_id import SessionIdFactory
 
         factory = SessionIdFactory()
 
@@ -714,7 +714,7 @@ class TestSessionRoutingSameAgentDifferentInvocation:
         assert str(sid_1) == str(sid_2)
 
     def test_different_agent_same_invocation_different_sessions(self):
-        from framework.core.session_id import SessionIdFactory
+        from modex_agent.core.session_id import SessionIdFactory
 
         factory = SessionIdFactory()
 
@@ -731,10 +731,10 @@ class TestSessionRoutingSameAgentDifferentInvocation:
     async def test_second_empty_invocation_id_does_not_recreate_agent(self):
         """Second invocation_id="" on same template must NOT call
         _create_dynamic_subagent again — the agent is already registered."""
-        from framework.core.agent import AgentContext
-        from framework.multi_agent.address import AgentAddress
-        from framework.multi_agent.communication import AgentCommunicationService
-        from framework.multi_agent.descriptor import AgentDescriptor
+        from modex_agent.core.agent import AgentContext
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.communication import AgentCommunicationService
+        from modex_agent.multi_agent.descriptor import AgentDescriptor
 
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
@@ -807,9 +807,9 @@ class TestSubagentSafetyHooks:
 
     async def test_max_iteration_notify_hook_is_wired(self):
         """MaxIterationNotifyHook must be wired on the subagent pipeline."""
-        from framework.hook import HookRunner, HookErrorPolicy, HookSpec
-        from framework.hook.builtin import SubagentAutoSendHook
-        from framework.hook.notification import MaxIterationNotifyHook
+        from modex_agent.hook import HookRunner, HookErrorPolicy, HookSpec
+        from modex_agent.hook.builtin import SubagentAutoSendHook
+        from modex_agent.hook.notification import MaxIterationNotifyHook
 
         # Simulate a pipeline with hook_runner that records hooks
         recorded_hooks: list = []
@@ -827,8 +827,8 @@ class TestSubagentSafetyHooks:
         mock_pool = _make_mock_pool()
         mock_pool.get.return_value = MagicMock(pipeline=pipeline)
 
-        from framework.multi_agent.address import AgentAddress
-        from framework.multi_agent.communication import AgentCommunicationService
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.communication import AgentCommunicationService
 
         mock_broker = AsyncMock()
         mock_registry = MagicMock()
@@ -856,8 +856,8 @@ class TestSubagentSafetyHooks:
 
     async def test_hooks_not_wired_without_pipeline(self):
         """_wire_subagent_hooks must be safe when pipeline is None."""
-        from framework.multi_agent.address import AgentAddress
-        from framework.multi_agent.communication import AgentCommunicationService
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.communication import AgentCommunicationService
 
         mock_pool = _make_mock_pool()
         mock_pool.get.return_value = None  # No agent found
@@ -882,7 +882,7 @@ class TestOutputMdInjection:
         """OUTPUT.md path must contain session-id components and end with OUTPUT.md."""
         from pathlib import Path as _Path
 
-        from framework.core.session_id import SessionIdFactory
+        from modex_agent.core.session_id import SessionIdFactory
 
         factory = SessionIdFactory()
         session = factory.create(
@@ -902,7 +902,7 @@ class TestOutputMdInjection:
         """READ_ONLY scoped_write_dir must be the parent of OUTPUT.md's directory."""
         from pathlib import Path as _Path
 
-        from framework.core.session_id import SessionIdFactory
+        from modex_agent.core.session_id import SessionIdFactory
 
         factory = SessionIdFactory()
         session = factory.create(
@@ -926,7 +926,7 @@ class TestOutputMdInjection:
         import tempfile
         from pathlib import Path as _Path
 
-        from framework.tools.presets import ToolPreset, get_preset_tools
+        from modex_agent.tools.presets import ToolPreset, get_preset_tools
 
         scoped_dir = _Path(tempfile.gettempdir()) / "output"
         tools = get_preset_tools(ToolPreset.READ_ONLY, scoped_write_dir=scoped_dir)
@@ -943,7 +943,7 @@ class TestOutputMdInjection:
 
     def test_full_template_does_not_get_scoped_tools(self):
         """READ_WRITE template uses standard write/edit, not scoped versions."""
-        from framework.tools.presets import ToolPreset, get_preset_tools
+        from modex_agent.tools.presets import ToolPreset, get_preset_tools
 
         tools = get_preset_tools(ToolPreset.READ_WRITE)
         tool_names = {t.name for t in tools}
@@ -952,7 +952,7 @@ class TestOutputMdInjection:
 
     def test_no_scoped_dir_means_no_write_for_read_only(self):
         """READ_ONLY without scoped_write_dir gets no write/edit at all."""
-        from framework.tools.presets import ToolPreset, get_preset_tools
+        from modex_agent.tools.presets import ToolPreset, get_preset_tools
 
         tools = get_preset_tools(ToolPreset.READ_ONLY, scoped_write_dir=None)
         tool_names = {t.name for t in tools}
@@ -969,11 +969,11 @@ class TestOutputMdInjection:
         import tempfile
         from pathlib import Path as _Path
 
-        from framework.multi_agent.address import AgentAddress
-        from framework.multi_agent.communication import AgentCommunicationService
-        from framework.multi_agent.template import AgentTemplate
-        from framework.multi_agent.template_registry import AgentTemplateRegistry
-        from framework.tools.presets import ToolPreset
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.communication import AgentCommunicationService
+        from modex_agent.multi_agent.template import AgentTemplate
+        from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
+        from modex_agent.tools.presets import ToolPreset
 
         # Set up template registry — correct directory layout:
         #   config/pools/{pool}/templates/{type}.yml
@@ -1041,11 +1041,11 @@ class TestOutputMdInjection:
         import tempfile
         from pathlib import Path as _Path
 
-        from framework.multi_agent.address import AgentAddress
-        from framework.multi_agent.communication import AgentCommunicationService
-        from framework.multi_agent.template import AgentTemplate
-        from framework.multi_agent.template_registry import AgentTemplateRegistry
-        from framework.tools.presets import ContextMode, ToolPreset
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.communication import AgentCommunicationService
+        from modex_agent.multi_agent.template import AgentTemplate
+        from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
+        from modex_agent.tools.presets import ContextMode, ToolPreset
 
         project = _Path(tempfile.mkdtemp())
         pool_tpl_dir = project / "config" / "pools" / "main" / "templates"
@@ -1102,9 +1102,9 @@ class TestOutputMdInjection:
         import tempfile
         from pathlib import Path as _Path
 
-        from framework.memory.core.scope import MemoryAgentRole
-        from framework.ioc.factories.descriptors import build_session_only_memory
-        from framework.ioc.configs.memory import MemoryConfig
+        from modex_agent.memory.core.scope import MemoryAgentRole
+        from modex_agent.ioc.factories.descriptors import build_session_only_memory
+        from modex_agent.ioc.configs.memory import MemoryConfig
 
         runtime_dir = _Path(tempfile.mkdtemp()) / "runtime"
         session_id = "conv-1.reviewer.abc123"
@@ -1149,9 +1149,9 @@ class TestSubagentToolInstanceIsolation:
 
     async def test_two_subagents_get_distinct_tool_managers(self):
         """Each _create_dynamic_subagent call creates a new InMemoryToolManager."""
-        from framework.multi_agent.address import AgentAddress
-        from framework.multi_agent.communication import AgentCommunicationService
-        from framework.multi_agent.template_registry import AgentTemplateRegistry
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.communication import AgentCommunicationService
+        from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
@@ -1202,10 +1202,10 @@ class TestSubagentToolInstanceIsolation:
 
     async def test_tool_instances_not_shared_between_subagents(self):
         """Registering a tool in one subagent's manager must not affect the other."""
-        from framework.multi_agent.address import AgentAddress
-        from framework.multi_agent.communication import AgentCommunicationService
-        from framework.multi_agent.template_registry import AgentTemplateRegistry
-        from framework.tools.standard import ReadFileTool
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.communication import AgentCommunicationService
+        from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
+        from modex_agent.tools.standard import ReadFileTool
 
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
@@ -1252,10 +1252,10 @@ class TestSubagentToolInstanceIsolation:
 
     async def test_subagents_have_independent_preset_tool_instances(self):
         """Two subagents with READ_ONLY preset each get their own tool instances."""
-        from framework.multi_agent.address import AgentAddress
-        from framework.multi_agent.communication import AgentCommunicationService
-        from framework.multi_agent.template_registry import AgentTemplateRegistry
-        from framework.tools.presets import ToolPreset
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.communication import AgentCommunicationService
+        from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
+        from modex_agent.tools.presets import ToolPreset
 
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)

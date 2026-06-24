@@ -5,8 +5,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from framework.memory.core.scope import MemoryContext
-from framework.memory.injection import FullInjectionPolicy, RestrictedInjectionPolicy
+from modex_agent.memory.core.scope import MemoryContext
+from modex_agent.memory.injection import FullInjectionPolicy, RestrictedInjectionPolicy
 
 
 class TestMemoryScopeConstruction:

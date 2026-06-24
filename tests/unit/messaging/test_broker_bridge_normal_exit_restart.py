@@ -15,10 +15,10 @@ from typing import Any
 
 import pytest
 
-from framework.core.session_id import SessionInfo
-from framework.core.types import InputMessage
-from framework.messaging.broker import Address, BrokerMessage
-from framework.messaging.broker_bridge import BrokerBridgeService
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.types import InputMessage
+from modex_agent.messaging.broker import Address, BrokerMessage
+from modex_agent.messaging.broker_bridge import BrokerBridgeService
 
 
 class _FakeBroker:

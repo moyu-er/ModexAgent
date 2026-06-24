@@ -10,9 +10,9 @@ from __future__ import annotations
 from enum import StrEnum
 
 from bot.input_pipeline.context import BotInputContext
-from framework.core.session_id import SessionInfo, encode_snowflake, session_id_prefix_of
-from framework.input_pipeline.envelope import UserInputEnvelope
-from framework.input_pipeline.stage import Continue, InputStage, StageResult
+from modex_agent.core.session_id import SessionInfo, encode_snowflake, session_id_prefix_of
+from modex_agent.input_pipeline.envelope import UserInputEnvelope
+from modex_agent.input_pipeline.stage import Continue, InputStage, StageResult
 
 
 class RoutingMeta(StrEnum):

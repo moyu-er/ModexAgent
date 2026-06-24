@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from framework.sandbox.guard import CommandSeverity, GuardMatch, GuardResult
-from framework.sandbox.guard_network import (
+from modex_agent.sandbox.guard import CommandSeverity, GuardMatch, GuardResult
+from modex_agent.sandbox.guard_network import (
     NetworkGuard,
     NetworkGuardConfig,
     configure_ssrf_whitelist,

@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from framework.core.agent import AgentContext, current_agent_context
-from framework.core.session_id import SessionInfo
-from framework.multi_agent.address import AgentAddress
-from framework.multi_agent.comm_kind import AgentCommKind
-from framework.multi_agent.tools import (
+from modex_agent.core.agent import AgentContext, current_agent_context
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.multi_agent.comm_kind import AgentCommKind
+from modex_agent.multi_agent.tools import (
     CommunicationTarget,
     CommunicationTargetStore,
     SendToAgentTool,
@@ -53,7 +53,7 @@ def _store_with_target() -> CommunicationTargetStore:
 class TestSendToAgentToolNames:
     def test_old_tool_names_are_absent(self) -> None:
         """Old tools must not be importable from tools module."""
-        import framework.multi_agent.tools as t
+        import modex_agent.multi_agent.tools as t
 
         assert not hasattr(t, "DispatchTaskTool"), "DispatchTaskTool should be removed"
         assert not hasattr(t, "SendMessageTool"), "SendMessageTool should be removed"
@@ -62,12 +62,12 @@ class TestSendToAgentToolNames:
 
 class TestNewToolExports:
     def test_send_to_agent_tool_importable(self) -> None:
-        from framework.multi_agent.tools import SendToAgentTool
+        from modex_agent.multi_agent.tools import SendToAgentTool
 
         assert SendToAgentTool.__name__ == "SendToAgentTool"
 
     def test_new_tools_exported_from_multi_agent(self) -> None:
-        from framework.multi_agent import SendToAgentTool
+        from modex_agent.multi_agent import SendToAgentTool
 
         assert SendToAgentTool is not None
 
@@ -256,7 +256,7 @@ class TestToolManagerIntegration:
     """
 
     def test_tool_manager_descriptions_use_dynamic_schema(self) -> None:
-        from framework.core.tool_manager import InMemoryToolManager
+        from modex_agent.core.tool_manager import InMemoryToolManager
         store = CommunicationTargetStore()
         store.add(CommunicationTarget(
             name="scout", kind=AgentCommKind.SUBAGENT, description="Fast recon",
@@ -420,7 +420,7 @@ class TestSendToAgentToolDescription:
 
     def test_description_via_tool_manager(self) -> None:
         """ToolManager.get_tool_descriptions() returns dynamic description."""
-        from framework.core.tool_manager import InMemoryToolManager
+        from modex_agent.core.tool_manager import InMemoryToolManager
         store = CommunicationTargetStore()
         store.add(CommunicationTarget(
             name="scout", kind=AgentCommKind.SUBAGENT, description="Fast recon",

@@ -10,17 +10,17 @@ from pathlib import Path
 
 import pytest
 
-from framework.commands.handlers import SkillCommandHandler
-from framework.commands.models import CommandContext, SlashCommandInvocation
-from framework.core.skills import FileSkillSource, DefaultSkillBuilder, SkillManager
-from framework.core.skills.cache import DirectorySkillCache
-from framework.core.session_id import SessionInfo
-from framework.core.types import InputMessage
-from framework.multi_agent import DefaultAgentFactory, AgentPool
+from modex_agent.commands.handlers import SkillCommandHandler
+from modex_agent.commands.models import CommandContext, SlashCommandInvocation
+from modex_agent.core.skills import FileSkillSource, DefaultSkillBuilder, SkillManager
+from modex_agent.core.skills.cache import DirectorySkillCache
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.types import InputMessage
+from modex_agent.multi_agent import DefaultAgentFactory, AgentPool
 from unittest.mock import MagicMock
-from framework.multi_agent.address import AgentAddress
-from framework.multi_agent.descriptor import AgentDescriptor
-from framework.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.multi_agent.descriptor import AgentDescriptor
+from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 
 
 def _make_skill_manager(tmp: Path) -> SkillManager:
@@ -141,7 +141,7 @@ async def test_pool_skill_manager_end_to_end() -> None:
             )
 
             # Verify slash command would be handled
-            from framework.commands.processor import SlashCommandProcessor
+            from modex_agent.commands.processor import SlashCommandProcessor
             processor = SlashCommandProcessor.default()
 
             context = CommandContext(
@@ -152,7 +152,7 @@ async def test_pool_skill_manager_end_to_end() -> None:
             )
             result = await processor.handle("/test-skill", context)
 
-            from framework.commands.constants import CommandAction
+            from modex_agent.commands.constants import CommandAction
             assert result.action == CommandAction.TRANSFORM_TO_USER_INPUT, (
                 f"/test-skill should resolve to TRANSFORM_TO_USER_INPUT, "
                 f"got {result.action} with notice: {result.notice}"

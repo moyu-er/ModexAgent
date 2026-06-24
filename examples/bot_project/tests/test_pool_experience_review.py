@@ -18,8 +18,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from framework.core.provider import LLMProvider
-from framework.hook.builtin.experience_review import ExperienceReviewHook
+from modex_agent.core.provider import LLMProvider
+from modex_agent.hook.builtin.experience_review import ExperienceReviewHook
 
 
 class TestExperienceReviewHookExecution:
@@ -28,9 +28,9 @@ class TestExperienceReviewHookExecution:
     @pytest.mark.asyncio
     async def test_review_agent_produces_jsonl_trace(self, tmp_path: Path) -> None:
         """When review runs, it must write a JSONL trace file."""
-        from framework.agents.experience.review_agent import ExperienceReviewAgent
-        from framework.core.experience.meta import PerFileExperienceMetaStore
-        from framework.core.provider import LLMProvider
+        from modex_agent.agents.experience.review_agent import ExperienceReviewAgent
+        from modex_agent.core.experience.meta import PerFileExperienceMetaStore
+        from modex_agent.core.provider import LLMProvider
 
         provider = MagicMock(spec=LLMProvider)
         agent = ExperienceReviewAgent(provider=provider, max_iterations=2)
@@ -42,8 +42,8 @@ class TestExperienceReviewHookExecution:
         # Mock the ReActAgent.run so we don't need a real LLM,
         # but make it emit a complete event so trace is written.
         async def _mock_run(context, emitter):
-            from framework.core.constants import StopReason
-            from framework.core.emitter import AgentResult
+            from modex_agent.core.constants import StopReason
+            from modex_agent.core.emitter import AgentResult
 
             await emitter.emit_complete(
                 AgentResult(content="done", stop_reason=StopReason.COMPLETED)
@@ -75,9 +75,9 @@ class TestExperienceReviewHookExecution:
     @pytest.mark.asyncio
     async def test_review_agent_has_run_logging_hook(self, tmp_path: Path) -> None:
         """Review agent's internal ReAct loop must have RunLoggingHook for observability."""
-        from framework.agents.experience.review_agent import ExperienceReviewAgent
-        from framework.core.experience.meta import PerFileExperienceMetaStore
-        from framework.core.provider import LLMProvider
+        from modex_agent.agents.experience.review_agent import ExperienceReviewAgent
+        from modex_agent.core.experience.meta import PerFileExperienceMetaStore
+        from modex_agent.core.provider import LLMProvider
 
         provider = MagicMock(spec=LLMProvider)
         agent = ExperienceReviewAgent(provider=provider, max_iterations=2)
@@ -87,8 +87,8 @@ class TestExperienceReviewHookExecution:
         meta = PerFileExperienceMetaStore(exp_dir)
 
         async def _mock_run(context, emitter):
-            from framework.core.constants import StopReason
-            from framework.core.emitter import AgentResult
+            from modex_agent.core.constants import StopReason
+            from modex_agent.core.emitter import AgentResult
 
             await emitter.emit_complete(
                 AgentResult(content="done", stop_reason=StopReason.COMPLETED)
@@ -98,7 +98,7 @@ class TestExperienceReviewHookExecution:
         agent._react_agent = MagicMock()
         agent._react_agent.run = _mock_run
 
-        with patch("framework.hook.runner.HookRunner") as MockRunner:
+        with patch("modex_agent.hook.runner.HookRunner") as MockRunner:
             mock_runner = MagicMock()
             MockRunner.return_value = mock_runner
 
@@ -117,11 +117,11 @@ class TestExperienceReviewHookExecution:
     @pytest.mark.asyncio
     async def test_experience_review_hook_after_turn_logs_info(self, tmp_path: Path) -> None:
         """ExperienceReviewHook.after_turn must log INFO when triggering review."""
-        from framework.agents.experience.review_agent import ExperienceReviewAgent
-        from framework.core.constants import StopReason
-        from framework.core.emitter import AgentResult
-        from framework.core.experience.meta import PerFileExperienceMetaStore
-        from framework.memory.history import ListMessageHistory
+        from modex_agent.agents.experience.review_agent import ExperienceReviewAgent
+        from modex_agent.core.constants import StopReason
+        from modex_agent.core.emitter import AgentResult
+        from modex_agent.core.experience.meta import PerFileExperienceMetaStore
+        from modex_agent.memory.history import ListMessageHistory
 
         exp_dir = tmp_path / "experiences"
         exp_dir.mkdir(parents=True, exist_ok=True)
@@ -152,7 +152,7 @@ class TestExperienceReviewHookExecution:
         result = AgentResult(content="earth", stop_reason=StopReason.COMPLETED, messages=[])
 
         records: list[logging.LogRecord] = []
-        logger = logging.getLogger("framework.hook.builtin.experience_review")
+        logger = logging.getLogger("modex_agent.hook.builtin.experience_review")
         old_level = logger.level
         logger.setLevel(logging.INFO)
 

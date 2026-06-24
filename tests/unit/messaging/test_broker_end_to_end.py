@@ -8,16 +8,16 @@ import asyncio
 
 import pytest
 
-from framework.core.session_id import SessionInfo
-from framework.core.types import InputMessage, OutputMessage
-from framework.messaging.broker import Address, BrokerMessage
-from framework.messaging.broker_bridge import (
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.types import InputMessage, OutputMessage
+from modex_agent.messaging.broker import Address, BrokerMessage
+from modex_agent.messaging.broker_bridge import (
     BrokerBridgeService,
     BrokerOutputAdapter,
     OutputRoute,
 )
-from framework.messaging.broker_memory import InMemoryMessageBroker
-from framework.pipeline.adapters import InputAdapter, OutputAdapter
+from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
 
 
 class _MockInputAdapter(InputAdapter):

@@ -3,7 +3,7 @@
 import pytest
 from pathlib import Path
 
-from framework.memory.tools.scoped_read import ScopedReadFileTool
+from modex_agent.memory.tools.scoped_read import ScopedReadFileTool
 
 
 @pytest.fixture

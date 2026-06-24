@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import BaseModel
 
-from framework.providers.shared.delta import (
+from modex_agent.providers.shared.delta import (
     ParsedResponse,
     StreamDelta,
     extract_reasoning,

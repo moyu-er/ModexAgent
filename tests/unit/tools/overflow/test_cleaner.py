@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from framework.tools.overflow.cleaner import OverflowCleaner
-from framework.tools.overflow.local import LocalFileToolOverflowStore
+from modex_agent.tools.overflow.cleaner import OverflowCleaner
+from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
 
 
 @pytest.fixture

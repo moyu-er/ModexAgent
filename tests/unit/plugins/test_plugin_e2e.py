@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from framework.plugins import PluginLoader, PluginManager
-from framework.plugins.abc import MemoryProvider
+from modex_agent.plugins import PluginLoader, PluginManager
+from modex_agent.plugins.abc import MemoryProvider
 
 
 class E2EProvider(MemoryProvider):
@@ -108,7 +108,7 @@ class TestPluginE2E:
         await pm.shutdown_providers()
 
     def test_plugin_loader_integration(self, tmp_path: Path):
-        from framework.memory.system import create_memory_system
+        from modex_agent.memory.system import create_memory_system
 
         plugin_dir = tmp_path / "e2e_plugin"
         plugin_dir.mkdir()

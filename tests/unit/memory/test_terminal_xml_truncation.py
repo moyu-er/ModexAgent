@@ -5,7 +5,7 @@ command_result, process_result, and terminal_result XML while preserving
 all other fields, tags, and attributes.
 """
 
-from framework.memory.xml_truncate import truncate_xml_safe
+from modex_agent.memory.xml_truncate import truncate_xml_safe
 
 # ── test fixtures ──
 
@@ -50,28 +50,28 @@ SHORT_TERMINAL_RESULT = (
 # ── detection helper tests ──
 
 def test_get_truncatable_paths_returns_none_for_plain_text() -> None:
-    from framework.tools.terminal.types import get_terminal_xml_truncatable_paths
+    from modex_agent.tools.terminal.types import get_terminal_xml_truncatable_paths
 
     assert get_terminal_xml_truncatable_paths("plain text output") is None
     assert get_terminal_xml_truncatable_paths("") is None
 
 
 def test_get_truncatable_paths_detects_command_result() -> None:
-    from framework.tools.terminal.types import get_terminal_xml_truncatable_paths
+    from modex_agent.tools.terminal.types import get_terminal_xml_truncatable_paths
 
     paths = get_terminal_xml_truncatable_paths(COMMAND_RESULT)
     assert "output" in paths
 
 
 def test_get_truncatable_paths_detects_process_result() -> None:
-    from framework.tools.terminal.types import get_terminal_xml_truncatable_paths
+    from modex_agent.tools.terminal.types import get_terminal_xml_truncatable_paths
 
     paths = get_terminal_xml_truncatable_paths(PROCESS_RESULT)
     assert paths == ["output"]
 
 
 def test_get_truncatable_paths_detects_terminal_result() -> None:
-    from framework.tools.terminal.types import get_terminal_xml_truncatable_paths
+    from modex_agent.tools.terminal.types import get_terminal_xml_truncatable_paths
 
     paths = get_terminal_xml_truncatable_paths(TERMINAL_RESULT)
     assert paths is not None
@@ -80,7 +80,7 @@ def test_get_truncatable_paths_detects_terminal_result() -> None:
 
 
 def test_get_truncatable_paths_detects_overflow_result() -> None:
-    from framework.tools.terminal.types import get_terminal_xml_truncatable_paths
+    from modex_agent.tools.terminal.types import get_terminal_xml_truncatable_paths
 
     overflow_xml = (
         '<tool_result_overflow tool="read_file" total_chars="60000" '
@@ -174,7 +174,7 @@ def test_terminal_result_short_is_unchanged() -> None:
 # ── overflow XML detection via ToolResult.to_message() ──
 
 def test_tool_result_to_message_detects_overflow_xml() -> None:
-    from framework.core.tool_manager import ToolResult
+    from modex_agent.core.tool_manager import ToolResult
 
     xml = (
         '<tool_result_overflow tool="read_file" total_chars="60000" '

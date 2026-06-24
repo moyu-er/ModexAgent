@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import pytest
 
-from framework.runtime.codec import RuntimeStateCodecRegistry
-from framework.runtime.enums import AgentKind, SnapshotReason, TurnPhase
-from framework.runtime.models import ResumePoint, TurnIdentity, TurnSnapshot
-from framework.runtime.store import ActiveTurnConflictError
-from framework.core.session_id import SessionInfo
+from modex_agent.runtime.codec import RuntimeStateCodecRegistry
+from modex_agent.runtime.enums import AgentKind, SnapshotReason, TurnPhase
+from modex_agent.runtime.models import ResumePoint, TurnIdentity, TurnSnapshot
+from modex_agent.runtime.store import ActiveTurnConflictError
+from modex_agent.core.session_id import SessionInfo
 
 
 class _FakeCodec:
@@ -55,7 +55,7 @@ class _FakeCodec:
 
 
 async def test_store_rejects_second_active_turn_for_same_agent_session(tmp_path) -> None:
-    from framework.runtime.store import JsonFileTurnStateStore
+    from modex_agent.runtime.store import JsonFileTurnStateStore
 
     registry = RuntimeStateCodecRegistry({AgentKind.REACT: _FakeCodec()})
     store = JsonFileTurnStateStore(tmp_path, registry)

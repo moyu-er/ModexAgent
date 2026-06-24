@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from framework.memory.core.scope import MemoryContext
-from framework.memory.core.message import ChatMessage
-from framework.memory.recorder import MemoryAppendRecorder
+from modex_agent.memory.core.scope import MemoryContext
+from modex_agent.memory.core.message import ChatMessage
+from modex_agent.memory.recorder import MemoryAppendRecorder
 
 
 class FakeProvider:

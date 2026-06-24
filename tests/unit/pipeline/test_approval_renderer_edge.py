@@ -7,21 +7,21 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from framework.agents.react.constants import ReActNode
-from framework.agents.react.state import ReActSnapshotPolicy, ReActTurnState
-from framework.approval.constants import ApprovalDecision, ApprovalTier
-from framework.approval.response import parse_approval_action
-from framework.core.types import InputMessage
-from framework.pipeline.approval_renderer import ApprovalRenderer, format_approval_prompt
-from framework.runtime.enums import AgentKind, ApprovalSubjectType, SnapshotReason, TurnPhase
-from framework.runtime.models import (
+from modex_agent.agents.react.constants import ReActNode
+from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
+from modex_agent.approval.constants import ApprovalDecision, ApprovalTier
+from modex_agent.approval.response import parse_approval_action
+from modex_agent.core.types import InputMessage
+from modex_agent.pipeline.approval_renderer import ApprovalRenderer, format_approval_prompt
+from modex_agent.runtime.enums import AgentKind, ApprovalSubjectType, SnapshotReason, TurnPhase
+from modex_agent.runtime.models import (
     ApprovalRequestState,
     ApprovalTransaction,
     ToolArguments,
     TurnIdentity,
     TurnSnapshot,
 )
-from framework.core.session_id import SessionInfo
+from modex_agent.core.session_id import SessionInfo
 
 
 def _pending_snapshot(session_id: str = "s1") -> TurnSnapshot:

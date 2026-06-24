@@ -5,10 +5,10 @@ import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, MagicMock
 
-from framework.memory.core.models import LongTermMemory
-from framework.memory.core.scope import MemoryContext
-from framework.memory.core.system import MemorySystem
-from framework.memory.injection.full_injection import FullInjectionPolicy
+from modex_agent.memory.core.models import LongTermMemory
+from modex_agent.memory.core.scope import MemoryContext
+from modex_agent.memory.core.system import MemorySystem
+from modex_agent.memory.injection.full_injection import FullInjectionPolicy
 
 
 def _make_injectable_system(knowledge_dir: Path | None = None):
@@ -109,8 +109,8 @@ async def test_directory_section_cross_platform_path(tmp_path):
 
 
 def test_scoped_storage_base_path(tmp_path):
-    from framework.memory.stores.scoped_file import DefaultScopedStorage
-    from framework.memory.core.scope import MemoryLayerName
+    from modex_agent.memory.stores.scoped_file import DefaultScopedStorage
+    from modex_agent.memory.core.scope import MemoryLayerName
 
     storage = DefaultScopedStorage(tmp_path, layer=MemoryLayerName.KNOWLEDGE)
     result = storage.base_path
@@ -120,7 +120,7 @@ def test_scoped_storage_base_path(tmp_path):
 
 
 def test_in_memory_storage_base_path():
-    from framework.memory.stores.scoped_in_memory import InMemoryScopedStorage
+    from modex_agent.memory.stores.scoped_in_memory import InMemoryScopedStorage
 
     storage = InMemoryScopedStorage()
     assert storage.base_path is None

@@ -13,18 +13,18 @@ import re
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from framework.core.agent import AgentContext
-from framework.core.session_id import SessionInfo
-from framework.core.constants import StopReason
-from framework.core.emitter import AgentResult
-from framework.core.tool_manager import InMemoryToolManager, ToolManagerConfig
-from framework.hook.builtin import SubagentAutoSendHook
-from framework.memory.history import ListMessageHistory
-from framework.multi_agent.bus import LocalAgentMessageBus
-from framework.multi_agent.comm_kind import AgentCommKind
-from framework.multi_agent.inbox.consumer import InboxConsumer
-from framework.multi_agent.inbox.producer import InboxProducer
-from framework.multi_agent.inbox.server_local import LocalFileInboxServer
+from modex_agent.core.agent import AgentContext
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.constants import StopReason
+from modex_agent.core.emitter import AgentResult
+from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
+from modex_agent.hook.builtin import SubagentAutoSendHook
+from modex_agent.memory.history import ListMessageHistory
+from modex_agent.multi_agent.bus import LocalAgentMessageBus
+from modex_agent.multi_agent.comm_kind import AgentCommKind
+from modex_agent.multi_agent.inbox.consumer import InboxConsumer
+from modex_agent.multi_agent.inbox.producer import InboxProducer
+from modex_agent.multi_agent.inbox.server_local import LocalFileInboxServer
 
 
 def _make_bus(tmpdir: Path) -> LocalAgentMessageBus:

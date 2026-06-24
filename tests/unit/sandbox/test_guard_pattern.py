@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from framework.sandbox.guard import (
+from modex_agent.sandbox.guard import (
     CommandPatternGuard,
     CommandPatternGuardConfig,
     CommandSeverity,

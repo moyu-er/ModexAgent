@@ -5,12 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from framework.core.skills.cache import DirectorySkillCache
-from framework.core.skills.filter import AllowListFilter
-from framework.core.skills.builder import DefaultSkillBuilder
-from framework.core.skills.manager import SkillManager
-from framework.core.skills.models import ResolutionContext, Skill
-from framework.core.skills.source import FileSkillSource, InlineSkillSource
+from modex_agent.core.skills.cache import DirectorySkillCache
+from modex_agent.core.skills.filter import AllowListFilter
+from modex_agent.core.skills.builder import DefaultSkillBuilder
+from modex_agent.core.skills.manager import SkillManager
+from modex_agent.core.skills.models import ResolutionContext, Skill
+from modex_agent.core.skills.source import FileSkillSource, InlineSkillSource
 
 
 class TestSkillManager:

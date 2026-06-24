@@ -1,4 +1,4 @@
-from framework.ioc.merge import deep_merge
+from modex_agent.ioc.merge import deep_merge
 
 
 class TestDeepMerge:

@@ -4,24 +4,24 @@ from __future__ import annotations
 import pytest
 from unittest.mock import AsyncMock
 
-from framework import ToolCall
-from framework.agents.react.agent import ReActAgent
-from framework.agents.react.constants import ReActNode, ReActReason
-from framework.agents.react.nodes.end import EndNode
-from framework.agents.react.nodes.llm import LLMNode
-from framework.agents.react.nodes.start import StartNode
-from framework.agents.react.nodes.tool import ToolNode
-from framework.agents.react.state import ReActTurnState
-from framework.approval.constants import ApprovalDecision
-from framework.core.agent import AgentContext
-from framework.core.constants import FinishReason
-from framework.core.graph.constants import GraphNode
-from framework.core.tool_manager import InMemoryToolManager, ToolResult
-from framework.memory.history import ListMessageHistory
-from framework.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
-from framework.runtime.models import TurnIdentity
-from framework.runtime.services import AgentRuntime, AgentRuntimeServices
-from framework.core.session_id import SessionInfo
+from modex_agent import ToolCall
+from modex_agent.agents.react.agent import ReActAgent
+from modex_agent.agents.react.constants import ReActNode, ReActReason
+from modex_agent.agents.react.nodes.end import EndNode
+from modex_agent.agents.react.nodes.llm import LLMNode
+from modex_agent.agents.react.nodes.start import StartNode
+from modex_agent.agents.react.nodes.tool import ToolNode
+from modex_agent.agents.react.state import ReActTurnState
+from modex_agent.approval.constants import ApprovalDecision
+from modex_agent.core.agent import AgentContext
+from modex_agent.core.constants import FinishReason
+from modex_agent.core.graph.constants import GraphNode
+from modex_agent.core.tool_manager import InMemoryToolManager, ToolResult
+from modex_agent.memory.history import ListMessageHistory
+from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
+from modex_agent.runtime.models import TurnIdentity
+from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.core.session_id import SessionInfo
 
 
 def _make_runtime() -> AgentRuntime:
@@ -396,8 +396,8 @@ class TestToolNode:
             session=SessionInfo.from_str("test.agent"),
         )
 
-        from framework.runtime.enums import ApprovalDenyPolicy
-        from framework.agents.react.approval import ApprovalRuntime
+        from modex_agent.runtime.enums import ApprovalDenyPolicy
+        from modex_agent.agents.react.approval import ApprovalRuntime
         ctx.runtime.services.approval = ApprovalRuntime(
             classifier=type("_Cls", (), {"classify": lambda s, tc, c: "normal"})(),
             default_deny_policy=ApprovalDenyPolicy.CANCEL_TURN,
@@ -422,8 +422,8 @@ class TestToolNode:
         tc = ToolCall(tool_name="write", arguments={"path": "/tmp/x"}, call_id="c1")
         runtime = _make_runtime()
         runtime.state.iteration = 1
-        from framework.agents.react.approval import ApprovalRuntime
-        from framework.runtime.enums import ApprovalDenyPolicy
+        from modex_agent.agents.react.approval import ApprovalRuntime
+        from modex_agent.runtime.enums import ApprovalDenyPolicy
         runtime.services.approval = ApprovalRuntime(
             classifier=type("_Cls", (), {"classify": lambda s, tc, c: "normal"})(),
             default_deny_policy=ApprovalDenyPolicy.CANCEL_TURN,

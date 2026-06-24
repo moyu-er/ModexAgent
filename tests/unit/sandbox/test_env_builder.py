@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from framework.sandbox.env_builder import EnvBuilderConfig, EnvPolicy, EnvironmentBuilder
+from modex_agent.sandbox.env_builder import EnvBuilderConfig, EnvPolicy, EnvironmentBuilder
 
 
 class TestEnvironmentBuilderUnixMinimal:

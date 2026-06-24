@@ -9,9 +9,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from framework.core.constants import FinishReason
-from framework.core.llm_struct import LLMErrorKind
-from framework.core.types import LLMResponse
+from modex_agent.core.constants import FinishReason
+from modex_agent.core.llm_struct import LLMErrorKind
+from modex_agent.core.types import LLMResponse
 
 
 def _make_stream_chunk(content=None, reasoning_content=None, finish_reason=None):
@@ -67,7 +67,7 @@ class TestChatErrorHandling:
     @pytest.fixture
     def provider(self):
         with patch.dict('os.environ', {'LITELLM_LOG': 'ERROR'}):
-            from framework.providers.litellm_provider import LiteLLMProvider
+            from modex_agent.providers.litellm_provider import LiteLLMProvider
             p = LiteLLMProvider(model="gpt-4", api_key="test-key")
             p._acompletion = AsyncMock()
             return p
@@ -181,7 +181,7 @@ class TestChatStreamRawErrorHandling:
     @pytest.fixture
     def provider(self):
         with patch.dict('os.environ', {'LITELLM_LOG': 'ERROR'}):
-            from framework.providers.litellm_provider import LiteLLMProvider
+            from modex_agent.providers.litellm_provider import LiteLLMProvider
             p = LiteLLMProvider(
                 model="gpt-4", api_key="test-key",
                 stream_idle_timeout=0.01,  # short timeout for tests
@@ -273,7 +273,7 @@ class TestBuildRequestParams:
     @pytest.fixture
     def provider(self):
         with patch.dict('os.environ', {'LITELLM_LOG': 'ERROR'}):
-            from framework.providers.litellm_provider import LiteLLMProvider
+            from modex_agent.providers.litellm_provider import LiteLLMProvider
             return LiteLLMProvider(model="gpt-4", api_key="test-key")
 
     def test_num_retries_not_in_params(self, provider):
