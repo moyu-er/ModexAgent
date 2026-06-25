@@ -19,7 +19,7 @@ Message broker and bridge service for agent communication. Supports pub/sub patt
 - Runtime control messages should pass through the control plane, not embedded here
 
 ## Dependencies
-- `framework.core.types` — `AgentEvent` types used in broker signatures
+- `modex_agent.core.types` — `AgentEvent` types used in broker signatures
 - `asyncio.Queue` — backing transport for `InMemoryMessageBroker`
 
 <!-- MANUAL: -->

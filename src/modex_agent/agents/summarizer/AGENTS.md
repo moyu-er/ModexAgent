@@ -42,7 +42,7 @@ Agent[E]
 - Tests in `tests/unit/agents/`
 
 ### Dependencies
-- `framework.core.agent` — `Agent[E]`, `AgentContext`
-- `framework.core.tool_manager` — `InMemoryToolManager`, `Tool`
-- `framework.memory.prompts` — `SummarizerPromptRegistry`
-- `framework.utils.helpers` — `strip_think`
+- `modex_agent.core.agent` — `Agent[E]`, `AgentContext`
+- `modex_agent.core.tool_manager` — `InMemoryToolManager`, `Tool`
+- `modex_agent.memory.prompts` — `SummarizerPromptRegistry`
+- `modex_agent.utils.helpers` — `strip_think`

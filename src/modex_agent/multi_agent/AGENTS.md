@@ -68,8 +68,8 @@ Session id assembly belongs in routing/communication layers:
 
 ## Dependencies
 
-- `framework.core.agent` — `Agent[E]`, `ContentEmitter[E]` for agent lifecycle
-- `framework.runtime` — `AgentRuntime`, `TurnStateStore` for per-agent runtime state
-- `framework.pipeline` — `AgentPipeline` for execution orchestration
-- `framework.messaging` — `MessageBroker`, `BrokerBridgeService` for inter-agent message transport
-- `framework.hook` — `HookRunner` for lifecycle hooks
+- `modex_agent.core.agent` — `Agent[E]`, `ContentEmitter[E]` for agent lifecycle
+- `modex_agent.runtime` — `AgentRuntime`, `TurnStateStore` for per-agent runtime state
+- `modex_agent.pipeline` — `AgentPipeline` for execution orchestration
+- `modex_agent.messaging` — `MessageBroker`, `BrokerBridgeService` for inter-agent message transport
+- `modex_agent.hook` — `HookRunner` for lifecycle hooks

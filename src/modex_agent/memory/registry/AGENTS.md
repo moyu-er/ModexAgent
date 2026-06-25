@@ -31,11 +31,11 @@ Storage provider registry that resolves a memory layer + scope pair into a concr
 ## Dependencies
 
 ### Internal
-- `framework.memory.core.scope` — `MemoryAgentRole`, `MemoryContext`, `MemoryLayerName`, `MemoryScope`, `ScopeRecord`
-- `framework.memory.core.storage` — `MemoryStorage`
-- `framework.memory.archive_models` — `ArchiveChannel`, archive file key constants
-- `framework.memory.stores.scoped_file` — `DefaultScopedStorage`
-- `framework.memory.stores.scoped_in_memory` — `InMemoryScopedStorage`
-- `framework.memory.stores.utils` — `sanitize_scope_key`
+- `modex_agent.memory.core.scope` — `MemoryAgentRole`, `MemoryContext`, `MemoryLayerName`, `MemoryScope`, `ScopeRecord`
+- `modex_agent.memory.core.storage` — `MemoryStorage`
+- `modex_agent.memory.archive_models` — `ArchiveChannel`, archive file key constants
+- `modex_agent.memory.stores.scoped_file` — `DefaultScopedStorage`
+- `modex_agent.memory.stores.scoped_in_memory` — `InMemoryScopedStorage`
+- `modex_agent.memory.stores.utils` — `sanitize_scope_key`
 
 <!-- MANUAL -->

@@ -25,7 +25,7 @@ cancel-drain utility:
 
 | File | Defines | Kind | Status |
 |------|---------|------|--------|
-| `control_drain.py` | `drain_control_channel()` (shared fn), `ControlDrainInterceptor` (TOOL_CALL), `LlmCancelInterceptor` (LLM_STREAM) | interceptor + helper | drains an always-empty queue (see `framework/control/AGENTS.md`) |
+| `control_drain.py` | `drain_control_channel()` (shared fn), `ControlDrainInterceptor` (TOOL_CALL), `LlmCancelInterceptor` (LLM_STREAM) | interceptor + helper | drains an always-empty queue (see `modex_agent/control/AGENTS.md`) |
 
 `drain_control_channel()` is also called directly from `ReActAgent`,
 `LLMNode`, and `ToolNode._execute_batch` at safe points.
@@ -37,9 +37,9 @@ cancel-drain utility:
 - Register via `HookRunner.add(HookSpec(hook=MyHook(), on_error=...))`
 
 ## Dependencies
-- `framework.core` -- AgentContext
-- `framework.control` -- ControlEventBus, ControlEventType, ControlChannel, ControlCommandType, ControlScope
-- `framework.interceptor.abc` -- ToolCallInterceptor, LLMStreamInterceptor (control_drain.py only)
-- `framework.hook.abc` -- Hook base ABC + per-point ABC hierarchy
+- `modex_agent.core` -- AgentContext
+- `modex_agent.control` -- ControlEventBus, ControlEventType, ControlChannel, ControlCommandType, ControlScope
+- `modex_agent.interceptor.abc` -- ToolCallInterceptor, LLMStreamInterceptor (control_drain.py only)
+- `modex_agent.hook.abc` -- Hook base ABC + per-point ABC hierarchy
 
 <!-- MANUAL -->

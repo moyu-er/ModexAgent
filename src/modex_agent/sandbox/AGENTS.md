@@ -37,7 +37,7 @@ Sandboxed code execution — isolates tool execution from the agent runtime via 
 
 ## Status
 
-The guards/policies above (command pattern, path boundary, traversal, device, network, sanitized env) are fully implemented and exported from `sandbox/__init__.py`, but **not wired into the live tool-execution path**: no code in `framework/tools`, `framework/agents`, or `examples/bot_project/bot` imports `framework.sandbox`. They are available for integration but currently inert. The root `framework/AGENTS.md` "Known Gaps" (command content, workspace boundary, environment isolation) therefore still describe the shipped runtime — the guards to close those gaps exist here but are not connected.
+The guards/policies above (command pattern, path boundary, traversal, device, network, sanitized env) are fully implemented and exported from `sandbox/__init__.py`, but **not wired into the live tool-execution path**: no code in `modex_agent/tools`, `modex_agent/agents`, or `examples/bot_project/bot` imports `modex_agent.sandbox`. They are available for integration but currently inert. The root `framework/AGENTS.md` "Known Gaps" (command content, workspace boundary, environment isolation) therefore still describe the shipped runtime — the guards to close those gaps exist here but are not connected.
 
 ## For AI Agents
 
@@ -51,6 +51,6 @@ The guards/policies above (command pattern, path boundary, traversal, device, ne
 
 ## Dependencies
 
-- `framework.core` — base types and exceptions
-- `framework.tools` — potential integration point for guarded tool execution (currently unwired)
+- `modex_agent.core` — base types and exceptions
+- `modex_agent.tools` — potential integration point for guarded tool execution (currently unwired)
 - External: `docker` SDK (Docker adapter), `e2b` SDK (E2B adapter), `landlock` (Linux-only)

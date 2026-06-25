@@ -14,14 +14,14 @@ The `tests/` directory mirrors the `framework/` package structure with unit test
 | Directory | Purpose |
 |-----------|---------|
 | `unit/` | Unit tests mirroring `framework/` package structure (21 sub-modules) |
-| `framework/` | Framework-level tests (e.g., `framework/tools/` tool tests) |
+| `framework/` | Framework-level tests (e.g., `modex_agent/tools/` tool tests) |
 | `integration/` | Integration tests across multiple modules — `experience/`, `memory/`, `multi_agent/` |
 
 ## For AI Agents
 
 ### Working In This Directory
 - Run all tests: `pytest tests/ -v`
-- Use absolute imports: `from framework.xxx`
+- Use absolute imports: `from modex_agent.xxx`
 - Mock `LLMProvider`, `ControlChannel`, `ControlEventBus` — never hit real APIs
 - `pytest-asyncio` for async test functions (use `async def` + `await`)
 

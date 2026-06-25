@@ -28,7 +28,7 @@ Asynchronous message inbox subsystem for multi-agent deferred delivery. Implemen
 - All servers guarantee exactly-once delivery: a `message_id` seen before is silently dropped
 - `LocalFileInboxServer` stores data under `{workspace}/{safe_session_id}/pending.jsonl` and `delivered_ids.json`
 - Producer and consumer both have local LRU caches (default 1000 entries) for fast dedup without filesystem access
-- `InboxFlushHook` (from `framework/hook/builtin`) integrates with the agent runtime to flush pending inbox messages
+- `InboxFlushHook` (from `modex_agent/hook/builtin`) integrates with the agent runtime to flush pending inbox messages
 
 ### Common Patterns
 - Instantiate: `server = LocalFileInboxServer(Path("data/inbox"))` then `producer = InboxProducer(server)` / `consumer = InboxConsumer(server)`
@@ -38,8 +38,8 @@ Asynchronous message inbox subsystem for multi-agent deferred delivery. Implemen
 ## Dependencies
 
 ### Internal
-- `framework/multi_agent/envelope.py` — `AgentMessageEnvelope` consumed by producer to build `InboxMessage`
-- `framework/hook/builtin/` — `InboxFlushHook` for runtime integration
-- `framework/utils/file_io.py` — `read_json_robust` used by tracker for robust JSON loading
+- `modex_agent/multi_agent/envelope.py` — `AgentMessageEnvelope` consumed by producer to build `InboxMessage`
+- `modex_agent/hook/builtin/` — `InboxFlushHook` for runtime integration
+- `modex_agent/utils/file_io.py` — `read_json_robust` used by tracker for robust JSON loading
 
 <!-- MANUAL -->

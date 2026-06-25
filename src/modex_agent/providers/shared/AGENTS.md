@@ -5,7 +5,7 @@
 
 ## Purpose
 
-Shared utility types and functions used by LLM provider implementations. Provides streaming delta normalization, non-streaming response parsing, and structured error classification for the OpenAI SDK. These are imported directly by provider modules and are not re-exported from `framework/providers/__init__.py`.
+Shared utility types and functions used by LLM provider implementations. Provides streaming delta normalization, non-streaming response parsing, and structured error classification for the OpenAI SDK. These are imported directly by provider modules and are not re-exported from `modex_agent/providers/__init__.py`.
 
 ## Key Files
 
@@ -26,14 +26,14 @@ Shared utility types and functions used by LLM provider implementations. Provide
 ### Common Patterns
 - All types are frozen dataclasses with typed fields — no dict-based intermediate representations
 - Error classification returns `LLMErrorInfo(LLMErrorKind, message, service, should_retry, status_code)` — caller checks `should_retry` to decide retry logic
-- `ToolCallChunk` (from `framework.core.tool_call_accumulator`) is used for incremental tool call building during streaming
+- `ToolCallChunk` (from `modex_agent.core.tool_call_accumulator`) is used for incremental tool call building during streaming
 
 ## Dependencies
 
 ### Internal
-- `framework/core/tool_call_accumulator.py` — `ToolCallChunk` for streaming tool call accumulation
-- `framework/core/types.py` — `ToolCall` for parsed tool calls
-- `framework/core/llm_struct.py` — `LLMErrorInfo`, `LLMErrorKind` for structured error data
+- `modex_agent/core/tool_call_accumulator.py` — `ToolCallChunk` for streaming tool call accumulation
+- `modex_agent/core/types.py` — `ToolCall` for parsed tool calls
+- `modex_agent/core/llm_struct.py` — `LLMErrorInfo`, `LLMErrorKind` for structured error data
 
 ### External
 - `openai` (optional) — SDK exception types used by `errors.py`; gracefully handled via `try/except ImportError`

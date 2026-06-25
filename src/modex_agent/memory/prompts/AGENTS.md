@@ -25,14 +25,14 @@ Prompt template files used during memory consolidation and experience review. Co
 - Each subdirectory has a `*_system.md` (agent persona/instructions) and `*_user.md` (user input template with placeholders)
 
 ### Common Patterns
-- Prompt files are referenced by path from summarizer implementations in `framework/agents/summarizer/`
+- Prompt files are referenced by path from summarizer implementations in `modex_agent/agents/summarizer/`
 - System prompts define agent behavior; user prompts define the input structure for each consolidation type
 - To modify consolidation behavior, edit the relevant `*_system.md` file
 
 ## Dependencies
 
 ### Internal
-- Consumed by `framework.agents.summarizer` — `ArchiveSummarizer`, `KnowledgeConsolidator`
+- Consumed by `modex_agent.agents.summarizer` — `ArchiveSummarizer`, `KnowledgeConsolidator`
 - Referenced by path in summarizer agent configurations
 
 <!-- MANUAL -->

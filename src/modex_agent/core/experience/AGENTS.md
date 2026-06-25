@@ -85,8 +85,8 @@ Body content with problem-solving pattern...
 
 ### Integration Points
 - **Pool builder**: `_build_pool_experience_manager()` in `examples/bot_project/bot/service/pool_builder.py`
-- **System prompt**: injected by `framework/pipeline/context_assembler.py` via `ExperienceManager.build_prompt()`
-- **Review agent**: `framework/agents/experience/review_agent.py` creates/updates experiences from conversation snapshots
+- **System prompt**: injected by `modex_agent/pipeline/context_assembler.py` via `ExperienceManager.build_prompt()`
+- **Review agent**: `modex_agent/agents/experience/review_agent.py` creates/updates experiences from conversation snapshots
 
 ### Testing
 - Tests in `tests/unit/core/test_experience.py`
@@ -94,10 +94,10 @@ Body content with problem-solving pattern...
 ## Dependencies
 
 ### Internal
-- `framework.core.frontmatter` — YAML frontmatter parsing
-- `framework.core.skills.builder` — shares `SkillPromptBuilder` pattern
-- `framework.memory.utils` — `safe_atomic_replace` for meta file writes
-- `framework.utils.xml` — `xml_attr`, `xml_text` for prompt rendering
+- `modex_agent.core.frontmatter` — YAML frontmatter parsing
+- `modex_agent.core.skills.builder` — shares `SkillPromptBuilder` pattern
+- `modex_agent.memory.utils` — `safe_atomic_replace` for meta file writes
+- `modex_agent.utils.xml` — `xml_attr`, `xml_text` for prompt rendering
 
 ### External
 - `pathvalidate` — safe filename sanitization

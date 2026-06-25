@@ -70,7 +70,7 @@ The `core/` module defines the foundational contracts (`Agent[E]`, `Tool`, `LLMP
 
 ### Testing
 - `tests/unit/core/` — mock `LLPprovider`, never hit real APIs
-- Absolute imports (`from framework.core.xxx`)
+- Absolute imports (`from modex_agent.core.xxx`)
 
 ## Dependencies
 

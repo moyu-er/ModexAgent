@@ -47,9 +47,9 @@ ExperienceWriteTool.execute(name, content)
 - Scoped tools enforce `allowed_dirs` — summarizer agents cannot escape their target directory
 
 ### Dependencies
-- `framework.core.tool_manager` — `Tool` base class
-- `framework.core.experience.source` — `sanitize_name()`
-- `framework.core.experience.validation` — `validate_experience_md()`
-- `framework.core.experience.name_sync` — `auto_correct_frontmatter_name()`
-- `framework.core.experience.meta` — `ExperienceMetaStore`
-- `framework.utils.xml` — `xml_text()`
+- `modex_agent.core.tool_manager` — `Tool` base class
+- `modex_agent.core.experience.source` — `sanitize_name()`
+- `modex_agent.core.experience.validation` — `validate_experience_md()`
+- `modex_agent.core.experience.name_sync` — `auto_correct_frontmatter_name()`
+- `modex_agent.core.experience.meta` — `ExperienceMetaStore`
+- `modex_agent.utils.xml` — `xml_text()`

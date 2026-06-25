@@ -30,7 +30,7 @@ Web interaction tools for agents. Provides URL content fetching (HTML-to-markdow
 ## Dependencies
 
 ### Internal
-- `framework.core.tool_manager` — `Tool` ABC, `ToolConfig`
+- `modex_agent.core.tool_manager` — `Tool` ABC, `ToolConfig`
 
 ### External
 - `httpx` — HTTP client for URL fetching and search API calls

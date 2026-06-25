@@ -30,7 +30,7 @@ the planned full wiring was **superseded by direct `asyncio.Task.cancel()`** in
 the pipeline pre-lock phase, and the channel is left in a half-wired state:
 
 - **`CANCEL_TURN`** — effectively never delivered to the channel. Two code paths can construct a CANCEL_TURN:
-  - **IM `/stop`** (`SessionControlStage` -> `InputAdapter._try_intercept_control` in `framework/pipeline/adapters.py`): this path *does* call `channel.send(...)`, but only after `configure_control_filter()` has wired `self._control_channel`. That configuration is **never called in the live bot** (no production call site), so `_try_intercept_control` short-circuits with `channel is None` and returns False. IM `/stop` therefore stops the input-pipeline stage processing but does **not** cancel the running turn.
+  - **IM `/stop`** (`SessionControlStage` -> `InputAdapter._try_intercept_control` in `modex_agent/pipeline/adapters.py`): this path *does* call `channel.send(...)`, but only after `configure_control_filter()` has wired `self._control_channel`. That configuration is **never called in the live bot** (no production call site), so `_try_intercept_control` short-circuits with `channel is None` and returns False. IM `/stop` therefore stops the input-pipeline stage processing but does **not** cancel the running turn.
   - **Pipeline-mode `/stop`** (`ControlCommandHandler` -> pre-lock `BYPASS_QUEUE`): returns the command as a *result field* (`CommandHandlingResult.control_command`) and the pipeline cancels the task directly (`existing_task.cancel()`), without writing to the channel.
   Net effect: the drain sites (see below) drain an always-empty queue in every shipped path.
 - **`INJECT_STEER`** — sent into the channel in `STEER` busy-input mode
@@ -39,7 +39,7 @@ the pipeline pre-lock phase, and the channel is left in a half-wired state:
 - **`APPROVAL_RESPONSE`** — never sent. `/approve` and `/deny` are resolved via
   `CommandAction.APPROVAL_DECISION` result fields, not the channel. The one
   consumer that drains `APPROVAL_RESPONSE` (`IMUserInterface.render_question` in
-  `framework/approval/ui.py`) has **zero callers** and waits on a command that
+  `modex_agent/approval/ui.py`) has **zero callers** and waits on a command that
   never arrives.
 - **`ControlEventBus` / `ProgressReportHook`** — the only declared event
   producer is `ProgressReportHook`, which is **never instantiated**, and no code
@@ -47,7 +47,7 @@ the pipeline pre-lock phase, and the channel is left in a half-wired state:
 
 ## Drain Sites (Exist But Consume An Empty Queue)
 
-`drain_control_channel()` (in `framework/hook/builtin/control_drain.py`) is called
+`drain_control_channel()` (in `modex_agent/hook/builtin/control_drain.py`) is called
 at four safe points — the ReAct `LLMNode`, `ToolNode._execute_batch`, the agent
 iteration loop, and via two interceptor wrappers (`ControlDrainInterceptor` on
 `TOOL_CALL`, `LlmCancelInterceptor` on `LLM_STREAM`). Each drains
@@ -58,7 +58,7 @@ as the intended "safe-point" cancel mechanism if the channel is ever fed.
 ## What Actually Performs Cancellation
 
 Real turn cancellation today happens in `AgentPipeline._process_message_locked()`
-(`framework/pipeline/pipeline.py`): the busy-input `INTERRUPT` mode and the
+(`modex_agent/pipeline/pipeline.py`): the busy-input `INTERRUPT` mode and the
 `/stop` `BYPASS_QUEUE` path both call `existing_task.cancel()` on the running
 asyncio task. This raises `asyncio.CancelledError` inside the agent directly and
 does not involve this package's channel at all.

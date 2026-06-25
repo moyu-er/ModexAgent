@@ -38,12 +38,12 @@ Runtime state governance — typed state models, enums, persistence, codecs, and
 
 ## Note on Control-Related Types
 
-`enums.py` defines `ControlCommandKind` and `models.py` defines `ControlCommandState`, and `store.py` defines a `RuntimeCommandStore` (ABC + InMemory/JsonFile impls) with `save_command`/`load_pending_commands`. These are **vestigial**: no code calls `save_command`/`load_pending_commands` outside the store classes themselves. They remain as data shapes; the live cancellation path is `asyncio.Task.cancel()` in the pipeline (see `framework/control/AGENTS.md`). `AgentRuntimeServices.control_channel` is likewise threaded through but not fed in the default runtime.
+`enums.py` defines `ControlCommandKind` and `models.py` defines `ControlCommandState`, and `store.py` defines a `RuntimeCommandStore` (ABC + InMemory/JsonFile impls) with `save_command`/`load_pending_commands`. These are **vestigial**: no code calls `save_command`/`load_pending_commands` outside the store classes themselves. They remain as data shapes; the live cancellation path is `asyncio.Task.cancel()` in the pipeline (see `modex_agent/control/AGENTS.md`). `AgentRuntimeServices.control_channel` is likewise threaded through but not fed in the default runtime.
 
 ## Dependencies
 
-- `framework.core.agent` — `Agent[E]` for turn execution
-- `framework.core.types` — base types used by models
-- `framework.hook` — `HookRunner` for lifecycle hooks (injected via `AgentRuntimeServices`)
-- `framework.interceptor` — `InterceptorChain` for AOP interception (injected via `AgentRuntimeServices`)
-- `framework.control` — control channel types (vestigial)
+- `modex_agent.core.agent` — `Agent[E]` for turn execution
+- `modex_agent.core.types` — base types used by models
+- `modex_agent.hook` — `HookRunner` for lifecycle hooks (injected via `AgentRuntimeServices`)
+- `modex_agent.interceptor` — `InterceptorChain` for AOP interception (injected via `AgentRuntimeServices`)
+- `modex_agent.control` — control channel types (vestigial)

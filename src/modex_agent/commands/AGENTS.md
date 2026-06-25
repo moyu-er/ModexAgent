@@ -127,6 +127,6 @@ When a pending approval exists, `/continue` returns a `NOTICE` ("A pending appro
 **not** send it into `InMemoryControlChannel`; it returns it as the result's
 `control_command` field. The actual cancellation is `existing_task.cancel()` in
 the pipeline. The control channel is currently not used for cancellation — see
-`framework/control/AGENTS.md`.
+`modex_agent/control/AGENTS.md`.
 
 <!-- MANUAL: -->

@@ -29,7 +29,7 @@ System prompt pipeline — an ordered, versioned collection of `SystemPromptProv
 ## Dependencies
 
 ### Internal
-- `framework.core.prompt` — `SystemPromptProvider`, `SystemPromptPipeline`
-- `framework.utils.timezone` — `get_user_timezone`
+- `modex_agent.core.prompt` — `SystemPromptProvider`, `SystemPromptPipeline`
+- `modex_agent.utils.timezone` — `get_user_timezone`
 
 <!-- MANUAL -->

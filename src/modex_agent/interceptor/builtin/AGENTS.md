@@ -5,9 +5,9 @@
 
 ## Purpose
 Framework-provided interceptors and one classification helper that live in
-`framework/interceptor/builtin/`. Note: the cancel-related interceptors
+`modex_agent/interceptor/builtin/`. Note: the cancel-related interceptors
 (`ControlDrainInterceptor`, `LlmCancelInterceptor`) do **not** live here —
-they are in `framework/hook/builtin/control_drain.py` (see that file's note).
+they are in `modex_agent/hook/builtin/control_drain.py` (see that file's note).
 Approval interceptors have been removed; approval is handled through the
 pipeline layer.
 
@@ -20,11 +20,11 @@ pipeline layer.
 ## Where the Cancel Interceptors Actually Live
 | File (NOT here) | Class | Scope(s) | Description |
 |------|-------|----------|-------------|
-| `framework/hook/builtin/control_drain.py` | `ControlDrainInterceptor` | TOOL_CALL | Drains `{CANCEL_TURN}` before each tool call; raises `AgentCancelled` on a turn-matched command. |
-| `framework/hook/builtin/control_drain.py` | `LlmCancelInterceptor` | LLM_STREAM | Drains `{CANCEL_TURN}` before each streamed chunk; aborts the stream on a match. |
+| `modex_agent/hook/builtin/control_drain.py` | `ControlDrainInterceptor` | TOOL_CALL | Drains `{CANCEL_TURN}` before each tool call; raises `AgentCancelled` on a turn-matched command. |
+| `modex_agent/hook/builtin/control_drain.py` | `LlmCancelInterceptor` | LLM_STREAM | Drains `{CANCEL_TURN}` before each streamed chunk; aborts the stream on a match. |
 
 Both drain an always-empty queue in the current runtime (see
-`framework/control/AGENTS.md` "Current Status"). They are wired into the bot
+`modex_agent/control/AGENTS.md` "Current Status"). They are wired into the bot
 project's shared interceptor chain.
 
 ## Bot Project Shared Interceptor Chain (actual order)
@@ -43,7 +43,7 @@ Assembled in `examples/bot_project/bot/workspace/wiring.py::_build_workspace_int
   `CANCEL_RUN`, `INJECT_USER_MESSAGE`, `APPROVAL_RESPONSE`, `INJECT_STEER`.
 
 ## Dependencies
-- `framework.control` -- ControlChannel, ControlEventBus, ControlCommandType
-- `framework.interceptor.abc` -- InterceptorScope, context types
+- `modex_agent.control` -- ControlChannel, ControlEventBus, ControlCommandType
+- `modex_agent.interceptor.abc` -- InterceptorScope, context types
 
 <!-- MANUAL -->

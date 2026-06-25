@@ -12,7 +12,7 @@ I/O adapter base classes — decouple platform I/O from agent logic.
 | `platform.py` | `PlatformAdapter` ABC, `AdapterRegistry`, `StreamingMode` enum |
 
 ## Dependencies
-- `framework.core.types` — `AgentEvent`, `ChatMessage` types used in adapter interfaces
+- `modex_agent.core.types` — `AgentEvent`, `ChatMessage` types used in adapter interfaces
 - `abc`, `enum` — standard library
 
 ## Notes

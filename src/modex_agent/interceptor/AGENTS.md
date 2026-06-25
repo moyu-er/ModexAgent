@@ -36,7 +36,7 @@ Reserved (defined but not wired): AGENT_RUN, LLM_CALL, PIPELINE_STEP, POOL_TASK.
 - Use `has_scope()` to check if a scope has any registered interceptors
 
 ## Dependencies
-- `framework.control` -- ControlChannel, ControlEventBus, ControlCommandType
-- `framework.core.agent` -- AgentContext
+- `modex_agent.control` -- ControlChannel, ControlEventBus, ControlCommandType
+- `modex_agent.core.agent` -- AgentContext
 
 <!-- MANUAL: -->

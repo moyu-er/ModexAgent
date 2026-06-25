@@ -63,4 +63,4 @@ Deny policy: default `TOOL_RESULT_ONLY` (loop continues); override to `CANCEL_TU
   the iteration loop) to check for `CANCEL_TURN`, but the channel is currently not
   fed in the default runtime (real cancellation is `asyncio.Task.cancel()` in the
   pipeline). These drain calls are effectively no-ops unless a producer is added —
-  see `framework/control/AGENTS.md`.
+  see `modex_agent/control/AGENTS.md`.

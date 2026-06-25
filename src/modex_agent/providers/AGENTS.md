@@ -27,6 +27,6 @@ LLM provider implementations — abstracts model invocation behind a common inte
 ## Dependencies
 - `litellm` (optional) — for LiteLLMProvider
 - `openai` (optional) — for OpenAIProvider
-- Consumed by `framework/core/` (LLM abstraction layer) and `framework/pipeline/`
+- Consumed by `modex_agent/core/` (LLM abstraction layer) and `modex_agent/pipeline/`
 
 <!-- MANUAL: -->

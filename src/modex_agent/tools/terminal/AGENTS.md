@@ -33,13 +33,13 @@ allowing human users to observe or intervene in the same session.
    Returns output           Timeout/busy/ok           bash/cmd visible
 ```
 
-### Layer 1: CommandTool (`framework/tools/terminal/command_tool.py`)
+### Layer 1: CommandTool (`modex_agent/tools/terminal/command_tool.py`)
 
 The **agent-facing** shell execution tool for persistent terminal sessions.
 It delegates to `TerminalSession` and keeps state across calls.
 
 When terminal backends are unavailable, the application falls back to
-`SubprocessTool` (`framework/tools/terminal/subprocess_tool.py`), which runs
+`SubprocessTool` (`modex_agent/tools/terminal/subprocess_tool.py`), which runs
 each command in a fresh process and does **not** preserve state.
 
 Key features:
@@ -52,7 +52,7 @@ Key features:
 Registered when no terminal backend is available (e.g. subagents or when
 `use_terminal=false`). Each invocation is stateless.
 
-### Layer 2: TerminalSession (`framework/tools/terminal/session.py`)
+### Layer 2: TerminalSession (`modex_agent/tools/terminal/session.py`)
 
 The **per-tab execution engine**. Each session wraps one backend and handles:
 
@@ -77,7 +77,7 @@ Special states:
 | `waiting_input` | Command waiting for password/confirmation | Send input as next shell command |
 | `ended` | Shell exited (`exit`/`logout`) | Session will auto-restart on next use |
 
-### Layer 3: TerminalManager (`framework/tools/terminal/manager.py`)
+### Layer 3: TerminalManager (`modex_agent/tools/terminal/manager.py`)
 
 The **session registry** owning all named tabs:
 
@@ -97,7 +97,7 @@ Key methods:
 - `close(name)` / `close_all()` — terminate sessions
 - `save_state()` / `load_state()` — persist/restore
 
-### Layer 4: TerminalTool (`framework/tools/terminal/tool.py`)
+### Layer 4: TerminalTool (`modex_agent/tools/terminal/tool.py`)
 
 The **agent-facing tab management tool**. Registered only when `TerminalManager`
 is available.

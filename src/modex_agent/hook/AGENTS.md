@@ -43,7 +43,7 @@ Lifecycle extension points — lightweight observation, context injection, polic
 - Instance-level state keyed by `session_id` if unavoidable
 - `HookResult(veto=True)` for lightweight denial; does NOT exit the agent
 - ReAct clean mode runs without hook services
-- `ON_CONTROL_COMMAND` / `progress_report` are tied to the (vestigial) control plane; see `framework/control/AGENTS.md`
+- `ON_CONTROL_COMMAND` / `progress_report` are tied to the (vestigial) control plane; see `modex_agent/control/AGENTS.md`
 
 ## For AI Agents
 
@@ -56,4 +56,4 @@ Lifecycle extension points — lightweight observation, context injection, polic
 
 ## Dependencies
 
-- `framework.core.agent` — `AgentContext` (passed as payload to all hooks)
+- `modex_agent.core.agent` — `AgentContext` (passed as payload to all hooks)

@@ -125,19 +125,19 @@ class MyAgent(Agent[MyEvent]):
 ## Dependencies
 
 ### Internal
-- `framework.core.agent` — `Agent[E]`, `AgentContext`
-- `framework.core.graph` — `Graph[R]`, `Node[R]`, `GraphEngine`, `GraphInterrupt`
-- `framework.core.tool_manager` — `InMemoryToolManager`, `Tool`, `ToolResult`
-- `framework.core.provider` — `LLMProvider`, `StreamingLLMProvider`
-- `framework.core.emitter` — `ContentEmitter`, `AgentResult`
-- `framework.core.types` — `MessageRole`, `MessageType`, `ToolCall`
-- `framework.core.session_id` — `SessionInfo`
-- `framework.runtime` — `AgentRuntime`, `AgentRuntimeServices`, `ReActTurnState`, `RuntimeAssembler`
-- `framework.memory.prompts` — `SummarizerPromptRegistry`
-- `framework.memory.tools.experience` — Experience tools (for ExperienceReviewAgent)
-- `framework.utils.helpers` — `strip_think`
-- `framework.hook` — `HookRunner`, `HookPoint`
-- `framework.interceptor` — `InterceptorChain`
+- `modex_agent.core.agent` — `Agent[E]`, `AgentContext`
+- `modex_agent.core.graph` — `Graph[R]`, `Node[R]`, `GraphEngine`, `GraphInterrupt`
+- `modex_agent.core.tool_manager` — `InMemoryToolManager`, `Tool`, `ToolResult`
+- `modex_agent.core.provider` — `LLMProvider`, `StreamingLLMProvider`
+- `modex_agent.core.emitter` — `ContentEmitter`, `AgentResult`
+- `modex_agent.core.types` — `MessageRole`, `MessageType`, `ToolCall`
+- `modex_agent.core.session_id` — `SessionInfo`
+- `modex_agent.runtime` — `AgentRuntime`, `AgentRuntimeServices`, `ReActTurnState`, `RuntimeAssembler`
+- `modex_agent.memory.prompts` — `SummarizerPromptRegistry`
+- `modex_agent.memory.tools.experience` — Experience tools (for ExperienceReviewAgent)
+- `modex_agent.utils.helpers` — `strip_think`
+- `modex_agent.hook` — `HookRunner`, `HookPoint`
+- `modex_agent.interceptor` — `InterceptorChain`
 
 ### External
 - None beyond framework core dependencies.

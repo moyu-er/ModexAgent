@@ -13,25 +13,25 @@ Each subdirectory here corresponds to a `framework/` module and contains unit te
 
 | Directory | Target Module |
 |-----------|--------------|
-| `agents/` | `framework/agents/` — ReAct agent, experience review, summarizer |
-| `approval/` | `framework/approval/` — approval tiers, response parsing |
-| `commands/` | `framework/commands/` — slash command parser, processor |
-| `core/` | `framework/core/` — agent ABC, session store, tool manager, emitter |
-| `hook/` | `framework/hook/` — hook runner, builtin hooks |
-| `interceptor/` | `framework/interceptor/` — interceptor chain, builtin interceptors |
-| `ioc/` | `framework/ioc/` — config models, factory modules |
-| `memory/` | `framework/memory/` — three-layer memory, consolidation, injection |
-| `messaging/` | `framework/messaging/` — broker, broker bridge |
-| `multi_agent/` | `framework/multi_agent/` — pool, bus, communication tracker, inbox |
-| `pipeline/` | `framework/pipeline/` — pipeline orchestration, adapters, snapshot |
-| `plugins/` | `framework/plugins/` — plugin manager, loader |
-| `providers/` | `framework/providers/` — LLM provider implementations |
-| `runtime/` | `framework/runtime/` — runtime services, store, codec |
-| `sandbox/` | `framework/sandbox/` — isolation, adapters, guards |
-| `tools/` | `framework/tools/` — registry, executor, MCP, terminal, standard tools |
-| `trace/` | `framework/trace/` — trace store, hooks |
-| `utils/` | `framework/utils/` — file_io, sanitizer, deduplicator, timezone |
-| `workspace/` | `framework/workspace/` — workspace context, registry, routing |
+| `agents/` | `modex_agent/agents/` — ReAct agent, experience review, summarizer |
+| `approval/` | `modex_agent/approval/` — approval tiers, response parsing |
+| `commands/` | `modex_agent/commands/` — slash command parser, processor |
+| `core/` | `modex_agent/core/` — agent ABC, session store, tool manager, emitter |
+| `hook/` | `modex_agent/hook/` — hook runner, builtin hooks |
+| `interceptor/` | `modex_agent/interceptor/` — interceptor chain, builtin interceptors |
+| `ioc/` | `modex_agent/ioc/` — config models, factory modules |
+| `memory/` | `modex_agent/memory/` — three-layer memory, consolidation, injection |
+| `messaging/` | `modex_agent/messaging/` — broker, broker bridge |
+| `multi_agent/` | `modex_agent/multi_agent/` — pool, bus, communication tracker, inbox |
+| `pipeline/` | `modex_agent/pipeline/` — pipeline orchestration, adapters, snapshot |
+| `plugins/` | `modex_agent/plugins/` — plugin manager, loader |
+| `providers/` | `modex_agent/providers/` — LLM provider implementations |
+| `runtime/` | `modex_agent/runtime/` — runtime services, store, codec |
+| `sandbox/` | `modex_agent/sandbox/` — isolation, adapters, guards |
+| `tools/` | `modex_agent/tools/` — registry, executor, MCP, terminal, standard tools |
+| `trace/` | `modex_agent/trace/` — trace store, hooks |
+| `utils/` | `modex_agent/utils/` — file_io, sanitizer, deduplicator, timezone |
+| `workspace/` | `modex_agent/workspace/` — workspace context, registry, routing |
 | `bot/` | `examples/bot_project/bot/` — lifecycle, pool routing, adapters |
 | `bot_project/` | `examples/bot_project/` — config loader, slash commands, MCP resilience |
 

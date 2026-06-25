@@ -59,12 +59,12 @@ JsonFileTraceStore (append JSON line)
 ## Dependencies
 
 ### Internal
-- `framework.hook.abc` — `BeforeTurnHook`, `AfterLLMResponseHook`, `BeforeToolExecutionHook`, `AfterToolExecutionHook`, `FinallyTurnHook`
-- `framework.runtime.enums` — `OperationKind`, `OperationStatus`, `TurnCustomKey`
-- `framework.core.agent` — `AgentContext`
-- `framework.core.emitter` — `AgentResult`
-- `framework.core.tool_manager` — `ToolResult`
-- `framework.core.types` — `LLMResponse`, `ToolCall`
+- `modex_agent.hook.abc` — `BeforeTurnHook`, `AfterLLMResponseHook`, `BeforeToolExecutionHook`, `AfterToolExecutionHook`, `FinallyTurnHook`
+- `modex_agent.runtime.enums` — `OperationKind`, `OperationStatus`, `TurnCustomKey`
+- `modex_agent.core.agent` — `AgentContext`
+- `modex_agent.core.emitter` — `AgentResult`
+- `modex_agent.core.tool_manager` — `ToolResult`
+- `modex_agent.core.types` — `LLMResponse`, `ToolCall`
 
 ### External
 - `json`, `uuid`, `time`, `logging`, `pathlib` — standard library

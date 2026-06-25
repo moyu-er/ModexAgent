@@ -33,7 +33,7 @@ Pydantic configuration models for every framework component. Each file defines a
 - `AppConfig` performs environment variable resolution (`${VAR:-default}` syntax) recursively through all string values
 - `AgentConfig.tools` is populated in code, never from YAML
 - `MemoryConfig` is the most complex — contains governance chain config nested inside it
-- Config objects are consumed exclusively by `framework/ioc/factories/`
+- Config objects are consumed exclusively by `modex_agent/ioc/factories/`
 
 ### Common Patterns
 - `None` means "disabled" / "not configured" (e.g., `MemoryConfig | None` in AgentConfig)
@@ -44,7 +44,7 @@ Pydantic configuration models for every framework component. Each file defines a
 
 ### Internal
 - `pydantic` — all config models inherit from `BaseModel`
-- `framework/ioc/factories/` — each factory reads its corresponding config section
-- `framework/core/tool_manager.py` — `Tool` class used in `AgentConfig.tools`
+- `modex_agent/ioc/factories/` — each factory reads its corresponding config section
+- `modex_agent/core/tool_manager.py` — `Tool` class used in `AgentConfig.tools`
 
 <!-- MANUAL -->

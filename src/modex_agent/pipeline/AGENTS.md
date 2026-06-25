@@ -52,7 +52,7 @@ When `command_processor` is configured, the pipeline intercepts `/command` input
    - `APPROVAL_DECISION` → route to `_handle_snapshot_approval()`
    - `CONTINUE_AGENT` / `TRANSFORM_TO_USER_INPUT` → proceed to agent execution
 
-See `framework/commands/AGENTS.md` for full command subsystem documentation.
+See `modex_agent/commands/AGENTS.md` for full command subsystem documentation.
 
 ## Busy Input Modes
 
@@ -64,7 +64,7 @@ See `framework/commands/AGENTS.md` for full command subsystem documentation.
 
 Key invariant: slash commands must never bypass the command processor. In QUEUE mode, busy notice is sent instead of injecting raw text.
 
-> Caveat: the `STEER` mode sends `INJECT_STEER` into the control channel, but nothing drains `INJECT_STEER` today — the command is written but never read. STEER is therefore effectively inert until a consumer is added. See `framework/control/AGENTS.md`.
+> Caveat: the `STEER` mode sends `INJECT_STEER` into the control channel, but nothing drains `INJECT_STEER` today — the command is written but never read. STEER is therefore effectively inert until a consumer is added. See `modex_agent/control/AGENTS.md`.
 
 ## Approval in Pipeline
 
@@ -87,11 +87,11 @@ Pipeline assembles runtime services and handles platform I/O; ReAct owns the tur
 
 ## Dependencies
 
-- `framework.core.agent` — `Agent[E]` for execution
-- `framework.agents.react` — `ReActAgent`, `ReActTurnState` for turn execution
-- `framework.runtime` — `AgentRuntimeServices`, `TurnStateStore` for state and snapshot persistence
-- `framework.commands` — `CommandProcessor` for slash command parsing
-- `framework.approval` — approval response parsing and tier classification
-- `framework.multi_agent` — `MultiAgentContextBuilder` for multi-agent context assembly
-- `framework.memory` — memory compaction and consolidation after turns
-- `framework.control` — control channel types (vestigial, for STEER mode)
+- `modex_agent.core.agent` — `Agent[E]` for execution
+- `modex_agent.agents.react` — `ReActAgent`, `ReActTurnState` for turn execution
+- `modex_agent.runtime` — `AgentRuntimeServices`, `TurnStateStore` for state and snapshot persistence
+- `modex_agent.commands` — `CommandProcessor` for slash command parsing
+- `modex_agent.approval` — approval response parsing and tier classification
+- `modex_agent.multi_agent` — `MultiAgentContextBuilder` for multi-agent context assembly
+- `modex_agent.memory` — memory compaction and consolidation after turns
+- `modex_agent.control` — control channel types (vestigial, for STEER mode)

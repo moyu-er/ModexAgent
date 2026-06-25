@@ -30,12 +30,12 @@ Memory injection policies that convert MemorySystem state into a structured cont
 ## Dependencies
 
 ### Internal
-- `framework.memory.core.models` — `InjectionResult`, `MemoryBudget`
-- `framework.memory.core.scope` — `MemoryContext`
-- `framework.memory.core.system` — `MemorySystem`
-- `framework.memory.pruned.manager` — `PrunedManager`
-- `framework.memory.tags` — `ArchiveTag`, `KnowledgeTag`, `PrunedTag`
-- `framework.memory.utils` — `estimate_text_tokens`
-- `framework.utils.xml` — XML formatting helpers
+- `modex_agent.memory.core.models` — `InjectionResult`, `MemoryBudget`
+- `modex_agent.memory.core.scope` — `MemoryContext`
+- `modex_agent.memory.core.system` — `MemorySystem`
+- `modex_agent.memory.pruned.manager` — `PrunedManager`
+- `modex_agent.memory.tags` — `ArchiveTag`, `KnowledgeTag`, `PrunedTag`
+- `modex_agent.memory.utils` — `estimate_text_tokens`
+- `modex_agent.utils.xml` — XML formatting helpers
 
 <!-- MANUAL -->

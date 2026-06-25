@@ -30,6 +30,6 @@ Inversion of Control container — typed configuration (Pydantic) and factory fu
 
 ## Dependencies
 - `pydantic` — config model validation
-- Consumed by `framework/runtime/` (AgentRuntimeServices), `framework/pipeline/` (AgentPipeline assembly)
+- Consumed by `modex_agent/runtime/` (AgentRuntimeServices), `modex_agent/pipeline/` (AgentPipeline assembly)
 
 <!-- MANUAL: -->

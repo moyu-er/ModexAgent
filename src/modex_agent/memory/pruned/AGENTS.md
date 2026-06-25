@@ -33,11 +33,11 @@ Manages the pruned memory catalog — records of cleaned-up session messages tha
 ## Dependencies
 
 ### Internal
-- `framework.memory.tags` — `PrunedTag`
-- `framework.memory.pruned.models` — `PrunedIndexEntry`
-- `framework.memory.pruned.storage` — `PrunedStorage` (ABC) + `FilePrunedStorage`
-- `framework.utils.timezone` — `get_user_timezone`
-- `framework.utils.xml` — XML formatting helpers
-- `framework.utils.file_io` — `read_jsonl_robust`
+- `modex_agent.memory.tags` — `PrunedTag`
+- `modex_agent.memory.pruned.models` — `PrunedIndexEntry`
+- `modex_agent.memory.pruned.storage` — `PrunedStorage` (ABC) + `FilePrunedStorage`
+- `modex_agent.utils.timezone` — `get_user_timezone`
+- `modex_agent.utils.xml` — XML formatting helpers
+- `modex_agent.utils.file_io` — `read_jsonl_robust`
 
 <!-- MANUAL -->

@@ -5,7 +5,7 @@
 
 ## Purpose
 
-Pure factory functions that consume Pydantic config objects from `framework/ioc/configs/` and produce fully-wired runtime subsystem instances. Each factory handles its own section of the configuration and returns a ready-to-use object. No factory imports from `bot_project/`.
+Pure factory functions that consume Pydantic config objects from `modex_agent/ioc/configs/` and produce fully-wired runtime subsystem instances. Each factory handles its own section of the configuration and returns a ready-to-use object. No factory imports from `bot_project/`.
 
 ## Key Files
 
@@ -37,11 +37,11 @@ Pure factory functions that consume Pydantic config objects from `framework/ioc/
 ## Dependencies
 
 ### Internal
-- `framework/ioc/configs/` — all Pydantic config models consumed here
-- `framework/agents/react/` — `ReActAgent` created by agent factory
-- `framework/providers/` — `LiteLLMProvider`, `OpenAIProvider` created by LLM factory
-- `framework/memory/` — `DefaultMemorySystem`, `MemoryLayerConfigSet`, governance classes
-- `framework/tools/` — `MCPClientManager`, `MCPToolAdapter`, `ToolRegistry`, standard tools
-- `framework/multi_agent/` — `AgentDescriptor`, `AgentAddress`, `AgentCommKind`
+- `modex_agent/ioc/configs/` — all Pydantic config models consumed here
+- `modex_agent/agents/react/` — `ReActAgent` created by agent factory
+- `modex_agent/providers/` — `LiteLLMProvider`, `OpenAIProvider` created by LLM factory
+- `modex_agent/memory/` — `DefaultMemorySystem`, `MemoryLayerConfigSet`, governance classes
+- `modex_agent/tools/` — `MCPClientManager`, `MCPToolAdapter`, `ToolRegistry`, standard tools
+- `modex_agent/multi_agent/` — `AgentDescriptor`, `AgentAddress`, `AgentCommKind`
 
 <!-- MANUAL -->

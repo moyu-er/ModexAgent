@@ -27,6 +27,6 @@ Language Server Protocol integration stubs for code navigation and diagnostics. 
 ## Dependencies
 
 ### Internal
-- `framework.core.tool_manager` — `Tool` ABC
+- `modex_agent.core.tool_manager` — `Tool` ABC
 
 <!-- MANUAL -->

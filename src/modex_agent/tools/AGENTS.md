@@ -5,7 +5,7 @@
 
 ## Purpose
 
-Tool subsystem — registry, type definitions, filtering, metadata parsing, MCP integration, the stateful terminal system, standard built-in tools, AST code-analysis tools, LSP integration, web tools, tool-result overflow management, and workspace-scoped tools. All tools implement the `Tool` ABC from `framework/core`.
+Tool subsystem — registry, type definitions, filtering, metadata parsing, MCP integration, the stateful terminal system, standard built-in tools, AST code-analysis tools, LSP integration, web tools, tool-result overflow management, and workspace-scoped tools. All tools implement the `Tool` ABC from `modex_agent/core`.
 
 ## Key Files
 
@@ -38,10 +38,10 @@ Tool subsystem — registry, type definitions, filtering, metadata parsing, MCP 
 - `FilteredToolManager` enforces per-agent tool visibility rules at runtime
 - `metadata_parser.py` enables automatic parameter schema extraction from docstrings
 - Terminal sessions are stateful — use session IDs for persistent shell interaction
-- No standalone `executor.py` exists; tool execution is handled by `ToolRegistry` lookup + individual tool `.execute()` calls, coordinated by the agent's `ToolNode` (see `framework/agents/AGENTS.md`)
+- No standalone `executor.py` exists; tool execution is handled by `ToolRegistry` lookup + individual tool `.execute()` calls, coordinated by the agent's `ToolNode` (see `modex_agent/agents/AGENTS.md`)
 
 ## Dependencies
 
-- `framework.core.abc` — `Tool` ABC for all tool implementations
-- `framework.agents.react.nodes.tool` — `ToolNode` that orchestrates tool batch execution and approval
-- `framework.workspace` — `WorkspaceContext` for workspace-scoped tool resolution
+- `modex_agent.core.abc` — `Tool` ABC for all tool implementations
+- `modex_agent.agents.react.nodes.tool` — `ToolNode` that orchestrates tool batch execution and approval
+- `modex_agent.workspace` — `WorkspaceContext` for workspace-scoped tool resolution

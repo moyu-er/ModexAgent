@@ -29,6 +29,6 @@ Directed graph state machine powering ReActAgent's 4-node execution loop (START 
 
 ## Dependencies
 
-- `framework.core.agent.AgentContext` — node execution context
+- `modex_agent.core.agent.AgentContext` — node execution context
 
 <!-- MANUAL: -->

@@ -32,7 +32,7 @@ Built-in agent-facing tools for file system operations and content search. Provi
 ## Dependencies
 
 ### Internal
-- `framework.core.tool_manager` — `Tool` ABC
+- `modex_agent.core.tool_manager` — `Tool` ABC
 
 ### External
 - `ripgrep` (optional) — fastest search backend on supported platforms

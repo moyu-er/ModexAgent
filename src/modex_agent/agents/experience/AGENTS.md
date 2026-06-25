@@ -31,7 +31,7 @@ Experience review agent — creates and updates EXPERIENCE.md files from convers
 - Trace files go to `experience_dir.parent / "review_traces"` (never inside experience data)
 
 ### Dependencies
-- `framework.agents.summarizer.scoped_file_agent` — `ScopedFileAgent` base class
-- `framework.core.experience.meta` — `ExperienceMetaStore` for lifecycle tracking
-- `framework.memory.tools.experience` — `ExperienceReadTool`, `ExperienceWriteTool`, etc.
-- `framework.agents.summarizer.emitter` — `SummarizerTrajectoryEmitter` for JSONL traces
+- `modex_agent.agents.summarizer.scoped_file_agent` — `ScopedFileAgent` base class
+- `modex_agent.core.experience.meta` — `ExperienceMetaStore` for lifecycle tracking
+- `modex_agent.memory.tools.experience` — `ExperienceReadTool`, `ExperienceWriteTool`, etc.
+- `modex_agent.agents.summarizer.emitter` — `SummarizerTrajectoryEmitter` for JSONL traces

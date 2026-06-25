@@ -1,7 +1,7 @@
 <!-- Parent: ../AGENTS.md -->
 <!-- Updated: 2026-06-22 -->
 
-# framework/workspace
+# modex_agent/workspace
 
 Generic workspace mechanism — identifies, isolates, and routes per-workspace resources. Pool-agnostic — pool concepts are business concerns and live in `bot/workspace/`.
 
@@ -53,7 +53,7 @@ WorkspaceMessageDispatcher   ← per-message: resolve workspace → bind context
 ## Dependencies
 
 ### Internal
-- `framework/workspace/` — self-contained module, minimal framework imports
+- `modex_agent/workspace/` — self-contained module, minimal framework imports
 
 ### External
 - None beyond standard library + `pathlib`

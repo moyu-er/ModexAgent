@@ -29,19 +29,19 @@ Concrete storage backend implementations for the memory system. Provides file-ba
 
 ### Common Patterns
 - Each storage backend wraps a lock (`AioRWLock` or `NoOpStorageLock`) for concurrent access
-- `safe_atomic_replace()` (from `framework.memory.utils`) is used for crash-safe file writes across all file-based stores
+- `safe_atomic_replace()` (from `modex_agent.memory.utils`) is used for crash-safe file writes across all file-based stores
 - `sanitize_scope_key()` ensures scope keys are valid directory names on all platforms (Windows reserved names handled)
 - `ensure_scope_dir()` creates the storage directory lazily
 
 ## Dependencies
 
 ### Internal
-- `framework.memory.core.storage` — `MemoryStorage` ABC
-- `framework.memory.core.lock` — `AioRWLock`, `NoOpStorageLock`, `StorageLock`
-- `framework.memory.core.models` — `StorageRevision`
-- `framework.memory.core.scope` — `MemoryAgentRole`, `MemoryContext`, `ScopeRecord`, `MemoryLayerName`
-- `framework.memory.archive_models` — `ArchiveChannel`, archive file constants
-- `framework.memory.utils` — `safe_atomic_replace`
-- `framework.utils.file_io` — `read_json_robust`, `read_jsonl_robust`
+- `modex_agent.memory.core.storage` — `MemoryStorage` ABC
+- `modex_agent.memory.core.lock` — `AioRWLock`, `NoOpStorageLock`, `StorageLock`
+- `modex_agent.memory.core.models` — `StorageRevision`
+- `modex_agent.memory.core.scope` — `MemoryAgentRole`, `MemoryContext`, `ScopeRecord`, `MemoryLayerName`
+- `modex_agent.memory.archive_models` — `ArchiveChannel`, archive file constants
+- `modex_agent.memory.utils` — `safe_atomic_replace`
+- `modex_agent.utils.file_io` — `read_json_robust`, `read_jsonl_robust`
 
 <!-- MANUAL -->

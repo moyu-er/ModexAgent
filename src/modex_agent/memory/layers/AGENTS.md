@@ -34,15 +34,15 @@ Concrete implementations of the four memory layer managers — Session, Archive,
 ## Dependencies
 
 ### Internal
-- `framework.memory.core.layers` — `ArchiveMemoryManager`, `KnowledgeMemoryManager`, `SessionMemoryManager`, `MemoryLayerSet` ABCs
-- `framework.memory.core.scope` — `MemoryContext`, `MemoryScope`, `MemoryLayerName`, `SessionScope`, `UserScope`
-- `framework.memory.core.storage` — `MemoryStorage`
-- `framework.memory.core.models` — `ArchiveEntry`, `LongTermMemory`, `UnprocessedResult`, `StorageRevision`
-- `framework.memory.archive_models` — `ArchiveChannel`, `ArchiveBundleResult`, `ArchiveState`, `ArchiveWrite`
-- `framework.memory.history_search` — `HistorySearchStrategy`, `RecentFirstHistorySearch`
-- `framework.memory.knowledge_search` — `KnowledgeSearchStrategy`, `FullDumpKnowledgeStrategy`
-- `framework.memory.registry` — `MemoryStoreRegistry`
-- `framework.memory.user_buffer` — `UserBufferEntry`
-- `framework.core.provider` — `LLMProvider`
+- `modex_agent.memory.core.layers` — `ArchiveMemoryManager`, `KnowledgeMemoryManager`, `SessionMemoryManager`, `MemoryLayerSet` ABCs
+- `modex_agent.memory.core.scope` — `MemoryContext`, `MemoryScope`, `MemoryLayerName`, `SessionScope`, `UserScope`
+- `modex_agent.memory.core.storage` — `MemoryStorage`
+- `modex_agent.memory.core.models` — `ArchiveEntry`, `LongTermMemory`, `UnprocessedResult`, `StorageRevision`
+- `modex_agent.memory.archive_models` — `ArchiveChannel`, `ArchiveBundleResult`, `ArchiveState`, `ArchiveWrite`
+- `modex_agent.memory.history_search` — `HistorySearchStrategy`, `RecentFirstHistorySearch`
+- `modex_agent.memory.knowledge_search` — `KnowledgeSearchStrategy`, `FullDumpKnowledgeStrategy`
+- `modex_agent.memory.registry` — `MemoryStoreRegistry`
+- `modex_agent.memory.user_buffer` — `UserBufferEntry`
+- `modex_agent.core.provider` — `LLMProvider`
 
 <!-- MANUAL -->

@@ -31,8 +31,8 @@ AST-based code analysis and manipulation tools. Provides tree-sitter powered sea
 ## Dependencies
 
 ### Internal
-- `framework.core.tool_manager` — `Tool` ABC
-- `framework.workspace.runtime` — `resolve_workspace_root`
+- `modex_agent.core.tool_manager` — `Tool` ABC
+- `modex_agent.workspace.runtime` — `resolve_workspace_root`
 
 ### External
 - `tree_sitter` (optional) — S-expression query engine

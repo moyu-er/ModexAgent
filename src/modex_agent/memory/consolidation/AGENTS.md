@@ -28,11 +28,11 @@ Offline background consolidation that processes archive entries through a ReAct-
 ## Dependencies
 
 ### Internal
-- `framework.memory.archive_models` — `ArchiveChannel`, `ArchiveWrite`
-- `framework.memory.core.layers` — `ArchiveMemoryManager`, `KnowledgeMemoryManager`
-- `framework.memory.core.models` — `ArchiveEntry`
-- `framework.memory.core.scope` — `MemoryAgentRole`, `MemoryContext`, `MemoryLayerName`
-- `framework.memory.registry.base` — `MemoryStoreRegistry`
-- `framework.agents.summarizer.abc` — `KnowledgeConsolidatorBase`
+- `modex_agent.memory.archive_models` — `ArchiveChannel`, `ArchiveWrite`
+- `modex_agent.memory.core.layers` — `ArchiveMemoryManager`, `KnowledgeMemoryManager`
+- `modex_agent.memory.core.models` — `ArchiveEntry`
+- `modex_agent.memory.core.scope` — `MemoryAgentRole`, `MemoryContext`, `MemoryLayerName`
+- `modex_agent.memory.registry.base` — `MemoryStoreRegistry`
+- `modex_agent.agents.summarizer.abc` — `KnowledgeConsolidatorBase`
 
 <!-- MANUAL -->

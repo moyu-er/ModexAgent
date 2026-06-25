@@ -21,9 +21,9 @@ Platform-specific terminal backend implementations that provide the OS-level PTY
 ## For AI Agents
 
 ### Working In This Directory
-- Backends are **not** called directly by agents — they are used through `TerminalSession` (in `framework/tools/terminal/`)
+- Backends are **not** called directly by agents — they are used through `TerminalSession` (in `modex_agent/tools/terminal/`)
 - `create_pty_backend()` selects the appropriate backend for the current platform automatically
-- Platform detection: `Platform.WINDOWS` vs `Platform.LINUX`/`Platform.MACOS` (enum in `framework/tools/terminal/types.py`)
+- Platform detection: `Platform.WINDOWS` vs `Platform.LINUX`/`Platform.MACOS` (enum in `modex_agent/tools/terminal/types.py`)
 - Visibility: `TerminalVisibility.HIDDEN` (pexpect, windows_hidden), `TerminalVisibility.VISIBLE` (visible_windows, tmux with visible pane)
 - All backends implement: `start()`, `write(data)`, `read(timeout)` → `TerminalRead`, `close()`, `resize(rows, cols)`
 
@@ -37,11 +37,11 @@ Platform-specific terminal backend implementations that provide the OS-level PTY
 ## Dependencies
 
 ### Internal
-- `framework.tools.terminal.base` — `TerminalBackend` ABC
-- `framework.tools.terminal.results` — `SlidingOutputBuffer`, `TerminalRead`, `TerminalSegment`
-- `framework.tools.terminal.types` — `Platform`, `TerminalVisibility`
-- `framework.tools.terminal.prompt` — `drain_windows_startup`, `is_prompt_ready`
-- `framework.tools.terminal.pty_keys` — `CTRL_C`
+- `modex_agent.tools.terminal.base` — `TerminalBackend` ABC
+- `modex_agent.tools.terminal.results` — `SlidingOutputBuffer`, `TerminalRead`, `TerminalSegment`
+- `modex_agent.tools.terminal.types` — `Platform`, `TerminalVisibility`
+- `modex_agent.tools.terminal.prompt` — `drain_windows_startup`, `is_prompt_ready`
+- `modex_agent.tools.terminal.pty_keys` — `CTRL_C`
 
 ### External
 - `pexpect` (Unix, optional) — pexpect-based PTY

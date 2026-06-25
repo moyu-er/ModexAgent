@@ -38,8 +38,8 @@ Sandbox backend implementations that execute code and commands in isolated envir
 ## Dependencies
 
 ### Internal
-- `framework/sandbox/` — `SandboxConfig`, `SandboxResult`, `SandboxArtifact`, `EnvironmentBuilder`, `CommandPatternGuard`, `WorkspacePolicy`, `IsolationManager`, `validate_code`
-- `framework/sandbox/exceptions.py` — `SandboxUnavailableError`, `CommandRejectedError`
+- `modex_agent/sandbox/` — `SandboxConfig`, `SandboxResult`, `SandboxArtifact`, `EnvironmentBuilder`, `CommandPatternGuard`, `WorkspacePolicy`, `IsolationManager`, `validate_code`
+- `modex_agent/sandbox/exceptions.py` — `SandboxUnavailableError`, `CommandRejectedError`
 
 ### External
 - `docker` (optional) — Docker SDK for Python

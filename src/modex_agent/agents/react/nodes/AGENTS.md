@@ -21,10 +21,10 @@ Graph node implementations for the ReAct agent execution loop. Each node is a si
 
 ### Working In This Directory
 - Each node extends `Node` and implements `async def execute(ctx: AgentContext) -> NodeTransition`
-- Nodes access ReAct-specific state via `get_react_state(ctx)` from `framework/agents/react/state.py`
+- Nodes access ReAct-specific state via `get_react_state(ctx)` from `modex_agent/agents/react/state.py`
 - Node transitions use `ReActReason` enums (e.g. `NORMAL_START`, `HAS_TOOLS`, `NO_TOOLS`, `LLM_ERROR`, `DONE`)
 - `ToolNode` is the most complex node — it handles the full approval lifecycle (classify → suspend → resume → execute)
-- Approval suspension uses `interrupt()` from `framework.core.graph.interrupt` which raises a `GraphInterrupt`
+- Approval suspension uses `interrupt()` from `modex_agent.core.graph.interrupt` which raises a `GraphInterrupt`
 
 ### Common Patterns
 - Read `state.phase` to detect `SUSPENDED` vs fresh turns
@@ -35,11 +35,11 @@ Graph node implementations for the ReAct agent execution loop. Each node is a si
 ## Dependencies
 
 ### Internal
-- `framework/agents/react/` — `agent.py` (ReActAgent, ReActEvent), `constants.py` (ReActNode, ReActReason), `state.py` (ReActTurnState)
-- `framework/core/graph/` — `node.py` (Node, NodeTransition), `interrupt.py` (interrupt)
-- `framework/core/` — `AgentContext`, `LLMResponse`, `ToolCall`, emitter types
-- `framework/runtime/` — `TurnPhase`, interceptors, dispatch deadline
-- `framework/hook/` — HookPoint, HookPayload, control_drain
-- `framework/approval/` — ApprovalDecision, ApprovalTier enums
+- `modex_agent/agents/react/` — `agent.py` (ReActAgent, ReActEvent), `constants.py` (ReActNode, ReActReason), `state.py` (ReActTurnState)
+- `modex_agent/core/graph/` — `node.py` (Node, NodeTransition), `interrupt.py` (interrupt)
+- `modex_agent/core/` — `AgentContext`, `LLMResponse`, `ToolCall`, emitter types
+- `modex_agent/runtime/` — `TurnPhase`, interceptors, dispatch deadline
+- `modex_agent/hook/` — HookPoint, HookPayload, control_drain
+- `modex_agent/approval/` — ApprovalDecision, ApprovalTier enums
 
 <!-- MANUAL -->

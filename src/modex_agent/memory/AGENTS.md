@@ -129,13 +129,13 @@ Message appended
 ## Dependencies
 
 ### Internal
-- `framework.core.types` — `MessageRole`, `MessageType`, `ToolCall`
-- `framework.core.context` — `ContextManager`, `ContextState`
-- `framework.core.session_id` — `SessionInfo`
-- `framework.core.events` — `AgentEvent`
-- `framework.core.history` — `MessageHistory` ABC
-- `framework.utils` — xml, helpers, sanitizer
-- `framework.agents.summarizer` — `ArchiveSummarizer`, `KnowledgeConsolidator` (for consolidation pipeline)
+- `modex_agent.core.types` — `MessageRole`, `MessageType`, `ToolCall`
+- `modex_agent.core.context` — `ContextManager`, `ContextState`
+- `modex_agent.core.session_id` — `SessionInfo`
+- `modex_agent.core.events` — `AgentEvent`
+- `modex_agent.core.history` — `MessageHistory` ABC
+- `modex_agent.utils` — xml, helpers, sanitizer
+- `modex_agent.agents.summarizer` — `ArchiveSummarizer`, `KnowledgeConsolidator` (for consolidation pipeline)
 
 ### External
 - `pydantic` — data models

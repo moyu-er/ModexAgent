@@ -32,7 +32,7 @@ Model Context Protocol (MCP) integration layer. Provides client implementations 
 ## Dependencies
 
 ### Internal
-- `framework.core.tool_manager` — `Tool` ABC, `ToolConfig`
+- `modex_agent.core.tool_manager` — `Tool` ABC, `ToolConfig`
 
 ### External
 - `mcp` — official MCP SDK (`ClientSession`, `McpError`)

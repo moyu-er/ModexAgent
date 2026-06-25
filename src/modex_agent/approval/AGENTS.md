@@ -28,7 +28,7 @@ ToolNode: _resume_suspended_batch() -> PRE_APPROVED_TOOL_IDS -> _execute_batch()
 - Batch atomicity: one DENY cascades to PREEMPT all unresolved requests
 - Unrelated input during pending approval: DENIED with reason, cascades to all
 - Per-tool `allowed_paths`: `["*"]` = never require approval; `[]` = always require
-- Do NOT add approval-specific stores; use `TurnStateStore` from `framework.runtime`
+- Do NOT add approval-specific stores; use `TurnStateStore` from `modex_agent.runtime`
 
 ## Dependencies
 - None internal (pure data types and parsing; no agent/runtime imports)
