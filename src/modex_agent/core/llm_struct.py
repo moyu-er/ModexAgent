@@ -30,6 +30,7 @@ class LLMErrorKind(StrEnum):
     CONNECTION = "connection"
     SERVER = "server"
     INVALID_REQUEST = "invalid_request"
+    CONTENT_FILTER = "content_filter"
     UNKNOWN = "unknown"
 
 
@@ -45,6 +46,24 @@ class LLMErrorInfo:
     should_retry: bool = False
 
 
+_CONTENT_FILTER_MARKERS = (
+    "content_filter",
+    "content filter",
+    "content management policy",
+    "content policy",
+    "sensitive",  # GLM/Zhipu moderation code, e.g. "new_sensitive (1027)"
+)
+
+
+def is_content_filter_text(text: str) -> bool:
+    """Return True if a lowercased error text indicates content moderation.
+
+    Used by both the openai and litellm classifiers so the marker vocabulary
+    stays in one place. Content-moderation errors are never retryable.
+    """
+    return any(marker in text for marker in _CONTENT_FILTER_MARKERS)
+
+
 def classify_litellm_error(exc: Exception) -> LLMErrorInfo:
     """将 LiteLLM / httpx / aiohttp 异常归类为 LLMErrorInfo。
 
@@ -54,6 +73,11 @@ def classify_litellm_error(exc: Exception) -> LLMErrorInfo:
     text = str(exc).lower()
     cls_name = type(exc).__name__.lower()
     message = str(exc)[:500]
+
+    if is_content_filter_text(text):
+        return LLMErrorInfo(
+            LLMErrorKind.CONTENT_FILTER, message, "litellm", should_retry=False
+        )
 
     if "timeout" in text or "timeout" in cls_name or "timed out" in text:
         return LLMErrorInfo(LLMErrorKind.TIMEOUT, message, "litellm", should_retry=True)

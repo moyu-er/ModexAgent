@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 
-from modex_agent.core.llm_struct import LLMErrorInfo, LLMErrorKind
+from modex_agent.core.llm_struct import LLMErrorInfo, LLMErrorKind, is_content_filter_text
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +106,7 @@ def classify_api_status(exc, message: str) -> LLMErrorInfo:
     body = exc.body
     if isinstance(body, dict):
         error_type = body.get("error", {}).get("type", "")
+        error_code = body.get("error", {}).get("code", "")
         if error_type and status_code == 429:
             if error_type == "insufficient_quota" or "quota" in error_type.lower():
                 return LLMErrorInfo(
@@ -113,6 +114,12 @@ def classify_api_status(exc, message: str) -> LLMErrorInfo:
                 )
             return LLMErrorInfo(
                 LLMErrorKind.RATE_LIMIT, message, "openai", status_code, should_retry=True
+            )
+        # Content moderation surfaced in the response body (OpenAI marks the
+        # error type/code as content_filter).
+        if is_content_filter_text(f"{error_type} {error_code}".lower()):
+            return LLMErrorInfo(
+                LLMErrorKind.CONTENT_FILTER, message, "openai", status_code, should_retry=False
             )
 
     if status_code in (401, 403):
@@ -129,6 +136,11 @@ def classify_api_status(exc, message: str) -> LLMErrorInfo:
 
 def classify_by_string(text: str, message: str) -> LLMErrorInfo:
     """String-scan fallback for non-openai exceptions."""
+    if is_content_filter_text(text):
+        return LLMErrorInfo(
+            LLMErrorKind.CONTENT_FILTER, message, "openai", should_retry=False
+        )
+
     if "timeout" in text or "timed out" in text:
         return LLMErrorInfo(LLMErrorKind.TIMEOUT, message, "openai", should_retry=True)
 

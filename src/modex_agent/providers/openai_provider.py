@@ -209,6 +209,32 @@ class OpenAIProvider(StreamingLLMProvider):
                     message="LLM stream idle timeout",
                     partial_content=partial_content,
                 )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                # Mid-stream error raised by the SDK while iterating (e.g. GLM
+                # content-moderation ``new_sensitive (1027)``). Convert to a
+                # graceful error response preserving partial content already
+                # streamed, instead of letting it abort the whole agent turn.
+                with contextlib.suppress(Exception):
+                    await stream.close()
+                error_info = classify_openai_error(exc)
+                partial_content = "".join(content_parts)
+                elapsed_ms = (time.monotonic() - t0) * 1000
+                logger.warning(
+                    "OpenAI stream failed mid-stream: kind=%s elapsed=%.0fms "
+                    "partial_content_len=%d message=%s",
+                    error_info.kind.value,
+                    elapsed_ms,
+                    len(partial_content),
+                    error_info.message[:200],
+                )
+                return LLMResponse(
+                    content=partial_content,
+                    finish_reason=FinishReason.ERROR.value,
+                    error=error_info.message,
+                    error_info=error_info,
+                )
 
             if not chunk.choices:
                 continue

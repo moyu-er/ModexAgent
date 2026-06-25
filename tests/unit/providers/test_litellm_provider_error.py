@@ -249,6 +249,53 @@ class TestChatStreamRawErrorHandling:
         assert "partial" in (result.content or "")
 
     @pytest.mark.asyncio
+    async def test_stream_mid_stream_exception_returns_error_response(self, provider):
+        """A mid-stream exception must become a graceful error response, not raise.
+
+        Regression for the crash where the streaming loop only caught
+        StopAsyncIteration / TimeoutError, so any error raised after the first
+        chunk (e.g. content-moderation ``new_sensitive``) aborted the turn.
+        """
+        provider._stream_idle_timeout = 30  # ensure timeout doesn't mask the error
+
+        async def breaking_stream(**_kwargs):
+            class BreakingIter:
+                def __init__(self):
+                    self._i = 0
+
+                def __aiter__(self):
+                    return self
+
+                async def __anext__(self):
+                    if self._i == 0:
+                        self._i += 1
+                        return _make_stream_chunk(content="partial")
+                    raise Exception("output new_sensitive (1027)")
+
+                async def aclose(self):
+                    pass
+
+            return BreakingIter()
+
+        provider._acompletion = breaking_stream
+
+        deltas = []
+        result = await provider.chat_stream_with_retry(
+            messages=[{"role": "user", "content": "hi"}],
+            max_retries=0,
+            on_content_delta=lambda d: deltas.append(d),
+        )
+
+        assert isinstance(result, LLMResponse)
+        assert result.finish_reason == FinishReason.ERROR.value
+        assert result.error_info is not None
+        assert result.error_info.kind == LLMErrorKind.CONTENT_FILTER
+        assert result.error_info.should_retry is False
+        assert "new_sensitive" in (result.error or "")
+        # Partial content streamed before the error must be preserved.
+        assert deltas == ["partial"]
+
+    @pytest.mark.asyncio
     async def test_stream_normal_response(self, provider):
         """Normal stream should complete successfully."""
         chunks = [_make_stream_chunk(content="hello", finish_reason="stop")]
@@ -265,6 +312,24 @@ class TestChatStreamRawErrorHandling:
         assert result.content == "hello"
         assert result.finish_reason == "stop"
         assert deltas == ["hello"]
+
+
+class TestClassifyLitellmContentFilter:
+    """classify_litellm_error() recognises content-moderation errors."""
+
+    def test_new_sensitive(self):
+        from modex_agent.core.llm_struct import classify_litellm_error
+
+        result = classify_litellm_error(Exception("output new_sensitive (1027)"))
+        assert result.kind == LLMErrorKind.CONTENT_FILTER
+        assert result.should_retry is False
+
+    def test_content_filter(self):
+        from modex_agent.core.llm_struct import classify_litellm_error
+
+        result = classify_litellm_error(Exception("content_filter triggered"))
+        assert result.kind == LLMErrorKind.CONTENT_FILTER
+        assert result.should_retry is False
 
 
 class TestBuildRequestParams:

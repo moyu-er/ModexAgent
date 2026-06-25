@@ -330,6 +330,30 @@ class LiteLLMProvider(StreamingLLMProvider):
                     message="LLM stream idle timeout",
                     partial_content=partial_content,
                 )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                # Mid-stream error raised while iterating (e.g. content
+                # moderation). Convert to a graceful error response preserving
+                # partial content already streamed, instead of aborting the turn.
+                with contextlib.suppress(Exception):
+                    close = getattr(iterator, "aclose", None)
+                    if close is not None:
+                        await close
+                error_info = classify_litellm_error(exc)
+                partial_content = "".join(content_parts)
+                logger.warning(
+                    "LiteLLM stream failed mid-stream: kind=%s partial_content_len=%d message=%s",
+                    error_info.kind.value,
+                    len(partial_content),
+                    error_info.message[:200],
+                )
+                return LLMResponse(
+                    content=partial_content,
+                    finish_reason=FinishReason.ERROR.value,
+                    error=error_info.message,
+                    error_info=error_info,
+                )
 
             delta = self._extract_delta(chunk)
             if not delta:

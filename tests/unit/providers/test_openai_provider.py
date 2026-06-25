@@ -383,3 +383,42 @@ class TestOpenAIProviderChatStream:
 
         assert result.finish_reason == FinishReason.ERROR.value
         assert result.error_info.kind == LLMErrorKind.CONNECTION
+
+    @pytest.mark.asyncio
+    async def test_chat_stream_mid_stream_apierror_returns_error_response(self, provider):
+        """A mid-stream APIError (e.g. GLM content moderation ``new_sensitive``)
+        must be converted into a graceful error LLMResponse, not raised.
+
+        Regression for the crash where the streaming iteration loop only caught
+        StopAsyncIteration / TimeoutError, so any mid-stream exception escaped
+        and aborted the whole agent turn.
+        """
+        from openai import APIError
+
+        async def _stream_that_breaks_midway():
+            yield self._make_chunk(content="partial answer")
+            raise APIError(
+                "output new_sensitive (1027)",
+                request=MagicMock(),
+                body=None,
+            )
+
+        provider._client.chat.completions.create = AsyncMock(
+            return_value=_stream_that_breaks_midway()
+        )
+
+        deltas = []
+        result = await provider.chat_stream(
+            messages=[{"role": "user", "content": "hi"}],
+            on_content_delta=lambda d: deltas.append(d),
+        )
+
+        # Must not raise; must return a structured error response.
+        assert result.finish_reason == FinishReason.ERROR.value
+        assert result.error_info is not None
+        # Content-moderation error is classified distinctly and non-retryable.
+        assert result.error_info.kind == LLMErrorKind.CONTENT_FILTER
+        assert result.error_info.should_retry is False
+        # Partial content already streamed before the error must be preserved.
+        assert deltas == ["partial answer"]
+        assert "new_sensitive" in (result.error or "")
