@@ -11,7 +11,7 @@ import pytest
 
 from modex_agent.memory.pruned.manager import PrunedManager
 from modex_agent.memory.stores.dir_archive import DirArchiveStorage
-from modex_agent.memory.pipeline.providers import ArchiveProvider, PrunedProvider
+from modex_agent.memory.prompt_pipeline.providers import ArchiveProvider, PrunedProvider
 
 
 # ---------------------------------------------------------------------------

@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from modex_agent.memory.pipeline.abc import SystemPromptProvider
+from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.utils.timezone import get_user_timezone
 
 

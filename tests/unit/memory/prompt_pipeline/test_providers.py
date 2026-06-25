@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from modex_agent.memory.pipeline.providers import (
+from modex_agent.memory.prompt_pipeline.providers import (
     BasePromptProvider,
     ExperienceProvider,
     KnowledgeProvider,

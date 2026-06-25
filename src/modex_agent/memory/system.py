@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from modex_agent.memory.pipeline import SystemPromptProvider
+from modex_agent.core.prompt import SystemPromptProvider
 
 # Default system prompt used when no other content is configured.
 # Kept minimal so the agent is useful even without custom configuration.
@@ -220,8 +220,8 @@ class MemorySystemContextManager(ContextManager):
         # The injection_policy provides: disclaimer + knowledge + blocks + prefetch.
         # ────────────────────────────────────────────────────────────────
         from modex_agent.memory.injection.full_injection import FullInjectionPolicy
-        from modex_agent.memory.pipeline.pipeline import SystemPromptPipeline
-        from modex_agent.memory.pipeline.providers import (
+        from modex_agent.core.prompt import SystemPromptPipeline
+        from modex_agent.memory.prompt_pipeline.providers import (
             ArchiveProvider,
             BasePromptProvider,
             ExperienceProvider,
@@ -259,7 +259,7 @@ class MemorySystemContextManager(ContextManager):
 
         # 2b. OUTPUT.md path — dynamic per-session (subagents only)
         if self._output_base_dir is not None:
-            from modex_agent.memory.pipeline.providers import OutputMdProvider
+            from modex_agent.memory.prompt_pipeline.providers import OutputMdProvider
 
             providers.append(OutputMdProvider(self._output_base_dir, session_id))
 

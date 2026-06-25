@@ -3,8 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from modex_agent.memory.pipeline.abc import SystemPromptProvider
-from modex_agent.memory.pipeline.pipeline import SystemPromptPipeline
+from modex_agent.core.prompt import SystemPromptPipeline, SystemPromptProvider
 
 
 class _FakeProvider(SystemPromptProvider):

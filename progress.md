@@ -10,7 +10,7 @@ Created 14 AGENTS.md files for memory and tools subdirectories:
 - `framework/memory/consolidation/AGENTS.md` — DreamEngine, offline consolidation
 - `framework/memory/injection/AGENTS.md` — FullInjectionPolicy, RestrictedInjectionPolicy
 - `framework/memory/layers/AGENTS.md` — 4 layer managers + config + factory
-- `framework/memory/pipeline/AGENTS.md` — SystemPromptPipeline + providers
+- `framework/memory/prompt_pipeline/AGENTS.md` — SystemPromptPipeline + providers
 - `framework/memory/prompts/AGENTS.md` — 6 prompt template files in 3 subdirs
 - `framework/memory/pruned/AGENTS.md` — PrunedManager, index, storage
 - `framework/memory/registry/AGENTS.md` — MemoryStoreRegistry (file + in-memory)
