@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 import tempfile
 import uuid as _uuid_mod
-from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,7 +26,7 @@ from modex_agent.multi_agent.tools import CommunicationTarget, CommunicationTarg
 from modex_agent.pipeline.adapters import OutputAdapter
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
-from modex_agent.workspace.resources import WorkspaceResources
+from modex_agent.workspace.resources import WorkspaceManager
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
@@ -37,25 +36,6 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.comm_tracker import CommunicationTracker
     from modex_agent.multi_agent.pool import AgentPool
     from modex_agent.multi_agent.registry import AgentRegistry
-
-
-class WorkspaceManager(ABC):
-    """Abstract interface for workspace resolution used by AgentCommunicationService.
-
-    The concrete implementation (e.g. ``WorkspaceResolverCell``) is provided
-    by the bot layer.  This ABC keeps the framework decoupled from business
-    types while giving the constructor a precise type annotation.
-    """
-
-    @abstractmethod
-    def resolve_workspace(self) -> WorkspaceResources:
-        """Return the currently active workspace's resources.
-
-        The returned :class:`WorkspaceResources` exposes ``pool_data`` (pool
-        name → :class:`PoolDataSnapshot`), whose values carry ``memory_dir``,
-        ``runtime_dir``, and ``pruned_manager``.
-        """
-        ...
 
 
 logger = logging.getLogger(__name__)
