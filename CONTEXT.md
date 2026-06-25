@@ -44,6 +44,14 @@ _Avoid_: root config, top-level config, settings
 The config for one agent pool (one deployment of one system). Holds `LLMConfig`, a list of `AgentConfig`, optional `MCPConfig` / `MemoryConfig` / `SkillsConfig`, and `TerminalConfig`. Pool identity = name of the agent with `role="main"`. Per ADR-0001, pool mode is the only assembly mode.
 _Avoid_: agent system config, fleet config, cluster config
 
+**Active-Workspace Resources Resolver**:
+The framework port the business layer implements to hand the framework the currently active workspace's per-pool resources (memory/runtime/trace stores). Canonical type: `WorkspaceManager` (a single method returning `WorkspaceResources`). Distinct from `WorkspaceResolver` (resolves a workspace by id) and `WorkspaceControlPort` (cd/switch/list control).
+_Avoid_: workspace manager (the historical single-active switch-engine concept, since removed)
+
+**Session Eviction**:
+The pool dropping a subagent task session from its tracking. Two independent triggers: TTL staleness (a session inactive longer than the retention window) and LRU count cap (when a subagent exceeds `max_sessions_per_subagent`, the least-recently-used session). A session's creation time is metadata only and is never an eviction ordering key.
+_Avoid_: session GC
+
 ## Relationships
 
 - A **Workspace** owns one or more **Pool Instances**; pool instances are not shared across workspaces.

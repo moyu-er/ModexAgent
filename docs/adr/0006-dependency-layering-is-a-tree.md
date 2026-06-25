@@ -40,12 +40,22 @@ Recommended order: ③ → ④ → ⑤ → ⑥. (Living status also in project m
 - ② **memory** (tier 2) — ✅ done. Deleted the `memory.core.{scope,message}`
   re-export shims; `memory → core` is one-directional. Guard:
   `tests/architecture/test_memory_shims_gone.py`.
-- ③ **multi_agent** (tier 3) — ⏳ next. Deepen pool / subagent communication /
-  descriptor. First concrete item from this ADR: relocate `WorkspaceManager`
-  (currently in `multi_agent/communication.py`) into `workspace` — the last
-  upward edge listed above. Open issue found 2026-06-25: `_enforce_session_cap`
-  (now int-counter LRU) and `_evict_dynamic_session` Policy 2 (sorts by
-  `created_at`) use inconsistent eviction semantics — unify during ③.
+- ③ **multi_agent** (tier 3) — ✅ done (conservative scope). Relocated
+  `WorkspaceManager` into `workspace/resources.py` (a workspace concept no
+  longer owned by `multi_agent`) and cut the latent `workspace → pipeline`
+  runtime edge (PoolDataSnapshot import now TYPE_CHECKING). Unified session
+  eviction on a single int-counter LRU: deleted the redundant/wrong-signaled
+  Policy 2 from `_try_evict_if_stale` (now TTL-only); cap enforcement is solely
+  `_enforce_session_cap`. Introduced a frozen `SessionActivity` dataclass to
+  name `created_at` (metadata), `last_active` (TTL), and `_session_lru` (LRU
+  key) distinctly. Guards: `test_workspace_no_runtime_upward_to_tier3plus`,
+  `test_workspace_manager_not_defined_in_multi_agent` (in
+  `tests/architecture/test_dependency_tree.py`; per-file direct-import scope,
+  not a full transitive-closure check). **Deferred:** splitting
+  `AgentPool` / `AgentCommunicationService` (deepening — cousin of ②'s C3);
+  renaming `WorkspaceManager` (rule 8); exporting `WorkspaceResources` from
+  the workspace facade (mild facade-completeness gap). See
+  `docs/refactor/candidate-3-multi-agent-edge-and-eviction.md`.
 - ④ **orchestration** — ⏳ pending. Remove the dead event bus and durable
   command store (ADR-0007's "genuinely dead" list); deepen turn loop / graph
   engine / pipeline composition.
