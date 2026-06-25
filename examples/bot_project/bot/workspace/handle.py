@@ -43,7 +43,7 @@ class WorkspaceHandleRootProvider(WorkspaceRootProvider):
         return self._handle.current
 
 
-from modex_agent.multi_agent.communication import WorkspaceManager
+from modex_agent.workspace import WorkspaceManager
 
 
 class WorkspaceResolverCell(WorkspaceManager):

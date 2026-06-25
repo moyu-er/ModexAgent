@@ -22,6 +22,7 @@ from modex_agent.workspace.paths import (
     safe_segment,
 )
 from modex_agent.workspace.port import WorkspaceControlPort
+from modex_agent.workspace.resources import WorkspaceManager
 from modex_agent.workspace.registry import (
     InMemoryRegistryStore,
     RegistryStore,
@@ -42,6 +43,7 @@ __all__ = [
     "WorkspaceRegistry",
     "WorkspaceResolver",
     "WorkspaceControlPort",
+    "WorkspaceManager",
     "CdError",
     "CdResult",
     "is_reserved_segment",

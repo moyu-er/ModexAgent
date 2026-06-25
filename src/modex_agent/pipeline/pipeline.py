@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from modex_agent.hook.runner import HookRunner
     from modex_agent.interceptor.chain import InterceptorChain
     from modex_agent.multi_agent.router import RouteResult
-    from modex_agent.multi_agent.communication import WorkspaceManager
+    from modex_agent.workspace import WorkspaceManager
     from modex_agent.runtime.store import RuntimeCommandStore, TurnStateStore
     from modex_agent.utils.media_utils import MediaBlock, MediaProcessor
 

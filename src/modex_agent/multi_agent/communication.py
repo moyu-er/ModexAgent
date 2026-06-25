@@ -26,7 +26,6 @@ from modex_agent.multi_agent.tools import CommunicationTarget, CommunicationTarg
 from modex_agent.pipeline.adapters import OutputAdapter
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
-from modex_agent.workspace.resources import WorkspaceManager
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
@@ -36,6 +35,7 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.comm_tracker import CommunicationTracker
     from modex_agent.multi_agent.pool import AgentPool
     from modex_agent.multi_agent.registry import AgentRegistry
+    from modex_agent.workspace.resources import WorkspaceManager
 
 
 logger = logging.getLogger(__name__)
