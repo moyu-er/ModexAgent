@@ -14,9 +14,9 @@ import asyncio
 import contextlib
 import logging
 
-from framework.core.experience.curator import ExperienceCurator
-from framework.ioc.configs.pool import PoolConfig
-from framework.memory.consolidation.dream_engine import DreamEngine
+from modex_agent.core.experience import ExperienceCurator
+from modex_agent.ioc.configs.pool import PoolConfig
+from modex_agent.memory.consolidation.dream_engine import DreamEngine
 
 from bot.workspace.pool_data import PoolData
 

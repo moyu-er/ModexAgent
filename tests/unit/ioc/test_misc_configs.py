@@ -1,5 +1,5 @@
-from framework.ioc.configs.observability import ObservabilityConfig
-from framework.ioc.configs.plugins import PluginConfig
+from modex_agent.ioc.configs.observability import ObservabilityConfig
+from modex_agent.ioc.configs.plugins import PluginConfig
 
 
 class TestPluginConfig:

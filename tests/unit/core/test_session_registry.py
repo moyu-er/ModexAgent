@@ -6,8 +6,8 @@ import asyncio
 
 import pytest
 
-from framework.core.session_id import SessionIdFactory
-from framework.core.session_registry import InMemorySessionRegistry
+from modex_agent.core.session_id import SessionIdFactory
+from modex_agent.core.session_registry import InMemorySessionRegistry
 
 
 @pytest.fixture
@@ -25,7 +25,7 @@ async def test_register_and_get(factory: SessionIdFactory):
 async def test_register_initializes_timestamps_for_from_str() -> None:
     """Reconstructing a SessionInfo from a bare id (as AgentPool._track_session
     does) must not leave created_at/updated_at null in the persisted record."""
-    from framework.core.session_id import SessionInfo
+    from modex_agent.core.session_id import SessionInfo
 
     reg = InMemorySessionRegistry()
     session = SessionInfo.from_str("abc123.main", default_agent_name="main")
@@ -57,7 +57,7 @@ async def test_touch_updates_updated_at(factory: SessionIdFactory):
 
 
 async def test_register_writes_through_to_store(tmp_path, factory: SessionIdFactory):
-    from framework.core.session_store import LocalFileSessionStore
+    from modex_agent.core.session_store import LocalFileSessionStore
 
     store = LocalFileSessionStore(tmp_path)
     reg = InMemorySessionRegistry(store=store)
@@ -68,7 +68,7 @@ async def test_register_writes_through_to_store(tmp_path, factory: SessionIdFact
 
 
 async def test_load_all_populates_cache_from_store(tmp_path, factory: SessionIdFactory):
-    from framework.core.session_store import LocalFileSessionStore
+    from modex_agent.core.session_store import LocalFileSessionStore
 
     store = LocalFileSessionStore(tmp_path)
     session = factory.create(agent_name="main")

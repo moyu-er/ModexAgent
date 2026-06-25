@@ -12,18 +12,18 @@ from typing import Any
 
 import pytest
 
-from framework.agents.summarizer.abc import ArchiveSummarizerResult
-from framework.core.types import MessageRole
-from framework.memory.archive_models import (
+from modex_agent.agents.summarizer.abc import ArchiveSummarizerResult
+from modex_agent.core.types import MessageRole
+from modex_agent.memory.archive_models import (
     ArchiveChannel,
 )
-from framework.memory.core.models import ArchiveEntry
-from framework.memory.core.system import MemorySystem
-from framework.memory.core.scope import MemoryContext
-from framework.memory.default_system import DefaultMemorySystem
-from framework.memory.layers.factory import MemoryLayerFactory
-from framework.memory.registry.in_memory import InMemoryStoreRegistry
-from framework.memory.stores.dir_archive import DirArchiveStorage
+from modex_agent.memory.core.models import ArchiveEntry
+from modex_agent.memory.core.system import MemorySystem
+from modex_agent.core.scope import MemoryContext
+from modex_agent.memory.default_system import DefaultMemorySystem
+from modex_agent.memory.layers.factory import MemoryLayerFactory
+from modex_agent.memory.registry.in_memory import InMemoryStoreRegistry
+from modex_agent.memory.stores.dir_archive import DirArchiveStorage
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
@@ -98,7 +98,7 @@ class _FakeInjectableMemorySystem(MemorySystem):
     def create_message_history(
         self, context: Any, initial_messages: Any = None
     ) -> Any:
-        from framework.memory.history import ListMessageHistory
+        from modex_agent.memory.history import ListMessageHistory
         return ListMessageHistory()
 
     async def add_messages(self, context: Any, messages: Any) -> None:
@@ -111,7 +111,7 @@ class _FakeInjectableMemorySystem(MemorySystem):
         pass
 
     async def get_knowledge(self, context: Any) -> Any:
-        from framework.memory.core.models import LongTermMemory
+        from modex_agent.memory.core.models import LongTermMemory
         return LongTermMemory()
 
     async def get_storage_path(self, context: Any) -> Path | None:
@@ -121,7 +121,7 @@ class _FakeInjectableMemorySystem(MemorySystem):
         return []
 
     async def retrieve_knowledge(self, context: Any, query: str = "") -> Any:
-        from framework.memory.core.models import LongTermMemory
+        from modex_agent.memory.core.models import LongTermMemory
         return LongTermMemory()
 
     async def get_history_entries(self, context: Any, limit: int = 3, query: str = "", channel: Any = None) -> list:
@@ -349,8 +349,8 @@ async def test_archive_skips_empty_generation(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_full_injection_includes_knowledge_archive_and_session(tmp_path: Path):
     """FullInjectionPolicy assembles Knowledge, Archive, and Session messages."""
-    from framework.memory.injection import FullInjectionPolicy
-    from framework.memory.stores.dir_archive import DirArchiveStorage
+    from modex_agent.memory.injection import FullInjectionPolicy
+    from modex_agent.memory.stores.dir_archive import DirArchiveStorage
 
     archive_dir = tmp_path / "archives"
     storage = DirArchiveStorage(archive_dir)
@@ -371,8 +371,8 @@ async def test_full_injection_includes_knowledge_archive_and_session(tmp_path: P
 @pytest.mark.asyncio
 async def test_injection_excludes_empty_archive_markers(tmp_path: Path):
     """Empty context.md files are skipped; only non-empty archives inject."""
-    from framework.memory.injection import FullInjectionPolicy
-    from framework.memory.stores.dir_archive import DirArchiveStorage
+    from modex_agent.memory.injection import FullInjectionPolicy
+    from modex_agent.memory.stores.dir_archive import DirArchiveStorage
 
     archive_dir = tmp_path / "archives"
     storage = DirArchiveStorage(archive_dir)
@@ -409,7 +409,7 @@ async def test_knowledge_update_preserves_existing_when_adding_new():
     assert "fact A" in before.memory
     assert "fact B" in before.memory
 
-    from framework.memory.core.consolidation import MemoryUpdate
+    from modex_agent.memory.core.consolidation import MemoryUpdate
     await km.apply_update(ctx, MemoryUpdate(
         file_name="MEMORY.md", content="- fact C\n", mode="append", reason="test",
     ))
@@ -430,7 +430,7 @@ async def test_knowledge_replace_text_updates_in_place():
     km = system._layers.knowledge
     await km.ensure_defaults(ctx, {"user": "- location: Tokyo\n- prefers dark mode\n"})
 
-    from framework.memory.core.consolidation import MemoryUpdate
+    from modex_agent.memory.core.consolidation import MemoryUpdate
     await km.apply_update(ctx, MemoryUpdate(
         file_name="USER.md",
         content="- location: Osaka\n",
@@ -523,8 +523,8 @@ async def test_session_only_messages_no_duplicate_cleanup_trigger(tmp_path: Path
 @pytest.mark.asyncio
 async def test_archive_injection_has_distinguishable_markers(tmp_path: Path):
     """Multiple archive entries are injected with clear per-entry markers."""
-    from framework.memory.injection import FullInjectionPolicy
-    from framework.memory.stores.dir_archive import DirArchiveStorage
+    from modex_agent.memory.injection import FullInjectionPolicy
+    from modex_agent.memory.stores.dir_archive import DirArchiveStorage
 
     archive_dir = tmp_path / "archives"
     storage = DirArchiveStorage(archive_dir)
@@ -550,8 +550,8 @@ async def test_archive_injection_has_distinguishable_markers(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_archive_injection_uses_archive_id_as_number(tmp_path: Path):
     """Archive entries are injected with archive_id as the number attribute."""
-    from framework.memory.injection import FullInjectionPolicy
-    from framework.memory.stores.dir_archive import DirArchiveStorage
+    from modex_agent.memory.injection import FullInjectionPolicy
+    from modex_agent.memory.stores.dir_archive import DirArchiveStorage
 
     archive_dir = tmp_path / "archives"
     storage = DirArchiveStorage(archive_dir)
@@ -638,7 +638,7 @@ async def test_knowledge_retrieve_returns_all_files():
 @pytest.mark.asyncio
 async def test_injection_priority_order_respected():
     """Sections are ordered by priority descending: knowledge > archive > compression."""
-    from framework.memory.injection import FullInjectionPolicy
+    from modex_agent.memory.injection import FullInjectionPolicy
 
     registry = InMemoryStoreRegistry()
     system = _bot_project_system(registry)
@@ -675,8 +675,8 @@ async def test_injection_priority_order_respected():
 @pytest.mark.asyncio
 async def test_injection_budget_trims_low_priority_first():
     """When token budget is tight, low-priority sections drop first."""
-    from framework.memory.injection import FullInjectionPolicy
-    from framework.memory.core.models import MemoryBudget
+    from modex_agent.memory.injection import FullInjectionPolicy
+    from modex_agent.memory.core.models import MemoryBudget
 
     registry = InMemoryStoreRegistry()
     system = _bot_project_system(registry)
@@ -708,7 +708,7 @@ async def test_injection_budget_trims_low_priority_first():
 @pytest.mark.asyncio
 async def test_restricted_injection_session_only():
     """Peer/subagent policy: only session messages, no knowledge/archive."""
-    from framework.memory.injection import RestrictedInjectionPolicy
+    from modex_agent.memory.injection import RestrictedInjectionPolicy
 
     registry = InMemoryStoreRegistry()
     system = _bot_project_system(registry)
@@ -738,7 +738,7 @@ async def test_injection_preserves_tool_messages_by_default():
     Governance (MicrocompactGovernance, ToolChainRepair) handles
     tool message management at the LLM call boundary.
     """
-    from framework.memory.injection import FullInjectionPolicy
+    from modex_agent.memory.injection import FullInjectionPolicy
 
     registry = InMemoryStoreRegistry()
     system = _bot_project_system(registry)

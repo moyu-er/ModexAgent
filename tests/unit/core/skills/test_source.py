@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from framework.core.skills.models import Skill, SkillMetadata, SkillResource
-from framework.core.skills.source import (
+from modex_agent.core.skills.models import Skill, SkillMetadata, SkillResource
+from modex_agent.core.skills.source import (
     CompositeSkillSource,
     FileSkillSource,
     InlineSkillSource,

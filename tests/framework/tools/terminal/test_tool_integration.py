@@ -6,13 +6,13 @@ import time
 
 import pytest
 
-from framework.tools.terminal.command_tool import CommandTool
-from framework.tools.terminal.config import TerminalRuntimeConfig
-from framework.tools.terminal.process_tool import ProcessTool
-from framework.tools.terminal.pty_keys import CTRL_C, ENTER_KEY
-from framework.tools.terminal.results import TerminalRead, TerminalSegment
-from framework.tools.terminal.tool import TerminalTool
-from framework.tools.terminal.types import TerminalCommandStatus
+from modex_agent.tools.terminal.command_tool import CommandTool
+from modex_agent.tools.terminal.config import TerminalRuntimeConfig
+from modex_agent.tools.terminal.process_tool import ProcessTool
+from modex_agent.tools.terminal.pty_keys import CTRL_C, ENTER_KEY
+from modex_agent.tools.terminal.results import TerminalRead, TerminalSegment
+from modex_agent.tools.terminal.tool import TerminalTool
+from modex_agent.tools.terminal.types import TerminalCommandStatus
 
 from tests.framework.tools.terminal.conftest import FakeBackend, make_manager_and_registry
 

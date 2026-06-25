@@ -8,8 +8,8 @@ from bot.input_pipeline.stages.resolve_workspace import ResolveWorkspaceStage
 from bot.input_pipeline.stages.session_control import SessionControlStage
 from bot.input_pipeline.stages.set_channel import SetChannelStage
 from bot.input_pipeline.stages.skill_parse import SkillParseStage, SkillRegistry
-from framework.workspace.control import WorkspaceController
-from framework.input_pipeline.pipeline import UserInputPipeline
+from modex_agent.workspace.control import WorkspaceController
+from modex_agent.input_pipeline.pipeline import UserInputPipeline
 
 def build_im_pipeline(
     *,

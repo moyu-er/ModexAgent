@@ -21,14 +21,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from framework.adapters.platform import StreamingMode
-from framework.core.types import OutputMessage
-from framework.core.session_id import SessionInfo
-from framework.pipeline.adapters import OutputAdapter
+from modex_agent.adapters.platform import StreamingMode
+from modex_agent.core.types import OutputMessage
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.pipeline.adapters import OutputAdapter
 
 if TYPE_CHECKING:
-    from framework.core.emitter import ContentEmitter
-    from framework.pipeline.adapters import InputAdapter
+    from modex_agent.core.emitter import ContentEmitter
+    from modex_agent.pipeline.adapters import InputAdapter
 
 
 # ── Channel tracking (session_id → channel_name) ────────────────────

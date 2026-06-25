@@ -4,10 +4,10 @@ import inspect
 
 import pytest
 
-from framework.memory.core.scope import MemoryContext, MemoryLayerName, SessionScope, UserScope
-from framework.memory.core.storage import MemoryStorage
-from framework.memory.registry import InMemoryStoreRegistry
-from framework.memory.stores import DefaultScopedStorage, InMemoryScopedStorage
+from modex_agent.core.scope import MemoryContext, MemoryLayerName, SessionScope, UserScope
+from modex_agent.memory.core.storage import MemoryStorage
+from modex_agent.memory.registry import InMemoryStoreRegistry
+from modex_agent.memory.stores import DefaultScopedStorage, InMemoryScopedStorage
 
 
 @pytest.mark.asyncio
@@ -93,7 +93,7 @@ def test_memory_storage_contract_is_scoped() -> None:
 
 
 def test_public_storage_exports_only_scoped_storage() -> None:
-    import framework.memory.stores as stores
+    import modex_agent.memory.stores as stores
 
     assert stores.DefaultScopedStorage is DefaultScopedStorage
     assert stores.InMemoryScopedStorage is InMemoryScopedStorage

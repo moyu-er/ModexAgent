@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from framework.core.session_id import SessionInfo
-from framework.core.types import InputMessage
-from framework.multi_agent.router import DefaultMeshRouter
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.types import InputMessage
+from modex_agent.multi_agent.router import DefaultMeshRouter
 
 
 class TestDefaultMeshRouter:

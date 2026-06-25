@@ -5,16 +5,16 @@ from pathlib import Path
 
 import pytest
 
-from framework.core.skills.builder import DefaultSkillBuilder
-from framework.core.skills.manager import SkillManager
-from framework.core.skills.models import (
+from modex_agent.core.skills.builder import DefaultSkillBuilder
+from modex_agent.core.skills.manager import SkillManager
+from modex_agent.core.skills.models import (
     ResolutionContext,
     Skill,
     SkillMetadata,
     SkillResource,
     SkillSummary,
 )
-from framework.core.skills.source import FileSkillSource, InlineSkillSource
+from modex_agent.core.skills.source import FileSkillSource, InlineSkillSource
 
 
 class TestFileSkillSourceEdgeCases:

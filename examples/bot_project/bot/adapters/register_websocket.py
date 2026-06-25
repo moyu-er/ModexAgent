@@ -15,8 +15,8 @@ from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapte
 from bot.webui.emitter import WebBotEmitter
 from bot.webui.events import SessionMeta
 from bot.webui.transcript_store import TranscriptStore
-from framework.core.emitter import EmitterConfig
-from framework.core.session_id import SessionIdFactory
+from modex_agent.core.emitter import EmitterConfig
+from modex_agent.core.session_id import SessionIdFactory
 
 
 def _default_meta_resolver(session_id: str) -> SessionMeta:

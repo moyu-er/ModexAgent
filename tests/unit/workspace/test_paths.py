@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from framework.workspace.paths import (
+from modex_agent.workspace.paths import (
     SUBDIR_COMMANDS,
     SUBDIR_EXPERIENCES,
     SUBDIR_FORK_CONTEXTS,

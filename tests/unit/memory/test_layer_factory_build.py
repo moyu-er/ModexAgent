@@ -4,17 +4,17 @@ from __future__ import annotations
 
 import pytest
 
-from framework.memory.core.layers import MemoryLayerSet
-from framework.memory.core.scope import SessionScope, UserScope
-from framework.memory.layers.config import (
+from modex_agent.memory.core.layers import MemoryLayerSet
+from modex_agent.core.scope import SessionScope, UserScope
+from modex_agent.memory.layers.config import (
     ArchiveMemoryConfig,
     KnowledgeMemoryConfig,
     MemoryLayerConfigSet,
     SessionMemoryConfig,
     UserRetentionBufferConfig,
 )
-from framework.memory.layers.factory import MemoryLayerFactory
-from framework.memory.registry import InMemoryStoreRegistry
+from modex_agent.memory.layers.factory import MemoryLayerFactory
+from modex_agent.memory.registry import InMemoryStoreRegistry
 
 
 class TestBuildFullConfig:

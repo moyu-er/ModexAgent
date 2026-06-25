@@ -20,7 +20,7 @@ Input/output adapters that bridge external platforms (QQ, WebUI) to the agent pi
 ## For AI Agents
 
 ### Working In This Directory
-- All adapters implement `InputAdapter` or `OutputAdapter` from `framework/pipeline/adapters.py`.
+- All adapters implement `InputAdapter` or `OutputAdapter` from `modex_agent/pipeline/adapters.py`.
 - `InputAdapter.configure_input_pipeline()` is a typed ABC method (stores `_input_pipeline`, `_input_ctx`, `_output_adapter`). Override with no-op when the pipeline is held externally (see `web_socket.py`).
 - `fan_in.py` is critical for WebUI — it routes agent output to the correct WebSocket connection by conversation_id.
 - `channels.py` enables platform-aware behavior (e.g., WebUI conversations skip IM-only pipeline stages like S2/S3).
@@ -32,6 +32,6 @@ Input/output adapters that bridge external platforms (QQ, WebUI) to the agent pi
 ## Dependencies
 
 ### Internal
-- `framework/pipeline/adapters.py` — adapter ABCs
-- `framework/core/types.py` — `InputMessage`, `OutputMessage`
+- `modex_agent/pipeline/adapters.py` — adapter ABCs
+- `modex_agent/core/types.py` — `InputMessage`, `OutputMessage`
 - `bot/webui/events.py` — WebUI event types

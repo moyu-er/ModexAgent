@@ -11,9 +11,9 @@ from pathlib import Path
 
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
-from framework.core.types import InputMessage
-from framework.input_pipeline.envelope import UserInputEnvelope
-from framework.input_pipeline.stage import Continue, InputStage, StageResult
+from modex_agent.core.types import InputMessage
+from modex_agent.input_pipeline.envelope import UserInputEnvelope
+from modex_agent.input_pipeline.stage import Continue, InputStage, StageResult
 
 
 class EnqueueStage(InputStage):

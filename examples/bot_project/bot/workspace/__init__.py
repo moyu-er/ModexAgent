@@ -1,10 +1,10 @@
 """Business half of the workspace mechanism (pool-scoped resources).
 
-The generic workspace mechanism lives in ``framework.workspace`` (registry,
+The generic workspace mechanism lives in ``modex_agent.workspace`` (registry,
 resolver, paths, control). This package holds the business-specific resource
 bundle — the concrete resource type ``R = PoolWorkspaceResources`` and its
 factory, dispatcher, and BotService wiring. Pool is a business concept and
-stays here; ``framework.workspace`` is pool-agnostic.
+stays here; ``modex_agent.workspace`` is pool-agnostic.
 """
 
 from bot.workspace.background import BackgroundTaskRunner  # noqa: F401

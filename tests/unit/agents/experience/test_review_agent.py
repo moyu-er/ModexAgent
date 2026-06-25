@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 def test_build_user_message_with_snapshot():
-    from framework.agents.experience.review_agent import ExperienceReviewAgent
+    from modex_agent.agents.experience.review_agent import ExperienceReviewAgent
 
     msg = ExperienceReviewAgent.build_user_message(
         conversation_snapshot="[user]: Hello\n[assistant]: Hi",
@@ -14,7 +14,7 @@ def test_build_user_message_with_snapshot():
 
 
 def test_build_user_message_without_experiences():
-    from framework.agents.experience.review_agent import ExperienceReviewAgent
+    from modex_agent.agents.experience.review_agent import ExperienceReviewAgent
 
     msg = ExperienceReviewAgent.build_user_message(
         conversation_snapshot="[user]: Hello",
@@ -23,7 +23,7 @@ def test_build_user_message_without_experiences():
 
 
 def test_build_system_prompt(tmp_path: Path):
-    from framework.agents.experience.review_agent import ExperienceReviewAgent
+    from modex_agent.agents.experience.review_agent import ExperienceReviewAgent
 
     prompt = ExperienceReviewAgent.build_system_prompt(tmp_path)
     assert "experience" in prompt.lower()

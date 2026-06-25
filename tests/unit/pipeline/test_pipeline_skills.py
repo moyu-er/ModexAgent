@@ -4,10 +4,10 @@ import asyncio
 
 import pytest
 
-from framework.core.session_id import SessionInfo
-from framework.core.skills import DefaultSkillBuilder, InlineSkillSource, SkillManager
-from framework.core.skills.models import Skill
-from framework.pipeline.pipeline import AgentPipeline
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.skills import DefaultSkillBuilder, InlineSkillSource, SkillManager
+from modex_agent.core.skills.models import Skill
+from modex_agent.pipeline.pipeline import AgentPipeline
 
 
 class FakeAgent:
@@ -26,7 +26,7 @@ class FakeContextManager:
         self.base_system_prompt = base_system_prompt
 
     async def load(self, session_id, **kwargs):
-        from framework.core.context import ContextState
+        from modex_agent.core.context import ContextState
 
         return ContextState(system_prompt=self.base_system_prompt, history=[])
 
@@ -36,7 +36,7 @@ class FakeContextManager:
     async def build_system_prompt(self, tool_manager, skill_manager=None, runtime_info=None):
         parts = [self.base_system_prompt]
         if skill_manager is not None:
-            from framework.core.skills import ResolutionContext
+            from modex_agent.core.skills import ResolutionContext
 
             skill_prompt = await skill_manager.build_prompt(
                 ResolutionContext.from_runtime(tool_manager=tool_manager)
@@ -70,7 +70,7 @@ class FakeInputAdapter:
         pass
 
     async def receive(self):
-        from framework.pipeline.pipeline import InputMessage
+        from modex_agent.pipeline.pipeline import InputMessage
 
         yield InputMessage(content="hi", source="test", session=SessionInfo.from_str("test", default_agent_name="main"))
         await asyncio.sleep(10)  # block indefinitely after first message

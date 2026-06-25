@@ -1,12 +1,12 @@
 """Tests for RuntimeCommandStore — durable command lifecycle."""
 from __future__ import annotations
 
-from framework.runtime.enums import ControlCommandKind, OperationStatus
-from framework.runtime.models import ControlCommandState, StateQueryScope
+from modex_agent.runtime.enums import ControlCommandKind, OperationStatus
+from modex_agent.runtime.models import ControlCommandState, StateQueryScope
 
 
 async def test_command_store_lifecycle() -> None:
-    from framework.runtime.store import InMemoryRuntimeCommandStore
+    from modex_agent.runtime.store import InMemoryRuntimeCommandStore
 
     store = InMemoryRuntimeCommandStore()
     command = ControlCommandState(

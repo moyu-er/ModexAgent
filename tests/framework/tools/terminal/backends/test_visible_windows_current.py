@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from framework.tools.terminal.backends.base import extract_current_segment_from_buffer
+from modex_agent.tools.terminal.backends.base import extract_current_segment_from_buffer
 
 
 def test_extract_current_segment_returns_empty_prompt() -> None:

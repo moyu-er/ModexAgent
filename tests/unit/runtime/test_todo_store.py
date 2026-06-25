@@ -1,7 +1,7 @@
 import pytest
 
-from framework.core.types import TodoStatus
-from framework.runtime.store import JsonFileTodoStore, TodoItem, TodoStore
+from modex_agent.core.types import TodoStatus
+from modex_agent.runtime.store import JsonFileTodoStore, TodoItem, TodoStore
 
 
 def _item(content: str, status: TodoStatus = TodoStatus.PENDING) -> TodoItem:
@@ -68,7 +68,7 @@ async def test_real_session_id_preserves_dot_in_filename(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_save_is_atomic_on_crash(tmp_path, monkeypatch) -> None:
     """A failed write must not corrupt the existing file."""
-    import framework.runtime.store as store_mod
+    import modex_agent.runtime.store as store_mod
 
     store = JsonFileTodoStore(tmp_path)
     await store.save("s", [_item("orig")])

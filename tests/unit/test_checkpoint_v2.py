@@ -1,7 +1,7 @@
 """Tests for ApprovalDenialContext."""
 import pytest
 
-from framework.runtime.models import ApprovalDenialContext
+from modex_agent.runtime.models import ApprovalDenialContext
 
 
 class TestApprovalDenialContext:

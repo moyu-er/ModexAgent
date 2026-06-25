@@ -5,17 +5,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from framework.workspace.context import WorkspaceContext
-from framework.core.session_store import LocalFileSessionStore
-from framework.messaging.broker_memory import InMemoryMessageBroker
-from framework.multi_agent.bus import LocalAgentMessageBus
-from framework.multi_agent.inbox.consumer import InboxConsumer
-from framework.multi_agent.inbox.producer import InboxProducer
-from framework.multi_agent.inbox.server_local import LocalFileInboxServer
-from framework.pipeline.snapshot import PoolDataSnapshot
-from framework.tools.overflow.local import LocalFileToolOverflowStore
-from framework.tools.workspace_scoped import WorkspaceRootProvider
-from framework.workspace.resources import WorkspaceResources
+from modex_agent.workspace.context import WorkspaceContext
+from modex_agent.core.session_store import LocalFileSessionStore
+from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.multi_agent.bus import LocalAgentMessageBus
+from modex_agent.multi_agent.inbox.consumer import InboxConsumer
+from modex_agent.multi_agent.inbox.producer import InboxProducer
+from modex_agent.multi_agent.inbox.server_local import LocalFileInboxServer
+from modex_agent.pipeline.snapshot import PoolDataSnapshot
+from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
+from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
+from modex_agent.workspace.resources import WorkspaceResources
 
 if TYPE_CHECKING:
     # These live in bot.service, whose package __init__ imports BotService,
@@ -43,7 +43,7 @@ class WorkspaceHandleRootProvider(WorkspaceRootProvider):
         return self._handle.current
 
 
-from framework.multi_agent.communication import WorkspaceManager
+from modex_agent.workspace import WorkspaceManager
 
 
 class WorkspaceResolverCell(WorkspaceManager):

@@ -1,4 +1,4 @@
-"""Tests for framework.providers.openai_provider."""
+"""Tests for modex_agent.providers.openai_provider."""
 from __future__ import annotations
 
 import asyncio
@@ -6,15 +6,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from framework.core.constants import FinishReason
-from framework.core.llm_struct import (
+from modex_agent.core.constants import FinishReason
+from modex_agent.core.llm_struct import (
     LLMErrorKind,
     LLMTimeoutPolicy,
     RuntimeSafetyPolicy,
     TurnTimeoutPolicy,
 )
-from framework.core.types import LLMResponse
-from framework.providers.openai_provider import OpenAIProvider
+from modex_agent.core.types import LLMResponse
+from modex_agent.providers.openai_provider import OpenAIProvider
 
 
 class TestOpenAIProviderChat:
@@ -30,7 +30,7 @@ class TestOpenAIProviderChat:
             llm=LLMTimeoutPolicy(request_timeout_seconds=10, stream_idle_timeout_seconds=30),
             turn=TurnTimeoutPolicy(),
         )
-        with patch("framework.providers.openai_provider.AsyncOpenAI") as mock_client_cls:
+        with patch("modex_agent.providers.openai_provider.AsyncOpenAI") as mock_client_cls:
             mock_client = MagicMock()
             mock_client_cls.return_value = mock_client
             p = OpenAIProvider(model="gpt-4o", api_key="sk-test", safety=safety)
@@ -172,7 +172,7 @@ class TestBuildParamsStripsGovernanceFields:
             llm=LLMTimeoutPolicy(request_timeout_seconds=10, stream_idle_timeout_seconds=30),
             turn=TurnTimeoutPolicy(),
         )
-        with patch("framework.providers.openai_provider.AsyncOpenAI") as mock_client_cls:
+        with patch("modex_agent.providers.openai_provider.AsyncOpenAI") as mock_client_cls:
             mock_client = MagicMock()
             mock_client_cls.return_value = mock_client
             p = OpenAIProvider(model="gpt-4o", api_key="sk-test", safety=safety)
@@ -229,7 +229,7 @@ class TestOpenAIProviderChatStream:
             llm=LLMTimeoutPolicy(request_timeout_seconds=10, stream_idle_timeout_seconds=0.1),
             turn=TurnTimeoutPolicy(),
         )
-        with patch("framework.providers.openai_provider.AsyncOpenAI") as mock_client_cls:
+        with patch("modex_agent.providers.openai_provider.AsyncOpenAI") as mock_client_cls:
             mock_client = MagicMock()
             mock_client_cls.return_value = mock_client
             p = OpenAIProvider(model="gpt-4o", api_key="sk-test", safety=safety)
@@ -383,3 +383,42 @@ class TestOpenAIProviderChatStream:
 
         assert result.finish_reason == FinishReason.ERROR.value
         assert result.error_info.kind == LLMErrorKind.CONNECTION
+
+    @pytest.mark.asyncio
+    async def test_chat_stream_mid_stream_apierror_returns_error_response(self, provider):
+        """A mid-stream APIError (e.g. GLM content moderation ``new_sensitive``)
+        must be converted into a graceful error LLMResponse, not raised.
+
+        Regression for the crash where the streaming iteration loop only caught
+        StopAsyncIteration / TimeoutError, so any mid-stream exception escaped
+        and aborted the whole agent turn.
+        """
+        from openai import APIError
+
+        async def _stream_that_breaks_midway():
+            yield self._make_chunk(content="partial answer")
+            raise APIError(
+                "output new_sensitive (1027)",
+                request=MagicMock(),
+                body=None,
+            )
+
+        provider._client.chat.completions.create = AsyncMock(
+            return_value=_stream_that_breaks_midway()
+        )
+
+        deltas = []
+        result = await provider.chat_stream(
+            messages=[{"role": "user", "content": "hi"}],
+            on_content_delta=lambda d: deltas.append(d),
+        )
+
+        # Must not raise; must return a structured error response.
+        assert result.finish_reason == FinishReason.ERROR.value
+        assert result.error_info is not None
+        # Content-moderation error is classified distinctly and non-retryable.
+        assert result.error_info.kind == LLMErrorKind.CONTENT_FILTER
+        assert result.error_info.should_retry is False
+        # Partial content already streamed before the error must be preserved.
+        assert deltas == ["partial answer"]
+        assert "new_sensitive" in (result.error or "")

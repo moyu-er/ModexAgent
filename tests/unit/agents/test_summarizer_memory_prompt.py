@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from framework.agents.summarizer.agent import SummarizerAgent
+from modex_agent.agents.summarizer.agent import SummarizerAgent
 
 
 def test_memory_compression_prompt_has_handoff_sections() -> None:

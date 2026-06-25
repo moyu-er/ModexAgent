@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from framework.memory.core.layers import (
+from modex_agent.memory.core.layers import (
     ArchiveMemoryManager,
     KnowledgeMemoryManager,
     MemoryLayerSet,
@@ -118,7 +118,7 @@ class TestChatMessageReasoningContent:
     """
 
     def test_from_dict_preserves_reasoning_content(self):
-        from framework.memory.core.message import ChatMessage
+        from modex_agent.core.message import ChatMessage
 
         msg = ChatMessage.from_dict({
             "role": "assistant",
@@ -130,7 +130,7 @@ class TestChatMessageReasoningContent:
         assert msg.content == "hello"
 
     def test_from_dict_preserves_think_tags_in_content(self):
-        from framework.memory.core.message import ChatMessage
+        from modex_agent.core.message import ChatMessage
 
         msg = ChatMessage.from_dict({
             "role": "assistant",
@@ -140,7 +140,7 @@ class TestChatMessageReasoningContent:
         assert msg.content == "<think>reasoning</think>actual content"
 
     def test_to_dict_excludes_reasoning_content(self):
-        from framework.memory.core.message import ChatMessage
+        from modex_agent.core.message import ChatMessage
 
         msg = ChatMessage(role="assistant", content="hello")
         # Simulate extra field via model_extra
@@ -150,7 +150,7 @@ class TestChatMessageReasoningContent:
         assert d["content"] == "hello"
 
     def test_coerce_dict_preserves_raw_content(self):
-        from framework.memory.core.message import ChatMessage
+        from modex_agent.core.message import ChatMessage
 
         msg = ChatMessage.coerce({
             "role": "assistant",

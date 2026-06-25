@@ -9,20 +9,20 @@ import pytest
 
 pytestmark = pytest.mark.integration
 
-from framework.core.types import InputMessage
-from framework.messaging.broker_memory import InMemoryMessageBroker
-from framework.multi_agent import (
+from modex_agent.core.types import InputMessage
+from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.multi_agent import (
     AgentDescriptor,
     DefaultAgentFactory,
     SessionRetentionPolicy,
 )
-from framework.multi_agent.address import AgentAddress
-from framework.multi_agent.bus import LocalAgentMessageBus
-from framework.multi_agent.envelope import AgentMessageEnvelope
-from framework.multi_agent.inbox.consumer import InboxConsumer
-from framework.multi_agent.inbox.producer import InboxProducer
-from framework.multi_agent.inbox.server_memory import InMemoryInboxServer
-from framework.multi_agent.pool import AgentPool
+from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.multi_agent.bus import LocalAgentMessageBus
+from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+from modex_agent.multi_agent.inbox.consumer import InboxConsumer
+from modex_agent.multi_agent.inbox.producer import InboxProducer
+from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
+from modex_agent.multi_agent.pool import AgentPool
 
 
 @pytest.mark.asyncio

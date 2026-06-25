@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from framework.tools.terminal.config import TerminalRuntimeConfig
-from framework.tools.terminal.managers import BaseTerminalManager
-from framework.tools.terminal.process_registry import ProcessRegistry
-from framework.tools.terminal.pty_keys import CTRL_C
-from framework.tools.terminal.results import TerminalRead, TerminalSegment
-from framework.tools.terminal.session import TerminalSession
-from framework.tools.terminal.types import Platform, ShellFamily, ShellInfo, TerminalVisibility
+from modex_agent.tools.terminal.config import TerminalRuntimeConfig
+from modex_agent.tools.terminal.managers import BaseTerminalManager
+from modex_agent.tools.terminal.process_registry import ProcessRegistry
+from modex_agent.tools.terminal.pty_keys import CTRL_C
+from modex_agent.tools.terminal.results import TerminalRead, TerminalSegment
+from modex_agent.tools.terminal.session import TerminalSession
+from modex_agent.tools.terminal.types import Platform, ShellFamily, ShellInfo, TerminalVisibility
 
 
 class FakeBackend:

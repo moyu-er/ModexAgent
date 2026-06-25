@@ -1,8 +1,8 @@
 import asyncio
 import pytest
 
-from framework.messaging.broker import Address, BrokerMessage
-from framework.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.messaging.broker import Address, BrokerMessage
+from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 
 
 @pytest.fixture

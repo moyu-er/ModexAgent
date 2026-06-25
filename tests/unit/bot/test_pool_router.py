@@ -17,16 +17,16 @@ _BOT_PROJECT = Path(__file__).parent.parent.parent.parent / "examples" / "bot_pr
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
-from framework.core.session_id import SessionInfo
-from framework.core.types import InputMessage
-from framework.ioc.configs.app import _validate_pool_name
-from framework.ioc.configs.pool import PoolConfig
-from framework.ioc.configs.llm import LLMConfig
-from framework.ioc.configs.agent import AgentConfig
-from framework.pipeline.adapters import InputAdapter
-from framework.messaging.broker_memory import InMemoryMessageBroker
-from framework.messaging.broker import BrokerMessage
-from framework.multi_agent.address import AgentAddress
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.types import InputMessage
+from modex_agent.ioc.configs.app import _validate_pool_name
+from modex_agent.ioc.configs.pool import PoolConfig
+from modex_agent.ioc.configs.llm import LLMConfig
+from modex_agent.ioc.configs.agent import AgentConfig
+from modex_agent.pipeline.adapters import InputAdapter
+from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.messaging.broker import BrokerMessage
+from modex_agent.multi_agent.address import AgentAddress
 
 
 # ── Stubs ──

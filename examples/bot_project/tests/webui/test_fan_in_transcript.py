@@ -24,10 +24,10 @@ from bot.input_pipeline.assembly import build_im_pipeline
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.skill_parse import ParsedSkill, SkillRegistry
 from bot.webui.transcript_store import JSONLTranscriptStore
-from framework.core.session_id import SessionInfo, SessionIdFactory
-from framework.core.types import InputMessage
-from framework.input_pipeline.envelope import AttachmentRef, UserInputEnvelope
-from framework.pipeline.adapters import InputAdapter
+from modex_agent.core.session_id import SessionInfo, SessionIdFactory
+from modex_agent.core.types import InputMessage
+from modex_agent.input_pipeline.envelope import AttachmentRef, UserInputEnvelope
+from modex_agent.pipeline.adapters import InputAdapter
 
 
 def _sid(agent: str, conv: str) -> str:

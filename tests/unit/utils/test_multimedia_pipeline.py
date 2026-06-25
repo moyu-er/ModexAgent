@@ -15,13 +15,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from framework.memory.history import (
+from modex_agent.memory.history import (
     ListMessageHistory,
     MessageHistory,
     restore_multimodal_in_history,
 )
-from framework.memory.system import MemorySystemContextManager
-from framework.utils.media_utils import (
+from modex_agent.memory.system import MemorySystemContextManager
+from modex_agent.utils.media_utils import (
     ImageHandler,
     MediaBlock,
     MediaHandler,
@@ -356,37 +356,37 @@ class TestIsTransient:
     """验证 _is_transient 能匹配 InternalServerError 和空响应。"""
 
     def test_internal_server_error(self):
-        from framework.core.provider import LLMProvider
+        from modex_agent.core.provider import LLMProvider
 
         assert LLMProvider._is_transient(
             Exception("litellm.InternalServerError: Empty or invalid response")
         ) is True
 
     def test_empty_response(self):
-        from framework.core.provider import LLMProvider
+        from modex_agent.core.provider import LLMProvider
 
         assert LLMProvider._is_transient(Exception("Empty response from API")) is True
 
     def test_invalid_response(self):
-        from framework.core.provider import LLMProvider
+        from modex_agent.core.provider import LLMProvider
 
         assert LLMProvider._is_transient(Exception("invalid response from LLM endpoint")) is True
 
     def test_existing_markers_still_work(self):
-        from framework.core.provider import LLMProvider
+        from modex_agent.core.provider import LLMProvider
 
         assert LLMProvider._is_transient(Exception("429 Too Many Requests")) is True
         assert LLMProvider._is_transient(Exception("502 Bad Gateway")) is True
         assert LLMProvider._is_transient(Exception("rate limit exceeded")) is True
 
     def test_non_transient_not_matched(self):
-        from framework.core.provider import LLMProvider
+        from modex_agent.core.provider import LLMProvider
 
         assert LLMProvider._is_transient(Exception("invalid api key")) is False
         assert LLMProvider._is_transient(Exception("model not found")) is False
 
     def test_billing_error_not_retryable(self):
-        from framework.core.provider import LLMProvider
+        from modex_agent.core.provider import LLMProvider
 
         assert LLMProvider._is_transient(
             Exception("500 server error insufficient_quota")
@@ -402,16 +402,16 @@ class TestBuildToolMessage:
     """验证 build_tool_message 不截断结果，正确传递 XML 元数据。"""
 
     def test_short_result_not_truncated(self):
-        from framework.core.tool_manager import ToolResult
-        from framework.utils.message_builder import build_tool_message
+        from modex_agent.core.tool_manager import ToolResult
+        from modex_agent.utils.message_builder import build_tool_message
 
         result = ToolResult(tool_name="test", result="short output")
         msg = build_tool_message(result)
         assert msg.content == "short output"
 
     def test_long_result_not_truncated(self):
-        from framework.core.tool_manager import ToolResult
-        from framework.utils.message_builder import build_tool_message
+        from modex_agent.core.tool_manager import ToolResult
+        from modex_agent.utils.message_builder import build_tool_message
 
         long_content = "x" * 30000
         result = ToolResult(tool_name="test", result=long_content)
@@ -420,25 +420,31 @@ class TestBuildToolMessage:
         assert len(msg.content) == 30000
 
     def test_error_not_truncated(self):
-        from framework.core.tool_manager import ToolResult
-        from framework.utils.message_builder import build_tool_message
+        from modex_agent.core.tool_manager import ToolResult
+        from modex_agent.utils.message_builder import build_tool_message
 
         result = ToolResult(tool_name="test", error="something failed")
         msg = build_tool_message(result)
         assert msg.content == "Error: something failed"
 
     def test_empty_result_gets_space(self):
-        from framework.core.tool_manager import ToolResult
-        from framework.utils.message_builder import build_tool_message
+        from modex_agent.core.tool_manager import ToolResult
+        from modex_agent.utils.message_builder import build_tool_message
 
         result = ToolResult(tool_name="test", result=None)
         msg = build_tool_message(result)
         assert msg.content == " "
 
     def test_terminal_xml_sets_metadata(self):
-        from framework.core.tool_manager import ToolResult
-        from framework.memory.core.message import ContentFormat
-        from framework.utils.message_builder import build_tool_message
+        """build_tool_message passes through metadata declared on the ToolResult.
+
+        Under ADR-0006 the ToolManager attaches content_format / truncatable_paths
+        via the tool's result_metadata hook; build_tool_message no longer sniffs
+        terminal XML itself. Terminal tool results arrive with metadata already set.
+        """
+        from modex_agent.core.tool_manager import ToolResult
+        from modex_agent.core.message import ContentFormat
+        from modex_agent.utils.message_builder import build_tool_message
 
         xml_content = (
             "<command_result>"
@@ -447,15 +453,20 @@ class TestBuildToolMessage:
             "<status>completed</status>"
             "</command_result>"
         )
-        result = ToolResult(tool_name="bash", result=xml_content)
+        result = ToolResult(
+            tool_name="bash",
+            result=xml_content,
+            content_format=ContentFormat.XML,
+            truncatable_paths=["output", "tui_screen", "cursor_line"],
+        )
         msg = build_tool_message(result)
         assert msg.content_format == ContentFormat.XML
         assert msg.truncatable_paths == ["output", "tui_screen", "cursor_line"]
 
     def test_plain_text_no_metadata(self):
-        from framework.core.tool_manager import ToolResult
-        from framework.memory.core.message import ContentFormat
-        from framework.utils.message_builder import build_tool_message
+        from modex_agent.core.tool_manager import ToolResult
+        from modex_agent.core.message import ContentFormat
+        from modex_agent.utils.message_builder import build_tool_message
 
         result = ToolResult(tool_name="grep", result="Found 3 matches")
         msg = build_tool_message(result)
@@ -473,7 +484,7 @@ class TestBase64SanitizeStringDetection:
 
     @pytest.mark.asyncio
     async def test_string_with_base64_data_uri(self):
-        from framework.memory.content_transform import Base64SanitizeTransformer
+        from modex_agent.memory.content_transform import Base64SanitizeTransformer
 
         transformer = Base64SanitizeTransformer()
         msg = {
@@ -487,7 +498,7 @@ class TestBase64SanitizeStringDetection:
 
     @pytest.mark.asyncio
     async def test_plain_string_unchanged(self):
-        from framework.memory.content_transform import Base64SanitizeTransformer
+        from modex_agent.memory.content_transform import Base64SanitizeTransformer
 
         transformer = Base64SanitizeTransformer()
         msg = {"role": "user", "content": "Hello world"}
@@ -496,7 +507,7 @@ class TestBase64SanitizeStringDetection:
 
     @pytest.mark.asyncio
     async def test_multiple_base64_uris_in_string(self):
-        from framework.memory.content_transform import Base64SanitizeTransformer
+        from modex_agent.memory.content_transform import Base64SanitizeTransformer
 
         transformer = Base64SanitizeTransformer()
         msg = {

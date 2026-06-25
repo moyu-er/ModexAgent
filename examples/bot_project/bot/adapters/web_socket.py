@@ -8,10 +8,10 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from bot.webui.events import DeltaEnvelope
-from framework.adapters.platform import StreamingMode
-from framework.core.session_id import SessionIdFactory, agent_of
-from framework.core.types import InputMessage, OutputMessage
-from framework.pipeline.adapters import InputAdapter, OutputAdapter
+from modex_agent.adapters.platform import StreamingMode
+from modex_agent.core.session_id import SessionIdFactory, agent_of
+from modex_agent.core.types import InputMessage, OutputMessage
+from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
 
 # ── Constants ──────────────────────────────────────────────────────────────
 

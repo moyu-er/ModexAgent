@@ -1,8 +1,8 @@
 """Tests for ReActGraph."""
 from unittest.mock import MagicMock
 
-from framework.agents.react.graph import ReActGraph
-from framework.agents.react.constants import ReActNode, ReActReason
+from modex_agent.agents.react.graph import ReActGraph
+from modex_agent.agents.react.constants import ReActNode, ReActReason
 
 
 class TestReActGraph:

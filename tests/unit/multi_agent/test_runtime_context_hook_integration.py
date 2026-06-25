@@ -11,16 +11,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from framework.core.agent import AgentContext
-from framework.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
-from framework.runtime.models import TurnIdentity, TurnStateBase
-from framework.runtime.services import AgentRuntime, AgentRuntimeServices
-from framework.core.session_id import SessionInfo
-from framework.core.emitter import AgentResult, ContentEmitter
-from framework.hook import Hook, HookErrorPolicy, HookSpec, HookRunner
-from framework.hook.abc import AfterToolExecutionHook, AfterTurnHook, BeforeTurnHook
-from framework.hook.builtin import RuntimeContextHook
-from framework.core.runtime_context import RuntimeContextManager
+from modex_agent.core.agent import AgentContext
+from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
+from modex_agent.runtime.models import TurnIdentity, TurnStateBase
+from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.hook import Hook, HookErrorPolicy, HookSpec, HookRunner
+from modex_agent.hook.abc import AfterToolExecutionHook, AfterTurnHook, BeforeTurnHook
+from modex_agent.hook.builtin import RuntimeContextHook
+from modex_agent.core.runtime_context import RuntimeContextManager
 
 
 def _make_runtime(hook_runner=None, runtime_mgr=None):
@@ -34,10 +34,10 @@ def _make_runtime(hook_runner=None, runtime_mgr=None):
         runtime_context_manager=runtime_mgr,
     )
     return AgentRuntime(services=services, state=state), identity
-from framework.core.tool_manager import InMemoryToolManager
-from framework.memory.history import ListMessageHistory
-from framework.hook.builtin import SubagentAutoSendHook, RuntimeContextHook
-from framework.pipeline.pipeline import AgentPipeline
+from modex_agent.core.tool_manager import InMemoryToolManager
+from modex_agent.memory.history import ListMessageHistory
+from modex_agent.hook.builtin import SubagentAutoSendHook, RuntimeContextHook
+from modex_agent.pipeline.pipeline import AgentPipeline
 
 
 class FakeAgent:
@@ -57,7 +57,7 @@ class FakeAgent:
 
         async def _call_hook_point(method_name: str, *args):
             if hook_runner is not None:
-                from framework.hook import HookPoint, HookPayload
+                from modex_agent.hook import HookPoint, HookPayload
                 payload_data = {}
                 if method_name == "after_turn" and args:
                     payload_data = {"result": args[0]}
@@ -173,7 +173,7 @@ class TestHookCollaboration:
         hook_runner.add(HookSpec(hook=RuntimeContextHook(), on_error=HookErrorPolicy.LOG))
         hook_runner.add(HookSpec(hook=subagent_hook, on_error=HookErrorPolicy.LOG))
 
-        from framework.memory.history import ListMessageHistory
+        from modex_agent.memory.history import ListMessageHistory
         runtime, identity = _make_runtime(hook_runner=hook_runner, runtime_mgr=RuntimeContextManager())
         ctx = AgentContext(
             system_prompt="",
@@ -207,7 +207,7 @@ class TestHookCollaboration:
         hook_runner.add(HookSpec(hook=RuntimeContextHook(), on_error=HookErrorPolicy.LOG))
         hook_runner.add(HookSpec(hook=subagent_hook, on_error=HookErrorPolicy.LOG))
 
-        from framework.memory.history import ListMessageHistory
+        from modex_agent.memory.history import ListMessageHistory
         runtime, identity = _make_runtime(hook_runner=hook_runner, runtime_mgr=RuntimeContextManager())
         ctx = AgentContext(
             system_prompt="",
@@ -236,7 +236,7 @@ class TestHookCollaboration:
         runtime_mgr = RuntimeContextManager()
         rch = RuntimeContextHook()
 
-        from framework.memory.history import ListMessageHistory
+        from modex_agent.memory.history import ListMessageHistory
         hook_runner = HookRunner()
         hook_runner.add(HookSpec(hook=rch, on_error=HookErrorPolicy.LOG))
         runtime, identity = _make_runtime(hook_runner=hook_runner, runtime_mgr=runtime_mgr)
@@ -303,7 +303,7 @@ class TestHookCollaboration:
         hook_runner.add(HookSpec(hook=custom_hook, on_error=HookErrorPolicy.LOG))
         hook_runner.add(HookSpec(hook=subagent_hook, on_error=HookErrorPolicy.LOG))
 
-        from framework.memory.history import ListMessageHistory
+        from modex_agent.memory.history import ListMessageHistory
         runtime, identity = _make_runtime(hook_runner=hook_runner, runtime_mgr=runtime_mgr)
         ctx = AgentContext(
             system_prompt="",

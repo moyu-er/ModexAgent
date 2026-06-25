@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from framework.multi_agent.pool_reuse import SubagentPool
+from modex_agent.multi_agent.pool_reuse import SubagentPool
 
 
 class _FakeInstance:

@@ -6,8 +6,8 @@ import asyncio
 
 import pytest
 
-from framework.control.channel import InMemoryControlChannel
-from framework.control.types import ControlCommand, ControlCommandType, ControlScope
+from modex_agent.control.channel import InMemoryControlChannel
+from modex_agent.control.types import ControlCommand, ControlCommandType, ControlScope
 
 
 @pytest.fixture

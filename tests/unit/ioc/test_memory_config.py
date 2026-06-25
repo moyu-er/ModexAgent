@@ -1,4 +1,4 @@
-from framework.ioc.configs.memory import (
+from modex_agent.ioc.configs.memory import (
     DreamEngineConfig,
     GovernanceConfig,
     LongTermConfig,

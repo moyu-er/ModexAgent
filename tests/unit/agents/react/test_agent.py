@@ -1,14 +1,14 @@
 """Tests for ReActAgent thin shell."""
 import pytest
 
-from framework.agents.react.agent import ReActAgent
-from framework.agents.react.graph import ReActGraph
-from framework.core.agent import AgentContext
-from framework.core.graph.engine import GraphEngine
-from framework.core.session_id import SessionInfo
-from framework.core.tool_manager import InMemoryToolManager
-from framework.hook import HookRunner
-from framework.memory.history import ListMessageHistory
+from modex_agent.agents.react.agent import ReActAgent
+from modex_agent.agents.react.graph import ReActGraph
+from modex_agent.core.agent import AgentContext
+from modex_agent.core.graph.engine import GraphEngine
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.tool_manager import InMemoryToolManager
+from modex_agent.hook import HookRunner
+from modex_agent.memory.history import ListMessageHistory
 
 
 class _MockProvider:

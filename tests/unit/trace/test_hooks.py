@@ -8,18 +8,18 @@ from pathlib import Path
 
 import pytest
 
-from framework.core.agent import AgentContext
-from framework.core.emitter import AgentResult
-from framework.core.session_id import SessionInfo
-from framework.core.tool_manager import InMemoryToolManager, ToolManagerConfig, ToolResult
-from framework.core.types import LLMResponse, ToolCall
-from framework.memory.history import ListMessageHistory
-from framework.runtime.enums import AgentKind, OperationKind, OperationStatus, TurnCustomKey, TurnPhase
-from framework.runtime.models import TurnIdentity
-from framework.runtime.services import AgentRuntime, AgentRuntimeServices
-from framework.agents.react.state import ReActTurnState
-from framework.trace.hooks import TraceCollectorHook
-from framework.trace.store import JsonFileTraceStore, TraceStore
+from modex_agent.core.agent import AgentContext
+from modex_agent.core.emitter import AgentResult
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig, ToolResult
+from modex_agent.core.types import LLMResponse, ToolCall
+from modex_agent.memory.history import ListMessageHistory
+from modex_agent.runtime.enums import AgentKind, OperationKind, OperationStatus, TurnCustomKey, TurnPhase
+from modex_agent.runtime.models import TurnIdentity
+from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.agents.react.state import ReActTurnState
+from modex_agent.trace.hooks import TraceCollectorHook
+from modex_agent.trace.store import JsonFileTraceStore, TraceStore
 
 
 # -- helpers ------------------------------------------------------------------

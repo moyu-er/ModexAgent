@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from framework.memory.stores.dir_archive import DirArchiveStorage
+from modex_agent.memory.stores.dir_archive import DirArchiveStorage
 
 
 @pytest.fixture

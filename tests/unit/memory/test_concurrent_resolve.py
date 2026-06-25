@@ -13,13 +13,13 @@ import asyncio
 
 import pytest
 
-from framework.memory.core.scope import (
+from modex_agent.core.scope import (
     GlobalScope,
     MemoryContext,
     MemoryLayerName,
     SessionScope,
 )
-from framework.memory.registry.in_memory import InMemoryStoreRegistry
+from modex_agent.memory.registry.in_memory import InMemoryStoreRegistry
 
 
 def _make_context(session_id: str = "sess-1") -> MemoryContext:
@@ -64,7 +64,7 @@ async def test_concurrent_resolve_with_yield_returns_identical_storage() -> None
     """
     import unittest.mock
 
-    from framework.memory.stores.scoped_in_memory import InMemoryScopedStorage
+    from modex_agent.memory.stores.scoped_in_memory import InMemoryScopedStorage
 
     registry = InMemoryStoreRegistry()
     scope = SessionScope()

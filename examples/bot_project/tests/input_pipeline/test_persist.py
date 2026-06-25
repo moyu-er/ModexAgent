@@ -11,9 +11,9 @@ from bot.input_pipeline.stages.persist_user_message import PersistUserMessageSta
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import UserMessageEvent
-from framework.workspace.paths import WorkspacePaths
-from framework.input_pipeline.envelope import UserInputEnvelope
-from framework.workspace.runtime import bind_workspace_root
+from modex_agent.workspace.paths import WorkspacePaths
+from modex_agent.input_pipeline.envelope import UserInputEnvelope
+from modex_agent.workspace.runtime import bind_workspace_root
 
 
 def _ctx(store: WorkspaceScopedTranscriptStore) -> BotInputContext:

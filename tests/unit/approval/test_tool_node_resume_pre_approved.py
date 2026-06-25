@@ -5,22 +5,22 @@ from __future__ import annotations
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from framework.agents.react.agent import ReActAgent
-from framework.agents.react.constants import ReActNode, ReActReason
-from framework.agents.react.nodes.tool import ToolNode
-from framework.agents.react.state import ReActSnapshotPolicy, ReActTurnState
-from framework.approval.constants import ApprovalDecision, ApprovalTier
-from framework.core.agent import AgentContext
-from framework.core.emitter import AgentResult, ContentEmitter
-from framework.core.graph.interrupt import GraphInterrupt
-from framework.core.session_id import SessionInfo
-from framework.core.tool_manager import InMemoryToolManager, Tool
-from framework.core.types import LLMResponse, ToolCall
-from framework.memory.history import ListMessageHistory
-from framework.runtime.enums import AgentKind, ApprovalDenyPolicy, MessageDeltaSource, SnapshotReason, ToolBatchStatus, ToolCallStatus, TurnCustomKey, TurnPhase
-from framework.runtime.models import ApprovalRequestState, ApprovalTransaction, StateQueryScope, ToolArguments, ToolBatchState, ToolCallState, TurnIdentity
-from framework.runtime.services import AgentRuntime, AgentRuntimeServices
-from framework.runtime.store import InMemoryTurnStateStore
+from modex_agent.agents.react.agent import ReActAgent
+from modex_agent.agents.react.constants import ReActNode, ReActReason
+from modex_agent.agents.react.nodes.tool import ToolNode
+from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
+from modex_agent.approval.constants import ApprovalDecision, ApprovalTier
+from modex_agent.core.agent import AgentContext
+from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.graph.interrupt import GraphInterrupt
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.tool_manager import InMemoryToolManager, Tool
+from modex_agent.core.types import LLMResponse, ToolCall
+from modex_agent.memory.history import ListMessageHistory
+from modex_agent.runtime.enums import AgentKind, ApprovalDenyPolicy, MessageDeltaSource, SnapshotReason, ToolBatchStatus, ToolCallStatus, TurnCustomKey, TurnPhase
+from modex_agent.runtime.models import ApprovalRequestState, ApprovalTransaction, StateQueryScope, ToolArguments, ToolBatchState, ToolCallState, TurnIdentity
+from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.runtime.store import InMemoryTurnStateStore
 
 
 class _AlwaysDangerousClassifier:
@@ -93,7 +93,7 @@ def _make_ctx(store, executed, default_deny_policy=ApprovalDenyPolicy.TOOL_RESUL
         agent_kind=AgentKind.REACT,
         phase=TurnPhase.CREATED,
     )
-    from framework.agents.react.approval import ApprovalRuntime
+    from modex_agent.agents.react.approval import ApprovalRuntime
     ctx = AgentContext(
         system_prompt="",
         history=ListMessageHistory(),

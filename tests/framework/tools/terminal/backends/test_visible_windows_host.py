@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from framework.tools.terminal.backends.visible_windows_host import (
+from modex_agent.tools.terminal.backends.visible_windows_host import (
     _stdin_to_pty,
     _translate_key,
 )
@@ -165,7 +165,7 @@ class FakeSock:
 def test_pty_to_socket_continues_writing_to_stdout_after_socket_disconnect(
     monkeypatch: Any,
 ) -> None:
-    from framework.tools.terminal.backends.visible_windows_host import _READ_TIMEOUT
+    from modex_agent.tools.terminal.backends.visible_windows_host import _READ_TIMEOUT
 
     chunks = [b"hello ", b"world"]
     fileobj = FakeFileobj(chunks)
@@ -209,7 +209,7 @@ def test_pty_to_socket_continues_writing_to_stdout_after_socket_disconnect(
 
 
 def test_visible_host_forces_winpty_backend(monkeypatch: pytest.MonkeyPatch) -> None:
-    from framework.tools.terminal.backends import visible_windows_host
+    from modex_agent.tools.terminal.backends import visible_windows_host
 
     captured: dict[str, object] = {}
 
@@ -252,7 +252,7 @@ def test_disable_echo_bit_logic() -> None:
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
 def test_disable_console_echo_smoke() -> None:
-    from framework.tools.terminal.backends.visible_windows_host import _disable_console_echo
+    from modex_agent.tools.terminal.backends.visible_windows_host import _disable_console_echo
     _disable_console_echo()
 
 
@@ -261,5 +261,5 @@ def test_disable_console_echo_smoke() -> None:
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows only")
 def test_resize_console_smoke() -> None:
-    from framework.tools.terminal.backends.visible_windows_host import _resize_console
+    from modex_agent.tools.terminal.backends.visible_windows_host import _resize_console
     _resize_console()

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from framework.agents.react.assembler import RuntimeAssembler, RuntimeServicesConfig
-from framework.agents.react.approval import ApprovalRuntime
-from framework.interceptor.chain import InterceptorChain
-from framework.runtime.services import AgentRuntime
+from modex_agent.agents.react.assembler import RuntimeAssembler, RuntimeServicesConfig
+from modex_agent.agents.react.approval import ApprovalRuntime
+from modex_agent.interceptor.chain import InterceptorChain
+from modex_agent.runtime.services import AgentRuntime
 
 
 class _FakeClassifier:

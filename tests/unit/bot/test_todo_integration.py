@@ -3,8 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from framework.core.agent import current_agent_context
-from framework.runtime.store import JsonFileTodoStore
+from modex_agent.core.agent import current_agent_context
+from modex_agent.runtime.store import JsonFileTodoStore
 
 
 def _set_ctx(session_id: str) -> object:
@@ -18,7 +18,7 @@ async def test_write_persists_across_store_instances(tmp_path) -> None:
     """A NEW store instance over the same base_dir sees the persisted list
     (simulates cross-turn / cross-restart). The tool returns only the active
     subset; the store keeps the full list including completed items."""
-    from framework.tools.standard.todo_tool import TodoReadTool, TodoWriteTool
+    from modex_agent.tools.standard.todo_tool import TodoReadTool, TodoWriteTool
 
     token = _set_ctx("s1")
     try:
@@ -46,7 +46,7 @@ async def test_write_persists_across_store_instances(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_session_isolation_through_tool(tmp_path) -> None:
-    from framework.tools.standard.todo_tool import TodoWriteTool
+    from modex_agent.tools.standard.todo_tool import TodoWriteTool
 
     for sid, contents in (("s1", ["a"]), ("s2", ["b", "c"])):
         token = _set_ctx(sid)

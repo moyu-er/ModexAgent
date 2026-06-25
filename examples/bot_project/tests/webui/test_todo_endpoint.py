@@ -11,9 +11,9 @@ from aiohttp.test_utils import TestClient, TestServer
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.server import WebUIServer
-from framework.core.types import TodoStatus
-from framework.runtime.store import JsonFileTodoStore, TodoItem
-from framework.workspace.paths import WorkspacePaths
+from modex_agent.core.types import TodoStatus
+from modex_agent.runtime.store import JsonFileTodoStore, TodoItem
+from modex_agent.workspace.paths import WorkspacePaths
 
 
 @pytest.mark.asyncio

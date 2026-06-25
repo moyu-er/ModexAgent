@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from bot.workspace.factory import PoolResourceFactory
-from framework.workspace.context import WorkspaceContext
+from modex_agent.workspace.context import WorkspaceContext
 
 
 async def test_materialize_delegates_to_build_closure(tmp_path: Path) -> None:

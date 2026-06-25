@@ -5,9 +5,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from framework.plugins.abc import MemoryProvider
-from framework.plugins.context import PluginContext
-from framework.plugins.manager import PluginManager
+from modex_agent.plugins.abc import MemoryProvider
+from modex_agent.plugins.context import PluginContext
+from modex_agent.plugins.manager import PluginManager
 
 
 class DummyProvider(MemoryProvider):
@@ -113,7 +113,7 @@ def register(ctx):
         assert len(pm.tools) == 2
 
     def test_collect_hooks(self, tmp_path: Path):
-        from framework.hook import Hook
+        from modex_agent.hook import Hook
 
         code = '''
 class FakeHook:
@@ -260,7 +260,7 @@ def register(ctx):
 
         mock_ep.load.return_value = mock_register
 
-        with patch("framework.plugins.manager.importlib.metadata.entry_points") as mock_eps:
+        with patch("modex_agent.plugins.manager.importlib.metadata.entry_points") as mock_eps:
             mock_eps.return_value.select.return_value = [mock_ep]
             pm = PluginManager()
             pm.discover_and_load()
@@ -278,11 +278,11 @@ def register(ctx):
 
         mock_ep.load.return_value = mock_register
 
-        with patch("framework.plugins.manager.importlib.metadata.entry_points") as mock_eps:
+        with patch("modex_agent.plugins.manager.importlib.metadata.entry_points") as mock_eps:
             # simulate older Python without .select()
             class OldStyleEps:
                 def get(self, group, default=None):
-                    if group == "framework.plugins":
+                    if group == "modex_agent.plugins":
                         return [mock_ep]
                     return default
 

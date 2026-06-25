@@ -10,13 +10,13 @@ from __future__ import annotations
 
 import pytest
 
-from framework.core.runtime_context import (
+from modex_agent.core.runtime_context import (
     InMemoryRuntimeContext,
     InMemoryRuntimeContextStore,
     RuntimeContextManager,
     ToolCallRecord,
 )
-from framework.memory.core.scope import SessionScope, UserScope
+from modex_agent.core.scope import SessionScope, UserScope
 
 
 class TestInMemoryRuntimeContext:

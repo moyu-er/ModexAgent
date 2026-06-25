@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from bot.service.session_store import WorkspacePoolSessionStore
-from framework.core.session_id import SessionInfo, now_ms
+from modex_agent.core.session_id import SessionInfo, now_ms
 
 _DATA_DIR_NAME = ".modex"
 

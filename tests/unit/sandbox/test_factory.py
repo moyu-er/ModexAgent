@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from framework.sandbox.enums import SandboxType
-from framework.sandbox.factory import PlatformFallbackChain, get_local_sandbox
-from framework.sandbox.platform import Platform
+from modex_agent.sandbox.enums import SandboxType
+from modex_agent.sandbox.factory import PlatformFallbackChain, get_local_sandbox
+from modex_agent.sandbox.platform import Platform
 
 
 class TestPlatformFallbackChain:

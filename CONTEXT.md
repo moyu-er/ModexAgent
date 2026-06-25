@@ -44,6 +44,14 @@ _Avoid_: root config, top-level config, settings
 The config for one agent pool (one deployment of one system). Holds `LLMConfig`, a list of `AgentConfig`, optional `MCPConfig` / `MemoryConfig` / `SkillsConfig`, and `TerminalConfig`. Pool identity = name of the agent with `role="main"`. Per ADR-0001, pool mode is the only assembly mode.
 _Avoid_: agent system config, fleet config, cluster config
 
+**Active-Workspace Resources Resolver**:
+The framework port the business layer implements to hand the framework the currently active workspace's per-pool resources (memory/runtime/trace stores). Canonical type: `WorkspaceManager` (a single method returning `WorkspaceResources`). Distinct from `WorkspaceResolver` (resolves a workspace by id) and `WorkspaceControlPort` (cd/switch/list control).
+_Avoid_: workspace manager (the historical single-active switch-engine concept, since removed)
+
+**Session Eviction**:
+The pool dropping a subagent task session from its tracking. Two independent triggers: TTL staleness (a session inactive longer than the retention window) and LRU count cap (when a subagent exceeds `max_sessions_per_subagent`, the least-recently-used session). A session's creation time is metadata only and is never an eviction ordering key.
+_Avoid_: session GC
+
 ## Relationships
 
 - A **Workspace** owns one or more **Pool Instances**; pool instances are not shared across workspaces.
@@ -55,6 +63,6 @@ _Avoid_: agent system config, fleet config, cluster config
 
 ## Flagged ambiguities
 
-- "**control channel**" historically meant the runtime control plane in `framework/control/`, but that package is largely **vestigial** — channels are constructed and threaded but have no live producers/consumers. Real cancellation is `asyncio.Task.cancel()` in `AgentPipeline`. Use "control channel" only when quoting the package; prefer "control plane" for the abstraction.
+- "**control channel**" historically meant the runtime control plane in `modex_agent/control/`, but that package is largely **vestigial** — channels are constructed and threaded but have no live producers/consumers. Real cancellation is `asyncio.Task.cancel()` in `AgentPipeline`. Use "control channel" only when quoting the package; prefer "control plane" for the abstraction.
 - "**pipeline**" was overloaded: it meant both the old `create_app`/`App` entry point (removed by ADR-0001) and the `AgentPipeline` orchestration layer that survives. "Pipeline" alone now means `AgentPipeline`; the old entry point is gone.
-- "**Approval**" lives in `framework/approval/` as tier definitions and classifiers, but per `framework/AGENTS.md` the tiered approval is **not wired in pool mode** — `pool_builder.py` skips `RuntimeAssembler`, and subagents' `ToolNode._get_tier()` always returns `NORMAL`. The terminology is in use; the runtime coverage is partial.
+- "**Approval**" lives in `modex_agent/approval/` as tier definitions and classifiers, but per `modex_agent/AGENTS.md` the tiered approval is **not wired in pool mode** — `pool_builder.py` skips `RuntimeAssembler`, and subagents' `ToolNode._get_tier()` always returns `NORMAL`. The terminology is in use; the runtime coverage is partial.

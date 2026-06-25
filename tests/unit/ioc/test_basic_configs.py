@@ -1,6 +1,6 @@
-from framework.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
-from framework.ioc.configs.hooks import HookConfig, HooksConfig
-from framework.ioc.configs.skills import SkillsConfig
+from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
+from modex_agent.ioc.configs.hooks import HookConfig, HooksConfig
+from modex_agent.ioc.configs.skills import SkillsConfig
 
 
 class TestHooksConfig:

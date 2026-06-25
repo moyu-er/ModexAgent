@@ -3,12 +3,12 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from framework.core.llm_struct import LLMErrorInfo, LLMErrorKind
+from modex_agent.core.llm_struct import LLMErrorInfo, LLMErrorKind
 
 
 def _make_classify():
     """Import helpers fresh for each test to get clean module state."""
-    from framework.providers.shared import errors
+    from modex_agent.providers.shared import errors
     return errors
 
 
@@ -56,6 +56,21 @@ class TestClassifyByString:
         result = mod.classify_by_string("insufficient_quota: rate limit", "insufficient_quota")
         assert result.kind == LLMErrorKind.QUOTA
         assert result.should_retry is False
+
+    def test_content_filter_glm_new_sensitive(self):
+        """GLM/Zhipu content-moderation error code."""
+        mod = _make_classify()
+        result = mod.classify_by_string("output new_sensitive (1027)", "output new_sensitive (1027)")
+        assert result.kind == LLMErrorKind.CONTENT_FILTER
+        assert result.should_retry is False
+
+    def test_content_filter_openai(self):
+        """OpenAI-style content_filter markers."""
+        mod = _make_classify()
+        for msg in ("content_filter", "triggered content filter", "content management policy"):
+            result = mod.classify_by_string(msg.lower(), msg)
+            assert result.kind == LLMErrorKind.CONTENT_FILTER, msg
+            assert result.should_retry is False
 
 
 class TestClassifyRateLimit:
@@ -145,6 +160,16 @@ class TestClassifyApiStatus:
         exc.body = None
         result = mod.classify_api_status(exc, "not found")
         assert result.kind == LLMErrorKind.UNKNOWN
+        assert result.should_retry is False
+
+    def test_content_filter_body(self):
+        """APIStatusError body carrying a content_filter type."""
+        mod = _make_classify()
+        exc = MagicMock()
+        exc.status_code = 400
+        exc.body = {"error": {"code": "content_filter", "message": "blocked"}}
+        result = mod.classify_api_status(exc, "content filter")
+        assert result.kind == LLMErrorKind.CONTENT_FILTER
         assert result.should_retry is False
 
 

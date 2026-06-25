@@ -1,9 +1,9 @@
 import tempfile
 from pathlib import Path
 
-from framework.ioc.configs.agent import AgentConfig
-from framework.ioc.configs.app import AppConfig
-from framework.ioc.configs.llm import LLMConfig
+from modex_agent.ioc.configs.agent import AgentConfig
+from modex_agent.ioc.configs.app import AppConfig
+from modex_agent.ioc.configs.llm import LLMConfig
 
 
 class TestAppConfig:

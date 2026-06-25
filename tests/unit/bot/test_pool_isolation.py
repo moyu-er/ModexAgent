@@ -19,10 +19,10 @@ _BOT_PROJECT = Path(__file__).parent.parent.parent.parent / "examples" / "bot_pr
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
-from framework.ioc.configs.pool import PoolConfig, TerminalConfig
-from framework.ioc.configs.llm import LLMConfig
-from framework.ioc.configs.agent import AgentConfig
-from framework.ioc.configs.mcp import MCPConfig
+from modex_agent.ioc.configs.pool import PoolConfig, TerminalConfig
+from modex_agent.ioc.configs.llm import LLMConfig
+from modex_agent.ioc.configs.agent import AgentConfig
+from modex_agent.ioc.configs.mcp import MCPConfig
 
 
 class TestPoolConfigValidation:
@@ -142,7 +142,7 @@ class TestPerPoolMemoryIsolation:
 
     def test_memory_inline_config(self):
         """Memory config can be specified inline."""
-        from framework.ioc.configs.memory import MemoryConfig, ShortTermConfig
+        from modex_agent.ioc.configs.memory import MemoryConfig, ShortTermConfig
         cfg = PoolConfig(
             llm=LLMConfig(model="test", api_key="k"),
             agents=[AgentConfig(name="main", role="main")],

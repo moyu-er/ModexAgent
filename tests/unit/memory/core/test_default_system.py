@@ -3,14 +3,14 @@ from __future__ import annotations
 
 import pytest
 
-from framework.core.emitter import AgentResult
-from framework.memory.core.consolidation import MemoryUpdate
-from framework.memory.core.models import ArchiveEntry
-from framework.memory.core.scope import MemoryContext
-from framework.memory.default_system import DefaultMemorySystem
-from framework.memory.layers.factory import MemoryLayerFactory
-from framework.memory.registry.in_memory import InMemoryStoreRegistry
-from framework.memory.system import MemorySystemContextManager
+from modex_agent.core.emitter import AgentResult
+from modex_agent.memory.core.consolidation import MemoryUpdate
+from modex_agent.memory.core.models import ArchiveEntry
+from modex_agent.core.scope import MemoryContext
+from modex_agent.memory.default_system import DefaultMemorySystem
+from modex_agent.memory.layers.factory import MemoryLayerFactory
+from modex_agent.memory.registry.in_memory import InMemoryStoreRegistry
+from modex_agent.memory.system import MemorySystemContextManager
 
 
 @pytest.fixture

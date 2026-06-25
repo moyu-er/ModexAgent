@@ -27,9 +27,9 @@ from bot.service.session_store import WorkspacePoolSessionStore
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import DeltaEnvelope, UserMessageEvent, _unwrap_envelope
 from bot.webui.server import WebUIServer
-from framework.workspace.paths import WorkspacePaths
-from framework.core.session_id import SessionIdFactory
-from framework.workspace.runtime import bind_workspace_root
+from modex_agent.workspace.paths import WorkspacePaths
+from modex_agent.core.session_id import SessionIdFactory
+from modex_agent.workspace.runtime import bind_workspace_root
 
 _DATA_DIR_NAME = ".modex"
 
@@ -187,7 +187,7 @@ async def test_transcript_append_silent_when_ws_root_bound(
 async def test_session_index_save_warns_when_ws_root_unbound(
     caplog: pytest.LogCaptureFixture, tmp_path: Path
 ) -> None:
-    from framework.core.session_id import SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionInfo, now_ms
 
     index = WorkspacePoolSessionStore(
         base_dir=tmp_path, pool_resolver=lambda s: "main"
@@ -209,7 +209,7 @@ async def test_session_index_save_warns_when_ws_root_unbound(
 async def test_session_index_save_silent_when_index_dir_given(
     caplog: pytest.LogCaptureFixture, tmp_path: Path
 ) -> None:
-    from framework.core.session_id import SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionInfo, now_ms
 
     index = WorkspacePoolSessionStore(
         base_dir=tmp_path, pool_resolver=lambda s: "main"

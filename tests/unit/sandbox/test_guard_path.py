@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from framework.sandbox.guard import CommandSeverity, GuardMatch, GuardResult
-from framework.sandbox.guard_path import PathBoundaryConfig, PathBoundaryGuard
+from modex_agent.sandbox.guard import CommandSeverity, GuardMatch, GuardResult
+from modex_agent.sandbox.guard_path import PathBoundaryConfig, PathBoundaryGuard
 
 
 class TestPathBoundaryGuardPOSIX:

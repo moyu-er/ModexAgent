@@ -6,10 +6,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from framework.approval.ui import IMUserInterface
-from framework.control.channel import InMemoryControlChannel
-from framework.core.types import OutputMessage
-from framework.pipeline.adapters import OutputAdapter
+from modex_agent.approval.ui import IMUserInterface
+from modex_agent.control.channel import InMemoryControlChannel
+from modex_agent.core.types import OutputMessage
+from modex_agent.pipeline.adapters import OutputAdapter
 
 
 class _FakeOutputAdapter(OutputAdapter):
@@ -48,7 +48,7 @@ class TestRenderMessage:
             channel=InMemoryControlChannel(),
         )
 
-        with caplog.at_level(logging.ERROR, logger="framework.approval.ui"):
+        with caplog.at_level(logging.ERROR, logger="modex_agent.approval.ui"):
             msg_id = await ui.render_message("s1", "approval prompt")
 
         assert msg_id  # still returns a msg_id even on failure
@@ -65,7 +65,7 @@ class TestRenderMessage:
             channel=InMemoryControlChannel(),
         )
 
-        with caplog.at_level(logging.ERROR, logger="framework.approval.ui"):
+        with caplog.at_level(logging.ERROR, logger="modex_agent.approval.ui"):
             msg_id = await ui.render_message("s1", "hello")
 
         assert len(output.sent) == 1

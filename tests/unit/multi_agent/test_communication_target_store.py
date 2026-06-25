@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from framework.multi_agent.comm_kind import AgentCommKind
-from framework.multi_agent.tools import (
+from modex_agent.multi_agent.comm_kind import AgentCommKind
+from modex_agent.multi_agent.tools import (
     CommunicationTarget,
     CommunicationTargetStore,
 )

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from framework.control.exceptions import AgentCancelled, AgentControlError, AgentTimeout
-from framework.core.agent import AgentContext
-from framework.core.emitter import AgentResult
-from framework.core.tool_manager import ToolResult
-from framework.core.types import ToolCall
-from framework.interceptor.abc import (
+from modex_agent.control.exceptions import AgentCancelled, AgentControlError, AgentTimeout
+from modex_agent.core.agent import AgentContext
+from modex_agent.core.emitter import AgentResult
+from modex_agent.core.tool_manager import ToolResult
+from modex_agent.core.types import ToolCall
+from modex_agent.interceptor.abc import (
     Interceptor,
     InterceptorScope,
     IterationContext,
@@ -18,7 +18,7 @@ from framework.interceptor.abc import (
     TurnContext,
     TurnNext,
 )
-from framework.interceptor.chain import InterceptorChain
+from modex_agent.interceptor.chain import InterceptorChain
 
 
 class BoomInterceptor:

@@ -2,14 +2,14 @@
 
 from unittest.mock import MagicMock
 
-from framework.core.agent import AgentContext
-from framework.core.session_id import SessionInfo
-from framework.core.tool_manager import ToolManager
-from framework.memory.history import ListMessageHistory
-from framework.multi_agent.inbox.consumer import InboxConsumer
-from framework.hook.builtin import InboxFlushHook
-from framework.multi_agent.inbox.server_memory import InMemoryInboxServer
-from framework.multi_agent.inbox.types import InboxMessage
+from modex_agent.core.agent import AgentContext
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.tool_manager import ToolManager
+from modex_agent.memory.history import ListMessageHistory
+from modex_agent.multi_agent.inbox.consumer import InboxConsumer
+from modex_agent.hook.builtin import InboxFlushHook
+from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
+from modex_agent.multi_agent.inbox.types import InboxMessage
 
 
 class TestInboxFlushHook:

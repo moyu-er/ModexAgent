@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from framework.tools.presets import ToolPreset, get_preset_tools
+from modex_agent.tools.presets import ToolPreset, get_preset_tools
 
 
 class TestToolPreset:
@@ -41,7 +41,7 @@ class TestGetPresetTools:
 
     def test_read_write_preset_has_bash(self) -> None:
         """READ_WRITE preset includes bash for code review (git diff, git log)."""
-        from framework.tools.terminal.subprocess_tool import SubprocessTool
+        from modex_agent.tools.terminal.subprocess_tool import SubprocessTool
 
         tools = get_preset_tools(
             ToolPreset.READ_WRITE,
@@ -61,7 +61,7 @@ class TestGetPresetTools:
 
     def test_bash_injected_for_full_preset(self) -> None:
         """FULL preset includes bash when factory provided."""
-        from framework.tools.terminal.subprocess_tool import SubprocessTool
+        from modex_agent.tools.terminal.subprocess_tool import SubprocessTool
 
         def make_bash() -> SubprocessTool:
             return SubprocessTool(timeout=60)
@@ -72,7 +72,7 @@ class TestGetPresetTools:
 
     def test_bash_not_injected_for_minimal(self) -> None:
         """MINIMAL preset excludes bash even when factory provided."""
-        from framework.tools.terminal.subprocess_tool import SubprocessTool
+        from modex_agent.tools.terminal.subprocess_tool import SubprocessTool
 
         tools = get_preset_tools(
             ToolPreset.MINIMAL,
@@ -88,7 +88,7 @@ class TestGetPresetTools:
 
     def test_none_preset_no_bash(self) -> None:
         """NONE preset does not get bash even with factory."""
-        from framework.tools.terminal.subprocess_tool import SubprocessTool
+        from modex_agent.tools.terminal.subprocess_tool import SubprocessTool
 
         tools = get_preset_tools(
             ToolPreset.NONE,

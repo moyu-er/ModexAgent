@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from framework.interceptor.builtin.tool_approval import ArgumentMatcher
+from modex_agent.interceptor.builtin.tool_approval import ArgumentMatcher
 
 
 class TestResolvePath:

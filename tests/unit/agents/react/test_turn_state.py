@@ -1,11 +1,11 @@
 """Tests for ReActTurnState — typed turn state, tool batch helpers, snapshot policy."""
 from __future__ import annotations
 
-from framework.agents.react.constants import ReActNode
-from framework.agents.react.state import ReActSnapshotPolicy, ReActTurnState
-from framework.runtime.enums import AgentKind, OperationKind, OperationStatus, SnapshotReason, ToolBatchStatus, TurnPhase
-from framework.runtime.models import ToolArguments, ToolCallState, TurnIdentity
-from framework.core.session_id import SessionInfo
+from modex_agent.agents.react.constants import ReActNode
+from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
+from modex_agent.runtime.enums import AgentKind, OperationKind, OperationStatus, SnapshotReason, ToolBatchStatus, TurnPhase
+from modex_agent.runtime.models import ToolArguments, ToolCallState, TurnIdentity
+from modex_agent.core.session_id import SessionInfo
 
 
 def test_react_turn_state_creates_operation_for_tool_batch() -> None:
@@ -78,7 +78,7 @@ def test_react_turn_state_initializes_default_react_fields() -> None:
 
 
 def test_react_turn_state_extends_turn_state_base() -> None:
-    from framework.runtime.models import TurnStateBase
+    from modex_agent.runtime.models import TurnStateBase
 
     state = ReActTurnState(
         identity=TurnIdentity(agent_id="bot", session=SessionInfo.from_str("s1"), turn_id="t1"),

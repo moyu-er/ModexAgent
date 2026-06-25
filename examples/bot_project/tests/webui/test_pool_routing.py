@@ -24,8 +24,8 @@ from bot.webui.server import (
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import _unwrap_envelope
 from bot.webui.transcript_store import JSONLTranscriptStore
-from framework.workspace.paths import WorkspacePaths
-from framework.workspace.runtime import bind_workspace_root
+from modex_agent.workspace.paths import WorkspacePaths
+from modex_agent.workspace.runtime import bind_workspace_root
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -209,9 +209,9 @@ async def test_control_command_intercepted_before_enqueue() -> None:
     /cd and /exit are now handled directly by S2 (EnvironmentControlStage),
     not by _try_intercept_control. This test verifies /stop interception.
     """
-    from framework.commands.handlers import build_default_builtin_handlers
-    from framework.commands.processor import SlashCommandProcessor
-    from framework.control.channel import InMemoryControlChannel
+    from modex_agent.commands.handlers import build_default_builtin_handlers
+    from modex_agent.commands.processor import SlashCommandProcessor
+    from modex_agent.control.channel import InMemoryControlChannel
 
     handlers = list(build_default_builtin_handlers())
     processor = SlashCommandProcessor(handlers=handlers)
@@ -246,7 +246,7 @@ async def test_control_command_intercepted_before_enqueue() -> None:
     )
 
     # Verify /stop added a control command to the channel
-    from framework.control.types import ControlCommandType, ControlScope
+    from modex_agent.control.types import ControlCommandType, ControlScope
 
     cmds = await channel.drain(
         ControlScope(session_id="test-session.main"),
@@ -267,8 +267,8 @@ async def test_fan_in_propagates_control_filter_to_sources() -> None:
     This is the fix for: terminal/process/command broken because
     WebSocketInputAdapter._cmd_processor was never set.
     """
-    from framework.commands.processor import SlashCommandProcessor
-    from framework.control.channel import InMemoryControlChannel
+    from modex_agent.commands.processor import SlashCommandProcessor
+    from modex_agent.control.channel import InMemoryControlChannel
 
     # Create FanIn with WebSocket source
     fan_in = FanInInputAdapter()
@@ -315,8 +315,8 @@ async def test_fan_in_propagates_control_filter_to_sources() -> None:
 @pytest.mark.asyncio
 async def test_fan_in_propagates_to_all_sources() -> None:
     """FanIn with 2+ sources — ALL get configured."""
-    from framework.commands.processor import SlashCommandProcessor
-    from framework.control.channel import InMemoryControlChannel
+    from modex_agent.commands.processor import SlashCommandProcessor
+    from modex_agent.control.channel import InMemoryControlChannel
 
     fan_in = FanInInputAdapter()
     ws1 = WebSocketInputAdapter()
@@ -343,7 +343,7 @@ async def test_fan_in_propagates_to_all_sources() -> None:
 async def test_pool_mapping_survives_server_recreation() -> None:
     """Pool mapping saved to disk must survive server restart."""
     from bot.service.session_store import WorkspacePoolSessionStore
-    from framework.core.session_id import SessionIdFactory
+    from modex_agent.core.session_id import SessionIdFactory
 
     data_dir = Path(tempfile.mkdtemp())
     agent_pool_map = {"main": "main", "coding": "coding"}
@@ -603,9 +603,9 @@ async def test_initialize_pool_wires_control_filter_to_websocket() -> None:
     """
     from bot.adapters.fan_in import FanInInputAdapter
 
-    from framework.commands.handlers import build_default_builtin_handlers
-    from framework.commands.processor import SlashCommandProcessor
-    from framework.control.channel import InMemoryControlChannel
+    from modex_agent.commands.handlers import build_default_builtin_handlers
+    from modex_agent.commands.processor import SlashCommandProcessor
+    from modex_agent.control.channel import InMemoryControlChannel
 
     ws_input = WebSocketInputAdapter()
 
@@ -740,7 +740,7 @@ async def test_conversations_survive_pool_switching() -> None:
     Regression test for: switching pool → sidebar empty → switching back → still empty.
     """
     from bot.service.session_store import WorkspacePoolSessionStore
-    from framework.core.session_id import SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionInfo, now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     server, inp = _make_server(data_dir)
@@ -836,7 +836,7 @@ async def test_conversation_visible_after_first_message() -> None:
     /api/sessions after the first message. Empty (no-message) sessions are
     client-side only and do NOT appear in the server session list."""
     from bot.service.session_store import WorkspacePoolSessionStore
-    from framework.core.session_id import SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionInfo, now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     server, inp = _make_server(data_dir)
@@ -932,7 +932,7 @@ async def test_sessions_includes_external_adapter_conversations() -> None:
     """
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
-    from framework.core.session_id import SessionInfo, now_ms
+    from modex_agent.core.session_id import SessionInfo, now_ms
 
     data_dir = Path(tempfile.mkdtemp())
     server, inp = _make_server(data_dir)
@@ -1005,9 +1005,9 @@ async def test_pool_router_forwards_agent_session_id() -> None:
     session_id — creating a brand-new session instead of routing to the
     existing one.
     """
-    from framework.core.session_id import SessionInfo
-    from framework.core.types import InputMessage
-    from framework.messaging.broker import BrokerMessage
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.types import InputMessage
+    from modex_agent.messaging.broker import BrokerMessage
 
     data_dir = Path(tempfile.mkdtemp())
     session_store = PoolSessionStore(data_dir)

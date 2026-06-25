@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from framework.tools.overflow.models import CleanRequest, OverflowMetadata, OverflowRef
+from modex_agent.tools.overflow.models import CleanRequest, OverflowMetadata, OverflowRef
 
 
 class TestOverflowMetadata:

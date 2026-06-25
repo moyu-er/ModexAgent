@@ -24,10 +24,10 @@ from bot.adapters.channels import (
 from bot.adapters.fan_in import FanInInputAdapter
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.pool_router import PoolRouter, PoolSessionStore
-from framework.control.channel import InMemoryControlChannel
-from framework.core.session_id import SessionInfo
-from framework.core.types import InputMessage, OutputMessage
-from framework.pipeline.adapters import InputAdapter, OutputAdapter
+from modex_agent.control.channel import InMemoryControlChannel
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.types import InputMessage, OutputMessage
+from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
 
 
 class _RecordingOutputAdapter(OutputAdapter):
@@ -124,10 +124,10 @@ async def test_control_commands_isolated_across_im_channels(tmp_path: Path):
     """S2 handles /cd and /exit directly; each adapter's current_ws is updated."""
     from bot.input_pipeline.stages.environment_control import EnvironmentControlStage
     from bot.input_pipeline.context import BotInputContext
-    from framework.input_pipeline.envelope import UserInputEnvelope
+    from modex_agent.input_pipeline.envelope import UserInputEnvelope
     from unittest.mock import MagicMock
-    from framework.workspace.control import WorkspaceController
-    from framework.workspace.models import CdResult
+    from modex_agent.workspace.control import WorkspaceController
+    from modex_agent.workspace.models import CdResult
 
     project_dir = tmp_path / "home"
     project_dir.mkdir()
@@ -222,9 +222,9 @@ async def test_webui_control_command_does_not_leak_to_im(tmp_path: Path):
     """A /cd typed in the WebUI input box is handled by S2 for the websocket adapter only."""
     from bot.input_pipeline.stages.environment_control import EnvironmentControlStage
     from bot.input_pipeline.context import BotInputContext
-    from framework.input_pipeline.envelope import UserInputEnvelope
-    from framework.workspace.control import WorkspaceController
-    from framework.workspace.models import CdResult
+    from modex_agent.input_pipeline.envelope import UserInputEnvelope
+    from modex_agent.workspace.control import WorkspaceController
+    from modex_agent.workspace.models import CdResult
 
     qq_out = _RecordingOutputAdapter("qq")
     tg_out = _RecordingOutputAdapter("telegram")
@@ -286,8 +286,8 @@ async def test_plain_message_not_intercepted_routes_normally():
         "websocket": ws_out,
     })
 
-    from framework.commands.handlers import build_default_builtin_handlers
-    from framework.commands.processor import SlashCommandProcessor
+    from modex_agent.commands.handlers import build_default_builtin_handlers
+    from modex_agent.commands.processor import SlashCommandProcessor
 
     processor = SlashCommandProcessor(handlers=list(build_default_builtin_handlers()))
     channel = InMemoryControlChannel()

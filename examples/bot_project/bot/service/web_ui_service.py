@@ -22,11 +22,11 @@ from bot.service.session_store import WorkspacePoolSessionStore
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.emitter import CompositeEmitter
 from bot.webui.server import WebUIServer
-from framework.agents.react.agent import ReActEvent
-from framework.core.emitter import ContentEmitter
-from framework.core.session_store import LocalFileSessionStore
-from framework.ioc.configs.app import AppConfig
-from framework.pipeline.adapters import InputAdapter, OutputAdapter
+from modex_agent.agents.react.agent import ReActEvent
+from modex_agent.core.emitter import ContentEmitter
+from modex_agent.core.session_store import LocalFileSessionStore
+from modex_agent.ioc.configs.app import AppConfig
+from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +104,7 @@ class WebUIService(BotService):
 
         import yaml
 
-        from framework.ioc.configs.app import _resolve_env_in
+        from modex_agent.ioc.configs.app import _resolve_env_in
 
         raw_config: dict[str, Any] = _resolve_env_in(
             yaml.safe_load(
@@ -137,7 +137,7 @@ class WebUIService(BotService):
 
         # ── 2.5 Session store + registry ───────────────────────────────
         from bot.service.session_store import WorkspacePoolSessionStore
-        from framework.core.session_registry import InMemorySessionRegistry
+        from modex_agent.core.session_registry import InMemorySessionRegistry
 
         session_store: WorkspacePoolSessionStore = WorkspacePoolSessionStore(
             home_session_index,
@@ -252,7 +252,7 @@ class WebUIService(BotService):
             # first streaming event (or for the user to refresh).
             from bot.adapters.register_websocket import get_ws_output
             from bot.webui.events import DeltaEnvelope, WebUIEventType
-            from framework.core.session_id import agent_of
+            from modex_agent.core.session_id import agent_of
 
             ws_output = get_ws_output()
             child_agent = agent_of(child_id, default="unknown")
@@ -423,7 +423,7 @@ class WebUIService(BotService):
         parent_ids = self._parent_ids
 
         def _resolve_session_meta(session_id: str) -> SessionMeta:
-            from framework.core.session_id import agent_of
+            from modex_agent.core.session_id import agent_of
 
             agent = agent_of(session_id, default="main")
             pool = agent_pool_map.get(agent, _DEFAULT_AGENT_NAME)
@@ -445,7 +445,7 @@ class WebUIService(BotService):
         from bot.input_pipeline.assembly import build_im_pipeline, build_webui_pipeline
         from bot.input_pipeline.context import BotInputContext
         from bot.input_pipeline.stages.skill_parse import PoolSkillManagerRegistry
-        from framework.core.session_id import SessionIdFactory
+        from modex_agent.core.session_id import SessionIdFactory
 
         # Per-pool skill registry backed by each pool's real SkillManager.
         # Skills live under skills/{pool}/{agent}/.  One shared registry serves
@@ -540,7 +540,7 @@ class WebUIService(BotService):
         dynamic-subagent template types so the transcript dispatcher can route
         every write by agent name alone.
         """
-        from framework.multi_agent.template_registry import AgentTemplateRegistry
+        from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 
         # Use the already-loaded AppConfig instead of re-parsing YAML files.
         mapping: dict[str, str] = {

@@ -1,9 +1,9 @@
 """Tests for ApprovalTransaction — denormalized, preemption, batch atomicity."""
 from __future__ import annotations
 
-from framework.approval.constants import ApprovalDecision, ApprovalStatus, ApprovalTier
-from framework.runtime.enums import ApprovalSubjectType
-from framework.runtime.models import ApprovalRequestState, ApprovalTransaction, ToolArguments
+from modex_agent.approval.constants import ApprovalDecision, ApprovalStatus, ApprovalTier
+from modex_agent.runtime.enums import ApprovalSubjectType
+from modex_agent.runtime.models import ApprovalRequestState, ApprovalTransaction, ToolArguments
 
 
 def test_denial_preempts_unresolved_requests() -> None:

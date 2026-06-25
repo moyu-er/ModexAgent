@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from framework.workspace.paths import (
+from modex_agent.workspace.paths import (
     RESERVED_GLOBAL_DIR,
     WorkspacePaths,
     is_reserved_segment,

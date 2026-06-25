@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from framework.core.experience.curator import ExperienceCurator
-from framework.core.experience.meta import ExperienceMetaRecord, PerFileExperienceMetaStore
+from modex_agent.core.experience.curator import ExperienceCurator
+from modex_agent.core.experience.meta import ExperienceMetaRecord, PerFileExperienceMetaStore
 
 
 def _setup_exp(

@@ -2,11 +2,11 @@
 
 import pytest
 
-from framework.hook import Hook
-from framework.core.skills.source import SkillSource
-from framework.core.tool_manager import Tool
-from framework.plugins.abc import MemoryProvider
-from framework.plugins.context import PluginContext
+from modex_agent.hook import Hook
+from modex_agent.core.skills.source import SkillSource
+from modex_agent.core.tool_manager import Tool
+from modex_agent.plugins.abc import MemoryProvider
+from modex_agent.plugins.context import PluginContext
 
 
 class FakeTool(Tool):

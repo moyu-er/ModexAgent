@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from framework.memory.pruned.models import PrunedIndexEntry
-from framework.memory.pruned.storage import FilePrunedStorage
+from modex_agent.memory.pruned.models import PrunedIndexEntry
+from modex_agent.memory.pruned.storage import FilePrunedStorage
 
 
 def _entry(**overrides: object) -> PrunedIndexEntry:

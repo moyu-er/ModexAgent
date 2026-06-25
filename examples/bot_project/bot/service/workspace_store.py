@@ -13,7 +13,7 @@ The store is keyed by the **full session id** (the receiver-owned identifier
 subagent invocations of the same agent persist to separate files.
 
 Routing is driven by the per-turn ``bind_workspace_root`` ctxvar
-(:mod:`framework.workspace.runtime`):
+(:mod:`modex_agent.workspace.runtime`):
 
 - **Writes** (``append``) resolve the owning ``<root>/<data_dir_name>/sessions``
   from :func:`resolve_workspace_root`. The dispatcher already binds the turn's
@@ -47,9 +47,9 @@ from bot.webui.transcript_store import (
     ResilientTranscriptStore,
     TranscriptStore,
 )
-from framework.core.session_id import agent_of, session_id_prefix_of
-from framework.workspace.paths import WorkspacePaths
-from framework.workspace.runtime import is_workspace_root_bound, resolve_workspace_root
+from modex_agent.core.session_id import agent_of, session_id_prefix_of
+from modex_agent.workspace.paths import WorkspacePaths
+from modex_agent.workspace.runtime import is_workspace_root_bound, resolve_workspace_root
 
 logger = logging.getLogger(__name__)
 

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from framework.workspace.models import CdResult
+from modex_agent.workspace.models import CdResult
 
 
 class TestCdResult:

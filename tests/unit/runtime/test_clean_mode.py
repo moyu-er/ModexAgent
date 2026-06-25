@@ -1,12 +1,12 @@
 """Tests for clean runtime mode — typed state, no persistence."""
 from __future__ import annotations
 
-from framework.agents.react.state import ReActTurnState
-from framework.runtime.enums import AgentKind, TurnPhase
-from framework.runtime.models import TurnIdentity
-from framework.runtime.services import AgentRuntime, AgentRuntimeServices
-from framework.core.session_id import SessionInfo
-from framework.runtime.store import NoOpTurnStateStore
+from modex_agent.agents.react.state import ReActTurnState
+from modex_agent.runtime.enums import AgentKind, TurnPhase
+from modex_agent.runtime.models import TurnIdentity
+from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.runtime.store import NoOpTurnStateStore
 
 
 def test_clean_mode_still_has_typed_react_state() -> None:

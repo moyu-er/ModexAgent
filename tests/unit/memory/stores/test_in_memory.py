@@ -2,7 +2,7 @@
 
 import pytest
 
-from framework.memory.stores.in_memory import InMemoryStorage
+from modex_agent.memory.stores.in_memory import InMemoryStorage
 
 
 @pytest.fixture

@@ -6,10 +6,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from framework.commands.constants import CommandAction, CommandDispatchPolicy
-from framework.commands.handlers import ControlCommandHandler
-from framework.commands.models import CommandContext, SlashCommandInvocation
-from framework.control.types import ControlCommandType
+from modex_agent.commands.constants import CommandAction, CommandDispatchPolicy
+from modex_agent.commands.handlers import ControlCommandHandler
+from modex_agent.commands.models import CommandContext, SlashCommandInvocation
+from modex_agent.control.types import ControlCommandType
 
 
 def _make_invocation(command: str = "stop", args: str = "") -> SlashCommandInvocation:

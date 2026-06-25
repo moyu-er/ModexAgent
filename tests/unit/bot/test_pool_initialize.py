@@ -13,10 +13,10 @@ _BOT_PROJECT = Path(__file__).parent.parent.parent.parent / "examples" / "bot_pr
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
-from framework.core.session_id import SessionInfo
-from framework.core.types import InputMessage, OutputMessage
-from framework.ioc.configs.app import AppConfig
-from framework.pipeline.adapters import InputAdapter, OutputAdapter
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.types import InputMessage, OutputMessage
+from modex_agent.ioc.configs.app import AppConfig
+from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
 
 
 class _StubInput(InputAdapter):

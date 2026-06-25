@@ -10,10 +10,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from framework.agents.react.agent import ReActEvent, ReActAgent
-from framework.core.provider import StreamingLLMProvider
-from framework.core.types import LLMResponse, ToolCall
-from framework.interceptor.abc import InterceptorScope
+from modex_agent.agents.react.agent import ReActEvent, ReActAgent
+from modex_agent.core.provider import StreamingLLMProvider
+from modex_agent.core.types import LLMResponse, ToolCall
+from modex_agent.interceptor.abc import InterceptorScope
 
 
 class _StreamingEmitter:
@@ -51,14 +51,14 @@ class _StreamingEmitter:
 
 
 def _make_fake_ctx(*, interceptor_chain=None, control_channel=None):
-    from framework.core.agent import AgentContext
-    from framework.memory.history import ListMessageHistory
-    from framework.core.tool_manager import InMemoryToolManager
-    from framework.agents.react.state import ReActTurnState
-    from framework.runtime.services import AgentRuntime, AgentRuntimeServices
-    from framework.runtime.models import TurnIdentity
-    from framework.runtime.enums import AgentKind, TurnPhase
-    from framework.core.session_id import SessionInfo
+    from modex_agent.core.agent import AgentContext
+    from modex_agent.memory.history import ListMessageHistory
+    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.agents.react.state import ReActTurnState
+    from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+    from modex_agent.runtime.models import TurnIdentity
+    from modex_agent.runtime.enums import AgentKind, TurnPhase
+    from modex_agent.core.session_id import SessionInfo
     state = ReActTurnState(
         identity=TurnIdentity(agent_id="test", session=SessionInfo.from_str("test-session-001"), turn_id="t1"),
         agent_kind=AgentKind.REACT, phase=TurnPhase.CREATED,
@@ -85,7 +85,7 @@ class TestStreamWithControlPreservesToolCalls:
         """When LLM returns tool_calls via chat_stream, _stream_with_control
         must include them in the returned LLMResponse."""
         # Arrange: mock interceptor_chain with has_scope(LLM_STREAM)=True
-        from framework.interceptor.abc import LLMStreamChunk, LLMStreamContext
+        from modex_agent.interceptor.abc import LLMStreamChunk, LLMStreamContext
 
         async def _fake_llm_stream(ctx, call, actual_stream):
             """Mirror the actual stream, passing chunks through."""
@@ -152,7 +152,7 @@ class TestStreamWithControlPreservesToolCalls:
 
     async def test_no_tool_calls_when_llm_returns_none(self):
         """When LLM returns NO tool_calls, _stream_with_control must work correctly."""
-        from framework.interceptor.abc import LLMStreamChunk, LLMStreamContext
+        from modex_agent.interceptor.abc import LLMStreamChunk, LLMStreamContext
 
         async def _fake_llm_stream(ctx, call, actual_stream):
             async for chunk in actual_stream():
@@ -215,13 +215,13 @@ class TestMidTurnCancelViaInterceptor:
         by the drain inside _on_content_delta and abort the turn immediately —
         before chat_stream returns.  This is the fast path: one content delta
         fires, the drain finds CANCEL_TURN, the provider aborts the stream."""
-        from framework.control.channel import InMemoryControlChannel
-        from framework.control.types import (
+        from modex_agent.control.channel import InMemoryControlChannel
+        from modex_agent.control.types import (
             ControlCommand,
             ControlCommandType,
             ControlScope,
         )
-        from framework.interceptor.chain import InterceptorChain
+        from modex_agent.interceptor.chain import InterceptorChain
 
         channel = InMemoryControlChannel()
         chain = InterceptorChain()
@@ -268,14 +268,14 @@ class TestMidTurnCancelViaInterceptor:
 
     @pytest.mark.asyncio
     async def test_mid_stream_cancel_aborts_turn(self):
-        from framework.control.channel import InMemoryControlChannel
-        from framework.control.types import (
+        from modex_agent.control.channel import InMemoryControlChannel
+        from modex_agent.control.types import (
             ControlCommand,
             ControlCommandType,
             ControlScope,
         )
-        from framework.hook.builtin.control_drain import LlmCancelInterceptor
-        from framework.interceptor.chain import InterceptorChain
+        from modex_agent.hook.builtin.control_drain import LlmCancelInterceptor
+        from modex_agent.interceptor.chain import InterceptorChain
 
         channel = InMemoryControlChannel()
         chain = InterceptorChain()

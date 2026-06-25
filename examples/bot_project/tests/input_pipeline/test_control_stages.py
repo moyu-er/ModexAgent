@@ -10,11 +10,11 @@ from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.environment_control import EnvironmentControlStage
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from bot.input_pipeline.stages.session_control import SessionControlStage
-from framework.workspace.control import WorkspaceController
-from framework.core.session_id import SessionIdFactory, encode_snowflake
-from framework.core.types import InputMessage
-from framework.input_pipeline.envelope import UserInputEnvelope
-from framework.workspace.models import CdResult
+from modex_agent.workspace.control import WorkspaceController
+from modex_agent.core.session_id import SessionIdFactory, encode_snowflake
+from modex_agent.core.types import InputMessage
+from modex_agent.input_pipeline.envelope import UserInputEnvelope
+from modex_agent.workspace.models import CdResult
 
 
 def _sid(agent: str, conv: str) -> str:

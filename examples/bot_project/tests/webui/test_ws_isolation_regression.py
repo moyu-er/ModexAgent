@@ -25,9 +25,9 @@ from bot.service.session_store import WorkspacePoolSessionStore
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import UserMessageEvent, _unwrap_envelope
 from bot.webui.server import WebUIServer
-from framework.workspace.paths import WorkspacePaths
-from framework.core.session_id import SessionIdFactory
-from framework.workspace.runtime import bind_workspace_root
+from modex_agent.workspace.paths import WorkspacePaths
+from modex_agent.core.session_id import SessionIdFactory
+from modex_agent.workspace.runtime import bind_workspace_root
 
 _DATA_DIR_NAME = ".modex"
 

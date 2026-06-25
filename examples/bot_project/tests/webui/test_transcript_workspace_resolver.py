@@ -26,8 +26,8 @@ import pytest
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.emitter import CompositeEmitter, WebBotEmitter
 from bot.webui.events import AssistantTextEvent
-from framework.core.emitter import EmitterConfig
-from framework.workspace.runtime import bind_workspace_root, is_workspace_root_bound
+from modex_agent.core.emitter import EmitterConfig
+from modex_agent.workspace.runtime import bind_workspace_root, is_workspace_root_bound
 
 _DATA_DIR_NAME = ".modex"
 

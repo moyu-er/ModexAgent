@@ -13,10 +13,10 @@ from pathlib import Path
 
 import pytest
 
-from framework.tools.standard.file_tool import ListDirTool, ReadFileTool, WriteFileTool
-from framework.tools.standard.search_tool import FindFilesTool, SearchFilesTool
-from framework.tools.terminal import SubprocessTool
-from framework.tools.workspace_scoped import (
+from modex_agent.tools.standard.file_tool import ListDirTool, ReadFileTool, WriteFileTool
+from modex_agent.tools.standard.search_tool import FindFilesTool, SearchFilesTool
+from modex_agent.tools.terminal import SubprocessTool
+from modex_agent.tools.workspace_scoped import (
     WorkspaceRootProvider,
     WorkspaceScopedFileTool,
     WorkspaceScopedShellTool,

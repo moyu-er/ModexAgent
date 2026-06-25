@@ -399,7 +399,7 @@ def test_workspace_store_append_is_resilient(tmp_path: Path, monkeypatch: pytest
     user-message persist stage can crash an agent turn.
     """
     from bot.service.workspace_store import WorkspaceScopedTranscriptStore
-    from framework.workspace.runtime import bind_workspace_root
+    from modex_agent.workspace.runtime import bind_workspace_root
 
     def _workspace() -> str:
         return "ws"

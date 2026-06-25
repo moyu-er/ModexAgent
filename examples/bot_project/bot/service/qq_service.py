@@ -13,7 +13,7 @@ from bot.adapters.qq import (
 )
 from bot.service.core import BotService
 from bot.utils.config_loader import ConfigLoader
-from framework.ioc.configs.app import AppConfig
+from modex_agent.ioc.configs.app import AppConfig
 
 logger = logging.getLogger(__name__)
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from framework.multi_agent.communication import AgentCommunicationService
+from modex_agent.multi_agent.communication import AgentCommunicationService
 
 
 def _service(

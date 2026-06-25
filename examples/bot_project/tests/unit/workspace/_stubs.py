@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from framework.workspace.context import WorkspaceContext
-from framework.workspace.factory import ResourceFactory
+from modex_agent.workspace.context import WorkspaceContext
+from modex_agent.workspace.factory import ResourceFactory
 
 
 class StubResources:

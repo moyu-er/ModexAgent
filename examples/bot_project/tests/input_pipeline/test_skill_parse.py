@@ -6,7 +6,7 @@ import pytest
 
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.skill_parse import ParsedSkill, SkillParseStage
-from framework.input_pipeline.envelope import UserInputEnvelope
+from modex_agent.input_pipeline.envelope import UserInputEnvelope
 
 
 class _FakeRegistry:

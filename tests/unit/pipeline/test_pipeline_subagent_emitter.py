@@ -9,11 +9,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from framework.core.context import ContextState
-from framework.core.emitter import AgentResult, StreamingAwareEmitter
-from framework.core.session_id import SessionInfo
-from framework.core.types import InputMessage
-from framework.pipeline.pipeline import AgentPipeline
+from modex_agent.core.context import ContextState
+from modex_agent.core.emitter import AgentResult, StreamingAwareEmitter
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.types import InputMessage
+from modex_agent.pipeline.pipeline import AgentPipeline
 
 
 class _CapturingAgent:

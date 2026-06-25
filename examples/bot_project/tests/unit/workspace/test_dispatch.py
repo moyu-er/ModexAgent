@@ -6,9 +6,9 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 from bot.workspace.dispatch import WorkspaceMessageDispatcher
-from framework.workspace.registry import InMemoryRegistryStore, WorkspaceRegistry
-from framework.workspace.routing import WorkspaceResolver
-from framework.workspace.runtime import resolve_workspace_root
+from modex_agent.workspace.registry import InMemoryRegistryStore, WorkspaceRegistry
+from modex_agent.workspace.routing import WorkspaceResolver
+from modex_agent.workspace.runtime import resolve_workspace_root
 from ._stubs import StubFactory, StubResources
 
 

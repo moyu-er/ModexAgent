@@ -5,11 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from framework.ioc.configs.agent import AgentConfig
-from framework.ioc.configs.app import AppConfig
-from framework.ioc.configs.llm import LLMConfig
-from framework.ioc.configs.skills import SkillsConfig
-from framework.ioc.factories.descriptors import build_subagent_descriptor
+from modex_agent.ioc.configs.agent import AgentConfig
+from modex_agent.ioc.configs.app import AppConfig
+from modex_agent.ioc.configs.llm import LLMConfig
+from modex_agent.ioc.configs.skills import SkillsConfig
+from modex_agent.ioc.factories.descriptors import build_subagent_descriptor
 
 
 class TestBuildSubagentDescriptorQuery12306:

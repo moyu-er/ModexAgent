@@ -42,6 +42,7 @@ dependencies = [
   "ddgs>=9.0.0",
   "markdownify>=0.13.0",
   "typer>=0.9.0",
+  "path>=17.1.1",
 ]
 
 [project.optional-dependencies]
@@ -79,10 +80,12 @@ ast = [
 all = ["ModexAgent[llm,sandbox,gateway,skills,terminal,ast]"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["framework"]
+packages = ["src/modex_agent"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "tests_ext"]
+# src layout: resolve `modex_agent` from source without requiring an editable install.
+pythonpath = ["src"]
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
@@ -90,9 +93,12 @@ asyncio_mode = "auto"
 # importlib mode derives each test module's name from its full path, so
 # same-basename files in different dirs (e.g. several test_models.py) no longer
 # collide, and test dirs without __init__.py coexist with packaged ones.
-addopts = "-v --tb=short --import-mode=importlib"
+# `-m "not integration"`: integration tests hit real external services (LLM
+# API, network) and are inherently non-deterministic; keep the default run
+# deterministic. Run them explicitly with `pytest -m integration`.
+addopts = "-v --tb=short --import-mode=importlib -m 'not integration'"
 markers = [
-  "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+  "integration: marks tests as integration tests (run explicitly with '-m integration'; deselected from the default run)",
 ]
 
 [tool.ruff]

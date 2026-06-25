@@ -1,5 +1,5 @@
-from framework.core.experience.builder import ExperiencePromptBuilder
-from framework.core.experience.models import ExperienceSummary
+from modex_agent.core.experience.builder import ExperiencePromptBuilder
+from modex_agent.core.experience.models import ExperienceSummary
 
 
 def test_build_empty():

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from framework.workspace.registry import InMemoryRegistryStore, WorkspaceRegistry
-from framework.workspace.routing import WorkspaceResolver
+from modex_agent.workspace.registry import InMemoryRegistryStore, WorkspaceRegistry
+from modex_agent.workspace.routing import WorkspaceResolver
 from ._stubs import StubFactory, StubResources
 
 

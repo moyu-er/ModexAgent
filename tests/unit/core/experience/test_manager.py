@@ -1,8 +1,8 @@
 import pytest
 from pathlib import Path
 
-from framework.core.experience.manager import ExperienceManager
-from framework.core.experience.source import FileExperienceSource
+from modex_agent.core.experience.manager import ExperienceManager
+from modex_agent.core.experience.source import FileExperienceSource
 
 
 @pytest.mark.asyncio

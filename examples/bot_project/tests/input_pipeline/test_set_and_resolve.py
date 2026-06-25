@@ -8,8 +8,8 @@ from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.resolve_pool import ResolvePoolStage
 from bot.input_pipeline.stages.set_channel import SetChannelStage
 from bot.adapters import channels
-from framework.core.session_id import SessionIdFactory, encode_snowflake
-from framework.input_pipeline.envelope import UserInputEnvelope
+from modex_agent.core.session_id import SessionIdFactory, encode_snowflake
+from modex_agent.input_pipeline.envelope import UserInputEnvelope
 
 
 def _ctx(store_get: str = "main") -> BotInputContext:

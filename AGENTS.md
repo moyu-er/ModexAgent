@@ -6,19 +6,19 @@
 
 `framework/` is the reusable agent framework (322+ Python files, 22 subdirectories). Key areas:
 
-- `framework/core/`: ABCs — `Agent[E]`, `ContentEmitter[E]`, `Tool`, `ContextManager`, graph engine (`Graph[R]`/`Node[R]`), skills, experience system, types.
-- `framework/agents/react/`: graph-based ReAct runtime (4-node: START→LLM→TOOL→END), approval suspension/resume, `RuntimeAssembler`.
-- `framework/agents/experience/`: `ExperienceReviewAgent` — ReAct agent that reviews conversations and creates/updates EXPERIENCE.md files.
-- `framework/core/experience/`: experience layer — `ExperienceManager`, `FileExperienceSource`, `ExperiencePromptBuilder`, `ExperienceCurator`, validation, metadata tracking.
-- `framework/memory/`: three-layer memory (session/archive/knowledge) + compression + governance + injection policies.
-- `framework/multi_agent/`: star-topology subagent coordination, `AgentPool`, inbox, `CommunicationTracker`, `AgentMessageBus`.
-- `framework/ioc/`: typed config (`AppConfig` via Pydantic) + 8 factory modules + `PoolConfig`.
-- `framework/runtime/`: `AgentRuntime`, `AgentRuntimeServices`, `TurnStateStore`, `RuntimeCommandStore`, typed enums/models.
-- `framework/pipeline/`: `AgentPipeline` end-to-end orchestration, I/O adapters, approval renderer, slash commands.
-- `framework/hook/` + `framework/interceptor/` + `framework/control/`: three-layer runtime model (observe/AOP/control).
-- `framework/tools/`: tool registry, executor, MCP integration, terminal system (pexpect/tmux/winpty backends, input guard, poll loop), overflow management.
-- `framework/commands/`: slash command processor with two-stage dispatch (pre-lock routing + in-lock execution).
-- `framework/sandbox/`: sandboxed execution adapters (Subprocess/Docker/E2B/Landlock).
+- `modex_agent/core/`: ABCs — `Agent[E]`, `ContentEmitter[E]`, `Tool`, `ContextManager`, graph engine (`Graph[R]`/`Node[R]`), skills, experience system, types.
+- `modex_agent/agents/react/`: graph-based ReAct runtime (4-node: START→LLM→TOOL→END), approval suspension/resume, `RuntimeAssembler`.
+- `modex_agent/agents/experience/`: `ExperienceReviewAgent` — ReAct agent that reviews conversations and creates/updates EXPERIENCE.md files.
+- `modex_agent/core/experience/`: experience layer — `ExperienceManager`, `FileExperienceSource`, `ExperiencePromptBuilder`, `ExperienceCurator`, validation, metadata tracking.
+- `modex_agent/memory/`: three-layer memory (session/archive/knowledge) + compression + governance + injection policies.
+- `modex_agent/multi_agent/`: star-topology subagent coordination, `AgentPool`, inbox, `CommunicationTracker`, `AgentMessageBus`.
+- `modex_agent/ioc/`: typed config (`AppConfig` via Pydantic) + 8 factory modules + `PoolConfig`.
+- `modex_agent/runtime/`: `AgentRuntime`, `AgentRuntimeServices`, `TurnStateStore`, `RuntimeCommandStore`, typed enums/models.
+- `modex_agent/pipeline/`: `AgentPipeline` end-to-end orchestration, I/O adapters, approval renderer, slash commands.
+- `modex_agent/hook/` + `modex_agent/interceptor/` + `modex_agent/control/`: three-layer runtime model (observe/AOP/control).
+- `modex_agent/tools/`: tool registry, executor, MCP integration, terminal system (pexpect/tmux/winpty backends, input guard, poll loop), overflow management.
+- `modex_agent/commands/`: slash command processor with two-stage dispatch (pre-lock routing + in-lock execution).
+- `modex_agent/sandbox/`: sandboxed execution adapters (Subprocess/Docker/E2B/Landlock).
 
 `examples/bot_project/` is the primary end-to-end reference (Pool + Pipeline modes, WebUI React frontend, QQ adapter). Framework-generic behavior in `framework/`; business wiring in `examples/`.
 
@@ -46,7 +46,7 @@
 - `Agent[E]`, `ContentEmitter[E]` with `TypeVar("E", bound=AgentEvent)`.
 - Per-turn state in `runtime.state` (typed `ReActTurnState`), not instance attributes or `ctx.metadata`.
 - Frozen dataclasses for config/value objects; runtime objects hold state/connections.
-- `MessageRole` lives in `framework.core.types.MessageRole`.
+- `MessageRole` lives in `modex_agent.core.types.MessageRole`.
 - `GraphInterrupt` for approval suspension — never catch and swallow it.
 - `TurnCustomKey` enum for per-turn custom state keys in `TurnStateBase.custom`.
 
@@ -81,7 +81,7 @@
 
 ## Testing
 
-Unit tests under `tests/unit/` (mirrors `framework/` structure), framework-level tests under `tests/framework/`, integration tests under `tests/integration/`. Write/update tests before production code when practical. Absolute imports (`from framework.xxx`). Mock `LLMProvider`, `ControlChannel`, `ControlEventBus` — never hit real APIs.
+Unit tests under `tests/unit/` (mirrors `framework/` structure), framework-level tests under `tests/framework/`, integration tests under `tests/integration/`. Write/update tests before production code when practical. Absolute imports (`from modex_agent.xxx`). Mock `LLMProvider`, `ControlChannel`, `ControlEventBus` — never hit real APIs.
 
 ## Documentation
 

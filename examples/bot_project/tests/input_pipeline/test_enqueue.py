@@ -7,8 +7,8 @@ import pytest
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.enqueue import EnqueueStage
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
-from framework.core.types import InputMessage
-from framework.input_pipeline.envelope import UserInputEnvelope
+from modex_agent.core.types import InputMessage
+from modex_agent.input_pipeline.envelope import UserInputEnvelope
 
 
 def _ctx(enqueued: list[InputMessage]) -> BotInputContext:
@@ -50,7 +50,7 @@ async def test_enqueue_uses_skill_xml_when_present() -> None:
 
 @pytest.mark.asyncio
 async def test_enqueue_carries_attachments() -> None:
-    from framework.input_pipeline.envelope import AttachmentRef
+    from modex_agent.input_pipeline.envelope import AttachmentRef
 
     enqueued: list[InputMessage] = []
     env = UserInputEnvelope(external_id="u1", content="hi", channel="qq")

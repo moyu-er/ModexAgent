@@ -18,8 +18,8 @@ from pathlib import Path
 
 import pytest
 
-from framework.core.experience.builder import ExperiencePromptBuilder
-from framework.core.experience.source import FileExperienceSource
+from modex_agent.core.experience.builder import ExperiencePromptBuilder
+from modex_agent.core.experience.source import FileExperienceSource
 
 _EXP_MD = (
     "---\n"

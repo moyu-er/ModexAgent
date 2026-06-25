@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from framework.workspace.store import GlobalWorkspaceStore
+from modex_agent.workspace.store import GlobalWorkspaceStore
 
 
 def test_roundtrip_targets(tmp_path: Path) -> None:

@@ -5,7 +5,7 @@ command_result, process_result, and terminal_result XML while preserving
 all other fields, tags, and attributes.
 """
 
-from framework.memory.xml_truncate import truncate_xml_safe
+from modex_agent.memory.xml_truncate import truncate_xml_safe
 
 # ── test fixtures ──
 
@@ -50,28 +50,28 @@ SHORT_TERMINAL_RESULT = (
 # ── detection helper tests ──
 
 def test_get_truncatable_paths_returns_none_for_plain_text() -> None:
-    from framework.tools.terminal.types import get_terminal_xml_truncatable_paths
+    from modex_agent.tools.terminal.types import get_terminal_xml_truncatable_paths
 
     assert get_terminal_xml_truncatable_paths("plain text output") is None
     assert get_terminal_xml_truncatable_paths("") is None
 
 
 def test_get_truncatable_paths_detects_command_result() -> None:
-    from framework.tools.terminal.types import get_terminal_xml_truncatable_paths
+    from modex_agent.tools.terminal.types import get_terminal_xml_truncatable_paths
 
     paths = get_terminal_xml_truncatable_paths(COMMAND_RESULT)
     assert "output" in paths
 
 
 def test_get_truncatable_paths_detects_process_result() -> None:
-    from framework.tools.terminal.types import get_terminal_xml_truncatable_paths
+    from modex_agent.tools.terminal.types import get_terminal_xml_truncatable_paths
 
     paths = get_terminal_xml_truncatable_paths(PROCESS_RESULT)
     assert paths == ["output"]
 
 
 def test_get_truncatable_paths_detects_terminal_result() -> None:
-    from framework.tools.terminal.types import get_terminal_xml_truncatable_paths
+    from modex_agent.tools.terminal.types import get_terminal_xml_truncatable_paths
 
     paths = get_terminal_xml_truncatable_paths(TERMINAL_RESULT)
     assert paths is not None
@@ -80,7 +80,7 @@ def test_get_truncatable_paths_detects_terminal_result() -> None:
 
 
 def test_get_truncatable_paths_detects_overflow_result() -> None:
-    from framework.tools.terminal.types import get_terminal_xml_truncatable_paths
+    from modex_agent.tools.terminal.types import get_terminal_xml_truncatable_paths
 
     overflow_xml = (
         '<tool_result_overflow tool="read_file" total_chars="60000" '
@@ -171,10 +171,18 @@ def test_terminal_result_short_is_unchanged() -> None:
     assert len(result) < 500  # fits, so unchanged
 
 
-# ── overflow XML detection via ToolResult.to_message() ──
+# ── metadata is carried by ToolResult.to_message() when declared ──
 
-def test_tool_result_to_message_detects_overflow_xml() -> None:
-    from framework.core.tool_manager import ToolResult
+def test_tool_result_to_message_carries_declared_overflow_metadata() -> None:
+    """ToolResult.to_message() emits metadata that was declared on the result.
+
+    Under ADR-0006 the ToolManager no longer sniffs terminal XML itself; tools
+    declare metadata via ``result_metadata`` and the ToolManager stores it on
+    the ToolResult. The overflow layer constructs ToolResults for
+    ``<tool_result_overflow>`` output and passes the metadata explicitly.
+    """
+    from modex_agent.core.message import ContentFormat
+    from modex_agent.core.tool_manager import ToolResult
 
     xml = (
         '<tool_result_overflow tool="read_file" total_chars="60000" '
@@ -182,11 +190,31 @@ def test_tool_result_to_message_detects_overflow_xml() -> None:
         '  <chunk index="1"><![CDATA[chunk content]]></chunk>\n'
         '</tool_result_overflow>'
     )
-    result = ToolResult(tool_name="read_file", result=xml, call_id="tc_1")
+    result = ToolResult(
+        tool_name="read_file",
+        result=xml,
+        call_id="tc_1",
+        content_format=ContentFormat.XML,
+        truncatable_paths=["chunk", "instruction"],
+    )
     msg = result.to_message()
 
     assert msg.get("content_format") == "xml"
     assert msg.get("truncatable_paths") == ["chunk", "instruction"]
+
+
+def test_tool_result_to_message_no_metadata_when_undeclared() -> None:
+    """A bare ToolResult with no declared metadata attaches none (ADR-0006)."""
+    from modex_agent.core.tool_manager import ToolResult
+
+    result = ToolResult(
+        tool_name="read_file",
+        result="<command_result><output>x</output></command_result>",
+        call_id="tc_1",
+    )
+    msg = result.to_message()
+    assert "content_format" not in msg
+    assert "truncatable_paths" not in msg
 
 
 # ── edge case: empty truncatable_paths ──

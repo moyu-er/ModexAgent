@@ -3,12 +3,12 @@
 import tempfile
 from pathlib import Path
 
-from framework.ioc.configs.agent import AgentConfig
-from framework.ioc.configs.app import AppConfig
-from framework.ioc.configs.llm import LLMConfig
-from framework.ioc.configs.memory import MemoryConfig
-from framework.ioc.configs.safety import SafetyConfig
-from framework.ioc.merge import deep_merge
+from modex_agent.ioc.configs.agent import AgentConfig
+from modex_agent.ioc.configs.app import AppConfig
+from modex_agent.ioc.configs.llm import LLMConfig
+from modex_agent.ioc.configs.memory import MemoryConfig
+from modex_agent.ioc.configs.safety import SafetyConfig
+from modex_agent.ioc.merge import deep_merge
 
 
 class TestDeepMergeEdgeCases:
@@ -109,7 +109,7 @@ class TestSafetyConfigDefaults:
         assert cfg.turn.tool_timeout == 360.0  # updated default
 
     def test_safety_partial_llm_override(self) -> None:
-        from framework.ioc.configs.safety import LLMSafetyConfig
+        from modex_agent.ioc.configs.safety import LLMSafetyConfig
 
         cfg = SafetyConfig(
             llm=LLMSafetyConfig(request_timeout=30.0),

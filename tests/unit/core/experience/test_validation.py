@@ -1,5 +1,5 @@
 """Tests for validate_experience_md()."""
-from framework.core.experience.validation import validate_experience_md
+from modex_agent.core.experience.validation import validate_experience_md
 
 
 def test_valid_experience():

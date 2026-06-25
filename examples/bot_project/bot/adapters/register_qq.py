@@ -10,9 +10,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from bot.adapters.channels import AdapterBuildContext, get_conv_channel, register
-from framework.agents.react.agent import ReActEvent
-from framework.core.emitter import AgentResult
-from framework.core.session_id import session_id_prefix_of
+from modex_agent.agents.react.agent import ReActEvent
+from modex_agent.core.emitter import AgentResult
+from modex_agent.core.session_id import session_id_prefix_of
 
 
 def _qq_enabled(ctx: AdapterBuildContext) -> bool:

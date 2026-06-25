@@ -27,13 +27,13 @@ _BOT_PROJECT = Path(__file__).parent.parent.parent.parent / "examples" / "bot_pr
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
-from framework.core.session_id import SessionInfo
-from framework.core.types import InputMessage, OutputMessage
-from framework.messaging.broker_memory import InMemoryMessageBroker
-from framework.messaging.broker import BrokerMessage
-from framework.messaging.broker_bridge import BrokerBridgeService, OutputRoute
-from framework.multi_agent.address import AgentAddress
-from framework.pipeline.adapters import InputAdapter, OutputAdapter
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.types import InputMessage, OutputMessage
+from modex_agent.messaging.broker_memory import InMemoryMessageBroker
+from modex_agent.messaging.broker import BrokerMessage
+from modex_agent.messaging.broker_bridge import BrokerBridgeService, OutputRoute
+from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
 
 
 # ── Stubs ──
@@ -308,10 +308,10 @@ class TestApprovalCrossPool:
 
     def test_each_pool_has_own_turn_store(self, tmp_path):
         """Each pool gets its own TurnStateStore with isolated directories."""
-        from framework.agents.react.state import ReActRuntimeStateCodec
-        from framework.runtime.codec import RuntimeStateCodecRegistry
-        from framework.runtime.enums import AgentKind
-        from framework.runtime.store import JsonFileTurnStateStore
+        from modex_agent.agents.react.state import ReActRuntimeStateCodec
+        from modex_agent.runtime.codec import RuntimeStateCodecRegistry
+        from modex_agent.runtime.enums import AgentKind
+        from modex_agent.runtime.store import JsonFileTurnStateStore
 
         codec_registry = RuntimeStateCodecRegistry({AgentKind.REACT: ReActRuntimeStateCodec()})
 
@@ -331,10 +331,10 @@ class TestApprovalCrossPool:
           data/runtime_state/{pool_name}/turns/
           data/runtime_state/{pool_name}/commands/
         """
-        from framework.agents.react.state import ReActRuntimeStateCodec
-        from framework.runtime.codec import RuntimeStateCodecRegistry
-        from framework.runtime.enums import AgentKind
-        from framework.runtime.store import JsonFileRuntimeCommandStore, JsonFileTurnStateStore
+        from modex_agent.agents.react.state import ReActRuntimeStateCodec
+        from modex_agent.runtime.codec import RuntimeStateCodecRegistry
+        from modex_agent.runtime.enums import AgentKind
+        from modex_agent.runtime.store import JsonFileRuntimeCommandStore, JsonFileTurnStateStore
 
         codec_registry = RuntimeStateCodecRegistry({AgentKind.REACT: ReActRuntimeStateCodec()})
 

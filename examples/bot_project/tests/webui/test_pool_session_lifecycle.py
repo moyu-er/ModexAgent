@@ -13,10 +13,10 @@ from bot.service.web_ui_service import WebUIService
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import AssistantTurnEvent, UserMessageEvent
 from bot.webui.server import WebUIServer
-from framework.workspace.paths import WorkspacePaths
+from modex_agent.workspace.paths import WorkspacePaths
 
-from framework.core.session_id import SessionIdFactory
-from framework.workspace.runtime import bind_workspace_root
+from modex_agent.core.session_id import SessionIdFactory
+from modex_agent.workspace.runtime import bind_workspace_root
 
 
 def _real_project_dir() -> Path:
@@ -26,7 +26,7 @@ def _real_project_dir() -> Path:
 
 def _real_agent_pool_map() -> dict[str, str]:
     """Build the production agent->pool mapping from the loaded AppConfig."""
-    from framework.ioc.configs.app import AppConfig
+    from modex_agent.ioc.configs.app import AppConfig
 
     project_dir = _real_project_dir()
 

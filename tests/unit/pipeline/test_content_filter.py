@@ -6,8 +6,8 @@ and ChainedContentFilter behaviors.
 
 import pytest
 
-from framework.core.types import OutputMessage
-from framework.pipeline.filters import (
+from modex_agent.core.types import OutputMessage
+from modex_agent.pipeline.filters import (
     ChainedContentFilter,
     ContentFilter,
     ReasoningContentFilter,

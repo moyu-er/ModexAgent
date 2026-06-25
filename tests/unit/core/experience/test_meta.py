@@ -1,7 +1,7 @@
 """Tests for PerFileExperienceMetaStore — no cache, direct disk I/O."""
 from pathlib import Path
 
-from framework.core.experience.meta import (
+from modex_agent.core.experience.meta import (
     ExperienceMetaRecord,
     PerFileExperienceMetaStore,
 )

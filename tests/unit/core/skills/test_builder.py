@@ -2,8 +2,8 @@
 
 import pytest
 
-from framework.core.skills.builder import DefaultSkillBuilder
-from framework.core.skills.models import Skill
+from modex_agent.core.skills.builder import DefaultSkillBuilder
+from modex_agent.core.skills.models import Skill
 
 
 class TestDefaultSkillBuilder:

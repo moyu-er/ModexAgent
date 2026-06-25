@@ -15,8 +15,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Skip if plugins framework not importable
 try:
-    from framework.plugins import PluginLoader, PluginManager  # noqa: F401
-    from framework.plugins.context import PluginContext  # noqa: F401
+    from modex_agent.plugins import PluginLoader, PluginManager  # noqa: F401
+    from modex_agent.plugins.context import PluginContext  # noqa: F401
 
     PLUGINS_AVAILABLE = True
 except ImportError:

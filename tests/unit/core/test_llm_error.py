@@ -2,7 +2,7 @@
 
 import pytest
 
-from framework.core.llm_struct import (
+from modex_agent.core.llm_struct import (
     LLMErrorInfo,
     LLMErrorKind,
     LLMTimeoutPolicy,
@@ -12,7 +12,7 @@ from framework.core.llm_struct import (
     build_timeout_response,
     classify_litellm_error,
 )
-from framework.core.types import LLMResponse
+from modex_agent.core.types import LLMResponse
 
 
 class TestLLMErrorKind:

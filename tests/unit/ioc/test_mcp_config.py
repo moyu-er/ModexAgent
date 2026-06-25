@@ -1,4 +1,4 @@
-from framework.ioc.configs.mcp import MCPConfig, MCPServerEntry
+from modex_agent.ioc.configs.mcp import MCPConfig, MCPServerEntry
 
 
 class TestMCPConfig:

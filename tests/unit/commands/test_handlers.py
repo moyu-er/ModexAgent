@@ -2,21 +2,21 @@ from __future__ import annotations
 
 import pytest
 
-from framework.approval.types import ApprovalAction
-from framework.commands.constants import (
+from modex_agent.approval.types import ApprovalAction
+from modex_agent.commands.constants import (
     BuiltinCommand,
     CommandAction,
     CommandDispatchPolicy,
 )
-from framework.commands.handlers import (
+from modex_agent.commands.handlers import (
     ApprovalCommandHandler,
     ContinueCommandHandler,
     InvalidCommandHandler,
     UnknownCommandHandler,
 )
-from framework.commands.models import CommandContext, SlashCommandInvocation
-from framework.core.session_id import SessionInfo
-from framework.core.types import InputMessage
+from modex_agent.commands.models import CommandContext, SlashCommandInvocation
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.types import InputMessage
 
 
 def _context(content: str = "/continue", *, pending: object | None = None) -> CommandContext:

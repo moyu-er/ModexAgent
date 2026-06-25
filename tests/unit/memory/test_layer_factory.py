@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import pytest
 
-from framework.memory.core.consolidation import MemoryUpdate
-from framework.memory.core.layers import MemoryLayerSet
-from framework.memory.core.models import ArchiveEntry
-from framework.memory.core.scope import MemoryContext
-from framework.memory.layers import (
+from modex_agent.memory.core.consolidation import MemoryUpdate
+from modex_agent.memory.core.layers import MemoryLayerSet
+from modex_agent.memory.core.models import ArchiveEntry
+from modex_agent.core.scope import MemoryContext
+from modex_agent.memory.layers import (
     MemoryLayerConfigSet,
     MemoryLayerFactory,
     SessionMemoryConfig,
 )
-from framework.memory.registry import InMemoryStoreRegistry
+from modex_agent.memory.registry import InMemoryStoreRegistry
 
 
 @pytest.mark.asyncio

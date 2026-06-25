@@ -16,29 +16,29 @@ from typing import Any
 
 import pytest
 
-from framework.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
-from framework.memory.core.models import ArchiveEntry
-from framework.core.session_id import SessionInfo
-from framework.memory.core.scope import (
+from modex_agent.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
+from modex_agent.memory.core.models import ArchiveEntry
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.scope import (
     MemoryContext,
     MemoryLayerName,
     SessionScope,
     UserScope,
 )
-from framework.memory.layers.archive import ScopedArchiveMemoryManager
-from framework.memory.layers.knowledge import ScopedKnowledgeMemoryManager
-from framework.memory.layers.config import (
+from modex_agent.memory.layers.archive import ScopedArchiveMemoryManager
+from modex_agent.memory.layers.knowledge import ScopedKnowledgeMemoryManager
+from modex_agent.memory.layers.config import (
     ArchiveMemoryConfig,
     MemoryLayerConfigSet,
     SessionMemoryConfig,
     UserRetentionBufferConfig,
 )
-from framework.memory.layers.factory import MemoryLayerFactory
-from framework.memory.layers.user_buffer import ScopedUserRetentionBuffer
-from framework.memory.pruned.manager import PrunedManager
-from framework.memory.registry.file import DefaultMemoryStoreRegistry
-from framework.memory.registry.in_memory import InMemoryStoreRegistry
-from framework.memory.user_buffer import UserBufferEntry
+from modex_agent.memory.layers.factory import MemoryLayerFactory
+from modex_agent.memory.layers.user_buffer import ScopedUserRetentionBuffer
+from modex_agent.memory.pruned.manager import PrunedManager
+from modex_agent.memory.registry.file import DefaultMemoryStoreRegistry
+from modex_agent.memory.registry.in_memory import InMemoryStoreRegistry
+from modex_agent.memory.user_buffer import UserBufferEntry
 
 
 # -- Helpers ---------------------------------------------------------------
@@ -350,7 +350,7 @@ class TestPerUserLockIsolation:
 
     async def test_dream_engine_per_user_lock_not_blocking(self, tmp_path: Path) -> None:
         """User A's consolidation holds lock-A only; user B proceeds unblocked."""
-        from framework.memory.consolidation.dream_engine import DreamEngine
+        from modex_agent.memory.consolidation.dream_engine import DreamEngine
 
         registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
         await registry.initialize()
@@ -389,7 +389,7 @@ class TestPerUserLockIsolation:
 
     async def test_dream_engine_per_user_lock_skip(self, tmp_path: Path) -> None:
         """DreamEngine skips when same user already consolidating."""
-        from framework.memory.consolidation.dream_engine import DreamEngine
+        from modex_agent.memory.consolidation.dream_engine import DreamEngine
 
         registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
         await registry.initialize()
@@ -461,7 +461,7 @@ class TestScopeKeyCorrectness:
 
     def test_global_scope_returns_empty_key(self) -> None:
         """GlobalScope returns empty scope_key → storage path has no user subdir."""
-        from framework.memory.core.scope import GlobalScope
+        from modex_agent.core.scope import GlobalScope
 
         scope = GlobalScope()
         ctx = _ctx("sess-1", "user-1")
@@ -471,7 +471,7 @@ class TestScopeKeyCorrectness:
 
     def test_global_scope_ignore_context(self) -> None:
         """GlobalScope ignores all context fields — always returns same key."""
-        from framework.memory.core.scope import GlobalScope
+        from modex_agent.core.scope import GlobalScope
 
         scope = GlobalScope()
         assert scope.get_scope_key(_ctx("a", "x")) == ""
@@ -495,8 +495,8 @@ class TestConcurrentCleanupSession:
         Before Fix 3 (atomic archive_id reservation with write lock),
         both could read the same next_archive_id and one's data would be lost.
         """
-        from framework.memory.archive_models import ArchiveGenerationResult
-        from framework.memory.cleanup import cleanup_session
+        from modex_agent.memory.archive_models import ArchiveGenerationResult
+        from modex_agent.memory.cleanup import cleanup_session
 
         registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
         await registry.initialize()
@@ -579,8 +579,8 @@ class TestConcurrentCleanupSession:
         numbering from 1.  This verifies user-level scope isolation in
         the archive_id counter — not a shared global counter.
         """
-        from framework.memory.archive_models import ArchiveGenerationResult
-        from framework.memory.cleanup import cleanup_session
+        from modex_agent.memory.archive_models import ArchiveGenerationResult
+        from modex_agent.memory.cleanup import cleanup_session
 
         registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
         await registry.initialize()
@@ -656,8 +656,8 @@ class TestGlobalScopePath:
 
     def test_global_scope_empty_key_no_subdir(self, tmp_path: Path) -> None:
         """DefaultMemoryStoreRegistry._scope_dir omits subdir for empty scope_key."""
-        from framework.memory.core.scope import GlobalScope
-        from framework.memory.registry.file import DefaultMemoryStoreRegistry
+        from modex_agent.core.scope import GlobalScope
+        from modex_agent.memory.registry.file import DefaultMemoryStoreRegistry
 
         registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
         scope_dir = registry._scope_dir(MemoryLayerName.ARCHIVE, "")
@@ -667,8 +667,8 @@ class TestGlobalScopePath:
 
     async def test_archive_global_scope_writes_to_clean_path(self, tmp_path: Path) -> None:
         """Archive with GlobalScope writes to archive/ without user subdirectory."""
-        from framework.memory.core.scope import GlobalScope
-        from framework.memory.layers.config import ArchiveMemoryConfig
+        from modex_agent.core.scope import GlobalScope
+        from modex_agent.memory.layers.config import ArchiveMemoryConfig
 
         registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
         await registry.initialize()
@@ -679,7 +679,7 @@ class TestGlobalScopePath:
         )
         archive = ScopedArchiveMemoryManager(storage_factory, archive_config)
 
-        from framework.memory.core.models import ArchiveEntry
+        from modex_agent.memory.core.models import ArchiveEntry
         from datetime import UTC, datetime
 
         entry = ArchiveEntry(
@@ -701,8 +701,8 @@ class TestGlobalScopePath:
 
     async def test_knowledge_global_scope_writes_to_clean_path(self, tmp_path: Path) -> None:
         """Knowledge with GlobalScope writes to knowledge/ without user subdirectory."""
-        from framework.memory.core.scope import GlobalScope
-        from framework.memory.layers.config import KnowledgeMemoryConfig
+        from modex_agent.core.scope import GlobalScope
+        from modex_agent.memory.layers.config import KnowledgeMemoryConfig
 
         registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
         await registry.initialize()
@@ -713,7 +713,7 @@ class TestGlobalScopePath:
         )
         knowledge = ScopedKnowledgeMemoryManager(storage_factory, knowledge_config)
 
-        from framework.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
+        from modex_agent.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
 
         await knowledge.apply_update(
             _ctx("sess-a"),
@@ -803,7 +803,7 @@ class TestScopePathPersistence:
 
     async def test_archive_user_scope_path_contains_user_id(self, tmp_path: Path) -> None:
         """Archive with UserScope writes to {root}/archive/{user_id}/state.json."""
-        from framework.memory.core.models import ArchiveEntry
+        from modex_agent.memory.core.models import ArchiveEntry
         from datetime import UTC, datetime
 
         registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
@@ -827,7 +827,7 @@ class TestScopePathPersistence:
 
     async def test_archive_user_scope_different_users_different_dirs(self, tmp_path: Path) -> None:
         """Two users get different archive subdirectories."""
-        from framework.memory.core.models import ArchiveEntry
+        from modex_agent.memory.core.models import ArchiveEntry
         from datetime import UTC, datetime
 
         registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
@@ -858,8 +858,8 @@ class TestScopePathPersistence:
 
     async def test_archive_global_scope_no_user_subdir(self, tmp_path: Path) -> None:
         """Archive with GlobalScope writes to {root}/archive/ directly."""
-        from framework.memory.core.scope import GlobalScope
-        from framework.memory.core.models import ArchiveEntry
+        from modex_agent.core.scope import GlobalScope
+        from modex_agent.memory.core.models import ArchiveEntry
         from datetime import UTC, datetime
 
         registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
@@ -890,7 +890,7 @@ class TestScopePathPersistence:
 
     async def test_knowledge_user_scope_path_contains_user_id(self, tmp_path: Path) -> None:
         """Knowledge with UserScope writes to {root}/knowledge/{user_id}/memory.md."""
-        from framework.memory.layers.config import KnowledgeMemoryConfig
+        from modex_agent.memory.layers.config import KnowledgeMemoryConfig
 
         registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
         await registry.initialize()
@@ -917,7 +917,7 @@ class TestScopePathPersistence:
 
     async def test_knowledge_user_scope_different_users_different_dirs(self, tmp_path: Path) -> None:
         """Two users get different knowledge subdirectories."""
-        from framework.memory.layers.config import KnowledgeMemoryConfig
+        from modex_agent.memory.layers.config import KnowledgeMemoryConfig
 
         registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
         await registry.initialize()
@@ -1035,8 +1035,8 @@ class TestScopeFlexibility:
 
     async def test_archive_session_scope_path(self, tmp_path: Path) -> None:
         """Archive CAN be configured with SessionScope for per-session isolation."""
-        from framework.memory.core.scope import SessionScope
-        from framework.memory.core.models import ArchiveEntry
+        from modex_agent.core.scope import SessionScope
+        from modex_agent.memory.core.models import ArchiveEntry
         from datetime import UTC, datetime
 
         registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
@@ -1062,8 +1062,8 @@ class TestScopeFlexibility:
 
     async def test_knowledge_session_scope_path(self, tmp_path: Path) -> None:
         """Knowledge CAN be configured with SessionScope for per-session isolation."""
-        from framework.memory.core.scope import SessionScope
-        from framework.memory.layers.config import KnowledgeMemoryConfig
+        from modex_agent.core.scope import SessionScope
+        from modex_agent.memory.layers.config import KnowledgeMemoryConfig
 
         registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
         await registry.initialize()
@@ -1118,9 +1118,9 @@ class TestExperienceScopePath:
 
         This represents the current single-user bot behavior.
         """
-        from framework.core.experience.manager import ExperienceManager
-        from framework.core.experience.source import FileExperienceSource
-        from framework.memory.core.scope import GlobalScope
+        from modex_agent.core.experience.manager import ExperienceManager
+        from modex_agent.core.experience.source import FileExperienceSource
+        from modex_agent.core.scope import GlobalScope
 
         base_dir = tmp_path / "experiences" / "main" / "agent"
         source = FileExperienceSource(directories=[base_dir], scope=GlobalScope())
@@ -1138,9 +1138,9 @@ class TestExperienceScopePath:
 
     async def test_experience_user_scope_isolated(self, tmp_path: Path) -> None:
         """Experience with UserScope: user A must NOT see user B's data."""
-        from framework.core.experience.manager import ExperienceManager
-        from framework.core.experience.source import FileExperienceSource
-        from framework.memory.core.scope import UserScope, MemoryContext
+        from modex_agent.core.experience.manager import ExperienceManager
+        from modex_agent.core.experience.source import FileExperienceSource
+        from modex_agent.core.scope import UserScope, MemoryContext
 
         base_dir = tmp_path / "experiences" / "main" / "agent"
 
@@ -1170,13 +1170,13 @@ class TestExperienceScopePath:
 
     async def test_experience_user_scope_stores_in_user_dir(self, tmp_path: Path) -> None:
         """Experience files with UserScope are written to {base}/{user_id}/."""
-        from framework.core.experience.source import FileExperienceSource
-        from framework.memory.core.scope import UserScope
+        from modex_agent.core.experience.source import FileExperienceSource
+        from modex_agent.core.scope import UserScope
 
         base_dir = tmp_path / "experiences" / "main" / "agent"
         source = FileExperienceSource(directories=[base_dir], scope=UserScope())
 
-        from framework.memory.core.scope import MemoryContext
+        from modex_agent.core.scope import MemoryContext
         ctx = MemoryContext(session_id=SessionInfo.from_str("sess-1.main"), user_id="user-99")
 
         # _resolve_dirs should add user_id subdirectory

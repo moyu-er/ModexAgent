@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-from framework.tools.terminal.managers import BaseTerminalManager
-from framework.tools.terminal.types import (
+from modex_agent.tools.terminal.managers import BaseTerminalManager
+from modex_agent.tools.terminal.types import (
     Platform,
     ShellFamily,
     ShellInfo,

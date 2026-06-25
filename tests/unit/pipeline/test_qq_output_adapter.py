@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from framework.pipeline.adapters import OutputMessage
+from modex_agent.pipeline.adapters import OutputMessage
 
 
 class TestQQOutputAdapter:
@@ -115,7 +115,7 @@ class TestQQOutputAdapter:
 
     def test_streaming_mode_is_pseudo(self, adapter):
         """QQ output uses pseudo-streaming (buffered, not real-time)."""
-        from framework.pipeline.adapters import StreamingMode
+        from modex_agent.pipeline.adapters import StreamingMode
         assert adapter.streaming_mode == StreamingMode.PSEUDO
 
     @pytest.mark.asyncio

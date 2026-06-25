@@ -1,8 +1,8 @@
 """Tests for SubprocessTool."""
 
 
-from framework.ioc.configs.safety import SafetyConfig
-from framework.tools.terminal.subprocess_tool import SubprocessExecutor, SubprocessTool
+from modex_agent.ioc.configs.safety import SafetyConfig
+from modex_agent.tools.terminal.subprocess_tool import SubprocessExecutor, SubprocessTool
 
 
 class TestSubprocessToolConfig:

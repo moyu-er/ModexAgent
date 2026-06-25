@@ -7,7 +7,7 @@ import asyncio
 import pytest
 
 from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
-from framework.adapters.platform import StreamingMode
+from modex_agent.adapters.platform import StreamingMode
 
 
 @pytest.mark.asyncio

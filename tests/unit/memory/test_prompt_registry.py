@@ -4,9 +4,9 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 
-from framework.memory.prompts import PromptRegistry, create_default_registry
+from modex_agent.memory.prompts import PromptRegistry, create_default_registry
 
-PROMPTS_ROOT = Path(__file__).resolve().parent.parent.parent.parent / "framework" / "memory" / "prompts"
+PROMPTS_ROOT = Path(__file__).resolve().parent.parent.parent.parent / "src" / "modex_agent" / "memory" / "prompts"
 
 
 # ---------------------------------------------------------------------------

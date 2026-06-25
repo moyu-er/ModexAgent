@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from framework.memory.core.scope import MemoryLayerName
-from framework.memory.stores.scoped_file import DefaultScopedStorage
+from modex_agent.core.scope import MemoryLayerName
+from modex_agent.memory.stores.scoped_file import DefaultScopedStorage
 
 
 @pytest.mark.asyncio

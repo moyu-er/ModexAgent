@@ -6,24 +6,24 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from framework.agents.react.agent import ReActAgent
-from framework.agents.react.state import ReActTurnState
-from framework.core.constants import FinishReason, StopReason
-from framework.runtime.enums import TurnCustomKey
-from framework.core.emitter import AgentResult
-from framework.core.tool_manager import ToolResult
-from framework.core.types import LLMResponse, ToolCall
-from framework.runtime.enums import AgentKind, TurnPhase
-from framework.runtime.models import TurnIdentity
-from framework.core.session_id import SessionInfo
-from framework.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.agents.react.agent import ReActAgent
+from modex_agent.agents.react.state import ReActTurnState
+from modex_agent.core.constants import FinishReason, StopReason
+from modex_agent.runtime.enums import TurnCustomKey
+from modex_agent.core.emitter import AgentResult
+from modex_agent.core.tool_manager import ToolResult
+from modex_agent.core.types import LLMResponse, ToolCall
+from modex_agent.runtime.enums import AgentKind, TurnPhase
+from modex_agent.runtime.models import TurnIdentity
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 
 
 def _make_ctx(**kw):
     """Create a real AgentContext with typed runtime state."""
-    from framework.core.agent import AgentContext
-    from framework.memory.history import ListMessageHistory
-    from framework.core.tool_manager import InMemoryToolManager
+    from modex_agent.core.agent import AgentContext
+    from modex_agent.memory.history import ListMessageHistory
+    from modex_agent.core.tool_manager import InMemoryToolManager
     state = ReActTurnState(
         identity=TurnIdentity(agent_id="test", session=SessionInfo.from_str("s1"), turn_id="t1"),
         agent_kind=AgentKind.REACT, phase=TurnPhase.CREATED,
@@ -146,8 +146,8 @@ class TestReActAgentControlCancel:
 
     @pytest.mark.asyncio
     async def test_control_cancel_emits_turn_end(self):
-        from framework.control.channel import InMemoryControlChannel
-        from framework.control.types import (
+        from modex_agent.control.channel import InMemoryControlChannel
+        from modex_agent.control.types import (
             ControlCommand,
             ControlCommandType,
             ControlScope,
@@ -230,7 +230,7 @@ class TestReActAgentHookTimeout:
         agent = ReActAgent(provider=provider, hook_timeout=0.01)
         emitter = _FakeEmitter()
         ctx = _make_ctx()
-        from framework.hook import HookRunner
+        from modex_agent.hook import HookRunner
         ctx.runtime.services.hooks = HookRunner([SlowHook()])
         result = await agent.run(ctx, emitter)
         assert result is not None

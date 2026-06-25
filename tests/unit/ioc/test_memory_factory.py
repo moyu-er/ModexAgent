@@ -5,20 +5,20 @@ from pathlib import Path
 
 import pytest
 
-from framework.ioc.configs.memory import (
+from modex_agent.ioc.configs.memory import (
     MemoryConfig,
     ShortTermConfig,
 )
-from framework.ioc.factories.memory import create_memory, _build_memory_layer_config
+from modex_agent.ioc.factories.memory import create_memory, _build_memory_layer_config
 
 
 def _make_provider():
     """Create a mock LLMProvider with get_default_model()."""
-    from framework.core.provider import LLMProvider
+    from modex_agent.core.provider import LLMProvider
 
     class MockProvider(LLMProvider):
         async def chat(self, messages, **kwargs):
-            from framework.core.types import LLMResponse
+            from modex_agent.core.types import LLMResponse
             return LLMResponse(content="ok")
 
         def get_default_model(self):
@@ -59,7 +59,7 @@ class TestCreateMemoryCleanupConfig:
 
     def test_archive_agent_created_when_archive_enabled(self, tmp_path: Path) -> None:
         """When archive layer is enabled, archive_agent should be created."""
-        from framework.ioc.configs.memory import ArchiveConfig
+        from modex_agent.ioc.configs.memory import ArchiveConfig
 
         cfg = MemoryConfig(archive=ArchiveConfig(enabled=True))
         system = create_memory(cfg, _make_provider(), tmp_path)
@@ -69,7 +69,7 @@ class TestCreateMemoryCleanupConfig:
         self, tmp_path: Path,
     ) -> None:
         """When knowledge layer is enabled, knowledge_consolidator should be created."""
-        from framework.ioc.configs.memory import (
+        from modex_agent.ioc.configs.memory import (
             ArchiveConfig,
             KnowledgeConfig,
         )
@@ -85,7 +85,7 @@ class TestCreateMemoryCleanupConfig:
 class TestBuildMemoryLayerConfigNewSchema:
     def test_build_memory_layer_config_uses_new_config(self) -> None:
         """Should use new config fields (session, archive, knowledge)."""
-        from framework.ioc.configs.memory import (
+        from modex_agent.ioc.configs.memory import (
             MemoryConfig,
             SessionConfig,
             ArchiveConfig,
@@ -110,7 +110,7 @@ class TestBuildMemoryLayerConfigNewSchema:
 
     def test_build_memory_layer_config_handles_disabled_archive(self) -> None:
         """archive.enabled=False should result in no archive layer."""
-        from framework.ioc.configs.memory import MemoryConfig, ArchiveConfig
+        from modex_agent.ioc.configs.memory import MemoryConfig, ArchiveConfig
 
         cfg = MemoryConfig(
             archive=ArchiveConfig(enabled=False),
@@ -122,7 +122,7 @@ class TestBuildMemoryLayerConfigNewSchema:
 
     def test_build_memory_layer_config_handles_disabled_knowledge(self) -> None:
         """knowledge.enabled=False should result in no knowledge layer."""
-        from framework.ioc.configs.memory import MemoryConfig, KnowledgeConfig
+        from modex_agent.ioc.configs.memory import MemoryConfig, KnowledgeConfig
 
         cfg = MemoryConfig(
             knowledge=KnowledgeConfig(enabled=False),

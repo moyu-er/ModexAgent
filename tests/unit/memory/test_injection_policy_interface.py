@@ -1,7 +1,7 @@
 """MemoryInjectionPolicy exposes explicit capability queries, not private attrs."""
 
-from framework.memory.injection.full_injection import FullInjectionPolicy
-from framework.memory.injection.restricted_injection import RestrictedInjectionPolicy
+from modex_agent.memory.injection.full_injection import FullInjectionPolicy
+from modex_agent.memory.injection.restricted_injection import RestrictedInjectionPolicy
 
 
 class _StubPruned:

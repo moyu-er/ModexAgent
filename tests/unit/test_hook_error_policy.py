@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from framework.control.exceptions import PolicyViolation
-from framework.hook import HookErrorPolicy, HookPoint, HookPayload, HookRunner, HookSpec
-from framework.hook.abc import BeforeIterationHook, BeforeTurnHook
+from modex_agent.control.exceptions import PolicyViolation
+from modex_agent.hook import HookErrorPolicy, HookPoint, HookPayload, HookRunner, HookSpec
+from modex_agent.hook.abc import BeforeIterationHook, BeforeTurnHook
 
 
 class BrokenHook(BeforeTurnHook, BeforeIterationHook):
@@ -70,7 +70,7 @@ class TestHookErrorPolicyLog:
         runner = HookRunner([
             HookSpec(hook=BrokenHook(), on_error=HookErrorPolicy.LOG),
         ])
-        with caplog.at_level(logging.WARNING, logger="framework.hook.runner"):
+        with caplog.at_level(logging.WARNING, logger="modex_agent.hook.runner"):
             result = await runner.dispatch(HookPoint.BEFORE_TURN, None)
         assert not result.veto
         assert any("BrokenHook" in r.message for r in caplog.records)
@@ -162,7 +162,7 @@ class TestHookErrorPolicyMixed:
             HookSpec(hook=BrokenHook(), on_error=HookErrorPolicy.LOG),
             HookSpec(hook=TrackingHook(), on_error=HookErrorPolicy.ABORT),
         ])
-        with caplog.at_level(logging.WARNING, logger="framework.hook.runner"):
+        with caplog.at_level(logging.WARNING, logger="modex_agent.hook.runner"):
             await runner.dispatch(HookPoint.BEFORE_TURN, None)
         assert calls == ["track"]
         # LOG policy should have produced a record

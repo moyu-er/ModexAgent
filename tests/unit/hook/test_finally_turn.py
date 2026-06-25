@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from framework.control.exceptions import PolicyViolation
-from framework.core.agent import AgentContext
-from framework.core.emitter import AgentResult
-from framework.core.session_id import SessionInfo
-from framework.core.tool_manager import InMemoryToolManager, ToolManagerConfig
-from framework.hook import (
+from modex_agent.control.exceptions import PolicyViolation
+from modex_agent.core.agent import AgentContext
+from modex_agent.core.emitter import AgentResult
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
+from modex_agent.hook import (
     FinallyTurnHook,
     HookErrorPolicy,
     HookPayload,
@@ -17,7 +17,7 @@ from framework.hook import (
     HookRunner,
     HookSpec,
 )
-from framework.memory.history import ListMessageHistory
+from modex_agent.memory.history import ListMessageHistory
 
 # ---------------------------------------------------------------------------
 # Helper: minimal AgentContext

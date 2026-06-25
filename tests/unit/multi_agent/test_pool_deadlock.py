@@ -13,10 +13,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from framework.messaging.broker import Address, BrokerMessage
-from framework.multi_agent.address import AgentAddress
-from framework.multi_agent.pool import AgentPool
-from framework.multi_agent.state import AgentState
+from modex_agent.messaging.broker import Address, BrokerMessage
+from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.multi_agent.pool import AgentPool
+from modex_agent.multi_agent.state import AgentState
 
 
 class _FakeBroker:
@@ -67,7 +67,7 @@ class TestConsumerDuringErrorBackoff:
         Expected: broker.send_to is called to requeue the message.
         Actual (before fix): consumer creates dispatch task with invalid state transition.
         """
-        from framework.multi_agent.descriptor import AgentDescriptor, AgentInstance
+        from modex_agent.multi_agent.descriptor import AgentDescriptor, AgentInstance
 
 
         broker = pool._broker
@@ -111,7 +111,7 @@ class TestConsumerDuringErrorBackoff:
         This prevents the race condition where multiple dispatches compete
         for state transitions.
         """
-        from framework.multi_agent.descriptor import AgentDescriptor, AgentInstance
+        from modex_agent.multi_agent.descriptor import AgentDescriptor, AgentInstance
         broker = pool._broker
         pool._status["main"] = AgentState.ERROR
         pool._error_counts["main"] = 1

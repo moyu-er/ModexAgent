@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import logging
 
-from framework.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
-from framework.memory.core.scope import MemoryContext, MemoryLayerName, UserScope
-from framework.memory.layers.factory import MemoryLayerFactory
-from framework.memory.layers.knowledge import ScopedKnowledgeMemoryManager
-from framework.memory.registry.in_memory import InMemoryStoreRegistry
+from modex_agent.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
+from modex_agent.core.scope import MemoryContext, MemoryLayerName, UserScope
+from modex_agent.memory.layers.factory import MemoryLayerFactory
+from modex_agent.memory.layers.knowledge import ScopedKnowledgeMemoryManager
+from modex_agent.memory.registry.in_memory import InMemoryStoreRegistry
 
 
 async def test_append_update_is_idempotent():
@@ -93,7 +93,7 @@ async def test_replace_text_fallback_append_logs_warning(caplog):
         reason="test",
     )
 
-    with caplog.at_level(logging.WARNING, logger="framework.memory.layers.knowledge"):
+    with caplog.at_level(logging.WARNING, logger="modex_agent.memory.layers.knowledge"):
         result = await manager.apply_update(ctx, update)
 
     assert result == "existing fact\nnew fact"
@@ -119,7 +119,7 @@ async def test_remove_skipped_logs_warning(caplog):
         reason="test",
     )
 
-    with caplog.at_level(logging.WARNING, logger="framework.memory.layers.knowledge"):
+    with caplog.at_level(logging.WARNING, logger="modex_agent.memory.layers.knowledge"):
         result = await manager.apply_update(ctx, update)
 
     assert result == "existing fact"

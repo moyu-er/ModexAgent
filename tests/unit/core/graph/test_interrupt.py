@@ -1,6 +1,6 @@
 """Tests for interrupt(), GraphInterrupt."""
 import pytest
-from framework.core.graph.interrupt import GraphInterrupt, interrupt
+from modex_agent.core.graph.interrupt import GraphInterrupt, interrupt
 
 
 class TestGraphInterrupt:

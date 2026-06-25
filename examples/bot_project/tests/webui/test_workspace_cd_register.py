@@ -2,9 +2,9 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 import pytest
-from framework.workspace.control import WorkspaceController
-from framework.workspace.registry import WorkspaceRegistry
-from framework.workspace.store import GlobalWorkspaceStore
+from modex_agent.workspace.control import WorkspaceController
+from modex_agent.workspace.registry import WorkspaceRegistry
+from modex_agent.workspace.store import GlobalWorkspaceStore
 
 
 class _FakeFactory:

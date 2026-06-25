@@ -13,8 +13,8 @@ from bot.service.web_ui_service import WebUIService
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import _unwrap_envelope
 from bot.webui.server import WebUIServer
-from framework.workspace.paths import WorkspacePaths
-from framework.workspace.runtime import bind_workspace_root
+from modex_agent.workspace.paths import WorkspacePaths
+from modex_agent.workspace.runtime import bind_workspace_root
 
 
 def _make_fake_app_config(pools: dict[str, list[dict[str, str]]]) -> SimpleNamespace:
@@ -99,7 +99,7 @@ async def test_coding_session_transcript_written_to_coding_pool_directory() -> N
     input_adapter = WebSocketInputAdapter()
 
     # Use the production mapping builder with the real project config.
-    from framework.ioc.configs.app import AppConfig
+    from modex_agent.ioc.configs.app import AppConfig
 
     project_dir = Path(__file__).resolve().parent.parent
 
@@ -226,7 +226,7 @@ async def test_production_style_resolver_does_not_crash_emitter() -> None:
     from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
     from bot.webui.emitter import WebBotEmitter
 
-    from framework.core.emitter import EmitterConfig
+    from modex_agent.core.emitter import EmitterConfig
 
     input_adapter = WebSocketInputAdapter()
     output_adapter = WebSocketOutputAdapter(input_adapter)

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from framework.memory.archive_models import ArchiveChannel, ArchiveWrite
-from framework.memory.core.scope import MemoryContext, MemoryLayerName
-from framework.memory.layers.archive import ScopedArchiveMemoryManager
-from framework.memory.layers.config import ArchiveMemoryConfig
-from framework.memory.layers.factory import MemoryLayerFactory
-from framework.memory.registry.file import DefaultMemoryStoreRegistry
+from modex_agent.memory.archive_models import ArchiveChannel, ArchiveWrite
+from modex_agent.core.scope import MemoryContext, MemoryLayerName
+from modex_agent.memory.layers.archive import ScopedArchiveMemoryManager
+from modex_agent.memory.layers.config import ArchiveMemoryConfig
+from modex_agent.memory.layers.factory import MemoryLayerFactory
+from modex_agent.memory.registry.file import DefaultMemoryStoreRegistry
 
 
 async def test_file_registry_writes_context_and_knowledge_archive_files(tmp_path) -> None:
@@ -42,7 +42,7 @@ async def test_append_channel_log_uses_archive_id_as_cursor() -> None:
     the same channel with archive_ids 7 and 3 MUST have cursors 7 and 3,
     NOT per-channel counters 1 and 2.
     """
-    from framework.memory.stores.scoped_in_memory import InMemoryScopedStorage
+    from modex_agent.memory.stores.scoped_in_memory import InMemoryScopedStorage
 
     storage = InMemoryScopedStorage()
     await storage.initialize()

@@ -4,8 +4,8 @@ from typing import Any
 
 import pytest
 
-from framework.core.types import MessageRole
-from framework.memory.context_governance import (
+from modex_agent.core.types import MessageRole
+from modex_agent.memory.context_governance import (
     CompositeGovernance,
     LossyContentCompactionGovernance,
     MicrocompactGovernance,
@@ -133,7 +133,7 @@ async def test_token_budget_snips_from_start(monkeypatch):
         return sum(len(str(m)) for m in msgs)
 
     monkeypatch.setattr(
-        "framework.memory.context_governance.estimate_token_count",
+        "modex_agent.memory.context_governance.estimate_token_count",
         fake_estimate,
     )
 
@@ -162,7 +162,7 @@ async def test_token_budget_keeps_user_start(monkeypatch):
         return sum(len(str(m)) for m in msgs)
 
     monkeypatch.setattr(
-        "framework.memory.context_governance.estimate_token_count",
+        "modex_agent.memory.context_governance.estimate_token_count",
         fake_estimate,
     )
 
@@ -374,7 +374,7 @@ async def test_tool_chain_repair_removes_last_incomplete_assistant_for_model_vis
 @pytest.mark.asyncio
 async def test_final_legality_passes_messages_through_unchanged() -> None:
     """FinalContextLegality is a no-op; ToolChainRepair already sanitizes upstream."""
-    from framework.memory.context_governance import FinalContextLegalityGovernance
+    from modex_agent.memory.context_governance import FinalContextLegalityGovernance
 
     messages = [
         {"role": str(MessageRole.TOOL), "tool_call_id": "orphan", "content": "orphan_result"},
@@ -426,7 +426,7 @@ class FakeURB:
 
 
 def _make_urb_user_entry(content: str = "pruned user q") -> Any:
-    from framework.memory.user_buffer import UserBufferEntry
+    from modex_agent.memory.user_buffer import UserBufferEntry
     import time
     return UserBufferEntry(
         pruned_user_role="user", pruned_user_content=content,
@@ -436,7 +436,7 @@ def _make_urb_user_entry(content: str = "pruned user q") -> Any:
 
 
 def _make_urb_agent_entry(content: str = "agent task") -> Any:
-    from framework.memory.user_buffer import UserBufferEntry
+    from modex_agent.memory.user_buffer import UserBufferEntry
     import time
     return UserBufferEntry(
         pruned_user_role="agent", pruned_user_content=content,
@@ -448,8 +448,8 @@ def _make_urb_agent_entry(content: str = "agent task") -> Any:
 @pytest.mark.asyncio
 async def test_urb_injection_uses_user_role():
     """URB message must use user role (not system)."""
-    from framework.memory.context_governance import UserRetentionBufferInjectionGovernance
-    from framework.memory.core.scope import MemoryContext
+    from modex_agent.memory.context_governance import UserRetentionBufferInjectionGovernance
+    from modex_agent.core.scope import MemoryContext
 
     urb = FakeURB([_make_urb_user_entry("hello")])
     ctx = MemoryContext(session_id="s1")
@@ -473,8 +473,8 @@ async def test_urb_injection_uses_user_role():
 @pytest.mark.asyncio
 async def test_urb_injection_inserted_after_system():
     """URB user message inserted after system, before history."""
-    from framework.memory.context_governance import UserRetentionBufferInjectionGovernance
-    from framework.memory.core.scope import MemoryContext
+    from modex_agent.memory.context_governance import UserRetentionBufferInjectionGovernance
+    from modex_agent.core.scope import MemoryContext
 
     urb = FakeURB([_make_urb_user_entry("context")])
     ctx = MemoryContext(session_id="s1")
@@ -499,8 +499,8 @@ async def test_urb_injection_inserted_after_system():
 @pytest.mark.asyncio
 async def test_urb_injection_agent_entry_gets_role_attribute():
     """Agent entries in URB XML get role='agent' attribute."""
-    from framework.memory.context_governance import UserRetentionBufferInjectionGovernance
-    from framework.memory.core.scope import MemoryContext
+    from modex_agent.memory.context_governance import UserRetentionBufferInjectionGovernance
+    from modex_agent.core.scope import MemoryContext
 
     urb = FakeURB([_make_urb_agent_entry("task from planner")])
     ctx = MemoryContext(session_id="s1")
@@ -516,8 +516,8 @@ async def test_urb_injection_agent_entry_gets_role_attribute():
 @pytest.mark.asyncio
 async def test_urb_injection_empty_entries_noop():
     """When URB has no entries, messages pass through unchanged."""
-    from framework.memory.context_governance import UserRetentionBufferInjectionGovernance
-    from framework.memory.core.scope import MemoryContext
+    from modex_agent.memory.context_governance import UserRetentionBufferInjectionGovernance
+    from modex_agent.core.scope import MemoryContext
 
     urb = FakeURB([])
     ctx = MemoryContext(session_id="s1")

@@ -7,10 +7,10 @@ from __future__ import annotations
 
 import pytest
 
-from framework.core.context import (
+from modex_agent.core.context import (
     ContextState,
 )
-from framework.memory.history import ListMessageHistory
+from modex_agent.memory.history import ListMessageHistory
 
 
 async def _history_to_list(history):

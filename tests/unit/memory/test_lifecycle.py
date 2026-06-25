@@ -11,31 +11,31 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from framework.memory.core.layers import MemoryLayerSet
-from framework.memory.core.models import ArchiveEntry
-from framework.memory.core.scope import (
+from modex_agent.memory.core.layers import MemoryLayerSet
+from modex_agent.memory.core.models import ArchiveEntry
+from modex_agent.core.scope import (
     MemoryContext,
     MemoryLayerName,
     ScopeRecord,
     SessionScope,
     UserScope,
 )
-from framework.memory.layers.archive import ScopedArchiveMemoryManager
-from framework.memory.layers.config import (
+from modex_agent.memory.layers.archive import ScopedArchiveMemoryManager
+from modex_agent.memory.layers.config import (
     ArchiveMemoryConfig,
     KnowledgeMemoryConfig,
     SessionMemoryConfig,
 )
-from framework.memory.layers.factory import MemoryLayerFactory
-from framework.memory.layers.knowledge import ScopedKnowledgeMemoryManager
-from framework.memory.layers.session import ScopedSessionMemoryManager
-from framework.memory.lifecycle import (
+from modex_agent.memory.layers.factory import MemoryLayerFactory
+from modex_agent.memory.layers.knowledge import ScopedKnowledgeMemoryManager
+from modex_agent.memory.layers.session import ScopedSessionMemoryManager
+from modex_agent.memory.lifecycle import (
     DefaultArchiveRetentionPolicy,
     DefaultKnowledgeRetentionPolicy,
     DefaultMemoryMaintenancePolicy,
     MaintenanceResult,
 )
-from framework.memory.registry.in_memory import InMemoryStoreRegistry
+from modex_agent.memory.registry.in_memory import InMemoryStoreRegistry
 
 
 def _make_layer_set() -> MemoryLayerSet:
@@ -301,7 +301,7 @@ class TestArchiveRetentionFifoEviction:
     @pytest.mark.asyncio
     async def test_scan_once_fifo_eviction_deletes_oldest_consumed(self, tmp_path):
         """Oldest consumed archives are deleted when total exceeds max_archive_total."""
-        from framework.memory.stores.dir_archive import DirArchiveStorage
+        from modex_agent.memory.stores.dir_archive import DirArchiveStorage
 
         archive_dir = tmp_path / "archives"
         storage = DirArchiveStorage(archive_dir)
@@ -364,7 +364,7 @@ class TestArchiveRetentionFifoEviction:
     @pytest.mark.asyncio
     async def test_scan_once_fifo_preserves_unconsumed_archives(self, tmp_path):
         """Archives above the consumed cursor are never deleted."""
-        from framework.memory.stores.dir_archive import DirArchiveStorage
+        from modex_agent.memory.stores.dir_archive import DirArchiveStorage
 
         archive_dir = tmp_path / "archives"
         storage = DirArchiveStorage(archive_dir)

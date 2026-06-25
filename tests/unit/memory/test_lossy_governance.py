@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from framework.core.types import MessageRole
-from framework.memory.context_governance import (
+from modex_agent.core.types import MessageRole
+from modex_agent.memory.context_governance import (
     META_CONTEXT_LOSSY,
     META_CONTEXT_REDUCTION,
     ContextReductionType,

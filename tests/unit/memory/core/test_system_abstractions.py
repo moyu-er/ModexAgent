@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 
-from framework.memory.core.system import MemorySystem
+from modex_agent.memory.core.system import MemorySystem
 
 
 def test_memory_system_abc_excludes_prompt_assembly() -> None:

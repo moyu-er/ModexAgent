@@ -146,7 +146,7 @@ Both pipelines. Builds the final `InputMessage` and delivers it via `ctx.enqueue
 
 ## No-Framework-Change Constraint
 
-This pipeline reuses the framework's `InputAdapter._try_intercept_control` for `/cd`, `/exit`, and `/stop` handling. The call site is relocated into S2/S3 stages — no files under `framework/pipeline/` are modified. All new framework code lives under `framework/input_pipeline/` (envelope, stage, context, pipeline abstractions).
+This pipeline reuses the framework's `InputAdapter._try_intercept_control` for `/cd`, `/exit`, and `/stop` handling. The call site is relocated into S2/S3 stages — no files under `modex_agent/pipeline/` are modified. All new framework code lives under `modex_agent/input_pipeline/` (envelope, stage, context, pipeline abstractions).
 
 ## Adding a New Stage
 

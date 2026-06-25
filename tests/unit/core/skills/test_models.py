@@ -2,7 +2,7 @@
 
 import pytest
 
-from framework.core.skills.models import (
+from modex_agent.core.skills.models import (
     ResolutionContext,
     Skill,
     SkillMetadata,

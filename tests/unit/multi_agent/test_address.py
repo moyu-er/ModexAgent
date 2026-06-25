@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from framework.multi_agent.address import AgentAddress
+from modex_agent.multi_agent.address import AgentAddress
 
 
 class TestAgentAddress:

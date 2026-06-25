@@ -2,13 +2,13 @@
 
 import pytest
 
-from framework.ioc.configs.memory import (
+from modex_agent.ioc.configs.memory import (
     GovernanceConfig,
     LossyConfig,
     MemoryConfig,
     ShortTermConfig,
 )
-from framework.ioc.factories.governance import create_governance, create_subagent_governance
+from modex_agent.ioc.factories.governance import create_governance, create_subagent_governance
 
 
 class TestCreateGovernance:

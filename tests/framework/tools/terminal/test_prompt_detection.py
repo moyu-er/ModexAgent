@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from framework.tools.terminal.backends.base import extract_current_segment_from_buffer
-from framework.tools.terminal.prompt import (
+from modex_agent.tools.terminal.backends.base import extract_current_segment_from_buffer
+from modex_agent.tools.terminal.prompt import (
     extract_last_command_output,
     is_prompt_ready,
     is_waiting_for_input,

@@ -24,50 +24,50 @@ if TYPE_CHECKING:
         WorkspaceResolverCell,
     )
 
-from framework.control.channel import InMemoryControlChannel
-from framework.core.emitter import ContentEmitter
-from framework.core.llm_struct import RuntimeSafetyPolicy
-from framework.core.session_id import SessionIdFactory
-from framework.core.session_registry import SessionRegistry
-from framework.core.session_store import SessionStore
-from framework.core.tool_manager import InMemoryToolManager, ToolManagerConfig
-from framework.hook import HookErrorPolicy, HookRunner, HookSpec
-from framework.hook.builtin import InboxFlushHook
-from framework.hook.notification import AgentNotificationService, MaxIterationNotifyHook
-from framework.ioc.configs.agent import AgentConfig
-from framework.ioc.configs.memory import MemoryConfig
-from framework.ioc.configs.pool import PoolConfig
-from framework.ioc.factories.governance import create_governance
-from framework.ioc.factories.llm import create_llm_provider
-from framework.memory.core.scope import MemoryContext
-from framework.memory.default_system import DefaultMemorySystem
-from framework.memory.injection import FullInjectionPolicy
-from framework.memory.system import MemorySystemContextManager
-from framework.messaging.broker_bridge import BrokerBridgeService, OutputRoute
-from framework.multi_agent import (
+from modex_agent.control.channel import InMemoryControlChannel
+from modex_agent.core.emitter import ContentEmitter
+from modex_agent.core.llm_struct import RuntimeSafetyPolicy
+from modex_agent.core.session_id import SessionIdFactory
+from modex_agent.core.session_registry import SessionRegistry
+from modex_agent.core.session_store import SessionStore
+from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
+from modex_agent.hook import HookErrorPolicy, HookRunner, HookSpec
+from modex_agent.hook.builtin import InboxFlushHook
+from modex_agent.hook.notification import AgentNotificationService, MaxIterationNotifyHook
+from modex_agent.ioc.configs.agent import AgentConfig
+from modex_agent.ioc.configs.memory import MemoryConfig
+from modex_agent.ioc.configs.pool import PoolConfig
+from modex_agent.ioc.factories.governance import create_governance
+from modex_agent.ioc.factories.llm import create_llm_provider
+from modex_agent.core.scope import MemoryContext
+from modex_agent.memory.default_system import DefaultMemorySystem
+from modex_agent.memory.injection import FullInjectionPolicy
+from modex_agent.memory.system import MemorySystemContextManager
+from modex_agent.messaging.broker_bridge import BrokerBridgeService, OutputRoute
+from modex_agent.multi_agent import (
     AgentDescriptor,
     AgentPool,
     DefaultAgentFactory,
     SessionRetentionPolicy,
 )
-from framework.multi_agent.address import AgentAddress
-from framework.multi_agent.comm_tracker import CommunicationTracker
-from framework.multi_agent.bus import AgentMessageBus
-from framework.multi_agent.comm_kind import AgentCommKind
-from framework.multi_agent.communication import AgentCommunicationService
-from framework.multi_agent.descriptor import AgentLLMConfig
-from framework.multi_agent.inbox.consumer import InboxConsumer
-from framework.multi_agent.inbox.server import InboxServer
-from framework.multi_agent.tools import (
+from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.multi_agent.comm_tracker import CommunicationTracker
+from modex_agent.multi_agent.bus import AgentMessageBus
+from modex_agent.multi_agent.comm_kind import AgentCommKind
+from modex_agent.multi_agent.communication import AgentCommunicationService
+from modex_agent.multi_agent.descriptor import AgentLLMConfig
+from modex_agent.multi_agent.inbox.consumer import InboxConsumer
+from modex_agent.multi_agent.inbox.server import InboxServer
+from modex_agent.multi_agent.tools import (
     CommunicationTarget,
     CommunicationTargetStore,
     SendToAgentTool,
 )
-from framework.pipeline.adapters import OutputAdapter
-from framework.pipeline.snapshot import PoolDataSnapshot
-from framework.tools.standard import FindFilesTool, SearchFilesTool
-from framework.tools.terminal import SubprocessExecutor, SubprocessTool
-from framework.tools.workspace_scoped import (
+from modex_agent.pipeline.adapters import OutputAdapter
+from modex_agent.pipeline.snapshot import PoolDataSnapshot
+from modex_agent.tools.standard import FindFilesTool, SearchFilesTool
+from modex_agent.tools.terminal import SubprocessExecutor, SubprocessTool
+from modex_agent.tools.workspace_scoped import (
     WorkspaceRootProvider,
     wrap_standard_tools,
 )
@@ -311,7 +311,7 @@ def _build_terminal_manager(
 
     import sys
 
-    from framework.tools.terminal.managers import create_terminal_manager
+    from modex_agent.tools.terminal.managers import create_terminal_manager
 
     if sys.platform == "win32":
         kinds = ["windows_visible", "windows_hidden"] if visibility else ["windows_hidden"]
@@ -456,8 +456,8 @@ async def _build_tools(
 
     # Terminal tools — or subprocess fallback
     if terminal_manager is not None:
-        from framework.tools.terminal import CommandTool, ProcessRegistry, ProcessTool, TerminalTool
-        from framework.tools.terminal.config import TerminalRuntimeConfig
+        from modex_agent.tools.terminal import CommandTool, ProcessRegistry, ProcessTool, TerminalTool
+        from modex_agent.tools.terminal.config import TerminalRuntimeConfig
 
         cfg = TerminalRuntimeConfig()
         registry = ProcessRegistry(config=cfg)
@@ -494,8 +494,8 @@ async def _build_tools(
     # relative path for the non-workspace (test) wiring.
     exp_cfg = getattr(main_cfg, "experience", None)
     if exp_cfg is not None and getattr(exp_cfg, "enabled", False):
-        from framework.core.experience.meta import PerFileExperienceMetaStore
-        from framework.memory.tools.experience import ExperienceTool
+        from modex_agent.core.experience import PerFileExperienceMetaStore
+        from modex_agent.memory.tools.experience import ExperienceTool
 
         if pool_data is not None:
             base_exp_dir: Path = pool_data.experience_dir
@@ -513,8 +513,8 @@ async def _build_tools(
 
     # Todo tools — path from pool_data (pool-aware) or data_dir fallback,
     # mirroring the experience-tool path resolution above.
-    from framework.runtime.store import JsonFileTodoStore
-    from framework.tools.standard import TodoReadTool, TodoWriteTool
+    from modex_agent.runtime.store import JsonFileTodoStore
+    from modex_agent.tools.standard import TodoReadTool, TodoWriteTool
 
     if pool_data is not None and pool_data.runtime_dir is not None:
         todo_dir: Path = pool_data.runtime_dir / "todos"
@@ -598,7 +598,7 @@ def _build_skill_manager(main_cfg: AgentConfig, project_dir: Path, pool_name: st
         logger.warning("Pool '%s': no skill directories found", pool_name)
         return None
 
-    from framework.core.skills import (
+    from modex_agent.core.skills import (
         DefaultSkillBuilder,
         DirectorySkillCache,
         FileSkillSource,
@@ -811,7 +811,7 @@ def _build_communication(
     workspace_resolver: WorkspaceResolverCell | None = None,
     root_provider: WorkspaceRootProvider | None = None,
 ):
-    from framework.multi_agent.template_registry import AgentTemplateRegistry
+    from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 
     template_registry = AgentTemplateRegistry(project_dir)
     templates = template_registry.list_templates(pool_name)
@@ -932,7 +932,7 @@ def _wire_main_pipeline(
     if command_processor is not None:
         pipeline.command_processor = command_processor
     else:
-        from framework.commands.processor import SlashCommandProcessor
+        from modex_agent.commands.processor import SlashCommandProcessor
 
         pipeline.command_processor = SlashCommandProcessor.default()
 
@@ -950,8 +950,8 @@ def _wire_main_pipeline(
 
 
 _TOOL_REGISTRY: dict[str, tuple[str, str]] = {
-    "ast_grep_search": ("framework.tools.ast", "AstGrepSearchTool"),
-    "ast_grep_replace": ("framework.tools.ast", "AstGrepReplaceTool"),
+    "ast_grep_search": ("modex_agent.tools.ast", "AstGrepSearchTool"),
+    "ast_grep_replace": ("modex_agent.tools.ast", "AstGrepReplaceTool"),
 }
 
 

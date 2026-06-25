@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from framework.tools.standard.file_tool import (
+from modex_agent.tools.standard.file_tool import (
     ReadFileTool,
     WriteFileTool,
     EditFileTool,
@@ -21,7 +21,7 @@ from framework.tools.standard.file_tool import (
     _normalize_quotes,
     _preserve_quote_style,
 )
-from framework.tools.terminal import SubprocessTool
+from modex_agent.tools.terminal import SubprocessTool
 
 
 @pytest.fixture

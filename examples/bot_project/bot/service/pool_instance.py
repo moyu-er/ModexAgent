@@ -37,6 +37,6 @@ class PoolInstance:
 
     @property
     def main_address(self):
-        from framework.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.address import AgentAddress
 
         return AgentAddress(kind="agent", name=self.main_agent_name)

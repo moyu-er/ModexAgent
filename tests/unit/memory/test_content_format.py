@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from framework.memory.core.message import ChatMessage, ContentFormat
+from modex_agent.core.message import ChatMessage, ContentFormat
 
 
 def test_content_format_default_is_plain():

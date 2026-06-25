@@ -3,12 +3,12 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 
-from framework.control.event_bus import (
+from modex_agent.control.event_bus import (
     CallbackControlEventBus,
     Subscription,
     ControlEventHandler,
 )
-from framework.control.types import (
+from modex_agent.control.types import (
     ControlEvent, ControlEventType, ControlScope,
 )
 

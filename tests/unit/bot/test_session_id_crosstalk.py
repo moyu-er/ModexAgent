@@ -11,7 +11,7 @@ transcripts to be saved under the wrong key.
 
 from __future__ import annotations
 
-from framework.core.session_id import SessionInfo, SessionIdFactory, encode_snowflake
+from modex_agent.core.session_id import SessionInfo, SessionIdFactory, encode_snowflake
 
 
 def test_factory_double_encode_changes_snowflake():

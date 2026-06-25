@@ -3,8 +3,8 @@ from unittest.mock import patch
 
 import pytest
 
-from framework.memory.pruned.manager import PrunedManager
-from framework.utils.timezone import get_user_timezone
+from modex_agent.memory.pruned.manager import PrunedManager
+from modex_agent.utils.timezone import get_user_timezone
 
 SID = "test-session"
 TZ = get_user_timezone()
@@ -234,7 +234,7 @@ class TestInjectionXml:
         await manager.write_pruned(msgs, "test", now, session_id=SID)
         xml = manager.get_injection_xml(session_id=SID)
         assert xml is not None
-        from framework.memory.tags import PrunedTag
+        from modex_agent.memory.tags import PrunedTag
 
         assert f"<{PrunedTag.CONTAINER.value}>" in xml
         assert xml.strip().endswith(f"</{PrunedTag.CONTAINER.value}>")

@@ -1,6 +1,6 @@
 """Verify terminal type enums and helpers."""
 
-from framework.tools.terminal.types import (
+from modex_agent.tools.terminal.types import (
     CommandResultStatus,
     ShellFamily,
     TerminalCommandStatus,
@@ -40,8 +40,10 @@ class TestShellFamily:
     def test_cmd_not_uses_readline(self) -> None:
         assert ShellFamily.CMD.uses_readline() is False
 
-    def test_bash_command_ending_newline(self) -> None:
-        assert ShellFamily.BASH.command_ending() == "\n"
+    def test_bash_command_ending_is_carriage_return(self) -> None:
+        """Readline shells (bash/zsh/sh) terminate commands with ``\\r``."""
+        assert ShellFamily.BASH.command_ending() == "\r"
 
     def test_cmd_command_ending_crlf(self) -> None:
+        """Non-readline shells (cmd/powershell) terminate with ``\\r\\n``."""
         assert ShellFamily.CMD.command_ending() == "\r\n"

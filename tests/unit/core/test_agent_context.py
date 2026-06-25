@@ -2,10 +2,10 @@
 
 import pytest
 
-from framework.core.agent import AgentContext
-from framework.core.session_id import SessionInfo
-from framework.core.tool_manager import InMemoryToolManager
-from framework.memory.history import ListMessageHistory
+from modex_agent.core.agent import AgentContext
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.tool_manager import InMemoryToolManager
+from modex_agent.memory.history import ListMessageHistory
 
 
 class TestAgentContextToMessages:

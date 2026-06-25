@@ -5,7 +5,7 @@ import logging
 
 import pytest
 
-from framework.ioc.configs.memory import (
+from modex_agent.ioc.configs.memory import (
     ArchiveConfig,
     KnowledgeConfig,
     MemoryConfig,

@@ -17,14 +17,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from framework.memory.core.message import ChatMessage
-from framework.memory.core.models import (
+from modex_agent.core.message import ChatMessage
+from modex_agent.memory.core.models import (
     InjectionResult,
     MemoryBudget,
 )
-from framework.memory.core.scope import MemoryContext
-from framework.memory.injection.full_injection import FullInjectionPolicy
-from framework.memory.injection.restricted_injection import RestrictedInjectionPolicy
+from modex_agent.core.scope import MemoryContext
+from modex_agent.memory.injection.full_injection import FullInjectionPolicy
+from modex_agent.memory.injection.restricted_injection import RestrictedInjectionPolicy
 
 
 # -- Helpers ------------------------------------------------------------------
@@ -86,7 +86,7 @@ class FakeMemorySystem:
     def create_message_history(
         self, context: Any, initial_messages: Any = None,
     ) -> Any:
-        from framework.memory.history import ListMessageHistory
+        from modex_agent.memory.history import ListMessageHistory
         return ListMessageHistory(initial_messages or [])
 
     async def get_history(self, context: Any, max_messages: int | None = None) -> list[ChatMessage]:
@@ -98,7 +98,7 @@ class FakeMemorySystem:
     async def get_knowledge(self, context: Any) -> Any:
         if self._knowledge is not None:
             return self._knowledge
-        from framework.memory.core.models import LongTermMemory
+        from modex_agent.memory.core.models import LongTermMemory
         return LongTermMemory()
 
     async def retrieve_knowledge(self, context: Any, query: str = "") -> Any:
@@ -220,7 +220,7 @@ class TestPrioritySectionTrimming:
         memory_system = FakeMemorySystem(messages=[])
 
         # Mock knowledge to inject large sections
-        from framework.memory.core.models import LongTermMemory
+        from modex_agent.memory.core.models import LongTermMemory
         memory_system._knowledge = LongTermMemory(
             soul="S" * 50,
             user="U" * 50,

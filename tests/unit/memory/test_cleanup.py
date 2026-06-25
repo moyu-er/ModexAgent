@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from framework.memory.archive_models import (
+from modex_agent.memory.archive_models import (
     ArchiveBundleResult,
     ArchiveChannel,
     ArchiveGenerationInputs,
@@ -16,13 +16,13 @@ from framework.memory.archive_models import (
     ArchiveInputStats,
     ArchiveWrite,
 )
-from framework.memory.cleanup import CleanupResult, cleanup_session
-from framework.memory.core.layers import MemoryLayerSet, SessionMemoryManager
-from framework.memory.core.models import CompressionReason
-from framework.memory.core.scope import MemoryContext
-from framework.memory.layers.factory import MemoryLayerFactory
-from framework.memory.registry.in_memory import InMemoryStoreRegistry
-from framework.memory.sanitizer import (
+from modex_agent.memory.cleanup import CleanupResult, cleanup_session
+from modex_agent.memory.core.layers import MemoryLayerSet, SessionMemoryManager
+from modex_agent.memory.core.models import CompressionReason
+from modex_agent.core.scope import MemoryContext
+from modex_agent.memory.layers.factory import MemoryLayerFactory
+from modex_agent.memory.registry.in_memory import InMemoryStoreRegistry
+from modex_agent.memory.sanitizer import (
     DefaultSessionToolChainSanitizer,
     ToolChainSanitizationMode,
 )
@@ -833,7 +833,7 @@ class _MockArchiveAgent:
         archive_dir: object,
         archive_id: int = 0,
     ) -> object:
-        from framework.agents.summarizer.archive_agent import ArchiveSummarizerResult
+        from modex_agent.agents.summarizer.archive_agent import ArchiveSummarizerResult
 
         self.calls.append((list(pruned_messages), archive_dir, archive_id))
         if self._fail:
@@ -862,7 +862,7 @@ class _DirArchiveStorageFactory:
     @staticmethod
     def create(tmp_path) -> object:
         from pathlib import Path
-        from framework.memory.stores.dir_archive import DirArchiveStorage
+        from modex_agent.memory.stores.dir_archive import DirArchiveStorage
         return DirArchiveStorage(Path(tmp_path) / "archives")
 
 
@@ -918,7 +918,7 @@ class TestArchiveAgentIntegration:
         self, registry: InMemoryStoreRegistry, tmp_path,
     ) -> None:
         """When archive_agent fails, pruned index falls back to write_pruned."""
-        from framework.memory.pruned.manager import PrunedManager
+        from modex_agent.memory.pruned.manager import PrunedManager
 
         layer_set = _make_layer_set(registry)
         context = _ctx("agent-fail-session")
@@ -1115,7 +1115,7 @@ class TestArchiveSuccessPrunedContent:
         self, registry: InMemoryStoreRegistry, tmp_path,
     ) -> None:
         """Pruned content file must exist with raw messages, not just an index."""
-        from framework.memory.pruned.manager import PrunedManager
+        from modex_agent.memory.pruned.manager import PrunedManager
 
         layer_set = _make_layer_set(registry)
         context = _ctx("pruned-archive-session")
@@ -1167,7 +1167,7 @@ class TestArchiveSuccessPrunedContent:
     ) -> None:
         """Pruned content file must contain the raw pruned messages (JSONL)."""
         import json
-        from framework.memory.pruned.manager import PrunedManager
+        from modex_agent.memory.pruned.manager import PrunedManager
 
         layer_set = _make_layer_set(registry)
         context = _ctx("pruned-raw-session")
@@ -1219,7 +1219,7 @@ class TestArchiveSuccessPrunedContent:
         self, registry: InMemoryStoreRegistry, tmp_path,
     ) -> None:
         """Pruned index entry must have message_count > 0 and non-empty time fields."""
-        from framework.memory.pruned.manager import PrunedManager
+        from modex_agent.memory.pruned.manager import PrunedManager
 
         layer_set = _make_layer_set(registry)
         context = _ctx("pruned-fields-session")
@@ -1284,8 +1284,8 @@ class TestResolvedStoragePropagation:
         self, registry: InMemoryStoreRegistry, tmp_path,
     ) -> None:
         """archive_storage=None + dynamic resolve → pruned topic = archive index.md."""
-        from framework.memory.pruned.manager import PrunedManager
-        from framework.memory.stores.dir_archive import DirArchiveStorage
+        from modex_agent.memory.pruned.manager import PrunedManager
+        from modex_agent.memory.stores.dir_archive import DirArchiveStorage
 
         layer_set = _make_layer_set(registry)
         context = _ctx("resolve-topic-session")
@@ -1345,7 +1345,7 @@ class TestResolvedStoragePropagation:
         self, registry: InMemoryStoreRegistry, tmp_path,
     ) -> None:
         """archive_storage provided → existing behavior unchanged (topic from archive)."""
-        from framework.memory.pruned.manager import PrunedManager
+        from modex_agent.memory.pruned.manager import PrunedManager
 
         layer_set = _make_layer_set(registry)
         context = _ctx("explicit-storage-session")
@@ -1387,7 +1387,7 @@ class TestResolvedStoragePropagation:
         self, registry: InMemoryStoreRegistry, tmp_path,
     ) -> None:
         """archive_storage=None + agent fails → fallback time-range topic."""
-        from framework.memory.pruned.manager import PrunedManager
+        from modex_agent.memory.pruned.manager import PrunedManager
 
         layer_set = _make_layer_set(registry)
         context = _ctx("fail-fallback-session")
@@ -1431,7 +1431,7 @@ class TestResolvedStoragePropagation:
         self, registry: InMemoryStoreRegistry, tmp_path,
     ) -> None:
         """No archive_agent at all → fallback topic (existing behavior)."""
-        from framework.memory.pruned.manager import PrunedManager
+        from modex_agent.memory.pruned.manager import PrunedManager
 
         layer_set = _make_layer_set(registry)
         context = _ctx("no-agent-session")
@@ -1469,7 +1469,7 @@ class TestResolvedStoragePropagation:
         self, registry: InMemoryStoreRegistry, tmp_path,
     ) -> None:
         """archive_storage=None → state.json still gets next_archive_id incremented."""
-        from framework.memory.stores.dir_archive import DirArchiveStorage
+        from modex_agent.memory.stores.dir_archive import DirArchiveStorage
 
         layer_set = _make_layer_set(registry)
         context = _ctx("state-advance-session")
@@ -1538,7 +1538,7 @@ class TestResolvedStoragePropagation:
 
         # In the MD-only architecture, archives are written directly to disk
         # by the ArchiveSummarizer. Verify the MD files exist in the archive dir.
-        from framework.memory.stores.dir_archive import DirArchiveStorage
+        from modex_agent.memory.stores.dir_archive import DirArchiveStorage
         dir_storage = DirArchiveStorage(tmp_path / "archives")
         archive_ids = await dir_storage.list_archives()
         assert len(archive_ids) >= 1

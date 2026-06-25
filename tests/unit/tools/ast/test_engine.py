@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from framework.tools.ast.engine import (
+from modex_agent.tools.ast.engine import (
     AST_UNAVAILABLE_MSG,
     AstMatch,
     AstNotAvailableError,

@@ -3,7 +3,7 @@
 import pytest
 from pathlib import Path
 
-from framework.memory.tools.scoped_write import ScopedWriteFileTool
+from modex_agent.memory.tools.scoped_write import ScopedWriteFileTool
 
 
 @pytest.fixture

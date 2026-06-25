@@ -2,19 +2,19 @@
 from pathlib import Path
 
 import pytest
-from framework.agents.react.approval import (
+from modex_agent.agents.react.approval import (
     ApprovalClassifier,
     TieredToolApprovalClassifier,
     ApprovalRuntime,
 )
-from framework.approval.config import AgentApprovalConfig, ToolApprovalConfig
-from framework.approval.constants import ApprovalTier
-from framework.interceptor.builtin.tool_approval import ArgumentMatcher
-from framework.core.types import ToolCall
-from framework.core.agent import AgentContext
-from framework.core.session_id import SessionInfo
-from framework.core.tool_manager import InMemoryToolManager
-from framework.memory.history import ListMessageHistory
+from modex_agent.approval.config import AgentApprovalConfig, ToolApprovalConfig
+from modex_agent.approval.constants import ApprovalTier
+from modex_agent.interceptor.builtin.tool_approval import ArgumentMatcher
+from modex_agent.core.types import ToolCall
+from modex_agent.core.agent import AgentContext
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.tool_manager import InMemoryToolManager
+from modex_agent.memory.history import ListMessageHistory
 
 
 def make_ctx():
@@ -89,5 +89,5 @@ class TestApprovalRuntime:
         classifier = TieredToolApprovalClassifier(config=config)
         ar = ApprovalRuntime(classifier=classifier)
         assert ar.classifier is classifier
-        from framework.runtime.enums import ApprovalDenyPolicy
+        from modex_agent.runtime.enums import ApprovalDenyPolicy
         assert ar.default_deny_policy is ApprovalDenyPolicy.TOOL_RESULT_ONLY

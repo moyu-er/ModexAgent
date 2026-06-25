@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pathlib import Path
 
-from framework.agents.summarizer.archive_agent import (
+from modex_agent.agents.summarizer.archive_agent import (
     ArchiveSummarizerConfig,
     ArchiveSummarizerResult,
     ArchiveSummarizer,
@@ -365,8 +365,8 @@ class TestSummarizerTrajectoryEmitter:
         import asyncio
         import json
 
-        from framework.agents.summarizer.emitter import SummarizerTrajectoryEmitter
-        from framework.agents.react.agent import ReActEvent
+        from modex_agent.agents.summarizer.emitter import SummarizerTrajectoryEmitter
+        from modex_agent.agents.react.agent import ReActEvent
 
         trace_path = tmp_path / "trace.jsonl"
         emitter = SummarizerTrajectoryEmitter(
@@ -378,14 +378,14 @@ class TestSummarizerTrajectoryEmitter:
         async def _run() -> None:
             await emitter.emit(ReActEvent.ITERATION_START, {"iteration": 1})
             await emitter.emit(ReActEvent.MODEL_OUTPUT, "hello")
-            from framework.core.types import ToolCall
-            from framework.core.tool_manager import ToolResult
+            from modex_agent.core.types import ToolCall
+            from modex_agent.core.tool_manager import ToolResult
             await emitter.emit(ReActEvent.TOOL_CALL_START, ToolCall(tool_name="write", arguments={"path": "/tmp/f.txt"}))
             await emitter.emit(
                 ReActEvent.TOOL_CALL_END,
                 (ToolCall(tool_name="write", arguments={}), ToolResult(tool_name="write", result="ok")),
             )
-            from framework.core.emitter import AgentResult
+            from modex_agent.core.emitter import AgentResult
             await emitter.emit_complete(AgentResult(content="done", stop_reason="completed"))
 
         asyncio.run(_run())
@@ -411,7 +411,7 @@ class TestArchiveSummarizerInit:
 
     def test_accepts_config(self) -> None:
         from unittest.mock import MagicMock
-        from framework.core.provider import LLMProvider
+        from modex_agent.core.provider import LLMProvider
 
         mock_provider = MagicMock(spec=LLMProvider)
         config = ArchiveSummarizerConfig(max_iterations=5)
@@ -420,7 +420,7 @@ class TestArchiveSummarizerInit:
 
     def test_default_config_when_none(self) -> None:
         from unittest.mock import MagicMock
-        from framework.core.provider import LLMProvider
+        from modex_agent.core.provider import LLMProvider
 
         mock_provider = MagicMock(spec=LLMProvider)
         agent = ArchiveSummarizer(provider=mock_provider)

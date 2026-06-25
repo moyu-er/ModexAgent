@@ -13,8 +13,8 @@ import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock
 
-from framework.memory.core.scope import MemoryContext
-from framework.memory.layers.config import KnowledgeMemoryConfig
+from modex_agent.core.scope import MemoryContext
+from modex_agent.memory.layers.config import KnowledgeMemoryConfig
 
 
 @pytest.mark.asyncio
@@ -36,7 +36,7 @@ async def test_template_path_resolves_relative_to_cwd(tmp_path, monkeypatch):
         )
 
         # Simulate ensure_defaults logic
-        from framework.memory.layers.knowledge import ScopedKnowledgeMemoryManager
+        from modex_agent.memory.layers.knowledge import ScopedKnowledgeMemoryManager
 
         storage = AsyncMock()
         storage.get = AsyncMock(return_value=None)
@@ -73,7 +73,7 @@ async def test_template_path_absolute_works_anywhere(tmp_path):
     storage.set = AsyncMock()
     storage_factory = AsyncMock(return_value=storage)
 
-    from framework.memory.layers.knowledge import ScopedKnowledgeMemoryManager
+    from modex_agent.memory.layers.knowledge import ScopedKnowledgeMemoryManager
 
     manager = ScopedKnowledgeMemoryManager(
         storage_factory=storage_factory,

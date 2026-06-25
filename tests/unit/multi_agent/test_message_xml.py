@@ -1,7 +1,7 @@
 # tests/unit/multi_agent/test_message_xml.py
 """Tests for message_xml builders."""
 
-from framework.multi_agent.message_xml import build_agent_message, build_agent_result
+from modex_agent.multi_agent.message_xml import build_agent_message, build_agent_result
 
 
 def test_build_agent_message_with_invocation_id():

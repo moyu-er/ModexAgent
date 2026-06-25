@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from framework.commands.constants import CommandParseStatus
-from framework.commands.parser import SlashCommandParser
+from modex_agent.commands.constants import CommandParseStatus
+from modex_agent.commands.parser import SlashCommandParser
 
 
 @pytest.mark.parametrize(

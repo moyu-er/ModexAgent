@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from framework.plugins import PluginLoader, PluginManager
+from modex_agent.plugins import PluginLoader, PluginManager
 
 logger = logging.getLogger(__name__)
 

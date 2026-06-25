@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from framework.ioc.configs.llm import LLMConfig
-from framework.ioc.factories.llm import create_llm_provider
+from modex_agent.ioc.configs.llm import LLMConfig
+from modex_agent.ioc.factories.llm import create_llm_provider
 
 pytestmark = pytest.mark.integration
 
@@ -102,7 +102,7 @@ class TestOpenAIProviderNonStreaming:
     @pytest.mark.asyncio
     async def test_model_name_strips_openai_prefix(self, config):
         """Factory routes openai/ prefix to OpenAIProvider with stripped model name."""
-        from framework.providers.openai_provider import OpenAIProvider
+        from modex_agent.providers.openai_provider import OpenAIProvider
 
         provider = create_llm_provider(config)
         assert isinstance(provider, OpenAIProvider)
@@ -171,7 +171,7 @@ class TestFactoryRouting:
             api_key="sk-test",
             base_url="https://api.openai.com/v1",
         )
-        from framework.providers.openai_provider import OpenAIProvider
+        from modex_agent.providers.openai_provider import OpenAIProvider
         provider = create_llm_provider(config)
         assert isinstance(provider, OpenAIProvider)
         assert provider.get_default_model() == "gpt-4o"
@@ -181,7 +181,7 @@ class TestFactoryRouting:
             model="gpt-4o",
             api_key="sk-test",
         )
-        from framework.providers.litellm_provider import LiteLLMProvider
+        from modex_agent.providers.litellm_provider import LiteLLMProvider
         provider = create_llm_provider(config)
         assert isinstance(provider, LiteLLMProvider)
         assert provider.get_default_model() == "gpt-4o"

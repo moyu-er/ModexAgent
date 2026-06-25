@@ -4,19 +4,19 @@ import logging
 
 import pytest
 
-from framework.core.agent import AgentContext
-from framework.core.session_id import SessionInfo
-from framework.core.emitter import AgentResult
-from framework.core.tool_manager import ToolResult
-from framework.core.types import LLMResponse, ToolCall
-from framework.control.event_bus import CallbackControlEventBus
-from framework.control.types import ControlEvent, ControlEventType
-from framework.hook import HookPoint, HookPayload, HookRunner, HookSpec, HookErrorPolicy
-from framework.hook.abc import (
+from modex_agent.core.agent import AgentContext
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.emitter import AgentResult
+from modex_agent.core.tool_manager import ToolResult
+from modex_agent.core.types import LLMResponse, ToolCall
+from modex_agent.control.event_bus import CallbackControlEventBus
+from modex_agent.control.types import ControlEvent, ControlEventType
+from modex_agent.hook import HookPoint, HookPayload, HookRunner, HookSpec, HookErrorPolicy
+from modex_agent.hook.abc import (
     AfterIterationHook, AfterLLMResponseHook, AfterTurnHook,
     BeforeIterationHook, BeforeTurnHook, FinalizeContentHook,
 )
-from framework.hook.builtin import RunLoggingHook, ProgressReportHook
+from modex_agent.hook.builtin import RunLoggingHook, ProgressReportHook
 
 class BrokenHook(BeforeTurnHook, BeforeIterationHook, AfterIterationHook, AfterTurnHook, AfterLLMResponseHook):
     """Hook that raises in every async method."""
@@ -50,7 +50,7 @@ class TestHookRunnerLogging:
         runner = HookRunner(hooks)
         async_ctx = None
 
-        with caplog.at_level(logging.DEBUG, logger="framework.hook.runner"):
+        with caplog.at_level(logging.DEBUG, logger="modex_agent.hook.runner"):
             await runner.dispatch(HookPoint.BEFORE_TURN, async_ctx)
             await runner.dispatch(HookPoint.BEFORE_ITERATION, async_ctx)
             await runner.dispatch(
@@ -123,7 +123,7 @@ class TestHookRunnerLogging:
         ]
         runner = HookRunner(hooks)
 
-        with caplog.at_level(logging.DEBUG, logger="framework.hook.runner"):
+        with caplog.at_level(logging.DEBUG, logger="modex_agent.hook.runner"):
             result = runner.dispatch_finalize(None, "hello")
 
         assert result == "hello!"
