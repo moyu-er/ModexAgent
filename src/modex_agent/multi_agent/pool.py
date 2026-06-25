@@ -908,12 +908,16 @@ class AgentPool(AgentRegistry):
         self._dynamic_sessions.discard(session_id)
 
     async def _try_evict_if_stale(self, session_id: str) -> None:
-        """Evict a session if stale (TTL) OR if count exceeds per-subagent cap.
+        """Evict a session if stale by TTL.
 
-        Two policies:
-        1. TTL: evict sessions inactive longer than ttl_seconds
-        2. LRU count cap: when a subagent has > max_sessions_per_subagent
-           sessions, evict the oldest (by created_at) first, regardless of TTL.
+        TTL staleness only. Per-subagent count-cap enforcement is
+        :meth:`_enforce_session_cap`'s sole responsibility — it is called
+        eagerly at every site that registers a dynamic session
+        (``_dispatch_task_request`` and ``_dispatch_agent_message``), and in
+        the cleanup loop on the line immediately before this method. Do not re-implement cap logic
+        here: a second eviction path diverged on the sort signal
+        (``created_at`` vs the int counter ``_session_lru``) and selected
+        different victims — see ADR-0006 candidate ③ / candidate-3 spec A2.
 
         Safety: acquires the session lock before making eviction decisions
         to eliminate the TOCTOU window between staleness check and eviction.
@@ -938,27 +942,7 @@ class AgentPool(AgentRegistry):
             if activity is None:
                 return
 
-            should_evict = False
-
-            # Policy 1: TTL staleness
-            if time.monotonic() - activity.last_active >= self._retention.ttl_seconds:
-                should_evict = True
-
-            # Policy 2: per-subagent count cap (LRU by created_at)
-            if not should_evict:
-                same_agent: list[tuple[str, SessionActivity]] = [
-                    (sid, act)
-                    for sid, act in self._session_activity.items()
-                    if self._session_agents.get(sid) == agent_name
-                    and sid in self._dynamic_sessions
-                ]
-                if len(same_agent) > self._retention.max_sessions_per_subagent:
-                    same_agent.sort(key=lambda x: x[1].created_at)
-                    oldest_sid = same_agent[0][0]
-                    if oldest_sid == session_id:
-                        should_evict = True
-
-            if not should_evict:
+            if time.monotonic() - activity.last_active < self._retention.ttl_seconds:
                 return
 
             instance = self._agents.get(agent_name)
