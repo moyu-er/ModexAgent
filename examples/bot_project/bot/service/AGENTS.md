@@ -34,7 +34,7 @@ The workspace system lives in `bot/workspace/` (generic half) + `bot/workspace/b
 Key architectural decisions:
 - `workspace.enabled` flag in `WorkspaceConfig` (default `False`) → single-home stack (no `/cd`); `True` → full multi-live.
 - `bot/workspace/` (generic half, except `bundle/`) has zero business imports — migration-ready to `modex_agent/workspace/`.
-- `WorkspaceManager` (ABC, `modex_agent/multi_agent/communication.py`) is now a framework-level interface for pipeline workspace access, NOT a single-active switch engine.
+- `WorkspaceManager` (ABC, `modex_agent/workspace/resources.py`) is now a framework-level interface for pipeline workspace access, NOT a single-active switch engine.
 
 ## Workspace directory layout (paths.py as single authority)
 ```
@@ -81,7 +81,7 @@ Defined in `pool_router.py`:
 - `bot/workspace/` — generic workspace mechanism (registry, resolver, session map, controller)
 - `bot/workspace/bundle/` — business resource factory, dispatcher, per-workspace wiring
 - `modex_agent/multi_agent/pool.py` — `AgentPool`
-- `modex_agent/multi_agent/communication.py` — `WorkspaceManager` ABC (framework view of workspace resources)
+- `modex_agent/workspace/resources.py` — `WorkspaceManager` ABC (framework view of workspace resources)
 - `modex_agent/pipeline/pipeline.py` — `Pipeline`
 - `modex_agent/memory/` — memory system, store registries
 - `bot/adapters/` — input/output adapters
