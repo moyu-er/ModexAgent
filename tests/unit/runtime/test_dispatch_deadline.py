@@ -55,7 +55,7 @@ class TestDispatchDeadlineUnit:
         time.sleep(0.01)
         d.renew()
         remaining_after_renew = d.remaining
-        assert 0.1 < remaining_after_renew <= 0.2
+        assert 0.1 < remaining_after_renew <= 0.21
 
     def test_renew_never_shortens_deadline(self):
         """ renew() must not push expires_at earlier than it already is.

@@ -82,6 +82,8 @@ class AgentPool(AgentRegistry):
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._session_agents: dict[str, str] = {}
         self._session_times: dict[str, tuple[float, float]] = {}
+        self._session_lru_seq: int = 0
+        self._session_lru: dict[str, int] = {}
         self._dynamic_sessions: set[str] = set()
         self._session_registry = session_registry
         self._session_store = session_store
@@ -829,6 +831,8 @@ class AgentPool(AgentRegistry):
         self._session_locks.setdefault(session_id, asyncio.Lock())
         self._session_agents[session_id] = agent_name
         self._session_times[session_id] = (now, now)
+        self._session_lru_seq += 1
+        self._session_lru[session_id] = self._session_lru_seq
         if is_dynamic:
             self._dynamic_sessions.add(session_id)
         if self._session_registry is not None:
@@ -843,6 +847,8 @@ class AgentPool(AgentRegistry):
         times = self._session_times.get(session_id)
         if times is not None:
             self._session_times[session_id] = (times[0], time.monotonic())
+            self._session_lru_seq += 1
+            self._session_lru[session_id] = self._session_lru_seq
         if self._session_registry is not None:
             self._fire_and_forget_registry(
                 f"touch session {session_id}", self._session_registry.touch(session_id)
@@ -878,6 +884,7 @@ class AgentPool(AgentRegistry):
         """Remove all local tracking entries for a session."""
         self._session_agents.pop(session_id, None)
         self._session_times.pop(session_id, None)
+        self._session_lru.pop(session_id, None)
         self._dynamic_sessions.discard(session_id)
 
     async def _try_evict_if_stale(self, session_id: str) -> None:
@@ -965,17 +972,17 @@ class AgentPool(AgentRegistry):
         cap = self._retention.max_sessions_per_subagent
         dynamic_sessions = sorted(
             (
-                (sid, times)
-                for sid, times in self._session_times.items()
+                sid
+                for sid in self._session_times.keys()
                 if self._session_agents.get(sid) == agent_name
                 and sid in self._dynamic_sessions
             ),
-            key=lambda x: x[1][1],
+            key=lambda sid: self._session_lru.get(sid, 0),
         )
         excess = len(dynamic_sessions) - cap
         if excess <= 0:
             return
-        for sid, _times in dynamic_sessions[:excess]:
+        for sid in dynamic_sessions[:excess]:
             await self._evict_dynamic_session(sid)
 
     async def _evict_dynamic_session(self, session_id: str) -> None:

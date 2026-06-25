@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 # Add framework path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from modex_agent.adapters.platform import StreamingMode
 from modex_agent.core.constants import StopReason
 from modex_agent.core.emitter import AgentResult, ContentEmitter, EmitterConfig
 from modex_agent.core.events import AgentEvent
@@ -181,7 +182,7 @@ class TestQQBotServiceIntegration:
 
             # Test reasoning is logged (not sent)
             import logging
-            with caplog.at_level(logging.INFO, logger='qq_bot.reasoning'):
+            with caplog.at_level(logging.INFO, logger='bot.reasoning'):
                 await emitter.emit(ReActEvent.MODEL_REASONING, "Thinking...")
                 assert "[Reasoning]" in caplog.text
 
@@ -358,8 +359,6 @@ class TestQQBotServiceIntegration:
         """
         import sys
         sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'examples' / 'bot_project'))
-
-        from pathlib import Path
 
         from modex_agent.core.skills import (
             FileSkillSource,

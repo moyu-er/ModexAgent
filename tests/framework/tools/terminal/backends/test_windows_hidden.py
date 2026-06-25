@@ -121,12 +121,17 @@ class TestWindowsHiddenPtyLifecycle:
     async def test_current_segment_after_echo(self, backend: WindowsHiddenPtyBackend) -> None:
         b = backend
         await b.write("echo seg-test\n")
+        # read_pending() populates the sliding buffer that current_segment()
+        # reads from (read() is deliberately non-buffering — see
+        # test_hidden_backend_read_does_not_buffer).  Poll the buffer until
+        # the echoed text has landed and current_segment() reflects it.
+        seg = await b.current_segment()
         for _ in range(40):
-            chunk = await b.read(timeout=0.3, max_size=4096)
-            if "seg-test" in chunk:
+            if seg.text:
                 break
+            await b.read_pending(timeout=0.3, max_size=4096)
+            seg = await b.current_segment()
             await asyncio.sleep(0.1)
 
-        seg = await b.current_segment()
         assert seg.text
         assert seg.cursor_line
