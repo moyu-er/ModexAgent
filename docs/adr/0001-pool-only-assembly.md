@@ -27,4 +27,4 @@ assembly the framework's sole assembly interface.
   dual-path maintenance burden.
 - Future single-agent-only deployments would need to either reuse pool
   assembly or reintroduce a lightweight path — but only if a real need emerges.
-- `framework/ioc/factories/app.py` and its exports are deleted.
+- `modex_agent/ioc/factories/app.py` and its exports are deleted.

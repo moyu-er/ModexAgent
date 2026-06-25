@@ -3,17 +3,17 @@
 The framework grew import edges that point the wrong way, masked by
 `TYPE_CHECKING` and re-export shims. Today's violations:
 
-- `core/graph/engine.py` imports `framework.runtime.enums` (core → runtime,
+- `core/graph/engine.py` imports `modex_agent.runtime.enums` (core → runtime,
   upward) to read the graph result out of per-turn state.
-- `core/tool_manager.py` imports `framework.tools.terminal.types`
+- `core/tool_manager.py` imports `modex_agent.tools.terminal.types`
   (core → tools, upward).
-- `core/agent.py` imports `framework.multi_agent.comm_kind`
+- `core/agent.py` imports `modex_agent.multi_agent.comm_kind`
   (core → multi_agent, upward).
-- `core/agent.py` imports `framework.pipeline.snapshot` under TYPE_CHECKING
+- `core/agent.py` imports `modex_agent.pipeline.snapshot` under TYPE_CHECKING
   (core → pipeline, upward).
-- `framework.memory.core.{scope,message}` re-exports `framework.core.*`
+- `modex_agent.memory.core.{scope,message}` re-exports `modex_agent.core.*`
   — a bidirectional shim left from an earlier cycle break.
-- `framework.multi_agent/communication.py` defines `WorkspaceManager`, a
+- `modex_agent/multi_agent/communication.py` defines `WorkspaceManager`, a
   workspace concept, forcing multi_agent to own a workspace type it also
   depends on (conceptual cycle).
 

@@ -2,7 +2,7 @@
 
 The framework mixes two intra-package import styles: ~777 relative imports
 (`from .core import X`, `from ..core import Y`) across 215 files and ~276
-package-absolute imports (`from framework.core import X`) across 78 files. The
+package-absolute imports (`from modex_agent.core import X`) across 78 files. The
 mix is the real "non-compliance," not the relative style itself. With the
 package name now stable as `modex_agent` (ADR-0003), we pick one style for all
 intra-package imports.

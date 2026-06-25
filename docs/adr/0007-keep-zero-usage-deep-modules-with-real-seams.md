@@ -1,6 +1,6 @@
 # Keep zero-usage deep modules when they carry a real seam
 
-An architecture review flagged `framework/sandbox/` as deletable on the grounds
+An architecture review flagged `modex_agent/sandbox/` as deletable on the grounds
 that it has zero live callers (only its own self-tests import it). That
 conclusion is rejected. `sandbox/` is an important capability that is
 *currently unused by the example bot*, not dead. Its `SandboxAdapter` base has
@@ -26,7 +26,7 @@ This is a general principle, not a sandbox exception.
    callers today is a wiring/product question, not an architecture defect.
 
 3. **Quarantine zero-usage modules out of the framework.** Rejected for the
-   same reason: moving `sandbox/` out of `framework/` hides a first-class
+   same reason: moving `sandbox/` out of `modex_agent/` hides a first-class
    capability and severs it from the security surface it is meant to serve.
 
 ## Consequences

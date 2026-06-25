@@ -63,6 +63,6 @@ _Avoid_: session GC
 
 ## Flagged ambiguities
 
-- "**control channel**" historically meant the runtime control plane in `framework/control/`, but that package is largely **vestigial** — channels are constructed and threaded but have no live producers/consumers. Real cancellation is `asyncio.Task.cancel()` in `AgentPipeline`. Use "control channel" only when quoting the package; prefer "control plane" for the abstraction.
+- "**control channel**" historically meant the runtime control plane in `modex_agent/control/`, but that package is largely **vestigial** — channels are constructed and threaded but have no live producers/consumers. Real cancellation is `asyncio.Task.cancel()` in `AgentPipeline`. Use "control channel" only when quoting the package; prefer "control plane" for the abstraction.
 - "**pipeline**" was overloaded: it meant both the old `create_app`/`App` entry point (removed by ADR-0001) and the `AgentPipeline` orchestration layer that survives. "Pipeline" alone now means `AgentPipeline`; the old entry point is gone.
-- "**Approval**" lives in `framework/approval/` as tier definitions and classifiers, but per `framework/AGENTS.md` the tiered approval is **not wired in pool mode** — `pool_builder.py` skips `RuntimeAssembler`, and subagents' `ToolNode._get_tier()` always returns `NORMAL`. The terminology is in use; the runtime coverage is partial.
+- "**Approval**" lives in `modex_agent/approval/` as tier definitions and classifiers, but per `modex_agent/AGENTS.md` the tiered approval is **not wired in pool mode** — `pool_builder.py` skips `RuntimeAssembler`, and subagents' `ToolNode._get_tier()` always returns `NORMAL`. The terminology is in use; the runtime coverage is partial.

@@ -25,5 +25,5 @@ capability. Only the dead ABCs (`MemoryMaintenancePolicy`, the always-False
 
 - A future "collapse the retention ABCs" cleanup pass must preserve the
   per-`MemoryContext` threshold lookup, not flatten it to module-level scalars.
-- Note: `framework/multi_agent/pool.SessionRetentionPolicy` is an unrelated
+- Note: `modex_agent/multi_agent/pool.SessionRetentionPolicy` is an unrelated
   class (subagent task-session cleanup) and is not affected by this decision.

@@ -4,7 +4,7 @@ Today module interfaces are inconsistent: `adapters/__init__.py` is empty
 (public classes only reachable via deep paths), `ioc/__init__.py` is a bare
 docstring, while `sandbox`, `core`, and `memory` re-export large surfaces from
 their `__init__`. Callers also reach across module seams into sibling files
-(`from framework.memory.core.layers import ...`) instead of through the module
+(`from modex_agent.memory.core.layers import ...`) instead of through the module
 interface. There is no single, predictable place to learn a module's interface.
 
 ## Considered Options
