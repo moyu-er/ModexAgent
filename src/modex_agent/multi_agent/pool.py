@@ -5,7 +5,7 @@ import logging
 import sys
 import time
 from collections.abc import Callable, Coroutine, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from modex_agent.core.context import ContextManager
@@ -46,6 +46,22 @@ class SessionRetentionPolicy:
     cleanup_interval_seconds: float = 1800.0
 
 
+@dataclass(frozen=True)
+class SessionActivity:
+    """Per-session time signals for eviction.
+
+    ``created_at`` is immutable session metadata (when the session was
+    created) and is NEVER an eviction key. ``last_active`` is the TTL
+    staleness signal, refreshed on every touch. LRU ordering is a separate
+    int counter (``_session_lru``), the sole eviction sort key — keeping
+    these three signals distinct prevents the created_at-vs-recency
+    confusion that caused the candidate-② LRU bug.
+    """
+
+    created_at: float
+    last_active: float
+
+
 class AgentPool(AgentRegistry):
     """Agent 生命周期管理池。"""
 
@@ -81,7 +97,7 @@ class AgentPool(AgentRegistry):
         self._safety = safety or RuntimeSafetyPolicy()
         self._session_locks: dict[str, asyncio.Lock] = {}
         self._session_agents: dict[str, str] = {}
-        self._session_times: dict[str, tuple[float, float]] = {}
+        self._session_activity: dict[str, SessionActivity] = {}
         self._session_lru_seq: int = 0
         self._session_lru: dict[str, int] = {}
         self._dynamic_sessions: set[str] = set()
@@ -830,7 +846,9 @@ class AgentPool(AgentRegistry):
         now = time.monotonic()
         self._session_locks.setdefault(session_id, asyncio.Lock())
         self._session_agents[session_id] = agent_name
-        self._session_times[session_id] = (now, now)
+        self._session_activity[session_id] = SessionActivity(
+            created_at=now, last_active=now
+        )
         self._session_lru_seq += 1
         self._session_lru[session_id] = self._session_lru_seq
         if is_dynamic:
@@ -844,9 +862,11 @@ class AgentPool(AgentRegistry):
 
     def _touch_session(self, session_id: str) -> None:
         """Refresh activity timestamp. Call inside lock-protected section."""
-        times = self._session_times.get(session_id)
-        if times is not None:
-            self._session_times[session_id] = (times[0], time.monotonic())
+        activity = self._session_activity.get(session_id)
+        if activity is not None:
+            self._session_activity[session_id] = replace(
+                activity, last_active=time.monotonic()
+            )
             self._session_lru_seq += 1
             self._session_lru[session_id] = self._session_lru_seq
         if self._session_registry is not None:
@@ -883,7 +903,7 @@ class AgentPool(AgentRegistry):
     def _evict_session_tracking(self, session_id: str) -> None:
         """Remove all local tracking entries for a session."""
         self._session_agents.pop(session_id, None)
-        self._session_times.pop(session_id, None)
+        self._session_activity.pop(session_id, None)
         self._session_lru.pop(session_id, None)
         self._dynamic_sessions.discard(session_id)
 
@@ -914,27 +934,26 @@ class AgentPool(AgentRegistry):
                 return
 
             agent_name = self._session_agents[session_id]
-            times = self._session_times.get(session_id)
-            if times is None:
+            activity = self._session_activity.get(session_id)
+            if activity is None:
                 return
-            _created_at, last_active = times
 
             should_evict = False
 
             # Policy 1: TTL staleness
-            if time.monotonic() - last_active >= self._retention.ttl_seconds:
+            if time.monotonic() - activity.last_active >= self._retention.ttl_seconds:
                 should_evict = True
 
             # Policy 2: per-subagent count cap (LRU by created_at)
             if not should_evict:
-                same_agent: list[tuple[str, tuple[float, float]]] = [
-                    (sid, t)
-                    for sid, t in self._session_times.items()
+                same_agent: list[tuple[str, SessionActivity]] = [
+                    (sid, act)
+                    for sid, act in self._session_activity.items()
                     if self._session_agents.get(sid) == agent_name
                     and sid in self._dynamic_sessions
                 ]
                 if len(same_agent) > self._retention.max_sessions_per_subagent:
-                    same_agent.sort(key=lambda x: x[1][0])
+                    same_agent.sort(key=lambda x: x[1].created_at)
                     oldest_sid = same_agent[0][0]
                     if oldest_sid == session_id:
                         should_evict = True
@@ -973,7 +992,7 @@ class AgentPool(AgentRegistry):
         dynamic_sessions = sorted(
             (
                 sid
-                for sid in self._session_times.keys()
+                for sid in self._session_activity.keys()
                 if self._session_agents.get(sid) == agent_name
                 and sid in self._dynamic_sessions
             ),

@@ -311,3 +311,29 @@ async def test_agent_pool_injects_communication_sideband_metadata(any_broker):
         assert "inv_1" in sideband
     finally:
         await pool.shutdown_all()
+
+
+@pytest.mark.asyncio
+async def test_session_activity_records_created_at_and_last_active(any_broker):
+    """created_at is immutable metadata; last_active refreshes on touch;
+    _session_lru (int counter) bumps on track and touch."""
+    pool = AgentPool(
+        broker=any_broker,
+        agent_factory=MagicMock(),
+        enable_inbox_polling=False,
+    )
+    try:
+        pool._track_session("conv:worker:inv", "worker", is_dynamic=True)
+        activity = pool._session_activity["conv:worker:inv"]
+        created0 = activity.created_at
+        assert created0 == activity.last_active  # equal at creation
+
+        lru0 = pool._session_lru["conv:worker:inv"]
+        pool._touch_session("conv:worker:inv")
+
+        activity = pool._session_activity["conv:worker:inv"]
+        assert activity.created_at == created0          # immutable
+        assert activity.last_active >= created0          # refreshed
+        assert pool._session_lru["conv:worker:inv"] > lru0  # bumped
+    finally:
+        await pool.shutdown_all()
