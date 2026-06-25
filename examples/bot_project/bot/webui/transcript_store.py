@@ -33,7 +33,7 @@ def _session_id_prefix(session_id: str) -> str:
     """Return the session prefix (segment before the first ``.``).
 
     ``"abc.main"`` → ``"abc"``; ``"abc.reviewer.z9"`` → ``"abc"``.
-    Delegates to :func:`framework.core.session_id.session_id_prefix_of`.
+    Delegates to :func:`modex_agent.core.session_id.session_id_prefix_of`.
     """
     return session_id_prefix_of(session_id)
 

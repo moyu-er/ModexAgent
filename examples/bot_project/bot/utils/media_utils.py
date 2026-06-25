@@ -1,7 +1,7 @@
 """QQ Bot 专用媒体处理工具
 
 提供文件下载功能。通用的文档提取、图片编码等功能已移至
-framework.utils.media_utils。
+modex_agent.utils.media_utils。
 """
 
 from __future__ import annotations

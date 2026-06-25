@@ -70,8 +70,8 @@ Each WebSocket connection is tracked by `_WsConnectionState`:
 - `bot/adapters/fan_in.py` — Multi-agent output fan-in
 - `bot/input_pipeline/` — Converged pipeline (server.py produces seed envelopes, runs WebUI pipeline)
 - `bot/webui/events.py` — Event types shared between server and emitter
-- `framework/workspace/context.py` — WorkspaceContext for cd/workspace APIs
-- `framework/input_pipeline/` — Generic input pipeline abstractions
+- `modex_agent/workspace/context.py` — WorkspaceContext for cd/workspace APIs
+- `modex_agent/input_pipeline/` — Generic input pipeline abstractions
 
 ### External
 - `aiohttp` — HTTP/WS server framework

@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 class PoolData(PoolDataSnapshot):
     """Frozen bundle of concrete framework objects backing a single pool.
 
-    Inherits the framework contract from :class:`framework.pipeline.snapshot.PoolDataSnapshot`
+    Inherits the framework contract from :class:`modex_agent.pipeline.snapshot.PoolDataSnapshot`
     and adds ``experience_meta``, which is consumed at wiring time (not during
     the turn itself) when constructing the experience review hook.
     """

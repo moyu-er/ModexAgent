@@ -13,7 +13,7 @@ The store is keyed by the **full session id** (the receiver-owned identifier
 subagent invocations of the same agent persist to separate files.
 
 Routing is driven by the per-turn ``bind_workspace_root`` ctxvar
-(:mod:`framework.workspace.runtime`):
+(:mod:`modex_agent.workspace.runtime`):
 
 - **Writes** (``append``) resolve the owning ``<root>/<data_dir_name>/sessions``
   from :func:`resolve_workspace_root`. The dispatcher already binds the turn's

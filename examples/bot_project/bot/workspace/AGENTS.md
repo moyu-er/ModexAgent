@@ -3,7 +3,7 @@
 
 # bot/workspace
 
-Business half of the workspace mechanism — pool-scoped resource bundle and BotService wiring. The generic half lives in `framework/workspace/`.
+Business half of the workspace mechanism — pool-scoped resource bundle and BotService wiring. The generic half lives in `modex_agent/workspace/`.
 
 ## Key Files
 
@@ -25,14 +25,14 @@ Business half of the workspace mechanism — pool-scoped resource bundle and Bot
 - `factory.py` uses dependency injection (closures) for testability — the real build logic lives in `wiring.py`.
 
 ### Common Patterns
-- Resource factory pattern: `PoolResourceFactory` implements `ResourceFactory[PoolWorkspaceResources]` from `framework.workspace`
+- Resource factory pattern: `PoolResourceFactory` implements `ResourceFactory[PoolWorkspaceResources]` from `modex_agent.workspace`
 - Per-workspace isolation: each workspace gets its own broker, inbox, bus, interceptor, background tasks
 - PoolData is `frozen=True` dataclass — immutable after construction
 
 ## Dependencies
 
 ### Internal
-- `framework/workspace/` — generic workspace mechanism (registry, resolver, context, paths, control, store)
+- `modex_agent/workspace/` — generic workspace mechanism (registry, resolver, context, paths, control, store)
 - `bot/service/pool_builder.py` — pool construction (via wiring)
 
 <!-- MANUAL -->

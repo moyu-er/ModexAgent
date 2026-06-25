@@ -48,12 +48,12 @@ Primary end-to-end reference implementation for the ModexAgent framework. Demons
 
 ### Workspace Model (multi-live)
 
-The workspace system lives in `bot/workspace/` (business) backed by `framework/workspace/` (generic). Key properties:
+The workspace system lives in `bot/workspace/` (business) backed by `modex_agent/workspace/` (generic). Key properties:
 
 1. **Multi-live**: Many workspaces coexist in a `WorkspaceRegistry`. Switching mutates only a per-session pointer (`SessionWorkspaceMap`), not a global `_active`. No `os.chdir`, no busy-check.
 2. **Snapshot safety**: In-flight turns hold a `PipelineSnapshot` with pinned workspace references, unaffected by mid-turn switches.
 3. **Lazy materialization**: Heavy resources (`PoolWorkspaceResources`) are built on first use via `PoolResourceFactory`, cached, and LRU-evictable. WorkspaceContext (identity) is cheap and always retained.
-4. **Safe paths**: `WorkspacePaths` in `framework/workspace/paths.py` provides containment-checked path accessors.
+4. **Safe paths**: `WorkspacePaths` in `modex_agent/workspace/paths.py` provides containment-checked path accessors.
 5. **Per-workspace isolation**: Each workspace owns its own broker/inbox/bus/interceptor. Inbox cross-consume is structurally impossible.
 6. **Optional**: `workspace.enabled = False` → single-home stack (no `/cd`); `True` → full multi-live. Data layout is identical.
 
@@ -100,8 +100,8 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 | `bot/workspace/handle.py` | `PoolWorkspaceResources` — per-workspace resource bundle |
 | `bot/workspace/dispatch.py` | `WorkspaceMessageDispatcher` — per-message workspace routing |
 | `bot/workspace/pool_data.py` | `PoolData` — frozen per-pool data bundle |
-| `framework/workspace/registry.py` | `WorkspaceRegistry` — multi-live workspace holder with lazy resource materialization |
-| `framework/workspace/routing.py` | `SessionWorkspaceMap` — per-session workspace pointer |
+| `modex_agent/workspace/registry.py` | `WorkspaceRegistry` — multi-live workspace holder with lazy resource materialization |
+| `modex_agent/workspace/routing.py` | `SessionWorkspaceMap` — per-session workspace pointer |
 | `bot/service/web_ui_service.py` | `WebUIService` — assembles and starts the WebUI HTTP/WS server |
 | `bot/service/qq_service.py` | QQ platform service wiring |
 | `bot/adapters/qq.py` | QQ platform input/output adapters (C2C + group + file upload) |
