@@ -21,7 +21,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from modex_agent.memory.archive_models import DEFAULT_RETAINED_CONSUMED_ARCHIVE_PAIRS
-from modex_agent.memory.core.scope import MemoryContext, MemoryScope, SessionScope, UserScope
+from modex_agent.core.scope import MemoryContext, MemoryScope, SessionScope, UserScope
 from modex_agent.memory.core.storage import MemoryStorage
 
 StorageFactory = Callable[[MemoryContext], Awaitable[MemoryStorage]]

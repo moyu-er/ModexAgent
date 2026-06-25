@@ -13,7 +13,7 @@ import asyncio
 
 import pytest
 
-from modex_agent.memory.core.scope import (
+from modex_agent.core.scope import (
     GlobalScope,
     MemoryContext,
     MemoryLayerName,

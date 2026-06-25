@@ -9,9 +9,9 @@ import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock
 
-from modex_agent.memory.core.scope import MemoryContext
+from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.stores.markdown_knowledge import MarkdownKnowledgeStorage
-from modex_agent.memory.core.scope import MemoryLayerName
+from modex_agent.core.scope import MemoryLayerName
 
 
 class TestOverwriteKnowledgeUpdate:

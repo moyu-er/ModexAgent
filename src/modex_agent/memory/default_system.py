@@ -10,9 +10,9 @@ from typing import TYPE_CHECKING, Any
 
 from modex_agent.memory.archive_models import ArchiveChannel
 from modex_agent.memory.core.layers import ArchiveMemoryManager, MemoryLayerSet, SessionMemoryManager
-from modex_agent.memory.core.message import ChatMessage
+from modex_agent.core.message import ChatMessage
 from modex_agent.memory.core.models import LongTermMemory
-from modex_agent.memory.core.scope import (
+from modex_agent.core.scope import (
     MemoryContext,
     MemoryLayerName,
 )
@@ -436,7 +436,7 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
 
     async def _resolve_archive_storage(self, context: MemoryContext) -> Any:
         archive = self._layers.archive
-        from modex_agent.memory.core.scope import UserScope
+        from modex_agent.core.scope import UserScope
 
         scope = archive.get_scope() if archive is not None else UserScope()
         return await self._registry.resolve(

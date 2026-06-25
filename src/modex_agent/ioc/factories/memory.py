@@ -40,7 +40,7 @@ def _build_memory_layer_config(cfg: MemoryConfig) -> MemoryLayerConfigSet:
     # Archive config (new field, migrated from long_term if old config used)
     archive_config = None
     if cfg.archive is not None and cfg.archive.enabled:
-        from modex_agent.memory.core.scope import GlobalScope, UserScope
+        from modex_agent.core.scope import GlobalScope, UserScope
         from modex_agent.memory.layers.config import ArchiveMemoryConfig
 
         archive_scope = GlobalScope() if cfg.archive.scope == "global" else UserScope()
@@ -53,7 +53,7 @@ def _build_memory_layer_config(cfg: MemoryConfig) -> MemoryLayerConfigSet:
     # Knowledge config (new field, migrated from long_term if old config used)
     knowledge_config = None
     if cfg.knowledge is not None and cfg.knowledge.enabled:
-        from modex_agent.memory.core.scope import GlobalScope, UserScope
+        from modex_agent.core.scope import GlobalScope, UserScope
         from modex_agent.memory.layers.config import KnowledgeMemoryConfig
 
         knowledge_scope = GlobalScope() if cfg.knowledge.scope == "global" else UserScope()

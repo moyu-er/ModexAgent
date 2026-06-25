@@ -71,7 +71,7 @@ Register it in a `MemoryLayerConfigSet`:
 
 ```python
 from modex_agent.memory.layers import MemoryLayerConfigSet, SessionMemoryConfig
-from modex_agent.memory.core.scope import SessionScope
+from modex_agent.core.scope import SessionScope
 
 config = MemoryLayerConfigSet(
     session=SessionMemoryConfig(scope=SessionScope()),

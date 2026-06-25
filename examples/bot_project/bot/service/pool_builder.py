@@ -39,7 +39,7 @@ from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.ioc.configs.pool import PoolConfig
 from modex_agent.ioc.factories.governance import create_governance
 from modex_agent.ioc.factories.llm import create_llm_provider
-from modex_agent.memory.core.scope import MemoryContext
+from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.default_system import DefaultMemorySystem
 from modex_agent.memory.injection import FullInjectionPolicy
 from modex_agent.memory.system import MemorySystemContextManager

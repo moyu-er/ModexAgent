@@ -8,7 +8,7 @@ import pytest
 from modex_agent.memory.archive_models import ArchiveChannel
 from modex_agent.memory.consolidation.dream_engine import DreamEngine
 from modex_agent.memory.core.models import ArchiveEntry, LongTermMemory, UnprocessedResult
-from modex_agent.memory.core.scope import MemoryAgentRole, MemoryContext, MemoryLayerName, ScopeRecord
+from modex_agent.core.scope import MemoryAgentRole, MemoryContext, MemoryLayerName, ScopeRecord
 
 
 class _FakePath:

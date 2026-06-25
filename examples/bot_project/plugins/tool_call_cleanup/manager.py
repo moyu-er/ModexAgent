@@ -16,9 +16,9 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from modex_agent.memory.core.layers import SessionMemoryManager
-from modex_agent.memory.core.message import ChatMessage
+from modex_agent.core.message import ChatMessage
 from modex_agent.memory.core.models import StorageRevision
-from modex_agent.memory.core.scope import MemoryContext
+from modex_agent.core.scope import MemoryContext
 
 from .policy import ToolCallCleanupPolicy
 

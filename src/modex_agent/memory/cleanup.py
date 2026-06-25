@@ -27,7 +27,7 @@ from modex_agent.memory.core.layers import (
     UserRetentionBuffer,
 )
 from modex_agent.memory.core.models import CompressionReason
-from modex_agent.memory.core.scope import MemoryContext
+from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.pruned.manager import PrunedManager
 from modex_agent.memory.sanitizer import (
     DefaultSessionToolChainSanitizer,

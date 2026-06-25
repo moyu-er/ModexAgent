@@ -449,7 +449,7 @@ def _make_urb_agent_entry(content: str = "agent task") -> Any:
 async def test_urb_injection_uses_user_role():
     """URB message must use user role (not system)."""
     from modex_agent.memory.context_governance import UserRetentionBufferInjectionGovernance
-    from modex_agent.memory.core.scope import MemoryContext
+    from modex_agent.core.scope import MemoryContext
 
     urb = FakeURB([_make_urb_user_entry("hello")])
     ctx = MemoryContext(session_id="s1")
@@ -474,7 +474,7 @@ async def test_urb_injection_uses_user_role():
 async def test_urb_injection_inserted_after_system():
     """URB user message inserted after system, before history."""
     from modex_agent.memory.context_governance import UserRetentionBufferInjectionGovernance
-    from modex_agent.memory.core.scope import MemoryContext
+    from modex_agent.core.scope import MemoryContext
 
     urb = FakeURB([_make_urb_user_entry("context")])
     ctx = MemoryContext(session_id="s1")
@@ -500,7 +500,7 @@ async def test_urb_injection_inserted_after_system():
 async def test_urb_injection_agent_entry_gets_role_attribute():
     """Agent entries in URB XML get role='agent' attribute."""
     from modex_agent.memory.context_governance import UserRetentionBufferInjectionGovernance
-    from modex_agent.memory.core.scope import MemoryContext
+    from modex_agent.core.scope import MemoryContext
 
     urb = FakeURB([_make_urb_agent_entry("task from planner")])
     ctx = MemoryContext(session_id="s1")
@@ -517,7 +517,7 @@ async def test_urb_injection_agent_entry_gets_role_attribute():
 async def test_urb_injection_empty_entries_noop():
     """When URB has no entries, messages pass through unchanged."""
     from modex_agent.memory.context_governance import UserRetentionBufferInjectionGovernance
-    from modex_agent.memory.core.scope import MemoryContext
+    from modex_agent.core.scope import MemoryContext
 
     urb = FakeURB([])
     ctx = MemoryContext(session_id="s1")

@@ -14,14 +14,14 @@ from modex_agent.memory.archive_models import (
     ArchiveWrite,
 )
 from modex_agent.memory.core.consolidation import MemoryUpdate
-from modex_agent.memory.core.message import ChatMessage
+from modex_agent.core.message import ChatMessage
 from modex_agent.memory.core.models import (
     ArchiveEntry,
     LongTermMemory,
     StorageRevision,
     UnprocessedResult,
 )
-from modex_agent.memory.core.scope import MemoryContext, MemoryScope, UserScope
+from modex_agent.core.scope import MemoryContext, MemoryScope, UserScope
 
 
 class SessionMemoryManager(ABC):

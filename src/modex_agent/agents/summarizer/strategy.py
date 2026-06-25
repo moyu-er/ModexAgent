@@ -13,7 +13,7 @@ from typing import Any
 
 from modex_agent.agents.summarizer.agent import SummarizerAgent
 from modex_agent.memory.core.models import CompressionReason
-from modex_agent.memory.core.scope import MemoryContext
+from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.utils import (
     EMPTY_MEMORY_SUMMARY_MARKERS,
     _is_meaningless_summary,

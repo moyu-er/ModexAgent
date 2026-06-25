@@ -10,7 +10,7 @@ import pytest
 from modex_agent.ioc.configs.memory import LongTermConfig
 from modex_agent.memory.layers.config import KnowledgeMemoryConfig
 from modex_agent.memory.layers.knowledge import ScopedKnowledgeMemoryManager
-from modex_agent.memory.core.scope import MemoryContext
+from modex_agent.core.scope import MemoryContext
 
 
 # ---------------------------------------------------------------------------

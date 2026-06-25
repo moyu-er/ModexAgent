@@ -6,9 +6,9 @@ from typing import Any
 
 from examples.bot_project.plugins.tool_call_cleanup.manager import ToolCallAwareSessionManager
 from modex_agent.memory.core.layers import SessionMemoryManager
-from modex_agent.memory.core.message import ChatMessage
+from modex_agent.core.message import ChatMessage
 from modex_agent.memory.core.models import StorageRevision
-from modex_agent.memory.core.scope import MemoryContext
+from modex_agent.core.scope import MemoryContext
 
 
 class DummySessionManager(SessionMemoryManager):

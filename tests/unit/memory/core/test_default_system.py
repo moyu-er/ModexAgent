@@ -6,7 +6,7 @@ import pytest
 from modex_agent.core.emitter import AgentResult
 from modex_agent.memory.core.consolidation import MemoryUpdate
 from modex_agent.memory.core.models import ArchiveEntry
-from modex_agent.memory.core.scope import MemoryContext
+from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.default_system import DefaultMemorySystem
 from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.registry.in_memory import InMemoryStoreRegistry

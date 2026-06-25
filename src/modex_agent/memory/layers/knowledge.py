@@ -9,7 +9,7 @@ from pathlib import Path
 from modex_agent.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
 from modex_agent.memory.core.layers import KnowledgeMemoryManager
 from modex_agent.memory.core.models import LongTermMemory
-from modex_agent.memory.core.scope import MemoryContext, MemoryScope
+from modex_agent.core.scope import MemoryContext, MemoryScope
 from modex_agent.memory.knowledge_search import (
     FullDumpKnowledgeStrategy,
     KnowledgeSearchStrategy,

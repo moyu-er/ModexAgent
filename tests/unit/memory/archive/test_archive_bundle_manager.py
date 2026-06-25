@@ -8,7 +8,7 @@ from modex_agent.memory.archive_models import (
     ArchiveChannel,
     ArchiveWrite,
 )
-from modex_agent.memory.core.scope import MemoryContext, MemoryLayerName
+from modex_agent.core.scope import MemoryContext, MemoryLayerName
 from modex_agent.memory.layers.archive import ScopedArchiveMemoryManager
 from modex_agent.memory.layers.config import ArchiveMemoryConfig
 from modex_agent.memory.layers.factory import MemoryLayerFactory

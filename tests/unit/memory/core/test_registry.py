@@ -4,7 +4,7 @@ import inspect
 
 import pytest
 
-from modex_agent.memory.core.scope import MemoryContext, MemoryLayerName, SessionScope, UserScope
+from modex_agent.core.scope import MemoryContext, MemoryLayerName, SessionScope, UserScope
 from modex_agent.memory.core.storage import MemoryStorage
 from modex_agent.memory.registry import InMemoryStoreRegistry
 from modex_agent.memory.stores import DefaultScopedStorage, InMemoryScopedStorage

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from modex_agent.memory.archive_models import ArchiveChannel
 from modex_agent.memory.core.layers import MemoryLayerSet
-from modex_agent.memory.core.scope import (
+from modex_agent.core.scope import (
     MemoryContext,
     MemoryLayerName,
 )

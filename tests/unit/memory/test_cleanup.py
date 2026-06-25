@@ -19,7 +19,7 @@ from modex_agent.memory.archive_models import (
 from modex_agent.memory.cleanup import CleanupResult, cleanup_session
 from modex_agent.memory.core.layers import MemoryLayerSet, SessionMemoryManager
 from modex_agent.memory.core.models import CompressionReason
-from modex_agent.memory.core.scope import MemoryContext
+from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.registry.in_memory import InMemoryStoreRegistry
 from modex_agent.memory.sanitizer import (

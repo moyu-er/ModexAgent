@@ -5,7 +5,7 @@ import pytest
 from modex_agent.memory.core.consolidation import MemoryUpdate
 from modex_agent.memory.core.layers import MemoryLayerSet
 from modex_agent.memory.core.models import ArchiveEntry
-from modex_agent.memory.core.scope import MemoryContext
+from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.layers import (
     MemoryLayerConfigSet,
     MemoryLayerFactory,

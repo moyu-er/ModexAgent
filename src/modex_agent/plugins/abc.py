@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from modex_agent.memory.core.scope import MemoryContext
+    from modex_agent.core.scope import MemoryContext
 
 
 class MemoryProvider(ABC):

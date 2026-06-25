@@ -13,7 +13,7 @@ from modex_agent.agents.summarizer.abc import KnowledgeConsolidatorBase
 from modex_agent.memory.archive_models import ArchiveChannel
 from modex_agent.memory.core.layers import ArchiveMemoryManager, KnowledgeMemoryManager
 from modex_agent.memory.core.models import ArchiveEntry
-from modex_agent.memory.core.scope import (
+from modex_agent.core.scope import (
     MemoryAgentRole,
     MemoryContext,
     MemoryLayerName,

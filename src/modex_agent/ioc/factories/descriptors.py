@@ -13,7 +13,7 @@ from modex_agent.core.tool_manager import InMemoryToolManager, Tool, ToolManager
 from modex_agent.ioc.configs.agent import AgentConfig
 from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.ioc.configs.memory import MemoryConfig
-from modex_agent.memory.core.scope import MemoryAgentRole
+from modex_agent.core.scope import MemoryAgentRole
 from modex_agent.memory.injection import RestrictedInjectionPolicy
 from modex_agent.memory.layers.config import (
     MemoryLayerConfigSet,

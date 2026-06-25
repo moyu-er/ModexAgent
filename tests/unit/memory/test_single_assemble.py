@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from modex_agent.core.context import ContextState
-from modex_agent.memory.core.message import ChatMessage
+from modex_agent.core.message import ChatMessage
 from modex_agent.memory.system import MemorySystemContextManager
 
 

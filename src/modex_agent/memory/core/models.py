@@ -19,7 +19,7 @@ from modex_agent.memory.archive_models import (
     ArchiveState,
     ArchiveWrite,
 )
-from modex_agent.memory.core.message import ChatMessage
+from modex_agent.core.message import ChatMessage
 from modex_agent.memory.sanitizer import ToolChainSanitizationIssue
 
 

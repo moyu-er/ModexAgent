@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from modex_agent.memory.core.message import ChatMessage
+from modex_agent.core.message import ChatMessage
 
 EMPTY_MEMORY_SUMMARY_MARKERS = frozenset(
     {

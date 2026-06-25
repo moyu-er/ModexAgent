@@ -15,7 +15,7 @@ Public surface:
 - Pruned catalog: PrunedManager
 """
 
-from modex_agent.memory.core.scope import (
+from modex_agent.core.scope import (
     AgentScope,
     ChannelScope,
     ChatScope,

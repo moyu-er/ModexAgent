@@ -21,7 +21,7 @@ from modex_agent.commands.models import (
     SlashCommandInvocation,
 )
 from modex_agent.core.skills.builder import build_skill_command_xml
-from modex_agent.memory.core.message import ContentFormat
+from modex_agent.core.message import ContentFormat
 
 logger = logging.getLogger(__name__)
 

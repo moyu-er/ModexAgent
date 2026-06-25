@@ -19,8 +19,8 @@ from collections.abc import Sequence
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, TypeAlias
 
-from modex_agent.memory.core.message import ChatMessage
-from modex_agent.memory.core.scope import MemoryAgentRole, MemoryContext
+from modex_agent.core.message import ChatMessage
+from modex_agent.core.scope import MemoryAgentRole, MemoryContext
 
 if TYPE_CHECKING:
     from modex_agent.plugins import MemoryProvider

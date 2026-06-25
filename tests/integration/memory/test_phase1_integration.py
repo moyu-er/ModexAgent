@@ -10,7 +10,7 @@ from modex_agent.ioc.configs.memory import (
     MemoryConfig,
 )
 from modex_agent.ioc.factories.memory import _build_memory_layer_config
-from modex_agent.memory.core.scope import MemoryContext
+from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.layers.knowledge import ScopedKnowledgeMemoryManager
 
 

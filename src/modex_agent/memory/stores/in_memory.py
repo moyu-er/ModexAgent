@@ -8,7 +8,7 @@ from typing import Any
 
 from modex_agent.memory.core.lock import NoOpStorageLock, StorageLock
 from modex_agent.memory.core.models import StorageRevision
-from modex_agent.memory.core.scope import MemoryAgentRole, MemoryContext, ScopeRecord
+from modex_agent.core.scope import MemoryAgentRole, MemoryContext, ScopeRecord
 
 
 class InMemoryStorage:

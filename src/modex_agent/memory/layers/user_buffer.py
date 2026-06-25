@@ -10,7 +10,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 from modex_agent.memory.core.layers import UserRetentionBuffer as _CoreURB
-from modex_agent.memory.core.scope import MemoryContext
+from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.layers.config import StorageFactory, UserRetentionBufferConfig
 from modex_agent.memory.user_buffer import UserBufferEntry
 
@@ -175,7 +175,7 @@ class ScopedUserRetentionBuffer(UserRetentionBuffer):
         ``truncatable_paths`` to preserve structure.  Plain entries use
         head truncation.
         """
-        from modex_agent.memory.core.message import ContentFormat
+        from modex_agent.core.message import ContentFormat
         from modex_agent.memory.xml_truncate import truncate_xml_safe
 
         max_entries = self._config.max_entries

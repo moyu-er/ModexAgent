@@ -16,7 +16,7 @@ from modex_agent.core.runtime_context import (
     RuntimeContextManager,
     ToolCallRecord,
 )
-from modex_agent.memory.core.scope import SessionScope, UserScope
+from modex_agent.core.scope import SessionScope, UserScope
 
 
 class TestInMemoryRuntimeContext:

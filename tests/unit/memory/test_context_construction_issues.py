@@ -17,12 +17,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from modex_agent.memory.core.message import ChatMessage
+from modex_agent.core.message import ChatMessage
 from modex_agent.memory.core.models import (
     InjectionResult,
     MemoryBudget,
 )
-from modex_agent.memory.core.scope import MemoryContext
+from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.injection.full_injection import FullInjectionPolicy
 from modex_agent.memory.injection.restricted_injection import RestrictedInjectionPolicy
 

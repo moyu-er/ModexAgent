@@ -443,7 +443,7 @@ class TestBuildToolMessage:
         terminal XML itself. Terminal tool results arrive with metadata already set.
         """
         from modex_agent.core.tool_manager import ToolResult
-        from modex_agent.memory.core.message import ContentFormat
+        from modex_agent.core.message import ContentFormat
         from modex_agent.utils.message_builder import build_tool_message
 
         xml_content = (
@@ -465,7 +465,7 @@ class TestBuildToolMessage:
 
     def test_plain_text_no_metadata(self):
         from modex_agent.core.tool_manager import ToolResult
-        from modex_agent.memory.core.message import ContentFormat
+        from modex_agent.core.message import ContentFormat
         from modex_agent.utils.message_builder import build_tool_message
 
         result = ToolResult(tool_name="grep", result="Found 3 matches")

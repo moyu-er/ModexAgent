@@ -13,7 +13,7 @@ import pytest
 
 from modex_agent.memory.core.layers import MemoryLayerSet
 from modex_agent.memory.core.models import ArchiveEntry
-from modex_agent.memory.core.scope import (
+from modex_agent.core.scope import (
     MemoryContext,
     MemoryLayerName,
     ScopeRecord,

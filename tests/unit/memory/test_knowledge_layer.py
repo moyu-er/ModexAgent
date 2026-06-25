@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 
 from modex_agent.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
-from modex_agent.memory.core.scope import MemoryContext, MemoryLayerName, UserScope
+from modex_agent.core.scope import MemoryContext, MemoryLayerName, UserScope
 from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.layers.knowledge import ScopedKnowledgeMemoryManager
 from modex_agent.memory.registry.in_memory import InMemoryStoreRegistry

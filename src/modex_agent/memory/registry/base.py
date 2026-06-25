@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Collection
 
-from modex_agent.memory.core.scope import (
+from modex_agent.core.scope import (
     MemoryAgentRole,
     MemoryContext,
     MemoryLayerName,

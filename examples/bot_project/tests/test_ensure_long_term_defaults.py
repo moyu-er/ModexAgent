@@ -28,7 +28,7 @@ import pytest
 
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.ioc.factories.memory import create_memory
-from modex_agent.memory.core.scope import MemoryContext
+from modex_agent.core.scope import MemoryContext
 from bot.service.pool_builder import ensure_long_term_defaults
 
 

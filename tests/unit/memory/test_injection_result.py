@@ -1,7 +1,7 @@
 """Tests for InjectionResult replacing MemoryContextBundle."""
 from __future__ import annotations
 
-from modex_agent.memory.core.message import ChatMessage
+from modex_agent.core.message import ChatMessage
 from modex_agent.memory.core.models import InjectionResult
 
 

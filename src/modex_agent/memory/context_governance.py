@@ -14,8 +14,8 @@ from typing import Any
 
 from modex_agent.core.types import MessageRole
 from modex_agent.core.governance import ContextGovernance
-from modex_agent.memory.core.message import ContentFormat
-from modex_agent.memory.core.scope import MemoryContext
+from modex_agent.core.message import ContentFormat
+from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.tags import UrbTag
 from modex_agent.memory.xml_truncate import truncate_xml_safe
 

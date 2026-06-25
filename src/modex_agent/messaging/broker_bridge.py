@@ -101,7 +101,7 @@ def _broker_msg_to_input_message(
     content_fmt = None
     trunc_paths = None
     if metadata.get("message_type") in _xml_message_types:
-        from modex_agent.memory.core.message import ContentFormat
+        from modex_agent.core.message import ContentFormat
 
         content_fmt = ContentFormat.XML
         trunc_paths = ["content"]

@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 from pathlib import Path
 
-from modex_agent.memory.core.scope import MemoryLayerName
+from modex_agent.core.scope import MemoryLayerName
 
 
 def _make_storage(tmp_path: Path):

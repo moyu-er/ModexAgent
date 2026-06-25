@@ -124,7 +124,7 @@ class TestSubagentMemoryLayers:
     def test_build_session_only_memory_creates_context_manager(self, tmp_path):
         """_build_session_only_memory returns a MemorySystemContextManager."""
         from modex_agent.ioc.factories.descriptors import build_session_only_memory as _build_session_only_memory
-        from modex_agent.memory.core.scope import MemoryAgentRole
+        from modex_agent.core.scope import MemoryAgentRole
         from modex_agent.ioc.configs.memory import MemoryConfig, ShortTermConfig
 
         cfg = MemoryConfig(short_term=ShortTermConfig(max_messages=80))
@@ -140,8 +140,8 @@ class TestSubagentMemoryLayers:
     def test_archive_config_created_with_session_scope(self, tmp_path):
         """_build_session_only_memory creates ArchiveMemoryConfig(scope=SessionScope())."""
         from modex_agent.ioc.factories.descriptors import build_session_only_memory as _build_session_only_memory
-        from modex_agent.memory.core.scope import MemoryAgentRole
-        from modex_agent.memory.core.scope import SessionScope
+        from modex_agent.core.scope import MemoryAgentRole
+        from modex_agent.core.scope import SessionScope
         from modex_agent.memory.layers.config import ArchiveMemoryConfig
         from modex_agent.ioc.configs.memory import MemoryConfig
 
@@ -160,7 +160,7 @@ class TestSubagentMemoryLayers:
     def test_max_messages_respects_config(self, tmp_path):
         """Session layer max_messages comes from the MemoryConfig."""
         from modex_agent.ioc.factories.descriptors import build_session_only_memory as _build_session_only_memory
-        from modex_agent.memory.core.scope import MemoryAgentRole
+        from modex_agent.core.scope import MemoryAgentRole
         from modex_agent.ioc.configs.memory import MemoryConfig, ShortTermConfig
 
         cfg = MemoryConfig(short_term=ShortTermConfig(max_messages=120))
@@ -174,7 +174,7 @@ class TestSubagentMemoryLayers:
     def test_default_max_messages_without_config(self, tmp_path):
         """Without MemoryConfig, subagent gets default 50 max_messages."""
         from modex_agent.ioc.factories.descriptors import build_session_only_memory as _build_session_only_memory
-        from modex_agent.memory.core.scope import MemoryAgentRole
+        from modex_agent.core.scope import MemoryAgentRole
 
         memory_ctx = _build_session_only_memory(
             None, tmp_path / "mem4", "sub",

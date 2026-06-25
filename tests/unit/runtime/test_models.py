@@ -16,7 +16,7 @@ from modex_agent.runtime.models import (
     TurnIdentity,
     TurnStateBase,
 )
-from modex_agent.memory.core.message import ChatMessage
+from modex_agent.core.message import ChatMessage
 from modex_agent.core.session_id import SessionInfo
 
 

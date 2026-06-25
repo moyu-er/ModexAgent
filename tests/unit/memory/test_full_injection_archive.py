@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from modex_agent.memory.core.scope import MemoryContext
+from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.core.system import MemorySystem
 from modex_agent.memory.injection.full_injection import FullInjectionPolicy
 from modex_agent.memory.stores.dir_archive import DirArchiveStorage

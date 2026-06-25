@@ -25,8 +25,8 @@ from modex_agent.core.context import ContextManager, ContextState
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.skills import SkillManager
 from modex_agent.memory.context_governance import ContextGovernance
-from modex_agent.memory.core.message import ChatMessage
-from modex_agent.memory.core.scope import MemoryAgentRole, MemoryContext
+from modex_agent.core.message import ChatMessage
+from modex_agent.core.scope import MemoryAgentRole, MemoryContext
 from modex_agent.memory.core.system import (
     MemorySystem,  # noqa: F401 — re-export
 )

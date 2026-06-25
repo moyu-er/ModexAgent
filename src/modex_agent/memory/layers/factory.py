@@ -4,7 +4,7 @@ from typing import Any
 
 from modex_agent.core.provider import LLMProvider
 from modex_agent.memory.core.layers import MemoryLayerSet
-from modex_agent.memory.core.scope import (
+from modex_agent.core.scope import (
     MemoryContext,
     MemoryLayerName,
     MemoryScope,

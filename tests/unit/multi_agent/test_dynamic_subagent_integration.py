@@ -510,7 +510,7 @@ class TestSubagentMemoryCorrectness:
         from modex_agent.memory.system import MemorySystemContextManager
         from modex_agent.multi_agent.address import AgentAddress
         from modex_agent.multi_agent.communication import AgentCommunicationService
-        from modex_agent.memory.core.scope import MemoryAgentRole
+        from modex_agent.core.scope import MemoryAgentRole
 
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
@@ -1102,7 +1102,7 @@ class TestOutputMdInjection:
         import tempfile
         from pathlib import Path as _Path
 
-        from modex_agent.memory.core.scope import MemoryAgentRole
+        from modex_agent.core.scope import MemoryAgentRole
         from modex_agent.ioc.factories.descriptors import build_session_only_memory
         from modex_agent.ioc.configs.memory import MemoryConfig
 

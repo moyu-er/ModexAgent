@@ -8,9 +8,9 @@ from pathlib import Path
 from typing import Any
 
 from modex_agent.memory.archive_models import ArchiveChannel
-from modex_agent.memory.core.message import ChatMessage
+from modex_agent.core.message import ChatMessage
 from modex_agent.memory.core.models import LongTermMemory
-from modex_agent.memory.core.scope import MemoryContext
+from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.history import MessageHistory
 from modex_agent.memory.pruned.manager import PrunedManager
 

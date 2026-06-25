@@ -27,7 +27,7 @@ from .enums import (
 
 if TYPE_CHECKING:
     from modex_agent.core.tool_manager import ToolResult
-    from modex_agent.memory.core.message import ChatMessage
+    from modex_agent.core.message import ChatMessage
 
 
 JsonPrimitive: TypeAlias = str | int | float | bool | None

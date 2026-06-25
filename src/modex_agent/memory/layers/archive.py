@@ -18,7 +18,7 @@ from modex_agent.memory.archive_models import (
 )
 from modex_agent.memory.core.layers import ArchiveMemoryManager
 from modex_agent.memory.core.models import ArchiveEntry, UnprocessedResult
-from modex_agent.memory.core.scope import MemoryContext, MemoryScope
+from modex_agent.core.scope import MemoryContext, MemoryScope
 from modex_agent.memory.core.storage import MemoryStorage
 from modex_agent.memory.history_search import (
     HistorySearchStrategy,

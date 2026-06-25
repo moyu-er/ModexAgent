@@ -117,7 +117,7 @@ async def test_assemble_context_appends_transformed_skill_content() -> None:
 @pytest.mark.asyncio
 async def test_assemble_context_propagates_xml_format_from_input_msg() -> None:
     """When input_msg has content_format=XML, the user message must carry it."""
-    from modex_agent.memory.core.message import ContentFormat
+    from modex_agent.core.message import ContentFormat
 
     ctx_mgr = FakeContextManager()
     input_msg = InputMessage(content="/weather", session=SessionInfo.from_str("s1", default_agent_name="main"))

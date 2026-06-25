@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from modex_agent.memory.core.layers import MemoryLayerSet
-from modex_agent.memory.core.scope import SessionScope, UserScope
+from modex_agent.core.scope import SessionScope, UserScope
 from modex_agent.memory.layers.config import (
     ArchiveMemoryConfig,
     KnowledgeMemoryConfig,

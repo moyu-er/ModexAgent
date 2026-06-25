@@ -11,7 +11,7 @@ from modex_agent.memory.archive_models import (
     KNOWLEDGE_ARCHIVE_FILE_KEY,
     ArchiveChannel,
 )
-from modex_agent.memory.core.scope import (
+from modex_agent.core.scope import (
     MemoryAgentRole,
     MemoryContext,
     MemoryLayerName,

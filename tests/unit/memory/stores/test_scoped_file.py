@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.memory.core.scope import MemoryContext, MemoryLayerName, SessionScope, UserScope
+from modex_agent.core.scope import MemoryContext, MemoryLayerName, SessionScope, UserScope
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry
 
 

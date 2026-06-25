@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
 from modex_agent.core.session_registry import SessionRegistry
-from modex_agent.memory.core.message import ChatMessage
+from modex_agent.core.message import ChatMessage
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
@@ -516,7 +516,7 @@ class AgentCommunicationService:
 
         # ── Memory: session-scoped, no knowledge layer ──
         from modex_agent.ioc.factories.descriptors import build_session_only_memory
-        from modex_agent.memory.core.scope import MemoryAgentRole
+        from modex_agent.core.scope import MemoryAgentRole
 
         memory_workspace = self._resolved_memory_dir() or (
             self._project_dir / "data" / "memory" / self._pool_name
@@ -534,7 +534,7 @@ class AgentCommunicationService:
         )
 
         # ── Fork context: two-stage truncation → XML → persist → system prompt ──
-        from modex_agent.memory.core.scope import MemoryContext
+        from modex_agent.core.scope import MemoryContext
         from modex_agent.tools.presets import ContextMode
 
         if template.context_mode == ContextMode.FORK and self._project_dir is not None:

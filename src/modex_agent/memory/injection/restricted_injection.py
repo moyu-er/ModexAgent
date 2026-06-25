@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from modex_agent.memory.core.models import InjectionResult
-from modex_agent.memory.core.scope import MemoryContext
+from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.core.system import MemorySystem
 from modex_agent.memory.injection.policy import MemoryInjectionPolicy
 from modex_agent.memory.pruned.manager import PrunedManager
