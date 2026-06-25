@@ -58,3 +58,47 @@ def test_core_no_unexpected_runtime_upward_imports() -> None:
             offenders.setdefault(mod, []).append(path.relative_to(CORE_ROOT).as_posix())
     unexpected = {m: f for m, f in offenders.items() if m not in EXPECTED_OFFENDERS}
     assert not unexpected, f"unexpected runtime upward imports from core: {unexpected}"
+
+
+# ── Candidate ③ guards ───────────────────────────────────────────────
+WORKSPACE_ROOT = (
+    Path(__file__).resolve().parents[2] / "src" / "modex_agent" / "workspace"
+)
+MULTI_AGENT_ROOT = (
+    Path(__file__).resolve().parents[2] / "src" / "modex_agent" / "multi_agent"
+)
+# tier-3+ top-level modules workspace (tier 2) must not runtime-import.
+WORKSPACE_FORBIDDEN_TOP = {"pipeline", "multi_agent", "ioc"}
+
+# Shrinks to empty as fixes land; the assertion stays strict (ADR-0006 pattern).
+EXPECTED_WORKSPACE_OFFENDERS: set[str] = set()
+
+
+def test_workspace_no_runtime_upward_to_tier3plus() -> None:
+    """ADR-0006: workspace (tier 2) has no runtime import of tier-3+ modules."""
+    offenders: dict[str, list[str]] = {}
+    for path in sorted(WORKSPACE_ROOT.rglob("*.py")):
+        for mod in _runtime_upward(path):
+            top = mod.split(".")[1]
+            if top in WORKSPACE_FORBIDDEN_TOP:
+                offenders.setdefault(mod, []).append(
+                    path.relative_to(WORKSPACE_ROOT).as_posix()
+                )
+    unexpected = {
+        m: f for m, f in offenders.items() if m not in EXPECTED_WORKSPACE_OFFENDERS
+    }
+    assert not unexpected, (
+        f"unexpected runtime upward imports from workspace to tier-3+: {unexpected}"
+    )
+
+
+def test_workspace_manager_not_defined_in_multi_agent() -> None:
+    """ADR-0006 candidate ③: WorkspaceManager is a workspace concept; multi_agent
+    must not own (define) it. A re-export import is fine; a `class` def is not."""
+    offenders: list[str] = []
+    for path in sorted(MULTI_AGENT_ROOT.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and node.name == "WorkspaceManager":
+                offenders.append(path.relative_to(MULTI_AGENT_ROOT).as_posix())
+    assert not offenders, f"WorkspaceManager still defined in multi_agent: {offenders}"
