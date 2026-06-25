@@ -14,7 +14,7 @@ import asyncio
 import contextlib
 import logging
 
-from modex_agent.core.experience.curator import ExperienceCurator
+from modex_agent.core.experience import ExperienceCurator
 from modex_agent.ioc.configs.pool import PoolConfig
 from modex_agent.memory.consolidation.dream_engine import DreamEngine
 

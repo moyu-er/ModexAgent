@@ -494,7 +494,7 @@ async def _build_tools(
     # relative path for the non-workspace (test) wiring.
     exp_cfg = getattr(main_cfg, "experience", None)
     if exp_cfg is not None and getattr(exp_cfg, "enabled", False):
-        from modex_agent.core.experience.meta import PerFileExperienceMetaStore
+        from modex_agent.core.experience import PerFileExperienceMetaStore
         from modex_agent.memory.tools.experience import ExperienceTool
 
         if pool_data is not None:

@@ -18,9 +18,11 @@ from pathlib import Path
 
 from modex_agent.workspace.context import WorkspaceContext
 
-from modex_agent.core.experience.manager import ExperienceManager
-from modex_agent.core.experience.meta import PerFileExperienceMetaStore
-from modex_agent.core.experience.source import FileExperienceSource
+from modex_agent.core.experience import (
+    ExperienceManager,
+    FileExperienceSource,
+    PerFileExperienceMetaStore,
+)
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.ioc.configs.pool import PoolConfig
 from modex_agent.memory.system import MemorySystemContextManager

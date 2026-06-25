@@ -15,10 +15,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from modex_agent.core.experience.meta import ExperienceMetaStore
-from modex_agent.core.experience.name_sync import auto_correct_frontmatter_name
-from modex_agent.core.experience.source import sanitize_name
-from modex_agent.core.experience.validation import validate_experience_md
+from modex_agent.core.experience import (
+    ExperienceMetaStore,
+    auto_correct_frontmatter_name,
+    sanitize_name,
+    validate_experience_md,
+)
 from modex_agent.core.tool_manager import Tool, ToolConfig
 from modex_agent.tools.standard.file_tool import (
     EditFileTool,

@@ -4,6 +4,7 @@ from .agent import (
     Agent,
     AgentCommKind,
     AgentContext,
+    current_agent_context,
 )
 from .constants import (
     DefaultValues,
@@ -43,11 +44,39 @@ from .tool_manager import (
 )
 from .types import (
     InputMessage,
+    LLMResponse,
     MessageRole,
     MessageType,
     OutputMessage,
+    TodoStatus,
     ToolCall,
 )
+from .session_id import (
+    SessionInfo,
+    SessionIdFactory,
+    now_ms,
+    agent_of,
+    session_id_prefix_of,
+    encode_snowflake,
+)
+from .session_store import (
+    SessionStore,
+    LocalFileSessionStore,
+    safe_filename,
+)
+from .session_registry import (
+    SessionRegistry,
+    InMemorySessionRegistry,
+)
+from .message import (
+    ChatMessage,
+    ContentFormat,
+)
+from .llm_struct import RuntimeSafetyPolicy
+from .runtime_context import RuntimeContextManager
+from .prompt import SystemPromptPipeline
+from .frontmatter import parse_frontmatter
+from .utils import safe_atomic_replace
 
 __all__ = [
     # 常量
@@ -90,4 +119,32 @@ __all__ = [
     # 抽象基类
     "LLMProvider",
     "StreamingLLMProvider",
+    # Agent - 当前上下文
+    "current_agent_context",
+    # 会话 ID
+    "SessionInfo",
+    "SessionIdFactory",
+    "now_ms",
+    "agent_of",
+    "session_id_prefix_of",
+    "encode_snowflake",
+    # 会话存储
+    "SessionStore",
+    "LocalFileSessionStore",
+    "safe_filename",
+    # 会话注册表
+    "SessionRegistry",
+    "InMemorySessionRegistry",
+    # 消息
+    "ChatMessage",
+    "ContentFormat",
+    # 类型扩展
+    "LLMResponse",
+    "TodoStatus",
+    # 运行时结构
+    "RuntimeSafetyPolicy",
+    "RuntimeContextManager",
+    "SystemPromptPipeline",
+    "parse_frontmatter",
+    "safe_atomic_replace",
 ]

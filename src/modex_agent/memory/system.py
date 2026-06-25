@@ -40,7 +40,7 @@ from modex_agent.memory.registry.file import DefaultMemoryStoreRegistry
 
 if TYPE_CHECKING:
     from modex_agent.agents.summarizer.abc import ArchiveGenerator, KnowledgeConsolidatorBase
-    from modex_agent.core.experience.manager import ExperienceManager
+    from modex_agent.core.experience import ExperienceManager
     from modex_agent.core.provider import LLMProvider
     from modex_agent.memory.stores.dir_archive import DirArchiveStorage
 

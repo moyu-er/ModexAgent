@@ -26,10 +26,12 @@ from modex_agent.agents.experience.review_agent import ExperienceReviewAgent
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.constants import StopReason
 from modex_agent.core.emitter import AgentResult
-from modex_agent.core.experience.meta import ExperienceMetaStore
-from modex_agent.core.experience.name_sync import auto_correct_frontmatter_name
-from modex_agent.core.experience.source import FileExperienceSource
-from modex_agent.core.experience.validation import validate_experience_md
+from modex_agent.core.experience import (
+    ExperienceMetaStore,
+    FileExperienceSource,
+    auto_correct_frontmatter_name,
+    validate_experience_md,
+)
 from modex_agent.hook.abc import AfterTurnHook
 
 logger = logging.getLogger(__name__)
