@@ -42,6 +42,7 @@ dependencies = [
   "ddgs>=9.0.0",
   "markdownify>=0.13.0",
   "typer>=0.9.0",
+  "path>=17.1.1",
 ]
 
 [project.optional-dependencies]
