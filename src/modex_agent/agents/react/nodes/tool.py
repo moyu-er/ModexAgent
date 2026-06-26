@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import uuid4
 
 from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.agents.react.constants import ReActNode, ReActReason
 from modex_agent.agents.react.message_builder import build_tool_message
 from modex_agent.agents.react.state import ReActSnapshotPolicy, get_react_state
+from modex_agent.agents.react.tool_executor import ToolExecutor
 from modex_agent.approval.constants import ApprovalDecision, ApprovalTier
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.graph.interrupt import interrupt
@@ -37,18 +38,15 @@ from modex_agent.runtime.models import (
     ToolCallState,
 )
 
-if TYPE_CHECKING:
-    from modex_agent.agents.react.agent import ReActAgent
-
 logger = logging.getLogger(__name__)
 
 
 class ToolNode(Node):
     """Two-phase tool node: classify all, persist approval state, batch execute."""
 
-    def __init__(self, agent: ReActAgent) -> None:
+    def __init__(self, tool_executor: ToolExecutor) -> None:
         super().__init__(ReActNode.TOOL)
-        self._agent = agent
+        self._tool_executor = tool_executor
 
     async def execute(self, ctx: AgentContext) -> NodeTransition:
         state = get_react_state(ctx)
@@ -277,7 +275,7 @@ class ToolNode(Node):
         tool_results: list[Any] = []
         for tc, decision in zip(tool_calls, decisions, strict=False):
             if decision == ApprovalDecision.ALLOWED:
-                result = await self._agent._execute_tool(tc, ctx)
+                result = await self._tool_executor.execute(tc, ctx)
             else:
                 error_msg = f"Error: {decision}"
                 if state is not None and state.approval is not None and state.approval.deny_reason:

@@ -2,24 +2,20 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.agents.react.constants import ReActNode, ReActReason
+from modex_agent.agents.react.injection_drainer import InjectionDrainer
+from modex_agent.agents.react.llm_client import ReactLlmClient
 from modex_agent.agents.react.message_builder import build_assistant_message
 from modex_agent.agents.react.state import get_react_state
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.constants import FinishReason
 from modex_agent.core.graph.node import Node, NodeTransition
-from modex_agent.core.types import LLMResponse
 from modex_agent.hook import HookPayload, HookPoint
 from modex_agent.interceptor.abc import InterceptorScope, IterationContext
 from modex_agent.runtime.dispatch import current_dispatch_deadline
 from modex_agent.runtime.enums import MessageDeltaSource, OperationKind, TurnPhase
 from modex_agent.runtime.models import MessageDelta
-
-if TYPE_CHECKING:
-    from modex_agent.agents.react.agent import ReActAgent
 
 
 def _renew_dispatch_deadline() -> None:
@@ -31,9 +27,10 @@ def _renew_dispatch_deadline() -> None:
 class LLMNode(Node):
     """Calls LLM, writes assistant message, routes to ToolNode or EndNode."""
 
-    def __init__(self, agent: ReActAgent) -> None:
+    def __init__(self, llm_client: ReactLlmClient, injection_drainer: InjectionDrainer) -> None:
         super().__init__(ReActNode.LLM)
-        self._agent = agent
+        self._llm_client = llm_client
+        self._injection_drainer = injection_drainer
 
     async def execute(self, ctx: AgentContext) -> NodeTransition:
         state = get_react_state(ctx)
@@ -80,10 +77,10 @@ class LLMNode(Node):
                 )
 
             if runtime and runtime.injection_queue:
-                await self._agent._drain_injections(ctx)
+                await self._injection_drainer.drain(ctx)
 
             messages = await self._build_messages(ctx)
-            response = await self._call_llm(messages, ctx)
+            response = await self._llm_client.call(messages, ctx)
 
             if runtime and runtime.hooks:
                 await runtime.hooks.dispatch(
@@ -175,71 +172,3 @@ class LLMNode(Node):
         if governance is not None:
             messages = await governance.apply(messages)
         return messages
-
-    async def _call_llm(
-        self,
-        messages: list[dict[str, object]],
-        ctx: AgentContext,
-    ) -> LLMResponse:
-        emitter = ctx.emitter
-        use_streaming = False
-        if emitter is not None and emitter.wants_streaming():
-            try:
-                self._agent.provider.chat_stream
-            except AttributeError:
-                pass
-            else:
-                use_streaming = True
-        if use_streaming:
-            interceptor_chain = ctx.runtime.interceptors if ctx.runtime else None
-            if interceptor_chain is not None:
-                if interceptor_chain.has_scope(InterceptorScope.LLM_STREAM):
-                    return await self._agent._stream_with_control(messages, ctx)
-            return await self._stream_plain(messages, ctx)
-        return await self._call_non_streaming(messages, ctx)
-
-    async def _stream_plain(
-        self,
-        messages: list[dict[str, object]],
-        ctx: AgentContext,
-    ) -> LLMResponse:
-        async def _on_content(delta: str) -> None:
-            if delta and ctx.emitter is not None:
-                await ctx.emitter.emit_delta(delta)
-                await ctx.emitter.emit(ReActEvent.MODEL_OUTPUT, delta)
-
-        async def _on_reasoning(delta: str) -> None:
-            if delta and ctx.emitter is not None:
-                await ctx.emitter.emit(ReActEvent.MODEL_REASONING, delta)
-
-        response = await self._agent.provider.chat_stream(
-            messages=messages,
-            tools=ctx.get_tool_descriptions() if ctx.tool_manager else None,
-            temperature=ctx.temperature or 0.7,
-            max_tokens=ctx.max_tokens,
-            on_content_delta=_on_content,
-            on_reasoning_delta=_on_reasoning,
-        )
-        if ctx.emitter is not None:
-            await ctx.emitter.emit_stream_end(resuming=bool(response.tool_calls))
-        return response
-
-    async def _call_non_streaming(
-        self,
-        messages: list[dict[str, object]],
-        ctx: AgentContext,
-    ) -> LLMResponse:
-        response = await self._agent.provider.chat(
-            messages=messages,
-            tools=ctx.get_tool_descriptions() if ctx.tool_manager else None,
-            temperature=ctx.temperature or 0.7,
-            max_tokens=ctx.max_tokens,
-        )
-        if ctx.emitter is not None:
-            if response.content:
-                await ctx.emitter.emit_content(response.content)
-                await ctx.emitter.emit(ReActEvent.MODEL_OUTPUT, response.content)
-            if response.reasoning_content:
-                await ctx.emitter.emit(ReActEvent.MODEL_REASONING, response.reasoning_content)
-            await ctx.emitter.emit_stream_end(resuming=bool(response.tool_calls))
-        return response

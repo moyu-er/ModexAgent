@@ -2,30 +2,37 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 from modex_agent.agents.react.constants import ReActNode, ReActReason
+from modex_agent.agents.react.injection_drainer import InjectionDrainer
+from modex_agent.agents.react.llm_client import ReactLlmClient
 from modex_agent.agents.react.nodes.end import EndNode
 from modex_agent.agents.react.nodes.llm import LLMNode
 from modex_agent.agents.react.nodes.start import StartNode
 from modex_agent.agents.react.nodes.tool import ToolNode
+from modex_agent.agents.react.tool_executor import ToolExecutor
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.graph.graph import Graph
 from modex_agent.runtime.enums import TurnCustomKey
 
-if TYPE_CHECKING:
-    from modex_agent.agents.react.agent import ReActAgent
-
 
 class ReActGraph(Graph):
-    def __init__(self, agent: ReActAgent, *, mode: Literal["clean", "full"] = "full") -> None:
+    def __init__(
+        self,
+        *,
+        llm_client: ReactLlmClient,
+        injection_drainer: InjectionDrainer,
+        tool_executor: ToolExecutor,
+        mode: Literal["clean", "full"] = "full",
+    ) -> None:
         super().__init__(name=f"react_{mode}")
         self.result_extractor = self._extract_graph_result
 
         self.add_node(StartNode())
-        self.add_node(LLMNode(agent))
-        self.add_node(ToolNode(agent))
-        self.add_node(EndNode(agent))
+        self.add_node(LLMNode(llm_client, injection_drainer))
+        self.add_node(ToolNode(tool_executor))
+        self.add_node(EndNode())
 
         # start edges
         self.add_edge(ReActNode.START, ReActNode.LLM, reason=ReActReason.NORMAL_START)

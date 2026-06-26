@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.agents.react.constants import ReActNode, ReActReason
 from modex_agent.agents.react.state import get_react_state
@@ -14,16 +12,12 @@ from modex_agent.core.graph.constants import GraphNode
 from modex_agent.core.graph.node import Node, NodeTransition
 from modex_agent.runtime.enums import TurnCustomKey, TurnPhase
 
-if TYPE_CHECKING:
-    from modex_agent.agents.react.agent import ReActAgent
-
 
 class EndNode(Node):
     """Constructs final result and emits completion events."""
 
-    def __init__(self, agent: ReActAgent) -> None:
+    def __init__(self) -> None:
         super().__init__(ReActNode.END)
-        self._agent = agent
 
     async def execute(self, ctx: AgentContext) -> NodeTransition:
         state = get_react_state(ctx)
