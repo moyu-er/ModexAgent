@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from modex_agent.control.channel import ControlChannel
-    from modex_agent.control.event_bus import ControlEventBus
     from modex_agent.hook.abc import HookSpec
     from modex_agent.runtime.store import TurnStateStore
 
@@ -29,7 +28,6 @@ class RuntimeControl:
     """控制平面组件聚合。"""
 
     channel: ControlChannel | None = None
-    event_bus: ControlEventBus | None = None
     turn_store: TurnStateStore | None = None
     busy_input_mode: BusyInputMode = BusyInputMode.QUEUE
 

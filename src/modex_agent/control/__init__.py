@@ -4,11 +4,9 @@ Provides:
 - Unified termination exceptions (AgentControlError etc.)
 - ControlCommand / ControlScope control command types
 - InMemoryControlChannel command input channel
-- CallbackControlEventBus event output bus
 """
 
 from modex_agent.control.channel import InMemoryControlChannel
-from modex_agent.control.event_bus import CallbackControlEventBus, ControlEventBus
 from modex_agent.control.exceptions import (
     AgentCancelled,
     AgentControlError,
@@ -35,8 +33,6 @@ __all__ = [
     "ControlEvent",
     "ControlEventType",
     "ControlScope",
-    # Channel / Bus
-    "CallbackControlEventBus",
-    "ControlEventBus",
+    # Channel
     "InMemoryControlChannel",
 ]

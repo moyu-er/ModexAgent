@@ -72,7 +72,7 @@ The `framework/` directory is the reusable agent framework. It provides ABCs, ru
 ### Testing
 - `pytest tests/unit/ -v` before committing
 - Absolute imports (`from modex_agent.xxx`) in tests
-- Mock `LLMProvider`, `ControlChannel`, `ControlEventBus` — never hit real APIs
+- Mock `LLMProvider`, `ControlChannel` — never hit real APIs
 
 ### Common Patterns
 - `Protocol` for contracts, `@dataclass` for data, `ABC` + `@abstractmethod` for abstract classes

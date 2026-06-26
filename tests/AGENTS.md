@@ -22,7 +22,7 @@ The `tests/` directory mirrors the `framework/` package structure with unit test
 ### Working In This Directory
 - Run all tests: `pytest tests/ -v`
 - Use absolute imports: `from modex_agent.xxx`
-- Mock `LLMProvider`, `ControlChannel`, `ControlEventBus` — never hit real APIs
+- Mock `LLMProvider`, `ControlChannel` — never hit real APIs
 - `pytest-asyncio` for async test functions (use `async def` + `await`)
 
 ### Common Patterns

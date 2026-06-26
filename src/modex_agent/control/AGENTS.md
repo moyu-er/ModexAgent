@@ -10,8 +10,8 @@ the channels defined here are currently almost entirely vestigial in the live
 runtime — read the "Current Status" section before assuming anything here is
 wired.** What this package actually provides that is in active use is the
 `AgentControlError` exception hierarchy (consumed widely) and a set of command
-/event data types. The `InMemoryControlChannel` queue and `CallbackControlEventBus`
-exist but have no live producers/consumers in the default runtime path.
+/event data types. The `InMemoryControlChannel` queue exists but has no live
+producers/consumers in the default runtime path.
 
 ## Key Files
 
@@ -20,7 +20,6 @@ exist but have no live producers/consumers in the default runtime path.
 | `exceptions.py` | `AgentControlError` base + `AgentCancelled`, `AgentTimeout`, `PolicyViolation`. **Actively used** — raised across hook/interceptor/agent layers. |
 | `types.py` | `ControlCommand` (data), `ControlEvent` (data), `ControlScope`, `ControlCommandType` (5: `CANCEL_TURN`, `CANCEL_RUN`, `INJECT_USER_MESSAGE`, `APPROVAL_RESPONSE`, `INJECT_STEER`), `ControlEventType` (5). |
 | `channel.py` | `ControlChannel` ABC + `InMemoryControlChannel` — session-routed deques with TTL. **Constructed** by `BotService` and threaded through the runtime, but see "Current Status". |
-| `event_bus.py` | `ControlEventBus` ABC + `CallbackControlEventBus` — session-scoped pub/sub. **Never instantiated or subscribed in the live path**; its only declared producer (`ProgressReportHook`) is itself never instantiated. |
 
 ## Current Status — Read Before Relying On This Layer
 
@@ -41,9 +40,6 @@ the pipeline pre-lock phase, and the channel is left in a half-wired state:
   consumer that drains `APPROVAL_RESPONSE` (`IMUserInterface.render_question` in
   `modex_agent/approval/ui.py`) has **zero callers** and waits on a command that
   never arrives.
-- **`ControlEventBus` / `ProgressReportHook`** — the only declared event
-  producer is `ProgressReportHook`, which is **never instantiated**, and no code
-  calls `subscribe(...)`. The bus is effectively dead.
 
 ## Drain Sites (Exist But Consume An Empty Queue)
 

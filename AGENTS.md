@@ -81,7 +81,7 @@
 
 ## Testing
 
-Unit tests under `tests/unit/` (mirrors `framework/` structure), framework-level tests under `tests/framework/`, integration tests under `tests/integration/`. Write/update tests before production code when practical. Absolute imports (`from modex_agent.xxx`). Mock `LLMProvider`, `ControlChannel`, `ControlEventBus` — never hit real APIs.
+Unit tests under `tests/unit/` (mirrors `framework/` structure), framework-level tests under `tests/framework/`, integration tests under `tests/integration/`. Write/update tests before production code when practical. Absolute imports (`from modex_agent.xxx`). Mock `LLMProvider`, `ControlChannel` — never hit real APIs.
 
 ## Documentation
 

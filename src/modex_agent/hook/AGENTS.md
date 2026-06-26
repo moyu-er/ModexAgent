@@ -20,7 +20,7 @@ Lifecycle extension points — lightweight observation, context injection, polic
 
 | Directory | Purpose |
 |-----------|---------|
-| `builtin/` | Built-in hook implementations — `logging.py`, `runtime_context.py`, `inbox_flush.py`, `subagent_auto_send.py`, `control_drain.py` (interceptors, not hooks), `experience_review.py`, `progress_report.py` (dead). See `hook/builtin/AGENTS.md`. |
+| `builtin/` | Built-in hook implementations — `logging.py`, `runtime_context.py`, `inbox_flush.py`, `subagent_auto_send.py`, `control_drain.py` (interceptors, not hooks), `experience_review.py`. See `hook/builtin/AGENTS.md`. |
 
 ## HookPoint Dispatch
 

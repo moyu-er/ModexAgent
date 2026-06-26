@@ -4,8 +4,8 @@
 # builtin hooks
 
 ## Purpose
-Framework-provided hooks covering logging, context tracking, multi-agent communication,
-and progress reporting. Also hosts `control_drain.py`, which despite living under
+Framework-provided hooks covering logging, context tracking, and multi-agent communication.
+Also hosts `control_drain.py`, which despite living under
 `hook/builtin/` actually defines *interceptors* (not hooks) that consume the control
 channel — see the separate table below.
 
@@ -16,7 +16,6 @@ channel — see the separate table below.
 | `runtime_context.py` | `RuntimeContextHook` | before_turn, before/after_tool_execution | live | Tracks tool calls per session via RuntimeContextManager |
 | `inbox_flush.py` | `InboxFlushHook` | before_turn, before_iteration | live | Flushes inbox messages at turn start |
 | `subagent_auto_send.py` | `SubagentAutoSendHook` | after_turn | live | Auto-forwards to subagents when LLM forgets send_message |
-| `progress_report.py` | `ProgressReportHook` | multiple | **dead** | Would push progress events to `ControlEventBus`; **never instantiated** and the bus is never subscribed — effectively unused. |
 | `experience_review.py` | `ExperienceReviewAgent` driver | — | live | Background conversation-review agent; spawns its own task. |
 
 ## Non-Hook Files In This Directory
@@ -38,7 +37,7 @@ cancel-drain utility:
 
 ## Dependencies
 - `modex_agent.core` -- AgentContext
-- `modex_agent.control` -- ControlEventBus, ControlEventType, ControlChannel, ControlCommandType, ControlScope
+- `modex_agent.control` -- ControlEventType, ControlChannel, ControlCommandType, ControlScope
 - `modex_agent.interceptor.abc` -- ToolCallInterceptor, LLMStreamInterceptor (control_drain.py only)
 - `modex_agent.hook.abc` -- Hook base ABC + per-point ABC hierarchy
 
