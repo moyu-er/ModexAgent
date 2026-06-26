@@ -12,10 +12,13 @@ import re
 
 ROOT = pathlib.Path(__file__).resolve().parents[2] / "src" / "modex_agent"
 
-# Symbols removed as genuinely dead in candidate ④. Live neighbors kept on
-# purpose (AgentControlError exceptions, ControlCommand/ControlEvent data types,
-# InMemoryControlChannel + drain sites — those are deferred to ④b, not dead).
+# Symbols removed as genuinely dead in candidate ④ and ④b (ADR-0007). Live
+# neighbors kept on purpose: AgentControlError exceptions; ControlCommand /
+# ControlCommandType / ControlScope (live channel payload); InMemoryControlChannel
+# + drain_control_channel + the ControlDrainInterceptor / LlmCancelInterceptor
+# (the LIVE /stop + WebUI-pause mechanism — confirmed load-bearing in ④b, not dead).
 DEAD_SYMBOLS = (
+    # candidate ④ — dead event bus + dead durable command store
     "ControlEventBus",
     "CallbackControlEventBus",
     "ProgressReportHook",
@@ -25,6 +28,12 @@ DEAD_SYMBOLS = (
     "NoOpRuntimeCommandStore",
     "ControlCommandState",
     "ControlCommandKind",
+    # candidate ④b — dead control event types + dead config aggregate + dead hook point
+    "ControlEvent",
+    "ControlEventType",
+    "RuntimeControl",
+    "AgentRuntimeConfig",
+    "OnControlCommandHook",
 )
 
 # Match whole identifiers, not substrings.
