@@ -35,14 +35,25 @@ from modex_agent.tools.terminal.managers import TerminalManagerBase
 
 
 class TerminalManager(TerminalManagerBase):
-    """Manages named terminal sessions with LRU eviction and JSON persistence.
+    """Full-featured terminal-session manager: LRU eviction + JSON persistence.
 
-    Responsibilities:
-    - Named session collection (name -> TerminalSession)
-    - Default terminal for CommandTool
-    - LRU eviction when max_terminals exceeded
+    Role in the seam (see ``TerminalManagerBase`` in ``managers.py``): the
+    capability-rich implementation, distinct from the lean production
+    ``BaseTerminalManager``. Adds:
+
+    - LRU eviction when ``max_terminals`` is exceeded
+    - JSON persist/restore of session metadata and history
+      (``save_state`` / ``load_state``)
+    - Memory-pressure buffer clearing (``_check_memory_pressure``)
     - Lazy alive detection (check only on use)
-    - Persist/restore session metadata and history
+
+    Currently has ZERO production callers (the example bot uses the
+    ``BaseTerminalManager`` family). Retained at zero callers per ADR-0007 —
+    a real capability seam, not dead code. The method-level divergences from
+    ``BaseTerminalManager`` (``close`` force-kill semantics, ``_default_terminal``
+    vs ``_default_name``, ``get_or_create`` signature) are intentional and
+    unchanged; folding inward is a separate future decision (see candidate-⑤
+    spec Part B).
     """
 
     def __init__(

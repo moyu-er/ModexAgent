@@ -22,11 +22,25 @@ from modex_agent.tools.terminal.types import (
 
 
 class TerminalManagerBase(ABC):
-    """Abstract base for terminal managers.
+    """Abstract seam for multi-session terminal managers.
 
-    Both TerminalManager (manager.py) and BaseTerminalManager implement this
-    interface. Tools use get_default() for command execution and the full
-    interface for session management.
+    Two intentional implementations (ADR-0007 — a real adapter seam, not
+    duplication):
+
+    - ``BaseTerminalManager`` (this module): lightweight, composition-friendly
+      base with a pluggable ``backend_factory``. No LRU eviction, no
+      persistence. This is the PRODUCTION path — the example bot uses its
+      platform subclasses (``WindowsHiddenTerminalManager`` /
+      ``WindowsVisibleTerminalManager`` / ``LinuxTerminalManager``) via
+      ``create_terminal_manager``.
+    - ``TerminalManager`` (``manager.py``): full-featured manager adding LRU
+      eviction, JSON persistence (save/load state), and memory-pressure
+      buffer clearing. Currently has ZERO production callers; retained as a
+      capability seam per ADR-0007 (do not delete as "unused" — see
+      ``tests/architecture/test_terminal_manager_seam_preserved.py``).
+
+    Tools consume the seam via ``get_default()`` (command execution) and the
+    session-management methods.
     """
 
     @abstractmethod
@@ -55,11 +69,14 @@ class TerminalManagerBase(ABC):
 
 
 class BaseTerminalManager(TerminalManagerBase):
-    """Manages named terminal sessions with a pluggable backend factory.
+    """Production terminal-session manager — lightweight, no eviction/persistence.
 
-    Unlike the full TerminalManager (manager.py), this class does not
-    handle LRU eviction or persistence.  It is designed for composition:
-    real backends in production, fake backends in tests.
+    Manages named sessions with a pluggable ``backend_factory`` (real backends
+    in production, fakes in tests). Role in the seam (see
+    ``TerminalManagerBase``): the lean production implementation. The example
+    bot uses the platform subclasses below via ``create_terminal_manager``.
+    Unlike ``TerminalManager`` it does NOT do LRU eviction or persistence —
+    by design.
     """
 
     def __init__(
