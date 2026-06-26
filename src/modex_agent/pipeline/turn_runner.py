@@ -59,7 +59,7 @@ from modex_agent.runtime.models import TurnSnapshot
 logger = logging.getLogger(__name__)
 
 
-async def _safe_flush(ctx_mgr: Any, session_id: str, *, timeout: float) -> None:
+async def _safe_flush(ctx_mgr: ContextManager, session_id: str, *, timeout: float) -> None:
     """Memory flush with timeout."""
     try:
         await asyncio.wait_for(ctx_mgr.flush(session_id), timeout=timeout)
