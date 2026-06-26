@@ -21,7 +21,7 @@ The framework grew import edges that point the wrong way, masked by
 that depends on nothing internal. The runtime edges above break that invariant
 and make the dependency graph not a tree.
 
-## Refactor track status (updated 2026-06-25)
+## Refactor track status (updated 2026-06-26)
 
 The violation list above describes the **pre-refactor** state. The decision
 (the tree rule, the tiers) is unchanged; this section records progress so a
@@ -56,9 +56,36 @@ Recommended order: ③ → ④ → ⑤ → ⑥. (Living status also in project m
   renaming `WorkspaceManager` (rule 8); exporting `WorkspaceResources` from
   the workspace facade (mild facade-completeness gap). See
   `docs/refactor/candidate-3-multi-agent-edge-and-eviction.md`.
-- ④ **orchestration** — ⏳ pending. Remove the dead event bus and durable
-  command store (ADR-0007's "genuinely dead" list); deepen turn loop / graph
-  engine / pipeline composition.
+- ④ **orchestration** — ✅ done (2026-06-26, conservative dead-code sweep;
+  commits `dbe3fe8a..d10bbf21`). Removed the dead event bus (`ControlEventBus` /
+  `CallbackControlEventBus` + `ProgressReportHook`) and the dead durable command
+  store (`RuntimeCommandStore` + 3 impls + `ControlCommandState` /
+  `ControlCommandKind`) per ADR-0007's "genuinely dead" list; tighten the graph
+  engine seam (`Graph.get_node()` accessor so `GraphEngine` stops reaching into
+  `Graph._nodes`); add a `tests/architecture/test_dead_code_gone.py` guard
+  asserting zero references to the removed symbol set. Spec:
+  `docs/refactor/candidate-4-orchestration.md`.
+- ④b **orchestration dead-code sweep (rescoped)** — ✅ done (2026-06-26; commits
+  `37be7024..6bdb0a1a`). The original
+  ④b premise (remove the "vestigial" control channel) was **rejected after
+  scouting**: `InMemoryControlChannel` + `drain_control_channel()` + the 4 drain
+  sites + `ControlDrainInterceptor` / `LlmCancelInterceptor` are **live and
+  load-bearing** — they are the IM `/stop` + WebUI pause mechanism
+  (`bot/service/core.py:504` calls `configure_control_filter`;
+  `session_control.py:13` + `webui/server.py:901` send `CANCEL_TURN`;
+  interceptors registered at `wiring.py:356-357`). They are never removed.
+  ④b is now a small sweep of what is *genuinely* dead: `ControlEvent` /
+  `ControlEventType` (event bus gone), the `RuntimeControl` /
+  `AgentRuntimeConfig` aggregate (zero readers; keep `BusyInputMode`), and
+  `OnControlCommandHook` + `HookPoint.ON_CONTROL_COMMAND` (never dispatched,
+  never subclassed); plus correcting the stale `control/AGENTS.md` "Current
+  Status". Spec: `docs/refactor/candidate-4b-orchestration.md`.
+- ④c **turn-loop / pipeline deepen** — ⏳ pending (split out from ④b). Deepen
+  `ReActAgent` (extract node-collaborator capabilities — `ToolExecutor`,
+  `InjectionDrainer`, `TurnStreamer`; kill node→agent back-refs; the streaming
+  cluster must preserve the live drain contract) and `AgentPipeline` (extract a
+  `TurnRunner` from the 1168-line god-object). Real surgery, separate
+  grilling/spec/plan.
 - ⑤ **tools/sandbox** (tier 2) — ⏳ pending. Slim the `sandbox` facade
   (ADR-0007); clarify the heavier `TerminalManager` subclass role vs
   `managers.py` (ADR-0007).
