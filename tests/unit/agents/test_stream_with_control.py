@@ -1,7 +1,10 @@
-"""Tests for ReActAgent._stream_with_control — LLM_STREAM interceptor path.
+"""End-to-end regression for the LLM_STREAM control-drain path (now in ReactLlmClient).
 
-Includes mid-turn cancel verification: a CANCEL_TURN injected while the LLM
-is streaming must be consumed by the LlmCancelInterceptor and abort the turn.
+Drives agent.run() through the streaming interceptor path (ReactLlmClient.call →
+_stream_with_control) and asserts tool_calls are preserved and that a mid-turn
+CANCEL_TURN is consumed by the LlmCancelInterceptor and aborts the turn. The
+unit-level WRITE of INTERRUPTED_PARTIAL is covered by
+tests/unit/agents/react/test_llm_client.py; this file covers full-turn behavior.
 """
 
 import asyncio
