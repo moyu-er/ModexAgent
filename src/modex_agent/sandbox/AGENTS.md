@@ -37,7 +37,7 @@ Sandboxed code execution — isolates tool execution from the agent runtime via 
 
 ## Status
 
-The guards/policies above (command pattern, path boundary, traversal, device, network, sanitized env) are fully implemented and exported from `sandbox/__init__.py`, but **not wired into the live tool-execution path**: no code in `modex_agent/tools`, `modex_agent/agents`, or `examples/bot_project/bot` imports `modex_agent.sandbox`. They are available for integration but currently inert. The root `framework/AGENTS.md` "Known Gaps" (command content, workspace boundary, environment isolation) therefore still describe the shipped runtime — the guards to close those gaps exist here but are not connected.
+The guards/policies above (command pattern, path boundary, traversal, device, network, sanitized env) are fully implemented behind `sandbox.guard` / `sandbox.guard_*`, and the four adapters behind `sandbox.adapters`. The package facade (`sandbox/__init__.py`) exposes only the seam — selection entry points + the `SandboxAdapter` ABC + consumer-facing types/errors (slimmed in candidate ⑤, ADR-0005/0007). The subsystem is **not wired into the live tool-execution path**: no code in `modex_agent/tools`, `modex_agent/agents`, or `examples/bot_project/bot` imports it. It is an opt-in capability, currently inert (ADR-0007). The repo-root `AGENTS.md` approval "Known Gaps" (command content, workspace boundary, environment isolation) still describe the shipped runtime — the guards to close those gaps exist here but are not connected.
 
 ## For AI Agents
 

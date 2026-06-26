@@ -633,4 +633,3 @@ Log files are at `logs/bot.log`, containing:
 - [ModexAgent Framework README](../../README.md)
 - [ModexAgent Framework (中文)](../../README.zh-CN.md)
 - [AGENTS.md](../../AGENTS.md)
-- [docs/bot-guide.md](../../docs/bot-guide.md)

@@ -94,4 +94,4 @@ Pipeline assembles runtime services and handles platform I/O; ReAct owns the tur
 - `modex_agent.approval` — approval response parsing and tier classification
 - `modex_agent.multi_agent` — `MultiAgentContextBuilder` for multi-agent context assembly
 - `modex_agent.memory` — memory compaction and consolidation after turns
-- `modex_agent.control` — control channel types (vestigial, for STEER mode)
+- `modex_agent.control` — `InMemoryControlChannel` (the live `/stop` + pause mechanism), `AgentControlError`, control types

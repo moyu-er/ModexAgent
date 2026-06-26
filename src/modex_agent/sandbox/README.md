@@ -1,6 +1,6 @@
 # Sandbox Module
 
-Secure code execution module for framework.
+Secure code execution module for ModexAgent — isolated command/code execution with security guards. Adapters: Subprocess, Landlock (Linux), Docker, E2B (cloud).
 
 ## Quick Start
 
@@ -69,5 +69,7 @@ config = SandboxConfig(
 - `DOCKER_SOCKET` - Docker socket path
 ## Current Runtime Status
 
-Sandbox adapters are used by tools under the ReAct tool execution path. Runtime
-control and approval boundaries are documented in `docs/current-runtime.md`.
+Sandbox adapters are an opt-in capability (ADR-0007) — currently not wired into
+the example bot's tool path. The public seam is the package facade
+(`get_default_sandbox` / `get_sandbox` / `SandboxAdapter`); concrete adapters
+live behind `sandbox.adapters`, guards behind `sandbox.guard`.

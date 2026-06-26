@@ -44,4 +44,4 @@ Runtime state governance — typed state models, enums, persistence, codecs, and
 - `modex_agent.core.types` — base types used by models
 - `modex_agent.hook` — `HookRunner` for lifecycle hooks (injected via `AgentRuntimeServices`)
 - `modex_agent.interceptor` — `InterceptorChain` for AOP interception (injected via `AgentRuntimeServices`)
-- `modex_agent.control` — control channel types (vestigial)
+- `modex_agent.control` — `InMemoryControlChannel` + `ControlCommand`/`ControlScope` (live control-plane types)

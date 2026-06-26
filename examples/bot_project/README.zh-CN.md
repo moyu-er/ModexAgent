@@ -633,4 +633,3 @@ plugins:
 - [ModexAgent 框架文档](../../README.zh-CN.md)
 - [ModexAgent Framework (English)](../../README.md)
 - [AGENTS.md](../../AGENTS.md)
-- [docs/bot-guide.md](../../docs/bot-guide.md)
