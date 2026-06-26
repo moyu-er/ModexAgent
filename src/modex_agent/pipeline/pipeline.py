@@ -51,15 +51,14 @@ from modex_agent.core.runtime_context import RuntimeContextManager
 from modex_agent.core.tool_manager import ToolManager
 from modex_agent.core.types import InputMessage
 from modex_agent.memory.context_governance import ContextGovernance
-from modex_agent.memory import MemoryContext
 from modex_agent.memory.consolidation import DreamEngine
 from modex_agent.memory.history import (
     inject_attachments_to_history,
 )
 from modex_agent.multi_agent import AgentDescriptor
 from modex_agent.multi_agent.router import AgentMessageRouter
+from modex_agent.pipeline.dream_scanner import DreamScanner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
-from modex_agent.runtime.dream_locks import _dream_locks
 from modex_agent.runtime.enums import SnapshotReason, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import StateQueryScope, TurnSnapshot
 from modex_agent.runtime.services import AgentRuntimeServices
@@ -209,6 +208,7 @@ class AgentPipeline:
         )
         self._running = False
         self._dream_task: asyncio.Task | None = None
+        self._dream_scanner: DreamScanner | None = None
         self._registry = TurnSessionRegistry()
 
     @property
@@ -268,7 +268,12 @@ class AgentPipeline:
             and self.dream_interval is not None
             and self.dream_interval > 0
         ):
-            self._dream_task = asyncio.create_task(self._dream_scan_loop())
+            self._dream_scanner = DreamScanner(
+                dream_engine=self.dream_engine,
+                dream_interval=self.dream_interval,
+                context_manager=self.context_manager,
+            )
+            self._dream_task = asyncio.create_task(self._dream_scanner.run_forever())
 
         try:
             async for input_msg in self.input_adapter.receive():
@@ -325,60 +330,15 @@ class AgentPipeline:
             raise
         finally:
             if self._dream_task is not None:
+                if self._dream_scanner is not None:
+                    self._dream_scanner.stop()
                 self._dream_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await self._dream_task
                 self._dream_task = None
+                self._dream_scanner = None
             await self.input_adapter.stop()
             await self.tool_manager.shutdown()
-
-    async def _dream_scan_loop(self) -> None:
-        """后台周期性扫描活跃 Context 并触发 DreamEngine。"""
-        dream_engine = self.dream_engine
-        dream_interval = self.dream_interval
-        if dream_engine is None or dream_interval is None:
-            return
-
-        while self._running:
-            try:
-                await asyncio.sleep(dream_interval)
-            except asyncio.CancelledError:
-                break
-            if not self._running:
-                break
-            # Duck typing: MemorySystemContextManager provides get_active_contexts + memory_system
-            get_active = getattr(self.context_manager, "get_active_contexts", None)
-            memory_system = getattr(self.context_manager, "memory_system", None)
-            if get_active is None or memory_system is None:
-                continue
-            for ctx in self.context_manager.get_active_contexts():
-                try:
-                    count = await memory_system.get_unprocessed_history_count(ctx)
-                except Exception as scan_err:
-                    logger.debug("DreamEngine scan error for %s: %s", str(ctx.session_id), scan_err)
-                    continue
-                if count > 0:
-                    scope_key = f"{str(ctx.session_id) if ctx.session_id else ''}:{ctx.user_id or ''}:{ctx.tenant_id or ''}"
-                    lock = _dream_locks.setdefault(scope_key, asyncio.Lock())
-
-                    logger.info(
-                        "DreamEngine timer trigger, scope=%s, count=%d",
-                        scope_key,
-                        count,
-                    )
-
-                    async def _run_dream(
-                        c: MemoryContext = ctx,
-                        engine: DreamEngine = dream_engine,
-                        lk: asyncio.Lock = lock,
-                    ) -> None:
-                        async with lk:
-                            try:
-                                await engine.run(c)
-                            except Exception as dream_err:
-                                logger.warning("DreamEngine failed: %s", dream_err)
-
-                    asyncio.create_task(_run_dream())
 
     async def process_message(self, input_msg: InputMessage) -> AgentResult | None:
         """公共入口：处理单个消息"""
