@@ -1,63 +1,79 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-22 -->
+<!-- Updated: 2026-06-26 -->
 
 # control
 
 ## Purpose
 
-Data types and transport channels for a runtime control plane. **Important:
-the channels defined here are currently almost entirely vestigial in the live
-runtime — read the "Current Status" section before assuming anything here is
-wired.** What this package actually provides that is in active use is the
-`AgentControlError` exception hierarchy (consumed widely) and a set of command
-/event data types. The `InMemoryControlChannel` queue exists but has no live
-producers/consumers in the default runtime path.
+Data types, transport channel, and termination exceptions for a runtime control
+plane. This package provides three live things:
+
+- **`AgentControlError` exception hierarchy** — `AgentCancelled`, `AgentTimeout`,
+  `PolicyViolation`. Raised across the hook / interceptor / agent layers; safe to
+  import and raise from anywhere.
+- **`InMemoryControlChannel` + `drain_control_channel()`** — the LIVE mid-turn
+  cancellation path for IM `/stop` and the WebUI pause button (see "How
+  Cancellation Works").
+- **`ControlCommand` / `ControlCommandType` / `ControlScope`** — the command
+  payload types carried by the channel.
+
+> Earlier versions of this doc described the channel as "almost entirely
+> vestigial" with "no live producers/consumers." That was **wrong**, corrected in
+> candidate ④b: `configure_control_filter()` IS called live (`bot/service/core.py`),
+> and `/stop` + pause DO feed `CANCEL_TURN` through the channel.
 
 ## Key Files
 
 | File | Description |
 |------|-------------|
 | `exceptions.py` | `AgentControlError` base + `AgentCancelled`, `AgentTimeout`, `PolicyViolation`. **Actively used** — raised across hook/interceptor/agent layers. |
-| `types.py` | `ControlCommand` (data), `ControlEvent` (data), `ControlScope`, `ControlCommandType` (5: `CANCEL_TURN`, `CANCEL_RUN`, `INJECT_USER_MESSAGE`, `APPROVAL_RESPONSE`, `INJECT_STEER`), `ControlEventType` (5). |
-| `channel.py` | `ControlChannel` ABC + `InMemoryControlChannel` — session-routed deques with TTL. **Constructed** by `BotService` and threaded through the runtime, but see "Current Status". |
+| `types.py` | `ControlCommand` (data), `ControlScope`, `ControlCommandType` (5: `CANCEL_TURN`, `CANCEL_RUN`, `INJECT_USER_MESSAGE`, `APPROVAL_RESPONSE`, `INJECT_STEER`). (The former `ControlEvent` / `ControlEventType` were dead — event bus gone in candidate ④ — and removed in ④b.) |
+| `channel.py` | `ControlChannel` ABC + `InMemoryControlChannel` — session-routed deques with TTL. **Live**: constructed by `BotService` and fed by `/stop` + pause. |
 
-## Current Status — Read Before Relying On This Layer
+## How Cancellation Works
 
-The control channel was designed as a shared inbox for cross-cutting runtime
-commands (cancel, steer, inject, approval responses). In the current codebase
-the planned full wiring was **superseded by direct `asyncio.Task.cancel()`** in
-the pipeline pre-lock phase, and the channel is left in a half-wired state:
+There are two independent cancellation mechanisms:
 
-- **`CANCEL_TURN`** — effectively never delivered to the channel. Two code paths can construct a CANCEL_TURN:
-  - **IM `/stop`** (`SessionControlStage` -> `InputAdapter._try_intercept_control` in `modex_agent/pipeline/adapters.py`): this path *does* call `channel.send(...)`, but only after `configure_control_filter()` has wired `self._control_channel`. That configuration is **never called in the live bot** (no production call site), so `_try_intercept_control` short-circuits with `channel is None` and returns False. IM `/stop` therefore stops the input-pipeline stage processing but does **not** cancel the running turn.
-  - **Pipeline-mode `/stop`** (`ControlCommandHandler` -> pre-lock `BYPASS_QUEUE`): returns the command as a *result field* (`CommandHandlingResult.control_command`) and the pipeline cancels the task directly (`existing_task.cancel()`), without writing to the channel.
-  Net effect: the drain sites (see below) drain an always-empty queue in every shipped path.
-- **`INJECT_STEER`** — sent into the channel in `STEER` busy-input mode
-  (`pipeline.py`), but **no code drains `INJECT_STEER`** anywhere. The command
-  is written to a queue that is never read.
-- **`APPROVAL_RESPONSE`** — never sent. `/approve` and `/deny` are resolved via
-  `CommandAction.APPROVAL_DECISION` result fields, not the channel. The one
-  consumer that drains `APPROVAL_RESPONSE` (`IMUserInterface.render_question` in
-  `modex_agent/approval/ui.py`) has **zero callers** and waits on a command that
-  never arrives.
+### (A) Channel-based — IM `/stop` + WebUI pause (this package)
 
-## Drain Sites (Exist But Consume An Empty Queue)
+`InMemoryControlChannel` is constructed by `BotService`
+(`examples/bot_project/bot/service/core.py`) and wired into the input adapter via
+`configure_control_filter()` (called live at `core.py`). Two UI paths send
+`CANCEL_TURN` into it:
 
-`drain_control_channel()` (in `modex_agent/hook/builtin/control_drain.py`) is called
-at four safe points — the ReAct `LLMNode`, `ToolNode._execute_batch`, the agent
-iteration loop, and via two interceptor wrappers (`ControlDrainInterceptor` on
-`TOOL_CALL`, `LlmCancelInterceptor` on `LLM_STREAM`). Each drains
-`{CANCEL_TURN}` and raises `AgentCancelled` on a turn-matched command. Because
-no `CANCEL_TURN` is ever sent, these are currently no-ops. They remain in place
-as the intended "safe-point" cancel mechanism if the channel is ever fed.
+- **IM `/stop`**: `input_pipeline/stages/session_control.py` →
+  `InputAdapter._try_intercept_control("/stop")` → `channel.send(CANCEL_TURN)`.
+- **WebUI pause**: `bot/webui/server.py` `_ws_pause` → the same
+  `_try_intercept_control` path.
 
-## What Actually Performs Cancellation
+`drain_control_channel()` (`modex_agent/hook/builtin/control_drain.py`) drains
+`{CANCEL_TURN}` at safe points and raises `AgentCancelled` on a turn-matched
+command. The drain is invoked from the ReAct `LLMNode` (before + after the LLM
+call), `ToolNode._execute_batch`, the agent iteration loop, and inside two
+interceptor wrappers registered live in `bot/workspace/wiring.py`:
+`ControlDrainInterceptor` (TOOL_CALL) and `LlmCancelInterceptor` (LLM_STREAM).
+`AgentCancelled` is caught in `ReActAgent.run` → `AgentResult(stop_reason=CANCELLED)`.
 
-Real turn cancellation today happens in `AgentPipeline._process_message_locked()`
-(`modex_agent/pipeline/pipeline.py`): the busy-input `INTERRUPT` mode and the
-`/stop` `BYPASS_QUEUE` path both call `existing_task.cancel()` on the running
-asyncio task. This raises `asyncio.CancelledError` inside the agent directly and
-does not involve this package's channel at all.
+### (B) Task-based — busy-input INTERRUPT (independent of this package)
+
+`AgentPipeline._process_message_locked()` (`modex_agent/pipeline/pipeline.py`):
+when a new message arrives in `BusyInputMode.INTERRUPT`, it calls
+`existing_task.cancel()` on the running asyncio task — pure
+`asyncio.CancelledError`, no channel involvement.
+
+### Steer (`INJECT_STEER`)
+
+Written to the channel in STEER busy-input mode (`pipeline.py`). The drain sites
+filter `{CANCEL_TURN}` only, so `INJECT_STEER`'s consumption path is not exercised
+by the default drain — verify before relying on it.
+
+### Approval responses (`APPROVAL_RESPONSE`)
+
+`/approve` and `/deny` resolve via `CommandAction.APPROVAL_DECISION` result fields,
+not the channel. `IMUserInterface.render_question` (`modex_agent/approval/ui.py`)
+drains `APPROVAL_RESPONSE`, but whether that drain is ever reached is unverified
+(it is a live-but-possibly-starving consumer) — flagged in candidate ④b for
+separate validation.
 
 ## Exception Model
 
@@ -74,12 +90,11 @@ never caught by control code.
 ## For AI Agents
 
 ### Working In This Directory
-- Do **not** describe this package as an active "control plane" in other docs
-  without qualifying it. The channels are vestigial; the exceptions are live.
-- If you add a real producer for `CANCEL_TURN`/`INJECT_STEER`, the drain sites
-  already exist and will start firing — verify the turn-uuid staleness logic in
-  `drain_control_channel()` matches your producer.
-- `AgentControlError`/`AgentCancelled`/`AgentTimeout`/`PolicyViolation` are
-  safe to import and raise from anywhere; they are the durable part of this API.
+- The channel + drain ARE live (the `/stop` + pause mechanism). Do not remove them
+  without installing a replacement cancel mechanism.
+- `AgentControlError`/`AgentCancelled`/`AgentTimeout`/`PolicyViolation` are safe
+  to import and raise from anywhere; they are the durable part of this API.
+- If you add a new producer or consumer of the channel, mind the turn-uuid
+  staleness logic in `drain_control_channel()`.
 
 <!-- MANUAL: -->
