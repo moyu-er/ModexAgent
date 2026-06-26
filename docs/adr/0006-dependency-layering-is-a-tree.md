@@ -22,7 +22,7 @@ that depends on nothing internal. The runtime edges above break that invariant
 and make the dependency graph not a tree. (One later, deliberate exception:
 `core` may import `utils` — see "utils — root-adjacent pure leaf".)
 
-## Refactor track status (updated 2026-06-26)
+## Refactor track status (updated 2026-06-27)
 
 The violation list above describes the **pre-refactor** state. The decision
 (the tree rule, the tiers) is unchanged; this section records progress so a
@@ -104,12 +104,36 @@ Recommended order: ③ → ④ → ⑤ → ⑥. (Living status also in project m
   architecture 12, bot 466/0. Spec:
   `docs/refactor/candidate-4c-react-agent-node-decoupling.md`; plan:
   `docs/refactor/candidate-4c-plan.md`.
-- ④d **AgentPipeline → TurnRunner deepen** — ⏳ pending (the G2 half, split out
-  from the original ④c). `AgentPipeline` (~1157L, ~30 ctor deps, god-object):
-  extract a `TurnRunner`/`TurnSession` absorbing `_execute_turn` +
-  approval-resume + context-build; `_process_message_locked` into named steps.
-  Highest single leverage but highest risk. Real surgery, separate
-  grilling/spec/plan.
+- ④d **AgentPipeline god-object decompose** — ✅ done (2026-06-27; commits
+  `da8c8313..a8f10e6c`). The G2 half, split out from the original ④c.
+  `AgentPipeline` (~1157L, 34 ctor deps, 9 responsibilities) is decomposed into
+  a facade + deep collaborators, all in the `pipeline/` package: `TurnRunner`
+  (deep cut — absorbs the entire `_process_message_locked` flow: turn-request
+  build, preprocess, context assemble, runtime build, execute, approval-resume)
+  composes two sub-modules — `TurnContextBuilder` (pure construction) and
+  `ApprovalResumer` (pure approval state-machine; `apply_resume()→(snapshot,
+  should_resume)`, TurnRunner drives execute + delete_turn + drain —
+  single-direction dependency, no cycle); `TurnSessionRegistry` (the 4 session
+  dicts + queries, shared owner — no back-ref); `DreamScanner` (`run_forever()`,
+  pipeline owns task lifecycle). `AgentPipeline` stays a thin facade: run loop,
+  pre-lock dispatch (route/dedup/busy-mode/lock), session-query delegation,
+  dream task, stop. Wired internally in `AgentPipeline.__init__` (④c pattern —
+  factory + 16 test sites unchanged). Approval-resume chain preserved verbatim;
+  approval regression is mandatory evidence. Front-loaded task-0: converted
+  `pipeline/` relative imports (~45) to ADR-0004 absolute. Guards:
+  `test_pipeline_modules_no_backref.py` (no sub-module holds a **code-level**
+  back-ref to `AgentPipeline` — uses `ast`, so docstring provenance prose does
+  not false-fire) + `test_pipeline_god_object_gone.py` (`pipeline.py` no longer
+  defines `execute_turn`/`process_locked`/`_handle_snapshot_approval`/
+  `_build_runtime_and_context`/`_resolve_pool_data`/`_is_subagent`). Highest
+  single leverage, highest risk.
+  **Landed:** 5 new deep modules (`TurnRunner` 420L / `TurnContextBuilder` 419L
+  / `ApprovalResumer` 123L / `TurnSessionRegistry` 81L / `DreamScanner` 83L);
+  `pipeline.py` facade ~1157→~522 lines; `TurnRunner` has zero `AgentPipeline`
+  back-reference (pinned); approval-resume chain preserved verbatim. **Verified:**
+  framework 2795/0, architecture 23, bot 466/0, approval+turn_runner regression
+  29 green. Spec: `docs/refactor/candidate-4d-pipeline-decompose.md`; plan:
+  `docs/refactor/candidate-4d-plan.md`.
 - ⑤ **tools/sandbox** (tier 2) — ✅ done (2026-06-26; commits `45cfbabb..5a176613`). **Part A (sandbox facade slim, ADR-0005/0007):** pure re-export trim — no symbol deleted, no file relocated, zero behavior change. Top-level `sandbox/__init__.py` `__all__` shrunk ~40→14 (5 selection entry points + the `SandboxAdapter` ABC + 8 consumer-facing types/errors); concrete adapters stay behind `sandbox.adapters`, guards behind `sandbox.guard`/`sandbox.guard_*`, env/policy/platform/docker helpers behind their submodules. Safe because sandbox has zero production callers (only `tests/unit/sandbox/*`, all via deep paths). Guard `tests/architecture/test_sandbox_facade_contract.py` pins `__all__` to exactly the seam (facade-freeze; ADR-0005 "`__all__` is load-bearing" made executable). **Part B (TerminalManager dedup, ADR-0007):** strategy = **clarify-roles, zero behavior change**. `TerminalManager` (manager.py, LRU/persist/memory-pressure) has zero production callers (bot uses the `BaseTerminalManager` family via `create_terminal_manager`); the two implementations have real method divergences (close force-kill, `_default_terminal`/`_default_name`, `get_or_create` signature) so fold-inward would be non-mechanical and risk the production path for an unused class — rejected. Resolution: doc-only (`TerminalManagerBase` seam-contract docstring + 2 class docstrings) + guard `tests/architecture/test_terminal_manager_seam_preserved.py` pinning `save_state`/`load_state`/`_evict_oldest`/`_check_memory_pressure` (semantic inverse of `test_dead_code_gone.py` — prevents future "zero-callers→delete" relitigation). **Deferred (own future candidate):** fold-inward if the bot adopts persistence — then the 3 divergences must be reconciled with full scouting. Verified: framework 2735/0, architecture 10, bot 466/0. Spec: `docs/refactor/candidate-5-tools-sandbox.md`; plan: `docs/refactor/candidate-5-plan.md`.
 - ⑥ **utils — pure-leaf rule** — ✅ done (2026-06-26). Per the new utils policy
   (see "utils — root-adjacent pure leaf"): `core` may depend on `utils`, but
