@@ -136,7 +136,7 @@ def test_pipeline_copies_runtime_services_template_into_each_turn() -> None:
     )
     context_state = ContextState()
 
-    agent_context, _ = pipeline._build_runtime_and_context(
+    agent_context, _ = pipeline._turn_context_builder.build_runtime_and_context(
         SessionInfo.from_str("s1", default_agent_name="main"),
         context_state,
         InMemoryContextManager(),

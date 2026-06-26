@@ -23,6 +23,7 @@ import pytest
 
 from modex_agent.pipeline.pipeline import AgentPipeline
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
+from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 
 
@@ -52,6 +53,41 @@ def _make_pipeline(**attrs: Any) -> AgentPipeline:
     for k, v in attrs.items():
         setattr(p, k, v)
     return p
+
+
+def _make_builder(**attrs: Any) -> TurnContextBuilder:
+    """Construct a TurnContextBuilder directly for build_runtime_and_context tests.
+
+    The two ``_build_runtime_and_context`` tests previously used ``__new__`` to
+    bypass the pipeline constructor; that behavior now lives in
+    :class:`TurnContextBuilder`, so these tests construct the builder directly.
+    Only the deps the tested path reads are wired; the rest default to None.
+    """
+    defaults: dict[str, Any] = dict(
+        agent=None,
+        tool_manager=None,
+        context_manager=None,
+        context_manager_factory=None,
+        sanitizer=None,
+        command_processor=None,
+        skill_manager=None,
+        context_builder=None,
+        agent_descriptor=None,
+        max_iterations=5,
+        safety=None,
+        runtime_services=None,
+        runtime_context_manager=None,
+        governance=None,
+        hook_runner=None,
+        interceptor_chain=None,
+        control_channel=None,
+        emitter_factory=None,
+        output_adapter=None,
+        turn_store=None,
+        registry=TurnSessionRegistry(),
+    )
+    defaults.update(attrs)
+    return TurnContextBuilder(**defaults)
 
 
 # ---------------------------------------------------------------------------
@@ -211,25 +247,15 @@ async def test_build_context_uses_snapshot_turn_store_when_wired() -> None:
     agent = MagicMock()
     agent.name = "main"
 
-    p = _make_pipeline(
+    builder = _make_builder(
         agent=agent,
-        agent_descriptor=None,
         tool_manager=MagicMock(),
-        max_iterations=5,
-        runtime_services=None,
-        hook_runner=None,
-        interceptor_chain=None,
-        control_channel=None,
         safety=MagicMock(),
-        runtime_context_manager=None,
         turn_store=self_turn,
-        emitter_factory=None,
         output_adapter=MagicMock(),
-        governance=None,
-        _registry=TurnSessionRegistry(),
     )
 
-    ctx, _emitter = p._build_runtime_and_context(
+    ctx, _emitter = builder.build_runtime_and_context(
         SessionInfo.from_str("s:main"),
         context_state,
         ctx_mgr,
@@ -261,25 +287,15 @@ async def test_build_context_falls_back_to_self_when_no_snapshot() -> None:
     agent = MagicMock()
     agent.name = "main"
 
-    p = _make_pipeline(
+    builder = _make_builder(
         agent=agent,
-        agent_descriptor=None,
         tool_manager=MagicMock(),
-        max_iterations=5,
-        runtime_services=None,
-        hook_runner=None,
-        interceptor_chain=None,
-        control_channel=None,
         safety=MagicMock(),
-        runtime_context_manager=None,
         turn_store=self_turn,
-        emitter_factory=None,
         output_adapter=MagicMock(),
-        governance=None,
-        _registry=TurnSessionRegistry(),
     )
 
-    ctx, _emitter = p._build_runtime_and_context(
+    ctx, _emitter = builder.build_runtime_and_context(
         SessionInfo.from_str("s:main"),
         context_state,
         ctx_mgr,
