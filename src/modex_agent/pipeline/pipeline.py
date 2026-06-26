@@ -58,6 +58,7 @@ from modex_agent.memory.history import (
 )
 from modex_agent.multi_agent import AgentDescriptor
 from modex_agent.multi_agent.router import AgentMessageRouter
+from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.runtime.dream_locks import _dream_locks
 from modex_agent.runtime.enums import SnapshotReason, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import StateQueryScope, TurnSnapshot
@@ -208,10 +209,7 @@ class AgentPipeline:
         )
         self._running = False
         self._dream_task: asyncio.Task | None = None
-        self._session_locks: dict[str, asyncio.Lock] = {}
-        self._session_tasks: dict[str, asyncio.Task] = {}
-        self._injection_queues: dict[str, asyncio.Queue[str]] = {}
-        self._turn_uuids: dict[str, str] = {}
+        self._registry = TurnSessionRegistry()
 
     @property
     def _user_interface(self):  # delegates to renderer so pool injection reaches handle()
@@ -388,8 +386,7 @@ class AgentPipeline:
 
     def is_session_active(self, session_id: str) -> bool:
         """Check if a turn is currently executing for this session."""
-        task = self._session_tasks.get(session_id)
-        return task is not None and not task.done()
+        return self._registry.is_active(session_id)
 
     def has_active_sessions(self) -> bool:
         """Return True if any session has a running agent turn.
@@ -398,13 +395,11 @@ class AgentPipeline:
         Subagent turns are covered — they run within their parent
         session's task and are tracked here.
         """
-        return any(not task.done() for task in self._session_tasks.values())
+        return self._registry.has_active()
 
     def get_active_turn_uuid(self, session_id: str) -> str | None:
         """Get turn UUID for the currently executing turn, or None."""
-        if not self.is_session_active(session_id):
-            return None
-        return self._turn_uuids.get(session_id)
+        return self._registry.get_turn_uuid(session_id)
 
     async def _process_message(self, input_msg: InputMessage) -> AgentResult | None:
         """处理单个消息（内部入口）"""
@@ -466,7 +461,7 @@ class AgentPipeline:
                 return None
 
         # 忙碌状态处理
-        existing_task = self._session_tasks.get(session_id)
+        existing_task = self._registry.get_session_task(session_id)
         if existing_task is not None and not existing_task.done():
             # Agent 正在执行中
             if self.busy_input_mode == BusyInputMode.INTERRUPT:
@@ -496,7 +491,7 @@ class AgentPipeline:
                             session_id,
                         )
                         return None
-                queue = self._injection_queues.get(session_id)
+                queue = self._registry.get_queue(session_id)
                 if queue:
                     await queue.put(input_msg.content or "")
                 else:
@@ -526,7 +521,7 @@ class AgentPipeline:
                 pass
 
         # 获取或创建 session 级别的锁，防止同一 session 并发处理
-        lock = self._session_locks.setdefault(session_id, asyncio.Lock())
+        lock = self._registry.set_session_lock(session_id)
         lock_wait_start = time.monotonic()
         async with lock:
             lock_wait_ms = (time.monotonic() - lock_wait_start) * 1000
@@ -624,7 +619,7 @@ class AgentPipeline:
         """Build AgentContext and emitter for the turn."""
 
         # Ensure per-session injection queue exists
-        self._injection_queues.setdefault(session.session_id, asyncio.Queue(maxsize=50))
+        self._registry.get_or_create_queue(session.session_id)
 
         # ---- typed TurnIdentity (new) ----
         from uuid import uuid4
@@ -699,7 +694,7 @@ class AgentPipeline:
                     else snapshot_turn_store
                 ),
                 trace_store=snapshot_trace_store,
-                pending_input_queue=self._injection_queues.get(session.session_id),
+                pending_input_queue=self._registry.get_queue(session.session_id),
                 safety=base_services.safety if base_services is not None else self.safety,
                 runtime_context_manager=(
                     base_services.runtime_context_manager
@@ -765,16 +760,18 @@ class AgentPipeline:
         turn_start = time.monotonic()
 
         try:
-            # Track this task for busy_input_mode handling
+            # Track this task for busy_input_mode handling + generate the
+            # control-command turn UUID. These are independent registrations:
+            # the task is tracked whenever one is running, while the turn UUID
+            # is recorded only when a runtime exists (it needs runtime.state).
             turn_task = asyncio.current_task()
             if turn_task is not None:
-                self._session_tasks[session_id] = turn_task
+                self._registry.register_task(session_id, turn_task)
 
-            # Generate turn UUID for control command scoping
             if agent_context.runtime is not None:
                 turn_uuid = uuid.uuid4().hex
                 agent_context.runtime.state.custom[TurnCustomKey.TURN_UUID] = turn_uuid
-                self._turn_uuids[session_id] = turn_uuid
+                self._registry.set_turn_uuid(session_id, turn_uuid)
 
             try:
                 result = await self.agent.run(agent_context, emitter)
@@ -824,8 +821,7 @@ class AgentPipeline:
 
         finally:
             # Clean up session task tracking
-            self._session_tasks.pop(session_id, None)
-            self._turn_uuids.pop(session_id, None)
+            self._registry.unregister_turn(session_id)
             await _safe_flush(ctx_mgr, session_id, timeout=turn.memory_flush_timeout_seconds)
             # Turn 结束时的清理（带 timeout 保护）
             if self.on_session_end is not None:
@@ -1132,10 +1128,7 @@ class AgentPipeline:
 
         应在 session 彻底结束时调用（用户断开、超时等），不应每个 turn 调用。
         """
-        self._session_locks.pop(session_id, None)
-        self._injection_queues.pop(session_id, None)
-        self._session_tasks.pop(session_id, None)
-        self._turn_uuids.pop(session_id, None)
+        self._registry.cleanup(session_id)
         self._approval.cleanup_session(session_id)
         if self.control_channel is not None:
             try:
@@ -1152,6 +1145,6 @@ class AgentPipeline:
         """停止流水线"""
         self._running = False
         # 清理所有 lingering session 资源
-        for sid in list(self._session_locks.keys()):
+        for sid in self._registry.session_ids():
             await self.cleanup_session_resources(sid)
         logger.info("Pipeline stop requested, waiting for current message to complete...")

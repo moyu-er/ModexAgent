@@ -23,6 +23,7 @@ import pytest
 
 from modex_agent.pipeline.pipeline import AgentPipeline
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
+from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 
 
 class _FakeWorkspace:
@@ -225,7 +226,7 @@ async def test_build_context_uses_snapshot_turn_store_when_wired() -> None:
         emitter_factory=None,
         output_adapter=MagicMock(),
         governance=None,
-        _injection_queues={},
+        _registry=TurnSessionRegistry(),
     )
 
     ctx, _emitter = p._build_runtime_and_context(
@@ -275,7 +276,7 @@ async def test_build_context_falls_back_to_self_when_no_snapshot() -> None:
         emitter_factory=None,
         output_adapter=MagicMock(),
         governance=None,
-        _injection_queues={},
+        _registry=TurnSessionRegistry(),
     )
 
     ctx, _emitter = p._build_runtime_and_context(
