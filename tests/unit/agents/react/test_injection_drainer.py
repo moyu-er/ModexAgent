@@ -1,11 +1,15 @@
-"""Tests for ReActAgent._drain_injections — message loss prevention (P1-2r2)."""
+"""Tests for InjectionDrainer.drain — message loss prevention (P1-2r2).
+
+Migrated from tests/unit/agents/test_drain_injections.py (which tested
+ReActAgent._drain_injections). Behaviour and assertions are identical; only
+the call site changed from `agent._drain_injections(ctx)` to
+`InjectionDrainer().drain(ctx)`.
+"""
 
 import asyncio
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 
-from modex_agent.agents.react.agent import ReActAgent
-from modex_agent.core.types import LLMResponse
+from modex_agent.agents.react.injection_drainer import InjectionDrainer
 from modex_agent.runtime.enums import AgentKind, TurnPhase
 from modex_agent.runtime.models import TurnIdentity, TurnStateBase
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
@@ -71,17 +75,9 @@ class TestDrainInjectionsMessagePreservation:
         # History that fails on first append
         history = _FakeHistory(fail_on_append=True)
 
-        provider = MagicMock()
-        provider.chat = AsyncMock(return_value=LLMResponse(
-            content="ok",
-            finish_reason="stop",
-        ))
-
-        agent = ReActAgent(provider=provider)
-
-        # Call _drain_injections directly to isolate the test
+        # Call drain directly to isolate the test
         ctx = _FakeContext(history=history, injection_queue=injection_queue)
-        injected = await agent._drain_injections(ctx)
+        injected = await InjectionDrainer().drain(ctx)
 
         # Assert: message should be back in queue (put_back on failure)
         assert injection_queue.qsize() >= 1, (
@@ -96,17 +92,9 @@ class TestDrainInjectionsMessagePreservation:
         assert injection_queue.qsize() == 2
 
         history = _FakeHistory(fail_on_append=False)
-
-        provider = MagicMock()
-        provider.chat = AsyncMock(return_value=LLMResponse(
-            content="ok",
-            finish_reason="stop",
-        ))
-
-        agent = ReActAgent(provider=provider)
         ctx = _FakeContext(history=history, injection_queue=injection_queue)
 
-        injected = await agent._drain_injections(ctx)
+        injected = await InjectionDrainer().drain(ctx)
 
         # Both messages should be in history
         assert len(injected) == 2
