@@ -1,19 +1,21 @@
 # Sandbox module — isolated command/code execution with security guards.
+#
+# Public seam (ADR-0005 facade-only; slimmed in candidate ⑤ Part A per
+# ADR-0007):
+#   - selection entry points (get_default_sandbox / get_sandbox /
+#     get_local_sandbox / get_cloud_sandbox / list_available_adapters)
+#   - the SandboxAdapter ABC (the extension contract)
+#   - consumer-facing types/errors
+#
+# Concrete adapters live behind `sandbox.adapters`; command/path guards
+# behind `sandbox.guard` / `sandbox.guard_*`; env builder behind
+# `sandbox.env_builder`; workspace policy behind `sandbox.workspace_policy`;
+# platform/docker helpers behind `sandbox.platform` / `sandbox.docker_utils`.
 # For usage examples, see examples/sandbox/.
 
 from .adapters.base import SandboxAdapter
-from .adapters.docker import DockerSandbox
-from .adapters.e2b import E2BSandbox
-from .adapters.landlock import LandlockSandbox
-from .adapters.subprocess import SubprocessSandbox
 from .config import SandboxConfig
-from .docker_utils import (
-    DockerPlatformChecker,
-    check_docker_available,
-    check_windows_linux_containers,
-)
 from .enums import SandboxType
-from .env_builder import EnvBuilderConfig, EnvironmentBuilder, EnvPolicy
 from .exceptions import (
     CommandRejectedError,
     SandboxError,
@@ -28,65 +30,24 @@ from .factory import (
     get_sandbox,
     list_available_adapters,
 )
-from .guard import (
-    CommandPatternGuard,
-    CommandPatternGuardConfig,
-    CommandSeverity,
-    GuardMatch,
-    GuardResult,
-)
-from .guard_device import BENIGN_DEVICE_PATHS, is_benign_device_path
-from .guard_pipeline import GuardPipeline
-from .guard_traversal import PathTraversalConfig, PathTraversalGuard
-from .platform import (
-    Platform,
-    get_default_shell,
-    get_platform,
-)
 from .types import SandboxResult
-from .workspace_policy import WorkspacePolicy, WorkspacePolicyConfig
 
 __all__ = [
-    "SandboxResult",
-    "SandboxError",
-    "SandboxUnavailableError",
-    "SandboxTimeoutError",
-    "CommandRejectedError",
-    "WorkspaceBoundaryError",
-    "SandboxConfig",
-    "SandboxType",
+    # Selection entry points
     "get_default_sandbox",
     "get_sandbox",
     "get_local_sandbox",
     "get_cloud_sandbox",
     "list_available_adapters",
+    # Seam ABC
     "SandboxAdapter",
-    "SubprocessSandbox",
-    "LandlockSandbox",
-    "DockerSandbox",
-    "E2BSandbox",
-    # Guard & policy
-    "CommandPatternGuard",
-    "CommandPatternGuardConfig",
-    "CommandSeverity",
-    "GuardMatch",
-    "GuardResult",
-    "GuardPipeline",
-    "PathTraversalGuard",
-    "PathTraversalConfig",
-    "BENIGN_DEVICE_PATHS",
-    "is_benign_device_path",
-    "EnvironmentBuilder",
-    "EnvBuilderConfig",
-    "EnvPolicy",
-    "WorkspacePolicy",
-    "WorkspacePolicyConfig",
-    # Platform
-    "Platform",
-    "get_platform",
-    "get_default_shell",
-    # Docker utils
-    "check_docker_available",
-    "check_windows_linux_containers",
-    "DockerPlatformChecker",
+    # Types / errors
+    "SandboxConfig",
+    "SandboxResult",
+    "SandboxType",
+    "SandboxError",
+    "SandboxUnavailableError",
+    "SandboxTimeoutError",
+    "CommandRejectedError",
+    "WorkspaceBoundaryError",
 ]
