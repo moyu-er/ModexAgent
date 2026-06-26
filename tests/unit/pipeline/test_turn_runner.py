@@ -231,9 +231,9 @@ async def test_execute_turn_finally_runs_on_session_end() -> None:
 
 
 async def test_handle_snapshot_approval_returns_none_when_resume_not_applied() -> None:
-    """When apply_resume returns False the driver returns None without executing."""
+    """When apply_resume returns None the driver returns None without executing."""
     resumer = MagicMock(spec=ApprovalResumer)
-    resumer.apply_resume = AsyncMock(return_value=False)
+    resumer.apply_resume = AsyncMock(return_value=None)
     runner = _make_runner(resumer=resumer)
 
     snapshot = MagicMock(spec=TurnSnapshot)
@@ -259,7 +259,7 @@ async def test_handle_snapshot_approval_drains_on_success() -> None:
     approval = MagicMock(spec=ApprovalRenderer)
     approval.drain = AsyncMock()
     resumer = MagicMock(spec=ApprovalResumer)
-    resumer.apply_resume = AsyncMock(return_value=True)
+    resumer.apply_resume = AsyncMock(return_value=turn_store)
     runner = _make_runner(
         agent=_OkAgent(),
         turn_store=turn_store,

@@ -3,12 +3,16 @@
 Exercises the resumer directly, asserting the load-bearing approval-resume
 semantics are preserved after extraction from the pipeline:
 
-* some requests still PENDING → save_turn called, prompt rendered, returns False
+* some requests still PENDING → save_turn called, prompt rendered, returns None
 * all decided (or action decides the last pending) → state restored into
-  agent_context.runtime.state, returns True
-* approval_from_snapshot returns None → return False immediately
-* no turn_store resolvable + not all decided → log error, return False (no crash)
-* all decided but agent_context.runtime is None → return False (cannot restore)
+  agent_context.runtime.state, returns the resolved TurnStateStore
+* approval_from_snapshot returns None → return None immediately
+* no turn_store resolvable + not all decided → log error, return None (no crash)
+* all decided but agent_context.runtime is None → return None (cannot restore)
+
+On the success path the returned store is the SAME store object the resumer
+resolved (pool_data.turn_store when present, else the resumer's own turn_store)
+— so the caller can ``delete_turn`` + ``drain`` without re-resolving it.
 
 The driving tail (execute_turn / delete_turn / drain) is owned by the caller
 and is therefore absent here — those are covered by the pipeline-level approval
@@ -255,86 +259,86 @@ def fake_agent_context_no_runtime() -> AgentContext:
 # ---------------------------------------------------------------------------
 
 
-async def test_apply_resume_partial_saves_and_returns_false(
+async def test_apply_resume_partial_saves_and_returns_none(
     resumer, partial_snapshot, turn_store, user_interface,
 ):
-    """Some requests still PENDING → save_turn called, prompt rendered, returns False."""
-    should = await resumer.apply_resume(
+    """Some requests still PENDING → save_turn called, prompt rendered, returns None."""
+    result = await resumer.apply_resume(
         partial_snapshot, action=None, session_id="s1", pool_data=None,
         agent_context=fake_agent_context_for(partial_snapshot),
     )
-    assert should is False
+    assert result is None
     assert turn_store.saved  # save_turn invoked with updated snapshot
     assert user_interface.rendered  # prompt rendered for the first PENDING req
 
 
-async def test_apply_resume_complete_restores_state_and_returns_true(
+async def test_apply_resume_complete_restores_state_and_returns_store(
     resumer, complete_snapshot, fake_agent_context,
 ):
-    """All decided → state restored into agent_context, returns True."""
-    should = await resumer.apply_resume(
+    """All decided → state restored into agent_context, returns the resolved store."""
+    result = await resumer.apply_resume(
         complete_snapshot, action=None, session_id="s1", pool_data=None,
         agent_context=fake_agent_context,
     )
-    assert should is True
+    assert result is resumer._turn_store  # the store the caller should clean up with
     assert fake_agent_context.runtime is not None  # restored from snapshot
     assert fake_agent_context.identity == complete_snapshot.identity
 
 
-async def test_apply_resume_action_decides_last_pending_returns_true(
+async def test_apply_resume_action_decides_last_pending_returns_store(
     resumer, partial_snapshot, fake_agent_context,
 ):
-    """action=ALLOW decides the first PENDING req → completes the set → returns True."""
+    """action=ALLOW decides the first PENDING req → completes the set → returns store."""
     # Seed both as PENDING; applying ALLOW to the first makes it the only
-    # decision, but the second is still PENDING → still False.
-    should_partial = await resumer.apply_resume(
+    # decision, but the second is still PENDING → still None.
+    result_partial = await resumer.apply_resume(
         partial_snapshot, action=ApprovalAction.ALLOW, session_id="s1",
         pool_data=None, agent_context=fake_agent_context,
     )
-    assert should_partial is False  # one decided, one still pending
+    assert result_partial is None  # one decided, one still pending
 
     # Now build a single-request snapshot: deciding it completes the set.
     single = _snapshot(
         decisions={},
         approval_requests=[_request("r1", "c1")],
     )
-    should = await resumer.apply_resume(
+    result = await resumer.apply_resume(
         single, action=ApprovalAction.ALLOW, session_id="s1",
         pool_data=None, agent_context=fake_agent_context,
     )
-    assert should is True
+    assert result is resumer._turn_store
 
 
-async def test_apply_resume_no_turn_store_returns_false(snapshot_no_store):
-    """No turn_store resolvable + not all decided → logs error, returns False."""
+async def test_apply_resume_no_turn_store_returns_none(snapshot_no_store):
+    """No turn_store resolvable + not all decided → logs error, returns None."""
     no_store_resumer, snapshot = snapshot_no_store
-    should = await no_store_resumer.apply_resume(
+    result = await no_store_resumer.apply_resume(
         snapshot, action=None, session_id="s1", pool_data=None,
         agent_context=fake_agent_context_for(snapshot),
     )
-    assert should is False
+    assert result is None
 
 
-async def test_apply_resume_approval_none_returns_false(
+async def test_apply_resume_approval_none_returns_none(
     resumer, snapshot_no_approval, fake_agent_context,
 ):
-    """approval_from_snapshot returns None → return False immediately."""
-    should = await resumer.apply_resume(
+    """approval_from_snapshot returns None → return None immediately."""
+    result = await resumer.apply_resume(
         snapshot_no_approval, action=ApprovalAction.ALLOW, session_id="s1",
         pool_data=None, agent_context=fake_agent_context,
     )
-    assert should is False
+    assert result is None
 
 
-async def test_apply_resume_complete_but_runtime_none_returns_false(
+async def test_apply_resume_complete_but_runtime_none_returns_none(
     resumer, complete_snapshot, fake_agent_context_no_runtime,
 ):
-    """All decided but agent_context.runtime is None → return False (cannot restore)."""
-    should = await resumer.apply_resume(
+    """All decided but agent_context.runtime is None → return None (cannot restore)."""
+    result = await resumer.apply_resume(
         complete_snapshot, action=ApprovalAction.ALLOW, session_id="s1",
         pool_data=None, agent_context=fake_agent_context_no_runtime,
     )
-    assert should is False
+    assert result is None
 
 
 async def test_apply_resume_pool_data_turn_store_used(
@@ -343,11 +347,11 @@ async def test_apply_resume_pool_data_turn_store_used(
     """When pool_data carries its own turn_store, that store is used for save_turn."""
     pool_store = _RecordingTurnStore()
     pool_data = _PoolDataSnapshotStub(turn_store=pool_store)
-    should = await resumer.apply_resume(
+    result = await resumer.apply_resume(
         partial_snapshot, action=None, session_id="s1", pool_data=pool_data,
         agent_context=fake_agent_context_for(partial_snapshot),
     )
-    assert should is False
+    assert result is None  # partial → no resume
     assert pool_store.saved  # pool_data.turn_store, not the resumer's own
     assert not turn_store.saved
 

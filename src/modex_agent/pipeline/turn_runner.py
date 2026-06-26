@@ -267,16 +267,15 @@ class TurnRunner:
         ctx_mgr: ContextManager,
         pool_data: PoolDataSnapshot | None = None,
     ) -> AgentResult | None:
-        should_resume = await self._resumer.apply_resume(
+        turn_store = await self._resumer.apply_resume(
             snapshot,
             action=action,
             session_id=session_id,
             pool_data=pool_data,
             agent_context=agent_context,
         )
-        if not should_resume:
+        if turn_store is None:
             return None
-        turn_store = pool_data.turn_store if pool_data is not None else self._turn_store
         result = await self.execute_turn(
             agent_context,
             emitter,

@@ -79,10 +79,24 @@ class ApprovalResumer:
         session_id: str,
         pool_data: PoolDataSnapshot | None,
         agent_context: AgentContext,
-    ) -> bool:
+    ) -> TurnStateStore | None:
+        """Apply a resume decision and restore state if every tool is decided.
+
+        Returns the ``TurnStateStore`` the caller should use for cleanup
+        (``delete_turn`` on the snapshot, then ``drain``) when the resume
+        succeeds — i.e. all approval requests are decided and the snapshot
+        state has been restored into ``agent_context.runtime.state``. Returns
+        ``None`` on every non-resuming path: no approval payload, no
+        resolvable turn_store, requests still pending (after a partial save +
+        prompt render), or ``agent_context.runtime`` is None.
+
+        On a successful resume the caller runs ``execute_turn`` and, when it
+        yields a result, ``turn_store.delete_turn(snapshot.identity)`` and
+        ``drain(session_id)`` using the returned store.
+        """
         approval = ReActSnapshotPolicy.approval_from_snapshot(snapshot)
         if approval is None:
-            return False
+            return None
 
         if action is not None:
             decision = (
@@ -100,7 +114,7 @@ class ApprovalResumer:
         turn_store = self._resolve_turn_store(pool_data)
         if turn_store is None:
             logger.error("Approval resume requested but no TurnStateStore is configured")
-            return False
+            return None
 
         if not approval.every_tool_decided:
             await turn_store.save_turn(snapshot)
@@ -113,11 +127,11 @@ class ApprovalResumer:
                             format_approval_prompt(req),
                         )
                         break
-            return False
+            return None
 
         state = ReActSnapshotPolicy.state_from_snapshot(snapshot)
         if agent_context.runtime is None:
-            return False
+            return None
         agent_context.identity = snapshot.identity
         agent_context.runtime.state = state
-        return True
+        return turn_store
