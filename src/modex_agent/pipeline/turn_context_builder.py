@@ -42,12 +42,9 @@ if TYPE_CHECKING:
     from modex_agent.utils.media_utils import MediaBlock, MediaProcessor
 
     from modex_agent.commands.models import CommandHandlingResult, CommandProcessor
-    from modex_agent.core.emitter import AgentResult
-    from modex_agent.core.session_id import SessionInfo
     from modex_agent.core.skills import SkillManager
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.pipeline.adapters import OutputAdapter
-    from modex_agent.pipeline.snapshot import PoolDataSnapshot
     from modex_agent.runtime.models import TurnSnapshot
 
 from modex_agent.approval.response import parse_input_command
@@ -90,8 +87,6 @@ class TurnContextBuilder:
         *,
         agent: Agent,
         tool_manager: ToolManager,
-        context_manager: ContextManager,
-        context_manager_factory: Callable[..., ContextManager] | None,
         sanitizer: Callable[[str], str] | None,
         command_processor: CommandProcessor | None,
         skill_manager: SkillManager | None,
@@ -112,8 +107,6 @@ class TurnContextBuilder:
     ) -> None:
         self._agent = agent
         self._tool_manager = tool_manager
-        self._context_manager = context_manager
-        self._context_manager_factory = context_manager_factory
         self._sanitizer = sanitizer
         self._command_processor = command_processor
         self._skill_manager = skill_manager

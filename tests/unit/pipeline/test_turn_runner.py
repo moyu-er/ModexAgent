@@ -118,7 +118,6 @@ def _make_runner(
 
     return TurnRunner(
         agent=agent,
-        tool_manager=InMemoryToolManager(),
         context_manager=_FlushingCtxMgr(),
         context_manager_factory=None,
         on_session_start=None,

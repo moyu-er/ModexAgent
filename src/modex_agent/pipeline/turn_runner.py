@@ -40,9 +40,6 @@ if TYPE_CHECKING:
     from modex_agent.runtime.store import TurnStateStore
     from modex_agent.workspace import WorkspaceManager
 
-    from modex_agent.core.runtime_context import RuntimeContextManager
-    from modex_agent.core.tool_manager import ToolManager
-
 from modex_agent.approval.types import ApprovalAction
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult
@@ -82,7 +79,6 @@ class TurnRunner:
         self,
         *,
         agent: Agent,
-        tool_manager: ToolManager,
         context_manager: ContextManager,
         context_manager_factory: Callable[..., ContextManager] | None,
         on_session_start: Callable[[str], None] | None,
@@ -99,7 +95,6 @@ class TurnRunner:
         agent_descriptor: AgentDescriptor | None,
     ) -> None:
         self._agent = agent
-        self._tool_manager = tool_manager
         self._context_manager = context_manager
         self._context_manager_factory = context_manager_factory
         self._on_session_start = on_session_start
@@ -174,7 +169,6 @@ class TurnRunner:
             AgentResult on successful turn, None if GraphInterrupt for approval.
         """
         agent_name = agent_context.session.agent_name
-        result: AgentResult | None = None
         turn = self._safety.turn
         turn_start = time.monotonic()
 
@@ -313,7 +307,7 @@ class TurnRunner:
             if self._context_manager_factory
             else self._context_manager
         )
-        input_metadata = getattr(input_msg, "metadata", None) or {}
+        input_metadata = input_msg.metadata
 
         # Resolve the per-turn PoolData snapshot once, at turn start, so a
         # workspace switch mid-turn cannot corrupt the in-flight turn.

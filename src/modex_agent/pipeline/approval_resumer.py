@@ -129,9 +129,9 @@ class ApprovalResumer:
                         break
             return None
 
-        state = ReActSnapshotPolicy.state_from_snapshot(snapshot)
         if agent_context.runtime is None:
             return None
+        state = ReActSnapshotPolicy.state_from_snapshot(snapshot)
         agent_context.identity = snapshot.identity
         agent_context.runtime.state = state
         return turn_store

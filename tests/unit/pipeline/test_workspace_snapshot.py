@@ -50,7 +50,6 @@ def _make_runner(**attrs: Any) -> TurnRunner:
     constructor's keyword-only contract is satisfied."""
     defaults: dict[str, Any] = dict(
         agent=MagicMock(name="agent"),
-        tool_manager=MagicMock(name="tool_manager"),
         context_manager=MagicMock(name="context_manager"),
         context_manager_factory=None,
         on_session_start=None,
@@ -81,8 +80,6 @@ def _make_builder(**attrs: Any) -> TurnContextBuilder:
     defaults: dict[str, Any] = dict(
         agent=None,
         tool_manager=None,
-        context_manager=None,
-        context_manager_factory=None,
         sanitizer=None,
         command_processor=None,
         skill_manager=None,

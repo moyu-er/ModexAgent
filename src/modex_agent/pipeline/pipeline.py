@@ -61,8 +61,6 @@ logger = logging.getLogger(__name__)
 
 _UNSET = object()
 
-_ERROR_PLACEHOLDER = "[Assistant reply unavailable due to model or runtime error.]"
-
 
 class AgentPipeline:
     """Agent 流水线 - 编排完整的端到端流程
@@ -90,7 +88,6 @@ class AgentPipeline:
         dream_engine: DreamEngine | None = None,
         dream_interval: float | None = None,
         max_iterations: int = 10,
-        incremental_flush: bool = True,
         skill_manager: SkillManager | None = None,
         hooks: list[HookSpec] | None = None,
         router: AgentMessageRouter | None = None,
@@ -139,17 +136,14 @@ class AgentPipeline:
         self.tool_manager = tool_manager
         self.input_adapter = input_adapter
         self.output_adapter = output_adapter
-        self.emitter_factory = emitter_factory
+        self._emitter_factory = emitter_factory
         self.dream_engine = dream_engine
         self.dream_interval = dream_interval
-        self.max_iterations = max_iterations
-        self.incremental_flush = incremental_flush
         self.skill_manager = skill_manager
         self.hooks = list(hooks) if hooks else []
 
         self.router = router
         self.deduplicator = deduplicator
-        self.context_builder = context_builder
         self.agent_descriptor = agent_descriptor
         self.sanitizer = sanitizer
         self.context_manager_factory = context_manager_factory
@@ -189,8 +183,6 @@ class AgentPipeline:
         self._turn_context_builder = TurnContextBuilder(
             agent=agent,
             tool_manager=tool_manager,
-            context_manager=context_manager,
-            context_manager_factory=context_manager_factory,
             sanitizer=sanitizer,
             command_processor=command_processor,
             skill_manager=skill_manager,
@@ -211,7 +203,6 @@ class AgentPipeline:
         )
         self._turn_runner = TurnRunner(
             agent=agent,
-            tool_manager=tool_manager,
             context_manager=context_manager,
             context_manager_factory=context_manager_factory,
             on_session_start=on_session_start,
@@ -256,11 +247,22 @@ class AgentPipeline:
         self._pool_name = value
         self._turn_runner._pool_name = value
 
+    @property
+    def emitter_factory(self) -> Callable[..., ContentEmitter] | None:
+        return self._emitter_factory
+
+    @emitter_factory.setter
+    def emitter_factory(self, value: Callable[..., ContentEmitter] | None) -> None:
+        self._emitter_factory = value
+        # Mirror into TurnContextBuilder so its captured copy stays current when
+        # pool wiring mutates this attribute after pipeline construction
+        # (pool_builder._create_with_emitter reassigns it post-construction).
+        self._turn_context_builder._emitter_factory = value
+
     async def run(self) -> None:
         """运行流水线"""
         self._running = True
         await self.input_adapter.start()
-        await self.tool_manager.startup()
 
         if (
             self.dream_engine is not None
@@ -306,7 +308,6 @@ class AgentPipeline:
                             str(input_msg.session),
                             exc_info=True,
                         )
-                    pass
                 except Exception as e:
                     logger.exception(f"Failed to process message: {e}")
                     # 发送错误响应
@@ -337,7 +338,6 @@ class AgentPipeline:
                 self._dream_task = None
                 self._dream_scanner = None
             await self.input_adapter.stop()
-            await self.tool_manager.shutdown()
 
     async def process_message(self, input_msg: InputMessage) -> AgentResult | None:
         """公共入口：处理单个消息"""
@@ -377,7 +377,6 @@ class AgentPipeline:
         session_id = session.session_id
         logger.info(f"Processing message: session_id={session_id}")
 
-        prelock_dispatch_policy = None
         if self.command_processor is not None:
             prelock_parse_result = self.command_processor.parse(input_msg.content or "")
             if prelock_parse_result.invocation is not None:
@@ -433,12 +432,13 @@ class AgentPipeline:
             elif self.busy_input_mode == BusyInputMode.QUEUE:
                 # Never queue slash commands as raw text — they would bypass the
                 # command processor and lose their semantics when injected.
+                # Reuse the pre-lock parse (prelock_parse_result) — command_processor
+                # is stateless and input_msg.content is unchanged.
                 if self.command_processor is not None:
-                    prelock_parse = self.command_processor.parse(input_msg.content or "")
-                    if prelock_parse.invocation is not None:
+                    if prelock_parse_result.invocation is not None:
                         logger.info(
                             "Slash command %s dropped while agent is busy (session=%s)",
-                            prelock_parse.invocation.command,
+                            prelock_parse_result.invocation.command,
                             session_id,
                         )
                         await self.output_adapter.send(

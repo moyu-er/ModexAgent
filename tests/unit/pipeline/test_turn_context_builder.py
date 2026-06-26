@@ -36,8 +36,6 @@ def _make_builder(**overrides: Any) -> TurnContextBuilder:
     defaults: dict[str, Any] = dict(
         agent=MagicMock(name="agent"),
         tool_manager=InMemoryToolManager(),
-        context_manager=InMemoryContextManager(),
-        context_manager_factory=None,
         sanitizer=None,
         command_processor=None,
         skill_manager=None,
