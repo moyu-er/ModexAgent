@@ -37,7 +37,7 @@ cancel-drain utility:
 
 ## Dependencies
 - `modex_agent.core` -- AgentContext
-- `modex_agent.control` -- ControlEventType, ControlChannel, ControlCommandType, ControlScope
+- `modex_agent.control` -- ControlChannel, ControlCommandType, ControlScope
 - `modex_agent.interceptor.abc` -- ToolCallInterceptor, LLMStreamInterceptor (control_drain.py only)
 - `modex_agent.hook.abc` -- Hook base ABC + per-point ABC hierarchy
 

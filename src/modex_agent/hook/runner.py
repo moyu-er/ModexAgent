@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, TypedDict, Unpack
 
 from modex_agent.hook.abc import (
@@ -25,7 +25,6 @@ from modex_agent.hook.abc import (
     HookPoint,
     HookResult,
     HookSpec,
-    OnControlCommandHook,
 )
 
 if TYPE_CHECKING:
@@ -63,10 +62,6 @@ class _ToolResultsPayload(TypedDict, total=False):
 
 class _AfterLLMResponsePayload(TypedDict, total=False):
     response: LLMResponse | None
-
-
-class _ControlCommandPayload(TypedDict, total=False):
-    command: Mapping[str, object]
 
 
 class _FinalizeContentPayload(TypedDict, total=False):
@@ -124,12 +119,6 @@ async def _call_after_llm_response(
     return await hook.after_llm_response(ctx, kw.get("response"))  # type: ignore[arg-type]
 
 
-async def _call_on_control_command(
-    hook: OnControlCommandHook, ctx: AgentContext, **kw: Unpack[_ControlCommandPayload]
-) -> HookResult:
-    return await hook.on_control_command(ctx, kw.get("command", {}))
-
-
 async def _call_finalize_content(
     hook: FinalizeContentHook, ctx: AgentContext, **kw: Unpack[_FinalizeContentPayload]
 ) -> str | None:
@@ -150,7 +139,6 @@ _HOOK_DISPATCH: dict[HookPoint, tuple[type, Callable[..., Any]]] = {
     HookPoint.BEFORE_TOOL_EXECUTION: (BeforeToolExecutionHook, _call_before_tool_execution),
     HookPoint.AFTER_TOOL_EXECUTION: (AfterToolExecutionHook, _call_after_tool_execution),
     HookPoint.AFTER_LLM_RESPONSE: (AfterLLMResponseHook, _call_after_llm_response),
-    HookPoint.ON_CONTROL_COMMAND: (OnControlCommandHook, _call_on_control_command),
     HookPoint.FINALIZE_CONTENT: (FinalizeContentHook, _call_finalize_content),
     HookPoint.FINALLY_TURN: (FinallyTurnHook, _call_finally_turn),
 }

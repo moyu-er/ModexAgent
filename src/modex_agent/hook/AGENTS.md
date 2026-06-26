@@ -33,7 +33,6 @@ Lifecycle extension points — lightweight observation, context injection, polic
 | `BEFORE_TOOL_EXECUTION` | `before_tool_execution` | Before tool batch | Policy guard |
 | `AFTER_TOOL_EXECUTION` | `after_tool_execution` | After tool batch | Result transform |
 | `AFTER_LLM_RESPONSE` | `after_llm_response` | After LLM response | Output guard |
-| `ON_CONTROL_COMMAND` | `on_control_command` | Control command arrives | Veto commands |
 | `FINALIZE_CONTENT` | `finalize_content` | Before final output (sync) | Content formatting |
 
 ## Design Rules
@@ -43,7 +42,6 @@ Lifecycle extension points — lightweight observation, context injection, polic
 - Instance-level state keyed by `session_id` if unavoidable
 - `HookResult(veto=True)` for lightweight denial; does NOT exit the agent
 - ReAct clean mode runs without hook services
-- `ON_CONTROL_COMMAND` / `progress_report` are tied to the (vestigial) control plane; see `modex_agent/control/AGENTS.md`
 
 ## For AI Agents
 

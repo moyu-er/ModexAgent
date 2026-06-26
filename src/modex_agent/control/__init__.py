@@ -16,8 +16,6 @@ from modex_agent.control.exceptions import (
 from modex_agent.control.types import (
     ControlCommand,
     ControlCommandType,
-    ControlEvent,
-    ControlEventType,
     ControlScope,
 )
 
@@ -30,8 +28,6 @@ __all__ = [
     # Types
     "ControlCommand",
     "ControlCommandType",
-    "ControlEvent",
-    "ControlEventType",
     "ControlScope",
     # Channel
     "InMemoryControlChannel",
