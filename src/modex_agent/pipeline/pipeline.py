@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from modex_agent.interceptor.chain import InterceptorChain
     from modex_agent.multi_agent.router import RouteResult
     from modex_agent.workspace import WorkspaceManager
-    from modex_agent.runtime.store import RuntimeCommandStore, TurnStateStore
+    from modex_agent.runtime.store import TurnStateStore
     from modex_agent.utils.media_utils import MediaBlock, MediaProcessor
 
 from modex_agent.commands.models import (
@@ -143,7 +143,6 @@ class AgentPipeline:
         busy_input_mode: BusyInputMode = BusyInputMode.QUEUE,
         user_interface: ApprovalUserInterface | None = None,
         turn_store: TurnStateStore | None = None,
-        command_store: RuntimeCommandStore | None = None,
         runtime_services: AgentRuntimeServices | None = None,
         command_processor: CommandProcessor | None = None,
         workspace_manager: WorkspaceManager | None = None,
@@ -156,11 +155,10 @@ class AgentPipeline:
             safety: P0-a 运行时安全策略（timeout、retry 等），None 则使用默认
             user_interface: 审批通知 UI 接口（CLI/IM/Noop），None 则不通知
             turn_store: TurnStateStore — typed turn snapshot persistence
-            command_store: RuntimeCommandStore — durable command queue
             runtime_services: process-scope services copied into each turn runtime
             workspace_manager: optional WorkspaceManager; when set together
                 with ``pool_name`` each turn resolves its per-turn stores
-                (context manager / turn store / command store) from the
+                (context manager / turn store) from the
                 active workspace's PoolData snapshot instead of ``self``.
             pool_name: name of the pool whose PoolData snapshot backs each
                 turn when ``workspace_manager`` is wired.
@@ -198,7 +196,6 @@ class AgentPipeline:
         self.control_channel = control_channel
         self.busy_input_mode = busy_input_mode
         self.turn_store = turn_store
-        self.command_store = command_store
         self.runtime_services = runtime_services
         self.command_processor = command_processor
         self.workspace_manager = workspace_manager
@@ -233,7 +230,7 @@ class AgentPipeline:
         receives *session_id* and returns the pool name, so the pipeline
         follows per‑session pool routing (PoolSessionStore) instead of the
         static ``pool_name`` assigned at pipeline creation.  This keeps a
-        session's memory, trace, and turn/command stores consistently in the
+        session's memory, trace, and turn stores consistently in the
         same pool, even when pool routing changes between turns.
 
         When no resolver is wired the old static ``pool_name`` path is used
@@ -665,14 +662,11 @@ class AgentPipeline:
         base_gov = base_services.governance if base_services is not None else None
         governance = ctx_mgr.wrap_governance(base_gov or self.governance, session.session_id)
 
-        # Resolve the turn-scoped turn/command stores. Precedence:
+        # Resolve the turn-scoped turn store. Precedence:
         # process-scope runtime_services override > per-turn pool snapshot
-        # > pipeline-level self.turn_store / self.command_store.
+        # > pipeline-level self.turn_store.
         snapshot_turn_store = (
             pool_data.turn_store if pool_data is not None else self.turn_store
-        )
-        snapshot_command_store = (
-            pool_data.command_store if pool_data is not None else self.command_store
         )
         snapshot_trace_store = (
             pool_data.trace_store if pool_data is not None else None
@@ -703,11 +697,6 @@ class AgentPipeline:
                     base_services.turn_store
                     if base_services is not None and base_services.turn_store is not None
                     else snapshot_turn_store
-                ),
-                command_store=(
-                    base_services.command_store
-                    if base_services is not None and base_services.command_store is not None
-                    else snapshot_command_store
                 ),
                 trace_store=snapshot_trace_store,
                 pending_input_queue=self._injection_queues.get(session.session_id),
@@ -1043,8 +1032,8 @@ class AgentPipeline:
         # its OWN context_manager — its own system prompt + OUTPUT.md base dir
         # — and must never be overridden by the main agent's, otherwise every
         # subagent inherits the main prompt and loses its OUTPUT.md task.
-        # (turn_store / command_store below are still shared — they are
-        # pool-level and session-isolated, and the subagent needs them so its
+        # (turn_store below is still shared — it is
+        # pool-level and session-isolated, and the subagent needs it so its
         # runtime + FINALLY_TURN hooks are constructed.)
         if pool_data is not None and not self._is_subagent():
             ctx_mgr = pool_data.context_manager

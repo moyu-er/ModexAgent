@@ -325,27 +325,23 @@ class TestApprovalCrossPool:
         assert main_store._workspace != coding_store._workspace
 
     def test_runtime_stores_are_per_pool(self, tmp_path):
-        """Both TurnStateStore and RuntimeCommandStore are per-pool.
+        """TurnStateStore is per-pool.
 
         In create_pool():
           data/runtime_state/{pool_name}/turns/
-          data/runtime_state/{pool_name}/commands/
         """
         from modex_agent.agents.react.state import ReActRuntimeStateCodec
         from modex_agent.runtime.codec import RuntimeStateCodecRegistry
         from modex_agent.runtime.enums import AgentKind
-        from modex_agent.runtime.store import JsonFileRuntimeCommandStore, JsonFileTurnStateStore
+        from modex_agent.runtime.store import JsonFileTurnStateStore
 
         codec_registry = RuntimeStateCodecRegistry({AgentKind.REACT: ReActRuntimeStateCodec()})
 
         main_turns = JsonFileTurnStateStore(tmp_path / "main" / "turns", codec_registry)
-        main_cmds = JsonFileRuntimeCommandStore(tmp_path / "main" / "commands")
         coding_turns = JsonFileTurnStateStore(tmp_path / "coding" / "turns", codec_registry)
-        coding_cmds = JsonFileRuntimeCommandStore(tmp_path / "coding" / "commands")
 
         # Per-pool isolation: different workspaces
         assert main_turns._workspace != coding_turns._workspace
-        assert main_cmds._workspace != coding_cmds._workspace
 
     def test_approval_isolated_per_pool(self):
         """Approval created in one pool is NOT visible in another pool.

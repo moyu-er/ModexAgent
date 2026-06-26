@@ -1,7 +1,7 @@
 """Tests for the per-turn PoolData snapshot resolution in AgentPipeline.
 
 Unit C: the pipeline must resolve its per-turn stores (context manager,
-turn store, command store) from the active workspace's PoolData snapshot
+turn store) from the active workspace's PoolData snapshot
 when a workspace manager is wired, and fall back to its own ``self.*``
 stores otherwise.
 
@@ -36,7 +36,6 @@ class _FakePoolData(PoolDataSnapshot):
 
     context_manager: Any
     turn_store: Any
-    command_store: Any
     trace_store: Any | None = None
     memory_dir: Path | None = None
     runtime_dir: Path | None = None
@@ -76,11 +75,9 @@ def test_resolve_pool_data_returns_snapshot_from_active_workspace() -> None:
     """When wired, the snapshot comes from resolve_workspace().pool_data[name]."""
     snap_cm = MagicMock(name="snap_context_manager")
     snap_turn = MagicMock(name="snap_turn_store")
-    snap_cmd = MagicMock(name="snap_command_store")
     snapshot = _FakePoolData(
         context_manager=snap_cm,
         turn_store=snap_turn,
-        command_store=snap_cmd,
     )
     ws = _FakeWorkspace({"main": snapshot})
     wm = MagicMock()
@@ -110,7 +107,7 @@ def test_resolve_pool_data_returns_none_for_missing_pool() -> None:
 def test_resolve_pool_data_returns_snapshot_for_subagent() -> None:
     """A subagent pipeline shares the pool's name with the main agent and
     MUST still resolve the pool's PoolData — it needs the pool-level
-    ``turn_store`` / ``command_store`` so its AgentRuntime is constructed
+    ``turn_store`` so its AgentRuntime is constructed
     and FINALLY_TURN hooks (SubagentAutoSendHook) fire. The per-agent
     isolation is enforced one level up: ``_process_message_locked`` does
     not let the snapshot override a subagent's own context_manager.
@@ -120,7 +117,6 @@ def test_resolve_pool_data_returns_snapshot_for_subagent() -> None:
     snapshot = _FakePoolData(
         context_manager=MagicMock(name="main_context_manager"),
         turn_store=MagicMock(name="main_turn_store"),
-        command_store=MagicMock(name="main_command_store"),
     )
     ws = _FakeWorkspace({"main": snapshot})
     wm = MagicMock()
@@ -166,7 +162,6 @@ def test_resolve_pool_data_returns_snapshot_for_main_agent() -> None:
     snapshot = _FakePoolData(
         context_manager=MagicMock(name="main_context_manager"),
         turn_store=MagicMock(name="main_turn_store"),
-        command_store=MagicMock(name="main_command_store"),
     )
     ws = _FakeWorkspace({"main": snapshot})
     wm = MagicMock()
@@ -196,15 +191,12 @@ async def test_build_context_uses_snapshot_turn_store_when_wired() -> None:
 
     snap_cm = MagicMock(name="snap_cm")
     snap_turn = MagicMock(name="snap_turn_store")
-    snap_cmd = MagicMock(name="snap_command_store")
     snapshot = _FakePoolData(
         context_manager=snap_cm,
         turn_store=snap_turn,
-        command_store=snap_cmd,
     )
 
     self_turn = MagicMock(name="self_turn_store")  # must NOT be used
-    self_cmd = MagicMock(name="self_command_store")  # must NOT be used
 
     # Minimal context_state stub: only system_prompt / history / pipeline read.
     context_state = MagicMock()
@@ -230,7 +222,6 @@ async def test_build_context_uses_snapshot_turn_store_when_wired() -> None:
         safety=MagicMock(),
         runtime_context_manager=None,
         turn_store=self_turn,
-        command_store=self_cmd,
         emitter_factory=None,
         output_adapter=MagicMock(),
         governance=None,
@@ -246,19 +237,17 @@ async def test_build_context_uses_snapshot_turn_store_when_wired() -> None:
 
     # Snapshot injected onto AgentContext
     assert ctx.workspace_snapshot is snapshot
-    # The runtime services turn_store/command_store come from the snapshot
+    # The runtime services turn_store comes from the snapshot
     assert ctx.runtime is not None
     assert ctx.runtime.services.turn_store is snap_turn
-    assert ctx.runtime.services.command_store is snap_cmd
 
 
 @pytest.mark.asyncio
 async def test_build_context_falls_back_to_self_when_no_snapshot() -> None:
-    """Without a snapshot, self.turn_store / self.command_store are used."""
+    """Without a snapshot, self.turn_store is used."""
     from modex_agent.core.session_id import SessionInfo
 
     self_turn = MagicMock(name="self_turn_store")
-    self_cmd = MagicMock(name="self_command_store")
 
     context_state = MagicMock()
     context_state.system_prompt = "sys"
@@ -283,7 +272,6 @@ async def test_build_context_falls_back_to_self_when_no_snapshot() -> None:
         safety=MagicMock(),
         runtime_context_manager=None,
         turn_store=self_turn,
-        command_store=self_cmd,
         emitter_factory=None,
         output_adapter=MagicMock(),
         governance=None,
@@ -300,7 +288,6 @@ async def test_build_context_falls_back_to_self_when_no_snapshot() -> None:
     assert ctx.workspace_snapshot is None
     assert ctx.runtime is not None
     assert ctx.runtime.services.turn_store is self_turn
-    assert ctx.runtime.services.command_store is self_cmd
 
 
 # ---------------------------------------------------------------------------
@@ -314,7 +301,7 @@ def test_resolve_pool_data_uses_callable_when_pool_resolver_set() -> None:
     Regression: pipeline.pool_name was set once during pool init and never
     changed, but a session's pool routing could change between turns (e.g.
     the user switches pools in the WebUI).  With a static pool_name the
-    memory system, trace store, and turn/command stores all resolved from
+    memory system, trace store, and turn store all resolved from
     the WRONG pool — splitting one session's data across multiple pool dirs.
     The resolver callable lets the pipeline ask a per-turn routing source
     (PoolSessionStore) which pool owns this session.
@@ -322,12 +309,10 @@ def test_resolve_pool_data_uses_callable_when_pool_resolver_set() -> None:
     snap_a = _FakePoolData(
         context_manager=MagicMock(name="cm_a"),
         turn_store=MagicMock(name="ts_a"),
-        command_store=MagicMock(name="cs_a"),
     )
     snap_b = _FakePoolData(
         context_manager=MagicMock(name="cm_b"),
         turn_store=MagicMock(name="ts_b"),
-        command_store=MagicMock(name="cs_b"),
     )
     ws = _FakeWorkspace({"main": snap_a, "coding": snap_b})
     wm = MagicMock()
@@ -359,7 +344,7 @@ def test_resolve_pool_data_uses_callable_when_pool_resolver_set() -> None:
 def test_resolve_pool_data_falls_back_to_static_pool_name_when_no_resolver() -> None:
     """Without pool_data_resolver the old static pool_name path still works."""
     snapshot = _FakePoolData(
-        context_manager=MagicMock(), turn_store=MagicMock(), command_store=MagicMock(),
+        context_manager=MagicMock(), turn_store=MagicMock(),
     )
     ws = _FakeWorkspace({"main": snapshot})
     wm = MagicMock()

@@ -101,7 +101,6 @@ async def build_pool_data(
     from modex_agent.runtime.codec import RuntimeStateCodecRegistry
     from modex_agent.runtime.enums import AgentKind
     from modex_agent.runtime.store import (
-        JsonFileRuntimeCommandStore,
         JsonFileTurnStateStore,
     )
 
@@ -113,15 +112,12 @@ async def build_pool_data(
     memory_system = create_memory(memory_cfg, provider, memory_dir)  # type: ignore[arg-type]
     await memory_system.initialize()
 
-    # ── Runtime stores (runtime_state/<pool>/{turns,commands,trace}) ─
+    # ── Runtime stores (runtime_state/<pool>/{turns,trace}) ─
     codec_registry = RuntimeStateCodecRegistry(
         {AgentKind.REACT: ReActRuntimeStateCodec()}
     )
     turn_store = JsonFileTurnStateStore(
         ctx.paths.runtime_dir(pool_name, "turns"), codec_registry
-    )
-    command_store = JsonFileRuntimeCommandStore(
-        ctx.paths.runtime_dir(pool_name, "commands")
     )
     trace_store = JsonFileTraceStore(
         base_dir=ctx.paths.runtime_dir(pool_name, "trace")
@@ -150,7 +146,6 @@ async def build_pool_data(
     return PoolData(
         context_manager=context_manager,
         turn_store=turn_store,
-        command_store=command_store,
         trace_store=trace_store,
         memory_dir=memory_dir,
         runtime_dir=runtime_dir_parent,

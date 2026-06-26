@@ -1,7 +1,6 @@
-"""Turn state and command stores — ABCs and default implementations.
+"""Turn state stores — ABCs and default implementations.
 
 TurnStateStore: semantic turn-snapshot persistence.
-RuntimeCommandStore: durable command queue (separate lifecycle from turns).
 """
 
 from __future__ import annotations
@@ -20,8 +19,8 @@ from modex_agent.core.types import TodoStatus
 from modex_agent.utils.file_io import read_json_robust
 
 from .codec import RuntimeStateCodecRegistry
-from .enums import OperationStatus, TurnPhase
-from .models import ControlCommandState, StateQueryScope, TurnIdentity, TurnSnapshot
+from .enums import TurnPhase
+from .models import StateQueryScope, TurnIdentity, TurnSnapshot
 from modex_agent.core.session_id import SessionInfo
 
 logger = logging.getLogger(__name__)
@@ -248,135 +247,6 @@ class JsonFileTurnStateStore(TurnStateStore):
         if scope.created_before is not None and snapshot.created_at >= scope.created_before:
             return False
         return True
-
-
-# ===========================================================================
-# RuntimeCommandStore
-# ===========================================================================
-
-
-class RuntimeCommandStore(ABC):
-    """Durable command queue — separate lifecycle from turn snapshots."""
-
-    @abstractmethod
-    async def save_command(self, command: ControlCommandState) -> None: ...
-
-    @abstractmethod
-    async def load_pending_commands(self, scope: StateQueryScope) -> list[ControlCommandState]: ...
-
-    @abstractmethod
-    async def mark_command_applied(self, command_id: str) -> None: ...
-
-
-class NoOpRuntimeCommandStore(RuntimeCommandStore):
-    """No-op store for clean mode."""
-
-    async def save_command(self, command: ControlCommandState) -> None:
-        return
-
-    async def load_pending_commands(self, scope: StateQueryScope) -> list[ControlCommandState]:
-        return []
-
-    async def mark_command_applied(self, command_id: str) -> None:
-        return
-
-
-class InMemoryRuntimeCommandStore(RuntimeCommandStore):
-    """In-memory command store for testing."""
-
-    def __init__(self) -> None:
-        self._store: dict[str, ControlCommandState] = {}
-
-    async def save_command(self, command: ControlCommandState) -> None:
-        self._store[command.command_id] = command
-
-    async def load_pending_commands(self, scope: StateQueryScope) -> list[ControlCommandState]:
-        result: list[ControlCommandState] = []
-        for cmd in self._store.values():
-            if cmd.status != OperationStatus.COMPLETED:
-                if scope.agent_id is not None and cmd.agent_id != scope.agent_id:
-                    continue
-                if scope.session_id is not None and cmd.session_id != scope.session_id:
-                    continue
-                result.append(cmd)
-        return result
-
-    async def mark_command_applied(self, command_id: str) -> None:
-        import time
-
-        cmd = self._store.get(command_id)
-        if cmd is not None:
-            cmd.status = OperationStatus.COMPLETED
-            cmd.applied_at = time.time()
-
-
-class JsonFileRuntimeCommandStore(RuntimeCommandStore):
-    """Default JSON-file backend for durable commands."""
-
-    def __init__(self, workspace: Path) -> None:
-        self._workspace = workspace
-        self._workspace.mkdir(parents=True, exist_ok=True)
-
-    def _path(self, command_id: str) -> Path:
-        safe = JsonFileTurnStateStore._safe_segment(command_id)
-        return self._workspace / f"{safe}.json"
-
-    async def save_command(self, command: ControlCommandState) -> None:
-        data = {
-            "command_id": command.command_id,
-            "kind": command.kind.value,
-            "agent_id": command.agent_id,
-            "session_id": command.session_id,
-            "payload": dict(command.payload),
-            "status": command.status.value,
-            "created_at": command.created_at,
-            "applied_at": command.applied_at,
-        }
-        self._path(command.command_id).write_text(
-            json.dumps(data, ensure_ascii=False, default=str), encoding="utf-8"
-        )
-
-    async def load_pending_commands(self, scope: StateQueryScope) -> list[ControlCommandState]:
-        result: list[ControlCommandState] = []
-        for f in self._workspace.glob("*.json"):
-            data = read_json_robust(f)
-            if not data:
-                continue
-            try:
-                if data.get("status") == "completed":
-                    continue
-                if scope.agent_id is not None and data.get("agent_id") != scope.agent_id:
-                    continue
-                if scope.session_id is not None and data.get("session_id") != scope.session_id:
-                    continue
-                from .enums import ControlCommandKind
-                from .enums import OperationStatus as OS
-
-                result.append(
-                    ControlCommandState(
-                        command_id=data["command_id"],
-                        kind=ControlCommandKind(data["kind"]),
-                        agent_id=data["agent_id"],
-                        session_id=data.get("session_id"),
-                        payload=data.get("payload", {}),
-                        status=OS(data.get("status", "created")),
-                        created_at=data.get("created_at", 0),
-                        applied_at=data.get("applied_at"),
-                    )
-                )
-            except Exception:
-                logger.exception("Failed to load command from %s", f)
-        return result
-
-    async def mark_command_applied(self, command_id: str) -> None:
-        import time
-
-        path = self._path(command_id)
-        data = read_json_robust(path)
-        if data is not None:
-            data["status"] = "completed"
-            data["applied_at"] = time.time()
-            path.write_text(json.dumps(data, ensure_ascii=False, default=str), encoding="utf-8")
 
 
 # ===========================================================================

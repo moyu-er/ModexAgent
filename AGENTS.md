@@ -13,7 +13,7 @@
 - `modex_agent/memory/`: three-layer memory (session/archive/knowledge) + compression + governance + injection policies.
 - `modex_agent/multi_agent/`: star-topology subagent coordination, `AgentPool`, inbox, `CommunicationTracker`, `AgentMessageBus`.
 - `modex_agent/ioc/`: typed config (`AppConfig` via Pydantic) + 8 factory modules + `PoolConfig`.
-- `modex_agent/runtime/`: `AgentRuntime`, `AgentRuntimeServices`, `TurnStateStore`, `RuntimeCommandStore`, typed enums/models.
+- `modex_agent/runtime/`: `AgentRuntime`, `AgentRuntimeServices`, `TurnStateStore`, typed enums/models.
 - `modex_agent/pipeline/`: `AgentPipeline` end-to-end orchestration, I/O adapters, approval renderer, slash commands.
 - `modex_agent/hook/` + `modex_agent/interceptor/` + `modex_agent/control/`: three-layer runtime model (observe/AOP/control).
 - `modex_agent/tools/`: tool registry, executor, MCP integration, terminal system (pexpect/tmux/winpty backends, input guard, poll loop), overflow management.
