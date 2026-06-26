@@ -7,7 +7,7 @@ to the target platform (QQ, CLI, HTTP, etc.).
 import re
 from abc import ABC, abstractmethod
 
-from ..core.types import OutputMessage
+from modex_agent.core.types import OutputMessage
 
 
 class ContentFilter(ABC):

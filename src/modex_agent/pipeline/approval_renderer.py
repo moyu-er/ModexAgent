@@ -7,15 +7,15 @@ import logging
 from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING
 
-from ..agents.react.agent import ReActAgent
-from ..agents.react.state import ReActSnapshotPolicy
-from ..approval.constants import ApprovalDecision
-from ..approval.types import ApprovalAction
-from ..core.types import InputMessage
-from ..runtime.models import ApprovalRequestState, ToolArguments, TurnSnapshot
+from modex_agent.agents.react.agent import ReActAgent
+from modex_agent.agents.react.state import ReActSnapshotPolicy
+from modex_agent.approval.constants import ApprovalDecision
+from modex_agent.approval.types import ApprovalAction
+from modex_agent.core.types import InputMessage
+from modex_agent.runtime.models import ApprovalRequestState, ToolArguments, TurnSnapshot
 
 if TYPE_CHECKING:
-    from ..approval.ui import ApprovalUserInterface
+    from modex_agent.approval.ui import ApprovalUserInterface
 
 logger = logging.getLogger(__name__)
 

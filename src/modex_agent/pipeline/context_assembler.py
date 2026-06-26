@@ -8,18 +8,18 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from ..core.emitter import AgentResult
-from ..core.types import InputMessage, MessageRole
-from ..memory.history import (
+from modex_agent.core.emitter import AgentResult
+from modex_agent.core.types import InputMessage, MessageRole
+from modex_agent.memory.history import (
     ListMessageHistory,
     history_to_list,
 )
 
 if TYPE_CHECKING:
-    from ..core.skills import SkillManager
-    from ..core.tool_manager import ToolManager
-    from ..multi_agent import AgentDescriptor
-    from ..utils.context_builder import MultiAgentContextBuilder
+    from modex_agent.core.skills import SkillManager
+    from modex_agent.core.tool_manager import ToolManager
+    from modex_agent.multi_agent import AgentDescriptor
+    from modex_agent.utils.context_builder import MultiAgentContextBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,7 @@ async def assemble_context(
 
     # Restore full multimodal content in history
     if media_blocks and _media_processor is not None:
-        from ..memory.history import restore_multimodal_in_history
+        from modex_agent.memory.history import restore_multimodal_in_history
 
         pending = await restore_multimodal_in_history(
             context_state.history, multimodal_content, logger
@@ -113,8 +113,8 @@ async def assemble_context(
 
     # MultiAgentContextBuilder
     if context_builder is not None and agent_descriptor is not None:
-        from ..multi_agent.address import AgentAddress
-        from ..multi_agent.envelope import AgentMessageEnvelope
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 
         envelope = AgentMessageEnvelope(
             payload={"content": multimodal_content},

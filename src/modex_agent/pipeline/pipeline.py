@@ -36,38 +36,38 @@ from modex_agent.core.agent_runtime_config import BusyInputMode
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.skills import SkillManager
 
-from ..agents.react.state import ReActSnapshotPolicy
-from ..approval.constants import ApprovalDecision
-from ..approval.response import parse_input_command
-from ..approval.types import ApprovalAction
-from ..approval.ui import ApprovalUserInterface
-from ..control.exceptions import AgentControlError
-from ..core.agent import Agent, AgentContext
-from ..core.context import ContextManager
-from ..core.session_id import SessionInfo
-from ..core.emitter import AgentResult, StreamingAwareEmitter
-from ..core.graph.interrupt import GraphInterrupt
-from ..core.runtime_context import RuntimeContextManager
-from ..core.tool_manager import ToolManager
-from ..core.types import InputMessage
-from ..memory.context_governance import ContextGovernance
-from ..memory import MemoryContext
-from ..memory.consolidation import DreamEngine
-from ..memory.history import (
+from modex_agent.agents.react.state import ReActSnapshotPolicy
+from modex_agent.approval.constants import ApprovalDecision
+from modex_agent.approval.response import parse_input_command
+from modex_agent.approval.types import ApprovalAction
+from modex_agent.approval.ui import ApprovalUserInterface
+from modex_agent.control.exceptions import AgentControlError
+from modex_agent.core.agent import Agent, AgentContext
+from modex_agent.core.context import ContextManager
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.emitter import AgentResult, StreamingAwareEmitter
+from modex_agent.core.graph.interrupt import GraphInterrupt
+from modex_agent.core.runtime_context import RuntimeContextManager
+from modex_agent.core.tool_manager import ToolManager
+from modex_agent.core.types import InputMessage
+from modex_agent.memory.context_governance import ContextGovernance
+from modex_agent.memory import MemoryContext
+from modex_agent.memory.consolidation import DreamEngine
+from modex_agent.memory.history import (
     inject_attachments_to_history,
 )
-from ..multi_agent import AgentDescriptor
-from ..multi_agent.router import AgentMessageRouter
-from ..runtime.dream_locks import _dream_locks
-from ..runtime.enums import SnapshotReason, TurnCustomKey, TurnPhase
-from ..runtime.models import StateQueryScope, TurnSnapshot
-from ..runtime.services import AgentRuntimeServices
-from ..utils.context_builder import MultiAgentContextBuilder
-from ..utils.deduplicator import MessageDeduplicator
-from .adapters import InputAdapter, OutputAdapter, OutputMessage
-from .approval_renderer import ApprovalRenderer, format_approval_prompt
-from .context_assembler import assemble_context
-from .snapshot import PoolDataSnapshot
+from modex_agent.multi_agent import AgentDescriptor
+from modex_agent.multi_agent.router import AgentMessageRouter
+from modex_agent.runtime.dream_locks import _dream_locks
+from modex_agent.runtime.enums import SnapshotReason, TurnCustomKey, TurnPhase
+from modex_agent.runtime.models import StateQueryScope, TurnSnapshot
+from modex_agent.runtime.services import AgentRuntimeServices
+from modex_agent.utils.context_builder import MultiAgentContextBuilder
+from modex_agent.utils.deduplicator import MessageDeduplicator
+from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter, OutputMessage
+from modex_agent.pipeline.approval_renderer import ApprovalRenderer, format_approval_prompt
+from modex_agent.pipeline.context_assembler import assemble_context
+from modex_agent.pipeline.snapshot import PoolDataSnapshot
 
 logger = logging.getLogger(__name__)
 

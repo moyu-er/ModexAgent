@@ -1,12 +1,12 @@
 """Pipeline 模块 - 端到端流程编排"""
 
-from .adapters import (
+from modex_agent.pipeline.adapters import (
     InputAdapter,
     InputMessage,
     OutputAdapter,
     OutputMessage,
 )
-from .pipeline import AgentPipeline
+from modex_agent.pipeline.pipeline import AgentPipeline
 
 __all__ = [
     # Adapters
