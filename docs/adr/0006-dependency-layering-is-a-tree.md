@@ -81,11 +81,34 @@ Recommended order: ③ → ④ → ⑤ → ⑥. (Living status also in project m
   `OnControlCommandHook` + `HookPoint.ON_CONTROL_COMMAND` (never dispatched,
   never subclassed); plus correcting the stale `control/AGENTS.md` "Current
   Status". Spec: `docs/refactor/candidate-4b-orchestration.md`.
-- ④c **turn-loop / pipeline deepen** — ⏳ pending (split out from ④b). Deepen
-  `ReActAgent` (extract node-collaborator capabilities — `ToolExecutor`,
-  `InjectionDrainer`, `TurnStreamer`; kill node→agent back-refs; the streaming
-  cluster must preserve the live drain contract) and `AgentPipeline` (extract a
-  `TurnRunner` from the 1168-line god-object). Real surgery, separate
+- ④c **ReActAgent node→agent back-reference decoupling** — ✅ done (2026-06-26;
+  commits `6aa0d8a4..f5e8db27`). Split the original "turn-loop/pipeline deepen"
+  item: ④c is the node-decoupling half (G1), ④d is the pipeline half (G2).
+  Extracted the three node-back-referenced capability clusters from
+  `ReActAgent`/`LLMNode` into deep-module collaborators injected at node
+  construction: `ReactLlmClient(provider)` — single `call(messages, ctx)`
+  absorbing `_call_llm`/`_stream_with_control`/`_stream_plain`/
+  `_call_non_streaming`, preserving the INTERRUPTED_PARTIAL live-drain contract
+  (write targets turn state, so `run()`'s cancel/error handler still reads it);
+  `InjectionDrainer()` (`_drain_injections`); `ToolExecutor(default_tool_timeout)`
+  (`_execute_tool`/`_execute_tool_raw`/`_resolve_tool_timeout`). Wiring:
+  `ReActAgent.__init__` builds the collaborators → `ReActGraph` takes
+  collaborators (not the agent) → nodes hold collaborators; `EndNode` lost its
+  dead `agent` param. The 6 agent methods were deleted with no delegate shims
+  (agent.py 628→384 lines, −39%). Approval machinery in `ToolNode` preserved
+  verbatim — the only `ToolNode` edit was the single `_execute_tool`→
+  `tool_executor.execute` swap. Guard
+  `tests/architecture/test_react_nodes_have_no_agent_backref.py` pins that no
+  `react/nodes/*.py` mentions `ReActAgent`/`_agent` (word-boundary regex, sibling-
+  consistent with `test_dead_code_gone.py`). Verified: framework 2741/0,
+  architecture 12, bot 466/0. Spec:
+  `docs/refactor/candidate-4c-react-agent-node-decoupling.md`; plan:
+  `docs/refactor/candidate-4c-plan.md`.
+- ④d **AgentPipeline → TurnRunner deepen** — ⏳ pending (the G2 half, split out
+  from the original ④c). `AgentPipeline` (~1157L, ~30 ctor deps, god-object):
+  extract a `TurnRunner`/`TurnSession` absorbing `_execute_turn` +
+  approval-resume + context-build; `_process_message_locked` into named steps.
+  Highest single leverage but highest risk. Real surgery, separate
   grilling/spec/plan.
 - ⑤ **tools/sandbox** (tier 2) — ✅ done (2026-06-26; commits `45cfbabb..5a176613`). **Part A (sandbox facade slim, ADR-0005/0007):** pure re-export trim — no symbol deleted, no file relocated, zero behavior change. Top-level `sandbox/__init__.py` `__all__` shrunk ~40→14 (5 selection entry points + the `SandboxAdapter` ABC + 8 consumer-facing types/errors); concrete adapters stay behind `sandbox.adapters`, guards behind `sandbox.guard`/`sandbox.guard_*`, env/policy/platform/docker helpers behind their submodules. Safe because sandbox has zero production callers (only `tests/unit/sandbox/*`, all via deep paths). Guard `tests/architecture/test_sandbox_facade_contract.py` pins `__all__` to exactly the seam (facade-freeze; ADR-0005 "`__all__` is load-bearing" made executable). **Part B (TerminalManager dedup, ADR-0007):** strategy = **clarify-roles, zero behavior change**. `TerminalManager` (manager.py, LRU/persist/memory-pressure) has zero production callers (bot uses the `BaseTerminalManager` family via `create_terminal_manager`); the two implementations have real method divergences (close force-kill, `_default_terminal`/`_default_name`, `get_or_create` signature) so fold-inward would be non-mechanical and risk the production path for an unused class — rejected. Resolution: doc-only (`TerminalManagerBase` seam-contract docstring + 2 class docstrings) + guard `tests/architecture/test_terminal_manager_seam_preserved.py` pinning `save_state`/`load_state`/`_evict_oldest`/`_check_memory_pressure` (semantic inverse of `test_dead_code_gone.py` — prevents future "zero-callers→delete" relitigation). **Deferred (own future candidate):** fold-inward if the bot adopts persistence — then the 3 divergences must be reconciled with full scouting. Verified: framework 2735/0, architecture 10, bot 466/0. Spec: `docs/refactor/candidate-5-tools-sandbox.md`; plan: `docs/refactor/candidate-5-plan.md`.
 - ⑥ **utils — pure-leaf rule** — ✅ done (2026-06-26). Per the new utils policy
