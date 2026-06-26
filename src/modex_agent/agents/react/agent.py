@@ -23,6 +23,7 @@ from modex_agent.interceptor.abc import (
     ToolCallContext,
 )
 from modex_agent.runtime.enums import TurnCustomKey, TurnPhase
+from .message_builder import build_interrupted_assistant_message
 
 from ...core.agent import Agent, AgentContext, current_agent_context
 from ...core.constants import DefaultValues, StopReason
@@ -123,7 +124,6 @@ async def _persist_interrupted_partial(ctx: AgentContext, reason: str) -> None:
     """
     from modex_agent.runtime.enums import MessageDeltaSource
     from modex_agent.runtime.models import MessageDelta
-    from modex_agent.utils.message_builder import build_interrupted_assistant_message
 
     state = get_react_state(ctx)
     if state is None:
@@ -623,6 +623,6 @@ class ReActAgent(Agent[ReActEvent]):
 
         return injected
 
-    # Message construction helpers moved to framework.utils.message_builder
-    # (build_assistant_message, build_tool_message) to keep ReActAgent focused
-    # on orchestration rather than data-formatting details.
+    # Message construction helpers live in this package's message_builder module
+    # (build_assistant_message, build_tool_message, build_interrupted_assistant_message)
+    # to keep ReActAgent focused on orchestration rather than data-formatting details.

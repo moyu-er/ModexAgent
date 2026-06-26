@@ -2,8 +2,8 @@
 
 from xml.etree import ElementTree as ET
 
+from modex_agent.agents.react.message_builder import build_interrupted_assistant_message
 from modex_agent.core.message import ContentFormat
-from modex_agent.utils.message_builder import build_interrupted_assistant_message
 
 
 def _parse(content: str) -> ET.Element:

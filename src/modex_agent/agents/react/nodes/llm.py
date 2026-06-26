@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.agents.react.constants import ReActNode, ReActReason
+from modex_agent.agents.react.message_builder import build_assistant_message
 from modex_agent.agents.react.state import get_react_state
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.constants import FinishReason
@@ -106,7 +107,6 @@ class LLMNode(Node):
                 return
 
             from modex_agent.utils.helpers import strip_think
-            from modex_agent.utils.message_builder import build_assistant_message
 
             # If the provider did NOT separate reasoning_content (non-standard API),
             # sanitize possible <think> tags embedded in content.

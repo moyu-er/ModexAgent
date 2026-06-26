@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.agents.react.constants import ReActNode, ReActReason
+from modex_agent.agents.react.message_builder import build_tool_message
 from modex_agent.agents.react.state import ReActSnapshotPolicy, get_react_state
 from modex_agent.approval.constants import ApprovalDecision, ApprovalTier
 from modex_agent.core.agent import AgentContext
@@ -291,8 +292,6 @@ class ToolNode(Node):
                 await ctx.emitter.emit(ReActEvent.TOOL_CALL_END, (tc, result))
 
             tool_results.append(result)
-
-            from modex_agent.utils.message_builder import build_tool_message
 
             tool_msg = build_tool_message(result, tc.call_id)
             await ctx.history.append(tool_msg)

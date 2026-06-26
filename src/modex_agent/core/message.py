@@ -12,12 +12,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-
-def _user_tz():
-    """Lazy-import get_user_timezone to avoid circular import via framework.utils."""
-    from modex_agent.utils.timezone import get_user_timezone
-
-    return get_user_timezone()
+from modex_agent.utils.timezone import get_user_timezone
 
 
 class ContentFormat(StrEnum):
@@ -50,7 +45,7 @@ class ChatMessage(BaseModel):
     tool_call_id: str | None = Field(default=None, description="tool 消息对应的 tool_call_id")
     name: str | None = Field(default=None, description="工具名称（OpenAI function calling）")
     created_at: datetime = Field(
-        default_factory=lambda: datetime.now(_user_tz()).replace(microsecond=0),
+        default_factory=lambda: datetime.now(get_user_timezone()).replace(microsecond=0),
         description="消息创建时间戳（用户配置时区，秒级精度）",
     )
     content_format: ContentFormat = Field(
@@ -64,7 +59,7 @@ class ChatMessage(BaseModel):
     @classmethod
     def _parse_created_at(cls, v: Any) -> datetime:
         """Parse created_at from string ("YYYY-MM-DD HH:MM:SS"), datetime, or int."""
-        tz = _user_tz()
+        tz = get_user_timezone()
         if isinstance(v, datetime):
             return v
         if isinstance(v, int | float):
