@@ -27,7 +27,7 @@ class GraphEngine(Generic[R]):
         """Single entry point. Runs from entry_node until GraphNode.END."""
         current: str = self.graph.entry_node
         while current != GraphNode.END:
-            node = self.graph._nodes[current]
+            node = self.graph.get_node(current)
             try:
                 transition = await node.execute(ctx)
             except GraphInterrupt:

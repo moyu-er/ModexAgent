@@ -64,3 +64,14 @@ class TestGraph:
     def test_entry_node_default(self):
         g = Graph()
         assert g.entry_node == "start"
+
+    def test_get_node_returns_added_node(self):
+        g = Graph()
+        node = _NoOpNode("n1")
+        g.add_node(node)
+        assert g.get_node("n1") is node
+
+    def test_get_node_missing_raises_key_error(self):
+        g = Graph()
+        with pytest.raises(KeyError):
+            g.get_node("nope")
