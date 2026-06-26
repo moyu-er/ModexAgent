@@ -1,15 +1,14 @@
-"""Tests for the per-turn PoolData snapshot resolution in AgentPipeline.
+"""Tests for the per-turn PoolData snapshot resolution.
 
-Unit C: the pipeline must resolve its per-turn stores (context manager,
+Unit C: the runner must resolve its per-turn stores (context manager,
 turn store) from the active workspace's PoolData snapshot
 when a workspace manager is wired, and fall back to its own ``self.*``
 stores otherwise.
 
 These tests target ``_resolve_pool_data`` directly (pure resolution
-logic) and the snapshot-vs-self selection performed in
-``_build_runtime_and_context``. They construct the pipeline via
-``__new__`` to avoid the heavy constructor and set only the attributes
-the tested paths read.
+logic, now on :class:`TurnRunner`) and the snapshot-vs-self selection
+performed in ``TurnContextBuilder.build_runtime_and_context``. They
+construct the runner directly, wiring only the deps the tested paths read.
 """
 
 from __future__ import annotations
@@ -21,9 +20,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from modex_agent.pipeline.pipeline import AgentPipeline
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
+from modex_agent.pipeline.turn_runner import TurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 
 
@@ -45,14 +44,30 @@ class _FakePoolData(PoolDataSnapshot):
     experience_dir: Path | None = None
 
 
-def _make_pipeline(**attrs: Any) -> AgentPipeline:
-    """Build a pipeline bypassing the heavy constructor."""
-    p = AgentPipeline.__new__(AgentPipeline)
-    # Defaults for fields gated in _resolve_pool_data.
-    p.pool_data_resolver = None
-    for k, v in attrs.items():
-        setattr(p, k, v)
-    return p
+def _make_runner(**attrs: Any) -> TurnRunner:
+    """Build a TurnRunner wiring only the deps ``_resolve_pool_data`` /
+    ``_is_subagent`` read. The rest default to lightweight fakes so the
+    constructor's keyword-only contract is satisfied."""
+    defaults: dict[str, Any] = dict(
+        agent=MagicMock(name="agent"),
+        tool_manager=MagicMock(name="tool_manager"),
+        context_manager=MagicMock(name="context_manager"),
+        context_manager_factory=None,
+        on_session_start=None,
+        on_session_end=None,
+        safety=MagicMock(name="safety"),
+        turn_store=None,
+        registry=TurnSessionRegistry(),
+        builder=MagicMock(name="builder"),
+        resumer=MagicMock(name="resumer"),
+        approval=MagicMock(name="approval"),
+        workspace_manager=None,
+        pool_name=None,
+        pool_data_resolver=None,
+        agent_descriptor=None,
+    )
+    defaults.update(attrs)
+    return TurnRunner(**defaults)
 
 
 def _make_builder(**attrs: Any) -> TurnContextBuilder:
@@ -97,14 +112,14 @@ def _make_builder(**attrs: Any) -> TurnContextBuilder:
 
 def test_resolve_pool_data_returns_none_when_no_workspace_manager() -> None:
     """Without a workspace manager, resolution returns None (fallback path)."""
-    p = _make_pipeline(workspace_manager=None, pool_name="main")
+    p = _make_runner(workspace_manager=None, pool_name="main")
     assert p._resolve_pool_data() is None
 
 
 def test_resolve_pool_data_returns_none_when_no_pool_name() -> None:
     """Workspace manager set but pool_name missing -> None."""
     wm = MagicMock()
-    p = _make_pipeline(workspace_manager=wm, pool_name=None)
+    p = _make_runner(workspace_manager=wm, pool_name=None)
     assert p._resolve_pool_data() is None
 
 
@@ -120,7 +135,7 @@ def test_resolve_pool_data_returns_snapshot_from_active_workspace() -> None:
     wm = MagicMock()
     wm.resolve_workspace.return_value = ws
 
-    p = _make_pipeline(
+    p = _make_runner(
         workspace_manager=wm, pool_name="main", agent_descriptor=None,
     )
     resolved = p._resolve_pool_data()
@@ -135,7 +150,7 @@ def test_resolve_pool_data_returns_none_for_missing_pool() -> None:
     wm = MagicMock()
     wm.resolve_workspace.return_value = ws
 
-    p = _make_pipeline(
+    p = _make_runner(
         workspace_manager=wm, pool_name="main", agent_descriptor=None,
     )
     assert p._resolve_pool_data() is None
@@ -162,7 +177,7 @@ def test_resolve_pool_data_returns_snapshot_for_subagent() -> None:
     subagent_descriptor = MagicMock()
     subagent_descriptor.comm_kind = AgentCommKind.SUBAGENT
 
-    p = _make_pipeline(
+    p = _make_runner(
         workspace_manager=wm,
         pool_name="main",
         agent_descriptor=subagent_descriptor,
@@ -182,8 +197,8 @@ def test_subagent_context_manager_not_overridden_by_pool_data() -> None:
     main_desc = MagicMock()
     main_desc.comm_kind = AgentCommKind.NORMAL
 
-    sub_pipe = _make_pipeline(agent_descriptor=sub_desc)
-    main_pipe = _make_pipeline(agent_descriptor=main_desc)
+    sub_pipe = _make_runner(agent_descriptor=sub_desc)
+    main_pipe = _make_runner(agent_descriptor=main_desc)
 
     assert sub_pipe._is_subagent() is True
     assert main_pipe._is_subagent() is False
@@ -207,7 +222,7 @@ def test_resolve_pool_data_returns_snapshot_for_main_agent() -> None:
     main_descriptor = MagicMock()
     main_descriptor.comm_kind = AgentCommKind.NORMAL
 
-    p = _make_pipeline(
+    p = _make_runner(
         workspace_manager=wm,
         pool_name="main",
         agent_descriptor=main_descriptor,
@@ -341,7 +356,7 @@ def test_resolve_pool_data_uses_callable_when_pool_resolver_set() -> None:
         calls.append(session_id)
         return "coding" if "coding" in session_id else "main"
 
-    p = _make_pipeline(
+    p = _make_runner(
         workspace_manager=wm,
         pool_name=None,
         pool_data_resolver=pool_resolver,
@@ -367,7 +382,7 @@ def test_resolve_pool_data_falls_back_to_static_pool_name_when_no_resolver() -> 
     wm = MagicMock()
     wm.resolve_workspace.return_value = ws
 
-    p = _make_pipeline(
+    p = _make_runner(
         workspace_manager=wm, pool_name="main", pool_data_resolver=None,
     )
     resolved = p._resolve_pool_data()

@@ -161,7 +161,7 @@ async def test_source_agent_message_during_pending_approval_is_buffered_not_writ
         session=SessionInfo.from_str("s1", default_agent_name="main"),
         metadata={"source_agent": "subagent"},
     )
-    await pipeline._process_message_locked(
+    await pipeline._turn_runner.process_locked(
         input_msg,
         "s1",
         session=input_msg.session,
@@ -180,7 +180,7 @@ async def test_unrelated_input_during_pending_approval_is_not_written_as_user_tu
     pipeline = _pipeline(turn_store=turn_store, context_manager=context_manager)
 
     input_msg = InputMessage(content="not an approval command", session=SessionInfo.from_str("s1", default_agent_name="main"))
-    await pipeline._process_message_locked(
+    await pipeline._turn_runner.process_locked(
         input_msg,
         "s1",
         session=input_msg.session,
@@ -209,7 +209,7 @@ async def test_resume_that_suspends_again_keeps_new_snapshot() -> None:
     )
 
     input_msg = InputMessage(content="/approve", session=SessionInfo.from_str("s1", default_agent_name="main"))
-    await pipeline._process_message_locked(
+    await pipeline._turn_runner.process_locked(
         input_msg,
         "s1",
         session=input_msg.session,
@@ -237,7 +237,7 @@ async def test_sequential_approval_groups_in_same_session_do_not_interfere() -> 
 
     await turn_store.save_turn(first_snapshot)
     input_msg1 = InputMessage(content="/approve", session=SessionInfo.from_str("s1", default_agent_name="main"))
-    await pipeline._process_message_locked(
+    await pipeline._turn_runner.process_locked(
         input_msg1,
         "s1",
         session=input_msg1.session,
@@ -246,7 +246,7 @@ async def test_sequential_approval_groups_in_same_session_do_not_interfere() -> 
 
     await turn_store.save_turn(second_snapshot)
     input_msg2 = InputMessage(content="/approve", session=SessionInfo.from_str("s1", default_agent_name="main"))
-    await pipeline._process_message_locked(
+    await pipeline._turn_runner.process_locked(
         input_msg2,
         "s1",
         session=input_msg2.session,

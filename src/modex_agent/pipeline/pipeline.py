@@ -12,11 +12,10 @@ import time
 import uuid
 from collections.abc import Callable
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from modex_agent.control.channel import InMemoryControlChannel
-    from modex_agent.core.context import ContextState
     from modex_agent.core.emitter import ContentEmitter
     from modex_agent.hook.abc import HookSpec
     from modex_agent.hook.runner import HookRunner
@@ -32,12 +31,10 @@ from modex_agent.core.agent_runtime_config import BusyInputMode
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.skills import SkillManager
 
-from modex_agent.approval.types import ApprovalAction
 from modex_agent.approval.ui import ApprovalUserInterface
 from modex_agent.control.exceptions import AgentControlError
-from modex_agent.core.agent import Agent, AgentContext
+from modex_agent.core.agent import Agent
 from modex_agent.core.context import ContextManager
-from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.graph.interrupt import GraphInterrupt
 from modex_agent.core.runtime_context import RuntimeContextManager
@@ -45,39 +42,26 @@ from modex_agent.core.tool_manager import ToolManager
 from modex_agent.core.types import InputMessage
 from modex_agent.memory.context_governance import ContextGovernance
 from modex_agent.memory.consolidation import DreamEngine
-from modex_agent.memory.history import (
-    inject_attachments_to_history,
-)
 from modex_agent.multi_agent import AgentDescriptor
 from modex_agent.multi_agent.router import AgentMessageRouter
 from modex_agent.pipeline.dream_scanner import DreamScanner
-from modex_agent.pipeline.turn_context_builder import TurnContextBuilder, TurnRequest
+from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
-from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.runtime.models import TurnSnapshot
 from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.utils.context_builder import MultiAgentContextBuilder
 from modex_agent.utils.deduplicator import MessageDeduplicator
 from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter, OutputMessage
-from modex_agent.pipeline.approval_renderer import ApprovalRenderer, format_approval_prompt
+from modex_agent.pipeline.approval_renderer import ApprovalRenderer
 from modex_agent.pipeline.approval_resumer import ApprovalResumer
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
+from modex_agent.pipeline.turn_runner import TurnRunner
 
 logger = logging.getLogger(__name__)
 
 _UNSET = object()
 
 _ERROR_PLACEHOLDER = "[Assistant reply unavailable due to model or runtime error.]"
-
-
-async def _safe_flush(ctx_mgr: Any, session_id: str, *, timeout: float) -> None:
-    """Memory flush 带 timeout。"""
-    try:
-        await asyncio.wait_for(ctx_mgr.flush(session_id), timeout=timeout)
-    except TimeoutError:
-        logger.error("Memory flush timeout for %s", session_id)
-    except Exception:
-        logger.exception("Memory flush failed for %s", session_id)
 
 
 class AgentPipeline:
@@ -181,8 +165,12 @@ class AgentPipeline:
         self.turn_store = turn_store
         self.runtime_services = runtime_services
         self.command_processor = command_processor
-        self.workspace_manager = workspace_manager
-        self.pool_name = pool_name
+        # workspace_manager / pool_name are mutated post-construction by pool
+        # wiring (e.g. bot pool_builder sets them after AgentPool creates the
+        # pipeline). They back the properties below, which mirror mutations
+        # into the TurnRunner so its captured copies don't go stale.
+        self._workspace_manager = workspace_manager
+        self._pool_name = pool_name
         self.pool_data_resolver = pool_data_resolver
         self._approval = ApprovalRenderer(
             agent=agent,
@@ -221,6 +209,24 @@ class AgentPipeline:
             turn_store=turn_store,
             registry=self._registry,
         )
+        self._turn_runner = TurnRunner(
+            agent=agent,
+            tool_manager=tool_manager,
+            context_manager=context_manager,
+            context_manager_factory=context_manager_factory,
+            on_session_start=on_session_start,
+            on_session_end=on_session_end,
+            safety=self.safety,
+            turn_store=turn_store,
+            registry=self._registry,
+            builder=self._turn_context_builder,
+            resumer=self._approval_resumer,
+            approval=self._approval,
+            workspace_manager=workspace_manager,
+            pool_name=pool_name,
+            pool_data_resolver=pool_data_resolver,
+            agent_descriptor=agent_descriptor,
+        )
 
     @property
     def _user_interface(self):  # delegates to renderer so pool injection reaches handle()
@@ -230,43 +236,25 @@ class AgentPipeline:
     def _user_interface(self, value):
         self._approval._user_interface = value
 
-    def _resolve_pool_data(
-        self, session_id: str = ""
-    ) -> PoolDataSnapshot | None:
-        """Resolve the per-turn data snapshot from the active workspace.
+    @property
+    def workspace_manager(self) -> WorkspaceManager | None:
+        return self._workspace_manager
 
-        When ``pool_data_resolver`` is set it takes precedence: the callable
-        receives *session_id* and returns the pool name, so the pipeline
-        follows per‑session pool routing (PoolSessionStore) instead of the
-        static ``pool_name`` assigned at pipeline creation.  This keeps a
-        session's memory, trace, and turn stores consistently in the
-        same pool, even when pool routing changes between turns.
+    @workspace_manager.setter
+    def workspace_manager(self, value: WorkspaceManager | None) -> None:
+        self._workspace_manager = value
+        # Mirror into TurnRunner so its captured copy stays current when pool
+        # wiring mutates this attribute after pipeline construction.
+        self._turn_runner._workspace_manager = value
 
-        When no resolver is wired the old static ``pool_name`` path is used
-        (backward‑compatible).
-        """
-        if self.workspace_manager is None:
-            return None
-        ws = self.workspace_manager.resolve_workspace()
+    @property
+    def pool_name(self) -> str | None:
+        return self._pool_name
 
-        if self.pool_data_resolver is not None and session_id:
-            pool_name = self.pool_data_resolver(session_id)
-            if pool_name is not None:
-                return ws.pool_data.get(pool_name)
-            return None
-
-        if self.pool_name is None:
-            return None
-        return ws.pool_data.get(self.pool_name)
-
-    def _is_subagent(self) -> bool:
-        """Whether this pipeline backs a subagent (vs the pool's main agent)."""
-        from modex_agent.core import AgentCommKind
-
-        return (
-            self.agent_descriptor is not None
-            and self.agent_descriptor.comm_kind == AgentCommKind.SUBAGENT
-        )
+    @pool_name.setter
+    def pool_name(self, value: str | None) -> None:
+        self._pool_name = value
+        self._turn_runner._pool_name = value
 
     async def run(self) -> None:
         """运行流水线"""
@@ -500,268 +488,12 @@ class AgentPipeline:
                 logger.warning(
                     "Session lock wait: session=%s wait=%.0fms", session_id, lock_wait_ms
                 )
-            return await self._process_message_locked(input_msg, session_id, route_result, session=session)
-
-    async def _execute_turn(
-        self,
-        agent_context: AgentContext,
-        emitter: ContentEmitter,
-        session_id: str,
-        context_state: ContextState,
-        input_metadata: dict[str, Any],
-        ctx_mgr: ContextManager,
-    ) -> AgentResult | None:
-        """Execute a normal agent turn, including cleanup.
-
-        Returns:
-            AgentResult on successful turn, None if GraphInterrupt for approval.
-        """
-        agent_name = agent_context.session.agent_name
-        result: AgentResult | None = None
-        turn = self.safety.turn
-        turn_start = time.monotonic()
-
-        try:
-            # Track this task for busy_input_mode handling + generate the
-            # control-command turn UUID. These are independent registrations:
-            # the task is tracked whenever one is running, while the turn UUID
-            # is recorded only when a runtime exists (it needs runtime.state).
-            turn_task = asyncio.current_task()
-            if turn_task is not None:
-                self._registry.register_task(session_id, turn_task)
-
-            if agent_context.runtime is not None:
-                turn_uuid = uuid.uuid4().hex
-                agent_context.runtime.state.custom[TurnCustomKey.TURN_UUID] = turn_uuid
-                self._registry.set_turn_uuid(session_id, turn_uuid)
-
-            try:
-                result = await self.agent.run(agent_context, emitter)
-            except GraphInterrupt as interrupt_exc:
-                # ToolNode suspended for approval — snapshot persisted via TurnStateStore
-                # Send approval prompts to user via UI
-                if self._user_interface is not None:
-                    requests = interrupt_exc.value
-                    if isinstance(requests, list):
-                        for req in requests:
-                            await self._user_interface.render_message(
-                                session_id,
-                                format_approval_prompt(req),
-                            )
-                            break  # Only prompt the first one; user approves one at a time
-
-                # Don't save user message — approval state takes over
-                return None
-
-            # 为最后一条 assistant 消息注入 attachments metadata
-            if result and result.attachments:
-                await inject_attachments_to_history(context_state.history, result.attachments)
-
-            await ctx_mgr.save(
-                session_id=session_id,
-                user_message=None,
-                assistant_result=result,
-                metadata={"input_metadata": input_metadata},
-            )
-            elapsed = time.monotonic() - turn_start
-            logger.info(
-                "turn_done session=%s agent=%s stop_reason=%s elapsed=%.1fs",
-                session_id,
-                agent_name,
-                result.stop_reason if result else "none",
-                elapsed,
-            )
-            return result
-
-        except asyncio.CancelledError:
-            logger.warning(
-                "Agent turn cancelled session=%s agent=%s",
-                session_id,
-                agent_name,
-            )
-            raise
-
-        finally:
-            # Clean up session task tracking
-            self._registry.unregister_turn(session_id)
-            await _safe_flush(ctx_mgr, session_id, timeout=turn.memory_flush_timeout_seconds)
-            # Turn 结束时的清理（带 timeout 保护）
-            if self.on_session_end is not None:
-                try:
-                    await asyncio.wait_for(
-                        self.on_session_end(session_id),
-                        timeout=turn.hook_timeout_seconds,
-                    )
-                except asyncio.CancelledError:
-                    logger.warning("on_session_end cancelled for %s", session_id)
-                except Exception:
-                    logger.exception("on_session_end failed for %s", session_id)
-
-    async def _handle_snapshot_approval(
-        self,
-        *,
-        action: ApprovalAction | None,
-        snapshot: TurnSnapshot,
-        agent_context: AgentContext,
-        emitter: ContentEmitter,
-        session_id: str,
-        context_state: ContextState,
-        input_metadata: dict[str, Any],
-        ctx_mgr: ContextManager,
-        pool_data: PoolDataSnapshot | None = None,
-    ) -> AgentResult | None:
-        should_resume = await self._approval_resumer.apply_resume(
-            snapshot,
-            action=action,
-            session_id=session_id,
-            pool_data=pool_data,
-            agent_context=agent_context,
-        )
-        if not should_resume:
-            return None
-        turn_store = pool_data.turn_store if pool_data is not None else self.turn_store
-        result = await self._execute_turn(
-            agent_context,
-            emitter,
-            session_id,
-            context_state,
-            input_metadata,
-            ctx_mgr,
-        )
-        if result is not None:
-            await turn_store.delete_turn(snapshot.identity)
-            await self._approval.drain(session_id)
-        return result
+            return await self._turn_runner.process_locked(input_msg, session_id, route_result, session=session)
 
     async def _load_pending_approval_snapshot(
         self, session_id: str, *, pool_data: PoolDataSnapshot | None = None,
     ) -> TurnSnapshot | None:
         return await self._approval_resumer.load_pending(session_id, pool_data=pool_data)
-
-    async def _process_message_locked(
-        self, input_msg: InputMessage, session_id: str, route_result: Any | None = None,
-        *, session: SessionInfo,
-    ) -> AgentResult | None:
-        """Process one message while holding the session lock."""
-        if self.on_session_start is not None:
-            try:
-                await asyncio.wait_for(
-                    self.on_session_start(session_id),
-                    timeout=self.safety.turn.hook_timeout_seconds,
-                )
-            except TimeoutError:
-                logger.warning("on_session_start timeout for %s", session_id)
-            except Exception:
-                logger.exception("on_session_start failed for %s", session_id)
-        ctx_mgr = (
-            self.context_manager_factory(session_id)
-            if self.context_manager_factory
-            else self.context_manager
-        )
-        input_metadata = getattr(input_msg, "metadata", None) or {}
-
-        # Resolve the per-turn PoolData snapshot once, at turn start, so a
-        # workspace switch mid-turn cannot corrupt the in-flight turn.
-        pool_data = self._resolve_pool_data(session_id)
-        # Only the pool's main agent follows the workspace's pool_data
-        # context_manager (to track workspace switches). A subagent registers
-        # its OWN context_manager — its own system prompt + OUTPUT.md base dir
-        # — and must never be overridden by the main agent's, otherwise every
-        # subagent inherits the main prompt and loses its OUTPUT.md task.
-        # (turn_store below is still shared — it is
-        # pool-level and session-isolated, and the subagent needs it so its
-        # runtime + FINALLY_TURN hooks are constructed.)
-        if pool_data is not None and not self._is_subagent():
-            ctx_mgr = pool_data.context_manager
-
-        pending_snapshot = await self._load_pending_approval_snapshot(
-            session_id, pool_data=pool_data,
-        )
-        turn_request = await self._turn_context_builder.build_turn_request(
-            input_msg,
-            session_id,
-            input_metadata,
-            pending_snapshot,
-            pool_data=pool_data,
-        )
-        if turn_request is None:
-            return None
-
-        sanitized_content, media_blocks, media_processor = await self._turn_context_builder.preprocess(
-            input_msg,
-            session_id,
-            input_metadata,
-            route_result,
-        )
-        if sanitized_content is None:
-            return None
-
-        if turn_request.user_content is not None:
-            sanitized_content = turn_request.user_content
-            # Propagate content format from skill command to input_msg
-            # so assemble_context picks it up for governance (XML truncation, etc.)
-            cmd_result = turn_request.command_result
-            if cmd_result is not None:
-                if cmd_result.content_format is not None:
-                    input_msg.content_format = cmd_result.content_format
-                if cmd_result.truncatable_paths is not None:
-                    input_msg.truncatable_paths = cmd_result.truncatable_paths
-        elif not turn_request.append_user_message:
-            sanitized_content = None
-
-        approval_action = turn_request.approval_action
-        is_approval_cmd, approval_state = await self._approval.detect(
-            input_msg,
-            session_id,
-            input_metadata,
-            pending_snapshot=pending_snapshot,
-            approval_action=approval_action,
-        )
-
-        context_state = await self._turn_context_builder.assemble(
-            session_id,
-            input_msg,
-            input_metadata,
-            sanitized_content,
-            media_blocks,
-            media_processor,
-            ctx_mgr,
-            route_result,
-            is_approval_cmd,
-            append_user_message=turn_request.append_user_message,
-        )
-        agent_context, emitter = self._turn_context_builder.build_runtime_and_context(
-            session,
-            context_state,
-            ctx_mgr,
-            input_metadata=input_metadata,
-            pool_data=pool_data,
-        )
-
-        if approval_state is not None:
-            return await self._handle_snapshot_approval(
-                action=approval_action,
-                snapshot=approval_state,
-                agent_context=agent_context,
-                emitter=emitter,
-                session_id=session_id,
-                context_state=context_state,
-                input_metadata=input_metadata,
-                ctx_mgr=ctx_mgr,
-                pool_data=pool_data,
-            )
-
-        if not turn_request.trigger_agent:
-            return None
-
-        return await self._execute_turn(
-            agent_context,
-            emitter,
-            session_id,
-            context_state,
-            input_metadata,
-            ctx_mgr,
-        )
 
     async def cleanup_session_resources(self, session_id: str) -> None:
         """清理 per-session 资源（长时间运行避免内存泄漏）。
