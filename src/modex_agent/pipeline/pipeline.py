@@ -32,8 +32,6 @@ from modex_agent.core.agent_runtime_config import BusyInputMode
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.skills import SkillManager
 
-from modex_agent.agents.react.state import ReActSnapshotPolicy
-from modex_agent.approval.constants import ApprovalDecision
 from modex_agent.approval.types import ApprovalAction
 from modex_agent.approval.ui import ApprovalUserInterface
 from modex_agent.control.exceptions import AgentControlError
@@ -55,13 +53,14 @@ from modex_agent.multi_agent.router import AgentMessageRouter
 from modex_agent.pipeline.dream_scanner import DreamScanner
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder, TurnRequest
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
-from modex_agent.runtime.enums import SnapshotReason, TurnCustomKey, TurnPhase
-from modex_agent.runtime.models import StateQueryScope, TurnSnapshot
+from modex_agent.runtime.enums import TurnCustomKey
+from modex_agent.runtime.models import TurnSnapshot
 from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.utils.context_builder import MultiAgentContextBuilder
 from modex_agent.utils.deduplicator import MessageDeduplicator
 from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter, OutputMessage
 from modex_agent.pipeline.approval_renderer import ApprovalRenderer, format_approval_prompt
+from modex_agent.pipeline.approval_resumer import ApprovalResumer
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 
 logger = logging.getLogger(__name__)
@@ -189,6 +188,11 @@ class AgentPipeline:
             agent=agent,
             user_interface=user_interface,
             on_drain=self._process_message,
+        )
+        self._approval_resumer = ApprovalResumer(
+            agent=agent,
+            turn_store=turn_store,
+            user_interface=user_interface,
         )
         self._running = False
         self._dream_task: asyncio.Task | None = None
@@ -606,46 +610,16 @@ class AgentPipeline:
         ctx_mgr: ContextManager,
         pool_data: PoolDataSnapshot | None = None,
     ) -> AgentResult | None:
-        approval = ReActSnapshotPolicy.approval_from_snapshot(snapshot)
-        if approval is None:
+        should_resume = await self._approval_resumer.apply_resume(
+            snapshot,
+            action=action,
+            session_id=session_id,
+            pool_data=pool_data,
+            agent_context=agent_context,
+        )
+        if not should_resume:
             return None
-
-        if action is not None:
-            decision = (
-                ApprovalDecision.ALLOWED
-                if action == ApprovalAction.ALLOW
-                else ApprovalDecision.DENIED
-            )
-            for req in approval.requests:
-                current = approval.decisions.get(req.tool_call_id, ApprovalDecision.PENDING)
-                if current == ApprovalDecision.PENDING:
-                    approval.apply_decision(req.tool_call_id, decision)
-                    break
-
-        snapshot = ReActSnapshotPolicy.replace_approval(snapshot, approval)
         turn_store = pool_data.turn_store if pool_data is not None else self.turn_store
-        if turn_store is None:
-            logger.error("Approval resume requested but no TurnStateStore is configured")
-            return None
-
-        if not approval.every_tool_decided:
-            await turn_store.save_turn(snapshot)
-            if self._user_interface is not None:
-                for req in approval.requests:
-                    current = approval.decisions.get(req.tool_call_id, ApprovalDecision.PENDING)
-                    if current == ApprovalDecision.PENDING:
-                        await self._user_interface.render_message(
-                            session_id,
-                            format_approval_prompt(req),
-                        )
-                        break
-            return None
-
-        state = ReActSnapshotPolicy.state_from_snapshot(snapshot)
-        if agent_context.runtime is None:
-            return None
-        agent_context.identity = snapshot.identity
-        agent_context.runtime.state = state
         result = await self._execute_turn(
             agent_context,
             emitter,
@@ -662,22 +636,7 @@ class AgentPipeline:
     async def _load_pending_approval_snapshot(
         self, session_id: str, *, pool_data: PoolDataSnapshot | None = None,
     ) -> TurnSnapshot | None:
-        turn_store = pool_data.turn_store if pool_data is not None else self.turn_store
-        if turn_store is None:
-            return None
-        agent_id = self.agent.name
-        snapshots = await turn_store.list_active_turns(
-            StateQueryScope(
-                agent_id=agent_id,
-                session_id=session_id,
-                phase=TurnPhase.SUSPENDED,
-                reason=SnapshotReason.TOOL_APPROVAL_REQUIRED,
-            )
-        )
-        if not snapshots:
-            return None
-        snapshots.sort(key=lambda snapshot: snapshot.created_at)
-        return snapshots[-1]
+        return await self._approval_resumer.load_pending(session_id, pool_data=pool_data)
 
     async def _process_message_locked(
         self, input_msg: InputMessage, session_id: str, route_result: Any | None = None,
