@@ -48,16 +48,14 @@ class CompositeGovernance(ContextGovernance):
 
 
 class ToolChainRepairGovernance(ContextGovernance):
-    """Repair tool-call chain integrity by removing structurally invalid records.
+    """Repair tool-call chain integrity in the model-visible message copy.
 
-    Uses the session tool-chain sanitizer in MODEL_VISIBLE_CONTEXT mode to
-    remove orphan tool results and incomplete assistant/tool groups from the
-    model-visible message copy. Incomplete tool-call groups are deleted rather
-    than backfilled; LLM providers cannot receive assistant messages with
-    tool_calls but no matching tool results.
-
-    This pass also handles orphan tool results with no preceding assistant
-    declaration.
+    Uses the session tool-chain sanitizer in MODEL_VISIBLE_CONTEXT mode to:
+    - remove orphan tool results (no matching assistant tool_call), and
+    - backfill dangling tool_calls: an assistant tool_call with no matching
+      tool result is kept and a placeholder tool message (matched id) is
+      synthesized so LLM providers never receive assistant messages with
+      tool_calls but no matching tool results.
 
     Operates on a message copy only — persisted history is never modified.
     """
@@ -320,19 +318,6 @@ class LossyContentCompactionGovernance(ContextGovernance):
         if role == str(MessageRole.USER):
             return ContextReductionType.USER_INPUT_TRUNCATED
         return ContextReductionType.CONTENT_TRUNCATED
-
-
-class FinalContextLegalityGovernance(ContextGovernance):
-    """Final provider-legality pass for model-visible context.
-
-    ToolChainRepairGovernance already removes all incomplete tool-call groups
-    and orphan tool results upstream via the tool-chain sanitizer. This pass
-    returns the messages unchanged; it exists for config compatibility so
-    existing governance chains do not break.
-    """
-
-    async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return messages
 
 
 class UserRetentionBufferInjectionGovernance(ContextGovernance):

@@ -62,6 +62,31 @@ class SessionActivity:
     last_active: float
 
 
+def input_message_from_dispatch_envelope(
+    envelope: AgentMessageEnvelope,
+    *,
+    session: Any,
+    metadata: dict[str, Any],
+) -> InputMessage:
+    """Reconstruct the InputMessage dispatched to a pipeline from a broker envelope.
+
+    Carries ``approval_decision`` through (serialized in the envelope payload by
+    ``broker_bridge.build_input_broker_message``). Without this, a webui
+    approve/deny decision crossing the broker is lost and treated as an empty
+    user turn — polluting history and leaving a dangling assistant ``tool_calls``.
+    """
+    from modex_agent.approval.views import ApprovalDecisionInput
+
+    return InputMessage(
+        content=envelope.payload.get("content", ""),
+        session=session,
+        metadata=metadata,
+        approval_decision=ApprovalDecisionInput.from_dict(
+            envelope.payload.get("approval_decision")
+        ),
+    )
+
+
 class AgentPool(AgentRegistry):
     """Agent 生命周期管理池。"""
 
@@ -763,7 +788,9 @@ class AgentPool(AgentRegistry):
                     self._touch_session(session_id)
                 session = await self._resolve_session_info(session_id, instance.descriptor.address.name)
                 await instance.pipeline.process_message(
-                    InputMessage(content=content, session=session, metadata=metadata)
+                    input_message_from_dispatch_envelope(
+                        envelope, session=session, metadata=metadata
+                    )
                 )
             if envelope.invocation_id:
                 await self._enforce_session_cap(instance.descriptor.address.name)

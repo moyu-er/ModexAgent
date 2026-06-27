@@ -6,7 +6,6 @@ interceptor — it is a pure classification helper."""
 
 from __future__ import annotations
 
-import fnmatch
 from pathlib import Path
 from typing import Any
 
@@ -21,44 +20,78 @@ def _looks_like_path(val: str) -> bool:
 
 
 class ArgumentMatcher:
-    """Match tool arguments against allowed path patterns for approval.
+    """Match tool path arguments against allowed directory roots.
 
-    Uses fnmatch for cross-platform wildcard support (*, ?, []).
-    Resolves . to project_root, ~ to user home.
+    A tool call is allowed when every path argument resolves to a real
+    absolute path contained by at least one ``allowed_paths`` root. Paths
+    are fully resolved (``expanduser`` -> anchor to ``project_root`` ->
+    ``Path.resolve``) so ``..`` segments collapse and cannot escape, and
+    containment is segment-aware (``is_relative_to``) — never raw string
+    prefix or glob matching, which would let ``*`` cross ``/`` and admit
+    ``../`` escapes.
+
+    ``allowed_paths`` entries are directory roots. A trailing ``/*`` or
+    ``/**`` means "this directory, recursively"; a bare ``*`` or ``**``
+    allows everywhere. Example: ``["./*"]`` is the whole project tree.
     """
 
     def __init__(self, project_root: Path | None = None) -> None:
         self.project_root = project_root
 
     def matches(self, arguments: dict[str, Any], allowed_paths: list[str]) -> bool:
-        """Returns True if all path arguments match at least one allowed pattern."""
+        """True if all path arguments resolve inside at least one allowed root."""
         paths = self._extract_paths(arguments)
         if not paths:
             return True
-        for path in paths:
-            resolved = self._resolve_path(path)
-            if not self._match_any(resolved, allowed_paths):
+        for raw in paths:
+            if not self._match_any(self._resolve_path(raw), allowed_paths):
                 return False
         return True
 
     def _resolve_path(self, raw: str) -> Path:
-        if raw.startswith("~/"):
-            return Path.home() / raw[2:]
-        if raw == ".":
-            return self.project_root if self.project_root is not None else Path(".").resolve()
-        if raw.startswith("./"):
-            root = self.project_root if self.project_root is not None else Path(".").resolve()
-            return root / raw[2:]
-        return Path(raw).expanduser()
+        """Resolve *raw* to a real absolute path.
+
+        ``~`` expands to the user home; relative paths anchor to
+        ``project_root`` (or the process cwd when unset); the result is
+        fully resolved so ``..`` segments collapse and symlinks resolve.
+        """
+        p = Path(raw).expanduser()
+        if not p.is_absolute():
+            base = self.project_root if self.project_root is not None else Path.cwd()
+            p = base / p
+        return p.resolve(strict=False)
 
     def _match_any(self, path: Path, patterns: list[str]) -> bool:
-        path_str = str(path).replace("\\", "/")
+        """True if *path* is contained by at least one allowed root pattern."""
+        resolved = path.expanduser().resolve(strict=False)
         for pattern in patterns:
-            resolved_pattern = self._resolve_path(pattern)
-            pattern_str = str(resolved_pattern).replace("\\", "/")
-            if fnmatch.fnmatch(path_str, pattern_str):
+            if self._matches_pattern(resolved, pattern):
                 return True
         return False
+
+    def _matches_pattern(self, path: Path, pattern: str) -> bool:
+        stripped = pattern.strip()
+        if stripped in ("*", "**"):
+            return True
+        if stripped == "":
+            return False
+        return path.is_relative_to(self._allowed_root(stripped))
+
+    def _allowed_root(self, pattern: str) -> Path:
+        """Resolve an allowed_paths pattern to its directory root.
+
+        Strips a trailing ``/**``, ``/*``, or ``*`` glob marker so the
+        remaining directory anchors the segment-aware containment check.
+        """
+        p = pattern
+        if p.endswith("/**"):
+            p = p[:-3]
+        elif p.endswith("/*"):
+            p = p[:-2]
+        elif p.endswith("*"):
+            p = p[:-1]
+        p = p.rstrip("/") or "."
+        return self._resolve_path(p)
 
     def _extract_paths(self, arguments: dict[str, Any]) -> list[str]:
         path_keys = {

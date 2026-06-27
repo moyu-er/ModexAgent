@@ -150,7 +150,7 @@ class AgentPipeline:
         self.on_session_start = on_session_start
         self.on_session_end = on_session_end
         self.runtime_context_manager = runtime_context_manager
-        self.governance = governance
+        self._governance = governance
         self.safety = safety or RuntimeSafetyPolicy()
         self.hook_runner = hook_runner
         self.interceptor_chain = interceptor_chain
@@ -260,6 +260,20 @@ class AgentPipeline:
         # emitter_factory; cf. workspace_manager / pool_name which mirror
         # into the TurnRunner instead.
         self._turn_context_builder._runtime_services = value
+
+    @property
+    def governance(self) -> ContextGovernance | None:
+        return self._governance
+
+    @governance.setter
+    def governance(self, value: ContextGovernance | None) -> None:
+        self._governance = value
+        # Mirror into TurnContextBuilder so post-construction wiring (e.g.
+        # main-pool governance = create_governance(...) in pool_builder) reaches
+        # the per-turn runtime via base_gov or self._governance. Without this,
+        # sanitizer never runs on the main agent and dangling tool_calls reach
+        # the provider (400). Same mirror pattern as runtime_services.
+        self._turn_context_builder._governance = value
 
     @property
     def emitter_factory(self) -> Callable[..., ContentEmitter] | None:

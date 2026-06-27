@@ -115,7 +115,13 @@ def test_persistent_mode_preserves_last_incomplete_assistant_as_open_tail() -> N
     assert result.open_tail_assistant_index == 1
 
 
-def test_model_visible_mode_removes_last_incomplete_assistant_and_partial_tool() -> None:
+def test_model_visible_mode_backfills_missing_tool_result() -> None:
+    """MODEL_VISIBLE_CONTEXT backfills a dangling tool_call instead of deleting
+    the group: the assistant is preserved, the existing tool(a) is reused, and
+    the missing tool(b) gets a placeholder so the provider sees a well-formed
+    chain and the LLM learns the result was lost."""
+    from modex_agent.memory.sanitizer import BACKFILL_LOST_TOOL_CONTENT
+
     messages = [
         {"role": str(MessageRole.USER), "content": "start"},
         _assistant_tool_call("a", "b"),
@@ -130,10 +136,55 @@ def test_model_visible_mode_removes_last_incomplete_assistant_and_partial_tool()
 
     assert result.messages == [
         {"role": str(MessageRole.USER), "content": "start"},
+        _assistant_tool_call("a", "b"),
+        _tool("a", "partial"),
+        {
+            "role": str(MessageRole.TOOL),
+            "tool_call_id": "b",
+            "content": BACKFILL_LOST_TOOL_CONTENT,
+        },
         {"role": str(MessageRole.USER), "content": "new user"},
     ]
-    assert result.removed_indices == {1, 2}
+    # Original tool(a) position is rebuilt into the contiguous run after the
+    # assistant; nothing else is removed.
+    assert result.removed_indices == {2}
     assert result.has_open_tail is False
+    assert [m["tool_call_id"] for m in result.backfilled_messages] == ["b"]
+
+
+def test_model_visible_mode_backfills_every_missing_call_when_no_tool_results() -> None:
+    """Assistant with tool_calls but zero tool messages: every call_id is
+    backfilled, assistant preserved."""
+    from modex_agent.memory.sanitizer import BACKFILL_LOST_TOOL_CONTENT
+
+    messages = [
+        {"role": str(MessageRole.USER), "content": "start"},
+        _assistant_tool_call("a", "b"),
+        {"role": str(MessageRole.USER), "content": "follow-up"},
+    ]
+
+    result = DefaultSessionToolChainSanitizer().sanitize(
+        messages,
+        mode=ToolChainSanitizationMode.MODEL_VISIBLE_CONTEXT,
+    )
+
+    assert result.messages == [
+        {"role": str(MessageRole.USER), "content": "start"},
+        _assistant_tool_call("a", "b"),
+        {
+            "role": str(MessageRole.TOOL),
+            "tool_call_id": "a",
+            "content": BACKFILL_LOST_TOOL_CONTENT,
+        },
+        {
+            "role": str(MessageRole.TOOL),
+            "tool_call_id": "b",
+            "content": BACKFILL_LOST_TOOL_CONTENT,
+        },
+        {"role": str(MessageRole.USER), "content": "follow-up"},
+    ]
+    assert result.removed_indices == set()
+    assert {m["tool_call_id"] for m in result.backfilled_messages} == {"a", "b"}
 
 
 def test_duplicate_tool_result_keeps_first_and_removes_later_duplicate() -> None:

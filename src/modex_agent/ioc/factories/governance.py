@@ -16,7 +16,7 @@ def create_governance(
 ) -> Any | None:
     """Build ContextGovernance chain from IOC config.
 
-    Chain order: lossy_compaction → tool_chain_repair → final_legality
+    Chain order: lossy_compaction → tool_chain_repair
 
     Args:
         cfg: Memory configuration (governance lives inside it).
@@ -34,7 +34,6 @@ def create_governance(
 
     from modex_agent.memory.context_governance import (
         CompositeGovernance,
-        FinalContextLegalityGovernance,
         LossyContentCompactionGovernance,
         ToolChainRepairGovernance,
     )
@@ -58,7 +57,6 @@ def create_governance(
     # Tool chain repair runs last (after compaction) so it can
     # clean up any structural issues before sending to the LLM.
     strategies.append(ToolChainRepairGovernance())
-    strategies.append(FinalContextLegalityGovernance())
     return CompositeGovernance(strategies)
 
 
@@ -68,12 +66,11 @@ def create_subagent_governance(
 ) -> Any | None:
     """Build lightweight governance for subagents.
 
-    Chain: ToolChainRepair + FinalContextLegality.
+    Chain: ToolChainRepair only.
     No lossy compaction (that's main-agent only).
     """
     from modex_agent.memory.context_governance import (
         CompositeGovernance,
-        FinalContextLegalityGovernance,
         ToolChainRepairGovernance,
     )
 
@@ -86,7 +83,6 @@ def create_subagent_governance(
         return None
 
     strategies: list[Any] = [
-        ToolChainRepairGovernance(),
-        FinalContextLegalityGovernance(),
+        ToolChainRepairGovernance()
     ]
     return CompositeGovernance(strategies)

@@ -40,6 +40,17 @@ class ApprovalDecisionInput:
     tool_call_id: str
     action: ApprovalAction
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a broker-safe plain dict (crosses the message broker)."""
+        return {"tool_call_id": self.tool_call_id, "action": self.action.value}
+
+    @classmethod
+    def from_dict(cls, data: Any) -> ApprovalDecisionInput | None:
+        """Reconstruct from ``to_dict`` output; None when *data* is falsy."""
+        if not data:
+            return None
+        return cls(tool_call_id=str(data["tool_call_id"]), action=ApprovalAction(str(data["action"])))
+
 
 def view_from_request(req: ApprovalRequestState, *, status: str = "pending") -> ApprovalRequestView:
     """Serialize an ``ApprovalRequestState`` snapshot into the wire DTO."""

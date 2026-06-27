@@ -72,7 +72,10 @@ agents:
       enabled: true
     approval:
       enabled: true                       # opt-in (default is off)
+      # Keys MUST match the real tool names (WriteFileTool.name="write",
+      # EditFileTool.name="edit"). allowed_paths are workspace-relative
+      # directory roots ("./*" = whole project tree).
       tools:
-        write_file: {allowed_paths: ["./*"]}
-        edit_file: {allowed_paths: ["./*"]}
+        write: {allowed_paths: ["./*"]}
+        edit: {allowed_paths: ["./*"]}
     extra_tools: ["ast_grep_search", "ast_grep_replace"]
