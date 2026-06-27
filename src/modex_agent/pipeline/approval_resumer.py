@@ -57,10 +57,13 @@ class ApprovalResumer:
         turn_store = self._resolve_turn_store(pool_data)
         if turn_store is None:
             return None
-        agent_id = self._agent.name
+        # Approval turns are partitioned by workspace (turn_store path) + pool
+        # + session_id. The session_id already identifies the conversation
+        # uniquely, so agent_id is NOT a query dimension — using self._agent.name
+        # here (a class-name constant like "ReActAgent") mismatches the snapshot's
+        # stored agent_id (the pool registration name) and silently finds nothing.
         snapshots = await turn_store.list_active_turns(
             StateQueryScope(
-                agent_id=agent_id,
                 session_id=session_id,
                 phase=TurnPhase.SUSPENDED,
                 reason=SnapshotReason.TOOL_APPROVAL_REQUIRED,

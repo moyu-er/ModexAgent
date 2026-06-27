@@ -264,6 +264,7 @@ def _build_pipeline_with_agent(
     command_processor: SlashCommandProcessor | None = None,
     governance: Any | None = None,
     context_manager: Any | None = None,
+    agent_descriptor: Any | None = None,
 ) -> AgentPipeline:
     """Build a pipeline around an already-constructed agent + stores.
 
@@ -272,6 +273,10 @@ def _build_pipeline_with_agent(
     tool-chain repair + lossy compaction); None leaves governance off.
     ``context_manager`` defaults to InMemoryContextManager; pass a production
     MemorySystemContextManager to exercise the real message store layer.
+    ``agent_descriptor`` reproduces production wiring: when set, the snapshot's
+    ``identity.agent_id`` becomes ``descriptor.address.name`` (e.g. "main"),
+    which differs from ``agent.name`` ("ReActAgent") — the exact mismatch that
+    broke resume before the load_pending scope fix.
     """
     tool_manager = InMemoryToolManager()
     tool_manager.register(_WriteFileTool(recorded))
@@ -299,6 +304,7 @@ def _build_pipeline_with_agent(
         runtime_services=runtime_services,
         command_processor=command_processor,
         user_interface=IMUserInterface(output_adapter=output_adapter),
+        agent_descriptor=agent_descriptor,
     )
 
 
@@ -713,6 +719,134 @@ async def test_post_construction_governance_mirrors_and_backfills_dangling_toolc
     # _ValidatingProvider.chat asserts every assistant tool_call is followed by a
     # matching tool message. If the mirror/backfill failed, the dangling
     # tool_call reaches the LLM and the assertion raises (the production 400).
+
+
+@pytest.mark.asyncio
+async def test_snapshot_and_resume_connect_across_different_agent_ids(
+    tmp_path: Path,
+) -> None:
+    """Snapshot generation and resume are two independent flows that must connect.
+
+    Flow A (snapshot): during turn execution ``identity.agent_id`` comes from
+    ``agent_descriptor.address.name`` ("main" in production).
+    Flow B (resume): ``load_pending`` queries by session_id; ``agent.name`` is
+    the hardcoded class constant "ReActAgent".
+
+    These two agent_ids differ. ``load_pending`` must connect them by session_id,
+    NOT by agent.name — using agent.name as a scope silently mismatches and the
+    approve click does nothing (the production bug). This test reproduces the
+    real wiring (agent_descriptor set) where the previous tests' blind spot hid.
+    """
+    from modex_agent.multi_agent import AgentDescriptor
+    from modex_agent.multi_agent.address import AgentAddress
+
+    descriptor = AgentDescriptor(address=AgentAddress(name="main"), system_prompt_template="x")
+    provider = _ValidatingProvider(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        tool_name="write",
+                        arguments={"path": "/etc/x", "content": "y"},
+                        call_id="c1",
+                    ),
+                ],
+            ),
+            LLMResponse(content="done"),
+        ]
+    )
+    output_adapter = _RecordingOutputAdapter()
+    turn_store = InMemoryTurnStateStore()
+    recorded: list[tuple[str, str]] = []
+    pipeline = _build_pipeline_with_agent(
+        tmp_path=tmp_path,
+        agent=ReActAgent(provider),
+        output_adapter=output_adapter,
+        turn_store=turn_store,
+        recorded=recorded,
+        agent_descriptor=descriptor,
+    )
+    session = SessionInfo.from_str("s1.main")
+
+    # Flow A: snapshot is stored with agent_id from the descriptor ("main").
+    assert await pipeline._process_message(
+        InputMessage(content="do it", session=session)
+    ) is None
+    snap = await _assert_one_suspended_snapshot(turn_store, session.session_id)
+    assert snap.identity.agent_id == "main"
+    assert pipeline.agent.name == "ReActAgent"  # differs from snapshot agent_id
+
+    # Flow B: resume must find the snapshot by session_id and execute the tool.
+    result = await pipeline._process_message(
+        InputMessage(
+            content="",
+            session=session,
+            approval_decision=ApprovalDecisionInput("c1", ApprovalAction.ALLOW),
+        )
+    )
+    assert result is not None
+    assert recorded == [("/etc/x", "y")]
+    await _assert_no_suspended_snapshot(turn_store, session.session_id)
+
+
+@pytest.mark.asyncio
+async def test_resume_isolated_by_session_id_no_cross_contamination(
+    tmp_path: Path,
+) -> None:
+    """With agent_id removed from the scope, session_id remains the partition:
+    an approve for session B must NOT resume session A's suspended snapshot.
+    Locks the isolation guarantee so the scope fix can't be regressed into
+    cross-session leakage."""
+    from modex_agent.multi_agent import AgentDescriptor
+    from modex_agent.multi_agent.address import AgentAddress
+
+    descriptor = AgentDescriptor(address=AgentAddress(name="main"), system_prompt_template="x")
+    provider = _ValidatingProvider(
+        [
+            LLMResponse(
+                content="",
+                tool_calls=[
+                    ToolCall(
+                        tool_name="write",
+                        arguments={"path": "/etc/a", "content": "1"},
+                        call_id="ca",
+                    ),
+                ],
+            ),
+            LLMResponse(content="done"),
+        ]
+    )
+    output_adapter = _RecordingOutputAdapter()
+    turn_store = InMemoryTurnStateStore()
+    recorded: list[tuple[str, str]] = []
+    pipeline = _build_pipeline_with_agent(
+        tmp_path=tmp_path,
+        agent=ReActAgent(provider),
+        output_adapter=output_adapter,
+        turn_store=turn_store,
+        recorded=recorded,
+        agent_descriptor=descriptor,
+    )
+    sess_a = SessionInfo.from_str("s1.main")
+    sess_b = SessionInfo.from_str("s2.main")
+
+    # Session A suspends a write.
+    assert await pipeline._process_message(
+        InputMessage(content="do a", session=sess_a)
+    ) is None
+    await _assert_one_suspended_snapshot(turn_store, sess_a.session_id)
+
+    # Session B approves (different session_id) — must not touch A's snapshot.
+    await pipeline._process_message(
+        InputMessage(
+            content="",
+            session=sess_b,
+            approval_decision=ApprovalDecisionInput("ca", ApprovalAction.ALLOW),
+        )
+    )
+    assert recorded == [], "session B approve must not execute session A's tool"
+    await _assert_one_suspended_snapshot(turn_store, sess_a.session_id)
 
 
 @pytest.mark.asyncio
