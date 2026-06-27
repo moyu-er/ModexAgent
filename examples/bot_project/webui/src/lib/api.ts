@@ -1,4 +1,5 @@
 import type {
+  ApprovalRequestView,
   ConversationInfo,
   CreateConversationResponse,
   ServerEventUnion,
@@ -107,7 +108,7 @@ export async function deleteConversation(
 async function fetchSessionResource<T>(
   sessionId: string,
   ws: string | undefined,
-  resource: "messages" | "todos",
+  resource: "messages" | "todos" | "approvals",
 ): Promise<T> {
   // ws (workspace) scopes the read to the session's workspace — without it the
   // server reads home and a message written under another workspace is lost.
@@ -129,6 +130,29 @@ export async function fetchTodos(
   ws?: string,
 ): Promise<TodoItemDTO[]> {
   return fetchSessionResource<TodoItemDTO[]>(sessionId, ws, "todos");
+}
+
+export async function fetchApprovals(
+  sessionId: string,
+  ws?: string,
+): Promise<ApprovalRequestView[]> {
+  return fetchSessionResource<ApprovalRequestView[]>(sessionId, ws, "approvals");
+}
+
+export async function submitApproval(
+  sessionId: string,
+  toolCallId: string,
+  action: "allow" | "deny",
+  ws?: string,
+): Promise<{ accepted: boolean }> {
+  const params = ws ? `?ws=${encodeURIComponent(ws)}` : "";
+  const resp = await fetch(`${API_BASE}/sessions/${sessionId}/approvals${params}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tool_call_id: toolCallId, action }),
+  });
+  await assertOk(resp);
+  return resp.json() as Promise<{ accepted: boolean }>;
 }
 
 export async function fetchAllMessages(

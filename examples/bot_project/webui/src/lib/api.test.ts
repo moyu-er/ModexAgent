@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { ApiError, fetchPools } from "./api";
+import {
+  ApiError,
+  fetchApprovals,
+  fetchPools,
+  submitApproval,
+} from "./api";
 
 // Minimal Response factory. The Response constructor derives `ok` from the
 // status code, and its body-consumption guard makes json() throw if text() was
@@ -58,5 +63,59 @@ describe("ApiError", () => {
 
     const result = await fetchPools();
     expect(result).toEqual([{ name: "main" }]);
+  });
+});
+
+describe("approval API", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("fetchApprovals GETs /approvals with ws param and returns views", async () => {
+    const fake = [
+      {
+        tool_call_id: "c1",
+        tool_name: "write_file",
+        tier: "dangerous",
+        arguments: {},
+        status: "pending",
+      },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          makeResponse(200, "OK", JSON.stringify(fake)),
+        ),
+      ),
+    );
+
+    const out = await fetchApprovals("s.main", "ws0");
+    expect(out).toEqual(fake);
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/sessions/s.main/approvals?ws=ws0",
+    );
+  });
+
+  it("submitApproval POSTs the decision body with tool_call_id and action", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          makeResponse(202, "Accepted", JSON.stringify({ accepted: true })),
+        ),
+      ),
+    );
+
+    const out = await submitApproval("s.main", "c1", "allow", "ws0");
+    expect(out).toEqual({ accepted: true });
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/sessions/s.main/approvals?ws=ws0",
+      expect.objectContaining({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tool_call_id: "c1", action: "allow" }),
+      }),
+    );
   });
 });
