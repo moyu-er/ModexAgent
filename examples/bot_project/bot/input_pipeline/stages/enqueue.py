@@ -45,6 +45,7 @@ class EnqueueStage(InputStage):
             workspace=Path(envelope.metadata[RoutingMeta.WORKSPACE])
             if RoutingMeta.WORKSPACE in envelope.metadata
             else None,
+            approval_decision=envelope.metadata.get(RoutingMeta.APPROVAL_DECISION),
         )
         ctx.enqueue_message(msg)
         return Continue(value=envelope)
