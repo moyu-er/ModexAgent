@@ -137,6 +137,21 @@ class WebSocketOutputAdapter(OutputAdapter):
         return StreamingMode.NATIVE
 
     async def send(self, message: OutputMessage, session_id: str) -> None:
+        if message.message_type == "approval_request":
+            # Structured approval push: emit the view as the envelope payload so
+            # the webui renders an approval card. IM/QQ adapters (which read
+            # ``content``) are unaffected — they receive the same OutputMessage
+            # via their own adapters, not this branch.
+            view = dict(message.metadata.get("approval") or {})
+            await self.send_envelope(
+                DeltaEnvelope(
+                    session_id=session_id,
+                    agent_name=_agent_of(session_id),
+                    event_type="approval_request",
+                    payload=view,
+                )
+            )
+            return
         content = message.content or ""
         await self.send_delta(content, session_id)
 
