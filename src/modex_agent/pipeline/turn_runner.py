@@ -41,11 +41,12 @@ if TYPE_CHECKING:
     from modex_agent.workspace import WorkspaceManager
 
 from modex_agent.approval.types import ApprovalAction
+from modex_agent.approval.views import view_from_request
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.graph.interrupt import GraphInterrupt
 from modex_agent.memory.history import inject_attachments_to_history
-from modex_agent.pipeline.approval_renderer import ApprovalRenderer, format_approval_prompt
+from modex_agent.pipeline.approval_renderer import ApprovalRenderer
 from modex_agent.pipeline.approval_resumer import ApprovalResumer
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
@@ -195,9 +196,9 @@ class TurnRunner:
                     requests = interrupt_exc.value
                     if isinstance(requests, list):
                         for req in requests:
-                            await self._user_interface.render_message(
+                            await self._user_interface.render_approval_prompt(
                                 session_id,
-                                format_approval_prompt(req),
+                                view_from_request(req),
                             )
                             break  # Only prompt the first one; user approves one at a time
 

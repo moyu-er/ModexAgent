@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -11,6 +10,7 @@ from modex_agent.agents.react.constants import ReActNode
 from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
 from modex_agent.approval.constants import ApprovalDecision, ApprovalTier
 from modex_agent.approval.response import parse_approval_action
+from modex_agent.approval.views import ApprovalRequestView
 from modex_agent.core.types import InputMessage
 from modex_agent.pipeline.approval_renderer import ApprovalRenderer, format_approval_prompt
 from modex_agent.runtime.enums import AgentKind, ApprovalSubjectType, SnapshotReason, TurnPhase
@@ -159,20 +159,25 @@ class TestCleanup:
 
 class TestFormat:
     def test_tool_name_and_args(self) -> None:
-        req = MagicMock(
-            tool_name="rm",
+        view = ApprovalRequestView(
             tool_call_id="abc",
-            arguments=ToolArguments(values={"path": "/etc"}),
-            tier=ApprovalTier.HARDLINE,
+            tool_name="rm",
+            tier=str(ApprovalTier.HARDLINE),
+            arguments={"path": "/etc"},
         )
-        result = format_approval_prompt(req)
+        result = format_approval_prompt(view)
         assert "HARDLINE" in result
         assert "rm" in result
         assert "abc" in result
         assert "path=/etc" in result
 
     def test_null_args(self) -> None:
-        req = MagicMock(tool_name="echo", tool_call_id="x1", arguments=None, tier="normal")
-        result = format_approval_prompt(req)
+        view = ApprovalRequestView(
+            tool_call_id="x1",
+            tool_name="echo",
+            tier="normal",
+            arguments={},
+        )
+        result = format_approval_prompt(view)
         assert "NORMAL" in result
         assert "echo" in result

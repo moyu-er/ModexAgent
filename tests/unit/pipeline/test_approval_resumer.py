@@ -61,7 +61,7 @@ from modex_agent.runtime.store import InMemoryTurnStateStore, TurnStateStore
 
 
 class _RecordingUI:
-    """Records render_message calls (session_id, content)."""
+    """Records render_message / render_approval_prompt calls (session_id, content)."""
 
     def __init__(self) -> None:
         self.rendered: list[tuple[str, str]] = []
@@ -69,6 +69,11 @@ class _RecordingUI:
     async def render_message(self, session_id, content, metadata=None) -> str:
         self.rendered.append((session_id, content))
         return "msg-id"
+
+    async def render_approval_prompt(self, session_id, view) -> None:
+        # Record the same way render_message does so existing assertions
+        # (``assert user_interface.rendered``) stay valid.
+        self.rendered.append((session_id, view.tool_name))
 
 
 class _RecordingTurnStore(TurnStateStore):

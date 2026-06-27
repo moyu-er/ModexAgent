@@ -40,13 +40,18 @@ from modex_agent.runtime.store import InMemoryTurnStateStore
 
 
 class _RecordingUI:
-    """Captures render_message calls so tests can assert approval prompts."""
+    """Captures render_message / render_approval_prompt calls so tests can assert approval prompts."""
 
     def __init__(self) -> None:
         self.rendered_prompt: str | None = None
 
     async def render_message(self, session_id: str, content: str) -> None:
         self.rendered_prompt = content
+
+    async def render_approval_prompt(self, session_id: str, view) -> None:
+        # Record the same way render_message does so existing assertions
+        # (``assert ui.rendered_prompt is not None``) stay valid.
+        self.rendered_prompt = view.tool_name
 
 
 class _InterruptingAgent:

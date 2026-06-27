@@ -15,8 +15,8 @@ from typing import TYPE_CHECKING
 from modex_agent.agents.react.state import ReActSnapshotPolicy
 from modex_agent.approval.constants import ApprovalDecision
 from modex_agent.approval.types import ApprovalAction
+from modex_agent.approval.views import view_from_request
 from modex_agent.core.agent import AgentContext
-from modex_agent.pipeline.approval_renderer import format_approval_prompt
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.runtime.enums import SnapshotReason, TurnPhase
 from modex_agent.runtime.models import StateQueryScope, TurnSnapshot
@@ -130,9 +130,9 @@ class ApprovalResumer:
                 for req in approval.requests:
                     current = approval.decisions.get(req.tool_call_id, ApprovalDecision.PENDING)
                     if current == ApprovalDecision.PENDING:
-                        await self._user_interface.render_message(
+                        await self._user_interface.render_approval_prompt(
                             session_id,
-                            format_approval_prompt(req),
+                            view_from_request(req),
                         )
                         break
             return None
