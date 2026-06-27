@@ -1,4 +1,6 @@
 import type {
+  ApprovalRequestEvent,
+  ApprovalRequestView,
   AssistantReasoningEvent,
   ContentEvent,
   ErrorEvent,
@@ -27,6 +29,8 @@ export interface StreamState {
   sessionStreaming: Record<string, boolean>;
   /** Per-session active task list (pending + in_progress), keyed by session_id. */
   todos: Record<string, TodoItemDTO[]>;
+  /** Per-session pending approvals, keyed by session_id (push from server, pull from GET). */
+  pendingApprovals: Record<string, ApprovalRequestView[]>;
 }
 
 interface PendingRequestRef {
@@ -227,6 +231,26 @@ export function applyServerEvent(
   currentSessionId: string | null,
   pendingRequestRef: PendingRequestRef,
 ): StreamState {
+  if (event.event === "approval_request") {
+    const areq = event as ApprovalRequestEvent;
+    const sid: string = areq.session_id;
+    const view: ApprovalRequestView = {
+      tool_call_id: areq.tool_call_id,
+      tool_name: areq.tool_name,
+      tier: areq.tier,
+      arguments: areq.arguments,
+      status: areq.status,
+    };
+    const prev = state.pendingApprovals[sid] ?? [];
+    if (prev.some((v) => v.tool_call_id === view.tool_call_id)) {
+      return state; // dedupe: same request pushed twice (e.g. on restart)
+    }
+    return {
+      ...state,
+      pendingApprovals: { ...state.pendingApprovals, [sid]: [...prev, view] },
+    };
+  }
+
   const raw = event as unknown as Record<string, unknown>;
   const sid: string = (raw.session_id as string) || (raw.conversation_id as string) || "";
 
@@ -252,5 +276,21 @@ export function applyServerEvent(
     sessionStreaming: currentSessionId
       ? { ...state.sessionStreaming, [currentSessionId]: result.isStreaming }
       : state.sessionStreaming,
+  };
+}
+
+/** Remove a decided approval from the store (called after a successful POST). */
+export function clearPendingApproval(
+  state: StreamState,
+  sessionId: string,
+  toolCallId: string,
+): StreamState {
+  const prev = state.pendingApprovals[sessionId] ?? [];
+  return {
+    ...state,
+    pendingApprovals: {
+      ...state.pendingApprovals,
+      [sessionId]: prev.filter((v) => v.tool_call_id !== toolCallId),
+    },
   };
 }

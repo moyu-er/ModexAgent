@@ -38,6 +38,7 @@ export function useWebUIStream(
     sessionMessages: {},
     sessionStreaming: {},
     todos: {},
+    pendingApprovals: {},
   });
   const clientRef = useRef<WebSocketClient | null>(null);
   /** ID of the most recent optimistically-added user message.  The server
@@ -194,6 +195,7 @@ export function useWebUIStream(
       sessionMessages: {},
       sessionStreaming: {},
       todos: {},
+      pendingApprovals: {},
     }));
     streamingSessionsRef.current.clear();
   }, [currentWs]);
@@ -207,6 +209,7 @@ export function useWebUIStream(
         sessionMessages: prev.sessionMessages,
         sessionStreaming: prev.sessionStreaming,
         todos: prev.todos,
+        pendingApprovals: prev.pendingApprovals,
       }));
       return;
     }
@@ -219,6 +222,7 @@ export function useWebUIStream(
         sessionMessages: prev.sessionMessages,
         sessionStreaming: prev.sessionStreaming,
         todos: prev.todos,
+        pendingApprovals: prev.pendingApprovals,
       }));
       if (clientRef.current?.connected) {
         clientRef.current.attach(sessionId, pool, currentWsRef.current);
@@ -239,6 +243,7 @@ export function useWebUIStream(
       sessionMessages: prev.sessionMessages,
       sessionStreaming: prev.sessionStreaming,
       todos: prev.todos,
+      pendingApprovals: prev.pendingApprovals,
     }));
 
     Promise.all([
