@@ -45,7 +45,8 @@ class SessionMemoryManager(ABC):
 
         This is a **windowed view** intended for LLM context injection and
         external read APIs that need bounded output.  When *limit* is None,
-        the implementation's configured ``max_messages`` is used.
+        ALL stored messages are returned; pass an explicit *limit* for a
+        bounded tail read.
 
         For operations that require the **complete** message list — compression
         triggers, archiving, summarisation, decision-making — use

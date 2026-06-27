@@ -127,7 +127,7 @@ class TestSubagentMemoryLayers:
         from modex_agent.core.scope import MemoryAgentRole
         from modex_agent.ioc.configs.memory import MemoryConfig, ShortTermConfig
 
-        cfg = MemoryConfig(short_term=ShortTermConfig(max_messages=80))
+        cfg = MemoryConfig(short_term=ShortTermConfig(max_tokens=80000))
         memory_ctx = _build_session_only_memory(
             cfg, tmp_path / "mem", "test_sub",
             MemoryAgentRole.SUBAGENT, "system prompt",
@@ -157,22 +157,22 @@ class TestSubagentMemoryLayers:
         assert system is not None
         # Session scope ensures archive is per-session, not global
 
-    def test_max_messages_respects_config(self, tmp_path):
-        """Session layer max_messages comes from the MemoryConfig."""
+    def test_max_tokens_respects_config(self, tmp_path):
+        """Session layer max_tokens comes from the MemoryConfig."""
         from modex_agent.ioc.factories.descriptors import build_session_only_memory as _build_session_only_memory
         from modex_agent.core.scope import MemoryAgentRole
         from modex_agent.ioc.configs.memory import MemoryConfig, ShortTermConfig
 
-        cfg = MemoryConfig(short_term=ShortTermConfig(max_messages=120))
+        cfg = MemoryConfig(short_term=ShortTermConfig(max_tokens=120000))
         memory_ctx = _build_session_only_memory(
             cfg, tmp_path / "mem3", "sub",
             MemoryAgentRole.SUBAGENT, "",
         )
         assert memory_ctx.memory_system is not None
-        # Config with 120 max_messages was accepted and system created
+        # Config with 120000 max_tokens was accepted and system created
 
-    def test_default_max_messages_without_config(self, tmp_path):
-        """Without MemoryConfig, subagent gets default 50 max_messages."""
+    def test_default_max_tokens_without_config(self, tmp_path):
+        """Without MemoryConfig, subagent gets default token-based memory."""
         from modex_agent.ioc.factories.descriptors import build_session_only_memory as _build_session_only_memory
         from modex_agent.core.scope import MemoryAgentRole
 
@@ -181,7 +181,7 @@ class TestSubagentMemoryLayers:
             MemoryAgentRole.SUBAGENT, "",
         )
         assert memory_ctx.memory_system is not None
-        # Default 50 max_messages when no config provided
+        # Default token-based config is applied when no MemoryConfig provided
 
 
 # ── Hook Wiring Integration Tests ──

@@ -39,6 +39,7 @@ from modex_agent.memory.pruned.manager import PrunedManager
 from modex_agent.memory.registry.file import DefaultMemoryStoreRegistry
 from modex_agent.memory.registry.in_memory import InMemoryStoreRegistry
 from modex_agent.memory.user_buffer import UserBufferEntry
+from tests.unit.memory.conftest import FixedTokenEstimator
 
 
 # -- Helpers ---------------------------------------------------------------
@@ -537,21 +538,25 @@ class TestConcurrentCleanupSession:
 
         mock_agent = _MockArchiveAgent()
 
-        # Run cleanup concurrently — max_messages=5 so 10 each triggers cleanup
+        # Run cleanup concurrently — max_tokens=70 so 280 tokens each triggers cleanup
         results = await asyncio.gather(
             cleanup_session(
                 session=layer_set.session,
                 archive=layer_set.archive,
                 context=ctx_a,
-                max_messages=5,
+                max_tokens=70,
+                max_token_ratio=0.8,
                 archive_agent=mock_agent,
+                token_estimator=FixedTokenEstimator(10),
             ),
             cleanup_session(
                 session=layer_set.session,
                 archive=layer_set.archive,
                 context=ctx_b,
-                max_messages=5,
+                max_tokens=70,
+                max_token_ratio=0.8,
                 archive_agent=mock_agent,
+                token_estimator=FixedTokenEstimator(10),
             ),
         )
 
@@ -619,15 +624,19 @@ class TestConcurrentCleanupSession:
                 session=layer_set.session,
                 archive=layer_set.archive,
                 context=ctx_a,
-                max_messages=5,
+                max_tokens=70,
+                max_token_ratio=0.8,
                 archive_agent=_MockArchiveAgent(),
+                token_estimator=FixedTokenEstimator(10),
             ),
             cleanup_session(
                 session=layer_set.session,
                 archive=layer_set.archive,
                 context=ctx_b,
-                max_messages=5,
+                max_tokens=70,
+                max_token_ratio=0.8,
                 archive_agent=_MockArchiveAgent(),
+                token_estimator=FixedTokenEstimator(10),
             ),
         )
 

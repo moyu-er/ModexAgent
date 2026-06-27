@@ -62,7 +62,7 @@ class TestCreatePeerGovernance:
 
     def test_none_governance_uses_defaults(self) -> None:
         """cfg set but governance=None → default governance."""
-        cfg = MemoryConfig(short_term=ShortTermConfig(max_messages=50), governance=None)
+        cfg = MemoryConfig(short_term=ShortTermConfig(max_tokens=50000), governance=None)
         gov = create_subagent_governance(cfg, llm_max_tokens=80000)
         assert gov is not None
         assert len(gov._strategies) == 1

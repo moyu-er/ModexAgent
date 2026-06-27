@@ -24,6 +24,7 @@ from modex_agent.memory.default_system import DefaultMemorySystem
 from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.registry.in_memory import InMemoryStoreRegistry
 from modex_agent.memory.stores.dir_archive import DirArchiveStorage
+from tests.unit.memory.conftest import FixedTokenEstimator
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
@@ -141,7 +142,7 @@ class _FakeInjectableMemorySystem(MemorySystem):
 
 def _bot_project_system(
     registry: InMemoryStoreRegistry,
-    max_messages: int = 50,
+    max_tokens: int = 700,
     keep_ratio: float = 0.5,
     *,
     archive_agent: object | None = None,
@@ -151,10 +152,16 @@ def _bot_project_system(
 
     When *archive_agent* and *archive_storage* are provided, cleanup_session
     can generate archive entries on the hot path.
+
+    Token-driven: cleanup fires when total tokens exceed ``max_tokens * 0.8``.
+    With ``FixedTokenEstimator(10)`` each message is 10 + 4 (overhead) = 14 tokens,
+    so the trigger threshold equals ``max_tokens`` (the legacy message-count limit
+    multiplied by 14, preserving the original trigger/no-trigger intent).
     """
     layer_set = MemoryLayerFactory.single_user(registry=registry)
     cleanup_config: dict[str, int | float] = {
-        "max_messages": max_messages,
+        "max_tokens": max_tokens,
+        "max_token_ratio": 0.8,
         "keep_ratio": keep_ratio,
     }
     return DefaultMemorySystem(
@@ -163,6 +170,7 @@ def _bot_project_system(
         cleanup_config=cleanup_config,
         archive_agent=archive_agent,  # type: ignore[arg-type]
         archive_storage=archive_storage,  # type: ignore[arg-type]
+        token_estimator=FixedTokenEstimator(10),
     )
 
 
@@ -189,7 +197,7 @@ async def test_multi_turn_triggers_cleanup_at_threshold(tmp_path: Path):
         await history.append({"role": "user", "content": f"question {i}"})
         await history.append({"role": "assistant", "content": f"answer {i}"})
 
-    remaining = await system.get_history(ctx, max_messages=None)
+    remaining = await system.get_history(ctx)
     assert len(remaining) <= 65, f"should compress to <=65, got {len(remaining)}"
 
     # Archives are MD-based (DirArchiveStorage); verify directly
@@ -203,7 +211,7 @@ async def test_cleanup_respects_threshold(tmp_path: Path):
     registry = InMemoryStoreRegistry()
     mock = _MockArchiveGenerator()
     storage = DirArchiveStorage(tmp_path / "archives")
-    system = _bot_project_system(registry, max_messages=10, archive_agent=mock, archive_storage=storage)
+    system = _bot_project_system(registry, max_tokens=140, archive_agent=mock, archive_storage=storage)
     await system.initialize()
     ctx = _make_ctx("threshold")
 
@@ -212,7 +220,7 @@ async def test_cleanup_respects_threshold(tmp_path: Path):
         await history.append({"role": "user", "content": f"q{i}"})
         await history.append({"role": "assistant", "content": f"a{i}"})
 
-    compressed_count = len(await system.get_history(ctx, max_messages=None))
+    compressed_count = len(await system.get_history(ctx))
     archive_count_1 = len(await storage.list_archives())
 
     # Add only 2 more turns (4 messages)
@@ -220,7 +228,7 @@ async def test_cleanup_respects_threshold(tmp_path: Path):
         await history.append({"role": "user", "content": f"post{i}"})
         await history.append({"role": "assistant", "content": f"post-a{i}"})
 
-    new_count = len(await system.get_history(ctx, max_messages=None))
+    new_count = len(await system.get_history(ctx))
     archive_count_2 = len(await storage.list_archives())
 
     assert new_count <= compressed_count + 10
@@ -233,7 +241,7 @@ async def test_second_cleanup_fires_when_over_threshold(tmp_path: Path):
     registry = InMemoryStoreRegistry()
     mock = _MockArchiveGenerator()
     storage = DirArchiveStorage(tmp_path / "archives")
-    system = _bot_project_system(registry, max_messages=10, archive_agent=mock, archive_storage=storage)
+    system = _bot_project_system(registry, max_tokens=140, archive_agent=mock, archive_storage=storage)
     await system.initialize()
     ctx = _make_ctx("recompress")
 
@@ -261,7 +269,7 @@ async def test_tool_chains_intact_after_cascade(tmp_path: Path):
     registry = InMemoryStoreRegistry()
     mock = _MockArchiveGenerator()
     storage = DirArchiveStorage(tmp_path / "archives")
-    system = _bot_project_system(registry, max_messages=8, archive_agent=mock, archive_storage=storage)
+    system = _bot_project_system(registry, max_tokens=112, archive_agent=mock, archive_storage=storage)
     await system.initialize()
     ctx = _make_ctx("tool-chain-cascade")
 
@@ -274,7 +282,7 @@ async def test_tool_chains_intact_after_cascade(tmp_path: Path):
         await history.append({"role": "tool", "tool_call_id": f"tc{i}", "name": "read_file", "content": f"data{i}"})
         await history.append({"role": "assistant", "content": f"answer {i}"})
 
-    remaining = await system.get_history(ctx, max_messages=None)
+    remaining = await system.get_history(ctx)
     assert len(remaining) <= 25, f"should compress 32 to <=25, got {len(remaining)}"
 
     # No orphan tool results
@@ -302,7 +310,7 @@ async def test_archive_uses_mock_summarizer_output(tmp_path: Path):
         canned_knowledge="[MOCK] compressed to archive",
     )
     storage = DirArchiveStorage(tmp_path / "archives")
-    system = _bot_project_system(registry, max_messages=5, archive_agent=mock, archive_storage=storage)
+    system = _bot_project_system(registry, max_tokens=70, archive_agent=mock, archive_storage=storage)
     await system.initialize()
     ctx = _make_ctx("mock-summary")
 
@@ -325,7 +333,7 @@ async def test_archive_skips_empty_generation(tmp_path: Path):
     registry = InMemoryStoreRegistry()
     mock = _EmptyArchiveGenerator()
     storage = DirArchiveStorage(tmp_path / "archives")
-    system = _bot_project_system(registry, max_messages=5, archive_agent=mock, archive_storage=storage)
+    system = _bot_project_system(registry, max_tokens=70, archive_agent=mock, archive_storage=storage)
     await system.initialize()
     ctx = _make_ctx("nothing-sentinel")
 
@@ -337,7 +345,7 @@ async def test_archive_skips_empty_generation(tmp_path: Path):
     archive_ids = await storage.list_archives()
     assert len(archive_ids) == 0, "empty archive generation should produce no dirs"
     # Session IS cleaned even when archive generation is empty
-    remaining = len(await system.get_history(ctx, max_messages=None))
+    remaining = len(await system.get_history(ctx))
     assert remaining < 24, (
         f"session must be cleaned even without archive writes, still has {remaining}"
     )
@@ -454,7 +462,7 @@ async def test_archive_merges_multiple_cleanup_rounds(tmp_path: Path):
         canned_knowledge="[MOCK] round knowledge",
     )
     storage = DirArchiveStorage(tmp_path / "archives")
-    system = _bot_project_system(registry, max_messages=10, archive_agent=mock, archive_storage=storage)
+    system = _bot_project_system(registry, max_tokens=140, archive_agent=mock, archive_storage=storage)
     await system.initialize()
     ctx = _make_ctx("multi-compress")
 
@@ -470,7 +478,7 @@ async def test_archive_merges_multiple_cleanup_rounds(tmp_path: Path):
     archive_ids = await storage.list_archives()
     assert len(archive_ids) >= 1
 
-    remaining = len(await system.get_history(ctx, max_messages=None))
+    remaining = len(await system.get_history(ctx))
     assert remaining <= 25, f"multiple rounds should keep session small, got {remaining}"
 
 
@@ -490,7 +498,7 @@ async def test_empty_session_no_cleanup():
         await history.append({"role": "user", "content": f"q{i}"})
         await history.append({"role": "assistant", "content": f"a{i}"})
 
-    remaining = len(await system.get_history(ctx, max_messages=None))
+    remaining = len(await system.get_history(ctx))
     assert remaining == 6, "all 6 messages should be present (no cleanup)"
 
     archive = await system.get_history_entries(ctx, limit=10)
@@ -503,7 +511,7 @@ async def test_session_only_messages_no_duplicate_cleanup_trigger(tmp_path: Path
     registry = InMemoryStoreRegistry()
     mock = _MockArchiveGenerator()
     storage = DirArchiveStorage(tmp_path / "archives")
-    system = _bot_project_system(registry, max_messages=10, archive_agent=mock, archive_storage=storage)
+    system = _bot_project_system(registry, max_tokens=140, archive_agent=mock, archive_storage=storage)
     await system.initialize()
     ctx = _make_ctx("no-dupe")
 
@@ -512,7 +520,7 @@ async def test_session_only_messages_no_duplicate_cleanup_trigger(tmp_path: Path
         await history.append({"role": "user", "content": f"q{i}"})
         await history.append({"role": "assistant", "content": f"a{i}"})
 
-    remaining = len(await system.get_history(ctx, max_messages=None))
+    remaining = len(await system.get_history(ctx))
     assert remaining <= 20, f"should compress, got {remaining}"
     assert remaining > 0
 
@@ -782,7 +790,7 @@ async def test_three_tier_memory_cascade_preserves_tool_context(tmp_path: Path):
         canned_knowledge="[ARCHIVE] user asked about weather, used shell+web_search, got sunny 28C",
     )
     storage = DirArchiveStorage(tmp_path / "archives")
-    system = _bot_project_system(registry, max_messages=5, archive_agent=mock, archive_storage=storage)
+    system = _bot_project_system(registry, max_tokens=70, archive_agent=mock, archive_storage=storage)
     await system.initialize()
     ctx = _make_ctx("three-tier")
 
@@ -795,7 +803,7 @@ async def test_three_tier_memory_cascade_preserves_tool_context(tmp_path: Path):
         await history.append({"role": "tool", "tool_call_id": f"tc{i}", "name": "read_file", "content": f"result {i}"})
         await history.append({"role": "assistant", "content": f"done {i}"})
 
-    remaining = await system.get_history(ctx, max_messages=None)
+    remaining = await system.get_history(ctx)
     assert len(remaining) <= 10, f"old prefix compressed, got {len(remaining)} remaining"
 
     archive_ids = await storage.list_archives()
@@ -827,7 +835,7 @@ async def test_archive_entries_are_meaningful_for_dream_engine(tmp_path: Path):
                         "decision: use JWT instead of session | state: branch fix/auth, tests fail",
     )
     storage = DirArchiveStorage(tmp_path / "archives")
-    system = _bot_project_system(registry, max_messages=3, archive_agent=mock, archive_storage=storage)
+    system = _bot_project_system(registry, max_tokens=42, archive_agent=mock, archive_storage=storage)
     await system.initialize()
     ctx = _make_ctx("dream-input")
 
