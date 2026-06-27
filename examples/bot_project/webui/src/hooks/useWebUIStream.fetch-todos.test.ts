@@ -6,6 +6,8 @@ import { fetchMessages, fetchTodos } from "../lib/api";
 vi.mock("../lib/api", () => ({
   fetchMessages: vi.fn().mockResolvedValue([]),
   fetchTodos: vi.fn().mockResolvedValue([]),
+  fetchApprovals: vi.fn().mockResolvedValue([]),
+  submitApproval: vi.fn().mockResolvedValue({ accepted: true }),
 }));
 
 // Minimal fake WebSocket that opens immediately.

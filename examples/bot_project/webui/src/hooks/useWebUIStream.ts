@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ServerEventUnion, TodoItemDTO, UIMessage } from "../types/events";
+import type { ApprovalRequestView, ServerEventUnion, TodoItemDTO, UIMessage } from "../types/events";
 import { eventsToMessages } from "../types/events";
 import { WebSocketClient, buildWsUrl } from "../lib/ws-client";
-import { fetchMessages, fetchTodos } from "../lib/api";
-import { applyServerEvent, type StreamState } from "./useWebUIStream.reducer";
+import { fetchApprovals, fetchMessages, fetchTodos, submitApproval as apiSubmitApproval } from "../lib/api";
+import { applyServerEvent, clearPendingApproval, type StreamState } from "./useWebUIStream.reducer";
 
 /** Events that mark the start of an assistant turn (set isStreaming=true). */
 const STREAM_START_EVENTS = new Set<string>([
@@ -18,10 +18,16 @@ export interface UseWebUIStreamResult {
   isPending: boolean;
   /** Active todos for the currently selected session (pending + in_progress). */
   todos: TodoItemDTO[];
+  /** Pending approvals for the currently selected session. */
+  pendingApprovals: ApprovalRequestView[];
+  /** Per-tool-call submitting flags (true while a decision POST is in flight). */
+  submittingApprovals: Record<string, boolean>;
   connect: () => void;
   disconnect: () => void;
   send: (content: string) => void;
   pause: () => void;
+  /** POST an allow/deny decision for a pending approval; clears the card on success. */
+  submitApproval: (toolCallId: string, action: "allow" | "deny") => void;
 }
 
 export function useWebUIStream(
@@ -40,6 +46,9 @@ export function useWebUIStream(
     todos: {},
     pendingApprovals: {},
   });
+  /** Per-tool-call submitting flag so the card's buttons disable while a
+   *  decision POST is in flight. Keyed by tool_call_id. */
+  const [submittingApprovals, setSubmittingApprovals] = useState<Record<string, boolean>>({});
   const clientRef = useRef<WebSocketClient | null>(null);
   /** ID of the most recent optimistically-added user message.  The server
    * echoes it back via ``_request_id`` in the envelope metadata so the
@@ -119,6 +128,22 @@ export function useWebUIStream(
           },
         ).catch((err) => {
           console.error("Failed to refresh todos after tool_call_end", err);
+        });
+      }
+
+      // turn_end fires when a turn completes (including suspension for
+      // approval). Re-fetch the authoritative approval list so a freshly-
+      // suspended approval appears without a manual reload.
+      if (event.event === "turn_end" && event.session_id) {
+        fetchApprovals(event.session_id, currentWsRef.current).then(
+          (views) => {
+            setState((prev) => ({
+              ...prev,
+              pendingApprovals: { ...prev.pendingApprovals, [event.session_id]: views },
+            }));
+          },
+        ).catch((err) => {
+          console.error("Failed to refresh approvals after turn_end", err);
         });
       }
     },
@@ -252,8 +277,12 @@ export function useWebUIStream(
         console.error("Failed to fetch todos for", sessionId, err);
         return [] as TodoItemDTO[];
       }),
+      fetchApprovals(sessionId, currentWs).catch((err) => {
+        console.error("Failed to fetch approvals for", sessionId, err);
+        return [] as ApprovalRequestView[];
+      }),
     ])
-      .then(([events, fetchedTodos]) => {
+      .then(([events, fetchedTodos, fetchedApprovals]) => {
         if (cancelled) return;
         const history = eventsToMessages(events);
         setState((prev) => {
@@ -267,6 +296,7 @@ export function useWebUIStream(
             messages: [...history, ...liveTail],
             isStreaming: streaming,
             todos: { ...prev.todos, [sessionId]: fetchedTodos },
+            pendingApprovals: { ...prev.pendingApprovals, [sessionId]: fetchedApprovals },
           };
         });
       })
@@ -340,15 +370,40 @@ export function useWebUIStream(
     client.pause(sessionId, currentWsRef.current);
   }, [sessionId, state.isStreaming, currentWsRef.current]);
 
+  const submitApproval = useCallback(
+    (toolCallId: string, action: "allow" | "deny"): void => {
+      if (!sessionId) return;
+      setSubmittingApprovals((prev) => ({ ...prev, [toolCallId]: true }));
+      apiSubmitApproval(sessionId, toolCallId, action, currentWsRef.current)
+        .then(() => {
+          setState((prev) => clearPendingApproval(prev, sessionId, toolCallId));
+        })
+        .catch((err) => {
+          console.error("Failed to submit approval", err);
+        })
+        .finally(() => {
+          setSubmittingApprovals((prev) => {
+            const next = { ...prev };
+            delete next[toolCallId];
+            return next;
+          });
+        });
+    },
+    [sessionId],
+  );
+
   return {
     messages: state.messages,
     isStreaming: state.isStreaming,
     isPending,
     todos: sessionId ? state.todos[sessionId] ?? [] : [],
+    pendingApprovals: sessionId ? state.pendingApprovals[sessionId] ?? [] : [],
+    submittingApprovals,
     connect,
     disconnect,
     send,
     pause,
+    submitApproval,
   };
 }
 

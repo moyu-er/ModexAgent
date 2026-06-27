@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, type FC, type FormEvent, type KeyboardEvent } from "react";
-import type { TodoItemDTO, UIMessage } from "../types/events";
+import type { ApprovalRequestView, TodoItemDTO, UIMessage } from "../types/events";
+import { ApprovalCard } from "./ApprovalCard";
 import { MessageBubble } from "./MessageBubble";
 import { TodoPanel } from "./TodoPanel";
 
@@ -9,6 +10,12 @@ export interface ChatViewProps {
   isPending: boolean;
   /** Active todos (pending + in_progress) for the selected session. */
   todos: TodoItemDTO[];
+  /** Pending approvals for the selected session (awaiting user decision). */
+  pendingApprovals: ApprovalRequestView[];
+  /** Per-tool-call submitting flags (true while a decision POST is in flight). */
+  submittingApprovals: Record<string, boolean>;
+  /** POST an allow/deny decision for a pending approval. */
+  submitApproval: (toolCallId: string, action: "allow" | "deny") => void;
   /** Current session id — passed to TodoPanel so it auto-closes on switch. */
   sessionId?: string | null;
   onSend: (content: string) => void;
@@ -31,6 +38,9 @@ export const ChatView: FC<ChatViewProps> = ({
   isStreaming,
   isPending,
   todos,
+  pendingApprovals,
+  submittingApprovals,
+  submitApproval,
   sessionId,
   onSend,
   onPause,
@@ -132,6 +142,15 @@ export const ChatView: FC<ChatViewProps> = ({
           )}
           {messages.map((msg) => (
             <MessageBubble key={msg.id} message={msg} />
+          ))}
+          {pendingApprovals.map((view) => (
+            <ApprovalCard
+              key={view.tool_call_id}
+              view={view}
+              submitting={!!submittingApprovals[view.tool_call_id]}
+              onApprove={(id) => submitApproval(id, "allow")}
+              onDeny={(id) => submitApproval(id, "deny")}
+            />
           ))}
           <div ref={bottomRef} />
         </div>

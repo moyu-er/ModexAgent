@@ -252,8 +252,19 @@ const App: FC = () => {
     [],
   );
 
-  const { messages, isStreaming, isPending, todos, connect, disconnect, send, pause } =
-    useWebUIStream(
+  const {
+    messages,
+    isStreaming,
+    isPending,
+    todos,
+    pendingApprovals,
+    submittingApprovals,
+    submitApproval,
+    connect,
+    disconnect,
+    send,
+    pause,
+  } = useWebUIStream(
       selectedId,
       getPoolForUuid,
       handleSessionReady,
@@ -669,6 +680,9 @@ const App: FC = () => {
           isStreaming={isStreaming}
           isPending={isPending}
           todos={todos}
+          pendingApprovals={pendingApprovals}
+          submittingApprovals={submittingApprovals}
+          submitApproval={submitApproval}
           sessionId={selectedId}
           onSend={handleSend}
           onPause={pause}
