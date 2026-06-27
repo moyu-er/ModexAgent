@@ -17,6 +17,7 @@ from modex_agent.core.governance import ContextGovernance
 from modex_agent.core.message import ContentFormat
 from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.tags import UrbTag
+from modex_agent.memory.token_estimator import CharTokenEstimator, TokenEstimator
 from modex_agent.memory.xml_truncate import truncate_xml_safe
 
 logger = logging.getLogger(__name__)
@@ -481,9 +482,11 @@ class TokenBudgetGovernance(ContextGovernance):
         self,
         max_tokens: int,
         safety_buffer: int = 1024,
+        token_estimator: TokenEstimator | None = None,
     ) -> None:
         self._max_tokens = max_tokens
         self._safety_buffer = safety_buffer
+        self._estimator: TokenEstimator = token_estimator or CharTokenEstimator()
 
     async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not messages:
@@ -497,14 +500,14 @@ class TokenBudgetGovernance(ContextGovernance):
         if not non_system:
             return system_messages
 
-        system_tokens = estimate_token_count(system_messages)
+        system_tokens = self._estimator.estimate_messages(system_messages)
         remaining_budget = max(128, self._max_tokens - system_tokens - self._safety_buffer)
 
         # 从尾部向前累加，直到预算耗尽
         kept: list[dict[str, Any]] = []
         kept_tokens = 0
         for msg in reversed(non_system):
-            msg_tokens = estimate_token_count([msg])
+            msg_tokens = self._estimator.estimate_message(msg)
             if kept and kept_tokens + msg_tokens > remaining_budget:
                 break
             kept.append(msg)
