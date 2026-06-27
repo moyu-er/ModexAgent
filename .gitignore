@@ -53,6 +53,7 @@ references
 uv.lock
 bun.lock
 trace
+nul
 
 /trace
 /output
