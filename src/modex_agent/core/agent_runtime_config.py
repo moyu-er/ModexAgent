@@ -2,7 +2,7 @@
 
 This module previously held a runtime-control configuration aggregate that was
 dead (zero readers; production wiring goes through ``AgentPipeline`` /
-``RuntimeServicesConfig`` directly) and was removed in candidate ④b.
+``PoolData`` directly) and was removed in candidate ④b.
 ``BusyInputMode`` is the one live export and stays.
 """
 
