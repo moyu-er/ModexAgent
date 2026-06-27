@@ -79,6 +79,7 @@ class ApprovalResumer:
         session_id: str,
         pool_data: PoolDataSnapshot | None,
         agent_context: AgentContext,
+        tool_call_id: str | None = None,
     ) -> TurnStateStore | None:
         """Apply a resume decision and restore state if every tool is decided.
 
@@ -93,6 +94,10 @@ class ApprovalResumer:
         On a successful resume the caller runs ``execute_turn`` and, when it
         yields a result, ``turn_store.delete_turn(snapshot.identity)`` and
         ``drain(session_id)`` using the returned store.
+
+        When ``tool_call_id`` is given, only that request is decided (webui
+        precision); ``None`` keeps the legacy decide-next-PENDING behaviour
+        for IM ``/approve``.
         """
         approval = ReActSnapshotPolicy.approval_from_snapshot(snapshot)
         if approval is None:
@@ -106,9 +111,12 @@ class ApprovalResumer:
             )
             for req in approval.requests:
                 current = approval.decisions.get(req.tool_call_id, ApprovalDecision.PENDING)
-                if current == ApprovalDecision.PENDING:
-                    approval.apply_decision(req.tool_call_id, decision)
-                    break
+                if current != ApprovalDecision.PENDING:
+                    continue
+                if tool_call_id is not None and req.tool_call_id != tool_call_id:
+                    continue  # leave non-target requests pending
+                approval.apply_decision(req.tool_call_id, decision)
+                break
 
         snapshot = ReActSnapshotPolicy.replace_approval(snapshot, approval)
         turn_store = self._resolve_turn_store(pool_data)

@@ -382,6 +382,33 @@ async def test_load_pending_returns_none_when_no_snapshots(turn_store, resumer):
     assert pending is None
 
 
+async def test_apply_resume_targets_specific_call_id(
+    resumer, partial_snapshot, turn_store, fake_agent_context,
+):
+    """tool_call_id given → only that request decided; the other stays PENDING."""
+    result = await resumer.apply_resume(
+        partial_snapshot, action=ApprovalAction.ALLOW, session_id="s1",
+        pool_data=None, agent_context=fake_agent_context, tool_call_id="c2",
+    )
+    assert result is None  # c1 still pending → not every tool decided
+    saved = turn_store.saved[-1]
+    approval = ReActSnapshotPolicy.approval_from_snapshot(saved)
+    assert approval.decisions["c2"] == ApprovalDecision.ALLOWED
+    assert approval.decisions.get("c1", ApprovalDecision.PENDING) == ApprovalDecision.PENDING
+
+
+async def test_apply_resume_targeted_call_id_completes_when_last_pending(
+    resumer, fake_agent_context, turn_store,
+):
+    """Targeting the only remaining PENDING request completes the set → returns store."""
+    snapshot = _snapshot(decisions={"c1": ApprovalDecision.ALLOWED})  # c2 still PENDING
+    result = await resumer.apply_resume(
+        snapshot, action=ApprovalAction.ALLOW, session_id="s1",
+        pool_data=None, agent_context=fake_agent_context, tool_call_id="c2",
+    )
+    assert result is resumer._turn_store
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
