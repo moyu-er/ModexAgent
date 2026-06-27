@@ -208,7 +208,7 @@ async def create_pool(
         pool, main_agent_name, inbox_consumer,
         notification_service,
         shared_interceptor_chain,
-        im_ui, pool_cfg,
+        im_ui, pool_cfg, project_dir,
         command_processor, skill_manager,
         pool_name,
     )
@@ -897,6 +897,7 @@ def _wire_main_pipeline(
     shared_interceptor_chain,
     im_ui,
     pool_cfg: PoolConfig,
+    project_dir: Path,
     command_processor,
     skill_manager,
     pool_name: str,
@@ -927,6 +928,25 @@ def _wire_main_pipeline(
     pipeline.interceptor_chain = shared_interceptor_chain
     pipeline._user_interface = im_ui
     pipeline.governance = create_governance(pool_cfg.memory, pool_cfg.llm.max_tokens)
+
+    # Approval runtime — main agent only (subagents never pass through this
+    # function). Opt-in: build_approval_runtime returns None when disabled or
+    # no tools gated, leaving runtime_services untouched (default-off).
+    from modex_agent.ioc.factories.approval import build_approval_runtime
+    from modex_agent.runtime.services import AgentRuntimeServices
+
+    main_cfg = next(a for a in pool_cfg.agents if a.role == "main")
+    approval_runtime = build_approval_runtime(main_cfg.approval, project_root=project_dir)
+    if approval_runtime is not None:
+        # Sparse services: hooks/interceptors/governance stay None and are
+        # sourced per-field from the builder defaults at turn time (identical
+        # to the pre-wiring path). safety is passed explicitly because
+        # AgentRuntimeServices.safety has a default_factory that would
+        # otherwise clobber the pipeline's configured policy.
+        pipeline.runtime_services = AgentRuntimeServices(
+            approval=approval_runtime,
+            safety=pipeline.safety,
+        )
 
     # Command processor (convention: use provided, else default)
     if command_processor is not None:
