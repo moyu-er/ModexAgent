@@ -49,10 +49,9 @@ terminal:
 
 memory:
   session:
-    max_messages: 500
-    max_tokens: 150000
-    keep_ratio_for_messages: 0.3
-    keep_ratio_for_token: 0.3
+    max_tokens: 200000
+    max_token_ratio: 0.85
+    keep_ratio: 0.3
   archive: {enabled: true, scope: global}
   knowledge: {enabled: true, default_templates_dir: "templates/knowledge", scope: global}
   dream_engine: {enabled: true, interval: 600, max_consume_per_run: 3}

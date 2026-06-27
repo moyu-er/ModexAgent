@@ -90,6 +90,7 @@ class ScopedMessageHistory(MessageHistory):
             archive_agent=self._archive_agent,
             archive_storage=self._archive_storage,
             on_archive_generated=_trigger if self._archive_trigger_callback is not None else None,
+            token_estimator=self._token_estimator,
             **self._cleanup_config,
         )
 

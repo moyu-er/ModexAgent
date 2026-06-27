@@ -107,9 +107,13 @@ async def build_pool_data(
     memory_cfg = memory_cfg_factory(pool_cfg)
 
     # ── Memory system (memory/<pool>) ────────────────────────────────
+    from bot.memory.token_estimator import TiktokenTokenEstimator
+
     memory_dir = ctx.paths.memory_dir(pool_name)
     memory_dir.mkdir(parents=True, exist_ok=True)
-    memory_system = create_memory(memory_cfg, provider, memory_dir)  # type: ignore[arg-type]
+    memory_system = create_memory(
+        memory_cfg, provider, memory_dir, token_estimator=TiktokenTokenEstimator()
+    )  # type: ignore[arg-type]
     await memory_system.initialize()
 
     # ── Runtime stores (runtime_state/<pool>/{turns,trace}) ─

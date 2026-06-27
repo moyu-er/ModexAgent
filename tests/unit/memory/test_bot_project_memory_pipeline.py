@@ -153,10 +153,8 @@ def _bot_project_system(
     When *archive_agent* and *archive_storage* are provided, cleanup_session
     can generate archive entries on the hot path.
 
-    Token-driven: cleanup fires when total tokens exceed ``max_tokens * 0.8``.
-    With ``FixedTokenEstimator(10)`` each message is 10 + 4 (overhead) = 14 tokens,
-    so the trigger threshold equals ``max_tokens`` (the legacy message-count limit
-    multiplied by 14, preserving the original trigger/no-trigger intent).
+    Token-driven: cleanup fires when non-system session tokens exceed
+    ``max_tokens * max_token_ratio`` (i.e. ``max_tokens * 0.8``).
     """
     layer_set = MemoryLayerFactory.single_user(registry=registry)
     cleanup_config: dict[str, int | float] = {

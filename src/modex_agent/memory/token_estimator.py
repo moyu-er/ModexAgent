@@ -6,8 +6,9 @@ all agree on what "over budget" means. The framework ships a zero-dependency
 char-based default; the example bot supplies a tiktoken-backed estimator.
 
 Both estimators count the SAME message fields (content, name, tool_call_id,
-tool_calls JSON, reasoning_content) plus a per-message overhead — only the
-text-to-token encoding differs.
+tool_calls JSON) plus a per-message overhead — only the text-to-token
+encoding differs. ``reasoning_content`` is excluded (stripped before
+persistence, so it never occupies the session).
 """
 from __future__ import annotations
 
@@ -18,25 +19,17 @@ from typing import Any
 from modex_agent.core.message import ChatMessage
 
 
-def message_payload(message: ChatMessage | dict[str, Any]) -> str:
-    """Concatenate every token-bearing field of a message into one string.
+def message_payload(message: dict[str, Any]) -> str:
+    """Concatenate every token-bearing field of a session message dict.
 
-    Covers content (str / list-of-parts / other), name, tool_call_id,
-    tool_calls JSON, and reasoning_content. System-role messages are NOT
-    special-cased here — callers decide what to count.
+    Counts content (str / list-of-parts / other), name, tool_call_id, and
+    tool_calls JSON. ``reasoning_content`` is never present here — it is
+    stripped before persistence — so it is not counted.
     """
-    if isinstance(message, ChatMessage):
-        content = message.content
-        name = message.name
-        tool_call_id = message.tool_call_id
-        tool_calls = message.tool_calls
-        reasoning = getattr(message, "reasoning_content", None)
-    else:
-        content = message.get("content")
-        name = message.get("name")
-        tool_call_id = message.get("tool_call_id")
-        tool_calls = message.get("tool_calls")
-        reasoning = message.get("reasoning_content")
+    content = message.get("content")
+    name = message.get("name")
+    tool_call_id = message.get("tool_call_id")
+    tool_calls = message.get("tool_calls")
 
     parts: list[str] = []
 
@@ -61,14 +54,14 @@ def message_payload(message: ChatMessage | dict[str, Any]) -> str:
         parts.append(tool_call_id)
     if tool_calls:
         parts.append(json.dumps(tool_calls, ensure_ascii=False))
-    if isinstance(reasoning, str) and reasoning:
-        parts.append(reasoning)
 
     return "\n".join(parts)
 
 
 def _char_tokens(text: str) -> int:
     """ASCII: 1 token / 4 chars. Non-ASCII (CJK etc.): 1 token / char."""
+    if text.isascii():
+        return len(text) // 4
     ascii_chars = sum(1 for c in text if ord(c) < 128)
     non_ascii = len(text) - ascii_chars
     return ascii_chars // 4 + non_ascii
@@ -85,8 +78,14 @@ class TokenEstimator(ABC):
         """Token count of a plain string."""
 
     def estimate_message(self, message: ChatMessage | dict[str, Any]) -> int:
-        """Token count contributed by one message (payload + overhead)."""
-        payload = message_payload(message)
+        """Token count contributed by one message (payload + overhead).
+
+        Accepts either a typed ``ChatMessage`` or the dict form used throughout
+        the memory subsystem; the ``ChatMessage`` is normalized to its persisted
+        dict (``to_dict``) once so ``message_payload`` works on a single shape.
+        """
+        data = message.to_dict() if isinstance(message, ChatMessage) else message
+        payload = message_payload(data)
         if not payload:
             return self.MESSAGE_OVERHEAD
         return self.estimate_text(payload) + self.MESSAGE_OVERHEAD

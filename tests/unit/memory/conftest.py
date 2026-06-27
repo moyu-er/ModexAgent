@@ -1,8 +1,6 @@
 """Shared fixtures for memory tests."""
 from __future__ import annotations
 
-import pytest
-
 from modex_agent.memory.token_estimator import TokenEstimator
 
 
@@ -17,8 +15,3 @@ class FixedTokenEstimator(TokenEstimator):
 
     def estimate_text(self, text: str) -> int:
         return self.per_message
-
-
-@pytest.fixture
-def fake_token_estimator() -> FixedTokenEstimator:
-    return FixedTokenEstimator(per_message=10)

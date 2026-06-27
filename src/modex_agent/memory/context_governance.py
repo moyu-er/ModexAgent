@@ -23,12 +23,6 @@ from modex_agent.memory.xml_truncate import truncate_xml_safe
 logger = logging.getLogger(__name__)
 
 
-def estimate_token_count(messages: list[dict[str, Any]]) -> int:
-    """Rough token estimate from character count (chars / 4)."""
-    total = sum(len(str(m.get("content", ""))) for m in messages)
-    return total // 4
-
-
 META_CONTEXT_LOSSY = "meta_context_lossy"
 META_ORIGINAL_CHARS = "meta_original_chars"
 META_CONTEXT_REDUCTION = "meta_context_reduction"

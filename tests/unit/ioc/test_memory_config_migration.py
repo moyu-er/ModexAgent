@@ -16,7 +16,7 @@ from modex_agent.ioc.configs.memory import (
 def test_session_config_exists():
     cfg = SessionConfig()
     assert cfg.max_tokens == 200000
-    assert cfg.max_token_ratio == 0.8
+    assert cfg.max_token_ratio == 0.85
     assert cfg.keep_ratio == 0.3
 
 
@@ -51,7 +51,7 @@ def test_memory_config_accepts_old_keys():
     }
     cfg = MemoryConfig(**data)
     assert cfg.session.max_tokens == 50000
-    assert cfg.session.max_token_ratio == 0.8
+    assert cfg.session.max_token_ratio == 0.85
     assert cfg.session.keep_ratio == 0.3
     assert cfg.archive.enabled is True
     assert cfg.knowledge.enabled is True

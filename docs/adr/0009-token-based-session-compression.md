@@ -54,7 +54,7 @@ Both ratios are applied to a single reference base `max_tokens`.
 | Field | Meaning | Default |
 |---|---|---|
 | `max_tokens` | Reference base (nominal context window) | 200000 |
-| `max_token_ratio` | Trigger line = `max_tokens × this` | 0.8 (clamped 0.4–0.9) |
+| `max_token_ratio` | Trigger line = `max_tokens × this` | 0.85 (clamped 0.4–0.9) |
 | `keep_ratio` | Post-compression retention target = `max_tokens × this`; **hard cap** | 0.3 |
 
 Compression fires when `Σ message tokens > max_tokens × max_token_ratio`. After
@@ -86,10 +86,10 @@ rule).
   estimator at append/extend time (the natural write point) and persisted.
 - The trigger (sum) and the boundary walk (tail accumulation) read cached values — no
   re-encoding per turn.
-- On read, a missing `token_count`, or one that fails a cheap tamper sanity check
-  (`cached < len(str(content)) / 5`), is recomputed **transiently** (not written back).
-  This avoids the awkward single-field rewrite of the whole message file while still
-  detecting corruption/tampering.
+- On read, a missing, non-int, or non-positive `token_count` is recomputed
+  **transiently** (not written back). The cache is trusted otherwise because the same
+  estimator stamps it at append time; a magnitude heuristic was rejected (unsound for
+  CJK), so corruption detection is limited to structural sanity.
 - Estimator swap (e.g. char → tiktoken across runs) leaves cached values approximately
   correct (same field coverage, ~20% magnitude drift); the bounded error is accepted, and
   `TokenBudgetGovernance` remains the request-time backstop. No per-message version stamp.
@@ -169,8 +169,8 @@ a different semantic and is out of scope for this ADR; it may be token-ized late
   touches the injection policies, the memory budget, the session layer, the subagent
   memory factory, and their tests. `fork_max_messages` is intentionally kept (fork-seed
   volume, different semantic).
-- Open assumption (to confirm): compression is still evaluated after each
-  append/extend — now cheap because the trigger sums cached per-message tokens. If a
-  coarser cadence is wanted, that is an orchestration change layered on top of this ADR.
+- Confirmed: compression is evaluated after each append/extend — cheap because the
+  trigger sums cached per-message tokens. Verified end-to-end (append-time
+  auto-compression fires and bounds the session during turns).
 - CONTEXT.md gains domain terms: **Session Compression**, **Token Estimator**,
   **Compression Trigger Ratio** (`max_token_ratio`), **Keep Ratio**.

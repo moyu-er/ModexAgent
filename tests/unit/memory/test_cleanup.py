@@ -130,6 +130,15 @@ class TestCheckTriggerTokenOnly:
         reason = _check_trigger(msgs, _FixedEstimator(10), max_tokens=100, max_token_ratio=0.8)
         assert reason == CompressionReason.TOKEN_PRESSURE
 
+    def test_system_tokens_excluded_from_trigger(self) -> None:
+        """ADR-0009: system-role tokens do NOT count toward session pressure."""
+        # A giant system message alone must NOT trigger.
+        sys_only = [{"role": "system", "content": "huge system prompt", "token_count": 100000}]
+        assert _check_trigger(sys_only, _FixedEstimator(10), max_tokens=100, max_token_ratio=0.8) is None
+        # The same token burden as a user message DOES trigger.
+        user_only = [{"role": "user", "content": "x", "token_count": 100000}]
+        assert _check_trigger(user_only, _FixedEstimator(10), max_tokens=100, max_token_ratio=0.8) == CompressionReason.TOKEN_PRESSURE
+
 
 class TestComputeBoundaryTokenBased:
     """Boundary keeps a tail whose token sum stays within the keep target."""

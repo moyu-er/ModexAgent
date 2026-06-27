@@ -1,0 +1,4 @@
+# Vendored tokenizer blobs are BPE vocab data (base64 + rank per line).
+# They MUST be stored verbatim — never let core.autocrlf convert LF<->CRLF,
+# which corrupts the byte stream and silently breaks token counting.
+*.tiktoken binary -text -diff

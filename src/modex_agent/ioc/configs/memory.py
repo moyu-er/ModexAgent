@@ -10,7 +10,7 @@ MemoryConfig() = enabled with all defaults.
 import logging
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +19,18 @@ class ShortTermConfig(BaseModel):
     """Session memory: token-budget triggers for compression."""
 
     max_tokens: int = 200000
-    max_token_ratio: float = 0.8
+    max_token_ratio: float = 0.85
     keep_ratio: float = 0.3
+
+    @field_validator("max_token_ratio", mode="after")
+    @classmethod
+    def _clamp_max_token_ratio(cls, v: float) -> float:
+        """Clamp into [0.4, 0.9] per ADR-0009."""
+        if v < 0.4:
+            return 0.4
+        if v > 0.9:
+            return 0.9
+        return v
 
 
 class UserRetentionConfig(BaseModel):
@@ -80,8 +90,18 @@ class SessionConfig(BaseModel):
     """Session memory: token-budget triggers for compression. Replaces ShortTermConfig."""
 
     max_tokens: int = 200000
-    max_token_ratio: float = 0.8
+    max_token_ratio: float = 0.85
     keep_ratio: float = 0.3
+
+    @field_validator("max_token_ratio", mode="after")
+    @classmethod
+    def _clamp_max_token_ratio(cls, v: float) -> float:
+        """Clamp into [0.4, 0.9] per ADR-0009."""
+        if v < 0.4:
+            return 0.4
+        if v > 0.9:
+            return 0.9
+        return v
 
 
 class ArchiveConfig(BaseModel):

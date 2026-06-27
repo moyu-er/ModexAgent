@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from modex_agent.core.provider import LLMProvider
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.memory.default_system import DefaultMemorySystem
+from modex_agent.memory.token_estimator import TokenEstimator
 
 if TYPE_CHECKING:
     from modex_agent.memory.layers.config import MemoryLayerConfigSet
@@ -72,6 +73,7 @@ def create_memory(
     cfg: MemoryConfig,
     llm_provider: LLMProvider,
     workspace: Path,
+    token_estimator: TokenEstimator | None = None,
 ) -> DefaultMemorySystem:
     """Create a MemorySystem from config.
 
@@ -79,6 +81,7 @@ def create_memory(
         cfg: Memory configuration.
         llm_provider: LLMProvider for compression/summarization.
         workspace: Root directory for file-based storage.
+        token_estimator: Optional token estimator (defaults to char-based).
 
     Returns:
         Initialized DefaultMemorySystem.
@@ -156,4 +159,5 @@ def create_memory(
         archive_agent=archive_agent,
         archive_storage=archive_storage,
         knowledge_consolidator=knowledge_consolidator,
+        token_estimator=token_estimator,
     )

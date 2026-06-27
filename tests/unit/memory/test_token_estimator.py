@@ -88,3 +88,39 @@ async def test_scoped_message_history_stamps_token_count(tmp_path) -> None:
     await hist.append({"role": "user", "content": "abcdefgh"})  # 2 content tokens + 4 overhead = 6
     msgs = await hist.to_list()
     assert msgs[-1].token_count == 6
+
+
+@pytest.mark.asyncio
+async def test_cleanup_uses_injected_estimator_not_default(tmp_path) -> None:
+    """ScopedMessageHistory must forward its estimator to cleanup_session so
+    trigger/boundary share the same estimator as stamping. Regression for the
+    divergence bug where cleanup silently fell back to CharTokenEstimator."""
+    from modex_agent.memory.default_system import ScopedMessageHistory
+    from modex_agent.memory.layers.factory import MemoryLayerFactory
+    from modex_agent.memory.registry.in_memory import InMemoryStoreRegistry
+    from modex_agent.core.scope import MemoryContext
+
+    class HugeEstimator(TokenEstimator):
+        """Every message is enormous -> cleanup always triggers and prunes hard."""
+
+        def estimate_text(self, text: str) -> int:
+            return 1_000_000
+
+    registry = InMemoryStoreRegistry()
+    layer_set = MemoryLayerFactory.single_user(registry=registry)
+    ctx = MemoryContext(session_id="s1", user_id="u1")
+    hist = ScopedMessageHistory(
+        manager=layer_set.session,
+        context=ctx,
+        cleanup_config={"max_tokens": 100, "max_token_ratio": 0.85, "keep_ratio": 0.3},
+        token_estimator=HugeEstimator(),
+    )
+    for i in range(3):
+        await hist.append({"role": "user", "content": f"msg-{i}"})
+
+    msgs = await hist.to_list()
+    # HugeEstimator -> each message ~1M tokens -> trigger fires every append,
+    # boundary keeps only the floor-of-1 tail. Had cleanup fallen back to the
+    # default CharTokenEstimator, 3 short messages (~15 tokens) would NOT cross
+    # the 85-token line and all 3 would survive.
+    assert len(msgs) == 1

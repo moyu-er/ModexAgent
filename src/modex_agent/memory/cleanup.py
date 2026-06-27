@@ -1,7 +1,7 @@
 """Session cleanup function — prunes old messages and optionally archives them.
 
 This is a standalone async function that handles:
-1. Trigger check (message count or token pressure)
+1. Trigger check (token pressure: non-system session tokens exceed max_tokens * max_token_ratio)
 2. Cleanup (sanitize tool chains, compute keep/prune boundary)
 3. Archive agent generation (context.md, knowledge.md, index.md)
 4. Pruned index refresh from archive index.md files
@@ -20,6 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from modex_agent.core.message import ChatMessage
 from modex_agent.core.types import MessageRole
 from modex_agent.memory.core.layers import (
     ArchiveMemoryManager,
@@ -36,7 +37,6 @@ from modex_agent.memory.sanitizer import (
 from modex_agent.memory.token_estimator import (
     CharTokenEstimator,
     TokenEstimator,
-    message_payload,
 )
 from modex_agent.memory.user_buffer import UserBufferEntry
 from modex_agent.utils.timezone import get_user_timezone
@@ -128,6 +128,9 @@ async def _prepare_cleanup_phase(
     all_messages = await session.get_all_messages(context)
     total_count = len(all_messages)
 
+    # Trigger on the ChatMessage objects directly (reads cached token_count +
+    # role via .get). The full to_dict is deferred to after the trigger, so the
+    # common under-budget path never serializes the session.
     trigger_reason = _check_trigger(all_messages, estimator, max_tokens, max_token_ratio)
     if trigger_reason is None:
         return None
@@ -537,8 +540,8 @@ async def cleanup_session(
     archive: ArchiveMemoryManager | None,
     context: MemoryContext,
     max_tokens: int | None = None,
-    max_token_ratio: float = 0.8,
-    keep_ratio: float = 0.5,
+    max_token_ratio: float = 0.85,
+    keep_ratio: float = 0.3,
     max_backups: int = 10,
     user_retention: UserRetentionBuffer | None = None,
     pruned_manager: PrunedManager | None = None,
@@ -662,46 +665,57 @@ async def cleanup_session(
     )
 
 
+_MessageLike = dict[str, Any] | ChatMessage
+
+_SYSTEM_ROLE = str(MessageRole.SYSTEM)
+
+
 def _resolve_message_tokens(
-    message: dict[str, Any] | Any,
+    message: _MessageLike,
     estimator: TokenEstimator,
 ) -> int:
-    """Return a message's token count: cached if present and sane, else recomputed.
+    """Return a message's token count: cached if a sane positive int, else recompute.
 
-    Tamper guard: a cached value below len(payload)/5 is treated as corrupt and
-    recomputed transiently (not written back).
+    Works on either a persisted dict or a ``ChatMessage`` (both expose ``.get``).
+    The cache is authoritative because the SAME estimator stamps ``token_count``
+    at append time. A missing, non-int, or non-positive cached value is treated
+    as corrupt and recomputed transiently (not written back).
     """
-    cached: int | None = None
-    if isinstance(message, dict):
-        cached = message.get("token_count")
-    else:
-        cached = getattr(message, "token_count", None)
-    if cached is not None:
-        payload_len = len(message_payload(message))
-        if cached >= payload_len // 5:
-            return cached
+    cached = message.get("token_count")
+    if isinstance(cached, int) and cached > 0:
+        return cached
     return estimator.estimate_message(message)
 
 
 def _sum_tokens(
-    messages: Sequence[Any], estimator: TokenEstimator
+    messages: Sequence[_MessageLike], estimator: TokenEstimator
 ) -> int:
     return sum(_resolve_message_tokens(m, estimator) for m in messages)
 
 
 def _check_trigger(
-    messages: Sequence[Any],
+    messages: Sequence[_MessageLike],
     estimator: TokenEstimator,
     max_tokens: int | None,
     max_token_ratio: float,
 ) -> CompressionReason | None:
-    """Fire compression when non-system session tokens exceed max_tokens * ratio."""
+    """Fire compression when NON-SYSTEM session tokens exceed max_tokens * ratio.
+
+    System-role tokens are excluded from session pressure (per ADR-0009): the
+    system prompt size is hard to predict and is regulated separately by the
+    request-time TokenBudgetGovernance. Reads cached ``token_count`` + ``role``
+    via ``.get``, so callers may pass ``ChatMessage`` objects without serializing
+    them — the common under-budget path does zero ``to_dict`` work.
+    """
     if max_tokens is None:
         return None
     threshold = max_tokens * max_token_ratio
-    if _sum_tokens(messages, estimator) > threshold:
-        return CompressionReason.TOKEN_PRESSURE
-    return None
+    pressure = sum(
+        _resolve_message_tokens(m, estimator)
+        for m in messages
+        if str(m.get("role", "")) != _SYSTEM_ROLE
+    )
+    return CompressionReason.TOKEN_PRESSURE if pressure > threshold else None
 
 
 def _compute_boundary(
@@ -713,15 +727,17 @@ def _compute_boundary(
 
     Walk backward summing each message's resolved token count until the next
     message would exceed ``keep_target_tokens``; keep everything from there to
-    the end. ``keep_target_tokens`` is a HARD cap. If the cut splits a tool
-    chain, the chain is evicted forward into pruned (never kept orphaned).
+    the end. ``keep_target_tokens`` is a SOFT target with a HARD floor of one
+    message: the most recent message is always retained even if it alone
+    exceeds the target. If the cut splits a tool chain, the chain is evicted
+    forward into pruned (never kept orphaned), which only ever shrinks keep.
     """
     total = len(messages)
     if total == 0:
         return [], []
 
     accumulated = 0
-    boundary = total  # exclusive start of keep region
+    boundary = total - 1  # exclusive start of keep region; tail msg always kept
 
     for i in range(total - 1, -1, -1):
         msg_tokens = _resolve_message_tokens(messages[i], estimator)
@@ -730,9 +746,6 @@ def _compute_boundary(
             break
         accumulated += msg_tokens
         boundary = i
-
-    if boundary >= total:
-        boundary = max(0, total - 1)
 
     boundary = _adjust_boundary_for_tool_chains(messages, boundary)
 

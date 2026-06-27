@@ -37,7 +37,7 @@ class TestMemoryConfig:
         """SessionConfig token-budget defaults; no message-count fields."""
         cfg = SessionConfig()
         assert cfg.max_tokens == 200000
-        assert cfg.max_token_ratio == 0.8
+        assert cfg.max_token_ratio == 0.85
         assert cfg.keep_ratio == 0.3
         assert not hasattr(cfg, "max_messages")
         assert not hasattr(cfg, "keep_ratio_for_messages")
@@ -47,8 +47,13 @@ class TestMemoryConfig:
         """ShortTermConfig token-budget defaults; no message-count fields."""
         cfg = ShortTermConfig()
         assert cfg.max_tokens == 200000
-        assert cfg.max_token_ratio == 0.8
+        assert cfg.max_token_ratio == 0.85
         assert cfg.keep_ratio == 0.3
         assert not hasattr(cfg, "max_messages")
         assert not hasattr(cfg, "keep_ratio_for_messages")
         assert not hasattr(cfg, "keep_ratio_for_token")
+
+    def test_session_max_token_ratio_clamp(self) -> None:
+        """max_token_ratio clamped into [0.4, 0.9] per ADR-0009."""
+        assert SessionConfig(max_token_ratio=0.95).max_token_ratio == 0.9
+        assert SessionConfig(max_token_ratio=0.1).max_token_ratio == 0.4
