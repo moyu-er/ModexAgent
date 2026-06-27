@@ -43,12 +43,10 @@ class ApprovalDecisionInput:
 
 def view_from_request(req: ApprovalRequestState, *, status: str = "pending") -> ApprovalRequestView:
     """Serialize an ``ApprovalRequestState`` snapshot into the wire DTO."""
-    args = req.arguments
-    values = args.values if hasattr(args, "values") else dict(args or {})
     return ApprovalRequestView(
         tool_call_id=req.tool_call_id,
         tool_name=req.tool_name,
         tier=str(req.tier),
-        arguments=dict(values),
+        arguments=dict(req.arguments.values),
         status=status,
     )
