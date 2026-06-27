@@ -60,6 +60,22 @@ _Avoid_: workspace manager (the historical single-active switch-engine concept, 
 The pool dropping a subagent task session from its tracking. Two independent triggers: TTL staleness (a session inactive longer than the retention window) and LRU count cap (when a subagent exceeds `max_sessions_per_subagent`, the least-recently-used session). A session's creation time is metadata only and is never an eviction ordering key.
 _Avoid_: session GC
 
+**Session Compression**:
+The act of pruning the oldest session messages (and archiving them) when the session's token weight exceeds its budget, keeping only a recent tail. The budget is measured in tokens over all non-system message roles; message count is not a budget. The kept tail is bounded by a hard token cap; any tool chain the boundary would split is evicted (archived), never partially kept. Per ADR-0009.
+_Avoid_: summarization (that is the archive step), context windowing (that is the request-time governance backstop)
+
+**Token Estimator**:
+The swappable component that estimates the token weight of messages and text. A single injected instance is shared by the compression trigger and the request-time governance, so both agree on what "over budget" means. The framework ships a char-based default; the example bot supplies a tiktoken-backed estimator.
+_Avoid_: tokenizer (that is the underlying encoder), counter
+
+**Compression Trigger Ratio** (`max_token_ratio`):
+The fraction of `max_tokens` at which session compression fires. Compression starts when the session's non-system token weight exceeds `max_tokens × max_token_ratio`.
+_Avoid_: threshold (ambiguous — say trigger ratio or keep ratio)
+
+**Keep Ratio** (`keep_ratio`):
+The hard upper bound, as a fraction of `max_tokens`, on how much the kept region may weigh after compression. The boundary accumulates tokens from the tail until this cap; it never exceeds it.
+_Avoid_: retention ratio, keep target (target implies soft; this is a hard cap)
+
 ## Relationships
 
 - A **Workspace** owns one or more **Pool Instances**; pool instances are not shared across workspaces.
