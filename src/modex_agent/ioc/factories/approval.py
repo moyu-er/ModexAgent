@@ -2,7 +2,7 @@
 framework ApprovalRuntime + TieredToolApprovalClassifier.
 
 Returns None when approval is effectively a no-op (disabled, or no tools gated)
-so callers can skip wiring entirely — the default-off contract.
+so callers can skip wiring entirely when approval would be a no-op.
 
 An ``ArgumentMatcher`` is always injected when a runtime is built: without it
 the classifier cannot evaluate path patterns (``["./*"]``), and every gated
@@ -27,7 +27,8 @@ def build_approval_runtime(
     """Build an ``ApprovalRuntime`` from ioc config, or None when it is a no-op.
 
     ``project_root`` anchors ``./*`` path patterns (project-internal auto-allow).
-    Callers that know the workspace root should pass it; None falls back to cwd.
+    None resolves ``.`` against the process cwd — callers managing multiple
+    workspaces must pass the workspace root.
     """
     if cfg is None or not cfg.enabled or not cfg.tools:
         return None
