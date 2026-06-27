@@ -419,8 +419,9 @@ class AgentPipeline:
                     logger.info("Drop-if-busy slash-command received; dropping")
                     return None
 
-        # 去重检查
-        if self.deduplicator is not None:
+        # 去重检查 — structured approval decisions carry no message_id and would
+        # otherwise hash-collide; bypass dedup for them.
+        if self.deduplicator is not None and input_msg.approval_decision is None:
             message_id = input_msg.metadata.get("message_id") if input_msg.metadata else None
             if not message_id:
                 import hashlib

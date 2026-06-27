@@ -70,6 +70,7 @@ class TurnRequest:
     append_user_message: bool
     trigger_agent: bool
     approval_action: ApprovalAction | None = None
+    approval_tool_call_id: str | None = None
     command_result: CommandHandlingResult | None = None
 
 
@@ -134,6 +135,20 @@ class TurnContextBuilder:
         *,
         pool_data: PoolDataSnapshot | None = None,
     ) -> TurnRequest | None:
+        # Webui approval decision (structured, NOT a slash command): short-circuit
+        # straight to the resume branch — no user message, no agent trigger.
+        # IM /approve still goes through the command-processor path below.
+        decision = input_msg.approval_decision
+        if decision is not None:
+            return TurnRequest(
+                session_id=session_id,
+                input_msg=input_msg,
+                user_content=None,
+                append_user_message=False,
+                trigger_agent=False,
+                approval_action=decision.action,
+                approval_tool_call_id=decision.tool_call_id,
+            )
         if self._command_processor is None:
             parsed_command = parse_input_command(input_msg.content or "")
             approval_action = parsed_command.approval_action if parsed_command is not None else None

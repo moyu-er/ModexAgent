@@ -260,6 +260,7 @@ class TurnRunner:
         input_metadata: dict[str, Any],
         ctx_mgr: ContextManager,
         pool_data: PoolDataSnapshot | None = None,
+        tool_call_id: str | None = None,
     ) -> AgentResult | None:
         turn_store = await self._resumer.apply_resume(
             snapshot,
@@ -267,6 +268,7 @@ class TurnRunner:
             session_id=session_id,
             pool_data=pool_data,
             agent_context=agent_context,
+            tool_call_id=tool_call_id,
         )
         if turn_store is None:
             return None
@@ -398,6 +400,7 @@ class TurnRunner:
                 input_metadata=input_metadata,
                 ctx_mgr=ctx_mgr,
                 pool_data=pool_data,
+                tool_call_id=turn_request.approval_tool_call_id,
             )
 
         if not turn_request.trigger_agent:

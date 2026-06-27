@@ -147,6 +147,28 @@ async def test_build_turn_request_approval_decision_carries_action() -> None:
 
 
 @pytest.mark.asyncio
+async def test_build_turn_request_short_circuits_on_approval_decision() -> None:
+    """A webui approval_decision bypasses command processing -> resume branch."""
+    from modex_agent.approval.views import ApprovalDecisionInput
+
+    builder = _make_builder()  # command_processor=None; short-circuit fires first anyway
+    msg = InputMessage(
+        content="",
+        session=SessionInfo.from_str("s.main"),
+        approval_decision=ApprovalDecisionInput("call_1", ApprovalAction.DENY),
+    )
+
+    tr = await builder.build_turn_request(msg, "s.main", {}, None)
+
+    assert tr is not None
+    assert tr.trigger_agent is False
+    assert tr.append_user_message is False
+    assert tr.user_content is None
+    assert tr.approval_action == ApprovalAction.DENY
+    assert tr.approval_tool_call_id == "call_1"
+
+
+@pytest.mark.asyncio
 async def test_build_turn_request_uses_pool_turn_store_when_pool_data_wired() -> None:
     """When pool_data is wired, the command_context.turn_store comes from the snapshot."""
     snap_turn = MagicMock(name="snap_turn")
