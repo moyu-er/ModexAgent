@@ -5,6 +5,7 @@ No framework code should import from bot_project.
 """
 
 from modex_agent.ioc.factories.agent import create_agent
+from modex_agent.ioc.factories.approval import build_approval_runtime
 from modex_agent.ioc.factories.descriptors import build_subagent_descriptor
 from modex_agent.ioc.factories.governance import create_governance, create_subagent_governance
 from modex_agent.ioc.factories.llm import create_llm_provider
@@ -16,6 +17,7 @@ from modex_agent.ioc.factories.tools import (
 )
 
 __all__ = [
+    "build_approval_runtime",
     "build_subagent_descriptor",
     "connect_mcp",
     "create_agent",
