@@ -256,8 +256,9 @@ class AgentPipeline:
         self._runtime_services = value
         # Mirror into TurnContextBuilder so post-construction wiring (e.g.
         # main-pool approval wiring in pool_builder) reaches the per-turn
-        # runtime via base_services.approval — same mirror pattern as
-        # workspace_manager / pool_name / emitter_factory.
+        # runtime via base_services.approval. Mirrors into the builder like
+        # emitter_factory; cf. workspace_manager / pool_name which mirror
+        # into the TurnRunner instead.
         self._turn_context_builder._runtime_services = value
 
     @property
