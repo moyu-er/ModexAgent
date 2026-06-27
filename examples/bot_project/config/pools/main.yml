@@ -49,7 +49,7 @@ agents:
     experience:
       enabled: true
     approval:
+      enabled: true                       # opt-in (default is off)
       tools:
-        command: {allowed_paths: ["*"]}
         write_file: {allowed_paths: ["./*"]}
         edit_file: {allowed_paths: ["./*"]}

@@ -70,4 +70,9 @@ agents:
     terminal_visibility: false
     experience:
       enabled: true
+    approval:
+      enabled: true                       # opt-in (default is off)
+      tools:
+        write_file: {allowed_paths: ["./*"]}
+        edit_file: {allowed_paths: ["./*"]}
     extra_tools: ["ast_grep_search", "ast_grep_replace"]
