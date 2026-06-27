@@ -30,7 +30,7 @@ class TestSkillsConfig:
 class TestApprovalConfig:
     def test_defaults(self) -> None:
         cfg = ApprovalConfig()
-        assert cfg.enabled is True
+        assert cfg.enabled is False
         assert cfg.tools == {}
 
     def test_with_tools(self) -> None:

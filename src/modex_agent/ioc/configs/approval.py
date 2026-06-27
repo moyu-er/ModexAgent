@@ -16,10 +16,10 @@ class ToolApprovalEntry(BaseModel):
 
 
 class ApprovalConfig(BaseModel):
-    """Agent approval configuration. None = approval disabled.
+    """Agent approval configuration. Default OFF — set ``enabled: true`` to opt in.
 
     Tools NOT listed in `tools` field are auto-allowed without approval.
     """
 
-    enabled: bool = True
+    enabled: bool = False
     tools: dict[str, ToolApprovalEntry] = Field(default_factory=dict)
