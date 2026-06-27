@@ -20,6 +20,10 @@ _Avoid_: environment, sandbox, session space
 The process of constructing runtime objects (pools, workspace stacks, communication infrastructure) from configuration (`AppConfig` / `PoolConfig`). Pool mode is the only assembly mode.
 _Avoid_: initialization, bootstrapping, wiring (use "assembly" for the process, "wiring" for specific connections)
 
+**Input Pipeline**:
+The staged pre-processing chain a user input traverses before reaching an agent — resolving workspace, pool, channel, and session, then enqueuing an `InputMessage` for `AgentPipeline.receive()`. The bot layer composes it from framework stages (S1..S8); IM and webui use different stage subsets. It is the single entry path for everything a user sends, including (per ADR-0008) a webui approval decision, which rides as a structured `InputMessage.approval_decision` rather than a slash command.
+_Avoid_: message router, ingress (use "input pipeline" for the staged chain; "input adapter" for the physical queue endpoint)
+
 **Main Agent**:
 The entry-point agent in a pool that receives user input, dispatches to subagents, and produces final output. Identified by `main_agent_name` in `PoolConfig`.
 _Avoid_: primary agent, root agent, orchestrator
@@ -35,6 +39,10 @@ _Avoid_: state machine, workflow engine, pipeline (use "pipeline" only for `Agen
 **GraphInterrupt**:
 The exception type nodes raise to pause graph execution after persisting resumable turn state. Carries `value`, `node_name`, `iteration`. Approval suspension is the primary producer. Must propagate upward — never caught and swallowed.
 _Avoid_: pause, suspend (when referring to the mechanism), checkpoint exception
+
+**Approval**:
+A human-in-the-loop gate that pauses a main agent's turn before a tool call takes effect, persisting the turn so it resumes after a human decision. One shared state machine owns suspend → prompt → decide → resume; delivery channels (IM, webui) differ only in how the prompt is rendered and the decision collected (the `ApprovalUserInterface` adapter). Off by default — opt-in per main agent via config; applies only to main agents, never subagents. Path-tiered: a listed tool's calls are auto-allowed inside the project dir, gated outside it.
+_Avoid_: permission, auth, 鉴权-as-authentication (the human gate is "approval"; where 鉴权 is used in discussion it maps to approval)
 
 **AppConfig**:
 The root Pydantic config object loaded from YAML, aggregating 13 typed config sections (`LLMConfig`, `AgentConfig`, `PoolConfig`, `MemoryConfig`, `ApprovalConfig`, etc.). Single entry point for full-app usage; components can be used independently by loading their individual config directly.
@@ -65,4 +73,4 @@ _Avoid_: session GC
 
 - "**control channel**" historically meant the runtime control plane in `modex_agent/control/`, but that package is largely **vestigial** — channels are constructed and threaded but have no live producers/consumers. Real cancellation is `asyncio.Task.cancel()` in `AgentPipeline`. Use "control channel" only when quoting the package; prefer "control plane" for the abstraction.
 - "**pipeline**" was overloaded: it meant both the old `create_app`/`App` entry point (removed by ADR-0001) and the `AgentPipeline` orchestration layer that survives. "Pipeline" alone now means `AgentPipeline`; the old entry point is gone.
-- "**Approval**" lives in `modex_agent/approval/` as tier definitions and classifiers, but per `modex_agent/AGENTS.md` the tiered approval is **not wired in pool mode** — `pool_builder.py` skips `RuntimeAssembler`, and subagents' `ToolNode._get_tier()` always returns `NORMAL`. The terminology is in use; the runtime coverage is partial.
+- "**Approval**" was historically **not wired in pool mode** (pool_builder skipped `RuntimeAssembler`; `ToolNode._get_tier()` always returned `NORMAL`). Now **implemented end-to-end** (framework → bot → webui; see **ADR-0008** + its Implementation outcome): path-tiered, default-off (opt-in per main agent), main-agents-only, one shared state machine (`apply_resume`) with per-channel surfacing. webui decisions flow as a structured `InputMessage.approval_decision` through the input pipeline (not slash commands); IM uses `/approve` text. Push + pull share one `ApprovalRequestView` DTO; pull (GET pending) is webui-only.

@@ -39,9 +39,9 @@ ModexAgent 是一个用于构建 AI Agent 应用的 Python 框架。它将模型
 ## 核心特性
 
 - **图驱动的 ReAct 引擎** — 执行循环以 `Graph[R] + Node[R] + Edge` 的泛型图结构建模，支持 `GraphInterrupt` 挂起与状态持久化恢复，天然适合审批和断点续跑场景。
-- **可中断的审批系统** — Agent 调用敏感工具时，执行流自动挂起，通过 `TurnSnapshot` 持久化状态，用户确认后精确恢复。支持 Tiered 分级策略（NORMAL / HARDLINE / PENDING）和级联取消。
+- **可中断审批** — Agent 在做出有风险的改动前会先征求你的同意。当它试图写或改项目文件夹之外的文件时，会暂停并请求确认——在 WebUI 点一下「批准」，或在聊天里回复 `/approve`，它就从原地继续。默认关闭，可按 Agent 单独开启。
 - **跨平台交互式终端** — 内置完整终端工具链，支持 Windows（WinPTY/ConPTY）、Linux/macOS（pexpect/tmux）三端统一接口；支持可见终端窗口与后台 PTY 两种模式，248+ 单元测试覆盖。
-- **星型拓扑多 Agent 协作** — 主 Agent 作为通信中枢，子 Agent 通过 `send_to_agent`（同步）、`send_to_agent_async`（异步 inbox）、`spawn_subagent`（隔离调用）三种方式协作；`CommunicationTracker` 防止记忆压缩静默丢弃待处理通信。
+- **星型拓扑多 Agent 协作** — 主 Agent 作为通信中枢，把任务派给专门的子 Agent 并自动收集它们的回复；子 Agent 之间不直接通信，统一经主 Agent 转交，结构清晰、便于追踪。
 - **Pool 运行时** — 多 Agent 常驻池，通过 `MessageBroker` + `AgentMessageBus` 路由消息，I/O 适配器与 Agent 逻辑完全解耦。
 - **多级记忆 + 自学习系统** — Session、Archive、Knowledge、UserRetentionBuffer、Pruned、Experience 六层记忆，支持 SessionScope / UserScope / GlobalScope 可配置隔离范围。Dream Engine 定期将 Archive 整合为 Knowledge；ExperienceReviewAgent 将对话沉淀为可复用的 EXPERIENCE.md 参考知识。
 - **Hook + Interceptor 扩展体系** — 生命周期 Hook（如 InboxFlush、SubagentAutoSend）与 AOP 拦截器链（ControlDrain、ToolResultLimit）正交组合，框架行为可逐层定制，不侵入核心代码。

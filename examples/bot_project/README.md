@@ -30,7 +30,7 @@ Uses **Pool mode** — multi-agent persistent pools with `MessageBroker` + `Agen
 | **Multi-tier Memory** | Session / Archive / Knowledge / UserRetentionBuffer / Pruned / Experience — with configurable scopes (UserScope / GlobalScope / SessionScope) |
 | **Self-Learning** | ExperienceReviewAgent turns conversations into reusable EXPERIENCE.md knowledge; Dream Engine consolidates archives into long-term memory |
 | **Context Governance** | ToolChainRepair + Microcompact + TokenBudget auto-optimization |
-| **Tool Approval** | Interruptible execution with tiered policies (NORMAL / HARDLINE / PENDING) |
+| **Tool Approval** | The agent asks before writing/editing outside your project; approve via WebUI or `/approve`. Off by default; opt-in per agent |
 | **Multi-Agent Collaboration** | Main agent + persistent subagents, star-topology communication |
 | **Skill System** | Dynamic system prompt construction from Markdown skill files |
 | **Plugin System** | Dynamically extend tools, memory providers, and skill sources |
@@ -342,13 +342,25 @@ The bot learns from every conversation:
 
 ### Tool Approval
 
-When an agent invokes a sensitive tool, the ReAct graph engine automatically suspends, renders an approval prompt, and waits for user confirmation. Rejection supports cascade cancellation or error-resume:
+The agent asks for your permission before making potentially risky changes. It watches file writes/edits: changes **inside your project folder** go ahead automatically, but writes **outside the project** (or to sensitive locations) pause and surface an approval prompt — a card in the WebUI, or a message in chat. Approve to let it proceed, deny to stop; the agent picks up exactly where it paused.
+
+Approval is **off by default**. Enable it for a main agent in the pool config:
+
+```yaml
+approval:
+  enabled: true
+  tools:
+    write_file: { allowed_paths: ["./*"] }   # auto-allow inside the project, ask elsewhere
+    edit_file:  { allowed_paths: ["./*"] }
+```
+
+See `config/pools/main.yml` and `coding.yml` for live examples. In chat, reply `/approve` or `/deny`; in the WebUI, click the button on the approval card. (Approval never applies to subagents.)
 
 <img src="../../assets/approval.jpg" alt="Tool approval" width="800">
 
 ### Multi-Agent Collaboration
 
-The main agent distributes tasks to subagents via `send_to_agent` (async inbox-based). The tool description dynamically shows all available targets so the LLM can decide who to contact:
+The main agent delegates tasks to specialist subagents and gathers their replies. It picks the right subagent for each job, and the whole conversation — including the subagents' work — shows up in one place. Subagents don't talk to each other directly; everything flows through the main agent, so it's easy to follow.
 
 <img src="../../assets/office_subagent.jpg" alt="Multi-agent collaboration" width="800">
 
@@ -419,39 +431,44 @@ memory:
 
 ## Adding a New Subagent
 
-1. Add configuration in `config/bot_config.yml` under `agents:`:
+The bundled **`coding` pool** (`config/pools/coding.yml` + `config/pools/coding/templates/`) is the reference multi-agent setup. To add your own subagent, mirror that structure:
+
+1. Describe the agent in the pool config (or a subagent template) — its name, what it does, and what it's allowed to do:
 
 ```yaml
 agents:
   - name: "my-new-agent"
     role: subagent
+    max_steps: 60
     system_prompt: |
       You are a specialized agent for ...
-      You must reply to the main agent via send_to_agent (target_agent="main")
-    tools:
-      file_tools:
-        enabled: true
-      shell_tools:
-        enabled: false
-      mcp_tools:
-        enabled: false
+      Reply to the main agent via send_to_agent (target_agent="main").
+    # What this agent can do is chosen by a tool preset — see coding.yml:
+    #   read_only / read_write / full / minimal
+    extra_tools: []          # optional extra tool names on top of the preset
     skills:
       roots:
-        - "skills/subagents/pdf"
+        - "skills/subagents/my-new-agent"
 ```
 
-2. (Optional) Create a skill directory `skills/subagents/my-new-agent/` with `SKILL.md`
+2. (Optional) Drop a `SKILL.md` into `skills/<pool>/my-new-agent/` to give it a dedicated skill.
 
-3. Restart the service. The new subagent auto-registers in `AgentPool`.
+3. Restart the service. The new subagent registers automatically and the main agent can hand work to it.
 
 ## Agent Capability Matrix
 
-| Agent | File | Shell | MCP | Communication | Skills |
-|-------|:----:|:-----:|:---:|---------------|--------|
-| **main** | ✅ | ✅ | ✅ (all) | `send_to_agent`, `send_to_agent` | `skills/main/*` |
-| **office-expert** | ✅ | ✅ | — | `send_to_agent`(→main) | docx/pdf/pptx/xlsx |
-| **query-12306** | ✅ | ✅ | ✅ (12306-mcp, fetch) | `send_to_agent`(→main) | — |
-| **helper-sync** | ✅ | ✅ | — | — (spawn sync return) | `skills/subagents/*` |
+The **`coding` pool** (`config/pools/coding.yml` + its `templates/`) is the bundled multi-agent example: a `coding` main agent plus a team of subagents — scout, context-builder, planner, worker, reviewer, oracle, delegate — each allowed to do a different subset of work. Every subagent can be reached from the main agent; subagents report back to it.
+
+Each subagent's tool set is summarized by a **preset** (what it's allowed to do):
+
+| Preset | Read | Write | Edit | List | Search | Find | Bash | Terminal |
+|--------|:----:|:-----:|:----:|:----:|:------:|:----:|:----:|:--------:|
+| `full` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅* |
+| `read_write` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| `read_only` | ✅ | — | — | ✅ | ✅ | ✅ | ✅ | — |
+| `minimal` | ✅ | ✅ | — | ✅ | ✅ | — | — | — |
+
+`*` Terminal tools require `use_terminal: true`. Subagents always use `SubprocessTool` for bash (stateless). See the coding pool config for the full agent roster and presets.
 
 ## Adapting to Other IM Platforms
 

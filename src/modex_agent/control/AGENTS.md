@@ -67,13 +67,21 @@ Written to the channel in STEER busy-input mode (`pipeline.py`). The drain sites
 filter `{CANCEL_TURN}` only, so `INJECT_STEER`'s consumption path is not exercised
 by the default drain — verify before relying on it.
 
-### Approval responses (`APPROVAL_RESPONSE`)
+### Approval responses (`APPROVAL_RESPONSE`) — vestigial
 
-`/approve` and `/deny` resolve via `CommandAction.APPROVAL_DECISION` result fields,
-not the channel. `IMUserInterface.render_question` (`modex_agent/approval/ui.py`)
-drains `APPROVAL_RESPONSE`, but whether that drain is ever reached is unverified
-(it is a live-but-possibly-starving consumer) — flagged in candidate ④b for
-separate validation.
+Approval decisions do **not** flow through the control channel. `APPROVAL_RESPONSE`
+is a leftover command type with no live producer or consumer: the half-built
+`IMUserInterface.render_question` that once polled it was removed as dead code
+(ADR-0008). Real approval decisions take one of two paths, neither of which touches
+this channel:
+
+- **webui**: a structured `InputMessage.approval_decision` rides the input pipeline
+  → `AgentPipeline._process_message` → `ApprovalResumer.apply_resume`.
+- **IM**: `/approve` `/deny` resolve via `CommandAction.APPROVAL_DECISION` result
+  fields in the command processor → the same `apply_resume`.
+
+The `APPROVAL_RESPONSE` enum member is retained for protocol compatibility but is
+not on any live path.
 
 ## Exception Model
 
