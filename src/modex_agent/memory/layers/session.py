@@ -65,8 +65,7 @@ class ScopedSessionMemoryManager(SessionMemoryManager):
         limit: int | None = None,
     ) -> list[ChatMessage]:
         messages = await self.get_all_messages(context)
-        effective_limit = limit if limit is not None else self._config.max_messages
-        return messages[-effective_limit:] if effective_limit is not None else messages
+        return messages[-limit:] if limit is not None else messages
 
     async def get_all_messages(self, context: MemoryContext) -> list[ChatMessage]:
         storage = await self._storage_factory(context)

@@ -33,9 +33,7 @@ def _build_memory_layer_config(cfg: MemoryConfig) -> MemoryLayerConfigSet:
         max_assistant_chars=cfg.user_retention.max_assistant_chars,
     )
 
-    session_config = SessionMemoryConfig(
-        max_messages=cfg.session.max_messages,
-    )
+    session_config = SessionMemoryConfig()
 
     # Archive config (new field, migrated from long_term if old config used)
     archive_config = None
@@ -91,9 +89,9 @@ def create_memory(
 
     st = cfg.session
     cleanup_config: dict[str, int | float] = {
-        "max_messages": st.max_messages,
         "max_tokens": st.max_tokens,
-        "keep_ratio": st.keep_ratio_for_messages,
+        "max_token_ratio": st.max_token_ratio,
+        "keep_ratio": st.keep_ratio,
     }
 
     # Pruned catalog manager (independent of archive)

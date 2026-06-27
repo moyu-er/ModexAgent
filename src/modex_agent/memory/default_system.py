@@ -273,9 +273,8 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
     async def get_history(
         self,
         context: MemoryContext,
-        max_messages: int | None = None,
     ) -> list[ChatMessage]:
-        return await self._layers.session.get_recent_messages(context, limit=max_messages)
+        return await self._layers.session.get_recent_messages(context)
 
     async def search(
         self,

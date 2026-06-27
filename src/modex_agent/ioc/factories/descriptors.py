@@ -82,12 +82,8 @@ def build_session_only_memory(
     output_base_dir: Path | None = None,
 ) -> MemorySystemContextManager:
     """Create a session-only memory system for a subagent."""
-    max_messages = 50
-    if cfg is not None:
-        max_messages = cfg.session.max_messages
-
     layer_config = MemoryLayerConfigSet(
-        session=SessionMemoryConfig(max_messages=max_messages),
+        session=SessionMemoryConfig(),
         archive=None,
         knowledge=None,
         user_retention=UserRetentionBufferConfig(enabled=True),
@@ -97,9 +93,9 @@ def build_session_only_memory(
     if cfg is not None:
         st = cfg.session
         cleanup_config = {
-            "max_messages": st.max_messages,
             "max_tokens": st.max_tokens,
-            "keep_ratio": st.keep_ratio_for_messages,
+            "max_token_ratio": st.max_token_ratio,
+            "keep_ratio": st.keep_ratio,
         }
 
     memory_system = create_memory_system(
@@ -115,9 +111,7 @@ def build_session_only_memory(
         default_agent_id=agent_id,
         default_agent_role=agent_role,
         base_system_prompt=system_prompt,
-        injection_policy=RestrictedInjectionPolicy(
-            max_session_messages=max_messages, pruned_manager=pruned_manager
-        ),
+        injection_policy=RestrictedInjectionPolicy(pruned_manager=pruned_manager),
         output_base_dir=output_base_dir,
     )
 

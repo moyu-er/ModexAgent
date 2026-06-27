@@ -690,7 +690,7 @@ async def test_injection_budget_trims_low_priority_first():
     })
     await system._layers.archive.append(ctx, ArchiveEntry(summary="low priority old history " * 20))
 
-    budget = MemoryBudget(max_system_prompt_tokens=1200, max_history_messages=10)
+    budget = MemoryBudget(max_system_prompt_tokens=1200)
     bundle = await FullInjectionPolicy(max_history_entries=5, budget=budget).assemble(
         context=ctx, memory_system=system, query="",
     )
@@ -721,7 +721,7 @@ async def test_restricted_injection_session_only():
         {"role": "user", "content": "visible message"},
     ])
 
-    bundle = await RestrictedInjectionPolicy(max_session_messages=10).assemble(
+    bundle = await RestrictedInjectionPolicy().assemble(
         context=ctx, memory_system=system, query="",
     )
 

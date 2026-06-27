@@ -105,7 +105,6 @@ class MemoryLayerFactory:
     @staticmethod
     def subagent_session_isolated(
         registry: MemoryStoreRegistry,
-        max_session_messages: int = 50,
     ) -> MemoryLayerSet:
         """Subagent memory: session-scoped archive, no knowledge layer.
 
@@ -115,7 +114,7 @@ class MemoryLayerFactory:
         - Knowledge: disabled (None — no SOUL/USER/MEMORY.md access)
         """
         effective_config = MemoryLayerConfigSet(
-            session=SessionMemoryConfig(max_messages=max_session_messages),
+            session=SessionMemoryConfig(),
             archive=ArchiveMemoryConfig(scope=SessionScope()),
             knowledge=None,
             user_retention=UserRetentionBufferConfig(enabled=True),

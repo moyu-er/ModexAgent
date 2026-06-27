@@ -28,7 +28,7 @@ class _FakeInjectableMemorySystem(MemorySystem):
     async def get_storage_path(self, context):
         return self._archive_dir
 
-    async def get_history(self, context, max_messages=None):
+    async def get_history(self, context):
         return []
 
     async def get_knowledge(self, context):

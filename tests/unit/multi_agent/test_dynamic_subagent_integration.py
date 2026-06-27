@@ -89,7 +89,7 @@ agent_type: heavy
 description: Heavy task agent
 max_steps: 50
 memory:
-  short_term: {max_messages: 100, max_tokens: 50000}
+  short_term: {max_tokens: 50000}
 """
         _write_files(project, "main", "heavy", yml, "Heavy agent.")
 
@@ -98,8 +98,8 @@ memory:
         assert t is not None
         assert t.max_steps == 50
         assert t.memory is not None
-        assert t.memory.short_term.max_messages == 100
-        assert t.memory.short_term.max_tokens == 50000
+        # short_term migrates to session; only max_tokens survives.
+        assert t.memory.session.max_tokens == 50000
 
 
 def test_template_not_found_returns_none():

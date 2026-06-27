@@ -44,7 +44,7 @@ class TestInjectionPolicyBehavior:
         assert hasattr(policy, "assemble")
 
     async def test_restricted_injection_policy_creation(self) -> None:
-        policy = RestrictedInjectionPolicy(max_session_messages=3)
+        policy = RestrictedInjectionPolicy()
         assert hasattr(policy, "assemble")
 
     async def test_restricted_injection_policy_default(self) -> None:

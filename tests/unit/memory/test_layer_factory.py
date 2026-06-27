@@ -52,7 +52,7 @@ async def test_session_only_factory_excludes_archive_and_knowledge() -> None:
     registry = InMemoryStoreRegistry()
     layers = MemoryLayerFactory.session_only(
         registry=registry,
-        config=SessionMemoryConfig(max_messages=2),
+        config=SessionMemoryConfig(),
     )
     context = MemoryContext(session_id="s1")
 
@@ -68,6 +68,7 @@ async def test_session_only_factory_excludes_archive_and_knowledge() -> None:
     assert layers.archive is None
     assert layers.knowledge is None
     assert [message.content for message in await layers.session.get_recent_messages(context)] == [
+        "one",
         "two",
         "three",
     ]
@@ -90,3 +91,27 @@ async def test_factory_knowledge_layer_applies_memory_update() -> None:
 
     assert result == "remember this"
     assert await layers.knowledge.get_file(context, "MEMORY.md") == "remember this"
+
+
+@pytest.mark.asyncio
+async def test_session_get_recent_returns_all_when_no_limit() -> None:
+    """get_recent_messages returns ALL messages when no limit is passed.
+
+    Token compression is the sole size governor; the legacy message-count
+    retrieval cap (SessionMemoryConfig.max_messages) has been removed.
+    """
+    registry = InMemoryStoreRegistry()
+    layers = MemoryLayerFactory.session_only(
+        registry=registry,
+        config=SessionMemoryConfig(),
+    )
+    context = MemoryContext(session_id="s1")
+
+    await layers.session.add_messages(
+        context,
+        [{"role": "user", "content": f"msg-{i}"} for i in range(200)],
+    )
+
+    messages = await layers.session.get_recent_messages(context)
+    assert len(messages) == 200
+    assert [m.content for m in messages] == [f"msg-{i}" for i in range(200)]

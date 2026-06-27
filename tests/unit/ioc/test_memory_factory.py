@@ -7,7 +7,7 @@ import pytest
 
 from modex_agent.ioc.configs.memory import (
     MemoryConfig,
-    ShortTermConfig,
+    SessionConfig,
 )
 from modex_agent.ioc.factories.memory import create_memory, _build_memory_layer_config
 
@@ -28,22 +28,31 @@ def _make_provider():
 
 
 class TestCreateMemoryCleanupConfig:
-    def test_cleanup_config_uses_max_messages(self, tmp_path: Path) -> None:
-        """cleanup_config must use the configured max_messages."""
+    def test_cleanup_config_uses_session_fields(self, tmp_path: Path) -> None:
+        """cleanup_config must reflect the token-budget session config fields."""
         cfg = MemoryConfig(
-            short_term=ShortTermConfig(
-                max_messages=200,
+            session=SessionConfig(
+                max_tokens=50000,
+                max_token_ratio=0.7,
+                keep_ratio=0.2,
             ),
         )
         system = create_memory(cfg, _make_provider(), tmp_path)
-        assert system._cleanup_config["max_messages"] == 200
+        cleanup = system._cleanup_config
+        assert cleanup["max_tokens"] == cfg.session.max_tokens
+        assert cleanup["max_token_ratio"] == cfg.session.max_token_ratio
+        assert cleanup["keep_ratio"] == cfg.session.keep_ratio
+        assert "max_messages" not in cleanup
 
     def test_cleanup_config_present_by_default(self, tmp_path: Path) -> None:
-        """Default ShortTermConfig must have cleanup_config with max_messages."""
+        """Default SessionConfig must populate cleanup_config with token fields."""
         cfg = MemoryConfig()
         system = create_memory(cfg, _make_provider(), tmp_path)
-        assert "max_messages" in system._cleanup_config
-        assert system._cleanup_config["max_messages"] == 100
+        cleanup = system._cleanup_config
+        assert cleanup["max_tokens"] == cfg.session.max_tokens
+        assert cleanup["max_token_ratio"] == cfg.session.max_token_ratio
+        assert cleanup["keep_ratio"] == cfg.session.keep_ratio
+        assert "max_messages" not in cleanup
 
     def test_no_compression_coordinator_attribute(self, tmp_path: Path) -> None:
         """The old compression_coordinator attribute must not exist."""
@@ -93,7 +102,7 @@ class TestBuildMemoryLayerConfigNewSchema:
         )
 
         cfg = MemoryConfig(
-            session=SessionConfig(max_messages=250),
+            session=SessionConfig(max_tokens=250000),
             archive=ArchiveConfig(enabled=True, max_entries=800),
             knowledge=KnowledgeConfig(
                 enabled=True,
@@ -103,7 +112,6 @@ class TestBuildMemoryLayerConfigNewSchema:
 
         layer_config = _build_memory_layer_config(cfg)
 
-        assert layer_config.session.max_messages == 250
         assert layer_config.archive is not None
         assert layer_config.knowledge is not None
         assert layer_config.knowledge.default_templates_dir == "templates/knowledge"

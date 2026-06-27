@@ -16,12 +16,11 @@ logger = logging.getLogger(__name__)
 
 
 class ShortTermConfig(BaseModel):
-    """Session memory: triggers for compression."""
+    """Session memory: token-budget triggers for compression."""
 
-    max_messages: int = 100
-    max_tokens: int = 100000
-    keep_ratio_for_messages: float = 0.4
-    keep_ratio_for_token: float = 0.4
+    max_tokens: int = 200000
+    max_token_ratio: float = 0.8
+    keep_ratio: float = 0.3
 
 
 class UserRetentionConfig(BaseModel):
@@ -78,12 +77,11 @@ class LossyConfig(BaseModel):
 
 
 class SessionConfig(BaseModel):
-    """Session memory: short-term conversation buffer. Replaces ShortTermConfig."""
+    """Session memory: token-budget triggers for compression. Replaces ShortTermConfig."""
 
-    max_messages: int = 100
-    max_tokens: int = 100000
-    keep_ratio_for_messages: float = 0.4
-    keep_ratio_for_token: float = 0.4
+    max_tokens: int = 200000
+    max_token_ratio: float = 0.8
+    keep_ratio: float = 0.3
 
 
 class ArchiveConfig(BaseModel):
@@ -139,7 +137,7 @@ class MemoryConfig(BaseModel):
 
     None (as a field in AgentConfig) = memory system not created.
     MemoryConfig() = enabled with all defaults:
-      - session layer: on (100 messages / 100k tokens)
+      - session layer: on (token-budget compression triggers)
       - user retention layer: on (internal, transparent)
       - archive/knowledge: off
       - governance/lossy: off
@@ -171,18 +169,15 @@ class MemoryConfig(BaseModel):
         explicitly provided by the caller. This avoids overwriting new-style
         values with defaults.
         """
-        # Migrate short_term → session (only if caller explicitly passed short_term)
+        # Migrate short_term → session (only if caller explicitly passed short_term).
+        # Old short_term carried max_tokens (plus now-removed message-count fields);
+        # only max_tokens survives the token-based redesign.
         if "short_term" in self.model_fields_set and self.short_term is not None:
             logger.warning("MemoryConfig.short_term is deprecated, use session instead")
             object.__setattr__(
                 self,
                 "session",
-                SessionConfig(
-                    max_messages=self.short_term.max_messages,
-                    max_tokens=self.short_term.max_tokens,
-                    keep_ratio_for_messages=self.short_term.keep_ratio_for_messages,
-                    keep_ratio_for_token=self.short_term.keep_ratio_for_token,
-                ),
+                SessionConfig(max_tokens=self.short_term.max_tokens),
             )
 
         # Migrate long_term → archive + knowledge (only if caller explicitly passed long_term)
