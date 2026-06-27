@@ -13,6 +13,7 @@ from .session_id import SessionInfo
 
 if TYPE_CHECKING:
     from .llm_struct import LLMErrorInfo
+    from modex_agent.approval.views import ApprovalDecisionInput
 
 
 class MessageType(Enum):
@@ -71,6 +72,7 @@ class InputMessage:
     - metadata: 额外元数据
     - attachments: 附件本地文件路径列表（图片、文档等）
     - timestamp: 时间戳
+    - approval_decision: webui 审批决策（非指令）；None 表示普通消息
     """
 
     content: str  # 消息内容（唯一必填字段）
@@ -86,6 +88,7 @@ class InputMessage:
     content_format: Any | None = None
     truncatable_paths: list[str] | None = None
     workspace: Path | None = None
+    approval_decision: ApprovalDecisionInput | None = None
 
 
 @dataclass
