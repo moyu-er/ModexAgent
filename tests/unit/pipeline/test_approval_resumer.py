@@ -409,6 +409,29 @@ async def test_apply_resume_targeted_call_id_completes_when_last_pending(
     assert result is resumer._turn_store
 
 
+async def test_apply_resume_targeting_already_decided_is_noop(
+    resumer, turn_store, user_interface, fake_agent_context,
+):
+    """Targeting an already-decided (or unknown) call_id decides nothing:
+    the other PENDING request stays pending → partial save + prompt, None.
+
+    Guards the webui double-submit / stale-card path: re-sending a decision
+    for a request that was already resolved must not flip any state.
+    """
+    # c1 already ALLOWED, c2 still PENDING; target c1 again (already decided).
+    snapshot = _snapshot(decisions={"c1": ApprovalDecision.ALLOWED})
+    result = await resumer.apply_resume(
+        snapshot, action=ApprovalAction.ALLOW, session_id="s1",
+        pool_data=None, agent_context=fake_agent_context, tool_call_id="c1",
+    )
+    assert result is None  # c2 still pending
+    saved = turn_store.saved[-1]
+    approval = ReActSnapshotPolicy.approval_from_snapshot(saved)
+    assert approval.decisions["c1"] == ApprovalDecision.ALLOWED  # unchanged
+    assert approval.decisions.get("c2", ApprovalDecision.PENDING) == ApprovalDecision.PENDING
+    assert user_interface.rendered  # c2 prompt rendered (the remaining pending)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
