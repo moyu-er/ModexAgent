@@ -157,3 +157,24 @@ async def test_context_manager_save_does_not_duplicate_agent_result_messages(sys
         ("assistant", "reply"),
         ("tool", "tool result"),
     ]
+
+
+async def test_default_memory_system_uses_default_char_estimator(tmp_path) -> None:
+    from modex_agent.memory.system import create_memory_system
+    from modex_agent.memory.token_estimator import CharTokenEstimator
+
+    ms = create_memory_system(workspace=tmp_path, session_only=True)
+    assert isinstance(ms._token_estimator, CharTokenEstimator)
+
+
+async def test_default_memory_system_accepts_custom_estimator(tmp_path) -> None:
+    from modex_agent.memory.system import create_memory_system
+    from modex_agent.memory.token_estimator import TokenEstimator
+
+    class Spy(TokenEstimator):
+        def estimate_text(self, text: str) -> int:
+            return 1
+
+    spy = Spy()
+    ms = create_memory_system(workspace=tmp_path, session_only=True, token_estimator=spy)
+    assert ms._token_estimator is spy

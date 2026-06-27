@@ -54,6 +54,11 @@ class ChatMessage(BaseModel):
     truncatable_paths: list[str] | None = Field(
         default=None, description="XML 内容中可截断的路径列表"
     )
+    token_count: int | None = Field(
+        default=None,
+        description="缓存的 token 计数（append 时由 TokenEstimator 计算并落盘）；"
+        "None 表示未计算，触发/边界逻辑会现算。",
+    )
 
     @field_validator("created_at", mode="before")
     @classmethod

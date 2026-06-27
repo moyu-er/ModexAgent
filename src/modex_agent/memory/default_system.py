@@ -21,6 +21,7 @@ from modex_agent.memory.core.system import (
     MemorySystem,
 )
 from modex_agent.memory.history import MessageHistory
+from modex_agent.memory.token_estimator import CharTokenEstimator, TokenEstimator
 
 if TYPE_CHECKING:
     from modex_agent.agents.summarizer.abc import ArchiveGenerator, KnowledgeConsolidatorBase
@@ -53,6 +54,7 @@ class ScopedMessageHistory(MessageHistory):
         archive_agent: ArchiveGenerator | None = None,
         archive_storage: DirArchiveStorage | None = None,
         archive_trigger_callback: Callable[[MemoryContext], Awaitable[None]] | None = None,
+        token_estimator: TokenEstimator | None = None,
     ) -> None:
         self._manager = manager
         self._context = context
@@ -64,6 +66,7 @@ class ScopedMessageHistory(MessageHistory):
         self._archive_agent = archive_agent
         self._archive_storage = archive_storage
         self._archive_trigger_callback = archive_trigger_callback
+        self._token_estimator: TokenEstimator = token_estimator or CharTokenEstimator()
         self._cache: list[ChatMessage] | None = (
             [ChatMessage.coerce(m) for m in initial_messages]
             if initial_messages is not None
@@ -104,12 +107,27 @@ class ScopedMessageHistory(MessageHistory):
             return
         await self._user_retention.mark_all_completed(self._context, assistant_content)
 
+    def _stamp_token_count(
+        self, messages: Sequence[ChatMessage | dict[str, Any]]
+    ) -> list[ChatMessage | dict[str, Any]]:
+        """Set token_count on each message via the estimator (append-time write point)."""
+        stamped: list[ChatMessage | dict[str, Any]] = []
+        for msg in messages:
+            chat = ChatMessage.coerce(msg)
+            if chat.token_count is None:
+                chat = chat.model_copy(
+                    update={"token_count": self._token_estimator.estimate_message(chat)}
+                )
+            stamped.append(chat)
+        return stamped
+
     async def append(self, message: ChatMessage | dict[str, Any]) -> None:
-        await self._manager.add_messages(self._context, [message])
+        [stamped] = self._stamp_token_count([message])
+        await self._manager.add_messages(self._context, [stamped])
         if self._recorder is not None:
-            await self._recorder.record([message], self._context)
+            await self._recorder.record([stamped], self._context)
         if self._user_retention is not None:
-            await self._urb_completion_hook(message)
+            await self._urb_completion_hook(stamped)
         await self._run_cleanup()
         async with self._cache_lock:
             self._cache = None
@@ -117,11 +135,12 @@ class ScopedMessageHistory(MessageHistory):
     async def extend(self, messages: Sequence[ChatMessage | dict[str, Any]]) -> None:
         if not messages:
             return
-        await self._manager.add_messages(self._context, list(messages))
+        stamped = self._stamp_token_count(messages)
+        await self._manager.add_messages(self._context, stamped)
         if self._recorder is not None:
-            await self._recorder.record(list(messages), self._context)
-        if self._user_retention is not None and messages:
-            await self._urb_completion_hook(messages[-1])
+            await self._recorder.record(stamped, self._context)
+        if self._user_retention is not None and stamped:
+            await self._urb_completion_hook(stamped[-1])
         await self._run_cleanup()
         async with self._cache_lock:
             self._cache = None
@@ -181,6 +200,7 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
         archive_storage: DirArchiveStorage | None = None,
         knowledge_consolidator: KnowledgeConsolidatorBase | None = None,
         archive_trigger_callback: Callable[[MemoryContext], Awaitable[None]] | None = None,
+        token_estimator: TokenEstimator | None = None,
     ) -> None:
         self._layers = layer_set
         self._registry = store_registry
@@ -191,6 +211,7 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
         self._archive_storage = archive_storage
         self._knowledge_consolidator = knowledge_consolidator
         self._archive_trigger_callback = archive_trigger_callback
+        self._token_estimator: TokenEstimator = token_estimator or CharTokenEstimator()
         self._recorder = MemoryAppendRecorder()
         if providers is not None:
             for provider in providers.all():
@@ -235,6 +256,7 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
             archive_agent=self._archive_agent,
             archive_storage=self._archive_storage,
             archive_trigger_callback=self._archive_trigger_callback,
+            token_estimator=self._token_estimator,
         )
 
     async def add_messages(

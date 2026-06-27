@@ -37,6 +37,7 @@ from modex_agent.memory.pruned.manager import PrunedManager
 
 # UserRetentionBuffer injection moved to framework.memory.user_buffer (Task 6 stub)
 from modex_agent.memory.registry.file import DefaultMemoryStoreRegistry
+from modex_agent.memory.token_estimator import CharTokenEstimator, TokenEstimator
 
 if TYPE_CHECKING:
     from modex_agent.agents.summarizer.abc import ArchiveGenerator, KnowledgeConsolidatorBase
@@ -58,6 +59,7 @@ def create_memory_system(
     archive_storage: DirArchiveStorage | None = None,
     knowledge_consolidator: KnowledgeConsolidatorBase | None = None,
     archive_trigger_callback: Callable[[MemoryContext], Awaitable[None]] | None = None,
+    token_estimator: TokenEstimator | None = None,
 ) -> DefaultMemorySystem:
     """Create a production-ready memory system with default local-file registry.
 
@@ -92,6 +94,7 @@ def create_memory_system(
         archive_storage=archive_storage,
         knowledge_consolidator=knowledge_consolidator,
         archive_trigger_callback=archive_trigger_callback,
+        token_estimator=token_estimator,
     )
 
 
