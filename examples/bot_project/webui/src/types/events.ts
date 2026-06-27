@@ -14,7 +14,8 @@ export type WebUIEventType =
   | "attached"
   | "conversation_deleted"
   | "error"
-  | "content";
+  | "content"
+  | "approval_request";
 
 // ── Server → Client events ──────────────────────────────────────────────────
 
@@ -105,6 +106,23 @@ export interface ContentEvent extends ServerEvent {
   text: string;
 }
 
+export interface ApprovalRequestView {
+  tool_call_id: string;
+  tool_name: string;
+  tier: string;
+  arguments: Record<string, unknown>;
+  status: string;
+}
+
+export interface ApprovalRequestEvent extends ServerEvent {
+  event: "approval_request";
+  tool_call_id: string;
+  tool_name: string;
+  tier: string;
+  arguments: Record<string, unknown>;
+  status: string;
+}
+
 export interface TodoItemDTO {
   content: string;
   status: string;
@@ -124,7 +142,8 @@ export type ServerEventUnion =
   | AttachedEvent
   | ConversationDeletedEvent
   | ErrorEvent
-  | ContentEvent;
+  | ContentEvent
+  | ApprovalRequestEvent;
 
 // ── Structured transport envelope ─────────────────────────────────────────────
 
