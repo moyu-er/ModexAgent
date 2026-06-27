@@ -11,6 +11,8 @@ from bot.input_pipeline.stages.persist_user_message import PersistUserMessageSta
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import UserMessageEvent
+from modex_agent.approval.types import ApprovalAction
+from modex_agent.approval.views import ApprovalDecisionInput
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.input_pipeline.envelope import UserInputEnvelope
 from modex_agent.workspace.runtime import bind_workspace_root
@@ -64,3 +66,35 @@ async def test_persist_skips_known_control_commands() -> None:
                 await PersistUserMessageStage().process(env, _ctx(store))
             events = list(store.load("u.main"))
         assert events == [], "control commands must not be persisted"
+
+
+@pytest.mark.asyncio
+async def test_persist_skips_approval_decision() -> None:
+    """A decision envelope is NOT persisted as a user message.
+
+    Mirrors the existing real-store assertion pattern (load the store and
+    assert empty).  The envelope intentionally omits WORKSPACE so the test
+    also pins that the skip runs before the hard WORKSPACE subscript — a
+    decision envelope short-circuits workspace resolution.
+    """
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
+        store.set_agent_pool_map({"main": "main"})
+        envelope = UserInputEnvelope(
+            external_id="ext",
+            content="",
+            channel="websocket",
+            metadata={
+                RoutingMeta.FULL_SESSION_ID: "ext.main",
+                RoutingMeta.RESOLVED_AGENT: "main",
+                RoutingMeta.APPROVAL_DECISION: ApprovalDecisionInput(
+                    "c1", ApprovalAction.ALLOW
+                ),
+                # NOTE: no WORKSPACE — decision must skip before that subscript
+            },
+        )
+        with bind_workspace_root(root):
+            await PersistUserMessageStage().process(envelope, _ctx(store))
+            events = list(store.load("ext.main"))
+        assert events == [], "approval decisions must not be persisted"

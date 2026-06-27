@@ -19,6 +19,13 @@ class PersistUserMessageStage(InputStage):
     async def process(
         self, envelope: UserInputEnvelope, ctx: BotInputContext
     ) -> StageResult:
+        # Approval decisions are structured control inputs, not user chat —
+        # never persist them as user messages.  (Also guards the
+        # WORKSPACE/FULL_SESSION_ID subscripts below, which a decision
+        # envelope may not carry since it short-circuits workspace
+        # resolution.)
+        if RoutingMeta.APPROVAL_DECISION in envelope.metadata:
+            return Continue(value=envelope)
         content = envelope.content.strip()
         # Defense-in-depth: a valid skill invocation legitimately starts with
         # "/" and carries skill_xml (set by S6) — it must be persisted as the
