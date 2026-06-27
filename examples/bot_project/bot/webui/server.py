@@ -478,6 +478,12 @@ class WebUIServer:
         self.app.router.add_get(
             f"{_API_SESSIONS_SESSION_PATH}/todos", self._handle_get_todos
         )
+        self.app.router.add_get(
+            f"{_API_SESSIONS_SESSION_PATH}/approvals", self._handle_get_approvals
+        )
+        self.app.router.add_post(
+            f"{_API_SESSIONS_SESSION_PATH}/approvals", self._handle_post_approval
+        )
         self.app.router.add_delete(_API_SESSIONS_SESSION_PATH, self._handle_delete_session)
         self.app.router.add_get(_WS_PATH, self._handle_websocket)
 
@@ -805,6 +811,102 @@ class WebUIServer:
             if item.status in (TodoStatus.PENDING, TodoStatus.IN_PROGRESS)
         ]
         return web.json_response(active)
+
+    async def _handle_get_approvals(self, request: web.Request) -> web.Response:
+        """GET /api/sessions/{session_id}/approvals -- pending approvals (webui-only).
+
+        Reads the persisted turn snapshots directly from the pool's turn store
+        (same direct-file-read pattern as :meth:`_handle_get_todos`), so this
+        works for restart/refresh recovery without a live pipeline reference.
+        """
+        from modex_agent.agents.react.state import (
+            ReActRuntimeStateCodec,
+            ReActSnapshotPolicy,
+        )
+        from modex_agent.approval.views import view_from_request
+        from modex_agent.runtime.codec import RuntimeStateCodecRegistry
+        from modex_agent.runtime.enums import (
+            AgentKind,
+            SnapshotReason,
+            TurnPhase,
+        )
+        from modex_agent.runtime.models import StateQueryScope
+        from modex_agent.runtime.store import JsonFileTurnStateStore
+
+        session_id: str = request.match_info["session_id"]
+        ws_raw = request.query.get("ws", "")
+        sessions_dir = self._sessions_dir_of_ws(ws_raw)
+        agent_name: str = await self._resolve_agent(
+            session_id, index_dir=self._index_dir_of_ws(ws_raw)
+        )
+        pool: str = self._pool_of_agent(agent_name)
+
+        turns_dir = WorkspacePaths(root=sessions_dir.parent).runtime_dir(pool, "turns")
+        codec_registry = RuntimeStateCodecRegistry(
+            {AgentKind.REACT: ReActRuntimeStateCodec()}
+        )
+        turn_store = JsonFileTurnStateStore(turns_dir, codec_registry)
+        snapshots = await turn_store.list_active_turns(
+            StateQueryScope(
+                agent_id=agent_name,
+                session_id=session_id,
+                phase=TurnPhase.SUSPENDED,
+                reason=SnapshotReason.TOOL_APPROVAL_REQUIRED,
+            )
+        )
+        if not snapshots:
+            return web.json_response([])
+        snapshots.sort(key=lambda s: s.created_at)
+        approval = ReActSnapshotPolicy.approval_from_snapshot(snapshots[-1])
+        views = [
+            view_from_request(req).to_dict()
+            for req in (approval.requests if approval is not None else [])
+        ]
+        return web.json_response(views)
+
+    async def _handle_post_approval(self, request: web.Request) -> web.Response:
+        """POST /api/sessions/{session_id}/approvals -- submit approve/deny (webui).
+
+        Builds an envelope carrying the structured decision and runs it through
+        the webui input pipeline (reusing workspace/pool/session resolution),
+        converging on the agent pipeline's approval branch.
+        """
+        from bot.input_pipeline.stages.resolve_pool import RoutingMeta
+        from modex_agent.approval.types import ApprovalAction
+        from modex_agent.approval.views import ApprovalDecisionInput
+        from modex_agent.input_pipeline.envelope import UserInputEnvelope
+
+        session_id: str = request.match_info["session_id"]
+        try:
+            payload = await request.json()
+            action = ApprovalAction(payload["action"])
+        except (KeyError, ValueError, json.JSONDecodeError):
+            return web.json_response({"error": "invalid action"}, status=400)
+        try:
+            tool_call_id = payload["tool_call_id"]
+        except KeyError:
+            return web.json_response({"error": "missing tool_call_id"}, status=400)
+
+        decision = ApprovalDecisionInput(tool_call_id=tool_call_id, action=action)
+        ws_raw = request.query.get("ws", "")
+        session = await self._resolve_session(
+            session_id, index_dir=self._index_dir_of_ws(ws_raw)
+        )
+        envelope = UserInputEnvelope(
+            external_id=session_id,
+            content="",
+            channel="websocket",
+            metadata={RoutingMeta.APPROVAL_DECISION: decision},
+            pre_resolved_session=session,
+        )
+        # _input_pipeline / _input_ctx are injected by WebUIService. They may
+        # be None in minimal test setups -- guard so the handler degrades cleanly.
+        if self._input_pipeline is None or self._input_ctx is None:
+            return web.json_response(
+                {"error": "input pipeline not configured"}, status=503
+            )
+        await self._input_pipeline.handle(envelope, self._input_ctx)
+        return web.json_response({"accepted": True}, status=202)
 
     async def _handle_delete_session(self, request: web.Request) -> web.Response:
         """DELETE /api/sessions/{session_id} -- delete a session.
