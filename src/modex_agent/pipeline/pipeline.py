@@ -157,7 +157,7 @@ class AgentPipeline:
         self.control_channel = control_channel
         self.busy_input_mode = busy_input_mode
         self.turn_store = turn_store
-        self.runtime_services = runtime_services
+        self._runtime_services = runtime_services
         self.command_processor = command_processor
         # workspace_manager / pool_name are mutated post-construction by pool
         # wiring (e.g. bot pool_builder sets them after AgentPool creates the
@@ -246,6 +246,19 @@ class AgentPipeline:
     def pool_name(self, value: str | None) -> None:
         self._pool_name = value
         self._turn_runner._pool_name = value
+
+    @property
+    def runtime_services(self) -> AgentRuntimeServices | None:
+        return self._runtime_services
+
+    @runtime_services.setter
+    def runtime_services(self, value: AgentRuntimeServices | None) -> None:
+        self._runtime_services = value
+        # Mirror into TurnContextBuilder so post-construction wiring (e.g.
+        # main-pool approval wiring in pool_builder) reaches the per-turn
+        # runtime via base_services.approval — same mirror pattern as
+        # workspace_manager / pool_name / emitter_factory.
+        self._turn_context_builder._runtime_services = value
 
     @property
     def emitter_factory(self) -> Callable[..., ContentEmitter] | None:

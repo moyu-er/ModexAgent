@@ -351,12 +351,12 @@ class TurnContextBuilder:
                 phase=RTurnPhase.CREATED,
             )
             services = AgentRuntimeServices(
-                hooks=base_services.hooks if base_services is not None else self._hook_runner,
+                hooks=(
+                    base_services.hooks if base_services is not None else None
+                ) or self._hook_runner,
                 interceptors=(
-                    base_services.interceptors
-                    if base_services is not None
-                    else self._interceptor_chain
-                ),
+                    base_services.interceptors if base_services is not None else None
+                ) or self._interceptor_chain,
                 approval=base_services.approval if base_services is not None else None,
                 governance=governance,
                 turn_store=(
