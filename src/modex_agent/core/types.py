@@ -72,7 +72,8 @@ class InputMessage:
     - metadata: 额外元数据
     - attachments: 附件本地文件路径列表（图片、文档等）
     - timestamp: 时间戳
-    - approval_decision: webui 审批决策（非指令）；None 表示普通消息
+    - approval_decision: IM/WebUI 审批决策（非指令）；None 表示普通消息。
+      WebUI 在审批端点构造；IM 由 ApprovalStage 从 /approve·/deny 解析。
     """
 
     content: str  # 消息内容（唯一必填字段）
