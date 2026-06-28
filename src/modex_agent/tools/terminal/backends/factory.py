@@ -16,7 +16,7 @@ from modex_agent.tools.terminal.types import TerminalVisibility
 logger = logging.getLogger(__name__)
 
 
-class UnsupportedVisibilityForTransport(Exception):
+class UnsupportedVisibilityForTransport(Exception):  # noqa: N818 — ADR-0010 mandates this exception name
     """The requested (transport, visibility) combination cannot be served.
 
     Raised by ``create_pty_backend`` when the platform-preferred transport

@@ -27,21 +27,16 @@ class TestFactoryCapabilityTable:
         # (the factory will reject (pexpect, VISIBLE) regardless of platform).
         # We monkeypatch sys.platform to 'linux' so pexpect would be the preferred
         # transport; then we ask for VISIBLE, which pexpect cannot serve.
+        # This is more robust than stubbing builtins.__import__ because:
+        # (a) optional-dependency installs in CI envs do not silently re-allow libtmux
+        #     and break the test, and (b) we directly exercise the factory's
+        #     rejection logic rather than the I/O behaviour of __import__.
         import sys
 
+        from modex_agent.tools.terminal.backends import factory
+
         monkeypatch.setattr(sys, "platform", "linux")
-        # Stub out libtmux so the factory cannot "discover" an alternative transport
-        # for the visible-tmux fallback and accidentally succeed.
-        import builtins
-
-        real_import = builtins.__import__
-
-        def fake_import(name: str, *args: object, **kwargs: object):
-            if name == "libtmux":
-                raise ImportError("libtmux stubbed out for this test")
-            return real_import(name, *args, **kwargs)
-
-        monkeypatch.setattr(builtins, "__import__", fake_import)
+        monkeypatch.setattr(factory, "_is_libtmux_available", lambda: False)
 
         with pytest.raises(UnsupportedVisibilityForTransport) as exc_info:
             create_pty_backend(visibility=TerminalVisibility.VISIBLE)
