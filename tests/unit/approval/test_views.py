@@ -39,3 +39,11 @@ def test_decision_input_carries_call_id_and_action():
     di = ApprovalDecisionInput(tool_call_id="call_1", action=ApprovalAction.ALLOW)
     assert di.tool_call_id == "call_1"
     assert di.action == ApprovalAction.ALLOW
+
+
+def test_decision_input_allows_null_call_id_roundtrip():
+    di = ApprovalDecisionInput(tool_call_id=None, action=ApprovalAction.DENY)
+    assert di.tool_call_id is None
+    d = di.to_dict()
+    assert d == {"tool_call_id": None, "action": "deny"}
+    assert ApprovalDecisionInput.from_dict(d) == di

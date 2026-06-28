@@ -36,8 +36,12 @@ class ApprovalRequestView:
 
 @dataclass(frozen=True)
 class ApprovalDecisionInput:
-    """A webui approve/deny decision carried on ``InputMessage`` (not a slash command)."""
-    tool_call_id: str
+    """An approve/deny decision carried on ``InputMessage``.
+
+    WebUI fills ``tool_call_id`` (precision: that exact request). IM fills
+    ``None`` (decide-next-pending: the next still-pending request in order).
+    """
+    tool_call_id: str | None
     action: ApprovalAction
 
     def to_dict(self) -> dict[str, Any]:
@@ -49,7 +53,11 @@ class ApprovalDecisionInput:
         """Reconstruct from ``to_dict`` output; None when *data* is falsy."""
         if not data:
             return None
-        return cls(tool_call_id=str(data["tool_call_id"]), action=ApprovalAction(str(data["action"])))
+        raw_id = data.get("tool_call_id")
+        return cls(
+            tool_call_id=None if raw_id is None else str(raw_id),
+            action=ApprovalAction(str(data["action"])),
+        )
 
 
 def view_from_request(req: ApprovalRequestState, *, status: str = "pending") -> ApprovalRequestView:
