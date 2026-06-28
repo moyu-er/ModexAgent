@@ -27,6 +27,7 @@ from modex_agent.agents.react.state import (
     ReActTurnState,
 )
 from modex_agent.approval.constants import (
+    ApprovalDecision,
     ApprovalStatus,
     ApprovalTier,
 )
@@ -125,6 +126,54 @@ def _pending_snapshot(session_id: str, agent_name: str, tool_call_id: str) -> Tu
     return ReActSnapshotPolicy().capture(state, SnapshotReason.TOOL_APPROVAL_REQUIRED)
 
 
+def _mixed_snapshot(
+    session_id: str,
+    agent_name: str,
+    *,
+    decisions: dict[str, ApprovalDecision],
+) -> TurnSnapshot:
+    """Build a SUSPENDED approval snapshot with three requests.
+
+    ``decisions`` maps ``tool_call_id`` -> ``ApprovalDecision`` for whichever
+    requests have already been decided; the rest remain PENDING (absent from
+    the map). ``tool_call_id`` values are ``"c1"``, ``"c2"``, ``"c3"``.
+    """
+    identity = TurnIdentity(
+        agent_id=agent_name,
+        session=SessionInfo.from_str(session_id, default_agent_name="main"),
+        turn_id="t1",
+    )
+    requests = [
+        ApprovalRequestState(
+            request_id=f"r{i}",
+            approval_id="ap1",
+            tool_call_id=call_id,
+            tool_name="write_file",
+            arguments=ToolArguments(values={"path": f"/dangerous/{call_id}"}),
+            tier=ApprovalTier.DANGEROUS,
+            iteration=1,
+        )
+        for i, call_id in enumerate(("c1", "c2", "c3"), start=1)
+    ]
+    approval = ApprovalTransaction(
+        approval_id="ap1",
+        turn_id=identity.turn_id,
+        subject_type=ApprovalSubjectType.TOOL_BATCH,
+        subject_ids=["batch1"],
+        requests=requests,
+        decisions=dict(decisions),
+        status=ApprovalStatus.PENDING,
+    )
+    state = ReActTurnState(
+        identity=identity,
+        agent_kind=AgentKind.REACT,
+        phase=TurnPhase.SUSPENDED,
+        current_node=ReActNode.TOOL,
+        approval=approval,
+    )
+    return ReActSnapshotPolicy().capture(state, SnapshotReason.TOOL_APPROVAL_REQUIRED)
+
+
 def _turns_dir(workspace_root: Path) -> Path:
     """The turns dir the server resolves for the home ``main`` pool."""
     return WorkspacePaths(root=workspace_root / ".modex").runtime_dir("main", "turns")
@@ -185,6 +234,106 @@ async def test_get_approvals_returns_pending_views() -> None:
             assert view["tier"] == str(ApprovalTier.DANGEROUS)
             assert view["status"] == "pending"
             assert view["arguments"] == {"path": "/dangerous"}
+        finally:
+            await client.close()
+
+
+@pytest.mark.asyncio
+async def test_get_approvals_excludes_decided_requests() -> None:
+    """GET returns only PENDING requests; allowed/denied/preempted are absent."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        workspace_root = Path(tmp)
+        server = _build_server(workspace_root)
+
+        session_id = "abc123.main"
+        store = _make_turn_store(_turns_dir(workspace_root))
+        # c1 allowed, c2 denied, c3 still pending.
+        await store.save_turn(
+            _mixed_snapshot(
+                session_id,
+                agent_name="main",
+                decisions={
+                    "c1": ApprovalDecision.ALLOWED,
+                    "c2": ApprovalDecision.DENIED,
+                },
+            )
+        )
+
+        client = TestClient(TestServer(server.app))
+        await client.start_server()
+        try:
+            resp = await client.get(f"/api/sessions/{session_id}/approvals")
+            assert resp.status == 200
+            data = await resp.json()
+            # Only the genuinely-pending request (c3) comes back.
+            assert {view["tool_call_id"] for view in data} == {"c3"}
+            assert len(data) == 1
+            assert data[0]["status"] == "pending"
+        finally:
+            await client.close()
+
+
+@pytest.mark.asyncio
+async def test_get_approvals_empty_when_all_decided() -> None:
+    """When every request is already decided, GET returns an empty list."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        workspace_root = Path(tmp)
+        server = _build_server(workspace_root)
+
+        session_id = "abc123.main"
+        store = _make_turn_store(_turns_dir(workspace_root))
+        await store.save_turn(
+            _mixed_snapshot(
+                session_id,
+                agent_name="main",
+                decisions={
+                    "c1": ApprovalDecision.ALLOWED,
+                    "c2": ApprovalDecision.DENIED,
+                    "c3": ApprovalDecision.PREEMPTED,
+                },
+            )
+        )
+
+        client = TestClient(TestServer(server.app))
+        await client.start_server()
+        try:
+            resp = await client.get(f"/api/sessions/{session_id}/approvals")
+            assert resp.status == 200
+            assert await resp.json() == []
+        finally:
+            await client.close()
+
+
+@pytest.mark.asyncio
+async def test_get_approvals_resolves_snapshot_without_agent_id_scope() -> None:
+    """The agent_id-free scope still resolves the snapshot (regression guard).
+
+    The handler drops ``agent_id`` from ``StateQueryScope`` to match
+    ``ApprovalResumer.load_pending``. Approval turns are partitioned by
+    workspace + pool + session_id, so the snapshot must still be found.
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        workspace_root = Path(tmp)
+        server = _build_server(workspace_root)
+
+        session_id = "abc123.main"
+        store = _make_turn_store(_turns_dir(workspace_root))
+        await store.save_turn(_pending_snapshot(session_id, agent_name="main", tool_call_id="c1"))
+
+        client = TestClient(TestServer(server.app))
+        await client.start_server()
+        try:
+            resp = await client.get(f"/api/sessions/{session_id}/approvals")
+            assert resp.status == 200
+            data = await resp.json()
+            assert len(data) == 1
+            assert data[0]["tool_call_id"] == "c1"
         finally:
             await client.close()
 

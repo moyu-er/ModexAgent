@@ -112,7 +112,6 @@ def _wire(*, approval: ApprovalConfig | None) -> AgentPipeline:
         pool_cfg=_make_pool_cfg(approval=approval),
         project_dir=Path("/proj"),
         command_processor=None,  # exercise the default branch
-        skill_manager=None,
         pool_name="main",
     )
     return pipeline

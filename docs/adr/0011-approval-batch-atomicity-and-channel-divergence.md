@@ -103,4 +103,37 @@ re-working webui surfacing and clarifying the execution semantics that the surfa
   beyond the existing per-`tool_call_id` submitting flags.
 - `ApprovalRequestView` carries a real `status`; `GET /approvals` returns only `PENDING`.
 - IM (`/approve`, `/deny`, decide-next-pending) is behaviorally unchanged; regression tests
-  must cover both paths.
+  cover both paths (webui precision + IM decide-next-pending).
+
+## Implementation outcome
+
+Shipped end-to-end across framework → bot → webui; the decisions above all hold. The
+rework is frontend-heavy: the only production change outside the webui is
+`server.py:_handle_get_approvals` (PENDING filter + `agent_id` drop). `apply_resume` and
+`ApprovalTransaction.apply_decision` are unchanged — the deny-seals-batch behavior
+predates this ADR (Decision 2). Three refinements emerged during implementation that
+future readers should know about (none changes a decision, only its mechanism):
+
+1. **The pull trigger is the existing `approval_request` push, not a new event.** An
+   earlier draft of Decision 4 proposed a dedicated `approval_required` backend signal;
+   dropped once the existing single push was identified as a sufficient fetch trigger
+   (frontend-only, zero IM impact, no emitter change). The snapshot is persisted before
+   the push, so the GET finds it — no race.
+2. **Two in-flight guards, not one.** Because the fetch-replace and the reducer's append
+   are independent mutation paths, both must suppress an `approval_request` whose card has
+   a decision POST in flight, or a stale push re-adds an already-decided card as a phantom
+   (the reducer dedupes only against currently-present ids). The hook owns both guards;
+   the reducer stays pure. Covered by `useWebUIStream.approval.test.ts`.
+3. **`submittingApprovals` is internal; `isApprovingBatch` is the public flag.** The
+   per-`tool_call_id` in-flight map stays as hook state (the guards need per-card
+   granularity), but it is no longer returned from the hook — the derived
+   `isApprovingBatch` (`Object.keys(...).length > 0`) is the sole batch-lock signal the UI
+   consumes.
+
+Verified by `tests/unit/pipeline/test_approval_resumer.py` (deny-seals-batch +
+approve-per-request invariants), `examples/bot_project/tests/webui/test_server_approval_endpoints.py`
+(GET PENDING-only + agent_id-free scope), and the webui vitest suite
+(`useWebUIStream.approval.test.ts`, `ApprovalCard.test.tsx`, `ChatView.approval.test.tsx`).
+The existing framework deny-cascade tests (`test_denied_tool_cascades_and_cancels`,
+`test_partial_approval_then_deny_preempts_whole_batch_on_start_resume`) cover the execution
+path; the only remaining verification is a live bot end-to-end test.

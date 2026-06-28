@@ -438,6 +438,166 @@ async def test_apply_resume_targeting_already_decided_is_noop(
 
 
 # ---------------------------------------------------------------------------
+# Deny-seals-the-batch regression guards (ADR-0011)
+#
+# ApprovalTransaction.apply_decision preempts every other PENDING/ALLOWED
+# request when a DENIED decision lands, sets status=DENIED, and thereby flips
+# every_tool_decided to True — so the turn resumes. This is the intended
+# behaviour for BOTH channels (webui targeted deny AND IM next-pending deny).
+# These tests lock the invariant so a future refactor of apply_resume (e.g. a
+# misguided "short-circuit deny" patch) or of apply_decision cannot silently
+# break it. See ADR-0011 decision 2 (KEEP deny-seals-batch).
+# ---------------------------------------------------------------------------
+
+
+async def test_webui_deny_seals_batch_all_pending(
+    resumer, fake_agent_context,
+):
+    """webui DENY on one request preempts every other PENDING request → resume.
+
+    3 PENDING requests; deny req1 via tool_call_id. req1 → DENIED, req2/req3 →
+    PREEMPTED, every_tool_decided True, apply_resume returns the turn_store
+    (resume path, not the partial-save path).
+    """
+    snapshot = _snapshot(
+        decisions={},
+        approval_requests=[
+            _request("r1", "c1"),
+            _request("r2", "c2"),
+            _request("r3", "c3"),
+        ],
+    )
+    result = await resumer.apply_resume(
+        snapshot, action=ApprovalAction.DENY, session_id="s1",
+        pool_data=None, agent_context=fake_agent_context, tool_call_id="c1",
+    )
+    assert result is resumer._turn_store  # resumed, not partial-saved
+    approval = ReActSnapshotPolicy.approval_from_snapshot(snapshot)
+    assert approval.decisions["c1"] == ApprovalDecision.DENIED
+    assert approval.decisions["c2"] == ApprovalDecision.PREEMPTED
+    assert approval.decisions["c3"] == ApprovalDecision.PREEMPTED
+    assert approval.every_tool_decided is True
+    assert approval.status == ApprovalStatus.DENIED
+
+
+async def test_webui_deny_preempts_already_allowed(
+    resumer, fake_agent_context,
+):
+    """webui DENY preempts a previously-ALLOWED request too → resume.
+
+    req1 ALLOWED, req2/req3 PENDING; deny req2. req2 → DENIED, req1 (allowed) →
+    PREEMPTED, req3 → PREEMPTED, every_tool_decided True, returns turn_store.
+    Guards that ALLOWED is not exempt from deny-preempt.
+    """
+    snapshot = _snapshot(
+        decisions={"c1": ApprovalDecision.ALLOWED},
+        approval_requests=[
+            _request("r1", "c1"),
+            _request("r2", "c2"),
+            _request("r3", "c3"),
+        ],
+    )
+    result = await resumer.apply_resume(
+        snapshot, action=ApprovalAction.DENY, session_id="s1",
+        pool_data=None, agent_context=fake_agent_context, tool_call_id="c2",
+    )
+    assert result is resumer._turn_store
+    approval = ReActSnapshotPolicy.approval_from_snapshot(snapshot)
+    assert approval.decisions["c2"] == ApprovalDecision.DENIED
+    assert approval.decisions["c1"] == ApprovalDecision.PREEMPTED  # was ALLOWED
+    assert approval.decisions["c3"] == ApprovalDecision.PREEMPTED
+    assert approval.every_tool_decided is True
+    assert approval.status == ApprovalStatus.DENIED
+
+
+async def test_webui_approve_is_per_request(
+    resumer, fake_agent_context, turn_store,
+):
+    """webui ALLOW is per-request: only the target flips, others stay PENDING.
+
+    Regression guard mirroring the deny-seals tests: ALLOW must NOT seal the
+    batch. 3 PENDING; allow req1 → req1 ALLOWED, req2/req3 still PENDING,
+    every_tool_decided False, partial-save path → returns None.
+    """
+    snapshot = _snapshot(
+        decisions={},
+        approval_requests=[
+            _request("r1", "c1"),
+            _request("r2", "c2"),
+            _request("r3", "c3"),
+        ],
+    )
+    result = await resumer.apply_resume(
+        snapshot, action=ApprovalAction.ALLOW, session_id="s1",
+        pool_data=None, agent_context=fake_agent_context, tool_call_id="c1",
+    )
+    assert result is None  # partial path
+    saved = turn_store.saved[-1]
+    approval = ReActSnapshotPolicy.approval_from_snapshot(saved)
+    assert approval.decisions["c1"] == ApprovalDecision.ALLOWED
+    assert approval.decisions.get("c2", ApprovalDecision.PENDING) == ApprovalDecision.PENDING
+    assert approval.decisions.get("c3", ApprovalDecision.PENDING) == ApprovalDecision.PENDING
+    assert approval.every_tool_decided is False
+
+
+async def test_im_deny_seals_batch_and_im_allow_is_partial(
+    resumer, fake_agent_context, turn_store,
+):
+    """IM path (tool_call_id=None) current behaviour — regression guard.
+
+    A) DENY with no tool_call_id decides the next-PENDING request, and because
+       apply_decision seals on DENY, the remaining requests are PREEMPTED and
+       the turn resumes (returns turn_store). This documents that IM deny also
+       seals — the intended ADR-0011 behaviour, NOT one-at-a-time.
+    B) ALLOW with no tool_call_id decides only the next-PENDING request; the
+       others stay PENDING → partial path (returns None).
+    """
+    # --- A: IM deny seals the batch ---
+    snapshot = _snapshot(
+        decisions={},
+        approval_requests=[
+            _request("r1", "c1"),
+            _request("r2", "c2"),
+            _request("r3", "c3"),
+        ],
+    )
+    result_deny = await resumer.apply_resume(
+        snapshot, action=ApprovalAction.DENY, session_id="s1",
+        pool_data=None, agent_context=fake_agent_context, tool_call_id=None,
+    )
+    assert result_deny is resumer._turn_store  # sealed → resume
+    approval_deny = ReActSnapshotPolicy.approval_from_snapshot(snapshot)
+    # The first PENDING request (c1) is the one apply_resume decided...
+    assert approval_deny.decisions["c1"] == ApprovalDecision.DENIED
+    # ...and apply_decision preempted the rest.
+    assert approval_deny.decisions["c2"] == ApprovalDecision.PREEMPTED
+    assert approval_deny.decisions["c3"] == ApprovalDecision.PREEMPTED
+    assert approval_deny.every_tool_decided is True
+    assert approval_deny.status == ApprovalStatus.DENIED
+
+    # --- B: IM allow is per-request (partial) ---
+    snapshot_allow = _snapshot(
+        decisions={},
+        approval_requests=[
+            _request("r1", "c1"),
+            _request("r2", "c2"),
+            _request("r3", "c3"),
+        ],
+    )
+    result_allow = await resumer.apply_resume(
+        snapshot_allow, action=ApprovalAction.ALLOW, session_id="s1",
+        pool_data=None, agent_context=fake_agent_context, tool_call_id=None,
+    )
+    assert result_allow is None  # partial path
+    saved = turn_store.saved[-1]
+    approval_allow = ReActSnapshotPolicy.approval_from_snapshot(saved)
+    assert approval_allow.decisions["c1"] == ApprovalDecision.ALLOWED
+    assert approval_allow.decisions.get("c2", ApprovalDecision.PENDING) == ApprovalDecision.PENDING
+    assert approval_allow.decisions.get("c3", ApprovalDecision.PENDING) == ApprovalDecision.PENDING
+    assert approval_allow.every_tool_decided is False
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 

@@ -823,6 +823,7 @@ class WebUIServer:
             ReActRuntimeStateCodec,
             ReActSnapshotPolicy,
         )
+        from modex_agent.approval.constants import ApprovalDecision
         from modex_agent.approval.views import view_from_request
         from modex_agent.runtime.codec import RuntimeStateCodecRegistry
         from modex_agent.runtime.enums import (
@@ -846,9 +847,12 @@ class WebUIServer:
             {AgentKind.REACT: ReActRuntimeStateCodec()}
         )
         turn_store = JsonFileTurnStateStore(turns_dir, codec_registry)
+        # Approval turns are partitioned by workspace (turn_store path) + pool
+        # + session_id, so agent_id is NOT a query dimension — matches
+        # ApprovalResumer.load_pending. session_id already identifies the
+        # conversation uniquely.
         snapshots = await turn_store.list_active_turns(
             StateQueryScope(
-                agent_id=agent_name,
                 session_id=session_id,
                 phase=TurnPhase.SUSPENDED,
                 reason=SnapshotReason.TOOL_APPROVAL_REQUIRED,
@@ -858,9 +862,13 @@ class WebUIServer:
             return web.json_response([])
         snapshots.sort(key=lambda s: s.created_at)
         approval = ReActSnapshotPolicy.approval_from_snapshot(snapshots[-1])
+        # Surface only genuinely-PENDING requests: already-decided cards must
+        # not reappear after a refresh, which would force the user to re-approve.
         views = [
             view_from_request(req).to_dict()
             for req in (approval.requests if approval is not None else [])
+            if approval.decisions.get(req.tool_call_id, ApprovalDecision.PENDING)
+            == ApprovalDecision.PENDING
         ]
         return web.json_response(views)
 
