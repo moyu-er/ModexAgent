@@ -6,10 +6,7 @@ from modex_agent.tools.terminal.command_tool import CommandTool
 from modex_agent.tools.terminal.manager import TerminalManager
 from modex_agent.tools.terminal.managers import (
     BaseTerminalManager,
-    LinuxTerminalManager,
     TerminalManagerBase,
-    WindowsHiddenTerminalManager,
-    WindowsVisibleTerminalManager,
     create_terminal_manager,
 )
 from modex_agent.tools.terminal.process_registry import ProcessRegistry
@@ -28,7 +25,6 @@ __all__ = [
     "CommandRecord",
     "CommandTool",
     "JsonTerminalStateStore",
-    "LinuxTerminalManager",
     "ProcessRegistry",
     "ProcessTool",
     "ShellExecutor",
@@ -40,7 +36,5 @@ __all__ = [
     "TerminalManagerBase",
     "TerminalSession",
     "TerminalTool",
-    "WindowsHiddenTerminalManager",
-    "WindowsVisibleTerminalManager",
     "create_terminal_manager",
 ]

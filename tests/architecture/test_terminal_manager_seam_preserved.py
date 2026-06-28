@@ -1,22 +1,17 @@
 """Architecture guard: TerminalManager's persistence/eviction capability is
-retained even though it currently has zero production callers (ADR-0007).
+retained even though the original second class has been folded into
+``BaseTerminalManager`` (ADR-0010 Decision 8, closing the ADR-0007 fork).
 
-A future review that sees TerminalManager as "unused" and proposes deletion
-must fail this test and justify itself against ADR-0007 — the capability
-(save_state / load_state / _evict_oldest / _check_memory_pressure) is a
-designed seam, not dead code. This is the semantic inverse of
-test_dead_code_gone.py: that guards dead symbols stay gone; this guards a
-live capability stays present.
-
-See candidate-⑤ spec Part B (docs/refactor/candidate-5-tools-sandbox.md).
+A future review that sees the capability helpers as "unused" and proposes
+deletion must fail this test. Under ADR-0010 these helpers live on
+``BaseTerminalManager`` itself, guarded by capability flags, rather than on a
+second class.
 """
+
 from __future__ import annotations
 
-from modex_agent.tools.terminal.manager import TerminalManager
+from modex_agent.tools.terminal.managers import BaseTerminalManager, TerminalManagerBase
 
-# Capability markers that distinguish TerminalManager from the lean
-# BaseTerminalManager. If any are removed, the persistence/eviction seam is
-# being deleted — do not let that happen silently.
 _CAPABILITY_METHODS = (
     "save_state",
     "load_state",
@@ -25,14 +20,17 @@ _CAPABILITY_METHODS = (
 )
 
 
-def test_terminal_manager_retains_persistence_capability() -> None:
-    missing = [m for m in _CAPABILITY_METHODS if not hasattr(TerminalManager, m)]
+def test_base_terminal_manager_retains_capability_methods() -> None:
+    missing = [m for m in _CAPABILITY_METHODS if not hasattr(BaseTerminalManager, m)]
     assert not missing, (
-        f"TerminalManager lost capability methods {missing}. Per ADR-0007 this "
-        "is a real seam retained at zero callers — do not delete as 'unused'. "
-        "Folding inward onto BaseTerminalManager is a separate decision; see "
-        "candidate-⑤ spec Part B."
+        f"BaseTerminalManager lost capability methods {missing}. Per ADR-0007 + "
+        "ADR-0010 Decision 8 these are real folded-in implementations, not stubs."
     )
+
+
+def test_terminal_manager_base_abc_still_exists() -> None:
+    """The seam ABC still exists with at least one production subclass."""
+    assert issubclass(BaseTerminalManager, TerminalManagerBase)
 
 
 def test_capability_method_list_is_nonempty() -> None:

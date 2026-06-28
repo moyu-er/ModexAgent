@@ -1,4 +1,4 @@
-"""BaseTerminalManager — lightweight multi-session orchestration with fake backends."""
+"""Terminal-manager seam — BaseTerminalManager + two-axis factory (ADR-0010)."""
 
 from __future__ import annotations
 
@@ -10,9 +10,6 @@ from pathlib import Path
 from typing import Any
 
 from modex_agent.tools.terminal.backends.base import TerminalBackend
-from modex_agent.tools.terminal.backends.factory import create_pty_backend as _create_pty_backend
-from modex_agent.tools.terminal.backends.visible_windows import WinptyConsoleWindowBackend
-from modex_agent.tools.terminal.backends.windows_hidden import WinptyHiddenBackend
 from modex_agent.tools.terminal.config import TerminalRuntimeConfig
 from modex_agent.tools.terminal.session import TerminalInfo, TerminalSession
 from modex_agent.tools.terminal.state_store import JsonTerminalStateStore
@@ -36,20 +33,13 @@ logger = logging.getLogger(__name__)
 class TerminalManagerBase(ABC):
     """Abstract seam for multi-session terminal managers.
 
-    Two intentional implementations (ADR-0007 — a real adapter seam, not
-    duplication):
-
-    - ``BaseTerminalManager`` (this module): lightweight, composition-friendly
-      base with a pluggable ``backend_factory``. No LRU eviction, no
-      persistence. This is the PRODUCTION path — the example bot uses its
-      platform subclasses (``WindowsHiddenTerminalManager`` /
-      ``WindowsVisibleTerminalManager`` / ``LinuxTerminalManager``) via
-      ``create_terminal_manager``.
-    - ``TerminalManager`` (``manager.py``): full-featured manager adding LRU
-      eviction, JSON persistence (save/load state), and memory-pressure
-      buffer clearing. Currently has ZERO production callers; retained as a
-      capability seam per ADR-0007 (do not delete as "unused" — see
-      ``tests/architecture/test_terminal_manager_seam_preserved.py``).
+    Under ADR-0010 there is a single production implementation,
+    ``BaseTerminalManager``, parameterised by the two contract axes
+    ``shell_family`` x ``visibility`` plus optional capability flags
+    (``max_terminals`` / ``storage_dir`` / ``enable_memory_pressure``). The
+    legacy OS-named subclasses and the second ``TerminalManager`` class have
+    been folded inward (ADR-0010 Decision 8, closing the ADR-0007 fork); the
+    capability helpers are retained as flag-guarded private methods here.
 
     Tools consume the seam via ``get_default()`` (command execution) and the
     session-management methods.
@@ -81,14 +71,15 @@ class TerminalManagerBase(ABC):
 
 
 class BaseTerminalManager(TerminalManagerBase):
-    """Production terminal-session manager — lightweight, no eviction/persistence.
+    """Production terminal-session manager parameterised by two ADR-0010 axes.
 
     Manages named sessions with a pluggable ``backend_factory`` (real backends
     in production, fakes in tests). Role in the seam (see
-    ``TerminalManagerBase``): the lean production implementation. The example
-    bot uses the platform subclasses below via ``create_terminal_manager``.
-    Unlike ``TerminalManager`` it does NOT do LRU eviction or persistence —
-    by design.
+    ``TerminalManagerBase``): the single production implementation.
+    Capability behaviours — LRU eviction, JSON persistence, memory-pressure
+    buffer clearing — are flag-guarded (``max_terminals`` /
+    ``storage_dir`` / ``enable_memory_pressure``), all default-off, folded
+    inward from the legacy ``TerminalManager`` per ADR-0010 Decision 8.
     """
 
     def __init__(
@@ -283,145 +274,57 @@ class BaseTerminalManager(TerminalManagerBase):
         return True
 
 
-class WindowsHiddenTerminalManager(BaseTerminalManager):
-    """Terminal manager for hidden Windows PTY sessions."""
-
-    def __init__(
-        self,
-        config: TerminalRuntimeConfig | None = None,
-        default_cwd: str | None = None,
-    ) -> None:
-        shell_info = _require_windows_shell()
-        super().__init__(
-            shell_info=shell_info,
-            visibility=TerminalVisibility.HIDDEN,
-            backend_factory=WinptyHiddenBackend,
-            config=config,
-            default_cwd=default_cwd,
-        )
-
-
-class WindowsVisibleTerminalManager(BaseTerminalManager):
-    """Terminal manager for visible Windows PTY sessions.
-
-    Uses WSL bash > Git bash.  Raises RuntimeError if no supported shell is
-    available; the application layer falls back to SubprocessTool in that case.
-    PowerShell is not supported.
-    """
-
-    def __init__(
-        self,
-        config: TerminalRuntimeConfig | None = None,
-        default_cwd: str | None = None,
-    ) -> None:
-        shell_info = _require_windows_shell()
-        super().__init__(
-            shell_info=shell_info,
-            visibility=TerminalVisibility.VISIBLE,
-            backend_factory=WinptyConsoleWindowBackend,
-            config=config,
-            default_cwd=default_cwd,
-        )
-
-
-def _create_linux_backend() -> TerminalBackend:
-    """Create a Linux PTY backend (pexpect preferred, tmux fallback).
-
-    Delegates to ``create_pty_backend()`` for the actual selection logic.
-    Called eagerly by LinuxTerminalManager.__init__ to validate that at
-    least one backend is available at pool startup.  Also used as the
-    lazy backend_factory for new sessions.
-
-    Raises:
-        RuntimeError: If neither pexpect nor tmux+libtmux is available.
-    """
-    try:
-        return _create_pty_backend()
-    except ImportError as e:
-        raise RuntimeError(
-            "No Linux terminal backend available. "
-            "Install pexpect (`pip install pexpect`) or tmux+libtmux (`pip install libtmux`)."
-        ) from e
-
-
-class LinuxTerminalManager(BaseTerminalManager):
-    """Terminal manager for Linux/macOS headless PTY sessions.
-
-    Eagerly validates backend availability during __init__.  If neither
-    pexpect nor tmux+libtmux is importable, raises RuntimeError so the
-    caller can degrade to SubprocessTool.
-
-    Degradation chain (per-session): pexpect → tmux.
-    """
-
-    def __init__(
-        self,
-        config: TerminalRuntimeConfig | None = None,
-        default_cwd: str | None = None,
-    ) -> None:
-        shell_info = detect_platform_shell()
-        super().__init__(
-            shell_info=shell_info
-            or ShellInfo(
-                family=ShellFamily.BASH,
-                path="/bin/sh",
-                platform=Platform.LINUX,
-            ),
-            visibility=TerminalVisibility.HIDDEN,
-            backend_factory=_create_linux_backend,
-            config=config,
-            default_cwd=default_cwd,
-        )
-        # Eager validation: fail now (at pool startup) rather than at
-        # first command if no backend is available.
-        _create_linux_backend()
-
-
-def _require_windows_shell() -> ShellInfo:
-    """Detect shell: WSL bash > Git bash.
-
-    Raises RuntimeError if no supported shell is found. Callers that need a
-    fallback should degrade to SubprocessTool.
-    """
-    info = detect_platform_shell()
-    if info is not None:
-        return info
-    raise RuntimeError("No supported shell found on Windows")
-
-
-def _require_bash_shell() -> ShellInfo | None:
-    """Detect a bash shell (WSL or Git).  Returns None if unavailable."""
-    info = detect_platform_shell()
-    if info is not None and info.family == ShellFamily.BASH:
-        return info
-    return None
-
-
 def create_terminal_manager(
     *,
-    manager_kind: str,
+    shell_family: ShellFamily,
+    visibility: TerminalVisibility,
     config: TerminalRuntimeConfig | None = None,
     default_cwd: str | None = None,
+    max_terminals: int | None = None,
+    storage_dir: Path | None = None,
+    enable_memory_pressure: bool = False,
 ) -> TerminalManagerBase:
-    """Create a terminal manager by kind string.
+    """Construct a ``BaseTerminalManager`` parameterised by the two ADR-0010 axes.
 
     Args:
-        manager_kind: "windows_hidden", "windows_visible", or "linux".
-        config: Optional runtime configuration.
-        default_cwd: Optional directory new sessions open in when no explicit
-            ``cwd`` is given (e.g. the workspace target).
+        shell_family: behavioural shape of the shell (bash / zsh / sh / ...).
+            Upstream two-axis contract (ADR-0010 Decision 1); in production the
+            caller derives it from ``detect_platform_shell().family``.
+        visibility: ``VISIBLE`` or ``HIDDEN``.
+        config/default_cwd/max_terminals/storage_dir/enable_memory_pressure:
+            forwarded to ``BaseTerminalManager``; capability flags default-off.
 
     Returns:
-        A TerminalManagerBase instance.
-
-    Raises:
-        ValueError: If manager_kind is not recognized.
-        RuntimeError: If the selected manager cannot find an available backend.
+        A ``TerminalManagerBase`` instance.
     """
-    if manager_kind == "windows_hidden":
-        return WindowsHiddenTerminalManager(config=config, default_cwd=default_cwd)
-    if manager_kind == "windows_visible":
-        return WindowsVisibleTerminalManager(config=config, default_cwd=default_cwd)
-    if manager_kind == "linux":
-        return LinuxTerminalManager(config=config, default_cwd=default_cwd)
-    raise ValueError(f"Unsupported terminal manager kind: {manager_kind}")
+    shell_info = detect_platform_shell() or _DEFAULT_SHELL_INFO
+    logger.info(
+        "Creating terminal manager (family=%s, visibility=%s)",
+        shell_family.value,
+        visibility.value,
+    )
+    return BaseTerminalManager(
+        shell_info=shell_info,
+        visibility=visibility,
+        backend_factory=_make_backend_factory(visibility),
+        config=config,
+        default_cwd=default_cwd,
+        max_terminals=max_terminals,
+        storage_dir=storage_dir,
+        enable_memory_pressure=enable_memory_pressure,
+    )
+
+
+def _make_backend_factory(visibility: TerminalVisibility) -> Callable[[], TerminalBackend]:
+    """Return a 0-arg callable producing a fresh backend for ``visibility``.
+
+    The factory's capability table (ADR-0010) is the single source of truth;
+    ``create_pty_backend`` selects the transport from platform + visibility.
+    """
+    from modex_agent.tools.terminal.backends.factory import create_pty_backend
+
+    def _factory() -> TerminalBackend:
+        return create_pty_backend(visibility=visibility)
+
+    return _factory
+
