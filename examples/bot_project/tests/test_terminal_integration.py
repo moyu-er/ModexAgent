@@ -18,8 +18,24 @@ from bot.service.core import BotService
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import InputMessage
 from modex_agent.pipeline.adapters import InputAdapter, NullOutputAdapter
+from modex_agent.tools.terminal.managers import BaseTerminalManager
 from modex_agent.tools.terminal.subprocess_tool import SubprocessTool
 from modex_agent.tools.terminal.tool import TerminalTool
+from modex_agent.tools.terminal.types import Platform, ShellFamily, ShellInfo, TerminalVisibility
+
+# ADR-0010: BaseTerminalManager is constructed via the two-axis signature
+# (shell_info + visibility + backend_factory). These are real-construction
+# stand-ins — the manager is only used as a handle, never driven against a
+# live backend, so a HIDDEN LINUX bash shell is the minimal valid axis set.
+_SHELL_INFO = ShellInfo(family=ShellFamily.BASH, path="/bin/bash", platform=Platform.LINUX)
+
+
+def _make_manager() -> BaseTerminalManager:
+    return BaseTerminalManager(
+        shell_info=_SHELL_INFO,
+        visibility=TerminalVisibility.HIDDEN,
+        backend_factory=lambda: object(),
+    )
 
 
 class _InputAdapter(InputAdapter):
@@ -73,10 +89,8 @@ class TestTerminalManagerInitialization:
         """SubprocessTool must use SubprocessExecutor regardless of terminal_manager."""
         from bot.service.builders import _make_shell_tool
 
-        from modex_agent.tools.terminal.manager import TerminalManager
-
         # Even with a TerminalManager, SubprocessTool still uses SubprocessExecutor
-        tm = TerminalManager(backend_factory=lambda: object())
+        tm = _make_manager()
         shell_tool = _make_shell_tool(terminal_manager=tm)
         assert isinstance(shell_tool, SubprocessTool)
 
@@ -89,9 +103,7 @@ class TestTerminalManagerInitialization:
 
     def test_terminal_tool_registered_when_terminal_manager_exists(self, service) -> None:
         """TerminalTool should be registered when a TerminalManager exists."""
-        from modex_agent.tools.terminal.manager import TerminalManager
-
-        tm = TerminalManager(backend_factory=lambda: object())
+        tm = _make_manager()
 
         # Verify TerminalTool can be instantiated with the same manager
         terminal_tool = TerminalTool(tm)
@@ -118,10 +130,9 @@ class TestTerminalToolActions:
 
     def test_terminal_tool_interrupt_targets_default(self, service) -> None:
         """INTERRUPT should target the default terminal session."""
-        from modex_agent.tools.terminal.manager import TerminalManager
         from modex_agent.tools.terminal.tool import TerminalTool
 
-        tm = TerminalManager(backend_factory=lambda: object())
+        tm = _make_manager()
         tool = TerminalTool(tm)
         params = tool.parameters
         assert "action" in params["properties"]
