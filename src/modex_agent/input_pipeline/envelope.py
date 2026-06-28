@@ -35,6 +35,10 @@ class UserInputEnvelope:
                  NOT re-encode external_id — preventing double
                  encoding. None for IM, where the pipeline resolves
                  once via SessionIdFactory.create(external_id=...).
+    command_resolved: set True by any stage that claims this envelope's
+                 slash command. The terminal UnsupportedCommandStage
+                 rejects a "/command" only when this is still False, so
+                 no stage needs to know which other stage claimed it.
     """
 
     external_id: str
@@ -44,3 +48,4 @@ class UserInputEnvelope:
     metadata: dict[str, Any] = field(default_factory=dict)
     attachments: list[AttachmentRef] = field(default_factory=list)
     pre_resolved_session: Any = None
+    command_resolved: bool = False
