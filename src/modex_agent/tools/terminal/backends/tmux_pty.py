@@ -25,15 +25,18 @@ _DRAIN_POLL = 0.3
 class TmuxPtyBackend(TerminalBackend):
     """Unix terminal backend using tmux.
 
-    A single tmux session backs both headless and visible modes.
-    Users attach via ``tmux attach -t <session>`` to see and interact
-    with the same terminal the agent controls.
+    ADR-0010 Decision 4 (switch branch): visibility is a constructor parameter,
+    not a subclass split. tmux's ``new_session(attach=...)`` is the only
+    difference between HIDDEN and VISIBLE — the I/O architecture is otherwise
+    identical (same pane capture, same send_keys path).
+
+    ADR-0010 Decision 6: Linux-visible MVP is ``TmuxBackend(visibility=VISIBLE)``.
+    Default remains HIDDEN for backwards compatibility.
     """
 
     platform = Platform.LINUX
-    visibility = TerminalVisibility.HIDDEN
 
-    def __init__(self) -> None:
+    def __init__(self, *, visibility: TerminalVisibility = TerminalVisibility.HIDDEN) -> None:
         try:
             import libtmux
         except ImportError as e:
@@ -45,6 +48,16 @@ class TmuxPtyBackend(TerminalBackend):
         self._last_capture: str | None = None
         self._session_name: str | None = None
         self._shell: str | None = None
+        self._visibility = visibility
+
+    @property
+    def visibility(self) -> TerminalVisibility:
+        return self._visibility
+
+    @property
+    def _attach(self) -> bool:
+        """Whether ``new_session(attach=...)`` attaches the new session to a window."""
+        return self._visibility == TerminalVisibility.VISIBLE
 
     @property
     def window_title(self) -> str:
@@ -64,7 +77,7 @@ class TmuxPtyBackend(TerminalBackend):
             None,
             lambda: self._server.new_session(
                 session_name=self._session_name,
-                attach=False,
+                attach=self._attach,
                 window_name="main",
                 environment=env or {},
                 start_directory=cwd,
@@ -80,9 +93,10 @@ class TmuxPtyBackend(TerminalBackend):
             )
 
         logger.info(
-            "tmux session started: %s (shell=%s). Attach: tmux attach -t %s",
+            "tmux session started: %s (shell=%s, attach=%s). Attach: tmux attach -t %s",
             self._session_name,
             self._shell,
+            self._attach,
             self._session_name,
         )
 
