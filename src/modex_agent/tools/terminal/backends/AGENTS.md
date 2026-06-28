@@ -11,12 +11,12 @@ Platform-specific terminal backend implementations that provide the OS-level PTY
 |------|-------------|
 | `__init__.py` | Package init |
 | `base.py` | `TerminalBackend` ABC — defines the interface for all PTY backends: `start()`, `write()`, `read()`, `resize()`, `close()`, plus `extract_current_segment_from_buffer()` utility for extracting terminal output segments |
-| `factory.py` | `create_pty_backend()` — platform-aware factory. Windows: `VisibleWindowsPtyBackend`. Linux/macOS: `PexpectPtyBackend` (preferred), `TmuxPtyBackend` (fallback) |
-| `pexpect_pty.py` | `PexpectPtyBackend` — Linux/macOS hidden PTY using pexpect in-process. No visible window. Modeled on `WindowsHiddenPtyBackend` for behavioral consistency |
+| `factory.py` | `create_pty_backend()` — platform-aware factory. Windows: `WinptyConsoleWindowBackend` (legacy alias `VisibleWindowsPtyBackend`). Linux/macOS: `PexpectPtyBackend` (preferred), `TmuxPtyBackend` (fallback) |
+| `pexpect_pty.py` | `PexpectPtyBackend` — Linux/macOS hidden PTY using pexpect in-process. No visible window. Modeled on `WinptyHiddenBackend` (legacy alias `WindowsHiddenPtyBackend`) for behavioral consistency |
 | `tmux_pty.py` | `TmuxPtyBackend` — unified Unix backend using tmux + libtmux. Supports both headless and visible modes (users attach via `tmux attach -t <session>`) |
-| `visible_windows.py` | `VisibleWindowsPtyBackend` — Windows backend with visible console window. Launches a helper process (`visible_windows_host.py`) that owns a winpty and forwards I/O via TCP socket |
-| `visible_windows_host.py` | `VisibleWindowsPtyBackend` host process — runs in a visible console window, creates a winpty `PtyProcess`, and bridges I/O with the parent process over a local TCP socket |
-| `windows_hidden.py` | `WindowsHiddenPtyBackend` — Windows hidden terminal using pywinpty in-process. No visible console window. No helper subprocess or TCP bridge. Simpler than the visible backend |
+| `visible_windows.py` | `WinptyConsoleWindowBackend` (legacy alias `VisibleWindowsPtyBackend`) — Windows backend with visible console window. Launches a helper process (`visible_windows_host.py`) that owns a winpty and forwards I/O via TCP socket |
+| `visible_windows_host.py` | `WinptyConsoleWindowBackend` host process — runs in a visible console window, creates a winpty `PtyProcess`, and bridges I/O with the parent process over a local TCP socket |
+| `windows_hidden.py` | `WinptyHiddenBackend` (legacy alias `WindowsHiddenPtyBackend`) — Windows hidden terminal using pywinpty in-process. No visible console window. No helper subprocess or TCP bridge. Simpler than the visible backend |
 
 ## For AI Agents
 

@@ -21,11 +21,12 @@ from .winpty import WinptyBackend
 logger = logging.getLogger(__name__)
 
 
-class WindowsHiddenPtyBackend(WinptyBackend):
-    """Windows hidden terminal using pywinpty in-process.
+class WinptyHiddenBackend(WinptyBackend):
+    """WinptyHiddenBackend — Windows hidden in-process winpty backend.
 
-    The PTY has no visible console window.  This is simpler than the visible
-    backend because there is no helper subprocess or TCP bridge.
+    Renamed per ADR-0010 Decision 3. The legacy name
+    ``WindowsHiddenPtyBackend`` is re-exported as a deprecated alias in
+    ``backends/__init__.py`` for the migration window.
     """
 
     platform = Platform.WINDOWS
@@ -48,7 +49,7 @@ class WindowsHiddenPtyBackend(WinptyBackend):
         env: dict[str, str] | None = None,
     ) -> None:
         if sys.platform != "win32":
-            raise RuntimeError("WindowsHiddenPtyBackend requires Windows")
+            raise RuntimeError("WinptyHiddenBackend requires Windows")
 
         if shell is None:
             bash = shutil.which("bash")
@@ -73,7 +74,7 @@ class WindowsHiddenPtyBackend(WinptyBackend):
         self._proc.write(data)  # type: ignore[union-attr]
 
     async def read(self, timeout: float = 5.0, max_size: int = 65536) -> str:
-        """Read raw output without buffering (matching VisibleWindowsPtyBackend).
+        """Read raw output without buffering (matching WinptyConsoleWindowBackend).
 
         drain_startup() / drain_windows_startup() call read(), not
         read_pending(), so this keeps startup output out of the buffer.

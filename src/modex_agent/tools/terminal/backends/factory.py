@@ -58,15 +58,15 @@ def _create_tmux_backend(
 
 
 def _create_winpty_hidden_backend() -> TerminalBackend:
-    from .windows_hidden import WindowsHiddenPtyBackend
+    from .windows_hidden import WinptyHiddenBackend
 
-    return WindowsHiddenPtyBackend()
+    return WinptyHiddenBackend()
 
 
 def _create_winpty_visible_backend() -> TerminalBackend:
-    from .visible_windows import VisibleWindowsPtyBackend
+    from .visible_windows import WinptyConsoleWindowBackend
 
-    return VisibleWindowsPtyBackend()
+    return WinptyConsoleWindowBackend()
 
 
 def create_pty_backend(
@@ -84,18 +84,19 @@ def create_pty_backend(
 
     Backwards-compat: on Linux/macOS the default ``visibility=HIDDEN`` is
     equivalent to the old 0-arg call (pexpect preferred, tmux fallback).
-    On Windows the old 0-arg call returned ``VisibleWindowsPtyBackend``;
-    the new default returns ``WindowsHiddenPtyBackend`` — **known Windows
-    default-flip behaviour change**. No production caller uses the 0-arg
-    factory on Windows (the Windows managers bypass the factory by
-    passing ``backend_factory=WindowsHiddenPtyBackend`` /
-    ``VisibleWindowsPtyBackend`` directly), but ``manager.py:TerminalManager``
-    (deprecated, deleted in Phase 3 Task 9) wires
-    ``self._backend_factory = create_pty_backend``, so the e2e verification
-    tests ``tests/verify_terminal_e2e_*.py`` that instantiate
-    ``TerminalManager(...)`` directly will silently start receiving
-    ``WindowsHiddenPtyBackend`` sessions on Windows post-Phase-1. That
-    migration is finalised by Phase 6 Task 13 (deferred). Until then:
+    On Windows the old 0-arg call returned ``WinptyConsoleWindowBackend``
+    (legacy alias: ``VisibleWindowsPtyBackend``);
+    the new default returns ``WinptyHiddenBackend`` (legacy alias:
+    ``WindowsHiddenPtyBackend``) — **known Windows default-flip behaviour
+    change**. No production caller uses the 0-arg factory on Windows
+    (the Windows managers bypass the factory by passing
+    ``backend_factory=WinptyHiddenBackend`` / ``WinptyConsoleWindowBackend``
+    directly), but ``manager.py:TerminalManager`` (deprecated, deleted in
+    Phase 3 Task 9) wires ``self._backend_factory = create_pty_backend``,
+    so the e2e verification tests ``tests/verify_terminal_e2e_*.py`` that
+    instantiate ``TerminalManager(...)`` directly will silently start
+    receiving ``WinptyHiddenBackend`` sessions on Windows post-Phase-1.
+    That migration is finalised by Phase 6 Task 13 (deferred). Until then:
     document the change, do NOT silently re-tune verify tests to fake
     VISIBLE — the folded-in ``BaseTerminalManager(visibility=...)``
     parameter is the right surface.

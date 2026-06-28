@@ -1,4 +1,4 @@
-"""Tests for WindowsHiddenPtyBackend.
+"""Tests for WinptyHiddenBackend (legacy alias: WindowsHiddenPtyBackend).
 
 Covers both WSL bash and Git bash on Windows, plus cross-platform guards.
 """
@@ -11,20 +11,20 @@ import sys
 
 import pytest
 
-from modex_agent.tools.terminal.backends.windows_hidden import WindowsHiddenPtyBackend
+from modex_agent.tools.terminal.backends.windows_hidden import WinptyHiddenBackend
 from modex_agent.tools.terminal.types import Platform, TerminalVisibility
 
 
 @pytest.fixture
-def backend() -> WindowsHiddenPtyBackend:
-    return WindowsHiddenPtyBackend()
+def backend() -> WinptyHiddenBackend:
+    return WinptyHiddenBackend()
 
 
 # ------------------------------------------------------------------
 # pre-start property checks (single combined test)
 # ------------------------------------------------------------------
 
-def test_hidden_backend_pre_start_properties(backend: WindowsHiddenPtyBackend) -> None:
+def test_hidden_backend_pre_start_properties(backend: WinptyHiddenBackend) -> None:
     """Before start: correct platform/visibility, not alive, not writable."""
     assert backend.platform is Platform.WINDOWS
     assert backend.visibility is TerminalVisibility.HIDDEN
@@ -33,8 +33,8 @@ def test_hidden_backend_pre_start_properties(backend: WindowsHiddenPtyBackend) -
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Only relevant on non-Windows")
-def test_hidden_backend_start_raises_on_non_windows(backend: WindowsHiddenPtyBackend) -> None:
-    with pytest.raises(RuntimeError, match="WindowsHiddenPtyBackend requires Windows"):
+def test_hidden_backend_start_raises_on_non_windows(backend: WinptyHiddenBackend) -> None:
+    with pytest.raises(RuntimeError, match="WinptyHiddenBackend requires Windows"):
         asyncio.run(backend.start(shell=None, cwd=None, env=None))
 
 
@@ -63,7 +63,7 @@ class TestWindowsHiddenPtyLifecycle:
         if bash is None:
             pytest.skip("No bash (WSL or Git) available on this Windows machine")
 
-        b = WindowsHiddenPtyBackend()
+        b = WinptyHiddenBackend()
         await b.start(shell=bash)
         await b.drain_startup()
         try:
@@ -72,7 +72,7 @@ class TestWindowsHiddenPtyLifecycle:
             await b.terminate()
 
     @pytest.mark.asyncio
-    async def test_echo_read_roundtrip(self, backend: WindowsHiddenPtyBackend) -> None:
+    async def test_echo_read_roundtrip(self, backend: WinptyHiddenBackend) -> None:
         b = backend
         assert await b.is_alive()
 
@@ -89,7 +89,7 @@ class TestWindowsHiddenPtyLifecycle:
         assert "modex-hw-test" in output
 
     @pytest.mark.asyncio
-    async def test_multiple_commands_stay_alive(self, backend: WindowsHiddenPtyBackend) -> None:
+    async def test_multiple_commands_stay_alive(self, backend: WinptyHiddenBackend) -> None:
         b = backend
         for i in range(3):
             await b.write(f"echo seq-{i}\n")
@@ -105,7 +105,7 @@ class TestWindowsHiddenPtyLifecycle:
             assert await b.is_alive()
 
     @pytest.mark.asyncio
-    async def test_read_pending_populates_buffer(self, backend: WindowsHiddenPtyBackend) -> None:
+    async def test_read_pending_populates_buffer(self, backend: WinptyHiddenBackend) -> None:
         b = backend
         await b.write("echo buf-test\n")
         for _ in range(40):
@@ -118,7 +118,7 @@ class TestWindowsHiddenPtyLifecycle:
         assert "buf-test" in text
 
     @pytest.mark.asyncio
-    async def test_current_segment_after_echo(self, backend: WindowsHiddenPtyBackend) -> None:
+    async def test_current_segment_after_echo(self, backend: WinptyHiddenBackend) -> None:
         b = backend
         await b.write("echo seg-test\n")
         # read_pending() populates the sliding buffer that current_segment()

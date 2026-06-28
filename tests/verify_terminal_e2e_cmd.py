@@ -45,9 +45,9 @@ CMD_SHELL = ShellInfo(family=ShellFamily.CMD, path="cmd.exe", platform=Platform.
 
 
 def _mgr() -> TerminalManager:
-    from modex_agent.tools.terminal.backends.visible_windows import VisibleWindowsPtyBackend
+    from modex_agent.tools.terminal.backends.visible_windows import WinptyConsoleWindowBackend
     return TerminalManager(storage_dir=Path("data/test_terms_cmd"), max_terminals=4,
-                           backend_factory=VisibleWindowsPtyBackend, shell_info=CMD_SHELL)
+                           backend_factory=WinptyConsoleWindowBackend, shell_info=CMD_SHELL)
 
 
 async def main() -> None:

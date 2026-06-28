@@ -87,9 +87,9 @@ class TerminalManager(TerminalManagerBase):
         if backend_factory is not None:
             self._backend_factory: Callable[..., Any] = backend_factory
         elif not visibility and sys.platform == "win32":
-            from modex_agent.tools.terminal.backends.windows_hidden import WindowsHiddenPtyBackend
+            from modex_agent.tools.terminal.backends.windows_hidden import WinptyHiddenBackend
 
-            self._backend_factory = WindowsHiddenPtyBackend
+            self._backend_factory = WinptyHiddenBackend
         else:
             self._backend_factory = create_pty_backend
         self._config = TerminalRuntimeConfig()

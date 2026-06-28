@@ -1,4 +1,4 @@
-"""Real VisibleWindowsPtyBackend integration tests.
+"""Real WinptyConsoleWindowBackend (legacy alias: VisibleWindowsPtyBackend) integration tests.
 
 Exercises the visible-terminal backend on Windows with WSL bash or Git bash.
 """
@@ -34,10 +34,10 @@ class TestVisibleWindowsPtyIntegration:
             pytest.skip("No bash (WSL or Git) available on this Windows machine")
 
         from modex_agent.tools.terminal.backends.visible_windows import (
-            VisibleWindowsPtyBackend,
+            WinptyConsoleWindowBackend,
         )
 
-        b = VisibleWindowsPtyBackend()
+        b = WinptyConsoleWindowBackend()
         await b.start(bash)
         await b.drain_startup()
         try:
@@ -83,12 +83,12 @@ class TestVisibleWindowsPtyIntegration:
             pytest.skip("No bash available")
 
         from modex_agent.tools.terminal.backends.visible_windows import (
-            VisibleWindowsPtyBackend,
+            WinptyConsoleWindowBackend,
         )
         from modex_agent.tools.terminal.session import TerminalSession
         from modex_agent.tools.terminal.types import Platform, ShellFamily, ShellInfo
 
-        backend = VisibleWindowsPtyBackend()
+        backend = WinptyConsoleWindowBackend()
         session = TerminalSession(
             name="vw-session",
             backend=backend,

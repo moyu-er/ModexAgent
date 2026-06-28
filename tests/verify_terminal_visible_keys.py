@@ -33,7 +33,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from modex_agent.tools.terminal.backends.visible_windows import VisibleWindowsPtyBackend
+from modex_agent.tools.terminal.backends.visible_windows import WinptyConsoleWindowBackend
 from modex_agent.tools.terminal.prompt import _strip_ansi_and_da1
 from modex_agent.tools.terminal.types import ShellFamily, detect_platform_shell
 
@@ -49,7 +49,7 @@ def _find_git_bash() -> str | None:
     return None
 
 
-async def _read_until(backend: VisibleWindowsPtyBackend, marker: str, timeout: float = 10.0) -> str:
+async def _read_until(backend: WinptyConsoleWindowBackend, marker: str, timeout: float = 10.0) -> str:
     """Read until *marker* appears in output or timeout."""
     output = ""
     deadline = asyncio.get_running_loop().time() + timeout
@@ -71,7 +71,7 @@ def _clean(text: str) -> str:
 # Shared bash test suite (universal for any bash)
 # ═══════════════════════════════════════════════
 
-async def _bash_tests(label: str, backend: VisibleWindowsPtyBackend) -> int:
+async def _bash_tests(label: str, backend: WinptyConsoleWindowBackend) -> int:
     """Run universal bash tests. Returns failure count."""
     f = 0
     b = backend
@@ -179,7 +179,7 @@ async def wsl_tests() -> int:
         return 0
 
     print(f"     shell: {shell.path}")
-    b = VisibleWindowsPtyBackend()
+    b = WinptyConsoleWindowBackend()
     await b.start(shell.path)
     try:
         await b.drain_startup()
@@ -200,7 +200,7 @@ async def git_tests() -> int:
         return 0
 
     print(f"     shell: {git_bash}")
-    b = VisibleWindowsPtyBackend()
+    b = WinptyConsoleWindowBackend()
     await b.start(git_bash)
     try:
         await b.drain_startup()
@@ -223,7 +223,7 @@ async def ps_tests() -> int:
 
     print(f"     shell: {ps_path}")
     f = 0
-    b = VisibleWindowsPtyBackend()
+    b = WinptyConsoleWindowBackend()
     await b.start(ps_path)
     try:
         await b.drain_startup()

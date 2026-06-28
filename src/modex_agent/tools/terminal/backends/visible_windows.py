@@ -29,13 +29,12 @@ logger = logging.getLogger(__name__)
 _READ_TIMEOUT = 0.5
 
 
-class VisibleWindowsPtyBackend(WinptyBackend):
-    """Windows visible terminal using a subprocess with CREATE_NEW_CONSOLE.
+class WinptyConsoleWindowBackend(WinptyBackend):
+    """WinptyConsoleWindowBackend — Windows visible console window backend.
 
-    The helper process owns the visible console window and a PtyProcess.
-    I/O is forwarded through a local TCP socket so the data stream seen
-    by the parent (TerminalSession) is identical to what appears in the
-    visible window.
+    Renamed per ADR-0010 Decision 3 (transport-named subclasses). The legacy
+    name ``VisibleWindowsPtyBackend`` is re-exported as a deprecated alias
+    in ``backends/__init__.py`` for the migration window.
     """
 
     platform = Platform.WINDOWS

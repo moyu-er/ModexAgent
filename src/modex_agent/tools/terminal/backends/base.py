@@ -1,8 +1,11 @@
 """TerminalBackend abstract base class.
 
 Implementations:
-- VisibleWindowsPtyBackend: Windows subprocess with CREATE_NEW_CONSOLE
-- TmuxPtyBackend: Unix tmux + libtmux
+- WinptyConsoleWindowBackend (legacy alias: VisibleWindowsPtyBackend):
+  Windows subprocess with CREATE_NEW_CONSOLE
+- WinptyHiddenBackend (legacy alias: WindowsHiddenPtyBackend):
+  Windows in-process pywinpty
+- PexpectPtyBackend / TmuxPtyBackend: Unix
 """
 
 from __future__ import annotations

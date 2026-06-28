@@ -1,8 +1,9 @@
 """PexpectPtyBackend — Linux/macOS hidden PTY backend using pexpect.
 
 In-process PTY with no visible window.  Uses pexpect.spawn() for
-pseudo-terminal management.  Modeled on WindowsHiddenPtyBackend for
-behavioral consistency (both are hidden, in-process, third-party PTY).
+pseudo-terminal management.  Modeled on WinptyHiddenBackend (legacy alias:
+``WindowsHiddenPtyBackend``) for behavioral consistency (both are hidden,
+in-process, third-party PTY).
 """
 
 from __future__ import annotations

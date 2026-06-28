@@ -240,7 +240,7 @@ Agent calls terminal.execute(action="interrupt")
 
 ## Backends
 
-### Windows: VisibleWindowsPtyBackend
+### Windows: WinptyConsoleWindowBackend
 
 Launches `visible_windows_host.py` in a new OS console window.
 
@@ -266,11 +266,13 @@ Linux uses a degradation chain: `PexpectPtyBackend` (native PTY via pexpect) →
 `LinuxTerminalManager` auto-detects available backends and falls back gracefully.
 `create_pty_backend()` checks pexpect availability first; if unavailable, falls back to tmux.
 
-### Windows: VisibleWindowsPtyBackend + WindowsHiddenPtyBackend
+### Windows: WinptyConsoleWindowBackend + WinptyHiddenBackend
 
 Two Windows backends: visible (OS console window, human can observe/intervene) and hidden (headless, no visible window).
 `WindowsTerminalManager` selects the appropriate backend.
-`create_pty_backend()` on Windows uses `WindowsHiddenPtyBackend` by default.
+`create_pty_backend()` on Windows uses `WinptyHiddenBackend` by default
+(legacy aliases `VisibleWindowsPtyBackend` / `WindowsHiddenPtyBackend` are
+re-exported in `backends/__init__.py` for the migration window).
 
 ### Fallback: SubprocessExecutor
 
@@ -348,6 +350,6 @@ terminal:
 | `backends/factory.py` | `create_pty_backend()` — platform-auto backend selection |
 | `backends/visible_windows.py` | Visible Windows backend (winpty) — parent side |
 | `backends/visible_windows_host.py` | Visible console helper process |
-| `backends/windows_hidden.py` | `WindowsHiddenPtyBackend` — hidden Windows PTY backend |
+| `backends/windows_hidden.py` | `WinptyHiddenBackend` (legacy alias `WindowsHiddenPtyBackend`) — hidden Windows PTY backend |
 | `backends/pexpect_pty.py` | `PexpectPtyBackend` — Linux native PTY via pexpect |
 | `backends/tmux_pty.py` | `TmuxPtyBackend` — Unix tmux backend |

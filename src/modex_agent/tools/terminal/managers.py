@@ -8,8 +8,8 @@ from typing import Any
 
 from modex_agent.tools.terminal.backends.base import TerminalBackend
 from modex_agent.tools.terminal.backends.factory import create_pty_backend as _create_pty_backend
-from modex_agent.tools.terminal.backends.visible_windows import VisibleWindowsPtyBackend
-from modex_agent.tools.terminal.backends.windows_hidden import WindowsHiddenPtyBackend
+from modex_agent.tools.terminal.backends.visible_windows import WinptyConsoleWindowBackend
+from modex_agent.tools.terminal.backends.windows_hidden import WinptyHiddenBackend
 from modex_agent.tools.terminal.config import TerminalRuntimeConfig
 from modex_agent.tools.terminal.session import TerminalInfo, TerminalSession
 from modex_agent.tools.terminal.types import (
@@ -181,7 +181,7 @@ class WindowsHiddenTerminalManager(BaseTerminalManager):
         super().__init__(
             shell_info=shell_info,
             visibility=TerminalVisibility.HIDDEN,
-            backend_factory=WindowsHiddenPtyBackend,
+            backend_factory=WinptyHiddenBackend,
             config=config,
             default_cwd=default_cwd,
         )
@@ -204,7 +204,7 @@ class WindowsVisibleTerminalManager(BaseTerminalManager):
         super().__init__(
             shell_info=shell_info,
             visibility=TerminalVisibility.VISIBLE,
-            backend_factory=VisibleWindowsPtyBackend,
+            backend_factory=WinptyConsoleWindowBackend,
             config=config,
             default_cwd=default_cwd,
         )
