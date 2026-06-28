@@ -18,7 +18,6 @@ import pytest
 
 from modex_agent.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
 from modex_agent.memory.core.models import ArchiveEntry
-from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.scope import (
     MemoryContext,
     MemoryLayerName,
@@ -46,7 +45,7 @@ from tests.unit.memory.conftest import FixedTokenEstimator
 
 
 def _ctx(session_id: str, user_id: str = "user-1") -> MemoryContext:
-    return MemoryContext(session_id=SessionInfo.from_str(session_id), user_id=user_id)
+    return MemoryContext(session_id=session_id, user_id=user_id)
 
 
 def _make_user_msg(text: str) -> dict[str, Any]:
@@ -445,7 +444,7 @@ class TestScopeKeyCorrectness:
 
     def test_user_scope_default_on_none(self) -> None:
         scope = UserScope()
-        ctx = MemoryContext(session_id=SessionInfo.from_str("sess-1.main"))
+        ctx = MemoryContext(session_id="sess-1.main")
         assert scope.get_scope_key(ctx) == "default"
 
     def test_different_sessions_same_user_same_archive_key(self) -> None:
@@ -1166,13 +1165,13 @@ class TestExperienceScopePath:
         source = FileExperienceSource(directories=[base_dir], scope=UserScope())
         mgr = ExperienceManager(source=source)
 
-        ctx_a = MemoryContext(session_id=SessionInfo.from_str("sess-a.main"), user_id="user-a")
+        ctx_a = MemoryContext(session_id="sess-a.main", user_id="user-a")
         prompt = await mgr.build_prompt(context=ctx_a)
         assert "test-exp" in prompt, "User A should see their experience"
         assert "other-exp" not in prompt, "User A must NOT see user B's experience"
 
         # User B should only see their experience
-        ctx_b = MemoryContext(session_id=SessionInfo.from_str("sess-b.main"), user_id="user-b")
+        ctx_b = MemoryContext(session_id="sess-b.main", user_id="user-b")
         prompt_b = await mgr.build_prompt(context=ctx_b)
         assert "other-exp" in prompt_b, "User B should see their experience"
         assert "test-exp" not in prompt_b, "User B must NOT see user A's experience"
@@ -1186,7 +1185,7 @@ class TestExperienceScopePath:
         source = FileExperienceSource(directories=[base_dir], scope=UserScope())
 
         from modex_agent.core.scope import MemoryContext
-        ctx = MemoryContext(session_id=SessionInfo.from_str("sess-1.main"), user_id="user-99")
+        ctx = MemoryContext(session_id="sess-1.main", user_id="user-99")
 
         # _resolve_dirs should add user_id subdirectory
         resolved = source._resolve_dirs(ctx)

@@ -23,6 +23,8 @@ if TYPE_CHECKING:
         WorkspaceHandle,
         WorkspaceResolverCell,
     )
+    from modex_agent.memory.cleanup import CleanupResult
+    from modex_agent.memory.core.models import CompressionReason
 
 from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.core.emitter import ContentEmitter
@@ -33,13 +35,18 @@ from modex_agent.core.session_store import SessionStore
 from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
 from modex_agent.hook import HookErrorPolicy, HookRunner, HookSpec
 from modex_agent.hook.builtin import InboxFlushHook
-from modex_agent.hook.notification import AgentNotificationService, MaxIterationNotifyHook
+from modex_agent.hook.notification import (
+    AgentNotificationService,
+    MaxIterationNotifyHook,
+    TurnOutcomeNotifyHook,
+)
 from modex_agent.ioc.configs.agent import AgentConfig
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.ioc.configs.pool import PoolConfig
 from modex_agent.ioc.factories.governance import create_governance
 from modex_agent.ioc.factories.llm import create_llm_provider
 from modex_agent.core.scope import MemoryContext
+from modex_agent.memory.cleanup_events import MemoryCleanupListener
 from modex_agent.memory.default_system import DefaultMemorySystem
 from modex_agent.memory.injection import FullInjectionPolicy
 from modex_agent.memory.system import MemorySystemContextManager
@@ -178,6 +185,16 @@ async def create_pool(
         agent_bus=agent_bus,
         parent_agent_name=main_agent_name,
     )
+
+    # Register a compaction listener that notifies the user when session memory
+    # is being consolidated (the blocking archive LLM call otherwise looks like
+    # a stuck agent). Only the workspace-backed (DefaultMemorySystem) path.
+    if pool_data is not None:
+        memory_system = pool_data.context_manager.memory_system
+        if memory_system is not None:
+            memory_system.add_cleanup_listener(
+                UserNoticeCleanupListener(notification_service)
+            )
     main_service, main_store = _build_communication(
         pool, main_agent_name, broker, agent_bus,
         comm_tracker, project_dir, pool_name, pool_cfg,
@@ -209,8 +226,7 @@ async def create_pool(
         notification_service,
         shared_interceptor_chain,
         im_ui, pool_cfg, project_dir,
-        command_processor, skill_manager,
-        pool_name,
+        command_processor, pool_name,
     )
 
     bridge = BrokerBridgeService(
@@ -889,6 +905,40 @@ def _build_communication(
 # ── Pipeline wiring ──────────────────────────────────────────────────────
 
 
+class UserNoticeCleanupListener(MemoryCleanupListener):
+    """Pushes transient English notices when session memory is compacted.
+
+    Fires around the blocking archive-generation LLM call so the user
+    understands the pause instead of seeing a stuck agent. Notices go through
+    AgentNotificationService (tagged ``message_type=notice`` so the
+    ChannelRouter fans them to the originating channel AND the WebUI observer)
+    and are never written to session memory/history.
+    """
+
+    _START_NOTICE = "[compact] Consolidating conversation memory, please wait..."
+    _DONE_NOTICE = "[compact] Memory consolidated."
+
+    def __init__(self, notification_service: AgentNotificationService) -> None:
+        self._svc = notification_service
+
+    async def on_cleanup_triggered(
+        self, context: MemoryContext, reason: CompressionReason
+    ) -> None:
+        session_id = context.session_id
+        if session_id is None:
+            return
+        await self._svc.send_notice(session_id, self._START_NOTICE)
+
+    async def on_cleanup_finished(
+        self, context: MemoryContext, result: CleanupResult
+    ) -> None:
+        # ScopedMessageHistory only calls this when result.triggered.
+        session_id = context.session_id
+        if session_id is None:
+            return
+        await self._svc.send_notice(session_id, self._DONE_NOTICE)
+
+
 def _wire_main_pipeline(
     pool: AgentPool,
     main_agent_name: str,
@@ -899,7 +949,6 @@ def _wire_main_pipeline(
     pool_cfg: PoolConfig,
     project_dir: Path,
     command_processor,
-    skill_manager,
     pool_name: str,
 ) -> None:
     """Wire hooks, interceptors, governance, and command processor on main pipeline.
@@ -923,6 +972,7 @@ def _wire_main_pipeline(
     # Hooks
     _add_hook(pipeline, InboxFlushHook(consumer=inbox_consumer, agent_name=main_agent_name))
     _add_hook(pipeline, MaxIterationNotifyHook(notification_service=notification_service))
+    _add_hook(pipeline, TurnOutcomeNotifyHook(notification_service=notification_service))
 
     # Runtime wiring
     pipeline.interceptor_chain = shared_interceptor_chain

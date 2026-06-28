@@ -6,11 +6,11 @@ shared identity models used by both core.runtime_context and memory layers.
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-from modex_agent.core.session_id import SessionInfo
+from pydantic import BaseModel, ConfigDict
 
 
 class MemoryAgentRole(StrEnum):
@@ -30,11 +30,17 @@ class MemoryLayerName(StrEnum):
     USER_RETENTION = "user_retention"
 
 
-@dataclass
-class MemoryContext:
-    """统一上下文对象，包含所有可能用到的分组信息。"""
+class MemoryContext(BaseModel):
+    """统一上下文对象，包含所有可能用到的分组信息。
 
-    session_id: SessionInfo | None = None
+    Pydantic frozen model：构造时做类型校验，防止把与标注不符的值（例如把
+    ``SessionInfo`` 对象塞进 ``session_id``）随意传入。``session_id`` 是会话
+    标识**字符串**，不是 ``SessionInfo`` 对象。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    session_id: str | None = None
     user_id: str | None = None
     tenant_id: str | None = None
     agent_id: str | None = None
@@ -46,44 +52,24 @@ class MemoryContext:
 
     def with_defaults(self, **defaults: Any) -> "MemoryContext":
         """Return a new MemoryContext with default values for missing fields."""
-        current = {
-            key: getattr(self, key)
-            for key in [
-                "session_id",
-                "user_id",
-                "tenant_id",
-                "agent_id",
-                "agent_role",
-                "channel",
-                "chat_id",
-                "sender_agent",
-                "receiver_agent",
-            ]
-        }
+        current = {key: getattr(self, key) for key in type(self).model_fields}
         for key, default_value in defaults.items():
-            if hasattr(self, key) and current[key] is None and default_value is not None:
+            if key in current and current[key] is None and default_value is not None:
                 current[key] = default_value
-        return MemoryContext(**current)
+        return type(self)(**current)
 
     def to_dict(self) -> dict[str, Any]:
-        data = asdict(self)
-        if self.session_id is not None:
-            data["session_id"] = str(self.session_id)
-        return data
+        return self.model_dump()
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "MemoryContext":
-        """Restore context from persisted scope metadata."""
+        """Restore context from persisted scope metadata.
+
+        ``session_id`` is persisted as a plain string; no SessionInfo parsing.
+        """
         if not data:
             return cls()
-        allowed = cls.__dataclass_fields__.keys()
-        kwargs = {key: data.get(key) for key in allowed}
-        raw_sid = kwargs.get("session_id")
-        if type(raw_sid) is str:
-            if raw_sid == "default":
-                kwargs["session_id"] = SessionInfo(session_id="default", agent_name="unknown")
-            else:
-                kwargs["session_id"] = SessionInfo.from_str(raw_sid)
+        kwargs = {key: data.get(key) for key in cls.model_fields}
         return cls(**kwargs)
 
 

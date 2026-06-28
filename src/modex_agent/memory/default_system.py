@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.memory.archive_models import ArchiveChannel
+from modex_agent.memory.cleanup_events import MemoryCleanupListener
 from modex_agent.memory.core.layers import ArchiveMemoryManager, MemoryLayerSet, SessionMemoryManager
 from modex_agent.core.message import ChatMessage
 from modex_agent.memory.core.models import LongTermMemory
@@ -54,6 +55,7 @@ class ScopedMessageHistory(MessageHistory):
         archive_agent: ArchiveGenerator | None = None,
         archive_storage: DirArchiveStorage | None = None,
         archive_trigger_callback: Callable[[MemoryContext], Awaitable[None]] | None = None,
+        cleanup_listeners: Sequence[MemoryCleanupListener] | None = None,
         token_estimator: TokenEstimator | None = None,
     ) -> None:
         self._manager = manager
@@ -66,6 +68,7 @@ class ScopedMessageHistory(MessageHistory):
         self._archive_agent = archive_agent
         self._archive_storage = archive_storage
         self._archive_trigger_callback = archive_trigger_callback
+        self._cleanup_listeners: list[MemoryCleanupListener] = list(cleanup_listeners or [])
         self._token_estimator: TokenEstimator = token_estimator or CharTokenEstimator()
         self._cache: list[ChatMessage] | None = (
             [ChatMessage.coerce(m) for m in initial_messages]
@@ -81,7 +84,17 @@ class ScopedMessageHistory(MessageHistory):
             if self._archive_trigger_callback is not None:
                 await self._archive_trigger_callback(self._context)
 
-        await cleanup_session(
+        async def _on_triggered(context: MemoryContext, reason: Any) -> None:
+            for listener in self._cleanup_listeners:
+                try:
+                    await listener.on_cleanup_triggered(context, reason)
+                except Exception:
+                    logger.warning(
+                        "cleanup listener on_cleanup_triggered failed: session=%s",
+                        context.session_id,
+                    )
+
+        result = await cleanup_session(
             session=self._manager,
             archive=self._archive_manager,
             context=self._context,
@@ -90,9 +103,20 @@ class ScopedMessageHistory(MessageHistory):
             archive_agent=self._archive_agent,
             archive_storage=self._archive_storage,
             on_archive_generated=_trigger if self._archive_trigger_callback is not None else None,
+            on_triggered=_on_triggered if self._cleanup_listeners else None,
             token_estimator=self._token_estimator,
             **self._cleanup_config,
         )
+
+        if result.triggered:
+            for listener in self._cleanup_listeners:
+                try:
+                    await listener.on_cleanup_finished(self._context, result)
+                except Exception:
+                    logger.warning(
+                        "cleanup listener on_cleanup_finished failed: session=%s",
+                        self._context.session_id,
+                    )
 
     async def _urb_completion_hook(self, message: ChatMessage | dict[str, Any]) -> None:
         """If message is a plain assistant, mark all URB entries completed."""
@@ -213,6 +237,7 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
         self._knowledge_consolidator = knowledge_consolidator
         self._archive_trigger_callback = archive_trigger_callback
         self._token_estimator: TokenEstimator = token_estimator or CharTokenEstimator()
+        self._cleanup_listeners: list[MemoryCleanupListener] = []
         self._recorder = MemoryAppendRecorder()
         if providers is not None:
             for provider in providers.all():
@@ -240,6 +265,15 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
         """
         self._archive_trigger_callback = callback
 
+    def add_cleanup_listener(self, listener: MemoryCleanupListener) -> None:
+        """Register a cleanup (compaction) event listener.
+
+        Listeners are forwarded to every ``ScopedMessageHistory`` created after
+        registration. Register before the first turn so live histories observe
+        events (mirrors the ``archive_trigger_callback`` threading limitation).
+        """
+        self._cleanup_listeners.append(listener)
+
     def create_message_history(
         self,
         context: MemoryContext,
@@ -257,6 +291,7 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
             archive_agent=self._archive_agent,
             archive_storage=self._archive_storage,
             archive_trigger_callback=self._archive_trigger_callback,
+            cleanup_listeners=self._cleanup_listeners,
             token_estimator=self._token_estimator,
         )
 

@@ -17,6 +17,7 @@ from modex_agent.core.history import ListMessageHistory, MessageHistory
 if TYPE_CHECKING:
     from modex_agent.core.governance import ContextGovernance
     from modex_agent.core.prompt import SystemPromptPipeline
+    from modex_agent.memory.default_system import DefaultMemorySystem
 
 from .emitter import AgentResult
 from .message_utils import normalize_agent_messages_for_llm
@@ -78,6 +79,12 @@ class ContextManager(ABC):
     - 支持多种历史管理策略（滑动窗口、token 限制、智能压缩）
     - 可插拔的上下文构建策略
     """
+
+    # Optional extension point (no-op default): the MemorySystem backing this
+    # manager, if any. Non-memory managers (e.g. InMemoryContextManager) keep
+    # the None default; MemorySystemContextManager overrides it. Lets callers
+    # reach the memory system through the base type without isinstance checks.
+    memory_system: DefaultMemorySystem | None = None
 
     @abstractmethod
     async def load(

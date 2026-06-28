@@ -229,7 +229,11 @@ class ReActAgent(Agent[ReActEvent]):
         runtime = context.runtime
         ctx_token = current_agent_context.set(context)
 
-        result = AgentResult(content="", stop_reason=StopReason.ERROR)
+        # ``result`` stays None on a GraphInterrupt (approval suspend) so the
+        # FINALLY_TURN notification hook skips -- suspend is an expected pause,
+        # not a turn end. Every other path (success / cancel / error) reassigns
+        # it to a concrete AgentResult before the ``finally`` runs.
+        result: AgentResult | None = AgentResult(content="", stop_reason=StopReason.ERROR)
 
         async def actual_turn():
             nonlocal result
@@ -267,6 +271,14 @@ class ReActAgent(Agent[ReActEvent]):
                 result = await actual_turn()
             return result
         except GraphInterrupt:
+            # Approval suspend is an EXPECTED pause (a tool awaited human
+            # approval), not a turn end -- and definitely not an error. The
+            # ``finally`` below dispatches FINALLY_TURN with whatever ``result``
+            # holds; leaving the initial ``AgentResult(stop_reason=ERROR)``
+            # default here would make TurnOutcomeNotifyHook misreport every
+            # approval suspend as "The turn ended unexpectedly due to an error".
+            # None signals "no turn outcome" so the notification hook skips.
+            result = None
             raise
         except AgentControlError as e:
             # Controlled exit (e.g. CANCEL_TURN from the control channel) is

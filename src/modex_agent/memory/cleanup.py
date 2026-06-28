@@ -548,6 +548,7 @@ async def cleanup_session(
     archive_agent: ArchiveGenerator | None = None,
     archive_storage: DirArchiveStorage | None = None,
     on_archive_generated: Callable[[], Awaitable[None]] | None = None,
+    on_triggered: Callable[[MemoryContext, CompressionReason], Awaitable[None]] | None = None,
     token_estimator: TokenEstimator | None = None,
 ) -> CleanupResult:
     """Clean up a session by pruning old messages and optionally archiving them.
@@ -595,6 +596,17 @@ async def cleanup_session(
             archive_skipped=True,
             reason=plan.trigger_reason,
         )
+
+    # Trigger confirmed and a real cleanup is about to run — notify listeners
+    # BEFORE the (potentially slow) archive-generation LLM call so an observer
+    # can tell the user "consolidating memory, please wait".
+    if on_triggered is not None:
+        try:
+            await on_triggered(context, plan.trigger_reason)
+        except Exception:
+            logger.warning(
+                "on_triggered callback failed: session=%s", context.session_id
+            )
 
     # Phase 2: archive generation
     archive_outcome = await _generate_archive_phase(

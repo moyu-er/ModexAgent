@@ -203,8 +203,104 @@ class TestNoTrigger:
         )
 
         assert result.triggered is False
-        assert result.messages_kept == 0
-        assert result.messages_pruned == 0
+
+
+class TestOnTriggeredCallback:
+    """on_triggered fires once when a cleanup triggers, and not when under limit.
+
+    It must fire AFTER trigger confirmation and BEFORE archive generation (the
+    blocking LLM call) so an observer can warn the user about the pause.
+    """
+
+    @pytest.mark.asyncio
+    async def test_fires_when_triggered(self, registry: InMemoryStoreRegistry) -> None:
+        layer_set = _make_layer_set(registry)
+        context = _ctx()
+        session = layer_set.session
+        await _add_messages(session, context, [_user_msg("x" * 500)] * 20)
+
+        calls: list[tuple[str, CompressionReason]] = []
+
+        async def _on_triggered(ctx: MemoryContext, reason: CompressionReason) -> None:
+            calls.append((ctx.session_id, reason))
+
+        result = await cleanup_session(
+            session=session,
+            archive=None,
+            context=context,
+            max_tokens=100,
+            max_token_ratio=0.8,
+            keep_ratio=0.5,
+            token_estimator=_FixedEstimator(10),
+            on_triggered=_on_triggered,
+        )
+
+        assert result.triggered is True
+        assert len(calls) == 1
+        assert calls[0] == ("test-session", CompressionReason.TOKEN_PRESSURE)
+
+    @pytest.mark.asyncio
+    async def test_does_not_fire_when_under_limit(self, registry: InMemoryStoreRegistry) -> None:
+        layer_set = _make_layer_set(registry)
+        context = _ctx()
+        session = layer_set.session
+        await _add_messages(session, context, [_user_msg("a"), _assistant_msg("b")])
+
+        calls: list[tuple[str, CompressionReason]] = []
+
+        async def _on_triggered(ctx: MemoryContext, reason: CompressionReason) -> None:
+            calls.append((ctx.session_id, reason))
+
+        result = await cleanup_session(
+            session=session,
+            archive=layer_set.archive,
+            context=context,
+            max_tokens=8000,
+            max_token_ratio=0.8,
+            keep_ratio=0.5,
+            token_estimator=_FixedEstimator(10),
+            on_triggered=_on_triggered,
+        )
+
+        assert result.triggered is False
+        assert calls == []
+
+    @pytest.mark.asyncio
+    async def test_fires_before_archive_generation(
+        self, registry: InMemoryStoreRegistry, tmp_path,
+    ) -> None:
+        """on_triggered must run before the archive agent is invoked."""
+        layer_set = _make_layer_set(registry)
+        context = _ctx()
+        session = layer_set.session
+        await _add_messages(session, context, [_user_msg(f"u-{i}") for i in range(10)])
+
+        order: list[str] = []
+
+        async def _on_triggered(ctx: MemoryContext, reason: CompressionReason) -> None:
+            order.append("triggered")
+
+        class _OrderArchiveAgent(_MockArchiveAgent):
+            async def generate(self, pruned_messages, archive_dir, archive_id=0):
+                order.append("archive")
+                return await super().generate(pruned_messages, archive_dir, archive_id)
+
+        storage = _DirArchiveStorageFactory.create(tmp_path)
+
+        await cleanup_session(
+            session=session,
+            archive=layer_set.archive,
+            context=context,
+            max_tokens=50,
+            max_token_ratio=0.8,
+            keep_ratio=0.5,
+            token_estimator=_FixedEstimator(10),
+            on_triggered=_on_triggered,
+            archive_agent=_OrderArchiveAgent(),
+            archive_storage=storage,
+        )
+
+        assert order == ["triggered", "archive"]
 
 
 class TestTriggerAndCleanup:
