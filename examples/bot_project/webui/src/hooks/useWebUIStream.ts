@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ApprovalRequestView, ServerEventUnion, TodoItemDTO, UIMessage } from "../types/events";
+import type { ApprovalRequestEvent, ApprovalRequestView, ServerEventUnion, TodoItemDTO, UIMessage } from "../types/events";
 import { eventsToMessages } from "../types/events";
 import { WebSocketClient, buildWsUrl } from "../lib/ws-client";
 import { fetchApprovals, fetchMessages, fetchTodos, submitApproval as apiSubmitApproval } from "../lib/api";
@@ -20,8 +20,10 @@ export interface UseWebUIStreamResult {
   todos: TodoItemDTO[];
   /** Pending approvals for the currently selected session. */
   pendingApprovals: ApprovalRequestView[];
-  /** Per-tool-call submitting flags (true while a decision POST is in flight). */
-  submittingApprovals: Record<string, boolean>;
+  /** True while ANY approval decision POST is in flight (derived from the
+   *  internal per-tool-call submitting flags). Use to disable every approval
+   *  button for the duration of a batch-level decision. */
+  isApprovingBatch: boolean;
   connect: () => void;
   disconnect: () => void;
   send: (content: string) => void;
@@ -106,9 +108,20 @@ export function useWebUIStream(
       if (isOtherSession && (event.event === "turn_end" || event.event === "error")) {
         streamingSessionsRef.current.delete(evSid);
       }
-      setState((prev) =>
-        applyServerEvent(prev, event, sessionId, pendingRequestRef),
-      );
+      // Fix 1: guard the reducer's append path against phantom re-adds. If a
+      // decision POST for this card is in flight, the card was (or is being)
+      // optimistically cleared; a stale approval_request arriving now must NOT
+      // re-append it. The in-flight POST plus the next turn_end /
+      // approval_request reconcile. This mirrors the fetch-replace guard
+      // below and keeps the reducer pure.
+      const isApprovalRequestInFlight =
+        event.event === "approval_request" &&
+        !!submittingApprovals[(event as ApprovalRequestEvent).tool_call_id];
+      if (!isApprovalRequestInFlight) {
+        setState((prev) =>
+          applyServerEvent(prev, event, sessionId, pendingRequestRef),
+        );
+      }
 
       // When a todo tool completes, re-fetch the authoritative list from the
       // backend.  result_summary is truncated by the emitter (~200 chars), so
@@ -131,23 +144,64 @@ export function useWebUIStream(
         });
       }
 
-      // turn_end fires when a turn completes (including suspension for
-      // approval). Re-fetch the authoritative approval list so a freshly-
-      // suspended approval appears without a manual reload.
+      // Re-fetch the authoritative approval list for a session and replace the
+      // cached pending list. Shared by the turn_end and approval_request
+      // triggers. When guardInFlight is set, skip the replace if a decision
+      // POST is currently in flight for one of the session's pending cards —
+      // the optimistic clear in submitApproval already produced the correct
+      // view, and a stale fetch (captured earlier) would re-add an
+      // already-decided card as a phantom pending; the next event reconciles.
+      const refreshApprovals = (sid: string, guardInFlight: boolean): void => {
+        fetchApprovals(sid, currentWsRef.current)
+          .then((views) => {
+            setState((prev) => {
+              if (
+                guardInFlight &&
+                (prev.pendingApprovals[sid] ?? []).some(
+                  (v) => submittingApprovals[v.tool_call_id],
+                )
+              ) {
+                return prev;
+              }
+              return {
+                ...prev,
+                pendingApprovals: { ...prev.pendingApprovals, [sid]: views },
+              };
+            });
+          })
+          .catch((err) => {
+            console.error("Failed to refresh approvals", err);
+          });
+      };
+
+      // turn_end fires when a turn completes — reconcile the approval list.
+      // (A suspend never emits turn_end; the approval_request block handles
+      // that case.)
       if (event.event === "turn_end" && event.session_id) {
-        fetchApprovals(event.session_id, currentWsRef.current).then(
-          (views) => {
-            setState((prev) => ({
-              ...prev,
-              pendingApprovals: { ...prev.pendingApprovals, [event.session_id]: views },
-            }));
-          },
-        ).catch((err) => {
-          console.error("Failed to refresh approvals after turn_end", err);
-        });
+        refreshApprovals(event.session_id, false);
+      }
+
+      // The backend emits exactly ONE approval_request on suspend (the first
+      // pending request). Repurpose it as the trigger to (a) pull the full
+      // authoritative PENDING list — correcting the single-push so every
+      // queued request renders — and (b) clear the streaming flag, since a
+      // suspend never emits turn_end and the agent is paused, not streaming.
+      // The reducer's append still runs (via applyServerEvent above); the
+      // fetch-then-replace here wins and produces the authoritative list.
+      if (event.event === "approval_request" && event.session_id) {
+        const areqSid = event.session_id;
+        refreshApprovals(areqSid, true);
+        // Clear streaming flags: the agent is paused for approval. Only the
+        // top-level flag moves when the suspend is on the selected session;
+        // the per-session flag always reflects the suspending session.
+        setState((prev) => ({
+          ...prev,
+          isStreaming: areqSid === sessionId ? false : prev.isStreaming,
+          sessionStreaming: { ...prev.sessionStreaming, [areqSid]: false },
+        }));
       }
     },
-    [sessionId, getPoolForUuid, onSessionReady, onSessionActivity, onSessionCreated],
+    [sessionId, getPoolForUuid, onSessionReady, onSessionActivity, onSessionCreated, submittingApprovals],
   );
 
   // Keep a mutable reference to the latest handler so the WebSocket client
@@ -398,7 +452,7 @@ export function useWebUIStream(
     isPending,
     todos: sessionId ? state.todos[sessionId] ?? [] : [],
     pendingApprovals: sessionId ? state.pendingApprovals[sessionId] ?? [] : [],
-    submittingApprovals,
+    isApprovingBatch: Object.keys(submittingApprovals).length > 0,
     connect,
     disconnect,
     send,

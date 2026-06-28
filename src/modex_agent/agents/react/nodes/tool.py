@@ -9,7 +9,7 @@ from uuid import uuid4
 from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.agents.react.constants import ReActNode, ReActReason
 from modex_agent.agents.react.message_builder import build_tool_message
-from modex_agent.agents.react.state import ReActSnapshotPolicy, get_react_state
+from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState, get_react_state
 from modex_agent.agents.react.tool_executor import ToolExecutor
 from modex_agent.approval.constants import ApprovalDecision, ApprovalTier
 from modex_agent.core.agent import AgentContext
@@ -277,13 +277,10 @@ class ToolNode(Node):
             if decision == ApprovalDecision.ALLOWED:
                 result = await self._tool_executor.execute(tc, ctx)
             else:
-                error_msg = f"Error: {decision}"
-                if state is not None and state.approval is not None and state.approval.deny_reason:
-                    error_msg = f"Error: {decision} ({state.approval.deny_reason})"
                 result = ToolResult(
                     tool_name=tc.tool_name,
                     result=None,
-                    error=error_msg,
+                    error=self._denial_message(decision, tc, state),
                 )
 
             if ctx.emitter is not None:
@@ -347,6 +344,47 @@ class ToolNode(Node):
                 return NodeTransition(ReActNode.END, ReActReason.TURN_CANCELLED)
 
         return NodeTransition(ReActNode.LLM, ReActReason.TOOLS_DONE)
+
+    @staticmethod
+    def _denial_message(
+        decision: ApprovalDecision,
+        tc: ToolCall,
+        state: ReActTurnState | None,
+    ) -> str:
+        """Clear, firm message for a denied/preempted tool call.
+
+        Fed back to the agent as the tool result so it understands THIS
+        SPECIFIC INVOCATION was rejected by the user and must not be retried.
+        The old ``"Error: denied"`` rendered as ``"Error: Error: denied"``,
+        which looked like a generic tool error and left the agent unable to
+        tell it had been rejected -- so it re-issued the same dangerous tool,
+        re-suspended, and the user saw "deny all 后卡住 / 又冒出一个待审批卡
+        片". The wording also clarifies that the tool itself is not banned,
+        only this specific invocation is disallowed.
+
+        ``error`` is the bare message; ``ToolResult.to_message`` prepends a
+        single ``"Error: "`` so the final history content reads cleanly.
+        """
+        reason = (
+            state.approval.deny_reason
+            if state is not None and state.approval is not None
+            else None
+        )
+        if decision == ApprovalDecision.PREEMPTED:
+            return (
+                f"Skipped: this specific call to '{tc.tool_name}' was not "
+                f"allowed because another tool call in the same batch was "
+                f"denied by the user. The tool itself is not banned, but do "
+                f"not retry this invocation."
+            )
+        detail = f" Reason: {reason}." if reason else ""
+        return (
+            f"Denied by user: this specific call to '{tc.tool_name}' was "
+            f"explicitly rejected by the user.{detail} The tool itself is not "
+            f"banned, but this invocation is not allowed and must not be "
+            f"retried. Acknowledge the rejection and ask the user how to "
+            f"proceed."
+        )
 
     @staticmethod
     def _format_hint(tool_calls: list[ToolCall]) -> str:

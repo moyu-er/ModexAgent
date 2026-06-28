@@ -12,10 +12,12 @@ export interface ChatViewProps {
   todos: TodoItemDTO[];
   /** Pending approvals for the selected session (awaiting user decision). */
   pendingApprovals: ApprovalRequestView[];
-  /** Per-tool-call submitting flags (true while a decision POST is in flight). */
-  submittingApprovals: Record<string, boolean>;
+  /** True while any approval POST is in flight — disables all approval buttons. */
+  isApprovingBatch: boolean;
   /** POST an allow/deny decision for a pending approval. */
   submitApproval: (toolCallId: string, action: "allow" | "deny") => void;
+  /** Approve every currently-pending card at once. */
+  onApproveAll: () => void;
   /** Current session id — passed to TodoPanel so it auto-closes on switch. */
   sessionId?: string | null;
   onSend: (content: string) => void;
@@ -39,8 +41,9 @@ export const ChatView: FC<ChatViewProps> = ({
   isPending,
   todos,
   pendingApprovals,
-  submittingApprovals,
+  isApprovingBatch,
   submitApproval,
+  onApproveAll,
   sessionId,
   onSend,
   onPause,
@@ -143,11 +146,26 @@ export const ChatView: FC<ChatViewProps> = ({
           {messages.map((msg) => (
             <MessageBubble key={msg.id} message={msg} />
           ))}
+          {pendingApprovals.length > 0 && (
+            <div className="my-2 flex items-center justify-between gap-2 rounded-lg border border-card-border-light bg-content-bg-light px-3 py-2 dark:border-card-border-dark dark:bg-content-bg-dark">
+              <span className="text-xs text-text-secondary-light dark:text-text-secondary-dark">
+                Denying any one cancels the whole batch
+              </span>
+              <button
+                type="button"
+                disabled={isApprovingBatch}
+                onClick={onApproveAll}
+                className="rounded border border-success-light px-3 py-1 text-sm font-medium text-success-dark transition-colors hover:bg-success-light/10 disabled:cursor-not-allowed disabled:opacity-50 dark:border-success-dark dark:text-success-light dark:hover:bg-success-dark/10"
+              >
+                Approve All
+              </button>
+            </div>
+          )}
           {pendingApprovals.map((view) => (
             <ApprovalCard
               key={view.tool_call_id}
               view={view}
-              submitting={!!submittingApprovals[view.tool_call_id]}
+              disabled={isApprovingBatch}
               onApprove={(id) => submitApproval(id, "allow")}
               onDeny={(id) => submitApproval(id, "deny")}
             />

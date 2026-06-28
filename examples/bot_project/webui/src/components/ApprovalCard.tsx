@@ -1,56 +1,87 @@
+import { useMemo, useState } from "react";
 import type { ApprovalRequestView } from "../types/events";
 
 interface Props {
   view: ApprovalRequestView;
   onApprove: (toolCallId: string) => void;
   onDeny: (toolCallId: string) => void;
-  submitting?: boolean;
+  /** Batch-level submit lock: disables both actions while any POST is in flight. */
+  disabled?: boolean;
 }
 
-/** Inline approval card — status-driven: pending = amber; approved = green;
- *  denied = grey/readonly. Mono args block; semantic approve/deny buttons. */
-export function ApprovalCard({ view, onApprove, onDeny, submitting }: Props) {
-  const decided = view.status !== "pending";
+// Truncation budget for the collapsed preview. Keeps the card compact before
+// the user expands it; the full JSON is always one toggle away.
+const PREVIEW_MAX_CHARS = 120;
+
+/** Inline pending-approval card. Shows tool name + tier, a truncated args
+ *  preview that expands to full JSON, and per-card [Approve] / [Deny All].
+ *  Deny is batch-level: denying any card cancels the whole batch (backend
+ *  preempts the rest). Cards only ever render pending requests — decided
+ *  ones are dropped from the list by the hook. */
+export function ApprovalCard({ view, onApprove, onDeny, disabled }: Props) {
+  const [expanded, setExpanded] = useState(false);
+
+  // Memoize the serialization so it runs once per `view.arguments`, not on
+  // every parent re-render (the card re-renders on each isApprovingBatch
+  // toggle and any hook state change while cards are on screen).
+  const fullArgs = useMemo(
+    () => JSON.stringify(view.arguments, null, 2),
+    [view.arguments],
+  );
+  const previewArgs = useMemo(() => {
+    const isLong = fullArgs.length > PREVIEW_MAX_CHARS;
+    return isLong ? `${fullArgs.slice(0, PREVIEW_MAX_CHARS)}…` : fullArgs;
+  }, [fullArgs]);
+
+  const toggle = (): void => setExpanded((prev) => !prev);
+
   return (
-    <div
-      className={`rounded-lg border p-3 my-2 ${
-        view.status === "approved"
-          ? "border-green-600/50 bg-green-50 dark:bg-green-950/30"
-          : view.status === "denied"
-            ? "border-zinc-400/50 bg-zinc-100 dark:bg-zinc-900/40"
-            : "border-amber-500/60 bg-amber-50 dark:bg-amber-950/30"
-      }`}
-    >
-      <div className="flex items-center gap-2 text-sm font-semibold">
-        <span className="rounded bg-amber-600 px-1.5 py-0.5 text-[10px] uppercase text-white">
+    <div className="my-2 rounded-lg border border-card-border-light bg-content-bg-light p-3 dark:border-card-border-dark dark:bg-content-bg-dark">
+      <div className="flex items-center gap-2 text-sm">
+        <span className="rounded border border-warning-light bg-warning-light/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-warning-dark dark:border-warning-dark dark:bg-warning-dark/10 dark:text-warning-light">
           {view.tier}
         </span>
-        <span className="font-mono">{view.tool_name}</span>
-        <span className="text-xs text-zinc-500">awaiting approval</span>
+        <span className="font-mono font-semibold text-text-primary-light dark:text-text-primary-dark">
+          {view.tool_name}
+        </span>
+        <span className="text-xs text-text-secondary-light dark:text-text-secondary-dark">
+          awaiting approval
+        </span>
       </div>
-      <pre className="mt-2 overflow-x-auto rounded bg-zinc-900 p-2 text-xs text-zinc-100">
-        {JSON.stringify(view.arguments, null, 2)}
-      </pre>
-      {!decided && (
-        <div className="mt-2 flex gap-2">
-          <button
-            type="button"
-            disabled={submitting}
-            onClick={() => onApprove(view.tool_call_id)}
-            className="rounded bg-green-600 px-3 py-1 text-sm font-medium text-white hover:bg-green-700 active:bg-green-800 disabled:opacity-50"
-          >
-            Approve
-          </button>
-          <button
-            type="button"
-            disabled={submitting}
-            onClick={() => onDeny(view.tool_call_id)}
-            className="rounded bg-red-600 px-3 py-1 text-sm font-medium text-white hover:bg-red-700 active:bg-red-800 disabled:opacity-50"
-          >
-            Deny
-          </button>
-        </div>
-      )}
+
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={expanded}
+        aria-label={expanded ? "Collapse arguments" : "Expand arguments"}
+        className="mt-2 flex w-full items-start gap-1 rounded border border-code-border-light bg-code-bg-light px-2 py-1.5 text-left font-mono text-xs text-text-body-light transition-colors hover:border-divider-light dark:border-code-border-dark dark:bg-code-bg-dark dark:text-text-body-dark dark:hover:border-divider-dark"
+      >
+        <span className="inline-block shrink-0 text-[10px] leading-relaxed text-text-secondary-light dark:text-text-secondary-dark">
+          {expanded ? "▼" : "▸"}
+        </span>
+        <pre className="whitespace-pre-wrap break-words leading-relaxed">
+          {expanded ? fullArgs : previewArgs}
+        </pre>
+      </button>
+
+      <div className="mt-2 flex gap-2">
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => onApprove(view.tool_call_id)}
+          className="rounded border border-success-light px-3 py-1 text-sm font-medium text-success-dark transition-colors hover:bg-success-light/10 disabled:cursor-not-allowed disabled:opacity-50 dark:border-success-dark dark:text-success-light dark:hover:bg-success-dark/10"
+        >
+          Approve
+        </button>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => onDeny(view.tool_call_id)}
+          className="rounded border border-error-light px-3 py-1 text-sm font-medium text-error-dark transition-colors hover:bg-error-light/10 disabled:cursor-not-allowed disabled:opacity-50 dark:border-error-dark dark:text-error-light dark:hover:bg-error-dark/10"
+        >
+          Deny All
+        </button>
+      </div>
     </div>
   );
 }

@@ -258,7 +258,7 @@ const App: FC = () => {
     isPending,
     todos,
     pendingApprovals,
-    submittingApprovals,
+    isApprovingBatch,
     submitApproval,
     connect,
     disconnect,
@@ -274,6 +274,12 @@ const App: FC = () => {
       isHome ? "" : workspace,
       onSessionCreated,
     );
+
+  // Approve every currently-pending card. Client-side loop — no new endpoint;
+  // the batch runs once all requests are approved.
+  const onApproveAll = useCallback((): void => {
+    pendingApprovals.forEach((v) => submitApproval(v.tool_call_id, "allow"));
+  }, [pendingApprovals, submitApproval]);
 
   const sessionTree = useMemo(() => buildTree(sessions), [sessions]);
 
@@ -681,8 +687,9 @@ const App: FC = () => {
           isPending={isPending}
           todos={todos}
           pendingApprovals={pendingApprovals}
-          submittingApprovals={submittingApprovals}
+          isApprovingBatch={isApprovingBatch}
           submitApproval={submitApproval}
+          onApproveAll={onApproveAll}
           sessionId={selectedId}
           onSend={handleSend}
           onPause={pause}
