@@ -31,8 +31,8 @@ class PersistUserMessageStage(InputStage):
         # "/" and carries skill_xml (set by S6) — it must be persisted as the
         # raw text.  Only a "/" command WITHOUT skill_xml is a control command
         # that leaked past S2/S3/S6; skip persisting those.
-        if content.startswith("/") and RoutingMeta.SKILL_XML not in envelope.metadata:
-            logger.warning("Unexpected command reached persistence: %s", content)
+        if content.startswith("/") and not envelope.command_resolved:
+            logger.warning("Unresolved command reached persistence: %s", content)
             return Continue(value=envelope)
 
         full_sid = envelope.metadata[RoutingMeta.FULL_SESSION_ID]

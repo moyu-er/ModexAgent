@@ -488,9 +488,7 @@ class WebUIService(BotService):
                 current_ws_provider=current_ws_provider,
             )
 
-        webui_pipeline = build_webui_pipeline(
-            skill_registry=skill_registry, known_pools=known_pools
-        )
+        webui_pipeline = build_webui_pipeline(skill_registry=skill_registry)
         self._server.set_input_pipeline(webui_pipeline)
 
         # Find the WebSocket input adapter

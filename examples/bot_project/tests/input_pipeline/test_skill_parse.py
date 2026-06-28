@@ -54,17 +54,17 @@ async def test_valid_skill_sets_xml_and_keeps_raw_content() -> None:
     assert env.content == "/office-expert make ppt"  # raw preserved for persistence
     assert env.metadata["skill_xml"].startswith("<skill")
     assert env.metadata["skill_name"] == "office-expert"
+    assert env.command_resolved is True
 
 
 @pytest.mark.asyncio
-async def test_unknown_skill_terminates_and_does_not_persist() -> None:
+async def test_unknown_skill_passes_through_unresolved() -> None:
     stage = SkillParseStage(_FakeRegistry({"office-expert"}))
-    env = UserInputEnvelope(
-        external_id="u1", content="/nosuch thing", channel="qq"
-    )
+    env = UserInputEnvelope(external_id="u1", content="/nosuch thing", channel="qq")
     result = await stage.process(env, _ctx())
-    assert not result.should_continue()
+    assert result.should_continue()  # no longer terminates here
     assert "skill_xml" not in env.metadata
+    assert env.command_resolved is False  # left for the terminal stage to reject
 
 
 @pytest.mark.asyncio

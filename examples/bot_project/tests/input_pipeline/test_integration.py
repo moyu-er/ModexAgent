@@ -105,9 +105,7 @@ async def test_webui_explicit_coding_pool_persisted_to_coding() -> None:
             store.set_agent_pool_map({"coding": "coding"})
             enqueued: list[InputMessage] = []
             ctx = _make_ctx(store, enqueued)
-            pipe = build_webui_pipeline(
-                skill_registry=_NoSkill(), known_pools={"coding"}
-            )
+            pipe = build_webui_pipeline(skill_registry=_NoSkill())
             env = UserInputEnvelope(
                 external_id="uuid1",
                 content="hi",
@@ -160,7 +158,7 @@ async def test_im_continue_command_not_persisted_but_enqueued() -> None:
 
 @pytest.mark.asyncio
 async def test_webui_continue_command_rejected() -> None:
-    """WebUI /continue: rejected by S6 as a builtin command."""
+    """WebUI /continue: rejected by the terminal UnsupportedCommandStage."""
     with TemporaryDirectory() as tmp:
         root = Path(tmp)
         with bind_workspace_root(root):
@@ -168,7 +166,7 @@ async def test_webui_continue_command_rejected() -> None:
             store.set_agent_pool_map({"main": "main"})
             enqueued: list[InputMessage] = []
             ctx = _make_ctx(store, enqueued)
-            pipe = build_webui_pipeline(skill_registry=_NoSkill(), known_pools={"main"})
+            pipe = build_webui_pipeline(skill_registry=_NoSkill())
             env = UserInputEnvelope(
                 external_id="uuid1",
                 content="/continue",
@@ -179,7 +177,7 @@ async def test_webui_continue_command_rejected() -> None:
             assert not result.should_continue(), "/continue must be rejected in WebUI"
             response = getattr(result, "response", None)
             assert response is not None
-            assert "not supported" in str(response.get("message", "")).lower()
+            assert "unknown command" in str(response.get("message", "")).lower()
             assert enqueued == []
 
 
@@ -350,9 +348,7 @@ async def test_webui_invalid_skill_terminates_not_persisted() -> None:
             store.set_agent_pool_map({"main": "main"})
             enqueued: list[InputMessage] = []
             ctx = _make_ctx(store, enqueued)
-            pipe = build_webui_pipeline(
-                skill_registry=_NoSkill(), known_pools={"main"}
-            )
+            pipe = build_webui_pipeline(skill_registry=_NoSkill())
             env = UserInputEnvelope(
                 external_id="uuid1",
                 content="/nosuch thing",
@@ -412,9 +408,7 @@ async def test_multi_channel_pool_isolation() -> None:
                 command_adapter=cmd_adapter_ws,
                 current_ws_provider=(lambda r=root: r),
             )
-            pipe_ws = build_webui_pipeline(
-                skill_registry=_NoSkill(), known_pools={"main", "coding"}
-            )
+            pipe_ws = build_webui_pipeline(skill_registry=_NoSkill())
 
             # IM switches pool to "coding" via /coding command
             env_im = UserInputEnvelope(external_id="u1", content="/coding", channel="qq")
@@ -454,9 +448,7 @@ async def test_webui_slash_cd_produces_error_not_enqueued() -> None:
             store.set_agent_pool_map({"main": "main"})
             enqueued: list[InputMessage] = []
             ctx = _make_ctx(store, enqueued)
-            pipe = build_webui_pipeline(
-                skill_registry=_NoSkill(), known_pools={"main"}
-            )
+            pipe = build_webui_pipeline(skill_registry=_NoSkill())
             env = UserInputEnvelope(
                 external_id="uuid1",
                 content="/cd /tmp",
@@ -571,7 +563,8 @@ async def test_skill_resolved_from_correct_pool() -> None:
                 "/office-expert must NOT be found in main pool"
             )
             resp = getattr(result2, "response", {})
-            assert "not recognized" in str(resp.get("message", ""))
+            msg = str(resp.get("message", "")).lower()
+            assert "unknown command" in msg
             assert enqueued == []
             # u2.main must be empty — the unrecognized skill was terminated before S7
             assert list(store.load(_sid("main", "u2"))) == []
@@ -593,9 +586,7 @@ async def test_skill_pool_isolation_webui() -> None:
                 "main": {"brainstorming"},
                 "coding": {"office-expert"},
             })
-            pipe = build_webui_pipeline(
-                skill_registry=registry, known_pools={"main", "coding"},
-            )
+            pipe = build_webui_pipeline(skill_registry=registry)
 
             # WebUI with explicit_pool="coding" — /office-expert should work
             env = UserInputEnvelope(

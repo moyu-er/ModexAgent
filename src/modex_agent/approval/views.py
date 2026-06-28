@@ -50,8 +50,8 @@ class ApprovalDecisionInput:
 
     @classmethod
     def from_dict(cls, data: Any) -> ApprovalDecisionInput | None:
-        """Reconstruct from ``to_dict`` output; None when *data* is falsy."""
-        if not data:
+        """Reconstruct from ``to_dict`` output; None when *data* is None."""
+        if data is None:
             return None
         raw_id = data.get("tool_call_id")
         return cls(

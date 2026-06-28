@@ -179,9 +179,7 @@ async def test_non_home_workspace_routes_to_coding_with_shared_store() -> None:
         # now shares the service-level store.
         server.set_pool_switch_callback(home_resources.pool_router.set_pool)
 
-        pipe = build_webui_pipeline(
-            skill_registry=_NoSkillRegistry(), known_pools={"main", "coding"}
-        )
+        pipe = build_webui_pipeline(skill_registry=_NoSkillRegistry())
         server.set_input_pipeline(pipe)
         # Production wiring: pipeline ctx uses the shared store.
         ctx = BotInputContext(
@@ -277,9 +275,7 @@ async def test_home_workspace_coding_conversation_routes_to_coding() -> None:
         server.set_session_store(home_resources.session_index_store)
         server.set_pool_switch_callback(home_resources.pool_router.set_pool)
 
-        pipe = build_webui_pipeline(
-            skill_registry=_NoSkillRegistry(), known_pools={"main", "coding"}
-        )
+        pipe = build_webui_pipeline(skill_registry=_NoSkillRegistry())
         server.set_input_pipeline(pipe)
         ctx = BotInputContext(
             default_pool="main",
