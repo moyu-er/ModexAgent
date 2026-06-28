@@ -77,6 +77,15 @@ class TerminalBackend(ABC):
         if self._output_buffer is not None:
             self._output_buffer.append(text)
 
+    def buffer_size(self) -> int:
+        """Current buffered output size in chars (0 when no buffer)."""
+        return self._output_buffer.total_chars if self._output_buffer is not None else 0
+
+    def clear_buffer(self) -> None:
+        """Drop all buffered output (used under memory pressure)."""
+        if self._output_buffer is not None:
+            self._output_buffer.clear()
+
     @property
     @abstractmethod
     def platform(self) -> Platform:

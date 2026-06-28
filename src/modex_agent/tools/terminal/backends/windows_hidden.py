@@ -16,7 +16,7 @@ from modex_agent.tools.terminal.results import SlidingOutputBuffer, TerminalRead
 from modex_agent.tools.terminal.types import Platform, TerminalVisibility, _family_from_path
 
 from .base import TerminalBackend, extract_current_segment_from_buffer
-from .winpty import WinptyBackend
+from .winpty_transport import WinptyBackend
 
 logger = logging.getLogger(__name__)
 

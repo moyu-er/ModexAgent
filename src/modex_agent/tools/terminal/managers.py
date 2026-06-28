@@ -7,24 +7,15 @@ import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 from modex_agent.tools.terminal.backends.base import TerminalBackend
+from modex_agent.tools.terminal.backends.factory import create_pty_backend
 from modex_agent.tools.terminal.config import TerminalRuntimeConfig
 from modex_agent.tools.terminal.session import TerminalInfo, TerminalSession
 from modex_agent.tools.terminal.state_store import JsonTerminalStateStore
 from modex_agent.tools.terminal.types import (
-    Platform,
-    ShellFamily,
     ShellInfo,
     TerminalVisibility,
-    detect_platform_shell,
-)
-
-_DEFAULT_SHELL_INFO = ShellInfo(
-    family=ShellFamily.BASH,
-    path="/bin/bash",
-    platform=Platform.LINUX,
 )
 
 logger = logging.getLogger(__name__)
@@ -35,11 +26,12 @@ class TerminalManagerBase(ABC):
 
     Under ADR-0010 there is a single production implementation,
     ``BaseTerminalManager``, parameterised by the two contract axes
-    ``shell_family`` x ``visibility`` plus optional capability flags
-    (``max_terminals`` / ``storage_dir`` / ``enable_memory_pressure``). The
-    legacy OS-named subclasses and the second ``TerminalManager`` class have
-    been folded inward (ADR-0010 Decision 8, closing the ADR-0007 fork); the
-    capability helpers are retained as flag-guarded private methods here.
+    ``shell_info`` (carrying Shell Family + platform) x ``visibility`` plus
+    optional capability flags (``max_terminals`` / ``storage_dir`` /
+    ``enable_memory_pressure``). The legacy OS-named subclasses and the second
+    ``TerminalManager`` class have been folded inward (ADR-0010 Decision 8,
+    closing the ADR-0007 fork); the capability helpers are retained as
+    flag-guarded private methods here.
 
     Tools consume the seam via ``get_default()`` (command execution) and the
     session-management methods.
@@ -87,7 +79,7 @@ class BaseTerminalManager(TerminalManagerBase):
         *,
         shell_info: ShellInfo,
         visibility: TerminalVisibility,
-        backend_factory: Callable[[], Any],
+        backend_factory: Callable[[], TerminalBackend],
         config: TerminalRuntimeConfig | None = None,
         default_cwd: str | None = None,
         max_terminals: int | None = None,
@@ -144,7 +136,12 @@ class BaseTerminalManager(TerminalManagerBase):
         return self._sessions.get(name)
 
     async def get_default_session(self) -> TerminalSession | None:
-        """Return the default session, or None if none is set or it has been closed."""
+        """Return the default session, or None if none is set or it has been closed.
+
+        A dead session is dropped from ``_sessions`` so that ``get_default``
+        can create a fresh one instead of repeatedly trying to resurrect a
+        backend the user manually killed (e.g. closing a visible window).
+        """
         if self._default_name is None:
             return None
         session = self._sessions.get(self._default_name)
@@ -154,14 +151,17 @@ class BaseTerminalManager(TerminalManagerBase):
         # Only check alive if the backend was actually started, so unstarted
         # sessions (created but never used) are not incorrectly evicted.
         if session.backend_started and not await session.is_alive():
+            self._sessions.pop(self._default_name, None)
             self._default_name = None
             return None
         return session
 
     async def get_default(self) -> TerminalSession:
-        if self._default_name is None:
-            return await self.get_or_create("default")
-        return self._sessions[self._default_name]
+        """Return the default session, creating a fresh one if the current is dead."""
+        session = await self.get_default_session()
+        if session is not None:
+            return session
+        return await self.get_or_create("default")
 
     def list_names(self) -> list[str]:
         """Return just the session names."""
@@ -187,9 +187,8 @@ class BaseTerminalManager(TerminalManagerBase):
         total_buffer = 0
         session_buffers: list[tuple[str, int]] = []
         for name, session in self._sessions.items():
-            buf = session._backend._output_buffer
-            if buf is not None:
-                size = buf.total_chars
+            size = session._backend.buffer_size()
+            if size > 0:
                 total_buffer += size
                 session_buffers.append((name, size))
 
@@ -202,13 +201,11 @@ class BaseTerminalManager(TerminalManagerBase):
                 continue
             if total_buffer <= self.config.max_total_buffer_chars:
                 break
-            buf = self._sessions[name]._backend._output_buffer
-            if buf is not None:
-                buf.clear()
-                logger.warning(
-                    "Memory pressure: cleared buffer for '%s' (was %d chars)", name, size
-                )
-                total_buffer -= size
+            self._sessions[name]._backend.clear_buffer()
+            logger.warning(
+                "Memory pressure: cleared buffer for '%s' (was %d chars)", name, size
+            )
+            total_buffer -= size
 
     async def save_state(self) -> None:
         """Persist session metadata and history to JSON.
@@ -276,7 +273,7 @@ class BaseTerminalManager(TerminalManagerBase):
 
 def create_terminal_manager(
     *,
-    shell_family: ShellFamily,
+    shell_info: ShellInfo,
     visibility: TerminalVisibility,
     config: TerminalRuntimeConfig | None = None,
     default_cwd: str | None = None,
@@ -286,10 +283,20 @@ def create_terminal_manager(
 ) -> TerminalManagerBase:
     """Construct a ``BaseTerminalManager`` parameterised by the two ADR-0010 axes.
 
+    The two upstream contract axes (ADR-0010 Decision 1) are:
+
+    - ``shell_info`` (carrying Shell Family + platform) — in production the
+      caller derives it from ``detect_platform_shell()``.
+    - ``visibility`` — ``VISIBLE`` or ``HIDDEN``.
+
+    Eagerly validates the (transport, visibility) combo by probing
+    ``create_pty_backend(visibility=visibility)`` BEFORE constructing the
+    manager, so an unsupported combination surfaces here as
+    ``UnsupportedVisibilityForTransport`` (ADR-0010 Consequences) rather than
+    on the first command.
+
     Args:
-        shell_family: behavioural shape of the shell (bash / zsh / sh / ...).
-            Upstream two-axis contract (ADR-0010 Decision 1); in production the
-            caller derives it from ``detect_platform_shell().family``.
+        shell_info: detected platform shell (Shell Family + platform + path).
         visibility: ``VISIBLE`` or ``HIDDEN``.
         config/default_cwd/max_terminals/storage_dir/enable_memory_pressure:
             forwarded to ``BaseTerminalManager``; capability flags default-off.
@@ -297,12 +304,14 @@ def create_terminal_manager(
     Returns:
         A ``TerminalManagerBase`` instance.
     """
-    shell_info = detect_platform_shell() or _DEFAULT_SHELL_INFO
     logger.info(
         "Creating terminal manager (family=%s, visibility=%s)",
-        shell_family.value,
+        shell_info.family.value,
         visibility.value,
     )
+    # Eager probe — surfaces UnsupportedVisibilityForTransport here (ADR-0010),
+    # before the LAZY backend factory is ever invoked inside BaseTerminalManager.
+    create_pty_backend(visibility=visibility)
     return BaseTerminalManager(
         shell_info=shell_info,
         visibility=visibility,
@@ -321,7 +330,6 @@ def _make_backend_factory(visibility: TerminalVisibility) -> Callable[[], Termin
     The factory's capability table (ADR-0010) is the single source of truth;
     ``create_pty_backend`` selects the transport from platform + visibility.
     """
-    from modex_agent.tools.terminal.backends.factory import create_pty_backend
 
     def _factory() -> TerminalBackend:
         return create_pty_backend(visibility=visibility)

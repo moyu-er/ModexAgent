@@ -184,6 +184,7 @@ class CommandTool(Tool):
                     status=ProcessStatus.COMPLETED,
                 )
                 session.set_expected_state(TerminalCommandStatus.IDLE)
+                session.apply_outcome(result)
                 return _inject_hint(
                     self._format_completed(
                         result.output_parts, result.elapsed_ms, terminal=terminal_name
@@ -197,6 +198,7 @@ class CommandTool(Tool):
                     status=ProcessStatus.COMPLETED,
                 )
                 session.set_expected_state(TerminalCommandStatus.IDLE)
+                session.apply_outcome(result)
                 return _inject_hint(
                     self._format_completed(
                         result.output_parts, result.elapsed_ms, terminal=terminal_name
@@ -205,6 +207,7 @@ class CommandTool(Tool):
             case PollOutcome.INPUT_WAIT:
                 runtime = self._registry.running_runtime(proc.id)
                 session.set_expected_state(TerminalCommandStatus.WAITING_INPUT)
+                session.apply_outcome(result)
                 return _inject_hint(
                     await self._format_running(
                         session,
@@ -218,6 +221,7 @@ class CommandTool(Tool):
             case PollOutcome.LONG_RUNNING:
                 runtime = self._registry.running_runtime(proc.id)
                 session.set_expected_state(TerminalCommandStatus.LONG_RUNNING)
+                session.apply_outcome(result)
                 return _inject_hint(
                     await self._format_running(
                         session,
@@ -230,6 +234,7 @@ class CommandTool(Tool):
             case PollOutcome.STUCK:
                 raw_idle_ms = int((time.monotonic() - session.last_byte_at) * 1000)
                 session.set_expected_state(None)
+                session.apply_outcome(result)
                 return _inject_hint(
                     self._format_stuck(
                         result.output_parts, raw_idle_ms, result.elapsed_ms, terminal=terminal_name
@@ -237,6 +242,7 @@ class CommandTool(Tool):
                 )
             case PollOutcome.PAGINATED:
                 session.set_expected_state(TerminalCommandStatus.PAGINATED)
+                session.apply_outcome(result)
                 return _inject_hint(
                     self._format_paginated(
                         result.output_parts, result.elapsed_ms, terminal=terminal_name
@@ -244,6 +250,7 @@ class CommandTool(Tool):
                 )
             case PollOutcome.YIELDED:
                 session.set_expected_state(TerminalCommandStatus.EXECUTING)
+                session.apply_outcome(result)
                 return _inject_hint(
                     await self._format_running(
                         session,
@@ -263,6 +270,7 @@ class CommandTool(Tool):
                     timed_out=True,
                 )
                 session.set_expected_state(None)
+                session.apply_outcome(result)
                 return _inject_hint(
                     self._format_timed_out(
                         result.output_parts,

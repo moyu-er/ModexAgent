@@ -23,7 +23,7 @@ from modex_agent.tools.terminal.results import SlidingOutputBuffer, TerminalRead
 from modex_agent.tools.terminal.types import Platform, TerminalVisibility
 
 from .base import TerminalBackend, extract_current_segment_from_buffer
-from .winpty import WinptyBackend
+from .winpty_transport import WinptyBackend
 
 logger = logging.getLogger(__name__)
 _READ_TIMEOUT = 0.5

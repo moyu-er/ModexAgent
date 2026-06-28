@@ -19,6 +19,14 @@ class _FakeBackendHasBuffer:
         self._output_buffer = SlidingOutputBuffer(max_chars=10_000)
         self._output_buffer.append("x" * 50_000)
 
+    def buffer_size(self) -> int:
+        # Mirrors the real TerminalBackend public API the manager now calls.
+        return self._output_buffer.total_chars if self._output_buffer is not None else 0
+
+    def clear_buffer(self) -> None:
+        if self._output_buffer is not None:
+            self._output_buffer.clear()
+
     async def is_alive(self) -> bool:
         # TerminalSession.to_info() (invoked by list_sessions) requires this.
         return True

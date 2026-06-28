@@ -76,7 +76,6 @@ from modex_agent.tools.standard import FindFilesTool, SearchFilesTool
 from modex_agent.tools.terminal import SubprocessExecutor, SubprocessTool
 from modex_agent.tools.terminal.backends.factory import (
     UnsupportedVisibilityForTransport,
-    create_pty_backend,
 )
 from modex_agent.tools.terminal.managers import create_terminal_manager
 from modex_agent.tools.terminal.types import TerminalVisibility, detect_platform_shell
@@ -312,18 +311,18 @@ def _build_terminal_manager(
     (bool) and ``terminal_visibility`` (bool) keep their semantics; the framework
     translates ``True`` → ``TerminalVisibility.VISIBLE`` and ``False`` →
     ``TerminalVisibility.HIDDEN`` and constructs the manager via the two-axis
-    ``create_terminal_manager(shell_family=..., visibility=...)`` signature.
+    ``create_terminal_manager(shell_info=..., visibility=...)`` signature.
 
     Fallback chain: if the requested VISIBLE backend cannot be created on this
     platform (``UnsupportedVisibilityForTransport``), retry with HIDDEN. If HIDDEN
     also fails, fall back to SubprocessTool-only (return None) so the agent still
-    works. The shell family is auto-detected via ``detect_platform_shell``.
+    works. The shell info is auto-detected via ``detect_platform_shell``.
 
     ADR-0010 Consequences: the degradation decision (VISIBLE → HIDDEN) belongs
     HERE at pool-build time, not on the first command. ``create_terminal_manager``
-    stores a LAZY backend factory that only instantiates the backend when a
-    session is first created, so we probe ``create_pty_backend(visibility=...)``
-    eagerly to surface an unsupported (transport, visibility) combo now.
+    itself eagerly probes the (transport, visibility) combo, so an unsupported
+    combination surfaces as ``UnsupportedVisibilityForTransport`` from the call
+    below (validation is encapsulated in the factory, not duplicated here).
     """
     use_terminal = any(getattr(a, "use_terminal", False) for a in pool_cfg.agents)
     if not use_terminal:
@@ -343,7 +342,6 @@ def _build_terminal_manager(
             pool_name,
         )
         return None
-    shell_family = shell_info.family
 
     default_cwd: str | None = (
         str(workspace_handle.current) if workspace_handle is not None else None
@@ -358,20 +356,15 @@ def _build_terminal_manager(
     last_err: Exception | None = None
     for vis in attempts:
         try:
-            # create_terminal_manager stores a LAZY backend factory, so probe the
-            # backend now to surface an unsupported (transport, visibility) combo
-            # at pool-build time (ADR-0010: degradation decision belongs here,
-            # not on the first command).
-            create_pty_backend(visibility=vis)
             mgr = create_terminal_manager(
-                shell_family=shell_family,
+                shell_info=shell_info,
                 visibility=vis,
                 default_cwd=default_cwd,
             )
             logger.info(
                 "Pool '%s': terminal manager created (family=%s, visibility=%s)",
                 pool_name,
-                shell_family.value,
+                shell_info.family.value,
                 vis.value,
             )
             return mgr
@@ -380,7 +373,7 @@ def _build_terminal_manager(
             logger.warning(
                 "Pool '%s': terminal backend (family=%s, visibility=%s) unavailable: %s",
                 pool_name,
-                shell_family.value,
+                shell_info.family.value,
                 vis.value,
                 exc,
             )
@@ -389,7 +382,7 @@ def _build_terminal_manager(
             logger.warning(
                 "Pool '%s': terminal backend (family=%s, visibility=%s) failed: %s",
                 pool_name,
-                shell_family.value,
+                shell_info.family.value,
                 vis.value,
                 exc,
             )

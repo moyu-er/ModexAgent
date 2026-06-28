@@ -77,9 +77,13 @@ Special states:
 | `waiting_input` | Command waiting for password/confirmation | Send input as next shell command |
 | `ended` | Shell exited (`exit`/`logout`) | Session will auto-restart on next use |
 
-### Layer 3: TerminalManager (`modex_agent/tools/terminal/manager.py`)
+### Layer 3: BaseTerminalManager (`modex_agent/tools/terminal/managers.py`)
 
-The **session registry** owning all named tabs:
+The **session registry** owning all named tabs (ADR-0010 two-axis: `shell_info`
+× `visibility`). The legacy OS-named managers and the second `TerminalManager`
+class have been folded inward into this single implementation; capability
+behaviours (LRU, persistence, memory-pressure buffer clearing) are flag-guarded
+private methods, default-off:
 
 - **Named collection** — `name -> TerminalSession` map
 - **Default terminal** — the tab `ShellTool` uses when no name is specified
@@ -99,7 +103,7 @@ Key methods:
 
 ### Layer 4: TerminalTool (`modex_agent/tools/terminal/tool.py`)
 
-The **agent-facing tab management tool**. Registered only when `TerminalManager`
+The **agent-facing tab management tool**. Registered only when `BaseTerminalManager`
 is available.
 
 Actions:
@@ -174,29 +178,28 @@ poll_until_settled(session, registry, proc_id, config, yield_ms=..., timeout_sec
 ```
 Agent calls bash.execute("ls -la")
   -> CommandTool
-    -> TerminalManager.get_default_session() [creates "default" if none]
-      -> TerminalSession.execute("ls -la")
-        -> backend.write("ls -la\n")
-        -> backend.read() until prompt detected
-        -> return plain output
+    -> manager.get_default_session() [creates "default" if none]
+    -> session.submit_command("ls -la")        # writes command + line ending
+    -> poll_until_settled(session, ...)         # shared poll loop (poll_loop.py)
+    -> session.apply_outcome(poll_result)       # writes busy/last_status state
+  -> returns plain output (sanitized)
 ```
 
 ### Timeout Recovery Flow
 
 ```
 Agent calls bash.execute("sleep 100")
-  -> TerminalSession returns:
-     <status>timeout</status>
-     <message>Timed out after 60s...</message>
+  -> poll_until_settled hits timeout
+  -> TIMED_OUT terminates the session (backend killed)
+  -> apply_outcome(TIMED_OUT) sets _busy_after_timeout / last_status="timeout"
 
 Agent calls bash.execute("echo next")
-  -> TerminalSession returns:
-     <status>busy</status>
-     <message>Send ^C via bash or terminal.interrupt</message>
+  -> CommandTool input guard rejects: session is busy (TIMED_OUT)
+  -> returns <status>timeout</status> diagnostic suggesting ^C
 
-Agent calls bash.execute("^C")   # or terminal.interrupt
-  -> session.send_interrupt() writes \x03
-  -> busy state cleared
+Agent calls process.write("^C")      # ProcessTool — ^C goes through it
+  -> session._busy_after_timeout cleared
+  -> session is writable again
 
 Agent calls bash.execute("echo done")
   -> Normal execution resumes
@@ -263,16 +266,16 @@ bash output -> pywinpty -> visible host -> stdout (visible window)
 ### Unix: PexpectPtyBackend (primary) + TmuxPtyBackend (fallback)
 
 Linux uses a degradation chain: `PexpectPtyBackend` (native PTY via pexpect) → `TmuxPtyBackend` (tmux sessions).
-`LinuxTerminalManager` auto-detects available backends and falls back gracefully.
-`create_pty_backend()` checks pexpect availability first; if unavailable, falls back to tmux.
+`create_pty_backend()` checks pexpect availability first; if unavailable, falls back to tmux. The
+single `BaseTerminalManager` (two-axis `shell_info` × `visibility`) auto-detects available backends
+through the factory.
 
 ### Windows: WinptyConsoleWindowBackend + WinptyHiddenBackend
 
 Two Windows backends: visible (OS console window, human can observe/intervene) and hidden (headless, no visible window).
-`WindowsTerminalManager` selects the appropriate backend.
-`create_pty_backend()` on Windows uses `WinptyHiddenBackend` by default
-(legacy aliases `VisibleWindowsPtyBackend` / `WindowsHiddenPtyBackend` are
-re-exported in `backends/__init__.py` for the migration window).
+`create_pty_backend()` on Windows uses `WinptyHiddenBackend` by default, selecting the transport from
+the platform + `visibility` axis (legacy aliases `VisibleWindowsPtyBackend` / `WindowsHiddenPtyBackend`
+are re-exported in `backends/__init__.py` for the migration window).
 
 ### Fallback: SubprocessExecutor
 
@@ -328,8 +331,8 @@ terminal:
 
 | File | Purpose |
 |------|---------|
-| `manager.py` | Session registry, default terminal, LRU, persistence |
-| `managers.py` | `WindowsTerminalManager`, `LinuxTerminalManager` — platform-specific manager variants with auto-detection |
+| `manager.py` | Deprecated alias — `TerminalManager = BaseTerminalManager` (re-exported for the migration window) |
+| `managers.py` | `BaseTerminalManager` (single two-axis impl: shell_info × visibility, with folded flag-guarded LRU / persistence / memory-pressure) + `create_terminal_manager` factory |
 | `session.py` | Per-tab execution, timeout XML, cleanup, history |
 | `tool.py` | LLM terminal management tool (open/close/list/select/interrupt) |
 | `process_tool.py` | Process management tool — write/submit/send_keys/kill running commands |

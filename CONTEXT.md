@@ -84,6 +84,24 @@ _Avoid_: threshold (ambiguous — say trigger ratio or keep ratio)
 The hard upper bound, as a fraction of `max_tokens`, on how much the kept region may weigh after compression. The boundary accumulates tokens from the tail until this cap; it never exceeds it.
 _Avoid_: retention ratio, keep target (target implies soft; this is a hard cap)
 
+**CommandTool** (`bash` tool, `modex_agent.tools.terminal.command_tool.CommandTool`):
+The agent-facing command execution tool for persistent PTY sessions. Orchestrates `Session.primitives` + `poll_until_settled` + `Session.apply_outcome(result)` per ADR-0010 Decision 7 — Session owns state, the Tool owns orchestration. Returns XML `<command_result>` with status (completed / executing / timed_out / paginated / waiting_input / stuck). Falls back to `SubprocessTool` when terminal backends are unavailable. _Avoid_: ShellTool, bash (informal)
+
+**ProcessTool** (`process` tool, `modex_agent.tools.terminal.process_tool.ProcessTool`):
+The agent-facing tool for interacting with a running process inside a persistent PTY session (write / submit / send_keys / paste / interrupt / kill). Same orchestration pattern as CommandTool: `Session.primitives` + `poll_until_settled` + `Session.apply_outcome(result)`. Never used by subagents. _Avoid_: terminal (too generic)
+
+**Shell Family** (`ShellFamily`):
+The behavioural class of a shell — bash / zsh / sh / cmd / powershell — embodied by `ShellInfo(family, path, platform)`. ADR-0010 elevates Shell Family to one of two **upstream-visible design axes** for the terminal system (the other is Terminal Visibility). OS is NOT a design axis: it is an implementation fork collapsed entirely into the `TerminalBackend` subclasses. _Avoid_: shell type, terminal type (too generic)
+
+**Terminal Visibility** (`TerminalVisibility` enum, `VISIBLE` / `HIDDEN`):
+Whether a human can observe or intervene in the terminal session's window. ADR-0010 splits visibility expressions by mechanism:
+- *Structural* visibility difference (different I/O architecture) → subclass split (`WinptyHiddenBackend` vs `WinptyConsoleWindowBackend`: in-process winpty vs external host process + TCP socket bridge).
+- *Switch* visibility difference (one `new_session(attach=…)` flag) → single class with `visibility=` parameter (`TmuxBackend`).
+Unsupported (transport, visibility) combinations are rejected at the factory (`UnsupportedVisibilityForTransport`) rather than silently falling back. _Avoid_: visible mode, window mode (too vague)
+
+**TerminalTool** (`terminal` tool, `modex_agent.tools.terminal.tool.TerminalTool`):
+The agent-facing tab-management tool (open / close / list / select / history / interrupt). It is the *only* consumer of `TerminalSession.detect_interference` (which reads the `_expected_state` slot set by `set_expected_state(...)`); per ADR-0010 Decision 7, this interference-detection slot is orthogonal to the three slots (`_busy_after_timeout` / `_last_status` / `_command_started_at`) owned by `apply_outcome(result)`, and is therefore preserved when apply_outcome is introduced. _Avoid_: tab manager (informal)
+
 ## Relationships
 
 - A **Workspace** owns one or more **Pool Instances**; pool instances are not shared across workspaces.
@@ -92,6 +110,7 @@ _Avoid_: retention ratio, keep target (target implies soft; this is a hard cap)
 - **Assembly** turns `AppConfig` (root) into nested `PoolConfig` instances, then into `Pool` runtime objects held by a `Workspace`.
 - A **ReAct Agent** runs on a **Graph**; the graph is the execution substrate, the ReAct agent is one configuration of it (4-node loop).
 - A **GraphInterrupt** is raised by a `Node[R]`; the engine propagates it, the pipeline catches it for approval, and re-enters the graph after persistence.
+- **Terminal Visibility** is the second upstream-visible design axis of the terminal system (alongside **Shell Family**). The OS axis does NOT exist at this level: Windows-vs-Linux is an implementation fork realised inside `TerminalBackend` subclasses. **Two invariants**: (a) the manager layer (`BaseTerminalManager`) is forked ONLY by (Shell Family, Visibility), never by OS or by capability — capabilities are folded inward as default-off flags per ADR-0010 Decision 8; (b) `_expected_state` (set by `set_expected_state(...)`, consumed by `detect_interference` on visible sessions via `TerminalTool`) and the trio `_busy_after_timeout` / `_last_status` / `_command_started_at` (updated by `apply_outcome(...)`) are **two orthogonal state slots** in `TerminalSession` and coexist under ADR-0010 Decision 7 — neither subsumes the other.
 
 ## Flagged ambiguities
 

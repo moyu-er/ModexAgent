@@ -11,7 +11,7 @@ if not sys.platform.startswith("win"):
 
 from modex_agent.tools.terminal.backends.visible_windows import WinptyConsoleWindowBackend
 from modex_agent.tools.terminal.backends.windows_hidden import WinptyHiddenBackend
-from modex_agent.tools.terminal.backends.winpty import WinptyBackend
+from modex_agent.tools.terminal.backends.winpty_transport import WinptyBackend
 
 
 def test_winpty_console_window_is_winpty_transport() -> None:
