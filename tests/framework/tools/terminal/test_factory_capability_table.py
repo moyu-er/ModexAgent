@@ -41,3 +41,23 @@ class TestFactoryCapabilityTable:
         with pytest.raises(UnsupportedVisibilityForTransport) as exc_info:
             create_pty_backend(visibility=TerminalVisibility.VISIBLE)
         assert "pexpect" in str(exc_info.value).lower() or "visible" in str(exc_info.value).lower()
+
+    def test_visible_on_linux_produces_tmux_with_visible_flag(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import sys
+
+        pytest.importorskip("libtmux")
+        monkeypatch.setattr(sys, "platform", "linux")
+        # We already passed `importorskip` above, so libtmux IS importable; the
+        # patched return short-circuits the factory's own probe in case its
+        # probe logic ever drifts from a direct `import libtmux`.
+        from modex_agent.tools.terminal.backends import factory
+
+        monkeypatch.setattr(factory, "_is_libtmux_available", lambda: True)
+
+        backend = create_pty_backend(visibility=TerminalVisibility.VISIBLE)
+        assert backend.visibility == TerminalVisibility.VISIBLE
+        from modex_agent.tools.terminal.backends.tmux_pty import TmuxPtyBackend
+
+        assert isinstance(backend, TmuxPtyBackend)

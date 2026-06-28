@@ -49,10 +49,12 @@ def _create_pexpect_backend() -> TerminalBackend:
     return PexpectPtyBackend()
 
 
-def _create_tmux_backend() -> TerminalBackend:
+def _create_tmux_backend(
+    visibility: TerminalVisibility = TerminalVisibility.HIDDEN,
+) -> TerminalBackend:
     from .tmux_pty import TmuxPtyBackend
 
-    return TmuxPtyBackend()
+    return TmuxPtyBackend(visibility=visibility)
 
 
 def _create_winpty_hidden_backend() -> TerminalBackend:
@@ -110,13 +112,13 @@ def create_pty_backend(
                 "No transport available for VISIBLE on this platform: "
                 "libtmux is required (pexpect cannot serve VISIBLE — see ADR-0010 Decision 5)."
             )
-        return _create_tmux_backend()
+        return _create_tmux_backend(visibility=TerminalVisibility.VISIBLE)
 
     # HIDDEN on Linux/macOS
     if _is_pexpect_available():
         return _create_pexpect_backend()
     if _is_libtmux_available():
-        return _create_tmux_backend()
+        return _create_tmux_backend(visibility=TerminalVisibility.HIDDEN)
     raise UnsupportedVisibilityForTransport(
         "No transport available for HIDDEN on this platform: "
         "install pexpect (`pip install pexpect`) or libtmux (`pip install libtmux`)."
