@@ -16,11 +16,12 @@ from modex_agent.tools.terminal.results import SlidingOutputBuffer, TerminalRead
 from modex_agent.tools.terminal.types import Platform, TerminalVisibility, _family_from_path
 
 from .base import TerminalBackend, extract_current_segment_from_buffer
+from .winpty import WinptyBackend
 
 logger = logging.getLogger(__name__)
 
 
-class WindowsHiddenPtyBackend(TerminalBackend):
+class WindowsHiddenPtyBackend(WinptyBackend):
     """Windows hidden terminal using pywinpty in-process.
 
     The PTY has no visible console window.  This is simpler than the visible

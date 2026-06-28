@@ -23,12 +23,13 @@ from modex_agent.tools.terminal.results import SlidingOutputBuffer, TerminalRead
 from modex_agent.tools.terminal.types import Platform, TerminalVisibility
 
 from .base import TerminalBackend, extract_current_segment_from_buffer
+from .winpty import WinptyBackend
 
 logger = logging.getLogger(__name__)
 _READ_TIMEOUT = 0.5
 
 
-class VisibleWindowsPtyBackend(TerminalBackend):
+class VisibleWindowsPtyBackend(WinptyBackend):
     """Windows visible terminal using a subprocess with CREATE_NEW_CONSOLE.
 
     The helper process owns the visible console window and a PtyProcess.
