@@ -31,8 +31,18 @@
 11. Keep per-turn state in `runtime.state`. Do not store mutable turn state in
     instance attributes or `ctx.metadata`. Use typed `ReActTurnState` and
     `TurnCustomKey` for custom keys.
-12. Use frozen dataclasses for config and value objects. Runtime objects may
-    hold state and connections; config objects must be immutable.
+12. **Config and structured value objects use Pydantic `BaseModel` with
+    `frozen=True`.** The default schema for any structured object that
+    crosses a module boundary — including all config in `ioc/configs/`,
+    cross-module messages, memory records, runtime snapshots, hook payloads,
+    and approval payloads — is `pydantic.BaseModel` configured with
+    `model_config = ConfigDict(frozen=True, extra="forbid")`. This gives
+    immutable semantics plus runtime field validation and schema
+    round-tripping.
+    - Runtime objects that hold state and connections are NOT covered by
+      this rule — they remain regular classes with mutable attributes.
+    - Plain frozen `@dataclass` is allowed only as the leaf value-object
+      escape hatch described in `rules/type-safety.md` rule 11.
 13. Use `GraphInterrupt` for approval suspension. Never catch and swallow it.
     Approval state belongs in `ApprovalTransaction` inside `ReActTurnState`.
 14. Centralize domain constants. `MessageRole` lives in
