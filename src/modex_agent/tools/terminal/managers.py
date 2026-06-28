@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from modex_agent.tools.terminal.backends.base import TerminalBackend
@@ -12,6 +15,7 @@ from modex_agent.tools.terminal.backends.visible_windows import WinptyConsoleWin
 from modex_agent.tools.terminal.backends.windows_hidden import WinptyHiddenBackend
 from modex_agent.tools.terminal.config import TerminalRuntimeConfig
 from modex_agent.tools.terminal.session import TerminalInfo, TerminalSession
+from modex_agent.tools.terminal.state_store import JsonTerminalStateStore
 from modex_agent.tools.terminal.types import (
     Platform,
     ShellFamily,
@@ -19,6 +23,14 @@ from modex_agent.tools.terminal.types import (
     TerminalVisibility,
     detect_platform_shell,
 )
+
+_DEFAULT_SHELL_INFO = ShellInfo(
+    family=ShellFamily.BASH,
+    path="/bin/bash",
+    platform=Platform.LINUX,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class TerminalManagerBase(ABC):
@@ -87,6 +99,9 @@ class BaseTerminalManager(TerminalManagerBase):
         backend_factory: Callable[[], Any],
         config: TerminalRuntimeConfig | None = None,
         default_cwd: str | None = None,
+        max_terminals: int | None = None,
+        storage_dir: Path | None = None,
+        enable_memory_pressure: bool = False,
     ) -> None:
         self.platform = shell_info.platform
         self.shell_info = shell_info
@@ -96,12 +111,24 @@ class BaseTerminalManager(TerminalManagerBase):
         self._default_cwd: str | None = default_cwd
         self._sessions: dict[str, TerminalSession] = {}
         self._default_name: str | None = None
+        # Capability flags — all default-off → lean form behaviour-equivalent
+        self._max_terminals: int | None = max_terminals
+        self._storage_dir: Path | None = storage_dir
+        self._enable_memory_pressure: bool = enable_memory_pressure
+        # Lazily-created state store (only when storage_dir set)
+        self._store: JsonTerminalStateStore | None = (
+            JsonTerminalStateStore(storage_dir) if storage_dir is not None else None
+        )
 
     async def get_or_create(self, name: str | None, cwd: str | None = None) -> TerminalSession:
         session_name = name or "default"
         session = self._sessions.get(session_name)
         if session is not None:
+            session.last_active = time.time()
             return session
+        # LRU eviction — only when capacity is configured
+        if self._max_terminals is not None and len(self._sessions) >= self._max_terminals:
+            await self._evict_oldest()
         # Fall back to the workspace default cwd (e.g. the workspace target)
         # so a terminal-enabled pool opens in the workspace, not process CWD.
         effective_cwd = cwd if cwd is not None else self._default_cwd
@@ -118,6 +145,7 @@ class BaseTerminalManager(TerminalManagerBase):
         # auto-select it"). Without this, opening a second tab leaves the
         # default on the old tab and subsequent commands run there.
         self._default_name = session_name
+        await self._check_memory_pressure()
         return session
 
     def get(self, name: str) -> TerminalSession | None:
@@ -148,6 +176,91 @@ class BaseTerminalManager(TerminalManagerBase):
         """Return just the session names."""
         return list(self._sessions.keys())
 
+    async def _evict_oldest(self) -> None:
+        """Close the least recently used session (only called when LRU is enabled)."""
+        if not self._sessions:
+            return
+        oldest_name = min(self._sessions, key=lambda n: self._sessions[n].last_active)
+        logger.info("LRU evicting terminal: %s", oldest_name)
+        await self.close(oldest_name)
+
+    async def _check_memory_pressure(self) -> None:
+        """Clear buffers of largest non-default sessions when total exceeds threshold.
+
+        Per ADR-0010 Decision 8: folded inward from the legacy TerminalManager.
+        No-op when ``self._enable_memory_pressure`` is False.
+        """
+        if not self._enable_memory_pressure:
+            return
+
+        total_buffer = 0
+        session_buffers: list[tuple[str, int]] = []
+        for name, session in self._sessions.items():
+            buf = session._backend._output_buffer
+            if buf is not None:
+                size = buf.total_chars
+                total_buffer += size
+                session_buffers.append((name, size))
+
+        if total_buffer <= self.config.max_total_buffer_chars:
+            return
+
+        session_buffers.sort(key=lambda x: x[1], reverse=True)
+        for name, size in session_buffers:
+            if name == self._default_name:
+                continue
+            if total_buffer <= self.config.max_total_buffer_chars:
+                break
+            buf = self._sessions[name]._backend._output_buffer
+            if buf is not None:
+                buf.clear()
+                logger.warning(
+                    "Memory pressure: cleared buffer for '%s' (was %d chars)", name, size
+                )
+                total_buffer -= size
+
+    async def save_state(self) -> None:
+        """Persist session metadata and history to JSON.
+
+        No-op when storage_dir is None (lean form, per ADR-0010 Decision 8).
+        """
+        if self._store is None:
+            return
+        sessions_data = [session.get_state() for session in self._sessions.values()]
+        state = {
+            "version": 1,
+            "default_terminal": self._default_name,
+            "sessions": sessions_data,
+        }
+        self._store.save(state)
+
+    async def load_state(self) -> None:
+        """Restore session metadata from JSON. Sessions are lazily restarted on use.
+
+        No-op when storage_dir is None (lean form, per ADR-0010 Decision 8).
+        """
+        if self._store is None:
+            return
+        data = self._store.load()
+        if not data:
+            return
+        for sess_data in data.get("sessions", []):
+            name = sess_data["name"]
+            backend = self._backend_factory()
+            session = TerminalSession(
+                name=name,
+                backend=backend,
+                shell_info=self.shell_info,
+                cwd=sess_data.get("cwd"),
+                env=sess_data.get("env"),
+            )
+            session.restore_state(sess_data)
+            self._sessions[name] = session
+        self._default_name = data.get("default_terminal")
+        if self._default_name not in self._sessions:
+            self._default_name = next(iter(self._sessions), None)
+        logger.info("Loaded %d terminal sessions from state", len(self._sessions))
+
     async def select_default(self, name: str) -> None:
         if name not in self._sessions:
             raise ValueError(f"Terminal '{name}' does not exist")
@@ -157,6 +270,7 @@ class BaseTerminalManager(TerminalManagerBase):
         result: list[TerminalInfo] = []
         for name, session in self._sessions.items():
             result.append(await session.to_info(is_default=name == self._default_name))
+        await self._check_memory_pressure()
         return result
 
     async def close(self, name: str) -> bool:
