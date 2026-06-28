@@ -225,6 +225,18 @@ export default {
           dark: "#6B7280",
         },
 
+        // 审批严重级别(白天 = 深色可读文字 / 黑夜 = 柔和低饱和文字)
+        // 约定:-light 用于浅色模式文字,-dark 用于深色模式文字。
+        // 取色刻意降饱和,避免 dangerous/hardline 在两种模式下刺眼。
+        severity: {
+          normal: { light: "#475569", dark: "#94A3B8" }, // slate
+          sensitive: { light: "#B45309", dark: "#FCD34D" }, // amber
+          dangerous: { light: "#BE3A2F", dark: "#F0A8A2" }, // muted red / soft rose
+          hardline: { light: "#9F1239", dark: "#FDA4AF" }, // deep rose
+        },
+        approve: { light: "#047857", dark: "#6EE7B7" }, // emerald
+        deny: { light: "#B42318", dark: "#FCA5A5" }, // calm red / soft rose
+
         // 边框分割线
         divider: {
           light: "#E5E7EB",

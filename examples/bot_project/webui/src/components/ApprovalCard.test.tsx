@@ -24,24 +24,40 @@ const longView: ApprovalRequestView = {
 };
 
 describe("ApprovalCard", () => {
-  it("renders tool name + tier badge + truncated args by default", () => {
+  it("renders tool name + tier badge + preview of args", () => {
     render(<ApprovalCard view={view} onApprove={vi.fn()} onDeny={vi.fn()} />);
     expect(screen.getByText("write_file")).toBeTruthy();
     expect(screen.getByText("dangerous")).toBeTruthy();
-    // mono args block shows the serialized arguments
+    // Short args fit the preview, so they are visible without expanding.
     expect(screen.getByText(/tmp\/x/)).toBeTruthy();
+    // No chevron when everything already fits in the preview.
+    expect(screen.queryByRole("button", { name: /expand arguments/i })).toBeNull();
   });
 
-  it("truncates long args by default and expands to full on toggle", () => {
-    render(<ApprovalCard view={longView} onApprove={vi.fn()} onDeny={vi.fn()} />);
+  it("previews clamped args and toggles the clamp on expand", () => {
+    const { container } = render(
+      <ApprovalCard view={longView} onApprove={vi.fn()} onDeny={vi.fn()} />,
+    );
+    const pre = container.querySelector("pre") as HTMLPreElement;
     const toggle = screen.getByRole("button", { name: /expand arguments/i });
-    // Collapsed state: a preview with ellipsis is shown, not the full blob.
-    expect(screen.getByText(/…$/)).toBeTruthy();
-    expect(screen.queryByText(/y{200}/)).toBeNull();
+
+    // Collapsed: the full JSON is in the DOM but visually clamped to 3 lines.
+    expect(pre.textContent).toMatch(/y{200}/);
+    expect(pre.className).toContain("line-clamp-3");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
 
     fireEvent.click(toggle);
-    // Expanded state: full content (the 200-char run of "y") is now visible.
-    expect(screen.getByText(/y{200}/)).toBeTruthy();
+    // Expanded: the clamp is removed so the full content is shown.
+    expect(pre.className).not.toContain("line-clamp-3");
+    expect(
+      screen
+        .getByRole("button", { name: /collapse arguments/i })
+        .getAttribute("aria-expanded"),
+    ).toBe("true");
+
+    // Toggling again re-applies the clamp.
+    fireEvent.click(screen.getByRole("button", { name: /collapse arguments/i }));
+    expect(pre.className).toContain("line-clamp-3");
   });
 
   it("calls onApprove with tool_call_id", () => {

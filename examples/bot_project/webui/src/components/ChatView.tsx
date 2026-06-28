@@ -155,7 +155,7 @@ export const ChatView: FC<ChatViewProps> = ({
                 type="button"
                 disabled={isApprovingBatch}
                 onClick={onApproveAll}
-                className="rounded border border-success-light px-3 py-1 text-sm font-medium text-success-dark transition-colors hover:bg-success-light/10 disabled:cursor-not-allowed disabled:opacity-50 dark:border-success-dark dark:text-success-light dark:hover:bg-success-dark/10"
+                className="rounded border border-approve-light/50 px-3 py-1 text-sm font-medium text-approve-light transition-colors hover:bg-approve-light/10 disabled:cursor-not-allowed disabled:opacity-50 dark:border-approve-dark/50 dark:text-approve-dark dark:hover:bg-approve-dark/10"
               >
                 Approve All
               </button>
