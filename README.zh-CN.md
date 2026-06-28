@@ -210,7 +210,7 @@ uv pip install -e ".[all,dev]"
 
 | 文档 | 说明 |
 | --- | --- |
-| [ADR 索引](docs/adr/) | 架构决策记录（pool-only 装配、src-layout 改名、依赖树、facade-only、保留真实 seam） |
+| [ADR 索引](docs/adr/) | 架构决策记录（pool-only 装配、src-layout 改名、依赖树、facade-only、保留真实 seam、可中断审批 + 批原子性、基于 token 的压缩、双轴终端、认领/透传 input pipeline、附件系统） |
 | [CONTEXT.md](CONTEXT.md) | 领域术语表——Pool、Workspace、ReAct Agent、Graph、GraphInterrupt、Assembly 等 |
 | [Bot 示例](examples/bot_project/README.md) | bot_project 详解（QQ Bot + WebUI、多 Agent 配置） |
 | 各模块 `AGENTS.md` | `src/modex_agent/` 下每个包都附带 `AGENTS.md`，描述其职责与关键文件 |

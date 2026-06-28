@@ -45,6 +45,5 @@
       escape hatch described in `rules/type-safety.md` rule 11.
 13. Use `GraphInterrupt` for approval suspension. Never catch and swallow it.
     Approval state belongs in `ApprovalTransaction` inside `ReActTurnState`.
-14. Centralize domain constants. `MessageRole` lives in
-    `framework.core.types.MessageRole`; enums and typed constants replace raw
+14. Centralize domain constants, enums and typed constants replace raw
     strings.

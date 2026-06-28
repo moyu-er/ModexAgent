@@ -210,7 +210,7 @@ uv pip install -e ".[all,dev]"
 
 | Document | Description |
 | --- | --- |
-| [ADR index](docs/adr/) | Architecture Decision Records (pool-only assembly, src-layout rename, dependency tree, facade-only, retain real seams) |
+| [ADR index](docs/adr/) | Architecture Decision Records (pool-only assembly, src-layout rename, dependency tree, facade-only, retain real seams, interruptible approval + batch atomicity, token-based compression, two-axis terminal, claim/pass-through input pipeline, attachment system) |
 | [CONTEXT.md](CONTEXT.md) | Domain glossary — Pool, Workspace, ReAct Agent, Graph, GraphInterrupt, Assembly, etc. |
 | [Bot example](examples/bot_project/README.md) | bot_project walkthrough (QQ Bot + WebUI, multi-agent setup, configuration) |
 | Per-module `AGENTS.md` | Every package under `src/modex_agent/` ships an `AGENTS.md` describing its responsibility and key files |

@@ -102,6 +102,22 @@ Unsupported (transport, visibility) combinations are rejected at the factory (`U
 **TerminalTool** (`terminal` tool, `modex_agent.tools.terminal.tool.TerminalTool`):
 The agent-facing tab-management tool (open / close / list / select / history / interrupt). It is the *only* consumer of `TerminalSession.detect_interference` (which reads the `_expected_state` slot set by `set_expected_state(...)`); per ADR-0010 Decision 7, this interference-detection slot is orthogonal to the three slots (`_busy_after_timeout` / `_last_status` / `_command_started_at`) owned by `apply_outcome(result)`, and is therefore preserved when apply_outcome is introduced. _Avoid_: tab manager (informal)
 
+**Attachment**:
+A file bound to a message in a conversation, identified by an opaque id, rendered direction-agnostically but stored asymmetrically. The system's purpose is conversation-level file awareness + tool-based inspection by the agent, plus symmetric IM/WebUI download — not file transfer in isolation. `kind` (image / extractable-document / other) is classified once at ingest from magic-byte MIME. Two inspection mechanisms coexist: mechanism B (tool-based — the agent sees only a path reference and a tool's text result; works with any model; the v1 path) and mechanism A (native multimodal — file bytes inline as a model content block, gated on `ModelCapabilities`; deferred). The injected agent reference carries `name + mime + size + absolute_path` (no download id).
+_Avoid_: upload, media file, blob (use "Attachment" for the bound-to-message concept)
+
+**MediaStore**:
+The framework ABC that persists **inbound** attachment bytes, swappable to object storage (S3-class) later behind one ABC, with a `LocalFileMediaStore` now. Routed per-(workspace,pool), mirroring `WorkspaceScopedTranscriptStore.store_for` — a service-singleton with unified workspace+pool routing, not a parallel mechanism. `save`/`read` are stream/path-oriented (never buffer the largest configured file into memory). Only inbound bytes flow through it; **outbound** reads the workspace filesystem directly, in place, uncopied. Enforces the storage gate (single-file cap, per-session bytes budget with oldest-by-mtime deletion, executable deny-list).
+_Avoid_: media service, file store (use "MediaStore" for the framework ABC and its inbound persistence contract)
+
+**ModelCapabilities**:
+A frozen value object on `LLMConfig` exposing the modalities a provider/model can natively consume — a set of `Modality` enum values (`TEXT` always present; `IMAGE` / `VIDEO` / `AUDIO` default-off, extensible). It is the switch the dormant provider-side renderer binds to: when a modality is on, matching attachments that pass the **model-facing gate** (type allow-list + strict inline size — image ≤ 20 MB, text/doc ≤ 10 MB) render into model content blocks; on model rejection they strip back to path placeholders. v1 carries it as an unused placeholder (TEXT only); nothing reads it yet. Independent of the storage gate.
+_Avoid_: vision config, modality flag (use "ModelCapabilities" for the provider/model capability set)
+
+**Attachment Locator**:
+The `locator` field on an Attachment (`media` | `workspace`) — the single internal switch selecting the storage backend and download read path (`media` → `MediaStore.read`, `workspace` → filesystem read at the literal stored path). It is an internal read-dispatch detail, invisible to the frontend. It also selects path semantics: `media` paths are relative to the workspace root (a location we control); `workspace` paths are the literal absolute path the agent provided. The download + degradation contract is symmetric across both (file present → serve, file gone → fallback icon).
+_Avoid_: storage type, source field (use "Attachment Locator" for the media/workspace switch)
+
 ## Relationships
 
 - A **Workspace** owns one or more **Pool Instances**; pool instances are not shared across workspaces.

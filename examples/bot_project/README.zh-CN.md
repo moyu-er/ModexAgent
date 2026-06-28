@@ -35,7 +35,7 @@
 | **技能系统** | 从 Markdown 文件动态构建系统提示词 |
 | **插件系统** | 动态扩展工具、记忆提供者和技能来源 |
 | **Slash 指令** | `/approve`、`/deny`、`/continue`、`/cd`、`/pool名称`、`/stop` 及技能触发指令 |
-| **Input Pipeline** | 7 阶段统一消息处理流水线——IM 与 WebUI 共用，保证控制指令、技能解析、持久化、入队行为一致 |
+| **Input Pipeline** | 统一消息处理流水线——IM 与 WebUI 共用；阶段「认领或透传」，未知 `/命令` 由唯一终结阶段统一拒绝；IM 10 阶段 / WebUI 8 阶段 |
 | **Pool 运行时** | 多 Agent 常驻池，通过 `MessageBroker` + `AgentMessageBus` 路由消息 |
 | **自主部署** | Agent 通过 SSH 连接远程服务器，拉取代码并重启自身服务 |
 
@@ -54,9 +54,9 @@
          │  产生 seed UserInputEnvelope
          ▼
 ┌──────────────────────────────────────────────────────┐
-│              Input Pipeline（7 阶段）                  │
-│  S4 SetChannel → S5 ResolvePool → S6 SkillParse      │
-│  → S7 PersistUserMessage → S8 Enqueue                │
+│           Input Pipeline（WebUI，8 阶段）             │
+│  SetChannel → ResolveWorkspace → ResolvePool →       │
+│  Approval → Skill → Unsupported → Persist → Enqueue  │
 └────────┬─────────────────────────────────────────────┘
          │  已解析 session + InputMessage
          ▼
@@ -91,9 +91,12 @@ QQ 用户 / 群聊                    浏览器 (WebUI)
          │                                │
          ▼                                ▼
 ┌──────────────────────────────────────────────────────┐
-│              Input Pipeline（7 阶段收敛）              │
-│  IM: S4→S2→S3→S5→S6→S7→S8                          │
-│  WebUI: S4→S5→S6→S7→S8                              │
+│           Input Pipeline（认领 / 透传）              │
+│  IM:    SetChannel→ResolveWs→EnvCtrl→SessCtrl→       │
+│         ResolvePool→Approval→Skill→Unsupported→      │
+│         Persist→Enqueue                              │
+│  WebUI: SetChannel→ResolveWs→ResolvePool→Approval→   │
+│         Skill→Unsupported→Persist→Enqueue            │
 └────────┬─────────────────────────────────────────────┘
          │
          ▼
@@ -298,17 +301,20 @@ python bot_service.py
 
 ### Input Pipeline（统一消息处理流水线）
 
-所有用户消息——来自 IM（QQ）和 WebUI——在到达 Agent 之前经过共享的 7 阶段流水线处理。这保证了跨通道的控制指令、技能解析、Pool 路由、持久化和入队行为完全一致：
+所有用户消息——来自 IM（QQ）和 WebUI——在到达 Agent 之前经过共享流水线。阶段遵循**认领或透传**：识别该输入的阶段负责处理（控制指令直接终结，技能/审批认领后继续），不识别的阶段原样放行；唯一的终结阶段 `UnsupportedCommand` 拒绝任何无人认领的 `/命令` 并给出统一提示——命令识别与拒绝集中在一处，不再散落各阶段。IM 流水线 10 阶段，WebUI 8 阶段（无环境/会话控制，浏览器有等价 GUI），顺序如下：
 
-| 阶段 | 名称 | IM | WebUI | 功能 |
-|------|------|:--:|:-----:|------|
-| S2 | EnvironmentControl | ✅ | — | `/cd`、`/pool`、`/exit`、`/pwd` |
-| S3 | SessionControl | ✅ | — | `/stop` 取消当前轮次 |
-| S4 | SetChannel | ✅ | ✅ | 标记会话来源通道 |
-| S5 | ResolvePool | ✅ | ✅ | 解析 Pool + Agent，持久化 session→pool |
-| S6 | SkillParse | ✅ | ✅ | 校验 `/skillName`，转换为 XML |
-| S7 | PersistUserMessage | ✅ | ✅ | 写入 transcript store（唯一持久化路径） |
-| S8 | Enqueue | ✅ | ✅ | 构建 InputMessage，入队到 Agent |
+| 阶段 | IM | WebUI | 功能 |
+|------|:--:|:-----:|------|
+| SetChannel | ✅ | ✅ | 标记会话来源通道（最先运行，使提示回到正确通道适配器） |
+| ResolveWorkspace | ✅ | ✅ | 解析并锚定当前活跃 workspace 根 |
+| EnvironmentControl | ✅ | — | `/cd`、`/pool`、`/exit`、`/pwd` |
+| SessionControl | ✅ | — | `/stop` 取消当前轮次 |
+| ResolvePool | ✅ | ✅ | 解析 Pool + Agent，持久化 session→pool |
+| Approval | ✅ | ✅ | 认领 `/approve`·`/deny`，转成结构化审批决策 |
+| SkillParse | ✅ | ✅ | 校验 `/skillName`，转换为 XML；未知则透传 |
+| UnsupportedCommand | ✅ | ✅ | 终结阶段：拒绝任何无人认领的 `/命令`，统一提示 |
+| PersistUserMessage | ✅ | ✅ | 写入 transcript store（唯一持久化路径） |
+| Enqueue | ✅ | ✅ | 构建 InputMessage，入队到 Agent |
 
 ### 多级记忆系统
 
@@ -386,7 +392,7 @@ skills/
 
 ### Slash 指令
 
-指令由 Input Pipeline 处理（S2/S3 处理控制指令，S6 处理技能指令），之后才到达 Agent：
+指令在到达 Agent 前由 Input Pipeline 解析——`EnvironmentControl`/`SessionControl` 认领 IM 控制指令，`Approval` 认领 `/approve`·`/deny`，`SkillParse` 认领 `/skillName`，终结的 `UnsupportedCommand` 阶段拒绝其余未认领指令：
 
 | 指令 | 说明 |
 |------|------|

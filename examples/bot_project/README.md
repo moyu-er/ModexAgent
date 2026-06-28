@@ -53,9 +53,9 @@ Browser (React)
          │  seed UserInputEnvelope
          ▼
 ┌──────────────────────────────────────────────────────┐
-│              Input Pipeline (7-stage)                 │
-│  S4 SetChannel → S5 ResolvePool → S6 SkillParse      │
-│  → S7 PersistUserMessage → S8 Enqueue                │
+│              Input Pipeline (WebUI, 8 stages)        │
+│  SetChannel → ResolveWorkspace → ResolvePool →       │
+│  Approval → Skill → Unsupported → Persist → Enqueue  │
 └────────┬─────────────────────────────────────────────┘
          │  resolved session + InputMessage
          ▼
@@ -90,9 +90,12 @@ QQ User / Group Chat                Browser (WebUI)
          │                                │
          ▼                                ▼
 ┌──────────────────────────────────────────────────────┐
-│              Input Pipeline (7-stage convergence)     │
-│  IM: S4→S2→S3→S5→S6→S7→S8                          │
-│  WebUI: S4→S5→S6→S7→S8                              │
+│         Input Pipeline (claim / pass-through)        │
+│  IM:    SetChannel→ResolveWs→EnvCtrl→SessCtrl→       │
+│         ResolvePool→Approval→Skill→Unsupported→      │
+│         Persist→Enqueue                              │
+│  WebUI: SetChannel→ResolveWs→ResolvePool→Approval→   │
+│         Skill→Unsupported→Persist→Enqueue            │
 └────────┬─────────────────────────────────────────────┘
          │
          ▼
@@ -297,17 +300,20 @@ The built-in React frontend provides:
 
 ### Input Pipeline (Converged Message Processing)
 
-All user messages — from IM (QQ) and WebUI — flow through a shared 7-stage pipeline before reaching the agent. This convergence guarantees consistent handling of control commands, skill parsing, pool resolution, persistence, and enqueuing across every channel:
+All user messages — from IM (QQ) and WebUI — flow through a shared pipeline before reaching the agent. Stages **claim or pass through**: a stage that recognises an input handles it (control commands terminate; skills/approval claim-and-continue), and a stage that doesn't recognise it leaves the envelope untouched. A single terminal `UnsupportedCommand` stage rejects any slash command no stage claimed, with one generic notice — so command recognition and rejection live in one place, not scattered across stages. The IM pipeline runs 10 stages, WebUI 8 (no environment/session control — the browser has GUI equivalents), in this order:
 
-| Stage | Name | IM | WebUI | Purpose |
-|-------|------|:--:|:-----:|---------|
-| S2 | EnvironmentControl | ✅ | — | `/cd`, `/pool`, `/exit`, `/pwd` |
-| S3 | SessionControl | ✅ | — | `/stop` turn cancellation |
-| S4 | SetChannel | ✅ | ✅ | Tag conversation with originating channel |
-| S5 | ResolvePool | ✅ | ✅ | Resolve pool + agent, persist session→pool |
-| S6 | SkillParse | ✅ | ✅ | Validate `/skillName`, convert to XML |
-| S7 | PersistUserMessage | ✅ | ✅ | Write to transcript store (single persistence path) |
-| S8 | Enqueue | ✅ | ✅ | Build InputMessage, enqueue to agent |
+| Stage | IM | WebUI | Purpose |
+|-------|:--:|:-----:|---------|
+| SetChannel | ✅ | ✅ | Tag conversation with originating channel (runs first, so notices route to the right adapter) |
+| ResolveWorkspace | ✅ | ✅ | Resolve and anchor the live workspace root |
+| EnvironmentControl | ✅ | — | `/cd`, `/pool`, `/exit`, `/pwd` |
+| SessionControl | ✅ | — | `/stop` turn cancellation |
+| ResolvePool | ✅ | ✅ | Resolve pool + agent, persist session→pool |
+| Approval | ✅ | ✅ | Claim `/approve` · `/deny` into a structured approval decision |
+| SkillParse | ✅ | ✅ | Validate `/skillName`, convert to XML; pass through if unknown |
+| UnsupportedCommand | ✅ | ✅ | Terminal stage: reject any unclaimed `/command` with one generic notice |
+| PersistUserMessage | ✅ | ✅ | Write to transcript store (single persistence path) |
+| Enqueue | ✅ | ✅ | Build InputMessage, enqueue to agent |
 
 ### Multi-tier Memory System
 
@@ -386,7 +392,7 @@ skills/
 
 ### Slash Commands
 
-Commands are processed by the input pipeline (S2/S3 for control, S6 for skills) before reaching the agent:
+Commands are resolved inside the input pipeline before reaching the agent — `EnvironmentControl`/`SessionControl` claim IM control commands, `Approval` claims `/approve` · `/deny`, `SkillParse` claims `/skillName`, and the terminal `UnsupportedCommand` stage rejects anything unclaimed:
 
 | Command | Description |
 |---------|-------------|
