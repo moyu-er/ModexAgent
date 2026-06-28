@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import Callable
 
 from modex_agent.tools.terminal.backends.base import TerminalBackend
 from modex_agent.tools.terminal.types import TerminalVisibility
