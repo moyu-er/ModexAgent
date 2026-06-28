@@ -232,6 +232,7 @@ async def create_pool(
         shared_interceptor_chain,
         im_ui, pool_cfg, project_dir,
         command_processor, pool_name,
+        root_provider=root_provider,
     )
 
     bridge = BrokerBridgeService(
@@ -990,6 +991,8 @@ def _wire_main_pipeline(
     project_dir: Path,
     command_processor,
     pool_name: str,
+    *,
+    root_provider: WorkspaceRootProvider | None = None,
 ) -> None:
     """Wire hooks, interceptors, governance, and command processor on main pipeline.
 
@@ -997,6 +1000,12 @@ def _wire_main_pipeline(
     hook is built in bot.workspace.wiring._wire_pool_to_resources from
     the workspace's pool_data, and turn_store is resolved per turn from the
     workspace snapshot.
+
+    ``root_provider`` is the per-workspace working-dir provider (the SAME one
+    the file tools use). It anchors the approval classifier's ``./*`` patterns
+    to the active workspace so in-workspace writes are auto-allowed; without it
+    the classifier would fall back to ``project_dir`` (the bot project), gating
+    every in-workspace write as DANGEROUS.
     """
     main_instance = pool._agents.get(main_agent_name)
     if main_instance is None or main_instance.pipeline is None:
@@ -1026,7 +1035,9 @@ def _wire_main_pipeline(
     from modex_agent.runtime.services import AgentRuntimeServices
 
     main_cfg = next(a for a in pool_cfg.agents if a.role == "main")
-    approval_runtime = build_approval_runtime(main_cfg.approval, project_root=project_dir)
+    approval_runtime = build_approval_runtime(
+        main_cfg.approval, project_root=project_dir, root_provider=root_provider
+    )
     if approval_runtime is not None:
         # Sparse services: hooks/interceptors/governance stay None and are
         # sourced per-field from the builder defaults at turn time (identical

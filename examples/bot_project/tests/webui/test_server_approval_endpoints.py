@@ -374,6 +374,35 @@ async def test_post_approval_runs_input_pipeline_with_decision() -> None:
 
 
 @pytest.mark.asyncio
+async def test_post_approval_stamps_workspace_from_ws_query() -> None:
+    """POST stamps the workspace the snapshot lives under — otherwise
+    ``ResolveWorkspaceStage`` falls back to home, the dispatcher binds the wrong
+    workspace, and ``load_pending`` finds nothing (the "approve does nothing"
+    bug)."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        workspace_root = Path(tmp) / "ws_under_test"
+        workspace_root.mkdir()
+        pipeline = _RecordingInputPipeline()
+        server = _build_server(Path(tmp), input_pipeline=pipeline, input_ctx=object())
+
+        client = TestClient(TestServer(server.app))
+        await client.start_server()
+        try:
+            resp = await client.post(
+                f"/api/sessions/abc123.main/approvals?ws={workspace_root}",
+                json={"tool_call_id": "c1", "action": "allow"},
+            )
+            assert resp.status == 202
+        finally:
+            await client.close()
+
+        envelope = pipeline.received[0]
+        assert envelope.metadata[RoutingMeta.WORKSPACE] == str(workspace_root.resolve())
+
+
+@pytest.mark.asyncio
 async def test_post_approval_rejects_invalid_action() -> None:
     """An unknown action value yields 400, not a server error."""
     import tempfile

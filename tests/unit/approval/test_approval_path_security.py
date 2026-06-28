@@ -28,6 +28,7 @@ from modex_agent.core.types import ToolCall
 from modex_agent.interceptor.builtin.tool_approval import ArgumentMatcher
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.tools.standard.file_tool import EditFileTool, ReadFileTool, WriteFileTool
+from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 
 
 # ---------------------------------------------------------------------------
@@ -232,3 +233,74 @@ def test_classifier_absolute_allowed_paths_end_to_end(tmp_path: Path) -> None:
     )
     assert classifier.classify(inside, _ctx()) == ApprovalTier.NORMAL
     assert classifier.classify(outside, _ctx()) == ApprovalTier.DANGEROUS
+
+
+# ---------------------------------------------------------------------------
+# Workspace-anchored classification: the matcher reads the live
+# WorkspaceRootProvider (the SAME provider the file tools use), so ``./*``
+# follows the active workspace instead of a static bot project_dir.
+# ---------------------------------------------------------------------------
+
+
+class _StubRootProvider(WorkspaceRootProvider):
+    """Live root provider whose value can change to model a /cd switch."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+
+    def current(self) -> Path:
+        return self.root
+
+
+def test_classifier_anchors_to_live_workspace_not_static_project_root(
+    tmp_path: Path,
+) -> None:
+    """``./*`` resolves against the workspace, not a stale bot project_dir."""
+    bot_project_dir = tmp_path / "bot_project"
+    bot_project_dir.mkdir()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    cfg = AgentApprovalConfig(
+        enabled=True,
+        tools={"write": ToolApprovalConfig(allowed_paths=["./*"])},
+    )
+    classifier = TieredToolApprovalClassifier(
+        config=cfg,
+        argument_matcher=ArgumentMatcher(root_provider=_StubRootProvider(workspace)),
+    )
+
+    assert classifier.classify(_call(str(workspace / "f.txt")), _ctx()) == ApprovalTier.NORMAL
+    assert classifier.classify(_call(str(bot_project_dir / "f.txt")), _ctx()) == ApprovalTier.DANGEROUS
+
+
+def test_matcher_follows_workspace_switch(tmp_path: Path) -> None:
+    """A live provider means a workspace switch needs no re-wiring."""
+    ws_a = tmp_path / "a"
+    ws_a.mkdir()
+    ws_b = tmp_path / "b"
+    ws_b.mkdir()
+    provider = _StubRootProvider(ws_a)
+    matcher = ArgumentMatcher(root_provider=provider)
+
+    assert matcher.matches({"path": str(ws_a / "x.txt")}, ["./*"]) is True
+    assert matcher.matches({"path": str(ws_b / "y.txt")}, ["./*"]) is False
+
+    provider.root = ws_b  # user /cd'd into ws_b
+    assert matcher.matches({"path": str(ws_b / "y.txt")}, ["./*"]) is True
+    assert matcher.matches({"path": str(ws_a / "x.txt")}, ["./*"]) is False
+
+
+def test_root_provider_takes_precedence_over_static_project_root(
+    tmp_path: Path,
+) -> None:
+    """When both are supplied, the live provider wins (project_root is a fallback)."""
+    static_root = tmp_path / "static"
+    static_root.mkdir()
+    live_root = tmp_path / "live"
+    live_root.mkdir()
+    matcher = ArgumentMatcher(
+        project_root=static_root, root_provider=_StubRootProvider(live_root)
+    )
+    assert matcher.matches({"path": str(live_root / "f.txt")}, ["./*"]) is True
+    assert matcher.matches({"path": str(static_root / "f.txt")}, ["./*"]) is False

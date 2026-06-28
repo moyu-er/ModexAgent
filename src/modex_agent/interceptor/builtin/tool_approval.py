@@ -7,7 +7,10 @@ interceptor — it is a pure classification helper."""
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 
 
 def _looks_like_path(val: str) -> bool:
@@ -33,37 +36,67 @@ class ArgumentMatcher:
     ``allowed_paths`` entries are directory roots. A trailing ``/*`` or
     ``/**`` means "this directory, recursively"; a bare ``*`` or ``**``
     allows everywhere. Example: ``["./*"]`` is the whole project tree.
+
+    The base that relative paths (and relative ``allowed_paths`` like ``./*``)
+    anchor to is, in order of precedence: ``root_provider.current()`` (the live
+    active-workspace working dir, read on every call so a workspace switch needs
+    no re-wiring — the SAME provider the file tools use), then ``project_root``,
+    then the process cwd. Reusing ``WorkspaceRootProvider`` keeps approval path
+    resolution converged with workspace switching instead of pinning a static
+    root at construction time.
     """
 
-    def __init__(self, project_root: Path | None = None) -> None:
+    def __init__(
+        self,
+        project_root: Path | None = None,
+        *,
+        root_provider: WorkspaceRootProvider | None = None,
+    ) -> None:
         self.project_root = project_root
+        self.root_provider = root_provider
+
+    def _base(self) -> Path:
+        """The directory relative paths anchor to (live workspace > static > cwd)."""
+        if self.root_provider is not None:
+            return self.root_provider.current()
+        if self.project_root is not None:
+            return self.project_root
+        return Path.cwd()
 
     def matches(self, arguments: dict[str, Any], allowed_paths: list[str]) -> bool:
         """True if all path arguments resolve inside at least one allowed root."""
         paths = self._extract_paths(arguments)
         if not paths:
             return True
+        base = self._base()  # hoisted — invariant for the duration of this call
         for raw in paths:
-            if not self._match_any(self._resolve_path(raw), allowed_paths):
+            if not self._match_any(self._resolve_path(raw, base), allowed_paths):
                 return False
         return True
 
-    def _resolve_path(self, raw: str) -> Path:
+    def _resolve_path(self, raw: str, base: Path | None = None) -> Path:
         """Resolve *raw* to a real absolute path.
 
-        ``~`` expands to the user home; relative paths anchor to
-        ``project_root`` (or the process cwd when unset); the result is
-        fully resolved so ``..`` segments collapse and symlinks resolve.
+        ``~`` expands to the user home; relative paths anchor to *base* (or
+        ``_base()`` when not supplied — see class docstring for precedence); the
+        result is fully resolved so ``..`` segments collapse and symlinks
+        resolve.
         """
         p = Path(raw).expanduser()
         if not p.is_absolute():
-            base = self.project_root if self.project_root is not None else Path.cwd()
-            p = base / p
+            p = (base if base is not None else self._base()) / p
         return p.resolve(strict=False)
 
     def _match_any(self, path: Path, patterns: list[str]) -> bool:
-        """True if *path* is contained by at least one allowed root pattern."""
-        resolved = path.expanduser().resolve(strict=False)
+        """True if *path* is contained by at least one allowed root pattern.
+
+        ``path`` is normalized here (cheap, once per call) because callers like
+        the public ``matches`` pass through ``_resolve_path`` but some callers
+        (tests, ``_allowed_root`` consumers) pass raw ``Path`` instances that
+        may not yet be fully resolved. Pattern resolution is delegated to
+        ``_allowed_root`` so we don't redo it here.
+        """
+        resolved = path.resolve(strict=False)
         for pattern in patterns:
             if self._matches_pattern(resolved, pattern):
                 return True

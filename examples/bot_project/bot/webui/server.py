@@ -907,6 +907,10 @@ class WebUIServer:
             metadata={RoutingMeta.APPROVAL_DECISION: decision},
             pre_resolved_session=session,
         )
+        # Stamp the workspace (same resolver as _ws_send_message) so resume
+        # reads the turn store that holds this snapshot — without it, the
+        # decision silently lands on the home workspace.
+        envelope.metadata[RoutingMeta.WORKSPACE] = str(self._ws_root_of(ws_raw))
         # _input_pipeline / _input_ctx are injected by WebUIService. They may
         # be None in minimal test setups -- guard so the handler degrades cleanly.
         if self._input_pipeline is None or self._input_ctx is None:

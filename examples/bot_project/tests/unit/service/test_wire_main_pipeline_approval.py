@@ -146,3 +146,59 @@ def test_leaves_runtime_services_untouched_when_disabled() -> None:
     )
 
     assert pipeline.runtime_services is None
+
+
+def test_wired_classifier_anchors_to_live_workspace_root() -> None:
+    """``_wire_main_pipeline`` threads the per-workspace ``WorkspaceRootProvider``
+    so ``./*`` follows the active workspace, not the static bot project_dir."""
+    from modex_agent.approval.constants import ApprovalTier
+    from modex_agent.core.agent import AgentContext
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.tool_manager import InMemoryToolManager
+    from modex_agent.core.types import ToolCall
+    from modex_agent.memory.history import ListMessageHistory
+    from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
+
+    workspace = Path("/some/workspace").resolve()
+    project_dir = Path("/proj")  # deliberately NOT the workspace
+
+    class _Provider(WorkspaceRootProvider):
+        def current(self) -> Path:
+            return workspace
+
+    pipeline = _make_pipeline()
+    pool = _StandInPool("main", pipeline)
+    _wire_main_pipeline(
+        pool=pool,
+        main_agent_name="main",
+        inbox_consumer=MagicMock(name="inbox_consumer"),
+        notification_service=MagicMock(name="notification_service"),
+        shared_interceptor_chain=MagicMock(name="interceptor_chain"),
+        im_ui=MagicMock(name="im_ui"),
+        pool_cfg=_make_pool_cfg(
+            approval=ApprovalConfig(
+                enabled=True,
+                tools={"write": ToolApprovalEntry(allowed_paths=["./*"])},
+            )
+        ),
+        project_dir=project_dir,
+        command_processor=None,
+        pool_name="main",
+        root_provider=_Provider(),
+    )
+
+    classifier = pipeline.runtime_services.approval.classifier
+    ctx = AgentContext(
+        system_prompt="t",
+        history=ListMessageHistory(),
+        tool_manager=InMemoryToolManager(),
+        session=SessionInfo.from_str("test.main"),
+    )
+    assert (
+        classifier.classify(ToolCall(tool_name="write", arguments={"path": str(workspace / "f.txt")}, call_id="c1"), ctx)
+        == ApprovalTier.NORMAL
+    )
+    assert (
+        classifier.classify(ToolCall(tool_name="write", arguments={"path": str(project_dir / "f.txt")}, call_id="c2"), ctx)
+        == ApprovalTier.DANGEROUS
+    )
