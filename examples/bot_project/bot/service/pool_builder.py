@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     # TYPE_CHECKING keeps the import graph acyclic. Runtime references
     # (``WorkspaceHandleRootProvider``) are imported lazily inside
     # ``create_pool`` for the same reason.
+    from bot.webui.transcript_store import TranscriptStore
     from bot.workspace.handle import (
         WorkspaceHandle,
         WorkspaceResolverCell,
@@ -124,6 +125,7 @@ async def create_pool(
     on_subagent_created: Callable[[str, str], Awaitable[None]] | None = None,
     session_registry: SessionRegistry | None = None,
     session_store: SessionStore | None = None,
+    transcript_store: TranscriptStore | None = None,
 ) -> PoolInstance:
     """Build one PoolInstance's DEPLOYMENT resources from PoolConfig.
 
@@ -161,9 +163,19 @@ async def create_pool(
         from bot.workspace.handle import WorkspaceHandleRootProvider
 
         root_provider = WorkspaceHandleRootProvider(workspace_handle)
+    # sessions_dir provider for transcript-writing tools (SendFileToUserTool):
+    # derived from the resolver cell so the outbound record lands in the owning
+    # workspace's transcript, mirroring the emitter factory wrapper. None when
+    # no workspace resolver is wired (tests / legacy) — the store then falls
+    # back to the bound ctxvar root.
+    sessions_dir_provider: Callable[[], Path | None] | None = None
+    if workspace_resolver is not None:
+        sessions_dir_provider = lambda: _cell_sessions_dir(workspace_resolver)
     tool_manager, mcp_manager = await _build_tools(
         pool_cfg, main_cfg, terminal_manager, project_dir,
         output_adapter, pool_name, data_dir, pool_data, root_provider,
+        transcript_store=transcript_store,
+        sessions_dir_provider=sessions_dir_provider,
     )
     _register_extra_tools_from_config(tool_manager, main_cfg, pool_name)
 
@@ -492,6 +504,9 @@ async def _build_tools(
     data_dir: Path,
     pool_data: PoolDataSnapshot | None,
     root_provider: WorkspaceRootProvider | None,
+    *,
+    transcript_store: TranscriptStore | None = None,
+    sessions_dir_provider: Callable[[], Path | None] | None = None,
 ) -> tuple[InMemoryToolManager, Any | None]:
     """Build tool manager from config — convention over configuration.
 
@@ -544,7 +559,14 @@ async def _build_tools(
     # Custom tools
     from bot.tools.custom import SendFileToUserTool
 
-    tm.register(SendFileToUserTool(output_adapter=output_adapter))
+    tm.register(
+        SendFileToUserTool(
+            output_adapter=output_adapter,
+            transcript_store=transcript_store,
+            media_config=pool_cfg.media,
+            sessions_dir_provider=sessions_dir_provider,
+        )
+    )
 
     # Experience tool (if enabled in config). The experience dir comes from
     # the workspace's pool_data (fixed per workspace); fallback to a data_dir

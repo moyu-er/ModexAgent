@@ -260,6 +260,7 @@ async def _build_resources(
             on_subagent_created=service._on_subagent_created,
             session_registry=session_registry,
             session_store=session_index_store,
+            transcript_store=service._transcript_store,
         )
 
     resources = PoolWorkspaceResources(
