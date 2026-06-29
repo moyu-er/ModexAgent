@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class Modality(StrEnum):
@@ -52,6 +53,28 @@ class LLMConfig(BaseModel):
     temperature: float = 0.7
     max_tokens: int = 80000
     capabilities: ModelCapabilities = Field(default_factory=ModelCapabilities)
+
+    @field_validator("capabilities", mode="before")
+    @classmethod
+    def _coerce_capabilities(cls, value: Union[ModelCapabilities, list[str], tuple[str, ...], None]) -> ModelCapabilities:
+        """Coerce a flat ``list[str]`` from YAML into a ``ModelCapabilities``.
+
+        The pool YAML loader feeds parsed YAML in, so ``capabilities`` may
+        arrive as ``["text", "image"]``. A ``ModelCapabilities`` is passed
+        through unchanged; ``None`` falls back to the TEXT-only default.
+        Unknown modality strings raise ``ValueError`` → ``ValidationError``.
+        """
+        if value is None:
+            return ModelCapabilities()
+        if isinstance(value, ModelCapabilities):
+            return value
+        if isinstance(value, (list, tuple)):
+            modalities = frozenset(Modality(item) for item in value)
+            return ModelCapabilities(modalities=modalities)
+        raise ValueError(
+            f"capabilities must be a list[str], tuple[str, ...], "
+            f"ModelCapabilities, or None; got {type(value).__name__}"
+        )
 
     def missing_required_fields(self) -> list[str]:
         """Return list of required fields that are empty.

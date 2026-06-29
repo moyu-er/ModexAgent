@@ -1069,6 +1069,14 @@ def _wire_main_pipeline(
         pipeline.runtime_services = AgentRuntimeServices(
             approval=approval_runtime,
             safety=pipeline.safety,
+            model_capabilities=pool_cfg.llm.capabilities,
+        )
+    else:
+        # No approval wiring still needs the capability carrier threaded so
+        # the deferred inline renderer (ADR-0013 §10) can bind to it per turn.
+        pipeline.runtime_services = AgentRuntimeServices(
+            safety=pipeline.safety,
+            model_capabilities=pool_cfg.llm.capabilities,
         )
 
     # Command processor (convention: use provided, else default)

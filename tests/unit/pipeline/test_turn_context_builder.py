@@ -405,6 +405,113 @@ async def test_build_runtime_and_context_emitter_factory_used_when_wired() -> No
     emitter_factory.assert_called_once_with("s:main")
 
 
+@pytest.mark.asyncio
+async def test_build_runtime_and_context_propagates_model_capabilities() -> None:
+    """Pool-level base_services.model_capabilities reaches the per-turn runtime.
+
+    ADR-0013 §2: capabilities are threaded pool → base AgentRuntimeServices →
+    per-turn AgentRuntimeServices so the inline renderer can bind to
+    ``ctx.runtime.model_capabilities``. This mirrors how governance/approval
+    propagate through build_runtime_and_context.
+    """
+    from modex_agent.ioc.configs.llm import Modality, ModelCapabilities
+    from modex_agent.runtime.services import AgentRuntimeServices
+
+    caps = ModelCapabilities(modalities=frozenset({Modality.TEXT, Modality.IMAGE}))
+    builder = _make_builder(
+        agent=MagicMock(name="agent"),
+        turn_store=InMemoryTurnStateStore(),
+        runtime_services=AgentRuntimeServices(model_capabilities=caps),
+    )
+
+    ctx, _emitter = builder.build_runtime_and_context(
+        SessionInfo.from_str("s:main"),
+        ContextState(),
+        MagicMock(wrap_governance=MagicMock(return_value=None)),
+    )
+
+    assert ctx.runtime is not None
+    assert ctx.runtime.model_capabilities is caps
+    assert ctx.runtime.model_capabilities.supports(Modality.IMAGE)
+
+
+@pytest.mark.asyncio
+async def test_build_runtime_and_context_carries_inline_image_attachments() -> None:
+    """Image-kind resolved attachments land in turn state for the inline renderer.
+
+    ADR-0014 §3 / OpenSpec native-multimodal-inline unit 3: the current turn's
+    image-kind resolved Attachments are carried in
+    ``ctx.runtime.state.custom[INLINE_ATTACHMENTS]`` so the renderer (unit 4)
+    can find them. Non-image attachments are dropped (only image-kind is
+    eligible for native inline rendering). The records carry path/mime/kind/name
+    but NO base64 — bytes are materialized lazily by unit 5.
+    """
+    from modex_agent.media.models import Attachment, AttachmentLocator, Kind
+    from modex_agent.runtime.enums import TurnCustomKey
+
+    img = Attachment(
+        id="a1",
+        kind=Kind.IMAGE,
+        name="cat.png",
+        mime="image/png",
+        size=12345,
+        path="media/cat.png",
+        locator=AttachmentLocator.MEDIA,
+    )
+    doc = Attachment(
+        id="a2",
+        kind=Kind.EXTRACTABLE_DOCUMENT,
+        name="report.pdf",
+        mime="application/pdf",
+        size=999,
+        path="media/report.pdf",
+        locator=AttachmentLocator.MEDIA,
+    )
+
+    builder = _make_builder(
+        agent=MagicMock(name="agent"),
+        turn_store=InMemoryTurnStateStore(),
+    )
+
+    ctx, _emitter = builder.build_runtime_and_context(
+        SessionInfo.from_str("s:main"),
+        ContextState(),
+        MagicMock(wrap_governance=MagicMock(return_value=None)),
+        inline_attachments=[img, doc],
+    )
+
+    assert ctx.runtime is not None
+    carried = ctx.runtime.state.custom[TurnCustomKey.INLINE_ATTACHMENTS]
+    assert [a.id for a in carried] == ["a1"]
+    assert carried[0].kind is Kind.IMAGE
+    assert carried[0].path == "media/cat.png"
+    assert carried[0].mime == "image/png"
+    assert carried[0].name == "cat.png"
+    # Attachment is the path-only VO — it has no bytes/base64 field at all.
+    assert not hasattr(carried[0], "data")
+    assert not hasattr(carried[0], "base64")
+
+
+@pytest.mark.asyncio
+async def test_build_runtime_and_context_inline_attachments_defaults_empty() -> None:
+    """Omitting the param yields an empty list carrier (no KeyError for readers)."""
+    from modex_agent.runtime.enums import TurnCustomKey
+
+    builder = _make_builder(
+        agent=MagicMock(name="agent"),
+        turn_store=InMemoryTurnStateStore(),
+    )
+
+    ctx, _emitter = builder.build_runtime_and_context(
+        SessionInfo.from_str("s:main"),
+        ContextState(),
+        MagicMock(wrap_governance=MagicMock(return_value=None)),
+    )
+
+    assert ctx.runtime is not None
+    assert ctx.runtime.state.custom[TurnCustomKey.INLINE_ATTACHMENTS] == []
+
+
 # ---------------------------------------------------------------------------
 # assemble (smoke — full coverage lives in test_context_assembler / pipeline e2e)
 # ---------------------------------------------------------------------------

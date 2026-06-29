@@ -388,6 +388,7 @@ class TurnRunner:
             ctx_mgr,
             input_metadata=input_metadata,
             pool_data=pool_data,
+            inline_attachments=input_msg.attachments_resolved,
         )
 
         if approval_state is not None:

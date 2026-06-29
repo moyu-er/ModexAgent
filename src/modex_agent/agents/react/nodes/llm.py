@@ -13,15 +13,94 @@ from modex_agent.core.constants import FinishReason
 from modex_agent.core.graph.node import Node, NodeTransition
 from modex_agent.hook import HookPayload, HookPoint
 from modex_agent.interceptor.abc import InterceptorScope, IterationContext
+from modex_agent.ioc.configs.llm import Modality
+from modex_agent.media.models import Attachment
 from modex_agent.runtime.dispatch import current_dispatch_deadline
-from modex_agent.runtime.enums import MessageDeltaSource, OperationKind, TurnPhase
+from modex_agent.runtime.enums import (
+    MessageDeltaSource,
+    OperationKind,
+    TurnCustomKey,
+    TurnPhase,
+)
 from modex_agent.runtime.models import MessageDelta
+from modex_agent.utils.media_utils import build_inline_image_block
 
 
 def _renew_dispatch_deadline() -> None:
     deadline = current_dispatch_deadline.get()
     if deadline is not None:
         deadline.renew()
+
+
+def _attachment_blocks(att: Attachment, cache: dict[str, list[dict[str, object]]]) -> list[dict[str, object]]:
+    """Return the caption + image_url block pair for ``att``, cached per turn.
+
+    Base64 is encoded once per attachment id; later ReAct iterations reuse the
+    cached list (ADR-0014 §5). Mutates ``cache`` in place.
+    """
+    cached = cache.get(att.id)
+    if cached is not None:
+        return cached
+    blocks = build_inline_image_block(att)
+    cache[att.id] = blocks
+    return blocks
+
+
+def enrich_inline_attachments(
+    messages: list[dict[str, object]],
+    ctx: AgentContext,
+) -> list[dict[str, object]]:
+    """Inline current-turn image attachments into the LAST user-role message.
+
+    Mechanism A activation (ADR-0014); ADR-0013 §10 paved the capability seam.
+    Runs AFTER governance so governance and persisted history only ever see the
+    text-reference form. The persisted history is never touched — this returns a
+    NEW messages list (copies the one mutated message) for the transient LLM
+    call. Bails out unchanged when any gate fails: no runtime, no IMAGE
+    capability, no react state, no/empty attachments, or no user message.
+    """
+    runtime = ctx.runtime
+    if runtime is None:
+        return messages
+    caps = runtime.model_capabilities
+    if caps is None or not caps.supports(Modality.IMAGE):
+        return messages
+
+    state = get_react_state(ctx)
+    if state is None:
+        return messages
+    attachments = state.custom.get(TurnCustomKey.INLINE_ATTACHMENTS)
+    if not attachments:
+        return messages
+
+    # Locate the LAST user-role message (agent→user normalization happened
+    # upstream in to_messages, so a plain "user" check is correct).
+    user_idx = -1
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i].get("role") == "user":
+            user_idx = i
+            break
+    if user_idx < 0:
+        return messages
+
+    cache = state.custom.setdefault(TurnCustomKey.INLINE_IMAGE_CACHE, {})
+    tail: list[dict[str, object]] = []
+    for att in attachments:
+        tail.extend(_attachment_blocks(att, cache))
+
+    if not tail:
+        return messages
+
+    target = messages[user_idx]
+    existing = target.get("content")
+    if isinstance(existing, list):
+        new_content = [*existing, *tail]
+    else:
+        text = existing if existing is not None else ""
+        new_content = [{"type": "text", "text": text}, *tail]
+
+    enriched = {**target, "content": new_content}
+    return [*messages[:user_idx], enriched, *messages[user_idx + 1 :]]
 
 
 class LLMNode(Node):
@@ -171,4 +250,4 @@ class LLMNode(Node):
         governance = ctx.runtime.governance if ctx.runtime else None
         if governance is not None:
             messages = await governance.apply(messages)
-        return messages
+        return enrich_inline_attachments(messages, ctx)

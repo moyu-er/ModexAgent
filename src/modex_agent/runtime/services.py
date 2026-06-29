@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.control.types import ControlCommand, ControlScope
+from modex_agent.ioc.configs.llm import ModelCapabilities
 
 from .enums import SnapshotReason, TurnCustomKey
 from .models import TurnStateBase, TurnSnapshot
@@ -48,6 +49,7 @@ class AgentRuntimeServices:
     safety: RuntimeSafetyPolicy = field(default_factory=RuntimeSafetyPolicy)
     runtime_context_manager: RuntimeContextManager | None = None
     control_channel: InMemoryControlChannel | None = None
+    model_capabilities: ModelCapabilities | None = None
 
 
 @dataclass
@@ -83,6 +85,10 @@ class AgentRuntime:
     @property
     def governance(self) -> ContextGovernance | None:
         return self.services.governance
+
+    @property
+    def model_capabilities(self) -> ModelCapabilities | None:
+        return self.services.model_capabilities
 
     @property
     def turn_store(self) -> TurnStateStore | None:
