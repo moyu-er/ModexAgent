@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from modex_agent.media.models import Attachment
+
 # 可选依赖 — 顶层一次性 import，避免每次提取都 try/import
 try:
     from pypdf import PdfReader as _PdfReader
@@ -175,6 +177,29 @@ class MediaHandler(ABC):
         ...
 
 
+def _build_image_url_block(
+    raw: bytes, mime: str, path: str, *, with_meta: bool = True
+) -> dict[str, Any]:
+    """Build an OpenAI-compatible ``image_url`` content block from raw bytes.
+
+    Shared data-URL construction used by :class:`ImageHandler` and
+    :func:`build_inline_image_block`. When ``with_meta`` is True (the
+    default, used by :class:`ImageHandler`) a ``_meta.path`` entry is included
+    so the dormant sanitizer/strip-on-reject path can recover the source path.
+    The LIVE inline path passes ``with_meta=False`` so the block sent to the
+    provider API carries no ``_meta`` (the absolute filesystem path must not
+    leak past the call boundary).
+    """
+    b64 = base64.b64encode(raw).decode()
+    block: dict[str, Any] = {
+        "type": "image_url",
+        "image_url": {"url": f"data:{mime};base64,{b64}"},
+    }
+    if with_meta:
+        block["_meta"] = {"path": path}
+    return block
+
+
 class ImageHandler(MediaHandler):
     """图片处理器 → image_url block"""
 
@@ -192,18 +217,59 @@ class ImageHandler(MediaHandler):
             mime = _detect_image_mime(raw) or mimetypes.guess_type(path)[0]
             if not mime or not mime.startswith("image/"):
                 return None
-            b64 = base64.b64encode(raw).decode()
             return MediaBlock(
-                block={
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{mime};base64,{b64}"},
-                    "_meta": {"path": str(p)},
-                },
+                block=_build_image_url_block(raw, mime, str(p)),
                 source_path=str(p),
                 media_type="image",
             )
         except Exception:
             return None
+
+
+def _inline_caption(att: Attachment) -> dict[str, str]:
+    """Single source of truth for the mechanism-A inline image caption literal."""
+    return {"type": "text", "text": f"<image: {att.name}>"}
+
+
+def build_inline_image_block(att: Attachment) -> list[dict[str, Any]]:
+    """Render an image attachment as a caption + image_url content pair.
+
+    Returns the OpenAI-compatible two-element tail used to inject an image
+    inline into a user message (mechanism A, ADR-0014):
+
+    ``[_inline_caption(att), {"type": "image_url", "image_url": {...}}]``
+
+    The ``image_url`` block shares the same data-URL helper as
+    :class:`ImageHandler` (no duplicated base64/mime handling). The caption
+    is produced by :func:`_inline_caption` so tests and consumers reference
+    the same literal.
+
+    Assumes the caller has already filtered to image attachments — this helper
+    does not branch on ``att.kind``. The file is gate-vetted and present per
+    ADR-0013; if the bytes cannot be read (e.g. the file vanished between gate
+    and render), it degrades to a caption-only pair with a ``<missing>`` note
+    rather than raising — matching :class:`ImageHandler`'s swallow-and-skip
+    behavior so a single unreadable attachment never crashes a turn.
+    """
+    caption = _inline_caption(att)
+    try:
+        p = Path(att.path)
+        raw = p.read_bytes()
+    except OSError:
+        return [
+            caption,
+            {"type": "text", "text": "<missing image>"},
+        ]
+
+    mime = _detect_image_mime(raw) or att.mime or mimetypes.guess_type(att.path)[0]
+    if not mime or not mime.startswith("image/"):
+        # Unreadable as an image — degrade like ImageHandler (returns None).
+        return [
+            caption,
+            {"type": "text", "text": "<missing image>"},
+        ]
+
+    return [caption, _build_image_url_block(raw, mime, str(p), with_meta=False)]
 
 
 class MediaProcessor:

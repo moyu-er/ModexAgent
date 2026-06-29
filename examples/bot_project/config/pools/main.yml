@@ -6,6 +6,9 @@ llm:
   base_url: "${LLM_BASE_URL:-https://api.minimaxi.com/v1}"
   temperature: 0.7
   max_tokens: 50000
+  # The model accepts image input, so mechanism A inlines current-turn image
+  # attachments into the LLM-bound message (ADR-0014). TEXT-only pools skip it.
+  capabilities: [text, image]
 
 mcp:
   enabled: true

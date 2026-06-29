@@ -2,8 +2,8 @@
 
 Moved from framework.memory.history to core to break the core <-> memory
 import cycle. The pipeline helper functions (history_to_list,
-inject_attachments_to_history, restore_multimodal_in_history) are included
-because they depend only on ChatMessage, which now lives in core.
+inject_attachments_to_history) are included because they depend only on
+ChatMessage, which now lives in core.
 """
 from __future__ import annotations
 
@@ -205,48 +205,3 @@ async def inject_attachments_to_history(
             await history.replace_all(history_list)
 
     return history_list
-
-
-async def restore_multimodal_in_history(
-    history: MessageHistory
-    | list[ChatMessage | dict[str, Any]]
-    | Sequence[ChatMessage | dict[str, Any]],
-    multimodal_content: str | list[dict[str, Any]],
-    logger: Any | None = None,
-) -> list[dict[str, Any]] | None:
-    """将当前用户消息的多模态内容恢复到 history（在 save->sanitize->load 后调用）。
-
-    Pipeline 使用此辅助函数。
-    内存中保存的是 sanitize 后的占位符，LLM 需要看到完整媒体内容。
-
-    Args:
-        history: MessageHistory 实例或消息列表
-        multimodal_content: 完整的多模态内容（str 或 list[dict]）
-        logger: 可选的 logger 实例，用于记录警告
-
-    Returns:
-        None - 恢复成功且已通过 replace_all 写回存储；
-        list[dict] - 修改后的消息列表，调用方需手动赋值回 history（plain list 场景）。
-    """
-    try:
-        hist_list = await history_to_list(history)
-
-        if not hist_list or hist_list[-1].get("role") != "user":
-            return None  # 无需恢复
-
-        # Direct mutation on dict
-        hist_list[-1]["content"] = multimodal_content
-
-        if isinstance(history, MessageHistory):
-            try:
-                # skip_transform=True: 避免 content_transformer 再次将 base64 替换为占位符
-                await history.replace_all(hist_list, skip_transform=True)
-                return None  # 已写回
-            except NotImplementedError:
-                return hist_list  # 调用方需手动赋值
-        else:
-            return hist_list  # plain list，调用方需手动赋值
-    except Exception:
-        if logger:
-            logger.warning("Failed to restore multimodal content in history")
-        return None

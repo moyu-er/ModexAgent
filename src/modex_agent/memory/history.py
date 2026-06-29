@@ -8,7 +8,6 @@ from modex_agent.core.history import (
     MessageHistory,
     history_to_list,
     inject_attachments_to_history,
-    restore_multimodal_in_history,
 )
 
 __all__ = [
@@ -16,5 +15,4 @@ __all__ = [
     "MessageHistory",
     "history_to_list",
     "inject_attachments_to_history",
-    "restore_multimodal_in_history",
 ]

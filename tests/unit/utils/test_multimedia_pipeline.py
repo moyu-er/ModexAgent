@@ -2,7 +2,6 @@
 
 覆盖:
 - Bug A: _apply_runtime_context_prefix 多模态 content 支持
-- Bug B: restore_multimodal_in_history 共享辅助函数
 - P1-2: handler 失败后跳过文档提取
 - MediaHandler 可插拔架构
 - Error Fix 1: _is_transient 匹配 InternalServerError / empty response
@@ -11,16 +10,10 @@
 """
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from modex_agent.agents.react.message_builder import build_tool_message
-from modex_agent.memory.history import (
-    ListMessageHistory,
-    MessageHistory,
-    restore_multimodal_in_history,
-)
 from modex_agent.memory.system import MemorySystemContextManager
 from modex_agent.utils.media_utils import (
     ImageHandler,
@@ -107,74 +100,6 @@ class TestApplyRuntimeContextPrefix:
         )
         assert "channel=qq" in result["content"]
         assert "chat_id=789" in result["content"]
-
-
-# ---------------------------------------------------------------------------
-# Bug B: restore_multimodal_in_history
-# ---------------------------------------------------------------------------
-
-
-class TestRestoreMultimodalInHistory:
-    """验证 restore_multimodal_in_history 共享辅助函数。"""
-
-    @pytest.mark.asyncio
-    async def test_restore_with_message_history(self):
-        """MessageHistory（ListMessageHistory）场景：replace_all 成功写回。"""
-        history = ListMessageHistory([
-            {"role": "user", "content": "[media: image.png]"},
-        ])
-        multimodal = [
-            {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
-            {"type": "text", "text": "描述图片"},
-        ]
-        result = await restore_multimodal_in_history(history, multimodal)
-        assert result is None  # 已通过 replace_all 写回
-
-        hist = await history.to_list()
-        assert isinstance(hist[0]["content"], list)
-        assert hist[0]["content"][0]["type"] == "image_url"
-
-    @pytest.mark.asyncio
-    async def test_restore_with_plain_list(self):
-        """plain list 场景：返回修改后的列表供调用方赋值。"""
-        history = [
-            {"role": "user", "content": "[media: image.png]"},
-        ]
-        multimodal = [
-            {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
-        ]
-        result = await restore_multimodal_in_history(history, multimodal)
-        assert result is not None
-        assert isinstance(result[0]["content"], list)
-        assert result[0]["content"][0]["type"] == "image_url"
-
-    @pytest.mark.asyncio
-    async def test_no_user_message_in_history(self):
-        """历史中没有 user 消息时不做任何修改。"""
-        history = ListMessageHistory([
-            {"role": "assistant", "content": "hi"},
-        ])
-        result = await restore_multimodal_in_history(history, "content")
-        assert result is None
-        hist = await history.to_list()
-        assert hist[0]["content"] == "hi"
-
-    @pytest.mark.asyncio
-    async def test_empty_history(self):
-        """空历史不崩溃。"""
-        history = ListMessageHistory([])
-        result = await restore_multimodal_in_history(history, "content")
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_error_logged(self):
-        """异常时记录警告并返回 None。"""
-        mock_history = AsyncMock(spec=MessageHistory)
-        mock_history.to_list.side_effect = RuntimeError("boom")
-        logger = MagicMock()
-        result = await restore_multimodal_in_history(mock_history, "content", logger)
-        assert result is None
-        logger.warning.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

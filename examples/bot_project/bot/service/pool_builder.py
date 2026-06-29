@@ -1060,16 +1060,20 @@ def _wire_main_pipeline(
     approval_runtime = build_approval_runtime(
         main_cfg.approval, project_root=project_dir, root_provider=root_provider
     )
+    # Sparse services: hooks/interceptors/governance stay None and are
+    # sourced per-field from the builder defaults at turn time (identical
+    # to the pre-wiring path). safety is passed explicitly because
+    # AgentRuntimeServices.safety has a default_factory that would
+    # otherwise clobber the pipeline's configured policy.
+    # model_capabilities threads the per-pool modality declaration so
+    # the inline renderer can bind to it per turn (ADR-0014 §1/§3).
+    services_kwargs: dict[str, Any] = dict(
+        safety=pipeline.safety,
+        model_capabilities=pool_cfg.llm.capabilities,
+    )
     if approval_runtime is not None:
-        # Sparse services: hooks/interceptors/governance stay None and are
-        # sourced per-field from the builder defaults at turn time (identical
-        # to the pre-wiring path). safety is passed explicitly because
-        # AgentRuntimeServices.safety has a default_factory that would
-        # otherwise clobber the pipeline's configured policy.
-        pipeline.runtime_services = AgentRuntimeServices(
-            approval=approval_runtime,
-            safety=pipeline.safety,
-        )
+        services_kwargs["approval"] = approval_runtime
+    pipeline.runtime_services = AgentRuntimeServices(**services_kwargs)
 
     # Command processor (convention: use provided, else default)
     if command_processor is not None:

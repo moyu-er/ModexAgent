@@ -135,3 +135,14 @@ class TurnCustomKey(StrEnum):
     TURN_UUID = "_turn_uuid"
     INJECTION_CYCLE_COUNT = "_injection_cycle_count"
     TRACE_ID = "_trace_id"
+    # Resolved image-kind Attachment records for the current turn (ADR-0014 §3 /
+    # OpenSpec native-multimodal-inline unit 3). Path-only VOs (path/mime/kind/
+    # name/size) — never bytes. Read by the inline renderer (unit 4) to bind
+    # vision blocks; base64 is materialized lazily in unit 5.
+    INLINE_ATTACHMENTS = "inline_attachments"
+    # Per-turn cache of already-rendered image content blocks keyed by the
+    # attachment id (ADR-0014 §5 / OpenSpec native-multimodal-inline unit 5).
+    # Value: dict[str, list[dict]] mapping att.id -> the 2-element caption +
+    # image_url block list, so base64 is encoded once per turn and reused
+    # across ReAct iterations. Lives only in turn state — never persisted.
+    INLINE_IMAGE_CACHE = "_inline_image_cache"

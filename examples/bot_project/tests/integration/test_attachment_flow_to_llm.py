@@ -36,7 +36,7 @@ from bot.webui.events import UserMessageEvent
 
 from modex_agent.core.types import InputMessage
 from modex_agent.input_pipeline.envelope import AttachmentRef, UserInputEnvelope
-from modex_agent.media.models import AttachmentLocator, Kind
+from modex_agent.media.models import Attachment, AttachmentLocator, Kind
 from modex_agent.memory.system import MemorySystemContextManager, create_memory_system
 from modex_agent.messaging.broker import Address
 from modex_agent.messaging.broker_bridge import build_input_broker_message
@@ -45,6 +45,17 @@ from modex_agent.multi_agent.pool import input_message_from_dispatch_envelope
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.workspace.runtime import bind_workspace_root
+
+# Mechanism-A enrichment layer (native-multimodal-inline unit 5/6, ADR-0014)
+from modex_agent.agents.react.nodes.llm import enrich_inline_attachments
+from modex_agent.agents.react.state import ReActTurnState
+from modex_agent.core.agent import AgentContext
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.ioc.configs.llm import ModelCapabilities, Modality
+from modex_agent.memory.history import ListMessageHistory
+from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
+from modex_agent.runtime.models import TurnIdentity
+from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 
 _PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 40
 # JPEG SOI + APP0/JFIF header
@@ -249,3 +260,155 @@ async def test_attachment_flow_to_llm_injection_and_asymmetry() -> None:
         assert reloaded_user, "user message must persist to session memory"
         assert "[Attachment: photo.png (image/png, " in reloaded_user[-1]["content"]
         assert "[Attachment: scan.jpg (image/jpeg, " in reloaded_user[-1]["content"]
+
+
+# ---------------------------------------------------------------------------
+# Mechanism A — native multimodal inline (ADR-0014 / OpenSpec
+# native-multimodal-inline unit 6). Exercises the enrichment step that the
+# real LLM-bound message assembly calls last (`LLMNode._build_messages`), with
+# a realistic AgentContext: a real PNG on disk, real Attachment records, a real
+# ReActTurnState carrying INLINE_ATTACHMENTS, and ModelCapabilities on the
+# runtime. Asserts the three properties the transient-carrier design requires:
+#   (i)   vision-capable pool -> image_url inlined on the arrival turn;
+#   (ii)  a subsequent turn with no current-turn image attachments -> only the
+#         text-reference form survives (no image_url); the cached/persisted
+#         history is never mutated by enrichment;
+#   (iii) a [text]-only-capable pool never inlines, even with images present.
+# ---------------------------------------------------------------------------
+
+
+def _image_attachment(path: Path, name: str, mime: str) -> Attachment:
+    return Attachment(
+        id=f"id-{name}",
+        kind=Kind.IMAGE,
+        name=name,
+        mime=mime,
+        size=path.stat().st_size,
+        path=str(path),
+        locator=AttachmentLocator.MEDIA,
+    )
+
+
+def _build_ctx(
+    *,
+    capabilities: ModelCapabilities,
+    inline_attachments: list[Attachment],
+) -> AgentContext:
+    """A minimal-but-real AgentContext exercising enrich_inline_attachments."""
+    session = SessionInfo(session_id="s1", agent_name="main")
+    identity = TurnIdentity(agent_id="main", session=session, turn_id="t1")
+    state = ReActTurnState(
+        identity=identity, agent_kind=AgentKind.REACT, phase=TurnPhase.RUNNING
+    )
+    if inline_attachments:
+        state.custom[TurnCustomKey.INLINE_ATTACHMENTS] = inline_attachments
+    services = AgentRuntimeServices(model_capabilities=capabilities)
+    runtime = AgentRuntime(services=services, state=state)
+    return AgentContext(
+        system_prompt="sys",
+        history=ListMessageHistory(),
+        tool_manager=MagicMock(name="tool_manager"),
+        session=session,
+        runtime=runtime,
+        identity=identity,  # non-None so get_react_state proceeds
+    )
+
+
+def _arrival_messages(user_text: str) -> list[dict[str, object]]:
+    return [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": user_text},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_mechanism_a_inlines_image_on_arrival_turn_for_vision_pool() -> None:
+    """(i) A vision-capable pool inlines image_url on the arrival turn."""
+    with TemporaryDirectory() as tmp:
+        png = _write(Path(tmp), "photo.png", _PNG)
+        att = _image_attachment(png, "photo.png", "image/png")
+        ctx = _build_ctx(
+            capabilities=ModelCapabilities(modalities=frozenset({Modality.TEXT, Modality.IMAGE})),
+            inline_attachments=[att],
+        )
+        out = enrich_inline_attachments(_arrival_messages("describe this"), ctx)
+
+    user_msg = out[-1]
+    assert user_msg["role"] == "user"
+    content = user_msg["content"]
+    assert isinstance(content, list), "vision pool must convert content to a block list"
+    types = [b.get("type") for b in content]
+    assert "image_url" in types, "vision pool must inline the image_url block"
+    img_block = next(b for b in content if b.get("type") == "image_url")
+    url = img_block["image_url"]["url"]
+    assert url.startswith("data:image/png;base64,"), "data-URL carrier with real base64"
+    # Original text is preserved as the leading text block.
+    assert content[0]["type"] == "text"
+    assert "describe this" in content[0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_mechanism_a_only_text_reference_on_subsequent_turn() -> None:
+    """(ii) A subsequent turn (no current-turn image attachments) keeps only the
+    text-reference form — enrichment never mutates persisted history, and the
+    INLINE_IMAGE_CACHE from a prior turn is NOT re-applied when
+    INLINE_ATTACHMENTS is empty."""
+    with TemporaryDirectory() as tmp:
+        png = _write(Path(tmp), "photo.png", _PNG)
+        att = _image_attachment(png, "photo.png", "image/png")
+        vision_caps = ModelCapabilities(modalities=frozenset({Modality.TEXT, Modality.IMAGE}))
+
+        # Arrival turn: inlines + populates the per-turn cache.
+        arrival_ctx = _build_ctx(
+            capabilities=vision_caps, inline_attachments=[att]
+        )
+        arrival_out = enrich_inline_attachments(_arrival_messages("look"), arrival_ctx)
+        assert "image_url" in str(arrival_out)
+
+        # Subsequent turn: same capability, but NO current-turn attachments
+        # (history carried forward as a text reference, as mechanism B writes it).
+        subsequent_ctx = _build_ctx(
+            capabilities=vision_caps, inline_attachments=[]
+        )
+        subsequent_messages = [
+            {"role": "system", "content": "sys"},
+            {
+                "role": "user",
+                "content": "next question [Attachment: photo.png (image/png, 48) @ /p]",
+            },
+        ]
+        out = enrich_inline_attachments(subsequent_messages, subsequent_ctx)
+
+    final_user = out[-1]
+    # No inline carrier — only the persisted text-reference form survives.
+    if isinstance(final_user["content"], list):
+        assert not any(b.get("type") == "image_url" for b in final_user["content"]), (
+            "no image_url may survive on a turn without current-turn images"
+        )
+    else:
+        assert "image_url" not in str(final_user["content"])
+    assert "[Attachment: photo.png" in str(final_user["content"]), (
+        "mechanism-B text reference is preserved untouched"
+    )
+
+
+@pytest.mark.asyncio
+async def test_mechanism_a_text_only_pool_never_inlines() -> None:
+    """(iii) A [text]-only-capable pool never inlines, even with image
+    attachments present on the turn."""
+    with TemporaryDirectory() as tmp:
+        png = _write(Path(tmp), "photo.png", _PNG)
+        att = _image_attachment(png, "photo.png", "image/png")
+        ctx = _build_ctx(
+            capabilities=ModelCapabilities(modalities=frozenset({Modality.TEXT})),
+            inline_attachments=[att],
+        )
+        out = enrich_inline_attachments(_arrival_messages("describe this"), ctx)
+
+    user_msg = out[-1]
+    # Content stays a plain string (no block list, no image_url).
+    assert not isinstance(user_msg["content"], list), (
+        "text-only pool must not convert content to a block list"
+    )
+    assert "image_url" not in str(user_msg["content"])
+    assert user_msg["content"] == "describe this"

@@ -1,8 +1,26 @@
-# model-multimodal-seam Specification
+## REMOVED Requirements
 
-## Purpose
-TBD - created by archiving change add-attachment-system. Update Purpose after archive.
-## Requirements
+### Requirement: ModelCapabilities is a carried, unused placeholder
+**Reason**: Mechanism A is activated by this change. `ModelCapabilities` is now
+read from per-pool config and gates image inlining; it is no longer an unused
+placeholder.
+**Migration**: See the ADDED requirement "ModelCapabilities is read from
+per-pool config and gates inlining".
+
+### Requirement: The native-multimodal renderer contract is documented but not implemented
+**Reason**: The native-multimodal renderer is now implemented as a transient
+turn-state carrier plus a call-boundary enrichment step.
+**Migration**: See the ADDED requirement "Image attachments inline as content
+blocks for vision-capable pools".
+
+### Requirement: Multimodal memory discipline is documented
+**Reason**: The multimodal memory discipline is now implemented in code, not
+merely recorded as design.
+**Migration**: See the ADDED requirement "Image bytes never enter the message
+history".
+
+## ADDED Requirements
+
 ### Requirement: ModelCapabilities is read from per-pool config and gates inlining
 
 `LLMConfig.capabilities` SHALL be readable from per-pool YAML as a flat list of
@@ -75,4 +93,3 @@ NOT write back to history.
 #### Scenario: past turns do not re-inline
 - **WHEN** a later turn reads history containing a previous turn's image-bearing user message
 - **THEN** that message SHALL appear as the text-reference string only, with no `image_url` block
-

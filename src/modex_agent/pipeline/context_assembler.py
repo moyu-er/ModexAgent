@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.emitter import AgentResult
@@ -20,8 +19,6 @@ if TYPE_CHECKING:
     from modex_agent.core.tool_manager import ToolManager
     from modex_agent.multi_agent import AgentDescriptor
     from modex_agent.utils.context_builder import MultiAgentContextBuilder
-
-logger = logging.getLogger(__name__)
 
 
 async def assemble_context(
@@ -48,7 +45,12 @@ async def assemble_context(
     """
     source_agent = input_metadata.get("source_agent")
 
-    # Build multimodal content
+    # Build multimodal content.
+    # NOTE: mechanism A (native multimodal) is implemented via turn-state
+    # enrichment in ``LLMNode._build_messages`` (ADR-0014 §2/§7), NOT here.
+    # This branch is the dormant MediaProcessor seam retained for the deferred
+    # provider-side renderer (ADR-0013 §10) and is currently unreachable —
+    # ``preprocess`` always returns ``[]``/``None`` for ``media_blocks``.
     if media_blocks and _media_processor is not None:
         try:
             multimodal_content = _media_processor.build_content(sanitized_content, media_blocks)
@@ -94,16 +96,6 @@ async def assemble_context(
         assistant_result=AgentResult(),
         metadata={"input_metadata": input_metadata},
     )
-
-    # Restore full multimodal content in history
-    if media_blocks and _media_processor is not None:
-        from modex_agent.memory.history import restore_multimodal_in_history
-
-        pending = await restore_multimodal_in_history(
-            context_state.history, multimodal_content, logger
-        )
-        if pending is not None:
-            context_state.history = ListMessageHistory(pending)
 
     sideband_prompt = input_metadata.get("sideband_system_prompt")
     if isinstance(sideband_prompt, str) and sideband_prompt:

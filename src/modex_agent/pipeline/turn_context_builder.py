@@ -20,7 +20,7 @@ the constructor and stored as ``self._<name>``.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -366,8 +366,15 @@ class TurnContextBuilder:
         *,
         input_metadata: dict[str, Any] | None = None,
         pool_data: PoolDataSnapshot | None = None,
+        inline_attachments: Sequence[Attachment] | None = None,
     ) -> tuple[AgentContext, ContentEmitter]:
-        """Build AgentContext and emitter for the turn."""
+        """Build AgentContext and emitter for the turn.
+
+        ``inline_attachments`` are the current turn's resolved Attachment
+        records (path-only, no bytes). Only the image-kind subset is carried
+        in turn state (ADR-0014 §3 / mechanism A) so the inline renderer can
+        bind vision blocks. Defaults to empty.
+        """
 
         # Ensure per-session injection queue exists
         self._registry.get_or_create_queue(session.session_id)
@@ -455,6 +462,9 @@ class TurnContextBuilder:
                 ),
                 control_channel=self._control_channel
                 or (base_services.control_channel if base_services is not None else None),
+                model_capabilities=(
+                    base_services.model_capabilities if base_services is not None else None
+                ),
             )
             agent_context.runtime = AgentRuntime(services=services, state=react_state)
             agent_context.runtime.state.custom[TurnCustomKey.MAX_TOOLS_PER_TURN] = None
@@ -471,6 +481,11 @@ class TurnContextBuilder:
                     trace_store=snapshot_trace_store,
                     control_channel=self._control_channel
                     or (base_services.control_channel if base_services is not None else None),
+                    model_capabilities=(
+                        base_services.model_capabilities
+                        if base_services is not None
+                        else None
+                    ),
                 ),
                 state=ReActTurnState(
                     identity=turn_identity,
@@ -478,6 +493,20 @@ class TurnContextBuilder:
                     phase=RTurnPhase.CREATED,
                 ),
             )
+
+        # Carry the current turn's resolved image-kind attachments in turn state
+        # (ADR-0014 §3). The inline renderer (unit 4) reads these to bind vision
+        # blocks. Set once here — both runtime branches above share this path.
+        if agent_context.runtime is not None:
+            from modex_agent.media.models import Kind
+            from modex_agent.runtime.enums import TurnCustomKey
+
+            images = (
+                [a for a in inline_attachments if a.kind is Kind.IMAGE]
+                if inline_attachments
+                else []
+            )
+            agent_context.runtime.state.custom[TurnCustomKey.INLINE_ATTACHMENTS] = images
 
         # Emitter selection
         if self._emitter_factory:
