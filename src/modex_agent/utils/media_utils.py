@@ -226,19 +226,23 @@ class ImageHandler(MediaHandler):
             return None
 
 
+def _inline_caption(att: Attachment) -> dict[str, str]:
+    """Single source of truth for the mechanism-A inline image caption literal."""
+    return {"type": "text", "text": f"<image: {att.name}>"}
+
+
 def build_inline_image_block(att: Attachment) -> list[dict[str, Any]]:
     """Render an image attachment as a caption + image_url content pair.
 
     Returns the OpenAI-compatible two-element tail used to inject an image
-    inline into a user message (ADR-0013 mechanism A, provider-side renderer):
+    inline into a user message (mechanism A, ADR-0014):
 
-    ``[{"type": "text", "text": "<image: {att.name}>"},
-       {"type": "image_url", "image_url": {"url": "data:{mime};base64,{b64}"}}]``
+    ``[_inline_caption(att), {"type": "image_url", "image_url": {...}}]``
 
-    The ``image_url`` block is built via the same data-URL helper as
+    The ``image_url`` block shares the same data-URL helper as
     :class:`ImageHandler` (no duplicated base64/mime handling). The caption
-    literal is exactly ``<image: {att.name}>`` and must match byte-for-byte
-    what enrichment consumers expect.
+    is produced by :func:`_inline_caption` so tests and consumers reference
+    the same literal.
 
     Assumes the caller has already filtered to image attachments — this helper
     does not branch on ``att.kind``. The file is gate-vetted and present per
@@ -247,7 +251,7 @@ def build_inline_image_block(att: Attachment) -> list[dict[str, Any]]:
     rather than raising — matching :class:`ImageHandler`'s swallow-and-skip
     behavior so a single unreadable attachment never crashes a turn.
     """
-    caption = {"type": "text", "text": f"<image: {att.name}>"}
+    caption = _inline_caption(att)
     try:
         p = Path(att.path)
         raw = p.read_bytes()
