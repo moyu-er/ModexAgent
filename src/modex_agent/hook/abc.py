@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
@@ -31,7 +31,6 @@ class HookPoint(str, Enum):
     BEFORE_TOOL_EXECUTION = "before_tool_execution"
     AFTER_TOOL_EXECUTION = "after_tool_execution"
     AFTER_LLM_RESPONSE = "after_llm_response"
-    ON_CONTROL_COMMAND = "on_control_command"
     FINALIZE_CONTENT = "finalize_content"
     FINALLY_TURN = "finally_turn"
 
@@ -152,13 +151,6 @@ class AfterLLMResponseHook(Hook):
 
     @abstractmethod
     async def after_llm_response(self, ctx: AgentContext, response: LLMResponse) -> None: ...
-
-
-class OnControlCommandHook(Hook):
-    _hook_point = HookPoint.ON_CONTROL_COMMAND
-
-    @abstractmethod
-    async def on_control_command(self, ctx: AgentContext, command: Any) -> HookResult: ...  # noqa: ANN401
 
 
 class FinalizeContentHook(Hook):

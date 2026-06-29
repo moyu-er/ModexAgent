@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from modex_agent.interceptor.chain import InterceptorChain
     from modex_agent.memory.context_governance import ContextGovernance
 
-    from .store import RuntimeCommandStore, TurnStateStore
+    from .store import TurnStateStore
     from modex_agent.trace.store import TraceStore
 
 logger = logging.getLogger(__name__)
@@ -43,7 +43,6 @@ class AgentRuntimeServices:
     approval: ApprovalRuntime | None = None
     governance: ContextGovernance | None = None
     turn_store: TurnStateStore | None = None
-    command_store: RuntimeCommandStore | None = None
     trace_store: TraceStore | None = None
     pending_input_queue: asyncio.Queue[str] | None = None
     safety: RuntimeSafetyPolicy = field(default_factory=RuntimeSafetyPolicy)
@@ -88,10 +87,6 @@ class AgentRuntime:
     @property
     def turn_store(self) -> TurnStateStore | None:
         return self.services.turn_store
-
-    @property
-    def command_store(self) -> RuntimeCommandStore | None:
-        return self.services.command_store
 
     @property
     def trace_store(self) -> TraceStore | None:

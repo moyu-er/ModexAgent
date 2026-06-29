@@ -315,7 +315,7 @@ async def test_pipeline_drops_slash_command_when_busy_in_queue_mode() -> None:
         await asyncio.sleep(10)
 
     fake_task = asyncio.create_task(long_running())
-    pipeline._session_tasks["s1"] = fake_task
+    pipeline._registry._session_tasks["s1"] = fake_task
 
     try:
         result = await pipeline.process_message(

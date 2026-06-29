@@ -79,9 +79,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
 
         sections = self._trim_by_priority(sections)
 
-        session_msgs = await memory_system.get_history(
-            context, max_messages=self._budget.max_history_messages
-        )
+        session_msgs = await memory_system.get_history(context)
 
         system_prompt = "\n\n".join(s.content for s in sections) if sections else ""
         return InjectionResult(

@@ -17,7 +17,6 @@ approval suspend/resume, and integration points for hooks, interceptors, and con
 | `state.py` | `ReActTurnState`, snapshot payload keys, `ReActRuntimeStateCodec`. |
 | `builder.py` | `ReActAgentBuilder` -- `build_agent()` + `build_emitter_factory()` from `AgentDescriptor`. |
 | `approval.py` | `ApprovalRuntime` + `TieredToolApprovalClassifier` (NORMAL/DANGEROUS path-based). |
-| `assembler.py` | `RuntimeAssembler` -- sole constructor of `AgentRuntime` from `RuntimeServicesConfig`. |
 | `constants.py` | `ReActNode`, `ReActReason` enums. |
 | `nodes/start.py` | `StartNode` -- routes to LLM (fresh) or stored `current_node` (resume from suspended). |
 | `nodes/llm.py` | `LLMNode` -- calls LLM, handles streaming, emits iteration events. |
@@ -40,7 +39,10 @@ TOOL  --TURN_CANCELLED--> END
 ## Runtime Modes
 
 - **clean**: plain ReAct graph, no hooks/interceptors/approval/control/state-store.
-- **full**: all services wired through `AgentRuntimeServices` via `RuntimeAssembler`.
+- **full**: all services wired through `AgentRuntimeServices`. Runtime assembly lives in
+  `AgentPipeline` / `TurnContextBuilder` (the old `RuntimeAssembler` was removed as dead
+  code); the approval runtime is built by `ioc.factories.approval.build_approval_runtime`
+  and injected via `AgentPipeline.runtime_services`.
 
 ## Approval Flow
 
@@ -56,7 +58,10 @@ Deny policy: default `TOOL_RESULT_ONLY` (loop continues); override to `CANCEL_TU
 
 ## Key Invariants
 
-- Only `RuntimeAssembler.assemble()` constructs `AgentRuntime`/`ApprovalRuntime`.
+- `AgentRuntime` / `AgentRuntimeServices` are assembled by `AgentPipeline` /
+  `TurnContextBuilder` (per turn). The approval runtime is constructed by
+  `ioc.factories.approval.build_approval_runtime` and wired onto the main pipeline via
+  `AgentPipeline.runtime_services` (a mirror property) — see ADR-0008.
 - Hook state goes in `ctx.runtime.state`, never on shared instance attributes.
 - Approval does NOT go through interceptors; it is handled at the `ToolNode`/pipeline layer via `TurnSnapshot`.
 - Control: `drain_control_channel()` is called at safe points (LLMNode, ToolNode,

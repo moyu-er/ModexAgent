@@ -18,6 +18,7 @@ import json
 import logging
 import mimetypes
 import os
+import tempfile
 from collections import deque
 from enum import Enum
 from pathlib import Path
@@ -28,6 +29,7 @@ from bot.utils.media_utils import download_file
 from modex_agent.adapters.platform import StreamingMode
 from modex_agent.agents.react import ReActEvent
 from modex_agent.core.emitter import EmitterConfig, StreamingAwareEmitter
+from modex_agent.input_pipeline.envelope import AttachmentRef, UserInputEnvelope
 from modex_agent.pipeline.adapters import (
     InputAdapter,
     InputMessage,
@@ -40,20 +42,23 @@ from modex_agent.pipeline.filters import ChainedContentFilter, WhitespaceFilter
 QQ_FILE_TYPE_IMAGE = 1
 QQ_FILE_TYPE_FILE = 4
 
-_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".ico", ".svg"}
-
 # Persistence file for per-channel current workspace
 _CHANNEL_WS_FILE: str = "channel_ws.json"
 _REGISTRY_DIR: str = "_registry"
 
 
-def _guess_send_file_type(filename: str) -> int:
-    """判断发送文件的类型：图片 -> 1，其他 -> 4。"""
-    ext = Path(filename).suffix.lower()
+def _qq_file_type(filename: str, is_image: bool | None = None) -> int:
+    """Map an outbound file to QQ's rich-media file_type (1=image, 4=file).
+
+    *is_image* (from the Attachment record's magic-byte-derived ``kind``) is
+    authoritative when present — no extension guessing. The stdlib
+    ``mimetypes`` fallback only covers the legacy path-list case (no record),
+    so this adapter carries no hand-maintained extension list.
+    """
+    if is_image is not None:
+        return QQ_FILE_TYPE_IMAGE if is_image else QQ_FILE_TYPE_FILE
     mime, _ = mimetypes.guess_type(filename)
-    if ext in _IMAGE_EXTS or (mime and mime.startswith("image/")):
-        return QQ_FILE_TYPE_IMAGE
-    return QQ_FILE_TYPE_FILE
+    return QQ_FILE_TYPE_IMAGE if (mime and mime.startswith("image/")) else QQ_FILE_TYPE_FILE
 
 
 def _read_channel_ws(path: Path, channel_name: str, default: Path) -> Path:
@@ -100,7 +105,6 @@ class QQInputAdapter(InputAdapter):
         secret: str,
         sandbox: bool = False,
         allow_from: list | None = None,
-        media_dir: str | None = None,
         project_dir: Path | None = None,
     ):
         super().__init__()
@@ -117,13 +121,9 @@ class QQInputAdapter(InputAdapter):
         self._botpy = None
         self.last_input_metadata: dict[str, Any] = {}
 
-        # 媒体文件保存目录
-        self._media_dir = (
-            Path(media_dir)
-            if media_dir
-            else Path(__file__).resolve().parent.parent.parent / "data" / "media" / "qq"
-        )
-        self._media_dir.mkdir(parents=True, exist_ok=True)
+        # 入站附件的临时下载目录：ingest stage 读取字节后这些临时文件可丢弃。
+        # 生命周期与适配器一致（stop() 清理）。
+        self._inbound_tmp = tempfile.TemporaryDirectory(prefix="qq_inbound_")
 
         self._input_pipeline = None
         self._input_ctx = None
@@ -213,7 +213,7 @@ class QQInputAdapter(InputAdapter):
 
         # Start bot in background task
         self._bot_task = asyncio.create_task(self._run_bot())
-        print(f"[QQInputAdapter] Started, media_dir={self._media_dir}")
+        print("[QQInputAdapter] Started")
 
     async def _run_bot(self) -> None:
         """Run bot with auto-reconnect.
@@ -252,6 +252,10 @@ class QQInputAdapter(InputAdapter):
             with contextlib.suppress(asyncio.CancelledError):
                 await self._bot_task
 
+        # 入站附件临时下载目录清理（ingest stage 已持久化接受的字节）
+        with contextlib.suppress(Exception):
+            self._inbound_tmp.cleanup()
+
         print("[QQInputAdapter] Stopped")
 
     def put_input_message(self, msg: InputMessage) -> None:
@@ -288,11 +292,16 @@ class QQInputAdapter(InputAdapter):
             # 获取内容
             content = (data.content or "").strip()
 
-            # 下载附件
-            attachments: list[str] = []
-            recv_lines: list[str] = []
-            att_meta: list[dict[str, Any]] = []
+            # 附件只下载到临时位置并产出 AttachmentRef —— 与 webui 完全一致
+            # (ADR-0013 §12)。适配器不做任何字符串拼接进 content：gate / persist /
+            # record 由共享 AttachmentIngestStage 负责，agent 感知是 preprocess 的
+            # 瞬态 path-reference 注入（只进记忆，不进会话历史/transcript）。拼接
+            # 会把临时路径写进 transcript+memory，且该临时文件在 stop() 后即被删除，
+            # 留下悬挂引用。
+            attachment_refs: list[AttachmentRef] = []
             raw_attachments = getattr(data, "attachments", None) or []
+
+            inbound_tmp_dir = Path(self._inbound_tmp.name)
 
             if raw_attachments:
                 for att in raw_attachments:
@@ -302,36 +311,24 @@ class QQInputAdapter(InputAdapter):
                         print(f"[QQInputAdapter] Downloading attachment: {filename or url}")
                         local_path = await download_file(
                             url=url,
-                            dest_dir=self._media_dir,
+                            dest_dir=inbound_tmp_dir,
                             filename_hint=filename,
                         )
                         if local_path:
-                            attachments.append(local_path)
                             shown_name = filename or os.path.basename(local_path)
-                            recv_lines.append(f"- {shown_name}\n  saved: {local_path}")
+                            sniffed_mime, _ = mimetypes.guess_type(shown_name)
+                            attachment_refs.append(
+                                AttachmentRef(
+                                    local_path=local_path,
+                                    filename=shown_name,
+                                    mime_type=sniffed_mime,
+                                )
+                            )
                             print(f"[QQInputAdapter] Saved attachment: {local_path}")
                         else:
-                            shown_name = filename or url
-                            recv_lines.append(f"- {shown_name}\n  saved: [download failed]")
-                        att_meta.append(
-                            {
-                                "url": url,
-                                "filename": filename,
-                                "saved_path": local_path,
-                            }
-                        )
+                            print(f"[QQInputAdapter] Download failed: {filename or url}")
 
-            # 将附件信息附加到 content
-            if recv_lines:
-                tag = (
-                    "[Image]"
-                    if any(Path(p).suffix.lower() in _IMAGE_EXTS for p in attachments)
-                    else "[File]"
-                )
-                file_block = "Received files:\n" + "\n".join(recv_lines)
-                content = f"{content}\n\n{file_block}" if content else f"{tag}\n{file_block}"
-
-            if not content and not attachments:
+            if not content and not attachment_refs:
                 return
 
             print(f"[QQInputAdapter] Received from {user_id}: {content[:80]}...")
@@ -355,15 +352,11 @@ class QQInputAdapter(InputAdapter):
             }
             if channel_id:
                 metadata["channel"] = str(channel_id)
-            if att_meta:
-                metadata["attachments"] = att_meta
 
             # 记录最近一次输入 metadata，供 OutputAdapter 区分 C2C / 群聊
             self.last_input_metadata = metadata
 
             # ── S0: produce the seed envelope (adapter normalization done above) ──
-            from modex_agent.input_pipeline.envelope import UserInputEnvelope, AttachmentRef
-
             seed = UserInputEnvelope(
                 external_id=user_id,
                 content=content,
@@ -375,7 +368,7 @@ class QQInputAdapter(InputAdapter):
                     "chat_id": chat_id,
                     "session_id": user_id,
                 },
-                attachments=[AttachmentRef(local_path=p) for p in attachments],
+                attachments=attachment_refs,
             )
             result = await self._input_pipeline.handle(seed, self._input_ctx)
 
@@ -453,17 +446,30 @@ class QQOutputAdapter(OutputAdapter):
             chat_id = group_openid
 
         try:
-            # 1) 先发送附件
-            for media_ref in message.attachments:
+            # 1) 先发送附件。优先用结构化 Attachment 记录（name/is_image 来自 ingest
+            # 时的魔数分类，ADR-0013 §8），否则回退到旧路径列表。持久化路径的
+            # basename 可能是不透明 id（无扩展名），若据此取名/分类，图片会被当成
+            # 无名文件发出、后缀丢失。文件名与图片判定都取自记录，不在 adapter 里
+            # 维护扩展名表。
+            if message.attachment_records:
+                media_items: list[tuple[str, str | None, bool | None]] = [
+                    (r.path, r.name, r.is_image) for r in message.attachment_records
+                ]
+            else:
+                media_items = [(p, None, None) for p in message.attachments]
+            for media_ref, display_name, is_image in media_items:
                 ok = await self._send_media(
                     chat_id=chat_id,
                     media_ref=media_ref,
                     msg_id=msg_id,
                     is_group=is_group,
+                    display_name=display_name,
+                    is_image=is_image,
                 )
                 if not ok:
                     filename = (
-                        os.path.basename(urlparse(media_ref).path)
+                        display_name
+                        or os.path.basename(urlparse(media_ref).path)
                         or os.path.basename(media_ref)
                         or "file"
                     )
@@ -532,17 +538,28 @@ class QQOutputAdapter(OutputAdapter):
         media_ref: str,
         msg_id: str | None,
         is_group: bool,
+        *,
+        display_name: str | None = None,
+        is_image: bool | None = None,
     ) -> bool:
-        """读取文件 -> base64 编码 -> 上传 -> msg_type=7 发送。"""
+        """读取文件 -> base64 编码 -> 上传 -> msg_type=7 发送。
+
+        *display_name* / *is_image*（来自 Attachment 记录）覆盖路径 basename
+        推断：持久化路径的 basename 可能是不透明 id（无扩展名），据此取名会让
+        图片被当作无名文件、丢失后缀。
+        """
         if not self._qq_input._client:
             return False
 
-        data, filename = await self._read_media_bytes(media_ref)
-        if not data or not filename:
+        data, read_name = await self._read_media_bytes(media_ref)
+        if not data:
+            return False
+        filename = display_name or read_name
+        if not filename:
             return False
 
         try:
-            file_type = _guess_send_file_type(filename)
+            file_type = _qq_file_type(filename, is_image=is_image)
             file_data_b64 = base64.b64encode(data).decode()
 
             media_obj = await self._post_base64file(

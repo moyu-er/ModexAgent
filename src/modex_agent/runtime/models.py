@@ -15,7 +15,6 @@ from .enums import (
     AgentKind,
     ApprovalSubjectType,
     CancellationSource,
-    ControlCommandKind,
     MessageDeltaSource,
     OperationKind,
     OperationStatus,
@@ -263,23 +262,6 @@ class ToolBatchState:
     approval_id: str | None = None
     status: ToolBatchStatus = ToolBatchStatus.CREATED
     operation_id: str | None = None
-
-
-# ---------------------------------------------------------------------------
-# Control command state
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class ControlCommandState:
-    command_id: str
-    kind: ControlCommandKind
-    agent_id: str
-    session_id: str | None
-    payload: Mapping[str, JsonValue]
-    status: OperationStatus = OperationStatus.CREATED
-    created_at: float = field(default_factory=time.time)
-    applied_at: float | None = None
 
 
 @dataclass(frozen=True)

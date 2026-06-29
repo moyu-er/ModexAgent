@@ -1,4 +1,5 @@
 import type { DeltaEnvelope, ServerEventUnion } from "../types/events";
+import type { OutgoingAttachmentRef } from "../types/attachments";
 import { unwrapEnvelope } from "../types/events";
 
 type EventHandler = (event: ServerEventUnion) => void;
@@ -175,7 +176,13 @@ export class WebSocketClient {
     return this.send("attach", { session_id: sessionIdOrUuid });
   }
 
-  sendMessage(sessionId: string, content: string, ws?: string, requestId?: string): boolean {
+  sendMessage(
+    sessionId: string,
+    content: string,
+    ws?: string,
+    requestId?: string,
+    attachments?: OutgoingAttachmentRef[],
+  ): boolean {
     return this.send("send_message", {
       session_id: sessionId,
       content,
@@ -185,6 +192,9 @@ export class WebSocketClient {
       // optimistic message against the echo — without it every send renders
       // the user message twice (optimistic + un-deduped echo).
       ...(requestId ? { _request_id: requestId } : {}),
+      // Uploaded-file refs ({local_path, filename?, mime?}) the backend builds
+      // AttachmentRefs from so the ingest stage persists + perceives them.
+      ...(attachments && attachments.length > 0 ? { attachments } : {}),
     });
   }
 

@@ -4,7 +4,6 @@
 """
 
 import asyncio
-import contextlib
 import logging
 from enum import Enum
 from typing import Any, Literal
@@ -17,30 +16,20 @@ from modex_agent.control.exceptions import (
     PolicyViolation,
 )
 from modex_agent.hook import HookPayload, HookPoint
-from modex_agent.interceptor.abc import (
-    LLMStreamChunk,
-    LLMStreamContext,
-    ToolCallContext,
-)
 from modex_agent.runtime.enums import TurnCustomKey, TurnPhase
+from .message_builder import build_interrupted_assistant_message
 
 from ...core.agent import Agent, AgentContext, current_agent_context
 from ...core.constants import DefaultValues, StopReason
 from ...core.emitter import AgentResult, ContentEmitter
 from ...core.events import AgentEvent
-from ...core.provider import LLMProvider, StreamingLLMProvider
-from ...core.tool_manager import ToolResult
-from ...core.types import LLMResponse, ToolCall
+from ...core.provider import LLMProvider
 
 logger = logging.getLogger(__name__)
 
 # P0-a: 合理默认值
 _HOOK_TIMEOUT = 10.0
 _TOOL_TIMEOUT = DefaultValues.TOOL_TIMEOUT_SECONDS
-
-# Injection drain limits (ref: nanobot design)
-_MAX_INJECTIONS_PER_PHASE = 3
-_MAX_INJECTION_CYCLES = 5
 
 
 class ReActEvent(AgentEvent, Enum):
@@ -123,7 +112,6 @@ async def _persist_interrupted_partial(ctx: AgentContext, reason: str) -> None:
     """
     from modex_agent.runtime.enums import MessageDeltaSource
     from modex_agent.runtime.models import MessageDelta
-    from modex_agent.utils.message_builder import build_interrupted_assistant_message
 
     state = get_react_state(ctx)
     if state is None:
@@ -179,13 +167,24 @@ class ReActAgent(Agent[ReActEvent]):
         mode: Literal["clean", "full"] = "full",
     ) -> None:
         from modex_agent.agents.react.graph import ReActGraph
+        from modex_agent.agents.react.injection_drainer import InjectionDrainer
+        from modex_agent.agents.react.llm_client import ReactLlmClient
+        from modex_agent.agents.react.tool_executor import ToolExecutor
         from modex_agent.core.graph.engine import GraphEngine
 
         self.provider = provider
         self._hook_timeout = hook_timeout
         self._tool_timeout = tool_timeout
         self.mode = mode
-        self.graph = ReActGraph(self, mode=mode)
+        self._llm_client = ReactLlmClient(provider)
+        self._injection_drainer = InjectionDrainer()
+        self._tool_executor = ToolExecutor(default_tool_timeout=tool_timeout)
+        self.graph = ReActGraph(
+            llm_client=self._llm_client,
+            injection_drainer=self._injection_drainer,
+            tool_executor=self._tool_executor,
+            mode=mode,
+        )
         self.engine = GraphEngine(self.graph)
 
     @property
@@ -230,7 +229,11 @@ class ReActAgent(Agent[ReActEvent]):
         runtime = context.runtime
         ctx_token = current_agent_context.set(context)
 
-        result = AgentResult(content="", stop_reason=StopReason.ERROR)
+        # ``result`` stays None on a GraphInterrupt (approval suspend) so the
+        # FINALLY_TURN notification hook skips -- suspend is an expected pause,
+        # not a turn end. Every other path (success / cancel / error) reassigns
+        # it to a concrete AgentResult before the ``finally`` runs.
+        result: AgentResult | None = AgentResult(content="", stop_reason=StopReason.ERROR)
 
         async def actual_turn():
             nonlocal result
@@ -268,6 +271,14 @@ class ReActAgent(Agent[ReActEvent]):
                 result = await actual_turn()
             return result
         except GraphInterrupt:
+            # Approval suspend is an EXPECTED pause (a tool awaited human
+            # approval), not a turn end -- and definitely not an error. The
+            # ``finally`` below dispatches FINALLY_TURN with whatever ``result``
+            # holds; leaving the initial ``AgentResult(stop_reason=ERROR)``
+            # default here would make TurnOutcomeNotifyHook misreport every
+            # approval suspend as "The turn ended unexpectedly due to an error".
+            # None signals "no turn outcome" so the notification hook skips.
+            result = None
             raise
         except AgentControlError as e:
             # Controlled exit (e.g. CANCEL_TURN from the control channel) is
@@ -346,13 +357,6 @@ class ReActAgent(Agent[ReActEvent]):
             return safety.turn.hook_timeout_seconds
         return self._hook_timeout
 
-    def _resolve_tool_timeout(self, context: AgentContext) -> float:
-        """从 runtime.safety 读取 tool_timeout，带 fallback。"""
-        safety = context.runtime.safety if context.runtime else None
-        if safety is not None:
-            return safety.turn.tool_timeout_seconds
-        return self._tool_timeout
-
     async def _call_hooks(
         self,
         hook_point: HookPoint,
@@ -387,242 +391,6 @@ class ReActAgent(Agent[ReActEvent]):
             hook_timeout=self._resolve_hook_timeout(context),
         )
 
-    async def _execute_tool(
-        self,
-        tool_call: ToolCall,
-        context: AgentContext,
-    ) -> ToolResult:
-        """执行工具，优先使用 InterceptorChain 包裹。"""
-        interceptor_chain = context.runtime.interceptors if context.runtime else None
-        if interceptor_chain is not None:
-            call_ctx = ToolCallContext(
-                tool_call=tool_call,
-                tool_name=tool_call.tool_name,
-                arguments=tool_call.arguments or {},
-                session_id=str(context.session),
-            )
-
-            async def _actual() -> ToolResult:
-                return await self._execute_tool_raw(tool_call, context)
-
-            return await interceptor_chain.around_tool_call(
-                context,
-                call_ctx,
-                _actual,
-            )
-
-        return await self._execute_tool_raw(tool_call, context)
-
-    async def _execute_tool_raw(
-        self,
-        tool_call: ToolCall,
-        context: AgentContext,
-    ) -> ToolResult:
-        """执行工具（使用 ToolManager），带独立 timeout。"""
-        tool_timeout = self._resolve_tool_timeout(context)
-        try:
-            result = await asyncio.wait_for(
-                context.tool_manager.execute(
-                    tool_call.tool_name,
-                    tool_call.arguments or {},
-                ),
-                timeout=tool_timeout,
-            )
-            return result
-        except asyncio.CancelledError:
-            raise
-        except TimeoutError:
-            logger.warning(
-                "Tool %s timed out after %.1fs",
-                tool_call.tool_name,
-                tool_timeout,
-            )
-            return ToolResult(
-                tool_name=tool_call.tool_name,
-                result=None,
-                error=f"Error: Tool execution timeout after {tool_timeout:.0f}s",
-            )
-        except Exception as e:
-            logger.warning("Tool %s execution failed: %s", tool_call.tool_name, e)
-            return ToolResult(
-                tool_name=tool_call.tool_name,
-                result=None,
-                error=f"Error: {e}",
-            )
-
-    async def _stream_with_control(
-        self,
-        messages: list[dict[str, Any]],
-        context: AgentContext,
-    ) -> LLMResponse:
-        """通过 InterceptorChain 包裹的 LLM 流式调用。"""
-        assert isinstance(self.provider, StreamingLLMProvider)
-        emitter = context.emitter
-
-        stream_ctx = LLMStreamContext(
-            messages=messages,
-            model=getattr(self.provider, "model", None),
-            session_id=str(context.session),
-        )
-
-        accumulated_content = ""
-        accumulated_reasoning = ""
-        # Partial content streamed via _on_content_delta. Unlike
-        # accumulated_content (which only fills from the final end-of-stream
-        # chunk), this tracks content live during streaming — so it holds the
-        # partial text when a cancel interrupts mid-stream (the final chunk
-        # never arrives). Used to persist an interrupted assistant message.
-        streamed_content = ""
-        finish_reason = "stop"
-        tool_calls_list: list[ToolCall] = []
-
-        async def _actual_stream():
-            """实际调用 provider.chat_stream，将 chunk 转为 LLMStreamChunk。"""
-            nonlocal tool_calls_list
-
-            async def _on_content_delta(delta: str) -> None:
-                nonlocal streamed_content
-                # Drain control channel between every content delta so a
-                # CANCEL_TURN arriving mid-stream interrupts the LLM
-                # immediately (inside the provider's streaming loop, before
-                # the next chunk). Without this, cancel only takes effect
-                # after the full chat_stream returns.
-                if context.runtime and context.runtime.control_channel:
-                    from modex_agent.hook.builtin.control_drain import drain_control_channel
-                    await drain_control_channel(
-                        context.runtime.control_channel,
-                        context,
-                        turn_uuid=context.runtime.turn_uuid,
-                    )
-                if delta:
-                    streamed_content += delta
-                    await emitter.emit_delta(delta)
-                    await emitter.emit(ReActEvent.MODEL_OUTPUT, delta)
-
-            async def _on_reasoning_delta(delta: str) -> None:
-                if context.runtime and context.runtime.control_channel:
-                    from modex_agent.hook.builtin.control_drain import drain_control_channel
-                    await drain_control_channel(
-                        context.runtime.control_channel,
-                        context,
-                        turn_uuid=context.runtime.turn_uuid,
-                    )
-                if delta:
-                    await emitter.emit(ReActEvent.MODEL_REASONING, delta)
-
-            response = await self.provider.chat_stream(
-                messages=messages,
-                tools=context.get_tool_descriptions() if context.tool_manager else None,
-                temperature=context.temperature or 0.7,
-                max_tokens=context.max_tokens,
-                on_content_delta=_on_content_delta,
-                on_reasoning_delta=_on_reasoning_delta,
-            )
-            tool_calls_list = list(response.tool_calls or [])
-            yield LLMStreamChunk(
-                content_delta=response.content,
-                reasoning_delta=response.reasoning_content,
-                finish_reason=response.finish_reason,
-            )
-
-        interceptor_chain = context.runtime.interceptors if context.runtime else None
-        try:
-            async for chunk in interceptor_chain.around_llm_stream(
-                context,
-                stream_ctx,
-                _actual_stream,
-            ):
-                if chunk.control_action == "cancel":
-                    finish_reason = chunk.finish_reason or "cancelled"
-                    logger.warning(
-                        "LLM stream cancelled session=%s finish_reason=%s",
-                        str(context.session),
-                        finish_reason,
-                    )
-                    break
-                if chunk.content_delta:
-                    accumulated_content += chunk.content_delta
-                if chunk.reasoning_delta:
-                    accumulated_reasoning += chunk.reasoning_delta
-                if chunk.finish_reason:
-                    finish_reason = chunk.finish_reason
-        except (asyncio.CancelledError, Exception):
-            # Stream interrupted mid-flight (user /stop, pause, timeout, error).
-            # The normal assistant-message append (llm node ctx.history.append)
-            # never runs, so memory would lose this partial content. Stash the
-            # live-streamed partial (streamed_content) for the agent's
-            # cancel/error handler to persist as an XML-marked interrupted
-            # message, keeping memory aligned with the transcript.
-            if streamed_content or tool_calls_list:
-                state = get_react_state(context)
-                if state is not None:
-                    state.custom[TurnCustomKey.INTERRUPTED_PARTIAL] = {
-                        "content": streamed_content,
-                        "tool_names": [tc.tool_name for tc in tool_calls_list],
-                    }
-            raise
-
-        has_tool_calls = bool(tool_calls_list)
-        await emitter.emit_stream_end(resuming=has_tool_calls)
-        return LLMResponse(
-            content=accumulated_content or None,
-            reasoning_content=accumulated_reasoning or None,
-            finish_reason=finish_reason,
-            tool_calls=tool_calls_list,
-        )
-
-    async def _drain_injections(
-        self,
-        context: AgentContext,
-        max_per_phase: int = _MAX_INJECTIONS_PER_PHASE,
-    ) -> list[str]:
-        """消费注入队列中的用户消息，追加到 history。"""
-        q = context.runtime.injection_queue if context.runtime else None
-        if q is None:
-            return []
-
-        cycle_count: int = (
-            context.runtime.state.custom.get(TurnCustomKey.INJECTION_CYCLE_COUNT, 0)
-            if context.runtime
-            else 0
-        )
-        if cycle_count >= _MAX_INJECTION_CYCLES:
-            while True:
-                try:
-                    q.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
-            return []
-
-        injected: list[str] = []
-        for _ in range(max_per_phase):
-            try:
-                msg: str = q.get_nowait()
-            except asyncio.QueueEmpty:
-                break
-            try:
-                await context.history.append(
-                    {
-                        "role": "user",
-                        "content": f"[Injected during execution]: {msg}",
-                    }
-                )
-            except Exception:
-                logger.warning(
-                    "Failed to inject message into history, returning to queue: %s",
-                    msg[:100],
-                )
-                with contextlib.suppress(asyncio.QueueFull):
-                    q.put_nowait(msg)
-                break
-            injected.append(msg)
-
-        if injected:
-            if context.runtime:
-                context.runtime.state.custom[TurnCustomKey.INJECTION_CYCLE_COUNT] = cycle_count + 1
-
-        return injected
-
-    # Message construction helpers moved to framework.utils.message_builder
-    # (build_assistant_message, build_tool_message) to keep ReActAgent focused
-    # on orchestration rather than data-formatting details.
+    # Message construction helpers live in this package's message_builder module
+    # (build_assistant_message, build_tool_message, build_interrupted_assistant_message)
+    # to keep ReActAgent focused on orchestration rather than data-formatting details.

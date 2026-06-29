@@ -53,13 +53,8 @@ references
 uv.lock
 bun.lock
 trace
+nul
 
 /trace
 /output
 node_modules
-
-openspec
-design_doc/
-agent_doc/
-design_docs/
-agent_docs/

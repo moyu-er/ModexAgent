@@ -15,9 +15,9 @@ from typing import TYPE_CHECKING, Any
 
 from modex_agent.adapters.platform import StreamingMode
 
-from ..core.types import InputMessage, OutputMessage
-from ..core.session_id import SessionInfo
-from .filters import ContentFilter
+from modex_agent.core.types import InputMessage, OutputMessage
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.pipeline.filters import ContentFilter
 
 if TYPE_CHECKING:
     from modex_agent.commands.models import CommandProcessor

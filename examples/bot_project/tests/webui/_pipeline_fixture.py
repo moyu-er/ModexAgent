@@ -23,9 +23,7 @@ def attach_default_pipeline(
     workspace_root: Path | None = None,
 ) -> None:
     agent_pool_map = agent_pool_map or {"main": "main", "coding": "coding"}
-    pipe = build_webui_pipeline(
-        skill_registry=_NoSkillRegistry(), known_pools=set(agent_pool_map)
-    )
+    pipe = build_webui_pipeline(skill_registry=_NoSkillRegistry())
     if pool_session_store is None:
         pool_session_store = MagicMock()
         pool_session_store.get = lambda key, default=None: default

@@ -6,10 +6,13 @@ from collections.abc import AsyncIterator, Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from ..adapters.platform import StreamingMode
 from ..core.constants import DefaultValues
 from ..core.types import InputMessage, OutputMessage
 from modex_agent.core.session_id import SessionInfo, SessionIdFactory
+from modex_agent.media.models import Attachment
 from ..pipeline.adapters import InputAdapter, OutputAdapter
 from .broker import Address, BrokerMessage, MessageBroker
 
@@ -140,6 +143,92 @@ def _broker_msg_to_input_message(
         metadata=metadata,
         content_format=content_fmt,
         truncatable_paths=trunc_paths,
+        approval_decision=_approval_decision_from_payload(payload),
+        attachments_resolved=attachments_resolved_from_payload(payload),
+    )
+
+
+def _approval_decision_from_payload(payload: dict[str, Any]) -> Any:
+    """Reconstruct an ``ApprovalDecisionInput`` from a broker payload, or None."""
+    from modex_agent.approval.views import ApprovalDecisionInput
+
+    return ApprovalDecisionInput.from_dict(payload.get("approval_decision"))
+
+
+def attachments_resolved_from_payload(payload: dict[str, Any]) -> list[Attachment]:
+    """Rebuild the gate-accepted inbound Attachment records from a broker payload.
+
+    The broker serialization boundary (:class:`BrokerInputPayload`) carries the
+    resolved attachments as metadata-only dicts; without rebuilding them here
+    the path-reference injection (ADR-0013 §10, mechanism B) is silently lost
+    in transit — the same field-drift failure that once dropped
+    ``approval_decision``. Shared by the BrokerInputAdapter reconstruction and
+    the pool's raw-broker-message dispatch. Returns ``[]`` when none.
+    """
+    raw = payload.get("attachments_resolved") or []
+    return [Attachment.from_dict(d) for d in raw if isinstance(d, dict)]
+
+
+class BrokerInputPayload(BaseModel):
+    """Serialized ``InputMessage`` payload that crosses the message broker.
+
+    Built by both :func:`build_input_broker_message` (framework bridge) and
+    ``PoolRouter._route_to_pool`` (bot layer); the pool dispatch side reads it
+    back as a plain dict from ``BrokerMessage.payload``. Carrying it as a typed
+    model prevents field-name drift at the construction edge — the exact
+    failure that silently dropped ``approval_decision`` and turned a webui
+    approve click into an empty user turn (provider 400).
+
+    ``extra="allow"`` lets future/auxiliary fields (e.g. transport metadata
+    piggy-backing on the payload) pass through without a model edit; declared
+    fields stay typed and visible. Serialize with ``model_dump(exclude_none=True)``
+    so an absent ``approval_decision`` stays absent (callers rely on key
+    absence, not a ``None`` value, to detect "no decision").
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    content: str = ""
+    session_id: str = ""
+    agent_session_id: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    sender_id: str = ""
+    chat_id: str = ""
+    approval_decision: dict[str, Any] | None = None
+    attachments_resolved: list[dict[str, Any]] = Field(default_factory=list)
+
+
+def build_input_broker_message(msg: InputMessage, recipient: Address) -> BrokerMessage:
+    """Build the BrokerMessage that carries an InputMessage across the broker.
+
+    ``approval_decision`` is serialized into the payload so the dispatch side
+    (pool ``_dispatch_agent_message`` / ``BrokerInputAdapter``) can reconstruct
+    it. Without this, a webui approve/deny decision is lost in transport and
+    arrives as an empty user turn — polluting history and leaving a dangling
+    assistant ``tool_calls`` that triggers a provider 400.
+    """
+    payload = BrokerInputPayload(
+        content=msg.content,
+        session_id=msg.session.session_id_prefix,
+        agent_session_id=str(msg.session),
+        metadata=dict(msg.metadata) if msg.metadata else {},
+        sender_id=msg.sender_id,
+        chat_id=msg.chat_id,
+        approval_decision=msg.approval_decision.to_dict()
+        if msg.approval_decision is not None
+        else None,
+        attachments_resolved=[a.to_dict() for a in msg.attachments_resolved],
+    )
+    return BrokerMessage(
+        payload=payload.model_dump(exclude_none=True),
+        sender=Address(kind="channel", name=msg.source or "unknown"),
+        recipient=recipient,
+        headers={
+            "channel": msg.channel,
+            "chat_id": msg.chat_id,
+            "session_id": msg.session.session_id_prefix,
+            "agent_session_id": str(msg.session),
+        },
     )
 
 
@@ -354,25 +443,7 @@ class BrokerBridgeService:
         while True:
             try:
                 async for msg in adapter.receive():
-                    broker_msg = BrokerMessage(
-                        payload={
-                            "content": msg.content,
-                            "session_id": str(msg.session),
-                            "agent_session_id": str(msg.session),
-                            "metadata": msg.metadata,
-                            "sender_id": msg.sender_id,
-                            "chat_id": msg.chat_id,
-                            "session_id": msg.session.session_id_prefix,
-                        },
-                        sender=Address(kind="channel", name=msg.source or "unknown"),
-                        recipient=addr,
-                        headers={
-                            "channel": msg.channel,
-                            "chat_id": msg.chat_id,
-                            "session_id": msg.session.session_id_prefix,
-                            "agent_session_id": str(msg.session),
-                        },
-                    )
+                    broker_msg = build_input_broker_message(msg, addr)
                     await self.broker.send_to(addr, broker_msg)
             except asyncio.CancelledError:
                 raise

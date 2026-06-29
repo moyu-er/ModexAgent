@@ -23,7 +23,7 @@ class TestBuildFullConfig:
     def test_build_full_config(self) -> None:
         registry = InMemoryStoreRegistry()
         config = MemoryLayerConfigSet(
-            session=SessionMemoryConfig(max_messages=100),
+            session=SessionMemoryConfig(),
             archive=ArchiveMemoryConfig(),
             knowledge=KnowledgeMemoryConfig(),
             user_retention=UserRetentionBufferConfig(enabled=True),
@@ -43,7 +43,7 @@ class TestBuildSessionOnly:
     def test_build_session_only(self) -> None:
         registry = InMemoryStoreRegistry()
         config = MemoryLayerConfigSet(
-            session=SessionMemoryConfig(max_messages=50),
+            session=SessionMemoryConfig(),
             archive=None,
             knowledge=None,
             user_retention=UserRetentionBufferConfig(enabled=True),
@@ -63,7 +63,7 @@ class TestBuildSubagentSessionIsolated:
     def test_build_subagent_session_isolated(self) -> None:
         registry = InMemoryStoreRegistry()
         config = MemoryLayerConfigSet(
-            session=SessionMemoryConfig(max_messages=50),
+            session=SessionMemoryConfig(),
             archive=ArchiveMemoryConfig(scope=SessionScope()),
             knowledge=None,
             user_retention=UserRetentionBufferConfig(enabled=True),

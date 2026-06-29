@@ -1,9 +1,11 @@
 import type {
+  ApprovalRequestView,
   ConversationInfo,
   CreateConversationResponse,
   ServerEventUnion,
   TodoItemDTO,
 } from "../types/events";
+import type { MediaConfigResponse, UploadAttachmentResponse } from "../types/attachments";
 
 const API_BASE = "/api";
 
@@ -107,7 +109,7 @@ export async function deleteConversation(
 async function fetchSessionResource<T>(
   sessionId: string,
   ws: string | undefined,
-  resource: "messages" | "todos",
+  resource: "messages" | "todos" | "approvals",
 ): Promise<T> {
   // ws (workspace) scopes the read to the session's workspace — without it the
   // server reads home and a message written under another workspace is lost.
@@ -129,6 +131,29 @@ export async function fetchTodos(
   ws?: string,
 ): Promise<TodoItemDTO[]> {
   return fetchSessionResource<TodoItemDTO[]>(sessionId, ws, "todos");
+}
+
+export async function fetchApprovals(
+  sessionId: string,
+  ws?: string,
+): Promise<ApprovalRequestView[]> {
+  return fetchSessionResource<ApprovalRequestView[]>(sessionId, ws, "approvals");
+}
+
+export async function submitApproval(
+  sessionId: string,
+  toolCallId: string,
+  action: "allow" | "deny",
+  ws?: string,
+): Promise<{ accepted: boolean }> {
+  const params = ws ? `?ws=${encodeURIComponent(ws)}` : "";
+  const resp = await fetch(`${API_BASE}/sessions/${sessionId}/approvals${params}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tool_call_id: toolCallId, action }),
+  });
+  await assertOk(resp);
+  return resp.json() as Promise<{ accepted: boolean }>;
 }
 
 export async function fetchAllMessages(
@@ -190,3 +215,49 @@ export async function browseWorkspace(
   await assertOk(resp);
   return resp.json() as Promise<BrowseResult>;
 }
+
+// ── Attachments (ADR-0013) ──────────────────────────────────────────────────
+
+/** Fetch the active MediaConfig limits for composer pre-validation. */
+export async function fetchMediaConfig(): Promise<MediaConfigResponse> {
+  const resp = await fetch(`${API_BASE}/media/config`);
+  await assertOk(resp);
+  return resp.json() as Promise<MediaConfigResponse>;
+}
+
+/**
+ * Upload a file as multipart form-data to the per-session temp-file receiver.
+ * Returns a ref ({local_path, filename, size, mime?}) the composer includes in
+ * the subsequent WS send_message as an attachment. The perception gate + real
+ * persistence run later in the ingest stage.
+ */
+export async function uploadAttachment(
+  sessionId: string,
+  file: File,
+  ws?: string,
+): Promise<UploadAttachmentResponse> {
+  const form = new FormData();
+  form.append("file", file);
+  const params = ws ? `?ws=${encodeURIComponent(ws)}` : "";
+  const resp = await fetch(`${API_BASE}/sessions/${sessionId}/attachments${params}`, {
+    method: "POST",
+    body: form,
+  });
+  await assertOk(resp);
+  return resp.json() as Promise<UploadAttachmentResponse>;
+}
+
+/**
+ * Build the download URL for an attachment, appending the active workspace.
+ * Empty ws means the home workspace (matches the existing ?ws= convention:
+ * home requests omit the param so the server reads the canonical home dir).
+ */
+export function attachmentDownloadUrl(
+  sessionId: string,
+  attachmentId: string,
+  ws?: string,
+): string {
+  const base = `${API_BASE}/sessions/${sessionId}/attachments/${attachmentId}`;
+  return ws ? `${base}?ws=${encodeURIComponent(ws)}` : base;
+}
+

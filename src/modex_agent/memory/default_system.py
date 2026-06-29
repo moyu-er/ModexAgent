@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.memory.archive_models import ArchiveChannel
+from modex_agent.memory.cleanup_events import MemoryCleanupListener
 from modex_agent.memory.core.layers import ArchiveMemoryManager, MemoryLayerSet, SessionMemoryManager
 from modex_agent.core.message import ChatMessage
 from modex_agent.memory.core.models import LongTermMemory
@@ -21,6 +22,7 @@ from modex_agent.memory.core.system import (
     MemorySystem,
 )
 from modex_agent.memory.history import MessageHistory
+from modex_agent.memory.token_estimator import CharTokenEstimator, TokenEstimator
 
 if TYPE_CHECKING:
     from modex_agent.agents.summarizer.abc import ArchiveGenerator, KnowledgeConsolidatorBase
@@ -53,6 +55,8 @@ class ScopedMessageHistory(MessageHistory):
         archive_agent: ArchiveGenerator | None = None,
         archive_storage: DirArchiveStorage | None = None,
         archive_trigger_callback: Callable[[MemoryContext], Awaitable[None]] | None = None,
+        cleanup_listeners: Sequence[MemoryCleanupListener] | None = None,
+        token_estimator: TokenEstimator | None = None,
     ) -> None:
         self._manager = manager
         self._context = context
@@ -64,6 +68,8 @@ class ScopedMessageHistory(MessageHistory):
         self._archive_agent = archive_agent
         self._archive_storage = archive_storage
         self._archive_trigger_callback = archive_trigger_callback
+        self._cleanup_listeners: list[MemoryCleanupListener] = list(cleanup_listeners or [])
+        self._token_estimator: TokenEstimator = token_estimator or CharTokenEstimator()
         self._cache: list[ChatMessage] | None = (
             [ChatMessage.coerce(m) for m in initial_messages]
             if initial_messages is not None
@@ -78,7 +84,17 @@ class ScopedMessageHistory(MessageHistory):
             if self._archive_trigger_callback is not None:
                 await self._archive_trigger_callback(self._context)
 
-        await cleanup_session(
+        async def _on_triggered(context: MemoryContext, reason: Any) -> None:
+            for listener in self._cleanup_listeners:
+                try:
+                    await listener.on_cleanup_triggered(context, reason)
+                except Exception:
+                    logger.warning(
+                        "cleanup listener on_cleanup_triggered failed: session=%s",
+                        context.session_id,
+                    )
+
+        result = await cleanup_session(
             session=self._manager,
             archive=self._archive_manager,
             context=self._context,
@@ -87,8 +103,20 @@ class ScopedMessageHistory(MessageHistory):
             archive_agent=self._archive_agent,
             archive_storage=self._archive_storage,
             on_archive_generated=_trigger if self._archive_trigger_callback is not None else None,
+            on_triggered=_on_triggered if self._cleanup_listeners else None,
+            token_estimator=self._token_estimator,
             **self._cleanup_config,
         )
+
+        if result.triggered:
+            for listener in self._cleanup_listeners:
+                try:
+                    await listener.on_cleanup_finished(self._context, result)
+                except Exception:
+                    logger.warning(
+                        "cleanup listener on_cleanup_finished failed: session=%s",
+                        self._context.session_id,
+                    )
 
     async def _urb_completion_hook(self, message: ChatMessage | dict[str, Any]) -> None:
         """If message is a plain assistant, mark all URB entries completed."""
@@ -104,12 +132,27 @@ class ScopedMessageHistory(MessageHistory):
             return
         await self._user_retention.mark_all_completed(self._context, assistant_content)
 
+    def _stamp_token_count(
+        self, messages: Sequence[ChatMessage | dict[str, Any]]
+    ) -> list[ChatMessage | dict[str, Any]]:
+        """Set token_count on each message via the estimator (append-time write point)."""
+        stamped: list[ChatMessage | dict[str, Any]] = []
+        for msg in messages:
+            chat = ChatMessage.coerce(msg)
+            if chat.token_count is None:
+                chat = chat.model_copy(
+                    update={"token_count": self._token_estimator.estimate_message(chat)}
+                )
+            stamped.append(chat)
+        return stamped
+
     async def append(self, message: ChatMessage | dict[str, Any]) -> None:
-        await self._manager.add_messages(self._context, [message])
+        [stamped] = self._stamp_token_count([message])
+        await self._manager.add_messages(self._context, [stamped])
         if self._recorder is not None:
-            await self._recorder.record([message], self._context)
+            await self._recorder.record([stamped], self._context)
         if self._user_retention is not None:
-            await self._urb_completion_hook(message)
+            await self._urb_completion_hook(stamped)
         await self._run_cleanup()
         async with self._cache_lock:
             self._cache = None
@@ -117,11 +160,12 @@ class ScopedMessageHistory(MessageHistory):
     async def extend(self, messages: Sequence[ChatMessage | dict[str, Any]]) -> None:
         if not messages:
             return
-        await self._manager.add_messages(self._context, list(messages))
+        stamped = self._stamp_token_count(messages)
+        await self._manager.add_messages(self._context, stamped)
         if self._recorder is not None:
-            await self._recorder.record(list(messages), self._context)
-        if self._user_retention is not None and messages:
-            await self._urb_completion_hook(messages[-1])
+            await self._recorder.record(stamped, self._context)
+        if self._user_retention is not None and stamped:
+            await self._urb_completion_hook(stamped[-1])
         await self._run_cleanup()
         async with self._cache_lock:
             self._cache = None
@@ -181,6 +225,7 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
         archive_storage: DirArchiveStorage | None = None,
         knowledge_consolidator: KnowledgeConsolidatorBase | None = None,
         archive_trigger_callback: Callable[[MemoryContext], Awaitable[None]] | None = None,
+        token_estimator: TokenEstimator | None = None,
     ) -> None:
         self._layers = layer_set
         self._registry = store_registry
@@ -191,6 +236,8 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
         self._archive_storage = archive_storage
         self._knowledge_consolidator = knowledge_consolidator
         self._archive_trigger_callback = archive_trigger_callback
+        self._token_estimator: TokenEstimator = token_estimator or CharTokenEstimator()
+        self._cleanup_listeners: list[MemoryCleanupListener] = []
         self._recorder = MemoryAppendRecorder()
         if providers is not None:
             for provider in providers.all():
@@ -218,6 +265,15 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
         """
         self._archive_trigger_callback = callback
 
+    def add_cleanup_listener(self, listener: MemoryCleanupListener) -> None:
+        """Register a cleanup (compaction) event listener.
+
+        Listeners are forwarded to every ``ScopedMessageHistory`` created after
+        registration. Register before the first turn so live histories observe
+        events (mirrors the ``archive_trigger_callback`` threading limitation).
+        """
+        self._cleanup_listeners.append(listener)
+
     def create_message_history(
         self,
         context: MemoryContext,
@@ -235,6 +291,8 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
             archive_agent=self._archive_agent,
             archive_storage=self._archive_storage,
             archive_trigger_callback=self._archive_trigger_callback,
+            cleanup_listeners=self._cleanup_listeners,
+            token_estimator=self._token_estimator,
         )
 
     async def add_messages(
@@ -251,9 +309,8 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
     async def get_history(
         self,
         context: MemoryContext,
-        max_messages: int | None = None,
     ) -> list[ChatMessage]:
-        return await self._layers.session.get_recent_messages(context, limit=max_messages)
+        return await self._layers.session.get_recent_messages(context)
 
     async def search(
         self,

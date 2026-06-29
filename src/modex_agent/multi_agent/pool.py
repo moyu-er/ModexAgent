@@ -16,6 +16,7 @@ from modex_agent.core.session_store import SessionStore
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import InputMessage
 from modex_agent.messaging.broker import BrokerMessage, MessageBroker
+from modex_agent.messaging.broker_bridge import attachments_resolved_from_payload
 from modex_agent.runtime.dispatch import DispatchDeadline, current_dispatch_deadline
 
 from .address import AgentAddress
@@ -60,6 +61,35 @@ class SessionActivity:
 
     created_at: float
     last_active: float
+
+
+def input_message_from_dispatch_envelope(
+    envelope: AgentMessageEnvelope,
+    *,
+    session: Any,
+    metadata: dict[str, Any],
+) -> InputMessage:
+    """Reconstruct the InputMessage dispatched to a pipeline from a broker envelope.
+
+    Carries ``approval_decision`` through (serialized in the envelope payload by
+    ``broker_bridge.build_input_broker_message``). Without this, a webui
+    approve/deny decision crossing the broker is lost and treated as an empty
+    user turn — polluting history and leaving a dangling assistant ``tool_calls``.
+    """
+    from modex_agent.approval.views import ApprovalDecisionInput
+
+    return InputMessage(
+        content=envelope.payload.get("content", ""),
+        session=session,
+        metadata=metadata,
+        approval_decision=ApprovalDecisionInput.from_dict(
+            envelope.payload.get("approval_decision")
+        ),
+        # Carry resolved attachments through so mechanism-B path injection
+        # (ADR-0013 §10) survives the broker dispatch boundary — same drift
+        # class as approval_decision above. Serialized by PoolRouter._route_to_pool.
+        attachments_resolved=attachments_resolved_from_payload(envelope.payload),
+    )
 
 
 class AgentPool(AgentRegistry):
@@ -763,7 +793,9 @@ class AgentPool(AgentRegistry):
                     self._touch_session(session_id)
                 session = await self._resolve_session_info(session_id, instance.descriptor.address.name)
                 await instance.pipeline.process_message(
-                    InputMessage(content=content, session=session, metadata=metadata)
+                    input_message_from_dispatch_envelope(
+                        envelope, session=session, metadata=metadata
+                    )
                 )
             if envelope.invocation_id:
                 await self._enforce_session_cap(instance.descriptor.address.name)
@@ -800,7 +832,17 @@ class AgentPool(AgentRegistry):
             async with lock:
                 session = await self._resolve_session_info(session_id, descriptor.address.name)
                 await instance.pipeline.process_message(
-                    InputMessage(content=content, session=session, metadata=metadata)
+                    InputMessage(
+                        content=content,
+                        session=session,
+                        metadata=metadata,
+                        # Rebuild gate-accepted inbound attachments so the
+                        # mechanism-B path injection (ADR-0013 §10) survives the
+                        # broker dispatch boundary — without this the agent never
+                        # perceives an uploaded file. Serialized by
+                        # PoolRouter._route_to_pool / build_input_broker_message.
+                        attachments_resolved=attachments_resolved_from_payload(msg.payload),
+                    )
                 )
 
     def get(self, name: str) -> AgentInstance | None:

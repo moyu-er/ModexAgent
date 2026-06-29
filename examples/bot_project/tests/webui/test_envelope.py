@@ -65,7 +65,7 @@ def test_to_dict_round_trip_preserves_structure() -> None:
     assert wire["pool"] == ""
     assert wire["parent_session_id"] is None
     assert wire["metadata"] == {"k": "v"}
-    assert wire["payload"] == {"content": "hi"}
+    assert wire["payload"] == {"content": "hi", "attachments": []}
     assert "timestamp" in wire
 
 

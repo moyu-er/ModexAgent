@@ -39,12 +39,12 @@ The framework core replaces traditional loops with a **graph-driven execution en
 ## Key Features
 
 - **Graph-driven ReAct Engine** — Execution modeled as `Graph[R] + Node[R] + Edge`. Supports `GraphInterrupt` suspension and state-persistent resumption. Naturally suited for approval and breakpoint-resume scenarios.
-- **Interruptible Approval System** — When an agent invokes a sensitive tool, execution automatically suspends, persists state via `TurnSnapshot`, and resumes precisely after user confirmation. Tiered policies (NORMAL / HARDLINE / PENDING) and cascade cancellation.
+- **Interruptible Approval** — The agent asks before making risky changes. When it tries to write or edit files outside your project folder, it pauses and asks for your go-ahead — approve with one click in the WebUI or reply `/approve` in chat, and it continues exactly where it stopped. Off by default; turn it on per agent.
 - **Cross-platform Interactive Terminal** — Built-in terminal toolchain with unified interfaces for Windows (WinPTY/ConPTY), Linux, and macOS (pexpect/tmux); visible and headless PTY modes, covered by 248+ unit tests.
 - **Star-topology Multi-agent Collaboration** — Main agent as communication hub. Subagents collaborate via the single `send_to_agent` tool; the framework routes calls through the broker, the async inbox, or an isolated subagent session as needed. `CommunicationTracker` prevents silent message loss.
 - **Pool Runtime** — Multi-agent persistent pools with `MessageBroker` + `AgentMessageBus` routing. I/O adapters are fully decoupled from agent logic.
 - **Multi-tier Memory + Self-Learning** — Session, Archive, Knowledge, UserRetentionBuffer, Pruned, and Experience layers with configurable scopes (SessionScope / UserScope / GlobalScope). Dream Engine consolidates archives into knowledge; ExperienceReviewAgent turns conversations into reusable EXPERIENCE.md reference knowledge.
-- **Hook + Interceptor Extension System** — Lifecycle hooks (InboxFlush, SubagentAutoSend, ProgressReport) and AOP interceptor chains (ControlDrain, ToolResultLimit) compose orthogonally without core intrusion.
+- **Hook + Interceptor Extension System** — Lifecycle hooks (InboxFlush, SubagentAutoSend) and AOP interceptor chains (ControlDrain, ToolResultLimit) compose orthogonally without core intrusion.
 - **Type Safety** — All interfaces use ABCs (zero Protocols), enums replacing raw strings, mypy strict-level checking.
 - **Native MCP Integration** — Dynamically load MCP servers (SSE/stdio). `MCPToolAdapter` maps MCP capabilities to framework Tool objects.
 - **Browser WebUI** — React + Vite frontend with real-time streaming, multi-conversation sidebar, workspace browser, and pool selector (see `examples/bot_project/`).
@@ -153,29 +153,37 @@ modexbot start
 ## Project Structure
 
 ```text
-framework/
-  core/              # Core abstractions: Agent, Context, Emitter, Provider, Tool
-  agents/react/      # ReAct Agent graph engine implementation
-  pipeline/          # End-to-end orchestration
-  memory/            # Multi-tier memory system + Dream Engine + Governance
-  tools/             # Tool registry, execution, terminal system, MCP adapters
-  multi_agent/       # Multi-agent collaboration: Pool, MessageBus
-  hook/              # Lifecycle hook extension points
-  interceptor/       # AOP interceptor chains
-  control/           # Runtime control, approval, event bus
-  commands/          # Slash command system
-  sandbox/           # Sandbox adapters (Subprocess / Docker / E2B)
-  security/          # Security policies and approval classifiers
+src/modex_agent/        # the framework package (src layout — see ADR-0003)
+  core/              # Root: Agent/Context/Emitter/Provider/Tool ABCs, graph engine, types, constants
+  agents/            # Agent runtimes: ReAct (graph-driven), Summarizer, ExperienceReview
+  pipeline/          # End-to-end orchestration (AgentPipeline)
+  memory/            # Multi-tier memory + Dream Engine + context governance
+  multi_agent/       # Star-topology collaboration: Pool, broker, inbox, communication
+  tools/             # Tool registry + execution; terminal, MCP, AST, LSP, web toolkits
   providers/         # LLM providers (LiteLLM, OpenAI-compatible)
-  ioc/               # Typed configuration (Pydantic v2) and factory layer
-  runtime/           # Runtime state storage, snapshots, codecs
+  hook/              # Lifecycle hook extension points (InboxFlush, SubagentAutoSend)
+  interceptor/       # AOP interceptor chains (ControlDrain, ToolResultLimit, ...)
+  control/           # Runtime control transport (the /stop + pause channel)
+  approval/          # Tiered approval policies and classifiers
+  commands/          # Slash command system
+  input_pipeline/    # Generic stage pipeline for user-input processing
+  adapters/          # I/O adapter base classes — decouple platform I/O from agent logic
+  messaging/         # Message broker abstraction layer
+  workspace/         # Workspace mechanism: multi-live isolation, per-pool resources
+  runtime/           # Runtime state stores, snapshots, codecs
+  sandbox/           # Sandbox adapters (Subprocess / Landlock / Docker / E2B) + security guards
+  ioc/               # Typed configuration (Pydantic v2) + factory layer
+  plugins/           # Plugin system
+  registry/          # Registries
+  trace/             # Unified operation-level trace system
+  utils/             # Root-adjacent pure-leaf primitives (ADR-0006: imports no other package)
 
 examples/
   bot_project/       # Full QQ Bot + WebUI example (Pool mode)
-  sandbox/           # Sandbox-related examples
+  sandbox/           # Sandbox usage examples
 
 tests/               # Unit, integration, and end-to-end tests
-docs/                # Framework documentation
+docs/                # ADRs + architecture documentation
 ```
 
 ## Optional Extras
@@ -202,13 +210,10 @@ uv pip install -e ".[all,dev]"
 
 | Document | Description |
 | --- | --- |
-| [Architecture](docs/architecture.md) | Framework architecture and design decisions |
-| [Core Modules](docs/core-modules.md) | Agent, Tool, Memory, Pipeline core concepts |
-| [Memory System](docs/memory-system.md) | Multi-tier memory, Dream Engine, Governance |
-| [Multi-Agent Guide](docs/multi-agent-guide.md) | Star topology, communication tools, subagent lifecycle |
-| [Extension Guide](docs/extension-guide.md) | Hooks, interceptors, plugins, slash commands |
-| [Bot Guide](docs/bot-guide.md) | bot_project example walkthrough |
-| [Current Runtime](docs/current-runtime.md) | ReAct runtime design, control flow, approval flow |
+| [ADR index](docs/adr/) | Architecture Decision Records (pool-only assembly, src-layout rename, dependency tree, facade-only, retain real seams, interruptible approval + batch atomicity, token-based compression, two-axis terminal, claim/pass-through input pipeline, attachment system) |
+| [CONTEXT.md](CONTEXT.md) | Domain glossary — Pool, Workspace, ReAct Agent, Graph, GraphInterrupt, Assembly, etc. |
+| [Bot example](examples/bot_project/README.md) | bot_project walkthrough (QQ Bot + WebUI, multi-agent setup, configuration) |
+| Per-module `AGENTS.md` | Every package under `src/modex_agent/` ships an `AGENTS.md` describing its responsibility and key files |
 
 ## Development
 
@@ -216,7 +221,7 @@ uv pip install -e ".[all,dev]"
 pytest tests/unit/ -v
 pytest tests/integration/ -v -m integration
 
-ruff check framework tests
-ruff format framework
-mypy framework
+ruff check src/modex_agent tests
+ruff format src/modex_agent
+mypy src/modex_agent
 ```

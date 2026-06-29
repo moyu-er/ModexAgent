@@ -19,7 +19,7 @@ The `agents/` module provides concrete agent implementations: the `ReActAgent` (
 
 | Directory | Files | Purpose |
 |-----------|-------|---------|
-| `react/` | 11 py (incl. `nodes/`) | `ReActAgent` — 4-node graph (START→LLM→TOOL→END), `RuntimeAssembler`, `TieredToolApprovalClassifier`, `ReActTurnState`, approval suspend/resume (see `react/AGENTS.md`) |
+| `react/` | 11 py (incl. `nodes/`) | `ReActAgent` — 4-node graph (START→LLM→TOOL→END), `TieredToolApprovalClassifier`, `ReActTurnState`, approval suspend/resume (see `react/AGENTS.md`) |
 | `summarizer/` | 8 py | `SummarizerAgent` (single-turn, no tools), `ArchiveSummarizer` (MD archive generation), `KnowledgeConsolidator` (ReAct-based knowledge consolidation), `ScopedFileAgent` base class (see `summarizer/AGENTS.md`) |
 | `experience/` | 2 py | `ExperienceReviewAgent` — ReAct agent that reviews conversations and creates/updates EXPERIENCE.md files using experience tools (see `experience/AGENTS.md`) |
 
@@ -34,7 +34,6 @@ The ReAct module is the primary agent runtime. Key components:
 | `state.py` | `ReActTurnState`, snapshot payload keys, `ReActRuntimeStateCodec` |
 | `builder.py` | `ReActAgentBuilder` — `build_agent()` + `build_emitter_factory()` from `AgentDescriptor` |
 | `approval.py` | `ApprovalRuntime` + `TieredToolApprovalClassifier` (NORMAL/DANGEROUS path-based) |
-| `assembler.py` | `RuntimeAssembler` — sole constructor of `AgentRuntime` from `RuntimeServicesConfig` |
 | `constants.py` | `ReActNode`, `ReActReason` enums |
 | `nodes/start.py` | `StartNode` — routes to LLM (fresh) or stored `current_node` (resume from suspended) |
 | `nodes/llm.py` | `LLMNode` — calls LLM, handles streaming, emits iteration events |
@@ -102,7 +101,7 @@ TOOL  --TURN_CANCELLED--> END
 
 ### Runtime Modes
 - **clean**: plain ReAct graph, no hooks/interceptors/approval/control/state-store
-- **full**: all services wired through `AgentRuntimeServices` via `RuntimeAssembler`
+- **full**: all services wired through `AgentRuntimeServices` (assembly lives in `AgentPipeline` / `TurnContextBuilder`; the old `RuntimeAssembler` was removed as dead code — approval runtime is built by `ioc.factories.approval.build_approval_runtime` and injected via `AgentPipeline.runtime_services`)
 
 ### Approval Flow
 ```
@@ -132,7 +131,7 @@ class MyAgent(Agent[MyEvent]):
 - `modex_agent.core.emitter` — `ContentEmitter`, `AgentResult`
 - `modex_agent.core.types` — `MessageRole`, `MessageType`, `ToolCall`
 - `modex_agent.core.session_id` — `SessionInfo`
-- `modex_agent.runtime` — `AgentRuntime`, `AgentRuntimeServices`, `ReActTurnState`, `RuntimeAssembler`
+- `modex_agent.runtime` — `AgentRuntime`, `AgentRuntimeServices`, `ReActTurnState`
 - `modex_agent.memory.prompts` — `SummarizerPromptRegistry`
 - `modex_agent.memory.tools.experience` — Experience tools (for ExperienceReviewAgent)
 - `modex_agent.utils.helpers` — `strip_think`

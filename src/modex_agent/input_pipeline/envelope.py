@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from modex_agent.media.models import Attachment
 
 
 @dataclass
@@ -35,6 +38,10 @@ class UserInputEnvelope:
                  NOT re-encode external_id — preventing double
                  encoding. None for IM, where the pipeline resolves
                  once via SessionIdFactory.create(external_id=...).
+    command_resolved: set True by any stage that claims this envelope's
+                 slash command. The terminal UnsupportedCommandStage
+                 rejects a "/command" only when this is still False, so
+                 no stage needs to know which other stage claimed it.
     """
 
     external_id: str
@@ -44,3 +51,10 @@ class UserInputEnvelope:
     metadata: dict[str, Any] = field(default_factory=dict)
     attachments: list[AttachmentRef] = field(default_factory=list)
     pre_resolved_session: Any = None
+    command_resolved: bool = False
+    resolved_attachments: list[Attachment] = field(default_factory=list)
+    """Gate-accepted, persisted inbound attachments for THIS turn, produced by
+    the attachment ingest stage. Typed handoff to the transcript-write stage
+    (G4) and the agent-perception injection (G5) — never bytes, only records.
+    Empty when no attachment was accepted. Outbound attachments are NOT listed
+    here (they are produced by SendFileToUserTool, not the input pipeline)."""

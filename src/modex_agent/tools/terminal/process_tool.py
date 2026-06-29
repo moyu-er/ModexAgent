@@ -11,6 +11,7 @@ from modex_agent.core.tool_manager import Tool
 from modex_agent.tools.terminal.config import TerminalRuntimeConfig
 from modex_agent.tools.terminal.guard import TerminalGuardResult, check_process_writable
 from modex_agent.tools.terminal.managers import TerminalManagerBase
+from modex_agent.tools.terminal.poll_loop import PollResult
 from modex_agent.tools.terminal.process_registry import (
     ProcessRegistry,
     ProcessSession,
@@ -63,7 +64,7 @@ async def _drain_terminal_after_action(
     registry: ProcessRegistry,
     session_id: str,
     config: TerminalRuntimeConfig,
-) -> str:
+) -> tuple[str, PollResult]:
     """Read terminal output after write/submit. Uses shared poll_until_settled."""
     from modex_agent.tools.terminal.poll_loop import poll_until_settled
     from modex_agent.tools.terminal.prompt import sanitize_terminal_output
@@ -79,8 +80,10 @@ async def _drain_terminal_after_action(
     )
 
     if result.output_parts:
-        return sanitize_terminal_output("".join(result.output_parts)).rstrip()
-    return ""
+        output = sanitize_terminal_output("".join(result.output_parts)).rstrip()
+    else:
+        output = ""
+    return output, result
 
 
 def _build_process_xml(
@@ -359,7 +362,7 @@ class ProcessTool(Tool):
             repeat,
         )
 
-        drained = await _drain_terminal_after_action(
+        drained, result = await _drain_terminal_after_action(
             terminal_session,
             self._registry,
             running.id,
@@ -367,6 +370,7 @@ class ProcessTool(Tool):
         )
         output = (raw_output + drained) if drained else raw_output
         output = output or "(no output)"
+        terminal_session.apply_outcome(result)
 
         return _build_process_xml(
             _A.WRITE.value,
@@ -390,7 +394,7 @@ class ProcessTool(Tool):
             repeat,
         )
 
-        drained = await _drain_terminal_after_action(
+        drained, result = await _drain_terminal_after_action(
             terminal_session,
             self._registry,
             running.id,
@@ -398,6 +402,7 @@ class ProcessTool(Tool):
         )
         output = (raw_output + drained) if drained else raw_output
         output = output or "(no output)"
+        terminal_session.apply_outcome(result)
 
         return _build_process_xml(
             _A.SUBMIT.value,
@@ -446,12 +451,13 @@ class ProcessTool(Tool):
         await terminal_session.write(combined.decode("utf-8", errors="surrogateescape"))
 
         # Drain output after send_keys
-        output = await _drain_terminal_after_action(
+        output, result = await _drain_terminal_after_action(
             terminal_session,
             self._registry,
             running.id,
             self._config,
         )
+        terminal_session.apply_outcome(result)
 
         return _build_process_xml(
             _A.SEND_KEYS.value,
@@ -470,12 +476,13 @@ class ProcessTool(Tool):
         payload = encode_paste(params.text, bracketed=terminal_session.bracketed_paste_enabled)
         await terminal_session.write(payload.decode("utf-8", errors="surrogateescape"))
 
-        output = await _drain_terminal_after_action(
+        output, result = await _drain_terminal_after_action(
             terminal_session,
             self._registry,
             running.id,
             self._config,
         )
+        terminal_session.apply_outcome(result)
         return _build_process_xml(
             _A.PASTE.value,
             output or "(no output)",

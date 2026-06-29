@@ -202,7 +202,6 @@ async def _build_resources(
     shared_hook_runner = service._build_hook_runner(shared_hooks)
     im_ui = IMUserInterface(
         output_adapter=service.output_adapter,
-        channel=service.control_channel,
     )
     retention_cfg = app_config.multi_agent.session_retention
     retention = SessionRetentionPolicy(
@@ -261,6 +260,7 @@ async def _build_resources(
             on_subagent_created=service._on_subagent_created,
             session_registry=session_registry,
             session_store=session_index_store,
+            transcript_store=service._transcript_store,
         )
 
     resources = PoolWorkspaceResources(

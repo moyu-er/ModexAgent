@@ -8,14 +8,12 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.tools.terminal.prompt import (
-    INPUT_PROMPT_MARKERS,
     _strip_ansi_and_da1,
     detect_pager_entry,
     extract_last_command_output,
     is_prompt_ready,
     is_waiting_for_input,
     resolve_cursor_line,
-    sanitize_terminal_output,
 )
 from modex_agent.tools.terminal.pty_keys import (
     CursorKeyMode,
@@ -27,11 +25,11 @@ from modex_agent.tools.terminal.pty_keys import (
 )
 from modex_agent.tools.terminal.results import TerminalRead, TerminalSegment
 from modex_agent.tools.terminal.types import TerminalCommandStatus
-from modex_agent.utils.xml import xml_text
 
 if TYPE_CHECKING:
     from modex_agent.tools.terminal.backends.base import TerminalBackend
     from modex_agent.tools.terminal.config import TerminalRuntimeConfig
+    from modex_agent.tools.terminal.poll_loop import PollResult
     from modex_agent.tools.terminal.types import ShellInfo
 
 
@@ -96,6 +94,7 @@ class TerminalSession:
         self._last_byte_at: float = time.monotonic()
         self._ever_received_bytes: bool = False
         self._command_started_at: float | None = None
+        self._expected_state: TerminalCommandStatus | None = None
 
     def touch_output(self) -> None:
         """Reset the no-output timer. Called when output bytes are received."""
@@ -105,6 +104,39 @@ class TerminalSession:
     def set_expected_state(self, status: TerminalCommandStatus | None) -> None:
         """Set the expected terminal state after an agent operation."""
         self._expected_state = status
+
+    def apply_outcome(self, result: PollResult) -> None:
+        """Update the busy/last_status/command_started state for a poll result.
+
+        Per ADR-0010 Decision 7: the single state-event entry point. Tools call
+        this after poll_until_settled; they must NOT poke _busy_after_timeout /
+        _last_status / _command_started_at directly. This writes a DIFFERENT slot
+        than set_expected_state (which writes _expected_state for interference
+        detection) — both coexist.
+        """
+        from modex_agent.tools.terminal.poll_loop import PollOutcome
+
+        match result.outcome:
+            case PollOutcome.PROMPT_DETECTED | PollOutcome.PROCESS_EXIT:
+                self._command_started_at = None
+                self._busy_after_timeout = False
+                self._last_status = "ok"
+            case PollOutcome.YIELDED:
+                self._last_status = "executing"
+            case PollOutcome.INPUT_WAIT:
+                self._busy_after_timeout = False
+                self._last_status = "waiting_input"
+            case PollOutcome.LONG_RUNNING:
+                self._last_status = "long_running"
+            case PollOutcome.PAGINATED:
+                self._busy_after_timeout = False
+                self._last_status = "paginated"
+            case PollOutcome.STUCK:
+                self._command_started_at = None
+                self._last_status = None
+            case PollOutcome.TIMED_OUT:
+                self._busy_after_timeout = True
+                self._last_status = "timeout"
 
     def detect_interference(self, actual: TerminalCommandStatus) -> bool:
         """Detect if actual state diverges from expected (possible user interference).
@@ -172,192 +204,6 @@ class TerminalSession:
         """The directory the backend starts in (None = inherit process CWD)."""
         return self._cwd
 
-    async def execute(self, command: str, timeout: float = 60.0) -> str:
-        """Execute a command and return output.
-
-        Flow:
-        1. Check backend alive, restart if dead (lazy recovery).
-        2. Drain startup banner/prompt on a newly started tab.
-        3. Send command + platform-appropriate newline to PTY.
-        4. Read output until timeout or prompt heuristic.
-        5. Record truncated history.
-        6. Update last_active.
-        """
-        self._backend.mark_command_boundary()
-        if not await self._backend.is_alive() or self._needs_restart:
-            await self._backend.start(
-                shell=self.shell_info.path,
-                cwd=self._cwd,
-                env=self._startup_env(),
-            )
-            self._backend_started = True
-            self._needs_restart = False
-            self._busy_after_timeout = False
-            await self._backend.drain_startup()
-            await self._discard_pending_output()
-        elif self._busy_after_timeout:
-            return (
-                "<shell_result>\n"
-                "<output></output>\n"
-                "<status>busy</status>\n"
-                "<message>Previous command timed out and may still be running. "
-                "Send ^C via shell tool or terminal.interrupt to stop it.</message>\n"
-                "</shell_result>"
-            )
-        elif self._last_status == "waiting_input":
-            # Terminal is waiting for user input (e.g. password prompt).
-            # Do NOT clear the input line — the prompt is intentional and
-            # any cleanup would destroy the cursor position.
-            pass
-        elif self.shell_info.family.uses_readline():
-            await self._discard_pending_output()
-            await self._backend.clear_input_line()
-            await asyncio.sleep(0.05)
-            await self._discard_pending_output()
-
-        # Detect "exit" — it kills the shell and leaves the PTY dead.
-        # Write the command first, then drain any trailing output.
-        stripped = command.strip().lower()
-        if stripped in ("exit", "logout", "quit"):
-            await self._backend.write(command + self.shell_info.family.command_ending())
-            await asyncio.sleep(0.3)
-            output = await self._drain_on_exit(timeout=3.0)
-            self._needs_restart = True
-            if await self._backend.is_alive():
-                await self._backend.terminate()
-            return (
-                f"<shell_result>\n"
-                f"<output>{xml_text(output)}</output>\n"
-                f"<status>ended</status>\n"
-                f"<message>Terminal session ended</message>\n"
-                f"</shell_result>"
-            )
-
-        # Write the command directly.  Do NOT send a leading \r\n — that
-        # creates an empty command on bash which corrupts the readline
-        # cursor position.  Drain_startup already ensured a clean prompt.
-        # If the shell is in an abnormal state (e.g. >>), _is_waiting_for_input
-        # will catch it after the first read and we return waiting_input.
-        await self._backend.write(command + self.shell_info.family.command_ending())
-
-        # Read output with timeout.
-        # We accumulate all chunks, filter ANSI/DA1 pollution from the
-        # *combined* string, then check is_prompt_ready on the clean text.
-        # Filtering on the combined string avoids chunk-boundary fragmentation
-        # of escape sequences.
-        output_parts: list[str] = []
-        start_time = time.time()
-        timed_out = False
-        session_ended = False
-        waiting_input = False
-        saw_command_activity = True
-        while time.time() - start_time < timeout:
-            if not await self._backend.is_alive():
-                session_ended = True
-                break
-
-            chunk = await self._backend.read(timeout=0.3, max_size=65536)
-            if chunk:
-                output_parts.append(chunk)
-                combined = "".join(output_parts)
-                # Strip ANSI/DA1 pollution before prompt detection so conpty
-                # escape sequences don't corrupt the heuristic.
-                clean = _strip_ansi_and_da1(combined)
-                if self._has_non_prompt_content(clean):
-                    saw_command_activity = True
-                if saw_command_activity and is_prompt_ready(clean):
-                    break
-                if self._is_waiting_for_input(clean):
-                    waiting_input = True
-                    break
-            await asyncio.sleep(0.05)
-        else:
-            timed_out = True
-
-        output = "".join(output_parts)
-
-        # Sanitize model-facing output — strip ANSI/CSI/DA1/OSC control
-        # sequences and carriage-return repaint noise.  Internal prompt
-        # detection above used _strip_ansi_and_da1 on raw chunks; this
-        # full sanitize is for the string returned to the LLM.
-        output = sanitize_terminal_output(output)
-
-        # Structured result for exceptional states; plain text for normal output.
-        if timed_out and await self._backend.is_alive():
-            self._busy_after_timeout = True
-            self._last_status = "timeout"
-            return (
-                f"<shell_result>\n"
-                f"<output>{xml_text(output)}</output>\n"
-                f"<status>timeout</status>\n"
-                f"<message>Timed out after {timeout:.0f}s — command may still be running</message>\n"
-                f"</shell_result>"
-            )
-        if waiting_input:
-            self._busy_after_timeout = False
-            self._last_status = "waiting_input"
-            return (
-                f"<shell_result>\n"
-                f"<output>{xml_text(output)}</output>\n"
-                f"<status>waiting_input</status>\n"
-                f"<message>Command is waiting for user input</message>\n"
-                f"</shell_result>"
-            )
-        if session_ended:
-            self._busy_after_timeout = False
-            self._last_status = "ended"
-            return (
-                f"<shell_result>\n"
-                f"<output>{xml_text(output)}</output>\n"
-                f"<status>ended</status>\n"
-                f"<message>Terminal session ended</message>\n"
-                f"</shell_result>"
-            )
-
-        # Truncate and record
-        truncated_cmd = command[: self._history_truncate]
-        truncated_out = output[: self._history_truncate]
-        record = CommandRecord(
-            command=truncated_cmd,
-            output=truncated_out,
-        )
-        self._history.append(record)
-        if len(self._history) > self._max_history:
-            self._history.pop(0)
-
-        self.last_active = time.time()
-        self._busy_after_timeout = False
-        self._last_status = "ok"
-        return output
-
-    async def _drain_on_exit(self, timeout: float = 3.0) -> str:
-        """Drain remaining output after the shell has exited.
-
-        Called when the command is 'exit' / 'logout' / 'quit' so we capture
-        any trailing prompt or banner instead of timing out on a dead PTY.
-        """
-        output_parts: list[str] = []
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            if not await self._backend.is_alive():
-                output_parts.append("\n[Terminal session ended]")
-                break
-            chunk = await self._backend.read(timeout=0.3, max_size=65536)
-            if chunk:
-                output_parts.append(chunk)
-            else:
-                break
-            await asyncio.sleep(0.05)
-        return "".join(output_parts)
-
-    # Common prompt strings that indicate a command is waiting for user input.
-    # Checked case-insensitively against the last non-empty output line.
-    _INPUT_PROMPT_MARKERS: tuple[str, ...] = INPUT_PROMPT_MARKERS
-
-    def _is_waiting_for_input(self, output: str) -> bool:
-        """Check if the last non-empty line looks like an input prompt."""
-        return is_waiting_for_input(output)
-
     async def _discard_pending_output(self, timeout: float = 0.8) -> None:
         """Discard already-buffered PTY output before opening a command window."""
         deadline = time.monotonic() + timeout
@@ -370,14 +216,6 @@ class TerminalSession:
                 empty_reads = 0
             else:
                 empty_reads += 1
-
-    def _has_non_prompt_content(self, output: str) -> bool:
-        """Return True once output contains more than a prompt repaint."""
-        for line in output.splitlines():
-            stripped = line.strip()
-            if stripped and not is_prompt_ready(stripped):
-                return True
-        return False
 
     async def _drain_internal_command(self, timeout: float = 3.0) -> None:
         """Drain output from an internal setup command until the prompt returns."""
@@ -410,7 +248,7 @@ class TerminalSession:
             "shell_path": self.shell_info.path,
             "cwd": self._cwd,
             "env": self._env,
-            "visible": True,
+            "visible": self.visible,
             "created_at": self.created_at,
             "last_active": self.last_active,
             "history": [

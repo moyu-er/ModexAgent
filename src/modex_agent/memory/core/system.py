@@ -51,7 +51,6 @@ class MemorySystem(ABC):
     async def get_history(
         self,
         context: MemoryContext,
-        max_messages: int | None = None,
     ) -> list[ChatMessage]: ...
 
     @abstractmethod
@@ -150,7 +149,6 @@ class ContextManagedMemorySystem(
     async def get_history(
         self,
         context: MemoryContext,
-        max_messages: int | None = None,
     ) -> list[ChatMessage]: ...
 
     @abstractmethod

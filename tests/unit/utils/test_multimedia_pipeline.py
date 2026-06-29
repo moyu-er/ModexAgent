@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from modex_agent.agents.react.message_builder import build_tool_message
 from modex_agent.memory.history import (
     ListMessageHistory,
     MessageHistory,
@@ -403,7 +404,6 @@ class TestBuildToolMessage:
 
     def test_short_result_not_truncated(self):
         from modex_agent.core.tool_manager import ToolResult
-        from modex_agent.utils.message_builder import build_tool_message
 
         result = ToolResult(tool_name="test", result="short output")
         msg = build_tool_message(result)
@@ -411,7 +411,6 @@ class TestBuildToolMessage:
 
     def test_long_result_not_truncated(self):
         from modex_agent.core.tool_manager import ToolResult
-        from modex_agent.utils.message_builder import build_tool_message
 
         long_content = "x" * 30000
         result = ToolResult(tool_name="test", result=long_content)
@@ -421,7 +420,6 @@ class TestBuildToolMessage:
 
     def test_error_not_truncated(self):
         from modex_agent.core.tool_manager import ToolResult
-        from modex_agent.utils.message_builder import build_tool_message
 
         result = ToolResult(tool_name="test", error="something failed")
         msg = build_tool_message(result)
@@ -429,7 +427,6 @@ class TestBuildToolMessage:
 
     def test_empty_result_gets_space(self):
         from modex_agent.core.tool_manager import ToolResult
-        from modex_agent.utils.message_builder import build_tool_message
 
         result = ToolResult(tool_name="test", result=None)
         msg = build_tool_message(result)
@@ -444,7 +441,6 @@ class TestBuildToolMessage:
         """
         from modex_agent.core.tool_manager import ToolResult
         from modex_agent.core.message import ContentFormat
-        from modex_agent.utils.message_builder import build_tool_message
 
         xml_content = (
             "<command_result>"
@@ -466,7 +462,6 @@ class TestBuildToolMessage:
     def test_plain_text_no_metadata(self):
         from modex_agent.core.tool_manager import ToolResult
         from modex_agent.core.message import ContentFormat
-        from modex_agent.utils.message_builder import build_tool_message
 
         result = ToolResult(tool_name="grep", result="Found 3 matches")
         msg = build_tool_message(result)

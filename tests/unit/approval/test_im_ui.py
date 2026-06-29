@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock
 import pytest
 
 from modex_agent.approval.ui import IMUserInterface
-from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.core.types import OutputMessage
 from modex_agent.pipeline.adapters import OutputAdapter
 
@@ -45,7 +44,6 @@ class TestRenderMessage:
         output = _FakeOutputAdapter(should_raise=True)
         ui = IMUserInterface(
             output_adapter=output,
-            channel=InMemoryControlChannel(),
         )
 
         with caplog.at_level(logging.ERROR, logger="modex_agent.approval.ui"):
@@ -62,7 +60,6 @@ class TestRenderMessage:
         output = _FakeOutputAdapter(should_raise=False)
         ui = IMUserInterface(
             output_adapter=output,
-            channel=InMemoryControlChannel(),
         )
 
         with caplog.at_level(logging.ERROR, logger="modex_agent.approval.ui"):

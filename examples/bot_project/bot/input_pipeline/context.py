@@ -5,11 +5,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
+from bot.service.media_store import WorkspaceScopedMediaStore
 from bot.service.pool_router import PoolSessionStore
 from bot.webui.transcript_store import TranscriptStore
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.core.types import InputMessage
 from modex_agent.input_pipeline.context import InputContext
+from modex_agent.ioc.configs.pool import MediaConfig
 from modex_agent.pipeline.adapters import InputAdapter
 
 
@@ -23,6 +25,20 @@ class BotInputContext(InputContext):
         relocate the call site into a stage, no framework edits.
     session_factory: SessionIdFactory for creating SessionInfo from external
         conversation ids. Defaults to a fresh factory if not provided.
+    media_store: optional workspace+pool-routed inbound byte store. The
+        attachment ingest stage persists accepted uploads through it. None
+        disables attachment ingest (the stage no-ops when no attachments are
+        present, so legacy callers without media wiring still work).
+    media_config: perception-gate + budget config (defaults to MediaConfig()).
+        Single source of truth for the size caps shared by upload-accept,
+        path-injection, and inline-render. Returned by the ``media_config``
+        property as the default instance.
+    media_config_for_pool: optional resolver ``pool -> MediaConfig`` honoring
+        ADR-0013 §7 (per-pool override). When supplied,
+        :meth:`media_config_for` delegates to it so each pool's ingest path
+        uses that pool's ``PoolConfig.media``. When None (e.g. tests, legacy
+        callers), :meth:`media_config_for` falls back to the default
+        ``media_config`` instance — existing behavior is preserved.
     """
 
     def __init__(
@@ -37,6 +53,9 @@ class BotInputContext(InputContext):
         command_adapter: InputAdapter,
         session_factory: SessionIdFactory | None = None,
         current_ws_provider: Callable[[], Path] | None = None,
+        media_store: WorkspaceScopedMediaStore | None = None,
+        media_config: MediaConfig | None = None,
+        media_config_for_pool: Callable[[str], MediaConfig] | None = None,
     ) -> None:
         self._default_pool = default_pool
         self._pool_session_store = pool_session_store
@@ -47,6 +66,9 @@ class BotInputContext(InputContext):
         self._command_adapter = command_adapter
         self._session_factory = session_factory or SessionIdFactory()
         self._current_ws_provider = current_ws_provider or (lambda: Path.cwd())
+        self._media_store = media_store
+        self._media_config = media_config or MediaConfig()
+        self._media_config_for_pool = media_config_for_pool
 
     def current_ws(self) -> Path:
         return self._current_ws_provider()
@@ -80,3 +102,23 @@ class BotInputContext(InputContext):
     @property
     def session_factory(self) -> SessionIdFactory:
         return self._session_factory
+
+    @property
+    def media_store(self) -> WorkspaceScopedMediaStore | None:
+        return self._media_store
+
+    @property
+    def media_config(self) -> MediaConfig:
+        return self._media_config
+
+    def media_config_for(self, pool: str) -> MediaConfig:
+        """Return the perception-gate config to apply for *pool*.
+
+        Honors the ADR-0013 §7 per-pool override: when a ``media_config_for_pool``
+        resolver was supplied at construction, it decides the config for the
+        given pool; otherwise the default ``media_config`` instance is returned
+        so legacy callers and tests without per-pool wiring keep working.
+        """
+        if self._media_config_for_pool is not None:
+            return self._media_config_for_pool(pool)
+        return self._media_config

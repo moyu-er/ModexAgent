@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from modex_agent.runtime.codec import RuntimeStateCodecRegistry
 
 from bot.plugins.integration import PluginIntegration
+from bot.service.pool_router import PoolSessionStore
 from bot.workspace.wiring import build_single_workspace_stack, build_workspace_stack
 from bot.utils.config_loader import ConfigLoader
 from modex_agent import (
@@ -38,7 +39,6 @@ from modex_agent.core.llm_struct import (
 )
 from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.core.session_store import SessionStore
-from modex_agent.hook import HookErrorPolicy, HookSpec
 from modex_agent.hook.abc import Hook
 from modex_agent.hook.runner import HookRunner
 from modex_agent.ioc.configs.agent import AgentConfig as IOCAgentConfig
@@ -130,8 +130,6 @@ class BotService(AgentBuilderMixin):
         self._safety_policy_cache: RuntimeSafetyPolicy | None = None
 
         # Approval
-        self._im_ui: IMUserInterface | None = None
-
         self._default_provider: LLMProvider | None = None
 
         # Cached system prompts per pool (resolved once, reused across switches)
@@ -235,8 +233,6 @@ class BotService(AgentBuilderMixin):
         # data dir so every workspace's PoolRouter and the WebUI pipeline share
         # one durable mapping. Without this, a mapping written by the WebUI in
         # the home workspace is invisible to a non-home workspace's PoolRouter.
-        from bot.service.pool_router import PoolSessionStore
-
         self._pool_session_store = PoolSessionStore(
             data_dir=self.config_dir.parent / self._app_config.paths.data_dir_name
         )

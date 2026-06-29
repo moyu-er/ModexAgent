@@ -12,10 +12,10 @@ Runtime state governance — typed state models, enums, persistence, codecs, and
 | File | Description |
 |------|-------------|
 | `services.py` | `AgentRuntimeServices` — process-scope services container (hooks, interceptors, control, approval, governance, stores); `AgentRuntime` — composes services + per-turn state |
-| `store.py` | `TurnStateStore` + `RuntimeCommandStore` ABCs; `NoOpTurnStateStore` / `InMemoryTurnStateStore` / `JsonFileTurnStateStore` implementations; `ActiveTurnConflictError`. Also `TodoStore` ABC + `JsonFileTodoStore` + `TodoItem` (per-session task-list store, a separate concern from turn snapshots — injected into the todo tools, not part of turn-state governance) |
+| `store.py` | `TurnStateStore` ABC; `NoOpTurnStateStore` / `InMemoryTurnStateStore` / `JsonFileTurnStateStore` implementations; `ActiveTurnConflictError`. Also `TodoStore` ABC + `JsonFileTodoStore` + `TodoItem` (per-session task-list store, a separate concern from turn snapshots — injected into the todo tools, not part of turn-state governance) |
 | `dispatch.py` | Runtime dispatch utilities |
-| `models.py` | Core data models — `TurnIdentity`, `ToolArguments`, `ApprovalRequest`, `ApprovalTransaction`, `ToolCallRecord`, `ToolBatchState`, `TurnStateBase`, `TurnSnapshot`, `TurnSummary`, `ControlCommandState`, `StateQueryScope`, `MessageDelta` |
-| `enums.py` | Enumerations — `StateScope`, `AgentKind`, `TurnPhase`, `OperationKind`, `ToolBatchStatus`, `ToolCallStatus`, `ApprovalDenyPolicy`, `ApprovalSubjectType`, `OperationStatus`, `CancellationSource`, `SnapshotReason`, `ControlCommandKind`, `MessageDeltaSource`, `TurnCustomKey` |
+| `models.py` | Core data models — `TurnIdentity`, `ToolArguments`, `ApprovalRequest`, `ApprovalTransaction`, `ToolCallRecord`, `ToolBatchState`, `TurnStateBase`, `TurnSnapshot`, `TurnSummary`, `StateQueryScope`, `MessageDelta` |
+| `enums.py` | Enumerations — `StateScope`, `AgentKind`, `TurnPhase`, `OperationKind`, `ToolBatchStatus`, `ToolCallStatus`, `ApprovalDenyPolicy`, `ApprovalSubjectType`, `OperationStatus`, `CancellationSource`, `SnapshotReason`, `MessageDeltaSource`, `TurnCustomKey` |
 | `policy.py` | `SnapshotPolicy` ABC — defines when/how snapshots are taken during agent execution |
 | `codec.py` | `RuntimeStateCodec` ABC + `RuntimeStateCodecRegistry` — serialization extensibility for runtime state |
 | `dream_locks.py` | Dream lock primitives — coordination locks for the dream engine's concurrent scan phases |
@@ -32,13 +32,11 @@ Runtime state governance — typed state models, enums, persistence, codecs, and
 - Use `TurnStateStore` for all runtime persistence — do not bypass it with custom file I/O.
 - `AgentRuntimeServices` is constructed once per process; `AgentRuntime` is constructed per turn.
 - `TurnSnapshot` captures the full agent state for approval suspend/resume.
-- `RuntimeCommandStore` is **vestigial** — no code calls `save_command`/`load_pending_commands` outside the store classes themselves.
-- `ControlCommandKind` and `ControlCommandState` in `models.py`/`enums.py` are data shapes only; the live cancellation path is `asyncio.Task.cancel()` in the pipeline.
 - `dream_locks.py` is specific to the dream engine's scan phase — not for general locking.
 
 ## Note on Control-Related Types
 
-`enums.py` defines `ControlCommandKind` and `models.py` defines `ControlCommandState`, and `store.py` defines a `RuntimeCommandStore` (ABC + InMemory/JsonFile impls) with `save_command`/`load_pending_commands`. These are **vestigial**: no code calls `save_command`/`load_pending_commands` outside the store classes themselves. They remain as data shapes; the live cancellation path is `asyncio.Task.cancel()` in the pipeline (see `modex_agent/control/AGENTS.md`). `AgentRuntimeServices.control_channel` is likewise threaded through but not fed in the default runtime.
+`AgentRuntimeServices.control_channel` is threaded through but not fed in the default runtime; the live cancellation path is `asyncio.Task.cancel()` in the pipeline (see `modex_agent/control/AGENTS.md`).
 
 ## Dependencies
 
@@ -46,4 +44,4 @@ Runtime state governance — typed state models, enums, persistence, codecs, and
 - `modex_agent.core.types` — base types used by models
 - `modex_agent.hook` — `HookRunner` for lifecycle hooks (injected via `AgentRuntimeServices`)
 - `modex_agent.interceptor` — `InterceptorChain` for AOP interception (injected via `AgentRuntimeServices`)
-- `modex_agent.control` — control channel types (vestigial)
+- `modex_agent.control` — `InMemoryControlChannel` + `ControlCommand`/`ControlScope` (live control-plane types)

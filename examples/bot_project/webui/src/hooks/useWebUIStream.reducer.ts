@@ -1,5 +1,8 @@
 import type {
+  ApprovalRequestEvent,
+  ApprovalRequestView,
   AssistantReasoningEvent,
+  AttachmentCardEvent,
   ContentEvent,
   ErrorEvent,
   ModelContentDelta,
@@ -27,6 +30,8 @@ export interface StreamState {
   sessionStreaming: Record<string, boolean>;
   /** Per-session active task list (pending + in_progress), keyed by session_id. */
   todos: Record<string, TodoItemDTO[]>;
+  /** Per-session pending approvals, keyed by session_id (push from server, pull from GET). */
+  pendingApprovals: Record<string, ApprovalRequestView[]>;
 }
 
 interface PendingRequestRef {
@@ -87,10 +92,18 @@ function _applyEventToMessages(
       const echoId: string | undefined = meta?.["_request_id"] as string | undefined;
       if (echoId && echoId === pendingRequestRef.current) {
         pendingRequestRef.current = null;
+        // Carry the echoed attachments (persisted records from the ingest
+        // stage) onto the optimistic message so they render after echo.
+        const echoAttachments = (raw["attachments"] as UIMessage["attachments"]) ?? undefined;
         return {
           messages: messages.map((m) =>
             m.id === echoId
-              ? { ...m, timestamp: event.timestamp, metadata: raw["_metadata"] as Record<string, unknown> | undefined }
+              ? {
+                  ...m,
+                  timestamp: event.timestamp,
+                  metadata: raw["_metadata"] as Record<string, unknown> | undefined,
+                  ...(echoAttachments ? { attachments: echoAttachments } : {}),
+                }
               : m,
           ),
           isStreaming: false,
@@ -137,6 +150,25 @@ function _applyEventToMessages(
       const msgs = _upsertStreamingBlock(messages, start.agent_name,
         { kind: "tool", tool: { tool: start.tool, args: start.args } },
       );
+      return { messages: msgs, isStreaming: true };
+    }
+    case "attachment_card": {
+      // Outbound attachment_card delta — append as an inline attachment block
+      // on the streaming assistant message (same accumulation path as text/
+      // tool blocks). The renderer resolves the final download URL (with ws)
+      // at render time, so the reducer stays ws-agnostic.
+      const card = event as AttachmentCardEvent;
+      const msgs = _upsertStreamingBlock(messages, card.agent_name, {
+        kind: "attachment",
+        card: {
+          attachment_id: card.attachment_id,
+          kind: card.kind,
+          name: card.name,
+          size: card.size,
+          mime: card.mime,
+          download_url: card.download_url,
+        },
+      });
       return { messages: msgs, isStreaming: true };
     }
     case "tool_call_end": {
@@ -227,6 +259,26 @@ export function applyServerEvent(
   currentSessionId: string | null,
   pendingRequestRef: PendingRequestRef,
 ): StreamState {
+  if (event.event === "approval_request") {
+    const areq = event as ApprovalRequestEvent;
+    const sid: string = areq.session_id;
+    const view: ApprovalRequestView = {
+      tool_call_id: areq.tool_call_id,
+      tool_name: areq.tool_name,
+      tier: areq.tier,
+      arguments: areq.arguments,
+      status: areq.status,
+    };
+    const prev = state.pendingApprovals[sid] ?? [];
+    if (prev.some((v) => v.tool_call_id === view.tool_call_id)) {
+      return state; // dedupe: same request pushed twice (e.g. on restart)
+    }
+    return {
+      ...state,
+      pendingApprovals: { ...state.pendingApprovals, [sid]: [...prev, view] },
+    };
+  }
+
   const raw = event as unknown as Record<string, unknown>;
   const sid: string = (raw.session_id as string) || (raw.conversation_id as string) || "";
 
@@ -252,5 +304,21 @@ export function applyServerEvent(
     sessionStreaming: currentSessionId
       ? { ...state.sessionStreaming, [currentSessionId]: result.isStreaming }
       : state.sessionStreaming,
+  };
+}
+
+/** Remove a decided approval from the store (called after a successful POST). */
+export function clearPendingApproval(
+  state: StreamState,
+  sessionId: string,
+  toolCallId: string,
+): StreamState {
+  const prev = state.pendingApprovals[sessionId] ?? [];
+  return {
+    ...state,
+    pendingApprovals: {
+      ...state.pendingApprovals,
+      [sessionId]: prev.filter((v) => v.tool_call_id !== toolCallId),
+    },
   };
 }

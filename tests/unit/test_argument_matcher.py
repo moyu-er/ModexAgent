@@ -7,33 +7,36 @@ from modex_agent.interceptor.builtin.tool_approval import ArgumentMatcher
 
 
 class TestResolvePath:
-    """Test _resolve_path handles ., ~, and absolute paths."""
+    """Test _resolve_path resolves ., ~, and absolute paths to real absolutes."""
 
     def test_dot_resolves_to_project_root(self):
         root = Path("/project")
         matcher = ArgumentMatcher(project_root=root)
-        result = matcher._resolve_path(".")
-        assert result == root
+        assert matcher._resolve_path(".") == Path("/project").resolve()
 
     def test_dot_slash_resolves_to_project_root_subpath(self):
         root = Path("/project")
         matcher = ArgumentMatcher(project_root=root)
-        result = matcher._resolve_path("./data")
-        assert result == Path("/project/data")
+        assert matcher._resolve_path("./data") == Path("/project/data").resolve()
 
     def test_tilde_resolves_to_home(self):
         matcher = ArgumentMatcher(project_root=Path("/project"))
-        result = matcher._resolve_path("~/Documents")
-        assert result == Path.home() / "Documents"
+        assert matcher._resolve_path("~/Documents") == (Path.home() / "Documents").resolve()
 
-    def test_absolute_path_unchanged(self):
+    def test_absolute_path_resolved(self):
         matcher = ArgumentMatcher(project_root=Path("/project"))
-        result = matcher._resolve_path("/etc/passwd")
-        assert result == Path("/etc/passwd")
+        assert matcher._resolve_path("/etc/passwd") == Path("/etc/passwd").resolve()
+
+    def test_dotdot_segments_collapse(self):
+        # .. must collapse via resolve, never stay literal.
+        matcher = ArgumentMatcher(project_root=Path("/project"))
+        assert matcher._resolve_path("./a/../b.txt") == Path("/project/b.txt").resolve()
+        # An anchored escape resolves OUTSIDE the project root.
+        assert matcher._resolve_path("./../../etc/passwd") == Path("/etc/passwd").resolve()
 
 
 class TestMatchAny:
-    """Test _match_any with fnmatch patterns."""
+    """Test _match_any with directory-containment semantics."""
 
     def test_star_matches_any(self):
         matcher = ArgumentMatcher(project_root=Path("/project"))

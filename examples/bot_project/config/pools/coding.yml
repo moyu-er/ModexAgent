@@ -49,10 +49,9 @@ terminal:
 
 memory:
   session:
-    max_messages: 500
-    max_tokens: 150000
-    keep_ratio_for_messages: 0.3
-    keep_ratio_for_token: 0.3
+    max_tokens: 200000
+    max_token_ratio: 0.85
+    keep_ratio: 0.3
   archive: {enabled: true, scope: global}
   knowledge: {enabled: true, default_templates_dir: "templates/knowledge", scope: global}
   dream_engine: {enabled: true, interval: 600, max_consume_per_run: 3}
@@ -70,4 +69,12 @@ agents:
     terminal_visibility: false
     experience:
       enabled: true
+    approval:
+      enabled: true                       # opt-in (default is off)
+      # Keys MUST match the real tool names (WriteFileTool.name="write",
+      # EditFileTool.name="edit"). allowed_paths are workspace-relative
+      # directory roots ("./*" = whole project tree).
+      tools:
+        write: {allowed_paths: ["./*"]}
+        edit: {allowed_paths: ["./*"]}
     extra_tools: ["ast_grep_search", "ast_grep_replace"]

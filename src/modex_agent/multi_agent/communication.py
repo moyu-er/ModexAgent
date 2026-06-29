@@ -551,7 +551,6 @@ class AgentCommunicationService:
                         if subagent_memory is not None:
                             parent_messages = await subagent_memory.get_history(
                                 parent_ctx,
-                                max_messages=10000,
                             )
 
                             if parent_messages:

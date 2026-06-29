@@ -1,7 +1,7 @@
 """Control core types.
 
-Defines ControlCommand, ControlScope, ControlEvent, ControlCommandType,
-ControlEventType — the type definitions for the control plane.
+Defines ControlCommand, ControlScope, ControlCommandType — the type definitions
+for the control plane.
 """
 
 from __future__ import annotations
@@ -18,16 +18,6 @@ class ControlCommandType(str, Enum):
     INJECT_USER_MESSAGE = "inject_user_message"
     APPROVAL_RESPONSE = "approval_response"
     INJECT_STEER = "inject_steer"
-
-
-class ControlEventType(str, Enum):
-    """Control event types."""
-
-    TOOL_APPROVAL_REQUESTED = "tool_approval_requested"
-    TOOL_APPROVAL_RESOLVED = "tool_approval_resolved"
-    AGENT_PROGRESS = "agent_progress"
-    RUN_CANCELLED = "run_cancelled"
-    STEER_INJECTED = "steer_injected"
 
 
 @dataclass(frozen=True)
@@ -51,16 +41,4 @@ class ControlCommand:
     ttl_seconds: float | None = None
     correlation_id: str | None = None
     idempotency_key: str | None = None
-    payload: dict[str, object] = field(default_factory=dict)
-
-
-@dataclass
-class ControlEvent:
-    """Control event data class."""
-
-    event_id: str
-    type: ControlEventType
-    scope: ControlScope
-    source: str = "system"
-    correlation_id: str | None = None
     payload: dict[str, object] = field(default_factory=dict)

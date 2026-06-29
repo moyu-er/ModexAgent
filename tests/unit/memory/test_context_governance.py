@@ -12,6 +12,17 @@ from modex_agent.memory.context_governance import (
     TokenBudgetGovernance,
     ToolChainRepairGovernance,
 )
+from modex_agent.memory.token_estimator import TokenEstimator
+
+
+class _LenStrEstimator(TokenEstimator):
+    """Replicates the legacy fake_estimate: len(str(message)) per message."""
+
+    def estimate_text(self, text: str) -> int:
+        return len(text)
+
+    def estimate_message(self, message):
+        return len(str(message))
 
 
 @pytest.mark.asyncio
@@ -31,9 +42,12 @@ async def test_tool_chain_repair_drops_orphans():
 
 
 @pytest.mark.asyncio
-async def test_tool_chain_repair_removes_incomplete_assistant_in_model_context():
-    """In MODEL_VISIBLE_CONTEXT mode, incomplete assistant+tool group is removed,
-    not backfilled."""
+async def test_tool_chain_repair_backfills_incomplete_assistant_in_model_context():
+    """In MODEL_VISIBLE_CONTEXT mode, a dangling assistant tool_call is
+    backfilled with a placeholder tool result (not removed) so the provider
+    sees a well-formed chain."""
+    from modex_agent.memory.sanitizer import BACKFILL_LOST_TOOL_CONTENT
+
     messages = [
         {"role": str(MessageRole.ASSISTANT), "content": "", "tool_calls": [
             {"id": "call_1", "type": "function", "function": {"name": "read_file", "arguments": "{}"}},
@@ -44,6 +58,14 @@ async def test_tool_chain_repair_removes_incomplete_assistant_in_model_context()
     result = await gov.apply(messages)
 
     assert result == [
+        {"role": str(MessageRole.ASSISTANT), "content": "", "tool_calls": [
+            {"id": "call_1", "type": "function", "function": {"name": "read_file", "arguments": "{}"}},
+        ]},
+        {
+            "role": str(MessageRole.TOOL),
+            "tool_call_id": "call_1",
+            "content": BACKFILL_LOST_TOOL_CONTENT,
+        },
         {"role": str(MessageRole.USER), "content": "next"},
     ]
 
@@ -127,23 +149,17 @@ async def test_microcompact_returns_copy_when_no_change():
 
 
 @pytest.mark.asyncio
-async def test_token_budget_snips_from_start(monkeypatch):
+async def test_token_budget_snips_from_start():
     """超预算时从开头截断，保留 system 和最近消息."""
-    def fake_estimate(msgs):
-        return sum(len(str(m)) for m in msgs)
-
-    monkeypatch.setattr(
-        "modex_agent.memory.context_governance.estimate_token_count",
-        fake_estimate,
-    )
-
     messages = [
         {"role": str(MessageRole.SYSTEM), "content": "sys"},
         {"role": str(MessageRole.USER), "content": "x" * 500},
         {"role": str(MessageRole.ASSISTANT), "content": "y" * 500},
         {"role": str(MessageRole.USER), "content": "z" * 500},
     ]
-    gov = TokenBudgetGovernance(max_tokens=200, safety_buffer=0)
+    gov = TokenBudgetGovernance(
+        max_tokens=200, safety_buffer=0, token_estimator=_LenStrEstimator()
+    )
     result = await gov.apply(messages)
 
     # system 必须保留
@@ -156,23 +172,17 @@ async def test_token_budget_snips_from_start(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_token_budget_keeps_user_start(monkeypatch):
+async def test_token_budget_keeps_user_start():
     """截断后确保以 user 消息开头."""
-    def fake_estimate(msgs):
-        return sum(len(str(m)) for m in msgs)
-
-    monkeypatch.setattr(
-        "modex_agent.memory.context_governance.estimate_token_count",
-        fake_estimate,
-    )
-
     messages = [
         {"role": str(MessageRole.SYSTEM), "content": "sys"},
         {"role": str(MessageRole.ASSISTANT), "content": "a"},
         {"role": str(MessageRole.ASSISTANT), "content": "b"},
         {"role": str(MessageRole.USER), "content": "u"},
     ]
-    gov = TokenBudgetGovernance(max_tokens=30, safety_buffer=0)
+    gov = TokenBudgetGovernance(
+        max_tokens=30, safety_buffer=0, token_estimator=_LenStrEstimator()
+    )
     result = await gov.apply(messages)
 
     # 第一条非 system 必须是 user
@@ -348,7 +358,11 @@ async def test_tool_chain_repair_cleans_up_orphans_in_model_context() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tool_chain_repair_removes_last_incomplete_assistant_for_model_visible_context() -> None:
+async def test_tool_chain_repair_backfills_last_incomplete_assistant_for_model_visible_context() -> None:
+    """A partially-answered assistant tool_call group is repaired in place:
+    existing tool(a) reused, missing tool(b) backfilled."""
+    from modex_agent.memory.sanitizer import BACKFILL_LOST_TOOL_CONTENT
+
     messages = [
         {"role": str(MessageRole.USER), "content": "start"},
         {
@@ -367,32 +381,22 @@ async def test_tool_chain_repair_removes_last_incomplete_assistant_for_model_vis
 
     assert result == [
         {"role": str(MessageRole.USER), "content": "start"},
-        {"role": str(MessageRole.USER), "content": "next"},
-    ]
-
-
-@pytest.mark.asyncio
-async def test_final_legality_passes_messages_through_unchanged() -> None:
-    """FinalContextLegality is a no-op; ToolChainRepair already sanitizes upstream."""
-    from modex_agent.memory.context_governance import FinalContextLegalityGovernance
-
-    messages = [
-        {"role": str(MessageRole.TOOL), "tool_call_id": "orphan", "content": "orphan_result"},
         {
             "role": str(MessageRole.ASSISTANT),
             "content": "",
             "tool_calls": [
                 {"id": "a", "function": {"name": "tool_a"}},
+                {"id": "b", "function": {"name": "tool_b"}},
             ],
         },
         {"role": str(MessageRole.TOOL), "tool_call_id": "a", "content": "result_a"},
-        {"role": str(MessageRole.ASSISTANT), "content": "plain"},
+        {
+            "role": str(MessageRole.TOOL),
+            "tool_call_id": "b",
+            "content": BACKFILL_LOST_TOOL_CONTENT,
+        },
+        {"role": str(MessageRole.USER), "content": "next"},
     ]
-
-    result = await FinalContextLegalityGovernance().apply(messages)
-
-    assert result == messages
-
 
 @pytest.mark.asyncio
 async def test_all_strategies_return_copies():
@@ -527,3 +531,18 @@ async def test_urb_injection_empty_entries_noop():
     messages = [{"role": str(MessageRole.USER), "content": "hi"}]
     result = await gov.apply(messages)
     assert result == messages
+
+
+@pytest.mark.asyncio
+async def test_token_budget_governance_uses_injected_estimator() -> None:
+    from modex_agent.memory.context_governance import TokenBudgetGovernance
+    from modex_agent.memory.token_estimator import TokenEstimator
+
+    class FixedEst(TokenEstimator):
+        def estimate_text(self, text: str) -> int:
+            return 5
+
+    gov = TokenBudgetGovernance(max_tokens=100, token_estimator=FixedEst())
+    msgs = [{"role": "user", "content": "x"}, {"role": "user", "content": "y"}]
+    out = await gov.apply(msgs)
+    assert isinstance(out, list)

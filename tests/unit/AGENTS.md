@@ -3,11 +3,11 @@
 
 # tests/unit
 
-Unit tests for all `framework/` modules, mirroring the package structure one-to-one.
+Unit tests for all `src/modex_agent/` modules, mirroring the package structure one-to-one.
 
 ## Purpose
 
-Each subdirectory here corresponds to a `framework/` module and contains unit tests for its public APIs. Tests focus on isolated component behavior with mocked dependencies.
+Each subdirectory here corresponds to a `src/modex_agent/` module and contains unit tests for its public APIs. Tests focus on isolated component behavior with mocked dependencies.
 
 ## Subdirectories
 

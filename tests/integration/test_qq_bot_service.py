@@ -512,7 +512,6 @@ agents:
 
 memory:
   short_term:
-    max_messages: 10
     max_tokens: 100
     budget_ratio: 0.5
 """,
@@ -633,7 +632,6 @@ agents:
     system_prompt: "helper"
 memory:
   short_term:
-    max_messages: 10
     max_tokens: 100
     budget_ratio: 0.5
 """,

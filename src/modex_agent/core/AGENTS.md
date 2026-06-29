@@ -14,7 +14,7 @@ The `core/` module defines the foundational contracts (`Agent[E]`, `Tool`, `LLMP
 | File | Description |
 |------|-------------|
 | `agent.py` | `Agent[E]` generic ABC — `run()` entry point, `event_enum`, tool/skill registration. `AgentContext` (dataclass, runtime state + services). `current_agent_context` ContextVar |
-| `agent_runtime_config.py` | `AgentRuntimeConfig`, `BusyInputMode`, `RuntimeControl` — configuration enums |
+| `agent_runtime_config.py` | `BusyInputMode` — agent busy-input handling mode (the former `RuntimeControl`/`AgentRuntimeConfig` aggregates were dead and removed in ④b) |
 | `constants.py` | `DefaultValues`, `FinishReason` (StrEnum), `ToolCallType`, `ToolChoice`, `ErrorMessages`, `ToolSchemaConstants` |
 | `context.py` | `ContextState` (StrEnum: ACTIVE/PAUSED/STOPPED), `ContextManager` ABC, `InMemoryContextManager` |
 | `emitter.py` | `ContentEmitter[E]` ABC — event streaming contract. `AgentResult` dataclass (has_errors/error_summary/data). `StreamingAwareEmitter` ABC |

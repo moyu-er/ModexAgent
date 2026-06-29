@@ -19,21 +19,33 @@ class PersistUserMessageStage(InputStage):
     async def process(
         self, envelope: UserInputEnvelope, ctx: BotInputContext
     ) -> StageResult:
+        # Approval decisions are structured control inputs, not user chat —
+        # never persist them as user messages.  (Also guards the
+        # WORKSPACE/FULL_SESSION_ID subscripts below, which a decision
+        # envelope may not carry since it short-circuits workspace
+        # resolution.)
+        if RoutingMeta.APPROVAL_DECISION in envelope.metadata:
+            return Continue(value=envelope)
         content = envelope.content.strip()
         # Defense-in-depth: a valid skill invocation legitimately starts with
         # "/" and carries skill_xml (set by S6) — it must be persisted as the
         # raw text.  Only a "/" command WITHOUT skill_xml is a control command
         # that leaked past S2/S3/S6; skip persisting those.
-        if content.startswith("/") and RoutingMeta.SKILL_XML not in envelope.metadata:
-            logger.warning("Unexpected command reached persistence: %s", content)
+        if content.startswith("/") and not envelope.command_resolved:
+            logger.warning("Unresolved command reached persistence: %s", content)
             return Continue(value=envelope)
 
         full_sid = envelope.metadata[RoutingMeta.FULL_SESSION_ID]
         agent = envelope.metadata[RoutingMeta.RESOLVED_AGENT]
+        # Serialize the gate-accepted inbound Attachment records (G3) onto the
+        # user-message event — the transcript is the id→path index (ADR-0013
+        # §11). Metadata only; bytes live in the MediaStore, never here.
+        attachments = [a.to_dict() for a in envelope.resolved_attachments]
         event = UserMessageEvent(
             session_id=full_sid,
             agent_name=agent,
             content=envelope.content,
+            attachments=attachments,
         )
         # The transcript store routes writes by the bound workspace root
         # (ctxvar).  This stage runs in the input pipeline, OUTSIDE the

@@ -17,15 +17,10 @@ from modex_agent.core.governance import ContextGovernance
 from modex_agent.core.message import ContentFormat
 from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.tags import UrbTag
+from modex_agent.memory.token_estimator import CharTokenEstimator, TokenEstimator
 from modex_agent.memory.xml_truncate import truncate_xml_safe
 
 logger = logging.getLogger(__name__)
-
-
-def estimate_token_count(messages: list[dict[str, Any]]) -> int:
-    """Rough token estimate from character count (chars / 4)."""
-    total = sum(len(str(m.get("content", ""))) for m in messages)
-    return total // 4
 
 
 META_CONTEXT_LOSSY = "meta_context_lossy"
@@ -47,16 +42,14 @@ class CompositeGovernance(ContextGovernance):
 
 
 class ToolChainRepairGovernance(ContextGovernance):
-    """Repair tool-call chain integrity by removing structurally invalid records.
+    """Repair tool-call chain integrity in the model-visible message copy.
 
-    Uses the session tool-chain sanitizer in MODEL_VISIBLE_CONTEXT mode to
-    remove orphan tool results and incomplete assistant/tool groups from the
-    model-visible message copy. Incomplete tool-call groups are deleted rather
-    than backfilled; LLM providers cannot receive assistant messages with
-    tool_calls but no matching tool results.
-
-    This pass also handles orphan tool results with no preceding assistant
-    declaration.
+    Uses the session tool-chain sanitizer in MODEL_VISIBLE_CONTEXT mode to:
+    - remove orphan tool results (no matching assistant tool_call), and
+    - backfill dangling tool_calls: an assistant tool_call with no matching
+      tool result is kept and a placeholder tool message (matched id) is
+      synthesized so LLM providers never receive assistant messages with
+      tool_calls but no matching tool results.
 
     Operates on a message copy only — persisted history is never modified.
     """
@@ -321,19 +314,6 @@ class LossyContentCompactionGovernance(ContextGovernance):
         return ContextReductionType.CONTENT_TRUNCATED
 
 
-class FinalContextLegalityGovernance(ContextGovernance):
-    """Final provider-legality pass for model-visible context.
-
-    ToolChainRepairGovernance already removes all incomplete tool-call groups
-    and orphan tool results upstream via the tool-chain sanitizer. This pass
-    returns the messages unchanged; it exists for config compatibility so
-    existing governance chains do not break.
-    """
-
-    async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return messages
-
-
 class UserRetentionBufferInjectionGovernance(ContextGovernance):
     """Inject recently pruned conversation fragments as a user message.
 
@@ -481,9 +461,11 @@ class TokenBudgetGovernance(ContextGovernance):
         self,
         max_tokens: int,
         safety_buffer: int = 1024,
+        token_estimator: TokenEstimator | None = None,
     ) -> None:
         self._max_tokens = max_tokens
         self._safety_buffer = safety_buffer
+        self._estimator: TokenEstimator = token_estimator or CharTokenEstimator()
 
     async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not messages:
@@ -497,14 +479,14 @@ class TokenBudgetGovernance(ContextGovernance):
         if not non_system:
             return system_messages
 
-        system_tokens = estimate_token_count(system_messages)
+        system_tokens = self._estimator.estimate_messages(system_messages)
         remaining_budget = max(128, self._max_tokens - system_tokens - self._safety_buffer)
 
         # 从尾部向前累加，直到预算耗尽
         kept: list[dict[str, Any]] = []
         kept_tokens = 0
         for msg in reversed(non_system):
-            msg_tokens = estimate_token_count([msg])
+            msg_tokens = self._estimator.estimate_message(msg)
             if kept and kept_tokens + msg_tokens > remaining_budget:
                 break
             kept.append(msg)

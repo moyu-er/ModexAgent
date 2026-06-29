@@ -198,23 +198,3 @@ def estimate_text_tokens(text: str) -> int:
     non_ascii_chars = len(text) - ascii_chars
     return ascii_chars // 4 + non_ascii_chars
 
-
-def estimate_token_count(messages: Sequence[ChatMessage | dict[str, Any]]) -> int:
-    """基于字符数快速估算消息列表的 token 数。
-
-    不需要引入 tiktoken 依赖，但对中文场景做了针对性修正。
-    """
-    total = 0
-    for msg in messages:
-        if isinstance(msg, ChatMessage):
-            raw_content = msg.content or ""
-            tool_calls = msg.tool_calls
-        else:
-            raw_content = msg.get("content") or ""
-            tool_calls = msg.get("tool_calls")
-        content = raw_content if isinstance(raw_content, str) else str(raw_content)
-        total += estimate_text_tokens(content)
-        if tool_calls:
-            for tc in tool_calls:
-                total += estimate_text_tokens(str(tc))
-    return total + len(messages) * 2

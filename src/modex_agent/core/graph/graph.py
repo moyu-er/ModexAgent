@@ -37,6 +37,10 @@ class Graph(Generic[R]):
     def add_node(self, node: Node[R]) -> None:
         self._nodes[node.name] = node
 
+    def get_node(self, name: str) -> Node[R]:
+        """Return the node registered under ``name``. Raises KeyError if absent."""
+        return self._nodes[name]
+
     def add_edge(self, source: str, target: str, reason: str | None = None) -> None:
         self._edges.setdefault(source, []).append(Edge(source, target, reason))
 

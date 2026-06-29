@@ -61,8 +61,8 @@ class _FakePoolData:
 
     ``context_manager`` is deliberately the MAIN agent's (a sentinel prompt) so
     the test can detect whether the subagent pipeline wrongly adopted it.
-    ``turn_store`` / ``command_store`` are real stores rooted at the workspace
-    runtime dir — the subagent shares them (pool-level) so its AgentRuntime is
+    ``turn_store`` is a real store rooted at the workspace
+    runtime dir — the subagent shares it (pool-level) so its AgentRuntime is
     constructed and FINALLY_TURN hooks fire.
     """
 
@@ -71,7 +71,6 @@ class _FakePoolData:
         from modex_agent.runtime.codec import RuntimeStateCodecRegistry
         from modex_agent.runtime.enums import AgentKind
         from modex_agent.runtime.store import (
-            JsonFileRuntimeCommandStore,
             JsonFileTurnStateStore,
         )
 
@@ -82,7 +81,6 @@ class _FakePoolData:
         self.context_manager = main_ctx_mgr
         codec = RuntimeStateCodecRegistry({AgentKind.REACT: ReActRuntimeStateCodec()})
         self.turn_store = JsonFileTurnStateStore(runtime_dir / "turns", codec)
-        self.command_store = JsonFileRuntimeCommandStore(runtime_dir / "commands")
 
 
 class _FakeWorkspace:

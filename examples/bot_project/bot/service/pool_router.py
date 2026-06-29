@@ -17,6 +17,7 @@ from modex_agent.core.session_id import session_id_prefix_of
 from modex_agent.core.session_store import safe_filename
 from modex_agent.core.types import InputMessage
 from modex_agent.messaging.broker import BrokerMessage
+from modex_agent.messaging.broker_bridge import BrokerInputPayload
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.pipeline.adapters import InputAdapter
 
@@ -114,16 +115,31 @@ class PoolRouter:
         conv_id = msg.session.session_id_prefix
         metadata = dict(msg.metadata) if msg.metadata else {}
         metadata.setdefault("session_id", conv_id)
+        # Webui approval decisions ride on InputMessage.approval_decision (a
+        # structured field, not slash-command text). The pool-side dispatch
+        # (input_message_from_dispatch_envelope) reconstructs it from this key;
+        # omitting it here loses the decision in transit, so an approve click
+        # arrives as an empty user turn and the agent denies the batch. The
+        # typed BrokerInputPayload makes that field visible at the construction
+        # edge instead of a silently-drifted dict key.
+        payload = BrokerInputPayload(
+            content=msg.content,
+            session_id=conv_id,
+            agent_session_id=sid,
+            metadata=metadata,
+            sender_id=msg.sender_id,
+            chat_id=msg.chat_id,
+            approval_decision=msg.approval_decision.to_dict()
+            if msg.approval_decision is not None
+            else None,
+            # Carry resolved attachments across the broker so mechanism-B path
+            # injection survives the dispatch boundary (ADR-0013 §10). Without
+            # this the field is silently dropped and the agent never perceives
+            # the uploaded file — same drift class as approval_decision above.
+            attachments_resolved=[a.to_dict() for a in msg.attachments_resolved],
+        )
         broker_msg = BrokerMessage(
-            payload={
-                "content": msg.content,
-                "session_id": sid,
-                "metadata": metadata,
-                "sender_id": msg.sender_id,
-                "chat_id": msg.chat_id,
-                "session_id": conv_id,
-                "agent_session_id": sid,
-            },
+            payload=payload.model_dump(exclude_none=True),
             sender=AgentAddress(kind="channel", name=msg.source or "unknown"),
             recipient=AgentAddress(kind="agent", name=pool.main_agent_name),
             headers={

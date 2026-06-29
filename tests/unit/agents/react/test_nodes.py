@@ -2,16 +2,17 @@
 from __future__ import annotations
 
 import pytest
-from unittest.mock import AsyncMock
 
 from modex_agent import ToolCall
-from modex_agent.agents.react.agent import ReActAgent
 from modex_agent.agents.react.constants import ReActNode, ReActReason
+from modex_agent.agents.react.injection_drainer import InjectionDrainer
+from modex_agent.agents.react.llm_client import ReactLlmClient
 from modex_agent.agents.react.nodes.end import EndNode
 from modex_agent.agents.react.nodes.llm import LLMNode
 from modex_agent.agents.react.nodes.start import StartNode
 from modex_agent.agents.react.nodes.tool import ToolNode
 from modex_agent.agents.react.state import ReActTurnState
+from modex_agent.agents.react.tool_executor import ToolExecutor
 from modex_agent.approval.constants import ApprovalDecision
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.constants import FinishReason
@@ -30,6 +31,11 @@ def _make_runtime() -> AgentRuntime:
         agent_kind=AgentKind.REACT, phase=TurnPhase.CREATED,
     )
     return AgentRuntime(services=AgentRuntimeServices(), state=state)
+
+
+def _make_llm_client() -> ReactLlmClient:
+    """A ReactLlmClient whose provider is unused (call() is stubbed per-test)."""
+    return ReactLlmClient(provider=object())
 
 
 class _MockEmitter:
@@ -124,11 +130,7 @@ class TestStartNode:
 class TestEndNode:
     @pytest.mark.asyncio
     async def test_writes_result_to_metadata(self):
-        async def _mock_clear_checkpoint(self, ctx):
-            pass
-
-        agent = type("_MockAgent", (), {"_clear_checkpoint": _mock_clear_checkpoint})()
-        node = EndNode(agent)
+        node = EndNode()
         runtime = _make_runtime()
         runtime.state.llm_response = type("_MockResponse", (), {
             "content": "Done!", "reasoning_content": None,
@@ -149,11 +151,7 @@ class TestEndNode:
 
     @pytest.mark.asyncio
     async def test_max_iterations_writes_fallback_result(self):
-        async def _mock_clear_checkpoint(self, ctx):
-            pass
-
-        agent = type("_MockAgent", (), {"_clear_checkpoint": _mock_clear_checkpoint})()
-        node = EndNode(agent)
+        node = EndNode()
         runtime = _make_runtime()
         ctx = AgentContext(
             system_prompt="test", history=ListMessageHistory(),
@@ -171,11 +169,7 @@ class TestEndNode:
 
     @pytest.mark.asyncio
     async def test_turn_cancelled_writes_cancelled_result(self):
-        async def _mock_clear_checkpoint(self, ctx):
-            pass
-
-        agent = type("_MockAgent", (), {"_clear_checkpoint": _mock_clear_checkpoint})()
-        node = EndNode(agent)
+        node = EndNode()
         runtime = _make_runtime()
         ctx = AgentContext(
             system_prompt="test", history=ListMessageHistory(),
@@ -194,22 +188,16 @@ class TestEndNode:
 class TestLLMNode:
     @pytest.mark.asyncio
     async def test_routes_to_tool_on_has_tool_calls(self):
-        async def _mock_llm(messages, ctx):
+        async def _mock_call(messages, ctx):
             return type("_MockResponse", (), {
                 "content": None, "reasoning_content": None,
                 "tool_calls": [ToolCall(tool_name="search", arguments={})],
                 "finish_reason": "stop",
             })()
 
-        agent = type("_MockAgent", (), {
-            "provider": type("_MockProvider", (), {})(),
-            "_build_assistant_message": lambda self, content, tool_calls, reasoning_content=None: {"role": "assistant"},
-            "_call_hooks": lambda self, *a, **kw: None,
-            "_drain_injections": lambda self, ctx, max_per_phase=3: [],
-            "_save_checkpoint": AsyncMock(return_value=None),
-        })()
-        node = LLMNode(agent)
-        node._call_llm = _mock_llm
+        llm_client = _make_llm_client()
+        llm_client.call = _mock_call
+        node = LLMNode(llm_client, InjectionDrainer())
 
         runtime = _make_runtime()
         ctx = AgentContext(
@@ -226,21 +214,15 @@ class TestLLMNode:
 
     @pytest.mark.asyncio
     async def test_routes_to_end_on_no_tool_calls(self):
-        async def _mock_llm(messages, ctx):
+        async def _mock_call(messages, ctx):
             return type("_MockResponse", (), {
                 "content": "Hello!", "reasoning_content": None,
                 "tool_calls": [], "finish_reason": "stop",
             })()
 
-        agent = type("_MockAgent", (), {
-            "provider": type("_MockProvider", (), {})(),
-            "_build_assistant_message": lambda self, content, tool_calls, reasoning_content=None: {"role": "assistant", "content": "Hello!"},
-            "_call_hooks": lambda self, *a, **kw: None,
-            "_drain_injections": lambda self, ctx, max_per_phase=3: [],
-            "_save_checkpoint": AsyncMock(return_value=None),
-        })()
-        node = LLMNode(agent)
-        node._call_llm = _mock_llm
+        llm_client = _make_llm_client()
+        llm_client.call = _mock_call
+        node = LLMNode(llm_client, InjectionDrainer())
 
         runtime = _make_runtime()
         ctx = AgentContext(
@@ -257,11 +239,8 @@ class TestLLMNode:
 
     @pytest.mark.asyncio
     async def test_routes_to_end_on_max_iterations(self):
-        agent = type("_MockAgent", (), {
-            "_call_hooks": lambda self, *a, **kw: None,
-            "_drain_injections": lambda self, ctx, max_per_phase=3: [],
-        })()
-        node = LLMNode(agent)
+        llm_client = _make_llm_client()
+        node = LLMNode(llm_client, InjectionDrainer())
 
         runtime = _make_runtime()
         runtime.state.iteration = 5
@@ -280,20 +259,15 @@ class TestLLMNode:
 
     @pytest.mark.asyncio
     async def test_routes_to_end_on_llm_error(self):
-        async def _mock_llm(messages, ctx):
+        async def _mock_call(messages, ctx):
             return type("_MockResponse", (), {
                 "content": "API Error", "reasoning_content": None,
                 "tool_calls": [], "finish_reason": FinishReason.ERROR.value,
             })()
 
-        agent = type("_MockAgent", (), {
-            "provider": type("_MockProvider", (), {})(),
-            "_build_assistant_message": lambda self, content, tool_calls, reasoning_content=None: {"role": "assistant"},
-            "_call_hooks": lambda self, *a, **kw: None,
-            "_drain_injections": lambda self, ctx, max_per_phase=3: [],
-        })()
-        node = LLMNode(agent)
-        node._call_llm = _mock_llm
+        llm_client = _make_llm_client()
+        llm_client.call = _mock_call
+        node = LLMNode(llm_client, InjectionDrainer())
 
         runtime = _make_runtime()
         ctx = AgentContext(
@@ -314,25 +288,14 @@ class TestToolNode:
     async def test_execute_batch_all_allowed(self):
         executed: list[str] = []
 
-        class _MockAgent:
-            async def _execute_tool(self, tc, ctx):
-                executed.append(tc.tool_name)
-                return ToolResult(tool_name=tc.tool_name, result=f"ok_{tc.tool_name}")
+        tool_executor = ToolExecutor(default_tool_timeout=30.0)
 
-            def _build_tool_message(self, result, call_id):
-                return {"role": "tool", "tool_call_id": call_id or result.tool_name, "name": result.tool_name, "content": str(result.result) if result.result else str(result.error)}
+        async def _mock_execute(tc, ctx):
+            executed.append(tc.tool_name)
+            return ToolResult(tool_name=tc.tool_name, result=f"ok_{tc.tool_name}")
 
-            async def _call_hooks(self, *a, **kw):
-                pass
-
-            async def _drain_injections(self, ctx, max_per_phase=3):
-                return []
-
-            async def _save_checkpoint(self, msgs, ctx):
-                pass
-
-        agent = _MockAgent()
-        node = ToolNode(agent)
+        tool_executor.execute = _mock_execute  # type: ignore[method-assign]
+        node = ToolNode(tool_executor)
 
         history = _MockHistory()
         tc1 = ToolCall(tool_name="search", arguments={}, call_id="c1")
@@ -360,28 +323,14 @@ class TestToolNode:
     async def test_denied_tool_cascades_and_cancels(self):
         executed: list[str] = []
 
-        class _MockAgent:
-            async def _execute_tool(self, tc, ctx):
-                executed.append(tc.tool_name)
-                return ToolResult(tool_name=tc.tool_name, result="ok")
+        tool_executor = ToolExecutor(default_tool_timeout=30.0)
 
-            def _build_tool_message(self, result, call_id):
-                return {"role": "tool", "tool_call_id": call_id or result.tool_name, "name": result.tool_name, "content": str(result.result) if result.result else str(result.error)}
+        async def _mock_execute(tc, ctx):
+            executed.append(tc.tool_name)
+            return ToolResult(tool_name=tc.tool_name, result="ok")
 
-            async def _call_hooks(self, *a, **kw):
-                pass
-
-            async def _drain_injections(self, ctx, max_per_phase=3):
-                return []
-
-            async def _save_checkpoint(self, msgs, ctx):
-                pass
-
-            async def _save_denial_checkpoint(self, all_messages, ctx):
-                pass
-
-        agent = _MockAgent()
-        node = ToolNode(agent)
+        tool_executor.execute = _mock_execute  # type: ignore[method-assign]
+        node = ToolNode(tool_executor)
 
         history = _MockHistory()
         tc1 = ToolCall(tool_name="t1", arguments={}, call_id="c1")
@@ -415,9 +364,11 @@ class TestToolNode:
         assert len(executed) == 0  # atomic batch: ALLOWED converted to PREEMPTED when any DENIED present
 
     @pytest.mark.asyncio
-    async def test_denied_tool_cancel_path_uses_real_agent_checkpoint_signature(self):
-        agent = ReActAgent(provider=object(), mode="clean")
-        node = ToolNode(agent)
+    async def test_denied_tool_cancel_path_uses_real_tool_executor(self):
+        # DENIED decisions never reach the executor, so a real ToolExecutor
+        # with an unused provider is sufficient to exercise the cancel path.
+        tool_executor = ToolExecutor(default_tool_timeout=30.0)
+        node = ToolNode(tool_executor)
 
         tc = ToolCall(tool_name="write", arguments={"path": "/tmp/x"}, call_id="c1")
         runtime = _make_runtime()
@@ -443,15 +394,8 @@ class TestToolNode:
 
     @pytest.mark.asyncio
     async def test_exceeds_max_tools_routes_to_end(self):
-        class _MockAgent:
-            async def _call_hooks(self, *a, **kw):
-                pass
-
-            async def _drain_injections(self, ctx, max_per_phase=3):
-                return []
-
-        agent = _MockAgent()
-        node = ToolNode(agent)
+        tool_executor = ToolExecutor(default_tool_timeout=30.0)
+        node = ToolNode(tool_executor)
 
         tc_list = [ToolCall(tool_name=f"t{i}", arguments={}, call_id=f"c{i}") for i in range(5)]
         response = type("_MockResponse", (), {"tool_calls": tc_list})()
@@ -473,11 +417,8 @@ class TestToolNode:
 
     @pytest.mark.asyncio
     async def test_classify_all_returns_allowed_for_normal_tools(self):
-        class _MockAgent:
-            pass
-
-        agent = _MockAgent()
-        node = ToolNode(agent)
+        tool_executor = ToolExecutor(default_tool_timeout=30.0)
+        node = ToolNode(tool_executor)
 
         tool_calls = [ToolCall(tool_name="search", arguments={}), ToolCall(tool_name="read", arguments={})]
         ctx = AgentContext(

@@ -43,7 +43,6 @@ class QQBotService(BotService):
             secret=qq_cfg["secret"],
             sandbox=qq_cfg.get("sandbox", False),
             allow_from=qq_cfg.get("allow_from", ["*"]),
-            media_dir=qq_cfg.get("media_dir"),
         )
         qq_output_adapter = QQOutputAdapter(input_adapter)
         output_adapter = qq_output_adapter

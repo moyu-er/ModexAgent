@@ -9,6 +9,7 @@ the universal observer — all conversations from any channel are visible.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ from aiohttp import web
 from bot.adapters.fan_in import FanInInputAdapter
 from bot.adapters.register_websocket import get_ws_input  # noqa: F401 — ensure import
 from bot.service.core import BotService
+from bot.service.media_store import WorkspaceScopedMediaStore
 from bot.service.recent_workspaces import RecentWorkspaces
 from bot.service.session_store import WorkspacePoolSessionStore
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
@@ -26,6 +28,7 @@ from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.core.emitter import ContentEmitter
 from modex_agent.core.session_store import LocalFileSessionStore
 from modex_agent.ioc.configs.app import AppConfig
+from modex_agent.ioc.configs.pool import MediaConfig
 from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
 
 logger = logging.getLogger(__name__)
@@ -127,6 +130,14 @@ class WebUIService(BotService):
             data_dir_name=_data_dir_name,
         )
         self._transcript_store = transcript_store
+        # Media store mirrors the transcript store: a service-singleton built
+        # once from the data_dir_name. Routed by the bound workspace root
+        # (in-turn writers) and by explicit media_dir (HTTP readers). Wired into
+        # BotInputContext so the ingest stage persists accepted uploads.
+        media_store: WorkspaceScopedMediaStore = WorkspaceScopedMediaStore(
+            data_dir_name=_data_dir_name,
+        )
+        self._media_store = media_store
         # The emitter factory (register_websocket.py) captures the store at
         # build time in a closure. The _sessions_dir_for_prefix callback
         # resolves the workspace sessions_dir per conversation prefix so the
@@ -456,41 +467,7 @@ class WebUIService(BotService):
         self._session_factory = SessionIdFactory()
         self._server.set_session_factory(self._session_factory)
 
-        def _build_input_context(inp, *, current_ws_provider=None) -> BotInputContext:
-            # Both channels share the same routing/persistence wiring; only the
-            # physical queue (enqueue_message) and the control adapter differ.
-            # Use the service-level pool_session_store so mappings written here
-            # are visible to every workspace's PoolRouter during dispatch.
-            pool_store = self._pool_session_store
-            if pool_store is None:
-                # Should not happen: initialize() sets _pool_session_store
-                # before start(). Falling back to the home router's store only
-                # stays correct while home's router shares the service store;
-                # log loudly so a misconfigured startup is diagnosable.
-                logger.warning(
-                    "[pool-routing] _pool_session_store is None when building "
-                    "input context for channel '%s' — falling back to "
-                    "pool_router._session_store. Session→pool mappings written "
-                    "by this channel may be invisible to other workspaces if "
-                    "that store is not the service-level singleton.",
-                    inp.name,
-                )
-                pool_store = self.pool_router._session_store
-            return BotInputContext(
-                default_pool=self._app_config.multi_agent.default_pool,
-                pool_session_store=pool_store,
-                agent_pool_map=agent_pool_map,
-                agent_resolver=_agent_resolver,
-                transcript_store=self._transcript_store,
-                enqueue_message=inp.put_input_message,
-                command_adapter=inp,
-                session_factory=self._session_factory,
-                current_ws_provider=current_ws_provider,
-            )
-
-        webui_pipeline = build_webui_pipeline(
-            skill_registry=skill_registry, known_pools=known_pools
-        )
+        webui_pipeline = build_webui_pipeline(skill_registry=skill_registry)
         self._server.set_input_pipeline(webui_pipeline)
 
         # Find the WebSocket input adapter
@@ -502,7 +479,9 @@ class WebUIService(BotService):
         if ws_input is None:
             from bot.adapters.register_websocket import get_ws_input
             ws_input = get_ws_input()
-        self._server.set_input_context(_build_input_context(ws_input))
+        self._server.set_input_context(
+            self._build_input_context(ws_input, agent_resolver=_agent_resolver)
+        )
 
         # ── IM pipeline (QQ, etc.) ─────────────────────────────────
         im_pipeline = build_im_pipeline(
@@ -513,8 +492,10 @@ class WebUIService(BotService):
         for inp in self._channel_inputs:
             if inp.name == "websocket":
                 continue  # WebSocket is configured via server.set_input_context above
-            im_ctx = _build_input_context(
-                inp, current_ws_provider=lambda: inp.current_ws
+            im_ctx = self._build_input_context(
+                inp,
+                agent_resolver=_agent_resolver,
+                current_ws_provider=lambda: inp.current_ws,
             )
             raw_out = self._channel_outputs_by_name.get(inp.name)
             inp.configure_input_pipeline(im_pipeline, im_ctx, raw_out)
@@ -524,6 +505,9 @@ class WebUIService(BotService):
         # below) so IM /stop and the WebUI pause button push CANCEL_TURN
         # through InMemoryControlChannel.
 
+        # ── Reclaim leftover upload temp files before serving ────────
+        self._server.sweep_media_tmp_orphans()
+
         # ── Start aiohttp server ────────────────────────────────────
         runner = web.AppRunner(self._server.app)
         await runner.setup()
@@ -532,6 +516,63 @@ class WebUIService(BotService):
         logger.info("WebUI server started on http://%s:%d/webui/", _DEFAULT_HOST, self._port)
 
         await super().start()
+
+    def _media_config_for_pool(self, pool: str) -> MediaConfig:
+        """ADR-0013 §7 per-pool override: each pool's ingest path uses its own
+        ``PoolConfig.media``. Unknown pool → the default instance. Exposed as a
+        method (not a closure) so the production media-wiring has a testable
+        seam (architecture rule 5 — the interface is the test surface)."""
+        pi = self._pools.get(pool)
+        return pi.config.media if pi is not None else MediaConfig()
+
+    def _build_input_context(
+        self,
+        inp,
+        *,
+        agent_resolver: Callable[[str], str],
+        current_ws_provider: Callable[[], Path] | None = None,
+    ) -> "BotInputContext":
+        """Build the shared ``BotInputContext`` for a channel (WS or IM).
+
+        Both channels share routing/persistence wiring; only the physical queue
+        (``enqueue_message``) and the control adapter differ. Wires
+        ``media_store`` + the per-pool ``MediaConfig`` resolver so inbound
+        attachments persist (ADR-0013). Extracted from ``start()`` so the
+        production media-wiring is unit-testable — a regression guard for the
+        formerly-dead inbound path (where ``media_store`` was never passed and
+        the ingest stage silently no-op'd)."""
+        from bot.input_pipeline.context import BotInputContext
+
+        # Use the service-level pool_session_store so mappings written here are
+        # visible to every workspace's PoolRouter during dispatch.
+        pool_store = self._pool_session_store
+        if pool_store is None:
+            # Should not happen: initialize() sets _pool_session_store before
+            # start(). Falling back to the home router's store only stays
+            # correct while home's router shares the service store; log loudly
+            # so a misconfigured startup is diagnosable.
+            logger.warning(
+                "[pool-routing] _pool_session_store is None when building "
+                "input context for channel '%s' — falling back to "
+                "pool_router._session_store. Session→pool mappings written "
+                "by this channel may be invisible to other workspaces if "
+                "that store is not the service-level singleton.",
+                inp.name,
+            )
+            pool_store = self.pool_router._session_store
+        return BotInputContext(
+            default_pool=self._app_config.multi_agent.default_pool,
+            pool_session_store=pool_store,
+            agent_pool_map=self._agent_pool_map,
+            agent_resolver=agent_resolver,
+            transcript_store=self._transcript_store,
+            enqueue_message=inp.put_input_message,
+            command_adapter=inp,
+            session_factory=self._session_factory,
+            current_ws_provider=current_ws_provider,
+            media_store=self._media_store,
+            media_config_for_pool=self._media_config_for_pool,
+        )
 
     def _build_agent_pool_map(self) -> dict[str, str]:
         """Complete agent -> pool mapping from pool configs + subagent templates.

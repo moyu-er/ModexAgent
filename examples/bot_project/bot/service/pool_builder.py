@@ -19,10 +19,13 @@ if TYPE_CHECKING:
     # TYPE_CHECKING keeps the import graph acyclic. Runtime references
     # (``WorkspaceHandleRootProvider``) are imported lazily inside
     # ``create_pool`` for the same reason.
+    from bot.webui.transcript_store import TranscriptStore
     from bot.workspace.handle import (
         WorkspaceHandle,
         WorkspaceResolverCell,
     )
+    from modex_agent.memory.cleanup import CleanupResult
+    from modex_agent.memory.core.models import CompressionReason
 
 from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.core.emitter import ContentEmitter
@@ -33,13 +36,18 @@ from modex_agent.core.session_store import SessionStore
 from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
 from modex_agent.hook import HookErrorPolicy, HookRunner, HookSpec
 from modex_agent.hook.builtin import InboxFlushHook
-from modex_agent.hook.notification import AgentNotificationService, MaxIterationNotifyHook
+from modex_agent.hook.notification import (
+    AgentNotificationService,
+    MaxIterationNotifyHook,
+    TurnOutcomeNotifyHook,
+)
 from modex_agent.ioc.configs.agent import AgentConfig
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.ioc.configs.pool import PoolConfig
 from modex_agent.ioc.factories.governance import create_governance
 from modex_agent.ioc.factories.llm import create_llm_provider
 from modex_agent.core.scope import MemoryContext
+from modex_agent.memory.cleanup_events import MemoryCleanupListener
 from modex_agent.memory.default_system import DefaultMemorySystem
 from modex_agent.memory.injection import FullInjectionPolicy
 from modex_agent.memory.system import MemorySystemContextManager
@@ -67,6 +75,11 @@ from modex_agent.pipeline.adapters import OutputAdapter
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.tools.standard import FindFilesTool, SearchFilesTool
 from modex_agent.tools.terminal import SubprocessExecutor, SubprocessTool
+from modex_agent.tools.terminal.backends.factory import (
+    UnsupportedVisibilityForTransport,
+)
+from modex_agent.tools.terminal.managers import create_terminal_manager
+from modex_agent.tools.terminal.types import TerminalVisibility, detect_platform_shell
 from modex_agent.tools.workspace_scoped import (
     WorkspaceRootProvider,
     wrap_standard_tools,
@@ -112,6 +125,7 @@ async def create_pool(
     on_subagent_created: Callable[[str, str], Awaitable[None]] | None = None,
     session_registry: SessionRegistry | None = None,
     session_store: SessionStore | None = None,
+    transcript_store: TranscriptStore | None = None,
 ) -> PoolInstance:
     """Build one PoolInstance's DEPLOYMENT resources from PoolConfig.
 
@@ -149,9 +163,19 @@ async def create_pool(
         from bot.workspace.handle import WorkspaceHandleRootProvider
 
         root_provider = WorkspaceHandleRootProvider(workspace_handle)
+    # sessions_dir provider for transcript-writing tools (SendFileToUserTool):
+    # derived from the resolver cell so the outbound record lands in the owning
+    # workspace's transcript, mirroring the emitter factory wrapper. None when
+    # no workspace resolver is wired (tests / legacy) — the store then falls
+    # back to the bound ctxvar root.
+    sessions_dir_provider: Callable[[], Path | None] | None = None
+    if workspace_resolver is not None:
+        sessions_dir_provider = lambda: _cell_sessions_dir(workspace_resolver)
     tool_manager, mcp_manager = await _build_tools(
         pool_cfg, main_cfg, terminal_manager, project_dir,
         output_adapter, pool_name, data_dir, pool_data, root_provider,
+        transcript_store=transcript_store,
+        sessions_dir_provider=sessions_dir_provider,
     )
     _register_extra_tools_from_config(tool_manager, main_cfg, pool_name)
 
@@ -178,6 +202,16 @@ async def create_pool(
         agent_bus=agent_bus,
         parent_agent_name=main_agent_name,
     )
+
+    # Register a compaction listener that notifies the user when session memory
+    # is being consolidated (the blocking archive LLM call otherwise looks like
+    # a stuck agent). Only the workspace-backed (DefaultMemorySystem) path.
+    if pool_data is not None:
+        memory_system = pool_data.context_manager.memory_system
+        if memory_system is not None:
+            memory_system.add_cleanup_listener(
+                UserNoticeCleanupListener(notification_service)
+            )
     main_service, main_store = _build_communication(
         pool, main_agent_name, broker, agent_bus,
         comm_tracker, project_dir, pool_name, pool_cfg,
@@ -208,9 +242,9 @@ async def create_pool(
         pool, main_agent_name, inbox_consumer,
         notification_service,
         shared_interceptor_chain,
-        im_ui, pool_cfg,
-        command_processor, skill_manager,
-        pool_name,
+        im_ui, pool_cfg, project_dir,
+        command_processor, pool_name,
+        root_provider=root_provider,
     )
 
     bridge = BrokerBridgeService(
@@ -286,57 +320,92 @@ def _build_terminal_manager(
 ) -> Any | None:
     """Create terminal manager from pool config.
 
-    Convention: read ``use_terminal`` + ``terminal_visibility`` from the
-    main agent config.  If ``use_terminal`` is false or absent, terminal
-    tools are skipped and SubprocessTool is used instead.
+    ADR-0010 two-axis construction. The user-facing YAML fields ``use_terminal``
+    (bool) and ``terminal_visibility`` (bool) keep their semantics; the framework
+    translates ``True`` → ``TerminalVisibility.VISIBLE`` and ``False`` →
+    ``TerminalVisibility.HIDDEN`` and constructs the manager via the two-axis
+    ``create_terminal_manager(shell_info=..., visibility=...)`` signature.
 
-    New terminal sessions open in the workspace target (the working dir) when
-    a ``workspace_handle`` is wired, so a terminal-enabled pool follows the
-    workspace rather than the process CWD.
+    Fallback chain: if the requested VISIBLE backend cannot be created on this
+    platform (``UnsupportedVisibilityForTransport``), retry with HIDDEN. If HIDDEN
+    also fails, fall back to SubprocessTool-only (return None) so the agent still
+    works. The shell info is auto-detected via ``detect_platform_shell``.
+
+    ADR-0010 Consequences: the degradation decision (VISIBLE → HIDDEN) belongs
+    HERE at pool-build time, not on the first command. ``create_terminal_manager``
+    itself eagerly probes the (transport, visibility) combo, so an unsupported
+    combination surfaces as ``UnsupportedVisibilityForTransport`` from the call
+    below (validation is encapsulated in the factory, not duplicated here).
     """
     use_terminal = any(getattr(a, "use_terminal", False) for a in pool_cfg.agents)
     if not use_terminal:
         logger.info("Pool '%s': use_terminal=false, skipping terminal tools", pool_name)
         return None
 
-    visibility: bool = True
+    visibility_bool: bool = True
     for a in pool_cfg.agents:
         if getattr(a, "role", None) == "main":
-            visibility = getattr(a, "terminal_visibility", True)
+            visibility_bool = getattr(a, "terminal_visibility", True)
             break
+
+    shell_info = detect_platform_shell()
+    if shell_info is None:
+        logger.warning(
+            "Pool '%s': no supported shell detected; falling back to SubprocessTool.",
+            pool_name,
+        )
+        return None
 
     default_cwd: str | None = (
         str(workspace_handle.current) if workspace_handle is not None else None
     )
 
-    import sys
-
-    from modex_agent.tools.terminal.managers import create_terminal_manager
-
-    if sys.platform == "win32":
-        kinds = ["windows_visible", "windows_hidden"] if visibility else ["windows_hidden"]
-    else:
-        kinds = ["linux"]
+    attempts: list[TerminalVisibility] = (
+        [TerminalVisibility.VISIBLE, TerminalVisibility.HIDDEN]
+        if visibility_bool
+        else [TerminalVisibility.HIDDEN]
+    )
 
     last_err: Exception | None = None
-    for kind in kinds:
+    for vis in attempts:
         try:
-            mgr = create_terminal_manager(manager_kind=kind, default_cwd=default_cwd)
+            mgr = create_terminal_manager(
+                shell_info=shell_info,
+                visibility=vis,
+                default_cwd=default_cwd,
+            )
             logger.info(
-                "Pool '%s': TerminalManager created (kind=%s, visibility=%s)",
-                pool_name, kind, mgr.visibility.value,
+                "Pool '%s': terminal manager created (family=%s, visibility=%s)",
+                pool_name,
+                shell_info.family.value,
+                vis.value,
             )
             return mgr
+        except UnsupportedVisibilityForTransport as exc:
+            last_err = exc
+            logger.warning(
+                "Pool '%s': terminal backend (family=%s, visibility=%s) unavailable: %s",
+                pool_name,
+                shell_info.family.value,
+                vis.value,
+                exc,
+            )
         except Exception as exc:
             last_err = exc
             logger.warning(
-                "Pool '%s': TerminalManager kind=%s failed: %s", pool_name, kind, exc
+                "Pool '%s': terminal backend (family=%s, visibility=%s) failed: %s",
+                pool_name,
+                shell_info.family.value,
+                vis.value,
+                exc,
             )
 
     logger.error(
-        "Pool '%s': ALL terminal backends failed (tried %s). "
-        "Last error: %s. Falling back to SubprocessTool only.",
-        pool_name, kinds, last_err,
+        "Pool '%s': ALL terminal backends failed (tried %s). Last error: %s. "
+        "Falling back to SubprocessTool only.",
+        pool_name,
+        attempts,
+        last_err,
     )
     return None
 
@@ -435,6 +504,9 @@ async def _build_tools(
     data_dir: Path,
     pool_data: PoolDataSnapshot | None,
     root_provider: WorkspaceRootProvider | None,
+    *,
+    transcript_store: TranscriptStore | None = None,
+    sessions_dir_provider: Callable[[], Path | None] | None = None,
 ) -> tuple[InMemoryToolManager, Any | None]:
     """Build tool manager from config — convention over configuration.
 
@@ -487,7 +559,14 @@ async def _build_tools(
     # Custom tools
     from bot.tools.custom import SendFileToUserTool
 
-    tm.register(SendFileToUserTool(output_adapter=output_adapter))
+    tm.register(
+        SendFileToUserTool(
+            output_adapter=output_adapter,
+            transcript_store=transcript_store,
+            media_config=pool_cfg.media,
+            sessions_dir_provider=sessions_dir_provider,
+        )
+    )
 
     # Experience tool (if enabled in config). The experience dir comes from
     # the workspace's pool_data (fixed per workspace); fallback to a data_dir
@@ -889,6 +968,40 @@ def _build_communication(
 # ── Pipeline wiring ──────────────────────────────────────────────────────
 
 
+class UserNoticeCleanupListener(MemoryCleanupListener):
+    """Pushes transient English notices when session memory is compacted.
+
+    Fires around the blocking archive-generation LLM call so the user
+    understands the pause instead of seeing a stuck agent. Notices go through
+    AgentNotificationService (tagged ``message_type=notice`` so the
+    ChannelRouter fans them to the originating channel AND the WebUI observer)
+    and are never written to session memory/history.
+    """
+
+    _START_NOTICE = "[compact] Consolidating conversation memory, please wait..."
+    _DONE_NOTICE = "[compact] Memory consolidated."
+
+    def __init__(self, notification_service: AgentNotificationService) -> None:
+        self._svc = notification_service
+
+    async def on_cleanup_triggered(
+        self, context: MemoryContext, reason: CompressionReason
+    ) -> None:
+        session_id = context.session_id
+        if session_id is None:
+            return
+        await self._svc.send_notice(session_id, self._START_NOTICE)
+
+    async def on_cleanup_finished(
+        self, context: MemoryContext, result: CleanupResult
+    ) -> None:
+        # ScopedMessageHistory only calls this when result.triggered.
+        session_id = context.session_id
+        if session_id is None:
+            return
+        await self._svc.send_notice(session_id, self._DONE_NOTICE)
+
+
 def _wire_main_pipeline(
     pool: AgentPool,
     main_agent_name: str,
@@ -897,9 +1010,11 @@ def _wire_main_pipeline(
     shared_interceptor_chain,
     im_ui,
     pool_cfg: PoolConfig,
+    project_dir: Path,
     command_processor,
-    skill_manager,
     pool_name: str,
+    *,
+    root_provider: WorkspaceRootProvider | None = None,
 ) -> None:
     """Wire hooks, interceptors, governance, and command processor on main pipeline.
 
@@ -907,6 +1022,12 @@ def _wire_main_pipeline(
     hook is built in bot.workspace.wiring._wire_pool_to_resources from
     the workspace's pool_data, and turn_store is resolved per turn from the
     workspace snapshot.
+
+    ``root_provider`` is the per-workspace working-dir provider (the SAME one
+    the file tools use). It anchors the approval classifier's ``./*`` patterns
+    to the active workspace so in-workspace writes are auto-allowed; without it
+    the classifier would fall back to ``project_dir`` (the bot project), gating
+    every in-workspace write as DANGEROUS.
     """
     main_instance = pool._agents.get(main_agent_name)
     if main_instance is None or main_instance.pipeline is None:
@@ -922,11 +1043,33 @@ def _wire_main_pipeline(
     # Hooks
     _add_hook(pipeline, InboxFlushHook(consumer=inbox_consumer, agent_name=main_agent_name))
     _add_hook(pipeline, MaxIterationNotifyHook(notification_service=notification_service))
+    _add_hook(pipeline, TurnOutcomeNotifyHook(notification_service=notification_service))
 
     # Runtime wiring
     pipeline.interceptor_chain = shared_interceptor_chain
     pipeline._user_interface = im_ui
     pipeline.governance = create_governance(pool_cfg.memory, pool_cfg.llm.max_tokens)
+
+    # Approval runtime — main agent only (subagents never pass through this
+    # function). Opt-in: build_approval_runtime returns None when disabled or
+    # no tools gated, leaving runtime_services untouched (default-off).
+    from modex_agent.ioc.factories.approval import build_approval_runtime
+    from modex_agent.runtime.services import AgentRuntimeServices
+
+    main_cfg = next(a for a in pool_cfg.agents if a.role == "main")
+    approval_runtime = build_approval_runtime(
+        main_cfg.approval, project_root=project_dir, root_provider=root_provider
+    )
+    if approval_runtime is not None:
+        # Sparse services: hooks/interceptors/governance stay None and are
+        # sourced per-field from the builder defaults at turn time (identical
+        # to the pre-wiring path). safety is passed explicitly because
+        # AgentRuntimeServices.safety has a default_factory that would
+        # otherwise clobber the pipeline's configured policy.
+        pipeline.runtime_services = AgentRuntimeServices(
+            approval=approval_runtime,
+            safety=pipeline.safety,
+        )
 
     # Command processor (convention: use provided, else default)
     if command_processor is not None:

@@ -1,19 +1,14 @@
-"""AgentRuntimeConfig — 运行时配置聚合。
+"""BusyInputMode — how an agent handles a new message while busy.
 
-捆绑 hooks、interceptors、control 组件，提供统一配置入口。
+This module previously held a runtime-control configuration aggregate that was
+dead (zero readers; production wiring goes through ``AgentPipeline`` /
+``PoolData`` directly) and was removed in candidate ④b.
+``BusyInputMode`` is the one live export and stays.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from modex_agent.control.channel import ControlChannel
-    from modex_agent.control.event_bus import ControlEventBus
-    from modex_agent.hook.abc import HookSpec
-    from modex_agent.runtime.store import TurnStateStore
 
 
 class BusyInputMode(str, Enum):
@@ -22,33 +17,3 @@ class BusyInputMode(str, Enum):
     INTERRUPT = "interrupt"  # 中断当前 turn → 新消息
     QUEUE = "queue"  # 排队 → injection_queue
     STEER = "steer"  # 引导 → INJECT_STEER
-
-
-@dataclass
-class RuntimeControl:
-    """控制平面组件聚合。"""
-
-    channel: ControlChannel | None = None
-    event_bus: ControlEventBus | None = None
-    turn_store: TurnStateStore | None = None
-    busy_input_mode: BusyInputMode = BusyInputMode.QUEUE
-
-
-@dataclass
-class AgentRuntimeConfig:
-    """运行时配置聚合对象。
-
-    捆绑 hooks、interceptors、control 组件，供 Pipeline / AgentFactory /
-    AgentPool / Pipeline 统一使用。
-
-    Usage:
-        runtime = AgentRuntimeConfig(
-            hooks=[HookSpec(hook=RunLoggingHook(), on_error=HookErrorPolicy.LOG)],
-            control=RuntimeControl(channel=ctrl_channel, turn_store=store),
-        )
-    """
-
-    hooks: list[HookSpec] = field(default_factory=list)
-    interceptors: list[Any] = field(default_factory=list)
-    control: RuntimeControl = field(default_factory=RuntimeControl)
-    busy_input_mode: BusyInputMode = BusyInputMode.QUEUE

@@ -7,15 +7,16 @@ import logging
 from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING
 
-from ..agents.react.agent import ReActAgent
-from ..agents.react.state import ReActSnapshotPolicy
-from ..approval.constants import ApprovalDecision
-from ..approval.types import ApprovalAction
-from ..core.types import InputMessage
-from ..runtime.models import ApprovalRequestState, ToolArguments, TurnSnapshot
+from modex_agent.agents.react.agent import ReActAgent
+from modex_agent.agents.react.state import ReActSnapshotPolicy
+from modex_agent.approval.constants import ApprovalDecision
+from modex_agent.approval.types import ApprovalAction
+from modex_agent.approval.views import ApprovalRequestView
+from modex_agent.core.types import InputMessage, OutputMessage
+from modex_agent.runtime.models import ToolArguments, TurnSnapshot
 
 if TYPE_CHECKING:
-    from ..approval.ui import ApprovalUserInterface
+    from modex_agent.approval.ui import ApprovalUserInterface
 
 logger = logging.getLogger(__name__)
 
@@ -32,18 +33,28 @@ def _format_arguments(args: ToolArguments | Mapping[str, object] | None) -> str:
     return ", ".join(f"{key}={value}" for key, value in values.items())
 
 
-def format_approval_prompt(req: ApprovalRequestState) -> str:
-    """Format an approval request for display to the user."""
-    tool_name = req.tool_name
-    call_id = req.tool_call_id
-    tier = req.tier
-    args_str = _format_arguments(req.arguments)
+def format_approval_prompt(view: ApprovalRequestView) -> str:
+    """Format an approval request view for display to the user."""
+    args_str = _format_arguments(view.arguments)
     return (
-        f"Approval Required [{str(tier).upper()}]\n"
-        f"Tool: {tool_name}\n"
-        f"ID: {call_id}\n"
+        f"Approval Required [{view.tier.upper()}]\n"
+        f"Tool: {view.tool_name}\n"
+        f"ID: {view.tool_call_id}\n"
         f"Args: {args_str}\n"
         f"Reply /approve or /deny"
+    )
+
+
+def approval_output_message(view: ApprovalRequestView) -> OutputMessage:
+    """One message serving both channels: IM text (content) + webui structured (metadata).
+
+    IM/QQ adapters read ``content`` and are unchanged; ``WebSocketOutputAdapter``
+    branches on ``message_type == "approval_request"`` to emit a structured envelope.
+    """
+    return OutputMessage(
+        content=format_approval_prompt(view),
+        message_type="approval_request",
+        metadata={"approval": view.to_dict()},
     )
 
 

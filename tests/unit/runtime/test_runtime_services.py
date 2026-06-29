@@ -5,13 +5,12 @@ from modex_agent.runtime.enums import AgentKind, TurnPhase
 from modex_agent.runtime.models import TurnIdentity, TurnStateBase
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices, require_runtime_state
-from modex_agent.runtime.store import NoOpRuntimeCommandStore, NoOpTurnStateStore
+from modex_agent.runtime.store import NoOpTurnStateStore
 
 
 def test_runtime_services_are_not_part_of_turn_state() -> None:
     services = AgentRuntimeServices(
         turn_store=NoOpTurnStateStore(),
-        command_store=NoOpRuntimeCommandStore(),
     )
     state = TurnStateBase(
         identity=TurnIdentity(agent_id="bot", session=SessionInfo.from_str("s1"), turn_id="t1"),

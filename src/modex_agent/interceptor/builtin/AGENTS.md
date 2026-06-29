@@ -43,7 +43,7 @@ Assembled in `examples/bot_project/bot/workspace/wiring.py::_build_workspace_int
   `CANCEL_RUN`, `INJECT_USER_MESSAGE`, `APPROVAL_RESPONSE`, `INJECT_STEER`.
 
 ## Dependencies
-- `modex_agent.control` -- ControlChannel, ControlEventBus, ControlCommandType
+- `modex_agent.control` -- ControlChannel, ControlCommandType
 - `modex_agent.interceptor.abc` -- InterceptorScope, context types
 
 <!-- MANUAL -->

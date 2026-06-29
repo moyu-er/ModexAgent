@@ -216,7 +216,7 @@ class RuntimeContextManager:
     def _resolve_scope_key(self, session: SessionInfo, metadata: dict[str, Any] | None) -> str:
         meta = metadata or {}
         mem_ctx = MemoryContext(
-            session_id=session,
+            session_id=session.session_id,
             user_id=meta.get("user_id"),
             tenant_id=meta.get("tenant_id"),
             agent_id=meta.get("agent_id"),

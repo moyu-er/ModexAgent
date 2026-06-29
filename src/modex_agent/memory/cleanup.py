@@ -1,7 +1,7 @@
 """Session cleanup function — prunes old messages and optionally archives them.
 
 This is a standalone async function that handles:
-1. Trigger check (message count or token pressure)
+1. Trigger check (token pressure: non-system session tokens exceed max_tokens * max_token_ratio)
 2. Cleanup (sanitize tool chains, compute keep/prune boundary)
 3. Archive agent generation (context.md, knowledge.md, index.md)
 4. Pruned index refresh from archive index.md files
@@ -20,6 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from modex_agent.core.message import ChatMessage
 from modex_agent.core.types import MessageRole
 from modex_agent.memory.core.layers import (
     ArchiveMemoryManager,
@@ -32,6 +33,10 @@ from modex_agent.memory.pruned.manager import PrunedManager
 from modex_agent.memory.sanitizer import (
     DefaultSessionToolChainSanitizer,
     ToolChainSanitizationMode,
+)
+from modex_agent.memory.token_estimator import (
+    CharTokenEstimator,
+    TokenEstimator,
 )
 from modex_agent.memory.user_buffer import UserBufferEntry
 from modex_agent.utils.timezone import get_user_timezone
@@ -109,10 +114,11 @@ class _ArchiveOutcome:
 async def _prepare_cleanup_phase(
     session: SessionMemoryManager,
     context: MemoryContext,
-    max_messages: int | None,
     max_tokens: int | None,
+    max_token_ratio: float,
     keep_ratio: float,
     max_backups: int,
+    estimator: TokenEstimator,
 ) -> _CleanupPlan | None:
     """Phase 1: trigger check → backup → sanitize → compute keep/prune boundary.
 
@@ -122,7 +128,10 @@ async def _prepare_cleanup_phase(
     all_messages = await session.get_all_messages(context)
     total_count = len(all_messages)
 
-    trigger_reason = _check_trigger(all_messages, total_count, max_messages, max_tokens)
+    # Trigger on the ChatMessage objects directly (reads cached token_count +
+    # role via .get). The full to_dict is deferred to after the trigger, so the
+    # common under-budget path never serializes the session.
+    trigger_reason = _check_trigger(all_messages, estimator, max_tokens, max_token_ratio)
     if trigger_reason is None:
         return None
 
@@ -160,8 +169,8 @@ async def _prepare_cleanup_phase(
             pruned_messages=all_dicts,
         )
 
-    keep_target = max(1, int(len(sanitized) * keep_ratio))
-    keep_messages, pruned_messages = _compute_boundary(sanitized, keep_target)
+    keep_target_tokens = max(1, int((max_tokens or 0) * keep_ratio))
+    keep_messages, pruned_messages = _compute_boundary(sanitized, keep_target_tokens, estimator)
 
     if not keep_messages:
         logger.warning("No safe keep boundary found: session=%s", context.session_id)
@@ -530,15 +539,17 @@ async def cleanup_session(
     session: SessionMemoryManager,
     archive: ArchiveMemoryManager | None,
     context: MemoryContext,
-    max_messages: int | None = None,
     max_tokens: int | None = None,
-    keep_ratio: float = 0.5,
+    max_token_ratio: float = 0.85,
+    keep_ratio: float = 0.3,
     max_backups: int = 10,
     user_retention: UserRetentionBuffer | None = None,
     pruned_manager: PrunedManager | None = None,
     archive_agent: ArchiveGenerator | None = None,
     archive_storage: DirArchiveStorage | None = None,
     on_archive_generated: Callable[[], Awaitable[None]] | None = None,
+    on_triggered: Callable[[MemoryContext, CompressionReason], Awaitable[None]] | None = None,
+    token_estimator: TokenEstimator | None = None,
 ) -> CleanupResult:
     """Clean up a session by pruning old messages and optionally archiving them.
 
@@ -551,13 +562,15 @@ async def cleanup_session(
         6. Archive state advance + trigger
     """
     # Phase 1: prepare
+    estimator = token_estimator or CharTokenEstimator()
     plan = await _prepare_cleanup_phase(
         session,
         context,
-        max_messages,
         max_tokens,
+        max_token_ratio,
         keep_ratio,
         max_backups,
+        estimator,
     )
     if plan is None:
         return CleanupResult(triggered=False)
@@ -583,6 +596,17 @@ async def cleanup_session(
             archive_skipped=True,
             reason=plan.trigger_reason,
         )
+
+    # Trigger confirmed and a real cleanup is about to run — notify listeners
+    # BEFORE the (potentially slow) archive-generation LLM call so an observer
+    # can tell the user "consolidating memory, please wait".
+    if on_triggered is not None:
+        try:
+            await on_triggered(context, plan.trigger_reason)
+        except Exception:
+            logger.warning(
+                "on_triggered callback failed: session=%s", context.session_id
+            )
 
     # Phase 2: archive generation
     archive_outcome = await _generate_archive_phase(
@@ -653,77 +677,89 @@ async def cleanup_session(
     )
 
 
+_MessageLike = dict[str, Any] | ChatMessage
+
+_SYSTEM_ROLE = str(MessageRole.SYSTEM)
+
+
+def _resolve_message_tokens(
+    message: _MessageLike,
+    estimator: TokenEstimator,
+) -> int:
+    """Return a message's token count: cached if a sane positive int, else recompute.
+
+    Works on either a persisted dict or a ``ChatMessage`` (both expose ``.get``).
+    The cache is authoritative because the SAME estimator stamps ``token_count``
+    at append time. A missing, non-int, or non-positive cached value is treated
+    as corrupt and recomputed transiently (not written back).
+    """
+    cached = message.get("token_count")
+    if isinstance(cached, int) and cached > 0:
+        return cached
+    return estimator.estimate_message(message)
+
+
+def _sum_tokens(
+    messages: Sequence[_MessageLike], estimator: TokenEstimator
+) -> int:
+    return sum(_resolve_message_tokens(m, estimator) for m in messages)
+
+
 def _check_trigger(
-    messages: Sequence[Any],
-    total_count: int,
-    max_messages: int | None,
+    messages: Sequence[_MessageLike],
+    estimator: TokenEstimator,
     max_tokens: int | None,
+    max_token_ratio: float,
 ) -> CompressionReason | None:
-    """Check whether cleanup should be triggered."""
-    if max_messages is not None and total_count > max_messages:
-        return CompressionReason.MESSAGE_COUNT
+    """Fire compression when NON-SYSTEM session tokens exceed max_tokens * ratio.
 
-    if max_tokens is not None:
-        estimated = _estimate_tokens(messages)
-        if estimated > max_tokens:
-            return CompressionReason.TOKEN_PRESSURE
-
-    return None
-
-
-def _estimate_tokens(messages: Sequence[Any]) -> int:
-    """Estimate token count for a list of messages."""
-    try:
-        from modex_agent.memory.utils import estimate_token_count
-    except ImportError:
-        logger.debug("estimate_token_count not available, using heuristic")
-        return sum(len(str(m)) // 4 for m in messages)
-    else:
-        return estimate_token_count(messages)
+    System-role tokens are excluded from session pressure (per ADR-0009): the
+    system prompt size is hard to predict and is regulated separately by the
+    request-time TokenBudgetGovernance. Reads cached ``token_count`` + ``role``
+    via ``.get``, so callers may pass ``ChatMessage`` objects without serializing
+    them — the common under-budget path does zero ``to_dict`` work.
+    """
+    if max_tokens is None:
+        return None
+    threshold = max_tokens * max_token_ratio
+    pressure = sum(
+        _resolve_message_tokens(m, estimator)
+        for m in messages
+        if str(m.get("role", "")) != _SYSTEM_ROLE
+    )
+    return CompressionReason.TOKEN_PRESSURE if pressure > threshold else None
 
 
 def _compute_boundary(
     messages: list[dict[str, Any]],
-    keep_target: int,
+    keep_target_tokens: int,
+    estimator: TokenEstimator,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Compute keep/prune boundary by walking backward from the end.
+    """Split messages into (keep, pruned) by accumulating tokens from the tail.
 
-    Rules:
-    - Walk backward counting messages until accumulated >= keep_target
-    - Never split a tool chain: if boundary splits a tool result from its
-      assistant, move boundary before the assistant
-
-    Returns (keep_messages, pruned_messages).
+    Walk backward summing each message's resolved token count until the next
+    message would exceed ``keep_target_tokens``; keep everything from there to
+    the end. ``keep_target_tokens`` is a SOFT target with a HARD floor of one
+    message: the most recent message is always retained even if it alone
+    exceeds the target. If the cut splits a tool chain, the chain is evicted
+    forward into pruned (never kept orphaned), which only ever shrinks keep.
     """
     total = len(messages)
     if total == 0:
         return [], []
 
-    if keep_target >= total:
-        # Keep everything — no pruning needed
-        return list(messages), []
-
-    # Walk backward from end, counting messages
     accumulated = 0
-    boundary = total  # exclusive start of keep region
+    boundary = total - 1  # exclusive start of keep region; tail msg always kept
 
     for i in range(total - 1, -1, -1):
-        accumulated += 1
-        if accumulated >= keep_target:
-            boundary = i
+        msg_tokens = _resolve_message_tokens(messages[i], estimator)
+        if i < total - 1 and accumulated + msg_tokens > keep_target_tokens:
+            boundary = i + 1
             break
+        accumulated += msg_tokens
+        boundary = i
 
-    # Guard: if the loop never set boundary (should not happen, but defensive)
-    if boundary >= total:
-        boundary = max(0, total - 1)
-
-    # Ensure we don't split a tool chain
     boundary = _adjust_boundary_for_tool_chains(messages, boundary)
-
-    # NOTE: we do NOT force the keep region to start with a user message.
-    # The sanitizer (_resanitize_keep) removes incomplete tool chains,
-    # and governance handles final API-legality (e.g. TokenBudgetGovernance
-    # ensures the visible context starts with a user if the provider requires it).
 
     keep = messages[boundary:]
     pruned = messages[:boundary]
@@ -734,47 +770,32 @@ def _adjust_boundary_for_tool_chains(
     messages: list[dict[str, Any]],
     boundary: int,
 ) -> int:
-    """Move boundary backward if it splits an assistant tool_call from its tool result."""
-    if boundary <= 0 or boundary >= len(messages):
-        return boundary
+    """If the boundary splits a tool chain, evict it FORWARD into pruned.
 
-    # Check if boundary falls inside a tool chain:
-    # - message at boundary is a tool result → check if preceding assistant has tool_calls
-    # - message at boundary-1 is an assistant with tool_calls → ensure results are included
-    msg_at_boundary = messages[boundary]
-    msg_before = messages[boundary - 1]
-
-    # Case 1: tool result at boundary, assistant with tool_calls before it
-    if msg_at_boundary.get("role") == MessageRole.TOOL:
-        # Walk backward to find the assistant that started this tool chain
-        for j in range(boundary - 1, -1, -1):
-            candidate = messages[j]
-            if candidate.get("role") == MessageRole.ASSISTANT and candidate.get("tool_calls"):
-                call_ids = {tc.get("id") for tc in candidate.get("tool_calls") or []}
-                # Check if this tool result belongs to this assistant
-                if msg_at_boundary.get("tool_call_id") in call_ids:
-                    # Don't split: move boundary before the assistant
-                    return j
-            elif candidate.get("role") == MessageRole.ASSISTANT and not candidate.get("tool_calls"):
-                # Plain assistant — tool chain doesn't extend further back
-                break
-            elif candidate.get("role") == MessageRole.USER:
-                break
-
-    # Case 2: assistant with tool_calls just before boundary, tool results at or after boundary
-    if msg_before.get("role") == MessageRole.ASSISTANT and msg_before.get("tool_calls"):
-        call_ids = {tc.get("id") for tc in msg_before.get("tool_calls") or []}
-        # Check if any tool result for these calls is at or after boundary
-        has_tool_result_after = any(
-            messages[k].get("role") == MessageRole.TOOL
-            and messages[k].get("tool_call_id") in call_ids
-            for k in range(boundary, min(boundary + 5, len(messages)))
+    The kept region (messages[boundary:]) must never contain a tool result
+    whose assistant tool_call was pruned. Move the boundary forward (toward
+    the tail) past any leading tool results whose calls lie before the
+    boundary, so the whole chain lands in pruned and gets archived. The hard
+    keep-target cap is never exceeded by this adjustment (it only shrinks
+    keep).
+    """
+    while 0 < boundary < len(messages):
+        first = messages[boundary]
+        if first.get("role") != MessageRole.TOOL:
+            break
+        tool_call_id = first.get("tool_call_id")
+        owner_pruned = any(
+            messages[j].get("role") == MessageRole.ASSISTANT
+            and any(
+                tc.get("id") == tool_call_id
+                for tc in (messages[j].get("tool_calls") or [])
+            )
+            for j in range(boundary)
         )
-        if has_tool_result_after:
-            # The tool results are in keep region but assistant would be pruned —
-            # move boundary to include the assistant
-            return boundary - 1
-
+        if owner_pruned:
+            boundary += 1  # evict this orphan tool result into pruned
+            continue
+        break
     return boundary
 
 

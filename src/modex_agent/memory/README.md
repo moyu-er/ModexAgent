@@ -184,4 +184,4 @@ This pattern cleanly separates the **storage backend** (ChromaDB), the **retriev
 
 This memory package documents conversation and long-term memory. ReAct
 suspend/resume persistence is runtime state, not user memory; use the
-`TurnStateStore` from `framework.runtime`.
+`TurnStateStore` from `modex_agent.runtime`.

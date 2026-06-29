@@ -71,15 +71,15 @@ class TestPipelineCleanupSessionResources:
         )
 
         sid = "s1"
-        pipeline._session_locks[sid] = "fake_lock"
-        pipeline._injection_queues[sid] = "fake_queue"
-        pipeline._session_tasks[sid] = "fake_task"
+        pipeline._registry._session_locks[sid] = "fake_lock"
+        pipeline._registry._injection_queues[sid] = "fake_queue"
+        pipeline._registry._session_tasks[sid] = "fake_task"
 
         await pipeline.cleanup_session_resources(sid)
 
-        assert sid not in pipeline._session_locks
-        assert sid not in pipeline._injection_queues
-        assert sid not in pipeline._session_tasks
+        assert sid not in pipeline._registry._session_locks
+        assert sid not in pipeline._registry._injection_queues
+        assert sid not in pipeline._registry._session_tasks
         channel.cleanup_session.assert_awaited_once_with(sid)
 
     async def test_stop_cleans_up_session_resources(self):
@@ -97,17 +97,17 @@ class TestPipelineCleanupSessionResources:
         )
 
         # Simulate lingering session resources that were not cleaned up
-        pipeline._session_locks["s1"] = "fake_lock"
-        pipeline._injection_queues["s1"] = "fake_queue"
+        pipeline._registry._session_locks["s1"] = "fake_lock"
+        pipeline._registry._injection_queues["s1"] = "fake_queue"
 
         await pipeline.stop()
 
         # After stop(), session resources should be cleaned up
-        assert len(pipeline._session_locks) == 0, (
-            f"stop() should clean _session_locks, got {pipeline._session_locks}"
+        assert len(pipeline._registry._session_locks) == 0, (
+            f"stop() should clean _session_locks, got {pipeline._registry._session_locks}"
         )
-        assert len(pipeline._injection_queues) == 0, (
-            f"stop() should clean _injection_queues, got {pipeline._injection_queues}"
+        assert len(pipeline._registry._injection_queues) == 0, (
+            f"stop() should clean _injection_queues, got {pipeline._registry._injection_queues}"
         )
         assert channel.cleanup_session.called, (
             "stop() should call control_channel.cleanup_session"

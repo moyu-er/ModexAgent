@@ -277,19 +277,15 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
             tool_name: str = data.tool_name
             full_args: dict[str, object] = data.arguments or {}
 
-            if self._transcript_store is not None:
-                self._ensure_turn_started()
-                call_id: str = self._resolve_call_id(data.call_id, tool_name)
-                tc_evt = TcEvent(
-                    session_id=self._session_id,
-                    agent_name=self._agent_name,
-                    turn_id=self._current_turn_id,
-                    call_id=call_id,
-                    tool_name=tool_name,
-                    args=full_args,
-                )
-                self._persist(tc_evt)
-
+            self._ensure_turn_started()
+            # NOTE: the ToolCallEvent is persisted together with its
+            # ToolResultEvent in the TOOL_CALL_END branch below -- NOT here.
+            # Persisting the call on START leaves orphan tool_call events when
+            # the turn suspends for approval before the tool runs; and on resume
+            # the tool node emits ONLY TOOL_CALL_END (the call was already
+            # decided in the suspended snapshot), so the call would otherwise
+            # land in a different turn / never pair with its result, and the
+            # materializer would drop it -> "no tool rendering after refresh".
             evt = ToolCallStartEvent(
                 session_id=self._session_id,
                 agent_name=self._agent_name,
@@ -312,7 +308,23 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
                 full_result = ""
 
             if self._transcript_store is not None:
+                self._ensure_turn_started()
                 call_id: str = self._resolve_call_id(tc.call_id, tool_name)
+                full_args = tc.arguments or {}
+                # Persist call + result TOGETHER so they share a turn_id and
+                # the materializer pairs them into one complete tool block.
+                # This is also the ONLY persistence point on a resumed approval
+                # turn (no preceding TOOL_CALL_START), so it must carry the
+                # call args -- otherwise the resumed tool renders result-only.
+                tc_evt = TcEvent(
+                    session_id=self._session_id,
+                    agent_name=self._agent_name,
+                    turn_id=self._current_turn_id,
+                    call_id=call_id,
+                    tool_name=tool_name,
+                    args=full_args,
+                )
+                self._persist(tc_evt)
                 tr_evt = TrEvent(
                     session_id=self._session_id,
                     agent_name=self._agent_name,

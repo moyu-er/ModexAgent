@@ -1,8 +1,11 @@
 """TerminalBackend abstract base class.
 
 Implementations:
-- VisibleWindowsPtyBackend: Windows subprocess with CREATE_NEW_CONSOLE
-- TmuxPtyBackend: Unix tmux + libtmux
+- WinptyConsoleWindowBackend (legacy alias: VisibleWindowsPtyBackend):
+  Windows subprocess with CREATE_NEW_CONSOLE
+- WinptyHiddenBackend (legacy alias: WindowsHiddenPtyBackend):
+  Windows in-process pywinpty
+- PexpectPtyBackend / TmuxPtyBackend: Unix
 """
 
 from __future__ import annotations
@@ -73,6 +76,15 @@ class TerminalBackend(ABC):
         """Append output text to the sliding output buffer."""
         if self._output_buffer is not None:
             self._output_buffer.append(text)
+
+    def buffer_size(self) -> int:
+        """Current buffered output size in chars (0 when no buffer)."""
+        return self._output_buffer.total_chars if self._output_buffer is not None else 0
+
+    def clear_buffer(self) -> None:
+        """Drop all buffered output (used under memory pressure)."""
+        if self._output_buffer is not None:
+            self._output_buffer.clear()
 
     @property
     @abstractmethod

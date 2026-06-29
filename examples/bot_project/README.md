@@ -30,7 +30,7 @@ Uses **Pool mode** — multi-agent persistent pools with `MessageBroker` + `Agen
 | **Multi-tier Memory** | Session / Archive / Knowledge / UserRetentionBuffer / Pruned / Experience — with configurable scopes (UserScope / GlobalScope / SessionScope) |
 | **Self-Learning** | ExperienceReviewAgent turns conversations into reusable EXPERIENCE.md knowledge; Dream Engine consolidates archives into long-term memory |
 | **Context Governance** | ToolChainRepair + Microcompact + TokenBudget auto-optimization |
-| **Tool Approval** | Interruptible execution with tiered policies (NORMAL / HARDLINE / PENDING) |
+| **Tool Approval** | The agent asks before writing/editing outside your project; approve via WebUI or `/approve`. Off by default; opt-in per agent |
 | **Multi-Agent Collaboration** | Main agent + persistent subagents, star-topology communication |
 | **Skill System** | Dynamic system prompt construction from Markdown skill files |
 | **Plugin System** | Dynamically extend tools, memory providers, and skill sources |
@@ -53,9 +53,9 @@ Browser (React)
          │  seed UserInputEnvelope
          ▼
 ┌──────────────────────────────────────────────────────┐
-│              Input Pipeline (7-stage)                 │
-│  S4 SetChannel → S5 ResolvePool → S6 SkillParse      │
-│  → S7 PersistUserMessage → S8 Enqueue                │
+│              Input Pipeline (WebUI, 8 stages)        │
+│  SetChannel → ResolveWorkspace → ResolvePool →       │
+│  Approval → Skill → Unsupported → Persist → Enqueue  │
 └────────┬─────────────────────────────────────────────┘
          │  resolved session + InputMessage
          ▼
@@ -90,9 +90,12 @@ QQ User / Group Chat                Browser (WebUI)
          │                                │
          ▼                                ▼
 ┌──────────────────────────────────────────────────────┐
-│              Input Pipeline (7-stage convergence)     │
-│  IM: S4→S2→S3→S5→S6→S7→S8                          │
-│  WebUI: S4→S5→S6→S7→S8                              │
+│         Input Pipeline (claim / pass-through)        │
+│  IM:    SetChannel→ResolveWs→EnvCtrl→SessCtrl→       │
+│         ResolvePool→Approval→Skill→Unsupported→      │
+│         Persist→Enqueue                              │
+│  WebUI: SetChannel→ResolveWs→ResolvePool→Approval→   │
+│         Skill→Unsupported→Persist→Enqueue            │
 └────────┬─────────────────────────────────────────────┘
          │
          ▼
@@ -297,17 +300,20 @@ The built-in React frontend provides:
 
 ### Input Pipeline (Converged Message Processing)
 
-All user messages — from IM (QQ) and WebUI — flow through a shared 7-stage pipeline before reaching the agent. This convergence guarantees consistent handling of control commands, skill parsing, pool resolution, persistence, and enqueuing across every channel:
+All user messages — from IM (QQ) and WebUI — flow through a shared pipeline before reaching the agent. Stages **claim or pass through**: a stage that recognises an input handles it (control commands terminate; skills/approval claim-and-continue), and a stage that doesn't recognise it leaves the envelope untouched. A single terminal `UnsupportedCommand` stage rejects any slash command no stage claimed, with one generic notice — so command recognition and rejection live in one place, not scattered across stages. The IM pipeline runs 10 stages, WebUI 8 (no environment/session control — the browser has GUI equivalents), in this order:
 
-| Stage | Name | IM | WebUI | Purpose |
-|-------|------|:--:|:-----:|---------|
-| S2 | EnvironmentControl | ✅ | — | `/cd`, `/pool`, `/exit`, `/pwd` |
-| S3 | SessionControl | ✅ | — | `/stop` turn cancellation |
-| S4 | SetChannel | ✅ | ✅ | Tag conversation with originating channel |
-| S5 | ResolvePool | ✅ | ✅ | Resolve pool + agent, persist session→pool |
-| S6 | SkillParse | ✅ | ✅ | Validate `/skillName`, convert to XML |
-| S7 | PersistUserMessage | ✅ | ✅ | Write to transcript store (single persistence path) |
-| S8 | Enqueue | ✅ | ✅ | Build InputMessage, enqueue to agent |
+| Stage | IM | WebUI | Purpose |
+|-------|:--:|:-----:|---------|
+| SetChannel | ✅ | ✅ | Tag conversation with originating channel (runs first, so notices route to the right adapter) |
+| ResolveWorkspace | ✅ | ✅ | Resolve and anchor the live workspace root |
+| EnvironmentControl | ✅ | — | `/cd`, `/pool`, `/exit`, `/pwd` |
+| SessionControl | ✅ | — | `/stop` turn cancellation |
+| ResolvePool | ✅ | ✅ | Resolve pool + agent, persist session→pool |
+| Approval | ✅ | ✅ | Claim `/approve` · `/deny` into a structured approval decision |
+| SkillParse | ✅ | ✅ | Validate `/skillName`, convert to XML; pass through if unknown |
+| UnsupportedCommand | ✅ | ✅ | Terminal stage: reject any unclaimed `/command` with one generic notice |
+| PersistUserMessage | ✅ | ✅ | Write to transcript store (single persistence path) |
+| Enqueue | ✅ | ✅ | Build InputMessage, enqueue to agent |
 
 ### Multi-tier Memory System
 
@@ -342,13 +348,25 @@ The bot learns from every conversation:
 
 ### Tool Approval
 
-When an agent invokes a sensitive tool, the ReAct graph engine automatically suspends, renders an approval prompt, and waits for user confirmation. Rejection supports cascade cancellation or error-resume:
+The agent asks for your permission before making potentially risky changes. It watches file writes/edits: changes **inside your project folder** go ahead automatically, but writes **outside the project** (or to sensitive locations) pause and surface an approval prompt — a card in the WebUI, or a message in chat. Approve to let it proceed, deny to stop; the agent picks up exactly where it paused.
+
+Approval is **off by default**. Enable it for a main agent in the pool config:
+
+```yaml
+approval:
+  enabled: true
+  tools:
+    write_file: { allowed_paths: ["./*"] }   # auto-allow inside the project, ask elsewhere
+    edit_file:  { allowed_paths: ["./*"] }
+```
+
+See `config/pools/main.yml` and `coding.yml` for live examples. In chat, reply `/approve` or `/deny`; in the WebUI, click the button on the approval card. (Approval never applies to subagents.)
 
 <img src="../../assets/approval.jpg" alt="Tool approval" width="800">
 
 ### Multi-Agent Collaboration
 
-The main agent distributes tasks to subagents via `send_to_agent` (async inbox-based). The tool description dynamically shows all available targets so the LLM can decide who to contact:
+The main agent delegates tasks to specialist subagents and gathers their replies. It picks the right subagent for each job, and the whole conversation — including the subagents' work — shows up in one place. Subagents don't talk to each other directly; everything flows through the main agent, so it's easy to follow.
 
 <img src="../../assets/office_subagent.jpg" alt="Multi-agent collaboration" width="800">
 
@@ -374,7 +392,7 @@ skills/
 
 ### Slash Commands
 
-Commands are processed by the input pipeline (S2/S3 for control, S6 for skills) before reaching the agent:
+Commands are resolved inside the input pipeline before reaching the agent — `EnvironmentControl`/`SessionControl` claim IM control commands, `Approval` claims `/approve` · `/deny`, `SkillParse` claims `/skillName`, and the terminal `UnsupportedCommand` stage rejects anything unclaimed:
 
 | Command | Description |
 |---------|-------------|
@@ -419,39 +437,44 @@ memory:
 
 ## Adding a New Subagent
 
-1. Add configuration in `config/bot_config.yml` under `agents:`:
+The bundled **`coding` pool** (`config/pools/coding.yml` + `config/pools/coding/templates/`) is the reference multi-agent setup. To add your own subagent, mirror that structure:
+
+1. Describe the agent in the pool config (or a subagent template) — its name, what it does, and what it's allowed to do:
 
 ```yaml
 agents:
   - name: "my-new-agent"
     role: subagent
+    max_steps: 60
     system_prompt: |
       You are a specialized agent for ...
-      You must reply to the main agent via send_to_agent (target_agent="main")
-    tools:
-      file_tools:
-        enabled: true
-      shell_tools:
-        enabled: false
-      mcp_tools:
-        enabled: false
+      Reply to the main agent via send_to_agent (target_agent="main").
+    # What this agent can do is chosen by a tool preset — see coding.yml:
+    #   read_only / read_write / full / minimal
+    extra_tools: []          # optional extra tool names on top of the preset
     skills:
       roots:
-        - "skills/subagents/pdf"
+        - "skills/subagents/my-new-agent"
 ```
 
-2. (Optional) Create a skill directory `skills/subagents/my-new-agent/` with `SKILL.md`
+2. (Optional) Drop a `SKILL.md` into `skills/<pool>/my-new-agent/` to give it a dedicated skill.
 
-3. Restart the service. The new subagent auto-registers in `AgentPool`.
+3. Restart the service. The new subagent registers automatically and the main agent can hand work to it.
 
 ## Agent Capability Matrix
 
-| Agent | File | Shell | MCP | Communication | Skills |
-|-------|:----:|:-----:|:---:|---------------|--------|
-| **main** | ✅ | ✅ | ✅ (all) | `send_to_agent`, `send_to_agent` | `skills/main/*` |
-| **office-expert** | ✅ | ✅ | — | `send_to_agent`(→main) | docx/pdf/pptx/xlsx |
-| **query-12306** | ✅ | ✅ | ✅ (12306-mcp, fetch) | `send_to_agent`(→main) | — |
-| **helper-sync** | ✅ | ✅ | — | — (spawn sync return) | `skills/subagents/*` |
+The **`coding` pool** (`config/pools/coding.yml` + its `templates/`) is the bundled multi-agent example: a `coding` main agent plus a team of subagents — scout, context-builder, planner, worker, reviewer, oracle, delegate — each allowed to do a different subset of work. Every subagent can be reached from the main agent; subagents report back to it.
+
+Each subagent's tool set is summarized by a **preset** (what it's allowed to do):
+
+| Preset | Read | Write | Edit | List | Search | Find | Bash | Terminal |
+|--------|:----:|:-----:|:----:|:----:|:------:|:----:|:----:|:--------:|
+| `full` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅* |
+| `read_write` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| `read_only` | ✅ | — | — | ✅ | ✅ | ✅ | ✅ | — |
+| `minimal` | ✅ | ✅ | — | ✅ | ✅ | — | — | — |
+
+`*` Terminal tools require `use_terminal: true`. Subagents always use `SubprocessTool` for bash (stateless). See the coding pool config for the full agent roster and presets.
 
 ## Adapting to Other IM Platforms
 
@@ -633,4 +656,3 @@ Log files are at `logs/bot.log`, containing:
 - [ModexAgent Framework README](../../README.md)
 - [ModexAgent Framework (中文)](../../README.zh-CN.md)
 - [AGENTS.md](../../AGENTS.md)
-- [docs/bot-guide.md](../../docs/bot-guide.md)

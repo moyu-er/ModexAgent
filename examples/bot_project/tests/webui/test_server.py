@@ -96,6 +96,241 @@ async def test_ws_send_message_echoes_user_message() -> None:
 
 
 @pytest.mark.asyncio
+async def test_ws_send_message_passes_attachments_into_envelope() -> None:
+    """send_message MUST read ``attachments`` from the client payload and build
+    AttachmentRefs on the UserInputEnvelope — otherwise uploaded files are
+    orphaned (the ingest stage no-ops on an empty list). Mirrors the QQ
+    adapter (bot/adapters/qq.py). Regression for the G8 WS wire fix.
+    """
+    from modex_agent.input_pipeline.envelope import AttachmentRef
+
+    with tempfile.TemporaryDirectory() as tmp:
+        workspace_root = Path(tmp)
+        input_adapter = WebSocketInputAdapter()
+        store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
+        home_sessions_dir = WorkspacePaths(root=workspace_root / ".modex").sessions_dir
+        server = WebUIServer(
+            input_adapter, store, static_dist=None, home_sessions_dir=home_sessions_dir
+        )
+        server.set_workspace_index(store)
+        from tests.webui._pipeline_fixture import attach_default_pipeline
+        attach_default_pipeline(server, store, input_adapter, workspace_root=workspace_root)
+
+        # Wrap the pipeline's handle() to capture the envelope that reaches the
+        # ingest stage, so the assertion is deterministic without wiring a
+        # MediaStore (the ingest stage no-ops cleanly when none is wired).
+        captured: list = []
+        real_handle = server._input_pipeline.handle
+
+        async def _capture_handle(envelope, ctx):
+            captured.append(envelope)
+            return await real_handle(envelope, ctx)
+
+        server._input_pipeline.handle = _capture_handle  # type: ignore[method-assign]
+
+        # C1: only local_paths INSIDE the workspace's media staging dir are
+        # accepted; create the uploaded temp files there so the realistic
+        # upload→WS path is exercised (paths outside staging are dropped).
+        staging = (
+            WorkspacePaths(root=workspace_root / ".modex").media_dir("main") / "_tmp"
+        )
+        staging.mkdir(parents=True, exist_ok=True)
+        abc_png = staging / "abc.png"
+        abc_png.write_bytes(b"png")
+        notes_txt = staging / "notes.txt"
+        notes_txt.write_bytes(b"notes")
+
+        client = TestClient(TestServer(server.app))
+        await client.start_server()
+        try:
+            ws = await client.ws_connect("/ws")
+            await ws.send_json({"action": "attach", "session_id": "web:test.main"})
+            attached = _unwrap_envelope(await ws.receive_json())
+            assert attached["event"] == "attached"
+
+            await ws.send_json({
+                "action": "send_message",
+                "session_id": "web:test.main",
+                "content": "see this file",
+                "attachments": [
+                    {"local_path": str(abc_png), "filename": "pic.png", "mime": "image/png"},
+                    {"local_path": str(notes_txt)},
+                    {"filename": "no-path-should-be-dropped"},
+                    "not-a-dict",
+                ],
+            })
+            # Drain the echoed user_message so the handler completes.
+            echoed = _unwrap_envelope(await ws.receive_json(timeout=2))
+            assert echoed["event"] == "user_message"
+        finally:
+            await client.close()
+
+        assert len(captured) == 1
+        envelope = captured[0]
+        assert [a.local_path for a in envelope.attachments] == [
+            str(abc_png),
+            str(notes_txt),
+        ]
+        assert isinstance(envelope.attachments[0], AttachmentRef)
+        assert envelope.attachments[0].filename == "pic.png"
+        assert envelope.attachments[0].mime_type == "image/png"
+        # Entries without local_path / wrong type are dropped, never crash.
+        assert envelope.attachments[1].filename is None
+        assert envelope.attachments[1].mime_type is None
+
+
+@pytest.mark.asyncio
+async def test_ws_send_message_drops_local_path_outside_staging() -> None:
+    """C1 (path-traversal fix): a client-supplied ``local_path`` that does NOT
+    resolve under the workspace's media staging dir is dropped, never reaches
+    the envelope. Without this the WS adapter would build an AttachmentRef for
+    ANY server-readable path (e.g. ``/etc/passwd`` or a file under another
+    workspace's data dir) and the ingest stage would copy its bytes into the
+    media store — exfiltration. The staging dir is the only place the upload
+    endpoint writes, so anything outside it is illegitimate.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        workspace_root = Path(tmp)
+        input_adapter = WebSocketInputAdapter()
+        store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
+        home_sessions_dir = WorkspacePaths(root=workspace_root / ".modex").sessions_dir
+        server = WebUIServer(
+            input_adapter, store, static_dist=None, home_sessions_dir=home_sessions_dir
+        )
+        server.set_workspace_index(store)
+        from tests.webui._pipeline_fixture import attach_default_pipeline
+        attach_default_pipeline(server, store, input_adapter, workspace_root=workspace_root)
+
+        # An in-staging file is the legitimate upload path; an outside-staging
+        # file simulates the attacker's traversal target. Both exist on disk so
+        # the test distinguishes "dropped by the validation" from "dropped
+        # because missing" — only the outside one must be rejected.
+        staging = (
+            WorkspacePaths(root=workspace_root / ".modex").media_dir("main") / "_tmp"
+        )
+        staging.mkdir(parents=True, exist_ok=True)
+        inside = staging / "legit.png"
+        inside.write_bytes(b"png")
+        outside = workspace_root / "secret" / "etc_passwd"
+        outside.parent.mkdir(parents=True, exist_ok=True)
+        outside.write_bytes(b"root:x:0:0:root:/root:/bin/bash")
+
+        captured: list = []
+        real_handle = server._input_pipeline.handle
+
+        async def _capture_handle(envelope, ctx):
+            captured.append(envelope)
+            return await real_handle(envelope, ctx)
+
+        server._input_pipeline.handle = _capture_handle  # type: ignore[method-assign]
+
+        client = TestClient(TestServer(server.app))
+        await client.start_server()
+        try:
+            ws = await client.ws_connect("/ws")
+            await ws.send_json({"action": "attach", "session_id": "web:c1.main"})
+            attached = _unwrap_envelope(await ws.receive_json())
+            assert attached["event"] == "attached"
+
+            await ws.send_json({
+                "action": "send_message",
+                "session_id": "web:c1.main",
+                "content": "exfil",
+                "attachments": [
+                    {"local_path": str(inside), "filename": "legit.png"},
+                    {"local_path": str(outside), "filename": "passwd"},
+                    # A traversal attempt via ``..`` that resolves outside staging.
+                    {"local_path": str(staging / ".." / ".." / "secret" / "etc_passwd")},
+                ],
+            })
+            echoed = _unwrap_envelope(await ws.receive_json(timeout=2))
+            assert echoed["event"] == "user_message"
+        finally:
+            await client.close()
+
+        assert len(captured) == 1
+        envelope = captured[0]
+        # Only the in-staging entry survives; the outside file and the ``..``
+        # traversal are both rejected. No crash, and ``outside`` is never read.
+        assert [a.local_path for a in envelope.attachments] == [str(inside)]
+
+
+@pytest.mark.asyncio
+async def test_ws_send_message_echo_carries_resolved_attachments() -> None:
+    """The optimistic ``user_message`` echo MUST carry the resolved Attachment
+    records so the sender's own attachments render mid-session (symmetric
+    rendering), not only after a transcript reload. Mirrors
+    persist_user_message.py:43. Regression for the G8 echo fix.
+    """
+    from modex_agent.media.models import Attachment, AttachmentLocator, Kind
+
+    record = Attachment(
+        id="att-1",
+        kind=Kind.IMAGE,
+        name="pic.png",
+        mime="image/png",
+        size=1234,
+        path=".modex/media/main/uploads/pic.png",
+        locator=AttachmentLocator.MEDIA,
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        workspace_root = Path(tmp)
+        input_adapter = WebSocketInputAdapter()
+        store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
+        home_sessions_dir = WorkspacePaths(root=workspace_root / ".modex").sessions_dir
+        server = WebUIServer(
+            input_adapter, store, static_dist=None, home_sessions_dir=home_sessions_dir
+        )
+        server.set_workspace_index(store)
+        from tests.webui._pipeline_fixture import attach_default_pipeline
+        attach_default_pipeline(server, store, input_adapter, workspace_root=workspace_root)
+
+        # The fixture wires no MediaStore, so the ingest stage no-ops and
+        # resolved_attachments stays empty. Simulate a successful ingest by
+        # appending the record to the envelope AFTER the real pipeline runs —
+        # the echo reads final.resolved_attachments off the returned envelope.
+        real_handle = server._input_pipeline.handle
+
+        async def _inject_handle(envelope, ctx):
+            result = await real_handle(envelope, ctx)
+            if result.should_continue():
+                result.envelope().resolved_attachments.append(record)
+            return result
+
+        server._input_pipeline.handle = _inject_handle  # type: ignore[method-assign]
+
+        client = TestClient(TestServer(server.app))
+        await client.start_server()
+        try:
+            ws = await client.ws_connect("/ws")
+            await ws.send_json({"action": "attach", "session_id": "web:test.main"})
+            attached = _unwrap_envelope(await ws.receive_json())
+            assert attached["event"] == "attached"
+
+            await ws.send_json({
+                "action": "send_message",
+                "session_id": "web:test.main",
+                "content": "see this file",
+                "attachments": [
+                    {"local_path": "/tmp/uploads/pic.png", "filename": "pic.png", "mime": "image/png"},
+                ],
+            })
+            echoed = _unwrap_envelope(await ws.receive_json(timeout=2))
+            assert echoed["event"] == "user_message"
+            attachments = echoed.get("attachments")
+            assert isinstance(attachments, list)
+            assert len(attachments) == 1
+            serialized = attachments[0]
+            assert serialized == record.to_dict()
+            assert serialized["id"] == "att-1"
+            assert serialized["kind"] == "image"
+            assert serialized["locator"] == "media"
+        finally:
+            await client.close()
+
+
+@pytest.mark.asyncio
 async def test_ws_pause_sends_cancel_turn() -> None:
     """WebSocket pause action sends CANCEL_TURN via the configured control filter."""
     from modex_agent.commands.handlers import build_default_builtin_handlers

@@ -87,13 +87,6 @@ class CancellationSource(StrEnum):
     CONTROL_COMMAND = "control_command"
 
 
-class ControlCommandKind(StrEnum):
-    CANCEL_TURN = "cancel_turn"
-    PAUSE_TURN = "pause_turn"
-    RESUME_TURN = "resume_turn"
-    INJECT_INPUT = "inject_input"
-
-
 class SnapshotReason(StrEnum):
     LLM_COMPLETED = "llm_completed"
     TOOL_APPROVAL_REQUIRED = "tool_approval_required"

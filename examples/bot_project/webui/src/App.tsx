@@ -5,6 +5,7 @@ import { useWebUIStream } from "./hooks/useWebUIStream";
 import { fetchSessions, fetchPools, fetchWorkspace, deleteConversation, changeWorkspace } from "./lib/api";
 import { setTimezone } from "./lib/timezone";
 import type { ConversationInfo } from "./types/events";
+import type { OutgoingAttachmentRef } from "./types/attachments";
 import type { PoolInfo } from "./lib/api";
 
 const ACTIVE_POOL_STORAGE_KEY = "modexbot_active_pool";
@@ -252,8 +253,19 @@ const App: FC = () => {
     [],
   );
 
-  const { messages, isStreaming, isPending, todos, connect, disconnect, send, pause } =
-    useWebUIStream(
+  const {
+    messages,
+    isStreaming,
+    isPending,
+    todos,
+    pendingApprovals,
+    isApprovingBatch,
+    submitApproval,
+    connect,
+    disconnect,
+    send,
+    pause,
+  } = useWebUIStream(
       selectedId,
       getPoolForUuid,
       handleSessionReady,
@@ -263,6 +275,12 @@ const App: FC = () => {
       isHome ? "" : workspace,
       onSessionCreated,
     );
+
+  // Approve every currently-pending card. Client-side loop — no new endpoint;
+  // the batch runs once all requests are approved.
+  const onApproveAll = useCallback((): void => {
+    pendingApprovals.forEach((v) => submitApproval(v.tool_call_id, "allow"));
+  }, [pendingApprovals, submitApproval]);
 
   const sessionTree = useMemo(() => buildTree(sessions), [sessions]);
 
@@ -605,7 +623,7 @@ const App: FC = () => {
   );
 
   const handleSend = useCallback(
-    (content: string): void => {
+    (content: string, attachments?: OutgoingAttachmentRef[]): void => {
       // The session is now real — clear draft tracking so subsequent
       // "New Conversation" clicks create a fresh empty draft.
       if (selectedId) {
@@ -620,7 +638,7 @@ const App: FC = () => {
           ),
         );
       }
-      send(content);
+      send(content, attachments);
     },
     [send, selectedId],
   );
@@ -669,7 +687,12 @@ const App: FC = () => {
           isStreaming={isStreaming}
           isPending={isPending}
           todos={todos}
+          pendingApprovals={pendingApprovals}
+          isApprovingBatch={isApprovingBatch}
+          submitApproval={submitApproval}
+          onApproveAll={onApproveAll}
           sessionId={selectedId}
+          workspace={isHome ? "" : workspace}
           onSend={handleSend}
           onPause={pause}
           readOnly={isSelectedSubagent}

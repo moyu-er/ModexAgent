@@ -22,7 +22,6 @@ from modex_agent.hook.abc import (
     HookPoint,
     HookResult,
     HookSpec,
-    OnControlCommandHook,
 )
 from modex_agent.hook.runner import HookRunner
 
@@ -43,5 +42,4 @@ __all__ = [
     "HookResult",
     "HookRunner",
     "HookSpec",
-    "OnControlCommandHook",
 ]

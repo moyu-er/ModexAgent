@@ -4,9 +4,11 @@ Default session cleanup flow:
 
 1. Session writes go through ``ScopedMessageHistory.append/extend``;
    both call ``cleanup_session()`` after the append.
-2. ``cleanup_session()`` (in ``framework/memory/cleanup.py``) checks
-   stored session messages against ``max_messages`` and ``max_tokens``.
-3. When thresholds are exceeded, messages are pruned using the configured
+2. ``cleanup_session()`` (in ``framework/memory/cleanup.py``) is
+   token-based: it compresses when non-system session tokens exceed
+   ``max_tokens * max_token_ratio``, keeping a tail within
+   ``max_tokens * keep_ratio``.
+3. When the threshold is exceeded, messages are pruned using the configured
    ``keep_ratio``. If an ``archive_strategy`` is provided, pruned messages
    are archived before removal.
 4. ``UserBufferEntry`` records pruned unfinished
@@ -29,7 +31,6 @@ StorageFactory = Callable[[MemoryContext], Awaitable[MemoryStorage]]
 
 @dataclass(frozen=True)
 class SessionMemoryConfig:
-    max_messages: int | None = 100
     scope: MemoryScope = field(default_factory=SessionScope)
 
 

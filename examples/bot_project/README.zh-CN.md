@@ -30,12 +30,12 @@
 | **多级记忆** | Session / Archive / Knowledge / UserRetentionBuffer / Pruned / Experience — 支持 UserScope / GlobalScope / SessionScope 可配置隔离范围 |
 | **自学习系统** | ExperienceReviewAgent 将对话沉淀为 EXPERIENCE.md 知识；Dream Engine 定期整合 Archive 为长期记忆 |
 | **上下文治理** | ToolChainRepair + Microcompact + TokenBudget 自动优化 |
-| **工具审批** | 可中断执行，支持分级策略（NORMAL / HARDLINE / PENDING） |
+| **工具审批** | Agent 在改动项目外文件前会先征求同意；WebUI 点按钮或在聊天里 `/approve`。默认关闭，按 Agent 开启 |
 | **多 Agent 协作** | 主 Agent + 多个常驻 Subagent，星型拓扑通信 |
 | **技能系统** | 从 Markdown 文件动态构建系统提示词 |
 | **插件系统** | 动态扩展工具、记忆提供者和技能来源 |
 | **Slash 指令** | `/approve`、`/deny`、`/continue`、`/cd`、`/pool名称`、`/stop` 及技能触发指令 |
-| **Input Pipeline** | 7 阶段统一消息处理流水线——IM 与 WebUI 共用，保证控制指令、技能解析、持久化、入队行为一致 |
+| **Input Pipeline** | 统一消息处理流水线——IM 与 WebUI 共用；阶段「认领或透传」，未知 `/命令` 由唯一终结阶段统一拒绝；IM 10 阶段 / WebUI 8 阶段 |
 | **Pool 运行时** | 多 Agent 常驻池，通过 `MessageBroker` + `AgentMessageBus` 路由消息 |
 | **自主部署** | Agent 通过 SSH 连接远程服务器，拉取代码并重启自身服务 |
 
@@ -54,9 +54,9 @@
          │  产生 seed UserInputEnvelope
          ▼
 ┌──────────────────────────────────────────────────────┐
-│              Input Pipeline（7 阶段）                  │
-│  S4 SetChannel → S5 ResolvePool → S6 SkillParse      │
-│  → S7 PersistUserMessage → S8 Enqueue                │
+│           Input Pipeline（WebUI，8 阶段）             │
+│  SetChannel → ResolveWorkspace → ResolvePool →       │
+│  Approval → Skill → Unsupported → Persist → Enqueue  │
 └────────┬─────────────────────────────────────────────┘
          │  已解析 session + InputMessage
          ▼
@@ -91,9 +91,12 @@ QQ 用户 / 群聊                    浏览器 (WebUI)
          │                                │
          ▼                                ▼
 ┌──────────────────────────────────────────────────────┐
-│              Input Pipeline（7 阶段收敛）              │
-│  IM: S4→S2→S3→S5→S6→S7→S8                          │
-│  WebUI: S4→S5→S6→S7→S8                              │
+│           Input Pipeline（认领 / 透传）              │
+│  IM:    SetChannel→ResolveWs→EnvCtrl→SessCtrl→       │
+│         ResolvePool→Approval→Skill→Unsupported→      │
+│         Persist→Enqueue                              │
+│  WebUI: SetChannel→ResolveWs→ResolvePool→Approval→   │
+│         Skill→Unsupported→Persist→Enqueue            │
 └────────┬─────────────────────────────────────────────┘
          │
          ▼
@@ -298,17 +301,20 @@ python bot_service.py
 
 ### Input Pipeline（统一消息处理流水线）
 
-所有用户消息——来自 IM（QQ）和 WebUI——在到达 Agent 之前经过共享的 7 阶段流水线处理。这保证了跨通道的控制指令、技能解析、Pool 路由、持久化和入队行为完全一致：
+所有用户消息——来自 IM（QQ）和 WebUI——在到达 Agent 之前经过共享流水线。阶段遵循**认领或透传**：识别该输入的阶段负责处理（控制指令直接终结，技能/审批认领后继续），不识别的阶段原样放行；唯一的终结阶段 `UnsupportedCommand` 拒绝任何无人认领的 `/命令` 并给出统一提示——命令识别与拒绝集中在一处，不再散落各阶段。IM 流水线 10 阶段，WebUI 8 阶段（无环境/会话控制，浏览器有等价 GUI），顺序如下：
 
-| 阶段 | 名称 | IM | WebUI | 功能 |
-|------|------|:--:|:-----:|------|
-| S2 | EnvironmentControl | ✅ | — | `/cd`、`/pool`、`/exit`、`/pwd` |
-| S3 | SessionControl | ✅ | — | `/stop` 取消当前轮次 |
-| S4 | SetChannel | ✅ | ✅ | 标记会话来源通道 |
-| S5 | ResolvePool | ✅ | ✅ | 解析 Pool + Agent，持久化 session→pool |
-| S6 | SkillParse | ✅ | ✅ | 校验 `/skillName`，转换为 XML |
-| S7 | PersistUserMessage | ✅ | ✅ | 写入 transcript store（唯一持久化路径） |
-| S8 | Enqueue | ✅ | ✅ | 构建 InputMessage，入队到 Agent |
+| 阶段 | IM | WebUI | 功能 |
+|------|:--:|:-----:|------|
+| SetChannel | ✅ | ✅ | 标记会话来源通道（最先运行，使提示回到正确通道适配器） |
+| ResolveWorkspace | ✅ | ✅ | 解析并锚定当前活跃 workspace 根 |
+| EnvironmentControl | ✅ | — | `/cd`、`/pool`、`/exit`、`/pwd` |
+| SessionControl | ✅ | — | `/stop` 取消当前轮次 |
+| ResolvePool | ✅ | ✅ | 解析 Pool + Agent，持久化 session→pool |
+| Approval | ✅ | ✅ | 认领 `/approve`·`/deny`，转成结构化审批决策 |
+| SkillParse | ✅ | ✅ | 校验 `/skillName`，转换为 XML；未知则透传 |
+| UnsupportedCommand | ✅ | ✅ | 终结阶段：拒绝任何无人认领的 `/命令`，统一提示 |
+| PersistUserMessage | ✅ | ✅ | 写入 transcript store（唯一持久化路径） |
+| Enqueue | ✅ | ✅ | 构建 InputMessage，入队到 Agent |
 
 ### 多级记忆系统
 
@@ -342,13 +348,25 @@ Bot 会从每次对话中学习：
 
 ### 工具审批
 
-敏感工具调用时，ReAct 图引擎自动挂起，渲染审批提示等待用户确认。拒绝时支持级联取消或返回错误继续循环：
+Agent 在做出可能有风险的改动前，会先征求你的同意。它盯住文件的写/改操作：**项目文件夹内**的改动直接放行，但写到**项目之外**（或敏感位置）时会暂停并弹出审批提示——WebUI 里是一张卡片，聊天里是一条消息。批准则继续、拒绝则停下，Agent 从原地精确恢复。
+
+审批**默认关闭**。在 pool 配置里给某个主 Agent 开启：
+
+```yaml
+approval:
+  enabled: true
+  tools:
+    write_file: { allowed_paths: ["./*"] }   # 项目内自动放行，其余先问
+    edit_file:  { allowed_paths: ["./*"] }
+```
+
+`config/pools/main.yml`、`coding.yml` 里有现成示例。聊天里回复 `/approve` 或 `/deny`；WebUI 里点审批卡片上的按钮。（审批不作用于 subagent。）
 
 <img src="../../assets/approval.jpg" alt="工具审批" width="800">
 
 ### 多 Agent 协作
 
-主 Agent 通过 `send_to_agent` 异步投递到 inbox。工具描述会动态显示所有可用目标，帮助 LLM 判断联系目标：
+主 Agent 把任务派给专门的子 Agent，再回收它们的回复。它会自动挑合适的子 Agent 接活，而整段对话——连同子 Agent 的工作过程——都在一处可见。子 Agent 之间不直接对话，所有信息都经主 Agent 中转，脉络清晰。
 
 <img src="../../assets/office_subagent.jpg" alt="多 Agent 协作" width="800">
 
@@ -374,7 +392,7 @@ skills/
 
 ### Slash 指令
 
-指令由 Input Pipeline 处理（S2/S3 处理控制指令，S6 处理技能指令），之后才到达 Agent：
+指令在到达 Agent 前由 Input Pipeline 解析——`EnvironmentControl`/`SessionControl` 认领 IM 控制指令，`Approval` 认领 `/approve`·`/deny`，`SkillParse` 认领 `/skillName`，终结的 `UnsupportedCommand` 阶段拒绝其余未认领指令：
 
 | 指令 | 说明 |
 |------|------|
@@ -419,39 +437,44 @@ memory:
 
 ## 添加新 Subagent
 
-1. 在 `config/bot_config.yml` 的 `agents:` 中添加配置：
+内置的 **`coding` 池**（`config/pools/coding.yml` + `config/pools/coding/templates/`）是多 Agent 参考配置。新增你自己的 subagent 时，照它的结构来：
+
+1. 在 pool 配置（或 subagent 模板）里描述这个 agent——名字、做什么、允许做什么：
 
 ```yaml
 agents:
   - name: "my-new-agent"
     role: subagent
+    max_steps: 60
     system_prompt: |
       你是一个...的 Agent。
-      完成后必须通过 send_to_agent 将结果回复给主 Agent（target_agent="main"）
-    tools:
-      file_tools:
-        enabled: true
-      shell_tools:
-        enabled: false
-      mcp_tools:
-        enabled: false
+      完成后通过 send_to_agent 把结果回复给主 Agent（target_agent="main")。
+    # 这个 agent 能做什么，由一个工具 preset 决定——见 coding.yml：
+    #   read_only / read_write / full / minimal
+    extra_tools: []          # 可选：preset 之外再加的工具名
     skills:
       roots:
-        - "skills/subagents/pdf"
+        - "skills/subagents/my-new-agent"
 ```
 
-2. （可选）创建专属技能目录 `skills/subagents/my-new-agent/`，放入 `SKILL.md`
+2. （可选）在 `skills/<pool>/my-new-agent/` 放一个 `SKILL.md`，给它专属技能。
 
-3. 重启服务，新 subagent 自动注册到 `AgentPool`
+3. 重启服务，新 subagent 自动注册，主 Agent 即可把活派给它。
 
 ## Agent 能力矩阵
 
-| Agent | 文件 | Shell | MCP | 通信工具 | Skills |
-|-------|:----:|:-----:|:---:|----------|--------|
-| **main** | ✅ | ✅ | ✅（全部） | `send_to_agent`, `send_to_agent` | `skills/main/*` |
-| **office-expert** | ✅ | ✅ | — | `send_to_agent`(→main) | docx/pdf/pptx/xlsx |
-| **query-12306** | ✅ | ✅ | ✅（12306-mcp, fetch） | `send_to_agent`(→main) | — |
-| **helper-sync** | ✅ | ✅ | — | —（spawn 同步返回） | `skills/subagents/*` |
+内置的 **`coding` 池**（`config/pools/coding.yml` + 其 `templates/`）是多 Agent 示例：一个 `coding` 主 Agent 带一支子 Agent 团队——scout、context-builder、planner、worker、reviewer、oracle、delegate——各自能做不同范围的事。主 Agent 可调用任意子 Agent，子 Agent 把结果回报给它。
+
+每个子 Agent 的能力由一个 **preset**（允许它做什么）概括：
+
+| Preset | 读 | 写 | 编辑 | 列目录 | 搜索 | 查找 | Bash | 终端 |
+|--------|:--:|:--:|:----:|:------:|:----:|:----:|:----:|:----:|
+| `full` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅* |
+| `read_write` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
+| `read_only` | ✅ | — | — | ✅ | ✅ | ✅ | ✅ | — |
+| `minimal` | ✅ | ✅ | — | ✅ | ✅ | — | — | — |
+
+`*` 终端工具需 `use_terminal: true`。subagent 的 bash 一律走 `SubprocessTool`（无状态）。完整 agent 名单与 preset 见 coding pool 配置。
 
 ## 适配其他 IM 平台
 
@@ -633,4 +656,3 @@ plugins:
 - [ModexAgent 框架文档](../../README.zh-CN.md)
 - [ModexAgent Framework (English)](../../README.md)
 - [AGENTS.md](../../AGENTS.md)
-- [docs/bot-guide.md](../../docs/bot-guide.md)

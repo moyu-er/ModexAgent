@@ -11,6 +11,7 @@ dependencies = [
     # aiohttp is the runtime backbone of WebUIService (server.py, web_socket adapter,
     # etc.) — keep it in main deps so `uv pip install -e .` is enough to run debug_main.
     "aiohttp>=3.9.0,<4.0.0",
+    "tiktoken>=0.13.0",
 ]
 
 [project.optional-dependencies]

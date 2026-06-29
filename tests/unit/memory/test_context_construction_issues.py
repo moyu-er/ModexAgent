@@ -89,11 +89,8 @@ class FakeMemorySystem:
         from modex_agent.memory.history import ListMessageHistory
         return ListMessageHistory(initial_messages or [])
 
-    async def get_history(self, context: Any, max_messages: int | None = None) -> list[ChatMessage]:
-        result = self._messages
-        if max_messages is not None:
-            result = result[-max_messages:]
-        return result
+    async def get_history(self, context: Any) -> list[ChatMessage]:
+        return self._messages
 
     async def get_knowledge(self, context: Any) -> Any:
         if self._knowledge is not None:
@@ -144,7 +141,7 @@ class TestSingleAssemblePerRequest:
         memory_system = FakeMemorySystem(messages=all_messages)
 
         policy = FullInjectionPolicy(
-            budget=MemoryBudget(max_history_messages=50),
+            budget=MemoryBudget(),
         )
         context = MemoryContext(session_id="test")
 
@@ -152,9 +149,9 @@ class TestSingleAssemblePerRequest:
 
         # System prompt is a string (may be empty if no knowledge)
         assert isinstance(result.system_prompt, str)
-        # Messages are available
+        # Messages are available — no message-count cap; all returned (10 turns × 7 = 70)
         assert isinstance(result.messages, list)
-        assert len(result.messages) == 50
+        assert len(result.messages) == 70
 
 
 # -- Test 2: Injection Returns All Messages -----------------------------------
@@ -175,14 +172,14 @@ class TestSimplifiedInjection:
         all_messages = _make_session_messages(turns=10, tool_calls_per_turn=2)
         memory_system = FakeMemorySystem(messages=all_messages)
         policy = FullInjectionPolicy(
-            budget=MemoryBudget(max_history_messages=50),
+            budget=MemoryBudget(),
         )
 
         context = MemoryContext(session_id="test")
         result = await policy.assemble(context=context, memory_system=memory_system)
 
-        # All 50 messages returned, including tool messages
-        assert len(result.messages) == 50
+        # All messages returned, including tool messages (no message-count cap: 10 turns × 7 = 70)
+        assert len(result.messages) == 70
         tool_msgs = [m for m in result.messages if m.role == "tool"]
         assert len(tool_msgs) > 0, "Tool messages should be present for governance"
 
@@ -191,14 +188,13 @@ class TestSimplifiedInjection:
         """Subagent policy: session messages only, no knowledge/archive/providers."""
         all_messages = _make_session_messages(turns=5)
         memory_system = FakeMemorySystem(messages=all_messages)
-        policy = RestrictedInjectionPolicy(
-            max_session_messages=30,
-        )
+        policy = RestrictedInjectionPolicy()
 
         context = MemoryContext(session_id="sub-test")
         result = await policy.assemble(context=context, memory_system=memory_system)
 
-        assert len(result.messages) == 30
+        # No message-count cap: all session messages are returned (5 turns × 7 msgs = 35).
+        assert len(result.messages) == 35
         assert result.system_prompt == ""  # No knowledge for subagents
 
 
@@ -255,14 +251,14 @@ class TestMessageCountAcrossPipeline:
         memory_system = FakeMemorySystem(messages=all_messages)
         # Simplified: no filter, all messages preserved
         policy = FullInjectionPolicy(
-            budget=MemoryBudget(max_history_messages=50),
+            budget=MemoryBudget(),
         )
         context = MemoryContext(session_id="test")
         result = await policy.assemble(context=context, memory_system=memory_system)
 
         # Stage 1: After injection (no filter)
-        # -> 50 messages, including tools
-        assert len(result.messages) == 50
+        # -> all 70 messages, including tools (no message-count cap)
+        assert len(result.messages) == 70
 
         # Stage 2: Tool messages are present for governance
         tool_msgs = sum(1 for m in result.messages if m.role == "tool")

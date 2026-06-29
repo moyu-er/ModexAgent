@@ -1,0 +1,148 @@
+"""ApprovalResumer — pure approval state machine.
+
+Owns the approval decision/save/prompt/restore half of the resume flow. The
+turn-execution half (run the resumed turn, delete the snapshot, drain buffered
+messages) is driven by the caller, so this module has NO dependency on turn
+execution — a single-direction edge.
+
+Extracted from the pipeline's approval-resume methods. Behaviour identical.
+"""
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING
+
+from modex_agent.agents.react.state import ReActSnapshotPolicy
+from modex_agent.approval.constants import ApprovalDecision
+from modex_agent.approval.types import ApprovalAction
+from modex_agent.approval.views import view_from_request
+from modex_agent.core.agent import AgentContext
+from modex_agent.pipeline.snapshot import PoolDataSnapshot
+from modex_agent.runtime.enums import SnapshotReason, TurnPhase
+from modex_agent.runtime.models import StateQueryScope, TurnSnapshot
+
+if TYPE_CHECKING:
+    from modex_agent.approval.ui import ApprovalUserInterface
+    from modex_agent.core.agent import Agent
+    from modex_agent.runtime.store import TurnStateStore
+
+logger = logging.getLogger(__name__)
+
+
+class ApprovalResumer:
+    """Approval state machine: load pending snapshot, apply a decision, restore."""
+
+    def __init__(
+        self,
+        *,
+        agent: Agent,
+        turn_store: TurnStateStore | None,
+        user_interface: ApprovalUserInterface | None,
+    ) -> None:
+        self._agent = agent
+        self._turn_store = turn_store
+        self._user_interface = user_interface
+
+    def _resolve_turn_store(
+        self, pool_data: PoolDataSnapshot | None,
+    ) -> TurnStateStore | None:
+        return pool_data.turn_store if pool_data is not None else self._turn_store
+
+    async def load_pending(
+        self,
+        session_id: str,
+        *,
+        pool_data: PoolDataSnapshot | None = None,
+    ) -> TurnSnapshot | None:
+        turn_store = self._resolve_turn_store(pool_data)
+        if turn_store is None:
+            return None
+        # Approval turns are partitioned by workspace (turn_store path) + pool
+        # + session_id. The session_id already identifies the conversation
+        # uniquely, so agent_id is NOT a query dimension — using self._agent.name
+        # here (a class-name constant like "ReActAgent") mismatches the snapshot's
+        # stored agent_id (the pool registration name) and silently finds nothing.
+        snapshots = await turn_store.list_active_turns(
+            StateQueryScope(
+                session_id=session_id,
+                phase=TurnPhase.SUSPENDED,
+                reason=SnapshotReason.TOOL_APPROVAL_REQUIRED,
+            )
+        )
+        if not snapshots:
+            return None
+        snapshots.sort(key=lambda snapshot: snapshot.created_at)
+        return snapshots[-1]
+
+    async def apply_resume(
+        self,
+        snapshot: TurnSnapshot,
+        *,
+        action: ApprovalAction | None,
+        session_id: str,
+        pool_data: PoolDataSnapshot | None,
+        agent_context: AgentContext,
+        tool_call_id: str | None = None,
+    ) -> TurnStateStore | None:
+        """Apply a resume decision and restore state if every tool is decided.
+
+        Returns the ``TurnStateStore`` the caller should use for cleanup
+        (``delete_turn`` on the snapshot, then ``drain``) when the resume
+        succeeds — i.e. all approval requests are decided and the snapshot
+        state has been restored into ``agent_context.runtime.state``. Returns
+        ``None`` on every non-resuming path: no approval payload, no
+        resolvable turn_store, requests still pending (after a partial save +
+        prompt render), or ``agent_context.runtime`` is None.
+
+        On a successful resume the caller runs ``execute_turn`` and, when it
+        yields a result, ``turn_store.delete_turn(snapshot.identity)`` and
+        ``drain(session_id)`` using the returned store.
+
+        When ``tool_call_id`` is given, only that request is decided (webui
+        precision); ``None`` keeps the legacy decide-next-PENDING behaviour
+        for IM ``/approve``.
+        """
+        approval = ReActSnapshotPolicy.approval_from_snapshot(snapshot)
+        if approval is None:
+            return None
+
+        if action is not None:
+            decision = (
+                ApprovalDecision.ALLOWED
+                if action == ApprovalAction.ALLOW
+                else ApprovalDecision.DENIED
+            )
+            for req in approval.requests:
+                current = approval.decisions.get(req.tool_call_id, ApprovalDecision.PENDING)
+                if current != ApprovalDecision.PENDING:
+                    continue
+                if tool_call_id is not None and req.tool_call_id != tool_call_id:
+                    continue  # leave non-target requests pending
+                approval.apply_decision(req.tool_call_id, decision)
+                break
+
+        snapshot = ReActSnapshotPolicy.replace_approval(snapshot, approval)
+        turn_store = self._resolve_turn_store(pool_data)
+        if turn_store is None:
+            logger.error("Approval resume requested but no TurnStateStore is configured")
+            return None
+
+        if not approval.every_tool_decided:
+            await turn_store.save_turn(snapshot)
+            if self._user_interface is not None:
+                for req in approval.requests:
+                    current = approval.decisions.get(req.tool_call_id, ApprovalDecision.PENDING)
+                    if current == ApprovalDecision.PENDING:
+                        await self._user_interface.render_approval_prompt(
+                            session_id,
+                            view_from_request(req),
+                        )
+                        break
+            return None
+
+        if agent_context.runtime is None:
+            return None
+        state = ReActSnapshotPolicy.state_from_snapshot(snapshot)
+        agent_context.identity = snapshot.identity
+        agent_context.runtime.state = state
+        return turn_store

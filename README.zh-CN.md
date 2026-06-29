@@ -39,12 +39,12 @@ ModexAgent 是一个用于构建 AI Agent 应用的 Python 框架。它将模型
 ## 核心特性
 
 - **图驱动的 ReAct 引擎** — 执行循环以 `Graph[R] + Node[R] + Edge` 的泛型图结构建模，支持 `GraphInterrupt` 挂起与状态持久化恢复，天然适合审批和断点续跑场景。
-- **可中断的审批系统** — Agent 调用敏感工具时，执行流自动挂起，通过 `TurnSnapshot` 持久化状态，用户确认后精确恢复。支持 Tiered 分级策略（NORMAL / HARDLINE / PENDING）和级联取消。
+- **可中断审批** — Agent 在做出有风险的改动前会先征求你的同意。当它试图写或改项目文件夹之外的文件时，会暂停并请求确认——在 WebUI 点一下「批准」，或在聊天里回复 `/approve`，它就从原地继续。默认关闭，可按 Agent 单独开启。
 - **跨平台交互式终端** — 内置完整终端工具链，支持 Windows（WinPTY/ConPTY）、Linux/macOS（pexpect/tmux）三端统一接口；支持可见终端窗口与后台 PTY 两种模式，248+ 单元测试覆盖。
-- **星型拓扑多 Agent 协作** — 主 Agent 作为通信中枢，子 Agent 通过 `send_to_agent`（同步）、`send_to_agent_async`（异步 inbox）、`spawn_subagent`（隔离调用）三种方式协作；`CommunicationTracker` 防止记忆压缩静默丢弃待处理通信。
+- **星型拓扑多 Agent 协作** — 主 Agent 作为通信中枢，把任务派给专门的子 Agent 并自动收集它们的回复；子 Agent 之间不直接通信，统一经主 Agent 转交，结构清晰、便于追踪。
 - **Pool 运行时** — 多 Agent 常驻池，通过 `MessageBroker` + `AgentMessageBus` 路由消息，I/O 适配器与 Agent 逻辑完全解耦。
 - **多级记忆 + 自学习系统** — Session、Archive、Knowledge、UserRetentionBuffer、Pruned、Experience 六层记忆，支持 SessionScope / UserScope / GlobalScope 可配置隔离范围。Dream Engine 定期将 Archive 整合为 Knowledge；ExperienceReviewAgent 将对话沉淀为可复用的 EXPERIENCE.md 参考知识。
-- **Hook + Interceptor 扩展体系** — 生命周期 Hook（如 InboxFlush、SubagentAutoSend、ProgressReport）与 AOP 拦截器链（ControlDrain、ToolResultLimit）正交组合，框架行为可逐层定制，不侵入核心代码。
+- **Hook + Interceptor 扩展体系** — 生命周期 Hook（如 InboxFlush、SubagentAutoSend）与 AOP 拦截器链（ControlDrain、ToolResultLimit）正交组合，框架行为可逐层定制，不侵入核心代码。
 - **类型安全** — 全部使用 ABC 接口（零 Protocol），枚举替代原始字符串，`from __future__ import annotations` 全仓覆盖，mypy strict 级别检查。
 - **MCP 原生集成** — 动态加载 MCP 服务器（SSE/stdio），`MCPToolAdapter` 自动将 MCP 能力映射为框架 Tool 对象，支持工具、资源、Prompt 三类能力。
 - **浏览器 WebUI** — React + Vite 前端，实时流式渲染，多会话侧边栏，工作区浏览器，Pool 选择器（见 `examples/bot_project/`）。
@@ -153,29 +153,37 @@ modexbot start
 ## 项目结构
 
 ```text
-framework/
-  core/              # 核心抽象：Agent、Context、Emitter、Provider、Tool 等
-  agents/react/      # ReAct Agent 图引擎实现
-  pipeline/          # 端到端流程编排
-  memory/            # 多级记忆系统 + Dream 引擎 + 治理
-  tools/             # 工具注册、执行、终端系统、MCP 适配器
-  multi_agent/       # 多 Agent 协作：Pool、MessageBus
-  hook/              # 生命周期 Hook 扩展点
-  interceptor/       # AOP 拦截器链
-  control/           # 运行时控制、审批、事件总线
-  commands/          # Slash 指令系统
-  sandbox/           # 沙箱适配器（Subprocess / Docker / E2B）
-  security/          # 安全策略与审批分类器
+src/modex_agent/        # 框架包（src layout，见 ADR-0003）
+  core/              # 根：Agent/Context/Emitter/Provider/Tool ABC、图引擎、类型、常量
+  agents/            # Agent 运行时：ReAct（图驱动）、Summarizer、ExperienceReview
+  pipeline/          # 端到端流程编排（AgentPipeline）
+  memory/            # 多级记忆 + Dream 引擎 + 上下文治理
+  multi_agent/       # 星型协作：Pool、broker、inbox、通信
+  tools/             # 工具注册 + 执行；终端、MCP、AST、LSP、web 工具集
   providers/         # LLM 提供者（LiteLLM、OpenAI 兼容接口）
-  ioc/               # 类型化配置（Pydantic v2）与工厂层
+  hook/              # 生命周期 Hook 扩展点（InboxFlush、SubagentAutoSend）
+  interceptor/       # AOP 拦截器链（ControlDrain、ToolResultLimit、…）
+  control/           # 运行时控制传输（/stop + 暂停通道）
+  approval/          # 分级审批策略与分类器
+  commands/          # Slash 指令系统
+  input_pipeline/    # 用户输入的通用阶段式管线
+  adapters/          # I/O 适配器基类——将平台 I/O 与 Agent 逻辑解耦
+  messaging/         # 消息 broker 抽象层
+  workspace/         # Workspace 机制：多活隔离、按 pool 的资源
   runtime/           # 运行时状态存储、快照、编解码
+  sandbox/           # 沙箱适配器（Subprocess / Landlock / Docker / E2B）+ 安全 guard
+  ioc/               # 类型化配置（Pydantic v2）+ 工厂层
+  plugins/           # 插件系统
+  registry/          # 注册表
+  trace/             # 统一的操作级 trace 系统
+  utils/             # 根邻接的纯叶子原语（ADR-0006：不依赖任何其他包）
 
 examples/
   bot_project/       # 完整 QQ Bot + WebUI 示例（Pool 模式）
-  sandbox/           # 沙箱相关示例
+  sandbox/           # 沙箱使用示例
 
 tests/               # 单元、集成和端到端测试
-docs/                # 框架文档
+docs/                # ADR + 架构文档
 ```
 
 ## 按需安装
@@ -202,13 +210,10 @@ uv pip install -e ".[all,dev]"
 
 | 文档 | 说明 |
 | --- | --- |
-| [架构设计](docs/architecture.md) | 框架整体架构与设计决策 |
-| [核心模块](docs/core-modules.md) | Agent、Tool、Memory、Pipeline 核心概念 |
-| [记忆系统](docs/memory-system.md) | 多级记忆、Dream 引擎、治理系统 |
-| [多 Agent 指南](docs/multi-agent-guide.md) | 星型拓扑、通信工具、子 Agent 生命周期 |
-| [扩展指南](docs/extension-guide.md) | Hook、Interceptor、Plugin、Slash 指令开发 |
-| [Bot 指南](docs/bot-guide.md) | bot_project 示例项目详解 |
-| [运行时设计](docs/current-runtime.md) | ReAct 运行时设计、控制流、审批流 |
+| [ADR 索引](docs/adr/) | 架构决策记录（pool-only 装配、src-layout 改名、依赖树、facade-only、保留真实 seam、可中断审批 + 批原子性、基于 token 的压缩、双轴终端、认领/透传 input pipeline、附件系统） |
+| [CONTEXT.md](CONTEXT.md) | 领域术语表——Pool、Workspace、ReAct Agent、Graph、GraphInterrupt、Assembly 等 |
+| [Bot 示例](examples/bot_project/README.md) | bot_project 详解（QQ Bot + WebUI、多 Agent 配置） |
+| 各模块 `AGENTS.md` | `src/modex_agent/` 下每个包都附带 `AGENTS.md`，描述其职责与关键文件 |
 
 ## 开发命令
 
@@ -216,7 +221,7 @@ uv pip install -e ".[all,dev]"
 pytest tests/unit/ -v
 pytest tests/integration/ -v -m integration
 
-ruff check framework tests
-ruff format framework
-mypy framework
+ruff check src/modex_agent tests
+ruff format src/modex_agent
+mypy src/modex_agent
 ```

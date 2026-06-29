@@ -9,10 +9,12 @@ from types import SimpleNamespace
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from bot.adapters.web_socket import WebSocketInputAdapter
+from bot.service.media_store import WorkspaceScopedMediaStore
 from bot.service.web_ui_service import WebUIService
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import _unwrap_envelope
 from bot.webui.server import WebUIServer
+from modex_agent.ioc.configs.pool import MediaConfig
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.runtime import bind_workspace_root
 
@@ -248,3 +250,50 @@ async def test_production_style_resolver_does_not_crash_emitter() -> None:
     assert envelope.event_type == "model_content_delta"
     assert envelope.pool == "coding"  # resolved from the map
     assert envelope.session_id == "conv.coding"
+
+
+class TestAttachmentWiring:
+    """Regression guards for the production media-wiring seam (ADR-0013).
+
+    The inbound attachment pipeline was once dead in production because
+    ``media_store`` / the per-pool ``MediaConfig`` resolver were never passed
+    into ``BotInputContext`` (the ingest stage silently no-op'd on
+    ``ctx.media_store is None``). These tests call the extracted
+    ``_build_input_context`` / ``_media_config_for_pool`` directly so a future
+    refactor that drops the wiring line cannot pass undetected.
+    """
+
+    @staticmethod
+    def _fake_service() -> WebUIService:
+        """A WebUIService built without __init__ (heavy: reads config/.env),
+        carrying only the attrs the wiring methods read. Using the real class
+        lets ``self._media_config_for_pool`` resolve to the actual method."""
+        custom = MediaConfig(max_image_bytes=999, max_text_doc_bytes=888)
+        pool = SimpleNamespace(config=SimpleNamespace(media=custom))
+        svc = WebUIService.__new__(WebUIService)
+        svc._pools = {"main": pool}
+        svc._media_store = WorkspaceScopedMediaStore(data_dir_name=".modex")
+        svc._agent_pool_map = {"main": "main"}
+        svc._pool_session_store = SimpleNamespace()  # truthy -> skip pool_router branch
+        svc._transcript_store = SimpleNamespace()
+        svc._session_factory = SimpleNamespace()
+        svc._app_config = SimpleNamespace(
+            multi_agent=SimpleNamespace(default_pool="main")
+        )
+        return svc
+
+    def test_media_config_for_pool_returns_pool_override_and_default(self) -> None:
+        svc = self._fake_service()
+        assert svc._media_config_for_pool("main").max_image_bytes == 999
+        # Unknown pool degrades to the frozen default.
+        assert svc._media_config_for_pool("missing") == MediaConfig()
+
+    def test_build_input_context_wires_media_store_and_per_pool_resolver(self) -> None:
+        svc = self._fake_service()
+        inp = SimpleNamespace(name="ws", put_input_message=lambda *_a, **_k: None)
+        ctx = svc._build_input_context(inp, agent_resolver=lambda p: p)
+        # The wired store is the service singleton, not None (the dead-path bug).
+        assert ctx.media_store is svc._media_store
+        # The per-pool resolver is wired and honors PoolConfig.media.
+        assert ctx.media_config_for("main").max_text_doc_bytes == 888
+        assert ctx.media_config_for("nope") == MediaConfig()

@@ -2,7 +2,41 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from dataclasses import dataclass, field
+from enum import StrEnum
+
+from pydantic import BaseModel, Field
+
+
+class Modality(StrEnum):
+    """A perceptual channel a model can accept.
+
+    TEXT is always available for any text model; IMAGE/VIDEO/AUDIO are
+    native-multimodal flags, default-off. Extensible — adding a modality is
+    one enum member. See ADR-0013 §9.
+    """
+
+    TEXT = "text"
+    IMAGE = "image"
+    VIDEO = "video"
+    AUDIO = "audio"
+
+
+@dataclass(frozen=True)
+class ModelCapabilities:
+    """Frozen value object exposing the modalities a model can consume.
+
+    Placeholder carried on :class:`LLMConfig` but unused in v1 — nothing reads
+    it to alter behavior yet. It exists so the deferred native-multimodal
+    renderer (ADR-0013 §10) has a concrete switch to bind to. Defaults to
+    TEXT-only, matching every provider in v1.
+    """
+
+    modalities: frozenset[Modality] = field(default_factory=lambda: frozenset({Modality.TEXT}))
+
+    def supports(self, modality: Modality) -> bool:
+        """True if ``modality`` is among this model's capabilities."""
+        return modality in self.modalities
 
 
 class LLMConfig(BaseModel):
@@ -17,6 +51,7 @@ class LLMConfig(BaseModel):
     base_url: str = ""
     temperature: float = 0.7
     max_tokens: int = 80000
+    capabilities: ModelCapabilities = Field(default_factory=ModelCapabilities)
 
     def missing_required_fields(self) -> list[str]:
         """Return list of required fields that are empty.

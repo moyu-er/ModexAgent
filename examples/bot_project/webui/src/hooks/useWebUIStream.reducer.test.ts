@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { applyServerEvent, type StreamState } from "./useWebUIStream.reducer";
-import { unwrapEnvelope, type DeltaEnvelope } from "../types/events";
+import {
+  applyServerEvent,
+  clearPendingApproval,
+  type StreamState,
+} from "./useWebUIStream.reducer";
+import {
+  unwrapEnvelope,
+  type DeltaEnvelope,
+  type ServerEventUnion,
+} from "../types/events";
 
 describe("unwrapEnvelope", () => {
   it("splits event_type → event and payload → flat fields", () => {
@@ -57,7 +65,14 @@ describe("unwrapEnvelope", () => {
 });
 
 function emptyState(): StreamState {
-  return { messages: [], isStreaming: false, sessionMessages: {}, sessionStreaming: {}, todos: {} };
+  return {
+    messages: [],
+    isStreaming: false,
+    sessionMessages: {},
+    sessionStreaming: {},
+    todos: {},
+    pendingApprovals: {},
+  };
 }
 
 describe("applyServerEvent session isolation", () => {
@@ -273,5 +288,161 @@ describe("applyServerEvent control notices", () => {
     });
     // A notice must not flip the streaming flag on.
     expect(state.isStreaming).toBe(false);
+  });
+});
+
+describe("applyServerEvent approval_request", () => {
+  it("stores approval_request into pendingApprovals keyed by session", () => {
+    const ref = { current: null as string | null };
+    const state: StreamState = {
+      messages: [],
+      isStreaming: false,
+      sessionMessages: {},
+      sessionStreaming: {},
+      todos: {},
+      pendingApprovals: {},
+    };
+    const ev = {
+      event: "approval_request",
+      session_id: "s.main",
+      agent_name: "main",
+      timestamp: 1,
+      tool_call_id: "c1",
+      tool_name: "write_file",
+      tier: "dangerous",
+      arguments: { path: "a" },
+      status: "pending",
+    } as unknown as ServerEventUnion;
+    const next = applyServerEvent(state, ev, "s.main", ref);
+    expect(next.pendingApprovals["s.main"]).toHaveLength(1);
+    expect(next.pendingApprovals["s.main"]![0]!.tool_call_id).toBe("c1");
+  });
+
+  it("dedupes a repeated approval_request by tool_call_id", () => {
+    const ref = { current: null as string | null };
+    const state: StreamState = {
+      messages: [],
+      isStreaming: false,
+      sessionMessages: {},
+      sessionStreaming: {},
+      todos: {},
+      pendingApprovals: {
+        "s.main": [
+          {
+            tool_call_id: "c1",
+            tool_name: "write_file",
+            tier: "dangerous",
+            arguments: {},
+            status: "pending",
+          },
+        ],
+      },
+    };
+    const ev = {
+      event: "approval_request",
+      session_id: "s.main",
+      agent_name: "main",
+      tool_call_id: "c1",
+      tool_name: "write_file",
+      tier: "dangerous",
+      arguments: {},
+      status: "pending",
+    } as unknown as ServerEventUnion;
+    const next = applyServerEvent(state, ev, "s.main", ref);
+    expect(next.pendingApprovals["s.main"]).toHaveLength(1);
+    expect(next).toBe(state); // unchanged (dedup returns same reference)
+  });
+
+  it("stores approval for a non-selected session without buffering into messages", () => {
+    // Approvals key by their own session_id and must NOT be routed through
+    // the session-routing branch (which would buffer into sessionMessages).
+    const ref = { current: null as string | null };
+    const state: StreamState = {
+      messages: [],
+      isStreaming: false,
+      sessionMessages: {},
+      sessionStreaming: {},
+      todos: {},
+      pendingApprovals: {},
+    };
+    const ev = {
+      event: "approval_request",
+      session_id: "s.coding",
+      agent_name: "coding",
+      tool_call_id: "c9",
+      tool_name: "edit_file",
+      tier: "dangerous",
+      arguments: {},
+      status: "pending",
+    } as unknown as ServerEventUnion;
+    const next = applyServerEvent(state, ev, "s.main", ref);
+    expect(next.pendingApprovals["s.coding"]).toHaveLength(1);
+    expect(next.sessionMessages["s.coding"]).toBeUndefined();
+  });
+});
+
+describe("clearPendingApproval", () => {
+  it("removes a decided approval by tool_call_id", () => {
+    const state: StreamState = {
+      messages: [],
+      isStreaming: false,
+      sessionMessages: {},
+      sessionStreaming: {},
+      todos: {},
+      pendingApprovals: {
+        "s.main": [
+          {
+            tool_call_id: "c1",
+            tool_name: "write_file",
+            tier: "dangerous",
+            arguments: {},
+            status: "pending",
+          },
+          {
+            tool_call_id: "c2",
+            tool_name: "edit_file",
+            tier: "dangerous",
+            arguments: {},
+            status: "pending",
+          },
+        ],
+      },
+    };
+    const next = clearPendingApproval(state, "s.main", "c1");
+    expect(next.pendingApprovals["s.main"]).toHaveLength(1);
+    expect(next.pendingApprovals["s.main"]![0]!.tool_call_id).toBe("c2");
+  });
+
+  it("preserves other sessions' approvals", () => {
+    const state: StreamState = {
+      messages: [],
+      isStreaming: false,
+      sessionMessages: {},
+      sessionStreaming: {},
+      todos: {},
+      pendingApprovals: {
+        "s.main": [
+          {
+            tool_call_id: "c1",
+            tool_name: "write_file",
+            tier: "dangerous",
+            arguments: {},
+            status: "pending",
+          },
+        ],
+        "s.coding": [
+          {
+            tool_call_id: "c2",
+            tool_name: "edit_file",
+            tier: "dangerous",
+            arguments: {},
+            status: "pending",
+          },
+        ],
+      },
+    };
+    const next = clearPendingApproval(state, "s.main", "c1");
+    expect(next.pendingApprovals["s.main"]).toHaveLength(0);
+    expect(next.pendingApprovals["s.coding"]).toHaveLength(1);
   });
 });

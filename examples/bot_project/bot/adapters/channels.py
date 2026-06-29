@@ -167,7 +167,19 @@ class ChannelRouterOutputAdapter(OutputAdapter):
         return adapter
 
     async def send(self, message: OutputMessage, session_id: str) -> None:
+        # Transient user notices (message_type=notice) are fanned out to the
+        # originating channel AND the WebUI (universal observer), so an
+        # IM-originated notice is visible in both IM and the browser. WebUI-
+        # originated turns already receive it via the originating leg, so the
+        # extra WebUI send is skipped (no duplicate bubble). The WebUI leg is
+        # also skipped when no websocket adapter is registered (pure-IM deploy).
         await self._resolve(session_id).send(message, session_id)
+        if message.message_type == "notice":
+            conv_id = _session_to_session_id(session_id)
+            if get_conv_channel(conv_id) != "websocket":
+                webui = self._adapters.get("websocket")
+                if webui is not None:
+                    await webui.send(message, session_id)
 
     async def send_delta(
         self, delta: str, session_id: str, metadata: dict | None = None

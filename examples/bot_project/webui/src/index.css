@@ -211,6 +211,11 @@
   .send-btn--disabled {
     @apply bg-input-bg-light dark:bg-input-bg-dark text-text-disabled-light dark:text-text-disabled-dark cursor-not-allowed;
   }
+
+  /* Round attachment-toggle button inside the composer (paperclip). */
+  .composer-icon-btn {
+    @apply flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors text-text-secondary-light dark:text-text-secondary-dark hover:bg-sidebar-hover-light dark:hover:bg-sidebar-hover-dark hover:text-text-primary-light dark:hover:text-text-primary-dark disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent;
+  }
 }
 
 @layer utilities {

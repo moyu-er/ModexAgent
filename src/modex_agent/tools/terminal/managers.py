@@ -1,32 +1,40 @@
-"""BaseTerminalManager — lightweight multi-session orchestration with fake backends."""
+"""Terminal-manager seam — BaseTerminalManager + two-axis factory (ADR-0010)."""
 
 from __future__ import annotations
 
+import logging
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import Any
+from pathlib import Path
 
 from modex_agent.tools.terminal.backends.base import TerminalBackend
-from modex_agent.tools.terminal.backends.factory import create_pty_backend as _create_pty_backend
-from modex_agent.tools.terminal.backends.visible_windows import VisibleWindowsPtyBackend
-from modex_agent.tools.terminal.backends.windows_hidden import WindowsHiddenPtyBackend
+from modex_agent.tools.terminal.backends.factory import create_pty_backend
 from modex_agent.tools.terminal.config import TerminalRuntimeConfig
 from modex_agent.tools.terminal.session import TerminalInfo, TerminalSession
+from modex_agent.tools.terminal.state_store import JsonTerminalStateStore
 from modex_agent.tools.terminal.types import (
-    Platform,
-    ShellFamily,
     ShellInfo,
     TerminalVisibility,
-    detect_platform_shell,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class TerminalManagerBase(ABC):
-    """Abstract base for terminal managers.
+    """Abstract seam for multi-session terminal managers.
 
-    Both TerminalManager (manager.py) and BaseTerminalManager implement this
-    interface. Tools use get_default() for command execution and the full
-    interface for session management.
+    Under ADR-0010 there is a single production implementation,
+    ``BaseTerminalManager``, parameterised by the two contract axes
+    ``shell_info`` (carrying Shell Family + platform) x ``visibility`` plus
+    optional capability flags (``max_terminals`` / ``storage_dir`` /
+    ``enable_memory_pressure``). The legacy OS-named subclasses and the second
+    ``TerminalManager`` class have been folded inward (ADR-0010 Decision 8,
+    closing the ADR-0007 fork); the capability helpers are retained as
+    flag-guarded private methods here.
+
+    Tools consume the seam via ``get_default()`` (command execution) and the
+    session-management methods.
     """
 
     @abstractmethod
@@ -55,11 +63,15 @@ class TerminalManagerBase(ABC):
 
 
 class BaseTerminalManager(TerminalManagerBase):
-    """Manages named terminal sessions with a pluggable backend factory.
+    """Production terminal-session manager parameterised by two ADR-0010 axes.
 
-    Unlike the full TerminalManager (manager.py), this class does not
-    handle LRU eviction or persistence.  It is designed for composition:
-    real backends in production, fake backends in tests.
+    Manages named sessions with a pluggable ``backend_factory`` (real backends
+    in production, fakes in tests). Role in the seam (see
+    ``TerminalManagerBase``): the single production implementation.
+    Capability behaviours — LRU eviction, JSON persistence, memory-pressure
+    buffer clearing — are flag-guarded (``max_terminals`` /
+    ``storage_dir`` / ``enable_memory_pressure``), all default-off, folded
+    inward from the legacy ``TerminalManager`` per ADR-0010 Decision 8.
     """
 
     def __init__(
@@ -67,9 +79,12 @@ class BaseTerminalManager(TerminalManagerBase):
         *,
         shell_info: ShellInfo,
         visibility: TerminalVisibility,
-        backend_factory: Callable[[], Any],
+        backend_factory: Callable[[], TerminalBackend],
         config: TerminalRuntimeConfig | None = None,
         default_cwd: str | None = None,
+        max_terminals: int | None = None,
+        storage_dir: Path | None = None,
+        enable_memory_pressure: bool = False,
     ) -> None:
         self.platform = shell_info.platform
         self.shell_info = shell_info
@@ -79,12 +94,24 @@ class BaseTerminalManager(TerminalManagerBase):
         self._default_cwd: str | None = default_cwd
         self._sessions: dict[str, TerminalSession] = {}
         self._default_name: str | None = None
+        # Capability flags — all default-off → lean form behaviour-equivalent
+        self._max_terminals: int | None = max_terminals
+        self._storage_dir: Path | None = storage_dir
+        self._enable_memory_pressure: bool = enable_memory_pressure
+        # Lazily-created state store (only when storage_dir set)
+        self._store: JsonTerminalStateStore | None = (
+            JsonTerminalStateStore(storage_dir) if storage_dir is not None else None
+        )
 
     async def get_or_create(self, name: str | None, cwd: str | None = None) -> TerminalSession:
         session_name = name or "default"
         session = self._sessions.get(session_name)
         if session is not None:
+            session.last_active = time.time()
             return session
+        # LRU eviction — only when capacity is configured
+        if self._max_terminals is not None and len(self._sessions) >= self._max_terminals:
+            await self._evict_oldest()
         # Fall back to the workspace default cwd (e.g. the workspace target)
         # so a terminal-enabled pool opens in the workspace, not process CWD.
         effective_cwd = cwd if cwd is not None else self._default_cwd
@@ -101,6 +128,7 @@ class BaseTerminalManager(TerminalManagerBase):
         # auto-select it"). Without this, opening a second tab leaves the
         # default on the old tab and subsequent commands run there.
         self._default_name = session_name
+        await self._check_memory_pressure()
         return session
 
     def get(self, name: str) -> TerminalSession | None:
@@ -108,7 +136,12 @@ class BaseTerminalManager(TerminalManagerBase):
         return self._sessions.get(name)
 
     async def get_default_session(self) -> TerminalSession | None:
-        """Return the default session, or None if none is set or it has been closed."""
+        """Return the default session, or None if none is set or it has been closed.
+
+        A dead session is dropped from ``_sessions`` so that ``get_default``
+        can create a fresh one instead of repeatedly trying to resurrect a
+        backend the user manually killed (e.g. closing a visible window).
+        """
         if self._default_name is None:
             return None
         session = self._sessions.get(self._default_name)
@@ -118,18 +151,103 @@ class BaseTerminalManager(TerminalManagerBase):
         # Only check alive if the backend was actually started, so unstarted
         # sessions (created but never used) are not incorrectly evicted.
         if session.backend_started and not await session.is_alive():
+            self._sessions.pop(self._default_name, None)
             self._default_name = None
             return None
         return session
 
     async def get_default(self) -> TerminalSession:
-        if self._default_name is None:
-            return await self.get_or_create("default")
-        return self._sessions[self._default_name]
+        """Return the default session, creating a fresh one if the current is dead."""
+        session = await self.get_default_session()
+        if session is not None:
+            return session
+        return await self.get_or_create("default")
 
     def list_names(self) -> list[str]:
         """Return just the session names."""
         return list(self._sessions.keys())
+
+    async def _evict_oldest(self) -> None:
+        """Close the least recently used session (only called when LRU is enabled)."""
+        if not self._sessions:
+            return
+        oldest_name = min(self._sessions, key=lambda n: self._sessions[n].last_active)
+        logger.info("LRU evicting terminal: %s", oldest_name)
+        await self.close(oldest_name)
+
+    async def _check_memory_pressure(self) -> None:
+        """Clear buffers of largest non-default sessions when total exceeds threshold.
+
+        Per ADR-0010 Decision 8: folded inward from the legacy TerminalManager.
+        No-op when ``self._enable_memory_pressure`` is False.
+        """
+        if not self._enable_memory_pressure:
+            return
+
+        total_buffer = 0
+        session_buffers: list[tuple[str, int]] = []
+        for name, session in self._sessions.items():
+            size = session._backend.buffer_size()
+            if size > 0:
+                total_buffer += size
+                session_buffers.append((name, size))
+
+        if total_buffer <= self.config.max_total_buffer_chars:
+            return
+
+        session_buffers.sort(key=lambda x: x[1], reverse=True)
+        for name, size in session_buffers:
+            if name == self._default_name:
+                continue
+            if total_buffer <= self.config.max_total_buffer_chars:
+                break
+            self._sessions[name]._backend.clear_buffer()
+            logger.warning(
+                "Memory pressure: cleared buffer for '%s' (was %d chars)", name, size
+            )
+            total_buffer -= size
+
+    async def save_state(self) -> None:
+        """Persist session metadata and history to JSON.
+
+        No-op when storage_dir is None (lean form, per ADR-0010 Decision 8).
+        """
+        if self._store is None:
+            return
+        sessions_data = [session.get_state() for session in self._sessions.values()]
+        state = {
+            "version": 1,
+            "default_terminal": self._default_name,
+            "sessions": sessions_data,
+        }
+        self._store.save(state)
+
+    async def load_state(self) -> None:
+        """Restore session metadata from JSON. Sessions are lazily restarted on use.
+
+        No-op when storage_dir is None (lean form, per ADR-0010 Decision 8).
+        """
+        if self._store is None:
+            return
+        data = self._store.load()
+        if not data:
+            return
+        for sess_data in data.get("sessions", []):
+            name = sess_data["name"]
+            backend = self._backend_factory()
+            session = TerminalSession(
+                name=name,
+                backend=backend,
+                shell_info=self.shell_info,
+                cwd=sess_data.get("cwd"),
+                env=sess_data.get("env"),
+            )
+            session.restore_state(sess_data)
+            self._sessions[name] = session
+        self._default_name = data.get("default_terminal")
+        if self._default_name not in self._sessions:
+            self._default_name = next(iter(self._sessions), None)
+        logger.info("Loaded %d terminal sessions from state", len(self._sessions))
 
     async def select_default(self, name: str) -> None:
         if name not in self._sessions:
@@ -140,6 +258,7 @@ class BaseTerminalManager(TerminalManagerBase):
         result: list[TerminalInfo] = []
         for name, session in self._sessions.items():
             result.append(await session.to_info(is_default=name == self._default_name))
+        await self._check_memory_pressure()
         return result
 
     async def close(self, name: str) -> bool:
@@ -152,145 +271,68 @@ class BaseTerminalManager(TerminalManagerBase):
         return True
 
 
-class WindowsHiddenTerminalManager(BaseTerminalManager):
-    """Terminal manager for hidden Windows PTY sessions."""
-
-    def __init__(
-        self,
-        config: TerminalRuntimeConfig | None = None,
-        default_cwd: str | None = None,
-    ) -> None:
-        shell_info = _require_windows_shell()
-        super().__init__(
-            shell_info=shell_info,
-            visibility=TerminalVisibility.HIDDEN,
-            backend_factory=WindowsHiddenPtyBackend,
-            config=config,
-            default_cwd=default_cwd,
-        )
-
-
-class WindowsVisibleTerminalManager(BaseTerminalManager):
-    """Terminal manager for visible Windows PTY sessions.
-
-    Uses WSL bash > Git bash.  Raises RuntimeError if no supported shell is
-    available; the application layer falls back to SubprocessTool in that case.
-    PowerShell is not supported.
-    """
-
-    def __init__(
-        self,
-        config: TerminalRuntimeConfig | None = None,
-        default_cwd: str | None = None,
-    ) -> None:
-        shell_info = _require_windows_shell()
-        super().__init__(
-            shell_info=shell_info,
-            visibility=TerminalVisibility.VISIBLE,
-            backend_factory=VisibleWindowsPtyBackend,
-            config=config,
-            default_cwd=default_cwd,
-        )
-
-
-def _create_linux_backend() -> TerminalBackend:
-    """Create a Linux PTY backend (pexpect preferred, tmux fallback).
-
-    Delegates to ``create_pty_backend()`` for the actual selection logic.
-    Called eagerly by LinuxTerminalManager.__init__ to validate that at
-    least one backend is available at pool startup.  Also used as the
-    lazy backend_factory for new sessions.
-
-    Raises:
-        RuntimeError: If neither pexpect nor tmux+libtmux is available.
-    """
-    try:
-        return _create_pty_backend()
-    except ImportError as e:
-        raise RuntimeError(
-            "No Linux terminal backend available. "
-            "Install pexpect (`pip install pexpect`) or tmux+libtmux (`pip install libtmux`)."
-        ) from e
-
-
-class LinuxTerminalManager(BaseTerminalManager):
-    """Terminal manager for Linux/macOS headless PTY sessions.
-
-    Eagerly validates backend availability during __init__.  If neither
-    pexpect nor tmux+libtmux is importable, raises RuntimeError so the
-    caller can degrade to SubprocessTool.
-
-    Degradation chain (per-session): pexpect → tmux.
-    """
-
-    def __init__(
-        self,
-        config: TerminalRuntimeConfig | None = None,
-        default_cwd: str | None = None,
-    ) -> None:
-        shell_info = detect_platform_shell()
-        super().__init__(
-            shell_info=shell_info
-            or ShellInfo(
-                family=ShellFamily.BASH,
-                path="/bin/sh",
-                platform=Platform.LINUX,
-            ),
-            visibility=TerminalVisibility.HIDDEN,
-            backend_factory=_create_linux_backend,
-            config=config,
-            default_cwd=default_cwd,
-        )
-        # Eager validation: fail now (at pool startup) rather than at
-        # first command if no backend is available.
-        _create_linux_backend()
-
-
-def _require_windows_shell() -> ShellInfo:
-    """Detect shell: WSL bash > Git bash.
-
-    Raises RuntimeError if no supported shell is found. Callers that need a
-    fallback should degrade to SubprocessTool.
-    """
-    info = detect_platform_shell()
-    if info is not None:
-        return info
-    raise RuntimeError("No supported shell found on Windows")
-
-
-def _require_bash_shell() -> ShellInfo | None:
-    """Detect a bash shell (WSL or Git).  Returns None if unavailable."""
-    info = detect_platform_shell()
-    if info is not None and info.family == ShellFamily.BASH:
-        return info
-    return None
-
-
 def create_terminal_manager(
     *,
-    manager_kind: str,
+    shell_info: ShellInfo,
+    visibility: TerminalVisibility,
     config: TerminalRuntimeConfig | None = None,
     default_cwd: str | None = None,
+    max_terminals: int | None = None,
+    storage_dir: Path | None = None,
+    enable_memory_pressure: bool = False,
 ) -> TerminalManagerBase:
-    """Create a terminal manager by kind string.
+    """Construct a ``BaseTerminalManager`` parameterised by the two ADR-0010 axes.
+
+    The two upstream contract axes (ADR-0010 Decision 1) are:
+
+    - ``shell_info`` (carrying Shell Family + platform) — in production the
+      caller derives it from ``detect_platform_shell()``.
+    - ``visibility`` — ``VISIBLE`` or ``HIDDEN``.
+
+    Eagerly validates the (transport, visibility) combo by probing
+    ``create_pty_backend(visibility=visibility)`` BEFORE constructing the
+    manager, so an unsupported combination surfaces here as
+    ``UnsupportedVisibilityForTransport`` (ADR-0010 Consequences) rather than
+    on the first command.
 
     Args:
-        manager_kind: "windows_hidden", "windows_visible", or "linux".
-        config: Optional runtime configuration.
-        default_cwd: Optional directory new sessions open in when no explicit
-            ``cwd`` is given (e.g. the workspace target).
+        shell_info: detected platform shell (Shell Family + platform + path).
+        visibility: ``VISIBLE`` or ``HIDDEN``.
+        config/default_cwd/max_terminals/storage_dir/enable_memory_pressure:
+            forwarded to ``BaseTerminalManager``; capability flags default-off.
 
     Returns:
-        A TerminalManagerBase instance.
-
-    Raises:
-        ValueError: If manager_kind is not recognized.
-        RuntimeError: If the selected manager cannot find an available backend.
+        A ``TerminalManagerBase`` instance.
     """
-    if manager_kind == "windows_hidden":
-        return WindowsHiddenTerminalManager(config=config, default_cwd=default_cwd)
-    if manager_kind == "windows_visible":
-        return WindowsVisibleTerminalManager(config=config, default_cwd=default_cwd)
-    if manager_kind == "linux":
-        return LinuxTerminalManager(config=config, default_cwd=default_cwd)
-    raise ValueError(f"Unsupported terminal manager kind: {manager_kind}")
+    logger.info(
+        "Creating terminal manager (family=%s, visibility=%s)",
+        shell_info.family.value,
+        visibility.value,
+    )
+    # Eager probe — surfaces UnsupportedVisibilityForTransport here (ADR-0010),
+    # before the LAZY backend factory is ever invoked inside BaseTerminalManager.
+    create_pty_backend(visibility=visibility)
+    return BaseTerminalManager(
+        shell_info=shell_info,
+        visibility=visibility,
+        backend_factory=_make_backend_factory(visibility),
+        config=config,
+        default_cwd=default_cwd,
+        max_terminals=max_terminals,
+        storage_dir=storage_dir,
+        enable_memory_pressure=enable_memory_pressure,
+    )
+
+
+def _make_backend_factory(visibility: TerminalVisibility) -> Callable[[], TerminalBackend]:
+    """Return a 0-arg callable producing a fresh backend for ``visibility``.
+
+    The factory's capability table (ADR-0010) is the single source of truth;
+    ``create_pty_backend`` selects the transport from platform + visibility.
+    """
+
+    def _factory() -> TerminalBackend:
+        return create_pty_backend(visibility=visibility)
+
+    return _factory
+

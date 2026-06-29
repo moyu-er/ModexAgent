@@ -1,6 +1,7 @@
 """Windows visible terminal host process.
 
-Launched by VisibleWindowsPtyBackend with CREATE_NEW_CONSOLE so it owns a
+Launched by WinptyConsoleWindowBackend (legacy alias:
+``VisibleWindowsPtyBackend``) with CREATE_NEW_CONSOLE so it owns a
 visible console window.  Creates a winpty.PtyProcess and forwards I/O via
 TCP socket so the parent process and the visible window share the same data
 stream.
@@ -10,7 +11,7 @@ stream.
 # and notify the parent process via out-of-band socket marker (\x00HUMAN\x00).
 # Parent filters the marker and sets a flag on the backend.
 # Session layer checks the flag and appends a note to command results.
-# Only affects VisibleWindowsPtyBackend (not hidden or tmux).
+# Only affects WinptyConsoleWindowBackend (not hidden or tmux).
 # Requires: socket write lock in host process to prevent marker interleaving.
 # See: docs/superpowers/specs/2026-05-30-terminal-system-improvements-design.md §4
 

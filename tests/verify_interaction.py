@@ -27,11 +27,11 @@ OK, FAIL = "  OK  ", "  FAIL"
 
 def _mgr(visible: bool) -> TerminalManager:
     if visible:
-        from modex_agent.tools.terminal.backends.visible_windows import VisibleWindowsPtyBackend
-        backend = VisibleWindowsPtyBackend
+        from modex_agent.tools.terminal.backends.visible_windows import WinptyConsoleWindowBackend
+        backend = WinptyConsoleWindowBackend
     else:
-        from modex_agent.tools.terminal.backends.windows_hidden import WindowsHiddenPtyBackend
-        backend = WindowsHiddenPtyBackend
+        from modex_agent.tools.terminal.backends.windows_hidden import WinptyHiddenBackend
+        backend = WinptyHiddenBackend
     shell = detect_platform_shell() or ShellInfo(ShellFamily.BASH, "bash", Platform.WINDOWS)
     return TerminalManager(storage_dir=Path(f"data/test_int_{'v' if visible else 'h'}"),
                            max_terminals=2, backend_factory=backend, shell_info=shell)
