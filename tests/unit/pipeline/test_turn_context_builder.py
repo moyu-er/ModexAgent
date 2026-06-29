@@ -83,18 +83,53 @@ def test_turn_request_is_frozen() -> None:
 
 @pytest.mark.asyncio
 async def test_build_turn_request_plain_input_without_command_processor() -> None:
-    """No command_processor → content is treated as plain user input."""
+    """No command_processor → content is treated as plain user input.
+
+    Plain input carries no command transform, so ``user_content`` is None —
+    turn_runner then keeps preprocess's sanitized_content, which is where the
+    attachment path-reference injection (ADR-0013 §10) lives. Returning the raw
+    content here made turn_runner override and discard the injection, so the
+    agent never perceived uploaded files.
+    """
     builder = _make_builder()
     input_msg = InputMessage(content="hello world", session=SessionInfo.from_str("s:main"))
 
     req = await builder.build_turn_request(input_msg, "s:main", {}, None)
 
     assert req is not None
-    assert req.user_content == "hello world"
+    assert req.user_content is None
     assert req.append_user_message is True
     assert req.trigger_agent is True
     assert req.approval_action is None
     assert req.command_result is None
+
+
+@pytest.mark.asyncio
+async def test_build_turn_request_plain_input_preserves_injection_surface() -> None:
+    """Regression: PLAIN_INPUT (with a command_processor) must not set user_content.
+
+    If user_content were the raw content, turn_runner would override
+    sanitized_content and discard the attachment injection. None leaves
+    preprocess's injected content in place so the agent perceives attachments.
+    """
+    from unittest.mock import MagicMock
+
+    from modex_agent.commands.constants import CommandParseStatus
+    from modex_agent.commands.models import CommandParseResult
+
+    builder = _make_builder()
+    builder._command_processor = MagicMock()
+    builder._command_processor.parse.return_value = CommandParseResult(
+        status=CommandParseStatus.PLAIN_INPUT
+    )
+    input_msg = InputMessage(content="see image", session=SessionInfo.from_str("s:main"))
+
+    req = await builder.build_turn_request(input_msg, "s:main", {}, None)
+
+    assert req is not None
+    assert req.user_content is None, (
+        "plain input must not override preprocess's sanitized (injected) content"
+    )
 
 
 @pytest.mark.asyncio

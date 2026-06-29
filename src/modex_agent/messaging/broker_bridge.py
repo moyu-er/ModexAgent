@@ -12,6 +12,7 @@ from ..adapters.platform import StreamingMode
 from ..core.constants import DefaultValues
 from ..core.types import InputMessage, OutputMessage
 from modex_agent.core.session_id import SessionInfo, SessionIdFactory
+from modex_agent.media.models import Attachment
 from ..pipeline.adapters import InputAdapter, OutputAdapter
 from .broker import Address, BrokerMessage, MessageBroker
 
@@ -143,6 +144,7 @@ def _broker_msg_to_input_message(
         content_format=content_fmt,
         truncatable_paths=trunc_paths,
         approval_decision=_approval_decision_from_payload(payload),
+        attachments_resolved=attachments_resolved_from_payload(payload),
     )
 
 
@@ -151,6 +153,20 @@ def _approval_decision_from_payload(payload: dict[str, Any]) -> Any:
     from modex_agent.approval.views import ApprovalDecisionInput
 
     return ApprovalDecisionInput.from_dict(payload.get("approval_decision"))
+
+
+def attachments_resolved_from_payload(payload: dict[str, Any]) -> list[Attachment]:
+    """Rebuild the gate-accepted inbound Attachment records from a broker payload.
+
+    The broker serialization boundary (:class:`BrokerInputPayload`) carries the
+    resolved attachments as metadata-only dicts; without rebuilding them here
+    the path-reference injection (ADR-0013 §10, mechanism B) is silently lost
+    in transit — the same field-drift failure that once dropped
+    ``approval_decision``. Shared by the BrokerInputAdapter reconstruction and
+    the pool's raw-broker-message dispatch. Returns ``[]`` when none.
+    """
+    raw = payload.get("attachments_resolved") or []
+    return [Attachment.from_dict(d) for d in raw if isinstance(d, dict)]
 
 
 class BrokerInputPayload(BaseModel):
@@ -179,6 +195,7 @@ class BrokerInputPayload(BaseModel):
     sender_id: str = ""
     chat_id: str = ""
     approval_decision: dict[str, Any] | None = None
+    attachments_resolved: list[dict[str, Any]] = Field(default_factory=list)
 
 
 def build_input_broker_message(msg: InputMessage, recipient: Address) -> BrokerMessage:
@@ -200,6 +217,7 @@ def build_input_broker_message(msg: InputMessage, recipient: Address) -> BrokerM
         approval_decision=msg.approval_decision.to_dict()
         if msg.approval_decision is not None
         else None,
+        attachments_resolved=[a.to_dict() for a in msg.attachments_resolved],
     )
     return BrokerMessage(
         payload=payload.model_dump(exclude_none=True),

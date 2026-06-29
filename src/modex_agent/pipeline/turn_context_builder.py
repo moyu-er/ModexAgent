@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -53,13 +54,57 @@ from modex_agent.commands.models import CommandContext
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import StreamingAwareEmitter
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.media.models import Attachment
 from modex_agent.pipeline.adapters import OutputMessage
 from modex_agent.pipeline.context_assembler import assemble_context
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.runtime.services import AgentRuntimeServices
+from modex_agent.workspace.runtime import resolve_workspace_root
 
 logger = logging.getLogger(__name__)
+
+
+def _human_byte_size(size: int) -> str:
+    """Render a byte count as a short human-readable size (e.g. ``2.3MB``).
+
+    Used only by the transient attachment path-reference injection. Binary
+    units (1024), one decimal, unit suffix B/KB/MB/GB — matches the inline
+    ``{:.1f}MB`` style already used in :mod:`media_utils`.
+    """
+    if size < 1024:
+        return f"{size}B"
+    kb = size / 1024
+    if kb < 1024:
+        return f"{kb:.1f}KB"
+    mb = kb / 1024
+    if mb < 1024:
+        return f"{mb:.1f}MB"
+    return f"{mb / 1024:.1f}GB"
+
+
+def _attachment_reference(att: Attachment, ws_root: Path) -> str:
+    """Build the transient mechanism-B path-reference line for one attachment.
+
+    Format: ``[Attachment: <name> (<mime>, <human_size>) @ <absolute_path>]``.
+    Resolves the record's workspace-relative ``path`` against the turn's bound
+    workspace root (resolved once per turn by the caller and passed in) so the
+    agent receives a tool-usable absolute path. Deliberately omits the
+    ``attachment_id`` (a frontend/download concern the agent never needs —
+    ADR-0013 §1). Transient: enters LLM history only, never transcript
+    user-message content.
+    """
+    # An Attachment always carries a path (the ingest stage sets it from the
+    # stored file). Defensively avoid handing the agent the workspace ROOT when
+    # path is empty — degrade to an explicit <unknown path> marker instead of
+    # pointing tools at the whole workspace.
+    abs_path = (ws_root / att.path).resolve() if att.path else None
+    mime = att.mime or "unknown"
+    path_str = str(abs_path) if abs_path is not None else "<unknown path>"
+    return (
+        f"[Attachment: {att.name} ({mime}, {_human_byte_size(att.size)}) "
+        f"@ {path_str}]"
+    )
 
 
 @dataclass(frozen=True)
@@ -155,7 +200,7 @@ class TurnContextBuilder:
             return TurnRequest(
                 session_id=session_id,
                 input_msg=input_msg,
-                user_content=input_msg.content,
+                user_content=None,
                 append_user_message=True,
                 trigger_agent=True,
                 approval_action=approval_action,
@@ -165,10 +210,15 @@ class TurnContextBuilder:
 
         parse_result = self._command_processor.parse(input_msg.content or "")
         if parse_result.status == CommandParseStatus.PLAIN_INPUT:
+            # Plain input has no command transform to apply — leave user_content
+            # None so turn_runner keeps preprocess's sanitized_content (which
+            # carries the attachment path-reference injection, ADR-0013 §10).
+            # Setting it to input_msg.content here made turn_runner override and
+            # discard the injection, so the agent never perceived attachments.
             return TurnRequest(
                 session_id=session_id,
                 input_msg=input_msg,
-                user_content=input_msg.content,
+                user_content=None,
                 append_user_message=True,
                 trigger_agent=True,
             )
@@ -235,25 +285,40 @@ class TurnContextBuilder:
             if sanitized_content != input_msg.content:
                 logger.info("Input content sanitized for session %s", session_id)
 
-        # 处理附件（通用媒体类型，不限于图片）
-        attachments = getattr(input_msg, "attachments", None) or []
         media_blocks: list[MediaBlock] = []
         _media_processor: MediaProcessor | None = None
-        if attachments:
-            try:
-                from modex_agent.utils.media_utils import MediaProcessor
 
-                _media_processor = MediaProcessor()
-                media_result = await _media_processor.process(attachments)
-                if media_result.document_text:
-                    sanitized_content = (
-                        f"{sanitized_content}\n\n{media_result.document_text}".strip()
-                        if sanitized_content
-                        else media_result.document_text
-                    )
-                media_blocks = media_result.media_blocks
-            except Exception as e:
-                logger.warning("Attachment processing failed for session %s: %s", session_id, e)
+        # --- Mechanism B (v1, any model): transient path-reference injection. ---
+        # For each gate-accepted inbound Attachment, append a text reference so the
+        # agent perceives the file (name/mime/size/tool-usable absolute path) and
+        # inspects it with its tools. This is TRANSIENT — it enters the agent LLM
+        # history ( sanitized_content → assemble_context → context_state.history ),
+        # NOT the persisted transcript user content (PersistUserMessageStage writes
+        # envelope.content verbatim and carries the Attachment record separately).
+        # ADR-0013 §1/§10.
+        resolved = input_msg.attachments_resolved
+        if resolved:
+            # Resolve the workspace root once per turn (not per attachment):
+            # it is identical for every record in the same turn.
+            ws_root = resolve_workspace_root()
+            ref_lines = [_attachment_reference(a, ws_root) for a in resolved]
+            injection = "\n".join(ref_lines)
+            sanitized_content = (
+                f"{sanitized_content}\n{injection}" if sanitized_content else injection
+            )
+
+        # --- Mechanism A (DORMANT — native multimodal inline rendering). ---
+        # The MediaProcessor-based vision-block path is the dormant provider-side
+        # renderer seam (ADR-0013 §10). It is NOT activated in v1: every Modality
+        # flag is off, so every attachment reaches the agent as the text reference
+        # above. Activated by G10 once ModelCapabilities/Modality is wired.
+        # TODO(G10): when the Modality for an attachment's kind is on, hand its
+        #   resolved Attachment to MediaProcessor to build inline content blocks;
+        #   gate the path-reference above on the inverse condition. Until then the
+        #   legacy input_msg.attachments (list[str]) is intentionally NOT fed here
+        #   — those are channel temp paths, not the persisted perception-gate-
+        #   vetted files (the gate-vetted path lives on Attachment.path).
+        # _media_processor = MediaProcessor(); media_result = await ...
 
         # 应用路由的 prompt modifier（agent 消息跳过，前缀由 to_messages() 统一注入）
         source_agent = input_metadata.get("source_agent")

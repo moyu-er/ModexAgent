@@ -132,6 +132,11 @@ class PoolRouter:
             approval_decision=msg.approval_decision.to_dict()
             if msg.approval_decision is not None
             else None,
+            # Carry resolved attachments across the broker so mechanism-B path
+            # injection survives the dispatch boundary (ADR-0013 §10). Without
+            # this the field is silently dropped and the agent never perceives
+            # the uploaded file — same drift class as approval_decision above.
+            attachments_resolved=[a.to_dict() for a in msg.attachments_resolved],
         )
         broker_msg = BrokerMessage(
             payload=payload.model_dump(exclude_none=True),
