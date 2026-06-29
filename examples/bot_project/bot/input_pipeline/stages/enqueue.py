@@ -46,6 +46,9 @@ class EnqueueStage(InputStage):
             if RoutingMeta.WORKSPACE in envelope.metadata
             else None,
             approval_decision=envelope.metadata.get(RoutingMeta.APPROVAL_DECISION),
+            # Typed carriage: gate-accepted Attachment records reach the turn so
+            # preprocess can inject the transient path reference (ADR-0013 §1/§10).
+            attachments_resolved=list(envelope.resolved_attachments),
         )
         ctx.enqueue_message(msg)
         return Continue(value=envelope)

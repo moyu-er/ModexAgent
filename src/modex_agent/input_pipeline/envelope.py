@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from modex_agent.media.models import Attachment
 
 
 @dataclass
@@ -49,3 +52,9 @@ class UserInputEnvelope:
     attachments: list[AttachmentRef] = field(default_factory=list)
     pre_resolved_session: Any = None
     command_resolved: bool = False
+    resolved_attachments: list[Attachment] = field(default_factory=list)
+    """Gate-accepted, persisted inbound attachments for THIS turn, produced by
+    the attachment ingest stage. Typed handoff to the transcript-write stage
+    (G4) and the agent-perception injection (G5) — never bytes, only records.
+    Empty when no attachment was accepted. Outbound attachments are NOT listed
+    here (they are produced by SendFileToUserTool, not the input pipeline)."""

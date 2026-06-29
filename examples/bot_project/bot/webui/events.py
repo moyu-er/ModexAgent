@@ -31,6 +31,7 @@ class WebUIEventType(str, Enum):
     ATTACHED = "attached"
     CONVERSATION_DELETED = "conversation_deleted"
     ERROR = "error"
+    ATTACHMENT_CARD = "attachment_card"
 
 
 class WebSocketAction(str, Enum):
@@ -168,8 +169,15 @@ class ServerEvent:
 
 @dataclass
 class UserMessageEvent(ServerEvent):
-    """A user message received from the WebUI."""
+    """A user message received from the WebUI.
+
+    ``attachments`` carries the serialized inbound :class:`Attachment` records
+    (metadata only — never bytes) produced by the attachment ingest stage. The
+    transcript is the id→path index (ADR-0013 §11); inbound records land here.
+    Each entry is the dict form of ``Attachment.to_dict()``.
+    """
     content: str = ""
+    attachments: list[dict[str, object]] = field(default_factory=list)
     event: str = field(default=WebUIEventType.USER_MESSAGE.value, init=False)
 
 
@@ -261,10 +269,18 @@ class ToolResultEvent(ServerEvent):
 
 @dataclass
 class AssistantTurnEvent(ServerEvent):
-    """Complete assistant turn — persisted to transcript store at turn end."""
+    """Complete assistant turn — persisted to transcript store at turn end.
+
+    ``attachments`` carries the serialized outbound :class:`Attachment` records
+    (metadata only — never bytes) the agent produced this turn via
+    ``SendFileToUserTool``. Outbound records land here (ADR-0013 §11); G7
+    populates the list, G4 only carries the field. Each entry is the dict form
+    of ``Attachment.to_dict()``.
+    """
     blocks: list[dict[str, object]] = field(default_factory=list)
     turn_id: str = ""
     latency_ms: float = 0.0
+    attachments: list[dict[str, object]] = field(default_factory=list)
     event: str = field(default=WebUIEventType.ASSISTANT_TURN.value, init=False)
 
 

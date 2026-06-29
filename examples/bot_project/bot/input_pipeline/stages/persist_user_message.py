@@ -37,10 +37,15 @@ class PersistUserMessageStage(InputStage):
 
         full_sid = envelope.metadata[RoutingMeta.FULL_SESSION_ID]
         agent = envelope.metadata[RoutingMeta.RESOLVED_AGENT]
+        # Serialize the gate-accepted inbound Attachment records (G3) onto the
+        # user-message event — the transcript is the id→path index (ADR-0013
+        # §11). Metadata only; bytes live in the MediaStore, never here.
+        attachments = [a.to_dict() for a in envelope.resolved_attachments]
         event = UserMessageEvent(
             session_id=full_sid,
             agent_name=agent,
             content=envelope.content,
+            attachments=attachments,
         )
         # The transcript store routes writes by the bound workspace root
         # (ctxvar).  This stage runs in the input pipeline, OUTSIDE the

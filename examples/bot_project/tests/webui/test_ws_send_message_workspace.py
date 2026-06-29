@@ -183,3 +183,66 @@ async def test_ws_send_message_with_relative_ws_payload_resolves() -> None:
             assert result.envelope().metadata[RoutingMeta.WORKSPACE] == str(Path("subworkspace").resolve())
         finally:
             await client.close()
+
+
+@pytest.mark.asyncio
+async def test_ws_send_message_attachment_only_empty_content_not_dropped() -> None:
+    """Regression: a send_message with empty text BUT an attachment must not be
+    silently dropped. The frontend enables Send on pending uploads with no text
+    (ADR-0013: a file in a conversation is itself the message); the server's
+    early-return guard must allow it through when an attachment payload is
+    present, so the pipeline runs and the agent perceives the file.
+    """
+    from modex_agent.workspace.paths import WorkspacePaths
+
+    _PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 40
+    with tempfile.TemporaryDirectory() as tmp:
+        workspace_root = Path(tmp)
+        input_adapter = WebSocketInputAdapter()
+        store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
+        home_sessions_dir = WorkspacePaths(root=workspace_root / ".modex").sessions_dir
+        server = WebUIServer(
+            input_adapter, store, static_dist=None, home_sessions_dir=home_sessions_dir
+        )
+        server.set_workspace_index(store)
+        from tests.webui._pipeline_fixture import attach_default_pipeline
+        attach_default_pipeline(server, store, input_adapter, workspace_root=workspace_root)
+
+        captured: list = []
+        original_handle = server._input_pipeline.handle
+
+        async def _capturing_handle(envelope, ctx):
+            result = await original_handle(envelope, ctx)
+            captured.append(result)
+            return result
+
+        server._input_pipeline.handle = _capturing_handle
+
+        # Stage a file under the workspace media _tmp dir (the upload endpoint's
+        # layout) so it passes the C1 staging-containment guard.
+        staging = workspace_root / ".modex" / "media" / "main" / "_tmp"
+        staging.mkdir(parents=True, exist_ok=True)
+        staged = staging / "abc123"
+        staged.write_bytes(_PNG)
+
+        client = TestClient(TestServer(server.app))
+        await client.start_server()
+        try:
+            ws = await client.ws_connect("/ws")
+            await ws.send_json({"action": "attach", "session_id": "web:test.main"})
+            _unwrap_envelope(await ws.receive_json())
+
+            # Empty content + one attachment — must NOT be dropped.
+            await ws.send_json({
+                "action": "send_message",
+                "session_id": "web:test.main",
+                "content": "",
+                "ws": str(workspace_root),
+                "attachments": [{"local_path": str(staged), "filename": "x.png", "mime": "image/png"}],
+            })
+            echoed = _unwrap_envelope(await ws.receive_json(timeout=2))
+            assert echoed["event"] == "user_message"
+            # The pipeline ran (message was not dropped at the empty-content guard).
+            assert len(captured) == 1
+        finally:
+            await client.close()
