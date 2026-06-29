@@ -27,10 +27,10 @@ class Modality(StrEnum):
 class ModelCapabilities:
     """Frozen value object exposing the modalities a model can consume.
 
-    Placeholder carried on :class:`LLMConfig` but unused in v1 — nothing reads
-    it to alter behavior yet. It exists so the deferred native-multimodal
-    renderer (ADR-0013 §10) has a concrete switch to bind to. Defaults to
-    TEXT-only, matching every provider in v1.
+    Read from per-pool config (``LLMConfig.capabilities``) and gates image
+    inlining (ADR-0014 §1): a pool declaring ``IMAGE`` enables mechanism A;
+    the default TEXT-only leaves every attachment on the mechanism-B tool
+    path. Defaults to TEXT-only.
     """
 
     modalities: frozenset[Modality] = field(default_factory=lambda: frozenset({Modality.TEXT}))

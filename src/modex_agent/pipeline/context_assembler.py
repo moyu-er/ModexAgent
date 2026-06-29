@@ -45,7 +45,12 @@ async def assemble_context(
     """
     source_agent = input_metadata.get("source_agent")
 
-    # Build multimodal content
+    # Build multimodal content.
+    # NOTE: mechanism A (native multimodal) is implemented via turn-state
+    # enrichment in ``LLMNode._build_messages`` (ADR-0014 §2/§7), NOT here.
+    # This branch is the dormant MediaProcessor seam retained for the deferred
+    # provider-side renderer (ADR-0013 §10) and is currently unreachable —
+    # ``preprocess`` always returns ``[]``/``None`` for ``media_blocks``.
     if media_blocks and _media_processor is not None:
         try:
             multimodal_content = _media_processor.build_content(sanitized_content, media_blocks)

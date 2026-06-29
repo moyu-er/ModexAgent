@@ -281,6 +281,50 @@ class TestEnrichmentDivergence:
         assert out[0]["content"] == "hi"
 
 
+class TestApprovalResumeFallback:
+    @pytest.mark.asyncio
+    async def test_resumed_turn_does_not_re_inline(self, tmp_path: Path) -> None:
+        """Accepted v1 trade-off (ADR-0014 §3): an approval-resumed turn does
+        NOT re-inline images, because ``ReActSnapshotPolicy.state_from_snapshot``
+        does not restore ``state.custom`` (``INLINE_ATTACHMENTS`` /
+        ``INLINE_IMAGE_CACHE`` are absent on the reconstructed state).
+
+        This simulates the post-snapshot state: a FRESH ``ReActTurnState`` with
+        EMPTY ``custom`` (no attachment carriers), even though the history still
+        carries the image-bearing user message from before the interrupt. The
+        resumed turn must fall back to mechanism B — i.e.
+        ``enrich_inline_attachments`` returns the messages UNCHANGED (no
+        ``image_url`` block is added). This test pins that fallback so a future
+        change that silently restores ``custom`` is caught.
+        """
+        img_path = tmp_path / "cat.png"
+        img_path.write_bytes(_PNG_BYTES)
+
+        # Fresh state mimicking state_from_snapshot reconstruction: no
+        # INLINE_ATTACHMENTS key set, empty custom — exactly what a resumed
+        # turn sees.
+        runtime = _make_runtime(_CAPABLE)
+        # Deliberately do NOT set runtime.state.custom[INLINE_ATTACHMENTS].
+
+        messages_in: list[dict[str, Any]] = [
+            {"role": "user", "content": "look at this cat"},
+        ]
+        ctx = AgentContext(
+            system_prompt="sys",
+            history=_scoped_history(),
+            tool_manager=None,  # type: ignore[arg-type]
+            session=SessionInfo.from_str("test.agent"),
+            identity=runtime.state.identity,
+            runtime=runtime,
+        )
+        out = enrich_inline_attachments(messages_in, ctx)
+
+        # Unchanged: no enrichment, no image_url block — mechanism B floor.
+        assert out is messages_in or out == messages_in
+        assert out[0]["content"] == "look at this cat"
+        assert "image_url" not in str(out)
+
+
 class TestEnrichmentGuard:
     @pytest.mark.asyncio
     async def test_governance_runs_before_enrichment_on_text_form(self, tmp_path: Path) -> None:

@@ -56,6 +56,12 @@ class TestBuildInlineImageBlock:
         # (c) the data-URL mime prefix matches the file's detected mime.
         assert url.startswith("data:image/png;base64,")
 
+        # (d) the inline path must NOT carry the internal ``_meta`` key —
+        # that holds the absolute filesystem path and must not leak to the
+        # provider API. (``ImageHandler`` keeps ``_meta``; the inline path
+        # does not.)
+        assert "_meta" not in block[1]
+
     def test_caption_uses_att_name_exactly(self, tmp_path):
         # JPEG magic bytes so detection gives image/jpeg even though name is unusual.
         jpeg_bytes = b"\xff\xd8\xff\xe0" + b"\x00" * 10

@@ -177,19 +177,27 @@ class MediaHandler(ABC):
         ...
 
 
-def _build_image_url_block(raw: bytes, mime: str, path: str) -> dict[str, Any]:
+def _build_image_url_block(
+    raw: bytes, mime: str, path: str, *, with_meta: bool = True
+) -> dict[str, Any]:
     """Build an OpenAI-compatible ``image_url`` content block from raw bytes.
 
     Shared data-URL construction used by :class:`ImageHandler` and
-    :func:`build_inline_image_block`. The ``_meta.path`` entry is preserved so
-    downstream sanitizer/strip logic can recover the source path.
+    :func:`build_inline_image_block`. When ``with_meta`` is True (the
+    default, used by :class:`ImageHandler`) a ``_meta.path`` entry is included
+    so the dormant sanitizer/strip-on-reject path can recover the source path.
+    The LIVE inline path passes ``with_meta=False`` so the block sent to the
+    provider API carries no ``_meta`` (the absolute filesystem path must not
+    leak past the call boundary).
     """
     b64 = base64.b64encode(raw).decode()
-    return {
+    block: dict[str, Any] = {
         "type": "image_url",
         "image_url": {"url": f"data:{mime};base64,{b64}"},
-        "_meta": {"path": path},
     }
+    if with_meta:
+        block["_meta"] = {"path": path}
+    return block
 
 
 class ImageHandler(MediaHandler):
@@ -257,7 +265,7 @@ def build_inline_image_block(att: Attachment) -> list[dict[str, Any]]:
             {"type": "text", "text": "<missing image>"},
         ]
 
-    return [caption, _build_image_url_block(raw, mime, str(p))]
+    return [caption, _build_image_url_block(raw, mime, str(p), with_meta=False)]
 
 
 class MediaProcessor:
