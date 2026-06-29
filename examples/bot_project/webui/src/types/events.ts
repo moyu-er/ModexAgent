@@ -1,5 +1,7 @@
 /** TypeScript types matching Python WebUIEventType enum values. */
 
+import type { AttachmentRecord, AttachmentCardPayload } from "./attachments";
+
 export type WebUIEventType =
   | "user_message"
   | "model_content_delta"
@@ -15,7 +17,8 @@ export type WebUIEventType =
   | "conversation_deleted"
   | "error"
   | "content"
-  | "approval_request";
+  | "approval_request"
+  | "attachment_card";
 
 // ── Server → Client events ──────────────────────────────────────────────────
 
@@ -29,6 +32,8 @@ export interface ServerEvent {
 export interface UserMessageEvent extends ServerEvent {
   event: "user_message";
   content: string;
+  /** Inbound attachment records (serialized Attachment.to_dict()). */
+  attachments?: AttachmentRecord[];
 }
 
 export interface ModelContentDelta extends ServerEvent {
@@ -74,6 +79,8 @@ export interface AssistantTurnEvent extends ServerEvent {
   blocks: TurnBlock[];
   turn_id: string;
   latency_ms: number;
+  /** Outbound attachment records the agent produced this turn (SendFileToUserTool). */
+  attachments?: AttachmentRecord[];
 }
 
 export interface ConversationReadyEvent extends ServerEvent {
@@ -123,6 +130,22 @@ export interface ApprovalRequestEvent extends ServerEvent {
   status: string;
 }
 
+/**
+ * Outbound attachment-card delta. Arrives as a DeltaEnvelope with
+ * ``event_type: "attachment_card"``; after unwrapEnvelope the payload fields
+ * are spread onto this flat event. The renderer treats it symmetrically with
+ * inbound AttachmentRecords (image inline vs file card vs fallback).
+ */
+export interface AttachmentCardEvent extends ServerEvent {
+  event: "attachment_card";
+  attachment_id: string;
+  kind: "image" | "file";
+  name: string;
+  size: number;
+  mime?: string | null;
+  download_url: string;
+}
+
 export interface TodoItemDTO {
   content: string;
   status: string;
@@ -143,7 +166,8 @@ export type ServerEventUnion =
   | ConversationDeletedEvent
   | ErrorEvent
   | ContentEvent
-  | ApprovalRequestEvent;
+  | ApprovalRequestEvent
+  | AttachmentCardEvent;
 
 // ── Structured transport envelope ─────────────────────────────────────────────
 
@@ -221,7 +245,18 @@ export interface ReasoningBlockData {
   text: string;
 }
 
-export type TurnBlock = TextBlock | ToolBlockData | ReasoningBlockData;
+/**
+ * An attachment rendered inline in the message stream (outbound attachment_card
+ * deltas become one of these, appended to the streaming assistant message).
+ * Carries the raw card payload; the renderer resolves the final download URL
+ * (appending the active ws) at render time so the reducer stays ws-agnostic.
+ */
+export interface AttachmentBlockData {
+  kind: "attachment";
+  card: AttachmentCardPayload;
+}
+
+export type TurnBlock = TextBlock | ToolBlockData | ReasoningBlockData | AttachmentBlockData;
 
 export interface UIMessage {
   id: string;
@@ -234,6 +269,8 @@ export interface UIMessage {
   pool?: string;
   parent_session_id?: string | null;
   metadata?: Record<string, unknown>;
+  /** Attachment records bound to this message (inbound on user, outbound on assistant). */
+  attachments?: AttachmentRecord[];
 }
 
 // ── Transcript → UI conversion ────────────────────────────────────────────
@@ -314,6 +351,7 @@ export function eventsToMessages(events: ServerEventUnion[]): UIMessage[] {
         blocks: [{ kind: "text", text: ev.content }],
         isStreaming: false,
         timestamp: ev.timestamp,
+        attachments: ev.attachments,
       });
     } else if (ev.event === "assistant_reasoning") {
       messages.push({
@@ -332,6 +370,7 @@ export function eventsToMessages(events: ServerEventUnion[]): UIMessage[] {
         blocks: mergeBlocks((ev.blocks ?? []).map(normalizeBlock)),
         isStreaming: false,
         timestamp: ev.timestamp,
+        attachments: ev.attachments,
       });
     }
   }

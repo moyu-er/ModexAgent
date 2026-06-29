@@ -2,6 +2,7 @@ import type {
   ApprovalRequestEvent,
   ApprovalRequestView,
   AssistantReasoningEvent,
+  AttachmentCardEvent,
   ContentEvent,
   ErrorEvent,
   ModelContentDelta,
@@ -91,10 +92,18 @@ function _applyEventToMessages(
       const echoId: string | undefined = meta?.["_request_id"] as string | undefined;
       if (echoId && echoId === pendingRequestRef.current) {
         pendingRequestRef.current = null;
+        // Carry the echoed attachments (persisted records from the ingest
+        // stage) onto the optimistic message so they render after echo.
+        const echoAttachments = (raw["attachments"] as UIMessage["attachments"]) ?? undefined;
         return {
           messages: messages.map((m) =>
             m.id === echoId
-              ? { ...m, timestamp: event.timestamp, metadata: raw["_metadata"] as Record<string, unknown> | undefined }
+              ? {
+                  ...m,
+                  timestamp: event.timestamp,
+                  metadata: raw["_metadata"] as Record<string, unknown> | undefined,
+                  ...(echoAttachments ? { attachments: echoAttachments } : {}),
+                }
               : m,
           ),
           isStreaming: false,
@@ -141,6 +150,25 @@ function _applyEventToMessages(
       const msgs = _upsertStreamingBlock(messages, start.agent_name,
         { kind: "tool", tool: { tool: start.tool, args: start.args } },
       );
+      return { messages: msgs, isStreaming: true };
+    }
+    case "attachment_card": {
+      // Outbound attachment_card delta — append as an inline attachment block
+      // on the streaming assistant message (same accumulation path as text/
+      // tool blocks). The renderer resolves the final download URL (with ws)
+      // at render time, so the reducer stays ws-agnostic.
+      const card = event as AttachmentCardEvent;
+      const msgs = _upsertStreamingBlock(messages, card.agent_name, {
+        kind: "attachment",
+        card: {
+          attachment_id: card.attachment_id,
+          kind: card.kind,
+          name: card.name,
+          size: card.size,
+          mime: card.mime,
+          download_url: card.download_url,
+        },
+      });
       return { messages: msgs, isStreaming: true };
     }
     case "tool_call_end": {

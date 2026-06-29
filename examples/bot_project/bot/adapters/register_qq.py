@@ -49,7 +49,6 @@ def build_qq(ctx: AdapterBuildContext):
         secret=qq_cfg["secret"],
         sandbox=qq_cfg.get("sandbox", False),
         allow_from=qq_cfg.get("allow_from", ["*"]),
-        media_dir=qq_cfg.get("media_dir"),
         project_dir=ctx.project_dir,
     )
     qq_output_raw = QQOutputAdapter(qq_input)

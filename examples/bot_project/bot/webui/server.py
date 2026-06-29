@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import shutil
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
@@ -107,9 +108,14 @@ _DEFAULT_AGENT_NAME: str = "main"
 _API_SESSIONS_PATH: str = "/api/sessions"
 _API_SESSIONS_SESSION_PATH: str = "/api/sessions/{session_id}"
 _API_POOLS_PATH: str = "/api/pools"
+_API_MEDIA_CONFIG_PATH: str = "/api/media/config"
 _WS_PATH: str = "/ws"
 _WEBUI_STATIC_PREFIX: str = "/webui/"
 _DEFAULT_STATIC_DIST: Path = Path(__file__).resolve().parent.parent / "web" / "dist"
+
+# Multipart upload read chunk. Large enough to amortize per-chunk overhead on a
+# 20 MB image, small enough that the size pre-check fires promptly.
+_UPLOAD_CHUNK_BYTES: int = 64 * 1024
 
 
 @dataclass
@@ -307,6 +313,95 @@ class WebUIServer:
             logger.warning("Failed to build session-index dir for %r: %s", ws_raw, exc)
             return home_index
 
+    def _media_dir_of_ws(self, ws_raw: str, pool: str) -> Path:
+        """Resolve the raw ws path to the pool's MEDIA directory.
+
+        Mirrors :meth:`_sessions_dir_of_ws` and the business
+        :class:`WorkspaceScopedMediaStore` ctxvar resolution
+        (``WorkspacePaths(root=<ws_root>/<data_dir>).media_dir(pool)``) so an
+        inbound attachment written under a workspace is read back from the same
+        workspace's media dir. Home (empty ``ws_raw``) resolves against the
+        precomputed ``_home_sessions_dir`` parent so it never depends on
+        ``_data_dir_name`` being set, exactly like the sessions reader.
+        """
+        if not ws_raw:
+            return WorkspacePaths(root=self._home_sessions_dir.parent).media_dir(pool)
+        try:
+            return WorkspacePaths(
+                root=self._ws_root_of(ws_raw) / self._data_dir_name
+            ).media_dir(pool)
+        except (OSError, ValueError) as exc:
+            logger.warning("Failed to build media dir for %r: %s", ws_raw, exc)
+            return WorkspacePaths(root=self._home_sessions_dir.parent).media_dir(pool)
+
+    def _media_tmp_dir_of_ws(self, ws_raw: str, pool: str) -> Path:
+        """Resolve the raw ws path to the pool's media ``_tmp`` directory.
+
+        Staging area for the upload endpoint (:meth:`_handle_upload_attachment`)
+        — accepted files are re-persisted by the ingest stage into the real
+        media dir, so temp files here are disposable. Resolved the same way as
+        :meth:`_media_dir_of_ws` so a temp file written under a workspace is
+        read back from the same workspace when the WS message flows through the
+        pipeline. Leftover files from a previous run are reclaimed by
+        :meth:`sweep_media_tmp_orphans` at startup.
+        """
+        return self._media_dir_of_ws(ws_raw, pool) / "_tmp"
+
+    def sweep_media_tmp_orphans(self) -> None:
+        """Delete leftover upload temp files from a previous run.
+
+        The upload endpoint stages bytes under ``<data_dir>/media/<pool>/_tmp``;
+        the ingest stage re-persists accepted files into the real media dir
+        (``uploads/``). A file left in ``_tmp`` is an upload that never became a
+        WS message (client disconnected, crash, etc.) — disposable. Sweep ``_tmp``
+        across home + every recent workspace at startup so orphans do not
+        accumulate on disk. Accepted files under ``uploads/`` are never touched.
+        """
+        for data_root in self._known_workspace_data_roots():
+            media_dir = data_root / "media"
+            if not media_dir.is_dir():
+                continue
+            # Only ``_tmp`` dirs one level under ``media/<pool>/`` — leaves the
+            # ``uploads/`` subtree (accepted, budget-managed bytes) untouched.
+            for tmp_dir in media_dir.glob("*/_tmp"):
+                if tmp_dir.is_dir():
+                    self._clear_dir_contents(tmp_dir)
+
+    @staticmethod
+    def _clear_dir_contents(path: Path) -> None:
+        """Remove every entry inside *path*, keeping the directory itself."""
+        for entry in path.iterdir():
+            try:
+                if entry.is_dir() and not entry.is_symlink():
+                    shutil.rmtree(entry)
+                else:
+                    entry.unlink()
+            except OSError as exc:
+                logger.warning("media/_tmp sweep: could not remove %s: %s", entry, exc)
+
+    def _known_workspace_data_roots(self) -> list[Path]:
+        """Distinct ``<root>/<data_dir>`` dirs for home + recent workspaces.
+
+        Home's data root is ``_home_sessions_dir.parent`` (already encodes the
+        data dir, so it resolves even before ``_data_dir_name`` is set). Each
+        recent workspace resolves via :meth:`_ws_root_of` + ``_data_dir_name``;
+        recent is skipped while ``_data_dir_name`` is unset (minimal test wiring).
+        """
+        roots: list[Path] = [self._home_sessions_dir.parent]
+        if self._data_dir_name and self._recent_workspaces is not None:
+            for entry in self._recent_workspaces.list_recent():
+                ws_raw = str(entry.get("path", ""))
+                if ws_raw:
+                    roots.append(self._ws_root_of(ws_raw) / self._data_dir_name)
+        seen: set[str] = set()
+        unique: list[Path] = []
+        for root in roots:
+            key = str(root)
+            if key not in seen:
+                seen.add(key)
+                unique.append(root)
+        return unique
+
     def _pool_of_agent(self, agent_name: str) -> str:
         """Return the pool an agent belongs to (default main)."""
         return self._pool_for_agent_name(agent_name) or _DEFAULT_AGENT_NAME
@@ -484,6 +579,15 @@ class WebUIServer:
         self.app.router.add_post(
             f"{_API_SESSIONS_SESSION_PATH}/approvals", self._handle_post_approval
         )
+        self.app.router.add_get(
+            f"{_API_SESSIONS_SESSION_PATH}/attachments/{{attachment_id}}",
+            self._handle_download_attachment,
+        )
+        self.app.router.add_post(
+            f"{_API_SESSIONS_SESSION_PATH}/attachments",
+            self._handle_upload_attachment,
+        )
+        self.app.router.add_get(_API_MEDIA_CONFIG_PATH, self._handle_media_config)
         self.app.router.add_delete(_API_SESSIONS_SESSION_PATH, self._handle_delete_session)
         self.app.router.add_get(_WS_PATH, self._handle_websocket)
 
@@ -772,6 +876,10 @@ class WebUIServer:
                 "turn_id": t.turn_id,
                 "blocks": t.blocks,
                 "latency_ms": 0,
+                # G7: SendFileToUserTool populates outbound attachments here.
+                # The AssistantTurnEvent field exists and round-trips; G7 fills
+                # it with serialized Attachment records (ADR-0013 §11).
+                "attachments": [],
             })
 
         result = user_events + assistant_events
@@ -919,6 +1027,205 @@ class WebUIServer:
             )
         await self._input_pipeline.handle(envelope, self._input_ctx)
         return web.json_response({"accepted": True}, status=202)
+
+    async def _handle_download_attachment(self, request: web.Request) -> web.Response:
+        """GET /api/sessions/{session_id}/attachments/{attachment_id}?ws=<ws>.
+
+        Attachment download — one endpoint, dispatch on the record's
+        ``locator`` (ADR-0013 §4/§5):
+
+        - ``media`` (inbound): resolve the byte file through the business
+          :class:`WorkspaceScopedMediaStore` against the ``?ws=``-resolved media
+          dir and the session's pool.
+        - ``workspace`` (outbound): the file is at the literal absolute path the
+          agent wrote (``att.path``).
+
+        The ``attachment_id`` is an unguessable uuid and IS the capability — no
+        auth, no signing (the WebUI is unauthenticated; ADR-0013 §5). ``?ws=``
+        is routing only, resolved through the same ``_ws_root_of`` every other
+        endpoint uses.
+
+        Streaming + ``Range``/``206`` come from the HTTP layer
+        (:class:`aiohttp.web.FileResponse`), not hand-rolled — outbound files
+        may be up to 1 GB and must never buffer whole into memory. MIME is
+        allow-listed: only ``image/*`` and ``video/*`` keep their real
+        ``Content-Type``; everything else is ``application/octet-stream`` so a
+        browser cannot sniff executable content. SVG responses carry a strict
+        CSP. A present record whose underlying file is gone (evicted inbound,
+        deleted outbound) degrades symmetrically to 404 (ADR-0013 §3/§5).
+        """
+        from bot.service.attachment_index import find_attachment
+        from modex_agent.media.models import AttachmentLocator
+
+        session_id: str = request.match_info["session_id"]
+        attachment_id: str = request.match_info["attachment_id"]
+        ws_raw = request.query.get("ws", "")
+        sessions_dir = self._sessions_dir_of_ws(ws_raw)
+
+        att = find_attachment(self._store, session_id, attachment_id, sessions_dir=sessions_dir)
+        if att is None:
+            return web.Response(status=404, text="attachment not found")
+
+        path: Path | None
+        if att.locator is AttachmentLocator.MEDIA:
+            # Inbound: bytes are under the managed media dir. Resolve the pool
+            # for the media resolver the same way the other read handlers
+            # resolve it (agent_name -> pool), then read through the business
+            # WorkspaceScopedMediaStore with an explicit media_dir (HTTP readers
+            # run outside any dispatch turn, so the ctxvar root is unbound).
+            index_dir = self._index_dir_of_ws(ws_raw)
+            agent_name = await self._resolve_agent(session_id, index_dir=index_dir)
+            pool = self._pool_of_agent(agent_name)
+            media_store = (
+                self._input_ctx.media_store if self._input_ctx is not None else None
+            )
+            if media_store is None:
+                # No media resolver wired — cannot serve inbound bytes.
+                return web.Response(status=404, text="attachment not found")
+            media_dir = self._media_dir_of_ws(ws_raw, pool)
+            path = media_store.store_for(pool, media_dir=media_dir).read(
+                session_id, attachment_id
+            )
+        elif att.locator is AttachmentLocator.WORKSPACE:
+            # Outbound: the file is at the literal absolute path the agent gave.
+            path = Path(att.path)
+            if not path.is_absolute():
+                logger.warning(
+                    "Outbound attachment %s path is not absolute: %s",
+                    attachment_id,
+                    att.path,
+                )
+                return web.Response(status=404, text="attachment not found")
+        else:  # Defensive — unknown locator value.
+            logger.warning(
+                "Unknown attachment locator %r for %s", att.locator, attachment_id
+            )
+            return web.Response(status=404, text="attachment not found")
+
+        # Symmetric 404: the Attachment record exists in the transcript, but the
+        # underlying file is gone (evicted inbound / deleted outbound).
+        if path is None or not path.is_file():
+            return web.Response(status=404, text="attachment not found")
+
+        # MIME allow-list: only image/* and video/* keep their real Content-Type.
+        mime = att.mime or "application/octet-stream"
+        serve_mime = mime if (mime.startswith("image/") or mime.startswith("video/")) else "application/octet-stream"
+
+        headers: dict[str, str] = {
+            "Content-Type": serve_mime,
+            # nosniff: stop IE/Edge from MIME-sniffing an octet-stream body into
+            # executable content (defense in depth on top of the MIME allow-list).
+            "X-Content-Type-Options": "nosniff",
+        }
+        # SVG can carry inline script/style — pin a strict CSP so a downloaded
+        # SVG opened in a browser tab cannot execute or exfiltrate.
+        if serve_mime == "image/svg+xml":
+            headers["Content-Security-Policy"] = (
+                "default-src 'none'; img-src 'self' data:; "
+                "style-src 'unsafe-inline'; sandbox"
+            )
+        # FileResponse streams the file (chunk_size) and handles HTTP Range /
+        # 206 Partial Content natively, so up-to-1 GB outbound never buffers.
+        return web.FileResponse(path, headers=headers)
+
+    async def _handle_media_config(self, request: web.Request) -> web.Response:
+        """GET /api/media/config -- expose MediaConfig limits for pre-validation.
+
+        Returns the active ``MediaConfig`` numbers the frontend needs to
+        pre-validate a selection before uploading (ADR-0013 §7). v1 is a single
+        shared config (per-pool override is a later extension; the ingest stage
+        reads the same instance off the input context). When no input context is
+        wired (minimal tests), the frozen ``MediaConfig()`` defaults are
+        returned so the endpoint always answers with the authoritative numbers.
+        """
+        from modex_agent.ioc.configs.pool import MediaConfig
+
+        config: MediaConfig = (
+            self._input_ctx.media_config
+            if self._input_ctx is not None
+            else MediaConfig()
+        )
+        return web.json_response({
+            "max_image_bytes": config.max_image_bytes,
+            "max_text_doc_bytes": config.max_text_doc_bytes,
+            "session_budget_bytes": config.session_budget_bytes,
+            "max_outbound_bytes": config.max_outbound_bytes,
+        })
+
+    async def _handle_upload_attachment(self, request: web.Request) -> web.Response:
+        """POST /api/sessions/{session_id}/attachments -- temp-file receiver.
+
+        This endpoint is a **temp-file receiver + pre-stash**, NOT the
+        authority. It saves the uploaded file under the workspace's media
+        ``_tmp`` dir and returns a ref the frontend includes in the subsequent
+        WS user message as an ``AttachmentRef(local_path=...)``. The actual
+        perception gate + ``MediaStore.save`` + Attachment record happen in the
+        ingest stage (G3) when the WS message flows through the pipeline — the
+        gate stays the single authority (no duplicate gate logic here).
+
+        A loose size pre-check rejects absurd uploads early (cap is the larger
+        of the image/text-doc limits, generous on purpose); the authoritative
+        per-kind cap is the pipeline's. ``?ws=`` resolves the workspace the same
+        way every other handler does.
+        """
+        from modex_agent.ioc.configs.pool import MediaConfig
+
+        session_id: str = request.match_info["session_id"]
+        ws_raw = request.query.get("ws", "")
+
+        index_dir = self._index_dir_of_ws(ws_raw)
+        agent_name = await self._resolve_agent(session_id, index_dir=index_dir)
+        pool = self._pool_of_agent(agent_name)
+
+        reader = await request.multipart()
+        part = await reader.next()
+        if part is None or part.name != "file":
+            return web.json_response(
+                {"error": "missing 'file' part"}, status=400
+            )
+
+        config = (
+            self._input_ctx.media_config_for(pool)
+            if self._input_ctx is not None
+            else MediaConfig()
+        )
+        # Loose early cap: reject anything above the most generous accepted
+        # limit. The authoritative per-kind gate runs in the ingest stage.
+        early_cap = max(config.max_image_bytes, config.max_text_doc_bytes)
+
+        tmp_dir = self._media_tmp_dir_of_ws(ws_raw, pool)
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        tmp_name = uuid4().hex
+        tmp_path = tmp_dir / tmp_name
+
+        size = 0
+        try:
+            with tmp_path.open("wb") as out:
+                while True:
+                    chunk = await part.read_chunk(_UPLOAD_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > early_cap:
+                        out.close()
+                        tmp_path.unlink(missing_ok=True)
+                        return web.json_response(
+                            {"error": "file too large"}, status=413
+                        )
+                    out.write(chunk)
+        except Exception:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                logger.warning("could not remove temp upload %s", tmp_path)
+            raise
+
+        return web.json_response({
+            "local_path": str(tmp_path),
+            "filename": part.filename or tmp_name,
+            "size": size,
+            "mime": part.headers.get("Content-Type"),
+        })
 
     async def _handle_delete_session(self, request: web.Request) -> web.Response:
         """DELETE /api/sessions/{session_id} -- delete a session.
@@ -1241,7 +1548,14 @@ class WebUIServer:
         session_id = str(data.get("session_id", ""))
         content = str(data.get("content", ""))
         request_id = str(data.get("_request_id", ""))
-        if "." not in session_id or not content:
+        # An attachment-only send (no text) is valid — the frontend enables Send
+        # when there are pending uploads even with empty text (ADR-0013: a file
+        # in a conversation is itself the message). Drop only when there is
+        # neither text nor any attachment payload.
+        has_attachment_payload = isinstance(data.get("attachments"), list) and len(
+            data.get("attachments") or []
+        ) > 0
+        if "." not in session_id or (not content and not has_attachment_payload):
             return
 
         # Resolve the target workspace ("ws" == workspace) from the payload up
@@ -1291,7 +1605,64 @@ class WebUIServer:
 
         # Run the WebUI sub-pipeline (S4..S8).
         from bot.input_pipeline.stages.resolve_pool import RoutingMeta
-        from modex_agent.input_pipeline.envelope import UserInputEnvelope
+        from modex_agent.input_pipeline.envelope import AttachmentRef, UserInputEnvelope
+
+        # Build AttachmentRefs from the client payload so uploaded files (POSTed
+        # to the upload endpoint, returning {local_path, filename, mime?}) are
+        # NOT orphaned — the ingest stage (G3) reads envelope.attachments and
+        # would no-op on an empty list. Mirrors the QQ adapter
+        # (bot/adapters/qq.py: attachments=[AttachmentRef(local_path=p) ...]).
+        #
+        # C1: the upload endpoint is the ONLY legitimate writer to the staging
+        # dir, so an accepted local_path MUST resolve under it. A client could
+        # otherwise point local_path at ANY server-readable file (e.g.
+        # /etc/shadow, or a path under another workspace's data dir) and have
+        # the ingest stage copy its bytes into the media store — making them
+        # agent-perceivable and downloadable (path traversal / exfiltration).
+        # The QQ adapter is unaffected (it builds the ref server-side).
+        raw_attachments = data.get("attachments")
+        attachments: list[AttachmentRef] = []
+        if isinstance(raw_attachments, list):
+            # Resolve the staging pool the SAME way the upload endpoint does
+            # (_pool_of_agent -> _pool_for_agent_name, incl. dynamic-subagent
+            # prefix matching). ``explicit_pool`` (agent_pool_map.get or the raw
+            # agent name) diverges for subagent-instance sessions and would drop
+            # a legitimately-uploaded file whose temp path lives under the
+            # template pool's ``_tmp`` — the same file the upload endpoint wrote.
+            staging_pool = (
+                self._pool_of_agent(explicit_agent)
+                if explicit_agent
+                else _DEFAULT_AGENT_NAME
+            )
+            staging_root = self._media_tmp_dir_of_ws(ws_raw, staging_pool).resolve()
+            for entry in raw_attachments:
+                if not isinstance(entry, dict):
+                    continue
+                local_path = entry.get("local_path")
+                if not local_path or not isinstance(local_path, str):
+                    continue
+                # Resolve before the containment check so symlinks / ``..``
+                # segments cannot escape the staging dir.
+                try:
+                    resolved = Path(local_path).resolve()
+                except (OSError, ValueError) as exc:
+                    logger.warning(
+                        "Dropping WS attachment %r: path unresolvable (%s)",
+                        local_path, exc,
+                    )
+                    continue
+                if not resolved.is_relative_to(staging_root):
+                    logger.warning(
+                        "Dropping WS attachment %r: outside staging dir %s "
+                        "(path-traversal rejection)",
+                        local_path, staging_root,
+                    )
+                    continue
+                attachments.append(AttachmentRef(
+                    local_path=local_path,
+                    filename=entry.get("filename") if isinstance(entry.get("filename"), str) else None,
+                    mime_type=entry.get("mime") if isinstance(entry.get("mime"), str) else None,
+                ))
 
         envelope = UserInputEnvelope(
             external_id=uuid_prefix,
@@ -1299,6 +1670,7 @@ class WebUIServer:
             channel="websocket",
             explicit_pool=explicit_pool,
             pre_resolved_session=pre_resolved,
+            attachments=attachments,
         )
         envelope.metadata[RoutingMeta.WORKSPACE] = str(workspace_path)
         result = await self._input_pipeline.handle(envelope, self._input_ctx)
@@ -1313,7 +1685,15 @@ class WebUIServer:
             from bot.webui.events import UserMessageEvent
 
             event = UserMessageEvent(
-                session_id=full_sid, agent_name=agent_name, content=content
+                session_id=full_sid,
+                agent_name=agent_name,
+                content=content,
+                # Mirror persist_user_message.py:43 — carry the resolved
+                # Attachment records so the sender's own attachments render on
+                # their optimistic message mid-session, not only after a
+                # transcript reload. resolved_attachments may be None/empty for
+                # legacy messages; guard with ``or []``.
+                attachments=[a.to_dict() for a in (final.resolved_attachments or [])],
             )
             meta: dict[str, object] = {}
             if request_id:

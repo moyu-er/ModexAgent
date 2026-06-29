@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ApprovalRequestEvent, ApprovalRequestView, ServerEventUnion, TodoItemDTO, UIMessage } from "../types/events";
+import type { OutgoingAttachmentRef } from "../types/attachments";
 import { eventsToMessages } from "../types/events";
 import { WebSocketClient, buildWsUrl } from "../lib/ws-client";
 import { fetchApprovals, fetchMessages, fetchTodos, submitApproval as apiSubmitApproval } from "../lib/api";
@@ -26,7 +27,7 @@ export interface UseWebUIStreamResult {
   isApprovingBatch: boolean;
   connect: () => void;
   disconnect: () => void;
-  send: (content: string) => void;
+  send: (content: string, attachments?: OutgoingAttachmentRef[]) => void;
   pause: () => void;
   /** POST an allow/deny decision for a pending approval; clears the card on success. */
   submitApproval: (toolCallId: string, action: "allow" | "deny") => void;
@@ -372,7 +373,7 @@ export function useWebUIStream(
     : false;
 
   const send = useCallback(
-    (content: string): void => {
+    (content: string, attachments?: OutgoingAttachmentRef[]): void => {
       if (!sessionId) {
         console.warn("Cannot send message: no session selected");
         return;
@@ -403,7 +404,7 @@ export function useWebUIStream(
         console.warn("WebSocket: not connected");
         return;
       }
-      client.sendMessage(sessionId, content, currentWsRef.current, requestId);
+      client.sendMessage(sessionId, content, currentWsRef.current, requestId, attachments);
     },
     [sessionId, agentName, getPoolForUuid],
   );

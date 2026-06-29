@@ -5,6 +5,7 @@ import type {
   ServerEventUnion,
   TodoItemDTO,
 } from "../types/events";
+import type { MediaConfigResponse, UploadAttachmentResponse } from "../types/attachments";
 
 const API_BASE = "/api";
 
@@ -214,3 +215,49 @@ export async function browseWorkspace(
   await assertOk(resp);
   return resp.json() as Promise<BrowseResult>;
 }
+
+// ── Attachments (ADR-0013) ──────────────────────────────────────────────────
+
+/** Fetch the active MediaConfig limits for composer pre-validation. */
+export async function fetchMediaConfig(): Promise<MediaConfigResponse> {
+  const resp = await fetch(`${API_BASE}/media/config`);
+  await assertOk(resp);
+  return resp.json() as Promise<MediaConfigResponse>;
+}
+
+/**
+ * Upload a file as multipart form-data to the per-session temp-file receiver.
+ * Returns a ref ({local_path, filename, size, mime?}) the composer includes in
+ * the subsequent WS send_message as an attachment. The perception gate + real
+ * persistence run later in the ingest stage.
+ */
+export async function uploadAttachment(
+  sessionId: string,
+  file: File,
+  ws?: string,
+): Promise<UploadAttachmentResponse> {
+  const form = new FormData();
+  form.append("file", file);
+  const params = ws ? `?ws=${encodeURIComponent(ws)}` : "";
+  const resp = await fetch(`${API_BASE}/sessions/${sessionId}/attachments${params}`, {
+    method: "POST",
+    body: form,
+  });
+  await assertOk(resp);
+  return resp.json() as Promise<UploadAttachmentResponse>;
+}
+
+/**
+ * Build the download URL for an attachment, appending the active workspace.
+ * Empty ws means the home workspace (matches the existing ?ws= convention:
+ * home requests omit the param so the server reads the canonical home dir).
+ */
+export function attachmentDownloadUrl(
+  sessionId: string,
+  attachmentId: string,
+  ws?: string,
+): string {
+  const base = `${API_BASE}/sessions/${sessionId}/attachments/${attachmentId}`;
+  return ws ? `${base}?ws=${encodeURIComponent(ws)}` : base;
+}
+

@@ -1,10 +1,13 @@
 import { type FC } from "react";
 import type { TurnBlock, UIMessage } from "../types/events";
+import type { AttachmentRecord } from "../types/attachments";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { ReasoningBlock } from "./ReasoningBlock";
 import { ToolTraceCard } from "./ToolTraceCard";
+import { AttachmentRenderer, type AttachmentView } from "./AttachmentRenderer";
 import { TypewriterText } from "../hooks/useTypewriter";
 import { formatClock } from "../lib/timezone";
+import { attachmentDownloadUrl } from "../lib/api";
 
 // ── Agent-specific colors ────────────────────────────────────────────────
 
@@ -19,6 +22,24 @@ function agentColor(agentName: string): string {
 
 export interface MessageBubbleProps {
   message: UIMessage;
+  /** Session id — used to resolve attachment download URLs. */
+  sessionId?: string | null;
+  /** Active workspace (empty/undefined = home) — appended to attachment URLs. */
+  workspace?: string;
+}
+
+/** Map an inbound AttachmentRecord (3-way kind) to the renderer's 2-way kind. */
+function recordToView(rec: AttachmentRecord, sessionId: string | null | undefined, ws: string | undefined): AttachmentView {
+  return {
+    id: rec.id,
+    kind: rec.kind === "image" ? "image" : "file",
+    name: rec.name,
+    size: rec.size,
+    mime: rec.mime,
+    downloadUrl: sessionId
+      ? attachmentDownloadUrl(sessionId, rec.id, ws)
+      : "#",
+  };
 }
 
 function renderBlock(
@@ -26,12 +47,31 @@ function renderBlock(
   index: number,
   isUser: boolean,
   isStreaming: boolean,
+  ws: string | undefined,
 ): JSX.Element {
   if (block.kind === "reasoning") {
     return <ReasoningBlock key={`r-${index}`} reasoning={block.text} />;
   }
   if (block.kind === "tool") {
     return <ToolTraceCard key={`t-${index}`} tool={block.tool} />;
+  }
+  if (block.kind === "attachment") {
+    // Outbound card delta — append the active ws to the bare download_url.
+    const url = block.card.download_url;
+    const withWs = ws ? `${url}${url.includes("?") ? "&" : "?"}ws=${encodeURIComponent(ws)}` : url;
+    return (
+      <AttachmentRenderer
+        key={`a-${index}`}
+        view={{
+          id: block.card.attachment_id,
+          kind: block.card.kind,
+          name: block.card.name,
+          size: block.card.size,
+          mime: block.card.mime,
+          downloadUrl: withWs,
+        }}
+      />
+    );
   }
 
   if (isUser) {
@@ -79,9 +119,12 @@ const AssistantAvatar: FC = () => (
   </div>
 );
 
-export const MessageBubble: FC<MessageBubbleProps> = ({ message }) => {
+export const MessageBubble: FC<MessageBubbleProps> = ({ message, sessionId, workspace }) => {
   const isUser = message.role === "user";
   const timeStr = formatTime(message.timestamp);
+  const inboundViews = (message.attachments ?? []).map((r) =>
+    recordToView(r, sessionId, workspace),
+  );
 
   return (
     <div className={`mb-6 flex w-full items-start gap-2 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
@@ -102,8 +145,18 @@ export const MessageBubble: FC<MessageBubbleProps> = ({ message }) => {
           )}
 
           <div className="flex flex-col gap-1">
-            {(message.blocks ?? []).map((block, index) => renderBlock(block, index, isUser, message.isStreaming))}
+            {(message.blocks ?? []).map((block, index) =>
+              renderBlock(block, index, isUser, message.isStreaming, workspace),
+            )}
           </div>
+
+          {inboundViews.length > 0 && (
+            <div className={`mt-1 flex flex-col gap-1 ${isUser ? "items-end" : "items-start"}`}>
+              {inboundViews.map((v) => (
+                <AttachmentRenderer key={v.id} view={v} />
+              ))}
+            </div>
+          )}
 
           {message.isStreaming &&
             (message.blocks ?? []).length === 0 &&

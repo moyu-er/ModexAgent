@@ -5,6 +5,7 @@ import { useWebUIStream } from "./hooks/useWebUIStream";
 import { fetchSessions, fetchPools, fetchWorkspace, deleteConversation, changeWorkspace } from "./lib/api";
 import { setTimezone } from "./lib/timezone";
 import type { ConversationInfo } from "./types/events";
+import type { OutgoingAttachmentRef } from "./types/attachments";
 import type { PoolInfo } from "./lib/api";
 
 const ACTIVE_POOL_STORAGE_KEY = "modexbot_active_pool";
@@ -622,7 +623,7 @@ const App: FC = () => {
   );
 
   const handleSend = useCallback(
-    (content: string): void => {
+    (content: string, attachments?: OutgoingAttachmentRef[]): void => {
       // The session is now real — clear draft tracking so subsequent
       // "New Conversation" clicks create a fresh empty draft.
       if (selectedId) {
@@ -637,7 +638,7 @@ const App: FC = () => {
           ),
         );
       }
-      send(content);
+      send(content, attachments);
     },
     [send, selectedId],
   );
@@ -691,6 +692,7 @@ const App: FC = () => {
           submitApproval={submitApproval}
           onApproveAll={onApproveAll}
           sessionId={selectedId}
+          workspace={isHome ? "" : workspace}
           onSend={handleSend}
           onPause={pause}
           readOnly={isSelectedSubagent}

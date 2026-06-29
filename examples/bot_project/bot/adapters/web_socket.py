@@ -7,15 +7,22 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
-from bot.webui.events import DeltaEnvelope
+from bot.webui.events import DeltaEnvelope, WebUIEventType
 from modex_agent.adapters.platform import StreamingMode
 from modex_agent.core.session_id import SessionIdFactory, agent_of
 from modex_agent.core.types import InputMessage, OutputMessage
+from modex_agent.media.models import Attachment, Kind
 from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
 
 # ── Constants ──────────────────────────────────────────────────────────────
 
 WEBSOCKET_CHANNEL: str = "websocket"
+
+# Outbound attachment cards describe the attachment for the renderer; the
+# download URL points at the G6 endpoint. The frontend holds/appends the
+# ``ws`` query param (the active workspace) — the card itself is
+# workspace-agnostic so it round-trips through the transcript unchanged.
+_ATTACHMENT_DOWNLOAD_PATH: str = "/api/sessions/{session_id}/attachments/{attachment_id}"
 
 # Per-session delta queue capacity. Deltas are transient UI refresh (not
 # persisted); when a client lags or disconnects we drop new deltas rather than
@@ -28,6 +35,44 @@ logger = logging.getLogger(__name__)
 def _agent_of(session_id: str) -> str:
     """Return the agent segment (2nd) of a full session id, default ``main``."""
     return agent_of(session_id, default="main")
+
+
+def _card_kind_of(record: Attachment) -> str:
+    """Map an Attachment's Kind to the renderer's two-way card kind.
+
+    Only images render inline; every other kind (extractable documents, OTHER)
+    renders as a file card. Falls back to ``"file"`` on an unknown enum value
+    so a future Kind addition degrades safely.
+    """
+    if record.kind is Kind.IMAGE:
+        return "image"
+    return "file"
+
+
+def _attachment_card_envelope(record: Attachment, session_id: str) -> DeltaEnvelope:
+    """Build a direction-agnostic attachment-card delta for one outbound record.
+
+    The payload carries what the renderer needs to pick inline-image vs file
+    card vs fallback: ``kind`` (image/file), ``name``, ``size``, ``mime``, and
+    the ``download_url``. The frontend appends the active ``ws`` query param;
+    fallback-icon logic is frontend (download 404 → fallback).
+    """
+    download_url = _ATTACHMENT_DOWNLOAD_PATH.format(
+        session_id=session_id, attachment_id=record.id
+    )
+    return DeltaEnvelope(
+        session_id=session_id,
+        agent_name=_agent_of(session_id),
+        event_type=WebUIEventType.ATTACHMENT_CARD.value,
+        payload={
+            "attachment_id": record.id,
+            "kind": _card_kind_of(record),
+            "name": record.name,
+            "size": record.size,
+            "mime": record.mime,
+            "download_url": download_url,
+        },
+    )
 
 
 class WebSocketInputAdapter(InputAdapter):
@@ -151,6 +196,18 @@ class WebSocketOutputAdapter(OutputAdapter):
                     payload=view,
                 )
             )
+            return
+        # Outbound attachment cards (ADR-0013 §3). Emit one card per record so
+        # the frontend renders inline-image / file-card / fallback based on
+        # ``kind`` and whether the download URL later succeeds. The card is
+        # direction-agnostic — this adapter only describes the attachment; it
+        # does not pick a rendering. The accompanying text (if any) is sent as a
+        # separate content delta first so the card appears after the message.
+        if message.attachment_records:
+            if message.content:
+                await self.send_delta(message.content, session_id)
+            for record in message.attachment_records:
+                await self.send_envelope(_attachment_card_envelope(record, session_id))
             return
         content = message.content or ""
         await self.send_delta(content, session_id)
