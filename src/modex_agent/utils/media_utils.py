@@ -215,6 +215,21 @@ class MediaProcessor:
         processor = MediaProcessor()
         result = await processor.process(["/path/to/doc.pdf", "/path/to/image.png"])
         content = processor.build_content("用户问题", result.media_blocks)
+
+    --- Dormant provider-side renderer seam (mechanism A, NOT implemented in v1). ---
+    This class is the designated provider-side renderer for native multimodal
+    content (ADR-0013 §10): when a ``Modality`` beyond ``TEXT`` is enabled on
+    ``LLMConfig.capabilities`` (ADR-0013 §9), it is the consumer that turns a
+    gate-accepted Attachment into model content blocks (image → ``image_url``,
+    document → extracted-text block) and, on model rejection, strips them back
+    to text placeholders using each block's ``_meta.path``.
+
+    It is **gated on ``ModelCapabilities`` and currently dormant** — v1 ships
+    mechanism B (path reference) only, so every attachment reaches the agent as
+    a text reference regardless of this class. Zero callers while dormant is
+    EXPECTED and is the reason this seam is retained rather than deleted (real
+    adapter seam: ``MediaHandler`` base + pluggable handlers). Do not activate
+    it without binding the capability gate. See ADR-0013 §9, §10, §10a.
     """
 
     def __init__(self, max_file_size: int = 50 * 1024 * 1024) -> None:

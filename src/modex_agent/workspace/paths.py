@@ -18,6 +18,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 SUBDIR_MEMORY: str = "memory"
+SUBDIR_MEDIA: str = "media"
 SUBDIR_RUNTIME: str = "runtime_state"
 SUBDIR_INBOX: str = "inbox"
 SUBDIR_EXPERIENCES: str = "experiences"
@@ -106,6 +107,9 @@ class WorkspacePaths:
 
     def memory_dir(self, pool: str) -> Path:
         return self._child(SUBDIR_MEMORY, pool)
+
+    def media_dir(self, pool: str) -> Path:
+        return self._child(SUBDIR_MEDIA, pool)
 
     def pruned_dir(self, pool: str) -> Path:
         return self._child(SUBDIR_MEMORY, pool, SUBDIR_PRUNED)

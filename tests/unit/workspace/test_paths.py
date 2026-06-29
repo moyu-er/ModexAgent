@@ -15,7 +15,9 @@ from modex_agent.workspace.paths import (
     SUBDIR_EXPERIENCES,
     SUBDIR_FORK_CONTEXTS,
     SUBDIR_INBOX,
+    SUBDIR_MEDIA,
     SUBDIR_MEMORY,
+    SUBDIR_OUTPUT,
     SUBDIR_OVERFLOW,
     SUBDIR_POOL_SESSIONS,
     SUBDIR_PRUNED,
@@ -24,11 +26,9 @@ from modex_agent.workspace.paths import (
     SUBDIR_SESSIONS,
     SUBDIR_TRACE,
     SUBDIR_TURNS,
-    SUBDIR_OUTPUT,
     WorkspacePaths,
     safe_segment,
 )
-
 
 # ---------------------------------------------------------------------------
 # safe_segment
@@ -88,6 +88,24 @@ class TestWorkspacePaths:
         wp = WorkspacePaths(root=tmp_path)
         result = wp.memory_dir("pool_a")
         assert result.is_relative_to(wp.root)
+
+    def test_media_dir_under_root(self, tmp_path: Path) -> None:
+        wp = WorkspacePaths(root=tmp_path)
+        result = wp.media_dir("pool_a")
+        assert result.is_relative_to(wp.root)
+
+    def test_media_dir_two_pools_distinct(self, tmp_path: Path) -> None:
+        wp = WorkspacePaths(root=tmp_path)
+        a = wp.media_dir("pool_a")
+        b = wp.media_dir("pool_b")
+        assert a != b
+
+    def test_media_dir_malicious_pool_cannot_escape(self, tmp_path: Path) -> None:
+        wp = WorkspacePaths(root=tmp_path)
+        result = wp.media_dir("../../etc")
+        assert result.is_relative_to(wp.root)
+        rel = result.relative_to(wp.root)
+        assert ".." not in rel.parts
 
     def test_pruned_dir_under_root(self, tmp_path: Path) -> None:
         wp = WorkspacePaths(root=tmp_path)
@@ -186,6 +204,7 @@ class TestMkdirSkeleton:
 class TestLayoutConstants:
     def test_constants_have_expected_values(self) -> None:
         assert SUBDIR_MEMORY == "memory"
+        assert SUBDIR_MEDIA == "media"
         assert SUBDIR_RUNTIME == "runtime_state"
         assert SUBDIR_INBOX == "inbox"
         assert SUBDIR_EXPERIENCES == "experiences"

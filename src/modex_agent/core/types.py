@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 from .constants import DefaultValues
 from .session_id import SessionInfo
 
+from modex_agent.media.models import Attachment
+
 if TYPE_CHECKING:
     from .llm_struct import LLMErrorInfo
     from modex_agent.approval.views import ApprovalDecisionInput
@@ -74,6 +76,13 @@ class InputMessage:
     - timestamp: 时间戳
     - approval_decision: IM/WebUI 审批决策（非指令）；None 表示普通消息。
       WebUI 在审批端点构造；IM 由 ApprovalStage 从 /approve·/deny 解析。
+    - attachments_resolved: gate-accepted inbound Attachment records for THIS
+      turn (ADR-0013 §3/§11), produced by the attachment ingest stage. Typed
+      carriage from the input pipeline to turn-preprocessing: ``preprocess``
+      reads name/mime/size/path here to inject the transient path reference
+      the agent perceives (mechanism B). The records are metadata only — never
+      bytes. Empty when no attachment was accepted; outbound attachments are
+      not listed (produced by SendFileToUserTool, not the input pipeline).
     """
 
     content: str  # 消息内容（唯一必填字段）
@@ -90,6 +99,7 @@ class InputMessage:
     truncatable_paths: list[str] | None = None
     workspace: Path | None = None
     approval_decision: ApprovalDecisionInput | None = None
+    attachments_resolved: list[Attachment] = field(default_factory=list)
 
 
 @dataclass
@@ -110,6 +120,12 @@ class OutputMessage:
     - metadata: 额外元数据
     - attachments: 附件本地文件路径列表（图片、文档等）
     - timestamp: 时间戳
+    - attachment_records: outbound Attachment records (ADR-0013 §3). Populated
+      by SendFileToUserTool after it persists the record; the OutputAdapter
+      reads this to emit an attachment-card delta carrying the attachment_id
+      (``attachments`` is path-only and cannot build a download URL).
+      Direction-agnostic: the renderer (WebUI/IM) picks inline/card/fallback
+      from kind + whether the download succeeds.
     """
 
     content: str  # 消息内容（唯一必填字段）
@@ -123,6 +139,7 @@ class OutputMessage:
     metadata: dict[str, Any] = field(default_factory=dict)
     attachments: list[str] = field(default_factory=list)
     timestamp: datetime = field(default_factory=datetime.now)
+    attachment_records: list[Attachment] = field(default_factory=list)
 
 
 @dataclass

@@ -34,6 +34,32 @@ class LLMProvider(ABC):
 
             def get_default_model(self) -> str:
                 return "gpt-4"
+
+    --- Dormant mechanism-A seam (NOT implemented in the current change). ---
+    When a ``Modality`` beyond ``TEXT`` is enabled on
+    ``LLMConfig.capabilities`` (``ModelCapabilities``, ADR-0013 §9), the
+    provider-side renderer is the repurposed ``MediaProcessor``
+    (``modex_agent.utils.media_utils``): it renders each gate-accepted
+    Attachment whose ``kind`` matches an enabled modality into a native
+    multimodal content block (image → ``image_url``, document → extracted
+    text), inlined into the user message's ``content`` array alongside the
+    text block. On model rejection, the renderer strips the inline block
+    back to a text placeholder ``[image: <path>]`` / ``[doc: <path>]`` using
+    the block's ``_meta.path`` — a seamless degradation to the mechanism-B
+    path-reference form (strip/restore memory discipline).
+
+    Memory discipline (load-bearing, mechanism A): a multimodal block is
+    transient at call time only — it is stripped to a placeholder before the
+    message is persisted to the agent LLM history, never fed to memory
+    consolidation/compression, and only the current turn's attachment is
+    re-rendered; historical attachments stay as text placeholders.
+
+    This is **design only**. The framework's provider layer does not yet
+    pass multimodal content blocks through to any underlying LLM API, and
+    no ``Modality`` beyond ``TEXT`` is populated on any provider config in
+    v1. Every attachment reaches the agent as a path reference (mechanism
+    B) until a separate spec activates this seam. See ADR-0013 §9, §10,
+    §10a.
     """
 
     def __init__(self, retry_backoff_seconds: tuple[float, ...] = (2.0, 8.0)) -> None:
