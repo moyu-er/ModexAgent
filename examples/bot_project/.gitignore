@@ -55,6 +55,10 @@ config/*.local.json
 !.env.example
 !.gitattributes
 
+# Global model config (contains API key; copy config/model.example.yml)
+config/model.yml
+!config/model.example.yml
+
 # Node
 node_modules/
 webui/node_modules/

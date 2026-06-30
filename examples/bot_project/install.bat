@@ -239,8 +239,8 @@ if defined UV_EXE echo   Using uv: !UV_EXE!
 :: All venv operations must use the same path to stay in sync.
 if exist "%VENV_PYTHON%" (
     echo   Virtual environment found, checking health...
-    :: Verify the venv is actually isolated: sys.prefix must point inside it.
-    :: Do NOT import third-party packages here; only validate Python itself.
+    rem Verify the venv is actually isolated: sys.prefix must point inside it.
+    rem Do NOT import third-party packages here; only validate Python itself.
     "%VENV_PYTHON%" -c "import sys; sys.exit(0 if sys.prefix.lower() == r'%ROOT_VENV%'.lower() else 1)" >nul 2>&1
     if errorlevel 1 (
         echo   Existing venv is unhealthy ^(not isolated from system Python^), recreating...
@@ -352,15 +352,30 @@ if exist ".env" goto :env_done
 if not exist ".env.example" goto :env_done
 
 echo.
-echo [INFO] Creating .env from .env.example...
+echo [INFO] Created .env from .env.example.
 copy .env.example .env >nul
-echo.
-echo   ^>^>^> ACTION REQUIRED: Edit .env with your credentials ^<^<^<
 echo   File: %~dp0.env
-echo   Minimum required: LLM_MODEL, LLM_API_KEY, LLM_BASE_URL
+echo   Edit it only if you use integrations that read it (see the file's comments).
 echo.
 
 :env_done
+
+:: ==========================================================================
+:: 5b. Global model config
+:: ==========================================================================
+if exist "config\model.yml" goto :model_done
+if not exist "config\model.example.yml" goto :model_done
+
+echo.
+echo [INFO] Creating config\model.yml from config\model.example.yml...
+copy config\model.example.yml config\model.yml >nul
+echo.
+echo   ^>^>^> ACTION REQUIRED: Set your model via 'modexbot config' ^<^<^<
+echo   File: %~dp0config\model.yml
+echo   Minimum required: model, api_key, url
+echo.
+
+:model_done
 
 :: ==========================================================================
 :: 6. modexbot install (config wizard + frontend build)
@@ -368,8 +383,8 @@ echo.
 if "!HAS_NODE!"=="1" (
     echo.
     echo Running modexbot install ^(config check + frontend build^)...
-    :: Make sure node/npm is on this session's PATH so the child build subprocess
-    :: (modexbot -> npm via shell) inherits it; node's dir may not be on PATH yet.
+    rem Make sure node/npm is on this session PATH so the child build subprocess
+    rem - modexbot shells out to npm - inherits it; node dir may not be on PATH yet.
     call :ensure_node_on_path
     "%VENV_PYTHON%" -m modexbot install
     if errorlevel 1 (
@@ -423,14 +438,14 @@ if defined USER_PATH (
 )
 if not errorlevel 1 (
     echo   Added to user PATH.
-    :: Broadcast environment change to all running Windows processes so new
-    :: terminals and Explorer pick up the updated PATH immediately.
+    rem Broadcast environment change to all running Windows processes so new
+    rem terminals and Explorer pick up the updated PATH immediately.
     powershell -NoProfile -ExecutionPolicy Bypass -Command ^
         "[Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path', 'User'), 'User')" >nul 2>&1
-    :: Refresh current session PATH from registry (picks up the venv entry
-    :: we just wrote, plus any other recent system-wide changes).
+    rem Refresh current session PATH from registry - picks up the venv entry
+    rem we just wrote, plus any other recent system-wide changes.
     call :reload_path
-    :: Ensure the venv Scripts is in the current session PATH (belt-and-suspenders).
+    rem Ensure the venv Scripts is in the current session PATH - belt and suspenders.
     call :path_contains PATH VENV_SCRIPTS
     if "!PATH_CONTAINS!"=="0" set "PATH=!PATH!;!VENV_SCRIPTS!"
 ) else (
@@ -471,9 +486,17 @@ if "!HAS_NODE!"=="1" (
     echo    - WebUI frontend: SKIPPED ^(Node.js not available^)
 )
 echo.
-echo  Next step:
+echo  Next steps:
 echo.
-echo        modexbot start
+echo    1. Configure your model ^(sets model / api_key / url^):
+echo.
+echo          modexbot config
+echo.
+echo    2. Start the bot:
+echo.
+echo          modexbot start
+echo.
+echo  (start/restart will prompt for config if the model is unset.)
 echo.
 echo  (If 'modexbot' is not found, open a NEW terminal window first.)
 echo.

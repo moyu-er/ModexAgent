@@ -12,8 +12,8 @@ CLI entry point for the ModexAgent bot. Provides start/stop/restart/install comm
 | `__init__.py` | Package marker |
 | `__main__.py` | `python -m modexbot` entry point |
 | `cli.py` | CLI implementation — start, stop, restart, install, logs, status commands with process discovery |
-| `interactive_config.py` | Interactive configuration wizard (two-level menu) |
-| `config_env.py` | `.env` read/write helpers preserving comments |
+| `interactive_config.py` | Interactive model-config wizard (edits `config/model.yml`) |
+| `config_model.py` | `config/model.yml` read/write/check helpers (global model config) |
 | `main.py` | CLI → service bootstrap, creates and runs `BotService` |
 
 ## Commands

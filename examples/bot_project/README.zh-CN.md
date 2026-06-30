@@ -157,7 +157,7 @@ QQ 用户 / 群聊                    浏览器 (WebUI)
 | 虚拟环境 | 在项目根目录创建虚拟环境（`../../.venv`），使用 `uv venv --python 3.12`（Python 由 uv 自动下载） |
 | Python 依赖 | 安装完整框架（`..\..\.[all,dev]`）和 bot CLI（`.[webui,dev]`） |
 | 环境变量文件 | 如 `.env` 不存在，自动从 `.env.example` 复制 |
-| `modexbot install` | 运行配置向导（检查 LLM_API_KEY 等）+ 通过 `npm run build` 编译 WebUI 前端 |
+| `modexbot install` | 运行配置向导（检查 `config/model.yml`）+ 通过 `npm run build` 编译 WebUI 前端 |
 | **PATH 注册** | 提示将 venv 的 `Scripts`/`bin` 目录添加到**系统 PATH**，之后可在任意终端直接使用 `modexbot` — 无需激活 venv |
 
 > [!NOTE]
@@ -230,35 +230,32 @@ cp .env.example .env
 QQ_APP_ID=your_qq_app_id
 QQ_SECRET=your_qq_bot_secret
 
-# LLM 提供者（支持任何 OpenAI 兼容接口）
-LLM_API_KEY=your_llm_api_key
-LLM_BASE_URL=https://api.minimaxi.com/v1
-LLM_MODEL=openai/MiniMax-M2.5
-
 # MCP 服务凭证
 MCP_BEARER_TOKEN=your_modelscope_bearer_token
 MINIMAX_MCP_API_KEY=your_minimax_api_key
 ```
 
 > [!NOTE]
-> 如果只想使用 WebUI（不连 QQ），只需配置 `LLM_API_KEY`。QQ 凭据是可选的。
+> 模型配置（model / api_key / base URL / capabilities）**不在** `.env` 里，
+> 而在 `config/model.yml` —— 见下一步。
 
-#### 3. 配置 Bot 设置
+#### 3. 配置模型
 
-编辑 `config/bot_config.yml`（支持 `${ENV_VAR}` 环境变量插值）：
+模型在 `config/model.yml` 中配置（唯一真相源，从 `config/model.example.yml`
+复制）。用 `modexbot config` 交互式编辑，或手动编辑：
 
 ```yaml
-llm:
-  api_key: "${LLM_API_KEY}"
-  base_url: "${LLM_BASE_URL}"
-  model: "${LLM_MODEL}"
+model:
+  url: https://api.minimaxi.com/v1
+  api_key: your_llm_api_key      # 字面值，已 gitignore —— 不是 ${ENV} 引用
+  model: openai/MiniMax-M2.5
+  capabilities: [text, image]
   temperature: 0.7
-  max_tokens: 80000
-
-mcp:
-  enabled: true
-  config_file: "mcp.json"
+  max_tokens: 50000
 ```
+
+所有 pool 默认继承这份全局配置；`config/bot_config.yml` 与
+`config/pools/*.yml` 不再携带 `llm:` 段。
 
 #### 4. 运行
 

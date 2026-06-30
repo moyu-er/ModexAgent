@@ -168,6 +168,7 @@ def test_start_spawns_bot_process() -> None:
     with (
         patch("modexbot.cli._read_pid", return_value=None),
         patch("modexbot.cli._is_port_in_use", return_value=False),
+        patch("modexbot.cli.check_model_config", return_value=(True, [])),
         patch("modexbot.cli._launch_subprocess") as mock_launch,
     ):
         mock_proc = MagicMock()
@@ -200,6 +201,7 @@ def test_start_prints_webui_url() -> None:
     with (
         patch("modexbot.cli._read_pid", return_value=None),
         patch("modexbot.cli._is_port_in_use", return_value=False),
+        patch("modexbot.cli.check_model_config", return_value=(True, [])),
         patch("modexbot.cli._launch_subprocess") as mock_launch,
     ):
         mock_proc = MagicMock()
@@ -218,6 +220,7 @@ def test_start_no_webui_url() -> None:
     with (
         patch("modexbot.cli._read_pid", return_value=None),
         patch("modexbot.cli._is_port_in_use", return_value=False),
+        patch("modexbot.cli.check_model_config", return_value=(True, [])),
         patch("modexbot.cli._launch_subprocess") as mock_launch,
     ):
         mock_proc = MagicMock()
@@ -238,6 +241,7 @@ def test_restart_prints_webui_url() -> None:
     with (
         patch("modexbot.cli._read_pid", return_value=None),
         patch("modexbot.cli._is_port_in_use", return_value=False),
+        patch("modexbot.cli.check_model_config", return_value=(True, [])),
         patch("modexbot.cli._launch_subprocess") as mock_launch,
     ):
         mock_proc = MagicMock()
@@ -256,6 +260,7 @@ def test_restart_no_webui_url() -> None:
     with (
         patch("modexbot.cli._read_pid", return_value=None),
         patch("modexbot.cli._is_port_in_use", return_value=False),
+        patch("modexbot.cli.check_model_config", return_value=(True, [])),
         patch("modexbot.cli._launch_subprocess") as mock_launch,
     ):
         mock_proc = MagicMock()
@@ -292,7 +297,10 @@ def test_restart_validates_config_dir() -> None:
 
 def test_restart_launches_worker_child() -> None:
     """restart spawns a single worker child that calls _restart_bot."""
-    with patch("modexbot.cli._launch_subprocess") as mock_launch:
+    with (
+        patch("modexbot.cli.check_model_config", return_value=(True, [])),
+        patch("modexbot.cli._launch_subprocess") as mock_launch,
+    ):
         mock_proc = MagicMock()
         mock_proc.pid = 12345
         mock_proc.poll.return_value = None
@@ -308,6 +316,63 @@ def test_restart_launches_worker_child() -> None:
         script = mock_launch.call_args[0][0]
         assert "_restart_bot" in script
         assert "pid: 12345" in result.output
+
+
+def test_start_aborts_on_placeholder_model_config() -> None:
+    """start offers the wizard and aborts when model.yml is a placeholder."""
+    with (
+        patch("modexbot.cli._read_pid", return_value=None),
+        patch("modexbot.cli._is_port_in_use", return_value=False),
+        patch("modexbot.cli.check_model_config", return_value=(False, ["api_key"])),
+        patch("modexbot.cli._launch_subprocess") as mock_launch,
+        patch("builtins.input", return_value="n"),
+    ):
+        result = runner.invoke(
+            app, ["start", "--config", str(_default_config_dir()), "--no-webui"]
+        )
+        assert result.exit_code == 1
+        assert "incomplete" in result.output.lower()
+        assert "api_key" in result.output
+        mock_launch.assert_not_called()
+
+
+def test_restart_aborts_on_placeholder_model_config() -> None:
+    """restart offers the wizard and aborts when model.yml is a placeholder."""
+    with (
+        patch("modexbot.cli.check_model_config", return_value=(False, ["api_key"])),
+        patch("modexbot.cli._launch_subprocess") as mock_launch,
+        patch("builtins.input", return_value="n"),
+    ):
+        result = runner.invoke(
+            app, ["restart", "--config", str(_default_config_dir()), "--no-webui"]
+        )
+        assert result.exit_code == 1
+        assert "incomplete" in result.output.lower()
+        mock_launch.assert_not_called()
+
+
+def test_start_runs_wizard_then_launches_when_fixed() -> None:
+    """start launches after the wizard makes the model config complete."""
+    states = [(False, ["api_key"]), (True, [])]
+    with (
+        patch("modexbot.cli._read_pid", return_value=None),
+        patch("modexbot.cli._is_port_in_use", return_value=False),
+        patch("modexbot.cli.check_model_config", side_effect=states),
+        patch("modexbot.interactive_config.run_config_wizard") as mock_wizard,
+        patch("builtins.input", return_value="y"),
+        patch("modexbot.cli._launch_subprocess") as mock_launch,
+    ):
+        mock_proc = MagicMock()
+        mock_proc.pid = 12345
+        mock_proc.poll.return_value = None
+        mock_launch.return_value = mock_proc
+
+        result = runner.invoke(
+            app, ["start", "--config", str(_default_config_dir()), "--no-webui"]
+        )
+        assert result.exit_code == 0
+        mock_wizard.assert_called_once()
+        mock_launch.assert_called_once()
 
 
 def test_restart_bot_calls_stop_then_run() -> None:
@@ -382,7 +447,7 @@ def test_config_runs_wizard() -> None:
 def test_install_with_complete_env_builds_frontend() -> None:
     """install proceeds to build when .env LLM config is complete."""
     with (
-        patch("modexbot.cli.check_env_llm_config", return_value=(True, [])),
+        patch("modexbot.cli.check_model_config", return_value=(True, [])),
         patch("modexbot.cli._build_webui") as mock_build,
     ):
         result = runner.invoke(app, ["install"])
@@ -393,23 +458,23 @@ def test_install_with_complete_env_builds_frontend() -> None:
 def test_install_with_incomplete_env_prompts_and_exits() -> None:
     """install warns and exits when .env LLM config is incomplete."""
     with (
-        patch("modexbot.cli.check_env_llm_config", return_value=(False, ["LLM_API_KEY"])),
+        patch("modexbot.cli.check_model_config", return_value=(False, ["api_key"])),
         patch("modexbot.cli._build_webui") as mock_build,
         patch("builtins.input", return_value="n") as mock_input,
     ):
         result = runner.invoke(app, ["install"])
         assert result.exit_code == 1
         assert "incomplete" in result.output.lower()
-        assert "LLM_API_KEY" in result.output
+        assert "api_key" in result.output
         mock_input.assert_called_once()
         mock_build.assert_not_called()
 
 
 def test_install_with_incomplete_env_runs_config_then_builds() -> None:
     """install can launch config wizard and then build if env becomes complete."""
-    env_states = [(False, ["LLM_API_KEY"]), (True, [])]
+    env_states = [(False, ["api_key"]), (True, [])]
     with (
-        patch("modexbot.cli.check_env_llm_config", side_effect=env_states) as mock_check,
+        patch("modexbot.cli.check_model_config", side_effect=env_states) as mock_check,
         patch("modexbot.cli._build_webui") as mock_build,
         patch("modexbot.interactive_config.run_config_wizard") as mock_wizard,
         patch("builtins.input", return_value="y") as mock_input,
@@ -425,7 +490,7 @@ def test_install_with_incomplete_env_runs_config_then_builds() -> None:
 def test_install_with_incomplete_env_still_incomplete_after_config() -> None:
     """install exits if env is still incomplete after running config wizard."""
     with (
-        patch("modexbot.cli.check_env_llm_config", return_value=(False, ["LLM_API_KEY"])),
+        patch("modexbot.cli.check_model_config", return_value=(False, ["api_key"])),
         patch("modexbot.cli._build_webui") as mock_build,
         patch("modexbot.interactive_config.run_config_wizard") as mock_wizard,
         patch("builtins.input", return_value="y"),
@@ -440,7 +505,7 @@ def test_install_with_incomplete_env_still_incomplete_after_config() -> None:
 def test_install_with_force_passes_force_flag() -> None:
     """install --force passes force=True to _build_webui."""
     with (
-        patch("modexbot.cli.check_env_llm_config", return_value=(True, [])),
+        patch("modexbot.cli.check_model_config", return_value=(True, [])),
         patch("modexbot.cli._build_webui") as mock_build,
     ):
         result = runner.invoke(app, ["install", "--force"])
