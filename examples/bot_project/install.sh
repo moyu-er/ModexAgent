@@ -103,6 +103,26 @@ path_contains() {
     [[ ":${PATH}:" == *":${entry}:"* ]]
 }
 
+# ── Helper: discover the uv executable. uv's install location varies
+# (standalone installer -> ~/.local/bin, Homebrew -> its bin), so never assume a
+# fixed path. Probe PATH first, then known dirs, and pin the absolute path into
+# UV_EXE. All later uv calls use "$UV_EXE" instead of bare uv. Returns 0 if found.
+discover_uv() {
+    UV_EXE=""
+    if command -v uv &>/dev/null; then
+        UV_EXE="$(command -v uv)"
+        return 0
+    fi
+    local cand
+    for cand in "$HOME/.local/bin/uv" "/opt/homebrew/bin/uv" "/usr/local/bin/uv"; do
+        if [ -x "$cand" ]; then
+            UV_EXE="$cand"
+            return 0
+        fi
+    done
+    return 1
+}
+
 # ── Helper: ensure npm prefix is user-writable ───────────────────────────
 # Node's official macOS installer sets prefix to /usr/local, which is owned
 # by root. npm installs then fail with EACCES/EPERM. Fix by moving prefix
@@ -225,9 +245,10 @@ ensure_npm_prefix_usable
 # ==========================================================================
 # 2. uv
 # ==========================================================================
-if command -v uv &>/dev/null; then
-    :  # already installed
-else
+# Only install uv when none is available; reuse an existing one. After any
+# install we re-discover the real path because the location is not guaranteed.
+discover_uv || true
+if [ -z "${UV_EXE:-}" ]; then
     echo "  [INFO] uv package manager not found (required for Python dependency management)."
     echo ""
     if ! prompt_yn "Install uv automatically (official standalone installer)? [Y/n]:"; then
@@ -247,15 +268,16 @@ else
         exit 1
     fi
     reload_env
-    if ! command -v uv &>/dev/null; then
+    if ! discover_uv; then
         echo ""
-        echo "  [ERROR] uv installed but not found on PATH after reload."
+        echo "  [ERROR] uv installed but could not be located."
         echo "  Try restarting your terminal and re-running install.sh."
         exit 1
     fi
-    echo "  uv $(uv --version) installed."
+    echo "  uv installed."
     echo ""
 fi
+echo "  Using uv: $UV_EXE ($("$UV_EXE" --version 2>/dev/null))"
 
 # ==========================================================================
 # 3. Virtual environment
@@ -273,13 +295,27 @@ if [ -x "$VENV_PYTHON" ]; then
 fi
 
 if [ ! -x "$VENV_PYTHON" ]; then
-    echo "Creating virtual environment (Python 3.12)..."
-    if ! uv venv --python 3.12 "$ROOT_VENV"; then
+    echo "Creating virtual environment (uv-managed Python 3.12)..."
+    # Force uv to use ONLY its own managed Python — never the system interpreter —
+    # so the environment is reproducible and independent of any system Python.
+    export UV_PYTHON_PREFERENCE=only-managed
+
+    # Name the failing step so the user knows what broke. Both failure modes
+    # share the same remedy (the GitHub interpreter download may need a mirror).
+    venv_create_fail() {
         echo ""
-        echo "[ERROR] uv venv failed. uv will download Python 3.12 automatically."
-        echo "  Check network connectivity and retry."
+        echo "[ERROR] Failed while $1."
+        echo "  The uv-managed interpreter is downloaded from GitHub"
+        echo "  (python-build-standalone) and may be blocked or time out on some"
+        echo "  networks. Set a mirror and retry:"
+        echo "    export UV_PYTHON_INSTALL_MIRROR=<mirror-base-url>"
+        echo "    ./install.sh"
+        echo "  See https://docs.astral.sh/uv/ for the mirror URL format."
         exit 1
-    fi
+    }
+
+    "$UV_EXE" python install 3.12 || venv_create_fail "downloading uv-managed Python 3.12"
+    "$UV_EXE" venv --python 3.12 "$ROOT_VENV" || venv_create_fail "creating the virtual environment"
 fi
 
 # ==========================================================================
@@ -289,6 +325,11 @@ fi
 # different mounts) that can leave packages half-extracted. Belt-and-suspenders
 # with [tool.uv] link-mode in the root pyproject.
 export UV_LINK_MODE=copy
+
+# uv pip install runs with cwd = bot_project, whose pyproject.toml has no
+# [tool.uv] table, so the root project's mirror index would not be discovered.
+# Set it explicitly so package downloads use the mirror deterministically.
+export UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
 
 # Stop any running bot first. A running process may hold its imported files open;
 # reinstalling a package the bot imports while it runs can corrupt the install.
@@ -301,15 +342,19 @@ fi
 pip_install() {
     # $1 = extra uv flags (e.g. --reinstall) for the self-healing recovery path.
     local extra="${1:-}"
-    uv pip install $extra --python "$VENV_PYTHON" -e "../../.[all,dev]"
-    uv pip install $extra --python "$VENV_PYTHON" -e ".[webui,dev]"
+    "$UV_EXE" pip install $extra --python "$VENV_PYTHON" -e "../../.[all,dev]"
+    "$UV_EXE" pip install $extra --python "$VENV_PYTHON" -e ".[webui,dev]"
 }
+
+# Fingerprint BOTH pyproject files: most framework deps live in the root project
+# (../../), so a change there must also trigger a reinstall — the bot pyproject
+# alone would miss it.
+CUR_HASH="$(file_hash pyproject.toml)#$(file_hash ../../pyproject.toml)"
 
 NEEDS_PIP=0
 if [ ! -f "$VENV_MARKER" ]; then
     NEEDS_PIP=1
-elif [ -f "pyproject.toml" ]; then
-    CUR_HASH=$(file_hash "pyproject.toml")
+else
     STORED_HASH=$(cat "$VENV_MARKER" 2>/dev/null || echo "")
     [ "$CUR_HASH" != "$STORED_HASH" ] && NEEDS_PIP=1
 fi
@@ -317,9 +362,7 @@ fi
 if [ "$NEEDS_PIP" -eq 1 ]; then
     echo "Installing Python dependencies..."
     pip_install
-    if [ -f "pyproject.toml" ]; then
-        file_hash "pyproject.toml" > "$VENV_MARKER"
-    fi
+    printf '%s' "$CUR_HASH" > "$VENV_MARKER"
 fi
 
 # Integrity smoke check — runs even when the marker says "already installed", so
@@ -335,9 +378,7 @@ if ! "$VENV_PYTHON" -c "import aiohttp, aiohttp._cookie_helpers, aiohttp.web" >/
         echo "  Ensure the bot is stopped, then delete $ROOT_VENV and re-run install.sh."
         exit 1
     }
-    if [ -f "pyproject.toml" ]; then
-        file_hash "pyproject.toml" > "$VENV_MARKER"
-    fi
+    printf '%s' "$CUR_HASH" > "$VENV_MARKER"
 fi
 
 # ==========================================================================
