@@ -17,6 +17,16 @@ from modex_agent.core.runtime_context import (
     ToolCallRecord,
 )
 from modex_agent.core.scope import SessionScope, UserScope
+from modex_agent.core.session_id import SessionInfo
+
+
+def _session(session_id: str) -> SessionInfo:
+    """Build a SessionInfo for the manager API (which reads session.session_id).
+
+    Constructed directly (not via from_str) so the bare-id test keys carry no
+    '.' separator without tripping from_str's UserWarning.
+    """
+    return SessionInfo(session_id=session_id, agent_name="test")
 
 
 class TestInMemoryRuntimeContext:
@@ -109,8 +119,8 @@ class TestRuntimeContextManager:
 
     async def test_default_session_scope_isolation(self):
         mgr = RuntimeContextManager()
-        ctx_a = await mgr.get_context("session_1")
-        ctx_b = await mgr.get_context("session_2")
+        ctx_a = await mgr.get_context(_session("session_1"))
+        ctx_b = await mgr.get_context(_session("session_2"))
         assert ctx_a is not ctx_b
 
         await ctx_a.set("k", "v")
@@ -119,26 +129,27 @@ class TestRuntimeContextManager:
     async def test_user_scope_aggregates_sessions(self):
         mgr = RuntimeContextManager(scope=UserScope())
         # Same user_id → same scope key even with different session_id
-        ctx1 = await mgr.get_context("s1", {"user_id": "user_1"})
-        ctx2 = await mgr.get_context("s2", {"user_id": "user_1"})
+        ctx1 = await mgr.get_context(_session("s1"), {"user_id": "user_1"})
+        ctx2 = await mgr.get_context(_session("s2"), {"user_id": "user_1"})
         assert ctx1 is ctx2
 
-        ctx3 = await mgr.get_context("s3", {"user_id": "user_2"})
+        ctx3 = await mgr.get_context(_session("s3"), {"user_id": "user_2"})
         assert ctx3 is not ctx1
 
     async def test_clear_context(self):
         mgr = RuntimeContextManager()
-        ctx = await mgr.get_context("session_x")
+        ctx = await mgr.get_context(_session("session_x"))
         await ctx.record_tool_call("t", {}, "r")
         assert len(await ctx.get_tool_calls()) == 1
 
-        await mgr.clear_context("session_x")
+        await mgr.clear_context(_session("session_x"))
         assert await ctx.get_tool_calls() == []
 
     async def test_manager_reuses_store(self):
         store = InMemoryRuntimeContextStore()
         mgr = RuntimeContextManager(store=store)
-        ctx = await mgr.get_context("s1")
-        # Same store → same instance when accessed directly
+        ctx = await mgr.get_context(_session("s1"))
+        # Same store + SessionScope → scope_key is the session_id, so a direct
+        # store lookup by that id returns the same instance.
         ctx2 = await store.get_or_create("s1")
         assert ctx is ctx2

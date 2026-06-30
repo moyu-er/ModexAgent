@@ -283,7 +283,7 @@ class TestToolManagerIntegration:
         assert "scout" in desc, f"expected 'scout' in description, got: {desc}"
         assert "Fast recon" in desc, f"expected 'Fast recon' in description, got: {desc}"
         assert "worker" in desc, f"expected 'worker' in description, got: {desc}"
-        assert "Dispatch a task" in desc  # base instruction preserved
+        assert "Send a message to another agent" in desc  # base instruction preserved
 
 
 class TestSendToAgentToolDescription:
