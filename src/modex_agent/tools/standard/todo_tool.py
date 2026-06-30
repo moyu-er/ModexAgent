@@ -78,14 +78,22 @@ class TodoWriteTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Maintain a structured task list for this session.\n"
-            "Status lifecycle: pending → in_progress → completed/cancelled.\n"
-            "NEVER skip in_progress. Mark it BEFORE starting work; mark completed ONLY after "
-            "the work is done and verified.\n"
-            "Keep one in_progress item when possible. List order is execution order. "
-            "Update in real time; don't batch completions.\n"
-            "Use for 3+ distinct steps or multiple user tasks. Skip for trivial or "
-            "informational requests.\n"
+            "Plan and track a multi-step task as a structured, evolving checklist.\n"
+            "\n"
+            "WHEN TO USE\n"
+            "- The task has 3+ distinct steps, or the user gave several tasks at once.\n"
+            "- The work spans multiple files/areas, or must be tracked across several turns.\n"
+            "- A visible plan helps you and the user follow progress without losing context.\n"
+            "Create the list BEFORE starting such work — not after.\n"
+            "SKIP for trivial, single-step, or purely informational requests.\n"
+            "\n"
+            "DISCIPLINE\n"
+            "- Lifecycle: pending → in_progress → completed/cancelled.\n"
+            "- Mark a task in_progress BEFORE starting it; mark completed ONLY after it is "
+            "done and verified. Never skip in_progress.\n"
+            "- Keep at most one in_progress item. List order is execution order.\n"
+            "- Update in real time; don't batch completions or wait until the end.\n"
+            "\n"
             "Full-replace: send the entire list every call. Returns active items only."
         )
 
@@ -138,7 +146,8 @@ class TodoReadTool(Tool):
     def description(self) -> str:
         return (
             "Return active tasks (pending + in_progress) in execution order. "
-            "Call when unsure what to do next or the list may be stale."
+            "Call when resuming work, when unsure what to do next, or when the list "
+            "may be stale."
         )
 
     @property

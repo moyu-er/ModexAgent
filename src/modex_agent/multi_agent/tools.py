@@ -126,17 +126,26 @@ class CommunicationTargetStore:
 
     def _build_normal(self) -> str:
         lines = [
-            "Dispatch a task to another agent for BACKGROUND execution.",
+            "Send a message to another agent: coordinate, ask, reply, or hand off work.",
             "",
-            "This tool is ASYNCHRONOUS — the target agent works independently.",
-            "Do NOT wait or try to read result files after calling immediately.",
-            "Just wait for the notification that arrives when the agent finishes.",
+            "The target sees nothing you say outside of `content` — put the full message",
+            "there. When it finishes, its result comes back to you AUTOMATICALLY as a",
+            "completion notification (with a summary and a link to its output); the target",
+            "does not need to call anything to reply.",
+            "",
+            "Use this tool to:",
+            "  - exchange information, questions, decisions, or status with another agent;",
+            "  - hand off a self-contained subtask when work is better split off to a specialist.",
+            "",
+            "ASYNCHRONOUS: the target works on its own. Don't block, poll, or read output",
+            "files right after calling — wait for the completion notification, then read",
+            "the referenced Output file.",
             "",
         ]
         if not self._targets:
             lines.append("No targets currently available.")
             return "\n".join(lines)
-        lines.append("Available targets (you MUST use the exact name as target_agent):")
+        lines.append("Available targets (use the exact name as target_agent):")
         for t in self._targets.values():
             entry = f"  - {t.name} ({t.kind.value})"
             if t.description:
@@ -145,12 +154,10 @@ class CommunicationTargetStore:
         lines.extend(
             [
                 "",
-                "Usage:",
+                "Parameters:",
                 "  target_agent: Exact name from the list above.",
-                "  content: Complete task description with all needed context.",
-                "  invocation_id: Pass null to start a new task. The tool result will include an invocation_id. To continue an existing session, pass that exact invocation_id back.",
-                "",
-                "The tool result shows trace/output paths and the invocation_id — these are for LATER reference only. The files are NOT ready yet. Wait for the notification, then read the Output file for the deliverable.",
+                "  content: The full message or task — self-contained, since it's all the target sees.",
+                "  invocation_id: Pass null to start a new exchange. The tool result includes an invocation_id; pass that exact id back to continue the same exchange.",
             ]
         )
         return "\n".join(lines)
