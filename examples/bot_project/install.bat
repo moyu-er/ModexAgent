@@ -67,6 +67,50 @@ goto :skip_path_contains
 :skip_path_contains
 
 :: ==========================================================================
+:: Helper: discover the uv executable. uv's install location varies (standalone
+:: installer -> %USERPROFILE%\.local\bin, winget -> WinGet Links), so never
+:: assume a fixed path. Probe PATH first, then known dirs, and pin the absolute
+:: path into UV_EXE. All later uv calls use "%UV_EXE%" instead of bare uv.
+:: ==========================================================================
+goto :skip_discover_uv
+:discover_uv
+    set "UV_EXE="
+    for /f "delims=" %%p in ('where uv 2^>nul') do if not defined UV_EXE set "UV_EXE=%%p"
+    if defined UV_EXE goto :eof
+    if exist "%USERPROFILE%\.local\bin\uv.exe" (
+        set "UV_EXE=%USERPROFILE%\.local\bin\uv.exe"
+        goto :eof
+    )
+    if exist "%LOCALAPPDATA%\Microsoft\WinGet\Links\uv.exe" (
+        set "UV_EXE=%LOCALAPPDATA%\Microsoft\WinGet\Links\uv.exe"
+        goto :eof
+    )
+    if exist "%LOCALAPPDATA%\Programs\uv\uv.exe" (
+        set "UV_EXE=%LOCALAPPDATA%\Programs\uv\uv.exe"
+        goto :eof
+    )
+    goto :eof
+:skip_discover_uv
+
+:: ==========================================================================
+:: Helper: ensure Node's bin directory is on the CURRENT session PATH so the
+:: child "modexbot install" subprocess (which shells out to npm) can find it.
+:: Node's install dir varies, so probe known locations instead of assuming.
+:: ==========================================================================
+goto :skip_ensure_node
+:ensure_node_on_path
+    where node >nul 2>&1
+    if not errorlevel 1 goto :eof
+    set "_NODEDIR="
+    if exist "%ProgramFiles%\nodejs\node.exe" set "_NODEDIR=%ProgramFiles%\nodejs"
+    if not defined _NODEDIR if exist "%ProgramFiles(x86)%\nodejs\node.exe" set "_NODEDIR=%ProgramFiles(x86)%\nodejs"
+    if not defined _NODEDIR if exist "%LOCALAPPDATA%\Microsoft\WinGet\Links\node.exe" set "_NODEDIR=%LOCALAPPDATA%\Microsoft\WinGet\Links"
+    if defined _NODEDIR set "PATH=!PATH!;!_NODEDIR!"
+    set "_NODEDIR="
+    goto :eof
+:skip_ensure_node
+
+:: ==========================================================================
 :: 1. Node.js
 :: ==========================================================================
 set "HAS_NODE=0"
@@ -94,9 +138,10 @@ echo   WinGet detected - can install Node.js automatically.
 set /p "NODE_INSTALL=Install Node.js LTS via winget now? [Y/n]: "
 if /i "!NODE_INSTALL!"=="n" goto :node_manual
 echo   Installing Node.js LTS via winget...
-winget install -e --id OpenJS.NodeJS.LTS --source winget
+winget install -e --id OpenJS.NodeJS.LTS --source winget --accept-source-agreements --accept-package-agreements
 if errorlevel 1 goto :node_winget_fail
 call :reload_path
+call :ensure_node_on_path
 where node >nul 2>&1
 if errorlevel 1 goto :node_winget_fail
 set "HAS_NODE=1"
@@ -128,32 +173,35 @@ echo.
 :: ==========================================================================
 :: 2. uv
 :: ==========================================================================
-where uv >nul 2>&1
-if not errorlevel 1 goto :uv_done
+:: Only install uv when none is available. If one already exists (PATH or a
+:: known dir), reuse it. After any install we re-discover the real path because
+:: the install location is not guaranteed.
+call :discover_uv
+if defined UV_EXE goto :uv_done
 
 echo   [INFO] uv package manager not found (required for Python dependency management^).
 echo.
-set /p "UV_CHOICE=Install uv automatically (official standalone installer^)? [Y/n]: "
+set /p "UV_CHOICE=Install uv automatically? [Y/n]: "
 if /i "!UV_CHOICE!"=="n" goto :uv_denied
 
 echo.
 echo   Installing uv...
-:: Try winget first (no PowerShell dependency), fall back to official installer
+:: winget first (does not pull uv.exe from GitHub), fall back to official installer
 where winget >nul 2>&1
 if not errorlevel 1 (
-    winget install -e --id astral-sh.uv --source winget
-    if not errorlevel 1 goto :uv_installed
+    winget install -e --id astral-sh.uv --source winget --accept-source-agreements --accept-package-agreements
+    call :reload_path
+    call :discover_uv
+    if defined UV_EXE goto :uv_ok
 )
-:: Official PowerShell installer (works on all Windows 10+)
+:: Official PowerShell installer (pulls uv.exe from GitHub releases)
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 if errorlevel 1 goto :uv_failed
-
-:uv_installed
-
 call :reload_path
-where uv >nul 2>&1
-if errorlevel 1 goto :uv_not_on_path
+call :discover_uv
+if not defined UV_EXE goto :uv_not_on_path
 
+:uv_ok
 echo   uv installed successfully.
 echo.
 goto :uv_done
@@ -176,12 +224,13 @@ exit /b 1
 
 :uv_not_on_path
 echo.
-echo   [ERROR] uv installed but not found on PATH after reload.
+echo   [ERROR] uv installed but could not be located.
 echo   Try restarting your terminal and re-running install.bat.
 popd
 exit /b 1
 
 :uv_done
+if defined UV_EXE echo   Using uv: !UV_EXE!
 
 :: ==========================================================================
 :: 3. Virtual environment
@@ -202,27 +251,27 @@ if exist "%VENV_PYTHON%" (
     )
 )
 
-echo Creating virtual environment...
-:: Use miniforge Python if available (avoids corporate SSL issues with GitHub downloads)
-if exist "D:\programs\miniforge\python.exe" (
-    echo   Using system Python ...
-    "D:\programs\miniforge\python.exe" -m venv "%ROOT_VENV%"
-    if not errorlevel 1 goto :venv_skip_create
-)
+echo Creating virtual environment (uv-managed Python 3.12)...
+:: Force uv to use ONLY its own managed Python — never the system interpreter —
+:: so the environment is reproducible and independent of whatever Python (if
+:: any) happens to be installed on this machine.
+set "UV_PYTHON_PREFERENCE=only-managed"
+"%UV_EXE%" python install 3.12
+if errorlevel 1 goto :py_download_fail
+"%UV_EXE%" venv --python 3.12 "%ROOT_VENV%"
+if errorlevel 1 goto :py_download_fail
+goto :venv_skip_create
 
-:: Try uv with existing Python first
-uv venv "%ROOT_VENV%" 2>nul
-if not errorlevel 1 goto :venv_skip_create
-
-:: Last resort: uv downloads Python (may fail on corporate SSL intercepted networks)
-uv venv --python 3.12 "%ROOT_VENV%"
-if errorlevel 1 (
-    echo.
-    echo [ERROR] Failed to create virtual environment.
-    echo   Check network connectivity and retry.
-    popd
-    exit /b 1
-)
+:py_download_fail
+echo.
+echo [ERROR] Could not obtain uv-managed Python 3.12.
+echo   The interpreter is downloaded from GitHub (python-build-standalone^) and
+echo   may be blocked or time out on some networks. Set a mirror and re-run:
+echo     set "UV_PYTHON_INSTALL_MIRROR=^<mirror-base-url^>"
+echo     install.bat
+echo   See https://docs.astral.sh/uv/ for the mirror URL format.
+popd
+exit /b 1
 
 :venv_skip_create
 
@@ -233,6 +282,11 @@ if errorlevel 1 (
 :: another drive) that can leave packages half-extracted. Belt-and-suspenders
 :: with [tool.uv] link-mode in the root pyproject.
 set "UV_LINK_MODE=copy"
+
+:: uv pip install runs with cwd = bot_project, whose pyproject.toml has no
+:: [tool.uv] table, so the root project's mirror index would not be discovered.
+:: Set it explicitly so package downloads use the mirror deterministically.
+set "UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple"
 
 :: Stop any running bot first. On Windows a process holds its imported .pyd/.py
 :: files open; reinstalling aiohttp (or any package the bot imports) while it is
@@ -246,19 +300,22 @@ if exist "%BOT_PID_FILE%" (
 set "NEEDS_PIP=0"
 if not exist "%VENV_MARKER%" set "NEEDS_PIP=1"
 
-if exist "pyproject.toml" (
-    for %%I in ("pyproject.toml") do set "CUR_TS=%%~tI"
-    if exist "%VENV_MARKER%" (
-        set /p STORED_TS=<"%VENV_MARKER%"
-        if not "!CUR_TS!"=="!STORED_TS!" set "NEEDS_PIP=1"
-    )
+:: Fingerprint BOTH pyproject files: most framework deps live in the root
+:: project (..\..\), so a change there must also trigger a reinstall — the bot
+:: pyproject alone would miss it.
+set "CUR_TS="
+for %%I in ("pyproject.toml") do set "CUR_TS=!CUR_TS!%%~tI#"
+for %%I in ("..\..\pyproject.toml") do set "CUR_TS=!CUR_TS!%%~tI"
+if exist "%VENV_MARKER%" (
+    set /p STORED_TS=<"%VENV_MARKER%"
+    if not "!CUR_TS!"=="!STORED_TS!" set "NEEDS_PIP=1"
 )
 
 if "!NEEDS_PIP!"=="1" (
     echo Installing Python dependencies...
     call :pip_install
     if errorlevel 1 goto :pip_failed
-    for %%I in ("pyproject.toml") do echo %%~tI> "%VENV_MARKER%"
+    >"%VENV_MARKER%" echo !CUR_TS!
 )
 
 :: Integrity smoke check — runs even when the marker says "already installed",
@@ -278,7 +335,7 @@ if errorlevel 1 (
         popd
         exit /b 1
     )
-    for %%I in ("pyproject.toml") do echo %%~tI> "%VENV_MARKER%"
+    >"%VENV_MARKER%" echo !CUR_TS!
 )
 goto :pip_done
 
@@ -311,6 +368,9 @@ echo.
 if "!HAS_NODE!"=="1" (
     echo.
     echo Running modexbot install ^(config check + frontend build^)...
+    :: Make sure node/npm is on this session's PATH so the child build subprocess
+    :: (modexbot -> npm via shell) inherits it; node's dir may not be on PATH yet.
+    call :ensure_node_on_path
     "%VENV_PYTHON%" -m modexbot install
     if errorlevel 1 (
         echo.
@@ -440,8 +500,8 @@ exit /b 0
 :: ==========================================================================
 :pip_install
 set "_PIP_EXTRA=%~1"
-uv pip install %_PIP_EXTRA% --python "%VENV_PYTHON%" -e "..\..\.[all,dev]"
+"%UV_EXE%" pip install %_PIP_EXTRA% --python "%VENV_PYTHON%" -e "..\..\.[all,dev]"
 if errorlevel 1 exit /b 1
-uv pip install %_PIP_EXTRA% --python "%VENV_PYTHON%" -e ".[webui,dev]"
+"%UV_EXE%" pip install %_PIP_EXTRA% --python "%VENV_PYTHON%" -e ".[webui,dev]"
 if errorlevel 1 exit /b 1
 exit /b 0
