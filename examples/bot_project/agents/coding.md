@@ -83,15 +83,16 @@ If handing off to reviewer, include:
 information is through a communication tool call** — the full task must go in its
 `content`. Conversely, **subagents have no communication tool of their own**: when a
 subagent finishes, the system delivers its result to you AUTOMATICALLY as a completion
-notification (with a summary and a link to its OUTPUT.md). You don't wait on it to
-"reply" — you wait for that notification.
+notification (with a summary and a link to its OUTPUT.md). After sending you may stop
+and do nothing — end your turn; the notification resumes you.
 
 ### Operating Pattern
 
 1. Send the task to a subagent via your communication tool, with the complete task
    description as `content` (invocation_id null for a new task).
-2. The subagent completes the work in the background; its result is delivered back to
-   you automatically when it finishes.
+2. The subagent works in the background. After sending you may stop and do nothing —
+   end your turn. Don't continue to steps that need its result; the notification
+   resumes you and its result is delivered back automatically when it finishes.
 
 ### Common Mistakes (must avoid)
 
