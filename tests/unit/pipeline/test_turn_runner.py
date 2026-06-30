@@ -311,6 +311,83 @@ def test_is_subagent_false_without_descriptor() -> None:
 # ---------------------------------------------------------------------------
 
 
+async def test_process_locked_binds_workspace_root_from_manager(
+    tmp_path, monkeypatch
+) -> None:
+    """Regression (broker-boundary contextvar loss): the turn executes on the
+    pool's broker-consumer task, which does NOT inherit the dispatcher's
+    ``bind_workspace_root`` across the broker queue. ``process_locked`` must
+    re-bind the active workspace root (resolved from ``workspace_manager``, a
+    contextvar-independent per-workspace source) so attachment resolution
+    (mechanism A inline images + mechanism B path references) resolves against
+    the real workspace root — NOT the process CWD (the bot install dir).
+
+    Without the bind, ``resolve_workspace_root()`` falls back to ``Path.cwd()``
+    and every image silently degrades to ``<missing image>`` in non-HOME
+    workspaces (where CWD ≠ workspace root).
+    """
+    from modex_agent.workspace.runtime import resolve_workspace_root
+
+    ws_root = tmp_path / "workspace"
+    ws_root.mkdir()
+    # Process CWD is elsewhere entirely (mirrors prod: bot install dir).
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    seen: dict[str, Any] = {}
+
+    builder = MagicMock(spec=TurnContextBuilder)
+    builder.build_turn_request = AsyncMock(
+        return_value=MagicMock(
+            user_content=None,
+            append_user_message=True,
+            trigger_agent=True,
+            approval_action=None,
+            command_result=None,
+        )
+    )
+
+    async def _capture_preprocess(*args: Any, **kwargs: Any):
+        # Mechanism B (_attachment_reference) resolves paths here — capture the
+        # bound root at exactly this point in the turn.
+        seen["ws_root"] = resolve_workspace_root()
+        return ("hi", [], None)
+
+    builder.preprocess = AsyncMock(side_effect=_capture_preprocess)
+    builder.assemble = AsyncMock(return_value=ContextState())
+    builder.build_runtime_and_context = MagicMock(
+        return_value=(_make_agent_context(), MagicMock())
+    )
+
+    approval = MagicMock(spec=ApprovalRenderer)
+    approval.detect = AsyncMock(return_value=(False, None))
+
+    # Per-workspace fixed resources (contextvar-independent) — the same source
+    # _resolve_pool_data already reads. pool_name stays None so pool_data is None.
+    ws_resources = MagicMock()
+    ws_resources.workspace_root = ws_root
+    ws_resources.pool_data = {}
+    workspace_manager = MagicMock()
+    workspace_manager.resolve_workspace.return_value = ws_resources
+
+    runner = _make_runner(agent=_OkAgent(), builder=builder, approval=approval)
+    runner._workspace_manager = workspace_manager
+
+    input_msg = InputMessage(content="hi", session=SessionInfo.from_str("s1.main"))
+    await runner.process_locked(
+        input_msg,
+        "s1",
+        None,
+        session=SessionInfo.from_str("s1.main"),
+    )
+
+    assert seen["ws_root"].resolve() == ws_root.resolve(), (
+        "process_locked did not bind the workspace root from workspace_manager; "
+        "attachment resolution would fall back to the process CWD"
+    )
+
+
 async def test_process_locked_runs_full_flow_and_returns_result() -> None:
     """process_locked composes builder + approval + execute_turn end-to-end."""
     builder = MagicMock(spec=TurnContextBuilder)

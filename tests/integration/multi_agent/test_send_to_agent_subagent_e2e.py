@@ -84,8 +84,13 @@ class _FakePoolData:
 
 
 class _FakeWorkspace:
-    def __init__(self, pool_data: dict[str, _FakePoolData]) -> None:
+    def __init__(
+        self, pool_data: dict[str, _FakePoolData], workspace_root: Path | None = None
+    ) -> None:
         self.pool_data = pool_data
+        # Satisfies WorkspaceResources.workspace_root — process_locked binds it
+        # per turn. Defaults to cwd when the test doesn't care about it.
+        self.workspace_root = workspace_root if workspace_root is not None else Path.cwd()
 
 
 class _FakeWorkspaceManager:
@@ -189,7 +194,8 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
         base_system_prompt="MAIN PROMPT — must NOT leak into subagent"
     )
     ws = _FakeWorkspace(
-        {"main": _FakePoolData(runtime_dir, memory_dir, main_ctx_mgr)}
+        {"main": _FakePoolData(runtime_dir, memory_dir, main_ctx_mgr)},
+        workspace_root=tmp_path / "workspace",
     )
     workspace_manager = _FakeWorkspaceManager(ws)
 

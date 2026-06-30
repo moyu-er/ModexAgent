@@ -132,3 +132,13 @@ class PoolWorkspaceResources(WorkspaceResources):
         = <this R>`` at creation, so per-turn resolution always lands back here.
         """
         return self
+
+    @property
+    def workspace_root(self) -> Path:
+        """The workspace working dir — what the framework binds per turn.
+
+        Satisfies ``WorkspaceResources.workspace_root``; identical to ``target``
+        and to the ``WorkspaceHandleRootProvider`` root that scopes file/shell
+        tools, so attachment resolution and tool scoping share one root.
+        """
+        return self.target

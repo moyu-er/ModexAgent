@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -34,6 +35,21 @@ class WorkspaceResources(ABC):
     """
 
     pool_data: Mapping[str, PoolDataSnapshot]
+
+    @property
+    @abstractmethod
+    def workspace_root(self) -> Path:
+        """Absolute working-directory root of this workspace.
+
+        The framework binds this as the per-turn workspace root contextvar
+        (``bind_workspace_root``) on the turn-execution task. That task is the
+        pool's broker-consumer, which does NOT inherit the business
+        dispatcher's bind across the broker queue; without re-binding here,
+        attachment path resolution (mechanism A inline images + mechanism B
+        path references) would fall back to the process CWD and miss the real
+        files in any non-home workspace.
+        """
+        ...
 
 
 class WorkspaceManager(ABC):
