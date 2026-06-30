@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from modex_agent.media.models import Attachment
+from modex_agent.workspace.runtime import resolve_workspace_root
 
 # 可选依赖 — 顶层一次性 import，避免每次提取都 try/import
 try:
@@ -253,7 +254,14 @@ def build_inline_image_block(att: Attachment) -> list[dict[str, Any]]:
     """
     caption = _inline_caption(att)
     try:
-        p = Path(att.path)
+        # Resolve the record's workspace-relative ``path`` against the turn's
+        # bound workspace root — identical to mechanism B's
+        # ``_attachment_reference`` (``(ws_root / att.path).resolve()``). The bot
+        # process CWD is NOT the workspace root, so reading ``Path(att.path)``
+        # relative to CWD would miss the real file and silently degrade every
+        # inline image to ``<missing image>``. For an already-absolute path
+        # pathlib leaves it unchanged, so this is safe for both locators.
+        p = (resolve_workspace_root() / att.path).resolve()
         raw = p.read_bytes()
     except OSError:
         return [
