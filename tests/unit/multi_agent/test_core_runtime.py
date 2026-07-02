@@ -162,7 +162,6 @@ async def test_agent_pool_session_cap_evicts_lru_after_touching_oldest(any_broke
     pool = AgentPool(
         broker=any_broker,
         agent_factory=MagicMock(),
-        enable_inbox_polling=False,
         retention=SessionRetentionPolicy(max_sessions_per_subagent=2),
     )
     pool._agents["worker"] = fake_instance
@@ -188,7 +187,6 @@ async def test_session_activity_records_created_at_and_last_active(any_broker):
     pool = AgentPool(
         broker=any_broker,
         agent_factory=MagicMock(),
-        enable_inbox_polling=False,
     )
     try:
         pool._track_session("conv:worker:inv", "worker", is_dynamic=True)
@@ -220,7 +218,6 @@ async def test_try_evict_if_stale_is_ttl_only_and_does_not_cap_evict(any_broker)
     pool = AgentPool(
         broker=any_broker,
         agent_factory=MagicMock(),
-        enable_inbox_polling=False,
         retention=SessionRetentionPolicy(max_sessions_per_subagent=2, ttl_seconds=99999),
     )
     pool._agents["worker"] = fake_instance

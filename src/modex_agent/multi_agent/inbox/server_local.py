@@ -1,4 +1,5 @@
 """基于本地文件的 Inbox Server 实现。"""
+from __future__ import annotations
 
 import asyncio
 import json
@@ -198,12 +199,18 @@ class LocalFileInboxServer(InboxServer):
         """扫描工作目录，返回所有存在 pending.jsonl 文件的会话 ID。"""
         sessions = []
         for item in self._workspace.iterdir():
-            if item.is_dir() and (item / "pending.jsonl").exists():
-                # 尝试从安全目录名还原原始 session_id
-                sessions.append(
-                    self._session_id_from_pending(item / "pending.jsonl")
-                    or self._unsafe_dir_name(item.name)
-                )
+            if not item.is_dir():
+                continue
+            pending_path = item / "pending.jsonl"
+            if not pending_path.exists():
+                continue
+            try:
+                text = pending_path.read_text(encoding="utf-8")
+            except OSError:
+                text = ""
+            sessions.append(
+                self._session_id_from_text(text) or self._unsafe_dir_name(item.name)
+            )
         return sessions
 
     async def sessions_with_pending(self) -> list[str]:
@@ -219,22 +226,19 @@ class LocalFileInboxServer(InboxServer):
             pending_path = item / "pending.jsonl"
             if not pending_path.exists():
                 continue
-            # 与 count() 一致：统计非空行，>0 才视为有 pending。
+            # 与 count() 一致：统计非空行，>0 才视为有 pending。Read once and
+            # reuse the text for the non-empty check AND session-id recovery
+            # (avoids a second read via _session_id_from_pending).
             text = pending_path.read_text(encoding="utf-8")
             if not any(line.strip() for line in text.split("\n")):
                 continue
             sessions.append(
-                self._session_id_from_pending(pending_path)
-                or self._unsafe_dir_name(item.name)
+                self._session_id_from_text(text) or self._unsafe_dir_name(item.name)
             )
         return sessions
 
-    def _session_id_from_pending(self, pending_path: Path) -> str | None:
-        """Read the original session ID from pending message metadata."""
-        try:
-            text = pending_path.read_text(encoding="utf-8")
-        except OSError:
-            return None
+    def _session_id_from_text(self, text: str) -> str | None:
+        """Recover the original session_id from the first pending record."""
         for line in text.splitlines():
             if not line.strip():
                 continue

@@ -6,10 +6,11 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from modex_agent.core.types import MessageRole
 from modex_agent.hook.abc import BeforeIterationHook, BeforeTurnHook
+from modex_agent.multi_agent.message_type import AgentMessageType
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
@@ -63,7 +64,7 @@ class InboxFlushHook(BeforeTurnHook, BeforeIterationHook):
         messages = await self._consumer.consume(
             session_id,
             limit=self._max_messages,
-            only_types={"task_request", "subagent_result", "agent_message"},
+            only_types=AgentMessageType.fold_eligible(),
         )
         if not messages:
             return False

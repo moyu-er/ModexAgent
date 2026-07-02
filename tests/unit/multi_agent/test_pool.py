@@ -36,7 +36,6 @@ async def pool_with_bus():
         agent_factory=MagicMock(),
         agent_bus=bus,
         inbox_consumer=consumer,
-        enable_inbox_polling=False,
     )
     yield p
     await p.shutdown_all(timeout=0.1)
@@ -50,7 +49,6 @@ class TestRunDispatch:
         p = AgentPool(
             broker=_FakeBroker(),
             agent_factory=MagicMock(),
-            enable_inbox_polling=False,
         )
         yield p
         await p.shutdown_all(timeout=0.1)
@@ -96,7 +94,6 @@ class TestRegisterResidentTakesInstance:
         p = AgentPool(
             broker=_FakeBroker(),
             agent_factory=MagicMock(),
-            enable_inbox_polling=False,
         )
         yield p
         await p.shutdown_all(timeout=0.1)
@@ -130,7 +127,6 @@ class TestRegisterResidentTakesInstance:
             agent_factory=MagicMock(),
             session_factory=factory,
             session_registry=registry,
-            enable_inbox_polling=False,
         )
 
         # The id that _create_dynamic_subagent already computed and put on the
@@ -202,7 +198,7 @@ class TestSubmitInputAndPollerHelpers:
 
         await pool.submit_input(sid, msg)
 
-        assert await pool._agent_bus.has_pending(sid)
+        assert sid in await pool._agent_bus.sessions_with_pending()
         envs = await pool._agent_bus.consume(sid, limit=10)
         assert envs, "expected one envelope"
         env = envs[0]

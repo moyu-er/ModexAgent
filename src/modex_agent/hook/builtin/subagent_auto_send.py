@@ -209,6 +209,7 @@ class SubagentAutoSendHook(FinallyTurnHook):
         """Send XML notification to parent agent's inbox."""
         from modex_agent.multi_agent.address import AgentAddress
         from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+        from modex_agent.multi_agent.message_type import AgentMessageType
 
         session_id = str(ctx.session)
         invocation_id = ctx.session.session_id_prefix
@@ -229,12 +230,12 @@ class SubagentAutoSendHook(FinallyTurnHook):
         envelope = AgentMessageEnvelope(
             payload={
                 "content": xml,
-                "message_type": "agent_result",
+                "message_type": AgentMessageType.AGENT_RESULT,
                 "metadata": {"agent_type": self._self_name, "format": "xml"},
             },
             source=AgentAddress(name=self._self_name),
             target=AgentAddress(name=self._parent_name),
-            message_type="agent_result",
+            message_type=AgentMessageType.AGENT_RESULT,
             session_id=session_id,
             agent_session_id=inbox_key,
             invocation_id=invocation_id,

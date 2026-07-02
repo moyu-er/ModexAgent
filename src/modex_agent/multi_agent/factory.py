@@ -199,14 +199,22 @@ class DefaultAgentFactory(AgentFactory):
 
         agent_hooks: list[Any] = list(self._default_hooks) + list(hooks or [])
 
-        # Auto-inject InboxFlushHook (BEFORE pipeline construction)
-        if descriptor.inbox_strategy != "none" and self._inbox_consumer is not None:
-            agent_hooks.append(
-                InboxFlushHook(
-                    consumer=self._inbox_consumer,
-                    agent_name=descriptor.address.name,
-                )
+        # InboxFlushHook is auto-injected for every agent whose
+        # ``inbox_strategy != "none"`` and whose factory has a consumer. It is
+        # added to ``pipeline.hook_runner`` AFTER construction (below) — NOT to
+        # ``agent_hooks``, because ``AgentPipeline`` stores that list on
+        # ``pipeline.hooks``, which the turn loop never dispatches (only
+        # ``hook_runner`` is dispatched via ``runtime.hooks``). Putting it on
+        # the runner here is the single wiring point for BOTH main and
+        # subagent fold-in; pool_builder no longer adds a separate copy.
+        auto_inbox_flush = (
+            InboxFlushHook(
+                consumer=self._inbox_consumer,
+                agent_name=descriptor.address.name,
             )
+            if descriptor.inbox_strategy != "none" and self._inbox_consumer is not None
+            else None
+        )
 
         # Subagent governance: build a lightweight chain (tool chain repair +
         # final legality) from the template's MemoryConfig. Main agents
@@ -298,13 +306,18 @@ class DefaultAgentFactory(AgentFactory):
         from modex_agent.hook import HookErrorPolicy, HookSpec
         from modex_agent.trace import TraceCollectorHook
 
-        trace_hook = TraceCollectorHook()
+        # Hooks that must be DISPATCHED (the turn loop only runs hook_runner,
+        # never the pipeline.hooks list) are added here as HookSpecs.
+        live_hooks = [TraceCollectorHook()]
+        if auto_inbox_flush is not None:
+            live_hooks.append(auto_inbox_flush)
         if pipeline.hook_runner is not None:
-            pipeline.hook_runner.add(
-                HookSpec(hook=trace_hook, on_error=HookErrorPolicy.LOG)
-            )
+            for hook in live_hooks:
+                pipeline.hook_runner.add(
+                    HookSpec(hook=hook, on_error=HookErrorPolicy.LOG)
+                )
         else:
-            pipeline.hooks.append(trace_hook)
+            pipeline.hooks.extend(live_hooks)
 
         return AgentInstance(
             descriptor=descriptor,

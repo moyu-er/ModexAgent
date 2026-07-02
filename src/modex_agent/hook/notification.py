@@ -90,12 +90,13 @@ class AgentNotificationService:
 
         from modex_agent.multi_agent.address import AgentAddress
         from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+        from modex_agent.multi_agent.message_type import AgentMessageType
 
         envelope = AgentMessageEnvelope(
-            payload={"content": xml, "message_type": "agent_result"},
+            payload={"content": xml, "message_type": AgentMessageType.AGENT_RESULT},
             source=AgentAddress(name=ctx.session.agent_name),
             target=AgentAddress(name=parent_name),
-            message_type="agent_result",
+            message_type=AgentMessageType.AGENT_RESULT,
             session_id=str(ctx.session),
             agent_session_id=inbox_key,
         )

@@ -1,4 +1,3 @@
-# framework/multi_agent/template_registry.py
 """AgentTemplateRegistry — scans and loads per-pool subagent templates."""
 
 from __future__ import annotations

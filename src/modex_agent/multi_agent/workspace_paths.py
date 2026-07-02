@@ -1,9 +1,13 @@
 """WorkspacePathResolver — workspace-aware path resolution for agent construction.
 
-Two consumers (ADR-0015 D5/D7): the service ack (path strings when
-has_output=True) and AgentTemplate.materialize (mkdir output/trace dirs).
-Resolution prefers the active workspace's pool_data; ctor args are fallbacks
-(used by tests and non-workspace wiring).
+Exposes the workspace-rooted base dirs (runtime_dir / memory_dir /
+pruned_manager) consumed by AgentTemplate.materialize and the communication
+service ack. Per-session file paths (output/<sid>/OUTPUT.md, trace/<sid>)
+are assembled by their callers — they carry mkdir side-effects or
+dir-vs-file distinctions that do not belong here. Resolution prefers the
+active workspace's pool_data; ctor args are fallbacks (tests / non-workspace
+wiring). None of these methods ever synthesizes a process-CWD path, which
+would leak across workspaces.
 """
 
 from __future__ import annotations
@@ -64,26 +68,6 @@ class WorkspacePathResolver:
         if pool_data is not None and pool_data.pruned_manager is not None:
             return pool_data.pruned_manager
         return self._fallback_pruned_manager
-
-    def output_path(self, session_id: str) -> Path | None:
-        """Per-session OUTPUT.md path under the resolved runtime_dir.
-
-        Returns None when runtime_dir is unresolved (no workspace pool_data
-        and no ctor fallback). The caller — AgentTemplate.materialize —
-        decides whether to skip the mkdir or raise; this method never
-        synthesizes a process-CWD path, which would leak across workspaces.
-        """
-        runtime = self.runtime_dir()
-        if runtime is None:
-            return None
-        return runtime / "output" / session_id / "OUTPUT.md"
-
-    def trace_dir(self, session_id: str) -> Path | None:
-        """Per-session trace dir under the resolved runtime_dir, or None."""
-        runtime = self.runtime_dir()
-        if runtime is None:
-            return None
-        return runtime / "trace" / session_id
 
     @property
     def pool_name(self):

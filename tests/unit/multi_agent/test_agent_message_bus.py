@@ -101,7 +101,7 @@ class TestLocalAgentMessageBus:
         )
         # Must not raise.
         await bus.send("pfx.main", envelope)
-        assert await bus.has_pending("pfx.main")
+        assert "pfx.main" in await bus.sessions_with_pending()
 
 
 class TestBusPreservesSourceKind:

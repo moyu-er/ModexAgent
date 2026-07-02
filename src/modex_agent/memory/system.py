@@ -21,6 +21,9 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+if TYPE_CHECKING:
+    from modex_agent.memory.prompt_pipeline.providers import ForkContextSpec
+
 from modex_agent.core.context import ContextManager, ContextState
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.skills import SkillManager
@@ -126,8 +129,8 @@ class MemorySystemContextManager(ContextManager):
         injection_policy: Any | None = None,
         experience_manager: ExperienceManager | None = None,
         output_base_dir: Path | None = None,
-        parent_prompt_resolver: Any | None = None,
-        fork_context_spec: Any | None = None,
+        parent_prompt_resolver: Callable[[str], Awaitable[str | None]] | None = None,
+        fork_context_spec: ForkContextSpec | None = None,
     ) -> None:
         from modex_agent.memory.injection import FullInjectionPolicy
 

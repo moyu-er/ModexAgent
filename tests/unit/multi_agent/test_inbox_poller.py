@@ -9,9 +9,9 @@ from modex_agent.multi_agent.inbox_poller import InboxPoller
 class _FakePool:
     """Minimal pool double for poller unit tests.
 
-    Exposes exactly the helper surface the real AgentPool will expose:
-    sessions_with_pending / get / get_template / consume_inbox /
-    recover_parent_session / dispatch_envelope / _materialize_deps.
+    Exposes exactly the helper surface the real AgentPool exposes to the
+    poller: sessions_with_pending / get / get_template / consume_inbox /
+    recover_parent_session / materialize_agent / dispatch_envelope.
     """
     def __init__(self, pending_sessions: set[str], instances: dict, templates: dict | None = None):
         self._pending = set(pending_sessions)
@@ -35,6 +35,11 @@ class _FakePool:
 
     async def recover_parent_session(self, sid):
         return None
+
+    async def materialize_agent(self, sid, template):
+        parent = await self.recover_parent_session(sid)
+        inv = sid.split(".")[0]
+        return await template.materialize(parent, inv, self._materialize_deps)
 
     def get_template(self, name):
         return self._templates.get(name)

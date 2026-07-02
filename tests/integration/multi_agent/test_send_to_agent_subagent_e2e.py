@@ -236,8 +236,6 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
         agent_factory=factory,
         agent_bus=bus,
         inbox_consumer=consumer,
-        enable_inbox_polling=True,
-        inbox_poll_interval=0.05,
         session_factory=session_factory,
         retention=SessionRetentionPolicy(),
         session_registry=session_registry,
@@ -360,10 +358,10 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
         parent_session_id = str(ctx.session)
         notif_deadline = asyncio.get_event_loop().time() + 5.0
         while asyncio.get_event_loop().time() < notif_deadline:
-            if await bus.has_pending(parent_session_id):
+            if parent_session_id in await bus.sessions_with_pending():
                 break
             await asyncio.sleep(0.05)
-        assert await bus.has_pending(parent_session_id), (
+        assert parent_session_id in await bus.sessions_with_pending(), (
             "parent inbox was not notified — SubagentAutoSendHook did not fire "
             "(hook_runner wiring broken)"
         )

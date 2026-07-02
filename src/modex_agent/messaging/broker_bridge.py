@@ -13,6 +13,7 @@ from ..core.constants import DefaultValues
 from ..core.types import InputMessage, OutputMessage
 from modex_agent.core.session_id import SessionInfo, SessionIdFactory
 from modex_agent.media.models import Attachment
+from modex_agent.multi_agent.message_type import AgentMessageType
 from ..pipeline.adapters import InputAdapter, OutputAdapter
 from .broker import Address, BrokerMessage, MessageBroker
 
@@ -98,9 +99,7 @@ def _broker_msg_to_input_message(
             metadata[key] = value
 
     # Mark XML content format for agent messages so governance can protect XML structure
-    _xml_message_types = frozenset(
-        {"agent_message", "subagent_result", "task_request", "agent_result"}
-    )
+    _xml_message_types = AgentMessageType.xml_content()
     content_fmt = None
     trunc_paths = None
     if metadata.get("message_type") in _xml_message_types:
@@ -143,12 +142,12 @@ def _broker_msg_to_input_message(
         metadata=metadata,
         content_format=content_fmt,
         truncatable_paths=trunc_paths,
-        approval_decision=_approval_decision_from_payload(payload),
+        approval_decision=approval_decision_from_payload(payload),
         attachments_resolved=attachments_resolved_from_payload(payload),
     )
 
 
-def _approval_decision_from_payload(payload: dict[str, Any]) -> Any:
+def approval_decision_from_payload(payload: dict[str, Any]) -> Any:
     """Reconstruct an ``ApprovalDecisionInput`` from a broker payload, or None."""
     from modex_agent.approval.views import ApprovalDecisionInput
 

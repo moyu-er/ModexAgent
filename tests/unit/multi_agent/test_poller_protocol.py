@@ -83,7 +83,6 @@ async def _make_poller_pool(interval: float = 0.02):
         agent_factory=_MockAgentFactory(),
         agent_bus=bus,
         inbox_consumer=consumer,
-        enable_inbox_polling=False,
         session_factory=SessionIdFactory(),
     )
 
@@ -135,7 +134,7 @@ async def test_poller_drains_batch_one_turn_per_envelope():
             await bus.send("pfx.main", _envelope(f"m{i}"))
         await asyncio.sleep(0.15)
         assert main.pipeline.process_message.await_count == 3
-        assert not await bus.has_pending("pfx.main")
+        assert "pfx.main" not in await bus.sessions_with_pending()
     finally:
         await poller.stop()
 
@@ -197,7 +196,7 @@ async def test_poller_no_drop_under_concurrent_sends():
             *[bus.send("pfx.main", _envelope(f"c{i}")) for i in range(5)]
         )
         await asyncio.sleep(0.2)
-        assert not await bus.has_pending("pfx.main")
+        assert "pfx.main" not in await bus.sessions_with_pending()
         assert main.pipeline.process_message.await_count >= 1
     finally:
         await poller.stop()
@@ -274,6 +273,6 @@ async def test_poller_materialize_failure_leaves_message_in_inbox():
         await bus.send("inv2.scout", _envelope("hello", session_id="inv2.scout"))
         await asyncio.sleep(0.2)
         # Message must NOT be lost from the inbox.
-        assert await bus.has_pending("inv2.scout")
+        assert "inv2.scout" in await bus.sessions_with_pending()
     finally:
         await poller.stop()

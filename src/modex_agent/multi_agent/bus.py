@@ -51,10 +51,6 @@ class AgentMessageBus(ABC):
         """Session ids with >=1 pending message (default empty; override for real)."""
         return []
 
-    async def has_pending(self, session_id: str) -> bool:
-        """Non-destructive check for pending messages (default: poll-based)."""
-        return False
-
     @abstractmethod
     async def close(self) -> None:
         """Gracefully shut down the bus."""
@@ -85,7 +81,15 @@ class LocalAgentMessageBus(AgentMessageBus):
         self._closed = False
 
     async def send(self, session_id: str, envelope: AgentMessageEnvelope) -> None:
-        """Persist the envelope, then emit a broker wakeup for cross-process consumers."""
+        """Persist the envelope, then emit a broker wakeup for cross-process consumers.
+
+        NOTE: the broker ``_inbox_wakeup`` is emitted here but no handler
+        consumes it yet — cross-process wakeup is deferred. Single-process
+        deployments are poller-only (the ``InboxPoller`` ticks ~200ms and
+        re-scans regardless), so messages are never lost; multi-process
+        deployments simply wait up to one tick for delivery. Wiring a wakeup
+        handler that pokes the target pool's poller is a tracked follow-up.
+        """
         await self._producer.send(session_id, envelope)
         if self._broker is not None:
             try:
@@ -146,10 +150,6 @@ class LocalAgentMessageBus(AgentMessageBus):
             envelopes.append(envelope)
 
         return envelopes
-
-    async def has_pending(self, session_id: str) -> bool:
-        """Non-destructive check using server count (does NOT consume messages)."""
-        return await self._consumer.count(session_id) > 0
 
     async def sessions_with_pending(self) -> list[str]:  # type: ignore[override]
         """Forward to the consumer's session enumeration."""

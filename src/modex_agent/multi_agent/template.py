@@ -1,4 +1,3 @@
-# framework/multi_agent/template.py
 """AgentTemplate — preset definition + subagent construction path.
 
 ``AgentTemplate.materialize`` folds the old
@@ -23,7 +22,6 @@ from modex_agent.ioc.configs.skills import SkillsConfig
 from modex_agent.tools.presets import ContextMode, SystemPromptMode, ThinkingBudget, ToolPreset
 
 if TYPE_CHECKING:
-    from modex_agent.core.context import ContextManager
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.core.tool_manager import InMemoryToolManager
     from modex_agent.core.skills import SkillManager
@@ -226,9 +224,12 @@ class AgentTemplate:
 
         # ── Hooks ──
         # ``SubagentAutoSendHook`` and ``MaxIterationNotifyHook`` both descend
-        # from the ``Hook`` ABC. ``InboxFlushHook`` is auto-injected by
-        # AgentFactory when inbox_strategy != "none" + consumer available —
-        # NOT added here, to avoid double-wiring.
+        # from the ``Hook`` ABC and are passed via ``hooks=`` to create_agent,
+        # then re-added to ``pipeline.hook_runner`` below (the ``hooks=`` list
+        # itself is not dispatched by the turn loop). ``InboxFlushHook`` is
+        # NOT here: AgentFactory auto-injects it onto ``hook_runner`` for every
+        # agent with ``inbox_strategy != "none"`` + a consumer, so fold-in is
+        # wired once for both main and subagent at the factory.
         hooks: list[Hook] = []
         if parent_session is not None and deps.agent_bus is not None:
             from modex_agent.hook.builtin import SubagentAutoSendHook

@@ -43,10 +43,16 @@ InboxPoller tick (~200ms, sole between-turn driver)
 - **Single-flight**: `inflight: dict[session_id, asyncio.Task]` — set
   synchronously before the task is scheduled, popped in a `finally`;
   `reconcile_inflight()` every tick evicts any done-but-leaked entry.
+- **Turn granularity**: between-turn dispatch is **one agent turn per envelope**
+  (`_run_turn` consumes a batch then calls `dispatch_envelope` once per
+  envelope). An envelope is the unit of a turn — N pending envelopes on an idle
+  session become N serialized turns, not one batched turn.
 - **Fold-in**: a turn already running consumes its own inbox on each iteration
-  via `InboxFlushHook.before_iteration` (`only_types=AGENT_TYPES`), injecting
-  new inter-agent messages into the running turn as `role=AGENT`. It does NOT
-  consume `external_input` — a human DM is a separate turn (P6).
+  via `InboxFlushHook.before_iteration` (`only_types=AGENT_TYPES`) — a
+  **batch pull** that appends each new inter-agent message to the running
+  turn's history as a separate `role=AGENT` record. This is where multi-message
+  batching lives (mid-turn), not between turns. It does NOT consume
+  `external_input` — a human DM is a separate turn (P6).
 - **Materialize-on-first-turn**: a subagent instance is built lazily by the
   poller's `_materialize_then_turn` when it finds an idle+pending session with
   no live instance. `send` never creates an instance.

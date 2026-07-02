@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import InputMessage
+from modex_agent.multi_agent.message_type import AgentMessageType
 
 if TYPE_CHECKING:
     from modex_agent.core.session_registry import SessionRegistry
@@ -57,10 +58,14 @@ class DefaultMeshRouter(AgentMessageRouter):
         session = input_msg.session
 
         prompt_modifier = None
-        message_type = metadata.get("message_type", "agent_message")
-        is_envelope = message_type in ("agent_message", "subagent_result", "rpc_request")
+        message_type = metadata.get("message_type", AgentMessageType.AGENT_MESSAGE)
+        is_envelope = message_type in (
+            AgentMessageType.AGENT_MESSAGE,
+            AgentMessageType.SUBAGENT_RESULT,
+            "rpc_request",
+        )
 
-        if message_type == "subagent_result" and metadata.get("source_agent"):
+        if message_type == AgentMessageType.SUBAGENT_RESULT and metadata.get("source_agent"):
             prompt_modifier = f"[Subagent {metadata['source_agent']} result]\n\n"
 
         return RouteResult(

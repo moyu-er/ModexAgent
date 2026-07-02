@@ -35,7 +35,6 @@ from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.core.session_store import SessionStore
 from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
 from modex_agent.hook import HookErrorPolicy, HookRunner, HookSpec
-from modex_agent.hook.builtin import InboxFlushHook
 from modex_agent.hook.notification import (
     AgentNotificationService,
     MaxIterationNotifyHook,
@@ -892,9 +891,6 @@ def _build_agent_pool(
         default_context_manager=context_manager,
         agent_bus=agent_bus,
         inbox_consumer=inbox_consumer,
-        enable_inbox_polling=False,
-        inbox_poll_interval=10.0,
-        default_context_manager_factory=None,
         session_factory=session_factory,
         safety=safety,
         retention=retention,
@@ -1115,7 +1111,9 @@ def _wire_main_pipeline(
     pipeline = main_instance.pipeline
 
     # Hooks
-    _add_hook(pipeline, InboxFlushHook(consumer=inbox_consumer, agent_name=main_agent_name))
+    # InboxFlushHook is NOT added here: the AgentFactory auto-injects it onto
+    # pipeline.hook_runner for every agent (main + subagent) with
+    # inbox_strategy != "none", so fold-in is wired in one place.
     _add_hook(pipeline, MaxIterationNotifyHook(notification_service=notification_service))
     _add_hook(pipeline, TurnOutcomeNotifyHook(notification_service=notification_service))
 

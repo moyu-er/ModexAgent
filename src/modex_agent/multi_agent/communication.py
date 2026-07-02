@@ -18,14 +18,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from modex_agent.core.session_id import SessionIdFactory, SessionInfo
+from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
-from modex_agent.multi_agent.template import AgentTemplate
+from modex_agent.multi_agent.message_type import AgentMessageType
 from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
-from modex_agent.multi_agent.tools import CommunicationTarget, CommunicationTargetStore
+from modex_agent.multi_agent.tools import CommunicationTargetStore
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
@@ -215,41 +215,33 @@ class AgentCommunicationService:
         Returns ``runtime_dir / trace / <session_id>`` for SUBAGENT targets so
         the ack can show ``Trace (after notification): <dir>/operations.jsonl``
         (main's stated intent — "includes trace/output paths"). The directory
-        itself is created by the JsonFileTraceStore on first write, not here
-        (parity with main's _ensure_invocation).
+        itself is created by the JsonFileTraceStore on first write, not here.
         """
         runtime_dir = self._subagent_runtime_dir(target_kind)
         if runtime_dir is None:
             return None
         return runtime_dir / "trace" / session_id
 
-    def _resolve_target(
-        self, target_agent: str
-    ) -> tuple[AgentCommKind | None, AgentTemplate | None]:
-        """Resolve target_agent to comm_kind + optional template.
+    def _resolve_target(self, target_agent: str) -> AgentCommKind | None:
+        """Resolve target_agent to its comm kind, or None if unknown.
 
-        Templates are checked BEFORE the pool registry so that each new
-        invocation creates a fresh agent instance with the correct
-        OUTPUT.md path in its system prompt.  Already-running agents are
-        discovered through the pool registry only when no template matches.
+        A template match (template registry) classifies the target as a
+        SUBAGENT even before it is registered; otherwise the pool registry's
+        descriptor/profile supplies the kind. ``template`` is intentionally
+        NOT returned: the router does not branch on template presence —
+        materialization is the InboxPoller's job, decided from the live
+        registry (``pool.get``), not from the send-side lookup.
         """
-        # 1. Check template registry FIRST — ensures new invocations get
-        #    a fresh agent with correct OUTPUT.md path
         if self._template_registry is not None and self._pool_name is not None:
-            template = self._template_registry.get_template(self._pool_name, target_agent)
-            if template is not None:
-                return AgentCommKind.SUBAGENT, template
-
-        # 2. Check if registered in pool (already-running agent)
+            if self._template_registry.get_template(self._pool_name, target_agent) is not None:
+                return AgentCommKind.SUBAGENT
         descriptor = self._registry.get_descriptor(target_agent)
         if descriptor is not None:
-            return descriptor.comm_kind, None
-
+            return descriptor.comm_kind
         profile = self._registry.get_profile(target_agent)
         if profile is not None:
-            return profile.comm_kind, None
-
-        return None, None
+            return profile.comm_kind
+        return None
 
     def _validate_invocation_id(
         self,
@@ -272,6 +264,60 @@ class AgentCommunicationService:
             return invocation_id_in, None
 
         return None, f"Unknown target kind: {target_kind!r}"
+
+    @staticmethod
+    def _star_topology_error(
+        context: "AgentContext", target_kind: AgentCommKind | None
+    ) -> str | None:
+        """Star-topology policy gate. Returns an error string if the send is
+        forbidden, else None.
+
+        A subagent may only address its parent (a NORMAL agent); subagent→subagent
+        is rejected. This is the single enforcement point (ADR-0015 D4/D8) — the
+        send trunk never re-checks topology.
+        """
+        if (
+            context.comm_kind == AgentCommKind.SUBAGENT
+            and target_kind == AgentCommKind.SUBAGENT
+        ):
+            return (
+                "Subagents can only reply to normal agents; send subagent-to-"
+                "subagent requests through a normal agent."
+            )
+        return None
+
+    async def _deliver(self, envelope: AgentMessageEnvelope) -> str | None:
+        """Single delivery path: ``bus.send`` when an agent bus is wired,
+        else ``broker.send_to`` fallback (unit tests / no-bus wiring). Returns
+        an error string only when neither path is available.
+        """
+        if self._agent_bus is not None:
+            await self._agent_bus.send(envelope.agent_session_id, envelope)
+            return None
+        if envelope.target is not None:
+            await self._broker.send_to(envelope.target, envelope.to_broker_message())
+            return None
+        return "No target address for broker delivery"
+
+    @staticmethod
+    def _error_result(
+        target_agent: str,
+        target_kind: AgentCommKind,
+        error: str,
+        *,
+        session_id: str = "",
+        invocation_id: str | None = None,
+    ) -> AgentSendResult:
+        """Build a failed-send result. Every error return from ``_send`` is a
+        not-created task, so the common fields collapse here."""
+        return AgentSendResult(
+            target_agent=target_agent,
+            target_kind=target_kind,
+            session_id=session_id,
+            invocation_id=invocation_id,
+            created_new_task=False,
+            error=error,
+        )
 
     async def send_async(
         self,
@@ -334,232 +380,121 @@ class AgentCommunicationService:
         """Core routing logic shared by sync and async sends.
 
         Pure router: resolves the target, mints invocation_id + session,
-        builds the envelope, and enqueues. Agent materialization happens
-        lazily in the Drainer-spawner (ADR-0015 D3).
+        builds the envelope, and enqueues via ``_deliver``. Agent
+        materialization happens lazily in the InboxPoller (ADR-0015 D3).
+
+        Branches on ``target_kind`` only — template presence is irrelevant to
+        the send logic (the poller decides materialization from the live
+        registry). Star topology is enforced once, up front.
         """
-        # 1. Resolve parent session from context
         parent_sid = context.session
         effective_source = self._resolve_source(context)
 
-        # 2. Look up target
-        target_kind, template = self._resolve_target(target_agent)
+        # 1. Resolve target kind.
+        target_kind = self._resolve_target(target_agent)
         if target_kind is None:
-            return AgentSendResult(
-                target_agent=target_agent,
-                target_kind=AgentCommKind.NORMAL,
-                session_id="",
-                invocation_id=None,
-                created_new_task=False,
-                error=f"Target agent '{target_agent}' not found",
+            return self._error_result(
+                target_agent, AgentCommKind.NORMAL,
+                f"Target agent '{target_agent}' not found",
             )
 
-        # Cold start: mint invocation_id + session, enqueue. The Drainer-spawner
-        # materializes the instance on first drain (ADR-0015 D3).
-        if target_kind == AgentCommKind.SUBAGENT and template is not None:
-            # Subagent-to-subagent still forbidden
-            if context.comm_kind == AgentCommKind.SUBAGENT:
-                return AgentSendResult(
-                    target_agent=target_agent,
-                    target_kind=target_kind,
-                    session_id="",
-                    invocation_id=None,
-                    created_new_task=False,
-                    error="Subagents can only reply to normal agents; send subagent-to-subagent requests through a normal agent.",
-                )
-            if invocation_id is None or invocation_id.strip() == "":
-                invocation_id = _uuid_mod.uuid4().hex[:_TASK_ID_BYTES]
-            target_session = self._session_factory.create_with_prefix(
-                agent_name=target_agent, prefix=invocation_id, parent_session_id=parent_sid,
-            )
-            session_id = str(target_session)
-            if self._session_registry is not None:
-                await self._session_registry.register(target_session)
-            from modex_agent.multi_agent.message_xml import build_agent_message
-            xml_content = build_agent_message(source=effective_source.name, invocation_id=invocation_id, content=content)
-            envelope = AgentMessageEnvelope(
-                payload={"content": xml_content, "message_type": "task_request"},
-                source=effective_source, target=AgentAddress(name=target_agent),
-                message_type="task_request", session_id=str(parent_sid),
-                agent_session_id=session_id, invocation_id=invocation_id,
-            )
-            if self._comm_tracker is not None:
-                self._comm_tracker.record_send(
-                    agent_name=effective_source.name, target_agent=target_agent,
-                    invocation_id=invocation_id, session_id=session_id, content_summary=content[:500],
-                )
-            if self._agent_bus is not None:
-                await self._agent_bus.send(session_id, envelope)
-            elif envelope.target is not None:
-                await self._broker.send_to(envelope.target, envelope.to_broker_message())
-            return AgentSendResult(
-                target_agent=target_agent, target_kind=target_kind,
-                session_id=session_id, invocation_id=invocation_id, created_new_task=True,
-                output_path=self._subagent_output_path(target_kind, session_id),
-                trace_dir=self._subagent_trace_dir(target_kind, session_id),
-            )
+        # 2. Star topology: a subagent may only address its parent (a NORMAL).
+        if (topo_err := self._star_topology_error(context, target_kind)) is not None:
+            return self._error_result(target_agent, target_kind, topo_err)
 
-        # ── Registered SUBAGENT new task: agent instance exists, send via inbox ──
-        # When a SUBAGENT is already registered (template is None) and this is a NEW
-        # task (empty invocation_id), generate a new invocation_id and deliver through
-        # inbox with immediate wakeup so the consumer can process it concurrently with
-        # any other active session. Continuations (existing invocation_id) fall through
-        # to the original normal delivery path below.
-        if (
-            target_kind == AgentCommKind.SUBAGENT
-            and template is None
-            and (invocation_id is None or invocation_id.strip() == "")
-        ):
-            # Subagent-to-subagent still forbidden
-            if context.comm_kind == AgentCommKind.SUBAGENT:
-                return AgentSendResult(
-                    target_agent=target_agent,
-                    target_kind=target_kind,
-                    session_id="",
-                    invocation_id=None,
-                    created_new_task=False,
-                    error="Subagents can only reply to normal agents; send subagent-to-subagent requests through a normal agent.",
-                )
+        # 3. Normalize invocation_id (NORMAL → None; SUBAGENT → mint if empty).
+        normalized_invocation_id, verror = self._validate_invocation_id(
+            invocation_id, target_kind
+        )
+        if verror is not None:
+            return self._error_result(target_agent, target_kind, verror)
+        created_new_task = target_kind == AgentCommKind.SUBAGENT and (
+            invocation_id is None or invocation_id.strip() == ""
+        )
 
-            # Mint invocation_id directly (collision-avoidance deleted per ADR-0015 D6).
-            resolved_invocation_id = _uuid_mod.uuid4().hex[:_TASK_ID_BYTES]
+        from modex_agent.multi_agent.message_xml import build_agent_message
 
-            target_session = self._session_factory.create_with_prefix(
-                agent_name=target_agent,
-                prefix=resolved_invocation_id,
-                parent_session_id=parent_sid,
-            )
-            session_id = str(target_session)
-            if self._session_registry is not None:
-                await self._session_registry.register(target_session)
-
-            from modex_agent.multi_agent.message_xml import build_agent_message
-
-            xml_content = build_agent_message(
-                source=effective_source.name,
-                invocation_id=resolved_invocation_id,
-                content=content,
-            )
-            envelope = AgentMessageEnvelope(
-                payload={"content": xml_content, "message_type": "task_request"},
-                source=effective_source,
-                target=AgentAddress(name=target_agent),
-                message_type="task_request",
-                session_id=str(parent_sid),
-                agent_session_id=session_id,
-                invocation_id=resolved_invocation_id,
-            )
-
-            # Record in communication tracker
-            if self._comm_tracker is not None:
-                self._comm_tracker.record_send(
-                    agent_name=effective_source.name,
-                    target_agent=target_agent,
-                    invocation_id=resolved_invocation_id,
-                    session_id=session_id,
-                    content_summary=content[:500],
-                )
-
-            # Deliver: ADR-0015 always use bus.send when available.
-            if self._agent_bus is not None:
-                await self._agent_bus.send(session_id, envelope)
-            elif envelope.target is not None:
-                await self._broker.send_to(envelope.target, envelope.to_broker_message())
-            else:
-                return AgentSendResult(
-                    target_agent=target_agent,
-                    target_kind=target_kind,
-                    session_id=session_id,
-                    invocation_id=resolved_invocation_id,
-                    created_new_task=True,
-                    error="No target address for broker delivery",
-                )
-
-            return AgentSendResult(
-                target_agent=target_agent,
-                target_kind=target_kind,
-                session_id=session_id,
-                invocation_id=resolved_invocation_id,
-                created_new_task=True,
-                output_path=self._subagent_output_path(target_kind, session_id),
-                trace_dir=self._subagent_trace_dir(target_kind, session_id),
-            )
-
-        # 3. Validate invocation_id
-        if (
-            context.comm_kind == AgentCommKind.SUBAGENT
-            and target_kind == AgentCommKind.SUBAGENT
-        ):
-            return AgentSendResult(
-                target_agent=target_agent,
-                target_kind=target_kind,
-                session_id="",
-                invocation_id=None,
-                created_new_task=False,
-                error="Subagents can only reply to normal agents; send subagent-to-subagent requests through a normal agent.",
-            )
-        normalized_invocation_id, error = self._validate_invocation_id(invocation_id, target_kind)
-        if error is not None:
-            return AgentSendResult(
-                target_agent=target_agent,
-                target_kind=target_kind,
-                session_id="",
-                invocation_id=None,
-                created_new_task=False,
-                error=error,
-            )
-
-        created_new_task = invocation_id == "" and target_kind == AgentCommKind.SUBAGENT
-
-        # 4. Build session ID (receiver-owned)
-        if target_kind == AgentCommKind.SUBAGENT and normalized_invocation_id is not None:
+        # 4. SUBAGENT target — task-scoped session keyed by invocation_id.
+        # The poller materializes the instance on first turn (ADR-0015 D3).
+        if target_kind == AgentCommKind.SUBAGENT:
             target_session = self._session_factory.create_with_prefix(
                 agent_name=target_agent,
                 prefix=normalized_invocation_id,
                 parent_session_id=parent_sid,
             )
-        else:
-            target_session = self._session_factory.create(
-                agent_name=target_agent,
-                parent_session_id=parent_sid,
-                external_id=normalized_invocation_id,
+            session_id = str(target_session)
+            if self._session_registry is not None:
+                await self._session_registry.register(target_session)
+            xml_content = build_agent_message(
+                source=effective_source.name,
+                invocation_id=normalized_invocation_id,
+                content=content,
             )
+            envelope = AgentMessageEnvelope(
+                payload={"content": xml_content, "message_type": AgentMessageType.TASK_REQUEST},
+                source=effective_source,
+                target=AgentAddress(name=target_agent),
+                message_type=AgentMessageType.TASK_REQUEST,
+                session_id=str(parent_sid),
+                agent_session_id=session_id,
+                invocation_id=normalized_invocation_id,
+            )
+            if self._comm_tracker is not None:
+                self._comm_tracker.record_send(
+                    agent_name=effective_source.name,
+                    target_agent=target_agent,
+                    invocation_id=normalized_invocation_id,
+                    session_id=session_id,
+                    content_summary=content[:500],
+                )
+            deliver_err = await self._deliver(envelope)
+            if deliver_err is not None:
+                return self._error_result(
+                    target_agent, target_kind, deliver_err,
+                    session_id=session_id, invocation_id=normalized_invocation_id,
+                )
+            return AgentSendResult(
+                target_agent=target_agent,
+                target_kind=target_kind,
+                session_id=session_id,
+                invocation_id=normalized_invocation_id,
+                created_new_task=created_new_task,
+                output_path=self._subagent_output_path(target_kind, session_id),
+                trace_dir=self._subagent_trace_dir(target_kind, session_id),
+            )
+
+        # 5. NORMAL target — one stable receiver session per conversation.
+        # A subagent replying to its parent echoes the parent's snowflake on the
+        # envelope for trace correlation (it does not participate in routing).
+        target_session = self._session_factory.create(
+            agent_name=target_agent,
+            parent_session_id=parent_sid,
+            external_id=normalized_invocation_id,
+        )
         session_id = str(target_session)
 
-        # Register subagent session in registry so the parent→child relationship
-        # is persisted to session_index — the WebUI tree depends on it.
-        if target_kind == AgentCommKind.SUBAGENT and self._session_registry is not None:
-            await self._session_registry.register(target_session)
-
-        # 5. Build envelope (XML-wrapped per spec Section 4.1)
-        # For subagent replying to normal parent: preserve caller's snowflake on envelope
         envelope_invocation_id = normalized_invocation_id
-        if target_kind == AgentCommKind.NORMAL and context.comm_kind == AgentCommKind.SUBAGENT:
+        if context.comm_kind == AgentCommKind.SUBAGENT:
             envelope_invocation_id = parent_sid.session_id_prefix
 
-        from modex_agent.multi_agent.message_xml import build_agent_message
-
-        effective_source_name = effective_source.name
         xml_content = build_agent_message(
-            source=effective_source_name,
+            source=effective_source.name,
             invocation_id=envelope_invocation_id,
             content=content,
         )
         envelope = AgentMessageEnvelope(
-            payload={"content": xml_content, "message_type": "agent_message"},
+            payload={"content": xml_content, "message_type": AgentMessageType.AGENT_MESSAGE},
             source=effective_source,
             target=AgentAddress(kind="agent", name=target_agent),
-            message_type="agent_message",
+            message_type=AgentMessageType.AGENT_MESSAGE,
             session_id=str(parent_sid),
             agent_session_id=session_id,
             invocation_id=envelope_invocation_id,
         )
 
-        # 6. Record communication tracker events
         if self._comm_tracker is not None and envelope.invocation_id is not None:
-            if (
-                target_kind == AgentCommKind.NORMAL
-                and context.comm_kind == AgentCommKind.SUBAGENT
-            ):
+            if context.comm_kind == AgentCommKind.SUBAGENT:
+                # Subagent→parent reply: close the pending-send bracket.
                 self._comm_tracker.acknowledge(
                     invocation_id=envelope.invocation_id,
                     reply_from=effective_source.name,
@@ -580,28 +515,17 @@ class AgentCommunicationService:
                     content_summary=content[:500],
                 )
 
-        # 7. Deliver — ADR-0015: always use bus.send (signals the Drainer).
-        # Broker fallback only when no agent_bus is wired (unit tests).
-        if self._agent_bus is not None:
-            await self._agent_bus.send(session_id, envelope)
-        elif envelope.target is not None:
-            await self._broker.send_to(envelope.target, envelope.to_broker_message())
-        else:
-            return AgentSendResult(
-                target_agent=target_agent,
-                target_kind=target_kind,
-                session_id=session_id,
-                invocation_id=normalized_invocation_id,
-                created_new_task=created_new_task,
-                error="No target address for broker delivery",
+        deliver_err = await self._deliver(envelope)
+        if deliver_err is not None:
+            return self._error_result(
+                target_agent, target_kind, deliver_err,
+                session_id=session_id, invocation_id=normalized_invocation_id,
             )
-
+        # NORMAL targets carry no trace/output paths (only SUBAGENT acks do).
         return AgentSendResult(
             target_agent=target_agent,
             target_kind=target_kind,
             session_id=session_id,
             invocation_id=normalized_invocation_id,
             created_new_task=created_new_task,
-            output_path=self._subagent_output_path(target_kind, session_id),
-            trace_dir=self._subagent_trace_dir(target_kind, session_id),
         )

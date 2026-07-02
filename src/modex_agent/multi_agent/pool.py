@@ -5,7 +5,7 @@ import contextlib
 import logging
 import sys
 import time
-from collections.abc import Callable, Coroutine, Iterator
+from collections.abc import Coroutine, Iterator
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
@@ -25,6 +25,7 @@ from modex_agent.core.types import InputMessage
 from modex_agent.messaging.broker import MessageBroker
 from modex_agent.messaging.broker_bridge import (
     BrokerInputPayload,
+    approval_decision_from_payload,
     attachments_resolved_from_payload,
 )
 from modex_agent.runtime.dispatch import DispatchDeadline, current_dispatch_deadline
@@ -36,9 +37,9 @@ from .descriptor import AgentDescriptor, AgentInstance
 from .envelope import AgentMessageEnvelope
 from .factory import AgentFactory
 from .inbox.consumer import InboxConsumer
-from .inbox.types import InboxMessage
+from .message_type import AgentMessageType
 from .registry import AgentProfile, AgentRegistry
-from modex_agent.core.session_id import SessionInfo, SessionIdFactory
+from modex_agent.core.session_id import SessionInfo, SessionIdFactory, session_id_prefix_of
 from .state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -83,18 +84,12 @@ def input_message_from_dispatch_envelope(
     approve/deny decision crossing the broker is lost and treated as an empty
     user turn — polluting history and leaving a dangling assistant ``tool_calls``.
     """
-    from modex_agent.approval.views import ApprovalDecisionInput
-
     return InputMessage(
         content=envelope.payload.get("content", ""),
         session=session,
         metadata=metadata,
-        approval_decision=ApprovalDecisionInput.from_dict(
-            envelope.payload.get("approval_decision")
-        ),
-        # Carry resolved attachments through so mechanism-B path injection
-        # (ADR-0013 §10) survives the broker dispatch boundary — same drift
-        # class as approval_decision above. Serialized by PoolRouter._route_to_pool.
+        # Both drift fields share one reconstruction path in broker_bridge.
+        approval_decision=approval_decision_from_payload(envelope.payload),
         attachments_resolved=attachments_resolved_from_payload(envelope.payload),
     )
 
@@ -110,12 +105,6 @@ class AgentPool(AgentRegistry):
         agent_bus: AgentMessageBus | None = None,
         inbox_consumer: InboxConsumer | None = None,
         *,
-        # Legacy no-ops: the between-turn idle poller was removed in Task 10
-        # (the per-pool InboxPoller is the sole driver now). Accepted for
-        # backward-compat with existing callers/tests; ignored.
-        enable_inbox_polling: bool = True,
-        inbox_poll_interval: float = 10.0,
-        default_context_manager_factory: Callable[[str], ContextManager] | None = None,
         session_factory: SessionIdFactory | None = None,
         safety: RuntimeSafetyPolicy | None = None,
         retention: SessionRetentionPolicy | None = None,
@@ -128,7 +117,6 @@ class AgentPool(AgentRegistry):
         self._broker = broker
         self._agent_factory = agent_factory
         self._default_context_manager = default_context_manager
-        self._default_context_manager_factory = default_context_manager_factory
         self._agent_bus = agent_bus
         self._inbox_consumer = inbox_consumer
         self._session_factory = session_factory or SessionIdFactory()
@@ -143,7 +131,6 @@ class AgentPool(AgentRegistry):
         self._retention = retention or SessionRetentionPolicy()
         self._comm_tracker = comm_tracker
         self._cleanup_task: asyncio.Task[None] | None = None
-        self._agent_tasks: dict[str, list[asyncio.Task[None]]] = {}
         self._active_session_counts: dict[str, int] = {}
         self._error_counts: dict[str, int] = {}
         self._max_error_retries: int = 5
@@ -206,18 +193,6 @@ class AgentPool(AgentRegistry):
         self._transition(name, AgentState.IDLE, reason="register_resident_complete")
         return instance
 
-    def _track_agent_task(self, agent_name: str, task: asyncio.Task[None]) -> None:
-        """追踪 agent 的后台处理任务。"""
-        tasks = self._agent_tasks.setdefault(agent_name, [])
-        tasks.append(task)
-        task.add_done_callback(lambda t: self._prune_agent_task(agent_name, t))
-
-    def _prune_agent_task(self, agent_name: str, task: asyncio.Task[None]) -> None:
-        """清理已完成的任务引用。"""
-        tasks = self._agent_tasks.get(agent_name, [])
-        if task in tasks:
-            tasks.remove(task)
-
     # Max envelopes consumed per drain cycle ( InboxPoller → consume_inbox ).
     _DRAIN_BATCH_LIMIT = 10
 
@@ -261,7 +236,7 @@ class AgentPool(AgentRegistry):
             if message.approval_decision is not None
             else None,
             attachments_resolved=[a.to_dict() for a in message.attachments_resolved],
-            message_type="external_input",  # extra field, allowed by extra="allow"
+            message_type=AgentMessageType.EXTERNAL_INPUT,  # extra field, allowed by extra="allow"
         )
         payload: dict[str, Any] = payload_model.model_dump(exclude_none=True)
 
@@ -271,7 +246,7 @@ class AgentPool(AgentRegistry):
             target=AgentAddress(
                 kind="agent", name=SessionInfo.from_str(session_id).agent_name
             ),
-            message_type="external_input",
+            message_type=AgentMessageType.EXTERNAL_INPUT,
             session_id=message.session.session_id_prefix,
             agent_session_id=session_id,
         )
@@ -311,6 +286,22 @@ class AgentPool(AgentRegistry):
         if child is not None and child.parent_session_id:
             return SessionInfo.from_str(child.parent_session_id)
         return None
+
+    async def materialize_agent(
+        self, session_id: str, template: AgentTemplate
+    ) -> AgentInstance:
+        """Materialize a subagent instance for ``session_id`` via ``template``.
+
+        Thin accessor for the InboxPoller: recovers the parent session from
+        the registry, derives the invocation_id from the session_id prefix,
+        and calls ``template.materialize`` with this pool's materialize deps.
+        Keeps the poller from reaching into ``self._materialize_deps``
+        directly.
+        """
+        parent = await self.recover_parent_session(session_id)
+        inv_id = session_id_prefix_of(session_id)
+        assert self._materialize_deps is not None  # set by pool wiring before poller runs
+        return await template.materialize(parent, inv_id, self._materialize_deps)
 
     def get_template(self, agent_name: str) -> AgentTemplate | None:
         """Look up a materialization template for ``agent_name`` in this pool."""
@@ -526,30 +517,6 @@ class AgentPool(AgentRegistry):
                 await asyncio.sleep(min(remaining, self._WATCHDOG_POLL_INTERVAL))
         except asyncio.CancelledError:
             return
-
-    def _wrap_inbox_message(self, session_id: str, inbox_msg: InboxMessage) -> AgentMessageEnvelope:
-        """将 InboxMessage 包装为 AgentMessageEnvelope，使用防御性字段提取。"""
-        payload = inbox_msg.metadata.get("payload") if inbox_msg.metadata else None
-        if not isinstance(payload, dict):
-            payload = {"content": inbox_msg.content, "message_type": inbox_msg.message_type}
-        source_kind = payload.get("source_kind", "agent")
-        source_name = payload.get("source", inbox_msg.source)
-        meta = inbox_msg.metadata or {}
-        return AgentMessageEnvelope(
-            payload=payload,
-            source=AgentAddress(kind=source_kind, name=source_name),
-            message_type=payload.get("message_type", "subagent_result"),
-            session_id=meta.get("session_id", session_id),
-            agent_session_id=meta.get("agent_session_id", session_id),
-            invocation_id=meta.get("invocation_id"),
-            message_id=inbox_msg.message_id,
-            timestamp=inbox_msg.timestamp,
-            metadata={
-                k: v
-                for k, v in meta.items()
-                if k not in ("payload", "session_id", "invocation_id")
-            },
-        )
 
     async def _resolve_session_info(
         self,
@@ -831,12 +798,6 @@ class AgentPool(AgentRegistry):
         await self.stop_poller()
         for name in list(self._agents.keys()):
             self._transition(name, AgentState.SHUTTING_DOWN, reason="shutdown_all")
-        # 等待所有后台处理任务完成
-        all_tasks: list[asyncio.Task[None]] = []
-        for tasks in list(self._agent_tasks.values()):
-            all_tasks.extend(t for t in tasks if not t.done())
-        if all_tasks:
-            await asyncio.gather(*all_tasks, return_exceptions=True)
         deadline = asyncio.get_running_loop().time() + timeout
         for name, instance in list(self._agents.items()):
             remaining = max(0.0, deadline - asyncio.get_running_loop().time())
@@ -845,7 +806,6 @@ class AgentPool(AgentRegistry):
             except TimeoutError:
                 logger.warning("Agent %s did not shut down in time, forcing", name)
         self._agents.clear()
-        self._agent_tasks.clear()
         self._active_session_counts.clear()
         self._error_counts.clear()
         for name in list(self._status.keys()):

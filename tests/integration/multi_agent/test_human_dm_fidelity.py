@@ -85,7 +85,6 @@ async def test_human_dm_round_trips_approval_and_attachments() -> None:
         agent_factory=factory,
         agent_bus=bus,
         inbox_consumer=consumer,
-        inbox_poll_interval=0.05,
         session_factory=SessionIdFactory(),
         retention=SessionRetentionPolicy(),
     )

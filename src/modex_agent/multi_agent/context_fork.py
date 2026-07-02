@@ -47,9 +47,6 @@ class ContextForkBuilder:
     def __init__(self) -> None:
         self._registry: dict[str, Path] = {}
 
-    def _register(self, *, session_id: str, path: Path) -> None:
-        self._registry[session_id] = path
-
     async def build(
         self,
         *,
@@ -118,8 +115,6 @@ class ContextForkBuilder:
         except Exception:
             logger.exception("Fork context: failed to build for %s, continuing with empty", agent_type)
 
-        # NOTE: the caller (AgentTemplate.materialize) registers the file for
-        # cleanup AFTER it knows the session_id. We expose _register for that.
         return fork_xml
 
     def register_for_cleanup(self, *, session_id: str, fork_workspace: Path, agent_type: str, invocation_id: str) -> None:

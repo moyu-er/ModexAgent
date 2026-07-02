@@ -72,45 +72,6 @@ def test_runtime_dir_returns_none_when_workspace_unmaterialized() -> None:
     assert resolver.runtime_dir() is None
 
 
-def test_output_path_assembles_under_runtime_dir() -> None:
-    pool_data = _FakePoolData(
-        context_manager=MagicMock(), turn_store=MagicMock(), runtime_dir=Path("/ws/runtime"),
-    )
-    ws_mgr = MagicMock()
-    ws_mgr.resolve_workspace.return_value.pool_data.get.return_value = pool_data
-    resolver = WorkspacePathResolver(
-        workspace_manager=ws_mgr, pool_name="main", fallback_runtime_dir=Path("/fb"),
-    )
-    p = resolver.output_path("pfx.main")
-    assert p == Path("/ws/runtime/output/pfx.main/OUTPUT.md")
-
-
-def test_output_path_returns_none_when_runtime_unresolved() -> None:
-    resolver = WorkspacePathResolver(
-        workspace_manager=None, pool_name="main", fallback_runtime_dir=None,
-    )
-    assert resolver.output_path("x.main") is None
-
-
-def test_trace_dir_assembles_under_runtime_dir() -> None:
-    pool_data = _FakePoolData(
-        context_manager=MagicMock(), turn_store=MagicMock(), runtime_dir=Path("/ws/runtime"),
-    )
-    ws_mgr = MagicMock()
-    ws_mgr.resolve_workspace.return_value.pool_data.get.return_value = pool_data
-    resolver = WorkspacePathResolver(
-        workspace_manager=ws_mgr, pool_name="main", fallback_runtime_dir=Path("/fb"),
-    )
-    assert resolver.trace_dir("pfx.main") == Path("/ws/runtime/trace/pfx.main")
-
-
-def test_trace_dir_returns_none_when_runtime_unresolved() -> None:
-    resolver = WorkspacePathResolver(
-        workspace_manager=None, pool_name="main", fallback_runtime_dir=None,
-    )
-    assert resolver.trace_dir("x.main") is None
-
-
 def test_memory_dir_prefers_workspace() -> None:
     pool_data = _FakePoolData(
         context_manager=MagicMock(), turn_store=MagicMock(), memory_dir=Path("/ws/memory"),

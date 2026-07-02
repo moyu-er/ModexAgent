@@ -118,7 +118,6 @@ class TestPoolRenewableDispatch:
         p = AgentPool(
             broker=_FakeBroker(),
             agent_factory=MagicMock(),
-            enable_inbox_polling=False,
             safety=safety,
         )
         p._max_backoff_seconds = 0.05
@@ -214,7 +213,6 @@ class TestPoolRenewableDispatch:
         p = AgentPool(
             broker=_FakeBroker(),
             agent_factory=MagicMock(),
-            enable_inbox_polling=False,
             safety=safety,
         )
         p._max_backoff_seconds = 0.05
@@ -255,7 +253,6 @@ class TestPoolRenewableDispatch:
         p = AgentPool(
             broker=_FakeBroker(),
             agent_factory=MagicMock(),
-            enable_inbox_polling=False,
             safety=safety,
         )
         p._max_backoff_seconds = 0.05
@@ -285,7 +282,6 @@ class TestPoolRenewableDispatch:
         p = AgentPool(
             broker=_FakeBroker(),
             agent_factory=MagicMock(),
-            enable_inbox_polling=False,
             safety=safety,
         )
         await p._run_dispatch("main", slow())

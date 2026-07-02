@@ -86,7 +86,6 @@ class _PoolBundle:
             agent_factory=factory,
             agent_bus=self.bus,
             inbox_consumer=self.consumer,
-            inbox_poll_interval=0.05,
             session_factory=self.session_factory,
             retention=SessionRetentionPolicy(),
         )
