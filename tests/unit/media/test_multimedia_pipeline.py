@@ -15,7 +15,7 @@ import pytest
 
 from modex_agent.agents.react.message_builder import build_tool_message
 from modex_agent.memory.system import MemorySystemContextManager
-from modex_agent.utils.media_utils import (
+from modex_agent.media.media_utils import (
     ImageHandler,
     MediaBlock,
     MediaHandler,

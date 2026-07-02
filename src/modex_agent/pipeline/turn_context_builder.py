@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.router import RouteResult
     from modex_agent.runtime.store import TurnStateStore
     from modex_agent.utils.context_builder import MultiAgentContextBuilder
-    from modex_agent.utils.media_utils import MediaBlock, MediaProcessor
+    from modex_agent.media.media_utils import MediaBlock, MediaProcessor
 
     from modex_agent.commands.models import CommandHandlingResult, CommandProcessor
     from modex_agent.core.skills import SkillManager

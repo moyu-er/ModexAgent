@@ -16,13 +16,11 @@ General-purpose utilities — no domain-specific logic. Stateless helpers free o
 | `file_io.py` | Encoding-resilient JSON/JSONL readers (`read_json_robust`, `read_jsonl_robust`) |
 | `timezone.py` | User timezone from `TIMEZONE` env (cached, cross-platform) |
 | `xml.py` | Unified XML escaping utilities |
-| `media_utils.py` | `MediaProcessor` — image/audio/video attachments, multi-modal content |
 | `message_builder.py` | Message construction helpers |
 | `think_tag.py` | Think-tag extraction (streaming + non-streaming) |
 
 ## Dependencies
 - Standard library only (`json`, `pathlib`, `xml`, `re`, `base64`, `time`, `hashlib`, `os`) — stateless helpers with no framework coupling.
-- `PIL` (Pillow) — used by `media_utils.py` for image dimension detection.
 
 ## Notes
 - Keep utilities stateless and runtime-agnostic unless explicitly part of hook/interceptor/control integration.

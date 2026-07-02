@@ -10,7 +10,7 @@ from __future__ import annotations
 import base64
 
 from modex_agent.media.models import Attachment, AttachmentLocator, Kind
-from modex_agent.utils.media_utils import build_inline_image_block
+from modex_agent.media.media_utils import build_inline_image_block
 from modex_agent.workspace.runtime import bind_workspace_root
 
 _PNG_1X1 = (

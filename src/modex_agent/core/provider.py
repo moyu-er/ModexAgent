@@ -39,7 +39,7 @@ class LLMProvider(ABC):
     When a ``Modality`` beyond ``TEXT`` is enabled on
     ``LLMConfig.capabilities`` (``ModelCapabilities``, ADR-0013 §9), the
     provider-side renderer is the repurposed ``MediaProcessor``
-    (``modex_agent.utils.media_utils``): it renders each gate-accepted
+    (``modex_agent.media.media_utils``): it renders each gate-accepted
     Attachment whose ``kind`` matches an enabled modality into a native
     multimodal content block (image → ``image_url``, document → extracted
     text), inlined into the user message's ``content`` array alongside the
