@@ -154,11 +154,18 @@ class AppConfig(BaseModel):
             global_model = GlobalModelConfig.model_validate(model_data.get("model", {}))
             data["model"] = model_data.get("model", {})
 
-        # Load pool configs from config/pools/ directory
+        # Load pool configs from config/pools/<name>/pool.yml (one directory
+        # per pool). The normal agent is configured inline in the pool.yml
+        # `agents:` block (plain AgentConfig); subagents live under
+        # `<name>/templates/*.yml` (AgentTemplate), loaded separately by the
+        # template registry.
         pools_dir = yaml_path.parent / "pools"
         pools: dict[str, PoolConfig] = {}
         if pools_dir.exists():
-            for pool_file in sorted(pools_dir.glob("*.yml")):
+            for pool_dir in sorted(p for p in pools_dir.iterdir() if p.is_dir()):
+                pool_file = pool_dir / "pool.yml"
+                if not pool_file.exists():
+                    continue
                 with open(pool_file, encoding="utf-8") as f:
                     pool_data = yaml.safe_load(f) or {}
                 pool_data = _resolve_env_in(pool_data)
@@ -173,12 +180,11 @@ class AppConfig(BaseModel):
                     pool_data["llm"] = base_llm
                 pool_cfg = PoolConfig.model_validate(pool_data)
                 pool_name = pool_cfg.main_agent_name
-                # Filename stem must match main_agent_name
-                if pool_file.stem != pool_name:
+                # Directory name must match the pool's main agent name.
+                if pool_dir.name != pool_name:
                     raise ValueError(
-                        f"Pool file '{pool_file.name}': filename stem "
-                        f"'{pool_file.stem}' must match main agent name "
-                        f"'{pool_name}'"
+                        f"Pool directory '{pool_dir.name}': directory name "
+                        f"must match main agent name '{pool_name}'"
                     )
                 _validate_pool_name(pool_name)
                 pools[pool_name] = pool_cfg

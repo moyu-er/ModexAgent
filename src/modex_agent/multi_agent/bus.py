@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
@@ -22,33 +21,35 @@ logger = logging.getLogger(__name__)
 class AgentMessageBus(ABC):
     """Pluggable messaging facade for upper-layer multi-agent components.
 
-    Decouples consumers from InboxServer and MessageBroker internals.
+    The bus is poll-driven: producers persist envelopes via the inbox
+    producer, and an ``InboxPoller`` (per pool) drives between-turn
+    consumption. Cross-process latency is handled by a broker
+    ``_inbox_wakeup`` message emitted from ``send``.
     """
 
     @abstractmethod
     async def send(self, session_id: str, envelope: AgentMessageEnvelope) -> None:
-        """Send an envelope to the given session and signal the consumer."""
-        ...
-
-    @abstractmethod
-    async def send_silent(self, session_id: str, envelope: AgentMessageEnvelope) -> None:
-        """Persist the envelope without signaling/waking up the consumer."""
+        """Persist ``envelope`` for ``session_id`` and wake cross-process consumers."""
         ...
 
     @abstractmethod
     async def consume(
-        self, session_id: str, limit: int = 100, *, block: bool = True
+        self,
+        session_id: str,
+        limit: int = 100,
+        *,
+        only_types: set[str] | None = None,
     ) -> list[AgentMessageEnvelope]:
-        """Consume envelopes for the given session.
+        """Consume and return up to ``limit`` envelopes for ``session_id``.
 
-        When ``block=True``, the caller may block until messages are available.
+        Non-blocking: returns whatever is currently pending (possibly empty).
+        ``only_types`` optionally filters by envelope ``message_type``.
         """
         ...
 
-    @abstractmethod
-    async def poll(self, session_id: str, limit: int = 100) -> list[AgentMessageEnvelope]:
-        """Poll pending envelopes without blocking."""
-        ...
+    async def sessions_with_pending(self) -> list[str]:
+        """Session ids with >=1 pending message (default empty; override for real)."""
+        return []
 
     async def has_pending(self, session_id: str) -> bool:
         """Non-destructive check for pending messages (default: poll-based)."""
@@ -56,22 +57,20 @@ class AgentMessageBus(ABC):
 
     @abstractmethod
     async def close(self) -> None:
-        """Gracefully shut down the bus and unblock any waiting consumers."""
+        """Gracefully shut down the bus."""
         ...
 
 
 class LocalAgentMessageBus(AgentMessageBus):
-    """Local implementation of AgentMessageBus.
+    """Local poll-driven implementation of AgentMessageBus.
 
     Responsibilities:
-    1. Persist messages via InboxProducer.
-    2. Signal cross-process consumers via MessageBroker wakeup messages.
-    3. Signal same-process consumers via per-session asyncio.Event for low latency.
+    1. Persist messages via the InboxProducer.
+    2. Emit a broker ``_inbox_wakeup`` for cross-process consumers when a
+       broker is configured (single-process deployments are poller-only).
 
-    .. note::
-       The asyncio.Event optimization only works for consumers running in the
-       *same process*. Cross-process consumers rely on the MessageBroker wakeup
-       signal. This is a deliberate trade-off for local-first deployments.
+    Between-turn delivery is driven by an ``InboxPoller`` polling
+    ``consume``; there is no in-process signal/Event wakeup path.
     """
 
     def __init__(
@@ -83,20 +82,11 @@ class LocalAgentMessageBus(AgentMessageBus):
         self._producer = producer
         self._consumer = consumer
         self._broker = broker
-        self._events: dict[str, asyncio.Event] = {}
-        self._pending_counts: dict[str, int] = {}
         self._closed = False
 
-    def _get_event(self, session_id: str) -> asyncio.Event:
-        """Get or create the asyncio.Event for a session."""
-        if session_id not in self._events:
-            self._events[session_id] = asyncio.Event()
-        return self._events[session_id]
-
     async def send(self, session_id: str, envelope: AgentMessageEnvelope) -> None:
-        """Persist the envelope, then signal consumers through all available channels."""
+        """Persist the envelope, then emit a broker wakeup for cross-process consumers."""
         await self._producer.send(session_id, envelope)
-
         if self._broker is not None:
             try:
                 wakeup = BrokerMessage(
@@ -109,35 +99,22 @@ class LocalAgentMessageBus(AgentMessageBus):
                     wakeup,
                 )
             except Exception:
-                logger.exception("Failed to send broker wakeup signal for session %s", session_id)
-
-        event = self._get_event(session_id)
-        self._pending_counts[session_id] = self._pending_counts.get(session_id, 0) + 1
-        event.set()
-
-    async def send_silent(self, session_id: str, envelope: AgentMessageEnvelope) -> None:
-        """Persist the envelope without signaling/waking up the consumer.
-
-        Updates pending_counts so that consume() correctly detects
-        pending messages even when they were queued silently.
-        """
-        await self._producer.send(session_id, envelope)
-        self._pending_counts[session_id] = self._pending_counts.get(session_id, 0) + 1
+                logger.exception(
+                    "Failed to send broker wakeup signal for session %s",
+                    session_id,
+                )
 
     async def consume(
-        self, session_id: str, limit: int = 100, *, block: bool = True
+        self,
+        session_id: str,
+        limit: int = 100,
+        *,
+        only_types: set[str] | None = None,
     ) -> list[AgentMessageEnvelope]:
-        """Return messages for ``session_id``, optionally blocking until available."""
-        if block and not self._closed:
-            event = self._get_event(session_id)
-            if not event.is_set():
-                try:
-                    await event.wait()
-                except asyncio.CancelledError:
-                    raise
-            # event will be cleared after consuming based on pending counts
-
-        messages = await self._consumer.consume(session_id, limit)
+        """Return up to ``limit`` pending envelopes for ``session_id`` (non-blocking)."""
+        messages = await self._consumer.consume(
+            session_id, limit, only_types=only_types
+        )
         from modex_agent.multi_agent.address import AgentAddress
         from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 
@@ -146,9 +123,16 @@ class LocalAgentMessageBus(AgentMessageBus):
             payload = msg.metadata.get("payload") if msg.metadata else None
             if payload is None:
                 payload = {"content": msg.content, "message_type": msg.message_type}
+            # Preserve the original source kind/name (producer stores them in
+            # metadata). Hardcoding kind="agent" here would erase the
+            # channel/human origin of external_input envelopes, mis-classifying
+            # human DMs as agent-source -> role=agent in session memory.
+            meta = msg.metadata or {}
+            src_kind = meta.get("source_kind") or "agent"
+            src_name = meta.get("source_name") or msg.source
             envelope = AgentMessageEnvelope(
                 payload=payload,
-                source=AgentAddress(kind="agent", name=msg.source),
+                source=AgentAddress(kind=src_kind, name=src_name),
                 message_type=msg.message_type,
                 session_id=msg.metadata.get("session_id", session_id),
                 agent_session_id=msg.metadata.get("agent_session_id", session_id),
@@ -161,27 +145,16 @@ class LocalAgentMessageBus(AgentMessageBus):
             )
             envelopes.append(envelope)
 
-        # Adjust pending count and only clear event if no more pending messages
-        event = self._get_event(session_id)
-        remaining = self._pending_counts.get(session_id, 0) - len(messages)
-        if remaining <= 0:
-            self._pending_counts.pop(session_id, None)
-            event.clear()
-        else:
-            self._pending_counts[session_id] = remaining
-
         return envelopes
-
-    async def poll(self, session_id: str, limit: int = 100) -> list[AgentMessageEnvelope]:
-        """Poll pending messages without blocking."""
-        return await self.consume(session_id, limit=limit, block=False)
 
     async def has_pending(self, session_id: str) -> bool:
         """Non-destructive check using server count (does NOT consume messages)."""
         return await self._consumer.count(session_id) > 0
 
+    async def sessions_with_pending(self) -> list[str]:  # type: ignore[override]
+        """Forward to the consumer's session enumeration."""
+        return await self._consumer.sessions_with_pending()
+
     async def close(self) -> None:
-        """Set all registered events so blocked consumers can wake and exit."""
+        """Mark the bus as closed."""
         self._closed = True
-        for event in self._events.values():
-            event.set()

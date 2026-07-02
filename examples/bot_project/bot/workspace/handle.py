@@ -8,10 +8,6 @@ from typing import TYPE_CHECKING
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.core.session_store import LocalFileSessionStore
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
-from modex_agent.multi_agent.bus import LocalAgentMessageBus
-from modex_agent.multi_agent.inbox.consumer import InboxConsumer
-from modex_agent.multi_agent.inbox.producer import InboxProducer
-from modex_agent.multi_agent.inbox.server_local import LocalFileInboxServer
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
 from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
@@ -104,8 +100,8 @@ class WorkspaceHandle:
 class PoolWorkspaceResources(WorkspaceResources):
     """One workspace's full resource bundle (the business ``R``).
 
-    Owns the workspace-level stores, the PER-WORKSPACE broker/inbox/bus (not
-    shared — each workspace consumes only its own inbox), the per-pool data
+    Owns the workspace-level stores, the PER-WORKSPACE broker (cross-process
+    wakeup; the inbox/bus/poller are per-pool — Task 7), the per-pool data
     snapshots, the pool instances + router, and (added in a later task) the
     background tasks. It is also the per-workspace resolver: the framework
     pipeline reads ``workspace_manager.resolve_workspace().pool_data[pool]``.
@@ -113,13 +109,9 @@ class PoolWorkspaceResources(WorkspaceResources):
 
     target: Path
     ctx: WorkspaceContext
-    inbox_server: LocalFileInboxServer
     overflow_store: LocalFileToolOverflowStore
     session_index_store: WorkspacePoolSessionStore
     broker: InMemoryMessageBroker
-    inbox_producer: InboxProducer
-    inbox_consumer: InboxConsumer
-    agent_bus: LocalAgentMessageBus
     pool_data: dict[str, PoolDataSnapshot] = field(default_factory=dict)
     pools: dict[str, PoolInstance] = field(default_factory=dict)
     pool_router: PoolRouter | None = None

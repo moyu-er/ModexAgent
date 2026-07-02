@@ -60,7 +60,11 @@ class InboxFlushHook(BeforeTurnHook, BeforeIterationHook):
     async def _flush(self, history: MessageHistory, session_id: str | None) -> bool:
         if not session_id:
             return False
-        messages = await self._consumer.consume(session_id, limit=self._max_messages)
+        messages = await self._consumer.consume(
+            session_id,
+            limit=self._max_messages,
+            only_types={"task_request", "subagent_result", "agent_message"},
+        )
         if not messages:
             return False
 

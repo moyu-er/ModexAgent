@@ -118,54 +118,8 @@ def _make_mock_pool():
 
 
 class TestDynamicCreationAgentAddressBug:
-    """Bug: _create_dynamic_subagent passes comm_kind to AgentAddress which doesn't accept it.
-
-    Reproduces: AgentAddress.__init__() got an unexpected keyword argument 'comm_kind'
-    """
-
-    async def test_create_dynamic_subagent_does_not_pass_comm_kind_to_address(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            project = Path(tmp)
-            _write_files(project, "main", "helper",
-                "agent_type: helper\ndescription: Test\nmax_steps: 10\n",
-                "You are a helper.")
-
-            registry = AgentTemplateRegistry(project)
-            template = registry.get_template("main", "helper")
-            assert template is not None
-
-            from modex_agent.multi_agent.communication import AgentCommunicationService
-            from modex_agent.multi_agent.address import AgentAddress
-
-            mock_pool = _make_mock_pool()
-            mock_broker = AsyncMock()
-
-            service = AgentCommunicationService(
-                source=AgentAddress(name="main"),
-                broker=mock_broker,
-                registry=MagicMock(),
-                pool=mock_pool,
-                pool_name="main",
-                project_dir=project,
-            )
-
-            # This must NOT raise TypeError about comm_kind
-            result = await service._create_dynamic_subagent(
-                template=template,
-                parent_session_id="conv-1.main",
-                invocation_id="abc12345",
-                content="Do something",
-            )
-
-            assert result.error is None
-            assert result.target_agent == "helper"
-            assert result.target_kind == AgentCommKind.SUBAGENT
-            mock_pool.register_resident.assert_called_once()
-
-            # Verify the descriptor has correct comm_kind and clean name
-            desc = mock_pool.register_resident.call_args[0][0]
-            assert desc.comm_kind == AgentCommKind.SUBAGENT
-            assert desc.address.name == "helper"
+    """ADR-0015 D3: _create_dynamic_subagent folded into AgentTemplate.materialize;
+    see test_template_materialize.py for the comm_kind-inference behavior."""
 
 
 class TestInvocationIdNullCreatesNewSubagent:
@@ -175,56 +129,10 @@ class TestInvocationIdNullCreatesNewSubagent:
     null = new task, concrete value = continue existing session.
     """
 
-    async def test_null_invocation_id_creates_template_subagent(self):
-        """send_to_agent(target='helper', invocation_id=null) creates new subagent."""
-        with tempfile.TemporaryDirectory() as tmp:
-            project = Path(tmp)
-            _write_files(project, "main", "helper",
-                "agent_type: helper\ndescription: Test\nmax_steps: 10\n",
-                "You are a helper.")
-
-            registry = AgentTemplateRegistry(project)
-            template = registry.get_template("main", "helper")
-            assert template is not None
-
-            from modex_agent.multi_agent.communication import AgentCommunicationService
-            from modex_agent.multi_agent.address import AgentAddress
-            from modex_agent.core.agent import AgentContext
-
-            mock_pool = _make_mock_pool()
-            mock_broker = AsyncMock()
-            mock_registry = MagicMock()
-            mock_registry.get_descriptor.return_value = None
-            mock_registry.get_profile.return_value = None
-
-            service = AgentCommunicationService(
-                source=AgentAddress(name="main"),
-                broker=mock_broker,
-                registry=mock_registry,
-                pool=mock_pool,
-                pool_name="main",
-                project_dir=project,
-                template_registry=registry,
-            )
-
-            ctx = AgentContext(
-                system_prompt="",
-                history=MagicMock(),
-                tool_manager=MagicMock(),
-                session=SessionInfo.from_str("conv-1.main"),
-                comm_kind=AgentCommKind.NORMAL,
-            )
-
-            result = await service.send_async(
-                target_agent="helper",
-                content="Do something",
-                invocation_id=None,
-                context=ctx,
-            )
-
-            assert "Error" not in result
-            assert "dyn." not in result  # no internal prefix exposed
-            mock_pool.register_resident.assert_called_once()
+    # ADR-0015 D3: test_null_invocation_id_creates_template_subagent deleted —
+    # cold-start materialize is now covered by
+    # test_drainer_materializes_missing_subagent_on_first_drain
+    # (tests/unit/multi_agent/test_drainer_protocol.py).
 
     async def test_null_invocation_id_normal_agent(self):
         """send_to_agent(target='normal-agent', invocation_id=null) sends normally."""
@@ -391,172 +299,21 @@ class TestSubagentIdentityResolution:
 
 
 class TestSubagentIsolation:
-    """Dynamic subagent must NOT reuse main's context/tool managers.
+    """ADR-0015 D3: _create_dynamic_subagent folded into AgentTemplate.materialize;
+    dedicated-context-manager and dedicated-tool-manager construction is now
+    materialize's job (see test_template_materialize.py). The two original
+    tests are deleted."""
 
-    The pool's _default_context_manager and factory's _default_tool_manager
-    are shared objects. _create_dynamic_subagent must create DEDICATED
-    instances so the subagent:
-    - uses its own system prompt (from agents/{pool}/{type}.md)
-    - has only basic tools (no MCP/web search from main)
-    - does NOT share main's conversation history/memory
-    """
+    # ADR-0015 D3: test_subagent_gets_dedicated_context_manager deleted.
+    # ADR-0015 D3: test_subagent_gets_dedicated_tool_manager deleted.
 
-    async def test_subagent_gets_dedicated_context_manager(self):
-        from modex_agent.multi_agent.address import AgentAddress
-        from modex_agent.multi_agent.communication import AgentCommunicationService
-
-        with tempfile.TemporaryDirectory() as tmp:
-            project = Path(tmp)
-            _write_files(project, "main", "helper",
-                "agent_type: helper\ndescription: Test\nmax_steps: 10\n",
-                "You are a helper agent.")
-
-            registry = AgentTemplateRegistry(project)
-            template = registry.get_template("main", "helper")
-            assert template is not None
-
-            mock_pool = _make_mock_pool()
-            mock_pool._agents = {}
-            mock_broker = AsyncMock()
-
-            service = AgentCommunicationService(
-                source=AgentAddress(name="main"),
-                broker=mock_broker,
-                registry=MagicMock(),
-                pool=mock_pool,
-                pool_name="main",
-                project_dir=project,
-            )
-
-            result = await service._create_dynamic_subagent(
-                template=template,
-                parent_session_id="conv-1.main",
-                invocation_id="test0001",
-                content="Do something",
-            )
-
-            assert result.error is None
-            mock_pool.register_resident.assert_called_once()
-
-            call_kwargs = mock_pool.register_resident.call_args
-            passed_ctx = call_kwargs[1].get("context_manager")
-            assert passed_ctx is not None, (
-                "_create_dynamic_subagent must pass dedicated context_manager"
-            )
-
-    async def test_subagent_gets_dedicated_tool_manager(self):
-        from modex_agent.multi_agent.address import AgentAddress
-        from modex_agent.multi_agent.communication import AgentCommunicationService
-
-        with tempfile.TemporaryDirectory() as tmp:
-            project = Path(tmp)
-            _write_files(project, "main", "helper",
-                "agent_type: helper\ndescription: Test\nmax_steps: 10\n"
-                "use_terminal: false\n",
-                "You are a helper.")
-
-            registry = AgentTemplateRegistry(project)
-            template = registry.get_template("main", "helper")
-            assert template is not None
-
-            mock_pool = _make_mock_pool()
-            mock_broker = AsyncMock()
-
-            service = AgentCommunicationService(
-                source=AgentAddress(name="main"),
-                broker=mock_broker,
-                registry=MagicMock(),
-                pool=mock_pool,
-                pool_name="main",
-                project_dir=project,
-            )
-
-            result = await service._create_dynamic_subagent(
-                template=template,
-                parent_session_id="conv-1.main",
-                invocation_id="test0002",
-                content="Do something",
-            )
-
-            assert result.error is None
-            mock_pool.register_resident.assert_called_once()
-
-            call_kwargs = mock_pool.register_resident.call_args
-            passed_tm = call_kwargs[1].get("tool_manager")
-            assert passed_tm is not None, (
-                "_create_dynamic_subagent must pass dedicated tool_manager"
-            )
-
-            tool_names = set(passed_tm.list_tools())
-            assert "send_to_agent" not in tool_names, (
-                "Subagent must NOT have communication tools (notification via hook)"
-            )
-            assert "read" in tool_names
-            assert "write" in tool_names
-            assert "mcp_playwright_browser_navigate" not in tool_names, (
-                "Subagent must not inherit main's MCP tools"
-            )
 
 class TestSubagentMemoryCorrectness:
-    """Dynamic subagent must get a real MemorySystemContextManager with
-    session-scoped memory (no knowledge layer), not bare InMemoryContextManager.
+    """ADR-0015 D3: _create_dynamic_subagent folded into AgentTemplate.materialize;
+    memory-system-context-manager construction is now materialize's job
+    (see test_template_materialize.py)."""
 
-    Verifies the subagent's context_manager is a MemorySystemContextManager
-    wrapping a MemorySystem with session+archive layers (no knowledge).
-    """
-
-    async def test_subagent_gets_memory_system_context_manager(self):
-        """Subagent must use MemorySystemContextManager."""
-        from modex_agent.memory.system import MemorySystemContextManager
-        from modex_agent.multi_agent.address import AgentAddress
-        from modex_agent.multi_agent.communication import AgentCommunicationService
-        from modex_agent.core.scope import MemoryAgentRole
-
-        with tempfile.TemporaryDirectory() as tmp:
-            project = Path(tmp)
-            _write_files(project, "main", "helper",
-                "agent_type: helper\ndescription: Test\nmax_steps: 10\n"
-                "memory:\n  short_term:\n    max_messages: 20\n    max_tokens: 10000\n",
-                "You are a helper.")
-
-            registry = AgentTemplateRegistry(project)
-            template = registry.get_template("main", "helper")
-            assert template is not None
-
-            mock_pool = _make_mock_pool()
-            mock_pool._agents = {}
-            mock_broker = AsyncMock()
-
-            service = AgentCommunicationService(
-                source=AgentAddress(name="main"),
-                broker=mock_broker,
-                registry=MagicMock(),
-                pool=mock_pool,
-                pool_name="main",
-                project_dir=project,
-            )
-
-            result = await service._create_dynamic_subagent(
-                template=template,
-                parent_session_id="conv-1.main",
-                invocation_id="test0001",
-                content="Do something",
-            )
-
-            assert result.error is None
-            call_kwargs = mock_pool.register_resident.call_args
-            passed_ctx = call_kwargs[1].get("context_manager")
-
-            # Must be MemorySystemContextManager (has real memory persistence)
-            assert passed_ctx is not None
-            assert isinstance(passed_ctx, MemorySystemContextManager), (
-                f"Expected MemorySystemContextManager, got {type(passed_ctx).__name__}"
-            )
-
-            # Memory system must exist and be initialized
-            assert passed_ctx.memory_system is not None
-            assert passed_ctx.default_agent_id == "helper"
-            assert passed_ctx.default_agent_role == MemoryAgentRole.SUBAGENT
+    # ADR-0015 D3: test_subagent_gets_memory_system_context_manager deleted.
 
 
 class TestAgentMessageXmlWrapping:
@@ -567,60 +324,11 @@ class TestAgentMessageXmlWrapping:
     The receiving agent stores it in memory as-is via InboxFlushHook.
     """
 
-    async def test_task_request_wraps_content_in_agent_message_xml(self):
-        """First message (task_request) must be XML-wrapped."""
-        from modex_agent.multi_agent.address import AgentAddress
-        from modex_agent.multi_agent.communication import AgentCommunicationService
-        from modex_agent.multi_agent.message_xml import build_agent_message
-
-        sent_payloads: list = []
-        mock_broker = AsyncMock()
-
-        async def capture_send(target, msg):
-            sent_payloads.append(msg.payload)
-
-        mock_broker.send_to = capture_send
-        mock_pool = _make_mock_pool()
-        mock_registry = MagicMock()
-
-        with tempfile.TemporaryDirectory() as tmp:
-            project = Path(tmp)
-            _write_files(project, "main", "helper",
-                "agent_type: helper\ndescription: Test\nmax_steps: 10\n",
-                "You are a helper.")
-
-            registry = AgentTemplateRegistry(project)
-            template = registry.get_template("main", "helper")
-
-            service = AgentCommunicationService(
-                source=AgentAddress(name="main"),
-                broker=mock_broker,
-                registry=mock_registry,
-                pool=mock_pool,
-                pool_name="main",
-                project_dir=project,
-                template_registry=registry,
-            )
-
-            result = await service._create_dynamic_subagent(
-                template=template,
-                parent_session_id="conv-1.main",
-                invocation_id="test0001",
-                content="Hello from main",
-            )
-
-            assert result.error is None
-            assert len(sent_payloads) == 1
-            payload = sent_payloads[0]
-            content = payload.get("content", "")
-
-            # Must be XML-wrapped
-            assert "<agent_message" in content, (
-                f"Content must be XML-wrapped, got: {content[:100]}"
-            )
-            assert 'source="main"' in content
-            assert 'invocation_id="test0001"' in content
-            assert "Hello from main" in content
+    # ADR-0015 D3: test_task_request_wraps_content_in_agent_message_xml
+    # deleted — it exercised the deleted _create_dynamic_subagent's send path.
+    # XML wrapping on send is covered by test_agent_message_wraps_content_in_xml
+    # below (drives the still-existing send_async path) and by the build_agent_message
+    # round-trip test at module top (test_xml_message_round_trip).
 
     async def test_agent_message_wraps_content_in_xml(self):
         """Normal agent_message must also be XML-wrapped."""
@@ -728,150 +436,19 @@ class TestSessionRoutingSameAgentDifferentInvocation:
         # Different agent names → different sessions even with same external_id
         assert str(sid_a) != str(sid_b)
 
-    async def test_second_empty_invocation_id_does_not_recreate_agent(self):
-        """Second invocation_id="" on same template must NOT call
-        _create_dynamic_subagent again — the agent is already registered."""
-        from modex_agent.core.agent import AgentContext
-        from modex_agent.multi_agent.address import AgentAddress
-        from modex_agent.multi_agent.communication import AgentCommunicationService
-        from modex_agent.multi_agent.descriptor import AgentDescriptor
-
-        with tempfile.TemporaryDirectory() as tmp:
-            project = Path(tmp)
-            _write_files(project, "main", "helper",
-                "agent_type: helper\ndescription: Test\nmax_steps: 10\n",
-                "You are a helper.")
-
-            registry = AgentTemplateRegistry(project)
-            template = registry.get_template("main", "helper")
-            assert template is not None
-
-            mock_pool = _make_mock_pool()
-            mock_broker = AsyncMock()
-            mock_registry = MagicMock()
-
-            service = AgentCommunicationService(
-                source=AgentAddress(name="main"),
-                broker=mock_broker,
-                registry=mock_registry,
-                pool=mock_pool,
-                pool_name="main",
-                project_dir=project,
-                template_registry=registry,
-            )
-
-            # ---- First call: invocation_id="" → creates subagent ----
-            mock_registry.get_descriptor.return_value = None
-            mock_registry.get_profile.return_value = None
-
-            ctx = AgentContext(
-                system_prompt="",
-                history=MagicMock(),
-                tool_manager=MagicMock(),
-                session=SessionInfo.from_str("conv-1.main"),
-                comm_kind=AgentCommKind.NORMAL,
-            )
-
-            result1 = await service.send_async(
-                target_agent="helper", content="first task",
-                invocation_id="", context=ctx,
-            )
-            assert "Error" not in str(result1)
-            assert mock_pool.register_resident.call_count == 1
-
-            # ---- Second call: invocation_id="" again → new agent instance ----
-            # Template is checked first, so each new invocation creates a fresh
-            # agent with the correct OUTPUT.md path in its system prompt.
-            result2 = await service.send_async(
-                target_agent="helper", content="second task",
-                invocation_id="", context=ctx,
-            )
-            assert "Error" not in str(result2)
-            # Each new invocation creates a new agent instance (template-first lookup)
-            assert mock_pool.register_resident.call_count == 2, (
-                "Second invocation_id='' must create a new agent instance via template"
-            )
-            # The two calls must have different invocation_ids
-            inv1 = result1.split("invocation_id: ")[1] if "invocation_id:" in result1 else ""
-            inv2 = result2.split("invocation_id: ")[1] if "invocation_id:" in result2 else ""
-            assert inv1 != inv2, "Different tasks must have different invocation_ids"
+    # ADR-0015 D3: test_second_empty_invocation_id_does_not_recreate_agent
+    # deleted — send_async is now a pure router; subagent materialization is
+    # Drainer-driven (lazy on first drain), not synchronous in send_async.
+    # The pure session-id routing behavior this class cares about is covered by
+    # the three SessionIdFactory tests above.
 
 
 class TestSubagentSafetyHooks:
-    """Subagent pipeline must have safety hooks wired for communication edge cases.
+    """ADR-0015 D3: _wire_subagent_hooks deleted from the service; safety hooks
+    are now wired inside AgentTemplate.materialize."""
 
-    Two guard hooks:
-    - SubagentAutoSendHook: catches "LLM forgot to call send_to_agent"
-    - MaxIterationNotifyHook: catches "max_iterations reached"
-    """
-
-    async def test_max_iteration_notify_hook_is_wired(self):
-        """MaxIterationNotifyHook must be wired on the subagent pipeline."""
-        from modex_agent.hook import HookRunner, HookErrorPolicy, HookSpec
-        from modex_agent.hook.builtin import SubagentAutoSendHook
-        from modex_agent.hook.notification import MaxIterationNotifyHook
-
-        # Simulate a pipeline with hook_runner that records hooks
-        recorded_hooks: list = []
-
-        class _RecordingRunner:
-            def __init__(self):
-                self._specs: list = []
-
-            def add(self, spec):
-                recorded_hooks.append(spec.hook)
-
-        pipeline = MagicMock()
-        pipeline.hook_runner = _RecordingRunner()
-
-        mock_pool = _make_mock_pool()
-        mock_pool.get.return_value = MagicMock(pipeline=pipeline)
-
-        from modex_agent.multi_agent.address import AgentAddress
-        from modex_agent.multi_agent.communication import AgentCommunicationService
-
-        mock_broker = AsyncMock()
-        mock_registry = MagicMock()
-        mock_notification = MagicMock()
-
-        service = AgentCommunicationService(
-            source=AgentAddress(name="main"),
-            broker=mock_broker,
-            registry=mock_registry,
-            pool=mock_pool,
-            notification_service=mock_notification,
-            inbox_consumer=MagicMock(),
-            agent_bus=MagicMock(),
-        )
-
-        service._wire_subagent_hooks("worker")
-
-        hook_types = {type(h) for h in recorded_hooks}
-        assert SubagentAutoSendHook in hook_types, (
-            "SubagentAutoSendHook must be wired"
-        )
-        assert MaxIterationNotifyHook in hook_types, (
-            "MaxIterationNotifyHook must be wired for max_iterations guard"
-        )
-
-    async def test_hooks_not_wired_without_pipeline(self):
-        """_wire_subagent_hooks must be safe when pipeline is None."""
-        from modex_agent.multi_agent.address import AgentAddress
-        from modex_agent.multi_agent.communication import AgentCommunicationService
-
-        mock_pool = _make_mock_pool()
-        mock_pool.get.return_value = None  # No agent found
-
-        mock_broker = AsyncMock()
-        service = AgentCommunicationService(
-            source=AgentAddress(name="main"),
-            broker=mock_broker,
-            registry=MagicMock(),
-            pool=mock_pool,
-        )
-
-        # Should not raise
-        service._wire_subagent_hooks("worker")
+    # ADR-0015 D3: test_max_iteration_notify_hook_is_wired deleted.
+    # ADR-0015 D3: test_hooks_not_wired_without_pipeline deleted.
 
 
 class TestOutputMdInjection:
@@ -964,138 +541,12 @@ class TestOutputMdInjection:
             "Without scoped_write_dir, READ_ONLY must not get edit"
         )
 
-    async def test_system_prompt_includes_output_md_protocol(self):
-        """The subagent system prompt must contain OUTPUT.md with absolute path."""
-        import tempfile
-        from pathlib import Path as _Path
-
-        from modex_agent.multi_agent.address import AgentAddress
-        from modex_agent.multi_agent.communication import AgentCommunicationService
-        from modex_agent.multi_agent.template import AgentTemplate
-        from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
-        from modex_agent.tools.presets import ToolPreset
-
-        # Set up template registry — correct directory layout:
-        #   config/pools/{pool}/templates/{type}.yml
-        project = _Path(tempfile.mkdtemp())
-        pool_tpl_dir = project / "config" / "pools" / "main" / "templates"
-        pool_tpl_dir.mkdir(parents=True)
-        (pool_tpl_dir / "helper.yml").write_text(
-            "agent_type: helper\ndescription: Test\ntool_preset: read_only\nmax_steps: 10\n"
-        )
-        registry = AgentTemplateRegistry(project)
-        template = registry.get_template("main", "helper")
-        assert template is not None, (
-            f"Template not found — check dir: {pool_tpl_dir}, "
-            f"files: {list(pool_tpl_dir.iterdir()) if pool_tpl_dir.exists() else 'N/A'}"
-        )
-        assert template.tool_preset == ToolPreset.READ_ONLY
-
-        # Create service with runtime_dir → OUTPUT.md protocol injected
-        runtime_dir = _Path(tempfile.mkdtemp()) / "runtime"
-        mock_pool = _make_mock_pool()
-        mock_broker = AsyncMock()
-
-        service = AgentCommunicationService(
-            source=AgentAddress(name="main"),
-            broker=mock_broker,
-            registry=MagicMock(),
-            pool=mock_pool,
-            pool_name="main",
-            project_dir=project,
-            template_registry=registry,
-            runtime_dir=runtime_dir,
-        )
-
-        ctx = AgentContext(
-            system_prompt="",
-            history=MagicMock(),
-            tool_manager=MagicMock(),
-            session=SessionInfo.from_str("conv-1.main"),
-            comm_kind=AgentCommKind.NORMAL,
-        )
-        result = await service.send_async(
-            target_agent="helper", content="do something",
-            invocation_id="", context=ctx,
-        )
-
-        assert "Error" not in str(result)
-        call_args = mock_pool.register_resident.call_args
-        descriptor = call_args[0][0]
-        system_prompt = descriptor.system_prompt_template
-        assert system_prompt is not None
-
-        # OUTPUT.md is now in the dynamic OutputMdProvider, not in the static
-        # descriptor.system_prompt_template. Verify via build_system_prompt().
-        ctx_mgr = call_args[1].get("context_manager")
-        assert ctx_mgr is not None, "context_manager must be passed"
-        built = await ctx_mgr.build_system_prompt(tool_manager=None)
-        assert "OUTPUT.md" in built
-        assert "CRITICAL" in built
-        assert "`write` tool" in built
-        # For READ_ONLY: must mention scoped write access (in static prompt)
-        assert "Read-Only Mode" in system_prompt
-
-    async def test_output_md_before_fork_context(self):
-        """OUTPUT.md section must appear BEFORE fork context in built prompt."""
-        import tempfile
-        from pathlib import Path as _Path
-
-        from modex_agent.multi_agent.address import AgentAddress
-        from modex_agent.multi_agent.communication import AgentCommunicationService
-        from modex_agent.multi_agent.template import AgentTemplate
-        from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
-        from modex_agent.tools.presets import ContextMode, ToolPreset
-
-        project = _Path(tempfile.mkdtemp())
-        pool_tpl_dir = project / "config" / "pools" / "main" / "templates"
-        pool_tpl_dir.mkdir(parents=True)
-        (pool_tpl_dir / "helper.yml").write_text(
-            "agent_type: helper\ndescription: Test\n"
-            "tool_preset: read_only\ncontext_mode: fork\nmax_steps: 10\n"
-        )
-        registry = AgentTemplateRegistry(project)
-        template = registry.get_template("main", "helper")
-        assert template is not None and template.context_mode == ContextMode.FORK
-
-        runtime_dir = _Path(tempfile.mkdtemp()) / "runtime"
-        mock_pool = _make_mock_pool()
-        mock_broker = AsyncMock()
-
-        service = AgentCommunicationService(
-            source=AgentAddress(name="main"),
-            broker=mock_broker,
-            registry=MagicMock(),
-            pool=mock_pool,
-            pool_name="main",
-            project_dir=project,
-            template_registry=registry,
-            runtime_dir=runtime_dir,
-        )
-
-        ctx = AgentContext(
-            system_prompt="",
-            history=MagicMock(),
-            tool_manager=MagicMock(),
-            session=SessionInfo.from_str("conv-1.main"),
-            comm_kind=AgentCommKind.NORMAL,
-        )
-        await service.send_async(
-            target_agent="helper", content="do something",
-            invocation_id="", context=ctx,
-        )
-
-        call_args = mock_pool.register_resident.call_args
-        ctx_mgr = call_args[1].get("context_manager")
-        assert ctx_mgr is not None
-        # Load sets _last_session_id so OutputMdProvider gets the right session
-        await ctx_mgr.load(session_id="conv-1.helper.abc123")
-        built = await ctx_mgr.build_system_prompt(tool_manager=None)
-
-        # OUTPUT.md (from OutputMdProvider) must appear before Fork Context
-        # (Fork Context is in base_system_prompt via descriptor, not ctx_mgr)
-        assert "OUTPUT.md" in built
-        assert "CRITICAL" in built
+    # ADR-0015 D3: test_system_prompt_includes_output_md_protocol deleted —
+    # prompt assembly moved into AgentTemplate.materialize. OUTPUT.md injection
+    # is covered by test_built_system_prompt_contains_output_md below.
+    # ADR-0015 D3: test_output_md_before_fork_context deleted — same reason;
+    # OUTPUT.md-before-fork ordering is asserted by the OutputMdProvider
+    # ordering exercised in test_built_system_prompt_contains_output_md.
 
     async def test_built_system_prompt_contains_output_md(self):
         """OutputMdProvider injects per-session OUTPUT.md path dynamically."""
@@ -1136,166 +587,11 @@ class TestOutputMdInjection:
 
 
 class TestSubagentToolInstanceIsolation:
-    """Every subagent must get independent tool instances — no object sharing.
+    """ADR-0015 D3: _create_dynamic_subagent folded into AgentTemplate.materialize;
+    the tool_manager is now built fresh inside each materialize() call, so
+    distinct-by-construction holds. The three original tests are deleted."""
 
-    Two subagents created from the same template must NOT share:
-    - tool_manager objects
-    - individual tool instances (e.g. ReadFileTool)
-    - MCP connections / managers
+    # ADR-0015 D3: test_two_subagents_get_distinct_tool_managers deleted.
+    # ADR-0015 D3: test_tool_instances_not_shared_between_subagents deleted.
+    # ADR-0015 D3: test_subagents_have_independent_preset_tool_instances deleted.
 
-    This is critical for MCP: if subagents share a tool_manager, one
-    subagent's MCP tools would leak into another.
-    """
-
-    async def test_two_subagents_get_distinct_tool_managers(self):
-        """Each _create_dynamic_subagent call creates a new InMemoryToolManager."""
-        from modex_agent.multi_agent.address import AgentAddress
-        from modex_agent.multi_agent.communication import AgentCommunicationService
-        from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
-
-        with tempfile.TemporaryDirectory() as tmp:
-            project = Path(tmp)
-            _write_files(project, "main", "helper",
-                "agent_type: helper\ndescription: Test\nmax_steps: 10\n"
-                "use_terminal: false\ntool_preset: read_only\n",
-                "You are a helper.")
-
-            registry = AgentTemplateRegistry(project)
-            template = registry.get_template("main", "helper")
-            assert template is not None
-
-            service = AgentCommunicationService(
-                source=AgentAddress(name="main"),
-                broker=AsyncMock(),
-                registry=MagicMock(),
-                pool=_make_mock_pool(),
-                pool_name="main",
-                project_dir=project,
-            )
-
-            # Create two subagents
-            result_a = await service._create_dynamic_subagent(
-                template=template, parent_session_id="conv-1.main",
-                invocation_id="inv-a", content="task A",
-            )
-            result_b = await service._create_dynamic_subagent(
-                template=template, parent_session_id="conv-1.main",
-                invocation_id="inv-b", content="task B",
-            )
-
-            assert result_a.error is None
-            assert result_b.error is None
-
-            # Extract tool_managers from register_resident calls
-            pool = service._pool
-            call_args_list = pool.register_resident.call_args_list
-            assert len(call_args_list) == 2
-
-            tm_a = call_args_list[0][1]["tool_manager"]
-            tm_b = call_args_list[1][1]["tool_manager"]
-
-            # Must be different objects
-            assert tm_a is not tm_b, (
-                "Subagents must get distinct tool_manager instances, "
-                "not the same object"
-            )
-
-    async def test_tool_instances_not_shared_between_subagents(self):
-        """Registering a tool in one subagent's manager must not affect the other."""
-        from modex_agent.multi_agent.address import AgentAddress
-        from modex_agent.multi_agent.communication import AgentCommunicationService
-        from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
-        from modex_agent.tools.standard import ReadFileTool
-
-        with tempfile.TemporaryDirectory() as tmp:
-            project = Path(tmp)
-            _write_files(project, "main", "helper",
-                "agent_type: helper\ndescription: Test\nmax_steps: 10\n"
-                "use_terminal: false\n",
-                "You are a helper.")
-
-            registry = AgentTemplateRegistry(project)
-            template = registry.get_template("main", "helper")
-            assert template is not None
-
-            service = AgentCommunicationService(
-                source=AgentAddress(name="main"),
-                broker=AsyncMock(),
-                registry=MagicMock(),
-                pool=_make_mock_pool(),
-                pool_name="main",
-                project_dir=project,
-            )
-
-            result_a = await service._create_dynamic_subagent(
-                template=template, parent_session_id="conv-1.main",
-                invocation_id="inv-a", content="task A",
-            )
-            result_b = await service._create_dynamic_subagent(
-                template=template, parent_session_id="conv-1.main",
-                invocation_id="inv-b", content="task B",
-            )
-
-            pool = service._pool
-            tm_a = pool.register_resident.call_args_list[0][1]["tool_manager"]
-            tm_b = pool.register_resident.call_args_list[1][1]["tool_manager"]
-
-            # The actual tool INSTANCES should be different objects
-            tool_a = tm_a.get_tool("read")
-            tool_b = tm_b.get_tool("read")
-            assert tool_a is not None
-            assert tool_b is not None
-            assert tool_a is not tool_b, (
-                "Preset tool instances must NOT be shared between subagents. "
-                "Each subagent gets its own ReadFileTool instance."
-            )
-
-    async def test_subagents_have_independent_preset_tool_instances(self):
-        """Two subagents with READ_ONLY preset each get their own tool instances."""
-        from modex_agent.multi_agent.address import AgentAddress
-        from modex_agent.multi_agent.communication import AgentCommunicationService
-        from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
-        from modex_agent.tools.presets import ToolPreset
-
-        with tempfile.TemporaryDirectory() as tmp:
-            project = Path(tmp)
-            _write_files(project, "main", "scout",
-                "agent_type: scout\ndescription: Scout\ntool_preset: read_only\n"
-                "max_steps: 10\nuse_terminal: false\n",
-                "You are a scout.")
-
-            registry = AgentTemplateRegistry(project)
-            template = registry.get_template("main", "scout")
-            assert template is not None
-            assert template.tool_preset == ToolPreset.READ_ONLY
-
-            service = AgentCommunicationService(
-                source=AgentAddress(name="main"),
-                broker=AsyncMock(),
-                registry=MagicMock(),
-                pool=_make_mock_pool(),
-                pool_name="main",
-                project_dir=project,
-            )
-
-            await service._create_dynamic_subagent(
-                template=template, parent_session_id="conv-1.main",
-                invocation_id="inv-1", content="task 1",
-            )
-            await service._create_dynamic_subagent(
-                template=template, parent_session_id="conv-1.main",
-                invocation_id="inv-2", content="task 2",
-            )
-
-            pool = service._pool
-            tm_1 = pool.register_resident.call_args_list[0][1]["tool_manager"]
-            tm_2 = pool.register_resident.call_args_list[1][1]["tool_manager"]
-
-            for tool_name in tm_1.list_tools():
-                t1 = tm_1.get_tool(tool_name)
-                t2 = tm_2.get_tool(tool_name)
-                assert t1 is not None and t2 is not None
-                assert t1 is not t2, (
-                    f"Tool '{tool_name}': instances must be distinct. "
-                    f"Subagent 1 and 2 got the same object ({id(t1)} == {id(t2)})."
-                )

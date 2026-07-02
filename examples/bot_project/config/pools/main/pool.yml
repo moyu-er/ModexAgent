@@ -1,4 +1,9 @@
-# config/pools/main.yml — Main agent pool
+# config/pools/main/pool.yml — Main agent pool
+#
+# The normal (main) agent is configured inline in the `agents:` block below
+# (plain AgentConfig, NOT an AgentTemplate). Only subagents live under
+# `templates/`. `use_terminal`/`terminal_visibility`/`max_steps`/`approval`/
+# `experience` are read from this agents entry at pool-build time.
 
 # Model settings (url / api_key / model / capabilities) are global — see
 # config/model.yml, edited via `modexbot config`. This pool inherits them.
@@ -44,12 +49,10 @@ agents:
     experience:
       enabled: true
     approval:
-      enabled: true                       # opt-in (default is off)
+      enabled: true
       # Keys MUST match the real tool names (WriteFileTool.name="write",
-      # EditFileTool.name="edit"); a mismatch silently disables gating.
-      # allowed_paths are workspace-relative directory roots ("./*" = whole
-      # project tree). Paths are resolved + containment-checked, so ".."
-      # escapes are rejected.
+      # EditFileTool.name="edit"). allowed_paths are workspace-relative
+      # directory roots ("./*" = whole project tree).
       tools:
         write: {allowed_paths: ["./*"]}
         edit: {allowed_paths: ["./*"]}

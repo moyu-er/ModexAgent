@@ -99,7 +99,7 @@ class TestSubagentAutoSendHookFinallyTurn:
         with _mock_output_exists(runtime_dir, session_id):
             await hook.finally_turn(ctx, result)
 
-        msgs = await bus.consume("conv123.main", block=False)
+        msgs = await bus.consume("conv123.main")
         assert len(msgs) == 1
         xml = msgs[0].payload["content"]
         assert "<subagent_notification>" in xml
@@ -107,6 +107,36 @@ class TestSubagentAutoSendHookFinallyTurn:
         assert _extract_xml_field(xml, "status") == "completed"
         assert _extract_xml_field(xml, "is_normal") == "true"
         assert _extract_xml_field(xml, "stop_reason") == "completed"
+
+    async def test_notification_uses_absolute_artifact_paths(self, tmp_path: Path):
+        """trace/output in the notification must be ABSOLUTE, workspace-rooted
+        paths (parity with send_to_agent's ack) — not relative fragments the
+        parent cannot resolve. The subagent itself is unaware; the hook owns
+        this."""
+        runtime_dir = tmp_path / "runtime"
+        session_id = "a1b2c3d4.worker"
+
+        bus = _make_bus(tmp_path)
+        hook = SubagentAutoSendHook(
+            agent_bus=bus,
+            self_name="worker",
+            parent_name="main",
+            runtime_dir=runtime_dir,
+        )
+        ctx = _make_context(session_id)
+        result = AgentResult(content="Done.", stop_reason=StopReason.COMPLETED)
+
+        with _mock_output_exists(runtime_dir, session_id):
+            await hook.finally_turn(ctx, result)
+
+        xml = (await bus.consume("conv123.main"))[0].payload["content"]
+        expected_trace = str(runtime_dir / "trace" / session_id / "operations.jsonl")
+        expected_output = str(runtime_dir / "output" / session_id / "OUTPUT.md")
+        assert _extract_xml_field(xml, "trace") == expected_trace
+        assert _extract_xml_field(xml, "output") == expected_output
+        # Must not be a bare relative fragment.
+        assert not _extract_xml_field(xml, "trace").startswith("trace/")
+        assert not _extract_xml_field(xml, "output").startswith("output/")
 
     async def test_error_crash_sends_hint(self, tmp_path: Path):
         """Error result → is_normal=false, crash hint."""
@@ -129,7 +159,7 @@ class TestSubagentAutoSendHookFinallyTurn:
 
         await hook.finally_turn(ctx, result)
 
-        msgs = await bus.consume("conv123.main", block=False)
+        msgs = await bus.consume("conv123.main")
         assert len(msgs) == 1
         xml = msgs[0].payload["content"]
         assert _extract_xml_field(xml, "is_normal") == "false"
@@ -160,7 +190,7 @@ class TestSubagentAutoSendHookFinallyTurn:
         with _mock_output_exists(runtime_dir, session_id):
             await hook.finally_turn(ctx, result)
 
-        msgs = await bus.consume("conv123.main", block=False)
+        msgs = await bus.consume("conv123.main")
         assert len(msgs) == 1
         xml = msgs[0].payload["content"]
         assert _extract_xml_field(xml, "is_normal") == "false"
@@ -197,7 +227,7 @@ class TestSubagentAutoSendHookFinallyTurn:
 
         await hook.finally_turn(ctx, result=None)
 
-        msgs = await bus.consume("conv123.main", block=False)
+        msgs = await bus.consume("conv123.main")
         assert len(msgs) == 1
         xml = msgs[0].payload["content"]
         assert _extract_xml_field(xml, "is_normal") == "false"
@@ -222,7 +252,7 @@ class TestSubagentAutoSendHookFinallyTurn:
 
         await hook.finally_turn(ctx, result)
 
-        msgs = await bus.consume("conv123.main", block=False)
+        msgs = await bus.consume("conv123.main")
         assert len(msgs) == 1
         xml = msgs[0].payload["content"]
         assert _extract_xml_field(xml, "output_status") == "missing"
@@ -246,7 +276,7 @@ class TestSubagentAutoSendHookFinallyTurn:
 
         await hook.finally_turn(ctx, result)
 
-        msgs = await bus.consume("conv123.main", block=False)
+        msgs = await bus.consume("conv123.main")
         assert len(msgs) == 1
         xml = msgs[0].payload["content"]
         assert _extract_xml_field(xml, "invocation_id") == "abc12345"
@@ -270,7 +300,7 @@ class TestSubagentAutoSendHookFinallyTurn:
 
         await hook.finally_turn(ctx, result)
 
-        msgs = await bus.consume("conv123.main", block=False)
+        msgs = await bus.consume("conv123.main")
         assert len(msgs) == 1
         xml = msgs[0].payload["content"]
         summary = _extract_xml_field(xml, "summary")
@@ -294,7 +324,7 @@ class TestSubagentAutoSendHookFinallyTurn:
 
         await hook.finally_turn(ctx, result)
 
-        msgs = await bus.consume("conv123.qq_bot", block=False)
+        msgs = await bus.consume("conv123.qq_bot")
         assert len(msgs) == 1
         assert msgs[0].payload["metadata"]["agent_type"] == "worker"
 
@@ -401,8 +431,8 @@ class TestSubagentAutoSendHookBuildXml:
             error="",
             hint="",
             summary="Task done.",
-            trace_dir_rel="trace/conv123.worker:abc123/operations.jsonl",
-            output_path_rel="output/conv123.worker:abc123/OUTPUT.md",
+            trace_path="trace/conv123.worker:abc123/operations.jsonl",
+            output_path="output/conv123.worker:abc123/OUTPUT.md",
             output_status="written",
         )
         assert "<subagent_notification>" in xml
@@ -424,8 +454,8 @@ class TestSubagentAutoSendHookBuildXml:
             error="crashed <with> &special 'chars'",
             hint="Try again",
             summary="",
-            trace_dir_rel="t",
-            output_path_rel="o",
+            trace_path="t",
+            output_path="o",
             output_status="missing",
         )
         assert "<subagent_notification>" in xml

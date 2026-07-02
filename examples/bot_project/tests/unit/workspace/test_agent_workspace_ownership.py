@@ -24,10 +24,6 @@ from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.core.session_store import LocalFileSessionStore
 from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
-from modex_agent.multi_agent.bus import LocalAgentMessageBus
-from modex_agent.multi_agent.inbox.consumer import InboxConsumer
-from modex_agent.multi_agent.inbox.producer import InboxProducer
-from modex_agent.multi_agent.inbox.server_local import LocalFileInboxServer
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
 from modex_agent.tools.presets import ToolPreset, get_preset_tools
 from modex_agent.tools.standard import ReadFileTool, SearchFilesTool
@@ -57,21 +53,13 @@ def _build_test_resources(tmp_path: Path) -> PoolWorkspaceResources:
     target = tmp_path / "ws"
     target.mkdir()
     ctx = WorkspaceContext.from_target(target, data_dir_name=".modex", home=tmp_path)
-    inbox_server = LocalFileInboxServer(workspace=ctx.paths.inbox_dir)
     broker = InMemoryMessageBroker()
-    producer = InboxProducer(server=inbox_server)
-    consumer = InboxConsumer(server=inbox_server)
-    bus = LocalAgentMessageBus(producer=producer, consumer=consumer, broker=broker)
     return PoolWorkspaceResources(
         target=target,
         ctx=ctx,
-        inbox_server=inbox_server,
         overflow_store=LocalFileToolOverflowStore(workspace=ctx.paths.overflow_dir),
         session_index_store=LocalFileSessionStore(root=ctx.paths.session_index_dir),
         broker=broker,
-        inbox_producer=producer,
-        inbox_consumer=consumer,
-        agent_bus=bus,
     )
 
 
@@ -154,26 +142,27 @@ def test_main_agent_search_tools_wrapped_when_root_provider_given(tmp_path: Path
 
 
 async def test_subagent_tool_manager_uses_workspace_root_provider(tmp_path: Path) -> None:
-    """Verify that _build_subagent_tool_manager passes root_provider to get_preset_tools."""
-    from modex_agent.multi_agent.address import AgentAddress
-    from modex_agent.multi_agent.communication import AgentCommunicationService
+    """Verify that AgentTemplate._build_tool_manager passes root_provider to
+    get_preset_tools (the tool-manager build moved here from
+    AgentCommunicationService in ADR-0015 D5)."""
+    from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
     from modex_agent.multi_agent.template import AgentTemplate
 
     provider = _StaticRootProvider(tmp_path)
-    service = AgentCommunicationService(
-        source=AgentAddress(name="main"),
+    deps = AgentMaterializeDeps(
+        agent_factory=None,  # not used by _build_tool_manager
+        pool=object(),  # type: ignore[arg-type]  # not used by _build_tool_manager
+        session_factory=None,  # not used by _build_tool_manager
         broker=InMemoryMessageBroker(),
-        registry=object(),  # type: ignore[arg-type]
         root_provider=provider,
     )
-
     template = AgentTemplate(
         agent_type="scout",
         tool_preset=ToolPreset.READ_ONLY,
         description="Test scout",
     )
 
-    tm = await service._build_subagent_tool_manager(template, agent_name="scout", parent_name="main")
+    tm = await template._build_tool_manager(deps, "scout", runtime_dir=None)
     tools = tm.list_tools()
     assert len(tools) > 0
     for name in tools:
@@ -211,14 +200,8 @@ async def test_main_agent_tool_manager_is_workspace_scoped(tmp_path: Path) -> No
         memory=MemoryConfig(),
     )
 
-    inbox_server = LocalFileInboxServer(workspace=tmp_path / "inbox")
     broker = InMemoryMessageBroker()
     await broker.start()
-    inbox_consumer = InboxConsumer(server=inbox_server)
-    inbox_producer = InboxProducer(server=inbox_server)
-    agent_bus = LocalAgentMessageBus(
-        producer=inbox_producer, consumer=inbox_consumer, broker=broker
-    )
 
     workspace_handle = WorkspaceHandle(target=target, data_root=target / ".modex")
 
@@ -228,9 +211,6 @@ async def test_main_agent_tool_manager_is_workspace_scoped(tmp_path: Path) -> No
         project_dir=tmp_path,
         data_dir=target / ".modex",
         broker=broker,
-        inbox_server=inbox_server,
-        inbox_consumer=inbox_consumer,
-        agent_bus=agent_bus,
         output_adapter=object(),  # type: ignore[arg-type]
         safety=RuntimeSafetyPolicy(),
         retention=SessionRetentionPolicy(),

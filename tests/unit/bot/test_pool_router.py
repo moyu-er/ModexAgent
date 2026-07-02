@@ -53,11 +53,20 @@ def _make_pool_config(name: str) -> PoolConfig:
 
 
 class _FakePoolInstance:
-    """Minimal stub that has main_agent_name and main_address."""
+    """Minimal stub that has main_agent_name, main_address, and a recording
+    ``pool.submit_input`` (the poll-driven routing entry point)."""
 
     def __init__(self, name: str):
         self.name = name
         self.main_agent_name = name
+        self.submitted: list = []
+        record = self.submitted
+
+        class _Inner:
+            async def submit_input(self, sid, msg):  # noqa: ANN001
+                record.append((sid, msg))
+
+        self.pool = _Inner()
 
     @property
     def main_address(self):
@@ -210,8 +219,8 @@ class TestPoolRouterRouting:
             await router_task
             await capture_task
 
-        assert len(routed) >= 1
-        assert routed[0].payload["content"] == "hello"
+        assert pools["coding"].submitted, "coding pool received no submission"
+        assert pools["coding"].submitted[0][1].content == "hello"
 
 
 # ── Reserved Pool Name Validation Tests ──

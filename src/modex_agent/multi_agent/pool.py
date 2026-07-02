@@ -1,22 +1,32 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import sys
 import time
 from collections.abc import Callable, Coroutine, Iterator
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from modex_agent.multi_agent.context_fork import ContextForkBuilder
+    from modex_agent.multi_agent.inbox_poller import InboxPoller
+    from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
+    from modex_agent.multi_agent.template import AgentTemplate
+    from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 
 from modex_agent.core.context import ContextManager
 from modex_agent.core.graph.interrupt import GraphInterrupt
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.core.session_store import SessionStore
-from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import InputMessage
-from modex_agent.messaging.broker import BrokerMessage, MessageBroker
-from modex_agent.messaging.broker_bridge import attachments_resolved_from_payload
+from modex_agent.messaging.broker import MessageBroker
+from modex_agent.messaging.broker_bridge import (
+    BrokerInputPayload,
+    attachments_resolved_from_payload,
+)
 from modex_agent.runtime.dispatch import DispatchDeadline, current_dispatch_deadline
 
 from .address import AgentAddress
@@ -32,9 +42,6 @@ from modex_agent.core.session_id import SessionInfo, SessionIdFactory
 from .state import AgentState
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_INBOX_POLL_INTERVAL: float = 10.0
-MAX_ENVELOPE_HOPS: int = 5
 
 
 @dataclass
@@ -103,6 +110,9 @@ class AgentPool(AgentRegistry):
         agent_bus: AgentMessageBus | None = None,
         inbox_consumer: InboxConsumer | None = None,
         *,
+        # Legacy no-ops: the between-turn idle poller was removed in Task 10
+        # (the per-pool InboxPoller is the sole driver now). Accepted for
+        # backward-compat with existing callers/tests; ignored.
         enable_inbox_polling: bool = True,
         inbox_poll_interval: float = 10.0,
         default_context_manager_factory: Callable[[str], ContextManager] | None = None,
@@ -121,11 +131,8 @@ class AgentPool(AgentRegistry):
         self._default_context_manager_factory = default_context_manager_factory
         self._agent_bus = agent_bus
         self._inbox_consumer = inbox_consumer
-        self._enable_inbox_polling = enable_inbox_polling
-        self._inbox_poll_interval = inbox_poll_interval
         self._session_factory = session_factory or SessionIdFactory()
         self._safety = safety or RuntimeSafetyPolicy()
-        self._session_locks: dict[str, asyncio.Lock] = {}
         self._session_agents: dict[str, str] = {}
         self._session_activity: dict[str, SessionActivity] = {}
         self._session_lru_seq: int = 0
@@ -136,14 +143,20 @@ class AgentPool(AgentRegistry):
         self._retention = retention or SessionRetentionPolicy()
         self._comm_tracker = comm_tracker
         self._cleanup_task: asyncio.Task[None] | None = None
-        self._consumers: dict[str, asyncio.Task[None]] = {}
         self._agent_tasks: dict[str, list[asyncio.Task[None]]] = {}
         self._active_session_counts: dict[str, int] = {}
         self._error_counts: dict[str, int] = {}
         self._max_error_retries: int = 5
         self._max_backoff_seconds: float = 10.0
-        self._dispatch_locks: dict[str, asyncio.Lock] = {}
-        self._inbox_poll_task: asyncio.Task[None] | None = None
+        # ── ADR-0015 D3 lazy materialize (set by Task 2.9 wiring) ──
+        self._materialize_deps: AgentMaterializeDeps | None = None
+        self._template_registry: AgentTemplateRegistry | None = None
+        self._pool_name: str | None = None
+        # ── ADR-0015 D5 fork-context cleanup (set by Task 2.9 wiring) ──
+        self._context_fork_builder: ContextForkBuilder | None = None
+        # ── Per-poll InboxPoller (Task 7): attached by create_pool; started
+        #    after materialize-deps injection; stopped in shutdown_all. ──
+        self._poller: InboxPoller | None = None
         self._valid_transitions: dict[AgentState, set[AgentState]] = {
             AgentState.INITIALIZING: {AgentState.IDLE, AgentState.ERROR, AgentState.SHUTTING_DOWN},
             AgentState.IDLE: {AgentState.WORKING, AgentState.ERROR, AgentState.SHUTTING_DOWN},
@@ -152,8 +165,6 @@ class AgentPool(AgentRegistry):
             AgentState.SHUTTING_DOWN: {AgentState.SHUTDOWN},
             AgentState.SHUTDOWN: set(),
         }
-        if self._enable_inbox_polling:
-            self._inbox_poll_task = asyncio.create_task(self._poll_inbox_for_idle_agents())
         self._cleanup_task = asyncio.create_task(self._cleanup_stale_sessions())
 
     def _transition(self, name: str, new_state: AgentState, reason: str = "") -> None:
@@ -181,48 +192,18 @@ class AgentPool(AgentRegistry):
     async def register_resident(
         self,
         descriptor: AgentDescriptor,
-        *,
-        context_manager: ContextManager | None = None,
-        tool_manager: InMemoryToolManager | None = None,
-        skill_manager: Any | None = None,
-        output_adapter: Any | None = None,
-        context_manager_factory: Callable[[str], ContextManager] | None = None,
+        instance: AgentInstance,
     ) -> AgentInstance:
-        """注册常驻 Agent。
+        """Register a pre-built AgentInstance (ADR-0015 D3).
 
-        Args:
-            descriptor: Agent 描述符（身份、能力、策略配置）
-            context_manager: 独立的上下文管理器（如 MemorySystemContextManager），
-                不传则使用 pool 默认值或 descriptor 中的配置
-            tool_manager: 独立的工具管理器，不传则使用 AgentFactory 默认值
-            skill_manager: 独立的技能管理器，不传则使用 AgentFactory 默认值
-            output_adapter: 可选的自定义输出适配器（如 NullOutputAdapter）
-            context_manager_factory: 可选的 ContextManager 工厂函数，接收 session_id 返回 ContextManager
+        Instance construction moved to AgentTemplate.materialize; this method
+        is now a thin store-and-register entry point. Between-turn driving is
+        handled by the per-pool InboxPoller (Task 7).
         """
         name = descriptor.address.name
         self._transition(name, AgentState.INITIALIZING, reason="register_resident")
-        ctx_mgr = context_manager or self._default_context_manager
-        if ctx_mgr is None and descriptor.context_manager is not None:
-            ctx_mgr = descriptor.context_manager
-        ctx_mgr_factory = context_manager_factory or self._default_context_manager_factory
-        instance = await self._agent_factory.create_agent(
-            descriptor,
-            context_manager=ctx_mgr,
-            broker=self._broker,
-            tool_manager=tool_manager,
-            skill_manager=skill_manager,
-            output_adapter=output_adapter,
-            context_manager_factory=ctx_mgr_factory,
-        )
         self._agents[name] = instance
         self._transition(name, AgentState.IDLE, reason="register_resident_complete")
-        consumer_task = asyncio.create_task(self._consume_messages(instance, descriptor))
-
-        def on_consumer_done(task: asyncio.Task[Any], agent_name: str = name) -> None:
-            self._on_consumer_done(task, agent_name)
-
-        consumer_task.add_done_callback(on_consumer_done)
-        self._consumers[name] = consumer_task
         return instance
 
     def _track_agent_task(self, agent_name: str, task: asyncio.Task[None]) -> None:
@@ -237,43 +218,164 @@ class AgentPool(AgentRegistry):
         if task in tasks:
             tasks.remove(task)
 
-    def _on_consumer_done(self, task: asyncio.Task[Any], agent_name: str) -> None:
-        """Consumer task 完成回调：记录异常并尝试恢复。"""
-        if task.cancelled():
-            logger.info("Consumer task for %s was cancelled", agent_name)
-            if self._status.get(agent_name) not in (
-                AgentState.SHUTTING_DOWN,
-                AgentState.SHUTDOWN,
-            ):
-                self._transition(agent_name, AgentState.IDLE, reason="consumer_cancelled_recover")
-                self._restart_consumer_if_needed(agent_name)
+    # Max envelopes consumed per drain cycle ( InboxPoller → consume_inbox ).
+    _DRAIN_BATCH_LIMIT = 10
+
+    # ── Per-pool InboxPoller ownership (Task 7) ──
+
+    def attach_poller(self, poller: "InboxPoller") -> None:
+        """Attach this pool's InboxPoller (created by create_pool wiring)."""
+        self._poller = poller
+
+    def start_poller(self) -> None:
+        """Start the attached poller, if any."""
+        if self._poller is not None:
+            self._poller.start()
+
+    async def stop_poller(self) -> None:
+        """Stop the attached poller, if any. Awaited from shutdown_all."""
+        if self._poller is not None:
+            await self._poller.stop()
+
+    # ── Poll-driven unified inbox surface (Task 6) ──
+    # These helpers are the InboxPoller's view of the pool: writers persist
+    # only (submit_input), enumeration/consume are non-blocking, and
+    # dispatch_envelope starts the turn. C2/C4/C5 in the redesign plan.
+
+    async def submit_input(self, session_id: str, message: InputMessage) -> None:
+        """Human DM / WebUI / approval → write external_input to this pool's inbox.
+
+        Serializes the FULL InputMessage into the envelope payload using the
+        BrokerInputPayload contract (C2) so the turn runner can reconstruct
+        content + approval_decision + attachments_resolved + routing headers.
+        Writers persist only — the poller starts the turn (P2).
+        """
+        payload_model = BrokerInputPayload(
+            content=message.content,
+            session_id=message.session.session_id_prefix,
+            agent_session_id=session_id,
+            metadata=dict(message.metadata) if message.metadata else {},
+            sender_id=message.sender_id,
+            chat_id=message.chat_id,
+            approval_decision=message.approval_decision.to_dict()
+            if message.approval_decision is not None
+            else None,
+            attachments_resolved=[a.to_dict() for a in message.attachments_resolved],
+            message_type="external_input",  # extra field, allowed by extra="allow"
+        )
+        payload: dict[str, Any] = payload_model.model_dump(exclude_none=True)
+
+        envelope = AgentMessageEnvelope(
+            payload=payload,
+            source=AgentAddress(kind="channel", name=message.source or "user"),
+            target=AgentAddress(
+                kind="agent", name=SessionInfo.from_str(session_id).agent_name
+            ),
+            message_type="external_input",
+            session_id=message.session.session_id_prefix,
+            agent_session_id=session_id,
+        )
+        if self._agent_bus is not None:
+            await self._agent_bus.send(session_id, envelope)
+
+    async def sessions_with_pending(self) -> list[str]:
+        """Session ids that currently have ≥1 pending inbox message."""
+        if self._agent_bus is not None:
+            return await self._agent_bus.sessions_with_pending()
+        if self._inbox_consumer is not None:
+            return await self._inbox_consumer.sessions_with_pending()
+        return []
+
+    async def consume_inbox(
+        self, session_id: str, *, only_types: set[str] | None = None
+    ) -> list[AgentMessageEnvelope]:
+        """Non-blocking consume of a batch of inbox envelopes for a session."""
+        if self._agent_bus is not None:
+            return await self._agent_bus.consume(
+                session_id,
+                limit=self._DRAIN_BATCH_LIMIT,
+                only_types=only_types,
+            )
+        return []
+
+    async def recover_parent_session(self, session_id: str) -> SessionInfo | None:
+        """Recover the parent SessionInfo for a child session, if any.
+
+        Used by the poller when materializing a subagent: ``session_id`` is the
+        child, so ``SessionInfo.from_str`` would yield the child's own info
+        (parent_session_id=None). The real parent lives in the registry.
+        """
+        if self._session_registry is None:
+            return None
+        child = await self._session_registry.get(session_id)
+        if child is not None and child.parent_session_id:
+            return SessionInfo.from_str(child.parent_session_id)
+        return None
+
+    def get_template(self, agent_name: str) -> AgentTemplate | None:
+        """Look up a materialization template for ``agent_name`` in this pool."""
+        if self._template_registry is None or self._pool_name is None:
+            return None
+        return self._template_registry.get_template(self._pool_name, agent_name)
+
+    async def dispatch_envelope(
+        self,
+        sid: str,
+        instance: AgentInstance,
+        envelope: AgentMessageEnvelope,
+    ) -> None:
+        """Run one turn for a drained inbox envelope (external_input or agent msg).
+
+        C4: a single reconstruction path. Because ``submit_input`` writes a
+        C2-compatible payload, this method handles BOTH ``external_input`` and
+        inter-agent messages via the same ``input_message_from_dispatch_envelope``.
+        Renamed from ``_run_inbox_turn`` — the InboxPoller calls this directly.
+        """
+        session_id = sid
+        agent_name = SessionInfo.from_str(sid).agent_name
+        if instance.pipeline is None:
             return
-        exc = task.exception()
-        if exc is not None:
-            logger.error(
-                "Consumer task for %s exited with error",
-                agent_name,
-                exc_info=exc,
+        if session_id not in self._session_agents:
+            self._track_session(
+                session_id, agent_name, is_dynamic=bool(envelope.invocation_id)
             )
         else:
-            logger.warning(
-                "Consumer task for %s exited normally (unexpected for infinite loop)",
-                agent_name,
-            )
-        # Attempt to recover by transitioning back to IDLE so the agent
-        # can be restarted or polled again.
-        if self._status.get(agent_name) not in (
-            AgentState.SHUTTING_DOWN,
-            AgentState.SHUTDOWN,
-        ):
-            self._transition(agent_name, AgentState.IDLE, reason="consumer_done_recover")
-            self._restart_consumer_if_needed(agent_name)
+            self._touch_session(session_id)
+        session = await self._resolve_session_info(session_id, agent_name)
+        metadata = self._envelope_metadata(envelope)
+        if self._comm_tracker is not None:
+            self._comm_tracker.build_prompt_section(agent_name)
+        await self._run_dispatch(
+            agent_name,
+            instance.pipeline.process_message(
+                input_message_from_dispatch_envelope(
+                    envelope, session=session, metadata=metadata
+                )
+            ),
+        )
+        if envelope.invocation_id:
+            await self._enforce_session_cap(agent_name)
+
+    @staticmethod
+    def _envelope_metadata(
+        envelope: AgentMessageEnvelope,
+    ) -> dict[str, Any]:
+        source_name = envelope.source.name if envelope.source else None
+        target_name = envelope.target.name if envelope.target else None
+        is_agent_source = bool(envelope.source and envelope.source.kind == "agent")
+        return {
+            "session_id": envelope.agent_session_id,
+            "agent_session_id": envelope.agent_session_id,
+            "message_type": envelope.message_type,
+            "invocation_id": envelope.invocation_id,
+            "source_agent": source_name if is_agent_source else None,
+            "sender_agent": source_name if is_agent_source else None,
+            "receiver_agent": target_name if is_agent_source else None,
+            **envelope.metadata,
+        }
 
     # Watchdog: warn when dispatch exceeds this threshold (P0-a, seconds)
     _DISPATCH_WARN_SECONDS: float = 300.0
-
-    def _get_dispatch_lock(self, agent_name: str) -> asyncio.Lock:
-        return self._dispatch_locks.setdefault(agent_name, asyncio.Lock())
 
     def _bump_error_count(self, agent_name: str) -> int:
         """递增错误计数并返回当前值（上限受 _max_error_retries 限制）。"""
@@ -292,9 +394,6 @@ class AgentPool(AgentRegistry):
                 self._max_error_retries,
             )
             self._transition(agent_name, AgentState.ERROR, reason="max_errors_exceeded")
-            consumer_task = self._consumers.get(agent_name)
-            if consumer_task is not None and not consumer_task.done():
-                consumer_task.cancel()
         else:
             sleep_seconds = min(self._max_backoff_seconds, 2**error_count)
             logger.debug(
@@ -306,16 +405,15 @@ class AgentPool(AgentRegistry):
             await asyncio.sleep(sleep_seconds)
 
     async def _run_dispatch(self, agent_name: str, coro: Coroutine[Any, Any, None]) -> None:
-        """包装 dispatch 协程，维护活跃计数和状态转换。
+        """Execute a turn coroutine with deadline watchdog + error recovery.
 
-        consumer 循环快速 create_task，实际处理在后台执行，
-        通过 per-session lock 保证同 session 串行，但不同 session 可以并发。
+        ADR-0015 D6: the per-agent dispatch lock is removed — the Drainer is
+        single-flight per session, so intra-session mutual exclusion is
+        structural. Active-count decrement is a plain dict op.
         """
-        async with self._get_dispatch_lock(agent_name):
-            self._active_session_counts[agent_name] = (
-                self._active_session_counts.get(agent_name, 0) + 1
-            )
-            active_count = self._active_session_counts[agent_name]
+        self._active_session_counts[agent_name] = (
+            self._active_session_counts.get(agent_name, 0) + 1
+        )
         start_time = time.monotonic()
         current_state = self._status.get(agent_name)
         if current_state == AgentState.ERROR:
@@ -326,7 +424,7 @@ class AgentPool(AgentRegistry):
         logger.debug(
             "Dispatch start: agent=%s active=%d",
             agent_name,
-            active_count,
+            self._active_session_counts.get(agent_name, 0),
         )
         dispatch_timeout = self._safety.turn.dispatch_timeout_seconds
         extension = self._safety.turn.agent_run_timeout_seconds
@@ -374,7 +472,7 @@ class AgentPool(AgentRegistry):
                 "Error dispatching message for %s (elapsed=%.1fs active=%d)",
                 agent_name,
                 elapsed,
-                active_count,
+                self._active_session_counts.get(agent_name, 0),
             )
             self._transition(agent_name, AgentState.ERROR, reason="dispatch_error")
             error_count = self._bump_error_count(agent_name)
@@ -388,24 +486,24 @@ class AgentPool(AgentRegistry):
                     pass
             if deadline is not None:
                 current_dispatch_deadline.reset(token)
-            async with self._get_dispatch_lock(agent_name):
-                current = self._active_session_counts.get(agent_name, 0)
-                remaining = max(0, current - 1)
-                self._active_session_counts[agent_name] = remaining
-                elapsed = time.monotonic() - start_time
-                if elapsed > self._DISPATCH_WARN_SECONDS:
-                    logger.warning(
-                        "Dispatch watchdog: agent=%s elapsed=%.1fs active=%d threshold=%.0fs",
-                        agent_name,
-                        elapsed,
-                        remaining,
-                        self._DISPATCH_WARN_SECONDS,
-                    )
-                if remaining == 0 and self._status.get(agent_name) not in (
-                    AgentState.SHUTTING_DOWN,
-                    AgentState.SHUTDOWN,
-                ):
-                    self._transition(agent_name, AgentState.IDLE, reason="dispatch_idle")
+            remaining = max(
+                0, self._active_session_counts.get(agent_name, 1) - 1
+            )
+            self._active_session_counts[agent_name] = remaining
+            elapsed = time.monotonic() - start_time
+            if elapsed > self._DISPATCH_WARN_SECONDS:
+                logger.warning(
+                    "Dispatch watchdog: agent=%s elapsed=%.1fs active=%d threshold=%.0fs",
+                    agent_name,
+                    elapsed,
+                    remaining,
+                    self._DISPATCH_WARN_SECONDS,
+                )
+            if remaining == 0 and self._status.get(agent_name) not in (
+                AgentState.SHUTTING_DOWN,
+                AgentState.SHUTDOWN,
+            ):
+                self._transition(agent_name, AgentState.IDLE, reason="dispatch_idle")
 
     # watchdog 最大轮询间隔：避免 sleep(remaining) 一次睡太久，
     # 导致对 renew() 的响应延迟过大。
@@ -428,193 +526,6 @@ class AgentPool(AgentRegistry):
                 await asyncio.sleep(min(remaining, self._WATCHDOG_POLL_INTERVAL))
         except asyncio.CancelledError:
             return
-
-    async def _consume_messages(self, instance: AgentInstance, descriptor: AgentDescriptor) -> None:
-        """常驻 Agent 的消息消费循环（基于消息类型的分发器）。"""
-        address = descriptor.address
-        while self._status.get(address.name) not in (AgentState.SHUTTING_DOWN, AgentState.SHUTDOWN):
-            try:
-                msg = await self._broker.consume(address)
-                if msg is None:
-                    continue
-
-                logger.debug(
-                    "AgentPool._consume_messages: %s received msg from=%s payload_keys=%s",
-                    address.name,
-                    msg.sender,
-                    list(msg.payload.keys()),
-                )
-
-                if self._status.get(address.name) == AgentState.ERROR:
-                    await self._broker.send_to(address, msg)
-                    await asyncio.sleep(0.1)
-                    continue
-
-                # 1. Inbox wakeup 信号（并发后台处理，不阻塞 consumer loop）
-                # Note: _handle_inbox_wakeup is NOT wrapped in _run_dispatch here,
-                # because it creates per-dispatch tasks that each have their own
-                # _run_dispatch wrapper. Wrapping it would cause a premature
-                # active_count drop to 0 (outer _run_dispatch completes before
-                # inner tasks start), triggering a spurious IDLE transition.
-                if msg.payload.get("_inbox_wakeup"):
-                    session_id = msg.payload.get("session_id", "")
-                    if session_id:
-                        logger.debug(
-                            "AgentPool._consume_messages: %s handling inbox wakeup for %s",
-                            address.name,
-                            session_id,
-                        )
-                        task = asyncio.create_task(self._handle_inbox_wakeup(instance, session_id))
-                        self._track_agent_task(address.name, task)
-                    continue
-
-                # 2. 解析为 AgentMessageEnvelope 并后台分发
-                envelope = AgentMessageEnvelope.from_broker_message(msg)
-                if envelope is not None:
-                    logger.debug(
-                        "AgentPool._consume_messages: %s parsed envelope "
-                        "type=%s source=%s target=%s session=%s",
-                        address.name,
-                        envelope.message_type,
-                        envelope.source.name if envelope.source else None,
-                        envelope.target.name if envelope.target else None,
-                        envelope.agent_session_id,
-                    )
-                    if envelope.hop_count >= MAX_ENVELOPE_HOPS:
-                        logger.warning(
-                            "Dropping message for %s: hop_count %s exceeds limit %s",
-                            address.name,
-                            envelope.hop_count,
-                            MAX_ENVELOPE_HOPS,
-                        )
-                        continue
-                    if envelope.message_type == "task_request":
-                        task = asyncio.create_task(
-                            self._run_dispatch(
-                                address.name,
-                                self._dispatch_task_request(instance, descriptor, envelope),
-                            )
-                        )
-                    else:
-                        task = asyncio.create_task(
-                            self._run_dispatch(
-                                address.name,
-                                self._dispatch_agent_message(instance, envelope),
-                            )
-                        )
-                else:
-                    logger.debug(
-                        "AgentPool._consume_messages: %s could not parse envelope, "
-                        "dispatching as raw broker message",
-                        address.name,
-                    )
-                    task = asyncio.create_task(
-                        self._run_dispatch(
-                            address.name,
-                            self._dispatch_raw_broker_message(instance, descriptor, msg),
-                        )
-                    )
-                self._track_agent_task(address.name, task)
-            except asyncio.CancelledError:
-                break
-            except GeneratorExit:
-                break
-            except GraphInterrupt:
-                # Approval interrupt must propagate to the pipeline handler,
-                # not be treated as a consumer-level error.
-                raise
-            except RuntimeError as exc:
-                # Event loop is closing (or already closed) — the consumer
-                # cannot recover, so exit gracefully instead of crashing
-                # during the backoff sleep.
-                if "event loop" in str(exc).lower():
-                    logger.debug(
-                        "Consumer for %s: event loop is closing, exiting",
-                        address.name,
-                    )
-                    break
-                logger.exception("RuntimeError consuming messages for %s", address.name)
-                break
-            except Exception:
-                logger.exception("Error consuming messages for %s", address.name)
-                self._transition(address.name, AgentState.ERROR, reason="consume_error")
-                error_count = self._bump_error_count(address.name)
-                if error_count >= self._max_error_retries:
-                    logger.error(
-                        "Agent %s exceeded max error retries (%d), stopping consumer",
-                        address.name,
-                        self._max_error_retries,
-                    )
-                    break
-                sleep_seconds = min(self._max_backoff_seconds, 2**error_count)
-                try:
-                    await asyncio.sleep(sleep_seconds)
-                except RuntimeError:
-                    # Event loop closed during backoff — shut down
-                    break
-                self._transition(address.name, AgentState.IDLE, reason="consume_recover")
-
-    async def _handle_inbox_wakeup(
-        self,
-        instance: AgentInstance,
-        session_id: str,
-    ) -> None:
-        """处理 Inbox 唤醒信号：轮询消息并分发。"""
-        # Defensive: the broker address is keyed by agent name only.  If two
-        # pools happen to use the same agent name, a wakeup could be delivered
-        # to the wrong pool.  Verify that this session actually belongs to an
-        # agent managed by *this* pool before processing it.
-        parsed_session = SessionInfo.from_str(
-            session_id, default_agent_name=instance.descriptor.address.name
-        )
-        if parsed_session.agent_name not in self._agents:
-            logger.warning(
-                "Inbox wakeup for session %s (agent=%s) does not belong to pool of %s; skipping",
-                session_id,
-                parsed_session.agent_name,
-                instance.descriptor.address.name,
-            )
-            return
-
-        envelopes: list[AgentMessageEnvelope] = []
-        if self._agent_bus is not None:
-            envelopes = await self._agent_bus.poll(session_id, limit=10)
-        elif self._inbox_consumer is not None:
-            inbox_messages = await self._inbox_consumer.consume(session_id, limit=10)
-            for inbox_msg in inbox_messages:
-                envelopes.append(self._wrap_inbox_message(session_id, inbox_msg))
-        else:
-            logger.warning(
-                "Received inbox wakeup for %s but no agent_bus or inbox_consumer configured",
-                session_id,
-            )
-            return
-
-        for envelope in envelopes:
-            if envelope.hop_count >= MAX_ENVELOPE_HOPS:
-                logger.warning(
-                    "Dropping inbox message for %s: hop_count %s exceeds limit %s",
-                    instance.descriptor.address.name,
-                    envelope.hop_count,
-                    MAX_ENVELOPE_HOPS,
-                )
-                continue
-            agent_name = instance.descriptor.address.name
-            if envelope.message_type == "task_request":
-                task = asyncio.create_task(
-                    self._run_dispatch(
-                        agent_name,
-                        self._dispatch_task_request(instance, instance.descriptor, envelope),
-                    )
-                )
-            else:
-                task = asyncio.create_task(
-                    self._run_dispatch(
-                        agent_name,
-                        self._dispatch_agent_message(instance, envelope),
-                    )
-                )
-            self._track_agent_task(agent_name, task)
 
     def _wrap_inbox_message(self, session_id: str, inbox_msg: InboxMessage) -> AgentMessageEnvelope:
         """将 InboxMessage 包装为 AgentMessageEnvelope，使用防御性字段提取。"""
@@ -662,189 +573,6 @@ class AgentPool(AgentRegistry):
                 return session
         return SessionInfo.from_str(session_id, default_agent_name=default_agent_name)
 
-    async def _dispatch_task_request(
-        self,
-        instance: AgentInstance,
-        descriptor: AgentDescriptor,
-        envelope: AgentMessageEnvelope,
-    ) -> None:
-        """将 task_request 信封转换为 InputMessage 并执行用户回合。"""
-        task_prompt = envelope.payload.get("task_prompt") or envelope.payload.get("content", "")
-        session_id = envelope.session_id or envelope.payload.get(
-            "session_id", "default"
-        )
-        session_id = envelope.agent_session_id or str(self._session_factory.create(
-            agent_name=descriptor.address.name, external_id=session_id
-        ))
-        metadata = {
-            "session_id": session_id,
-            "agent_session_id": session_id,
-            "message_type": envelope.message_type,
-            "invocation_id": envelope.invocation_id,
-            "source_agent": envelope.source.name if envelope.source else None,
-            **envelope.metadata,
-        }
-        if self._comm_tracker is not None:
-            prompt_section = self._comm_tracker.build_prompt_section(descriptor.address.name)
-            if prompt_section:
-                metadata["sideband_system_prompt"] = prompt_section
-        task_invocation_id = envelope.invocation_id or envelope.correlation_id
-        if task_invocation_id and self._comm_tracker is not None:
-            self._comm_tracker.record_receive(
-                agent_name=descriptor.address.name,
-                source_agent=envelope.source.name if envelope.source else "unknown",
-                invocation_id=str(task_invocation_id),
-                content_summary=task_prompt[:500],
-            )
-        if instance.pipeline is not None:
-            lock = self.get_lock(session_id)
-            async with lock:
-                if session_id not in self._session_agents:
-                    self._track_session(
-                        session_id,
-                        descriptor.address.name,
-                        is_dynamic=True,
-                    )
-                else:
-                    self._touch_session(session_id)
-                session = await self._resolve_session_info(session_id, descriptor.address.name)
-                await instance.pipeline.process_message(
-                    InputMessage(content=task_prompt, session=session, metadata=metadata)
-                )
-            await self._enforce_session_cap(descriptor.address.name)
-
-        # ephemeral agent: clear context after each turn
-        if descriptor.context_strategy == "ephemeral" and instance.context_manager is not None:
-            try:
-                await instance.context_manager.clear(session_id)
-            except Exception:
-                logger.exception(
-                    "Failed to clear ephemeral context for %s", descriptor.address.name
-                )
-
-        # Subagent result delivery is handled by:
-        #   1. send_to_agent tool (LLM-initiated reply)
-        #   2. SubagentAutoSendHook (fallback when send_to_agent not called)
-        # No additional dispatch needed here.
-
-    async def _dispatch_agent_message(
-        self,
-        instance: AgentInstance,
-        envelope: AgentMessageEnvelope,
-    ) -> None:
-        """分发标准 agent_message（或 subagent_result）到 Agent Pipeline。"""
-        session_id = envelope.session_id or envelope.payload.get(
-            "session_id", "default"
-        )
-        session_id = envelope.agent_session_id or str(self._session_factory.create(
-            agent_name=instance.descriptor.address.name, external_id=session_id
-        ))
-        content = envelope.payload.get("content", "")
-        source_name = envelope.source.name if envelope.source else None
-        target_name = envelope.target.name if envelope.target else None
-        # source_agent / sender_agent describe an *agent* originator and drive
-        # the role=AGENT classification in ContextAssembler. A channel/user
-        # sender is a human turn (role=USER); only genuine agent->agent traffic
-        # carries a source agent. Setting source_agent to a channel name
-        # ("websocket", "qq") would wrongly classify human input as an agent
-        # message.
-        is_agent_source = bool(envelope.source and envelope.source.kind == "agent")
-        metadata = {
-            "session_id": session_id,
-            "agent_session_id": session_id,
-            "message_type": envelope.message_type,
-            "invocation_id": envelope.invocation_id,
-            "source_agent": source_name if is_agent_source else None,
-            "sender_agent": source_name if is_agent_source else None,
-            "receiver_agent": target_name if is_agent_source else None,
-            **envelope.metadata,
-        }
-        if self._comm_tracker is not None:
-            prompt_section = self._comm_tracker.build_prompt_section(
-                instance.descriptor.address.name
-            )
-            if prompt_section:
-                metadata["sideband_system_prompt"] = prompt_section
-        task_invocation_id = envelope.invocation_id or envelope.correlation_id
-        if task_invocation_id and self._comm_tracker is not None:
-            if envelope.message_type == "subagent_result":
-                self._comm_tracker.acknowledge(
-                    invocation_id=str(task_invocation_id),
-                    reply_from=source_name or "unknown",
-                    reply_summary=content[:500],
-                )
-            else:
-                self._comm_tracker.record_receive(
-                    agent_name=instance.descriptor.address.name,
-                    source_agent=source_name or "unknown",
-                    invocation_id=str(task_invocation_id),
-                    content_summary=content[:500],
-                )
-        if instance.pipeline is not None:
-            lock = self.get_lock(session_id)
-            async with lock:
-                if session_id not in self._session_agents:
-                    self._track_session(
-                        session_id,
-                        instance.descriptor.address.name,
-                        is_dynamic=bool(envelope.invocation_id),
-                    )
-                else:
-                    self._touch_session(session_id)
-                session = await self._resolve_session_info(session_id, instance.descriptor.address.name)
-                await instance.pipeline.process_message(
-                    input_message_from_dispatch_envelope(
-                        envelope, session=session, metadata=metadata
-                    )
-                )
-            if envelope.invocation_id:
-                await self._enforce_session_cap(instance.descriptor.address.name)
-
-    async def _dispatch_raw_broker_message(
-        self,
-        instance: AgentInstance,
-        descriptor: AgentDescriptor,
-        msg: BrokerMessage,
-    ) -> None:
-        """处理无法解析为 AgentMessageEnvelope 的原始 BrokerMessage。"""
-        session_id = msg.payload.get("agent_session_id")
-        if not session_id:
-            session_id = (
-                msg.headers.get("session_id")
-                or msg.payload.get("session_id")
-                or msg.payload.get("session_id", "default")
-            )
-            session_id = str(self._session_factory.create(
-                agent_name=descriptor.address.name, external_id=session_id
-            ))
-        else:
-            # Prefer the resolved session's parent link so subagent messages
-            # carry the parent session_id, matching the envelope path.
-            resolved = await self._resolve_session_info(session_id, descriptor.address.name)
-            session_id = resolved.parent_session_id or str(resolved)
-        content = msg.payload.get("content", "")
-        # Preserve original metadata (user_id, chat_id, etc.) from the adapter layer
-        metadata = dict(msg.payload.get("metadata") or {})
-        metadata.setdefault("session_id", session_id)
-        metadata["agent_session_id"] = session_id
-        if instance.pipeline is not None:
-            lock = self.get_lock(session_id)
-            async with lock:
-                session = await self._resolve_session_info(session_id, descriptor.address.name)
-                await instance.pipeline.process_message(
-                    InputMessage(
-                        content=content,
-                        session=session,
-                        metadata=metadata,
-                        # Rebuild gate-accepted inbound attachments so the
-                        # mechanism-B path injection (ADR-0013 §10) survives the
-                        # broker dispatch boundary — without this the agent never
-                        # perceives an uploaded file. Serialized by
-                        # PoolRouter._route_to_pool / build_input_broker_message.
-                        attachments_resolved=attachments_resolved_from_payload(msg.payload),
-                    )
-                )
-
     def get(self, name: str) -> AgentInstance | None:
         return self._agents.get(name)
 
@@ -866,27 +594,14 @@ class AgentPool(AgentRegistry):
     def get_status(self, name: str) -> AgentState:
         return self._status.get(name, AgentState.SHUTDOWN)
 
-    def get_lock(self, session_id: str) -> asyncio.Lock:
-        """Return the per-session lock for pool-managed lifecycle and eviction.
-
-        This is the **authoritative** concurrency guard for pool sessions.
-        Session tracking data, eviction decisions, and dispatch
-        calls all acquire this lock to serialize access to a given session.
-
-        AgentPipeline retains its own internal lock for direct (non-pool)
-        callers. Pool code must NOT rely on the pipeline lock for lifecycle
-        operations — use this lock instead.
-        """
-        return self._session_locks.setdefault(session_id, asyncio.Lock())
-
     def _track_session(self, session_id: str, agent_name: str, is_dynamic: bool = False) -> None:
         """Register new session metadata and persist via registry.
 
-        Call inside lock-protected section. Registry registration is fire-and-forget
-        via ``_schedule_registry_register`` to avoid blocking the caller.
+        ADR-0015 D6: session tracking no longer creates a per-session lock;
+        intra-session mutual exclusion is structural via the single-flight
+        Drainer. Registry registration is fire-and-forget.
         """
         now = time.monotonic()
-        self._session_locks.setdefault(session_id, asyncio.Lock())
         self._session_agents[session_id] = agent_name
         self._session_activity[session_id] = SessionActivity(
             created_at=now, last_active=now
@@ -952,48 +667,28 @@ class AgentPool(AgentRegistry):
     async def _try_evict_if_stale(self, session_id: str) -> None:
         """Evict a session if stale by TTL.
 
-        TTL staleness only. Per-subagent count-cap enforcement is
-        :meth:`_enforce_session_cap`'s sole responsibility — it is called
-        eagerly at every site that registers a dynamic session
-        (``_dispatch_task_request`` and ``_dispatch_agent_message``), and in
-        the cleanup loop on the line immediately before this method. Do not re-implement cap logic
-        here: a second eviction path diverged on the sort signal
-        (``created_at`` vs the int counter ``_session_lru``) and selected
-        different victims — see ADR-0006 candidate ③ / candidate-3 spec A2.
-
-        Safety: acquires the session lock before making eviction decisions
-        to eliminate the TOCTOU window between staleness check and eviction.
+        Clears the agent context and removes tracking. (The per-session
+        Drainer coordination that used to live here was removed in Task 10;
+        the between-turn driver is now the per-pool InboxPoller.)
         """
-        lock = self._session_locks.get(session_id)
-        if lock is None:
+        if session_id not in self._session_agents:
             self._evict_session_tracking(session_id)
             return
-        try:
-            await asyncio.wait_for(lock.acquire(), timeout=3.0)
-        except (TimeoutError, asyncio.CancelledError):
+        if session_id not in self._dynamic_sessions:
             return
-        try:
-            if session_id not in self._session_agents:
-                self._session_locks.pop(session_id, None)
-                return
-            if session_id not in self._dynamic_sessions:
-                return
 
-            agent_name = self._session_agents[session_id]
-            activity = self._session_activity.get(session_id)
-            if activity is None:
-                return
+        agent_name = self._session_agents[session_id]
+        activity = self._session_activity.get(session_id)
+        if activity is None:
+            return
+        if time.monotonic() - activity.last_active < self._retention.ttl_seconds:
+            return
 
-            if time.monotonic() - activity.last_active < self._retention.ttl_seconds:
-                return
-
-            instance = self._agents.get(agent_name)
-            if instance and instance.context_manager:
+        instance = self._agents.get(agent_name)
+        if instance and instance.context_manager:
+            with contextlib.suppress(Exception):
                 await instance.context_manager.clear(session_id)
-            self._session_locks.pop(session_id, None)
-            self._evict_session_tracking(session_id)
-        finally:
-            lock.release()
+        self._evict_session_tracking(session_id)
 
     async def _cleanup_stale_sessions(self) -> None:
         """Background task: TTL eviction with concurrency safety."""
@@ -1031,35 +726,26 @@ class AgentPool(AgentRegistry):
             await self._evict_dynamic_session(sid)
 
     async def _evict_dynamic_session(self, session_id: str) -> None:
-        """Evict a dynamic session selected by policy."""
-        lock = self._session_locks.get(session_id)
-        if lock is None:
+        """Evict a dynamic session selected by policy.
+
+        Clears the agent context and the fork context, then removes tracking.
+        (The per-session Drainer coordination that used to live here was
+        removed in Task 10; the between-turn driver is now the per-pool
+        InboxPoller.)
+        """
+        if session_id not in self._dynamic_sessions:
             self._evict_session_tracking(session_id)
             return
-        try:
-            await asyncio.wait_for(lock.acquire(), timeout=3.0)
-        except (TimeoutError, asyncio.CancelledError):
-            return
-        try:
-            if session_id not in self._dynamic_sessions:
-                return
-            agent_name = self._session_agents.get(session_id)
-            if agent_name is None:
-                return
+        agent_name = self._session_agents.get(session_id)
+        if agent_name is not None:
             instance = self._agents.get(agent_name)
             if instance and instance.context_manager:
-                await instance.context_manager.clear(session_id)
-            # ── Fork context cleanup — delete persisted fork XML on session eviction ──
-            try:
-                from modex_agent.multi_agent.communication import cleanup_fork_context
-
-                cleanup_fork_context(session_id)
-            except Exception:
-                pass
-            self._evict_session_tracking(session_id)
-            self._session_locks.pop(session_id, None)
-        finally:
-            lock.release()
+                with contextlib.suppress(Exception):
+                    await instance.context_manager.clear(session_id)
+        # ── Fork context cleanup ──
+        if self._context_fork_builder is not None:
+            self._context_fork_builder.cleanup(session_id)
+        self._evict_session_tracking(session_id)
 
     def list_agents(self) -> list[AgentDescriptor]:
         return [inst.descriptor for inst in self._agents.values()]
@@ -1125,95 +811,9 @@ class AgentPool(AgentRegistry):
             return None
         return self._make_profile(instance.descriptor)
 
-    async def _poll_inbox_for_idle_agents(self) -> None:
-        """后台轮询 inbox：对 IDLE 状态的 agent，若其 session 有未读消息则发送 wakeup。"""
-        while True:
-            try:
-                await asyncio.sleep(self._inbox_poll_interval)
-                if self._agent_bus is None:
-                    continue
-
-                # 收集所有需要检查的 session：
-                # 1. 已知 session（来自 _session_locks）
-                # 2. inbox 中有 pending 消息的 session（覆盖从未处理过消息的 agent）
-                sessions_to_check: set[str] = set(self._session_locks.keys())
-                if self._inbox_consumer is not None:
-                    try:
-                        server = getattr(self._inbox_consumer, "_server", None)
-                        if server is not None and hasattr(server, "list_sessions"):
-                            inbox_sessions = await server.list_sessions()
-                            sessions_to_check.update(inbox_sessions)
-                    except Exception:
-                        logger.debug("Failed to list inbox sessions", exc_info=True)
-
-                for session_id in sessions_to_check:
-                    session = SessionInfo.from_str(session_id)
-                    if not session.agent_name or session.agent_name not in self._agents:
-                        continue
-                    # Per-session check: skip if session is actively being processed
-                    # (lock held), regardless of the agent-level state. This allows
-                    # inbox delivery to idle sessions even when other sessions are
-                    # keeping the agent in WORKING state.
-                    agent_status = self._status.get(session.agent_name)
-                    if agent_status in (
-                        AgentState.SHUTTING_DOWN,
-                        AgentState.SHUTDOWN,
-                        AgentState.ERROR,
-                    ):
-                        continue
-                    session_lock = self._session_locks.get(session_id)
-                    if session_lock is not None and session_lock.locked():
-                        continue
-                    if not await self._agent_bus.has_pending(session_id):
-                        continue
-                    try:
-                        await self._broker.send_to(
-                            AgentAddress(kind="agent", name=session.agent_name),
-                            BrokerMessage(
-                                payload={"_inbox_wakeup": True, "session_id": session_id},
-                                sender=AgentAddress(kind="system", name="agent_pool_inbox_poller"),
-                            ),
-                        )
-                    except Exception:
-                        logger.exception("Failed to send inbox wakeup poll for %s", session_id)
-            except asyncio.CancelledError:
-                break
-            except Exception:
-                logger.exception("Error in inbox polling loop")
-                await asyncio.sleep(self._inbox_poll_interval)
-
-    def _restart_consumer_if_needed(self, agent_name: str) -> None:
-        """Restart consumer task if agent is IDLE and has no consumer running."""
-        if self._status.get(agent_name) != AgentState.IDLE:
-            return
-        consumer_task = self._consumers.get(agent_name)
-        if consumer_task is not None and not consumer_task.done():
-            return
-        instance = self._agents.get(agent_name)
-        if instance is None:
-            return
-        descriptor = instance.descriptor
-        if descriptor is None:
-            return
-        logger.info("Restarting consumer for %s", agent_name)
-        new_task = asyncio.create_task(self._consume_messages(instance, descriptor))
-
-        def on_consumer_done(task: asyncio.Task[Any], name: str = agent_name) -> None:
-            self._on_consumer_done(task, name)
-
-        new_task.add_done_callback(on_consumer_done)
-        self._consumers[agent_name] = new_task
-
     async def _shutdown_agent(self, agent_name: str) -> None:
         """Shut down a single agent and release its resources."""
         self._transition(agent_name, AgentState.SHUTTING_DOWN, reason="idle_cleanup")
-        consumer_task = self._consumers.pop(agent_name, None)
-        if consumer_task is not None and not consumer_task.done():
-            consumer_task.cancel()
-            try:
-                await consumer_task
-            except (asyncio.CancelledError, Exception):
-                pass
         instance = self._agents.pop(agent_name, None)
         if instance is not None:
             try:
@@ -1224,16 +824,13 @@ class AgentPool(AgentRegistry):
         logger.info("Agent %s shut down", agent_name)
 
     async def shutdown_all(self, timeout: float = 10.0) -> None:
-        if self._inbox_poll_task is not None:
-            self._inbox_poll_task.cancel()
         if self._cleanup_task is not None:
             self._cleanup_task.cancel()
+        # Task 7: stop the per-pool InboxPoller so no new between-turn
+        # cycles start while agents are being torn down.
+        await self.stop_poller()
         for name in list(self._agents.keys()):
             self._transition(name, AgentState.SHUTTING_DOWN, reason="shutdown_all")
-        for _, task in list(self._consumers.items()):
-            task.cancel()
-        if self._consumers:
-            await asyncio.gather(*self._consumers.values(), return_exceptions=True)
         # 等待所有后台处理任务完成
         all_tasks: list[asyncio.Task[None]] = []
         for tasks in list(self._agent_tasks.values()):
@@ -1248,11 +845,8 @@ class AgentPool(AgentRegistry):
             except TimeoutError:
                 logger.warning("Agent %s did not shut down in time, forcing", name)
         self._agents.clear()
-        self._consumers.clear()
         self._agent_tasks.clear()
         self._active_session_counts.clear()
         self._error_counts.clear()
-        self._dispatch_locks.clear()
-        self._session_locks.clear()
         for name in list(self._status.keys()):
             self._status[name] = AgentState.SHUTDOWN

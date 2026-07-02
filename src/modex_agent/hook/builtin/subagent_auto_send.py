@@ -64,9 +64,14 @@ class SubagentAutoSendHook(FinallyTurnHook):
         session_id = str(ctx.session)
 
         # 1. Derive artifact paths from session_id (deterministic).
-        #    Trace is written by TraceCollectorHook -> JsonFileTraceStore per
-        #    session_id under the workspace runtime/trace dir; the directory
-        #    is no longer pre-created here (the store handles it uniformly).
+        #    Absolute, workspace-rooted — mirrors send_to_agent's ack so the
+        #    parent can read them directly without resolving a relative fragment.
+        #    runtime_dir is the resolved workspace runtime dir (absolute),
+        #    captured at materialize; pools are per-workspace so it is correct
+        #    for this subagent's lifetime. Trace is written by
+        #    TraceCollectorHook -> JsonFileTraceStore per session_id; the dir is
+        #    created by the store on first write, not here.
+        trace_path = self._runtime_dir / "trace" / session_id / "operations.jsonl"
         output_path = self._runtime_dir / "output" / session_id / "OUTPUT.md"
 
         # 2. Check OUTPUT.md status
@@ -101,8 +106,8 @@ class SubagentAutoSendHook(FinallyTurnHook):
             error=error or "",
             hint=hint,
             summary=summary,
-            trace_dir_rel=f"trace/{session_id}/operations.jsonl",
-            output_path_rel=f"output/{session_id}/OUTPUT.md",
+            trace_path=str(trace_path),
+            output_path=str(output_path),
             output_status=output_status,
         )
 
@@ -169,8 +174,8 @@ class SubagentAutoSendHook(FinallyTurnHook):
         error: str,
         hint: str,
         summary: str,
-        trace_dir_rel: str,
-        output_path_rel: str,
+        trace_path: str,
+        output_path: str,
         output_status: str,
     ) -> str:
         from modex_agent.utils.xml import xml_text
@@ -186,8 +191,8 @@ class SubagentAutoSendHook(FinallyTurnHook):
             f"  <hint>{xml_text(hint)}</hint>\n"
             f"  <summary>{xml_text(summary)}</summary>\n"
             f"  <artifacts>\n"
-            f"    <trace>{xml_text(trace_dir_rel)}</trace>\n"
-            f"    <output>{xml_text(output_path_rel)}</output>\n"
+            f"    <trace>{xml_text(trace_path)}</trace>\n"
+            f"    <output>{xml_text(output_path)}</output>\n"
             f"    <output_status>{xml_text(output_status)}</output_status>\n"
             f"  </artifacts>\n"
             f"</subagent_notification>"

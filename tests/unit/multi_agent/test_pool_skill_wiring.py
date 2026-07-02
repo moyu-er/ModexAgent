@@ -122,16 +122,8 @@ async def test_pool_skill_manager_end_to_end() -> None:
             descriptor = AgentDescriptor(
                 address=AgentAddress(kind="agent", name="main"),
             )
-            instance = await pool.register_resident(descriptor)
-
-            # Clean up the consumer task
-            for task in pool._consumers.values():
-                task.cancel()
-            try:
-                import asyncio
-                await asyncio.gather(*pool._consumers.values(), return_exceptions=True)
-            except Exception:
-                pass
+            instance = await factory.create_agent(descriptor, broker=broker)
+            await pool.register_resident(descriptor, instance)
 
             # Verify pipeline skill_manager is wired
             pipeline = instance.pipeline

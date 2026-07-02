@@ -11,13 +11,23 @@ class BaseInboxConsumer(ABC):
     """Inbox 消息消费端抽象基类。"""
 
     @abstractmethod
-    async def consume(self, session_id: str, limit: int = 100) -> list[InboxMessage]:
+    async def consume(
+        self,
+        session_id: str,
+        limit: int = 100,
+        *,
+        only_types: set[str] | None = None,
+    ) -> list[InboxMessage]:
         """从 InboxServer 消费消息，返回经过去重过滤后的消息列表。"""
         ...
 
     async def count(self, session_id: str) -> int:
         """返回待处理消息数量（非破坏性检查）。"""
         return 0
+
+    async def sessions_with_pending(self) -> list[str]:
+        """返回当前有 pending 消息（count > 0）的会话 ID 列表。"""
+        return []
 
 
 class InboxConsumer(BaseInboxConsumer):
@@ -40,9 +50,15 @@ class InboxConsumer(BaseInboxConsumer):
             self._cache.popitem(last=False)
         return False
 
-    async def consume(self, session_id: str, limit: int = 100) -> list[InboxMessage]:
+    async def consume(
+        self,
+        session_id: str,
+        limit: int = 100,
+        *,
+        only_types: set[str] | None = None,
+    ) -> list[InboxMessage]:
         """从 InboxServer 消费消息，返回经过本地去重过滤后的消息列表。"""
-        messages = await self._server.consume(session_id, limit)
+        messages = await self._server.consume(session_id, limit, only_types=only_types)
         result = []
         for msg in messages:
             cache_key = self._cache_key(session_id, msg.message_id)
@@ -53,6 +69,10 @@ class InboxConsumer(BaseInboxConsumer):
     async def count(self, session_id: str) -> int:
         """返回待处理消息数量（非破坏性检查，不消费消息）。"""
         return await self._server.count(session_id)
+
+    async def sessions_with_pending(self) -> list[str]:
+        """返回当前有 pending 消息（count > 0）的会话 ID 列表。"""
+        return await self._server.sessions_with_pending()
 
 
 # 显式别名保留多态替换能力

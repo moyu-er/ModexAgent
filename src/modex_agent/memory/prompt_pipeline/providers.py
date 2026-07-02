@@ -7,13 +7,19 @@ Providers are ordered by their position in the pipeline list (not by priority).
 from __future__ import annotations
 
 import hashlib
+import logging
 import sys
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from modex_agent.core.prompt import SystemPromptProvider
+from modex_agent.core.session_id import session_id_prefix_of
 from modex_agent.utils.timezone import get_user_timezone
+
+logger = logging.getLogger(__name__)
 
 
 class BasePromptProvider(SystemPromptProvider):
@@ -265,3 +271,130 @@ class OutputMdProvider(SystemPromptProvider):
             "**Workflow:** do your task → use `write` or `edit` to save OUTPUT.md → "
             "say briefly \"done, see OUTPUT.md\" as your final message."
         )
+
+
+# ── Subagent per-invocation context (APPEND parent prompt + FORK context) ──
+#
+# These two move the invocation-specific parts of a subagent's system prompt
+# out of the materialize-time baked string. A reused instance (the pool keeps
+# one per agent_type) rebuilds them per invocation via load(session_id), so the
+# 2nd+ invocation no longer inherits the 1st's parent prompt / fork snapshot.
+
+
+@dataclass(frozen=True)
+class ForkContextSpec:
+    """Wiring holder for ForkContextProvider.
+
+    Frozen dataclass (type-safety rule 11 escape hatch): a tuple-like internal
+    record that crosses the materialize → MemorySystemContextManager seam. It
+    holds a mutable builder + a callable; no runtime field validation is
+    required, and it carries no behaviour beyond field access. ``memory_system``
+    is deliberately NOT here — it is injected by ``load()`` from the context
+    manager's own memory system to avoid a construction cycle.
+    """
+
+    builder: Any
+    agent_type: str
+    fork_max_messages: int
+    fork_workspace: Path | None
+    template_memory: Any
+    parent_session_resolver: Callable[[str], Awaitable[Any]]
+
+
+class AppendParentPromptProvider(SystemPromptProvider):
+    """Subagent APPEND mode — prepend the current parent's system prompt.
+
+    Per-invocation: rebuilt every ``load()`` with the live session_id (mirrors
+    OutputMdProvider). ``resolver(session_id)`` recovers the session's parent
+    and returns its ``system_prompt_template`` (or ``None``), so a reused
+    instance reflects each invocation's own parent instead of the first one
+    captured at materialize time.
+    """
+
+    def __init__(
+        self,
+        resolver: Callable[[str], Awaitable[str | None]],
+        session_id: str,
+    ) -> None:
+        super().__init__()
+        self._resolver = resolver
+        self._session_id = session_id
+
+    async def _fetch_version(self) -> str:
+        return self._session_id  # refresh on session change
+
+    async def _fetch_content(self) -> str:
+        try:
+            prompt = await self._resolver(self._session_id)
+        except Exception:
+            logger.warning(
+                "AppendParentPromptProvider: resolver failed for %s",
+                self._session_id,
+                exc_info=True,
+            )
+            return ""
+        return prompt or ""
+
+
+class ForkContextProvider(SystemPromptProvider):
+    """Subagent FORK context — parent history snapshot, per-invocation.
+
+    Rebuilt every ``load()`` with the live session_id. ``ContextForkBuilder.
+    build`` is idempotent per ``(agent_type, invocation_id)`` (first turn of a
+    session writes the fork file, later turns read it), so the per-turn cost is
+    bounded. The provider registers the fork file for eviction-driven cleanup
+    on first build.
+    """
+
+    def __init__(
+        self,
+        spec: ForkContextSpec,
+        session_id: str,
+        memory_system: Any,
+    ) -> None:
+        super().__init__()
+        self._spec = spec
+        self._session_id = session_id
+        self._memory_system = memory_system
+
+    async def _fetch_version(self) -> str:
+        return self._session_id  # refresh on session change
+
+    async def _fetch_content(self) -> str:
+        try:
+            parent = await self._spec.parent_session_resolver(self._session_id)
+            if parent is None:
+                return ""
+            parent_name = str(parent).split(".")[-1]
+            invocation_id = session_id_prefix_of(self._session_id)
+            fork_xml = await self._spec.builder.build(
+                parent_session=parent,
+                agent_type=self._spec.agent_type,
+                invocation_id=invocation_id,
+                fork_max_messages=self._spec.fork_max_messages,
+                fork_workspace=self._spec.fork_workspace,
+                template_memory=self._spec.template_memory,
+                subagent_memory_system=self._memory_system,
+                parent_name=parent_name,
+            )
+            if not fork_xml:
+                return ""
+            if self._spec.fork_workspace is not None:
+                self._spec.builder.register_for_cleanup(
+                    session_id=self._session_id,
+                    fork_workspace=self._spec.fork_workspace,
+                    agent_type=self._spec.agent_type,
+                    invocation_id=invocation_id,
+                )
+            return (
+                "## Fork Context\n\n"
+                f"You are a subagent running from a fork of agent '{parent_name}'.\n"
+                "The context below is READ-ONLY reference. Do NOT continue the "
+                "prior conversation. Your task starts now.\n\n"
+                + fork_xml
+            )
+        except Exception:
+            logger.warning(
+                "ForkContextProvider: failed for %s", self._session_id, exc_info=True
+            )
+            return ""

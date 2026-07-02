@@ -52,3 +52,29 @@ def test_registry_empty_when_no_templates():
         registry = AgentTemplateRegistry(Path(tmp))
         assert registry.list_templates("nonexistent") == []
         assert registry.get_template("nonexistent", "x") is None
+
+
+def test_template_parses_approval_experience_extra_tools(tmp_path):
+    pool_dir = tmp_path / "config" / "pools" / "main"
+    (pool_dir / "templates").mkdir(parents=True)
+    (pool_dir / "templates" / "worker.yml").write_text(
+        """\
+agent_type: worker
+approval:
+  enabled: true
+  tools:
+    write: {allowed_paths: ["./*"]}
+experience:
+  enabled: true
+  min_messages: 5
+extra_tools: ["ast_grep_search"]
+""",
+        encoding="utf-8",
+    )
+    from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
+    reg = AgentTemplateRegistry(tmp_path)
+    t = reg.get_template("main", "worker")
+    assert t is not None
+    assert t.approval is not None and t.approval.enabled is True
+    assert t.experience is not None and t.experience.min_messages == 5
+    assert t.extra_tools == ["ast_grep_search"]

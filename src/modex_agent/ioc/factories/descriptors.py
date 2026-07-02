@@ -80,8 +80,15 @@ def build_session_only_memory(
     system_prompt: str = "",
     pruned_manager: Any | None = None,
     output_base_dir: Path | None = None,
+    parent_prompt_resolver: Any | None = None,
+    fork_context_spec: Any | None = None,
 ) -> MemorySystemContextManager:
-    """Create a session-only memory system for a subagent."""
+    """Create a session-only memory system for a subagent.
+
+    ``parent_prompt_resolver`` / ``fork_context_spec`` wire the per-invocation
+    APPEND/FORK prompt providers (subagent-only). Both default to None — normal
+    agents and the cold-path ``build_subagent_descriptor`` skip the providers.
+    """
     layer_config = MemoryLayerConfigSet(
         session=SessionMemoryConfig(),
         archive=None,
@@ -113,6 +120,8 @@ def build_session_only_memory(
         base_system_prompt=system_prompt,
         injection_policy=RestrictedInjectionPolicy(pruned_manager=pruned_manager),
         output_base_dir=output_base_dir,
+        parent_prompt_resolver=parent_prompt_resolver,
+        fork_context_spec=fork_context_spec,
     )
 
 

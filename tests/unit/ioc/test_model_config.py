@@ -30,8 +30,13 @@ class TestGlobalModelConfig:
 
 
 def _write_config_tree(tmp: Path, *, pool_llm: str | None, with_model: bool) -> Path:
-    """Build a config/ tree and return the bot_config.yml path."""
-    (tmp / "pools").mkdir(parents=True)
+    """Build a config/ tree and return the bot_config.yml path.
+
+    Uses the dir-based pool layout (``pools/<name>/pool.yml``) that
+    ``AppConfig.from_yaml`` scans — not the legacy single ``pools/<name>.yml``
+    file, which the loader ignores.
+    """
+    (tmp / "pools" / "main").mkdir(parents=True)
     (tmp / "bot_config.yml").write_text("workspace:\n  enabled: false\n", encoding="utf-8")
     if with_model:
         (tmp / "model.yml").write_text(
@@ -45,7 +50,7 @@ def _write_config_tree(tmp: Path, *, pool_llm: str | None, with_model: bool) -> 
     pool = "agents:\n  - name: main\n    role: main\n"
     if pool_llm is not None:
         pool = pool_llm + pool
-    (tmp / "pools" / "main.yml").write_text(pool, encoding="utf-8")
+    (tmp / "pools" / "main" / "pool.yml").write_text(pool, encoding="utf-8")
     return tmp / "bot_config.yml"
 
 

@@ -42,10 +42,6 @@ from modex_agent.interceptor.chain import InterceptorChain
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent.comm_tracker import CommunicationTracker
 from modex_agent.multi_agent import SessionRetentionPolicy
-from modex_agent.multi_agent.bus import LocalAgentMessageBus
-from modex_agent.multi_agent.inbox.consumer import InboxConsumer
-from modex_agent.multi_agent.inbox.producer import InboxProducer
-from modex_agent.multi_agent.inbox.server_local import LocalFileInboxServer
 from modex_agent.tools.overflow.cleaner import OverflowCleaner
 from modex_agent.tools.overflow.handler import ToolResultOverflowHandler
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
@@ -170,7 +166,6 @@ async def _build_resources(
 
     # 1. Workspace-level stores.
     ctx.paths.mkdir_skeleton()
-    inbox_server = LocalFileInboxServer(workspace=ctx.paths.inbox_dir)
     overflow_store = LocalFileToolOverflowStore(
         workspace=ctx.paths.overflow_dir, max_chunk_size=10_000
     )
@@ -183,14 +178,10 @@ async def _build_resources(
 
     session_registry = InMemorySessionRegistry(store=session_index_store)
 
-    # 2. Per-workspace broker/inbox/bus.
+    # 2. Per-workspace broker (cross-process wakeup). The inbox/bus are now
+    #    per-pool (Task 7) — built inside create_pool, one set per pool.
     broker = InMemoryMessageBroker()
     await broker.start()
-    inbox_producer = InboxProducer(server=inbox_server)
-    inbox_consumer = InboxConsumer(server=inbox_server)
-    agent_bus = LocalAgentMessageBus(
-        producer=inbox_producer, consumer=inbox_consumer, broker=broker
-    )
 
     # 3. Per-workspace interceptor chain, rooted at THIS workspace's overflow dir.
     shared_interceptor_chain = _build_workspace_interceptor_chain(
@@ -237,9 +228,6 @@ async def _build_resources(
             project_dir=service._project_dir,
             data_dir=ctx.paths.root,
             broker=broker,
-            inbox_server=inbox_server,
-            inbox_consumer=inbox_consumer,
-            agent_bus=agent_bus,
             output_adapter=service.output_adapter,
             safety=service.safety_policy,
             retention=retention,
@@ -266,13 +254,9 @@ async def _build_resources(
     resources = PoolWorkspaceResources(
         target=ctx.target,
         ctx=ctx,
-        inbox_server=inbox_server,
         overflow_store=overflow_store,
         session_index_store=session_index_store,
         broker=broker,
-        inbox_producer=inbox_producer,
-        inbox_consumer=inbox_consumer,
-        agent_bus=agent_bus,
         pool_data=pool_data,
         pools=pools,
         pool_router=None,
@@ -284,6 +268,10 @@ async def _build_resources(
     # _wire_pool_to_workspace. Subagent pipelines pick up R via the resolver
     # cell through the factory wrap.
     resolver_cell.set(resources)
+    # Task 7: each pool now owns its per-poll InboxPoller (constructed + started
+    # inside create_pool), so the workspace-level shared-bus signal fan-out is
+    # superseded. The Drainer + idle poller (still spawned per pool until Task
+    # 8 disables them) operate on each pool's own bus.
     for name, pi in pools.items():
         _wire_pool_to_resources(pi, name, pool_configs[name], resources)
 

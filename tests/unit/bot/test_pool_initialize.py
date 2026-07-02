@@ -73,7 +73,8 @@ paths:
 """
     (tmp / "bot_config.yml").write_text(bot_config, encoding="utf-8")
 
-    # Pool config with llm
+    # Pool config with llm. Dir-based layout (pools/<name>/pool.yml) — the
+    # loader scans directories, not legacy single pools/<name>.yml files.
     pool_config = """
 llm:
   model: "test-model"
@@ -85,7 +86,8 @@ agents:
     role: main
     max_steps: 5
 """
-    (pools_dir / "testpool.yml").write_text(pool_config, encoding="utf-8")
+    (pools_dir / "testpool").mkdir(parents=True, exist_ok=True)
+    (pools_dir / "testpool" / "pool.yml").write_text(pool_config, encoding="utf-8")
 
     yield tmp
 
