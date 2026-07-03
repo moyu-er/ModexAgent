@@ -10,7 +10,15 @@ from __future__ import annotations
 import base64
 
 from modex_agent.media.models import Attachment, AttachmentLocator, Kind
-from modex_agent.utils.media_utils import build_inline_image_block
+from modex_agent.media.media_utils import build_inline_image_block
+from modex_agent.workspace.runtime import bind_workspace_root
+
+_PNG_1X1 = (
+    b"\x89PNG\r\n\x1a\n"
+    b"\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
+    b"\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01"
+    b"\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+)
 
 
 def _make_attachment(path: str, name: str, mime: str | None) -> Attachment:
@@ -84,3 +92,50 @@ class TestBuildInlineImageBlock:
         assert block[0] == {"type": "text", "text": "<image: gone.png>"}
         assert block[1]["type"] == "text"
         assert "missing" in block[1]["text"]
+
+    def test_workspace_relative_path_resolves_against_bound_ws_root(
+        self, tmp_path, monkeypatch
+    ):
+        """Regression (mechanism A ⇄ B asymmetry): a workspace-RELATIVE path
+        must resolve against the turn's bound workspace root, exactly as the
+        mechanism-B path reference does — NOT against the process CWD.
+
+        Production state: the bot process CWD (its install dir) is NOT the
+        per-turn workspace root. Reading ``Path(att.path)`` relative to CWD
+        then misses the real file and the image silently degrades to
+        ``<missing image>`` — the model sees no image. Resolving against
+        ``resolve_workspace_root()`` (same as ``_attachment_reference``) fixes it.
+        """
+        # Real upload lives UNDER the workspace root, addressed by a relative path.
+        ws_root = tmp_path / "workspace"
+        rel_path = ".modex/media/uploads/cat.png"
+        img_path = ws_root / rel_path
+        img_path.parent.mkdir(parents=True)
+        img_path.write_bytes(_PNG_1X1)
+
+        # The process CWD is somewhere else entirely (mirrors prod: install dir).
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+
+        att = Attachment(
+            id="att-rel",
+            kind=Kind.IMAGE,
+            name="cat.png",
+            mime="image/png",
+            size=len(_PNG_1X1),
+            path=rel_path,
+            locator=AttachmentLocator.MEDIA,
+        )
+
+        with bind_workspace_root(ws_root):
+            block = build_inline_image_block(att)
+
+        # Must deliver the real image, NOT degrade to <missing image>.
+        assert block[1]["type"] == "image_url", (
+            f"expected image_url, got {block[1]!r} — relative path was not "
+            f"resolved against the bound workspace root"
+        )
+        url = block[1]["image_url"]["url"]
+        assert url.startswith("data:image/png;base64,")
+        assert base64.b64decode(url.split(",", 1)[1]) == _PNG_1X1

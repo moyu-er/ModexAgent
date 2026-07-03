@@ -72,6 +72,19 @@ class _CaptureOutput(OutputAdapter):
 class _FakePool:
     name: str
     main_agent_name: str
+    submitted: list = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        # pool_router._route_to_pool writes DMs via pool.pool.submit_input(...)
+        # (poll-driven cutover). Expose a recording inner pool so tests assert
+        # on what was submitted to the inbox, not on broker messages.
+        record = self.submitted
+
+        class _Inner:
+            async def submit_input(self, sid, msg):  # noqa: ANN001
+                record.append((sid, msg))
+
+        self.pool = _Inner()
 
     @property
     def main_address(self):
@@ -124,8 +137,9 @@ class TestNormalMessageRouting:
             await router_task
             await capture_task
 
-        assert len(routed) >= 1, f"Expected >=1 routed messages, got {len(routed)}"
-        assert routed[0].payload["content"] == "hello world"
+        assert pools["main"].submitted, "main pool received no submission"
+        assert pools["main"].submitted[0][1].content == "hello world"
+        assert not pools["coding"].submitted
 
     @pytest.mark.asyncio
     async def test_message_routed_to_stored_pool(self, tmp_path):
@@ -168,8 +182,9 @@ class TestNormalMessageRouting:
             await router_task
             await capture_task
 
-        assert len(routed) >= 1, f"Expected routed message to coding, got {len(routed)}"
-        assert routed[0].payload["content"] == "review this"
+        assert pools["coding"].submitted, "coding pool received no submission"
+        assert pools["coding"].submitted[0][1].content == "review this"
+        assert not pools["main"].submitted
 
 
 # ── Flow 2: Pool switch persistence ──

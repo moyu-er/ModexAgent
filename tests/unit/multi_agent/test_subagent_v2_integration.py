@@ -146,7 +146,7 @@ class TestFullLifecycleNotification:
         # --- Verify bus ---
         # The notification is sent to the parent's inbox via parent_session_id.
         parent_inbox = "conv123.main"
-        envelopes = await bus.consume(parent_inbox, block=False)
+        envelopes = await bus.consume(parent_inbox)
         assert len(envelopes) == 1
 
         content = envelopes[0].payload["content"]
@@ -180,7 +180,7 @@ class TestCrashSendsErrorNotification:
 
         await auto_hook.finally_turn(ctx, result)
 
-        envelopes = await bus.poll("conv123.main", limit=10)
+        envelopes = await bus.consume("conv123.main", limit=10)
         assert len(envelopes) == 1
 
         content = envelopes[0].payload["content"]

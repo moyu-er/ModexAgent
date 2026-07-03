@@ -6,9 +6,25 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.messaging.broker import Address, BrokerMessage
+from modex_agent.multi_agent.message_type import AgentMessageType
 
 if TYPE_CHECKING:
     from modex_agent.multi_agent.address import AgentAddress
+
+
+# Routing headers serialized into the broker message. Single source of truth:
+# ``to_broker_message`` emits exactly these (plus invocation_id when present),
+# and ``from_broker_message`` excludes them when rebuilding free-form metadata.
+_ROUTING_HEADERS: frozenset[str] = frozenset(
+    {
+        "session_id",
+        "agent_session_id",
+        "message_id",
+        "in_reply_to",
+        "message_type",
+        "invocation_id",
+    }
+)
 
 
 @dataclass
@@ -24,7 +40,7 @@ class AgentMessageEnvelope:
     source: AgentAddress
     target: AgentAddress | None = None
     topic: str | None = None
-    message_type: str = "agent_message"
+    message_type: str = AgentMessageType.AGENT_MESSAGE
     session_id: str = ""
     agent_session_id: str = ""
     invocation_id: str | None = None
@@ -34,7 +50,6 @@ class AgentMessageEnvelope:
     correlation_id: str | None = None
     timestamp: datetime = field(default_factory=datetime.now)
     metadata: dict[str, Any] = field(default_factory=dict)
-    hop_count: int = field(default=0)
 
     def to_broker_message(self) -> BrokerMessage:
         """转换为 BrokerMessage，所有路由字段放入 headers。"""
@@ -45,7 +60,6 @@ class AgentMessageEnvelope:
             "message_id": self.message_id,
             "in_reply_to": self.in_reply_to or "",
             "message_type": self.message_type,
-            "hop_count": str(self.hop_count),
             **{k: str(v) for k, v in self.metadata.items()},
         }
         if self.invocation_id is not None:
@@ -83,7 +97,7 @@ class AgentMessageEnvelope:
             if msg.recipient
             else None,
             topic=msg.topic,
-            message_type=headers.get("message_type", "agent_message"),
+            message_type=headers.get("message_type", AgentMessageType.AGENT_MESSAGE),
             session_id=session_id,
             agent_session_id=agent_session_id,
             invocation_id=envelope_invocation_id,
@@ -92,17 +106,6 @@ class AgentMessageEnvelope:
             correlation_id=msg.correlation_id,
             timestamp=msg.timestamp,
             metadata={
-                k: v
-                for k, v in headers.items()
-                if k
-                not in {
-                    "session_id",
-                    "agent_session_id",
-                    "message_id",
-                    "in_reply_to",
-                    "message_type",
-                    "invocation_id",
-                }
+                k: v for k, v in headers.items() if k not in _ROUTING_HEADERS
             },
-            hop_count=int(headers.get("hop_count", 0)),
         )

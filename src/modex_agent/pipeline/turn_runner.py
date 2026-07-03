@@ -28,6 +28,8 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from modex_agent.approval.ui import ApprovalUserInterface
     from modex_agent.core.agent import Agent
     from modex_agent.core.context import ContextManager, ContextState
@@ -53,6 +55,7 @@ from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.runtime.models import TurnSnapshot
+from modex_agent.workspace.runtime import bind_workspace_root
 
 logger = logging.getLogger(__name__)
 
@@ -286,6 +289,25 @@ class TurnRunner:
             await self._approval.drain(session_id)
         return result
 
+    def _resolve_workspace_root(self) -> Path | None:
+        """Active workspace root for the per-turn bind, or None when unavailable.
+
+        Reads the same contextvar-independent per-workspace source as
+        :meth:`_resolve_pool_data` (``workspace_manager.resolve_workspace()``),
+        so the turn-execution task binds the real workspace root even though it
+        is the pool's broker-consumer and did not inherit the dispatcher's
+        ``bind_workspace_root`` across the broker queue. None when no workspace
+        manager is wired (CLI / direct pipeline use) — the caller then runs
+        without re-binding, preserving whatever the caller bound.
+        """
+        if self._workspace_manager is None:
+            return None
+        try:
+            return self._workspace_manager.resolve_workspace().workspace_root
+        except Exception:
+            logger.debug("workspace root resolution failed", exc_info=True)
+            return None
+
     async def process_locked(
         self,
         input_msg: InputMessage,
@@ -294,7 +316,34 @@ class TurnRunner:
         *,
         session: SessionInfo,
     ) -> AgentResult | None:
-        """Process one message while holding the session lock."""
+        """Process one message while holding the session lock.
+
+        Binds the active workspace root for the turn so attachment resolution
+        (mechanism A inline images + mechanism B path references) resolves
+        against the real workspace — the turn runs on the pool's broker-consumer
+        task, which does NOT inherit the dispatcher's bind across the broker
+        queue (root cause of inline images degrading to ``<missing image>`` in
+        non-home workspaces).
+        """
+        ws_root = self._resolve_workspace_root()
+        if ws_root is None:
+            return await self._process_locked_inner(
+                input_msg, session_id, route_result, session=session
+            )
+        with bind_workspace_root(ws_root):
+            return await self._process_locked_inner(
+                input_msg, session_id, route_result, session=session
+            )
+
+    async def _process_locked_inner(
+        self,
+        input_msg: InputMessage,
+        session_id: str,
+        route_result: RouteResult | None = None,
+        *,
+        session: SessionInfo,
+    ) -> AgentResult | None:
+        """Locked turn flow body (see :meth:`process_locked`)."""
         if self._on_session_start is not None:
             try:
                 await asyncio.wait_for(

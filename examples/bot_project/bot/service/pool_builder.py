@@ -35,7 +35,6 @@ from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.core.session_store import SessionStore
 from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
 from modex_agent.hook import HookErrorPolicy, HookRunner, HookSpec
-from modex_agent.hook.builtin import InboxFlushHook
 from modex_agent.hook.notification import (
     AgentNotificationService,
     MaxIterationNotifyHook,
@@ -53,19 +52,22 @@ from modex_agent.memory.injection import FullInjectionPolicy
 from modex_agent.memory.system import MemorySystemContextManager
 from modex_agent.messaging.broker_bridge import BrokerBridgeService, OutputRoute
 from modex_agent.multi_agent import (
-    AgentDescriptor,
     AgentPool,
     DefaultAgentFactory,
     SessionRetentionPolicy,
 )
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.comm_tracker import CommunicationTracker
-from modex_agent.multi_agent.bus import AgentMessageBus
+from modex_agent.multi_agent.bus import LocalAgentMessageBus
 from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.communication import AgentCommunicationService
-from modex_agent.multi_agent.descriptor import AgentLLMConfig
+from modex_agent.multi_agent.context_fork import ContextForkBuilder
+from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
+from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
+from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
-from modex_agent.multi_agent.inbox.server import InboxServer
+from modex_agent.multi_agent.inbox.producer import InboxProducer
+from modex_agent.multi_agent.inbox.server_local import LocalFileInboxServer
 from modex_agent.multi_agent.tools import (
     CommunicationTarget,
     CommunicationTargetStore,
@@ -103,9 +105,6 @@ async def create_pool(
     project_dir: Path,
     data_dir: Path,
     broker: Any,
-    inbox_server: InboxServer,
-    inbox_consumer: InboxConsumer,
-    agent_bus: AgentMessageBus,
     output_adapter: OutputAdapter,
     safety: RuntimeSafetyPolicy,
     retention: SessionRetentionPolicy,
@@ -142,6 +141,19 @@ async def create_pool(
 
     provider = _build_llm_provider(pool_cfg, pool_name)
     terminal_manager = _build_terminal_manager(pool_cfg, pool_name, workspace_handle)
+
+    # Task 7: PER-POOL inbox + bus. Each pool owns its own LocalFileInboxServer
+    # (own storage dir), producer, consumer, and LocalAgentMessageBus — instead
+    # of sharing one workspace-level inbox/bus across all pools. The broker
+    # stays workspace-level (cross-process wakeup); the bus binds to it for
+    # wakeup emission only.
+    inbox_dir = data_dir / "inbox" / pool_name
+    inbox_server = LocalFileInboxServer(workspace=inbox_dir)
+    inbox_producer = InboxProducer(server=inbox_server)
+    inbox_consumer = InboxConsumer(server=inbox_server)
+    agent_bus = LocalAgentMessageBus(
+        producer=inbox_producer, consumer=inbox_consumer, broker=broker
+    )
 
     # Per-pool data (memory/runtime/experience) is owned by the workspace and
     # passed in as an already-built snapshot. None = non-workspace wiring
@@ -195,12 +207,70 @@ async def create_pool(
         session_store=session_store,
     )
 
-    await _register_main_agent(pool, main_cfg, pool_cfg, system_prompt, safety, pool_name)
+    # ── Materialize deps + template registry (built once, injected into pool) ──
+    # ADR-0015 D5: the deps bundle carries subagent construction params; the
+    # ── Materialize deps + template registry (built once, injected into pool) ──
+    # ADR-0015 D5: the deps bundle carries subagent construction params; the
+    # template registry holds the YAML-defined SUBAGENT templates (the normal
+    # agent is a plain AgentConfig inline in pool.yml, NOT a template). Both
+    # are constructed here (before _register_main_agent) so the lazy
+    # InboxPoller-spawner shares the same bundle.
+    template_registry = AgentTemplateRegistry(project_dir)
+    templates = template_registry.list_templates(pool_name)
+    logger.info("Pool '%s': %d subagent templates available", pool_name, len(templates))
+    fallback_runtime_dir = data_dir / "runtime_state" / pool_name
+    fallback_runtime_dir.mkdir(parents=True, exist_ok=True)
+    path_resolver = WorkspacePathResolver(
+        workspace_manager=workspace_resolver,
+        pool_name=pool_name,
+        fallback_runtime_dir=fallback_runtime_dir,
+    )
+    context_fork_builder = ContextForkBuilder()
 
     notification_service = AgentNotificationService(
         output_adapter=output_adapter,
         agent_bus=agent_bus,
         parent_agent_name=main_agent_name,
+    )
+
+    deps = AgentMaterializeDeps(
+        agent_factory=factory,
+        pool=pool,
+        session_factory=session_factory,
+        broker=broker,
+        comm_tracker=comm_tracker,
+        safety=safety,
+        llm_model=pool_cfg.llm.model,
+        llm_temperature=pool_cfg.llm.temperature,
+        llm_max_tokens=pool_cfg.llm.max_tokens,
+        project_dir=project_dir,
+        notification_service=notification_service,
+        inbox_consumer=inbox_consumer,
+        agent_bus=agent_bus,
+        output_adapter_factory=output_adapter_factory,
+        root_provider=root_provider,
+        session_registry=session_registry,
+        on_subagent_created=on_subagent_created,
+        context_fork_builder=context_fork_builder,
+        workspace_path_resolver=path_resolver,
+    )
+    pool._materialize_deps = deps
+    pool._template_registry = template_registry
+    pool._pool_name = pool_name
+    pool._context_fork_builder = context_fork_builder
+
+    # Task 7: build + attach + start this pool's InboxPoller. Done after the
+    # materialize-deps injection (the poller's lazy-materialize path reads
+    # pool._materialize_deps) and before _register_main_agent.
+    from modex_agent.multi_agent.inbox_poller import InboxPoller
+
+    poller = InboxPoller(pool, interval=0.2)
+    pool.attach_poller(poller)
+    pool.start_poller()
+
+    await _register_main_agent(
+        pool, main_cfg, pool_cfg, system_prompt, safety, pool_name,
+        factory=factory, broker=broker, context_manager=context_manager,
     )
 
     # Register a compaction listener that notifies the user when session memory
@@ -214,15 +284,9 @@ async def create_pool(
             )
     main_service, main_store = _build_communication(
         pool, main_agent_name, broker, agent_bus,
-        comm_tracker, project_dir, pool_name, pool_cfg,
-        safety, inbox_consumer, notification_service,
-        data_dir,
-        # ── Injection points ──
-        output_adapter_factory=output_adapter_factory,
-        on_subagent_created=on_subagent_created,
+        comm_tracker, project_dir, pool_name, templates, template_registry,
         session_registry=session_registry,
-        workspace_resolver=workspace_resolver,
-        root_provider=root_provider,
+        workspace_path_resolver=path_resolver,
     )
     tool_manager.register(
         SendToAgentTool(
@@ -321,10 +385,12 @@ def _build_terminal_manager(
     """Create terminal manager from pool config.
 
     ADR-0010 two-axis construction. The user-facing YAML fields ``use_terminal``
-    (bool) and ``terminal_visibility`` (bool) keep their semantics; the framework
-    translates ``True`` → ``TerminalVisibility.VISIBLE`` and ``False`` →
-    ``TerminalVisibility.HIDDEN`` and constructs the manager via the two-axis
-    ``create_terminal_manager(shell_info=..., visibility=...)`` signature.
+    (bool) and ``terminal_visibility`` (bool) live on the pool's main-agent
+    ``AgentConfig`` (inline in ``config/pools/<pool>/pool.yml`` `agents:`
+    block). The framework translates ``True`` → ``TerminalVisibility.VISIBLE``
+    and ``False`` → ``TerminalVisibility.HIDDEN`` and constructs the manager via
+    the two-axis ``create_terminal_manager(shell_info=..., visibility=...)``
+    signature.
 
     Fallback chain: if the requested VISIBLE backend cannot be created on this
     platform (``UnsupportedVisibilityForTransport``), retry with HIDDEN. If HIDDEN
@@ -825,9 +891,6 @@ def _build_agent_pool(
         default_context_manager=context_manager,
         agent_bus=agent_bus,
         inbox_consumer=inbox_consumer,
-        enable_inbox_polling=True,
-        inbox_poll_interval=10.0,
-        default_context_manager_factory=None,
         session_factory=session_factory,
         safety=safety,
         retention=retention,
@@ -849,7 +912,27 @@ async def _register_main_agent(
     system_prompt: str,
     safety: RuntimeSafetyPolicy,
     pool_name: str,
+    *,
+    factory: DefaultAgentFactory,
+    broker: Any,
+    context_manager: Any,
 ) -> None:
+    """Register the main (NORMAL) agent with factory defaults (Design B).
+
+    The normal agent is a plain ``AgentConfig`` (inline in ``pool.yml``); its
+    ``max_steps`` / ``approval`` / ``experience`` / ``extra_tools`` /
+    ``use_terminal`` / ``terminal_visibility`` are read from ``main_cfg``.
+    It is NOT an ``AgentTemplate`` — only subagents are templated. Normals get
+    the rich toolset ``create_pool`` assembles (terminal, send_to_agent,
+    extra_tools, workspace memory) via the factory's default tool/skill
+    managers (``tool_manager=None`` / ``skill_manager=None`` → factory
+    substitutes its pre-built defaults, factory.py:176,186-191).
+    """
+    from modex_agent.multi_agent.descriptor import (
+        AgentDescriptor,
+        AgentLLMConfig,
+    )
+
     descriptor = AgentDescriptor(
         address=AgentAddress(kind="agent", name=main_cfg.name),
         llm_config=AgentLLMConfig(
@@ -858,13 +941,26 @@ async def _register_main_agent(
             max_tokens=pool_cfg.llm.max_tokens,
         ),
         system_prompt_template=system_prompt,
-        context_strategy="persistent",
         max_iterations=main_cfg.max_steps,
         execution_strategy="react",
+        context_strategy="persistent",
         safety_policy=safety,
+        comm_kind=AgentCommKind.NORMAL,
+        memory_config=main_cfg.memory,
     )
-    await pool.register_resident(descriptor)
-    logger.info("Pool '%s': main agent '%s' registered", pool_name, main_cfg.name)
+    instance = await factory.create_agent(
+        descriptor,
+        broker=broker,
+        tool_manager=None,
+        skill_manager=None,
+        context_manager=context_manager,
+        hooks=[],
+    )
+    await pool.register_resident(descriptor, instance)
+    logger.info(
+        "Pool '%s': main agent '%s' registered (factory defaults)",
+        pool_name, main_cfg.name,
+    )
 
 
 # ── Communication ────────────────────────────────────────────────────────
@@ -878,35 +974,21 @@ def _build_communication(
     comm_tracker,
     project_dir: Path,
     pool_name: str,
-    pool_cfg: PoolConfig,
-    safety,
-    inbox_consumer,
-    notification_service,
-    data_dir: Path,
-    # ── Injection points for bot-layer customization ──
-    output_adapter_factory: Callable[[], OutputAdapter] | None = None,
-    on_subagent_created: Callable[[str, str], Awaitable[None]] | None = None,
+    templates: list,
+    template_registry: AgentTemplateRegistry,
+    *,
     session_registry: SessionRegistry | None = None,
-    workspace_resolver: WorkspaceResolverCell | None = None,
-    root_provider: WorkspaceRootProvider | None = None,
-):
-    from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
+    workspace_path_resolver: WorkspacePathResolver | None = None,
+) -> tuple[AgentCommunicationService, CommunicationTargetStore]:
+    """Build the slimmed AgentCommunicationService + target store.
 
-    template_registry = AgentTemplateRegistry(project_dir)
-    templates = template_registry.list_templates(pool_name)
-    logger.info("Pool '%s': %d subagent templates available", pool_name, len(templates))
-
+    ADR-0015 D5: the service is a pure router — it no longer takes the ~30
+    construction params it once did. ``AgentMaterializeDeps`` (built once in
+    ``create_pool``) carries the subagent construction deps, injected into
+    ``AgentPool`` for the Drainer-spawner. This function wires only the
+    router + the target store.
+    """
     main_address = AgentAddress(name=main_agent_name)
-    # memory_dir / runtime_dir / pruned_manager are intentionally NOT passed
-    # as fixed values: AgentCommunicationService resolves them per call from
-    # the active workspace's pool_data (see _resolve_pool_data). The fixed
-    # ctor args are left None so the workspace path always wins when a
-    # workspace_manager is wired.
-    # However, we provide a stable fallback runtime_dir derived from data_dir
-    # so subagents still get OUTPUT.md write tooling if pool_data resolution
-    # is momentarily unavailable (e.g. during early boot or workspace switch).
-    fallback_runtime_dir = data_dir / "runtime_state" / pool_name
-    fallback_runtime_dir.mkdir(parents=True, exist_ok=True)
     main_service = AgentCommunicationService(
         source=main_address,
         broker=broker,
@@ -917,20 +999,8 @@ def _build_communication(
         pool=pool,
         pool_name=pool_name,
         project_dir=project_dir,
-        safety=safety,
-        pool_llm_model=pool_cfg.llm.model,
-        pool_llm_temperature=pool_cfg.llm.temperature,
-        pool_llm_max_tokens=pool_cfg.llm.max_tokens,
-        inbox_consumer=inbox_consumer,
-        notification_service=notification_service,
-        main_agent_name=main_agent_name,
-        runtime_dir=fallback_runtime_dir,
-        # ── Injection points ──
-        output_adapter_factory=output_adapter_factory,
-        on_subagent_created=on_subagent_created,
         session_registry=session_registry,
-        workspace_manager=workspace_resolver,
-        root_provider=root_provider,
+        workspace_path_resolver=workspace_path_resolver,
     )
 
     # Communication target store — populate from registered agents + templates
@@ -1041,7 +1111,9 @@ def _wire_main_pipeline(
     pipeline = main_instance.pipeline
 
     # Hooks
-    _add_hook(pipeline, InboxFlushHook(consumer=inbox_consumer, agent_name=main_agent_name))
+    # InboxFlushHook is NOT added here: the AgentFactory auto-injects it onto
+    # pipeline.hook_runner for every agent (main + subagent) with
+    # inbox_strategy != "none", so fold-in is wired in one place.
     _add_hook(pipeline, MaxIterationNotifyHook(notification_service=notification_service))
     _add_hook(pipeline, TurnOutcomeNotifyHook(notification_service=notification_service))
 

@@ -137,9 +137,9 @@ class CommunicationTargetStore:
             "  - exchange information, questions, decisions, or status with another agent;",
             "  - hand off a self-contained subtask when work is better split off to a specialist.",
             "",
-            "ASYNCHRONOUS: the target works on its own. Don't block, poll, or read output",
-            "files right after calling — wait for the completion notification, then read",
-            "the referenced Output file.",
+            "ASYNCHRONOUS: after sending you may stop and do nothing — end your turn.",
+            "Don't poll or read the output files yet. The result comes back on its own as",
+            "a completion notification, which resumes you; then read the referenced Output file.",
             "",
         ]
         if not self._targets:

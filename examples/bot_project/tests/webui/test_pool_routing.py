@@ -999,34 +999,37 @@ async def test_sessions_includes_external_adapter_conversations() -> None:
 
 @pytest.mark.asyncio
 async def test_pool_router_forwards_agent_session_id() -> None:
-    """PoolRouter must include ``agent_session_id`` in the BrokerMessage it sends
-    to the pool.  Without it, AgentPool's ``from_broker_message`` returns None,
-    falls back to ``_dispatch_raw_broker_message``, and re-encodes the
-    session_id — creating a brand-new session instead of routing to the
-    existing one.
+    """PoolRouter must forward the existing session id verbatim to
+    ``pool.pool.submit_input``. Without it, AgentPool re-encodes the session_id
+    — creating a brand-new session instead of routing to the existing one.
+
+    (Poll-driven cutover: _route_to_pool no longer builds a broker message; it
+    calls ``submit_input(sid, InputMessage)`` with ``sid = str(msg.session)``.)
     """
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.core.types import InputMessage
-    from modex_agent.messaging.broker import BrokerMessage
 
     data_dir = Path(tempfile.mkdtemp())
     session_store = PoolSessionStore(data_dir)
-
-    # Mock broker that captures sent messages
-    sent_messages: list[tuple[Any, BrokerMessage]] = []
-
-    class _MockBroker:
-        async def send_to(self, address: Any, msg: BrokerMessage) -> None:
-            sent_messages.append((address, msg))
 
     class _MockPool:
         main_agent_name = "coding"
         main_address = "pool:coding"
 
+        def __init__(self) -> None:
+            self.submitted: list[tuple[str, InputMessage]] = []
+
+            class _Inner:
+                async def submit_input(inner_self, sid: str, msg: InputMessage) -> None:
+                    self.submitted.append((sid, msg))
+
+            self.pool = _Inner()
+
+    pool = _MockPool()
     router = PoolRouter(
         input_adapter=MagicMock(),
-        broker=_MockBroker(),
-        pools={"coding": _MockPool()},
+        broker=MagicMock(),
+        pools={"coding": pool},
         session_store=session_store,
         default_pool="main",
     )
@@ -1042,19 +1045,12 @@ async def test_pool_router_forwards_agent_session_id() -> None:
             source="websocket",
             channel="websocket",
         ),
-        _MockPool(),
+        pool,
     )
 
-    assert len(sent_messages) == 1
-    address, broker_msg = sent_messages[0]
-    assert address == "pool:coding"
-    assert broker_msg.headers.get("agent_session_id") == existing_sid, (
-        f"PoolRouter must forward existing session id in headers; "
-        f"got {broker_msg.headers!r}"
+    assert len(pool.submitted) == 1
+    sid, submitted_msg = pool.submitted[0]
+    assert sid == existing_sid, (
+        f"PoolRouter must forward the existing session id verbatim; got {sid!r}"
     )
-    assert broker_msg.payload.get("agent_session_id") == existing_sid, (
-        f"PoolRouter should also set agent_session_id in payload for robustness; "
-        f"got {broker_msg.payload!r}"
-    )
-    assert broker_msg.payload.get("session_id") == "legacy123"
-    assert broker_msg.headers.get("session_id") == "legacy123"
+    assert submitted_msg.content == "hello"

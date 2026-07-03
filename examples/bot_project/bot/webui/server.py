@@ -876,10 +876,11 @@ class WebUIServer:
                 "turn_id": t.turn_id,
                 "blocks": t.blocks,
                 "latency_ms": 0,
-                # G7: SendFileToUserTool populates outbound attachments here.
-                # The AssistantTurnEvent field exists and round-trips; G7 fills
-                # it with serialized Attachment records (ADR-0013 §11).
-                "attachments": [],
+                # G7: SendFileToUserTool persists outbound Attachment records on
+                # an AssistantTurnEvent; _materialize_events collects them onto
+                # MaterializedTurn.attachments (including the standalone
+                # no-turn_id carriers G7 writes) so they survive a refresh.
+                "attachments": t.attachments,
             })
 
         result = user_events + assistant_events

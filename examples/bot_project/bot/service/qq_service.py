@@ -24,7 +24,8 @@ class QQBotService(BotService):
     def __init__(self, config_dir: Path) -> None:
         yaml_path = config_dir / "bot_config.yml"
 
-        # Load .env BEFORE AppConfig.from_yaml() so ${LLM_API_KEY} resolves
+        # Load .env BEFORE AppConfig.from_yaml() so ${QQ_SECRET} etc. resolve
+        # (model settings live in config/model.yml, not in .env)
         from dotenv import load_dotenv
 
         load_dotenv(config_dir.parent / ".env")

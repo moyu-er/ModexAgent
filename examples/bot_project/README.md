@@ -156,7 +156,7 @@ Both scripts perform the same automated steps:
 | Virtual environment | Creates virtual environment at repo root (`../../.venv`) with `uv venv --python 3.12` (Python downloaded automatically by uv) |
 | Python dependencies | Installs the full framework (`..\..\.[all,dev]`) and bot CLI (`.[webui,dev]`) |
 | Environment file | Copies `.env.example` → `.env` if `.env` doesn't exist |
-| `modexbot install` | Runs config wizard (checks LLM_API_KEY etc.) + builds WebUI frontend via `npm run build` |
+| `modexbot install` | Runs config wizard (checks `config/model.yml`) + builds WebUI frontend via `npm run build` |
 | **PATH registration** | Prompts to add the venv `Scripts`/`bin` directory to your **system-wide PATH**, so `modexbot` works from any terminal — no activation needed |
 
 > [!NOTE]
@@ -229,35 +229,33 @@ Key fields in `.env`:
 QQ_APP_ID=your_qq_app_id
 QQ_SECRET=your_qq_bot_secret
 
-# LLM provider (any OpenAI-compatible API)
-LLM_API_KEY=your_llm_api_key
-LLM_BASE_URL=https://api.minimaxi.com/v1
-LLM_MODEL=openai/MiniMax-M2.5
-
 # MCP server credentials
 MCP_BEARER_TOKEN=your_modelscope_bearer_token
 MINIMAX_MCP_API_KEY=your_minimax_api_key
 ```
 
 > [!NOTE]
-> If you only want to use the WebUI (no QQ Bot), you only need `LLM_API_KEY`. QQ credentials are optional.
+> Model settings (model / api_key / base URL / capabilities) do **not** live in
+> `.env`. They live in `config/model.yml` — see the next step.
 
-#### 3. Configure Bot Settings
+#### 3. Configure the Model
 
-Edit `config/bot_config.yml` (supports `${ENV_VAR}` interpolation):
+The model is configured in `config/model.yml` (the single source of truth —
+copy it from `config/model.example.yml`). Edit it interactively with
+`modexbot config`, or by hand:
 
 ```yaml
-llm:
-  api_key: "${LLM_API_KEY}"
-  base_url: "${LLM_BASE_URL}"
-  model: "${LLM_MODEL}"
+model:
+  url: https://api.minimaxi.com/v1
+  api_key: your_llm_api_key      # literal value, gitignored — not an ${ENV} ref
+  model: openai/MiniMax-M2.5
+  capabilities: [text, image]
   temperature: 0.7
-  max_tokens: 80000
-
-mcp:
-  enabled: true
-  config_file: "mcp.json"
+  max_tokens: 50000
 ```
+
+All pools inherit this global config. `config/bot_config.yml` and
+`config/pools/*.yml` no longer carry an `llm:` block.
 
 #### 4. Run
 
@@ -269,7 +267,7 @@ modexbot install
 modexbot start
 ```
 
-The `install` command checks your `.env` LLM configuration (offering to run the config wizard if needed) and builds the WebUI frontend (`npm run build`). It skips the build if the frontend is already up-to-date — use `-f` to force rebuild. The `start` command launches the bot as a detached background process.
+The `install` command checks your `config/model.yml` (offering to run the config wizard if needed) and builds the WebUI frontend (`npm run build`). It skips the build if the frontend is already up-to-date — use `-f` to force rebuild. The `start` command launches the bot as a detached background process.
 
 Then open `http://localhost:21800/webui/` in your browser.
 

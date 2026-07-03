@@ -1,4 +1,3 @@
-# framework/multi_agent/message_xml.py
 """XML message builders for inter-agent communication.
 
 Two formats:

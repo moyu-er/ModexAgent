@@ -386,12 +386,24 @@ fi
 # ==========================================================================
 if [ ! -f ".env" ] && [ -f ".env.example" ]; then
     echo ""
-    echo "[INFO] Creating .env from .env.example..."
+    echo "[INFO] Created .env from .env.example."
     cp .env.example .env
-    echo ""
-    echo "  >>> ACTION REQUIRED: Edit .env with your credentials <<<"
     echo "  File: $SCRIPT_DIR/.env"
-    echo "  Minimum required: LLM_MODEL, LLM_API_KEY, LLM_BASE_URL"
+    echo "  Edit it only if you use integrations that read it (see the file's comments)."
+    echo ""
+fi
+
+# ==========================================================================
+# 5b. Global model config
+# ==========================================================================
+if [ ! -f "config/model.yml" ] && [ -f "config/model.example.yml" ]; then
+    echo ""
+    echo "[INFO] Creating config/model.yml from config/model.example.yml..."
+    cp config/model.example.yml config/model.yml
+    echo ""
+    echo "  >>> ACTION REQUIRED: Set your model via 'modexbot config' <<<"
+    echo "  File: $SCRIPT_DIR/config/model.yml"
+    echo "  Minimum required: model, api_key, url"
     echo ""
 fi
 
@@ -514,9 +526,17 @@ else
     echo "   - WebUI frontend: SKIPPED (Node.js not available)"
 fi
 echo ""
-echo " Next step:"
+echo " Next steps:"
 echo ""
-echo "       modexbot start"
+echo "   1. Configure your model (sets model / api_key / url):"
+echo ""
+echo "         modexbot config"
+echo ""
+echo "   2. Start the bot:"
+echo ""
+echo "         modexbot start"
+echo ""
+echo " (start/restart will prompt for config if the model is unset.)"
 echo ""
 echo " (If 'modexbot' is not found, open a NEW terminal or run:"
 echo "   source $SHELL_PROFILE)"

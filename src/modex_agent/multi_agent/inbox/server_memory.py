@@ -25,17 +25,33 @@ class InMemoryInboxServer(InboxServer):
             pending.append(message)
             return True
 
-    async def consume(self, session_id: str, limit: int = 100) -> list[InboxMessage]:
+    async def consume(
+        self,
+        session_id: str,
+        limit: int = 100,
+        *,
+        only_types: set[str] | None = None,
+    ) -> list[InboxMessage]:
         async with self._lock:
-            pending = self._pending.pop(session_id, [])
-            msgs = pending[:limit]
-            # 未消费完的消息需要放回 pending（仅当 limit 切分时）
-            if len(pending) > limit:
+            pending = self._pending.get(session_id, [])
+            if only_types is None:
+                taken = pending[:limit]
                 self._pending[session_id] = pending[limit:]
+            else:
+                taken: list[InboxMessage] = []
+                kept: list[InboxMessage] = []
+                for m in pending:
+                    if len(taken) < limit and m.message_type in only_types:
+                        taken.append(m)
+                    else:
+                        kept.append(m)
+                self._pending[session_id] = kept
+            if not self._pending.get(session_id):
+                self._pending.pop(session_id, None)
             delivered = self._delivered_ids.setdefault(session_id, set())
-            for m in msgs:
+            for m in taken:
                 delivered.add(m.message_id)
-            return msgs
+            return taken
 
     async def peek(self, session_id: str) -> list[InboxMessage]:
         async with self._lock:
@@ -55,3 +71,7 @@ class InMemoryInboxServer(InboxServer):
             sessions = set(self._pending.keys())
             sessions.update(self._delivered_ids.keys())
             return list(sessions)
+
+    async def sessions_with_pending(self) -> list[str]:
+        async with self._lock:
+            return [sid for sid, msgs in self._pending.items() if msgs]

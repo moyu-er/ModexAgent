@@ -21,6 +21,9 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+if TYPE_CHECKING:
+    from modex_agent.memory.prompt_pipeline.providers import ForkContextSpec
+
 from modex_agent.core.context import ContextManager, ContextState
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.skills import SkillManager
@@ -126,6 +129,8 @@ class MemorySystemContextManager(ContextManager):
         injection_policy: Any | None = None,
         experience_manager: ExperienceManager | None = None,
         output_base_dir: Path | None = None,
+        parent_prompt_resolver: Callable[[str], Awaitable[str | None]] | None = None,
+        fork_context_spec: ForkContextSpec | None = None,
     ) -> None:
         from modex_agent.memory.injection import FullInjectionPolicy
 
@@ -140,6 +145,11 @@ class MemorySystemContextManager(ContextManager):
         self._max_context_cache_size = 1000
         self._experience_manager = experience_manager
         self._output_base_dir: Path | None = output_base_dir
+        # Subagent per-invocation context (APPEND parent prompt + FORK context).
+        # None for normal agents and cold-path subagents → providers are skipped,
+        # so load() is unchanged for every non-subagent caller.
+        self._parent_prompt_resolver = parent_prompt_resolver
+        self._fork_context_spec = fork_context_spec
 
     def wrap_governance(
         self,
@@ -256,9 +266,34 @@ class MemorySystemContextManager(ContextManager):
         if runtime_info:
             providers.append(RuntimeProvider())
 
+        # 1b. APPEND parent prompt — per-invocation (subagents only). Sits BEFORE
+        # the base prompt so the agent's own prompt follows its parent's, mirroring
+        # the pre-refactor "[parent] --- [base]" ordering.
+        if self._parent_prompt_resolver is not None:
+            from modex_agent.memory.prompt_pipeline.providers import (
+                AppendParentPromptProvider,
+            )
+
+            providers.append(
+                AppendParentPromptProvider(self._parent_prompt_resolver, session_id)
+            )
+
         # 2. Base system prompt (static)
         if self.base_system_prompt:
             providers.append(BasePromptProvider(self.base_system_prompt))
+
+        # 2a. FORK context — per-invocation (subagents only). Sits AFTER the base
+        # prompt as READ-ONLY reference, mirroring the pre-refactor ordering.
+        if self._fork_context_spec is not None:
+            from modex_agent.memory.prompt_pipeline.providers import (
+                ForkContextProvider,
+            )
+
+            providers.append(
+                ForkContextProvider(
+                    self._fork_context_spec, session_id, self.memory_system
+                )
+            )
 
         # 2b. OUTPUT.md path — dynamic per-session (subagents only)
         if self._output_base_dir is not None:

@@ -75,8 +75,6 @@ async def _create_pool_with_bus():
         agent_factory=factory,
         agent_bus=bus,
         inbox_consumer=consumer,
-        enable_inbox_polling=True,
-        inbox_poll_interval=0.1,  # fast polling for tests
         session_factory=session_factory,
         retention=SessionRetentionPolicy(),
     )
@@ -201,7 +199,7 @@ async def test_subagent_replies_to_main_via_communication_service():
     main_sessions = [s for s in sessions if s.endswith(".main")]
     assert len(main_sessions) > 0, f"Main agent should have a pending session, found: {sessions}"
     main_session_id = main_sessions[0]
-    assert await bus.has_pending(main_session_id), "Main agent should have pending reply in inbox"
+    assert main_session_id in await bus.sessions_with_pending(), "Main agent should have pending reply in inbox"
 
     await pool.shutdown_all()
     await broker.stop()

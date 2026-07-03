@@ -46,7 +46,8 @@ it rather than assuming names or availability.
 one — to ask, instruct, or hand off a subtask — is through a communication tool call,
 with the full message placed in its `content`. Conversely, when the agent finishes,
 its result is delivered back to you AUTOMATICALLY as a completion notification — it does
-not call anything to reply, so just wait for that notification.
+not call anything to reply. So after sending you may stop and do nothing: end your turn;
+the notification resumes you. Don't push on with steps that need its result.
 
 When a request is large, needs a skill you don't specialize in, or is cleaner split
 into focused pieces, decompose it and hand the self-contained subtasks to suitable

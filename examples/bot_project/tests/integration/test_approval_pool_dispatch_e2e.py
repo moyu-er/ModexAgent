@@ -271,7 +271,6 @@ async def _build_stack(
     pool = AgentPool(
         broker=broker,
         agent_factory=_StaticFactory(instance),
-        enable_inbox_polling=False,
     )
     await pool.register_resident(descriptor)
 

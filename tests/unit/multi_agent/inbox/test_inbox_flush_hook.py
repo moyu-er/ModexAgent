@@ -10,6 +10,7 @@ from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.hook.builtin import InboxFlushHook
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
 from modex_agent.multi_agent.inbox.types import InboxMessage
+from modex_agent.multi_agent.message_type import AgentMessageType
 
 
 class TestInboxFlushHook:
@@ -20,7 +21,7 @@ class TestInboxFlushHook:
 
         await server.receive(
             "s1",
-            InboxMessage(session_id="s1", source="helper", content="done", message_type="test"),
+            InboxMessage(session_id="s1", source="helper", content="done", message_type="agent_message"),
         )
 
         history = ListMessageHistory([])
@@ -76,7 +77,7 @@ class TestInboxFlushHook:
 
         await server.receive(
             "s1",
-            InboxMessage(session_id="s1", source="helper", content="iter", message_type="test"),
+            InboxMessage(session_id="s1", source="helper", content="iter", message_type="agent_message"),
         )
 
         history = ListMessageHistory([])
@@ -97,7 +98,7 @@ class TestInboxFlushHook:
         await server.receive(
             "s1",
             InboxMessage(
-                session_id="s1", source="helper", content="once", message_type="test", message_id="m1"
+                session_id="s1", source="helper", content="once", message_type="agent_message", message_id="m1"
             ),
         )
 
@@ -126,3 +127,65 @@ class TestInboxFlushHook:
 
         # Should not inject duplicate
         assert await history2.to_list() == []
+
+    async def test_before_iteration_pulls_subagent_result_mid_turn(self):
+        """A subagent reply (AGENT_RESULT) arriving while the parent is mid-turn
+        MUST be folded into history — that is the "active pull" a busy parent
+        agent relies on to see the result promptly instead of only after its
+        turn ends (which would leave it blind to the deliverable for the whole
+        turn). Regression: AGENT_RESULT was excluded from fold_eligible."""
+        server = InMemoryInboxServer()
+        consumer = InboxConsumer(server=server)
+        hook = InboxFlushHook(consumer=consumer, agent_name="coding")
+
+        await server.receive(
+            "pfx.coding",
+            InboxMessage(
+                session_id="pfx.coding",
+                source="scout",
+                content="<subagent_notification>done</subagent_notification>",
+                message_type=AgentMessageType.AGENT_RESULT,
+            ),
+        )
+
+        history = ListMessageHistory([])
+        ctx = AgentContext(
+            system_prompt="",
+            history=history,
+            tool_manager=MagicMock(spec=ToolManager),
+            session=SessionInfo.from_str("pfx.coding"),
+        )
+        await hook.before_iteration(ctx)
+
+        msgs = await history.to_list()
+        assert len(msgs) == 1, "AGENT_RESULT must be pulled mid-turn (active fold-in)"
+        assert msgs[0]["role"] == "agent"
+        assert msgs[0]["source_agent"] == "scout"
+
+    async def test_external_input_never_folded(self):
+        """A human DM (EXTERNAL_INPUT) must NOT fold mid-turn — it is a new
+        user input and starts its own between-turn (spec P6). Only the
+        between-turn poller consumes it."""
+        server = InMemoryInboxServer()
+        consumer = InboxConsumer(server=server)
+        hook = InboxFlushHook(consumer=consumer, agent_name="coding")
+
+        await server.receive(
+            "pfx.coding",
+            InboxMessage(
+                session_id="pfx.coding",
+                source="user",
+                content="a human DM",
+                message_type=AgentMessageType.EXTERNAL_INPUT,
+            ),
+        )
+
+        history = ListMessageHistory([])
+        ctx = AgentContext(
+            system_prompt="",
+            history=history,
+            tool_manager=MagicMock(spec=ToolManager),
+            session=SessionInfo.from_str("pfx.coding"),
+        )
+        await hook.before_iteration(ctx)
+        assert await history.to_list() == [], "EXTERNAL_INPUT must stay for the next between-turn"

@@ -1,4 +1,3 @@
-# framework/multi_agent/template_registry.py
 """AgentTemplateRegistry — scans and loads per-pool subagent templates."""
 
 from __future__ import annotations
@@ -8,6 +7,8 @@ from pathlib import Path
 
 import yaml
 
+from modex_agent.ioc.configs.agent import ExperienceConfig
+from modex_agent.ioc.configs.approval import ApprovalConfig
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.ioc.configs.skills import SkillsConfig
 from modex_agent.multi_agent.template import AgentTemplate
@@ -129,6 +130,17 @@ class AgentTemplateRegistry:
                             if raw.get("skills")
                             else None
                         ),
+                        approval=(
+                            ApprovalConfig.model_validate(raw["approval"])
+                            if raw.get("approval")
+                            else None
+                        ),
+                        experience=(
+                            ExperienceConfig.model_validate(raw["experience"])
+                            if raw.get("experience")
+                            else None
+                        ),
+                        extra_tools=raw.get("extra_tools", []),
                     )
                     self._templates[pool_name][template.agent_type] = template
                     logger.debug("Loaded template %s for pool %s", template.agent_type, pool_name)

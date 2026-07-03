@@ -226,9 +226,10 @@ class TestCommunicationService:
         )
 
         assert "task-42" in result
-        assert bus.sent == []
-        assert len(bus.sent_silent) == 1
-        session_id, envelope = bus.sent_silent[0]
+        # ADR-0015: send always uses bus.send (signals the Drainer), not send_silent
+        assert len(bus.sent) == 1
+        assert len(bus.sent_silent) == 0
+        session_id, envelope = bus.sent[0]
         from modex_agent.core.session_id import SessionIdFactory
         factory = SessionIdFactory()
         expected_sid = factory.create_with_prefix(

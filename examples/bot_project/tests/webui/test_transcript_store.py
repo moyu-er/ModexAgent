@@ -313,6 +313,86 @@ def test_materialize_tool_call_without_result_not_in_blocks() -> None:
     assert turns[0].blocks == []
 
 
+def test_materialize_assistant_turn_carries_attachments() -> None:
+    """An AssistantTurnEvent with turn_id and attachments contributes its
+    attachments to the materialized turn so history replay can re-render
+    download cards after a refresh (ADR-0013 §11).
+    """
+    store = _make_store()
+    store.append("conv.main", TurnStartEvent(
+        session_id="conv.main", agent_name="main", turn_id="t1", timestamp=100.0))
+    store.append("conv.main", AssistantTextEvent(
+        session_id="conv.main", agent_name="main", turn_id="t1",
+        text="here is the file", timestamp=200.0))
+    store.append("conv.main", AssistantTurnEvent(
+        session_id="conv.main", agent_name="main", turn_id="t1",
+        blocks=[{"kind": "text", "text": "done"}],
+        attachments=[{"id": "att-1", "kind": "other", "name": "report.txt",
+                       "mime": "text/plain", "size": 4, "path": "/x/report.txt",
+                       "locator": "workspace"}],
+        timestamp=300.0))
+    turns = store.load_materialized_by_prefix("conv")
+    assert len(turns) == 1
+    assert turns[0].turn_id == "t1"
+    assert len(turns[0].attachments) == 1
+    assert turns[0].attachments[0]["id"] == "att-1"
+    assert turns[0].attachments[0]["name"] == "report.txt"
+
+
+def test_materialize_attachment_only_event_without_turn_id_emits_standalone_turn() -> None:
+    """A SendFileToUserTool-persisted AssistantTurnEvent has no turn_id and
+    empty blocks (it only carries the outbound Attachment record). It must be
+    emitted as its own MaterializedTurn with empty blocks and the attachment
+    list, so the history-replay API returns it for the frontend to render a
+    download card after refresh.
+    """
+    store = _make_store()
+    store.append("conv.main", _msg("conv.main", "hi", timestamp=100.0))
+    store.append("conv.main", AssistantTurnEvent(
+        session_id="conv.main", agent_name="main",
+        blocks=[],
+        attachments=[{"id": "att-out", "kind": "image", "name": "chart.png",
+                       "mime": "image/png", "size": 11,
+                       "path": "/ws/chart.png", "locator": "workspace"}],
+        timestamp=200.0))
+    turns = store.load_materialized_by_prefix("conv")
+    assert len(turns) == 1
+    assert turns[0].turn_id == ""
+    assert turns[0].blocks == []
+    assert len(turns[0].attachments) == 1
+    assert turns[0].attachments[0]["id"] == "att-out"
+    # ServerEvent.from_dict migrates float seconds -> int milliseconds on load.
+    assert turns[0].started_at == 200_000
+
+
+def test_materialize_mixed_real_turn_and_attachment_only_turn_sorted() -> None:
+    """A real turn (with turn_id) and a standalone attachment carrier (no
+    turn_id) both materialize and stay ordered by timestamp.
+    """
+    store = _make_store()
+    store.append("conv.main", TurnStartEvent(
+        session_id="conv.main", agent_name="main", turn_id="t1", timestamp=100.0))
+    store.append("conv.main", AssistantTextEvent(
+        session_id="conv.main", agent_name="main", turn_id="t1",
+        text="hi", timestamp=150.0))
+    store.append("conv.main", AssistantTurnEvent(
+        session_id="conv.main", agent_name="main",
+        blocks=[],
+        attachments=[{"id": "att-mid", "kind": "other", "name": "data.csv",
+                       "mime": "text/csv", "size": 5, "path": "/x/data.csv",
+                       "locator": "workspace"}],
+        timestamp=200.0))
+    turns = store.load_materialized_by_prefix("conv")
+    assert len(turns) == 2
+    assert turns[0].turn_id == "t1"
+    assert turns[0].blocks == [{"kind": "text", "text": "hi"}]
+    assert turns[0].attachments == []
+    assert turns[1].turn_id == ""
+    assert turns[1].blocks == []
+    assert len(turns[1].attachments) == 1
+    assert turns[1].attachments[0]["id"] == "att-mid"
+
+
 # ── ResilientTranscriptStore (I/O resilience) ───────────────────────────────
 
 

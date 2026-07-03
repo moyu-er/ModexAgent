@@ -1,24 +1,18 @@
 """Tier 1 — approval_decision transport through ``PoolRouter._route_to_pool``.
 
-The production webui approval path is:
+The production webui approval path is (poll-driven):
 
   POST /approvals -> webui_pipeline (EnqueueStage lifts ``approval_decision``
   onto ``InputMessage``) -> WS adapter queue -> ``WorkspaceMessageDispatcher``
-  -> ``PoolRouter.route_message`` -> ``_route_to_pool`` -> broker ->
-  ``AgentPool._dispatch_agent_message`` ->
+  -> ``PoolRouter.route_message`` -> ``_route_to_pool`` ->
+  ``pool.pool.submit_input(sid, InputMessage)`` ->
+  ``AgentPool.submit_input`` serializes via ``BrokerInputPayload`` ->
   ``input_message_from_dispatch_envelope`` reconstructs the ``InputMessage``
   -> ``build_turn_request`` short-circuit -> resume.
 
-``BrokerBridgeService`` is wired with ``input_bindings={}`` in production
-(``pool_builder.py``), so ``build_input_broker_message`` (broker_bridge.py) is
-NEVER called on the webui path — the only broker hop is the one
-``PoolRouter._route_to_pool`` builds by hand. If that hand-built
-``BrokerMessage.payload`` omits ``approval_decision``, the decision is lost in
-transit, arrives as an empty user turn, leaves a dangling assistant
-``tool_calls``, and the provider returns 400.
-
-These tests pin the field's survival at the exact hand-off point that previous
-unit tests (which drove ``pipeline._process_message`` directly) missed.
+``_route_to_pool`` no longer hand-builds a broker payload; it hands the full
+``InputMessage`` to ``submit_input``. These tests pin the decision's survival at
+that hand-off and through the broker serialization round-trip.
 """
 from __future__ import annotations
 
@@ -28,38 +22,48 @@ from typing import Any
 import pytest
 
 from bot.service.pool_router import PoolRouter, PoolSessionStore
-from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import InputMessage
-from modex_agent.messaging.broker import BrokerMessage
-from modex_agent.multi_agent.envelope import AgentMessageEnvelope
-from modex_agent.multi_agent.pool import input_message_from_dispatch_envelope
 from modex_agent.approval.types import ApprovalAction
 from modex_agent.approval.views import ApprovalDecisionInput
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.types import InputMessage
+from modex_agent.messaging.broker_bridge import BrokerInputPayload
+from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.multi_agent.pool import input_message_from_dispatch_envelope
 
 
 class _MockBroker:
-    """Captures every BrokerMessage sent_to a pool address."""
+    """PoolRouter still takes a broker; route_message no longer sends through it
+    (it goes via pool.pool.submit_input), but the ctor arg remains."""
 
-    def __init__(self) -> None:
-        self.sent: list[tuple[Any, BrokerMessage]] = []
-
-    async def send_to(self, address: Any, msg: BrokerMessage) -> None:
-        self.sent.append((address, msg))
+    async def send_to(self, address: Any, msg: Any) -> None:  # noqa: ARG002
+        pass
 
 
 class _MockPool:
+    """Records the InputMessage handed to ``pool.pool.submit_input``."""
+
     main_agent_name = "main"
     main_address = "pool:main"
 
+    def __init__(self) -> None:
+        self.submitted: list[tuple[str, InputMessage]] = []
 
-def _router(tmp_path: Path, broker: _MockBroker) -> PoolRouter:
+        class _Inner:
+            async def submit_input(inner_self, sid: str, msg: InputMessage) -> None:
+                self.submitted.append((sid, msg))
+
+        self.pool = _Inner()
+
+
+def _router(tmp_path: Path, pool: _MockPool) -> PoolRouter:
     session_store = PoolSessionStore(tmp_path)
     # Seed the session->pool mapping so route_message resolves to our pool.
     session_store.set("sess", "main")
     return PoolRouter(
         input_adapter=None,  # type: ignore[arg-type]  # route_message doesn't read it
-        broker=broker,
-        pools={"main": _MockPool()},
+        broker=_MockBroker(),
+        pools={"main": pool},
         session_store=session_store,
         default_pool="main",
     )
@@ -77,51 +81,66 @@ def _approval_msg(action: ApprovalAction, tool_call_id: str = "c1") -> InputMess
 
 @pytest.mark.asyncio
 async def test_route_message_carries_allow_decision_in_payload(tmp_path: Path) -> None:
-    """A webui ALLOW decision must land in the BrokerMessage payload."""
-    broker = _MockBroker()
-    router = _router(tmp_path, broker)
+    """A webui ALLOW decision must reach submit_input on the InputMessage."""
+    pool = _MockPool()
+    router = _router(tmp_path, pool)
 
     await router.route_message(_approval_msg(ApprovalAction.ALLOW, "c1"))
 
-    assert len(broker.sent) == 1
-    _, msg = broker.sent[0]
-    assert msg.payload.get("approval_decision") == {
-        "tool_call_id": "c1",
-        "action": "allow",
-    }, f"approval_decision lost at PoolRouter._route_to_pool; payload={msg.payload!r}"
+    assert len(pool.submitted) == 1
+    decision = pool.submitted[0][1].approval_decision
+    assert decision is not None
+    assert decision.tool_call_id == "c1"
+    assert decision.action == ApprovalAction.ALLOW
 
 
 @pytest.mark.asyncio
 async def test_route_message_carries_deny_decision_in_payload(tmp_path: Path) -> None:
-    broker = _MockBroker()
-    router = _router(tmp_path, broker)
+    pool = _MockPool()
+    router = _router(tmp_path, pool)
 
     await router.route_message(_approval_msg(ApprovalAction.DENY, "c2"))
 
-    _, msg = broker.sent[0]
-    assert msg.payload.get("approval_decision") == {
-        "tool_call_id": "c2",
-        "action": "deny",
-    }
+    decision = pool.submitted[0][1].approval_decision
+    assert decision is not None
+    assert decision.tool_call_id == "c2"
+    assert decision.action == ApprovalAction.DENY
 
 
 @pytest.mark.asyncio
 async def test_decision_survives_full_dispatch_reconstruction(tmp_path: Path) -> None:
-    """The decision must survive broker -> envelope -> InputMessage rebuild.
-
-    This is the exact reconstruction ``AgentPool._dispatch_agent_message``
-    performs via ``input_message_from_dispatch_envelope``. If the field is
-    missing here, ``build_turn_request`` never sees it and the resume branch
-    never runs.
-    """
-    broker = _MockBroker()
-    router = _router(tmp_path, broker)
+    """The decision must survive the BrokerInputPayload -> envelope ->
+    InputMessage rebuild that ``AgentPool.submit_input`` +
+    ``input_message_from_dispatch_envelope`` perform. If the field is dropped
+    here, ``build_turn_request`` treats it as an empty user turn (bug #2)."""
+    pool = _MockPool()
+    router = _router(tmp_path, pool)
 
     await router.route_message(_approval_msg(ApprovalAction.ALLOW, "call_abc"))
 
-    _, broker_msg = broker.sent[0]
-    envelope = AgentMessageEnvelope.from_broker_message(broker_msg)
-    assert envelope is not None, "headers must carry session_id/agent_session_id"
+    submitted = pool.submitted[0][1]
+    # Mirror AgentPool.submit_input's serialization into the dispatch envelope.
+    payload_model = BrokerInputPayload(
+        content=submitted.content,
+        session_id=submitted.session.session_id_prefix,
+        agent_session_id="sess.main",
+        metadata=dict(submitted.metadata) if submitted.metadata else {},
+        sender_id=submitted.sender_id,
+        chat_id=submitted.chat_id,
+        approval_decision=submitted.approval_decision.to_dict()
+        if submitted.approval_decision is not None
+        else None,
+        attachments_resolved=[a.to_dict() for a in submitted.attachments_resolved],
+        message_type="external_input",
+    )
+    envelope = AgentMessageEnvelope(
+        payload=payload_model.model_dump(exclude_none=True),
+        source=AgentAddress(kind="channel", name="websocket"),
+        target=AgentAddress(kind="agent", name="main"),
+        message_type="external_input",
+        session_id=submitted.session.session_id_prefix,
+        agent_session_id="sess.main",
+    )
 
     rebuilt = input_message_from_dispatch_envelope(
         envelope,
@@ -140,12 +159,11 @@ async def test_decision_survives_full_dispatch_reconstruction(tmp_path: Path) ->
 async def test_im_approve_text_does_not_need_approval_field(tmp_path: Path) -> None:
     """IM ``/approve`` rides on content text, not the structured field.
 
-    It must keep working (content survives in payload) and must NOT carry an
-    approval_decision key. This is the green contrast proving the fix targets
-    only the webui structured-decision path.
-    """
-    broker = _MockBroker()
-    router = _router(tmp_path, broker)
+    It must keep working (content reaches submit_input) and must NOT carry an
+    approval_decision. Green contrast proving the structured-decision path is
+    the only one that sets the field."""
+    pool = _MockPool()
+    router = _router(tmp_path, pool)
 
     await router.route_message(
         InputMessage(
@@ -156,16 +174,16 @@ async def test_im_approve_text_does_not_need_approval_field(tmp_path: Path) -> N
         )
     )
 
-    _, msg = broker.sent[0]
-    assert msg.payload.get("content") == "/approve"
-    assert "approval_decision" not in msg.payload
+    submitted = pool.submitted[0][1]
+    assert submitted.content == "/approve"
+    assert submitted.approval_decision is None
 
 
 @pytest.mark.asyncio
 async def test_normal_message_omits_approval_decision(tmp_path: Path) -> None:
-    """Ordinary messages must not gain an approval_decision key."""
-    broker = _MockBroker()
-    router = _router(tmp_path, broker)
+    """Ordinary messages must not gain an approval_decision."""
+    pool = _MockPool()
+    router = _router(tmp_path, pool)
 
     await router.route_message(
         InputMessage(
@@ -176,5 +194,6 @@ async def test_normal_message_omits_approval_decision(tmp_path: Path) -> None:
         )
     )
 
-    _, msg = broker.sent[0]
-    assert "approval_decision" not in msg.payload
+    submitted = pool.submitted[0][1]
+    assert submitted.content == "hello"
+    assert submitted.approval_decision is None

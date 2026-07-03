@@ -22,10 +22,6 @@ from modex_agent.workspace.registry import InMemoryRegistryStore, WorkspaceRegis
 from modex_agent.workspace.routing import WorkspaceResolver
 from modex_agent.core.session_store import LocalFileSessionStore
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
-from modex_agent.multi_agent.bus import LocalAgentMessageBus
-from modex_agent.multi_agent.inbox.consumer import InboxConsumer
-from modex_agent.multi_agent.inbox.producer import InboxProducer
-from modex_agent.multi_agent.inbox.server_local import LocalFileInboxServer
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
 
 
@@ -36,32 +32,22 @@ from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
 
 
 def _build_minimal_resources(target: Path) -> PoolWorkspaceResources:
-    """Build a minimal PoolWorkspaceResources with distinct per-workspace inbox/broker/bus."""
+    """Build a minimal PoolWorkspaceResources with a distinct per-workspace broker."""
     ctx = WorkspaceContext.from_target(
         target, data_dir_name=".modex", home=target.parent
     )
     ctx.paths.mkdir_skeleton()
-    inbox_server = LocalFileInboxServer(workspace=ctx.paths.inbox_dir)
     overflow_store = LocalFileToolOverflowStore(
         workspace=ctx.paths.overflow_dir, max_chunk_size=10_000
     )
     session_index_store = LocalFileSessionStore(root=ctx.paths.session_index_dir)
     broker = InMemoryMessageBroker()
-    inbox_producer = InboxProducer(server=inbox_server)
-    inbox_consumer = InboxConsumer(server=inbox_server)
-    agent_bus = LocalAgentMessageBus(
-        producer=inbox_producer, consumer=inbox_consumer, broker=broker
-    )
     return PoolWorkspaceResources(
         target=target,
         ctx=ctx,
-        inbox_server=inbox_server,
         overflow_store=overflow_store,
         session_index_store=session_index_store,
         broker=broker,
-        inbox_producer=inbox_producer,
-        inbox_consumer=inbox_consumer,
-        agent_bus=agent_bus,
     )
 
 

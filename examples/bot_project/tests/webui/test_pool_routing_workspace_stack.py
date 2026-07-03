@@ -72,7 +72,6 @@ def _minimal_resources(
     return PoolWorkspaceResources(
         target=target,
         ctx=ctx,
-        inbox_server=MagicMock(),
         overflow_store=MagicMock(),
         session_index_store=WorkspacePoolSessionStore(
             base_dir=ctx.paths.session_index_dir,
@@ -81,9 +80,6 @@ def _minimal_resources(
             ),
         ),
         broker=broker,
-        inbox_producer=MagicMock(),
-        inbox_consumer=MagicMock(),
-        agent_bus=MagicMock(),
         pool_router=pool_router,
     )
 

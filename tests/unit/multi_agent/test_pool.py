@@ -19,6 +19,28 @@ class _FakeBroker:
         pass
 
 
+@pytest.fixture
+async def pool_with_bus():
+    """An AgentPool wired to a real InMemoryInboxServer + LocalAgentMessageBus."""
+    from modex_agent.multi_agent.bus import LocalAgentMessageBus
+    from modex_agent.multi_agent.inbox.consumer import InboxConsumer
+    from modex_agent.multi_agent.inbox.producer import InboxProducer
+    from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
+
+    server = InMemoryInboxServer()
+    producer = InboxProducer(server=server)
+    consumer = InboxConsumer(server=server)
+    bus = LocalAgentMessageBus(producer=producer, consumer=consumer, broker=None)
+    p = AgentPool(
+        broker=_FakeBroker(),
+        agent_factory=MagicMock(),
+        agent_bus=bus,
+        inbox_consumer=consumer,
+    )
+    yield p
+    await p.shutdown_all(timeout=0.1)
+
+
 class TestRunDispatch:
     """AgentPool._run_dispatch must propagate GraphInterrupt, not swallow it."""
 
@@ -27,7 +49,6 @@ class TestRunDispatch:
         p = AgentPool(
             broker=_FakeBroker(),
             agent_factory=MagicMock(),
-            enable_inbox_polling=False,
         )
         yield p
         await p.shutdown_all(timeout=0.1)
@@ -65,174 +86,30 @@ class TestRunDispatch:
         assert pool._status.get("main") == AgentState.IDLE
 
 
-class TestDispatchTaskRequestFallback:
-    """_dispatch_task_request must accept legacy envelopes with ``content`` as
-    a defensive fallback for ``task_prompt``."""
+class TestRegisterResidentTakesInstance:
+    """ADR-0015 D3: register_resident takes a pre-built instance."""
 
     @pytest.fixture
     async def pool(self):
         p = AgentPool(
             broker=_FakeBroker(),
             agent_factory=MagicMock(),
-            enable_inbox_polling=False,
         )
         yield p
         await p.shutdown_all(timeout=0.1)
 
     @pytest.mark.asyncio
-    async def test_dispatch_falls_back_to_content_when_task_prompt_missing(self, pool):
-        """When the envelope payload has ``content`` but no ``task_prompt``,
-        _dispatch_task_request should still extract the task via the fallback."""
-        from modex_agent.core.types import InputMessage
-        from modex_agent.multi_agent.address import AgentAddress
-        from modex_agent.multi_agent.descriptor import AgentDescriptor, AgentInstance
-        from modex_agent.multi_agent.envelope import AgentMessageEnvelope
-        from modex_agent.pipeline.pipeline import AgentPipeline
-
-        from modex_agent.core.agent import Agent
-        from modex_agent.core.tool_manager import InMemoryToolManager
-
-        desc = AgentDescriptor(address=AgentAddress(name="worker"))
-        agent_stub = MagicMock(spec=Agent)
-        agent_stub.name = "worker"
-
-        pipeline_stub = MagicMock(spec=AgentPipeline)
-        processed_content = []
-
-        async def _fake_process(msg):
-            processed_content.append(msg.content)
-            from modex_agent.core.emitter import AgentResult
-            return AgentResult(content="done")
-
-        pipeline_stub.process_message.side_effect = _fake_process
-        instance = AgentInstance(
-            descriptor=desc,
-            pipeline=pipeline_stub,
-            context_manager=MagicMock(),
-        )
-
-        envelope = AgentMessageEnvelope(
-            payload={"content": "legacy task", "message_type": "task_request"},
-            source=AgentAddress(name="main"),
-            message_type="task_request",
-            session_id="conv",
-        )
-
-        await pool._dispatch_task_request(instance, desc, envelope)
-        assert processed_content, "Pipeline should have been called"
-        assert processed_content[0] == "legacy task", (
-            f"Expected 'legacy task' but got {processed_content[0]!r}"
-        )
-
-
-class TestPoolSessionLockSerialization:
-    """Pool per-session lock must serialize same-session dispatch, preventing overlap."""
-
-    @pytest.fixture
-    async def pool(self):
-        p = AgentPool(
-            broker=_FakeBroker(),
-            agent_factory=MagicMock(),
-            enable_inbox_polling=False,
-        )
-        yield p
-        await p.shutdown_all(timeout=0.1)
-
-    @pytest.mark.asyncio
-    async def test_same_session_dispatches_are_serialized(self, pool):
-        """Two concurrent dispatches on the same session must not overlap.
-        The pool get_lock acquires per-session, serializing pipeline execution."""
-        sid = "conv:worker:task-X"
-        lock = pool.get_lock(sid)
-
-        enter_order: list[int] = []
-        exit_order: list[int] = []
-
-        async def _dispatch_with_index(idx: int):
-            enter_order.append(idx)
-            await asyncio.sleep(0.05)
-            exit_order.append(idx)
-
-        async def _locked_task(idx):
-            async with lock:
-                await _dispatch_with_index(idx)
-
-        t1 = asyncio.create_task(_locked_task(1))
-        await asyncio.sleep(0.01)
-        t2 = asyncio.create_task(_locked_task(2))
-        await asyncio.gather(t1, t2)
-
-        assert enter_order == [1, 2], (
-            f"Task 1 must enter before Task 2 (lock serializes); got {enter_order}"
-        )
-        assert exit_order == [1, 2], (
-            f"Task 1 must exit before Task 2; got {exit_order}"
-        )
-
-
-class TestInboxWakeupCrossPoolDefense:
-    """_handle_inbox_wakeup must ignore wakeups for sessions not owned by this pool.
-
-    The shared broker keys mailboxes by agent name only.  If two pools use the
-    same agent name, a wakeup intended for pool A could be consumed by pool B.
-    The defensive check prevents pool B from processing pool A's inbox messages.
-    """
-
-    @pytest.fixture
-    async def pool(self):
-        p = AgentPool(
-            broker=_FakeBroker(),
-            agent_factory=MagicMock(),
-            enable_inbox_polling=False,
-        )
-        # This pool only owns the "coding" agent.
-        agent_mock = MagicMock()
-        agent_mock.stop = AsyncMock()
-        p._agents["coding"] = agent_mock
-        yield p
-        await p.shutdown_all(timeout=0.1)
-
-    @pytest.mark.asyncio
-    async def test_handle_inbox_wakeup_skips_foreign_session(self, pool):
-        """Wakeup for a session whose agent is not in this pool must be dropped."""
+    async def test_register_resident_stores_prebuilt_instance(self, pool):
         from modex_agent.multi_agent.address import AgentAddress
         from modex_agent.multi_agent.descriptor import AgentDescriptor
 
-        desc = AgentDescriptor(address=AgentAddress(name="coding"))
-        instance = MagicMock()
-        instance.descriptor = desc
-
-        # The instance owns "coding", but the wakeup is for a "main" session.
-        await pool._handle_inbox_wakeup(instance, "abc123.main")
-
-        # No crash, no processing — simply returns after the defensive check.
-        # The real assertion is that we get here without trying to poll/dispatch.
-
-    @pytest.mark.asyncio
-    async def test_handle_inbox_wakeup_processes_owned_session(self, pool):
-        """Wakeup for a session whose agent is in this pool proceeds to poll."""
-        from modex_agent.multi_agent.address import AgentAddress
-        from modex_agent.multi_agent.descriptor import AgentDescriptor
-
-        desc = AgentDescriptor(address=AgentAddress(name="coding"))
-        instance = MagicMock()
-        instance.descriptor = desc
-
-        polled_sessions: list[str] = []
-
-        class _FakeAgentBus:
-            async def poll(self, session_id: str, limit: int):
-                polled_sessions.append(session_id)
-                return []
-
-        pool._agent_bus = _FakeAgentBus()
-
-        await pool._handle_inbox_wakeup(instance, "abc123.coding")
-        assert polled_sessions == ["abc123.coding"]
-
-
-class TestTrackSessionNoDoubleEncode:
-    """_track_session must NOT re-encode an already-encoded session_id."""
+        descriptor = AgentDescriptor(address=AgentAddress(name="main"))
+        fake_instance = MagicMock()
+        fake_instance.stop = AsyncMock()
+        await pool.register_resident(descriptor, fake_instance)
+        assert pool.get("main") is fake_instance
+        assert pool.get_status("main") == AgentState.IDLE
+        # Verify instance was stored (no consumer task — _consumers dict is deleted)
 
     async def test_track_session_registers_correct_session_id(self):
         """Regression: _track_session called factory.create with
@@ -250,7 +127,6 @@ class TestTrackSessionNoDoubleEncode:
             agent_factory=MagicMock(),
             session_factory=factory,
             session_registry=registry,
-            enable_inbox_polling=False,
         )
 
         # The id that _create_dynamic_subagent already computed and put on the
@@ -274,5 +150,131 @@ class TestTrackSessionNoDoubleEncode:
         assert str(registered_session) == session_id, (
             f"Expected {session_id!r}, got {str(registered_session)!r}"
         )
+
+
+class TestSubmitInputAndPollerHelpers:
+    """Task 6: pool.submit_input (C2 payload) + poller helpers + dispatch_envelope."""
+
+    @staticmethod
+    def _build_input_message():
+        from modex_agent.approval.types import ApprovalAction
+        from modex_agent.approval.views import ApprovalDecisionInput
+        from modex_agent.core.session_id import SessionIdFactory
+        from modex_agent.core.types import InputMessage
+        from modex_agent.media.models import Attachment, AttachmentLocator, Kind
+
+        sess = SessionIdFactory().create(agent_name="main")
+        attachment = Attachment(
+            id="att-1",
+            kind=Kind.IMAGE,
+            name="cat.png",
+            mime="image/png",
+            size=1234,
+            path="media/att-1",
+            locator=AttachmentLocator.MEDIA,
+        )
+        decision = ApprovalDecisionInput(tool_call_id="call_abc", action=ApprovalAction.ALLOW)
+        return InputMessage(
+            content="hi",
+            session=sess,
+            sender_id="u1",
+            chat_id="c1",
+            channel="qq",
+            source="qq",
+            metadata={"k": "v"},
+            approval_decision=decision,
+            attachments_resolved=[attachment],
+        ), str(sess)
+
+    @pytest.mark.asyncio
+    async def test_submit_input_preserves_payload_and_routes_to_inbox(self, pool_with_bus):
+        """C2: submit_input must write a full BrokerInputPayload to external_input.
+
+ approval_decision + attachments_resolved + sender_id + chat_id must survive
+        the bus round-trip (webui approvals + ADR-0013 mechanism-B depend on it).
+        """
+        pool = pool_with_bus
+        msg, sid = self._build_input_message()
+
+        await pool.submit_input(sid, msg)
+
+        assert sid in await pool._agent_bus.sessions_with_pending()
+        envs = await pool._agent_bus.consume(sid, limit=10)
+        assert envs, "expected one envelope"
+        env = envs[0]
+        assert env.message_type == "external_input"
+        # C2 payload fields all preserved
+        assert env.payload.get("approval_decision") is not None
+        assert env.payload["approval_decision"]["tool_call_id"] == "call_abc"
+        assert env.payload["approval_decision"]["action"] == "allow"
+        assert env.payload["sender_id"] == "u1"
+        assert env.payload["chat_id"] == "c1"
+        atts = env.payload.get("attachments_resolved")
+        assert atts and len(atts) == 1
+        assert atts[0]["id"] == "att-1"
+        assert env.payload["metadata"] == {"k": "v"}
+        assert env.payload["content"] == "hi"
+
+    @pytest.mark.asyncio
+    async def test_submit_input_carries_session_routing(self, pool_with_bus):
+        """Routing is carried by session_id/agent_session_id (target/source-kind
+        are normalized by the bus producer/consumer pair — slimmed in Task 11)."""
+        pool = pool_with_bus
+        msg, sid = self._build_input_message()
+
+        await pool.submit_input(sid, msg)
+
+        envs = await pool._agent_bus.consume(sid, limit=10)
+        env = envs[0]
+        assert env.agent_session_id == sid
+        # session_id prefix segment carries the conversation routing
+        assert env.session_id == msg.session.session_id_prefix
+
+    @pytest.mark.asyncio
+    async def test_sessions_with_pending_lists_pool_sessions(self, pool_with_bus):
+        pool = pool_with_bus
+        msg, sid = self._build_input_message()
+        assert await pool.sessions_with_pending() == []
+
+        await pool.submit_input(sid, msg)
+
+        pending = await pool.sessions_with_pending()
+        assert sid in pending
+
+    @pytest.mark.asyncio
+    async def test_consume_inbox_only_types_filters(self, pool_with_bus):
+        """consume_inbox(only_types=...) filters — external stays pending."""
+        pool = pool_with_bus
+        msg, sid = self._build_input_message()
+        await pool.submit_input(sid, msg)
+        # Seed a task_request envelope on the same session
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+
+        await pool._agent_bus.send(
+            sid,
+            AgentMessageEnvelope(
+                payload={"content": "do task", "message_type": "task_request"},
+                source=AgentAddress(kind="agent", name="boss"),
+                target=AgentAddress(kind="agent", name="main"),
+                message_type="task_request",
+                session_id=sid,
+                agent_session_id=sid,
+            ),
+        )
+
+        agent_only = await pool.consume_inbox(sid, only_types={"task_request"})
+        assert agent_only, "expected the task_request to be returned"
+        assert all(e.message_type == "task_request" for e in agent_only)
+
+        # The external_input must still be pending (only_types filtered it out)
+        remaining = await pool.consume_inbox(sid)
+        assert any(e.message_type == "external_input" for e in remaining)
+
+    @pytest.mark.asyncio
+    async def test_dispatch_envelope_is_public(self):
+        """dispatch_envelope is the renamed public _run_inbox_turn (C4/C5)."""
+        assert hasattr(AgentPool, "dispatch_envelope")
+        assert not hasattr(AgentPool, "_run_inbox_turn")
 
 

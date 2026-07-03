@@ -141,9 +141,20 @@ class ResilientTranscriptStore(TranscriptStore):
 
 @_dataclass
 class MaterializedTurn:
-    """A complete ReAct turn materialized from incremental events."""
+    """A complete ReAct turn materialized from incremental events.
+
+    ``attachments`` carries serialized outbound :class:`Attachment` records
+    collected from any :class:`AssistantTurnEvent` in this turn (populated by
+    ``SendFileToUserTool``). Empty for turns that produced no files. An
+    ``AssistantTurnEvent`` written with no ``turn_id`` (the standalone
+    attachment-record carrier ``SendFileToUserTool`` persists) is emitted as
+    its own ``MaterializedTurn`` with empty ``blocks`` and the record list, so
+    the history-replay API returns it for the frontend to render download
+    cards after a refresh (ADR-0013 §11).
+    """
     turn_id: str = ""
     blocks: list[dict[str, object]] = _dc_field(default_factory=list)
+    attachments: list[dict[str, object]] = _dc_field(default_factory=list)
     started_at: int = 0  # ms epoch
 
 
@@ -176,7 +187,16 @@ def _materialize_events(events: list[ServerEvent]) -> list[MaterializedTurn]:
         AssistantTurnEvent,
     )
     turns: dict[str, list[ServerEvent]] = {}
+    # AssistantTurnEvent carriers with NO turn_id — written by
+    # ``SendFileToUserTool`` as standalone outbound-attachment records (no
+    # conversational content, just the id→path index). They would be dropped
+    # by the turn_id grouping below; preserve them as standalone turns so the
+    # history-replay API returns them for rendering after refresh (ADR-0013 §11).
+    standalone_attachment_turns: list[AssistantTurnEvent] = []
     for evt in events:
+        if isinstance(evt, AssistantTurnEvent) and not evt.turn_id:
+            standalone_attachment_turns.append(evt)
+            continue
         if isinstance(evt, _event_with_turn) and evt.turn_id:
             turns.setdefault(evt.turn_id, []).append(evt)
 
@@ -185,12 +205,14 @@ def _materialize_events(events: list[ServerEvent]) -> list[MaterializedTurn]:
     for turn_id, group in turns.items():
         group_sorted = sorted(group, key=lambda e: e.timestamp)
         blocks: list[dict[str, object]] = []
+        attachments: list[dict[str, object]] = []
         tool_calls: dict[str, dict[str, object]] = {}
         started_at: int = group_sorted[0].timestamp
 
         for evt in group_sorted:
             if isinstance(evt, AssistantTurnEvent):
                 blocks.extend(evt.blocks)
+                attachments.extend(evt.attachments)
             elif isinstance(evt, AssistantReasoningEvent):
                 blocks.append({"kind": "reasoning", "text": evt.text})
             elif isinstance(evt, AssistantTextEvent):
@@ -216,7 +238,22 @@ def _materialize_events(events: list[ServerEvent]) -> list[MaterializedTurn]:
         result.append(MaterializedTurn(
             turn_id=turn_id,
             blocks=blocks,
+            attachments=attachments,
             started_at=started_at,
+        ))
+
+    # Emit AssistantTurnEvent carriers with no turn_id as standalone turns,
+    # preserving BOTH their blocks and attachments. Production
+    # ``SendFileToUserTool`` writes these with blocks=[] (the record is the
+    # only content), but preserving blocks too guards against any other
+    # writer — never silently drop conversational content. Timestamp keeps
+    # them in chronological order relative to the real turns.
+    for evt in standalone_attachment_turns:
+        result.append(MaterializedTurn(
+            turn_id="",
+            blocks=list(evt.blocks),
+            attachments=list(evt.attachments),
+            started_at=evt.timestamp,
         ))
 
     result.sort(key=lambda t: t.started_at)

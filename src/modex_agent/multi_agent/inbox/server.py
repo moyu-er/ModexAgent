@@ -25,8 +25,18 @@ class InboxServer(ABC):
         ...
 
     @abstractmethod
-    async def consume(self, session_id: str, limit: int = 100) -> list[InboxMessage]:
-        """原子性消费消息：从 pending 队列中移除并返回，严格保证 FIFO 和 Exactly-Once 交付。"""
+    async def consume(
+        self,
+        session_id: str,
+        limit: int = 100,
+        *,
+        only_types: set[str] | None = None,
+    ) -> list[InboxMessage]:
+        """原子性消费消息：从 pending 队列中移除并返回，严格保证 FIFO 和 Exactly-Once 交付。
+
+        若 ``only_types`` 非空，则仅消费 ``message_type`` 属于该集合的消息；
+        不匹配的消息保持 pending（FIFO 顺序不变）。
+        """
         ...
 
     @abstractmethod
@@ -48,5 +58,13 @@ class InboxServer(ABC):
         """返回当前存在 pending 消息或已注册过的所有 session_id 列表。
 
         默认实现返回空列表；具体实现应覆盖此方法以支持会话发现。
+        """
+        return []
+
+    async def sessions_with_pending(self) -> list[str]:
+        """Session ids that currently have ≥1 pending message (count > 0).
+
+        Default empty; concrete servers override. Distinct from
+        ``list_sessions`` (which includes now-empty sessions).
         """
         return []

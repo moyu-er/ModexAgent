@@ -286,8 +286,8 @@ class TestRegisteredSubagentContinuationPreserved:
     preserving backward compatibility."""
 
     @pytest.mark.asyncio
-    async def test_continuation_uses_send_silent(self) -> None:
-        """Continuation with existing invocation_id still uses send_silent."""
+    async def test_continuation_uses_bus_send(self) -> None:
+        """ADR-0015: all sends use bus.send (signals the Drainer)."""
         bus = _FakeAgentBus()
         svc = _make_service(
             profiles=[_subagent_profile("scout")],
@@ -304,10 +304,8 @@ class TestRegisteredSubagentContinuationPreserved:
         )
 
         assert "Error" not in result
-        assert bus.sent == [], (
-            "Continuations should use send_silent(), not send()"
-        )
-        assert len(bus.sent_silent) == 1
+        assert len(bus.sent) == 1
+        assert len(bus.sent_silent) == 0
 
     @pytest.mark.asyncio
     async def test_continuation_preserves_invocation_id(self) -> None:
@@ -420,7 +418,7 @@ class TestConcurrentSubagentTasks:
 
     @pytest.mark.asyncio
     async def test_mixed_new_and_continuation(self) -> None:
-        """New task uses send(), continuation uses send_silent()."""
+        """ADR-0015: both new and continuation use bus.send (signals the Drainer)."""
         bus = _FakeAgentBus()
         svc = _make_service(
             profiles=[_subagent_profile("scout")],
@@ -440,7 +438,7 @@ class TestConcurrentSubagentTasks:
         inv_new = _extract_invocation_id_from_result(r_new)
         assert inv_new is not None
 
-        # Continuation -> send_silent()
+        # Continuation — also uses send()
         r_cont = await svc.send_async(
             target_agent="scout",
             content="follow-up",
@@ -448,5 +446,5 @@ class TestConcurrentSubagentTasks:
             context=ctx,
         )
         assert "Error" not in r_cont
-        assert len(bus.sent) == 1, "send() count should not increase for continuation"
-        assert len(bus.sent_silent) == 1, "continuation uses send_silent()"
+        assert len(bus.sent) == 2, "both uses go through bus.send"
+        assert len(bus.sent_silent) == 0, "send_silent is no longer used"

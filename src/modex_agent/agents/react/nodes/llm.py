@@ -23,7 +23,7 @@ from modex_agent.runtime.enums import (
     TurnPhase,
 )
 from modex_agent.runtime.models import MessageDelta
-from modex_agent.utils.media_utils import build_inline_image_block
+from modex_agent.media.media_utils import build_inline_image_block
 
 
 def _renew_dispatch_deadline() -> None:

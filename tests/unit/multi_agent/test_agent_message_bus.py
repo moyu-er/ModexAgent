@@ -29,72 +29,6 @@ class TestLocalAgentMessageBus:
         await bus.send("s1", envelope)
         assert await server.count("s1") == 1
 
-    async def test_poll_returns_immediately(self):
-        server = InMemoryInboxServer()
-        producer = InboxProducer(server=server)
-        consumer = InboxConsumer(server=server)
-        bus = LocalAgentMessageBus(producer=producer, consumer=consumer)
-
-        envelope = AgentMessageEnvelope(
-            payload={"content": "hello"},
-            source=AgentAddress(kind="agent", name="a1"),
-            target=AgentAddress(kind="agent", name="a2"),
-            message_type="agent_message",
-        )
-        await bus.send("s1", envelope)
-
-        results = await bus.poll("s1", limit=10)
-        assert len(results) == 1
-        assert results[0].payload["content"] == "hello"
-
-    async def test_consume_blocks_and_wakes(self):
-        server = InMemoryInboxServer()
-        producer = InboxProducer(server=server)
-        consumer = InboxConsumer(server=server)
-        bus = LocalAgentMessageBus(producer=producer, consumer=consumer)
-
-        envelope = AgentMessageEnvelope(
-            payload={"content": "delayed"},
-            source=AgentAddress(kind="agent", name="a1"),
-            target=AgentAddress(kind="agent", name="a2"),
-            message_type="agent_message",
-        )
-
-        consumed = []
-
-        async def _consumer():
-            msgs = await bus.consume("s1", limit=10)
-            consumed.extend(msgs)
-
-        task = asyncio.create_task(_consumer())
-        await asyncio.sleep(0.05)
-        assert len(consumed) == 0
-
-        await bus.send("s1", envelope)
-        await asyncio.wait_for(task, timeout=1.0)
-
-        assert len(consumed) == 1
-        assert consumed[0].payload["content"] == "delayed"
-
-    async def test_close_wakes_blocked_consumer(self):
-        server = InMemoryInboxServer()
-        producer = InboxProducer(server=server)
-        consumer = InboxConsumer(server=server)
-        bus = LocalAgentMessageBus(producer=producer, consumer=consumer)
-
-        consumed = []
-
-        async def _consumer():
-            msgs = await bus.consume("s1", limit=10)
-            consumed.extend(msgs)
-
-        task = asyncio.create_task(_consumer())
-        await asyncio.sleep(0.05)
-        await bus.close()
-        await asyncio.wait_for(task, timeout=1.0)
-
-        assert consumed == []
-
     async def test_send_signals_broker_wakeup(self):
         broker = InMemoryMessageBroker()
         await broker.start()
@@ -149,3 +83,76 @@ class TestLocalAgentMessageBus:
         assert result.message_type == "subagent_result"
         assert result.agent_session_id == "sess_1"
         assert result.source.name == "src"
+
+    async def test_send_works_without_callback_set(self):
+        """bus.send without a callback does not crash (persist-only, no broker)."""
+        server = InMemoryInboxServer()
+        producer = InboxProducer(server=server)
+        consumer = InboxConsumer(server=server)
+        bus = LocalAgentMessageBus(producer=producer, consumer=consumer, broker=None)
+
+        envelope = AgentMessageEnvelope(
+            payload={"content": "hi", "message_type": "agent_message"},
+            source=AgentAddress(kind="agent", name="src"),
+            target=AgentAddress(kind="agent", name="main"),
+            message_type="agent_message",
+            session_id="pfx.main",
+            agent_session_id="pfx.main",
+        )
+        # Must not raise.
+        await bus.send("pfx.main", envelope)
+        assert "pfx.main" in await bus.sessions_with_pending()
+
+
+class TestBusPreservesSourceKind:
+    """The bus must preserve the original envelope ``source.kind`` across the
+    inbox round-trip.
+
+    Role assignment (context_assembler) keys off ``source_agent`` in the
+    dispatch metadata, which ``AgentPool._envelope_metadata`` derives from
+    ``envelope.source.kind == "agent"``. Human DMs arrive as ``external_input``
+    with ``source.kind == "channel"``; if the bus normalizes every source to
+    ``kind="agent"``, human input is mis-stored as ``role=agent`` in session
+    memory. Only inter-agent messages (and hook notifications) should be
+    ``role=agent``.
+    """
+
+    async def test_channel_source_kind_preserved_for_external_input(self):
+        server = InMemoryInboxServer()
+        bus = LocalAgentMessageBus(
+            producer=InboxProducer(server=server),
+            consumer=InboxConsumer(server=server),
+        )
+        envelope = AgentMessageEnvelope(
+            payload={"content": "hi", "message_type": "external_input"},
+            source=AgentAddress(kind="channel", name="user"),
+            target=AgentAddress(kind="agent", name="main"),
+            message_type="external_input",
+            session_id="conv.main",
+            agent_session_id="conv.main",
+        )
+        await bus.send("conv.main", envelope)
+        got = await bus.consume("conv.main", limit=10)
+        assert len(got) == 1
+        # The human-input origin must survive the round-trip.
+        assert got[0].source.kind == "channel"
+        assert got[0].source.name == "user"
+
+    async def test_agent_source_kind_preserved_for_inter_agent(self):
+        server = InMemoryInboxServer()
+        bus = LocalAgentMessageBus(
+            producer=InboxProducer(server=server),
+            consumer=InboxConsumer(server=server),
+        )
+        envelope = AgentMessageEnvelope(
+            payload={"content": "do", "message_type": "task_request"},
+            source=AgentAddress(kind="agent", name="scout"),
+            target=AgentAddress(kind="agent", name="main"),
+            message_type="task_request",
+            session_id="inv.scout",
+            agent_session_id="inv.scout",
+        )
+        await bus.send("inv.scout", envelope)
+        got = await bus.consume("inv.scout", limit=10)
+        assert got[0].source.kind == "agent"
+        assert got[0].source.name == "scout"

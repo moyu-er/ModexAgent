@@ -43,7 +43,7 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 | `workspace/` | 13 py | — | `WorkspaceContext` ABC, `DefaultWorkspaceContext` — cd/exit/restore workspace switching with callback notification and persistence (see `workspace/AGENTS.md`) |
 | `input_pipeline/` | 5 py | — | Extensible user-input stage pipeline — `UserInputEnvelope`, `InputStage` ABC, `Continue`/`Terminate`, `UserInputPipeline` (see `input_pipeline/AGENTS.md`) |
 | `trace/` | 4 py | — | Tracing and observability — `TraceStore`, `TraceHooks`, `TraceType` |
-| `utils/` | 11 py | — | tokenizer, context_builder, deduplicator, sanitizer, media_utils, helpers |
+| `utils/` | 10 py | — | tokenizer, context_builder, deduplicator, sanitizer, helpers |
 | `adapters/` | 2 py | — | `PlatformAdapter` ABC, `AdapterRegistry`, `StreamingMode` |
 | `registry/` | 1 py | — | Shared registry utilities |
 

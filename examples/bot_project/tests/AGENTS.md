@@ -22,8 +22,8 @@ Test suites for the bot_project. Unit and integration tests covering service lif
 | `test_runtime_defaults.py` | Default runtime configuration values |
 | `test_slash_commands.py` | Slash command parsing and dispatch |
 | `unit/service/test_terminal_degrades_to_subprocess.py` | Bot falls back to `SubprocessTool` when terminal backends are unavailable |
-| `test_config_env.py` | .env read/write/check helpers and LLM env-var validation |
-| `test_interactive_config.py` | Interactive config wizard (`run_config_wizard`) behavior |
+| `test_config_model.py` | `config/model.yml` read/write/check helpers (global model config) |
+| `test_interactive_config.py` | Interactive model-config wizard (`run_config_wizard`) behavior |
 | `test_mcp_resilience.py` | MCP registration failure does not block pool/tool-manager build |
 | `test_recent_workspaces.py` | `RecentWorkspaces` load/add/list recent workspace paths |
 | `test_session_store.py` | Session store persistence tests |

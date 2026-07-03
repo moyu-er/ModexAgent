@@ -24,7 +24,7 @@ from typing import Any
 
 import typer
 
-from modexbot.config_env import check_env_llm_config
+from modexbot.config_model import check_model_config
 
 app = typer.Typer(
     name="modexbot",
@@ -35,7 +35,7 @@ app = typer.Typer(
 )
 
 _PKG_ROOT: Path = Path(__file__).resolve().parent.parent
-_ENV_PATH: Path = _PKG_ROOT / ".env"
+_MODEL_PATH: Path = _PKG_ROOT / "config" / "model.yml"
 _REPO_ROOT: Path = _PKG_ROOT.parent.parent
 
 
@@ -730,6 +730,8 @@ def start(
         )
         raise typer.Exit(1)
 
+    _ensure_model_configured()
+
     typer.echo("Starting modexbot...")
     script = (
         "from modexbot.cli import _run_bot; "
@@ -766,6 +768,8 @@ def restart(
     if not config.is_dir():
         typer.echo(f"ERROR: config directory not found: {config}")
         raise typer.Exit(1)
+
+    _ensure_model_configured()
 
     typer.echo("Restarting modexbot...")
     script = (
@@ -816,6 +820,41 @@ def stop(
         raise typer.Exit(1)
 
 
+def _ensure_model_configured() -> None:
+    """Ensure ``config/model.yml`` is usable; offer the wizard if it is not.
+
+    Shared by ``install`` / ``start`` / ``restart``. When the model config is
+    missing, empty, or still a template placeholder, the user is offered the
+    interactive wizard. If it remains incomplete (or the prompt is declined),
+    the command aborts — the bot cannot run without a valid model.
+    """
+    complete, missing = check_model_config(_MODEL_PATH)
+    if complete:
+        return
+
+    typer.echo("WARNING: model configuration in config/model.yml is incomplete.")
+    typer.echo("Required: model, api_key, url")
+    typer.echo(f"Missing or placeholder: {', '.join(missing)}")
+
+    try:
+        response = input("Run 'modexbot config' now? [Y/n]: ").strip().lower()
+    except EOFError:
+        response = "n"
+
+    if response in ("", "y", "yes"):
+        from modexbot.interactive_config import run_config_wizard
+
+        run_config_wizard(_MODEL_PATH)
+        complete, _ = check_model_config(_MODEL_PATH)
+        if complete:
+            return
+        typer.echo("Model configuration is still incomplete. Aborting.")
+    else:
+        typer.echo("Run 'modexbot config' first, then retry. Aborting.")
+
+    raise typer.Exit(1)
+
+
 @app.command("install")
 def install(
     force: bool = typer.Option(  # noqa: B008
@@ -825,40 +864,19 @@ def install(
 ) -> None:
     """Rebuild the WebUI frontend after editing source files.
 
-    Checks that ``.env`` contains a complete LLM configuration before building.
+    Checks that ``config/model.yml`` has a complete model configuration
+    (offering the wizard on a placeholder/missing value) before building.
     """
-    complete, missing = check_env_llm_config(_ENV_PATH)
-    if not complete:
-        typer.echo("WARNING: LLM configuration in .env is incomplete.")
-        typer.echo("Required: LLM_MODEL, LLM_API_KEY, LLM_BASE_URL")
-        typer.echo(f"Missing: {', '.join(missing)}")
-
-        try:
-            response = input("Run 'modexbot config' now? [Y/n]: ").strip().lower()
-        except EOFError:
-            response = "n"
-
-        if response in ("", "y", "yes"):
-            from modexbot.interactive_config import run_config_wizard
-
-            run_config_wizard(_ENV_PATH)
-            complete, missing = check_env_llm_config(_ENV_PATH)
-            if not complete:
-                typer.echo("LLM configuration is still incomplete. Aborting install.")
-                raise typer.Exit(1)
-        else:
-            typer.echo("Run 'modexbot config' first, then retry 'modexbot install'.")
-            raise typer.Exit(1)
-
+    _ensure_model_configured()
     _build_webui(force=force)
 
 
 @app.command("config")
 def config_cmd() -> None:
-    """Interactive configuration wizard for .env settings."""
+    """Interactive wizard for the global model configuration (config/model.yml)."""
     from modexbot.interactive_config import run_config_wizard
 
-    run_config_wizard(_ENV_PATH)
+    run_config_wizard(_MODEL_PATH)
 
 
 @app.command("status")

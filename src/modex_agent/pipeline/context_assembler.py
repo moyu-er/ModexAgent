@@ -13,6 +13,7 @@ from modex_agent.memory.history import (
     ListMessageHistory,
     history_to_list,
 )
+from modex_agent.multi_agent.message_type import AgentMessageType
 
 if TYPE_CHECKING:
     from modex_agent.core.skills import SkillManager
@@ -115,9 +116,11 @@ async def assemble_context(
                 kind="agent", name=route_result.session.agent_name if route_result else "main"
             ),
             message_type=(
-                route_result.envelope_metadata.get("message_type", "agent_message")
+                route_result.envelope_metadata.get(
+                    "message_type", AgentMessageType.AGENT_MESSAGE
+                )
                 if route_result
-                else "agent_message"
+                else AgentMessageType.AGENT_MESSAGE
             ),
             session_id=route_result.session.session_id_prefix if route_result else session_id,
             agent_session_id=session_id,
