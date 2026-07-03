@@ -5,7 +5,9 @@ missing-file 404; (6.2) MIME allow-list (image/* + video/* real content-type,
 everything else octet-stream), SVG CSP header, Range/206 streaming via the HTTP
 layer; (6.3) symmetric 404 fallback for evicted-inbound and deleted-outbound;
 (I1) negative cross-workspace isolation; (I2) upload → WS → ingest → preprocess
-end-to-end; (I3) ingest → HTTP download round-trip.
+end-to-end; (I3) ingest → HTTP download round-trip; (R1) refresh-recovery: the
+history-replay API returns outbound Attachment records so the frontend can
+re-render download cards after a page refresh / backend restart.
 """
 
 from __future__ import annotations
@@ -801,3 +803,79 @@ def _session_info(session_id: str):
     from bot.webui.server import SessionInfo
 
     return SessionInfo.from_str(session_id)
+
+
+# ---------------------------------------------------------------------------
+# R1: refresh-recovery — history replay returns outbound attachment records
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_history_replay_returns_outbound_attachment_records() -> None:
+    """R1: a SendFileToUserTool-persisted AssistantTurnEvent (no turn_id, empty
+    blocks, one outbound Attachment) is returned by GET /api/sessions/{id}/messages
+    as an assistant_turn event carrying the serialized Attachment record, so the
+    frontend can re-render a download card after a page refresh / backend restart
+    (ADR-0013 §11).
+
+    This is the regression guard for the fix that replaced the hardcoded
+    ``"attachments": []`` in ``_handle_get_messages`` with
+    ``MaterializedTurn.attachments`` (collected by ``_materialize_events``).
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        ws_root = Path(tmp)
+        server = _build_server(ws_root)
+        store = server._store  # type: ignore[attr-defined]
+
+        session_id = "abc123.main"
+        att = Attachment(
+            id="att-refresh",
+            kind=Kind.OTHER,
+            name="report.txt",
+            mime="text/plain",
+            size=len(b"report-body"),
+            path=str(ws_root / "report.txt"),
+            locator=AttachmentLocator.WORKSPACE,
+        )
+        # The file is on disk so a subsequent download still works.
+        (ws_root / "report.txt").write_bytes(b"report-body")
+        # Persist exactly what SendFileToUserTool._persist_attachment writes:
+        # an AssistantTurnEvent with blocks=[], no turn_id, and one record.
+        store.append(
+            session_id,
+            AssistantTurnEvent(
+                session_id=session_id,
+                agent_name="main",
+                blocks=[],
+                attachments=[att.to_dict()],
+            ),
+            sessions_dir=_sessions_dir(ws_root),
+        )
+
+        client = TestClient(TestServer(server.app))
+        await client.start_server()
+        try:
+            resp = await client.get(f"/api/sessions/{session_id}/messages")
+            assert resp.status == 200
+            events = await resp.json()
+            assistant_turns = [e for e in events if e["event"] == "assistant_turn"]
+            assert len(assistant_turns) == 1, (
+                f"expected one assistant_turn; got {len(assistant_turns)}"
+            )
+            turn = assistant_turns[0]
+            assert turn["blocks"] == [], (
+                "attachment-only carrier has no conversational blocks"
+            )
+            assert turn["attachments"] == [att.to_dict()], (
+                "the outbound Attachment record must round-trip so the frontend "
+                "can build the download URL and re-render the card after refresh"
+            )
+            # The download endpoint still resolves the same record — proving the
+            # record the replay returns is the one find_attachment scans.
+            dl = await client.get(
+                f"/api/sessions/{session_id}/attachments/{att.id}"
+            )
+            assert dl.status == 200
+            assert (await dl.read()) == b"report-body"
+        finally:
+            await client.close()
