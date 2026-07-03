@@ -31,7 +31,7 @@ async def test_write_persists_across_store_instances(tmp_path) -> None:
         )
     finally:
         current_agent_context.reset(token)
-    assert [t["content"] for t in json.loads(result)] == ["do B", "do C"]
+    assert [t["content"] for t in json.loads(result[result.index("["):])] == ["do B", "do C"]
 
     # fresh store instance (new turn / restart) — read filter keeps active only
     token = _set_ctx("s1")
@@ -39,7 +39,7 @@ async def test_write_persists_across_store_instances(tmp_path) -> None:
         result = await TodoReadTool(JsonFileTodoStore(tmp_path)).execute()
     finally:
         current_agent_context.reset(token)
-    active = json.loads(result)
+    active = json.loads(result[result.index("["):])
     assert [t["content"] for t in active] == ["do B", "do C"]
     assert all(t["status"] in ("pending", "in_progress") for t in active)
 

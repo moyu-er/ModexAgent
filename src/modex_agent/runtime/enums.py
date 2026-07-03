@@ -146,3 +146,8 @@ class TurnCustomKey(StrEnum):
     # image_url block list, so base64 is encoded once per turn and reused
     # across ReAct iterations. Lives only in turn state — never persisted.
     INLINE_IMAGE_CACHE = "_inline_image_cache"
+    # Probe state machine for TodoCompletionProbeHook: {"fp": str, "count": int}.
+    # Transient ("_"-prefix ⇒ never persisted in snapshots); reclaimed when the
+    # turn's ReActTurnState is rebuilt. Tracks the last-probed active-todo
+    # fingerprint so each distinct list is probed at most once per turn.
+    TODO_PROBE = "_todo_probe"
