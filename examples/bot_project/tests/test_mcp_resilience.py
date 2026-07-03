@@ -60,7 +60,7 @@ class TestBuildToolsMcpResilience:
             "bot.service.pool_builder._load_agent_mcp_tools",
             new=AsyncMock(return_value=([], None)),
         ) as mock_load_mcp:
-            tool_manager, mcp_manager = await _build_tools(
+            tool_manager, mcp_manager, _todo_store = await _build_tools(
                 pool_cfg=minimal_pool_cfg,
                 main_cfg=minimal_main_cfg,
                 terminal_manager=None,
@@ -94,7 +94,7 @@ class TestBuildToolsMcpResilience:
             "bot.service.pool_builder._load_agent_mcp_tools",
             new=AsyncMock(side_effect=RuntimeError("MCP boom")),
         ) as mock_load_mcp:
-            tool_manager, mcp_manager = await _build_tools(
+            tool_manager, mcp_manager, _todo_store = await _build_tools(
                 pool_cfg=minimal_pool_cfg,
                 main_cfg=minimal_main_cfg,
                 terminal_manager=None,

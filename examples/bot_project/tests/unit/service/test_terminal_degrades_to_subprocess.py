@@ -51,7 +51,7 @@ def test_terminal_manager_degrades_to_none_when_all_backends_fail() -> None:
 @pytest.mark.asyncio
 async def test_tools_degrade_to_subprocess_when_terminal_manager_none() -> None:
     """With terminal_manager=None, bash is SubprocessTool; terminal/process absent."""
-    tm, _ = await _build_tools(
+    tm, _mcp, _todo = await _build_tools(
         pool_cfg=SimpleNamespace(mcp=None, media=MediaConfig()),
         main_cfg=SimpleNamespace(experience=None),
         terminal_manager=None,

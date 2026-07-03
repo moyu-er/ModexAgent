@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     )
     from modex_agent.memory.cleanup import CleanupResult
     from modex_agent.memory.core.models import CompressionReason
+    from modex_agent.runtime.store import JsonFileTodoStore
 
 from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.core.emitter import ContentEmitter
@@ -75,7 +76,11 @@ from modex_agent.multi_agent.tools import (
 )
 from modex_agent.pipeline.adapters import OutputAdapter
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
-from modex_agent.tools.standard import FindFilesTool, SearchFilesTool
+from modex_agent.tools.standard import (
+    FindFilesTool,
+    SearchFilesTool,
+    TodoCompletionProbeHook,
+)
 from modex_agent.tools.terminal import SubprocessExecutor, SubprocessTool
 from modex_agent.tools.terminal.backends.factory import (
     UnsupportedVisibilityForTransport,
@@ -183,7 +188,7 @@ async def create_pool(
     sessions_dir_provider: Callable[[], Path | None] | None = None
     if workspace_resolver is not None:
         sessions_dir_provider = lambda: _cell_sessions_dir(workspace_resolver)
-    tool_manager, mcp_manager = await _build_tools(
+    tool_manager, mcp_manager, todo_store = await _build_tools(
         pool_cfg, main_cfg, terminal_manager, project_dir,
         output_adapter, pool_name, data_dir, pool_data, root_provider,
         transcript_store=transcript_store,
@@ -308,6 +313,7 @@ async def create_pool(
         shared_interceptor_chain,
         im_ui, pool_cfg, project_dir,
         command_processor, pool_name,
+        todo_store=todo_store, tool_manager=tool_manager,
         root_provider=root_provider,
     )
 
@@ -573,7 +579,7 @@ async def _build_tools(
     *,
     transcript_store: TranscriptStore | None = None,
     sessions_dir_provider: Callable[[], Path | None] | None = None,
-) -> tuple[InMemoryToolManager, Any | None]:
+) -> tuple[InMemoryToolManager, Any | None, JsonFileTodoStore]:
     """Build tool manager from config — convention over configuration.
 
     When ``root_provider`` is given, the standard file/search/shell tools are
@@ -691,7 +697,7 @@ async def _build_tools(
         logger.info("Pool '%s': %d MCP tools registered", pool_name, len(mcp_tools))
 
     logger.info("Pool '%s': ToolManager ready (%d tools total)", pool_name, len(tm.list_tools()))
-    return tm, mcp_manager
+    return tm, mcp_manager, todo_store
 
 
 # ── Extra tools ──────────────────────────────────────────────────────────
@@ -1083,6 +1089,8 @@ def _wire_main_pipeline(
     project_dir: Path,
     command_processor,
     pool_name: str,
+    todo_store: JsonFileTodoStore,
+    tool_manager: InMemoryToolManager,
     *,
     root_provider: WorkspaceRootProvider | None = None,
 ) -> None:
@@ -1116,6 +1124,11 @@ def _wire_main_pipeline(
     # inbox_strategy != "none", so fold-in is wired in one place.
     _add_hook(pipeline, MaxIterationNotifyHook(notification_service=notification_service))
     _add_hook(pipeline, TurnOutcomeNotifyHook(notification_service=notification_service))
+    # Intentionally unconditional: every scanned pool (present + future) gets the probe hook — no per-pool flag.
+    _add_hook(
+        pipeline,
+        TodoCompletionProbeHook(store=todo_store, tool_manager=tool_manager),
+    )
 
     # Runtime wiring
     pipeline.interceptor_chain = shared_interceptor_chain
