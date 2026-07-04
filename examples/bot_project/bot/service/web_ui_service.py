@@ -308,6 +308,9 @@ class WebUIService(BotService):
             data_dir=home_sessions,
             home_sessions_dir=home_sessions,
         )
+        # /api/models re-reads model.yml live so CLI model edits appear in the
+        # selector without a server restart (runtime routing still needs restart).
+        self._server.set_model_config_loader(self._load_bot_model_config_for_listing)
         self._server.set_data_dir_name(_data_dir_name)
 
     # ------------------------------------------------------------------
@@ -467,7 +470,10 @@ class WebUIService(BotService):
         self._session_factory = SessionIdFactory()
         self._server.set_session_factory(self._session_factory)
 
-        webui_pipeline = build_webui_pipeline(skill_registry=skill_registry)
+        webui_pipeline = build_webui_pipeline(
+            skill_registry=skill_registry,
+            bot_model_config=self._bot_model_config,
+        )
         self._server.set_input_pipeline(webui_pipeline)
 
         # Find the WebSocket input adapter
@@ -572,6 +578,7 @@ class WebUIService(BotService):
             current_ws_provider=current_ws_provider,
             media_store=self._media_store,
             media_config_for_pool=self._media_config_for_pool,
+            model_choice_registry=self._model_choice_registry,
         )
 
     def _build_agent_pool_map(self) -> dict[str, str]:

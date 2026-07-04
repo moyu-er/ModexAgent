@@ -117,27 +117,27 @@ class TestCheckTriggerTokenOnly:
 
     def test_no_trigger_under_threshold(self) -> None:
         msgs = [{"role": "user", "content": "x", "token_count": 10}]  # 10 tokens
-        # trigger line = max_tokens * max_token_ratio = 100 * 0.8 = 80
-        assert _check_trigger(msgs, _FixedEstimator(10), max_tokens=100, max_token_ratio=0.8) is None
+        # trigger line = max_context_tokens * max_token_ratio = 100 * 0.8 = 80
+        assert _check_trigger(msgs, _FixedEstimator(10), max_context_tokens=100, max_token_ratio=0.8) is None
 
     def test_trigger_over_threshold(self) -> None:
         msgs = [{"role": "user", "content": "x", "token_count": 10}] * 9  # 90 tokens
-        reason = _check_trigger(msgs, _FixedEstimator(10), max_tokens=100, max_token_ratio=0.8)
+        reason = _check_trigger(msgs, _FixedEstimator(10), max_context_tokens=100, max_token_ratio=0.8)
         assert reason == CompressionReason.TOKEN_PRESSURE
 
     def test_missing_token_count_recomputes(self) -> None:
         msgs = [{"role": "user", "content": "x"}] * 9  # no token_count -> 10 each via estimator
-        reason = _check_trigger(msgs, _FixedEstimator(10), max_tokens=100, max_token_ratio=0.8)
+        reason = _check_trigger(msgs, _FixedEstimator(10), max_context_tokens=100, max_token_ratio=0.8)
         assert reason == CompressionReason.TOKEN_PRESSURE
 
     def test_system_tokens_excluded_from_trigger(self) -> None:
         """ADR-0009: system-role tokens do NOT count toward session pressure."""
         # A giant system message alone must NOT trigger.
         sys_only = [{"role": "system", "content": "huge system prompt", "token_count": 100000}]
-        assert _check_trigger(sys_only, _FixedEstimator(10), max_tokens=100, max_token_ratio=0.8) is None
+        assert _check_trigger(sys_only, _FixedEstimator(10), max_context_tokens=100, max_token_ratio=0.8) is None
         # The same token burden as a user message DOES trigger.
         user_only = [{"role": "user", "content": "x", "token_count": 100000}]
-        assert _check_trigger(user_only, _FixedEstimator(10), max_tokens=100, max_token_ratio=0.8) == CompressionReason.TOKEN_PRESSURE
+        assert _check_trigger(user_only, _FixedEstimator(10), max_context_tokens=100, max_token_ratio=0.8) == CompressionReason.TOKEN_PRESSURE
 
 
 class TestComputeBoundaryTokenBased:
@@ -196,7 +196,7 @@ class TestNoTrigger:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_tokens=8000,
+            max_context_tokens=8000,
             max_token_ratio=0.8,
             keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
@@ -228,7 +228,7 @@ class TestOnTriggeredCallback:
             session=session,
             archive=None,
             context=context,
-            max_tokens=100,
+            max_context_tokens=100,
             max_token_ratio=0.8,
             keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
@@ -255,7 +255,7 @@ class TestOnTriggeredCallback:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_tokens=8000,
+            max_context_tokens=8000,
             max_token_ratio=0.8,
             keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
@@ -291,7 +291,7 @@ class TestOnTriggeredCallback:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_tokens=50,
+            max_context_tokens=50,
             max_token_ratio=0.8,
             keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
@@ -312,7 +312,7 @@ class TestTriggerAndCleanup:
         context = _ctx()
         session = layer_set.session
 
-        # Add 20 messages = 200 tokens, max_tokens=100 -> line 80 -> triggers
+        # Add 20 messages = 200 tokens, max_context_tokens=100 -> line 80 -> triggers
         msgs = []
         for i in range(10):
             msgs.append(_user_msg(f"user-{i}"))
@@ -323,7 +323,7 @@ class TestTriggerAndCleanup:
             session=session,
             archive=None,
             context=context,
-            max_tokens=100,
+            max_context_tokens=100,
             max_token_ratio=0.8,
             keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
@@ -355,7 +355,7 @@ class TestTriggerAndCleanup:
             session=session,
             archive=None,
             context=context,
-            max_tokens=100,  # line 80 -> triggers
+            max_context_tokens=100,  # line 80 -> triggers
             max_token_ratio=0.8,
             keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
@@ -374,7 +374,7 @@ class TestCleanupAlwaysExecutes:
         context = _ctx()
         session = layer_set.session
 
-        # 10 messages = 100 tokens, max_tokens=50 -> line 40 -> triggered
+        # 10 messages = 100 tokens, max_context_tokens=50 -> line 40 -> triggered
         msgs = []
         for i in range(5):
             msgs.append(_user_msg(f"u-{i}"))
@@ -385,7 +385,7 @@ class TestCleanupAlwaysExecutes:
             session=session,
             archive=None,  # No archive
             context=context,
-            max_tokens=50,
+            max_context_tokens=50,
             max_token_ratio=0.8,
             keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
@@ -428,7 +428,7 @@ class TestCleanupRemovesInvalidToolChains:
             session=session,
             archive=None,
             context=context,
-            max_tokens=50,
+            max_context_tokens=50,
             max_token_ratio=0.8,
             keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
@@ -472,7 +472,7 @@ class TestKeepBoundary:
             session=session,
             archive=None,
             context=context,
-            max_tokens=100,  # 10 msgs = 100 tokens, line 80 -> triggers
+            max_context_tokens=100,  # 10 msgs = 100 tokens, line 80 -> triggers
             max_token_ratio=0.8,
             keep_ratio=0.4,  # keep_target_tokens = 40 -> keep ~4 msgs
             token_estimator=_FixedEstimator(10),
@@ -513,7 +513,7 @@ class TestKeepBoundary:
 
         result = await cleanup_session(
             session=session, archive=None, context=context,
-            max_tokens=280,  # 101 msgs ~= 1414 tokens (14/msg: 10 estimate + 4 overhead,
+            max_context_tokens=280,  # 101 msgs ~= 1414 tokens (14/msg: 10 estimate + 4 overhead,
             # recomputed since _add_messages bypasses append-stamping), line 224 -> triggers
             max_token_ratio=0.8, keep_ratio=0.5,  # keep_target_tokens = 140 -> keep ~10 msgs
             token_estimator=_FixedEstimator(10),
@@ -523,7 +523,7 @@ class TestKeepBoundary:
         assert result.triggered is True
         assert result.messages_pruned > 0, (
             f"Must prune messages when over token limit (total={len(msgs)} msgs, "
-            f"max_tokens=280), but pruned=0"
+            f"max_context_tokens=280), but pruned=0"
         )
         remaining = await session.get_all_messages(context)
         assert len(remaining) < len(msgs), (
@@ -559,7 +559,7 @@ class TestKeepToolChainIntegrity:
             session=session,
             archive=None,
             context=context,
-            max_tokens=80,  # 8 msgs = 80 tokens, line 64 -> triggers
+            max_context_tokens=80,  # 8 msgs = 80 tokens, line 64 -> triggers
             max_token_ratio=0.8,
             keep_ratio=0.4,  # keep_target_tokens = 32 -> keep 3 (tool chain intact)
             token_estimator=_FixedEstimator(10),
@@ -611,7 +611,7 @@ class TestUserRetentionExtraction:
             session=session,
             archive=None,
             context=context,
-            max_tokens=20,  # 4 msgs = 40 tokens, line 16 -> triggers
+            max_context_tokens=20,  # 4 msgs = 40 tokens, line 16 -> triggers
             max_token_ratio=0.8,
             keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
@@ -650,7 +650,7 @@ class TestUserRetentionExtraction:
             session=session,
             archive=None,
             context=context,
-            max_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
             max_token_ratio=0.8,
             keep_ratio=0.4,
             token_estimator=_FixedEstimator(10),
@@ -681,7 +681,7 @@ class TestUserRetentionExtraction:
             session=session,
             archive=None,
             context=context,
-            max_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
             max_token_ratio=0.8,
             keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
@@ -722,7 +722,7 @@ class TestUserRetentionCompletion:
             session=session,
             archive=None,
             context=context,
-            max_tokens=50,  # 8 msgs = 80 tokens, line 40 -> triggers
+            max_context_tokens=50,  # 8 msgs = 80 tokens, line 40 -> triggers
             max_token_ratio=0.8,
             keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
@@ -762,7 +762,7 @@ class TestUserRetentionCompletion:
             session=session,
             archive=None,
             context=context,
-            max_tokens=70,  # 7 msgs ~= 98 tokens (14/msg: 10 estimate + 4 overhead,
+            max_context_tokens=70,  # 7 msgs ~= 98 tokens (14/msg: 10 estimate + 4 overhead,
             # recomputed since _add_messages bypasses append-stamping), line 56 -> triggers
             max_token_ratio=0.8,
             keep_ratio=0.4,  # keep_target_tokens = 28 -> keep [call c1, result c1]
@@ -804,7 +804,7 @@ class TestUserRetentionCompletion:
             session=session,
             archive=None,
             context=context,
-            max_tokens=20,  # 5 msgs = 50 tokens, line 16 -> triggers
+            max_context_tokens=20,  # 5 msgs = 50 tokens, line 16 -> triggers
             max_token_ratio=0.8,
             keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
@@ -826,7 +826,7 @@ class TestUserRetentionCompletion:
             session=session,
             archive=None,
             context=context,
-            max_tokens=20,  # 3 msgs = 30 tokens, line 16 -> triggers
+            max_context_tokens=20,  # 3 msgs = 30 tokens, line 16 -> triggers
             max_token_ratio=0.8,
             keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
@@ -870,7 +870,7 @@ class TestToolChainDominanceDoesNotOverPrune:
             session=session,
             archive=None,
             context=context,
-            max_tokens=1000,  # 102 msgs = 1020 tokens, line 800 -> triggers
+            max_context_tokens=1000,  # 102 msgs = 1020 tokens, line 800 -> triggers
             max_token_ratio=0.8,
             keep_ratio=0.4,  # keep_target_tokens = 400 -> keep ~40 msgs
             token_estimator=_FixedEstimator(10),
@@ -909,7 +909,7 @@ class TestToolChainDominanceDoesNotOverPrune:
             session=session,
             archive=None,
             context=context,
-            max_tokens=1000,  # 102 msgs = 1020 tokens, line 800 -> triggers
+            max_context_tokens=1000,  # 102 msgs = 1020 tokens, line 800 -> triggers
             max_token_ratio=0.8,
             keep_ratio=keep_ratio,  # keep_target_tokens = 400 -> keep ~40 msgs
             token_estimator=_FixedEstimator(10),
@@ -953,7 +953,7 @@ class TestKeepResanitized:
             session=session,
             archive=None,
             context=context,
-            max_tokens=50,  # 8 msgs = 80 tokens, line 40 -> triggers
+            max_context_tokens=50,  # 8 msgs = 80 tokens, line 40 -> triggers
             max_token_ratio=0.8,
             keep_ratio=0.6,
             token_estimator=_FixedEstimator(10),
@@ -1081,7 +1081,7 @@ class TestArchiveAgentIntegration:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
             max_token_ratio=0.8,
             keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
@@ -1124,7 +1124,7 @@ class TestArchiveAgentIntegration:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
             max_token_ratio=0.8,
             keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
@@ -1163,7 +1163,7 @@ class TestArchiveAgentIntegration:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
             max_token_ratio=0.8,
             keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
@@ -1185,7 +1185,7 @@ class TestArchiveAgentIntegration:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
             max_token_ratio=0.8,
             keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
@@ -1229,7 +1229,7 @@ class TestArchiveAgentIntegration:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
             max_token_ratio=0.8,
             keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
@@ -1272,7 +1272,7 @@ class TestArchiveAgentIntegration:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
             max_token_ratio=0.8,
             keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
@@ -1326,7 +1326,7 @@ class TestArchiveSuccessPrunedContent:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
             max_token_ratio=0.8,
             keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
@@ -1379,7 +1379,7 @@ class TestArchiveSuccessPrunedContent:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
             max_token_ratio=0.8,
             keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
@@ -1432,7 +1432,7 @@ class TestArchiveSuccessPrunedContent:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
             max_token_ratio=0.8,
             keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
@@ -1511,7 +1511,7 @@ class TestResolvedStoragePropagation:
                 session=session,
                 archive=layer_set.archive,
                 context=context,
-                max_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+                max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
                 max_token_ratio=0.8,
                 keep_ratio=0.5,
                 token_estimator=_FixedEstimator(10),
@@ -1560,7 +1560,7 @@ class TestResolvedStoragePropagation:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
             max_token_ratio=0.8,
             keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
@@ -1602,7 +1602,7 @@ class TestResolvedStoragePropagation:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
             max_token_ratio=0.8,
             keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
@@ -1646,7 +1646,7 @@ class TestResolvedStoragePropagation:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
             max_token_ratio=0.8,
             keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
@@ -1689,7 +1689,7 @@ class TestResolvedStoragePropagation:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
             max_token_ratio=0.8,
             keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),
@@ -1725,7 +1725,7 @@ class TestResolvedStoragePropagation:
             session=session,
             archive=layer_set.archive,
             context=context,
-            max_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
+            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
             max_token_ratio=0.8,
             keep_ratio=0.5,
             token_estimator=_FixedEstimator(10),

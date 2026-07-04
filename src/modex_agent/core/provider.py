@@ -71,7 +71,7 @@ class LLMProvider(ABC):
         messages: list[dict[str, Any]],
         model: str | None = None,
         temperature: float = 0.7,
-        max_tokens: int | None = None,
+        max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
         **kwargs,
     ) -> LLMResponse:
@@ -82,7 +82,7 @@ class LLMProvider(ABC):
             messages: 消息列表，格式为 [{"role": "user", "content": "..."}, ...]
             model: 模型名称，None则使用默认模型
             temperature: 温度参数
-            max_tokens: 最大token数
+            max_output_tokens: 最大token数
             tools: 工具定义列表（可选）
             **kwargs: 其他提供商特定参数
 
@@ -118,7 +118,7 @@ class LLMProvider(ABC):
         messages: list[dict[str, Any]],
         model: str | None = None,
         temperature: float = 0.7,
-        max_tokens: int | None = None,
+        max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
         max_retries: int = 3,
         **kwargs,
@@ -130,7 +130,7 @@ class LLMProvider(ABC):
             max_retries,
             model=model,
             temperature=temperature,
-            max_tokens=max_tokens,
+            max_output_tokens=max_output_tokens,
             tools=tools,
             **kwargs,
         )
@@ -249,7 +249,7 @@ class StreamingLLMProvider(LLMProvider):
         messages: list[dict[str, Any]],
         model: str | None = None,
         temperature: float = 0.7,
-        max_tokens: int | None = None,
+        max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
         **kwargs,
     ) -> LLMResponse:
@@ -264,7 +264,7 @@ class StreamingLLMProvider(LLMProvider):
             messages=messages,
             model=model,
             temperature=temperature,
-            max_tokens=max_tokens,
+            max_output_tokens=max_output_tokens,
             tools=tools,
             on_content_delta=None,
             on_reasoning_delta=None,
@@ -277,7 +277,7 @@ class StreamingLLMProvider(LLMProvider):
         messages: list[dict[str, Any]],
         model: str | None = None,
         temperature: float = 0.7,
-        max_tokens: int | None = None,
+        max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
         max_retries: int = 3,
         **kwargs,
@@ -293,7 +293,7 @@ class StreamingLLMProvider(LLMProvider):
             messages=messages,
             model=model,
             temperature=temperature,
-            max_tokens=max_tokens,
+            max_output_tokens=max_output_tokens,
             tools=tools,
             on_content_delta=None,
             on_reasoning_delta=None,
@@ -307,7 +307,7 @@ class StreamingLLMProvider(LLMProvider):
         messages: list[dict[str, Any]],
         model: str | None = None,
         temperature: float = 0.7,
-        max_tokens: int | None = None,
+        max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
         on_content_delta: Callable[[str], Any] | None = None,
         on_reasoning_delta: Callable[[str], Any] | None = None,
@@ -320,7 +320,7 @@ class StreamingLLMProvider(LLMProvider):
             messages: 消息列表
             model: 模型名称
             temperature: 温度参数
-            max_tokens: 最大token数
+            max_output_tokens: 最大token数
             tools: 工具定义列表（可选）
             on_content_delta: 内容片段回调（支持 async）（支持 async）
             on_reasoning_delta: 推理片段回调（支持 async）（支持 async）
@@ -336,7 +336,7 @@ class StreamingLLMProvider(LLMProvider):
         messages: list[dict[str, Any]],
         model: str | None = None,
         temperature: float = 0.7,
-        max_tokens: int | None = None,
+        max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
         max_retries: int = 0,
         on_content_delta: Callable[[str], Any] | None = None,
@@ -354,7 +354,7 @@ class StreamingLLMProvider(LLMProvider):
             max_retries,
             model=model,
             temperature=temperature,
-            max_tokens=max_tokens,
+            max_output_tokens=max_output_tokens,
             tools=tools,
             on_content_delta=on_content_delta,
             on_reasoning_delta=on_reasoning_delta,

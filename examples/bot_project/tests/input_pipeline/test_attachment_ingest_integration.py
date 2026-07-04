@@ -18,6 +18,7 @@ from bot.input_pipeline.assembly import build_webui_pipeline
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.skill_parse import ParsedSkill, SkillRegistry
 from bot.service.media_store import WorkspaceScopedMediaStore
+from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 
 from modex_agent.input_pipeline.envelope import AttachmentRef, UserInputEnvelope
@@ -30,6 +31,19 @@ _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 class _NoSkill(SkillRegistry):
     async def resolve(self, pool: str, name: str, content: str) -> ParsedSkill | None:
         return None
+
+
+def _bot_model_config() -> BotModelConfig:
+    return BotModelConfig(
+        default_provider="A",
+        default_model="M1",
+        providers=[
+            ProviderCfg(
+                key="a", name="A", url="u", api_key="k",
+                models=[ModelCfg(name="M1", model="m1")],
+            )
+        ],
+    )
 
 
 @pytest.mark.asyncio
@@ -64,7 +78,9 @@ async def test_pipeline_turns_attachment_ref_into_persisted_attachment() -> None
             current_ws_provider=(lambda r=root: r),
             media_store=media_store,
         )
-        pipeline = build_webui_pipeline(skill_registry=_NoSkill())
+        pipeline = build_webui_pipeline(
+            skill_registry=_NoSkill(), bot_model_config=_bot_model_config()
+        )
 
         env = UserInputEnvelope(
             external_id="u1",
@@ -117,7 +133,9 @@ async def test_pipeline_noop_when_no_attachments() -> None:
             current_ws_provider=(lambda r=root: r),
             media_store=media_store,
         )
-        pipeline = build_webui_pipeline(skill_registry=_NoSkill())
+        pipeline = build_webui_pipeline(
+            skill_registry=_NoSkill(), bot_model_config=_bot_model_config()
+        )
 
         env = UserInputEnvelope(external_id="u1", content="hi", channel="websocket")
         with bind_workspace_root(root):

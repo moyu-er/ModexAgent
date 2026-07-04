@@ -32,14 +32,14 @@ class TestCreateMemoryCleanupConfig:
         """cleanup_config must reflect the token-budget session config fields."""
         cfg = MemoryConfig(
             session=SessionConfig(
-                max_tokens=50000,
+                max_context_tokens=50000,
                 max_token_ratio=0.7,
                 keep_ratio=0.2,
             ),
         )
         system = create_memory(cfg, _make_provider(), tmp_path)
         cleanup = system._cleanup_config
-        assert cleanup["max_tokens"] == cfg.session.max_tokens
+        assert cleanup["max_context_tokens"] == cfg.session.max_context_tokens
         assert cleanup["max_token_ratio"] == cfg.session.max_token_ratio
         assert cleanup["keep_ratio"] == cfg.session.keep_ratio
         assert "max_messages" not in cleanup
@@ -49,7 +49,7 @@ class TestCreateMemoryCleanupConfig:
         cfg = MemoryConfig()
         system = create_memory(cfg, _make_provider(), tmp_path)
         cleanup = system._cleanup_config
-        assert cleanup["max_tokens"] == cfg.session.max_tokens
+        assert cleanup["max_context_tokens"] == cfg.session.max_context_tokens
         assert cleanup["max_token_ratio"] == cfg.session.max_token_ratio
         assert cleanup["keep_ratio"] == cfg.session.keep_ratio
         assert "max_messages" not in cleanup
@@ -102,7 +102,7 @@ class TestBuildMemoryLayerConfigNewSchema:
         )
 
         cfg = MemoryConfig(
-            session=SessionConfig(max_tokens=250000),
+            session=SessionConfig(max_context_tokens=250000),
             archive=ArchiveConfig(enabled=True, max_entries=800),
             knowledge=KnowledgeConfig(
                 enabled=True,

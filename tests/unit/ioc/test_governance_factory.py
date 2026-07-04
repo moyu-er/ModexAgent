@@ -13,16 +13,16 @@ from modex_agent.ioc.factories.governance import create_governance, create_subag
 
 class TestCreateGovernance:
     def test_none_cfg_returns_none(self) -> None:
-        assert create_governance(None, llm_max_tokens=80000) is None
+        assert create_governance(None) is None
 
     def test_disabled_by_tool_chain_repair(self) -> None:
         cfg = MemoryConfig(governance=GovernanceConfig(tool_chain_repair=False))
-        assert create_governance(cfg, llm_max_tokens=80000) is None
+        assert create_governance(cfg) is None
 
     def test_minimal_governance(self) -> None:
         """ToolChainRepair when governance is bare."""
         cfg = MemoryConfig(governance=GovernanceConfig())
-        gov = create_governance(cfg, llm_max_tokens=80000)
+        gov = create_governance(cfg)
         assert gov is not None
         assert len(gov._strategies) == 1  # ToolChainRepair
 
@@ -37,7 +37,7 @@ class TestCreateGovernance:
                 ),
             )
         )
-        gov = create_governance(cfg, llm_max_tokens=80000)
+        gov = create_governance(cfg)
         assert gov is not None
         assert len(gov._strategies) == 2  # LossyCompaction + ToolChainRepair
 
@@ -48,7 +48,7 @@ class TestCreateGovernance:
                 lossy_compaction=LossyConfig(tool_args_head_chars=4096),
             )
         )
-        gov = create_governance(cfg, llm_max_tokens=80000)
+        gov = create_governance(cfg)
         assert gov is not None
         assert gov._strategies[0]._tool_args_head_chars == 4096
 
@@ -56,19 +56,19 @@ class TestCreateGovernance:
 class TestCreatePeerGovernance:
     def test_none_cfg_uses_defaults(self) -> None:
         """None cfg → minimal governance (ToolChainRepair)."""
-        gov = create_subagent_governance(None, llm_max_tokens=80000)
+        gov = create_subagent_governance(None)
         assert gov is not None
         assert len(gov._strategies) == 1
 
     def test_none_governance_uses_defaults(self) -> None:
         """cfg set but governance=None → default governance."""
-        cfg = MemoryConfig(short_term=ShortTermConfig(max_tokens=50000), governance=None)
-        gov = create_subagent_governance(cfg, llm_max_tokens=80000)
+        cfg = MemoryConfig(short_term=ShortTermConfig(max_context_tokens=50000), governance=None)
+        gov = create_subagent_governance(cfg)
         assert gov is not None
         assert len(gov._strategies) == 1
 
     def test_subagent_minimal(self) -> None:
         cfg = MemoryConfig(governance=GovernanceConfig())
-        gov = create_subagent_governance(cfg, llm_max_tokens=80000)
+        gov = create_subagent_governance(cfg)
         assert gov is not None
         assert len(gov._strategies) == 1

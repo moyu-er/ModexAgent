@@ -4,7 +4,7 @@ max_steps: 30
 memory:
   session:
     max_messages: 80
-    max_tokens: 80000
+    max_context_tokens: 80000
     keep_ratio_for_messages: 0.5
     keep_ratio_for_token: 0.5
   archive: {enabled: true}

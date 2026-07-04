@@ -24,6 +24,7 @@ from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.input_pipeline.assembly import build_webui_pipeline
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.skill_parse import SkillRegistry
+from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
 from bot.service.pool_router import PoolRouter, PoolSessionStore
 from bot.service.session_store import WorkspacePoolSessionStore
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
@@ -43,6 +44,19 @@ from modex_agent.multi_agent.address import AgentAddress
 class _NoSkillRegistry(SkillRegistry):
     async def resolve(self, pool: str, name: str, content: str) -> None:
         return None
+
+
+def _bot_model_config() -> BotModelConfig:
+    return BotModelConfig(
+        default_provider="A",
+        default_model="M1",
+        providers=[
+            ProviderCfg(
+                key="a", name="A", url="u", api_key="k",
+                models=[ModelCfg(name="M1", model="m1")],
+            )
+        ],
+    )
 
 
 def _minimal_resources(
@@ -175,7 +189,9 @@ async def test_non_home_workspace_routes_to_coding_with_shared_store() -> None:
         # now shares the service-level store.
         server.set_pool_switch_callback(home_resources.pool_router.set_pool)
 
-        pipe = build_webui_pipeline(skill_registry=_NoSkillRegistry())
+        pipe = build_webui_pipeline(
+            skill_registry=_NoSkillRegistry(), bot_model_config=_bot_model_config()
+        )
         server.set_input_pipeline(pipe)
         # Production wiring: pipeline ctx uses the shared store.
         ctx = BotInputContext(
@@ -271,7 +287,9 @@ async def test_home_workspace_coding_conversation_routes_to_coding() -> None:
         server.set_session_store(home_resources.session_index_store)
         server.set_pool_switch_callback(home_resources.pool_router.set_pool)
 
-        pipe = build_webui_pipeline(skill_registry=_NoSkillRegistry())
+        pipe = build_webui_pipeline(
+            skill_registry=_NoSkillRegistry(), bot_model_config=_bot_model_config()
+        )
         server.set_input_pipeline(pipe)
         ctx = BotInputContext(
             default_pool="main",

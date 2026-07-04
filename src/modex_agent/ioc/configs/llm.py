@@ -51,7 +51,7 @@ class LLMConfig(BaseModel):
     api_key: str = ""
     base_url: str = ""
     temperature: float = 0.7
-    max_tokens: int = 80000
+    max_output_tokens: int = 80000
     capabilities: ModelCapabilities = Field(default_factory=ModelCapabilities)
 
     @field_validator("capabilities", mode="before")

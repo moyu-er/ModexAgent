@@ -100,7 +100,7 @@ class TestQQBotServiceIntegration:
                 "model": "deepseek-ai/DeepSeek-R1",
                 "api_key": "test_key",
                 "temperature": 0.7,
-                "max_tokens": 2000,
+                "max_output_tokens": 2000,
             },
             "agent": {
                 "system_prompt": "You are a helpful assistant.",
@@ -476,7 +476,7 @@ llm:
   api_key: test-key
   base_url: ""
   temperature: 0.7
-  max_tokens: 100
+  max_output_tokens: 100
 
 multi_agent:
   default_pool: main
@@ -502,7 +502,7 @@ llm:
   api_key: test-key
   base_url: ""
   temperature: 0.7
-  max_tokens: 100
+  max_output_tokens: 100
 
 agents:
   - name: main
@@ -512,7 +512,7 @@ agents:
 
 memory:
   short_term:
-    max_tokens: 100
+    max_context_tokens: 100
     budget_ratio: 0.5
 """,
             encoding="utf-8",
@@ -632,7 +632,7 @@ agents:
     system_prompt: "helper"
 memory:
   short_term:
-    max_tokens: 100
+    max_context_tokens: 100
     budget_ratio: 0.5
 """,
             encoding="utf-8",

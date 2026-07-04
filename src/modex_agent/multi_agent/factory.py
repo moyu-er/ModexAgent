@@ -113,7 +113,7 @@ class DefaultAgentFactory(AgentFactory):
             api_key=None,
             base_url=None,
             temperature=cfg.temperature if cfg.temperature is not None else 0.7,
-            max_tokens=cfg.max_tokens,
+            max_output_tokens=cfg.max_output_tokens,
             reasoning_effort=cfg.reasoning_effort,
         )
 

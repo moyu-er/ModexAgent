@@ -30,7 +30,7 @@ class GlobalModelConfig(BaseModel):
     model: str = ""
     capabilities: list[str] = Field(default_factory=lambda: ["text"])
     temperature: float = 0.7
-    max_tokens: int = 80000
+    max_output_tokens: int = 80000
 
     def to_llm_dict(self) -> dict[str, Any]:
         """Return an ``LLMConfig``-shaped dict (``url`` renamed to ``base_url``)."""
@@ -39,6 +39,6 @@ class GlobalModelConfig(BaseModel):
             "api_key": self.api_key,
             "base_url": self.url,
             "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
+            "max_output_tokens": self.max_output_tokens,
             "capabilities": list(self.capabilities),
         }

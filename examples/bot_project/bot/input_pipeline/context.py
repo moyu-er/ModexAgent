@@ -4,9 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from bot.service.media_store import WorkspaceScopedMediaStore
 from bot.service.pool_router import PoolSessionStore
+
+if TYPE_CHECKING:
+    from bot.service.model_choice import ModelChoiceRegistry
 from bot.webui.transcript_store import TranscriptStore
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.core.types import InputMessage
@@ -56,6 +60,7 @@ class BotInputContext(InputContext):
         media_store: WorkspaceScopedMediaStore | None = None,
         media_config: MediaConfig | None = None,
         media_config_for_pool: Callable[[str], MediaConfig] | None = None,
+        model_choice_registry: ModelChoiceRegistry | None = None,
     ) -> None:
         self._default_pool = default_pool
         self._pool_session_store = pool_session_store
@@ -69,6 +74,7 @@ class BotInputContext(InputContext):
         self._media_store = media_store
         self._media_config = media_config or MediaConfig()
         self._media_config_for_pool = media_config_for_pool
+        self._model_choice_registry = model_choice_registry
 
     def current_ws(self) -> Path:
         return self._current_ws_provider()
@@ -110,6 +116,10 @@ class BotInputContext(InputContext):
     @property
     def media_config(self) -> MediaConfig:
         return self._media_config
+
+    @property
+    def model_choice_registry(self) -> ModelChoiceRegistry | None:
+        return self._model_choice_registry
 
     def media_config_for(self, pool: str) -> MediaConfig:
         """Return the perception-gate config to apply for *pool*.

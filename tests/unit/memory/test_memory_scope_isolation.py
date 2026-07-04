@@ -537,13 +537,13 @@ class TestConcurrentCleanupSession:
 
         mock_agent = _MockArchiveAgent()
 
-        # Run cleanup concurrently — max_tokens=70 so 280 tokens each triggers cleanup
+        # Run cleanup concurrently — max_context_tokens=70 so 280 tokens each triggers cleanup
         results = await asyncio.gather(
             cleanup_session(
                 session=layer_set.session,
                 archive=layer_set.archive,
                 context=ctx_a,
-                max_tokens=70,
+                max_context_tokens=70,
                 max_token_ratio=0.8,
                 archive_agent=mock_agent,
                 token_estimator=FixedTokenEstimator(10),
@@ -552,7 +552,7 @@ class TestConcurrentCleanupSession:
                 session=layer_set.session,
                 archive=layer_set.archive,
                 context=ctx_b,
-                max_tokens=70,
+                max_context_tokens=70,
                 max_token_ratio=0.8,
                 archive_agent=mock_agent,
                 token_estimator=FixedTokenEstimator(10),
@@ -623,7 +623,7 @@ class TestConcurrentCleanupSession:
                 session=layer_set.session,
                 archive=layer_set.archive,
                 context=ctx_a,
-                max_tokens=70,
+                max_context_tokens=70,
                 max_token_ratio=0.8,
                 archive_agent=_MockArchiveAgent(),
                 token_estimator=FixedTokenEstimator(10),
@@ -632,7 +632,7 @@ class TestConcurrentCleanupSession:
                 session=layer_set.session,
                 archive=layer_set.archive,
                 context=ctx_b,
-                max_tokens=70,
+                max_context_tokens=70,
                 max_token_ratio=0.8,
                 archive_agent=_MockArchiveAgent(),
                 token_estimator=FixedTokenEstimator(10),

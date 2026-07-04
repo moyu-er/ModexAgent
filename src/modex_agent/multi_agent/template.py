@@ -257,7 +257,7 @@ class AgentTemplate:
             llm_config=AgentLLMConfig(
                 model=deps.llm_model or "",
                 temperature=deps.llm_temperature,
-                max_tokens=deps.llm_max_tokens,
+                max_output_tokens=deps.llm_max_output_tokens,
             ),
             system_prompt_template=system_prompt,
             max_iterations=self.max_steps,

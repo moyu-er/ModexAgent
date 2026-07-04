@@ -1,10 +1,7 @@
-"""``config/model.yml`` read/write helpers for the modexbot CLI.
+# modexbot/config_model.py
+"""config/model.yml 的 models: 块读写（多 provider/多模型）。
 
-The global model configuration is the single source of truth for model
-settings (``url`` / ``api_key`` / ``model`` / ``capabilities``). It is a plain
-YAML file owned by the CLI — values are literal (the API key included), never
-environment variables. Rewrites use ``yaml.safe_dump`` with a header comment;
-hand-written comments inside the file are not preserved.
+仅 CLI 使用；运行时解析走 bot.service.model_config.BotModelConfig。
 """
 
 from __future__ import annotations
@@ -14,90 +11,64 @@ from typing import Any
 
 import yaml
 
-# Keys the CLI manages inside the top-level ``model:`` mapping.
-MODEL_KEY = "model"
-URL_KEY = "url"
-API_KEY_KEY = "api_key"
-CAPABILITIES_KEY = "capabilities"
-
-# Fields required for a working LLM connection.
-REQUIRED_MODEL_KEYS: tuple[str, ...] = (MODEL_KEY, API_KEY_KEY, URL_KEY)
-
-# Modalities a model may accept (mirrors ``modex_agent...llm.Modality``).
-CAPABILITY_CHOICES: tuple[str, ...] = ("text", "image", "video", "audio")
-
-# Template sentinel values that mean "not configured yet". A field still holding
-# one of these (copied verbatim from model.example.yml) counts as missing.
-PLACEHOLDER_VALUES: frozenset[str] = frozenset(
-    {"your_llm_api_key", "your_api_key", "your_llm_base_url", "your_model"}
-)
-
+_MODELS_KEY = "models"
+_PLACEHOLDER_VALUES = {"your_api_key", "your_llm_api_key", "your_llm_base_url", "your_model", ""}
+_PROVIDER_FIELDS = ("key", "name", "url", "api_key")
 _HEADER = (
-    "# ============================================================\n"
-    "# config/model.yml — Global model configuration (CLI-managed)\n"
-    "#\n"
-    "# Single source of truth for model settings. Edit with `modexbot config`.\n"
-    "# Contains the API key as a literal value — this file is gitignored.\n"
-    "# ============================================================\n\n"
+    "# config/model.yml — Multi-provider model configuration (CLI-managed).\n"
+    "# Single source of truth for models. Edit with `modexbot model`.\n"
+    "# Contains API keys as literal values — this file is gitignored.\n\n"
 )
 
 
 def _load_raw(model_path: Path) -> dict[str, Any]:
-    """Load the raw YAML mapping (empty dict if the file is missing)."""
     if not model_path.exists():
         return {}
     data = yaml.safe_load(model_path.read_text(encoding="utf-8")) or {}
     return data if isinstance(data, dict) else {}
 
 
-def get_model_section(model_path: Path) -> dict[str, Any]:
-    """Return the ``model:`` mapping from ``model.yml`` (empty if absent)."""
-    section = _load_raw(model_path).get("model")
-    return section if isinstance(section, dict) else {}
-
-
-def get_model_value(model_path: Path, key: str) -> Any:
-    """Return one value from the ``model:`` mapping, or ``None`` if unset."""
-    value = get_model_section(model_path).get(key)
-    if value is None or (isinstance(value, str) and value.strip() == ""):
-        return None
-    return value
-
-
-def set_model_value(model_path: Path, key: str, value: Any) -> None:
-    """Set one key in the ``model:`` mapping, preserving the other values."""
-    data = _load_raw(model_path)
-    section = data.get("model")
-    if not isinstance(section, dict):
-        section = {}
-    section[key] = value
-    data["model"] = section
-    _dump(model_path, data)
-
-
 def _dump(model_path: Path, data: dict[str, Any]) -> None:
     model_path.parent.mkdir(parents=True, exist_ok=True)
-    body = yaml.safe_dump(
-        data, allow_unicode=True, sort_keys=False, default_flow_style=False
-    )
+    body = yaml.safe_dump(data, allow_unicode=True, sort_keys=False, default_flow_style=False)
     model_path.write_text(_HEADER + body, encoding="utf-8")
 
 
-def check_model_config(model_path: Path) -> tuple[bool, list[str]]:
-    """Check whether ``model.yml`` has the required fields.
+def load_models_section(model_path: Path) -> dict[str, Any]:
+    section = _load_raw(model_path).get(_MODELS_KEY)
+    return section if isinstance(section, dict) else {}
 
-    Returns ``(complete, missing_keys)`` where *missing_keys* lists the
-    required keys that are absent, empty, or still hold a template
-    placeholder value (e.g. ``your_llm_api_key``).
-    """
-    section = get_model_section(model_path)
+
+def save_models_section(model_path: Path, section: dict[str, Any]) -> None:
+    data = _load_raw(model_path)
+    data[_MODELS_KEY] = section
+    _dump(model_path, data)
+
+
+def add_provider(model_path: Path, provider: dict[str, Any]) -> None:
+    section = load_models_section(model_path)
+    section.setdefault("providers", []).append(provider)
+    save_models_section(model_path, section)
+
+
+def set_default_model(model_path: Path, provider_name: str, model_name: str) -> None:
+    section = load_models_section(model_path)
+    section["default_provider"] = provider_name
+    section["default_model"] = model_name
+    save_models_section(model_path, section)
+
+
+def check_model_config(model_path: Path) -> tuple[bool, list[str]]:
+    """Return (complete, missing_or_placeholder_fields) for the default model's provider."""
+    section = load_models_section(model_path)
+    providers = section.get("providers") or []
+    dp = section.get("default_provider")
+    provider = next((p for p in providers if p.get("name") == dp), None)
+    if provider is None:
+        return False, ["default_provider"]
     missing: list[str] = []
-    for key in REQUIRED_MODEL_KEYS:
-        value = section.get(key)
-        if value is None or not isinstance(value, str):
-            missing.append(key)
-            continue
-        stripped = value.strip()
-        if stripped == "" or stripped in PLACEHOLDER_VALUES:
-            missing.append(key)
-    return (not missing, missing)
+    for field in _PROVIDER_FIELDS:
+        val = provider.get(field)
+        if val is None or (isinstance(val, str) and val.strip() in _PLACEHOLDER_VALUES):
+            missing.append(field)
+    return (len(missing) == 0), missing

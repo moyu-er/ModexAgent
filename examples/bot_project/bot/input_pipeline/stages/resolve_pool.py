@@ -30,6 +30,9 @@ class RoutingMeta(StrEnum):
     SKILL_NAME = "skill_name"
     WORKSPACE = "workspace"
     APPROVAL_DECISION = "approval_decision"
+    MODEL_PROVIDER = "model_provider"
+    MODEL_MODEL = "model_model"
+    RESOLVED_MODEL = "resolved_model"
 
 
 def conversation_session_prefix(envelope: UserInputEnvelope, ctx: BotInputContext) -> str:

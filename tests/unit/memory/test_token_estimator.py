@@ -112,7 +112,7 @@ async def test_cleanup_uses_injected_estimator_not_default(tmp_path) -> None:
     hist = ScopedMessageHistory(
         manager=layer_set.session,
         context=ctx,
-        cleanup_config={"max_tokens": 100, "max_token_ratio": 0.85, "keep_ratio": 0.3},
+        cleanup_config={"max_context_tokens": 100, "max_token_ratio": 0.85, "keep_ratio": 0.3},
         token_estimator=HugeEstimator(),
     )
     for i in range(3):

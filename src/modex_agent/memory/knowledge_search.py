@@ -30,7 +30,7 @@ class KnowledgeSearchStrategy(ABC):
         self,
         knowledge: LongTermMemory,
         query: str = "",
-        max_tokens: int = 2000,
+        max_tokens: int = 5000,
     ) -> LongTermMemory:
         """Return knowledge content filtered to *max_tokens*.
 
@@ -57,7 +57,7 @@ class FullDumpKnowledgeStrategy(KnowledgeSearchStrategy):
         self,
         knowledge: LongTermMemory,
         query: str = "",
-        max_tokens: int = 2000,
+        max_tokens: int = 5000,
     ) -> LongTermMemory:
         _ = query
 

@@ -1,93 +1,87 @@
-"""Tests for modexbot.interactive_config — model config wizard UI."""
+"""Tests for modexbot.interactive_config — multi-provider model wizard."""
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
-from tempfile import TemporaryDirectory
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-from modexbot.config_model import get_model_value
-from modexbot.interactive_config import run_config_wizard
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-
-def _seq_mock(*responses: object) -> MagicMock:
-    """Return a questionary-style mock whose ``(...).ask()`` yields *responses*."""
-    factory = MagicMock()
-    instance = MagicMock()
-    instance.ask.side_effect = list(responses)
-    factory.return_value = instance
-    return factory
+from modexbot import interactive_config as ic  # noqa: E402
+from modexbot.config_model import load_models_section, save_models_section  # noqa: E402
 
 
-class TestRunConfigWizard:
-    def test_exit_immediately_does_not_create_file(self) -> None:
-        with TemporaryDirectory() as tmp:
-            model_path = Path(tmp) / "model.yml"
-            with patch(
-                "modexbot.interactive_config.questionary.select", _seq_mock("exit")
-            ):
-                run_config_wizard(model_path)
-            assert not model_path.exists()
+def _seq(values: list) -> MagicMock:
+    """Mock questionary call-chain whose ``.ask()`` yields *values* in order.
 
-    def test_update_model_and_exit(self) -> None:
-        with TemporaryDirectory() as tmp:
-            model_path = Path(tmp) / "model.yml"
-            with (
-                patch(
-                    "modexbot.interactive_config.questionary.select",
-                    _seq_mock("model", "exit"),
-                ),
-                patch(
-                    "modexbot.interactive_config.questionary.text",
-                    _seq_mock("openai/gpt-5"),
-                ),
-            ):
-                run_config_wizard(model_path)
-            assert get_model_value(model_path, "model") == "openai/gpt-5"
+    questionary is called as ``questionary.<kind>(...).ask()``. This helper
+    returns a MagicMock whose ``ask`` side_effect pops the next value per call.
+    """
+    it = iter(values)
+    m = MagicMock()
+    m.ask.side_effect = lambda: next(it)
+    return m
 
-    def test_update_api_key_with_password_prompt(self) -> None:
-        with TemporaryDirectory() as tmp:
-            model_path = Path(tmp) / "model.yml"
-            with (
-                patch(
-                    "modexbot.interactive_config.questionary.select",
-                    _seq_mock("api_key", "exit"),
-                ),
-                patch(
-                    "modexbot.interactive_config.questionary.password",
-                    _seq_mock("sk-secret"),
-                ),
-            ):
-                run_config_wizard(model_path)
-            # API key is stored as a literal value in the YAML file.
-            assert get_model_value(model_path, "api_key") == "sk-secret"
 
-    def test_empty_value_does_not_overwrite(self) -> None:
-        with TemporaryDirectory() as tmp:
-            model_path = Path(tmp) / "model.yml"
-            model_path.write_text("model:\n  model: existing\n", encoding="utf-8")
-            with (
-                patch(
-                    "modexbot.interactive_config.questionary.select",
-                    _seq_mock("model", "exit"),
-                ),
-                patch("modexbot.interactive_config.questionary.text", _seq_mock("")),
-            ):
-                run_config_wizard(model_path)
-            assert get_model_value(model_path, "model") == "existing"
+def test_wizard_adds_provider(tmp_path: Path) -> None:
+    """Add provider -> set default -> exit writes the provider and default."""
+    p = tmp_path / "model.yml"
+    save_models_section(p, {"default_provider": "", "default_model": "", "providers": []})
 
-    def test_update_capabilities_via_checkbox(self) -> None:
-        with TemporaryDirectory() as tmp:
-            model_path = Path(tmp) / "model.yml"
-            with (
-                patch(
-                    "modexbot.interactive_config.questionary.select",
-                    _seq_mock("capabilities", "exit"),
-                ),
-                patch(
-                    "modexbot.interactive_config.questionary.checkbox",
-                    _seq_mock(["text", "image"]),
-                ),
-            ):
-                run_config_wizard(model_path)
-            assert get_model_value(model_path, "capabilities") == ["text", "image"]
+    # questionary.select calls, in exact call order:
+    #   menu (iter 1)            -> "Add provider"
+    #   menu (iter 2)            -> "Set default model"
+    #   _set_default: provider   -> "MiniMax"
+    #   _set_default: model      -> "M1"
+    #   menu (iter 3)            -> "Exit (done editing)"
+    ic.questionary.select = MagicMock(side_effect=[
+        _seq(["Add provider"]),
+        _seq(["Set default model"]),
+        _seq(["MiniMax"]),
+        _seq(["M1"]),
+        _seq(["Exit (done editing)"]),
+    ])
+    ic.questionary.text = MagicMock(side_effect=[
+        _seq(["minimax"]),                      # provider key
+        _seq(["MiniMax"]),                      # provider display name
+        _seq(["https://api.minimaxi.com/v1"]),  # base url
+        _seq(["M1"]),                           # first model name
+        _seq(["openai/MiniMax-M1"]),            # model string
+    ])
+    ic.questionary.password = MagicMock(return_value=_seq(["KEY"]))
+    ic.questionary.checkbox = MagicMock(return_value=_seq(["text", "image"]))
+
+    ic.run_config_wizard(p)
+
+    section = load_models_section(p)
+    assert section["providers"][0]["name"] == "MiniMax"
+    assert section["default_provider"] == "MiniMax"
+    assert section["default_model"] == "M1"
+
+
+def test_wizard_exit_without_changes(tmp_path: Path) -> None:
+    """Exiting immediately leaves the existing config untouched."""
+    p = tmp_path / "model.yml"
+    save_models_section(
+        p,
+        {
+            "default_provider": "A",
+            "default_model": "M1",
+            "providers": [
+                {
+                    "key": "a", "name": "A", "url": "u", "api_key": "k",
+                    "models": [{"name": "M1", "model": "m1"}],
+                }
+            ],
+        },
+    )
+
+    ic.questionary.select = MagicMock(side_effect=[_seq(["Exit (done editing)"])])
+    ic.questionary.text = MagicMock()
+    ic.questionary.password = MagicMock()
+    ic.questionary.checkbox = MagicMock()
+
+    ic.run_config_wizard(p)
+
+    assert load_models_section(p)["providers"][0]["name"] == "A"

@@ -249,6 +249,8 @@ async def _build_resources(
             session_registry=session_registry,
             session_store=session_index_store,
             transcript_store=service._transcript_store,
+            bot_model_config=service._bot_model_config,
+            model_choice_registry=service._model_choice_registry,
         )
 
     resources = PoolWorkspaceResources(

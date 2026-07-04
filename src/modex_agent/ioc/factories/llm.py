@@ -25,6 +25,10 @@ def create_llm_provider(
     - Model name with ``openai/`` prefix → OpenAIProvider (prefix stripped)
     - Otherwise → LiteLLMProvider
 
+    Note: the bot layer (``BotModelConfig._routing_model`` /
+    ``synthesize_llm_config``) normalizes bare model names to ``openai/``
+    upstream, so this factory only sees a bare name from non-bot callers.
+
     Args:
         config: LLM configuration.
         safety: Optional safety policy configuration.
@@ -56,7 +60,7 @@ def create_llm_provider(
             api_key=config.api_key or None,
             base_url=config.base_url or None,
             temperature=config.temperature,
-            max_tokens=config.max_tokens,
+            max_output_tokens=config.max_output_tokens,
             safety=safety_policy,
         )
 
@@ -67,6 +71,6 @@ def create_llm_provider(
         api_key=config.api_key or None,
         base_url=config.base_url or None,
         temperature=config.temperature,
-        max_tokens=config.max_tokens,
+        max_output_tokens=config.max_output_tokens,
         safety=safety_policy,
     )

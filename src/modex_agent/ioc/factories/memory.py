@@ -92,7 +92,7 @@ def create_memory(
 
     st = cfg.session
     cleanup_config: dict[str, int | float] = {
-        "max_tokens": st.max_tokens,
+        "max_context_tokens": st.max_context_tokens,
         "max_token_ratio": st.max_token_ratio,
         "keep_ratio": st.keep_ratio,
     }

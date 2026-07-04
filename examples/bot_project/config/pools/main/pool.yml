@@ -5,8 +5,8 @@
 # `templates/`. `use_terminal`/`terminal_visibility`/`max_steps`/`approval`/
 # `experience` are read from this agents entry at pool-build time.
 
-# Model settings (url / api_key / model / capabilities) are global — see
-# config/model.yml, edited via `modexbot config`. This pool inherits them.
+# Model settings live in config/model.yml (`models:` block); per-turn selection
+# via WebUI. The session context window (`max_context_tokens`) is injected from there.
 
 mcp:
   enabled: true
@@ -17,7 +17,6 @@ terminal:
 
 memory:
   session:
-    max_tokens: 200000
     max_token_ratio: 0.85
     keep_ratio: 0.3
   archive:

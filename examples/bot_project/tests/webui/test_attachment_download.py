@@ -24,6 +24,7 @@ from bot.input_pipeline.assembly import build_webui_pipeline
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.skill_parse import ParsedSkill, SkillRegistry
 from bot.service.media_store import WorkspaceScopedMediaStore
+from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import AssistantTurnEvent, UserMessageEvent
 from bot.webui.server import WebUIServer
@@ -44,6 +45,19 @@ _DATA_DIR = ".modex"
 
 # PNG magic — perception gate accepts this as an image (ADR-0013 §7).
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+
+
+def _bot_model_config() -> BotModelConfig:
+    return BotModelConfig(
+        default_provider="A",
+        default_model="M1",
+        providers=[
+            ProviderCfg(
+                key="a", name="A", url="u", api_key="k",
+                models=[ModelCfg(name="M1", model="m1")],
+            )
+        ],
+    )
 
 
 class _NoSkill(SkillRegistry):
@@ -74,7 +88,9 @@ def _full_pipeline_server(tmp_path: Path) -> tuple[WebUIServer, WorkspaceScopedM
     pool_store = MagicMock()
     pool_store.get.return_value = "main"
     cmd = MagicMock()
-    pipe = build_webui_pipeline(skill_registry=_NoSkill())
+    pipe = build_webui_pipeline(
+        skill_registry=_NoSkill(), bot_model_config=_bot_model_config()
+    )
     ctx = BotInputContext(
         default_pool="main",
         pool_session_store=pool_store,

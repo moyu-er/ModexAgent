@@ -21,7 +21,7 @@ class TestAgentConfig:
     def test_with_memory(self) -> None:
         cfg = AgentConfig(name="agent", memory=MemoryConfig())
         assert cfg.memory is not None
-        assert cfg.memory.session.max_tokens == 200000
+        assert cfg.memory.session.max_context_tokens == 200000
 
     def test_hooks_default(self) -> None:
         """Hooks defaults to built-in set, not None."""

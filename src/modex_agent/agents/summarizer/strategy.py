@@ -138,7 +138,7 @@ class DefaultSummarizerStrategy(SummarizerStrategy):
         summary = await self.agent.summarize(
             formatted,
             prompt=SummarizerAgent.PROMPT_MEMORY_COMPRESSION,
-            max_tokens=self.max_summary_length,
+            max_output_tokens=self.max_summary_length,
         )
 
         if not summary:

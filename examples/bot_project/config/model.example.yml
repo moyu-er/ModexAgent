@@ -1,24 +1,17 @@
-# ============================================================
-# config/model.example.yml — Global model configuration template
-#
-# Copy to config/model.yml and fill in real values, OR run:
-#   modexbot config
-#
-# This is the single source of truth for model settings. Every agent pool
-# inherits it. Values are literal (NOT environment variables) — the API key
-# lives here, not in .env. config/model.yml is gitignored.
-# ============================================================
-
-model:
-  # OpenAI-compatible base URL (MiniMax / OpenAI / Anthropic / Kimi / ...).
-  url: https://api.deepseek.com
-  # API key — literal value, kept out of version control via .gitignore.
-  api_key: your_llm_api_key
-  # Model name (provider inferred from the prefix, e.g. openai/...).
-  model: openai/deepseek-v4-flash
-  # Input modalities the model accepts: text, image, video, audio.
-  # Declaring `image` enables inline image perception (ADR-0014).
-  capabilities: [text]
-  # Sampling defaults (optional).
-  temperature: 0.7
-  max_tokens: 50000
+# config/model.example.yml — copy to config/model.yml and edit with `modexbot model`.
+# API keys are literal values; model.yml is gitignored.
+models:
+  default_provider: "DeepSeek"
+  default_model: "deepseek-v4-flash"
+  max_context_tokens: 200000
+  providers:
+    - key: deepseek
+      name: "DeepSeek"
+      url: https://api.deepseek.com
+      api_key: your_api_key
+      models:
+        - name: "deepseek-v4-flash"
+          model: openai/deepseek-v4-flash
+          capabilities: [text]
+          temperature: 0.7
+          max_output_tokens: 50000

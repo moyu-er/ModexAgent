@@ -13,7 +13,7 @@ Pydantic configuration models for every framework component. Each file defines a
 |------|-------------|
 | `app.py` | `AppConfig` — root configuration aggregating all sub-configs; includes `PathsConfig`, `SessionRetentionConfig`, `MultiAgentConfig`, `WorkspaceConfig`; resolves `${VAR}` env references from YAML |
 | `agent.py` | `AgentConfig` — per-agent config (name, role, LLM, system prompt, tools, memory, skills, approval, safety, hooks, experience sub-config) |
-| `llm.py` | `LLMConfig` — LLM provider settings (model, api_key, base_url, temperature, max_tokens) |
+| `llm.py` | `LLMConfig` — LLM provider settings (model, api_key, base_url, temperature, max_output_tokens) |
 | `memory.py` | `MemoryConfig` — memory subsystem config (short-term, user retention, long-term, archive, knowledge layers with GovernanceConfig) |
 | `safety.py` | `SafetyConfig` — LLM safety timeouts (`LLMSafetyConfig`) and turn safety timeouts (`TurnSafetyConfig`) |
 | `approval.py` | `ApprovalConfig` — tool approval enable/disable with per-tool `ToolApprovalEntry` (allowed_paths) |

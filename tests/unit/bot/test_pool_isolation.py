@@ -147,11 +147,11 @@ class TestPerPoolMemoryIsolation:
             llm=LLMConfig(model="test", api_key="k"),
             agents=[AgentConfig(name="main", role="main")],
             memory=MemoryConfig(
-                short_term=ShortTermConfig(max_tokens=150000),
+                short_term=ShortTermConfig(max_context_tokens=150000),
             ),
         )
         assert cfg.memory is not None
-        assert cfg.memory.short_term.max_tokens == 150000
+        assert cfg.memory.short_term.max_context_tokens == 150000
 
 
 class TestPoolInstanceStructure:

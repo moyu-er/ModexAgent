@@ -27,6 +27,7 @@ from aiohttp import web
 
 from bot.adapters.channels import set_conv_channel
 from bot.adapters.web_socket import WebSocketInputAdapter
+from bot.service.model_config import BotModelConfig
 from bot.webui.events import (
     DeltaEnvelope,
     UserMessageEvent,
@@ -108,6 +109,7 @@ _DEFAULT_AGENT_NAME: str = "main"
 _API_SESSIONS_PATH: str = "/api/sessions"
 _API_SESSIONS_SESSION_PATH: str = "/api/sessions/{session_id}"
 _API_POOLS_PATH: str = "/api/pools"
+_API_MODELS_PATH: str = "/api/models"
 _API_MEDIA_CONFIG_PATH: str = "/api/media/config"
 _WS_PATH: str = "/ws"
 _WEBUI_STATIC_PREFIX: str = "/webui/"
@@ -238,6 +240,10 @@ class WebUIServer:
         self._recent_workspaces = None  # set by WebUIService
         self._input_pipeline = None  # injected by WebUIService
         self._input_ctx = None
+        # Loader that re-reads config/model.yml on each GET /api/models so the
+        # selector reflects CLI edits (e.g. `modexbot model`) without a restart.
+        # Runtime routing still requires restart (CLI prints "restart to apply").
+        self._model_config_loader: Callable[[], BotModelConfig | None] | None = None
 
         self.app = web.Application()
         self._setup_routes()
@@ -477,6 +483,15 @@ class WebUIServer:
         """Inject the shared input-pipeline context."""
         self._input_ctx = ctx
 
+    def set_model_config_loader(self, loader: Callable[[], BotModelConfig | None]) -> None:
+        """Inject a callable that returns the current BotModelConfig for GET /api/models.
+
+        The loader re-reads config/model.yml so the selector reflects CLI model
+        edits without a server restart. Only provider/model names are exposed —
+        never api_key/url (handled in _handle_models).
+        """
+        self._model_config_loader = loader
+
     # ------------------------------------------------------------------
     # SessionInfo resolution helpers
     # ------------------------------------------------------------------
@@ -561,6 +576,7 @@ class WebUIServer:
     def _setup_routes(self) -> None:
         """Register REST and WebSocket routes on the aiohttp Application."""
         self.app.router.add_get(_API_POOLS_PATH, self._handle_pools)
+        self.app.router.add_get(_API_MODELS_PATH, self._handle_models)
         self.app.router.add_get("/api/workspace", self._handle_workspace)
         self.app.router.add_get("/api/workspace/browse", self._handle_workspace_browse)
         self.app.router.add_post("/api/workspace/cd", self._handle_workspace_cd)
@@ -615,6 +631,24 @@ class WebUIServer:
             {"name": name} for name in sorted(self._pool_agent_names)
         ]
         return web.json_response(pools)
+
+    async def _handle_models(self, request: web.Request) -> web.Response:
+        """GET /api/models -- list (provider_name, model_name, default) choices
+        for the frontend model selector.
+
+        Re-reads model.yml live so CLI edits appear without a restart. Only
+        provider_name / model_name / default are returned — NEVER api_key or url
+        (those stay server-side).
+        """
+        cfg = self._model_config_loader() if self._model_config_loader is not None else None
+        if cfg is None:
+            return web.json_response({"choices": []})
+        default = (cfg.default_provider, cfg.default_model)
+        choices = [
+            {"provider_name": p, "model_name": m, "default": (p, m) == default}
+            for (p, m) in cfg.all_choices()
+        ]
+        return web.json_response({"choices": choices})
 
     async def _handle_workspace(self, request: web.Request) -> web.Response:
         """GET /api/workspace -- return home path, recent workspaces, and timezone."""
@@ -1674,6 +1708,14 @@ class WebUIServer:
             attachments=attachments,
         )
         envelope.metadata[RoutingMeta.WORKSPACE] = str(workspace_path)
+        # Thread the UI-selected provider/model into the envelope so
+        # ModelChoiceStage (WebUI-only) reads them off the metadata.
+        provider_name = data.get("provider_name")
+        model_name = data.get("model_name")
+        if provider_name:
+            envelope.metadata[RoutingMeta.MODEL_PROVIDER] = str(provider_name)
+        if model_name:
+            envelope.metadata[RoutingMeta.MODEL_MODEL] = str(model_name)
         result = await self._input_pipeline.handle(envelope, self._input_ctx)
 
         if result.should_continue():

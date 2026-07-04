@@ -104,7 +104,7 @@ def build_session_only_memory(
     if cfg is not None:
         st = cfg.session
         cleanup_config = {
-            "max_tokens": st.max_tokens,
+            "max_context_tokens": st.max_context_tokens,
             "max_token_ratio": st.max_token_ratio,
             "keep_ratio": st.keep_ratio,
         }
@@ -213,7 +213,7 @@ async def build_subagent_descriptor(
         llm_config=AgentLLMConfig(
             model=app_cfg.llm.model,
             temperature=app_cfg.llm.temperature,
-            max_tokens=app_cfg.llm.max_tokens,
+            max_output_tokens=app_cfg.llm.max_output_tokens,
         ),
         system_prompt_template=system_prompt,
         max_iterations=agent_cfg.max_steps,

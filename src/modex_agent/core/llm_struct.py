@@ -156,7 +156,7 @@ class LLMProviderConfig:
     api_key: str | None = None
     base_url: str | None = None
     temperature: float = DefaultValues.TEMPERATURE
-    max_tokens: int | None = None
+    max_output_tokens: int | None = None
     timeout: float = DefaultValues.TIMEOUT_SECONDS
     stream_idle_timeout: float = 90.0
     parse_think_tags: bool = True

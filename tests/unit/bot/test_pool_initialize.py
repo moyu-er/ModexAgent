@@ -73,6 +73,24 @@ paths:
 """
     (tmp / "bot_config.yml").write_text(bot_config, encoding="utf-8")
 
+    # model.yml — required by the bot layer (BotModelConfig parses the models:
+    # block; BotService._load_app_config injects the default model into each
+    # pool's llm). Minimal valid block matching the pool's test-model below.
+    model_yml = """
+models:
+  default_provider: "Test"
+  default_model: "test-model"
+  providers:
+    - key: test
+      name: "Test"
+      url: "http://localhost"
+      api_key: "test-key"
+      models:
+        - name: "test-model"
+          model: "test-model"
+"""
+    (tmp / "model.yml").write_text(model_yml, encoding="utf-8")
+
     # Pool config with llm. Dir-based layout (pools/<name>/pool.yml) — the
     # loader scans directories, not legacy single pools/<name>.yml files.
     pool_config = """
@@ -80,7 +98,7 @@ llm:
   model: "test-model"
   api_key: "test-key"
   temperature: 0.5
-  max_tokens: 1000
+  max_output_tokens: 1000
 agents:
   - name: testpool
     role: main

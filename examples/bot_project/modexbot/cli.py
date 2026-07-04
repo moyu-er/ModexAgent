@@ -879,6 +879,14 @@ def config_cmd() -> None:
     run_config_wizard(_MODEL_PATH)
 
 
+@app.command("model")
+def model_cmd() -> None:
+    """Interactive wizard for multi-provider model management (config/model.yml)."""
+    from modexbot.interactive_config import run_config_wizard
+
+    run_config_wizard(_MODEL_PATH)
+
+
 @app.command("status")
 def status(
     port: int = typer.Option(  # noqa: B008

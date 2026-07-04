@@ -7,7 +7,7 @@ thinking_budget: low
 memory:
   session:
     max_messages: 150
-    max_tokens: 150000
+    max_context_tokens: 150000
     keep_ratio_for_messages: 0.4
     keep_ratio_for_token: 0.4
   archive: {enabled: true}

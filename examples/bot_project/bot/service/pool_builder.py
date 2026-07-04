@@ -45,7 +45,6 @@ from modex_agent.ioc.configs.agent import AgentConfig
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.ioc.configs.pool import PoolConfig
 from modex_agent.ioc.factories.governance import create_governance
-from modex_agent.ioc.factories.llm import create_llm_provider
 from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.cleanup_events import MemoryCleanupListener
 from modex_agent.memory.default_system import DefaultMemorySystem
@@ -92,6 +91,10 @@ from modex_agent.tools.workspace_scoped import (
     wrap_standard_tools,
 )
 
+from bot.service.model_choice import ModelChoiceBindHook, ModelChoiceRegistry
+from bot.service.model_config import BotModelConfig
+from bot.service.model_provider import BotModelProvider
+
 from .builders import _load_agent_mcp_tools, _make_file_tools, resolve_system_prompt
 from .pool_instance import PoolInstance
 
@@ -130,6 +133,8 @@ async def create_pool(
     session_registry: SessionRegistry | None = None,
     session_store: SessionStore | None = None,
     transcript_store: TranscriptStore | None = None,
+    bot_model_config: BotModelConfig,
+    model_choice_registry: ModelChoiceRegistry,
 ) -> PoolInstance:
     """Build one PoolInstance's DEPLOYMENT resources from PoolConfig.
 
@@ -144,7 +149,7 @@ async def create_pool(
     main_agent_name = main_cfg.name
     system_prompt = resolve_system_prompt(main_cfg, project_dir)
 
-    provider = _build_llm_provider(pool_cfg, pool_name)
+    provider = _build_llm_provider(pool_cfg, pool_name, bot_model_config)
     terminal_manager = _build_terminal_manager(pool_cfg, pool_name, workspace_handle)
 
     # Task 7: PER-POOL inbox + bus. Each pool owns its own LocalFileInboxServer
@@ -247,7 +252,7 @@ async def create_pool(
         safety=safety,
         llm_model=pool_cfg.llm.model,
         llm_temperature=pool_cfg.llm.temperature,
-        llm_max_tokens=pool_cfg.llm.max_tokens,
+        llm_max_output_tokens=pool_cfg.llm.max_output_tokens,
         project_dir=project_dir,
         notification_service=notification_service,
         inbox_consumer=inbox_consumer,
@@ -315,6 +320,8 @@ async def create_pool(
         command_processor, pool_name,
         todo_store=todo_store, tool_manager=tool_manager,
         root_provider=root_provider,
+        bot_model_config=bot_model_config,
+        model_choice_registry=model_choice_registry,
     )
 
     bridge = BrokerBridgeService(
@@ -374,9 +381,11 @@ def _require_main_agent(pool_cfg: PoolConfig) -> AgentConfig:
     raise ValueError(f"Pool has no agent with role='main': {pool_cfg}")
 
 
-def _build_llm_provider(pool_cfg: PoolConfig, pool_name: str):
-    provider = create_llm_provider(pool_cfg.llm)
-    logger.info("Pool '%s': LLM provider (%s)", pool_name, pool_cfg.llm.model)
+def _build_llm_provider(
+    pool_cfg: PoolConfig, pool_name: str, bot_model_config: BotModelConfig
+) -> BotModelProvider:
+    provider = BotModelProvider(bot_model_config)
+    logger.info("Pool '%s': BotModelProvider (default=%s)", pool_name, provider.model)
     return provider
 
 
@@ -944,7 +953,7 @@ async def _register_main_agent(
         llm_config=AgentLLMConfig(
             model=pool_cfg.llm.model,
             temperature=pool_cfg.llm.temperature,
-            max_tokens=pool_cfg.llm.max_tokens,
+            max_output_tokens=pool_cfg.llm.max_output_tokens,
         ),
         system_prompt_template=system_prompt,
         max_iterations=main_cfg.max_steps,
@@ -1093,6 +1102,8 @@ def _wire_main_pipeline(
     tool_manager: InMemoryToolManager,
     *,
     root_provider: WorkspaceRootProvider | None = None,
+    bot_model_config: BotModelConfig,
+    model_choice_registry: ModelChoiceRegistry,
 ) -> None:
     """Wire hooks, interceptors, governance, and command processor on main pipeline.
 
@@ -1129,11 +1140,12 @@ def _wire_main_pipeline(
         pipeline,
         TodoCompletionProbeHook(store=todo_store, tool_manager=tool_manager),
     )
+    _add_hook(pipeline, ModelChoiceBindHook(bot_model_config, model_choice_registry))
 
     # Runtime wiring
     pipeline.interceptor_chain = shared_interceptor_chain
     pipeline._user_interface = im_ui
-    pipeline.governance = create_governance(pool_cfg.memory, pool_cfg.llm.max_tokens)
+    pipeline.governance = create_governance(pool_cfg.memory)
 
     # Approval runtime — main agent only (subagents never pass through this
     # function). Opt-in: build_approval_runtime returns None when disabled or

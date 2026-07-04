@@ -52,7 +52,7 @@ class OpenAIProvider(StreamingLLMProvider):
         api_key: str | None = None,
         base_url: str | None = None,
         temperature: float = 0.7,
-        max_tokens: int | None = None,
+        max_output_tokens: int | None = None,
         timeout: float = 45.0,
         stream_idle_timeout: float = 90.0,
         parse_think_tags: bool = True,
@@ -62,7 +62,7 @@ class OpenAIProvider(StreamingLLMProvider):
     ) -> None:
         self._model = model
         self._temperature = temperature
-        self._max_tokens = max_tokens
+        self._max_output_tokens = max_output_tokens
         self._reasoning_effort = reasoning_effort
         self._extra_headers = extra_headers
         self._parse_think_tags = parse_think_tags
@@ -93,7 +93,7 @@ class OpenAIProvider(StreamingLLMProvider):
         messages: list[dict[str, Any]],
         model: str | None = None,
         temperature: float = 0.7,
-        max_tokens: int | None = None,
+        max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
         on_content_delta: Callable[[str], Any] | None = None,
         on_reasoning_delta: Callable[[str], Any] | None = None,
@@ -103,7 +103,7 @@ class OpenAIProvider(StreamingLLMProvider):
             messages=messages,
             model=model,
             temperature=temperature,
-            max_tokens=max_tokens,
+            max_output_tokens=max_output_tokens,
             tools=tools,
             on_content_delta=on_content_delta,
             on_reasoning_delta=on_reasoning_delta,
@@ -115,7 +115,7 @@ class OpenAIProvider(StreamingLLMProvider):
         messages: list[dict[str, Any]],
         model: str | None = None,
         temperature: float = 0.7,
-        max_tokens: int | None = None,
+        max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
         max_retries: int = 0,
         on_content_delta: Callable[[str], Any] | None = None,
@@ -128,7 +128,7 @@ class OpenAIProvider(StreamingLLMProvider):
             max_retries,
             model=model,
             temperature=temperature,
-            max_tokens=max_tokens,
+            max_output_tokens=max_output_tokens,
             tools=tools,
             on_content_delta=on_content_delta,
             on_reasoning_delta=on_reasoning_delta,
@@ -140,7 +140,7 @@ class OpenAIProvider(StreamingLLMProvider):
         messages: list[dict[str, Any]],
         model: str | None = None,
         temperature: float = 0.7,
-        max_tokens: int | None = None,
+        max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
         on_content_delta: Callable[[str], Any] | None = None,
         on_reasoning_delta: Callable[[str], Any] | None = None,
@@ -150,7 +150,7 @@ class OpenAIProvider(StreamingLLMProvider):
             messages=messages,
             model=model,
             temperature=temperature,
-            max_tokens=max_tokens,
+            max_output_tokens=max_output_tokens,
             tools=tools,
             stream=True,
             **kwargs,
@@ -336,7 +336,7 @@ class OpenAIProvider(StreamingLLMProvider):
         messages: list[dict[str, Any]],
         model: str | None = None,
         temperature: float = 0.7,
-        max_tokens: int | None = None,
+        max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
         stream: bool = False,
         **kwargs,
@@ -345,7 +345,7 @@ class OpenAIProvider(StreamingLLMProvider):
             "model": model or self._model,
             "messages": self._sanitize_api_messages(messages),
             "temperature": temperature if temperature is not None else self._temperature,
-            "max_tokens": max_tokens if max_tokens is not None else self._max_tokens,
+            "max_tokens": max_output_tokens if max_output_tokens is not None else self._max_output_tokens,
             "stream": stream,
         }
 

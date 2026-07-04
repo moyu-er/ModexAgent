@@ -251,7 +251,7 @@ model:
   model: openai/MiniMax-M2.5
   capabilities: [text, image]
   temperature: 0.7
-  max_tokens: 50000
+  max_output_tokens: 50000
 ```
 
 All pools inherit this global config. `config/bot_config.yml` and
@@ -412,7 +412,7 @@ Main-agent example (`config/pools/main.yml`):
 memory:
   session:
     max_messages: 150
-    max_tokens: 100000
+    max_context_tokens: 100000
   governance:
     tool_chain_repair: true      # Required: repair orphan/incomplete tool-call groups
     lossy_compaction:
@@ -562,7 +562,7 @@ llm:
   base_url: "https://api.openai.com/v1"
   model: "openai/gpt-4o"
   temperature: 0.7
-  max_tokens: 80000
+  max_output_tokens: 80000
 ```
 
 ### Memory
@@ -572,7 +572,7 @@ memory:
   main:
     short_term:
       max_messages: 50
-      max_tokens: 100000
+      max_context_tokens: 100000
       keep_ratio_for_messages: 0.4
     long_term:
       enabled: true

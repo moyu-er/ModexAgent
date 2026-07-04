@@ -146,7 +146,7 @@ class TestOpenAIProviderChat:
             messages=[{"role": "user", "content": "hi"}],
             model="gpt-4o-mini",
             temperature=0.3,
-            max_tokens=500,
+            max_output_tokens=500,
             tools=[{"type": "function", "function": {"name": "t1", "parameters": {}}}],
         )
 

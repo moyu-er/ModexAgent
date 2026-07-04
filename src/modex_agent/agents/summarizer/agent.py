@@ -235,7 +235,7 @@ Output ONLY the consolidated markdown content — nothing else. No extra text be
         text: str,
         *,
         prompt: str | None = None,
-        max_tokens: int = 500,
+        max_output_tokens: int = 500,
         temperature: float = 0.3,
     ) -> str:
         """Summarize text with a given prompt. Returns empty string on failure."""
@@ -246,7 +246,7 @@ Output ONLY the consolidated markdown content — nothing else. No extra text be
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": text},
                 ],
-                max_tokens=max_tokens,
+                max_output_tokens=max_output_tokens,
                 temperature=temperature,
             )
             content = self._extract_content(response)
@@ -261,14 +261,14 @@ Output ONLY the consolidated markdown content — nothing else. No extra text be
         self,
         messages: list[dict[str, Any]],
         *,
-        max_tokens: int = 500,
+        max_output_tokens: int = 500,
         temperature: float = 0.3,
     ) -> str | LLMResponse:
         chat_fn = getattr(self.provider, "chat_with_retry", self.provider.chat)
         return await chat_fn(
             messages=messages,
             temperature=temperature,
-            max_tokens=max_tokens,
+            max_output_tokens=max_output_tokens,
         )
 
     @staticmethod

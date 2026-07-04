@@ -94,7 +94,7 @@ class ScopedKnowledgeMemoryManager(KnowledgeMemoryManager):
     async def retrieve(self, context: MemoryContext, query: str = "") -> LongTermMemory:
         """Retrieve knowledge using the configured search strategy."""
         full = await self.get_all(context)
-        return await self._search_strategy.retrieve(full, query=query, max_tokens=2000)
+        return await self._search_strategy.retrieve(full, query=query)
 
     async def get_all(self, context: MemoryContext) -> LongTermMemory:
         await self.ensure_defaults(context)

@@ -31,6 +31,7 @@ from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from bot.input_pipeline.stages.skill_parse import ParsedSkill, SkillRegistry
 from bot.service.media_store import WorkspaceScopedMediaStore
+from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import UserMessageEvent
 
@@ -66,6 +67,19 @@ _TXT = b"hello world, this is a plain text attachment\n" * 3
 class _NoSkill(SkillRegistry):
     async def resolve(self, pool: str, name: str, content: str) -> ParsedSkill | None:
         return None
+
+
+def _bot_model_config() -> BotModelConfig:
+    return BotModelConfig(
+        default_provider="A",
+        default_model="M1",
+        providers=[
+            ProviderCfg(
+                key="a", name="A", url="u", api_key="k",
+                models=[ModelCfg(name="M1", model="m1")],
+            )
+        ],
+    )
 
 
 def _make_builder() -> TurnContextBuilder:
@@ -138,7 +152,9 @@ async def test_attachment_flow_to_llm_injection_and_asymmetry() -> None:
             current_ws_provider=(lambda r=root: r),
             media_store=media_store,
         )
-        pipeline = build_webui_pipeline(skill_registry=_NoSkill())
+        pipeline = build_webui_pipeline(
+            skill_registry=_NoSkill(), bot_model_config=_bot_model_config()
+        )
 
         user_text = "please look at these files"
         env = UserInputEnvelope(

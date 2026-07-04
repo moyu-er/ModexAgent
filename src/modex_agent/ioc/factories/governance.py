@@ -12,7 +12,6 @@ from modex_agent.ioc.configs.memory import GovernanceConfig, MemoryConfig
 
 def create_governance(
     cfg: MemoryConfig | None,
-    llm_max_tokens: int = 80000,  # noqa: ARG001  reserved for future use
 ) -> Any | None:
     """Build ContextGovernance chain from IOC config.
 
@@ -20,7 +19,6 @@ def create_governance(
 
     Args:
         cfg: Memory configuration (governance lives inside it).
-        llm_max_tokens: Max tokens from LLM config (reserved).
 
     Returns:
         CompositeGovernance or None if disabled.
@@ -62,7 +60,6 @@ def create_governance(
 
 def create_subagent_governance(
     cfg: MemoryConfig | None,
-    llm_max_tokens: int = 80000,  # noqa: ARG001  reserved for future use
 ) -> Any | None:
     """Build lightweight governance for subagents.
 

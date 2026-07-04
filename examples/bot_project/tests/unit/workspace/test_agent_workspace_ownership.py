@@ -177,6 +177,8 @@ async def test_subagent_tool_manager_uses_workspace_root_provider(tmp_path: Path
 
 async def test_main_agent_tool_manager_is_workspace_scoped(tmp_path: Path) -> None:
     """Verify that create_pool's tool_manager contains workspace-scoped tools when handle is given."""
+    from bot.service.model_choice import ModelChoiceRegistry
+    from bot.service.model_config import BotModelConfig
     from bot.service.pool_builder import create_pool
     from bot.workspace.handle import WorkspaceHandle
     from modex_agent.control.channel import InMemoryControlChannel
@@ -205,6 +207,16 @@ async def test_main_agent_tool_manager_is_workspace_scoped(tmp_path: Path) -> No
 
     workspace_handle = WorkspaceHandle(target=target, data_root=target / ".modex")
 
+    _yml = """
+models:
+  default_provider: "A"
+  default_model: "M1"
+  providers:
+    - {key: a, name: "A", url: u, api_key: k, models: [{name: M1, model: openai/m1}]}
+"""
+    (target / "model.yml").write_text(_yml, encoding="utf-8")
+    bot_model_config = BotModelConfig.from_yaml(target / "model.yml")
+
     pool_instance = await create_pool(
         pool_name="test_pool",
         pool_cfg=pool_cfg,
@@ -221,6 +233,8 @@ async def test_main_agent_tool_manager_is_workspace_scoped(tmp_path: Path) -> No
         shared_interceptor_chain=InterceptorChain(),
         control_channel=InMemoryControlChannel(),
         workspace_handle=workspace_handle,
+        bot_model_config=bot_model_config,
+        model_choice_registry=ModelChoiceRegistry(),
     )
 
     tm = pool_instance.tool_manager

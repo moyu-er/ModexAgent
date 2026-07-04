@@ -14,7 +14,7 @@ class TestAgentLLMConfig:
     def test_defaults(self) -> None:
         cfg = AgentLLMConfig()
         assert cfg.temperature == 0.7
-        assert cfg.max_tokens is None
+        assert cfg.max_output_tokens is None
         assert cfg.top_p == 1.0
         assert cfg.extra_params == {}
 
