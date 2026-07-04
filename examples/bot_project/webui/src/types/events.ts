@@ -182,13 +182,47 @@ export interface DeltaEnvelope {
   timestamp?: number;
 }
 
+// ── Envelope-injected tagged fields ─────────────────────────────────────────
+
+/**
+ * Fields ``unwrapEnvelope`` injects onto a flat event so the reducer / UI can
+ * recover routing context that the structured envelope carried but the flat
+ * event shape does not. They are optional: legacy flat events (not unwrapped
+ * from an envelope) never carry them.
+ */
+export interface EnvelopeTags {
+  /** Pool the event's session belongs to (for tree / pool display). */
+  _pool?: string;
+  /** Parent session id (for tree rendering). */
+  _parent_session_id?: string | null;
+  /** Envelope metadata — carries ``_request_id`` for optimistic dedup, etc. */
+  _metadata?: Record<string, unknown>;
+}
+
+/** A server event that may carry envelope-injected tagged fields. */
+export type TaggedServerEvent = ServerEventUnion & EnvelopeTags;
+
+/** Read the ``_request_id`` a sender attached to the envelope metadata, if any. */
+export function envelopeRequestId(event: ServerEventUnion | TaggedServerEvent): string | undefined {
+  const meta = (event as EnvelopeTags)._metadata;
+  const id = meta?._request_id;
+  return typeof id === "string" ? id : undefined;
+}
+
+/** Read the envelope metadata block, if any. */
+export function envelopeMetadata(
+  event: ServerEventUnion | TaggedServerEvent,
+): Record<string, unknown> | undefined {
+  return (event as EnvelopeTags)._metadata;
+}
+
 /**
  * Unwrap a structured DeltaEnvelope into a flat ServerEvent so the existing
  * reducer and REST-path code remain unchanged.  Pool, parent_session_id, and
  * metadata are preserved as ``_pool``, ``_parent_session_id``, ``_metadata``
  * for the UIMessage builder to attach.
  */
-export function unwrapEnvelope(env: DeltaEnvelope): ServerEventUnion {
+export function unwrapEnvelope(env: DeltaEnvelope): TaggedServerEvent {
   const flat = {
     event: env.event_type,
     session_id: env.session_id,
@@ -200,7 +234,7 @@ export function unwrapEnvelope(env: DeltaEnvelope): ServerEventUnion {
     _pool: env.pool,
     _parent_session_id: env.parent_session_id,
     _metadata: env.metadata,
-  } as unknown as ServerEventUnion;
+  } as unknown as TaggedServerEvent;
   return flat;
 }
 

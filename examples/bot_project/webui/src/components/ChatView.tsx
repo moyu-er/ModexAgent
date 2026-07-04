@@ -3,8 +3,10 @@ import type { ApprovalRequestView, TodoItemDTO, UIMessage } from "../types/event
 import type { MediaConfigResponse, OutgoingAttachmentRef, UploadAttachmentResponse } from "../types/attachments";
 import { ApprovalCard } from "./ApprovalCard";
 import { MessageBubble } from "./MessageBubble";
+import { ModelSelector } from "./ModelSelector";
 import { TodoPanel } from "./TodoPanel";
-import { fetchMediaConfig, uploadAttachment } from "../lib/api";
+import { fetchMediaConfig, fetchModels, uploadAttachment, type ModelChoice } from "../lib/api";
+import { formatBytes } from "../lib/format";
 
 export interface ChatViewProps {
   messages: UIMessage[];
@@ -24,7 +26,12 @@ export interface ChatViewProps {
   sessionId?: string | null;
   /** Active workspace (empty/undefined = home) — for attachment download URLs. */
   workspace?: string;
-  onSend: (content: string, attachments?: OutgoingAttachmentRef[]) => void;
+  onSend: (
+    content: string,
+    attachments?: OutgoingAttachmentRef[],
+    providerName?: string,
+    modelName?: string,
+  ) => void;
   /** Invoked when the user presses the pause control on a streaming session. */
   onPause?: () => void;
   readOnly?: boolean;
@@ -38,20 +45,6 @@ const MIN_INPUT_HEIGHT = 56;
 // Chat column is capped at 1200px and centered; keep a reasonable floor
 // on desktop so the dialog doesn't collapse too narrowly.
 const CONTENT_WIDTH = "mx-auto w-full min-w-0 max-w-[1200px] md:min-w-[720px]";
-
-/** Format a byte count for inline upload notices (1.2 KB, 3.4 MB). */
-function formatLocalBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return "—";
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ["KB", "MB", "GB"];
-  let value = bytes / 1024;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${value.toFixed(1)} ${units[unit]}`;
-}
 
 export const ChatView: FC<ChatViewProps> = ({
   messages,
@@ -98,6 +91,26 @@ export const ChatView: FC<ChatViewProps> = ({
     return mediaConfigRef.current;
   };
 
+  // Available models for the composer selector. Loaded once on mount; the
+  // default (or first) choice is preselected so a turn is always routed
+  // somewhere even if the user never touches the dropdown. Failures are
+  // swallowed — the selector just renders empty and the send falls back to
+  // the backend's configured default.
+  const [models, setModels] = useState<ModelChoice[]>([]);
+  const [selected, setSelected] = useState<{ provider: string; model: string }>(
+    { provider: "", model: "" },
+  );
+
+  useEffect(() => {
+    fetchModels()
+      .then((r) => {
+        setModels(r.choices);
+        const d = r.choices.find((c) => c.default) ?? r.choices[0];
+        if (d) setSelected({ provider: d.provider_name, model: d.model_name });
+      })
+      .catch(() => {});
+  }, []);
+
   // Auto-scroll to bottom when messages change
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -127,7 +140,12 @@ export const ChatView: FC<ChatViewProps> = ({
     if (readOnly || isBusy) return;
     const trimmed = input.trim();
     if (!trimmed && pendingUploads.length === 0) return;
-    onSend(trimmed, pendingUploads.map((p) => p.ref));
+    onSend(
+      trimmed,
+      pendingUploads.map((p) => p.ref),
+      selected.provider,
+      selected.model,
+    );
     setInput("");
     setPendingUploads([]);
     setUploadError(null);
@@ -180,8 +198,8 @@ export const ChatView: FC<ChatViewProps> = ({
       for (const file of Array.from(files)) {
         if (file.size > earlyCap) {
           setUploadError(
-            `"${file.name}" is too large (${formatLocalBytes(file.size)}). ` +
-            `Limit is ${formatLocalBytes(earlyCap)}.`,
+            `"${file.name}" is too large (${formatBytes(file.size)}). ` +
+            `Limit is ${formatBytes(earlyCap)}.`,
           );
           continue;
         }
@@ -217,21 +235,21 @@ export const ChatView: FC<ChatViewProps> = ({
   };
 
   return (
-    <div className="flex h-full flex-col bg-page-bg-light dark:bg-page-bg-dark">
+    <div className="flex h-full flex-col bg-page-bg">
       {/* Header */}
-      <header className="flex h-14 shrink-0 items-center justify-between border-b border-divider-light dark:border-divider-dark px-4">
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-divider px-4">
         <div className="flex items-center gap-3">
           {onOpenSidebar && (
             <button
               type="button"
               onClick={onOpenSidebar}
-              className="rounded-md p-2 text-text-secondary-light dark:text-text-secondary-dark transition-colors hover:bg-sidebar-hover-light dark:hover:bg-sidebar-hover-dark hover:text-text-primary-light dark:hover:text-text-primary-dark md:hidden"
+              className="rounded-md p-2 text-text-secondary transition-colors hover:bg-sidebar-hover hover:text-text-primary md:hidden"
               aria-label="Open sidebar"
             >
               <MenuIcon />
             </button>
           )}
-          <span className="text-sm font-semibold text-text-primary-light dark:text-text-primary-dark">
+          <span className="text-sm font-semibold text-text-primary">
             ModexBot
           </span>
         </div>
@@ -243,7 +261,7 @@ export const ChatView: FC<ChatViewProps> = ({
         <div className={`${CONTENT_WIDTH} px-3 py-6 md:px-5`}>
           {messages.length === 0 && (
             <div className="flex h-[55vh] items-center justify-center">
-              <p className="text-sm text-text-secondary-light dark:text-text-secondary-dark">
+              <p className="text-sm text-text-secondary">
                 Select a conversation to start chatting
               </p>
             </div>
@@ -257,15 +275,15 @@ export const ChatView: FC<ChatViewProps> = ({
             />
           ))}
           {pendingApprovals.length > 0 && (
-            <div className="my-2 flex items-center justify-between gap-2 rounded-lg border border-card-border-light bg-content-bg-light px-3 py-2 dark:border-card-border-dark dark:bg-content-bg-dark">
-              <span className="text-xs text-text-secondary-light dark:text-text-secondary-dark">
+            <div className="my-2 flex items-center justify-between gap-2 rounded-lg border border-card-border bg-content-bg px-3 py-2">
+              <span className="text-xs text-text-secondary">
                 Denying any one cancels the whole batch
               </span>
               <button
                 type="button"
                 disabled={isApprovingBatch}
                 onClick={onApproveAll}
-                className="rounded border border-approve-light/50 px-3 py-1 text-sm font-medium text-approve-light transition-colors hover:bg-approve-light/10 disabled:cursor-not-allowed disabled:opacity-50 dark:border-approve-dark/50 dark:text-approve-dark dark:hover:bg-approve-dark/10"
+                className="rounded border border-approve/50 px-3 py-1 text-sm font-medium text-approve transition-colors hover:bg-approve/10 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Approve All
               </button>
@@ -296,7 +314,7 @@ export const ChatView: FC<ChatViewProps> = ({
                 type="text"
                 disabled
                 placeholder="Subagent session — read only"
-                className="flex-1 cursor-not-allowed bg-transparent py-1 text-sm text-text-disabled-light dark:text-text-disabled-dark placeholder-input-placeholder-light dark:placeholder-input-placeholder-dark outline-none"
+                className="flex-1 cursor-not-allowed bg-transparent py-1 text-sm text-text-disabled placeholder-input-placeholder outline-none"
               />
               <button type="button" disabled title="Read only" className="send-btn send-btn--disabled">
                 <SendIcon />
@@ -307,27 +325,27 @@ export const ChatView: FC<ChatViewProps> = ({
               {(pendingUploads.length > 0 || uploadError) && (
                 <div className="mb-2 flex flex-col gap-1.5">
                   {uploadError && (
-                    <div className="rounded-md border border-deny-light/40 bg-deny-light/10 px-2.5 py-1.5 text-xs text-deny-light dark:border-deny-dark/40 dark:bg-deny-dark/10 dark:text-deny-dark">
+                    <div className="rounded-md border border-deny/40 bg-deny/10 px-2.5 py-1.5 text-xs text-deny">
                       {uploadError}
                     </div>
                   )}
                   {pendingUploads.map((p) => (
                     <div
                       key={p.ref.local_path}
-                      className="flex items-center gap-2 rounded-md border border-card-border-light bg-content-bg-light px-2.5 py-1.5 text-xs dark:border-card-border-dark dark:bg-content-bg-dark"
+                      className="flex items-center gap-2 rounded-md border border-card-border bg-content-bg px-2.5 py-1.5 text-xs"
                     >
                       <FileChipIcon />
-                      <span className="min-w-0 flex-1 truncate text-text-primary-light dark:text-text-primary-dark">
+                      <span className="min-w-0 flex-1 truncate text-text-primary">
                         {p.name}
                       </span>
-                      <span className="shrink-0 text-text-secondary-light dark:text-text-secondary-dark">
-                        {formatLocalBytes(p.size)}
+                      <span className="shrink-0 text-text-secondary">
+                        {formatBytes(p.size)}
                       </span>
                       <button
                         type="button"
                         onClick={(): void => removePendingUpload(p.ref.local_path)}
                         aria-label={`Remove ${p.name}`}
-                        className="shrink-0 rounded p-0.5 text-text-secondary-light transition-colors hover:bg-sidebar-hover-light hover:text-text-primary-light dark:text-text-secondary-dark dark:hover:bg-sidebar-hover-dark dark:hover:text-text-primary-dark"
+                        className="shrink-0 rounded p-0.5 text-text-secondary transition-colors hover:bg-sidebar-hover hover:text-text-primary"
                       >
                         <RemoveIcon />
                       </button>
@@ -369,8 +387,15 @@ export const ChatView: FC<ChatViewProps> = ({
                         : "Message…"
                   }
                   rows={1}
-                  className="max-h-[320px] min-h-[56px] flex-1 resize-none overflow-y-auto bg-transparent py-3.5 text-[15px] leading-relaxed text-text-primary-light dark:text-text-primary-dark outline-none placeholder-input-placeholder-light dark:placeholder-input-placeholder-dark"
+                  className="max-h-[320px] min-h-[56px] flex-1 resize-none overflow-y-auto bg-transparent py-3.5 text-[15px] leading-relaxed text-text-primary outline-none placeholder-input-placeholder"
                 />
+                {models.length > 0 && (
+                  <ModelSelector
+                    models={models}
+                    value={selected}
+                    onChange={setSelected}
+                  />
+                )}
                 <button
                   type="button"
                   onClick={handleButton}
@@ -454,7 +479,7 @@ const FileChipIcon: FC = () => (
     strokeLinecap="round"
     strokeLinejoin="round"
     aria-hidden="true"
-    className="shrink-0 text-text-secondary-light dark:text-text-secondary-dark"
+    className="shrink-0 text-text-secondary"
   >
     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
     <polyline points="14 2 14 8 20 8" />

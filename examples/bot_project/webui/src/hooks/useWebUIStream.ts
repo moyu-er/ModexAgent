@@ -27,7 +27,12 @@ export interface UseWebUIStreamResult {
   isApprovingBatch: boolean;
   connect: () => void;
   disconnect: () => void;
-  send: (content: string, attachments?: OutgoingAttachmentRef[]) => void;
+  send: (
+    content: string,
+    attachments?: OutgoingAttachmentRef[],
+    providerName?: string,
+    modelName?: string,
+  ) => void;
   pause: () => void;
   /** POST an allow/deny decision for a pending approval; clears the card on success. */
   submitApproval: (toolCallId: string, action: "allow" | "deny") => void;
@@ -373,7 +378,12 @@ export function useWebUIStream(
     : false;
 
   const send = useCallback(
-    (content: string, attachments?: OutgoingAttachmentRef[]): void => {
+    (
+      content: string,
+      attachments?: OutgoingAttachmentRef[],
+      providerName?: string,
+      modelName?: string,
+    ): void => {
       if (!sessionId) {
         console.warn("Cannot send message: no session selected");
         return;
@@ -404,7 +414,15 @@ export function useWebUIStream(
         console.warn("WebSocket: not connected");
         return;
       }
-      client.sendMessage(sessionId, content, currentWsRef.current, requestId, attachments);
+      client.sendMessage(
+        sessionId,
+        content,
+        currentWsRef.current,
+        requestId,
+        attachments,
+        providerName,
+        modelName,
+      );
     },
     [sessionId, agentName, getPoolForUuid],
   );

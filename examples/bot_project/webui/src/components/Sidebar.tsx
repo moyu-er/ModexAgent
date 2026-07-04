@@ -76,14 +76,14 @@ export const Sidebar: FC<SidebarProps> = ({
   return (
     <div
       style={style}
-      className={`fixed inset-y-0 left-0 z-40 flex h-full w-[260px] flex-col border-r border-divider-light dark:border-divider-dark bg-sidebar-bg-light dark:bg-sidebar-bg-dark transition-transform duration-200 ease-out md:static md:w-[var(--sidebar-width)] md:translate-x-0 ${
+      className={`fixed inset-y-0 left-0 z-40 flex h-full w-[260px] flex-col border-r border-divider bg-sidebar-bg transition-transform duration-200 ease-out md:static md:w-[var(--sidebar-width)] md:translate-x-0 ${
         mobileOpen ? "translate-x-0" : "-translate-x-full"
       }`}
     >
       {/* Workspace indicator (click to browse) */}
-      <div className="border-b border-divider-light dark:border-divider-dark px-4 py-3">
+      <div className="border-b border-divider px-4 py-3">
         <div className="flex items-center justify-between">
-          <span className="text-xs font-semibold uppercase tracking-wider text-text-secondary-light dark:text-text-secondary-dark">
+          <span className="text-xs font-semibold uppercase tracking-wider text-text-secondary">
             Workspace
           </span>
           {!isHome && (
@@ -91,7 +91,7 @@ export const Sidebar: FC<SidebarProps> = ({
               type="button"
               onClick={onGoHome}
               title="Return to home workspace (exit)"
-              className="flex items-center gap-0.5 text-text-secondary-light dark:text-text-secondary-dark transition-colors hover:text-text-primary-light dark:hover:text-text-primary-dark"
+              className="flex items-center gap-0.5 text-text-secondary transition-colors hover:text-text-primary"
             >
               <span className="text-xs">↩</span>
               <span className="text-xs font-medium">Home</span>
@@ -102,7 +102,7 @@ export const Sidebar: FC<SidebarProps> = ({
           type="button"
           onClick={(): void => setBrowserOpen(true)}
           title="Browse for workspace folder"
-          className="-ml-2 mt-1.5 flex w-full cursor-pointer items-center gap-1.5 truncate rounded-md px-2 py-1 text-left font-mono text-sm text-text-body-light dark:text-text-body-dark transition-colors hover:bg-sidebar-hover-light dark:hover:bg-sidebar-hover-dark hover:text-text-primary-light dark:hover:text-text-primary-dark"
+          className="-ml-2 mt-1.5 flex w-full cursor-pointer items-center gap-1.5 truncate rounded-md px-2 py-1 text-left font-mono text-sm text-text-body transition-colors hover:bg-sidebar-hover hover:text-text-primary"
         >
           <span className="shrink-0 text-sm">📂</span>
           <span className="truncate">{String(workspace || "(not set)")}</span>
@@ -114,21 +114,21 @@ export const Sidebar: FC<SidebarProps> = ({
             <button
               type="button"
               onClick={(): void => setRecentOpen(!recentOpen)}
-              className="flex w-full items-center gap-1 text-xs text-text-secondary-light dark:text-text-secondary-dark transition-colors hover:text-text-body-light dark:hover:text-text-body-dark"
+              className="flex w-full items-center gap-1 text-xs text-text-secondary transition-colors hover:text-text-body"
             >
               <span className={`inline-block transition-transform ${recentOpen ? "rotate-90" : ""}`}>▸</span>
               <span>Recent</span>
-              <span className="text-text-disabled-light dark:text-text-disabled-dark">({recentFiltered.length})</span>
+              <span className="text-text-disabled">({recentFiltered.length})</span>
             </button>
             {recentOpen && (
-              <div className="mt-1 max-h-40 overflow-y-auto rounded-md border border-card-border-light dark:border-card-border-dark bg-content-bg-light dark:bg-content-bg-dark">
+              <div className="mt-1 max-h-40 overflow-y-auto rounded-md border border-card-border bg-content-bg">
                 {recentFiltered.map((entry) => (
                   <button
                     key={String(entry.path)}
                     type="button"
                     onClick={(): void => { handleRecentClick(String(entry.path)); }}
                     title={String(entry.path)}
-                    className="flex w-full items-center gap-1.5 truncate px-2.5 py-1.5 text-left font-mono text-xs text-text-body-light dark:text-text-body-dark transition-colors hover:bg-sidebar-hover-light dark:hover:bg-sidebar-hover-dark hover:text-text-primary-light dark:hover:text-text-primary-dark"
+                    className="flex w-full items-center gap-1.5 truncate px-2.5 py-1.5 text-left font-mono text-xs text-text-body transition-colors hover:bg-sidebar-hover hover:text-text-primary"
                   >
                     <span className="shrink-0 text-xs opacity-50">📁</span>
                     <span className="truncate">{String(entry.path)}</span>
@@ -152,8 +152,8 @@ export const Sidebar: FC<SidebarProps> = ({
       />
 
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-divider-light dark:border-divider-dark px-4 py-3">
-        <h2 className="text-xs font-semibold uppercase tracking-wider text-text-secondary-light dark:text-text-secondary-dark">
+      <div className="flex items-center justify-between border-b border-divider px-4 py-3">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-text-secondary">
           Conversations
         </h2>
         <ThemeToggle />
@@ -161,12 +161,12 @@ export const Sidebar: FC<SidebarProps> = ({
 
       {/* Pool selector badge */}
       {pools.length > 1 && (
-        <div className="border-b border-divider-light dark:border-divider-dark px-4 py-3">
+        <div className="border-b border-divider px-4 py-3">
           <div className="relative">
             <select
               value={activePool}
               onChange={(e): void => onPoolChange(e.target.value)}
-              className="w-full cursor-pointer appearance-none rounded-lg border border-card-border-light dark:border-card-border-dark bg-content-bg-light dark:bg-content-bg-dark py-3 pl-7 pr-10 text-base font-semibold text-text-primary-light dark:text-text-primary-dark transition-colors hover:bg-sidebar-hover-light dark:hover:bg-sidebar-hover-dark focus:border-input-focus-light dark:focus:border-input-focus-dark focus:outline-none"
+              className="w-full cursor-pointer appearance-none rounded-lg border border-card-border bg-content-bg py-3 pl-7 pr-10 text-base font-semibold text-text-primary transition-colors hover:bg-sidebar-hover focus:border-input-focus focus:outline-none"
             >
               {pools.map((p) => (
                 <option key={p.name} value={p.name}>
@@ -174,8 +174,8 @@ export const Sidebar: FC<SidebarProps> = ({
                 </option>
               ))}
             </select>
-            <span className="pointer-events-none absolute left-2 top-1/2 h-2.5 w-2.5 -translate-y-1/2 rounded-full bg-ai-brand-light dark:bg-ai-brand-dark" />
-            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-base leading-none text-text-secondary-light dark:text-text-secondary-dark">
+            <span className="pointer-events-none absolute left-2 top-1/2 h-2.5 w-2.5 -translate-y-1/2 rounded-full bg-ai-brand" />
+            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-base leading-none text-text-secondary">
               ▾
             </span>
           </div>
@@ -185,11 +185,11 @@ export const Sidebar: FC<SidebarProps> = ({
       {/* Session tree */}
       <div className="flex-1 overflow-y-auto py-2">
         {isLoadingSessions ? (
-          <p className="px-4 py-3 text-sm text-text-secondary-light dark:text-text-secondary-dark">
+          <p className="px-4 py-3 text-sm text-text-secondary">
             Loading…
           </p>
         ) : sessionTree.length === 0 ? (
-          <p className="px-4 py-3 text-sm text-text-secondary-light dark:text-text-secondary-dark">
+          <p className="px-4 py-3 text-sm text-text-secondary">
             No conversations in {activePool}
           </p>
         ) : (
@@ -204,11 +204,11 @@ export const Sidebar: FC<SidebarProps> = ({
       </div>
 
       {/* New Conversation button */}
-      <div className="border-t border-divider-light dark:border-divider-dark p-3">
+      <div className="border-t border-divider p-3">
         <button
           type="button"
           onClick={handleNew}
-          className="w-full rounded-lg bg-btn-primary-light px-3 py-2.5 text-sm font-semibold text-btn-primary-text-light transition-opacity hover:opacity-90 active:opacity-80 dark:bg-btn-primary-dark dark:text-btn-primary-text-dark"
+          className="w-full rounded-lg bg-btn-primary px-3 py-2.5 text-sm font-semibold text-btn-primary-text transition-opacity hover:opacity-90 active:opacity-80"
         >
           + New Conversation
         </button>

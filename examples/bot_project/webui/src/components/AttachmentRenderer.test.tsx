@@ -2,9 +2,9 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import {
   AttachmentRenderer,
-  formatBytes,
   type AttachmentView,
 } from "./AttachmentRenderer";
+import { formatBytes } from "../lib/format";
 
 const imageView: AttachmentView = {
   id: "a1",

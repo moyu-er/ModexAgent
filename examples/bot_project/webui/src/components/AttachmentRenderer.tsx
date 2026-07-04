@@ -1,4 +1,5 @@
 import { useState, type FC, type MouseEvent } from "react";
+import { formatBytes } from "../lib/format";
 
 /**
  * Normalized, direction-agnostic view of one attachment for rendering.
@@ -20,20 +21,6 @@ export interface AttachmentView {
 
 export interface AttachmentRendererProps {
   view: AttachmentView;
-}
-
-/** Format a byte count as a human-readable string (1.2 KB, 3.4 MB). */
-export function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return "—";
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ["KB", "MB", "GB", "TB"];
-  let value = bytes / 1024;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${value.toFixed(1)} ${units[unit]}`;
 }
 
 /**
@@ -63,7 +50,7 @@ export const AttachmentRenderer: FC<AttachmentRendererProps> = ({ view }) => {
         href={view.downloadUrl}
         target="_blank"
         rel="noreferrer"
-        className="mt-1 block max-w-[320px] overflow-hidden rounded-lg border border-card-border-light dark:border-card-border-dark"
+        className="mt-1 block max-w-[320px] overflow-hidden rounded-lg border border-card-border"
         title={view.name}
       >
         <img
@@ -83,15 +70,15 @@ export const AttachmentRenderer: FC<AttachmentRendererProps> = ({ view }) => {
     return (
       <div
         aria-disabled="true"
-        className="mt-1 flex max-w-[360px] cursor-not-allowed items-center gap-2.5 rounded-lg border border-card-border-light bg-content-bg-light px-3 py-2 opacity-60 dark:border-card-border-dark dark:bg-content-bg-dark"
+        className="mt-1 flex max-w-[360px] cursor-not-allowed items-center gap-2.5 rounded-lg border border-card-border bg-content-bg px-3 py-2 opacity-60"
         title={view.name}
       >
         <FileIcon />
         <span className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate text-[13px] font-medium text-text-secondary-light dark:text-text-secondary-dark">
+          <span className="truncate text-[13px] font-medium text-text-secondary">
             {view.name}
           </span>
-          <span className="text-[11px] italic text-text-secondary-light dark:text-text-secondary-dark">
+          <span className="text-[11px] italic text-text-secondary">
             File no longer available
           </span>
         </span>
@@ -119,15 +106,15 @@ export const AttachmentRenderer: FC<AttachmentRendererProps> = ({ view }) => {
       target="_blank"
       rel="noreferrer"
       onClick={onDownloadClick}
-      className="mt-1 flex max-w-[360px] items-center gap-2.5 rounded-lg border border-card-border-light bg-content-bg-light px-3 py-2 text-left transition-colors hover:bg-sidebar-hover-light dark:border-card-border-dark dark:bg-content-bg-dark dark:hover:bg-sidebar-hover-dark"
+      className="mt-1 flex max-w-[360px] items-center gap-2.5 rounded-lg border border-card-border bg-content-bg px-3 py-2 text-left transition-colors hover:bg-sidebar-hover"
       title={view.name}
     >
       <FileIcon />
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate text-[13px] font-medium text-text-primary-light dark:text-text-primary-dark">
+        <span className="truncate text-[13px] font-medium text-text-primary">
           {view.name}
         </span>
-        <span className="text-[11px] text-text-secondary-light dark:text-text-secondary-dark">
+        <span className="text-[11px] text-text-secondary">
           {formatBytes(view.size)}
         </span>
       </span>
@@ -146,7 +133,7 @@ const FileIcon: FC = () => (
     strokeLinecap="round"
     strokeLinejoin="round"
     aria-hidden="true"
-    className="shrink-0 text-text-secondary-light dark:text-text-secondary-dark"
+    className="shrink-0 text-text-secondary"
   >
     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
     <polyline points="14 2 14 8 20 8" />

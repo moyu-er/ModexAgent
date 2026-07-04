@@ -14,6 +14,7 @@ import type {
   TurnBlock,
   UIMessage,
 } from "../types/events";
+import { envelopeMetadata, envelopeRequestId } from "../types/events";
 
 let _nextId = 0;
 
@@ -87,21 +88,19 @@ function _applyEventToMessages(
     case "user_message": {
       // Deduplicate the server echo: match by _request_id carried in the
       // envelope's metadata (set by the frontend on send, echoed by server).
-      const raw = event as unknown as Record<string, unknown>;
-      const meta = raw["_metadata"] as Record<string, unknown> | undefined;
-      const echoId: string | undefined = meta?.["_request_id"] as string | undefined;
+      const echoId = envelopeRequestId(event);
       if (echoId && echoId === pendingRequestRef.current) {
         pendingRequestRef.current = null;
         // Carry the echoed attachments (persisted records from the ingest
         // stage) onto the optimistic message so they render after echo.
-        const echoAttachments = (raw["attachments"] as UIMessage["attachments"]) ?? undefined;
+        const echoAttachments = event.attachments ?? undefined;
         return {
           messages: messages.map((m) =>
             m.id === echoId
               ? {
                   ...m,
                   timestamp: event.timestamp,
-                  metadata: raw["_metadata"] as Record<string, unknown> | undefined,
+                  metadata: envelopeMetadata(event),
                   ...(echoAttachments ? { attachments: echoAttachments } : {}),
                 }
               : m,
@@ -279,8 +278,12 @@ export function applyServerEvent(
     };
   }
 
-  const raw = event as unknown as Record<string, unknown>;
-  const sid: string = (raw.session_id as string) || (raw.conversation_id as string) || "";
+  // Some legacy flat events used ``conversation_id`` instead of ``session_id``;
+  // every typed ServerEvent has ``session_id``, so the fallback is defensive.
+  const sid: string =
+    event.session_id ||
+    (event as unknown as { conversation_id?: string }).conversation_id ||
+    "";
 
   if (sid && sid !== currentSessionId) {
     // Buffer event for a non-selected session (subagent, etc.)
