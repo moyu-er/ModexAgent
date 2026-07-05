@@ -81,7 +81,7 @@ config/mcp/registry.json
 # This keeps symlinks out of git and avoids duplicating the library per agent.
 # On a fresh checkout, agents have no assigned skills until you assign them via
 # the WebUI (the "frontend-configurable" bootstrapping model).
-/skills/
+/skills/main
 
 
 # Node

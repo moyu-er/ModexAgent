@@ -193,6 +193,73 @@ class TestListAgentSkills:
         assert skills[1].source == "local"
 
 
+# ─── rename agent / pool skill directories ───────────────────────────────────
+
+
+class TestRename:
+    def test_rename_agent_skills_moves_link(self, store: SkillsStore, tmp_path: Path) -> None:
+        store.upload_skill("alpha", {"SKILL.md": "x"})
+        store.assign_skill_to_agent("coding", "scout", "alpha")
+        src = tmp_path / "skills" / "coding" / "scout"
+        dst = tmp_path / "skills" / "coding" / "recon"
+        assert src.exists()
+        store.rename_agent_skills("coding", "scout", "recon")
+        assert not src.exists()
+        assert dst.exists()
+        assert (dst / "alpha" / "SKILL.md").read_text(encoding="utf-8") == "x"
+        assert store.list_agent_skills("coding", "recon") == [
+            SkillEntry(name="alpha", source="global")
+        ]
+
+    def test_rename_agent_skills_noop_when_source_missing(
+        self, store: SkillsStore, tmp_path: Path
+    ) -> None:
+        store.rename_agent_skills("coding", "scout", "recon")
+        assert not (tmp_path / "skills" / "coding" / "recon").exists()
+
+    def test_rename_agent_skills_overwrites_existing_target(
+        self, store: SkillsStore, tmp_path: Path
+    ) -> None:
+        store.upload_skill("alpha", {"SKILL.md": "alpha"})
+        store.upload_skill("beta", {"SKILL.md": "beta"})
+        store.assign_skill_to_agent("coding", "scout", "alpha")
+        store.assign_skill_to_agent("coding", "recon", "beta")
+        store.rename_agent_skills("coding", "scout", "recon")
+        dst = tmp_path / "skills" / "coding" / "recon"
+        assert dst.exists()
+        assert (dst / "alpha" / "SKILL.md").read_text(encoding="utf-8") == "alpha"
+
+    def test_rename_pool_skills_moves_directory(self, store: SkillsStore, tmp_path: Path) -> None:
+        store.upload_skill("alpha", {"SKILL.md": "x"})
+        store.assign_skill_to_agent("coding", "scout", "alpha")
+        store.rename_pool_skills("coding", "research")
+        assert not (tmp_path / "skills" / "coding").exists()
+        dst = tmp_path / "skills" / "research" / "scout" / "alpha"
+        assert dst.exists()
+        assert (dst / "SKILL.md").read_text(encoding="utf-8") == "x"
+
+    def test_rename_pool_skills_noop_when_source_missing(
+        self, store: SkillsStore, tmp_path: Path
+    ) -> None:
+        store.rename_pool_skills("coding", "research")
+        assert not (tmp_path / "skills" / "research").exists()
+
+    def test_rename_pool_skills_overwrites_existing_target(
+        self, store: SkillsStore, tmp_path: Path
+    ) -> None:
+        store.upload_skill("alpha", {"SKILL.md": "alpha"})
+        store.assign_skill_to_agent("coding", "scout", "alpha")
+        # Existing target is a real (local) dir, not a link, so its content is
+        # independent of the global source.
+        target = tmp_path / "skills" / "research" / "scout" / "alpha"
+        target.mkdir(parents=True)
+        (target / "SKILL.md").write_text("old", encoding="utf-8")
+        store.rename_pool_skills("coding", "research")
+        dst = tmp_path / "skills" / "research" / "scout" / "alpha"
+        assert dst.exists()
+        assert (dst / "SKILL.md").read_text(encoding="utf-8") == "alpha"
+
+
 # ─── user-home global source (~/.agents/skills) ──────────────────────────────
 
 

@@ -53,6 +53,7 @@ from modex_agent.ioc.configs.mcp import MCPServerEntry
 from bot.config.pool_store import (
     PoolStore,
     PoolValidationError,
+    RenameReport,
     UnknownPoolError,
     _DEFAULT_MAIN_PROMPT,
 )
@@ -62,6 +63,7 @@ from bot.config.prompt_store import (
 )
 from bot.config.skills_store import SkillsStore
 from bot.service.config_controller import FieldValidationError
+from bot.service.pool_router import PoolSessionStore
 
 # Artifact classes that, when written, set ``restart_required``. The marker is
 # coarse (a single bool) — once any of these fires, the next restart re-reads
@@ -104,6 +106,7 @@ class PoolConfigController:
         mcp_registry_path: Path,
         default_pool: str,
         restarter: Callable[[], None] | None = None,
+        pool_session_store: PoolSessionStore | None = None,
     ) -> None:
         self._pools: PoolStore = pool_store
         self._skills: SkillsStore = skills_store
@@ -111,6 +114,7 @@ class PoolConfigController:
         self._mcp_path: Path = mcp_registry_path
         self.default_pool: str = default_pool
         self._restarter: Callable[[], None] | None = restarter
+        self._pool_session_store: PoolSessionStore | None = pool_session_store
         # Coarse per-process dirty marker. The set tracks which artifact
         # classes triggered the marker (diagnostic); ``__bool__`` below is the
         # single source of truth for the API hint.
@@ -134,6 +138,31 @@ class PoolConfigController:
             self._dirty.add(c)
 
     # ------------------------------------------------------------------ #
+    # rename convergence helpers
+    # ------------------------------------------------------------------ #
+
+    def _apply_agent_renames(self, pool_name: str, report: RenameReport) -> None:
+        """Move per-agent skill directories after ``write_pool`` renames templates/md.
+
+        This is the single convergence point for agent-rename side-effects that
+        live outside :class:`PoolStore` (skills). Templates and prompt md are
+        already handled inside :meth:`PoolStore.write_pool`.
+        """
+        for old_agent, new_agent in report.agent_renames.items():
+            self._skills.rename_agent_skills(pool_name, old_agent, new_agent)
+
+    def _apply_pool_rename(self, old_pool: str, new_pool: str) -> None:
+        """Move all resources keyed by pool name after the pool directory is renamed.
+
+        Handles skill directories and, when a :class:`PoolSessionStore` is
+        available, migrates stored session->pool mappings from ``old_pool`` to
+        ``new_pool``.
+        """
+        self._skills.rename_pool_skills(old_pool, new_pool)
+        if self._pool_session_store is not None:
+            self._pool_session_store.rename_pool(old_pool, new_pool)
+
+    # ------------------------------------------------------------------ #
     # pools
     # ------------------------------------------------------------------ #
 
@@ -147,9 +176,10 @@ class PoolConfigController:
 
     def write_pool(self, name: str, tree: PoolTree) -> PoolTree:
         try:
-            self._pools.write_pool(name, tree)
+            report = self._pools.write_pool(name, tree)
         except PoolValidationError as exc:
             raise FieldValidationError({"pool": [str(exc)]}) from exc
+        self._apply_agent_renames(name, report)
         self._mark("pool")
         return self.read_pool(name)
 
@@ -181,6 +211,7 @@ class PoolConfigController:
             self._pools.rename_pool(old, new)
         except PoolValidationError as exc:
             raise FieldValidationError({"pool": [str(exc)]}) from exc
+        self._apply_pool_rename(old, new)
         self._mark("pool")
         return self.read_pool(new)
 

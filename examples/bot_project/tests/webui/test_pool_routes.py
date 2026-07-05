@@ -22,6 +22,7 @@ from bot.config.pool_store import PoolStore
 from bot.config.prompt_store import PromptStore
 from bot.config.skills_store import SkillsStore
 from bot.service.pool_config_controller import PoolConfigController
+from bot.service.pool_router import PoolSessionStore
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.server import WebUIServer
 
@@ -503,6 +504,84 @@ async def test_upload_skill_json_then_list_and_assign(tmp_path: Path) -> None:
         assert resp.status == 200
         got = await (await client.get("/api/pools/main/agents/main/skills")).json()
         assert got == []
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_write_pool_renames_agent_skills(tmp_path: Path) -> None:
+    """Agent rename through PUT /api/pools/{pool} moves per-agent skill links."""
+    _seed_pool_yml(tmp_path, "main")
+    # Seed a subagent template.
+    templates_dir = tmp_path / "config" / "pools" / "main" / "templates"
+    templates_dir.mkdir(parents=True, exist_ok=True)
+    (templates_dir / "researcher.yml").write_text(
+        yaml.safe_dump({"agent_name": "researcher", "description": "Old"}),
+        encoding="utf-8",
+    )
+    ctrl = _make_controller(tmp_path)
+    client = _make_client(ctrl, tmp_path)
+    await client.start_server()
+    try:
+        # Upload and assign a skill to the subagent.
+        files = {"SKILL.md": base64.b64encode(b"# hello\n").decode()}
+        resp = await client.post("/api/skills", json={"name": "hello", "files": files})
+        assert resp.status == 200, await resp.text()
+        resp = await client.post("/api/pools/main/agents/researcher/skills/hello")
+        assert resp.status == 200, await resp.text()
+        assert (tmp_path / "skills" / "main" / "researcher" / "hello").exists()
+
+        # Rename the subagent via PUT.
+        got = await (await client.get("/api/pools/main")).json()
+        got["subagents"][0]["agent_name"] = "scout"
+        resp = await client.put("/api/pools/main", json=got)
+        assert resp.status == 200, await resp.text()
+
+        # Skill link followed the rename.
+        assert not (tmp_path / "skills" / "main" / "researcher").exists()
+        dst = tmp_path / "skills" / "main" / "scout" / "hello"
+        assert dst.exists()
+        assert (dst / "SKILL.md").read_text(encoding="utf-8") == "# hello\n"
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_rename_pool_moves_skills_and_session_store(tmp_path: Path) -> None:
+    """PATCH /api/pools/{pool} rename moves skill dirs and updates sessions."""
+    _seed_pool_yml(tmp_path, "main")
+    _seed_pool_yml(tmp_path, "extra")
+    session_store = PoolSessionStore(tmp_path)
+    session_store.set("conv-123", "extra")
+    ctrl = PoolConfigController(
+        pool_store=PoolStore(base_dir=tmp_path),
+        skills_store=SkillsStore(base_dir=tmp_path, user_global_dir=tmp_path / "user_skills"),
+        prompt_store=PromptStore(base_dir=tmp_path),
+        mcp_registry_path=tmp_path / REGISTRY_PATH,
+        default_pool="main",
+        pool_session_store=session_store,
+    )
+    client = _make_client(ctrl, tmp_path)
+    await client.start_server()
+    try:
+        # Assign a skill under the pool that will be renamed.
+        files = {"SKILL.md": base64.b64encode(b"# skill\n").decode()}
+        resp = await client.post("/api/skills", json={"name": "skill", "files": files})
+        assert resp.status == 200, await resp.text()
+        resp = await client.post("/api/pools/extra/agents/extra/skills/skill")
+        assert resp.status == 200, await resp.text()
+
+        resp = await client.patch("/api/pools/extra", json={"name": "renamed"})
+        assert resp.status == 200, await resp.text()
+
+        # Skill dir moved with the pool.
+        assert not (tmp_path / "skills" / "extra").exists()
+        dst = tmp_path / "skills" / "renamed" / "extra" / "skill"
+        assert dst.exists()
+        assert (dst / "SKILL.md").read_text(encoding="utf-8") == "# skill\n"
+
+        # Session store record rewritten.
+        assert session_store.get("conv-123", "main") == "renamed"
     finally:
         await client.close()
 

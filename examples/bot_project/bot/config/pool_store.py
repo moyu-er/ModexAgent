@@ -42,6 +42,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -116,6 +117,18 @@ class UnknownPoolError(KeyError):
 
 class PoolValidationError(ValueError):
     """Raised when a pool tree fails validation (bad name, duplicate agent, ...)."""
+
+
+@dataclass(frozen=True)
+class RenameReport:
+    """Emitted by ``write_pool`` to tell callers which agents were renamed.
+
+    Maps ``old_agent_name`` -> ``new_agent_name``. Main-agent renames are
+    included too. Removed agents are not reported here; their resources are
+    already cleaned up by ``write_pool``.
+    """
+
+    agent_renames: dict[str, str]
 
 
 def _validate_name(name: str, kind: str) -> None:
@@ -219,7 +232,7 @@ class PoolStore:
 
     # ─── write ──────────────────────────────────────────────────────────────
 
-    def write_pool(self, name: str, tree: PoolTree) -> None:
+    def write_pool(self, name: str, tree: PoolTree) -> RenameReport:
         """Validate ``tree`` and atomically write pool.yml + templates.
 
         Validates everything FIRST; on any failure the filesystem is untouched.
@@ -232,6 +245,9 @@ class PoolStore:
         follow to the new file name. On agent rename/remove, the matching
         ``agents/<name>.md`` is renamed/removed (prompt-md coupling); md CONTENT
         is never written here.
+
+        Returns a :class:`RenameReport` describing which agents were renamed so
+        callers can converge other per-agent resources (skills) in one place.
         """
         _validate_name(name, "pool")
         self._validate_tree(name, tree)
@@ -246,6 +262,16 @@ class PoolStore:
         rename_map = self._subagent_rename_map(tree, prior_subagent_names)
         new_template_payloads = self._build_template_payloads(name, tree, rename_map)
         new_subagent_names = {tpl["agent_name"] for tpl in new_template_payloads}
+
+        # Build the rename report before touching disk so callers know which
+        # per-agent resources to move after the write commits.
+        agent_renames: dict[str, str] = {}
+        if prior_main_name is not None and prior_main_name != tree.main.agent_name:
+            agent_renames[prior_main_name] = tree.main.agent_name
+        for new_name in new_subagent_names:
+            prior_name = rename_map.get(new_name, new_name)
+            if prior_name != new_name:
+                agent_renames[prior_name] = new_name
 
         # Stage all .tmp files first; if staging raises, no .replace has run.
         tmp_files: list[Path] = []
@@ -282,6 +308,8 @@ class PoolStore:
                 except OSError:
                     pass
             raise
+
+        return RenameReport(agent_renames=agent_renames)
 
     def _validate_tree(self, pool_name: str, tree: PoolTree) -> None:
         _validate_name(tree.name, "pool")

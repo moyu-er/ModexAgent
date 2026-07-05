@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +51,25 @@ class PoolSessionStore:
             json.dumps({"pool": pool_name, "session_id": session_id}),
             encoding="utf-8",
         )
+
+    def rename_pool(self, old_pool: str, new_pool: str) -> int:
+        """Rewrite every stored session->pool mapping from ``old_pool`` to ``new_pool``.
+
+        Returns the number of records rewritten. Corrupt/empty files are skipped.
+        """
+        count = 0
+        for file in self._dir.glob("*.json"):
+            try:
+                data = json.loads(file.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            if data.get("pool") == old_pool:
+                data["pool"] = new_pool
+                tmp = file.with_suffix(".tmp")
+                tmp.write_text(json.dumps(data), encoding="utf-8")
+                os.replace(tmp, file)
+                count += 1
+        return count
 
 
 class PoolRouter:

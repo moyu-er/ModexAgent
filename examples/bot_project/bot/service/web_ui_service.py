@@ -382,6 +382,7 @@ class WebUIService(BotService):
                 mcp_registry_path=project_dir / _mcp_registry_path,
                 default_pool=app_cfg.multi_agent.default_pool,
                 restarter=_trigger_restart,
+                pool_session_store=self._pool_session_store,
             )
         )
 

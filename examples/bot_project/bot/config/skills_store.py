@@ -347,6 +347,44 @@ class SkillsStore:
             )
         return out
 
+    def rename_agent_skills(self, pool: str, old_agent: str, new_agent: str) -> None:
+        """Move ``skills/<pool>/<old_agent>/`` to ``skills/<pool>/<new_agent>/``.
+
+        Silently no-ops if the source directory does not exist. An existing
+        destination is removed before the move to mirror ``os.replace``
+        semantics. Directory links (symlinks or Windows junctions) are moved as
+        links, not copied, so the global skill target stays untouched.
+        """
+        _validate_name(pool, "pool")
+        _validate_name(old_agent, "agent")
+        _validate_name(new_agent, "agent")
+        src = self.skills_dir / pool / old_agent
+        if not src.exists():
+            return
+        dst = self.skills_dir / pool / new_agent
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if dst.exists() or dst.is_symlink():
+            self._remove_link(dst)
+        src.rename(dst)
+
+    def rename_pool_skills(self, old_pool: str, new_pool: str) -> None:
+        """Move ``skills/<old_pool>/`` to ``skills/<new_pool>/``.
+
+        Silently no-ops if the source directory does not exist. An existing
+        destination is removed before the move to mirror ``os.replace``
+        semantics.
+        """
+        _validate_name(old_pool, "pool")
+        _validate_name(new_pool, "pool")
+        src = self.skills_dir / old_pool
+        if not src.exists():
+            return
+        dst = self.skills_dir / new_pool
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if dst.exists():
+            shutil.rmtree(dst)
+        src.rename(dst)
+
     # ─── helpers ────────────────────────────────────────────────────────────
 
     def _write_under(

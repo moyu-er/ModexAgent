@@ -499,9 +499,28 @@ class TestPromptMdCoupling:
             main_agent_name="renamed",
             main=MainAgentNode(agent_name="renamed"),
         )
-        store.write_pool("main", tree)
+        report = store.write_pool("main", tree)
         assert not (tmp_path / "agents" / "main.md").exists()
         assert (tmp_path / "agents" / "renamed.md").read_text(encoding="utf-8") == "original"
+        assert report.agent_renames == {"main": "renamed"}
+
+    def test_rename_subagent_reports_rename(
+        self, store: PoolStore, tmp_path: Path
+    ) -> None:
+        _seed_pool_yml(tmp_path, "coding", main_agent="coding")
+        _seed_template(tmp_path, "coding", "scout")
+        tree = store.read_pool("coding")
+        sub = tree.subagents[0].model_copy(update={"agent_name": "recon-agent"})
+        report = store.write_pool("coding", tree.model_copy(update={"subagents": [sub]}))
+        assert report.agent_renames == {"scout": "recon-agent"}
+
+    def test_write_pool_report_empty_when_no_renames(
+        self, store: PoolStore, tmp_path: Path
+    ) -> None:
+        _seed_pool_yml(tmp_path, "main")
+        tree = store.read_pool("main")
+        report = store.write_pool("main", tree)
+        assert report.agent_renames == {}
 
     def test_store_seeds_md_for_new_agents(
         self, store: PoolStore, tmp_path: Path
