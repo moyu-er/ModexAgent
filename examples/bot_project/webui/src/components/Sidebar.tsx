@@ -4,6 +4,7 @@ import { changeWorkspace } from "../lib/api";
 import { WorkspaceBrowser } from "./WorkspaceBrowser";
 import { SessionTree, type TreeNode } from "./SessionTree";
 import { ThemeToggle } from "./ThemeToggle";
+import { useToast } from "./ToastContext";
 
 export interface SidebarProps {
   sessionTree: TreeNode[];
@@ -24,6 +25,7 @@ export interface SidebarProps {
   onPoolChange: (pool: string) => void;
   revealSessionId?: string | null;
   style?: CSSProperties;
+  onOpenSettings?: () => void;
 }
 
 export const Sidebar: FC<SidebarProps> = ({
@@ -45,9 +47,14 @@ export const Sidebar: FC<SidebarProps> = ({
   onPoolChange,
   revealSessionId,
   style,
+  onOpenSettings,
 }) => {
   const [browserOpen, setBrowserOpen] = useState(false);
   const [recentOpen, setRecentOpen] = useState(false);
+  // Persistent restart indicator: any restart_required save arms a red dot on
+  // the settings gear. Best-effort clear after restartSystem resolves (see
+  // restartToast); otherwise it stays until page reload.
+  const { restart } = useToast();
 
   const handleNew = (): void => {
     onNew(activePool);
@@ -156,7 +163,26 @@ export const Sidebar: FC<SidebarProps> = ({
         <h2 className="text-xs font-semibold uppercase tracking-wider text-text-secondary">
           Conversations
         </h2>
-        <ThemeToggle />
+        <div className="flex items-center gap-1">
+          {onOpenSettings && (
+            <button
+              type="button"
+              title="Settings"
+              className="relative rounded px-1.5 py-0.5 text-text-secondary hover:bg-sidebar-hover"
+              onClick={onOpenSettings}
+            >
+              ⚙
+              {restart.restartNeeded && (
+                <span
+                  aria-label="Restart required"
+                  title="Restart required to apply saved changes"
+                  className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-error"
+                />
+              )}
+            </button>
+          )}
+          <ThemeToggle />
+        </div>
       </div>
 
       {/* Pool selector badge */}

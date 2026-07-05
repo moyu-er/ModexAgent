@@ -23,6 +23,12 @@ from modex_agent.tools.mcp.client import (
 
 _logger = logging.getLogger(__name__)
 
+# Per-server connect timeout. Bounds startup when an MCP server is unreachable
+# or rejects auth (e.g. streamable_http 401 makes the SDK block on the response
+# stream until the underlying httpx read timeout — 60s — which is too long for
+# an eager startup init). A failing server is skipped after this many seconds.
+_CONNECT_TIMEOUT: float = 20.0
+
 
 class MCPConnectionError(Exception):
     """MCP connection error."""
@@ -72,7 +78,22 @@ class MCPClientManager:
                 continue
 
             try:
-                result = await self._connect_single(name, server_config)
+                result = await asyncio.wait_for(
+                    self._connect_single(name, server_config),
+                    timeout=_CONNECT_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                _logger.warning(
+                    "[MCP Manager] %s connect timed out after %.0fs — skipping",
+                    name,
+                    _CONNECT_TIMEOUT,
+                )
+                continue
+            except asyncio.CancelledError:
+                # Whole init cancelled (e.g. service shutdown) — propagate without
+                # touching per-server state; partial stacks were already cleaned
+                # in-task by _connect_single.
+                raise
             except Exception as e:
                 _logger.error("[MCP Manager] Failed to connect to %s: %s", name, e)
                 continue
@@ -136,7 +157,23 @@ class MCPClientManager:
                 await server_stack.aclose()
                 return name, None
 
-        except Exception as e:
+        except BaseException as e:
+            # Connect failed OR was cancelled. ``except Exception`` alone is
+            # insufficient: a streamable_http 401 makes the SDK tear down its
+            # anyio TaskGroup, which surfaces here as a ``CancelledError``
+            # ("Cancelled by cancel scope") — a ``BaseException`` the general
+            # except would let escape, leaking the half-entered ``server_stack``
+            # so the transport async generator is later GC-closed in a
+            # different task, raising ``RuntimeError: Attempted to exit cancel
+            # scope in a different task than it was entered in``.
+            #
+            # MCP connect is best-effort: clean up the stack IN THIS TASK
+            # (preventing the cross-task GC teardown) and skip the server for
+            # every non-fatal cause. Propagate only true interpreter signals.
+            await self._safe_aclose(server_stack)
+            if isinstance(e, (KeyboardInterrupt, SystemExit)):
+                raise
+
             hint = ""
             text = str(e).lower()
             if any(marker in text for marker in _STDIO_POLLUTION_MARKERS):
@@ -145,29 +182,43 @@ class MCPClientManager:
                     "only JSON-RPC to stdout and sends logs/debug output to stderr instead."
                 )
 
-            # Extract root cause from ExceptionGroup (Python 3.11+)
-            root_cause = e
+            # Extract root cause from ExceptionGroup (Python 3.11+) — a 401
+            # arrives wrapped in a TaskGroup BaseExceptionGroup.
+            root_cause: BaseException = e
             if hasattr(e, "exceptions") and callable(e.exceptions):
                 sub_exceptions = e.exceptions()
                 if sub_exceptions:
                     root_cause = sub_exceptions[0]
 
-            _logger.error(
-                "[MCP:%s] Failed to connect: %s%s",
-                name,
-                root_cause,
-                hint,
-            )
+            if isinstance(e, asyncio.CancelledError):
+                _logger.warning(
+                    "[MCP:%s] connect cancelled (%s) — skipping%s",
+                    name, type(root_cause).__name__, hint,
+                )
+            else:
+                _logger.error(
+                    "[MCP:%s] Failed to connect: %s%s",
+                    name, root_cause, hint,
+                )
             _logger.debug(
                 "[MCP:%s] Full exception traceback:",
                 name,
                 exc_info=True,
             )
-            try:
-                await server_stack.aclose()
-            except Exception:
-                pass
             return name, None
+
+    @staticmethod
+    async def _safe_aclose(stack: AsyncExitStack) -> None:
+        """Close an AsyncExitStack, swallowing cleanup errors.
+
+        Cleanup failures (including the anyio cross-task ``RuntimeError`` that
+        surfaces when an MCP transport's TaskGroup is torn down) must not escape
+        — they are non-fatal during connect failure / shutdown.
+        """
+        try:
+            await stack.aclose()
+        except BaseException:
+            pass
 
     async def _create_client(
         self,

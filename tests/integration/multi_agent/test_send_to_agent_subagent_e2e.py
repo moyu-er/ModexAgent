@@ -177,7 +177,7 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
     tpl_dir = project / "config" / "pools" / "main" / "templates"
     tpl_dir.mkdir(parents=True)
     (tpl_dir / "helper.yml").write_text(
-        "agent_type: helper\n"
+        "agent_name: helper\n"
         "description: Test helper\n"
         "tool_preset: read_write\n"
         "max_steps: 5\n",

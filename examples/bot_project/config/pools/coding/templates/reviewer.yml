@@ -1,18 +1,5 @@
-agent_type: reviewer
-description: "Versatile review specialist for code diffs, plans, and solutions"
+agent_name: reviewer
+description: Versatile review specialist for code diffs, plans, and solutions
 max_steps: 100
 context_mode: fresh
-thinking_budget: medium
-skills:
-  roots: ["skills/coding/reviewer"]
-# NOTE: default_reads is not implemented yet — field reserved for future use
-memory:
-  session:
-    max_messages: 100
-    max_context_tokens: 100000
-    keep_ratio_for_messages: 0.4
-    keep_ratio_for_token: 0.4
-  archive: {enabled: true}
-  pruned: {enabled: true, max_files: 50, topic_max_chars: 200}
-  governance:
-    tool_chain_repair: true
+tool_preset: read_write

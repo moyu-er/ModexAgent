@@ -35,10 +35,9 @@ class TestQqFileType:
 
 class TestQQInputAdapter:
     def test_init_sets_basic_attributes(self) -> None:
-        adapter = QQInputAdapter(app_id="123", secret="abc", sandbox=True, allow_from=["user1"])
+        adapter = QQInputAdapter(app_id="123", secret="abc", allow_from=["user1"])
         assert adapter.app_id == "123"
         assert adapter.secret == "abc"
-        assert adapter.sandbox is True
         assert adapter.allow_from == ["user1"]
         assert adapter._running is False
         assert adapter._message_queue is not None

@@ -47,9 +47,7 @@ from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.core.session_store import SessionStore
 from modex_agent.hook.abc import Hook
 from modex_agent.hook.runner import HookRunner
-from modex_agent.ioc.configs.agent import AgentConfig as IOCAgentConfig
 from modex_agent.ioc.configs.app import AppConfig
-from modex_agent.ioc.configs.memory import MemoryConfig as IOCMemoryConfig
 from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
 
 from .builders import AgentBuilderMixin, resolve_system_prompt
@@ -177,23 +175,6 @@ class BotService(AgentBuilderMixin):
         assert self._bot_model_config is not None, "BotModelConfig not loaded"
         return BotModelProvider(self._bot_model_config)
 
-    @property
-    def _main_agent_cfg(self) -> IOCAgentConfig | None:
-        """Find main agent by role, not by index."""
-        if not self._app_config or not self._app_config.agents:
-            return None
-        for a in self._app_config.agents:
-            if a.role == "main":
-                return a
-        return self._app_config.agents[0]
-
-    @property
-    def _main_memory_cfg(self) -> IOCMemoryConfig | None:
-        """Memory config for the main agent."""
-        if self._main_agent_cfg is None:
-            return None
-        return self._main_agent_cfg.memory
-
     def _load_app_config(self) -> AppConfig:
         """Load IOC AppConfig from bot_config.yml + 多模型后处理。
 
@@ -287,7 +268,7 @@ class BotService(AgentBuilderMixin):
         if self._app_config is None:
             self._app_config = self._load_app_config()
         assert self._app_config is not None, "AppConfig must be loaded before initialize"
-        print(f"[OK] Config loaded ({len(self._app_config.agents)} agents via IOC)")
+        print(f"[OK] Config loaded ({len(self._app_config.pools)} pools via IOC)")
 
         # Service-level session→pool mapping store. Lives in the project home
         # data dir so every workspace's PoolRouter and the WebUI pipeline share
@@ -400,24 +381,6 @@ class BotService(AgentBuilderMixin):
         except BaseException:
             if not suppress_errors:
                 raise
-
-    def _find_subagent_cfg(self) -> IOCAgentConfig | None:
-        """Find the first subagent config by role."""
-        if not self._app_config or not self._app_config.agents:
-            return None
-        for a in self._app_config.agents:
-            if a.role == "subagent":
-                return a
-
-    def _find_additional_subagent_cfgs(self) -> list[IOCAgentConfig]:
-        """Find all subagent configs by role, excluding the primary subagent."""
-        if not self._app_config or not self._app_config.agents:
-            return []
-        primary = self._find_subagent_cfg()
-        primary_name = primary.name if primary else None
-        return [
-            a for a in self._app_config.agents if a.role == "subagent" and a.name != primary_name
-        ]
 
     @property
     def safety_policy(self) -> RuntimeSafetyPolicy:

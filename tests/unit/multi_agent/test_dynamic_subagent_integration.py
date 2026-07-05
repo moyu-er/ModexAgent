@@ -26,7 +26,7 @@ def test_template_to_descriptor_pipeline():
     with tempfile.TemporaryDirectory() as tmp:
         project = Path(tmp)
         _write_files(project, "main", "helper",
-            "agent_type: helper\ndescription: Test helper\nmax_steps: 15\n",
+            "agent_name: helper\ndescription: Test helper\nmax_steps: 15\n",
             "You are a helpful assistant."
         )
 
@@ -35,7 +35,7 @@ def test_template_to_descriptor_pipeline():
         assert len(templates) == 1
 
         t = templates[0]
-        assert t.agent_type == "helper"
+        assert t.agent_name == "helper"
         assert t.max_steps == 15
 
         # System prompt resolution (same convention as resolve_system_prompt)
@@ -70,13 +70,13 @@ def test_multiple_templates_per_pool():
     """Multiple templates in one pool are all loaded."""
     with tempfile.TemporaryDirectory() as tmp:
         project = Path(tmp)
-        _write_files(project, "main", "a", "agent_type: a\ndescription: ''\n", "A")
-        _write_files(project, "main", "b", "agent_type: b\ndescription: ''\n", "B")
+        _write_files(project, "main", "a", "agent_name: a\ndescription: ''\n", "A")
+        _write_files(project, "main", "b", "agent_name: b\ndescription: ''\n", "B")
 
         registry = AgentTemplateRegistry(project)
         templates = registry.list_templates("main")
         assert len(templates) == 2
-        types = {t.agent_type for t in templates}
+        types = {t.agent_name for t in templates}
         assert types == {"a", "b"}
 
 
@@ -85,7 +85,7 @@ def test_template_with_memory_config():
     with tempfile.TemporaryDirectory() as tmp:
         project = Path(tmp)
         yml = """\
-agent_type: heavy
+agent_name: heavy
 description: Heavy task agent
 max_steps: 50
 memory:

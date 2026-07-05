@@ -27,14 +27,25 @@ from aiohttp import web
 
 from bot.adapters.channels import set_conv_channel
 from bot.adapters.web_socket import WebSocketInputAdapter
+from bot.service.config_controller import ConfigController, FieldValidationError
+from bot.service.pool_config_controller import (
+    DefaultPoolProtectedError,
+    McpInUseError,
+    PoolConfigController,
+)
 from bot.service.model_config import BotModelConfig
 from bot.webui.events import (
     DeltaEnvelope,
-    UserMessageEvent,
     WebSocketAction,
     WebUIEventType,
 )
-from modex_agent.core.session_id import SessionInfo, SessionIdFactory, agent_of, session_id_prefix_of
+from bot.webui.transcript_store import TranscriptStore
+from modex_agent.core.session_id import (
+    SessionIdFactory,
+    SessionInfo,
+    agent_of,
+    session_id_prefix_of,
+)
 from modex_agent.core.session_store import SessionStore
 from modex_agent.core.types import TodoStatus
 from modex_agent.runtime.store import JsonFileTodoStore
@@ -42,7 +53,6 @@ from modex_agent.utils.timezone import get_user_timezone
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.port import WorkspaceControlPort
 from modex_agent.workspace.runtime import resolve_workspace_root
-from bot.webui.transcript_store import TranscriptStore
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +70,6 @@ async def _safe_send_json(ws: web.WebSocketResponse, data: dict[str, object]) ->
         # Connection already closed or message serialisation impossible; the
         # main WebSocket loop will detect the close and clean up.
         logger.warning("WebSocket send_json failed: %s", exc)
-
 
 
 @dataclass
@@ -108,12 +117,54 @@ class _WsConnectionState:
 _DEFAULT_AGENT_NAME: str = "main"
 _API_SESSIONS_PATH: str = "/api/sessions"
 _API_SESSIONS_SESSION_PATH: str = "/api/sessions/{session_id}"
-_API_POOLS_PATH: str = "/api/pools"
 _API_MODELS_PATH: str = "/api/models"
 _API_MEDIA_CONFIG_PATH: str = "/api/media/config"
 _WS_PATH: str = "/ws"
 _WEBUI_STATIC_PREFIX: str = "/webui/"
 _DEFAULT_STATIC_DIST: Path = Path(__file__).resolve().parent.parent / "web" / "dist"
+
+# Skill upload size caps. Per-file and total limits protect the server from
+# oversized uploads; both are simple constants (not configurable per-pool — a
+# skill is global, so a single pair of limits is sufficient).
+_SKILL_MAX_FILE_MB: int = 20
+_SKILL_MAX_TOTAL_MB: int = 100
+_SKILL_MAX_FILE_BYTES: int = _SKILL_MAX_FILE_MB * 1024 * 1024
+_SKILL_MAX_TOTAL_BYTES: int = _SKILL_MAX_TOTAL_MB * 1024 * 1024
+
+
+class _SkillUploadFallback(Exception):
+    """Internal sentinel: multipart upload unavailable, fall back to JSON."""
+
+
+def _skill_relpath(filename: str) -> str | None:
+    """Normalize an uploaded skill filename to a path relative to ``<skillName>/``.
+
+    The frontend uploads with ``webkitdirectory``, so filenames look like
+    ``mySkill/SKILL.md`` or ``mySkill/sub/f.txt``. We strip the leading
+    ``<skillName>/`` segment so the resulting key is relative to the skill
+    root. Bare filenames (no slash) are kept as-is. Returns ``None`` for
+    traversal attempts (``..`` segments).
+    """
+    import os
+    from urllib.parse import unquote
+
+    # aiohttp may deliver filenames URL-encoded (e.g. ``greeter%2FSKILL.md``);
+    # decode first so the path-segment logic below sees real slashes.
+    cleaned = unquote(filename).replace("\\", "/")
+    # Drop a leading drive letter (Windows) and any leading slashes.
+    if len(cleaned) >= 2 and cleaned[1] == ":":
+        cleaned = cleaned[2:]
+    cleaned = cleaned.lstrip("/")
+    if "/" in cleaned:
+        # Drop the first segment (the skill-name prefix from webkitdirectory).
+        cleaned = cleaned.split("/", 1)[1] if "/" in cleaned else cleaned
+    if not cleaned or cleaned.startswith("/"):
+        return None
+    norm = os.path.normpath(cleaned).replace("\\", "/")
+    parts = norm.split("/")
+    if any(p in {".."} for p in parts):
+        return None
+    return norm
 
 # Multipart upload read chunk. Large enough to amortize per-chunk overhead on a
 # 20 MB image, small enough that the size pre-check fires promptly.
@@ -215,7 +266,9 @@ class WebUIServer:
         self._store: TranscriptStore = transcript_store
         self._static_dist: Path | None = static_dist
         self._data_dir: Path | None = data_dir
-        self._home_sessions_dir: Path = home_sessions_dir if home_sessions_dir is not None else Path()
+        self._home_sessions_dir: Path = (
+            home_sessions_dir if home_sessions_dir is not None else Path()
+        )
         self._data_dir_name: str = ""
 
         # Session store (WorkspacePoolSessionStore) -- injected by WebUIService.
@@ -244,6 +297,13 @@ class WebUIServer:
         # selector reflects CLI edits (e.g. `modexbot model`) without a restart.
         # Runtime routing still requires restart (CLI prints "restart to apply").
         self._model_config_loader: Callable[[], BotModelConfig | None] | None = None
+        # ConfigController -- injected by WebUIService; serves /api/config/{domain}
+        # and /api/system/restart. None degrades the endpoints to 503.
+        self._config_controller: ConfigController | None = None
+        # PoolConfigController -- injected by WebUIService; serves /api/pools,
+        # /api/mcp, /api/skills and the per-agent prompt/skills sub-routes. None
+        # degrades the endpoints to 503 (matches ConfigController convention).
+        self._pool_config_controller: PoolConfigController | None = None
 
         self.app = web.Application()
         self._setup_routes()
@@ -293,9 +353,7 @@ class WebUIServer:
         if not ws_raw:
             return self._home_sessions_dir
         try:
-            return WorkspacePaths(
-                root=self._ws_root_of(ws_raw) / self._data_dir_name
-            ).sessions_dir
+            return WorkspacePaths(root=self._ws_root_of(ws_raw) / self._data_dir_name).sessions_dir
         except (OSError, ValueError) as exc:
             logger.warning("Failed to build sessions dir for %r: %s", ws_raw, exc)
             return self._home_sessions_dir
@@ -333,9 +391,9 @@ class WebUIServer:
         if not ws_raw:
             return WorkspacePaths(root=self._home_sessions_dir.parent).media_dir(pool)
         try:
-            return WorkspacePaths(
-                root=self._ws_root_of(ws_raw) / self._data_dir_name
-            ).media_dir(pool)
+            return WorkspacePaths(root=self._ws_root_of(ws_raw) / self._data_dir_name).media_dir(
+                pool
+            )
         except (OSError, ValueError) as exc:
             logger.warning("Failed to build media dir for %r: %s", ws_raw, exc)
             return WorkspacePaths(root=self._home_sessions_dir.parent).media_dir(pool)
@@ -492,13 +550,19 @@ class WebUIServer:
         """
         self._model_config_loader = loader
 
+    def set_config_controller(self, controller: ConfigController) -> None:
+        """Inject the ConfigController for /api/config/{domain} and /api/system/restart."""
+        self._config_controller = controller
+
+    def set_pool_config_controller(self, controller: PoolConfigController) -> None:
+        """Inject the PoolConfigController for /api/pools, /api/mcp, /api/skills."""
+        self._pool_config_controller = controller
+
     # ------------------------------------------------------------------
     # SessionInfo resolution helpers
     # ------------------------------------------------------------------
 
-    async def _resolve_session(
-        self, session_id: str, index_dir: Path | None = None
-    ) -> SessionInfo:
+    async def _resolve_session(self, session_id: str, index_dir: Path | None = None) -> SessionInfo:
         """Resolve a SessionInfo from *session_id*.
 
         Prefers the session store; falls back to ``SessionInfo.from_str()``
@@ -511,9 +575,7 @@ class WebUIServer:
                 return session
         return SessionInfo.from_str(session_id)
 
-    async def _resolve_agent(
-        self, session_id: str, index_dir: Path | None = None
-    ) -> str:
+    async def _resolve_agent(self, session_id: str, index_dir: Path | None = None) -> str:
         """Return the agent name bound to *session_id*.
 
         Prefers the authoritative session store; falls back to
@@ -522,7 +584,9 @@ class WebUIServer:
         session = await self._resolve_session(session_id, index_dir=index_dir)
         return session.agent_name
 
-    def _derive_sessions_from_transcripts(self, sessions_dir: Path | None = None) -> list[SessionInfo]:
+    def _derive_sessions_from_transcripts(
+        self, sessions_dir: Path | None = None
+    ) -> list[SessionInfo]:
         """Build SessionInfo records from transcript files when the session
         index is missing or incomplete.
 
@@ -575,7 +639,9 @@ class WebUIServer:
 
     def _setup_routes(self) -> None:
         """Register REST and WebSocket routes on the aiohttp Application."""
-        self.app.router.add_get(_API_POOLS_PATH, self._handle_pools)
+        # GET /api/pools is registered below (Phase 2B) against
+        # _handle_list_pools, which returns the richer PoolSummary shape
+        # (a superset of the legacy {name} dict, so fetchPools() still works).
         self.app.router.add_get(_API_MODELS_PATH, self._handle_models)
         self.app.router.add_get("/api/workspace", self._handle_workspace)
         self.app.router.add_get("/api/workspace/browse", self._handle_workspace_browse)
@@ -583,12 +649,8 @@ class WebUIServer:
         self.app.router.add_get("/api/workspace/recent", self._handle_workspace_recent)
         self.app.router.add_get(_API_SESSIONS_PATH, self._handle_sessions)
         self.app.router.add_post(_API_SESSIONS_PATH, self._handle_create_session)
-        self.app.router.add_get(
-            f"{_API_SESSIONS_SESSION_PATH}/messages", self._handle_get_messages
-        )
-        self.app.router.add_get(
-            f"{_API_SESSIONS_SESSION_PATH}/todos", self._handle_get_todos
-        )
+        self.app.router.add_get(f"{_API_SESSIONS_SESSION_PATH}/messages", self._handle_get_messages)
+        self.app.router.add_get(f"{_API_SESSIONS_SESSION_PATH}/todos", self._handle_get_todos)
         self.app.router.add_get(
             f"{_API_SESSIONS_SESSION_PATH}/approvals", self._handle_get_approvals
         )
@@ -605,6 +667,41 @@ class WebUIServer:
         )
         self.app.router.add_get(_API_MEDIA_CONFIG_PATH, self._handle_media_config)
         self.app.router.add_delete(_API_SESSIONS_SESSION_PATH, self._handle_delete_session)
+        self.app.router.add_get("/api/config/{domain}", self._handle_get_config)
+        self.app.router.add_put("/api/config/{domain}", self._handle_put_config)
+        self.app.router.add_post("/api/system/restart", self._handle_restart)
+        # Pool / MCP / skills / prompt REST API (Phase 2B). Mirror the
+        # add_<verb> style used above.
+        self.app.router.add_get("/api/pools", self._handle_list_pools)
+        self.app.router.add_post("/api/pools", self._handle_create_pool)
+        self.app.router.add_get("/api/pools/{pool}", self._handle_read_pool)
+        self.app.router.add_put("/api/pools/{pool}", self._handle_write_pool)
+        self.app.router.add_delete("/api/pools/{pool}", self._handle_delete_pool)
+        self.app.router.add_patch("/api/pools/{pool}", self._handle_rename_pool)
+        self.app.router.add_get(
+            "/api/pools/{pool}/agents/{agent}/prompt", self._handle_read_prompt
+        )
+        self.app.router.add_put(
+            "/api/pools/{pool}/agents/{agent}/prompt", self._handle_write_prompt
+        )
+        self.app.router.add_get("/api/mcp", self._handle_read_mcp)
+        self.app.router.add_post("/api/mcp/{server}", self._handle_upsert_mcp)
+        self.app.router.add_put("/api/mcp/{server}", self._handle_upsert_mcp)
+        self.app.router.add_delete("/api/mcp/{server}", self._handle_delete_mcp)
+        self.app.router.add_get("/api/skills", self._handle_list_skills)
+        self.app.router.add_post("/api/skills", self._handle_upload_skill)
+        self.app.router.add_delete("/api/skills/{name}", self._handle_delete_skill)
+        self.app.router.add_get(
+            "/api/pools/{pool}/agents/{agent}/skills", self._handle_list_agent_skills
+        )
+        self.app.router.add_post(
+            "/api/pools/{pool}/agents/{agent}/skills/{name}",
+            self._handle_assign_skill,
+        )
+        self.app.router.add_delete(
+            "/api/pools/{pool}/agents/{agent}/skills/{name}",
+            self._handle_unassign_skill,
+        )
         self.app.router.add_get(_WS_PATH, self._handle_websocket)
 
         if self._static_dist is not None:
@@ -625,13 +722,6 @@ class WebUIServer:
     # REST handlers
     # ------------------------------------------------------------------
 
-    async def _handle_pools(self, request: web.Request) -> web.Response:
-        """GET /api/pools -- list available pool names."""
-        pools: list[dict[str, str]] = [
-            {"name": name} for name in sorted(self._pool_agent_names)
-        ]
-        return web.json_response(pools)
-
     async def _handle_models(self, request: web.Request) -> web.Response:
         """GET /api/models -- list (provider_name, model_name, default) choices
         for the frontend model selector.
@@ -650,6 +740,526 @@ class WebUIServer:
         ]
         return web.json_response({"choices": choices})
 
+    async def _handle_get_config(self, request: web.Request) -> web.Response:
+        """GET /api/config/{domain} -- masked config payload."""
+        if self._config_controller is None:
+            return web.json_response({"error": "config not configured"}, status=503)
+        domain = request.match_info["domain"]
+        try:
+            payload = self._config_controller.read(domain)
+        except KeyError:
+            return web.json_response({"error": f"unknown domain: {domain}"}, status=404)
+        except Exception as exc:  # noqa: BLE001 - malformed YAML / IO errors surface readably
+            logger.exception("config read failed for domain %s", domain)
+            return web.json_response(
+                {"error": f"config read failed: {exc}"}, status=500
+            )
+        return web.json_response(payload.model_dump(mode="json"))
+
+    async def _handle_put_config(self, request: web.Request) -> web.Response:
+        """PUT /api/config/{domain} -- validate + persist. Never auto-applies."""
+        if self._config_controller is None:
+            return web.json_response({"error": "config not configured"}, status=503)
+        domain = request.match_info["domain"]
+        try:
+            body = await request.json()
+        except Exception as exc:  # noqa: BLE001 - malformed JSON body
+            logger.warning("Failed to parse config JSON body: %s", exc)
+            return web.json_response({"error": "invalid body"}, status=400)
+        try:
+            payload = self._config_controller.write(domain, body)
+        except KeyError:
+            return web.json_response({"error": f"unknown domain: {domain}"}, status=404)
+        except FieldValidationError as exc:
+            return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
+        except Exception:  # noqa: BLE001 - unexpected write failure
+            logger.exception("config write failed for domain %s", domain)
+            return web.json_response({"error": "write failed"}, status=500)
+        return web.json_response(payload.model_dump(mode="json"))
+
+    async def _handle_restart(self, request: web.Request) -> web.Response:
+        """POST /api/system/restart -- schedule a process restart."""
+        if self._config_controller is None:
+            return web.json_response({"error": "config not configured"}, status=503)
+        try:
+            self._config_controller.restart()
+        except Exception as exc:  # noqa: BLE001 - restart unavailable
+            logger.warning("restart failed: %s", exc)
+            return web.json_response(
+                {
+                    "error": "restart unavailable",
+                    "hint": "Run `modexbot restart` in your terminal.",
+                },
+                status=200,
+            )
+        return web.json_response({"restarting": True})
+
+    # ------------------------------------------------------------------
+    # Pool / MCP / skills / prompt handlers (Phase 2B)
+    # ------------------------------------------------------------------
+
+    def _pool_cfg_required(self) -> web.Response | None:
+        """Return a 503 response if no PoolConfigController is wired, else None."""
+        if self._pool_config_controller is None:
+            return web.json_response(
+                {"error": "pool config not configured"}, status=503
+            )
+        return None
+
+    async def _handle_list_pools(self, request: web.Request) -> web.Response:
+        """GET /api/pools -- list pool summaries."""
+        if (miss := self._pool_cfg_required()) is not None:
+            return miss
+        try:
+            pools = self._pool_config_controller.list_pools()
+        except Exception:  # noqa: BLE001
+            logger.exception("list_pools failed")
+            return web.json_response({"error": "read failed"}, status=500)
+        return web.json_response([p.model_dump(mode="json") for p in pools])
+
+    async def _handle_create_pool(self, request: web.Request) -> web.Response:
+        """POST /api/pools -- create a pool. Body: {"name": "<pool>"}."""
+        if (miss := self._pool_cfg_required()) is not None:
+            return miss
+        try:
+            body = await request.json()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("create_pool: bad JSON body: %s", exc)
+            return web.json_response({"error": "invalid body"}, status=400)
+        name = body.get("name") if isinstance(body, dict) else None
+        if not isinstance(name, str) or not name:
+            return web.json_response(
+                {"error": "validation", "fields": {"name": ["required"]}},
+                status=400,
+            )
+        try:
+            tree = self._pool_config_controller.create_pool(name)
+        except FieldValidationError as exc:
+            return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
+        except Exception:  # noqa: BLE001
+            logger.exception("create_pool failed")
+            return web.json_response({"error": "create failed"}, status=500)
+        return web.json_response(tree.model_dump(mode="json"))
+
+    async def _handle_read_pool(self, request: web.Request) -> web.Response:
+        """GET /api/pools/{pool} -- read one pool tree."""
+        if (miss := self._pool_cfg_required()) is not None:
+            return miss
+        pool = request.match_info["pool"]
+        try:
+            tree = self._pool_config_controller.read_pool(pool)
+        except KeyError:
+            return web.json_response(
+                {"error": f"unknown pool: {pool}"}, status=404
+            )
+        except FieldValidationError as exc:
+            return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
+        except Exception:  # noqa: BLE001
+            logger.exception("read_pool failed")
+            return web.json_response({"error": "read failed"}, status=500)
+        return web.json_response(tree.model_dump(mode="json"))
+
+    async def _handle_write_pool(self, request: web.Request) -> web.Response:
+        """PUT /api/pools/{pool} -- validate + persist a pool tree. Body = PoolTree."""
+        if (miss := self._pool_cfg_required()) is not None:
+            return miss
+        pool = request.match_info["pool"]
+        try:
+            body = await request.json()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("write_pool: bad JSON body: %s", exc)
+            return web.json_response({"error": "invalid body"}, status=400)
+        try:
+            from bot.config.pool_payloads import PoolTree
+
+            tree = PoolTree.model_validate(body)
+        except Exception as exc:  # noqa: BLE001 - pydantic validation
+            from bot.service.config_controller import _flatten_errors
+            from pydantic import ValidationError
+
+            if isinstance(exc, ValidationError):
+                return web.json_response(
+                    {"error": "validation", "fields": _flatten_errors(exc)},
+                    status=400,
+                )
+            return web.json_response(
+                {"error": "validation", "fields": {"body": [str(exc)]}},
+                status=400,
+            )
+        try:
+            written = self._pool_config_controller.write_pool(pool, tree)
+        except KeyError:
+            return web.json_response({"error": f"unknown pool: {pool}"}, status=404)
+        except FieldValidationError as exc:
+            return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
+        except Exception:  # noqa: BLE001
+            logger.exception("write_pool failed")
+            return web.json_response({"error": "write failed"}, status=500)
+        return web.json_response(written.model_dump(mode="json"))
+
+    async def _handle_delete_pool(self, request: web.Request) -> web.Response:
+        """DELETE /api/pools/{pool} -- delete a pool (refuses the default pool)."""
+        if (miss := self._pool_cfg_required()) is not None:
+            return miss
+        pool = request.match_info["pool"]
+        try:
+            self._pool_config_controller.delete_pool(pool)
+        except DefaultPoolProtectedError as exc:
+            return web.json_response({"error": str(exc)}, status=409)
+        except KeyError:
+            return web.json_response({"error": f"unknown pool: {pool}"}, status=404)
+        except FieldValidationError as exc:
+            return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
+        except Exception:  # noqa: BLE001
+            logger.exception("delete_pool failed")
+            return web.json_response({"error": "delete failed"}, status=500)
+        return web.json_response({"deleted": pool})
+
+    async def _handle_rename_pool(self, request: web.Request) -> web.Response:
+        """PATCH /api/pools/{pool} -- rename a pool. Body: {"name": "<new>"}."""
+        if (miss := self._pool_cfg_required()) is not None:
+            return miss
+        old = request.match_info["pool"]
+        try:
+            body = await request.json()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("rename_pool: bad JSON body: %s", exc)
+            return web.json_response({"error": "invalid body"}, status=400)
+        new = body.get("name") if isinstance(body, dict) else None
+        if not isinstance(new, str) or not new:
+            return web.json_response(
+                {"error": "validation", "fields": {"name": ["required"]}},
+                status=400,
+            )
+        try:
+            tree = self._pool_config_controller.rename_pool(old, new)
+        except DefaultPoolProtectedError as exc:
+            return web.json_response({"error": str(exc)}, status=409)
+        except KeyError:
+            return web.json_response({"error": f"unknown pool: {old}"}, status=404)
+        except FieldValidationError as exc:
+            return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
+        except Exception:  # noqa: BLE001
+            logger.exception("rename_pool failed")
+            return web.json_response({"error": "rename failed"}, status=500)
+        return web.json_response(tree.model_dump(mode="json"))
+
+    async def _handle_read_prompt(self, request: web.Request) -> web.Response:
+        """GET /api/pools/{pool}/agents/{agent}/prompt -- read the agent prompt md."""
+        if (miss := self._pool_cfg_required()) is not None:
+            return miss
+        agent = request.match_info["agent"]
+        try:
+            prompt = self._pool_config_controller.read_prompt(agent)
+        except KeyError:
+            return web.json_response(
+                {"error": f"unknown agent: {agent}"}, status=404
+            )
+        except FieldValidationError as exc:
+            return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
+        except Exception:  # noqa: BLE001
+            logger.exception("read_prompt failed")
+            return web.json_response({"error": "read failed"}, status=500)
+        return web.json_response(prompt.model_dump(mode="json"))
+
+    async def _handle_write_prompt(self, request: web.Request) -> web.Response:
+        """PUT /api/pools/{pool}/agents/{agent}/prompt -- write the agent prompt md."""
+        if (miss := self._pool_cfg_required()) is not None:
+            return miss
+        agent = request.match_info["agent"]
+        try:
+            body = await request.json()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("write_prompt: bad JSON body: %s", exc)
+            return web.json_response({"error": "invalid body"}, status=400)
+        content = body.get("content") if isinstance(body, dict) else None
+        if not isinstance(content, str):
+            return web.json_response(
+                {"error": "validation", "fields": {"content": ["required"]}},
+                status=400,
+            )
+        try:
+            prompt = self._pool_config_controller.write_prompt(agent, content)
+        except KeyError:
+            return web.json_response({"error": f"unknown agent: {agent}"}, status=404)
+        except FieldValidationError as exc:
+            return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
+        except Exception:  # noqa: BLE001
+            logger.exception("write_prompt failed")
+            return web.json_response({"error": "write failed"}, status=500)
+        return web.json_response(prompt.model_dump(mode="json"))
+
+    async def _handle_read_mcp(self, request: web.Request) -> web.Response:
+        """GET /api/mcp -- read the typed MCP registry mapping."""
+        if (miss := self._pool_cfg_required()) is not None:
+            return miss
+        try:
+            registry = self._pool_config_controller.read_mcp()
+        except Exception:  # noqa: BLE001
+            logger.exception("read_mcp failed")
+            return web.json_response({"error": "read failed"}, status=500)
+        return web.json_response(
+            {name: e.model_dump(mode="json", by_alias=True) for name, e in registry.items()}
+        )
+
+    async def _handle_upsert_mcp(self, request: web.Request) -> web.Response:
+        """POST/PUT /api/mcp/{server} -- insert or update one MCP server entry."""
+        if (miss := self._pool_cfg_required()) is not None:
+            return miss
+        name = request.match_info["server"]
+        try:
+            body = await request.json()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("upsert_mcp: bad JSON body: %s", exc)
+            return web.json_response({"error": "invalid body"}, status=400)
+        try:
+            entry = self._pool_config_controller.upsert_mcp(name, body)
+        except FieldValidationError as exc:
+            return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
+        except Exception:  # noqa: BLE001
+            logger.exception("upsert_mcp failed")
+            return web.json_response({"error": "write failed"}, status=500)
+        return web.json_response(entry.model_dump(mode="json", by_alias=True))
+
+    async def _handle_delete_mcp(self, request: web.Request) -> web.Response:
+        """DELETE /api/mcp/{server} -- remove one MCP server (refuses if referenced)."""
+        if (miss := self._pool_cfg_required()) is not None:
+            return miss
+        name = request.match_info["server"]
+        try:
+            self._pool_config_controller.delete_mcp(name)
+        except McpInUseError as exc:
+            return web.json_response(
+                {"error": "in use", "used_by": [list(pair) for pair in exc.used_by]},
+                status=409,
+            )
+        except KeyError:
+            return web.json_response(
+                {"error": f"unknown server: {name}"}, status=404
+            )
+        except FieldValidationError as exc:
+            return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
+        except Exception:  # noqa: BLE001
+            logger.exception("delete_mcp failed")
+            return web.json_response({"error": "delete failed"}, status=500)
+        return web.json_response({"deleted": name})
+
+    async def _handle_list_skills(self, request: web.Request) -> web.Response:
+        """GET /api/skills -- list global skills."""
+        if (miss := self._pool_cfg_required()) is not None:
+            return miss
+        try:
+            skills = self._pool_config_controller.list_skills()
+        except Exception:  # noqa: BLE001
+            logger.exception("list_skills failed")
+            return web.json_response({"error": "read failed"}, status=500)
+        return web.json_response([s.model_dump(mode="json") for s in skills])
+
+    async def _handle_upload_skill(self, request: web.Request) -> web.Response:
+        """POST /api/skills -- upload a global skill.
+
+        Accepts multipart/form-data (preferred, matches the frontend
+        ``webkitdirectory`` upload): each part's filename is a path under
+        ``<skillName>/...``; keys are normalized relative to ``<skillName>/``.
+        A text ``name`` form field overrides the skill-name inference from the
+        path prefix. Per-file and total-size caps reject oversized uploads.
+        """
+        if (miss := self._pool_cfg_required()) is not None:
+            return miss
+        ct = request.content_type or ""
+        if ct.startswith("multipart/"):
+            return await self._upload_skill_multipart(request)
+        return await self._upload_skill_json(request)
+
+    async def _upload_skill_multipart(self, request: web.Request) -> web.Response:
+        name: str | None = None
+        file_tree: dict[str, bytes] = {}
+        total = 0
+        try:
+            reader = await request.multipart()
+        except Exception as exc:  # noqa: BLE001 - not multipart / parser error
+            logger.debug("skill upload: multipart unavailable (%s) -- falling back", exc)
+            raise _SkillUploadFallback()
+        async for part in reader:
+            if part.name == "name":
+                try:
+                    name = (await part.text()).strip()
+                except Exception:  # noqa: BLE001
+                    name = None
+                continue
+            filename = part.filename
+            if not filename:
+                continue
+            data = await part.read(decode=False)
+            # aiohttp returns bytearray; coerce to bytes for the store.
+            if not isinstance(data, (bytes, bytearray)):
+                continue
+            data = bytes(data)
+            if len(data) > _SKILL_MAX_FILE_BYTES:
+                return web.json_response(
+                    {"error": "validation", "fields": {"file": [f"{filename} exceeds {_SKILL_MAX_FILE_MB}MB"]}},
+                    status=400,
+                )
+            total += len(data)
+            if total > _SKILL_MAX_TOTAL_BYTES:
+                return web.json_response(
+                    {"error": "validation", "fields": {"upload": [f"exceeds {_SKILL_MAX_TOTAL_MB}MB total"]}},
+                    status=400,
+                )
+            rel = _skill_relpath(filename)
+            if rel is not None:
+                file_tree[rel] = data
+        if name is None:
+            # Infer the skill name from the first path segment if present.
+            for rel in file_tree:
+                head = rel.split("/", 1)[0]
+                if head and head != rel:
+                    name = head
+                    break
+        if not name:
+            return web.json_response(
+                {"error": "validation", "fields": {"name": ["required"]}}, status=400
+            )
+        if not file_tree:
+            raise _SkillUploadFallback()
+        try:
+            entry = self._pool_config_controller.upload_skill(name, file_tree)
+        except FieldValidationError as exc:
+            return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
+        except Exception:  # noqa: BLE001
+            logger.exception("upload_skill failed")
+            return web.json_response({"error": "upload failed"}, status=500)
+        return web.json_response(entry.model_dump(mode="json"))
+
+    async def _upload_skill_json(self, request: web.Request) -> web.Response:
+        """JSON fallback for skill upload: ``{"name": str, "files": {relpath: base64}}``.
+
+        Used when the client cannot submit multipart. Documented deviation;
+        the frontend (Task 4.5) is expected to use multipart, but this keeps
+        the API usable from environments where multipart is awkward.
+        """
+        try:
+            body = await request.json()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("upload_skill_json: bad JSON body: %s", exc)
+            return web.json_response({"error": "invalid body"}, status=400)
+        if not isinstance(body, dict):
+            return web.json_response({"error": "invalid body"}, status=400)
+        name = body.get("name")
+        files = body.get("files")
+        if not isinstance(name, str) or not name:
+            return web.json_response(
+                {"error": "validation", "fields": {"name": ["required"]}}, status=400
+            )
+        if not isinstance(files, dict) or not files:
+            return web.json_response(
+                {"error": "validation", "fields": {"files": ["required"]}}, status=400
+            )
+        import base64
+
+        file_tree: dict[str, bytes] = {}
+        total = 0
+        for rel_b64, payload in files.items():
+            rel = _skill_relpath(rel_b64)
+            if rel is None:
+                return web.json_response(
+                    {"error": "validation", "fields": {"file": [f"unsafe path {rel_b64!r}"]}},
+                    status=400,
+                )
+            if not isinstance(payload, str):
+                return web.json_response(
+                    {"error": "validation", "fields": {"file": [f"{rel_b64!r} not base64"]}},
+                    status=400,
+                )
+            try:
+                data = base64.b64decode(payload)
+            except Exception as exc:  # noqa: BLE001
+                return web.json_response(
+                    {"error": "validation", "fields": {"file": [f"{rel_b64!r} bad base64: {exc}"]}},
+                    status=400,
+                )
+            if len(data) > _SKILL_MAX_FILE_BYTES:
+                return web.json_response(
+                    {"error": "validation", "fields": {"file": [f"{rel_b64} exceeds {_SKILL_MAX_FILE_MB}MB"]}},
+                    status=400,
+                )
+            total += len(data)
+            if total > _SKILL_MAX_TOTAL_BYTES:
+                return web.json_response(
+                    {"error": "validation", "fields": {"upload": [f"exceeds {_SKILL_MAX_TOTAL_MB}MB total"]}},
+                    status=400,
+                )
+            file_tree[rel] = data
+        try:
+            entry = self._pool_config_controller.upload_skill(name, file_tree)
+        except FieldValidationError as exc:
+            return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
+        except Exception:  # noqa: BLE001
+            logger.exception("upload_skill_json failed")
+            return web.json_response({"error": "upload failed"}, status=500)
+        return web.json_response(entry.model_dump(mode="json"))
+
+    async def _handle_delete_skill(self, request: web.Request) -> web.Response:
+        """DELETE /api/skills/{name} -- remove a global skill (per-agent copies stay)."""
+        if (miss := self._pool_cfg_required()) is not None:
+            return miss
+        name = request.match_info["name"]
+        try:
+            self._pool_config_controller.delete_skill(name)
+        except FieldValidationError as exc:
+            return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
+        except Exception:  # noqa: BLE001
+            logger.exception("delete_skill failed")
+            return web.json_response({"error": "delete failed"}, status=500)
+        return web.json_response({"deleted": name})
+
+    async def _handle_list_agent_skills(self, request: web.Request) -> web.Response:
+        """GET /api/pools/{pool}/agents/{agent}/skills -- list an agent's skills."""
+        if (miss := self._pool_cfg_required()) is not None:
+            return miss
+        pool = request.match_info["pool"]
+        agent = request.match_info["agent"]
+        try:
+            skills = self._pool_config_controller.list_agent_skills(pool, agent)
+        except FieldValidationError as exc:
+            return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
+        except Exception:  # noqa: BLE001
+            logger.exception("list_agent_skills failed")
+            return web.json_response({"error": "read failed"}, status=500)
+        return web.json_response([s.model_dump(mode="json") for s in skills])
+
+    async def _handle_assign_skill(self, request: web.Request) -> web.Response:
+        """POST /api/pools/{pool}/agents/{agent}/skills/{name} -- assign a skill copy."""
+        if (miss := self._pool_cfg_required()) is not None:
+            return miss
+        pool = request.match_info["pool"]
+        agent = request.match_info["agent"]
+        name = request.match_info["name"]
+        try:
+            self._pool_config_controller.assign_skill(pool, agent, name)
+        except FieldValidationError as exc:
+            return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
+        except Exception:  # noqa: BLE001
+            logger.exception("assign_skill failed")
+            return web.json_response({"error": "assign failed"}, status=500)
+        return web.json_response({"assigned": name})
+
+    async def _handle_unassign_skill(self, request: web.Request) -> web.Response:
+        """DELETE /api/pools/{pool}/agents/{agent}/skills/{name} -- remove a skill copy."""
+        if (miss := self._pool_cfg_required()) is not None:
+            return miss
+        pool = request.match_info["pool"]
+        agent = request.match_info["agent"]
+        name = request.match_info["name"]
+        try:
+            self._pool_config_controller.unassign_skill(pool, agent, name)
+        except FieldValidationError as exc:
+            return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
+        except Exception:  # noqa: BLE001
+            logger.exception("unassign_skill failed")
+            return web.json_response({"error": "unassign failed"}, status=500)
+        return web.json_response({"unassigned": name})
+
     async def _handle_workspace(self, request: web.Request) -> web.Response:
         """GET /api/workspace -- return home path, recent workspaces, and timezone."""
         home = str(self._workspace_control.home) if self._workspace_control is not None else ""
@@ -660,7 +1270,9 @@ class WebUIServer:
                 for r in self._recent_workspaces.list_recent()
                 if isinstance(r, dict) and "path" in r
             ]
-        return web.json_response({"home": home, "recent": recent, "timezone": str(get_user_timezone())})
+        return web.json_response(
+            {"home": home, "recent": recent, "timezone": str(get_user_timezone())}
+        )
 
     async def _handle_workspace_browse(self, request: web.Request) -> web.Response:
         """GET /api/workspace/browse?path=<dir> -- list directory contents."""
@@ -685,11 +1297,13 @@ class WebUIServer:
                         continue
                     if not is_dir and not child.is_file():
                         continue
-                    entries.append({
-                        "name": child.name,
-                        "path": str(child),
-                        "is_dir": is_dir,
-                    })
+                    entries.append(
+                        {
+                            "name": child.name,
+                            "path": str(child),
+                            "is_dir": is_dir,
+                        }
+                    )
             except PermissionError:
                 pass
             entries.sort(key=lambda e: (not bool(e["is_dir"]), str(e["name"]).lower()))
@@ -699,26 +1313,32 @@ class WebUIServer:
             if directory == directory.parent:
                 import platform
                 import string
+
                 if platform.system() == "Windows":
                     from pathlib import Path as _P
+
                     for letter in string.ascii_uppercase:
                         drive = _P(f"{letter}:\\")
                         if drive.exists():
-                            drives.append({
-                                "name": f"{letter}:",
-                                "path": str(drive),
-                                "is_dir": True,
-                            })
+                            drives.append(
+                                {
+                                    "name": f"{letter}:",
+                                    "path": str(drive),
+                                    "is_dir": True,
+                                }
+                            )
             return entries, parent_path, drives
 
         entries, parent_path, drives = await asyncio.to_thread(_walk, target)
 
-        return web.json_response({
-            "path": str(target),
-            "parent": parent_path,
-            "entries": entries,
-            "drives": drives,
-        })
+        return web.json_response(
+            {
+                "path": str(target),
+                "parent": parent_path,
+                "entries": entries,
+                "drives": drives,
+            }
+        )
 
     async def _handle_workspace_cd(self, request: web.Request) -> web.Response:
         """POST /api/workspace/cd -- change current workspace directory."""
@@ -739,22 +1359,28 @@ class WebUIServer:
                 target = raw.strip()
         if not target:
             target = str(self._workspace_control.home)
-        result = await self._workspace_control.open_workspace(target)  # registers the workspace without mutating the agent_pool_map
+        result = await self._workspace_control.open_workspace(
+            target
+        )  # registers the workspace without mutating the agent_pool_map
         if result.success and self._recent_workspaces is not None:
             self._recent_workspaces.add(str(result.current_path))
-        return web.json_response({
-            "success": result.success,
-            "cwd": str(result.current_path),
-            "notice": result.notice,
-        })
+        return web.json_response(
+            {
+                "success": result.success,
+                "cwd": str(result.current_path),
+                "notice": result.notice,
+            }
+        )
 
     async def _handle_workspace_recent(self, request: web.Request) -> web.Response:
         """GET /api/workspace/recent -- return recently visited workspace paths."""
         if self._recent_workspaces is None:
             return web.json_response({"recent": []})
-        return web.json_response({
-            "recent": self._recent_workspaces.list_recent(),
-        })
+        return web.json_response(
+            {
+                "recent": self._recent_workspaces.list_recent(),
+            }
+        )
 
     async def _handle_create_session(self, request: web.Request) -> web.Response:
         """POST /api/sessions -- create a new session.
@@ -801,14 +1427,16 @@ class WebUIServer:
         set_conv_channel(session_prefix, "websocket")
         if self._pool_switch_callback is not None:
             self._pool_switch_callback(session_prefix, effective_pool)
-        return web.json_response({
-            "session_id": session_id,
-            "agent_name": agent_name,
-            "pool": effective_pool,
-            "parent_session_id": None,
-            "created_at": created_at,
-            "updated_at": updated_at,
-        })
+        return web.json_response(
+            {
+                "session_id": session_id,
+                "agent_name": agent_name,
+                "pool": effective_pool,
+                "parent_session_id": None,
+                "created_at": created_at,
+                "updated_at": updated_at,
+            }
+        )
 
     async def _handle_sessions(self, request: web.Request) -> web.Response:
         """GET /api/sessions -- list sessions visible in the current workspace.
@@ -902,20 +1530,22 @@ class WebUIServer:
         )
         assistant_events: list[dict[str, object]] = []
         for t in turns:
-            assistant_events.append({
-                "event": "assistant_turn",
-                "session_id": session_id,
-                "agent_name": agent_name,
-                "timestamp": t.started_at,
-                "turn_id": t.turn_id,
-                "blocks": t.blocks,
-                "latency_ms": 0,
-                # G7: SendFileToUserTool persists outbound Attachment records on
-                # an AssistantTurnEvent; _materialize_events collects them onto
-                # MaterializedTurn.attachments (including the standalone
-                # no-turn_id carriers G7 writes) so they survive a refresh.
-                "attachments": t.attachments,
-            })
+            assistant_events.append(
+                {
+                    "event": "assistant_turn",
+                    "session_id": session_id,
+                    "agent_name": agent_name,
+                    "timestamp": t.started_at,
+                    "turn_id": t.turn_id,
+                    "blocks": t.blocks,
+                    "latency_ms": 0,
+                    # G7: SendFileToUserTool persists outbound Attachment records on
+                    # an AssistantTurnEvent; _materialize_events collects them onto
+                    # MaterializedTurn.attachments (including the standalone
+                    # no-turn_id carriers G7 writes) so they survive a refresh.
+                    "attachments": t.attachments,
+                }
+            )
 
         result = user_events + assistant_events
 
@@ -986,9 +1616,7 @@ class WebUIServer:
         pool: str = self._pool_of_agent(agent_name)
 
         turns_dir = WorkspacePaths(root=sessions_dir.parent).runtime_dir(pool, "turns")
-        codec_registry = RuntimeStateCodecRegistry(
-            {AgentKind.REACT: ReActRuntimeStateCodec()}
-        )
+        codec_registry = RuntimeStateCodecRegistry({AgentKind.REACT: ReActRuntimeStateCodec()})
         turn_store = JsonFileTurnStateStore(turns_dir, codec_registry)
         # Approval turns are partitioned by workspace (turn_store path) + pool
         # + session_id, so agent_id is NOT a query dimension — matches
@@ -1040,9 +1668,7 @@ class WebUIServer:
 
         decision = ApprovalDecisionInput(tool_call_id=tool_call_id, action=action)
         ws_raw = request.query.get("ws", "")
-        session = await self._resolve_session(
-            session_id, index_dir=self._index_dir_of_ws(ws_raw)
-        )
+        session = await self._resolve_session(session_id, index_dir=self._index_dir_of_ws(ws_raw))
         envelope = UserInputEnvelope(
             external_id=session_id,
             content="",
@@ -1057,9 +1683,7 @@ class WebUIServer:
         # _input_pipeline / _input_ctx are injected by WebUIService. They may
         # be None in minimal test setups -- guard so the handler degrades cleanly.
         if self._input_pipeline is None or self._input_ctx is None:
-            return web.json_response(
-                {"error": "input pipeline not configured"}, status=503
-            )
+            return web.json_response({"error": "input pipeline not configured"}, status=503)
         await self._input_pipeline.handle(envelope, self._input_ctx)
         return web.json_response({"accepted": True}, status=202)
 
@@ -1111,16 +1735,12 @@ class WebUIServer:
             index_dir = self._index_dir_of_ws(ws_raw)
             agent_name = await self._resolve_agent(session_id, index_dir=index_dir)
             pool = self._pool_of_agent(agent_name)
-            media_store = (
-                self._input_ctx.media_store if self._input_ctx is not None else None
-            )
+            media_store = self._input_ctx.media_store if self._input_ctx is not None else None
             if media_store is None:
                 # No media resolver wired — cannot serve inbound bytes.
                 return web.Response(status=404, text="attachment not found")
             media_dir = self._media_dir_of_ws(ws_raw, pool)
-            path = media_store.store_for(pool, media_dir=media_dir).read(
-                session_id, attachment_id
-            )
+            path = media_store.store_for(pool, media_dir=media_dir).read(session_id, attachment_id)
         elif att.locator is AttachmentLocator.WORKSPACE:
             # Outbound: the file is at the literal absolute path the agent gave.
             path = Path(att.path)
@@ -1132,9 +1752,7 @@ class WebUIServer:
                 )
                 return web.Response(status=404, text="attachment not found")
         else:  # Defensive — unknown locator value.
-            logger.warning(
-                "Unknown attachment locator %r for %s", att.locator, attachment_id
-            )
+            logger.warning("Unknown attachment locator %r for %s", att.locator, attachment_id)
             return web.Response(status=404, text="attachment not found")
 
         # Symmetric 404: the Attachment record exists in the transcript, but the
@@ -1144,7 +1762,11 @@ class WebUIServer:
 
         # MIME allow-list: only image/* and video/* keep their real Content-Type.
         mime = att.mime or "application/octet-stream"
-        serve_mime = mime if (mime.startswith("image/") or mime.startswith("video/")) else "application/octet-stream"
+        serve_mime = (
+            mime
+            if (mime.startswith("image/") or mime.startswith("video/"))
+            else "application/octet-stream"
+        )
 
         headers: dict[str, str] = {
             "Content-Type": serve_mime,
@@ -1156,8 +1778,7 @@ class WebUIServer:
         # SVG opened in a browser tab cannot execute or exfiltrate.
         if serve_mime == "image/svg+xml":
             headers["Content-Security-Policy"] = (
-                "default-src 'none'; img-src 'self' data:; "
-                "style-src 'unsafe-inline'; sandbox"
+                "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; sandbox"
             )
         # FileResponse streams the file (chunk_size) and handles HTTP Range /
         # 206 Partial Content natively, so up-to-1 GB outbound never buffers.
@@ -1176,16 +1797,16 @@ class WebUIServer:
         from modex_agent.ioc.configs.pool import MediaConfig
 
         config: MediaConfig = (
-            self._input_ctx.media_config
-            if self._input_ctx is not None
-            else MediaConfig()
+            self._input_ctx.media_config if self._input_ctx is not None else MediaConfig()
         )
-        return web.json_response({
-            "max_image_bytes": config.max_image_bytes,
-            "max_text_doc_bytes": config.max_text_doc_bytes,
-            "session_budget_bytes": config.session_budget_bytes,
-            "max_outbound_bytes": config.max_outbound_bytes,
-        })
+        return web.json_response(
+            {
+                "max_image_bytes": config.max_image_bytes,
+                "max_text_doc_bytes": config.max_text_doc_bytes,
+                "session_budget_bytes": config.session_budget_bytes,
+                "max_outbound_bytes": config.max_outbound_bytes,
+            }
+        )
 
     async def _handle_upload_attachment(self, request: web.Request) -> web.Response:
         """POST /api/sessions/{session_id}/attachments -- temp-file receiver.
@@ -1215,14 +1836,10 @@ class WebUIServer:
         reader = await request.multipart()
         part = await reader.next()
         if part is None or part.name != "file":
-            return web.json_response(
-                {"error": "missing 'file' part"}, status=400
-            )
+            return web.json_response({"error": "missing 'file' part"}, status=400)
 
         config = (
-            self._input_ctx.media_config_for(pool)
-            if self._input_ctx is not None
-            else MediaConfig()
+            self._input_ctx.media_config_for(pool) if self._input_ctx is not None else MediaConfig()
         )
         # Loose early cap: reject anything above the most generous accepted
         # limit. The authoritative per-kind gate runs in the ingest stage.
@@ -1244,9 +1861,7 @@ class WebUIServer:
                     if size > early_cap:
                         out.close()
                         tmp_path.unlink(missing_ok=True)
-                        return web.json_response(
-                            {"error": "file too large"}, status=413
-                        )
+                        return web.json_response({"error": "file too large"}, status=413)
                     out.write(chunk)
         except Exception:
             try:
@@ -1255,12 +1870,14 @@ class WebUIServer:
                 logger.warning("could not remove temp upload %s", tmp_path)
             raise
 
-        return web.json_response({
-            "local_path": str(tmp_path),
-            "filename": part.filename or tmp_name,
-            "size": size,
-            "mime": part.headers.get("Content-Type"),
-        })
+        return web.json_response(
+            {
+                "local_path": str(tmp_path),
+                "filename": part.filename or tmp_name,
+                "size": size,
+                "mime": part.headers.get("Content-Type"),
+            }
+        )
 
     async def _handle_delete_session(self, request: web.Request) -> web.Response:
         """DELETE /api/sessions/{session_id} -- delete a session.
@@ -1372,13 +1989,16 @@ class WebUIServer:
         handled = await self._input._try_intercept_control("/stop", resolved.session_id)
         if not handled:
             pool = self._pool_of_agent(resolved.agent_name)
-            await _safe_send_json(ws, DeltaEnvelope(
-                session_id=resolved.session_id,
-                agent_name=resolved.agent_name,
-                event_type=WebUIEventType.ERROR.value,
-                pool=pool,
-                payload={"message": "No turn to pause — the agent is currently idle."},
-            ).to_dict())
+            await _safe_send_json(
+                ws,
+                DeltaEnvelope(
+                    session_id=resolved.session_id,
+                    agent_name=resolved.agent_name,
+                    event_type=WebUIEventType.ERROR.value,
+                    pool=pool,
+                    payload={"message": "No turn to pause — the agent is currently idle."},
+                ).to_dict(),
+            )
 
     async def _ws_attach(
         self,
@@ -1406,13 +2026,16 @@ class WebUIServer:
                 else pool_from_client
             )
             if self._pool_agent_names and agent_name not in self._pool_agent_names:
-                await _safe_send_json(ws, DeltaEnvelope(
-                    session_id=session_id or "",
-                    agent_name=agent_name,
-                    event_type=WebUIEventType.ERROR.value,
-                    pool=pool_from_client,
-                    payload={"message": f"unknown pool: {pool_from_client}"},
-                ).to_dict())
+                await _safe_send_json(
+                    ws,
+                    DeltaEnvelope(
+                        session_id=session_id or "",
+                        agent_name=agent_name,
+                        event_type=WebUIEventType.ERROR.value,
+                        pool=pool_from_client,
+                        payload={"message": f"unknown pool: {pool_from_client}"},
+                    ).to_dict(),
+                )
                 return
             # Deferred creation: empty drafts are NOT persisted — the client's
             # uuid_prefix is used verbatim as the session_prefix so the session id
@@ -1427,18 +2050,23 @@ class WebUIServer:
             # (reattach of a persisted session that already received a message),
             # routing is already established — attach is idempotent.
             try:
-                if any(True for _ in self._store.load(session_id, sessions_dir=attach_sessions_dir)):
+                if any(
+                    True for _ in self._store.load(session_id, sessions_dir=attach_sessions_dir)
+                ):
                     pass  # Session persisted; attach is idempotent, routing intact.
             except Exception as exc:
                 logger.warning("Failed to check existing transcript for %s: %s", session_id, exc)
         else:
             if not session_id or "." not in session_id:
-                await _safe_send_json(ws, DeltaEnvelope(
-                    session_id=session_id or "",
-                    agent_name=_DEFAULT_AGENT_NAME,
-                    event_type=WebUIEventType.ERROR.value,
-                    payload={"message": "session_id required"},
-                ).to_dict())
+                await _safe_send_json(
+                    ws,
+                    DeltaEnvelope(
+                        session_id=session_id or "",
+                        agent_name=_DEFAULT_AGENT_NAME,
+                        event_type=WebUIEventType.ERROR.value,
+                        payload={"message": "session_id required"},
+                    ).to_dict(),
+                )
                 return
             resolved = await self._resolve_session(session_id, index_dir=attach_index_dir)
             session_prefix = resolved.session_id_prefix
@@ -1486,15 +2114,15 @@ class WebUIServer:
             if self._input.get_delta_queue(pool_sid) is None:
                 self._input.register_connection(pool_sid, ws)
                 state.attached_sessions.append(pool_sid)
-                state.forward_tasks.append(
-                    asyncio.create_task(self._forward_deltas(pool_sid, ws))
-                )
+                state.forward_tasks.append(asyncio.create_task(self._forward_deltas(pool_sid, ws)))
 
         # Also register subagent sessions found in transcript (for history).
         # These are full session ids (``{conv}.{agent}.{invocation_id}``); each
         # invocation is a distinct session.  ``session_prefix`` is the stable
         # conversation prefix used by the transcript store.
-        for sub_sid in sorted(self._store.list_sessions_by_prefix(session_prefix, sessions_dir=attach_sessions_dir)):
+        for sub_sid in sorted(
+            self._store.list_sessions_by_prefix(session_prefix, sessions_dir=attach_sessions_dir)
+        ):
             sub_agent_name = agent_of(sub_sid, default="unknown")
             # Main-agent sessions have exactly two segments ({prefix}.{agent})
             # and were already registered in the pool_agent_names loop above.
@@ -1510,15 +2138,15 @@ class WebUIServer:
             if self._input.get_delta_queue(sub_sid) is None:
                 self._input.register_connection(sub_sid, ws)
                 state.attached_sessions.append(sub_sid)
-                state.forward_tasks.append(
-                    asyncio.create_task(self._forward_deltas(sub_sid, ws))
-                )
+                state.forward_tasks.append(asyncio.create_task(self._forward_deltas(sub_sid, ws)))
 
         # Also register subagent sessions from relation store — these may have
         # been dispatched but not yet written to transcript.
         if self._session_store is not None:
             for parent_sid in list(state.attached_sessions):
-                for child_session in await self._session_store.get_children(parent_sid, index_dir=attach_index_dir):
+                for child_session in await self._session_store.get_children(
+                    parent_sid, index_dir=attach_index_dir
+                ):
                     child_sid = str(child_session)
                     if self._input.get_delta_queue(child_sid) is None:
                         self._input.register_connection(child_sid, ws)
@@ -1530,21 +2158,20 @@ class WebUIServer:
         # Watch for dynamically-created subagent delta queues (created by
         # send_envelope auto-create).  When a new queue appears for a
         # session_id not yet forwarded, start a _forward_deltas task.
-        state.forward_tasks.append(
-            asyncio.create_task(self._watch_new_queues(ws, state))
-        )
+        state.forward_tasks.append(asyncio.create_task(self._watch_new_queues(ws, state)))
 
-        state.forward_tasks.append(
-            asyncio.create_task(self._forward_deltas(session_id, ws))
-        )
+        state.forward_tasks.append(asyncio.create_task(self._forward_deltas(session_id, ws)))
 
         att_agent = await self._resolve_agent(session_id, index_dir=attach_index_dir)
-        await _safe_send_json(ws, DeltaEnvelope(
-            session_id=session_id,
-            agent_name=att_agent,
-            event_type=WebUIEventType.ATTACHED.value,
-            pool=self._pool_of_agent(att_agent),
-        ).to_dict())
+        await _safe_send_json(
+            ws,
+            DeltaEnvelope(
+                session_id=session_id,
+                agent_name=att_agent,
+                event_type=WebUIEventType.ATTACHED.value,
+                pool=self._pool_of_agent(att_agent),
+            ).to_dict(),
+        )
 
     async def _materialize_deferred_session(
         self, session_id: str, index_dir: Path | None = None
@@ -1587,9 +2214,9 @@ class WebUIServer:
         # when there are pending uploads even with empty text (ADR-0013: a file
         # in a conversation is itself the message). Drop only when there is
         # neither text nor any attachment payload.
-        has_attachment_payload = isinstance(data.get("attachments"), list) and len(
-            data.get("attachments") or []
-        ) > 0
+        has_attachment_payload = (
+            isinstance(data.get("attachments"), list) and len(data.get("attachments") or []) > 0
+        )
         if "." not in session_id or (not content and not has_attachment_payload):
             return
 
@@ -1628,8 +2255,8 @@ class WebUIServer:
         # explicit_agent directly when agent_pool_map lacks the entry (edge
         # case: map not yet populated during early server startup).
         explicit_pool = (
-            self._agent_pool_map.get(explicit_agent) or explicit_agent
-        ) if explicit_agent else None
+            (self._agent_pool_map.get(explicit_agent) or explicit_agent) if explicit_agent else None
+        )
 
         # The session was already established upstream (attach / create_session).
         # Pass it through so the pipeline reuses session.session_id verbatim
@@ -1665,9 +2292,7 @@ class WebUIServer:
             # a legitimately-uploaded file whose temp path lives under the
             # template pool's ``_tmp`` — the same file the upload endpoint wrote.
             staging_pool = (
-                self._pool_of_agent(explicit_agent)
-                if explicit_agent
-                else _DEFAULT_AGENT_NAME
+                self._pool_of_agent(explicit_agent) if explicit_agent else _DEFAULT_AGENT_NAME
             )
             staging_root = self._media_tmp_dir_of_ws(ws_raw, staging_pool).resolve()
             for entry in raw_attachments:
@@ -1683,21 +2308,27 @@ class WebUIServer:
                 except (OSError, ValueError) as exc:
                     logger.warning(
                         "Dropping WS attachment %r: path unresolvable (%s)",
-                        local_path, exc,
+                        local_path,
+                        exc,
                     )
                     continue
                 if not resolved.is_relative_to(staging_root):
                     logger.warning(
                         "Dropping WS attachment %r: outside staging dir %s "
                         "(path-traversal rejection)",
-                        local_path, staging_root,
+                        local_path,
+                        staging_root,
                     )
                     continue
-                attachments.append(AttachmentRef(
-                    local_path=local_path,
-                    filename=entry.get("filename") if isinstance(entry.get("filename"), str) else None,
-                    mime_type=entry.get("mime") if isinstance(entry.get("mime"), str) else None,
-                ))
+                attachments.append(
+                    AttachmentRef(
+                        local_path=local_path,
+                        filename=entry.get("filename")
+                        if isinstance(entry.get("filename"), str)
+                        else None,
+                        mime_type=entry.get("mime") if isinstance(entry.get("mime"), str) else None,
+                    )
+                )
 
         envelope = UserInputEnvelope(
             external_id=uuid_prefix,
@@ -1756,13 +2387,16 @@ class WebUIServer:
                 except (KeyError, TypeError):
                     pass
             pool = explicit_pool or _DEFAULT_AGENT_NAME
-            await _safe_send_json(ws, DeltaEnvelope(
-                session_id=session_id,
-                agent_name=explicit_agent or _DEFAULT_AGENT_NAME,
-                event_type=WebUIEventType.ERROR.value,
-                pool=pool,
-                payload={"message": message or f"unsupported command in WebUI chat"},
-            ).to_dict())
+            await _safe_send_json(
+                ws,
+                DeltaEnvelope(
+                    session_id=session_id,
+                    agent_name=explicit_agent or _DEFAULT_AGENT_NAME,
+                    event_type=WebUIEventType.ERROR.value,
+                    pool=pool,
+                    payload={"message": message or "unsupported command in WebUI chat"},
+                ).to_dict(),
+            )
 
     async def _ws_delete_conversation(
         self,
@@ -1785,20 +2419,21 @@ class WebUIServer:
         # single-session delete path below).
         if self._session_store is not None:
             await self._session_store.delete_sessions_by_prefix(uuid_prefix, index_dir=index_dir)
-        await _safe_send_json(ws, DeltaEnvelope(
-            session_id=session_id,
-            agent_name=agent_name,
-            event_type=WebUIEventType.CONVERSATION_DELETED.value,
-            pool=pool,
-        ).to_dict())
+        await _safe_send_json(
+            ws,
+            DeltaEnvelope(
+                session_id=session_id,
+                agent_name=agent_name,
+                event_type=WebUIEventType.CONVERSATION_DELETED.value,
+                pool=pool,
+            ).to_dict(),
+        )
 
     # ------------------------------------------------------------------
     # Delta forwarding
     # ------------------------------------------------------------------
 
-    async def _forward_deltas(
-        self, session_id: str, ws: web.WebSocketResponse
-    ) -> None:
+    async def _forward_deltas(self, session_id: str, ws: web.WebSocketResponse) -> None:
         """Background task: read DeltaEnvelopes and send as structured JSON."""
         try:
             q = self._input.get_delta_queue(session_id)
@@ -1813,9 +2448,7 @@ class WebUIServer:
             logger.exception("Delta forwarding error for session %s", session_id)
 
     @staticmethod
-    def _queue_belongs_to_connection(
-        attached_sessions: list[str], session_id: str
-    ) -> bool:
+    def _queue_belongs_to_connection(attached_sessions: list[str], session_id: str) -> bool:
         """True if *session_id*'s conversation is already owned by this connection.
 
         Convergence point for ws isolation on the shared WebSocket adapter: the
@@ -1830,9 +2463,7 @@ class WebUIServer:
         prefix = session_id_prefix_of(session_id)
         return any(session_id_prefix_of(s) == prefix for s in attached_sessions)
 
-    async def _watch_new_queues(
-        self, ws: web.WebSocketResponse, state: _WsConnectionState
-    ) -> None:
+    async def _watch_new_queues(self, ws: web.WebSocketResponse, state: _WsConnectionState) -> None:
         """Periodically check for dynamically-created delta queues and start
         forwarding tasks for any that are not yet being drained.
 
@@ -1857,9 +2488,7 @@ class WebUIServer:
                         break
                     if session_id in state.attached_sessions:
                         continue
-                    if not self._queue_belongs_to_connection(
-                        state.attached_sessions, session_id
-                    ):
+                    if not self._queue_belongs_to_connection(state.attached_sessions, session_id):
                         # Belongs to another connection's conversation; let that
                         # connection's own watcher claim it.
                         continue

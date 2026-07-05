@@ -11,6 +11,7 @@ context, SubagentAutoSendHook).
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -19,7 +20,13 @@ from modex_agent.ioc.configs.agent import ExperienceConfig
 from modex_agent.ioc.configs.approval import ApprovalConfig
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.ioc.configs.skills import SkillsConfig
-from modex_agent.tools.presets import ContextMode, SystemPromptMode, ThinkingBudget, ToolPreset
+from modex_agent.tools.presets import (
+    DEFAULT_FORK_MAX_MESSAGES,
+    ContextMode,
+    SystemPromptMode,
+    ToolPreset,
+    ToolSupplement,
+)
 
 if TYPE_CHECKING:
     from modex_agent.core.session_id import SessionInfo
@@ -40,56 +47,57 @@ def _pool_name(deps: "AgentMaterializeDeps") -> str:
     resolver = deps.workspace_path_resolver
     if resolver is not None and resolver.pool_name:
         return resolver.pool_name
+    logger.debug(
+        "_pool_name: no workspace_path_resolver wired (or empty pool_name); "
+        "convention skill root defaulting to pool='main'."
+    )
     return "main"
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
 class AgentTemplate:
     """Preset definition for a dynamically creatable subagent type.
 
-    Communication tools (send_to_agent) are auto-injected by the framework —
-    they must not appear in template config.
+    Communication tools (``send_to_agent``) are auto-injected by the
+    framework in ``_build_tool_manager`` — they must not appear in
+    template config.
 
-    Pi-aligned fields (tool_preset, context_mode, thinking_budget,
-    default_reads) were added for the coding pool redesign. tool_preset
-    controls tool registration; context_mode controls memory inheritance.
-
-    thinking_budget is reserved for future LLM reasoning-budget control
-    — it is parsed from YAML but not yet consumed by any LLM config path.
-
-    default_reads is reserved for future use — parsed from YAML but
-    not yet injected into subagent context by the framework.
+    ``tool_preset`` controls base tool registration; ``tool_supplements``
+    layer additive tools on top. ``context_mode`` controls memory
+    inheritance. ``mcp`` lists registry server names resolved via
+    ``bot.config.mcp_registry``.
     """
 
-    agent_type: str
+    agent_name: str
     description: str = ""
 
     # ── lifecycle ──
-    max_steps: int = 20
+    max_steps: int = 80
 
     # ── tool policy ──
     tool_preset: ToolPreset = ToolPreset.READ_WRITE
-    use_terminal: bool = True
-    terminal_visibility: bool = True  # True=prefer visible, False=prefer hidden
+    tool_supplements: list[ToolSupplement] = field(default_factory=list)
 
     # ── pi-aligned fields ──
     context_mode: ContextMode = ContextMode.FRESH
-    thinking_budget: ThinkingBudget = ThinkingBudget.MEDIUM
-    default_reads: list[str] = field(default_factory=list)
-    visible_targets: list[str] | None = None  # None=all NORMAL agents visible; list=restrict
 
     # ── system prompt control ──
     system_prompt_mode: SystemPromptMode = SystemPromptMode.REPLACE
 
     # ── fork context control ──
-    fork_max_messages: int = 80  # only meaningful when context_mode == FORK
+    fork_max_messages: int = DEFAULT_FORK_MAX_MESSAGES  # only meaningful when context_mode == FORK
+
+    # ── MCP servers (registry names) ──
+    mcp: list[str] = field(default_factory=list)
 
     # ── optional subsystems ──
     memory: MemoryConfig | None = None
     skills: SkillsConfig | None = None
     approval: ApprovalConfig | None = None
     experience: ExperienceConfig | None = None
-    extra_tools: list[str] = field(default_factory=list)
 
     async def materialize(
         self,
@@ -113,7 +121,7 @@ class AgentTemplate:
         from modex_agent.multi_agent.comm_kind import AgentCommKind
         from modex_agent.multi_agent.descriptor import AgentDescriptor, AgentLLMConfig
 
-        name = self.agent_type
+        name = self.agent_name
         comm_kind = AgentCommKind.SUBAGENT
         parent_name = str(parent_session).split(".")[-1] if parent_session else ""
 
@@ -313,14 +321,15 @@ class AgentTemplate:
     ) -> "InMemoryToolManager":
         """Build the agent tool manager from this template's tool policy.
 
-        Faithful relocation of ``AgentCommunicationService._build_subagent_tool_manager``,
-        resolving the runtime dir / root provider from ``deps`` instead of service
-        attributes. Registers preset tools (with a scoped write dir so READ_ONLY
-        agents can still write OUTPUT.md) plus per-agent MCP tools when a
-        project dir is configured.
+        Registers, in order: preset tools (with a scoped write dir so
+        READ_ONLY agents can still write OUTPUT.md), additive supplement
+        tools (e.g. ast_grep), per-agent MCP tools resolved from the
+        registry by this template's ``mcp`` selection, and finally a
+        ``SendToAgentTool`` wired against a subagent-scoped communication
+        service (baked default — every subagent can delegate/reply).
         """
         from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
-        from modex_agent.tools.presets import get_preset_tools
+        from modex_agent.tools.presets import get_preset_tools, get_supplement_tools
         from modex_agent.tools.terminal import SubprocessTool
 
         tm = InMemoryToolManager(config=ToolManagerConfig())
@@ -342,45 +351,123 @@ class AgentTemplate:
         ):
             tm.register(tool)
 
-        # MCP tools from per-agent config file: config/mcp/{agentType}.json
-        if deps.project_dir is not None:
-            mcp_json = deps.project_dir / "config" / "mcp" / f"{self.agent_type}.json"
-            if mcp_json.exists():
-                try:
-                    from modex_agent.multi_agent.communication import _load_per_agent_mcp
+        # Additive supplement tools (e.g. AST_GREP) layered on top of the preset.
+        for tool in get_supplement_tools(self.tool_supplements, root_provider=deps.root_provider):
+            tm.register(tool)
 
-                    await _load_per_agent_mcp(tm, mcp_json, name)
-                except Exception:
-                    import logging
+        # MCP tools resolved from the registry by this template's mcp selection.
+        if deps.project_dir is not None and self.mcp:
+            try:
+                from modex_agent.multi_agent.communication import _load_per_agent_mcp
 
-                    logging.getLogger(__name__).exception(
-                        "Failed to load MCP tools for agent %s from %s",
-                        name,
-                        mcp_json,
-                    )
+                await _load_per_agent_mcp(tm, list(self.mcp), deps.project_dir, name)
+            except Exception:
+                import logging
+
+                logging.getLogger(__name__).exception(
+                    "Failed to load MCP tools for agent %s (selection=%s)",
+                    name,
+                    list(self.mcp),
+                )
+
+        # Baked default: every subagent gets send_to_agent for CONSULTATION
+        # (asking its parent a question / for a decision). The single target
+        # (the parent) is resolved dynamically at execution time, since this
+        # instance is reused across different invokers. Wired from deps so the
+        # subagent's SendToAgentTool shares the pool's broker/bus/registry.
+        self._register_send_to_agent(tm, deps, name)
 
         return tm
+
+    @staticmethod
+    def _register_send_to_agent(
+        tm: "InMemoryToolManager",
+        deps: "AgentMaterializeDeps",
+        name: str,
+    ) -> None:
+        """Register a subagent-scoped ``SendToAgentTool`` against deps.
+
+        Builds a minimal :class:`AgentCommunicationService` + a subagent-mode
+        :class:`CommunicationTargetStore` (``for_subagent=True``). The store
+        does NOT bake a static target list: the tool instance is reused across
+        different invokers, so the parent is resolved dynamically at execution
+        time from ``current_agent_context`` (see ``resolve_parent_name``). The
+        subagent's ``send_to_agent`` is for consultation only — the deliverable
+        goes to OUTPUT.md (enforced elsewhere). Failures are logged and
+        swallowed — a subagent must still materialize without a comm tool.
+        """
+        if deps.pool is None or deps.broker is None or deps.agent_bus is None:
+            return
+        try:
+            from modex_agent.multi_agent.address import AgentAddress
+            from modex_agent.multi_agent.communication import AgentCommunicationService
+            from modex_agent.multi_agent.tools import (
+                CommunicationTargetStore,
+                SendToAgentTool,
+            )
+
+            store = CommunicationTargetStore(for_subagent=True)
+            service = AgentCommunicationService(
+                source=AgentAddress(name=name),
+                broker=deps.broker,
+                registry=deps.pool,
+                agent_bus=deps.agent_bus,
+                comm_tracker=deps.comm_tracker,
+                pool=deps.pool,
+                pool_name=_pool_name(deps),
+                project_dir=deps.project_dir,
+                session_registry=deps.session_registry,
+                workspace_path_resolver=deps.workspace_path_resolver,
+            )
+            tm.register(
+                SendToAgentTool(
+                    store=store,
+                    source=AgentAddress(name=name),
+                    broker=deps.broker,
+                    registry=deps.pool,
+                    agent_bus=deps.agent_bus,
+                    service=service,
+                    comm_tracker=deps.comm_tracker,
+                )
+            )
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).exception(
+                "Failed to register SendToAgentTool for subagent %s", name,
+            )
 
     def _build_skill_manager(
         self,
         deps: "AgentMaterializeDeps",
         name: str,
     ) -> "SkillManager | None":
-        """Build a SkillManager from this template's skills config, or None.
+        """Build a SkillManager so the skill-injection pipeline stage is always present.
 
-        Faithful relocation of the skill block of
-        ``AgentCommunicationService._create_dynamic_subagent``. Returns None
-        when no skills are configured, no project dir is set, or the configured
-        roots do not exist on disk.
+        Baked default (ADR: skill injection default-on): every subagent gets
+        a SkillManager over its skill root, even when empty — the
+        skill-injection pipeline stage must always be present. Roots come
+        from ``self.skills.roots`` when set; otherwise the convention root
+        ``skills/<pool_name>/<agent_name>/``. Non-existent roots are still
+        included (an empty/non-existent root simply yields no skills but
+        keeps the pipeline stage wired). Returns ``None`` only when no
+        project_dir is set.
         """
-        if self.skills is None or self.skills.roots is None or deps.project_dir is None:
+        if deps.project_dir is None:
             return None
-        if not self.skills.roots:
-            return None
-        skill_roots = [deps.project_dir / r for r in self.skills.roots]
-        existing = [d for d in skill_roots if d.exists()]
-        if not existing:
-            return None
+        explicit_roots: list[str] = []
+        if self.skills is not None and self.skills.roots:
+            explicit_roots = list(self.skills.roots)
+        if not explicit_roots:
+            # Convention root: skills/<pool_name>/<agent_name>/
+            pool_name = _pool_name(deps)
+            explicit_roots = [f"skills/{pool_name}/{name}"]
+            logger.debug(
+                "_build_skill_manager: agent %r has no explicit skill roots; "
+                "using convention root skills/%s/%s/ (resolver wired=%s).",
+                name, pool_name, name, deps.workspace_path_resolver is not None,
+            )
+        skill_roots = [deps.project_dir / r for r in explicit_roots]
         from modex_agent.core.skills import (
             DefaultSkillBuilder,
             FileSkillSource,
@@ -388,7 +475,7 @@ class AgentTemplate:
         )
 
         skill_source = FileSkillSource(
-            directories=existing,
+            directories=skill_roots,
             cache=True,
             layout="directory",
             skill_filename="SKILL.md",

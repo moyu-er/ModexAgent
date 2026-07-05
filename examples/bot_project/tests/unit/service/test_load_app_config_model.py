@@ -26,6 +26,8 @@ def _write_config(tmp_path: Path) -> Path:
     pools = tmp_path / "pools" / "main"
     pools.mkdir(parents=True)
     (pools / "pool.yml").write_text(
+        'name: main\n'
+        'main_agent_name: main\n'
         'memory:\n  session: {max_token_ratio: 0.8}\n'
         'agents:\n  - {name: main, role: main, max_steps: 5}\n',
         encoding="utf-8",

@@ -1,6 +1,7 @@
-from modex_agent.ioc.configs.agent import DEFAULT_SYSTEM_PROMPT, AgentConfig
+from modex_agent.ioc.configs.agent import AgentConfig
 from modex_agent.ioc.configs.hooks import HooksConfig
 from modex_agent.ioc.configs.memory import MemoryConfig
+from modex_agent.tools.presets import ToolPreset
 
 
 class TestAgentConfig:
@@ -8,15 +9,17 @@ class TestAgentConfig:
         """Only name is required; everything else has defaults."""
         cfg = AgentConfig(name="test-agent")
         assert cfg.name == "test-agent"
-        assert cfg.max_steps == 20
-        assert cfg.system_prompt == DEFAULT_SYSTEM_PROMPT
+        assert cfg.max_steps == 100
         assert cfg.memory is None
         assert cfg.skills is None
         assert cfg.approval is None
         assert cfg.llm is None
         assert cfg.safety is None
         assert isinstance(cfg.hooks, HooksConfig)
-        assert len(cfg.tools) == 0
+        assert cfg.use_terminal is False
+        assert cfg.tool_preset == ToolPreset.FULL
+        assert cfg.tool_supplements == []
+        assert cfg.mcp == []
 
     def test_with_memory(self) -> None:
         cfg = AgentConfig(name="agent", memory=MemoryConfig())

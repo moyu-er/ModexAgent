@@ -93,7 +93,10 @@ models:
 
     # Pool config with llm. Dir-based layout (pools/<name>/pool.yml) — the
     # loader scans directories, not legacy single pools/<name>.yml files.
+    # name + main_agent_name are strictly required (no derivation).
     pool_config = """
+name: testpool
+main_agent_name: testpool
 llm:
   model: "test-model"
   api_key: "test-key"
@@ -117,11 +120,8 @@ class TestPoolModeInitializeNoTopLevelLlm:
     """Verify pool-mode initialization works when bot_config.yml has no llm section."""
 
     def test_config_loads_pools_without_top_level_llm(self, pool_mode_config_dir: Path) -> None:
-        """AppConfig loads pools correctly even without top-level llm."""
+        """AppConfig loads pools correctly (pool mode is the only mode)."""
         cfg = AppConfig.from_yaml(str(pool_mode_config_dir / "bot_config.yml"))
-
-        # Top-level llm should be None (not in bot_config.yml)
-        assert cfg.llm is None
 
         # Pools should be loaded
         assert "testpool" in cfg.pools
@@ -129,7 +129,7 @@ class TestPoolModeInitializeNoTopLevelLlm:
         assert cfg.pools["testpool"].main_agent_name == "testpool"
 
     def test_bot_service_initialize_pool_mode_no_crash(self, pool_mode_config_dir: Path) -> None:
-        """BotService.initialize() in pool mode doesn't crash on missing top-level llm."""
+        """BotService.initialize() in pool mode doesn't crash."""
         from bot.service.core import BotService
 
         bot = BotService(
@@ -141,20 +141,12 @@ class TestPoolModeInitializeNoTopLevelLlm:
         # Simulate what initialize() does — load config first
         bot._app_config = bot._load_app_config()
 
-        # Top-level llm should be None (not in bot_config.yml)
-        assert bot._app_config.llm is None
         assert bot._app_config.pools
-
-        # _main_agent_cfg should safely return None (no agents in top-level)
-        assert bot._main_agent_cfg is None
-
-        # _main_memory_cfg should safely return None
-        assert bot._main_memory_cfg is None
 
     def test_pool_mode_llm_provider_from_pool_not_top_level(
         self, pool_mode_config_dir: Path,
     ) -> None:
-        """In pool mode, LLM config comes from pool configs, not top-level."""
+        """In pool mode, LLM config comes from pool configs."""
         from bot.service.core import BotService
 
         cfg = AppConfig.from_yaml(str(pool_mode_config_dir / "bot_config.yml"))
@@ -166,12 +158,9 @@ class TestPoolModeInitializeNoTopLevelLlm:
             app_config=cfg,
         )
 
-        # Pool mode: top-level llm is None, pools have their own
-        assert cfg.llm is None
+        # Pool mode: pools have their own llm. BotService.__init__ runs
+        # _apply_bot_model_config which routes the bare model name through
+        # synthesize_llm_config (_routing_model prepends "openai/").
         assert len(cfg.pools) == 1
         pool_cfg = list(cfg.pools.values())[0]
-        assert pool_cfg.llm.model == "test-model"
-
-        # BotService properties adapt: no crash
-        assert bot._main_agent_cfg is None
-        assert bot._main_memory_cfg is None
+        assert pool_cfg.llm.model == "openai/test-model"

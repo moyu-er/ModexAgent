@@ -134,7 +134,7 @@ def _make_pool_cfg(*, approval: ApprovalConfig | None) -> PoolConfig:
         llm=LLMConfig(),
         approval=approval,
     )
-    return PoolConfig(llm=LLMConfig(), agents=[main_cfg])
+    return PoolConfig(name="main", main_agent_name="main", llm=LLMConfig(), agents=[main_cfg])
 
 
 def _wire(*, approval: ApprovalConfig | None) -> AgentPipeline:

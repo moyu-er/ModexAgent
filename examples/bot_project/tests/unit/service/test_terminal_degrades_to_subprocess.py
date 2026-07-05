@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).parents[3]))
 
 from bot.service.pool_builder import _build_terminal_manager, _build_tools  # noqa: E402
 from modex_agent.ioc.configs.pool import MediaConfig  # noqa: E402
+from modex_agent.tools.presets import ToolPreset  # noqa: E402
 from modex_agent.tools.terminal.subprocess_tool import SubprocessTool  # noqa: E402
 
 
@@ -53,7 +54,13 @@ async def test_tools_degrade_to_subprocess_when_terminal_manager_none() -> None:
     """With terminal_manager=None, bash is SubprocessTool; terminal/process absent."""
     tm, _mcp, _todo = await _build_tools(
         pool_cfg=SimpleNamespace(mcp=None, media=MediaConfig()),
-        main_cfg=SimpleNamespace(experience=None),
+        main_cfg=SimpleNamespace(
+            name="main",
+            experience=None,
+            tool_preset=ToolPreset.FULL,
+            tool_supplements=[],
+            mcp=[],
+        ),
         terminal_manager=None,
         project_dir=Path("."),
         output_adapter=SimpleNamespace(send=lambda *a, **k: None),

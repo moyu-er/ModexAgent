@@ -67,14 +67,14 @@ class TestForkContextTemplateFields:
     def test_fork_max_messages_default(self) -> None:
         from modex_agent.multi_agent.template import AgentTemplate
 
-        t = AgentTemplate(agent_type="test", context_mode=ContextMode.FORK)
+        t = AgentTemplate(agent_name="test", context_mode=ContextMode.FORK)
         assert t.fork_max_messages == 80
 
     def test_fork_max_messages_custom(self) -> None:
         from modex_agent.multi_agent.template import AgentTemplate
 
         t = AgentTemplate(
-            agent_type="test",
+            agent_name="test",
             context_mode=ContextMode.FORK,
             fork_max_messages=50,
         )
@@ -84,7 +84,7 @@ class TestForkContextTemplateFields:
         from modex_agent.multi_agent.template import AgentTemplate
 
         t = AgentTemplate(
-            agent_type="oracle",
+            agent_name="oracle",
             context_mode=ContextMode.FORK,
             system_prompt_mode=SystemPromptMode.REPLACE,
         )

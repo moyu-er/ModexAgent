@@ -16,14 +16,12 @@ from pydantic import BaseModel, Field
 
 from modex_agent.ioc.configs.agent import AgentConfig
 from modex_agent.ioc.configs.llm import LLMConfig
-from modex_agent.ioc.configs.mcp import MCPConfig
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.ioc.configs.model import GlobalModelConfig
 from modex_agent.ioc.configs.observability import ObservabilityConfig
 from modex_agent.ioc.configs.plugins import PluginConfig
 from modex_agent.ioc.configs.pool import PoolConfig
 from modex_agent.ioc.configs.safety import SafetyConfig
-from modex_agent.ioc.configs.skills import SkillsConfig
 
 _ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 
@@ -58,7 +56,17 @@ def _validate_pool_name(name: str) -> None:
             f"Reserved names: {_RESERVED_POOL_NAMES}"
         )
     if not re.match(r"^[a-z][a-z0-9_-]+$", name):
-        raise ValueError(f"Invalid pool name '{name}'. Must match: [a-z][a-z0-9_-]+")
+        raise ValueError(f"Invalid pool name '{name}'. Must match: [a-z][a-z0-9-]+")
+
+
+# Main-agent editable fields lifted from flat pool.yml top level into the
+# internal ``agents=[main]`` representation. ``name``/``role`` are set by the
+# loader; ``llm``/``memory`` are pool-level (PoolConfig fields).
+_MAIN_AGENT_YAML_FIELDS: tuple[str, ...] = (
+    "max_steps", "use_terminal", "terminal_visibility",
+    "skills", "approval", "safety", "hooks", "experience",
+    "tool_preset", "tool_supplements", "mcp",
+)
 
 
 class PathsConfig(BaseModel):
@@ -82,7 +90,7 @@ class SessionRetentionConfig(BaseModel):
 class MultiAgentConfig(BaseModel):
     """Multi-agent runtime settings."""
 
-    default_pool: str = "main"
+    default_pool: str = "default"
     session_retention: SessionRetentionConfig = Field(default_factory=SessionRetentionConfig)
 
 
@@ -95,20 +103,17 @@ class WorkspaceConfig(BaseModel):
 class AppConfig(BaseModel):
     """Root configuration for a ModexAgent application.
 
-    llm/agents/mcp/memory/skills are legacy fields kept for source compat.
-    In pool mode, these come from config/pools/{name}.yml via PoolConfig.
+    Pool mode is the only supported mode: every agent pool is configured
+    in ``config/pools/<name>/pool.yml`` and surfaced via ``pools``. The
+    cross-cutting fields below (safety, paths, multi_agent, workspace,
+    plugins, observability, model) come from the top-level YAML.
     Extra fields (business-layer config like qq, bot tokens)
     are silently ignored by the framework IOC layer.
     """
 
     model_config = {"extra": "ignore"}
 
-    llm: LLMConfig | None = None
     model: GlobalModelConfig | None = None
-    agents: list[AgentConfig] = Field(default_factory=list)
-    mcp: MCPConfig | None = None
-    memory: MemoryConfig | None = None
-    skills: SkillsConfig | None = None
     safety: SafetyConfig | None = None
     plugins: PluginConfig | None = None
     observability: ObservabilityConfig | None = None
@@ -121,26 +126,15 @@ class AppConfig(BaseModel):
     def from_yaml(cls, path: str | Path) -> AppConfig:
         """Load from YAML file, resolving ${ENV} references.
 
-        If `mcp` is not defined in the YAML, looks for a sibling `mcp.json`
-        (Claude-style `{"mcpServers": {...}}` schema). This keeps the main
-        YAML lean — MCP servers belong in their own file.
+        Pools are loaded from ``config/pools/<name>/pool.yml`` (one
+        directory per pool). The directory name is the pool's identity
+        (``PoolConfig.name``); ``main_agent_name`` is the agent with
+        ``role="main"`` and may differ from the directory name.
         """
         yaml_path = Path(path)
         with open(yaml_path, encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         data = _resolve_env_in(data)
-
-        # Auto-load sibling mcp.json when YAML doesn't define mcp servers.
-        if "mcp" not in data:
-            mcp_json = yaml_path.parent / "mcp.json"
-            if mcp_json.exists():
-                import json
-
-                with open(mcp_json, encoding="utf-8") as fj:
-                    mcp_data = _resolve_env_in(json.load(fj))
-                servers = mcp_data.get("mcpServers") or mcp_data.get("servers") or {}
-                if servers:
-                    data["mcp"] = {"servers": servers}
 
         # Load the global model config (config/model.yml, sibling file).
         # Model settings live here as literal values — NOT via ${ENV}, so this
@@ -178,16 +172,28 @@ class AppConfig(BaseModel):
                     if isinstance(pool_llm, dict):
                         base_llm.update(pool_llm)
                     pool_data["llm"] = base_llm
+                # pool.yml is FLAT — it IS the main agent's config. Pool
+                # identity = directory name; the main agent's name defaults to
+                # the directory name (override with ``main_agent_name:``). No
+                # ``agents:`` list, no ``role: main``, no duplicate ``name:``.
+                # Lift the main-agent editable fields into the internal
+                # ``agents=[main]`` representation PoolConfig expects.
+                pool_data.pop("name", None)
+                pool_name = pool_dir.name
+                main_agent_name = pool_data.pop("main_agent_name", pool_name)
+                agent_fields: dict[str, Any] = {
+                    "name": main_agent_name,
+                    "role": "main",
+                }
+                for f in _MAIN_AGENT_YAML_FIELDS:
+                    if f in pool_data:
+                        agent_fields[f] = pool_data.pop(f)
+                pool_data["name"] = pool_name
+                pool_data["main_agent_name"] = main_agent_name
+                pool_data["agents"] = [agent_fields]
                 pool_cfg = PoolConfig.model_validate(pool_data)
-                pool_name = pool_cfg.main_agent_name
-                # Directory name must match the pool's main agent name.
-                if pool_dir.name != pool_name:
-                    raise ValueError(
-                        f"Pool directory '{pool_dir.name}': directory name "
-                        f"must match main agent name '{pool_name}'"
-                    )
-                _validate_pool_name(pool_name)
-                pools[pool_name] = pool_cfg
+                _validate_pool_name(pool_cfg.name)
+                pools[pool_cfg.name] = pool_cfg
         data["pools"] = pools
 
         return cls.model_validate(data)

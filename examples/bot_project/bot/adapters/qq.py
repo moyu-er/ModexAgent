@@ -103,14 +103,12 @@ class QQInputAdapter(InputAdapter):
         self,
         app_id: str,
         secret: str,
-        sandbox: bool = False,
         allow_from: list | None = None,
         project_dir: Path | None = None,
     ):
         super().__init__()
         self.app_id = app_id
         self.secret = secret
-        self.sandbox = sandbox
         self.allow_from = allow_from or []
 
         self._client = None

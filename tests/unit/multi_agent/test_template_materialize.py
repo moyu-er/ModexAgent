@@ -45,7 +45,7 @@ def _make_deps() -> tuple[AgentMaterializeDeps, MagicMock]:
 @pytest.mark.asyncio
 async def test_materialize_subagent_only_comm_kind_subagent():
     deps, factory = _make_deps()
-    template = AgentTemplate(agent_type="scout")
+    template = AgentTemplate(agent_name="scout")
     parent = SessionIdFactory().create(agent_name="main")
     await template.materialize(parent_session=parent, invocation_id="inv123", deps=deps)
     call_kwargs = factory.create_agent.call_args
@@ -58,7 +58,7 @@ async def test_materialize_subagent_builds_own_tool_manager():
     """Subagents (parent_session set) DO get a materialize-built tool_manager
     + context_manager (session-scoped, preset tools)."""
     deps, factory = _make_deps()
-    template = AgentTemplate(agent_type="scout")
+    template = AgentTemplate(agent_name="scout")
     parent = SessionIdFactory().create(agent_name="main")
     await template.materialize(parent_session=parent, invocation_id="inv1", deps=deps)
     kwargs = factory.create_agent.call_args.kwargs
@@ -73,7 +73,7 @@ async def test_materialize_parent_none_still_builds_subagent_tool_manager():
     builds a tool_manager from the template rather than passing None through
     to the factory."""
     deps, factory = _make_deps()
-    template = AgentTemplate(agent_type="scout")
+    template = AgentTemplate(agent_name="scout")
     await template.materialize(parent_session=None, invocation_id=None, deps=deps)
     kwargs = factory.create_agent.call_args.kwargs
     assert kwargs["tool_manager"] is not None  # subagent-style, not factory default
@@ -106,7 +106,7 @@ async def test_materialize_subagent_wires_hooks_to_hook_runner():
         context_fork_builder=ContextForkBuilder(),
         workspace_path_resolver=WorkspacePathResolver(workspace_manager=None, pool_name="main"),
     )
-    template = AgentTemplate(agent_type="scout")
+    template = AgentTemplate(agent_name="scout")
     parent = SessionIdFactory().create(agent_name="main")
     await template.materialize(parent_session=parent, invocation_id="inv1", deps=deps)
     # SubagentAutoSendHook must be added to hook_runner (not just pipeline.hooks)

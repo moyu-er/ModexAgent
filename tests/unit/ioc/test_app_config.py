@@ -1,38 +1,37 @@
 import tempfile
 from pathlib import Path
 
-from modex_agent.ioc.configs.agent import AgentConfig
 from modex_agent.ioc.configs.app import AppConfig
+from modex_agent.ioc.configs.pool import PoolConfig
+from modex_agent.ioc.configs.agent import AgentConfig
 from modex_agent.ioc.configs.llm import LLMConfig
 
 
 class TestAppConfig:
     def test_minimal_app(self) -> None:
-        cfg = AppConfig(llm=LLMConfig(model="gpt-4", api_key="sk-xxx"))
-        assert cfg.llm.model == "gpt-4"
-        assert cfg.agents == []
-        assert cfg.mcp is None
-        assert cfg.memory is None
+        cfg = AppConfig()
+        assert cfg.pools == {}
+        assert cfg.model is None
 
-    def test_with_agents(self) -> None:
+    def test_with_pools(self) -> None:
         cfg = AppConfig(
-            llm=LLMConfig(model="gpt-4", api_key="sk-xxx"),
-            agents=[
-                AgentConfig(name="main", max_steps=50),
-                AgentConfig(name="worker", max_steps=10),
-            ],
+            pools={
+                "main": PoolConfig(
+                    name="main",
+                    main_agent_name="main",
+                    llm=LLMConfig(model="gpt-4", api_key="sk-xxx"),
+                    agents=[AgentConfig(name="main", role="main")],
+                ),
+            },
         )
-        assert len(cfg.agents) == 2
-        assert cfg.agents[0].name == "main"
+        assert len(cfg.pools) == 1
+        assert cfg.pools["main"].main_agent_name == "main"
 
     def test_from_yaml_minimal(self) -> None:
+        """A bare YAML with no pools loads cleanly (pools come from pools/ dir)."""
         yaml_content = """
-llm:
-  model: "gpt-4"
-  api_key: "sk-test"
-agents:
-  - name: main
-    max_steps: 30
+paths:
+  data_dir_name: ".modex"
 """
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".yml", delete=False, encoding="utf-8",
@@ -42,9 +41,7 @@ agents:
 
         try:
             cfg = AppConfig.from_yaml(tmp)
-            assert cfg.llm.model == "gpt-4"
-            assert len(cfg.agents) == 1
-            assert cfg.agents[0].max_steps == 30
+            assert cfg.pools == {}
         finally:
             Path(tmp).unlink()
 

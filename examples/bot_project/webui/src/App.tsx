@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect, useMemo, useRef, type FC } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
+import { SettingsView } from "./components/settings/SettingsView";
+import { ToastProvider } from "./components/ToastContext";
 import { useWebUIStream } from "./hooks/useWebUIStream";
 import { useSessions } from "./hooks/useSessions";
 import { buildTree } from "./lib/sessionTree";
@@ -99,6 +101,8 @@ const App: FC = () => {
     [onSent, send, selectedId],
   );
 
+  const [view, setView] = useState<"chat" | "settings">("chat");
+
   // ── Sidebar resize (refs keep the drag smooth without re-registering listeners)
   const [sidebarMobileOpen, setSidebarMobileOpen] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => loadSidebarWidth());
@@ -158,6 +162,7 @@ const App: FC = () => {
   );
 
   return (
+    <ToastProvider>
     <div className="flex h-screen w-screen overflow-hidden bg-page-bg">
       <Sidebar
         style={{ ["--sidebar-width" as string]: `${sidebarWidth}px` }}
@@ -178,6 +183,7 @@ const App: FC = () => {
         onGoHome={handleGoHome}
         onPoolChange={handlePoolChange}
         revealSessionId={revealSessionId}
+        onOpenSettings={() => setView("settings")}
       />
 
       {/* Resize handle — desktop only */}
@@ -196,22 +202,26 @@ const App: FC = () => {
       </div>
 
       <main className="flex flex-1 flex-col min-w-0">
-        <ChatView
-          messages={messages}
-          isStreaming={isStreaming}
-          isPending={isPending}
-          todos={todos}
-          pendingApprovals={pendingApprovals}
-          isApprovingBatch={isApprovingBatch}
-          submitApproval={submitApproval}
-          onApproveAll={onApproveAll}
-          sessionId={selectedId}
-          workspace={streamWs}
-          onSend={handleSend}
-          onPause={pause}
-          readOnly={isSelectedSubagent}
-          onOpenSidebar={() => setSidebarMobileOpen(true)}
-        />
+        {view === "settings" ? (
+          <SettingsView onExit={() => setView("chat")} />
+        ) : (
+          <ChatView
+            messages={messages}
+            isStreaming={isStreaming}
+            isPending={isPending}
+            todos={todos}
+            pendingApprovals={pendingApprovals}
+            isApprovingBatch={isApprovingBatch}
+            submitApproval={submitApproval}
+            onApproveAll={onApproveAll}
+            sessionId={selectedId}
+            workspace={streamWs}
+            onSend={handleSend}
+            onPause={pause}
+            readOnly={isSelectedSubagent}
+            onOpenSidebar={() => setSidebarMobileOpen(true)}
+          />
+        )}
       </main>
 
       {sidebarMobileOpen && (
@@ -222,6 +232,7 @@ const App: FC = () => {
         />
       )}
     </div>
+    </ToastProvider>
   );
 };
 

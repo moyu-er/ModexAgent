@@ -157,7 +157,7 @@ async def test_subagent_tool_manager_uses_workspace_root_provider(tmp_path: Path
         root_provider=provider,
     )
     template = AgentTemplate(
-        agent_type="scout",
+        agent_name="scout",
         tool_preset=ToolPreset.READ_ONLY,
         description="Test scout",
     )
@@ -197,6 +197,8 @@ async def test_main_agent_tool_manager_is_workspace_scoped(tmp_path: Path) -> No
     target.mkdir()
 
     pool_cfg = PoolConfig(
+        name="test_pool",
+        main_agent_name="main",
         llm=LLMConfig(model="gpt-4", temperature=0.7),
         agents=[AgentConfig(name="main", role="main")],
         memory=MemoryConfig(),
@@ -267,6 +269,8 @@ async def test_pool_resources_experience_dir_from_pool_data(tmp_path: Path) -> N
     ctx = WorkspaceContext.from_target(target, data_dir_name=".modex", home=tmp_path)
 
     pool_cfg = PoolConfig(
+        name="test_pool",
+        main_agent_name="main",
         llm=LLMConfig(model="gpt-4", temperature=0.7),
         agents=[AgentConfig(name="main", role="main")],
         memory=MemoryConfig(),

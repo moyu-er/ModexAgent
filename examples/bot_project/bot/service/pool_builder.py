@@ -64,6 +64,8 @@ from modex_agent.multi_agent.communication import AgentCommunicationService
 from modex_agent.multi_agent.context_fork import ContextForkBuilder
 from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
 from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
+
+from bot.config.memory_defaults import subagent_memory
 from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
@@ -75,6 +77,12 @@ from modex_agent.multi_agent.tools import (
 )
 from modex_agent.pipeline.adapters import OutputAdapter
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
+from modex_agent.tools.presets import (
+    ToolPreset,
+    ToolSupplement,
+    get_preset_tools,
+    get_supplement_tools,
+)
 from modex_agent.tools.standard import (
     FindFilesTool,
     SearchFilesTool,
@@ -146,6 +154,9 @@ async def create_pool(
     to this workspace (None = legacy/non-workspace path, e.g. unit tests).
     """
     main_cfg = _require_main_agent(pool_cfg)
+    # Main-agent memory is a baked default, resolved once at workspace wiring
+    # (bot.workspace.wiring._build_resources) before this factory runs — so
+    # pool_cfg.memory is already non-None here.
     main_agent_name = main_cfg.name
     system_prompt = resolve_system_prompt(main_cfg, project_dir)
 
@@ -199,7 +210,6 @@ async def create_pool(
         transcript_store=transcript_store,
         sessions_dir_provider=sessions_dir_provider,
     )
-    _register_extra_tools_from_config(tool_manager, main_cfg, pool_name)
 
     skill_manager = _build_skill_manager(main_cfg, project_dir, pool_name)
     factory = _build_agent_factory(
@@ -225,7 +235,10 @@ async def create_pool(
     # agent is a plain AgentConfig inline in pool.yml, NOT a template). Both
     # are constructed here (before _register_main_agent) so the lazy
     # InboxPoller-spawner shares the same bundle.
-    template_registry = AgentTemplateRegistry(project_dir)
+    template_registry = AgentTemplateRegistry(
+        project_dir,
+        default_subagent_memory=subagent_memory(),
+    )
     templates = template_registry.list_templates(pool_name)
     logger.info("Pool '%s': %d subagent templates available", pool_name, len(templates))
     fallback_runtime_dir = data_dir / "runtime_state" / pool_name
@@ -589,25 +602,51 @@ async def _build_tools(
     transcript_store: TranscriptStore | None = None,
     sessions_dir_provider: Callable[[], Path | None] | None = None,
 ) -> tuple[InMemoryToolManager, Any | None, JsonFileTodoStore]:
-    """Build tool manager from config — convention over configuration.
+    """Build the main agent's tool manager from config.
+
+    Tool assembly order: preset tools (file/search/bash gated by
+    ``main_cfg.tool_preset``), additive supplements (``main_cfg.tool_supplements``,
+    e.g. ast_grep), terminal tools (when ``terminal_manager`` is set), the
+    custom send_file_to_user tool, the experience tool (when enabled), todo
+    tools, and MCP tools resolved from ``main_cfg.mcp`` via the registry.
+    ``send_to_agent`` is registered separately in ``create_pool`` after the
+    communication service is wired.
 
     When ``root_provider`` is given, the standard file/search/shell tools are
     wrapped via :func:`wrap_standard_tools` so their relative paths resolve
-    against THIS workspace's root (a workspace switch is a different workspace
-    with its own provider). Terminal tools (Command/Process/Terminal) stay
-    UNWRAPPED — their cwd is the terminal manager's, bound separately.
+    against THIS workspace's root. Terminal tools (Command/Process/Terminal)
+    stay UNWRAPPED — their cwd is the terminal manager's, bound separately.
     """
+    from modex_agent.tools.presets import ToolPreset, get_preset_tools, get_supplement_tools
+
     tm = InMemoryToolManager(config=ToolManagerConfig())
 
-    # File tools (always registered). Wrap when a workspace root provider is
-    # wired so relative paths resolve against the workspace, not process CWD.
-    file_tools = _make_file_tools()
-    if root_provider is not None:
-        file_tools = wrap_standard_tools(file_tools, root_provider)
-    for tool in file_tools:
+    # Preset tools: file/search/bash gated by main_cfg.tool_preset. A bash
+    # factory is provided so FULL/READ_WRITE/READ_ONLY presets get a
+    # workspace-scoped SubprocessTool; the terminal manager (when present)
+    # registers the richer Command/Process/Terminal tools below.
+    def _make_bash() -> Tool:
+        sub = SubprocessTool(executor=SubprocessExecutor(), timeout=300)
+        if root_provider is not None:
+            wrapped = wrap_standard_tools([sub], root_provider)
+            return wrapped[0]
+        return sub
+
+    preset = main_cfg.tool_preset if main_cfg.tool_preset is not None else ToolPreset.FULL
+    for tool in get_preset_tools(preset, subprocess_tool_factory=_make_bash, root_provider=root_provider):
         tm.register(tool)
 
-    # Terminal tools — or subprocess fallback
+    # Additive supplement tools (e.g. ast_grep) layered on top of the preset.
+    for tool in get_supplement_tools(main_cfg.tool_supplements, root_provider=root_provider):
+        tm.register(tool)
+    if main_cfg.tool_supplements:
+        logger.info(
+            "Pool '%s': supplement tools registered: %s",
+            pool_name, [s.value for s in main_cfg.tool_supplements],
+        )
+
+    # Terminal tools — registered when a terminal manager exists (replaces the
+    # preset's bash tool with the stateful Command/Process/Terminal trio).
     if terminal_manager is not None:
         from modex_agent.tools.terminal import CommandTool, ProcessRegistry, ProcessTool, TerminalTool
         from modex_agent.tools.terminal.config import TerminalRuntimeConfig
@@ -618,24 +657,6 @@ async def _build_tools(
         tm.register(ProcessTool(registry=registry, manager=terminal_manager))
         tm.register(TerminalTool(terminal_manager))
         logger.info("Pool '%s': terminal tools registered (Command/Process/Terminal)", pool_name)
-    else:
-        # SubprocessTool is workspace-scoped when a provider is wired (its
-        # working_dir defaults to the workspace root); legacy unwrapped path
-        # otherwise (tests / non-workspace wiring).
-        sub = SubprocessTool(executor=SubprocessExecutor(), timeout=300)
-        if root_provider is not None:
-            sub_tools = wrap_standard_tools([sub], root_provider)
-            tm.register(sub_tools[0])
-        else:
-            tm.register(sub)
-        logger.info("Pool '%s': SubprocessTool registered (no terminal backend)", pool_name)
-
-    # Search tools (always registered); wrap to scope their path arg.
-    search_tools = [SearchFilesTool(), FindFilesTool()]
-    if root_provider is not None:
-        search_tools = wrap_standard_tools(search_tools, root_provider)
-    for tool in search_tools:
-        tm.register(tool)
 
     # Custom tools
     from bot.tools.custom import SendFileToUserTool
@@ -649,27 +670,25 @@ async def _build_tools(
         )
     )
 
-    # Experience tool (if enabled in config). The experience dir comes from
-    # the workspace's pool_data (fixed per workspace); fallback to a data_dir
-    # relative path for the non-workspace (test) wiring.
-    exp_cfg = getattr(main_cfg, "experience", None)
-    if exp_cfg is not None and getattr(exp_cfg, "enabled", False):
-        from modex_agent.core.experience import PerFileExperienceMetaStore
-        from modex_agent.memory.tools.experience import ExperienceTool
+    # Experience tool — always enabled for main agents (baked; not configurable).
+    # The experience dir comes from the workspace's pool_data (fixed per
+    # workspace); fallback to a data_dir relative path for non-workspace (test).
+    from modex_agent.core.experience import PerFileExperienceMetaStore
+    from modex_agent.memory.tools.experience import ExperienceTool
 
-        if pool_data is not None:
-            base_exp_dir: Path = pool_data.experience_dir
-            _exp_path: Callable[[], Path] = lambda: base_exp_dir
-        else:
-            fallback = data_dir / "experiences" / pool_name / main_cfg.name
+    if pool_data is not None:
+        base_exp_dir: Path = pool_data.experience_dir
+        _exp_path: Callable[[], Path] = lambda: base_exp_dir
+    else:
+        fallback = data_dir / "experiences" / pool_name / main_cfg.name
 
-            def _exp_path() -> Path:
-                return fallback
+        def _exp_path() -> Path:
+            return fallback
 
-        _exp_path().mkdir(parents=True, exist_ok=True)
-        exp_meta = PerFileExperienceMetaStore(_exp_path)
-        tm.register(ExperienceTool(_exp_path, exp_meta))
-        logger.info("Pool '%s': experience tool registered", pool_name)
+    _exp_path().mkdir(parents=True, exist_ok=True)
+    exp_meta = PerFileExperienceMetaStore(_exp_path)
+    tm.register(ExperienceTool(_exp_path, exp_meta))
+    logger.info("Pool '%s': experience tool registered", pool_name)
 
     # Todo tools — path from pool_data (pool-aware) or data_dir fallback,
     # mirroring the experience-tool path resolution above.
@@ -685,20 +704,19 @@ async def _build_tools(
     tm.register(TodoReadTool(todo_store))
     logger.info("Pool '%s': todo tools registered (dir=%s)", pool_name, todo_dir)
 
-    # MCP tools (convention: config/mcp/{agent_name}.json)
-    # Respect pool-level mcp.enabled toggle and never let MCP failures break
-    # the rest of the tool manager / pool creation.
+    # MCP tools resolved from main_cfg.mcp (registry names) — never let MCP
+    # failures break the rest of the tool manager / pool creation.
     mcp_tools: list[Any] = []
     mcp_manager: Any | None = None
-    if pool_cfg.mcp is not None and getattr(pool_cfg.mcp, "enabled", True):
+    if main_cfg.mcp:
         try:
-            mcp_tools, mcp_manager = await _load_agent_mcp_tools(main_cfg.name, project_dir)
+            mcp_tools, mcp_manager = await _load_agent_mcp_tools(
+                main_cfg.name, list(main_cfg.mcp), project_dir,
+            )
         except Exception as exc:
             logger.warning(
                 "Pool '%s': MCP tool loading failed, skipping: %s", pool_name, exc
             )
-    else:
-        logger.info("Pool '%s': MCP disabled in pool config, skipping", pool_name)
 
     for tool in mcp_tools:
         tm.register(tool)
@@ -709,20 +727,52 @@ async def _build_tools(
     return tm, mcp_manager, todo_store
 
 
-# ── Extra tools ──────────────────────────────────────────────────────────
+# ── Main agent tool-name resolver (pure, for parity testing) ─────────────
 
 
-def _register_extra_tools_from_config(
-    tool_manager: InMemoryToolManager,
-    main_cfg: AgentConfig,
-    pool_name: str,
-) -> None:
-    """Register AST/LSP tools declared in agent config (convention)."""
-    extra_tools: list[str] = getattr(main_cfg, "extra_tools", []) or []
-    if not extra_tools:
-        return
-    _register_extra_tools(tool_manager, extra_tools)
-    logger.info("Pool '%s': extra_tools registered: %s", pool_name, extra_tools)
+def build_main_agent_tool_names(
+    tool_preset: str,
+    supplements: list[str],
+    use_terminal: bool,
+) -> set[str]:
+    """Return the set of tool NAMES the main agent will receive.
+
+    Pure projection of the main-agent tool assembly (Task 1.6 parity
+    helper). Mirrors :func:`_build_tools` + ``send_to_agent``:
+    preset-gated file/search/bash + supplement tools (e.g. ast_grep) +
+    terminal tools (when ``use_terminal``) + the always-on send_to_agent.
+    Bot-specific tools (send_file_to_user, todo, experience) and MCP tools
+    are excluded from this projection — they are runtime/path-dependent and
+    not governed by the preset/supplement policy.
+
+    A ``subprocess_tool_factory`` is supplied to ``get_preset_tools`` so the
+    preset's bash tool (``SubprocessTool.name == "bash"``) is included for
+    FULL/READ_WRITE/READ_ONLY — matching what ``_build_tools`` registers.
+    When ``use_terminal`` is set, ``_build_tools`` ADDITIONALLY registers
+    the stateful Command/Process/Terminal trio; ``CommandTool.name`` is also
+    ``"bash"`` (it supersedes the preset's SubprocessTool under the same
+    name), so the projected set gains ``process`` and ``terminal`` but no
+    extra ``bash`` entry (sets dedupe).
+    """
+    names: set[str] = set()
+    preset = ToolPreset(tool_preset)
+
+    def _make_bash() -> Tool:
+        return SubprocessTool(executor=SubprocessExecutor(), timeout=300)
+
+    # File/search/bash tool names per preset. The factory mirrors _build_tools'
+    # _make_bash so the bash name surfaces for FULL/READ_WRITE/READ_ONLY.
+    for tool in get_preset_tools(preset, subprocess_tool_factory=_make_bash):
+        names.add(tool.name)
+    for tool in get_supplement_tools([ToolSupplement(s) for s in supplements]):
+        names.add(tool.name)
+    if use_terminal:
+        # Real terminal tool names: CommandTool.name="bash" (already in names
+        # via the preset factory above), ProcessTool.name="process",
+        # TerminalTool.name="terminal".
+        names |= {"bash", "process", "terminal"}
+    names.add("send_to_agent")
+    return names
 
 
 # ── Runtime stores ───────────────────────────────────────────────────────
@@ -1032,7 +1082,7 @@ def _build_communication(
     for t in templates:
         main_store.add(
             CommunicationTarget(
-                name=t.agent_type,
+                name=t.agent_name,
                 kind=AgentCommKind.SUBAGENT,
                 description=t.description,
             )
@@ -1191,29 +1241,6 @@ def _wire_main_pipeline(
 # ═══════════════════════════════════════════════════════════════════════════
 # Shared helpers (kept from original)
 # ═══════════════════════════════════════════════════════════════════════════
-
-
-_TOOL_REGISTRY: dict[str, tuple[str, str]] = {
-    "ast_grep_search": ("modex_agent.tools.ast", "AstGrepSearchTool"),
-    "ast_grep_replace": ("modex_agent.tools.ast", "AstGrepReplaceTool"),
-}
-
-
-def _register_extra_tools(tool_manager: InMemoryToolManager, tool_names: list[str]) -> None:
-    import importlib
-
-    for name in tool_names:
-        entry = _TOOL_REGISTRY.get(name)
-        if entry is None:
-            logger.warning("Unknown extra_tool: %s", name)
-            continue
-        module_name, class_name = entry
-        try:
-            module = importlib.import_module(module_name)
-            tool_cls = getattr(module, class_name)
-            tool_manager.register(tool_cls())
-        except Exception:
-            logger.exception("Failed to register extra_tool: %s", name)
 
 
 def _add_hook(pipeline: Any, hook: Any) -> None:

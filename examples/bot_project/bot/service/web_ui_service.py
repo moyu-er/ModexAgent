@@ -13,8 +13,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import yaml
 from aiohttp import web
 
+import bot.config.domains.im  # noqa: F401 - registers the 'im' ConfigDomain on import
+import bot.config.domains.model  # noqa: F401 - registers the 'model' ConfigDomain on import
 from bot.adapters.fan_in import FanInInputAdapter
 from bot.adapters.register_websocket import get_ws_input  # noqa: F401 — ensure import
 from bot.service.core import BotService
@@ -38,6 +41,51 @@ logger = logging.getLogger(__name__)
 _DEFAULT_PORT: int = 21800
 _DEFAULT_HOST: str = "0.0.0.0"
 _DEFAULT_AGENT_NAME: str = "main"
+
+
+def load_im_sections(im_path: Path) -> dict[str, Any]:
+    """Load ``config/im.yml`` and return its sections (``{}`` if absent).
+
+    Merged into ``raw_config`` at boot so adapters read their config from
+    ``ctx.raw_config["<im>"]`` without each adapter parsing the file.
+    """
+    try:
+        data = yaml.safe_load(im_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    return data or {}
+
+
+def _trigger_restart() -> None:
+    """Best-effort self-restart: spawn a detached ``modexbot restart`` then exit.
+
+    Cross-platform self-restart from within a request handler is fragile; the
+    handler catches failures and tells the UI to run ``modexbot restart``
+    manually. We spawn detached then schedule a hard ``os._exit(0)`` slightly
+    later so the HTTP response can flush first.
+
+    ``os._exit`` (not ``sys.exit``) is deliberate: this runs on a Timer thread,
+    where ``SystemExit`` only terminates the thread, not the process. The hard
+    exit therefore skips graceful async teardown (aiohttp runner, PTB shutdown,
+    in-flight transcript flushes) — a small data-loss window accepted for the
+    local-tool restart UX (the manual fallback avoids it entirely).
+    """
+    import os
+    import subprocess
+    import sys
+    import threading
+
+    args: list[str] = [sys.executable, "-m", "modexbot", "restart"]
+    try:
+        if os.name == "nt":
+            subprocess.Popen(  # noqa: S603 - trusted modexbot entry point
+                args,
+                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+            )
+        else:
+            subprocess.Popen(args, start_new_session=True)  # noqa: S603
+    finally:
+        threading.Timer(0.5, lambda: os._exit(0)).start()
 
 
 class WebUIService(BotService):
@@ -105,8 +153,6 @@ class WebUIService(BotService):
         project_dir = config_dir.parent
         app_cfg = AppConfig.from_yaml(config_dir / "bot_config.yml")
 
-        import yaml
-
         from modex_agent.ioc.configs.app import _resolve_env_in
 
         raw_config: dict[str, Any] = _resolve_env_in(
@@ -115,6 +161,10 @@ class WebUIService(BotService):
             )
             or {}
         )
+
+        # Merge IM sections from config/im.yml so adapters read their config
+        # from ctx.raw_config["<im>"] without each adapter parsing the file.
+        raw_config.update(load_im_sections(config_dir / "im.yml"))
 
         # ── 2. Shared transcript store + workspace membership ──────────
         # Stores are created from the project home dir for initial adapter
@@ -311,7 +361,29 @@ class WebUIService(BotService):
         # /api/models re-reads model.yml live so CLI model edits appear in the
         # selector without a server restart (runtime routing still needs restart).
         self._server.set_model_config_loader(self._load_bot_model_config_for_listing)
+        from bot.service.config_controller import ConfigController
+
+        self._server.set_config_controller(ConfigController(restarter=_trigger_restart))
         self._server.set_data_dir_name(_data_dir_name)
+        # Pool/MCP/skills/prompt REST API (Phase 2B). All four stores share the
+        # same base dir (the bot project root) and the MCP registry path under
+        # ``config/mcp/registry.json``; default_pool comes from AppConfig.
+        from bot.config.mcp_registry import REGISTRY_PATH as _mcp_registry_path
+        from bot.config.pool_store import PoolStore
+        from bot.config.prompt_store import PromptStore
+        from bot.config.skills_store import SkillsStore
+        from bot.service.pool_config_controller import PoolConfigController
+
+        self._server.set_pool_config_controller(
+            PoolConfigController(
+                pool_store=PoolStore(base_dir=project_dir),
+                skills_store=SkillsStore(base_dir=project_dir),
+                prompt_store=PromptStore(base_dir=project_dir),
+                mcp_registry_path=project_dir / _mcp_registry_path,
+                default_pool=app_cfg.multi_agent.default_pool,
+                restarter=_trigger_restart,
+            )
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -359,9 +431,7 @@ class WebUIService(BotService):
         workspace metadata directory even when the default ``.modex`` name is
         overridden in config.
         """
-        return RecentWorkspaces(
-            self._project_dir / self._app_config.paths.data_dir_name
-        )
+        return RecentWorkspaces(self._project_dir / self._app_config.paths.data_dir_name)
 
     def _pool_for_agent(self, agent_name: str) -> str:
         """Return the pool name for *agent_name*, defaulting to ``main``."""
@@ -378,9 +448,7 @@ class WebUIService(BotService):
         # Use main_agent_name from each pool's config — NOT the pool key.
         # This ensures the frontend only sees main agent events, never
         # subagent (reviewer, scout, query-12306, etc.) entries.
-        pool_agent_names: list[str] = [
-            pi.main_agent_name for pi in self._pools.values()
-        ]
+        pool_agent_names: list[str] = [pi.main_agent_name for pi in self._pools.values()]
         self._server.set_pool_agent_names(pool_agent_names)
         logger.info("Pool agents: %s", pool_agent_names)
 
@@ -402,9 +470,7 @@ class WebUIService(BotService):
 
         # Map pool_name -> main_agent_name from pool configs.
         # pool_name and main_agent_name may differ; the mapping is explicit.
-        _agent_map: dict[str, str] = {
-            name: pi.main_agent_name for name, pi in self._pools.items()
-        }
+        _agent_map: dict[str, str] = {name: pi.main_agent_name for name, pi in self._pools.items()}
 
         def _agent_resolver(pool_name: str) -> str:
             return _agent_map.get(pool_name, pool_name)
@@ -417,9 +483,7 @@ class WebUIService(BotService):
             self._server.set_pool_resolver(
                 lambda conv_id: self.pool_router._session_store.get(conv_id, "") or None
             )
-            self._server.set_agent_resolver(
-                lambda pool_name: _agent_map.get(pool_name, pool_name)
-            )
+            self._server.set_agent_resolver(lambda pool_name: _agent_map.get(pool_name, pool_name))
             self._server.set_agent_pool_map(agent_pool_map)
             logger.info("Pool routing callback injected (pools=%s)", pool_agent_names)
         else:
@@ -457,7 +521,6 @@ class WebUIService(BotService):
 
         # ── Input pipeline convergence ─────────────────────────────
         from bot.input_pipeline.assembly import build_im_pipeline, build_webui_pipeline
-        from bot.input_pipeline.context import BotInputContext
         from bot.input_pipeline.stages.skill_parse import PoolSkillManagerRegistry
         from modex_agent.core.session_id import SessionIdFactory
 
@@ -484,6 +547,7 @@ class WebUIService(BotService):
                 break
         if ws_input is None:
             from bot.adapters.register_websocket import get_ws_input
+
             ws_input = get_ws_input()
         self._server.set_input_context(
             self._build_input_context(ws_input, agent_resolver=_agent_resolver)
@@ -493,7 +557,9 @@ class WebUIService(BotService):
         im_pipeline = build_im_pipeline(
             skill_registry=skill_registry,
             known_pools=known_pools,
-            workspace_controller=self.workspace_stack.controller if self.workspace_stack is not None else None,
+            workspace_controller=self.workspace_stack.controller
+            if self.workspace_stack is not None
+            else None,
         )
         for inp in self._channel_inputs:
             if inp.name == "websocket":
@@ -537,7 +603,7 @@ class WebUIService(BotService):
         *,
         agent_resolver: Callable[[str], str],
         current_ws_provider: Callable[[], Path] | None = None,
-    ) -> "BotInputContext":
+    ) -> BotInputContext:
         """Build the shared ``BotInputContext`` for a channel (WS or IM).
 
         Both channels share routing/persistence wiring; only the physical queue
@@ -590,6 +656,8 @@ class WebUIService(BotService):
         """
         from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 
+        from bot.config.memory_defaults import subagent_memory
+
         # Use the already-loaded AppConfig instead of re-parsing YAML files.
         mapping: dict[str, str] = {
             agent.name: pool_name
@@ -599,12 +667,15 @@ class WebUIService(BotService):
 
         # Dynamic-subagent template types per pool.
         try:
-            reg = AgentTemplateRegistry(self._project_dir)
+            reg = AgentTemplateRegistry(
+                self._project_dir,
+                default_subagent_memory=subagent_memory(),
+            )
         except Exception:
             return mapping
         for pool_name in list(mapping.values()):
             for tmpl in reg.list_templates(pool_name):
-                mapping.setdefault(tmpl.agent_type, pool_name)
+                mapping.setdefault(tmpl.agent_name, pool_name)
         return mapping
 
     async def stop(self) -> None:

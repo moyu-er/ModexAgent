@@ -6,6 +6,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import Tool, ToolConfig
 from modex_agent.multi_agent.comm_kind import AgentCommKind
 
@@ -19,6 +20,38 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
+
+
+def resolve_parent_name(context: "AgentContext | None") -> str | None:
+    """Resolve the parent agent NAME for the currently executing subagent.
+
+    Reads ``context.session.parent_session_id`` (populated by the production
+    poller-driven path) and extracts the agent_name segment. Returns ``None``
+    when there is no context or no recorded parent — callers must treat that
+    as "no resolvable parent" (best-effort, never raises).
+
+    Single source of truth: both the subagent ``CommunicationTargetStore``
+    (dynamic target menu) and the service-layer topology defense use this so
+    they cannot drift apart.
+    """
+    if context is None:
+        return None
+    parent_sid = context.session.parent_session_id
+    if not parent_sid:
+        return None
+    return SessionInfo.from_str(parent_sid).agent_name
+
+
+def _current_parent_name() -> str | None:
+    """Resolve the parent name from the ``current_agent_context`` contextvar.
+
+    Returns ``None`` when the contextvar is unset or no parent is recorded.
+    Kept as a thin wrapper so ``CommunicationTargetStore`` stays testable
+    without depending on the contextvar module at import time.
+    """
+    from modex_agent.core.agent import current_agent_context
+
+    return resolve_parent_name(current_agent_context.get(None))
 
 
 @dataclass(frozen=True)
@@ -64,7 +97,10 @@ _SUBAGENT_PARAMS: dict[str, Any] = {
     "properties": {
         "target_agent": {
             "type": "string",
-            "description": "Exact name of your parent agent (from the list above).",
+            "description": (
+                "The agent that assigned your task — the exact value of source= "
+                "from the <agent_message> you received."
+            ),
         },
         "content": {"type": "string", "description": "Message content."},
     },
@@ -78,6 +114,19 @@ class CommunicationTargetStore:
     External API: add / pop_by_name / list (returns copy) / has.
     ``description`` and ``parameters`` are derived from current targets
     and cached until the next mutation.
+
+    Two modes:
+
+    - **Normal mode** (``for_subagent=False``, the main agent): targets are a
+      static set maintained via ``add`` / ``pop_by_name`` — every NORMAL +
+      SUBAGENT agent the main agent can address.
+    - **Subagent mode** (``for_subagent=True``): the static dict is ignored.
+      The single target — the parent that assigned this task — is resolved
+      dynamically at call time from ``current_agent_context``. This is required
+      because the tool instance is reused across different invokers, so any
+      parent baked at materialize time would go stale. The subagent's
+      ``send_to_agent`` is for CONSULTATION only; the deliverable goes to
+      OUTPUT.md (enforced elsewhere).
     """
 
     def __init__(self, *, for_subagent: bool = False) -> None:
@@ -88,26 +137,54 @@ class CommunicationTargetStore:
     # -- mutation -------------------------------------------------------------
 
     def add(self, target: CommunicationTarget) -> None:
+        # In subagent mode the static dict is intentionally unused — the
+        # target is resolved dynamically. No-op so callers (e.g. template
+        # wiring that doesn't know the mode) stay safe.
+        if self._for_subagent:
+            return
         if target.name not in self._targets:
             self._targets[target.name] = target
             self._description = None
 
     def pop_by_name(self, name: str) -> None:
+        if self._for_subagent:
+            return
         if self._targets.pop(name, None) is not None:
             self._description = None
 
     # -- query ----------------------------------------------------------------
 
     def list(self) -> list[CommunicationTarget]:
+        if self._for_subagent:
+            parent = self._parent_target()
+            return [parent] if parent is not None else []
         return list(self._targets.values())
 
     def has(self, name: str) -> bool:
+        if self._for_subagent:
+            parent = self._parent_target()
+            return parent is not None and parent.name == name
         return name in self._targets
 
-    # -- description (dynamic, cached) ----------------------------------------
+    def _parent_target(self) -> CommunicationTarget | None:
+        parent_name = _current_parent_name()
+        if parent_name is None:
+            return None
+        return CommunicationTarget(
+            name=parent_name,
+            kind=AgentCommKind.NORMAL,
+            description="the agent that assigned your task",
+        )
+
+    # -- description (dynamic, cached in normal mode only) --------------------
 
     @property
     def description(self) -> str:
+        # In subagent mode the parent is resolved at call time from the
+        # contextvar; caching would freeze a parent across different invokers
+        # reusing the same tool instance. Normal mode caches as before.
+        if self._for_subagent:
+            return self._build()
         if self._description is None:
             self._description = self._build()
         assert self._description is not None
@@ -163,23 +240,37 @@ class CommunicationTargetStore:
         return "\n".join(lines)
 
     def _build_subagent(self) -> str:
-        lines = ["Send a message to your parent agent for coordination."]
-        if not self._targets:
-            lines.append("No parent available.")
-            return "\n".join(lines)
-        lines.append("")
-        lines.append("Your parent (use the exact name as target_agent):")
-        for t in self._targets.values():
-            lines.append(f"  - {t.name}")
+        parent = self._parent_target()
+        lines = [
+            "Ask the agent that assigned you this task a clarifying question or "
+            "for a decision.",
+            "",
+            "Your task arrived as:",
+            '  <agent_message source="<PARENT_NAME>" invocation_id="...">',
+            "    <content>...</content>",
+            "  </agent_message>",
+        ]
+        if parent is not None:
+            lines.append(
+                f"Use that exact {parent.name!r} (the `source` value) as "
+                "`target_agent`. It is your only valid target."
+            )
+        else:
+            lines.append("No parent is currently available.")
         lines.extend(
             [
                 "",
-                "Usage:",
-                "  target_agent: Exact name from above.",
-                '  content: "NEED_DECISION: <question>" for blocking decisions,',
-                '    "PROGRESS_UPDATE: <info>" for non-blocking updates.',
+                "Use this tool ONLY to consult your parent when you cannot proceed "
+                "without input:",
+                '  content: "QUESTION: ..." or "NEED_DECISION: ...".',
+                "Then stop and wait — the reply comes back to you as another "
+                "<agent_message>.",
                 "",
-                "Important: You can ONLY message your parent.",
+                "This tool is for consultation, not for returning your result. "
+                "Your deliverable",
+                "still goes to OUTPUT.md (write it there as instructed); nothing "
+                "you send here",
+                "counts as your answer.",
             ]
         )
         return "\n".join(lines)

@@ -4,11 +4,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from bot.config.domain import Secret
 from modex_agent.ioc.configs.llm import LLMConfig, Modality, ModelCapabilities
 
 _DEFAULTS_CAPS = [Modality.TEXT]
@@ -40,7 +41,6 @@ class ModelCfg(BaseModel):
     capabilities: list[Modality] = Field(default_factory=lambda: list(_DEFAULTS_CAPS))
     temperature: float = 0.7
     max_output_tokens: int = 50000
-    reasoning_effort: str | None = None  # v1 仅解析留存，不透传（见 BotModelProvider TODO）
 
     @field_validator("capabilities", mode="before")
     @classmethod
@@ -60,7 +60,7 @@ class ProviderCfg(BaseModel):
     key: str
     name: str
     url: str
-    api_key: str
+    api_key: Annotated[str, Secret()]
     models: list[ModelCfg] = Field(default_factory=list)
 
 

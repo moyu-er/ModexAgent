@@ -1,0 +1,17 @@
+# config/pools/default/pool.yml — the main agent's config (pool identity = directory name).
+# memory + experience: baked main-agent defaults, not persisted/editable.
+# main agent name defaults to the directory name; set main_agent_name to override.
+
+max_steps: 50
+use_terminal: true
+terminal_visibility: true
+tool_preset: full
+approval:
+  enabled: true
+  tools:
+    write:
+      allowed_paths:
+      - ./*
+    edit:
+      allowed_paths:
+      - ./*

@@ -164,6 +164,22 @@ async def _build_resources(
     app_config = service._app_config
     pool_configs = app_config.pools
 
+    # Main-agent memory is a baked default (bot.config.memory_defaults.
+    # main_agent_memory) — never persisted in pool.yml, never user-editable.
+    # Resolve it once here so BOTH build_pool_data (which constructs the memory
+    # system via create_memory) and create_pool (which seeds long-term defaults)
+    # see a non-None memory block. This is the single source of truth.
+    from bot.config.memory_defaults import main_agent_memory
+
+    pool_configs = {
+        name: (
+            cfg
+            if cfg.memory is not None
+            else cfg.model_copy(update={"memory": main_agent_memory()})
+        )
+        for name, cfg in pool_configs.items()
+    }
+
     # 1. Workspace-level stores.
     ctx.paths.mkdir_skeleton()
     overflow_store = LocalFileToolOverflowStore(
@@ -371,9 +387,11 @@ def _wire_pool_to_resources(
     )
     if main_cfg is None:
         return
-    exp_cfg = getattr(main_cfg, "experience", None)
-    if exp_cfg is None or not getattr(exp_cfg, "enabled", False):
-        return
+    # Experience review is always enabled for main agents (baked). Params come
+    # from ExperienceConfig defaults when the agent's block is absent.
+    from modex_agent.ioc.configs.agent import ExperienceConfig
+
+    exp_cfg = getattr(main_cfg, "experience", None) or ExperienceConfig()
 
     pool_data = resources.pool_data.get(name)
     if pool_data is None:

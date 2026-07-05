@@ -139,7 +139,7 @@ async def test_materialize_appends_the_current_parent_prompt():
 
     deps.pool.recover_parent_session = recover
 
-    template = AgentTemplate(agent_type="scout", system_prompt_mode=SystemPromptMode.APPEND)
+    template = AgentTemplate(agent_name="scout", system_prompt_mode=SystemPromptMode.APPEND)
     await template.materialize(
         parent_session=SessionIdFactory().create(agent_name="mainA"),
         invocation_id="inv1", deps=deps,
@@ -173,7 +173,7 @@ async def test_materialize_forks_per_parent_via_load():
     deps.pool.recover_parent_session = recover
 
     template = AgentTemplate(
-        agent_type="planner", context_mode=ContextMode.FORK, fork_max_messages=10,
+        agent_name="planner", context_mode=ContextMode.FORK, fork_max_messages=10,
     )
     await template.materialize(
         parent_session=SessionIdFactory().create(agent_name="mainA"),
@@ -210,7 +210,7 @@ async def test_reused_instance_serves_per_invocation_append_and_fork():
     deps.pool.recover_parent_session = recover
 
     template = AgentTemplate(
-        agent_type="planner",
+        agent_name="planner",
         system_prompt_mode=SystemPromptMode.APPEND,
         context_mode=ContextMode.FORK,
         fork_max_messages=10,
@@ -311,7 +311,7 @@ async def test_output_base_dir_is_baked_at_materialize_not_per_turn(tmp_path):
     resolver = _RecordingResolver(runtime=ws_a, memory=ws_a / "mem")
 
     deps, factory = _deps(resolver=resolver)
-    template = AgentTemplate(agent_type="scout")
+    template = AgentTemplate(agent_name="scout")
     await template.materialize(
         parent_session=SessionIdFactory().create(agent_name="main"),
         invocation_id="inv1", deps=deps,
@@ -343,7 +343,7 @@ async def test_memory_workspace_is_baked_at_materialize(tmp_path):
     resolver = _RecordingResolver(runtime=ws_a, memory=ws_a / "mem")
 
     deps, factory = _deps(resolver=resolver)
-    template = AgentTemplate(agent_type="scout")
+    template = AgentTemplate(agent_name="scout")
     await template.materialize(
         parent_session=SessionIdFactory().create(agent_name="main"),
         invocation_id="inv1", deps=deps,

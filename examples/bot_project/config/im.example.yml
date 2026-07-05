@@ -1,0 +1,17 @@
+# IM adapter configuration. Copy this file to im.yml and fill in your values.
+# im.yml is gitignored (it contains secrets). Each top-level key is one IM
+# adapter; each adapter reads only its own section.
+
+qq:
+  enabled: false
+  app_id: "your_qq_app_id"
+  secret: "your_qq_secret"
+  allow_from:
+    - "*"
+
+telegram:
+  enabled: false
+  token: "your_telegram_bot_token"
+  proxy: null
+  allow_from:
+    - "*"

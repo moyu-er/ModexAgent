@@ -12,6 +12,8 @@ dependencies = [
     # etc.) — keep it in main deps so `uv pip install -e .` is enough to run debug_main.
     "aiohttp>=3.9.0,<4.0.0",
     "tiktoken>=0.13.0",
+    # Telegram IM adapter (bot/adapters/telegram.py) — Bot API polling only.
+    "python-telegram-bot>=21.0,<22.0",
 ]
 
 [project.optional-dependencies]

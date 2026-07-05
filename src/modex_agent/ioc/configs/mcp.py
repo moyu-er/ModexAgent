@@ -19,6 +19,13 @@ class MCPServerEntry(BaseModel):
     Claude ``mcp.json`` convention ``{"type": "sse", ...}``), and serializes
     as ``transport`` to match the runtime ``MCPClientManager`` API.
 
+    Transport spellings accepted by the load path (``streamable_http``,
+    ``streamable-http``, ``streamablehttp``, ``http``, ``local``) are
+    normalized to the canonical Literal form here so the model is the single
+    authority on transport vocabulary — reusing ``_TRANSPORT_ALIASES`` from
+    the MCP client would be ideal, but a string-level normalizer keeps this
+    config module free of a runtime-client import.
+
     ``command`` accepts both ``str`` and ``list[str]``.  When a list is
     given, the first element becomes the command and the rest are merged
     with ``args``.
@@ -26,7 +33,9 @@ class MCPServerEntry(BaseModel):
     ``environment`` is accepted as an alias for ``env`` on input.
     """
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(
+        frozen=True, extra="forbid", populate_by_name=True
+    )
 
     transport: Literal["stdio", "sse", "streamableHttp"] | None = Field(default=None, alias="type")
     command: str = ""

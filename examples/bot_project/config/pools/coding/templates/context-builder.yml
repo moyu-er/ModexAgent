@@ -1,16 +1,5 @@
-agent_type: context-builder
-description: "Deep requirements analysis — get context analysis"
+agent_name: context-builder
+description: Deep requirements analysis — get context analysis
 max_steps: 60
 tool_preset: read_only
 context_mode: fresh
-thinking_budget: medium
-memory:
-  session:
-    max_messages: 150
-    max_context_tokens: 150000
-    keep_ratio_for_messages: 0.3
-    keep_ratio_for_token: 0.3
-  archive: {enabled: true}
-  pruned: {enabled: true, max_files: 50, topic_max_chars: 200}
-  governance:
-    tool_chain_repair: true

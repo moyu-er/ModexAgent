@@ -1,18 +1,6 @@
-agent_type: worker
-description: "Implementation agent — the single writer thread"
+agent_name: worker
+description: Implementation agent — the single writer thread
 max_steps: 150
 context_mode: fork
-thinking_budget: high
-# NOTE: default_reads is not implemented yet — field reserved for future use
-system_prompt_mode: replace
 fork_max_messages: 60
-memory:
-  session:
-    max_messages: 200
-    max_context_tokens: 200000
-    keep_ratio_for_messages: 0.4
-    keep_ratio_for_token: 0.4
-  archive: {enabled: true}
-  pruned: {enabled: true, max_files: 50, topic_max_chars: 200}
-  governance:
-    tool_chain_repair: true
+tool_preset: read_write

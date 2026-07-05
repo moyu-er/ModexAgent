@@ -8,12 +8,10 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from bot.plugins.integration import PluginIntegration
 
-if TYPE_CHECKING:
-    from modex_agent.ioc.configs.agent import AgentConfig as IOCAgentConfig
 from modex_agent.core.skills import SkillManager
 from modex_agent.core.tool_manager import Tool
 from modex_agent.ioc.configs.app import AppConfig
@@ -62,32 +60,38 @@ def _make_search_tools() -> list[Tool]:
 
 async def _load_agent_mcp_tools(
     agent_name: str,
+    selection: list[str],
     project_dir: Path,
 ) -> tuple[list[Tool], Any | None]:
-    """Load MCP tools for an agent from config/mcp/{agent_name}.json.
+    """Load MCP tools for an agent from its registry selection.
 
-    Returns (tools, mcp_manager) — the manager must be kept alive for
+    Resolves ``selection`` (server names) against ``config/mcp/registry.json``
+    via :mod:`bot.config.mcp_registry`, then connects and adapts the tools.
+
+    Returns ``(tools, mcp_manager)`` — the manager must be kept alive for
     connection lifecycle and disconnected on shutdown.
     """
-    import json
-
     from modex_agent.ioc.configs.app import _resolve_env_in
     from modex_agent.tools.mcp import MCPClientManager
     from modex_agent.tools.mcp_adapter import MCPToolAdapter
     from modex_agent.tools.registry import ToolRegistry
 
-    mcp_json = project_dir / "config" / "mcp" / f"{agent_name}.json"
-    if not mcp_json.exists():
+    from bot.config.mcp_registry import resolve_agent_mcp_servers
+
+    if not selection:
+        return [], None
+
+    registry_path = project_dir / "config" / "mcp" / "registry.json"
+    try:
+        servers = resolve_agent_mcp_servers(selection, registry_path)
+    except Exception as e:
+        logger.warning("Agent %s: MCP selection %s resolve failed: %s", agent_name, selection, e)
+        return [], None
+
+    if not servers:
         return [], None
 
     try:
-        with open(mcp_json, encoding="utf-8") as f:
-            raw = json.load(f)
-
-        servers = raw.get("mcpServers") or raw.get("servers") or {}
-        if not servers:
-            return [], None
-
         servers = _resolve_env_in(servers)
         manager = MCPClientManager(config=servers)
         await manager.initialize()
@@ -105,7 +109,10 @@ async def _load_agent_mcp_tools(
             t = registry.get_tool(name)
             if t is not None:
                 tools.append(t)
-        logger.info("Agent %s: %d MCP tools loaded from %s", agent_name, len(tools), mcp_json.name)
+        logger.info(
+            "Agent %s: %d MCP tools loaded from selection %s",
+            agent_name, len(tools), selection,
+        )
         return tools, manager
 
     except Exception as e:
@@ -143,15 +150,4 @@ class AgentBuilderMixin:
     @property
     def _project_dir(self) -> Path:
         """Project root directory. Implemented by BotService."""
-        raise NotImplementedError
-
-    @property
-    def _main_agent_cfg(self) -> IOCAgentConfig | None:
-        """Main agent config by role. Implemented by BotService."""
-        raise NotImplementedError
-
-    # ── Method stubs — implemented by BotService ──
-
-    def _find_subagent_cfg(self) -> IOCAgentConfig | None:
-        """Find the first subagent config. Implemented by BotService."""
         raise NotImplementedError
