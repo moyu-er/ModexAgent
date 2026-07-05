@@ -23,6 +23,20 @@ from bot.config.pool_payloads import PromptContent
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_-]+$")
 
 
+DEFAULT_PROMPT_SEED = """\
+You are an AI assistant.
+
+## Interaction Guidelines
+- Respond naturally and concisely.
+- Give direct answers first, then add explanation.
+- Be honest about uncertainty — never fabricate information.
+
+## Output Constraints
+- Keep responses reasonably concise.
+- Do not output internal debug info or raw tool returns.
+"""
+
+
 class UnknownPromptError(KeyError):
     """Raised when an agent prompt md is not present on disk."""
 
@@ -77,3 +91,26 @@ class PromptStore:
     def prompt_exists(self, agent: str) -> bool:
         """True if ``agents/<agent>.md`` exists."""
         return self._md_path(agent).exists()
+
+    def read_or_seed_prompt(
+        self,
+        agent: str,
+        default_content: str | None = None,
+    ) -> PromptContent:
+        """Read ``agents/<agent>.md``; if missing, atomically seed it and return.
+
+        Idempotent and safe for concurrent callers: if the file appears between
+        the existence check and the write, the write simply overwrites with the
+        same default content. Uses the same ``.tmp`` + ``os.replace`` atomicity
+        as :meth:`write_prompt`.
+        """
+        md = self._md_path(agent)
+        if md.exists():
+            content = md.read_text(encoding="utf-8")
+        else:
+            content = default_content if default_content is not None else DEFAULT_PROMPT_SEED
+            self.agents_dir.mkdir(parents=True, exist_ok=True)
+            tmp = md.with_name(md.name + ".tmp")
+            tmp.write_text(content, encoding="utf-8")
+            os.replace(tmp, md)
+        return PromptContent(name=agent, content=content)

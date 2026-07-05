@@ -261,6 +261,7 @@ class PoolStore:
                 new_main_name=tree.main.agent_name,
                 prior_subagent_names=prior_subagent_names,
                 new_subagent_names=new_subagent_names,
+                rename_map=rename_map,
             )
             # Commit: replace all .tmp into place, then apply md ops.
             self._commit_tmp(pool_tmp)
@@ -268,6 +269,10 @@ class PoolStore:
                 self._commit_tmp(t)
             self._cleanup_removed_templates(name, new_subagent_names)
             self._apply_md_ops(md_ops)
+            self._seed_missing_md(
+                new_main_name=tree.main.agent_name,
+                new_subagent_names=new_subagent_names,
+            )
         except Exception:
             # Best-effort cleanup of staged .tmp files on failure.
             for t in tmp_files:
@@ -476,6 +481,7 @@ class PoolStore:
         new_main_name: str,
         prior_subagent_names: set[str],
         new_subagent_names: set[str],
+        rename_map: dict[str, str],
     ) -> list[tuple[str, ...]]:
         """Plan rename/remove ops on agents/*.md. Each op is a tuple:
 
@@ -488,7 +494,18 @@ class PoolStore:
             new = self.agents_dir / f"{new_main_name}.md"
             if old.exists():
                 ops.append(("rename", str(old), str(new)))
-        # Subagent mds: renames + removes.
+
+        # Subagent renames: rename_map tells us which prior name each new name
+        # inherits its template from; the prompt md should follow the same path.
+        for new_name in new_subagent_names:
+            prior_name = rename_map.get(new_name, new_name)
+            if prior_name != new_name:
+                old = self.agents_dir / f"{prior_name}.md"
+                new = self.agents_dir / f"{new_name}.md"
+                if old.exists():
+                    ops.append(("rename", str(old), str(new)))
+
+        # Subagent / old-main removals.
         prior_all = set(prior_subagent_names)
         if prior_main_name is not None:
             prior_all = prior_all | {prior_main_name}
@@ -513,6 +530,25 @@ class PoolStore:
             elif op[0] == "remove":
                 _, target_s = op
                 Path(target_s).unlink(missing_ok=True)
+
+    def _seed_missing_md(
+        self,
+        new_main_name: str,
+        new_subagent_names: set[str],
+    ) -> None:
+        """Ensure every agent in the saved tree has a corresponding prompt md.
+
+        Only creates missing files; existing files (including those just
+        renamed) are left untouched so user edits are preserved.
+        """
+        self.agents_dir.mkdir(parents=True, exist_ok=True)
+        for agent_name in {new_main_name, *new_subagent_names}:
+            md = self.agents_dir / f"{agent_name}.md"
+            if md.exists():
+                continue
+            tmp = md.with_name(md.name + ".tmp")
+            tmp.write_text(_DEFAULT_MAIN_PROMPT, encoding="utf-8")
+            os.replace(tmp, md)
 
     def _commit_tmp(self, tmp_path: Path) -> None:
         # tmp_path is <target>.tmp (see _atomic_stage); strip the trailing

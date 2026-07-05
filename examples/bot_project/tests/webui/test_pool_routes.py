@@ -242,15 +242,18 @@ async def test_read_write_prompt(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_read_prompt_unknown_agent_404(tmp_path: Path) -> None:
+async def test_read_prompt_seeds_missing_md(tmp_path: Path) -> None:
     _seed_pool_yml(tmp_path, "main")
     client = _make_client(_make_controller(tmp_path), tmp_path)
     await client.start_server()
     try:
         resp = await client.get("/api/pools/main/agents/ghost/prompt")
-        assert resp.status == 404
+        assert resp.status == 200, await resp.text()
         data = await resp.json()
-        assert "unknown agent" in data["error"]
+        assert data["name"] == "ghost"
+        assert "You are an AI assistant" in data["content"]
+        # File was created on disk by the GET seed path.
+        assert (tmp_path / "agents" / "ghost.md").exists()
     finally:
         await client.close()
 
@@ -265,11 +268,9 @@ async def test_write_prompt_creates_if_missing(tmp_path: Path) -> None:
     client = _make_client(_make_controller(tmp_path), tmp_path)
     await client.start_server()
     try:
-        # Pre-condition: file does not exist → GET 404.
-        resp = await client.get("/api/pools/main/agents/oracle/prompt")
-        assert resp.status == 404
-
-        # PUT creates the file atomically.
+        # Pre-condition: GET already seeds the default (we changed behavior).
+        # PUT still overrides with caller content, so the test still validates
+        # the create-or-update contract.
         resp = await client.put(
             "/api/pools/main/agents/oracle/prompt",
             json={"content": "fresh prompt body"},
@@ -278,7 +279,7 @@ async def test_write_prompt_creates_if_missing(tmp_path: Path) -> None:
         body = await resp.json()
         assert body["content"] == "fresh prompt body"
 
-        # Round-trip: GET now succeeds and returns the same content.
+        # Round-trip: GET now succeeds and returns the PUT content.
         resp = await client.get("/api/pools/main/agents/oracle/prompt")
         assert resp.status == 200
         assert (await resp.json())["content"] == "fresh prompt body"
@@ -287,6 +288,113 @@ async def test_write_prompt_creates_if_missing(tmp_path: Path) -> None:
         on_disk = tmp_path / "agents" / "oracle.md"
         assert on_disk.exists()
         assert on_disk.read_text(encoding="utf-8") == "fresh prompt body"
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_write_pool_seeds_missing_md_for_new_subagent(tmp_path: Path) -> None:
+    _seed_pool_yml(tmp_path, "main")
+    # Seed an existing subagent template.
+    templates_dir = tmp_path / "config" / "pools" / "main" / "templates"
+    templates_dir.mkdir(parents=True, exist_ok=True)
+    (templates_dir / "researcher.yml").write_text(
+        yaml.safe_dump({"agent_name": "researcher", "description": "Old"}),
+        encoding="utf-8",
+    )
+
+    client = _make_client(_make_controller(tmp_path), tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.get("/api/pools/main")
+        tree = await resp.json()
+
+        # Add a brand-new subagent.
+        tree["subagents"].append({
+            "agent_name": "oracle",
+            "description": "New sub",
+            "max_steps": 80,
+            "tool_preset": "read_write",
+            "tool_supplements": [],
+            "context_mode": "fork",
+            "mcp": [],
+        })
+
+        resp = await client.put("/api/pools/main", json=tree)
+        assert resp.status == 200, await resp.text()
+
+        # oracle md was auto-created on save.
+        assert (tmp_path / "agents" / "oracle.md").exists()
+        text = (tmp_path / "agents" / "oracle.md").read_text(encoding="utf-8")
+        assert "You are an AI assistant" in text
+
+        # Existing subagent without an md is also seeded on save.
+        assert (tmp_path / "agents" / "researcher.md").exists()
+        assert "You are an AI assistant" in (
+            tmp_path / "agents" / "researcher.md"
+        ).read_text(encoding="utf-8")
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_write_pool_renames_prompt_md_on_agent_rename(tmp_path: Path) -> None:
+    _seed_pool_yml(tmp_path, "main")
+    templates_dir = tmp_path / "config" / "pools" / "main" / "templates"
+    templates_dir.mkdir(parents=True, exist_ok=True)
+    (templates_dir / "researcher.yml").write_text(
+        yaml.safe_dump({"agent_name": "researcher", "description": "Old"}),
+        encoding="utf-8",
+    )
+    agents_dir = tmp_path / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    (agents_dir / "researcher.md").write_text(
+        "# custom researcher prompt\n", encoding="utf-8"
+    )
+
+    client = _make_client(_make_controller(tmp_path), tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.get("/api/pools/main")
+        tree = await resp.json()
+        tree["subagents"][0]["agent_name"] = "scout"
+
+        resp = await client.put("/api/pools/main", json=tree)
+        assert resp.status == 200, await resp.text()
+
+        # Old md moved, content preserved.
+        assert not (agents_dir / "researcher.md").exists()
+        assert (
+            agents_dir / "scout.md"
+        ).read_text(encoding="utf-8") == "# custom researcher prompt\n"
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_write_pool_removes_prompt_md_on_agent_delete(tmp_path: Path) -> None:
+    _seed_pool_yml(tmp_path, "main")
+    templates_dir = tmp_path / "config" / "pools" / "main" / "templates"
+    templates_dir.mkdir(parents=True, exist_ok=True)
+    (templates_dir / "researcher.yml").write_text(
+        yaml.safe_dump({"agent_name": "researcher", "description": "Old"}),
+        encoding="utf-8",
+    )
+    agents_dir = tmp_path / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    (agents_dir / "researcher.md").write_text("bye", encoding="utf-8")
+
+    client = _make_client(_make_controller(tmp_path), tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.get("/api/pools/main")
+        tree = await resp.json()
+        tree["subagents"] = []
+
+        resp = await client.put("/api/pools/main", json=tree)
+        assert resp.status == 200, await resp.text()
+
+        assert not (agents_dir / "researcher.md").exists()
     finally:
         await client.close()
 

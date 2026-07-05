@@ -54,6 +54,7 @@ from bot.config.pool_store import (
     PoolStore,
     PoolValidationError,
     UnknownPoolError,
+    _DEFAULT_MAIN_PROMPT,
 )
 from bot.config.prompt_store import (
     PromptStore,
@@ -188,8 +189,15 @@ class PoolConfigController:
     # ------------------------------------------------------------------ #
 
     def read_prompt(self, agent: str) -> PromptContent:
+        """Read ``agents/<agent>.md``; seed a default if it does not exist yet.
+
+        The webui prompt editor opens on a GET, so returning 404 for a brand-new
+        agent blocks the user before they can save their first system prompt.
+        Seeding here makes ``edit = create-or-update`` while keeping writes
+        explicit (PUT still goes through ``write_prompt``).
+        """
         try:
-            return self._prompts.read_prompt(agent)
+            return self._prompts.read_or_seed_prompt(agent, _DEFAULT_MAIN_PROMPT)
         except PromptValidationError as exc:
             raise FieldValidationError({"agent": [str(exc)]}) from exc
 

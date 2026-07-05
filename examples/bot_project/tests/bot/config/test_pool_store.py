@@ -503,10 +503,13 @@ class TestPromptMdCoupling:
         assert not (tmp_path / "agents" / "main.md").exists()
         assert (tmp_path / "agents" / "renamed.md").read_text(encoding="utf-8") == "original"
 
-    def test_store_never_writes_md_content(
+    def test_store_seeds_md_for_new_agents(
         self, store: PoolStore, tmp_path: Path
     ) -> None:
-        # write_pool must not create md files for NEW agents (PromptStore's job).
+        # write_pool now seeds a default prompt md for every agent present in the
+        # saved tree that does not already have one. This makes the webui flow
+        # "save pool → edit system prompt" work without a prior explicit prompt
+        # write, while PromptStore still owns the content shape/format.
         _seed_pool_yml(tmp_path, "coding", main_agent="coding")
         tree = PoolTree(
             name="coding",
@@ -515,7 +518,9 @@ class TestPromptMdCoupling:
             subagents=[SubagentNode(agent_name="brandnew")],
         )
         store.write_pool("coding", tree)
-        assert not (tmp_path / "agents" / "brandnew.md").exists()
+        md = tmp_path / "agents" / "brandnew.md"
+        assert md.exists()
+        assert "You are an AI assistant" in md.read_text(encoding="utf-8")
 
 
 # ─── create / delete / rename / list ─────────────────────────────────────────
