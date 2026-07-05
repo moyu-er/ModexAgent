@@ -255,6 +255,42 @@ async def test_read_prompt_unknown_agent_404(tmp_path: Path) -> None:
         await client.close()
 
 
+@pytest.mark.asyncio
+async def test_write_prompt_creates_if_missing(tmp_path: Path) -> None:
+    """PUT auto-creates ``agents/<name>.md`` — the contract the webui relies on
+    when the user provides an agent name and saves a fresh system prompt.
+    Locks in: a GET-first 404 turns into 200 after PUT, and the md lands on disk.
+    """
+    _seed_pool_yml(tmp_path, "main")
+    client = _make_client(_make_controller(tmp_path), tmp_path)
+    await client.start_server()
+    try:
+        # Pre-condition: file does not exist → GET 404.
+        resp = await client.get("/api/pools/main/agents/oracle/prompt")
+        assert resp.status == 404
+
+        # PUT creates the file atomically.
+        resp = await client.put(
+            "/api/pools/main/agents/oracle/prompt",
+            json={"content": "fresh prompt body"},
+        )
+        assert resp.status == 200, await resp.text()
+        body = await resp.json()
+        assert body["content"] == "fresh prompt body"
+
+        # Round-trip: GET now succeeds and returns the same content.
+        resp = await client.get("/api/pools/main/agents/oracle/prompt")
+        assert resp.status == 200
+        assert (await resp.json())["content"] == "fresh prompt body"
+
+        # File landed on disk.
+        on_disk = tmp_path / "agents" / "oracle.md"
+        assert on_disk.exists()
+        assert on_disk.read_text(encoding="utf-8") == "fresh prompt body"
+    finally:
+        await client.close()
+
+
 # ─── MCP registry ────────────────────────────────────────────────────────────
 
 

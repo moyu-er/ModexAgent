@@ -43,6 +43,15 @@ interface Props {
 
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
 
+// Mirrors the backend regex in `bot/config/prompt_store.py` so the "Edit system
+// prompt" button only opens the editor when the name we'd actually save under
+// is a valid agent name. Empty / uppercase / trailing-space names produce a
+// double-slash URL (`/api/pools/<pool>/agents//prompt`) that aiohttp can't
+// route — gate here to avoid the misleading 404.
+const AGENT_NAME_RE = /^[a-z][a-z0-9_-]+$/;
+const isValidAgentName = (name: string): boolean =>
+  typeof name === "string" && AGENT_NAME_RE.test(name);
+
 const INPUT =
   "w-full rounded border border-input-border bg-input-bg px-2.5 py-1.5 text-sm text-text-primary placeholder:text-text-disabled focus:border-input-focus focus:outline-none focus:ring-1 focus:ring-input-focus";
 const LABEL = "mb-1 block text-xs font-medium text-text-secondary";
@@ -244,6 +253,7 @@ export function PoolEditor({ pool, onDirtyChange }: Props) {
           <MainAgentFields
             node={form.main}
             savedAgentName={original.main.agent_name}
+            promptDisabled={!isValidAgentName(form.main.agent_name)}
             errors={errors}
             errFor={errFor}
             patch={patchMain}
@@ -267,6 +277,7 @@ export function PoolEditor({ pool, onDirtyChange }: Props) {
               index={i}
               node={sub}
               savedAgentName={original.subagents[i]?.agent_name ?? sub.agent_name}
+              promptDisabled={!isValidAgentName(sub.agent_name)}
               open={expanded.has(i)}
               errors={errors}
               errFor={errFor}
@@ -422,6 +433,7 @@ function SupplementsChips({
 function MainAgentFields({
   node,
   savedAgentName,
+  promptDisabled,
   errors,
   errFor,
   patch,
@@ -430,6 +442,7 @@ function MainAgentFields({
 }: {
   node: MainAgentNode;
   savedAgentName: string;
+  promptDisabled: boolean;
   errors: FieldErrors;
   errFor: ErrFn;
   patch: (p: Partial<MainAgentNode>) => void;
@@ -558,11 +571,23 @@ function MainAgentFields({
       <div>
         <button
           type="button"
-          className="text-xs text-ai-brand hover:underline"
+          className="text-xs text-ai-brand hover:underline disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:no-underline"
           onClick={onEditPrompt}
+          disabled={promptDisabled}
+          title={
+            promptDisabled
+              ? "Provide an agent name first"
+              : undefined
+          }
         >
           System prompt [Edit]
         </button>
+        {promptDisabled && (
+          <p className="mt-1 text-[11px] text-text-secondary">
+            Provide an agent name (lowercase, letters/digits/_/-) to edit its
+            system prompt.
+          </p>
+        )}
       </div>
     </>
   );
@@ -574,6 +599,7 @@ function SubagentCard({
   index,
   node,
   savedAgentName,
+  promptDisabled,
   open,
   errors,
   errFor,
@@ -589,6 +615,7 @@ function SubagentCard({
   index: number;
   node: SubagentNode;
   savedAgentName: string;
+  promptDisabled: boolean;
   open: boolean;
   errors: FieldErrors;
   errFor: ErrFn;
@@ -793,11 +820,23 @@ function SubagentCard({
           <div>
             <button
               type="button"
-              className="text-xs text-ai-brand hover:underline"
+              className="text-xs text-ai-brand hover:underline disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:no-underline"
               onClick={onEditPrompt}
+              disabled={promptDisabled}
+              title={
+                promptDisabled
+                  ? "Provide an agent name first"
+                  : undefined
+              }
             >
               System prompt [Edit]
             </button>
+            {promptDisabled && (
+              <p className="mt-1 text-[11px] text-text-secondary">
+                Provide an agent name (lowercase, letters/digits/_/-) to edit
+                its system prompt.
+              </p>
+            )}
           </div>
         </div>
       )}

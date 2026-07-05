@@ -196,4 +196,88 @@ describe("PoolEditor", () => {
     // PoolsView; covered in PoolsView.test.tsx.
     expect(true).toBe(true);
   });
+
+  // ─── system-prompt Edit button gating ──────────────────────────────────
+  // Regression: clicking "System prompt [Edit]" on an unnamed subagent built
+  // an URL with a double slash (`/agents//prompt`), which aiohttp routed to
+  // a 404. The button is now disabled when agent_name is empty/invalid; the
+  // backend PUT still creates the file once a valid name is provided.
+
+  it("disables 'System prompt [Edit]' for an untitled (empty-name) subagent", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        Promise.resolve(makeResponse(200, url.includes("/skills") ? [] : tree)),
+      ),
+    );
+    renderEditor({});
+    await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
+
+    // Add a subagent — auto-expanded with empty agent_name.
+    fireEvent.click(screen.getByRole("button", { name: /Add subagent/ }));
+
+    const editBtns = screen.getAllByRole("button", {
+      name: /System prompt \[Edit\]/,
+    }) as HTMLButtonElement[];
+    // [main, subagent]
+    expect(editBtns.length).toBe(2);
+    expect(editBtns[0]!.disabled).toBe(false);
+    expect(editBtns[1]!.disabled).toBe(true);
+    expect(screen.getByText(/Provide an agent name/)).toBeTruthy();
+  });
+
+  it("enables 'System prompt [Edit]' once a valid name is typed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        Promise.resolve(makeResponse(200, url.includes("/skills") ? [] : tree)),
+      ),
+    );
+    renderEditor({});
+    await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: /Add subagent/ }));
+
+    // After add-subagent (approval disabled, subagent description also rendered)
+    // the DOM textboxes (role="textbox") are, in order:
+    //   [mainName, subagentName, subagentDescription]
+    // — number inputs are role="spinbutton", textareas don't exist here.
+    const textboxes = screen.getAllByRole("textbox") as HTMLInputElement[];
+    expect(textboxes.length).toBe(3);
+    const subagentNameInput = textboxes[1]!;
+    expect(subagentNameInput.value).toBe("");
+    fireEvent.change(subagentNameInput, { target: { value: "oracle" } });
+
+    const editBtns = screen.getAllByRole("button", {
+      name: /System prompt \[Edit\]/,
+    }) as HTMLButtonElement[];
+    expect(editBtns[1]!.disabled).toBe(false);
+    expect(screen.queryByText(/Provide an agent name/)).toBeNull();
+  });
+
+  it("disables main agent's 'System prompt [Edit]' when main name is cleared", async () => {
+    // Use a no-subagent tree so only main's Edit button is in the DOM
+    // (existing subagent's button is gated behind a collapsed card).
+    const treeNoSub = { ...tree, subagents: [] };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        Promise.resolve(
+          makeResponse(200, url.includes("/skills") ? [] : treeNoSub),
+        ),
+      ),
+    );
+    renderEditor({});
+    await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
+
+    fireEvent.change(screen.getByDisplayValue("main"), {
+      target: { value: "" },
+    });
+
+    const editBtns = screen.getAllByRole("button", {
+      name: /System prompt \[Edit\]/,
+    }) as HTMLButtonElement[];
+    expect(editBtns.length).toBe(1);
+    expect(editBtns[0]!.disabled).toBe(true);
+  });
 });
