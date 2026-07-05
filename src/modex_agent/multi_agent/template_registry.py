@@ -10,7 +10,6 @@ import yaml
 from modex_agent.ioc.configs.agent import ExperienceConfig
 from modex_agent.ioc.configs.approval import ApprovalConfig
 from modex_agent.ioc.configs.memory import MemoryConfig
-from modex_agent.ioc.configs.skills import SkillsConfig
 from modex_agent.multi_agent.template import AgentTemplate
 from modex_agent.tools.presets import (
     DEFAULT_FORK_MAX_MESSAGES,
@@ -43,11 +42,15 @@ class AgentTemplateRegistry:
     # Accepted YAML keys — the full AgentTemplate field set as written in
     # template files. Any other key is a typo / stale field and must surface
     # (extra="forbid" semantics for the manually-parsed dataclass).
+    # ``memory`` is deliberately NOT accepted here: subagent memory is baked
+    # (sub-minimal, immutable, spec §9). A template carrying a ``memory:`` block
+    # is rejected so a stale/hand-edited rich-memory block can never silently
+    # override the baked preset. ``skills`` likewise (disk-only, not in YAML).
     _ACCEPTED_KEYS: frozenset[str] = frozenset({
         "agent_name", "description", "max_steps", "tool_preset",
         "tool_supplements", "context_mode",
-        "system_prompt_mode", "fork_max_messages", "mcp", "memory",
-        "skills", "approval", "experience",
+        "system_prompt_mode", "fork_max_messages", "mcp",
+        "approval", "experience",
     })
 
     def __init__(
@@ -58,9 +61,10 @@ class AgentTemplateRegistry:
     ) -> None:
         """Init.
 
-        ``default_subagent_memory`` is applied to any template that omits its
-        own ``memory`` block, so subagent templates need not persist the baked
-        memory preset per file (single source of truth = the caller's factory).
+        ``default_subagent_memory`` is baked onto EVERY subagent template,
+        unconditionally (spec §9 — sub-minimal, immutable). A template may NOT
+        carry its own ``memory:`` block; the caller's factory is the single
+        source of truth.
         """
         self._default_memory = default_subagent_memory
         self._templates: dict[str, dict[str, AgentTemplate]] = {}
@@ -159,16 +163,7 @@ class AgentTemplateRegistry:
                         system_prompt_mode=system_prompt_mode,
                         fork_max_messages=fork_max_messages,
                         mcp=list(raw.get("mcp") or []),
-                        memory=(
-                            MemoryConfig.model_validate(raw["memory"])
-                            if raw.get("memory")
-                            else self._default_memory
-                        ),
-                        skills=(
-                            SkillsConfig(roots=raw["skills"]["roots"])
-                            if raw.get("skills")
-                            else None
-                        ),
+                        memory=self._default_memory,
                         approval=(
                             ApprovalConfig.model_validate(raw["approval"])
                             if raw.get("approval")

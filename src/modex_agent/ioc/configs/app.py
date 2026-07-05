@@ -61,10 +61,13 @@ def _validate_pool_name(name: str) -> None:
 
 # Main-agent editable fields lifted from flat pool.yml top level into the
 # internal ``agents=[main]`` representation. ``name``/``role`` are set by the
-# loader; ``llm``/``memory`` are pool-level (PoolConfig fields).
+# loader; ``llm``/``memory`` are pool-level (PoolConfig fields). ``skills`` is
+# deliberately NOT lifted: skill assignment is disk-only (symlinks/junctions
+# under skills/<pool>/<agent>/, single source = disk). A stale top-level
+# ``skills:`` block in pool.yml is ignored, not honored.
 _MAIN_AGENT_YAML_FIELDS: tuple[str, ...] = (
     "max_steps", "use_terminal", "terminal_visibility",
-    "skills", "approval", "safety", "hooks", "experience",
+    "approval", "safety", "hooks", "experience",
     "tool_preset", "tool_supplements", "mcp",
 )
 
