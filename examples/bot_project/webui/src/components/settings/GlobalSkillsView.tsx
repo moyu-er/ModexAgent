@@ -14,12 +14,14 @@ import { listSkills, uploadSkill, deleteSkill } from "../../lib/skillsApi";
 import type { SkillFile } from "../../lib/skillsApi";
 import { ApiError } from "../../lib/api";
 import { useToast } from "../ToastContext";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 export function GlobalSkillsView() {
   const toast = useToast();
   const [skills, setSkills] = useState<SkillEntry[] | null>(null);
   const [loadError, setLoadError] = useState<string>("");
   const [uploading, setUploading] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const load = async (): Promise<void> => {
@@ -68,7 +70,7 @@ export function GlobalSkillsView() {
     }
   };
 
-  const onDelete = async (name: string): Promise<void> => {
+  const onDeleteConfirmed = async (name: string): Promise<void> => {
     try {
       await deleteSkill(name);
       setSkills((prev) => (prev ?? []).filter((s) => s.name !== name));
@@ -78,6 +80,8 @@ export function GlobalSkillsView() {
         message: `Delete failed: ${e instanceof ApiError ? `${e.status} ${e.detail}` : String(e)}`,
         tone: "warning",
       });
+    } finally {
+      setPendingDelete(null);
     }
   };
 
@@ -127,13 +131,24 @@ export function GlobalSkillsView() {
               type="button"
               aria-label={`Delete skill ${s.name}`}
               className="ml-auto text-text-secondary hover:text-error"
-              onClick={() => onDelete(s.name)}
+              onClick={() => setPendingDelete(s.name)}
             >
               <TrashIcon />
             </button>
           </li>
         ))}
       </ul>
+
+      {pendingDelete ? (
+        <ConfirmDialog
+          title={`Delete skill "${pendingDelete}"?`}
+          message="The global skill will be removed. Per-agent links that referenced it go dangling."
+          confirmLabel="Delete"
+          tone="danger"
+          onConfirm={() => void onDeleteConfirmed(pendingDelete)}
+          onCancel={() => setPendingDelete(null)}
+        />
+      ) : null}
 
     </div>
   );

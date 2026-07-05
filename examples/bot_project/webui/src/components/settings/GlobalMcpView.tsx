@@ -3,7 +3,7 @@
 // (surfaces the used_by conflict list on 409). MCP writes always imply a
 // restart, so successful save/delete shows a "Saved. Restart to apply." toast.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { McpServerEntry, McpTransport } from "../../types/pool";
 import {
@@ -23,6 +23,8 @@ const LABEL = "mb-1 block text-xs font-medium text-text-secondary";
 const TRANSPORTS: McpTransport[] = ["stdio", "sse", "streamableHttp"];
 
 interface CardState {
+  /** Stable id for React keys (not the server name, which can change). */
+  id: number;
   /** Original name (null = newly added, not yet persisted). */
   originalName: string | null;
   /** Currently-edited name. */
@@ -47,6 +49,7 @@ export function GlobalMcpView() {
   const toast = useToast();
   const [cards, setCards] = useState<CardState[] | null>(null);
   const [loadError, setLoadError] = useState<string>("");
+  const _nextId = useRef<number>(1);
 
   const load = async (): Promise<void> => {
     setLoadError("");
@@ -54,6 +57,7 @@ export function GlobalMcpView() {
       const map = await getMcp();
       setCards(
         Object.entries(map).map(([name, entry]) => ({
+          id: _nextId.current++,
           originalName: name,
           name,
           entry,
@@ -86,7 +90,7 @@ export function GlobalMcpView() {
   const addCard = (): void => {
     setCards((prev) => [
       ...(prev ?? []),
-      { originalName: null, name: "", entry: emptyEntry() },
+      { id: _nextId.current++, originalName: null, name: "", entry: emptyEntry() },
     ]);
   };
 
@@ -98,6 +102,14 @@ export function GlobalMcpView() {
       return;
     }
     try {
+      // Rename: the old server name (if any, and different) must be deleted so
+      // the renamed entry replaces it rather than leaving an orphan. A 409
+      // (in-use) on the old name blocks the rename — the user must unassign it.
+      const renamed =
+        card.originalName !== null && card.originalName !== name;
+      if (renamed) {
+        await deleteMcp(card.originalName!);
+      }
       await upsertMcp(name, card.entry);
       update(i, { originalName: name, name, conflict: undefined });
       // MCP upsert/delete unconditionally mark the pool dirty (the registry is
@@ -105,7 +117,16 @@ export function GlobalMcpView() {
       // unconditionally.
       restartToast(toast);
     } catch (e) {
-      toast.show({ message: `Save failed: ${errDetail(e)}`, tone: "warning" });
+      if (e instanceof McpInUseError) {
+        const where = e.usedBy.map(([p, a]) => `${p}/${a}`).join(", ");
+        update(i, { conflict: e.usedBy });
+        toast.show({
+          message: `Rename blocked — "${card.originalName}" in use by ${where}. Unassign first.`,
+          tone: "warning",
+        });
+      } else {
+        toast.show({ message: `Save failed: ${errDetail(e)}`, tone: "warning" });
+      }
     }
   };
 
@@ -165,7 +186,7 @@ export function GlobalMcpView() {
       <div className="space-y-2">
         {cards.map((card, i) => (
           <McpCard
-            key={i}
+            key={card.id}
             card={card}
             onChange={(patch) => update(i, patch)}
             onSave={() => onSave(i)}

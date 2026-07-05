@@ -985,13 +985,13 @@ async def _register_main_agent(
     """Register the main (NORMAL) agent with factory defaults (Design B).
 
     The normal agent is a plain ``AgentConfig`` (inline in ``pool.yml``); its
-    ``max_steps`` / ``approval`` / ``experience`` / ``extra_tools`` /
+    ``max_steps`` / ``tool_preset`` / ``tool_supplements`` / ``approval`` /
     ``use_terminal`` / ``terminal_visibility`` are read from ``main_cfg``.
     It is NOT an ``AgentTemplate`` — only subagents are templated. Normals get
     the rich toolset ``create_pool`` assembles (terminal, send_to_agent,
-    extra_tools, workspace memory) via the factory's default tool/skill
+    workspace memory) via the factory's default tool/skill
     managers (``tool_manager=None`` / ``skill_manager=None`` → factory
-    substitutes its pre-built defaults, factory.py:176,186-191).
+    substitutes its pre-built defaults).
     """
     from modex_agent.multi_agent.descriptor import (
         AgentDescriptor,

@@ -40,7 +40,7 @@ describe("GlobalSkillsView", () => {
     expect(screen.getByText("local")).toBeTruthy();
   });
 
-  it("Delete calls deleteSkill and removes the row", async () => {
+  it("Delete calls deleteSkill and removes the row after confirm", async () => {
     const fetchMock = vi.fn((url: string, init?: RequestInit) => {
       const method = init?.method ?? "GET";
       if (url === "/api/skills" && method === "DELETE") {
@@ -53,7 +53,11 @@ describe("GlobalSkillsView", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderView();
     await waitFor(() => expect(screen.getByText("fmt")).toBeTruthy());
+    // Click the trash button — opens the ConfirmDialog.
     fireEvent.click(screen.getByRole("button", { name: "Delete skill fmt" }));
+    // Confirm the deletion.
+    const deleteBtn = await screen.findByText("Delete");
+    fireEvent.click(deleteBtn);
     await waitFor(() => expect(screen.queryByText("fmt")).toBeNull());
     const deletes = fetchMock.mock.calls.filter(
       (c) => c[1]?.method === "DELETE",

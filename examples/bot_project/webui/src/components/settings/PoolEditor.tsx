@@ -4,7 +4,7 @@
 // presets and subagent fields all flow through the single Save button.
 //
 // Skill selection is EAGER (handled inside AgentSkillSelector — assigning a
-// skill is a side-effecting disk copy backed by dedicated REST routes).
+// skill is a side-effecting disk link backed by dedicated REST routes).
 //
 // A successful Save with restart_required=true fires the uniform restart toast
 // (via restartToast) and arms the persistent indicator. Validation errors
@@ -67,7 +67,7 @@ const SUPPLEMENTS = ["ast_grep"] as const;
 const defaultSubagent = (): SubagentNode => ({
   agent_name: "",
   description: "",
-  max_steps: 16,
+  max_steps: 80,
   tool_preset: "read_write",
   tool_supplements: [],
   context_mode: "fork",
@@ -243,6 +243,7 @@ export function PoolEditor({ pool, onDirtyChange }: Props) {
         <div className="space-y-5 px-4 py-4">
           <MainAgentFields
             node={form.main}
+            savedAgentName={original.main.agent_name}
             errors={errors}
             errFor={errFor}
             patch={patchMain}
@@ -265,6 +266,7 @@ export function PoolEditor({ pool, onDirtyChange }: Props) {
               key={i}
               index={i}
               node={sub}
+              savedAgentName={original.subagents[i]?.agent_name ?? sub.agent_name}
               open={expanded.has(i)}
               errors={errors}
               errFor={errFor}
@@ -419,6 +421,7 @@ function SupplementsChips({
 
 function MainAgentFields({
   node,
+  savedAgentName,
   errors,
   errFor,
   patch,
@@ -426,6 +429,7 @@ function MainAgentFields({
   onEditPrompt,
 }: {
   node: MainAgentNode;
+  savedAgentName: string;
   errors: FieldErrors;
   errFor: ErrFn;
   patch: (p: Partial<MainAgentNode>) => void;
@@ -547,7 +551,7 @@ function MainAgentFields({
         />
         <AgentSkillSelector
           pool={pool}
-          agent={node.agent_name}
+          agent={savedAgentName}
         />
       </div>
 
@@ -569,6 +573,7 @@ function MainAgentFields({
 function SubagentCard({
   index,
   node,
+  savedAgentName,
   open,
   errors,
   errFor,
@@ -583,6 +588,7 @@ function SubagentCard({
 }: {
   index: number;
   node: SubagentNode;
+  savedAgentName: string;
   open: boolean;
   errors: FieldErrors;
   errFor: ErrFn;
@@ -780,7 +786,7 @@ function SubagentCard({
             />
             <AgentSkillSelector
               pool={pool}
-              agent={node.agent_name}
+              agent={savedAgentName}
             />
           </div>
 
