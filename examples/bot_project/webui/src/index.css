@@ -5,85 +5,32 @@
 /*
  * Single source of truth for the palette. Every color token is a CSS variable
  * that flips under ``.dark``; tailwind.config.js maps each token name to the
- * matching ``var(--color-*)``, so components write ``bg-page-bg`` (not the old
- * ``bg-page-bg-light dark:bg-page-bg-dark`` pair) and pick up the right value
+ * matching ``var(--color-*)``, so components write ``bg-canvas`` (not the old
+ * ``bg-canvas-light dark:bg-canvas-dark`` pair) and pick up the right value
  * automatically. Edit a color here once — never in the tailwind config.
  */
 :root {
-  /* 背景层 */
-  --color-page-bg: #FAFAFA;
-  --color-content-bg: #FFFFFF;
-  --color-sidebar-bg: #F5F5F5;
-  --color-sidebar-hover: #EBEBEB;
+  /* 背景层 — Vercel Geist palette */
   --color-overlay: rgba(0,0,0,0.4);
 
-  /* 文字颜色 */
-  --color-text-primary: #111827;
-  --color-text-body: #374151;
-  --color-text-secondary: #6B7280;
-  --color-text-disabled: #9CA3AF;
-  --color-text-link: #2563EB;
-  --color-ai-brand: #2563EB;
-
-  /* 消息气泡 */
+  /* 消息气泡 — 保留旧名以兼容既有组件；user-bubble 提亮以维持新画布上的对比度 */
   --color-user-bubble: #EFF6FF;
   --color-user-bubble-text: #1E40AF;
-  --color-ai-bubble: #FFFFFF;
-  --color-ai-bubble-text: #374151;
-  --color-system-bubble: #FEF3C7;
-  --color-error-bubble: #FEE2E2;
-
-  /* 输入框区域 */
-  --color-input-bg: #FFFFFF;
-  --color-input-border: #E5E7EB;
-  --color-input-focus: #2563EB;
-  --color-input-placeholder: #9CA3AF;
-  --color-send-btn: #111827;
-  --color-send-btn-text: #FFFFFF;
-  --color-send-btn-hover: #374151;
-
-  /* 组件交互 */
-  --color-btn-primary: #111827;
-  --color-btn-primary-text: #FFFFFF;
-  --color-btn-secondary: #F3F4F6;
-  --color-btn-secondary-text: #374151;
-  --color-btn-secondary-border: #D1D5DB;
-  --color-icon-hover: #F3F4F6;
-  --color-dropdown-bg: #FFFFFF;
-  --color-dropdown-hover: #F3F4F6;
-  --color-dropdown-divider: #E5E7EB;
 
   /* 代码块 */
-  --color-code-bg: #F3F4F6;
-  --color-code-border: #E5E7EB;
-  --color-code-text: #1F2937;
-  --color-code-lineno: #9CA3AF;
-  --color-inline-code-bg: #E5E7EB;
+  --color-inline-code-bg: #f2f2f2;
   --color-inline-code-text: #BE123C;
 
-  /* 引用与表格 */
-  --color-quote-border: #D1D5DB;
-  --color-quote-bg: #F9FAFB;
-  --color-table-header: #F9FAFB;
-  --color-table-border: #E5E7EB;
-  --color-table-hover: #F9FAFB;
-  --color-list-marker: #6B7280;
-
   /* 状态反馈 */
-  --color-success: #10B981;
-  --color-warning: #F59E0B;
-  --color-error: #EF4444;
-  --color-info: #3B82F6;
-  --color-loading: #D1D5DB;
-  --color-typing: #9CA3AF;
+  --color-success: #0070f3;
+  --color-warning: #f5a623;
+  --color-error: #ee0000;
 
   /* 审批严重级别（白天 = 深色可读文字 / 黑夜 = 柔和低饱和文字） */
   --color-severity-normal: #475569;     /* slate */
   --color-severity-sensitive: #B45309;  /* amber */
   --color-severity-dangerous: #BE3A2F;  /* muted red */
   --color-severity-hardline: #9F1239;   /* deep rose */
-  --color-approve: #047857;             /* emerald */
-  --color-deny: #B42318;                /* calm red */
 
   /* TodoPanel iOS 风格专属配色（accent 两种模式同色） */
   --color-task-accent: #f97316;         /* orange */
@@ -95,11 +42,29 @@
   --color-task-text-muted: #6e6e73;
   --color-task-text-faint: #aeaeb2;     /* arrow / page label */
 
-  /* 边框分割线 */
-  --color-divider: #E5E7EB;
-  --color-divider-weak: #F3F4F6;
-  --color-card-border: #E5E7EB;
-  --color-shadow: rgba(0,0,0,0.05);
+  /* 软阴影颜色（私有变量，不映射 Tailwind；供 .composer 与下拉浮层共用） */
+  --shadow-color: rgba(0,0,0,0.05);
+
+  /* Vercel Geist token ladder */
+  --color-ink: #171717;
+  --color-body: #4d4d4d;
+  --color-mute: #8f8f8f;
+  --color-faint: #a1a1a1;
+  --color-hairline: #ebebeb;
+  --color-hairline-soft: #f2f2f2;
+  --color-canvas: #fafafa;
+  --color-canvas-elevated: #ffffff;
+  --color-link: #0070f3;
+  --color-link-deep: #0761d1;
+  --color-link-soft: #d3e5ff;
+
+  /* Radius */
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-pill-category: 64px;
+  --radius-pill: 100px;
+  --radius-full: 9999px;
 
   /* 滚动条 */
   --color-scrollbar-track: transparent;
@@ -108,80 +73,27 @@
 }
 
 .dark {
-  /* 背景层 */
-  --color-page-bg: #0D0D0D;
-  --color-content-bg: #141414;
-  --color-sidebar-bg: #111111;
-  --color-sidebar-hover: #1A1A1A;
+  /* 背景层 — Vercel Geist palette */
   --color-overlay: rgba(0,0,0,0.6);
 
-  /* 文字颜色 */
-  --color-text-primary: #F9FAFB;
-  --color-text-body: #E5E7EB;
-  --color-text-secondary: #9CA3AF;
-  --color-text-disabled: #4B5563;
-  --color-text-link: #60A5FA;
-  --color-ai-brand: #60A5FA;
-
-  /* 消息气泡 */
+  /* 消息气泡 — 保留旧名；user-bubble 已针对暗色画布调过对比度 */
   --color-user-bubble: #1E3A5F;
   --color-user-bubble-text: #93C5FD;
-  --color-ai-bubble: #1A1A1A;
-  --color-ai-bubble-text: #E5E7EB;
-  --color-system-bubble: #451A03;
-  --color-error-bubble: #450A0A;
-
-  /* 输入框区域 */
-  --color-input-bg: #1A1A1A;
-  --color-input-border: #333333;
-  --color-input-focus: #3B82F6;
-  --color-input-placeholder: #6B7280;
-  --color-send-btn: #F9FAFB;
-  --color-send-btn-text: #111827;
-  --color-send-btn-hover: #E5E7EB;
-
-  /* 组件交互 */
-  --color-btn-primary: #F9FAFB;
-  --color-btn-primary-text: #111827;
-  --color-btn-secondary: #262626;
-  --color-btn-secondary-text: #D1D5DB;
-  --color-btn-secondary-border: #404040;
-  --color-icon-hover: #262626;
-  --color-dropdown-bg: #1A1A1A;
-  --color-dropdown-hover: #262626;
-  --color-dropdown-divider: #333333;
 
   /* 代码块 */
-  --color-code-bg: #0D0D0D;
-  --color-code-border: #262626;
-  --color-code-text: #E5E7EB;
-  --color-code-lineno: #6B7280;
-  --color-inline-code-bg: #262626;
+  --color-inline-code-bg: #1a1a1a;
   --color-inline-code-text: #F472B6;
 
-  /* 引用与表格 */
-  --color-quote-border: #4B5563;
-  --color-quote-bg: #1A1A1A;
-  --color-table-header: #1A1A1A;
-  --color-table-border: #333333;
-  --color-table-hover: #1A1A1A;
-  --color-list-marker: #9CA3AF;
-
   /* 状态反馈 */
-  --color-success: #34D399;
-  --color-warning: #FBBF24;
-  --color-error: #F87171;
-  --color-info: #60A5FA;
-  --color-loading: #4B5563;
-  --color-typing: #6B7280;
+  --color-success: #60a5fa;
+  --color-warning: #f5a623;
+  --color-error: #ff4d4f;
 
   /* 审批严重级别（夜晚 = 柔和低饱和文字） */
   --color-severity-normal: #94A3B8;
   --color-severity-sensitive: #FCD34D;
   --color-severity-dangerous: #F0A8A2;
   --color-severity-hardline: #FDA4AF;
-  --color-approve: #6EE7B7;
-  --color-deny: #FCA5A5;
 
   /* TodoPanel iOS 风格专属配色（accent/faint 两种模式同色） */
   --color-task-accent: #f97316;
@@ -193,11 +105,29 @@
   --color-task-text-muted: #a1a1a6;
   --color-task-text-faint: #aeaeb2;
 
-  /* 边框分割线 */
-  --color-divider: #262626;
-  --color-divider-weak: #1A1A1A;
-  --color-card-border: #262626;
-  --color-shadow: rgba(0,0,0,0.3);
+  /* 软阴影颜色（私有变量，不映射 Tailwind；供 .composer 与下拉浮层共用） */
+  --shadow-color: rgba(0,0,0,0.3);
+
+  /* Vercel Geist token ladder */
+  --color-ink: #fafafa;
+  --color-body: #a1a1a1;
+  --color-mute: #6b6b6b;
+  --color-faint: #525252;
+  --color-hairline: #333333;
+  --color-hairline-soft: #1a1a1a;
+  --color-canvas: #0a0a0a;
+  --color-canvas-elevated: #111111;
+  --color-link: #60a5fa;
+  --color-link-deep: #60a5fa;
+  --color-link-soft: rgba(96,165,250,0.16);
+
+  /* Radius */
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-pill-category: 64px;
+  --radius-pill: 100px;
+  --radius-full: 9999px;
 
   /* 滚动条 */
   --color-scrollbar-thumb: #4B5563;
@@ -207,8 +137,8 @@
 @layer base {
   body {
     @apply antialiased;
-    background-color: var(--color-page-bg);
-    color: var(--color-text-primary);
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
     font-family: theme("fontFamily.sans");
   }
 }
@@ -230,34 +160,17 @@
 }
 
 @layer components {
-  /* Floating composer — large rounded input with a soft shadow. */
+  /* Floating composer — large rounded input with a soft shadow. The buttons
+   * inside (attachment, send/pause, etc.) come from the IconButton primitive;
+   * only the container surface and focus ring are defined here. */
   .composer {
-    @apply flex items-end gap-3 rounded-3xl border border-input-border bg-input-bg px-4 py-3;
-    box-shadow: 0 2px 8px var(--color-shadow);
+    @apply flex items-end gap-3 rounded-3xl border border-hairline bg-canvas-elevated px-4 py-3;
+    box-shadow: 0 2px 8px var(--shadow-color);
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
   }
   .composer:focus-within {
-    @apply border-input-focus;
-    box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-input-focus) 12%, transparent);
-  }
-
-  /* Round icon button inside the composer. */
-  .send-btn {
-    @apply flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors;
-  }
-  .send-btn--active {
-    @apply bg-send-btn text-send-btn-text hover:bg-send-btn-hover;
-  }
-  .send-btn--busy {
-    @apply bg-btn-secondary text-btn-secondary-text;
-  }
-  .send-btn--disabled {
-    @apply bg-input-bg text-text-disabled cursor-not-allowed;
-  }
-
-  /* Round attachment-toggle button inside the composer (paperclip). */
-  .composer-icon-btn {
-    @apply flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors text-text-secondary hover:bg-sidebar-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent;
+    @apply border-link;
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-link) 12%, transparent);
   }
 }
 
@@ -286,25 +199,25 @@
     list-style-type: decimal;
   }
   .prose-chat blockquote {
-    @apply mb-3 border-l-4 border-quote-border bg-quote-bg px-4 py-2 italic;
+    @apply mb-3 border-l-4 border-hairline bg-canvas-elevated px-4 py-2 italic;
   }
   .prose-chat a {
-    @apply underline text-text-link;
+    @apply underline text-link;
   }
   .prose-chat table {
-    @apply mb-3 w-full border-collapse border border-table-border;
+    @apply mb-3 w-full border-collapse border border-hairline;
   }
   .prose-chat th,
   .prose-chat td {
-    @apply border border-table-border px-3 py-2 text-left;
+    @apply border border-hairline px-3 py-2 text-left;
   }
   .prose-chat th {
-    @apply bg-table-header font-semibold;
+    @apply bg-canvas font-semibold;
   }
   .prose-chat :not(pre) > code {
     @apply rounded bg-inline-code-bg px-1.5 py-0.5 text-[13px] text-inline-code-text;
   }
   .prose-chat pre {
-    @apply mb-3 overflow-x-auto rounded-lg border border-code-border bg-code-bg p-0;
+    @apply mb-3 overflow-x-auto rounded-lg border border-hairline bg-canvas p-0;
   }
 }
