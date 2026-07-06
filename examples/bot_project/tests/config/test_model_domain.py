@@ -13,20 +13,18 @@ def _write_model(path: Path) -> None:
     path.write_text(
         yaml.safe_dump(
             {
-                "models": {
-                    "default_provider": "DeepSeek",
-                    "default_model": "m1",
-                    "max_context_tokens": 200000,
-                    "providers": [
-                        {
-                            "key": "deepseek",
-                            "name": "DeepSeek",
-                            "url": "https://x",
-                            "api_key": "sk-real",
-                            "models": [{"name": "m1", "model": "openai/m1"}],
-                        },
-                    ],
-                }
+                "default_provider": "DeepSeek",
+                "default_model": "m1",
+                "max_context_tokens": 200000,
+                "providers": [
+                    {
+                        "key": "deepseek",
+                        "name": "DeepSeek",
+                        "url": "https://x",
+                        "api_key": "sk-real",
+                        "models": [{"name": "m1", "model": "openai/m1"}],
+                    },
+                ],
             }
         ),
         encoding="utf-8",
@@ -65,4 +63,4 @@ def test_model_domain_write_overwrites_api_key(tmp_path: Path) -> None:
         }
     )
     data = yaml.safe_load(yml.read_text(encoding="utf-8"))
-    assert data["models"]["providers"][0]["api_key"] == "sk-new"
+    assert data["providers"][0]["api_key"] == "sk-new"

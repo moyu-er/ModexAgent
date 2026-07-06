@@ -21,22 +21,27 @@ from bot.service.model_config import BotModelConfig
 
 
 def _load_model(path: Path) -> dict[str, Any]:
-    """Return the inner ``models`` block of model.yml (``{}`` if absent)."""
+    """Return the inner ``models`` block of model.yml (``{}`` if absent).
+
+    Accepts both the flat layout and the legacy ``models:`` wrapper.
+    """
 
     try:
         raw = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return {}
     data = yaml.safe_load(raw) or {}
-    return data.get("models", {}) or {}
+    if "models" in data and isinstance(data["models"], dict):
+        return data["models"]
+    return data
 
 
 def _dump_model(path: Path, data: dict[str, Any]) -> None:
-    """Re-wrap ``data`` under a top-level ``models:`` key and atomically write."""
+    """Atomically write ``data`` as a flat (no ``models:`` wrapper) YAML document."""
 
     atomic_write(
         path,
-        yaml.safe_dump({"models": data}, sort_keys=False, allow_unicode=True),
+        yaml.safe_dump(data, sort_keys=False, allow_unicode=True),
     )
 
 

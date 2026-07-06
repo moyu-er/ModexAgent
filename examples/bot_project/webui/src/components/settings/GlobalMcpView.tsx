@@ -24,6 +24,7 @@ import { Card } from "../ui/Card";
 import { Input } from "../ui/Input";
 import { Select } from "../ui/Select";
 import { Textarea } from "../ui/Textarea";
+import { KeyValueEditor } from "../ui/KeyValueEditor";
 import { HelperText } from "../ui/HelperText";
 import { IconButton } from "../ui/IconButton";
 import { ChevronDownIcon, TrashIcon } from "../ui/icons";
@@ -295,7 +296,7 @@ function McpCard({
           )}
         </span>
         <span className="truncate font-mono text-xs text-mute">
-          {e.transport ?? "—"} · {e.command || e.url || "no command"}
+          {e.command || e.url || "no command"}
         </span>
         <div className="ml-auto flex items-center gap-1">
           <Button
@@ -379,19 +380,19 @@ function McpCard({
             />
           </div>
           <div className="sm:col-span-2">
-            <Textarea
-              label="Environment (KEY=value, one per line)"
-              helper="Each line sets an environment variable available to the server process."
-              value={envToText(e.env ?? {})}
-              onChange={(ev) => setEntry({ env: textToEnv(ev.target.value) })}
+            <KeyValueEditor
+              label="Environment variables"
+              helper="Variables available to the server process."
+              entries={e.env ?? {}}
+              onChange={(env) => setEntry({ env })}
             />
           </div>
           <div className="sm:col-span-2">
-            <Textarea
-              label="Headers (KEY:value, one per line)"
-              helper="Custom HTTP headers sent with non-stdio transports."
-              value={envToText(e.headers ?? {})}
-              onChange={(ev) => setEntry({ headers: textToEnv(ev.target.value) })}
+            <KeyValueEditor
+              label="HTTP headers"
+              helper="Custom headers sent with non-stdio transports."
+              entries={e.headers ?? {}}
+              onChange={(headers) => setEntry({ headers })}
             />
           </div>
           <Input
@@ -433,26 +434,6 @@ function textToKvList(text: string): string[] {
     .split(/[\n,]/)
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
-}
-
-function envToText(env: Record<string, string>): string {
-  return Object.entries(env)
-    .map(([k, v]) => `${k}=${v}`)
-    .join("\n");
-}
-
-function textToEnv(text: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const line of text.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq < 0) continue;
-    const k = trimmed.slice(0, eq).trim();
-    const v = trimmed.slice(eq + 1).trim();
-    if (k) out[k] = v;
-  }
-  return out;
 }
 
 function errDetail(e: unknown): string {

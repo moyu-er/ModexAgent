@@ -49,8 +49,6 @@ describe("GlobalSkillsView", () => {
     renderView();
     await waitFor(() => expect(screen.getByText("fmt")).toBeTruthy());
     expect(screen.getByText("lint")).toBeTruthy();
-    expect(screen.getByText("global")).toBeTruthy();
-    expect(screen.getByText("local")).toBeTruthy();
   });
 
   it("Delete calls deleteSkill and removes the row after confirm", async () => {

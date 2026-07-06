@@ -165,3 +165,28 @@ def test_anthropic_prefix_kept_for_litellm(tmp_path: Path) -> None:
     real = create_llm_provider(cfg.synthesize_llm_config(resolved))
     assert isinstance(real, LiteLLMProvider)
     assert real._model == "anthropic/claude-3"  # litellm wants the prefix kept
+
+
+_LEGACY_YML = """
+models:
+  default_provider: "MiniMax"
+  default_model: "M3"
+  max_context_tokens: 150000
+  providers:
+    - key: minimax
+      name: "MiniMax"
+      url: https://api.minimaxi.com/v1
+      api_key: k1
+      models:
+        - name: "M3"
+          model: openai/MiniMax-M3
+"""
+
+
+def test_legacy_models_wrapper_still_parses(tmp_path: Path) -> None:
+    p = tmp_path / "model.yml"
+    p.write_text(_LEGACY_YML, encoding="utf-8")
+    cfg = BotModelConfig.from_yaml(p)
+    assert cfg.default_provider == "MiniMax"
+    assert cfg.default_model == "M3"
+    assert cfg.providers[0].key == "minimax"

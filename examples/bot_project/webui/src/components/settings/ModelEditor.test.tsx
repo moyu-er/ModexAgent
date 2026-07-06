@@ -166,8 +166,8 @@ describe("ModelEditor", () => {
 
   it("marks required fields with a star and leaves defaulted numeric fields unmarked", () => {
     render(<ModelEditor values={values} onChange={() => {}} />);
-    // required: Key label has a star
-    expect(screen.getByText("Key").closest("label")?.textContent).toMatch(/\*/);
+    // required: Provider key label has a star
+    expect(screen.getByText("Provider key").closest("label")?.textContent).toMatch(/\*/);
     // optional: Temperature label has no star
     expect(screen.getByText("Temperature").closest("label")?.textContent).not.toMatch(
       /\*/,

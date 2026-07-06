@@ -35,13 +35,17 @@ def _dump(model_path: Path, data: dict[str, Any]) -> None:
 
 
 def load_models_section(model_path: Path) -> dict[str, Any]:
-    section = _load_raw(model_path).get(_MODELS_KEY)
-    return section if isinstance(section, dict) else {}
+    raw = _load_raw(model_path)
+    section = raw.get(_MODELS_KEY)
+    if isinstance(section, dict):
+        return section
+    return raw
 
 
 def save_models_section(model_path: Path, section: dict[str, Any]) -> None:
     data = _load_raw(model_path)
-    data[_MODELS_KEY] = section
+    data = {k: v for k, v in data.items() if k != _MODELS_KEY}
+    data.update(section)
     _dump(model_path, data)
 
 

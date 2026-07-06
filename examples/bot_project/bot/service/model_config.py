@@ -110,9 +110,16 @@ class BotModelConfig(BaseModel):
         return self
 
     @classmethod
+    def _extract_models_block(cls, data: dict[str, Any]) -> dict[str, Any]:
+        """Return the models config block, accepting either flat or legacy `models:` framing."""
+        if "models" in data and isinstance(data["models"], dict):
+            return data["models"]
+        return data
+
+    @classmethod
     def from_yaml(cls, path: Path) -> BotModelConfig:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        return cls.model_validate(data.get("models", {}))
+        return cls.model_validate(cls._extract_models_block(data))
 
     def find_provider(self, name: str) -> ProviderCfg | None:
         return next((p for p in self.providers if p.name == name), None)

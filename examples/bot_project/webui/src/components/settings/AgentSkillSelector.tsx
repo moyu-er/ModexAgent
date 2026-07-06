@@ -11,7 +11,7 @@
 // shown read-only — they cannot be toggled here; remove them by editing the
 // agent root on disk.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { SkillEntry } from "../../types/pool";
 import {
   assignSkill,
@@ -39,6 +39,7 @@ export function AgentSkillSelector({ pool, agent }: Props) {
   const [agentSkills, setAgentSkills] = useState<SkillEntry[] | null>(null);
   const [loadError, setLoadError] = useState<string>("");
   const [busy, setBusy] = useState<string>("");
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(async (): Promise<void> => {
     const a = await listAgentSkills(pool, agent);
@@ -61,6 +62,15 @@ export function AgentSkillSelector({ pool, agent }: Props) {
       cancelled = true;
     };
   }, [pool, agent]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (!containerRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [open]);
 
   // Assigned = agent skills that exist in the global registry (the checked
   // global checkboxes). The pool tree is not involved.
@@ -100,74 +110,77 @@ export function AgentSkillSelector({ pool, agent }: Props) {
   const header = `Skills (${assignedNames.size} selected)`;
 
   return (
-    <Card className="p-0">
-      <div
-        role="button"
-        tabIndex={0}
-        className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left hover:bg-hairline-soft"
-        onClick={() => setOpen((v) => !v)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            setOpen((v) => !v);
-          }
-        }}
-        aria-expanded={open}
-      >
-        <IconButton
-          label={open ? "Collapse" : "Expand"}
-          icon={<ChevronDownIcon open={open} />}
-          variant="ghost"
-          size="sm"
-          onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
-        />
-        <span className="text-xs font-medium text-ink">{header}</span>
-      </div>
+    <div ref={containerRef} className="relative">
+      <Card className="p-0">
+        <div
+          role="button"
+          tabIndex={0}
+          className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left hover:bg-hairline-soft"
+          onClick={() => setOpen((v) => !v)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setOpen((v) => !v);
+            }
+          }}
+          aria-expanded={open}
+        >
+          <IconButton
+            label={open ? "Collapse" : "Expand"}
+            icon={<ChevronDownIcon open={open} />}
+            variant="ghost"
+            size="sm"
+            onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+          />
+          <span className="text-xs font-medium text-ink">{header}</span>
+        </div>
+      </Card>
       {open && (
-        <div className="border-t border-hairline px-3 py-2">
-          <p className="mb-2 text-[11px] text-mute">
-            Skill changes apply immediately.
-          </p>
-          {loadError ? (
-            <p className="text-xs text-error">Failed to load: {loadError}</p>
-          ) : !globalSkills || !agentSkills ? (
-            <p className="text-xs text-mute">Loading…</p>
-          ) : globalSkills.length === 0 && localSkills.length === 0 ? (
-            <p className="text-xs text-mute">No skills available.</p>
-          ) : (
-            <ul className="space-y-1">
-              {globalSkills.map((s) => {
-                const checked = assignedNames.has(s.name);
-                return (
-                  <li key={`g-${s.name}`}>
-                    <Checkbox
-                      label={s.name}
-                      helper="global"
-                      checked={checked}
-                      disabled={busy !== "" && busy !== s.name}
-                      onChange={() => void toggle(s.name)}
-                      aria-label={s.name}
+        <div className="absolute left-0 right-0 top-full z-10 mt-1 max-h-64 overflow-y-auto rounded-md border border-hairline bg-canvas-elevated shadow-floating">
+          <div className="px-3 py-2">
+            <p className="mb-2 text-[11px] text-mute">
+              Skill changes apply immediately.
+            </p>
+            {loadError ? (
+              <p className="text-xs text-error">Failed to load: {loadError}</p>
+            ) : !globalSkills || !agentSkills ? (
+              <p className="text-xs text-mute">Loading…</p>
+            ) : globalSkills.length === 0 && localSkills.length === 0 ? (
+              <p className="text-xs text-mute">No skills available.</p>
+            ) : (
+              <ul className="space-y-1">
+                {globalSkills.map((s) => {
+                  const checked = assignedNames.has(s.name);
+                  return (
+                    <li key={`g-${s.name}`}>
+                      <Checkbox
+                        label={s.name}
+                        checked={checked}
+                        disabled={busy !== "" && busy !== s.name}
+                        onChange={() => void toggle(s.name)}
+                        aria-label={s.name}
+                      />
+                    </li>
+                  );
+                })}
+                {localSkills.map((s) => (
+                  <li key={`l-${s.name}`} className="flex items-center gap-2 text-sm text-ink">
+                    <span
+                      aria-hidden="true"
+                      className="inline-block h-4 w-4 shrink-0 rounded-sm border border-hairline bg-canvas-elevated"
+                      title="Local skill — edit the agent root on disk to remove"
                     />
+                    <span className="truncate">{s.name}</span>
+                    <span className="rounded-full border border-hairline px-1.5 py-0.5 text-[10px] text-mute">
+                      local
+                    </span>
                   </li>
-                );
-              })}
-              {localSkills.map((s) => (
-                <li key={`l-${s.name}`} className="flex items-center gap-2 text-sm text-ink">
-                  <span
-                    aria-hidden="true"
-                    className="inline-block h-4 w-4 shrink-0 rounded-sm border border-hairline bg-canvas-elevated"
-                    title="Local skill — edit the agent root on disk to remove"
-                  />
-                  <span className="truncate">{s.name}</span>
-                  <span className="rounded-full border border-hairline px-1.5 py-0.5 text-[10px] text-mute">
-                    local
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
       )}
-    </Card>
+    </div>
   );
 }

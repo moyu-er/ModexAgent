@@ -75,6 +75,18 @@ type Confirm =
   | { kind: "model"; pi: number; mi: number }
   | null;
 
+/** Find the first (provider.name, model.name) combo across providers. */
+function pickFirstCombo(
+  providers: Provider[],
+): { pName: string; mName: string } | null {
+  for (const p of providers) {
+    for (const m of p.models) {
+      if (p.name && m.name) return { pName: p.name, mName: m.name };
+    }
+  }
+  return null;
+}
+
 export function ModelEditor({ values, onChange }: Props) {
   const defaultProvider = String(values.default_provider ?? "");
   const defaultModel = String(values.default_model ?? "");
@@ -100,13 +112,23 @@ export function ModelEditor({ values, onChange }: Props) {
   const updateProviders = (next: Provider[]): void => update({ providers: next });
 
   const updateModel = (pi: number, mi: number, patch: Partial<ModelEntry>): void => {
-    updateProviders(
-      providers.map((q, i) =>
-        i === pi
-          ? { ...q, models: q.models.map((mm, j) => (j === mi ? { ...mm, ...patch } : mm)) }
-          : q,
-      ),
+    const nextProviders = providers.map((q, i) =>
+      i === pi
+        ? { ...q, models: q.models.map((mm, j) => (j === mi ? { ...mm, ...patch } : mm)) }
+        : q,
     );
+    const p = providers[pi];
+    const m = p?.models[mi];
+    const wasModelDefault =
+      patch.name !== undefined &&
+      p?.name === defaultProvider &&
+      m?.name === defaultModel &&
+      m!.name !== "";
+    if (wasModelDefault) {
+      update({ providers: nextProviders, default_model: patch.name as string });
+    } else {
+      update({ providers: nextProviders });
+    }
   };
 
   const toggle = (pi: number): void => {
@@ -163,8 +185,14 @@ export function ModelEditor({ values, onChange }: Props) {
       s.delete(pi);
       return s;
     });
-    if (isDef) update({ providers: next, default_provider: "", default_model: "" });
-    else updateProviders(next);
+    if (isDef) {
+      const firstCombo = pickFirstCombo(next);
+      update({
+        providers: next,
+        default_provider: firstCombo?.pName ?? "",
+        default_model: firstCombo?.mName ?? "",
+      });
+    } else updateProviders(next);
     setConfirm(null);
   };
 
@@ -198,8 +226,14 @@ export function ModelEditor({ values, onChange }: Props) {
     const next = providers.map((q, i) =>
       i === pi ? { ...q, models: q.models.filter((_, j) => j !== mi) } : q,
     );
-    if (isDef) update({ providers: next, default_provider: "", default_model: "" });
-    else updateProviders(next);
+    if (isDef) {
+      const firstCombo = pickFirstCombo(next);
+      update({
+        providers: next,
+        default_provider: firstCombo?.pName ?? "",
+        default_model: firstCombo?.mName ?? "",
+      });
+    } else updateProviders(next);
     setConfirm(null);
   };
 
@@ -229,9 +263,19 @@ export function ModelEditor({ values, onChange }: Props) {
     [providers],
   );
   const handleNameChange = useCallback(
-    (pi: number, v: string) =>
-      updateProviders(providers.map((q, i) => (i === pi ? { ...q, name: v } : q))),
-    [providers],
+    (pi: number, v: string) => {
+      const nextProviders = providers.map((q, i) =>
+        i === pi ? { ...q, name: v } : q,
+      );
+      const wasDefault =
+        providers[pi]?.name === defaultProvider && providers[pi]!.name !== "";
+      if (wasDefault) {
+        update({ providers: nextProviders, default_provider: v });
+      } else {
+        update({ providers: nextProviders });
+      }
+    },
+    [providers, defaultProvider],
   );
   const handleUrlChange = useCallback(
     (pi: number, v: string) =>
@@ -317,7 +361,7 @@ export function ModelEditor({ values, onChange }: Props) {
                       )}
                     </span>
                     <span className="truncate text-xs text-body">
-                      {p.key || "no key"} · {p.models.length} model
+                      key: {p.key || "none"} · {p.models.length} model
                       {p.models.length === 1 ? "" : "s"}
                     </span>
                   </button>
@@ -366,13 +410,13 @@ export function ModelEditor({ values, onChange }: Props) {
                       <SectionLabel>Provider</SectionLabel>
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                         <Input
-                          label="Key"
+                          label="Provider key"
                           required
                           value={p.key}
                           onChange={(e) => handleKeyChange(pi, e.target.value)}
                         />
                         <Input
-                          label="Name"
+                          label="Display name"
                           required
                           value={p.name}
                           onChange={(e) => handleNameChange(pi, e.target.value)}
@@ -474,7 +518,7 @@ export function ModelEditor({ values, onChange }: Props) {
 
                               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                                 <Input
-                                  label="Model name"
+                                  label="Model key"
                                   required
                                   value={m.name}
                                   onChange={(e) =>
@@ -482,7 +526,7 @@ export function ModelEditor({ values, onChange }: Props) {
                                   }
                                 />
                                 <Input
-                                  label="Model routing"
+                                  label="Model identifier"
                                   required
                                   value={m.model}
                                   onChange={(e) =>

@@ -1,17 +1,16 @@
 # config/model.example.yml — copy to config/model.yml and edit with `modexbot model`.
 # API keys are literal values; model.yml is gitignored.
-models:
-  default_provider: "DeepSeek"
-  default_model: "deepseek-v4-flash"
-  max_context_tokens: 200000
-  providers:
-    - key: deepseek
-      name: "DeepSeek"
-      url: https://api.deepseek.com
-      api_key: your_api_key
-      models:
-        - name: "deepseek-v4-flash"
-          model: openai/deepseek-v4-flash
-          capabilities: [text]
-          temperature: 0.7
-          max_output_tokens: 50000
+default_provider: "DeepSeek"
+default_model: "deepseek-v4-flash"
+max_context_tokens: 200000
+providers:
+  - key: deepseek
+    name: "DeepSeek"
+    url: https://api.deepseek.com
+    api_key: your_api_key
+    models:
+      - name: "deepseek-v4-flash"
+        model: openai/deepseek-v4-flash
+        capabilities: [text]
+        temperature: 0.7
+        max_output_tokens: 50000

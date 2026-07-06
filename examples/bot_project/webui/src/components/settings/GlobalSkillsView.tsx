@@ -256,9 +256,6 @@ export function GlobalSkillsView() {
                   <span className="truncate text-sm font-medium text-ink">
                     {s.name}
                   </span>
-                  <span className="rounded-full border border-hairline bg-canvas-elevated px-2 py-0.5 text-[11px] text-mute">
-                    {s.source}
-                  </span>
                 </div>
 
                 {/* Inline detail pane */}
