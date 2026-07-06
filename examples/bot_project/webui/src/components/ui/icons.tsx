@@ -352,6 +352,52 @@ export function DefaultStarIcon({ className, ...rest }: IconProps) {
   );
 }
 
+/** Small circular spinner for todo/status. */
+export function SpinnerIcon({ className, ...rest }: IconProps) {
+  return (
+    <svg
+      className={`h-3.5 w-3.5 shrink-0 animate-spin ${className ?? ""}`.trim()}
+      {...baseProps}
+      {...rest}
+    >
+      <circle
+        cx="8"
+        cy="8"
+        r="6"
+        stroke="currentColor"
+        strokeOpacity="0.25"
+        strokeWidth="1.5"
+      />
+      <path
+        d="M14 8a6 6 0 0 0-6-6"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+/** Hollow ring for pending todo status. */
+export function CircleRingIcon({ className, ...rest }: IconProps) {
+  return (
+    <svg
+      className={`h-3.5 w-3.5 shrink-0 ${className ?? ""}`.trim()}
+      {...baseProps}
+      {...rest}
+    >
+      <circle
+        cx="8"
+        cy="8"
+        r="6"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        opacity="0.5"
+      />
+    </svg>
+  );
+}
+
 /* Capability icons — used by capability selector chips (ModelEditor).
  * Drawn as 12x12-equivalent icons that visually correspond to text/image/
  * video/audio modalities. Sizes are controlled by the caller via className.
