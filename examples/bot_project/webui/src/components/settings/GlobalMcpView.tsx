@@ -2,9 +2,13 @@
 // Add/edit/delete entries; Save per-card via upsertMcp; Delete via deleteMcp
 // (surfaces the used_by conflict list on 409). MCP writes always imply a
 // restart, so successful save/delete shows a "Saved. Restart to apply." toast.
+//
+// Each card is collapsible (first card / newly-added cards start expanded).
+// Header row carries name, transport · command|URL summary, save link, trash
+// icon, and a chevron that rotates by `open`. The body uses the standard
+// form primitives (Input / Select / Textarea / HelperText).
 
 import { useEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
 import type { McpServerEntry, McpTransport } from "../../types/pool";
 import {
   getMcp,
@@ -15,12 +19,20 @@ import {
 import { ApiError } from "../../lib/api";
 import { useToast } from "../ToastContext";
 import { restartToast } from "./restartToast";
-
-const INPUT =
-  "w-full rounded border border-input-border bg-input-bg px-2.5 py-1.5 text-sm text-text-primary placeholder:text-text-disabled focus:border-input-focus focus:outline-none focus:ring-1 focus:ring-input-focus";
-const LABEL = "mb-1 block text-xs font-medium text-text-secondary";
+import { Button } from "../ui/Button";
+import { Card } from "../ui/Card";
+import { Input } from "../ui/Input";
+import { Select } from "../ui/Select";
+import { Textarea } from "../ui/Textarea";
+import { HelperText } from "../ui/HelperText";
+import { IconButton } from "../ui/IconButton";
+import { ChevronDownIcon, TrashIcon } from "../ui/icons";
 
 const TRANSPORTS: McpTransport[] = ["stdio", "sse", "streamableHttp"];
+const TRANSPORT_OPTIONS = [
+  { value: "", label: "—" },
+  ...TRANSPORTS.map((t) => ({ value: t, label: t })),
+];
 
 interface CardState {
   /** Stable id for React keys (not the server name, which can change). */
@@ -49,20 +61,22 @@ export function GlobalMcpView() {
   const toast = useToast();
   const [cards, setCards] = useState<CardState[] | null>(null);
   const [loadError, setLoadError] = useState<string>("");
-  const _nextId = useRef<number>(1);
+  const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
+  const nextId = useRef<number>(1);
 
   const load = async (): Promise<void> => {
     setLoadError("");
     try {
       const map = await getMcp();
-      setCards(
-        Object.entries(map).map(([name, entry]) => ({
-          id: _nextId.current++,
-          originalName: name,
-          name,
-          entry,
-        })),
-      );
+      const list = Object.entries(map).map(([name, entry]) => ({
+        id: nextId.current++,
+        originalName: name,
+        name,
+        entry,
+      }));
+      setCards(list);
+      // Default: only the first persisted card is expanded.
+      setExpanded(list.length > 0 ? new Set([list[0]!.id]) : new Set());
     } catch (e) {
       setLoadError(String(e));
     }
@@ -73,25 +87,37 @@ export function GlobalMcpView() {
   }, []);
 
   if (loadError) {
-    return (
-      <p className="text-sm text-error">Failed to load: {loadError}</p>
-    );
+    return <p className="text-sm text-error">Failed to load: {loadError}</p>;
   }
   if (!cards) {
-    return (
-      <p className="text-sm text-text-secondary">Loading…</p>
-    );
+    return <p className="text-sm text-mute">Loading…</p>;
   }
 
   const update = (i: number, patch: Partial<CardState>): void => {
     setCards((prev) => prev!.map((c, j) => (j === i ? { ...c, ...patch } : c)));
   };
 
+  const toggleExpanded = (id: number): void => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   const addCard = (): void => {
+    const newId = nextId.current++;
     setCards((prev) => [
+      { id: newId, originalName: null, name: "", entry: emptyEntry() },
       ...(prev ?? []),
-      { id: _nextId.current++, originalName: null, name: "", entry: emptyEntry() },
     ]);
+    // Auto-expand the newly added card so the user can edit immediately.
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.add(newId);
+      return next;
+    });
   };
 
   const onSave = async (i: number): Promise<void> => {
@@ -135,12 +161,28 @@ export function GlobalMcpView() {
     const name = card.originalName ?? card.name.trim();
     if (!card.originalName) {
       // Never persisted — just drop locally.
-      setCards((prev) => prev!.filter((_, j) => j !== i));
+      setCards((prev) => {
+        const removed = prev![i]!;
+        setExpanded((cur) => {
+          const next = new Set(cur);
+          next.delete(removed.id);
+          return next;
+        });
+        return prev!.filter((_, j) => j !== i);
+      });
       return;
     }
     try {
       await deleteMcp(name);
-      setCards((prev) => prev!.filter((_, j) => j !== i));
+      setCards((prev) => {
+        const removed = prev![i]!;
+        setExpanded((cur) => {
+          const next = new Set(cur);
+          next.delete(removed.id);
+          return next;
+        });
+        return prev!.filter((_, j) => j !== i);
+      });
       // Deletion also implies a restart; reuse the uniform toast (the message
       // already says "Saved", which is close enough for a delete→restart hint
       // and keeps every restart surface identical).
@@ -165,20 +207,16 @@ export function GlobalMcpView() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-xs text-text-secondary">
+        <p className="text-xs text-mute">
           Global MCP servers available to every pool's agents.
         </p>
-        <button
-          type="button"
-          className="rounded-md border border-input-border px-3 py-1.5 text-sm text-text-primary hover:bg-sidebar-hover"
-          onClick={addCard}
-        >
+        <Button variant="secondary" size="sm" onClick={addCard}>
           + Add server
-        </button>
+        </Button>
       </div>
 
       {cards.length === 0 && (
-        <p className="rounded-md border border-dashed border-input-border px-3 py-6 text-center text-sm text-text-secondary">
+        <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-sm text-mute">
           No MCP servers configured.
         </p>
       )}
@@ -188,6 +226,8 @@ export function GlobalMcpView() {
           <McpCard
             key={card.id}
             card={card}
+            open={expanded.has(card.id)}
+            onToggle={() => toggleExpanded(card.id)}
             onChange={(patch) => update(i, patch)}
             onSave={() => onSave(i)}
             onDelete={() => onDelete(i)}
@@ -200,11 +240,15 @@ export function GlobalMcpView() {
 
 function McpCard({
   card,
+  open,
+  onToggle,
   onChange,
   onSave,
   onDelete,
 }: {
   card: CardState;
+  open: boolean;
+  onToggle: () => void;
   onChange: (patch: Partial<CardState>) => void;
   onSave: () => void;
   onDelete: () => void;
@@ -213,47 +257,93 @@ function McpCard({
   const setEntry = (patch: Partial<McpServerEntry>): void =>
     onChange({ entry: { ...e, ...patch } });
 
+  // Dirty = has been edited and not yet persisted as the current name.
+  const dirty = card.name.trim() !== (card.originalName ?? "");
+
+  // Header is a clickable region (toggles the body), but it must also host
+  // real <button> children (Save, Trash, Chevron) — so we render it as a
+  // <div role="button"> rather than a <button> to avoid nested-button HTML.
+  const headerClick = onToggle;
+
   return (
-    <div className="rounded-lg border border-card-border bg-content-bg p-4">
-      <div className="mb-3 flex items-center gap-2">
-        <span className="truncate text-sm font-medium text-text-primary">
+    <Card>
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        aria-controls={`mcp-card-${card.id}-body`}
+        onClick={headerClick}
+        onKeyDown={(ev) => {
+          if (ev.key === "Enter" || ev.key === " ") {
+            ev.preventDefault();
+            headerClick();
+          }
+        }}
+        className="flex w-full cursor-pointer items-center gap-2 rounded text-left outline-none focus-visible:ring-2 focus-visible:ring-link/50"
+      >
+        {dirty && (
+          <span
+            aria-hidden="true"
+            title="Unsaved changes"
+            className="h-2 w-2 shrink-0 rounded-full bg-warning"
+          />
+        )}
+        <span className="truncate text-sm font-medium text-ink">
           {card.originalName ?? (
-            <span className="italic text-text-secondary">New server</span>
+            <span className="italic text-mute">New server</span>
           )}
         </span>
-        <span className="truncate font-mono text-xs text-text-secondary">
+        <span className="truncate font-mono text-xs text-mute">
           {e.transport ?? "—"} · {e.command || e.url || "no command"}
         </span>
-        <div className="ml-auto flex items-center gap-3">
-          <button
-            type="button"
-            className="text-xs text-ai-brand hover:underline"
-            onClick={onSave}
+        <div className="ml-auto flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={(ev) => {
+              ev.stopPropagation();
+              onSave();
+            }}
           >
             Save
-          </button>
-          <button
-            type="button"
-            aria-label="Delete server"
-            className="text-text-secondary hover:text-error"
-            onClick={onDelete}
-          >
-            <TrashIcon />
-          </button>
+          </Button>
+          <IconButton
+            label="Delete server"
+            icon={<TrashIcon />}
+            variant="ghost"
+            size="sm"
+            onClick={(ev) => {
+              ev.stopPropagation();
+              onDelete();
+            }}
+          />
+          <IconButton
+            label={open ? "Collapse" : "Expand"}
+            icon={<ChevronDownIcon open={open} />}
+            variant="ghost"
+            size="sm"
+            onClick={(ev) => {
+              ev.stopPropagation();
+              onToggle();
+            }}
+            tabIndex={-1}
+          />
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label="Name" required>
-          <input
-            className={INPUT}
+      {open && (
+        <div
+          id={`mcp-card-${card.id}-body`}
+          className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2"
+        >
+          <Input
+            label="Name"
+            required
             value={card.name}
             onChange={(ev) => onChange({ name: ev.target.value })}
           />
-        </Field>
-        <Field label="Transport">
-          <select
-            className={INPUT}
+          <Select
+            label="Transport"
             value={e.transport ?? ""}
             onChange={(ev) =>
               setEntry({
@@ -262,115 +352,71 @@ function McpCard({
                   | undefined,
               })
             }
-          >
-            <option value="">—</option>
-            {TRANSPORTS.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Command">
-          <input
-            className={INPUT}
+            options={TRANSPORT_OPTIONS}
+          />
+          <Input
+            label="Command"
             value={e.command ?? ""}
             onChange={(ev) => setEntry({ command: ev.target.value })}
             placeholder="npx"
           />
-        </Field>
-        <Field label="URL">
-          <input
-            className={INPUT}
+          <Input
+            label="URL"
             value={e.url ?? ""}
             onChange={(ev) => setEntry({ url: ev.target.value })}
             placeholder="https://…"
           />
-        </Field>
-        <Field label="Args (one per line or comma-separated)" className="sm:col-span-2">
-          <textarea
-            className={`${INPUT} min-h-[60px]`}
-            value={kvListToText(e.args ?? [])}
-            onChange={(ev) =>
-              setEntry({ args: textToKvList(ev.target.value) })
-            }
-          />
-        </Field>
-        <Field label="Environment (KEY=value, one per line)" className="sm:col-span-2">
-          <textarea
-            className={`${INPUT} min-h-[60px] font-mono`}
-            value={envToText(e.env ?? {})}
-            onChange={(ev) => setEntry({ env: textToEnv(ev.target.value) })}
-          />
-        </Field>
-        <Field label="Headers (KEY:value, one per line)" className="sm:col-span-2">
-          <textarea
-            className={`${INPUT} min-h-[48px] font-mono`}
-            value={envToText(e.headers ?? {})}
-            onChange={(ev) => setEntry({ headers: textToEnv(ev.target.value) })}
-          />
-        </Field>
-        <Field label="Working directory">
-          <input
-            className={INPUT}
+          <div className="sm:col-span-2">
+            <Textarea
+              label="Args (one per line or comma-separated)"
+              helper="Use newlines or commas to separate arguments."
+              mono={false}
+              value={kvListToText(e.args ?? [])}
+              onChange={(ev) =>
+                setEntry({ args: textToKvList(ev.target.value) })
+              }
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <Textarea
+              label="Environment (KEY=value, one per line)"
+              helper="Each line sets an environment variable available to the server process."
+              value={envToText(e.env ?? {})}
+              onChange={(ev) => setEntry({ env: textToEnv(ev.target.value) })}
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <Textarea
+              label="Headers (KEY:value, one per line)"
+              helper="Custom HTTP headers sent with non-stdio transports."
+              value={envToText(e.headers ?? {})}
+              onChange={(ev) => setEntry({ headers: textToEnv(ev.target.value) })}
+            />
+          </div>
+          <Input
+            label="Working directory"
             value={e.cwd ?? ""}
             onChange={(ev) => setEntry({ cwd: ev.target.value })}
           />
-        </Field>
-        <Field label="Timeout (s)">
-          <input
+          <Input
+            label="Timeout (s)"
             type="number"
-            className={INPUT}
             value={e.timeout ?? 30}
             onChange={(ev) => setEntry({ timeout: Number(ev.target.value) })}
           />
-        </Field>
-      </div>
 
-      {card.conflict && card.conflict.length > 0 && (
-        <p className="mt-3 rounded border border-warning bg-content-bg px-2 py-1.5 text-xs text-warning">
-          In use by{" "}
-          {card.conflict.map(([p, a]) => `${p}/${a}`).join(", ")}. Unassign from
-          those agents before deleting.
-        </p>
+          {card.conflict && card.conflict.length > 0 && (
+            <div className="sm:col-span-2">
+              <HelperText className="text-warning">
+                In use by{" "}
+                {card.conflict.map(([p, a]) => `${p}/${a}`).join(", ")}. Unassign
+                from those agents before deleting.
+              </HelperText>
+            </div>
+          )}
+        </div>
       )}
-    </div>
-  );
-}
-
-function Field({
-  label,
-  required,
-  className,
-  children,
-}: {
-  label: string;
-  required?: boolean;
-  className?: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className={className}>
-      <label className={LABEL}>
-        {label}
-        {required && <span className="text-error"> *</span>}
-      </label>
-      {children}
-    </div>
-  );
-}
-
-function TrashIcon() {
-  return (
-    <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path
-        d="M3 4h10M6.5 4V2.5h3V4M5 4l.5 8.5a1 1 0 0 0 1 .9h3a1 1 0 0 0 1-.9L11 4M6.5 7v4M9.5 7v4"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
+    </Card>
   );
 }
 

@@ -47,4 +47,18 @@ describe("ConfirmDialog", () => {
     const btn = screen.getByRole("button", { name: "Delete" });
     expect(btn.className).toContain("text-error");
   });
+
+  it("Escape key fires onCancel", () => {
+    const onCancel = vi.fn();
+    render(
+      <ConfirmDialog
+        title="Discard?"
+        confirmLabel="Discard"
+        onConfirm={() => {}}
+        onCancel={onCancel}
+      />,
+    );
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
 });

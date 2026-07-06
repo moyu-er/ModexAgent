@@ -5,6 +5,8 @@ import { ApprovalCard } from "./ApprovalCard";
 import { MessageBubble } from "./MessageBubble";
 import { ModelSelector } from "./ModelSelector";
 import { TodoPanel } from "./TodoPanel";
+import { Button } from "./ui/Button";
+import { IconButton } from "./ui/IconButton";
 import { fetchMediaConfig, fetchModels, uploadAttachment, type ModelChoice } from "../lib/api";
 import { formatBytes } from "../lib/format";
 
@@ -235,21 +237,21 @@ export const ChatView: FC<ChatViewProps> = ({
   };
 
   return (
-    <div className="flex h-full flex-col bg-page-bg">
+    <div className="flex h-full flex-col bg-canvas">
       {/* Header */}
-      <header className="flex h-14 shrink-0 items-center justify-between border-b border-divider px-4">
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-hairline px-4">
         <div className="flex items-center gap-3">
           {onOpenSidebar && (
-            <button
-              type="button"
+            <IconButton
+              icon={<MenuIcon />}
+              label="Open sidebar"
+              variant="ghost"
+              size="md"
               onClick={onOpenSidebar}
-              className="rounded-md p-2 text-text-secondary transition-colors hover:bg-sidebar-hover hover:text-text-primary md:hidden"
-              aria-label="Open sidebar"
-            >
-              <MenuIcon />
-            </button>
+              className="md:hidden"
+            />
           )}
-          <span className="text-sm font-semibold text-text-primary">
+          <span className="text-sm font-semibold text-ink">
             ModexBot
           </span>
         </div>
@@ -261,7 +263,7 @@ export const ChatView: FC<ChatViewProps> = ({
         <div className={`${CONTENT_WIDTH} px-3 py-6 md:px-5`}>
           {messages.length === 0 && (
             <div className="flex h-[55vh] items-center justify-center">
-              <p className="text-sm text-text-secondary">
+              <p className="text-sm text-body">
                 Select a conversation to start chatting
               </p>
             </div>
@@ -275,18 +277,18 @@ export const ChatView: FC<ChatViewProps> = ({
             />
           ))}
           {pendingApprovals.length > 0 && (
-            <div className="my-2 flex items-center justify-between gap-2 rounded-lg border border-card-border bg-content-bg px-3 py-2">
-              <span className="text-xs text-text-secondary">
+            <div className="my-2 flex items-center justify-between gap-2 rounded-md border border-hairline bg-canvas-elevated px-3 py-2">
+              <span className="text-xs text-body">
                 Denying any one cancels the whole batch
               </span>
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                size="sm"
                 disabled={isApprovingBatch}
                 onClick={onApproveAll}
-                className="rounded border border-approve/50 px-3 py-1 text-sm font-medium text-approve transition-colors hover:bg-approve/10 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Approve All
-              </button>
+              </Button>
             </div>
           )}
           {pendingApprovals.map((view) => (
@@ -314,41 +316,45 @@ export const ChatView: FC<ChatViewProps> = ({
                 type="text"
                 disabled
                 placeholder="Subagent session — read only"
-                className="flex-1 cursor-not-allowed bg-transparent py-1 text-sm text-text-disabled placeholder-input-placeholder outline-none"
+                className="flex-1 cursor-not-allowed bg-transparent py-1 text-sm text-faint placeholder:text-faint outline-none"
               />
-              <button type="button" disabled title="Read only" className="send-btn send-btn--disabled">
-                <SendIcon />
-              </button>
+              <IconButton
+                icon={<SendIcon />}
+                label="Read only"
+                variant="ghost"
+                size="md"
+                disabled
+                title="Read only"
+              />
             </div>
           ) : (
             <>
               {(pendingUploads.length > 0 || uploadError) && (
                 <div className="mb-2 flex flex-col gap-1.5">
                   {uploadError && (
-                    <div className="rounded-md border border-deny/40 bg-deny/10 px-2.5 py-1.5 text-xs text-deny">
+                    <div className="rounded-md border border-error/40 bg-error/10 px-2.5 py-1.5 text-xs text-error">
                       {uploadError}
                     </div>
                   )}
                   {pendingUploads.map((p) => (
                     <div
                       key={p.ref.local_path}
-                      className="flex items-center gap-2 rounded-md border border-card-border bg-content-bg px-2.5 py-1.5 text-xs"
+                      className="flex items-center gap-2 rounded-md border border-hairline bg-canvas-elevated px-2.5 py-1.5 text-xs"
                     >
                       <FileChipIcon />
-                      <span className="min-w-0 flex-1 truncate text-text-primary">
+                      <span className="min-w-0 flex-1 truncate text-ink">
                         {p.name}
                       </span>
-                      <span className="shrink-0 text-text-secondary">
+                      <span className="shrink-0 text-body">
                         {formatBytes(p.size)}
                       </span>
-                      <button
-                        type="button"
+                      <IconButton
+                        icon={<RemoveIcon />}
+                        label={`Remove ${p.name}`}
+                        variant="ghost"
+                        size="sm"
                         onClick={(): void => removePendingUpload(p.ref.local_path)}
-                        aria-label={`Remove ${p.name}`}
-                        className="shrink-0 rounded p-0.5 text-text-secondary transition-colors hover:bg-sidebar-hover hover:text-text-primary"
-                      >
-                        <RemoveIcon />
-                      </button>
+                      />
                     </div>
                   ))}
                 </div>
@@ -363,16 +369,14 @@ export const ChatView: FC<ChatViewProps> = ({
                   aria-hidden="true"
                   tabIndex={-1}
                 />
-                <button
-                  type="button"
-                  onClick={(): void => fileInputRef.current?.click()}
+                <IconButton
+                  icon={<PaperclipIcon />}
+                  label="Attach file"
+                  variant="ghost"
+                  size="md"
                   disabled={isBusy || isUploading || !sessionId}
-                  title="Attach file"
-                  aria-label="Attach file"
-                  className="composer-icon-btn"
-                >
-                  <PaperclipIcon />
-                </button>
+                  onClick={(): void => fileInputRef.current?.click()}
+                />
                 <textarea
                   ref={taRef}
                   value={input}
@@ -387,7 +391,7 @@ export const ChatView: FC<ChatViewProps> = ({
                         : "Message…"
                   }
                   rows={1}
-                  className="max-h-[320px] min-h-[56px] flex-1 resize-none overflow-y-auto bg-transparent py-3.5 text-[15px] leading-relaxed text-text-primary outline-none placeholder-input-placeholder"
+                  className="max-h-[320px] min-h-[56px] flex-1 resize-none overflow-y-auto bg-transparent py-3.5 text-[15px] leading-relaxed text-ink outline-none placeholder:text-faint"
                 />
                 {models.length > 0 && (
                   <ModelSelector
@@ -396,21 +400,32 @@ export const ChatView: FC<ChatViewProps> = ({
                     onChange={setSelected}
                   />
                 )}
-                <button
-                  type="button"
-                  onClick={handleButton}
-                  title={isBusy ? "Pause" : "Send"}
-                  aria-label={isBusy ? "Pause" : "Send"}
-                  className={
-                    isBusy
-                      ? "send-btn send-btn--busy"
-                      : canSend
-                        ? "send-btn send-btn--active"
-                        : "send-btn send-btn--disabled"
-                  }
-                >
-                  {isBusy ? <PauseIcon /> : <SendIcon />}
-                </button>
+                {isBusy ? (
+                  <IconButton
+                    icon={<PauseIcon />}
+                    label="Pause"
+                    variant="secondary"
+                    size="md"
+                    onClick={handleButton}
+                  />
+                ) : canSend ? (
+                  <IconButton
+                    icon={<SendIcon />}
+                    label="Send"
+                    variant="primary"
+                    size="md"
+                    onClick={handleButton}
+                  />
+                ) : (
+                  <IconButton
+                    icon={<SendIcon />}
+                    label="Send"
+                    variant="ghost"
+                    size="md"
+                    disabled
+                    onClick={handleButton}
+                  />
+                )}
               </form>
             </>
           )}
@@ -428,7 +443,7 @@ const MenuIcon: FC = () => (
   </svg>
 );
 
-const SendIcon = (): JSX.Element => (
+const SendIcon: FC = () => (
   <svg
     width="18"
     height="18"
@@ -445,7 +460,7 @@ const SendIcon = (): JSX.Element => (
   </svg>
 );
 
-const PauseIcon = (): JSX.Element => (
+const PauseIcon: FC = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
     <rect x="6" y="5" width="4" height="14" rx="1.2" />
     <rect x="14" y="5" width="4" height="14" rx="1.2" />
@@ -479,7 +494,7 @@ const FileChipIcon: FC = () => (
     strokeLinecap="round"
     strokeLinejoin="round"
     aria-hidden="true"
-    className="shrink-0 text-text-secondary"
+    className="shrink-0 text-body"
   >
     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
     <polyline points="14 2 14 8 20 8" />

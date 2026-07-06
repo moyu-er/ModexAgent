@@ -15,8 +15,7 @@
 // Switching to another pool while this editor is dirty is handled by the parent
 // PoolsView (custom ConfirmDialog).
 
-import { useEffect, useMemo, useState } from "react";
-import type { ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ApprovalConfig,
   ContextMode,
@@ -33,12 +32,28 @@ import { restartToast } from "./restartToast";
 import { AgentMcpSelector } from "./AgentMcpSelector";
 import { AgentSkillSelector } from "./AgentSkillSelector";
 import { PromptEditor } from "./PromptEditor";
-import { Chevron, PlusIcon, TrashIcon } from "./icons";
+import { Card } from "../ui/Card";
+import { Button } from "../ui/Button";
+import { Input } from "../ui/Input";
+import { Select } from "../ui/Select";
+import { Checkbox } from "../ui/Checkbox";
+import { Textarea } from "../ui/Textarea";
+import { HelperText } from "../ui/HelperText";
+import {
+  ChevronDownIcon,
+  PlusIcon,
+  TrashIcon,
+  XIcon,
+} from "../ui/icons";
 
 interface Props {
   pool: string;
   /** Optional upward dirty signal — PoolsView uses it to guard pool switching. */
   onDirtyChange?: (dirty: boolean) => void;
+  /** Optional callback that receives a trigger for persisting the current pool. */
+  onSave?: (save: () => Promise<void>) => void;
+  /** Optional callback that receives a trigger for reverting the current pool. */
+  onCancel?: (cancel: () => void) => void;
 }
 
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
@@ -51,12 +66,6 @@ const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
 const AGENT_NAME_RE = /^[a-z][a-z0-9_-]+$/;
 const isValidAgentName = (name: string): boolean =>
   typeof name === "string" && AGENT_NAME_RE.test(name);
-
-const INPUT =
-  "w-full rounded border border-input-border bg-input-bg px-2.5 py-1.5 text-sm text-text-primary placeholder:text-text-disabled focus:border-input-focus focus:outline-none focus:ring-1 focus:ring-input-focus";
-const LABEL = "mb-1 block text-xs font-medium text-text-secondary";
-const INPUT_ERR =
-  "w-full rounded border border-error bg-input-bg px-2.5 py-1.5 text-sm text-text-primary focus:border-error focus:outline-none focus:ring-1 focus:ring-error";
 
 const PRESETS: ToolPreset[] = ["full", "read_write", "read_only", "minimal", "none"];
 const CONTEXT_MODES: ContextMode[] = ["fresh", "fork"];
@@ -72,6 +81,13 @@ const SYSTEM_PROMPT_MODE_HINT: Record<SystemPromptMode, string> = {
 const FORK_MAX_DEFAULT = 80;
 const FORK_MAX_MAX = 100;
 const SUPPLEMENTS = ["ast_grep"] as const;
+
+const PRESET_OPTIONS = PRESETS.map((p) => ({ value: p, label: p }));
+const CONTEXT_MODE_OPTIONS = CONTEXT_MODES.map((m) => ({ value: m, label: m }));
+const SYSTEM_PROMPT_MODE_OPTIONS = SYSTEM_PROMPT_MODES.map((m) => ({
+  value: m,
+  label: m,
+}));
 
 const defaultSubagent = (): SubagentNode => ({
   agent_name: "",
@@ -90,13 +106,16 @@ type PromptTarget =
 
 type FieldErrors = Record<string, string[]>;
 
-export function PoolEditor({ pool, onDirtyChange }: Props) {
+export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
   const toast = useToast();
   const [original, setOriginal] = useState<PoolTree | null>(null);
+  const originalRef = useRef<PoolTree | null>(original);
+  originalRef.current = original;
   const [form, setForm] = useState<PoolTree | null>(null);
+  const formRef = useRef<PoolTree | null>(form);
+  formRef.current = form;
   const [errors, setErrors] = useState<FieldErrors>({});
   const [loadError, setLoadError] = useState<string>("");
-  const [saving, setSaving] = useState<boolean>(false);
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
   const [promptTarget, setPromptTarget] = useState<PromptTarget>(null);
   const [confirmDeleteSub, setConfirmDeleteSub] = useState<number | null>(null);
@@ -133,24 +152,78 @@ export function PoolEditor({ pool, onDirtyChange }: Props) {
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
 
+  // ── save ───────────────────────────────────────────────────────────────────
+  const save = useCallback(async (): Promise<void> => {
+    const currentForm = formRef.current;
+    if (!currentForm) return;
+    setErrors({});
+    try {
+      const saved = await savePool(pool, currentForm);
+      setOriginal(saved);
+      setForm(clone(saved));
+      if (saved.restart_required) restartToast(toast);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 400) {
+        try {
+          const body = JSON.parse(e.detail) as {
+            fields?: FieldErrors;
+          };
+          if (body.fields) setErrors(body.fields);
+          else
+            toast.show({
+              message: `Save failed: ${e.detail}`,
+              tone: "warning",
+            });
+        } catch {
+          toast.show({
+            message: `Save failed: ${e.detail}`,
+            tone: "warning",
+          });
+        }
+      } else {
+        toast.show({
+          message: `Save failed: ${e instanceof ApiError ? `${e.status} ${e.detail}` : String(e)}`,
+          tone: "warning",
+        });
+      }
+    }
+  }, [pool, toast]);
+
+  const cancel = useCallback((): void => {
+    setForm(clone(originalRef.current));
+    setErrors({});
+  }, []);
+
+  useEffect(() => {
+    onSave?.(save);
+  }, [onSave, save]);
+
+  useEffect(() => {
+    onCancel?.(cancel);
+  }, [onCancel, cancel]);
+
   if (loadError) {
     return <p className="text-sm text-error">Failed to load: {loadError}</p>;
   }
   if (!form || !original) {
-    return <p className="text-sm text-text-secondary">Loading…</p>;
+    return <p className="text-sm text-body">Loading…</p>;
   }
 
   // ── form mutation helpers ──────────────────────────────────────────────────
   const patch = (p: Partial<PoolTree>): void =>
     setForm((prev) => (prev ? { ...prev, ...p } : prev));
   const patchMain = (p: Partial<MainAgentNode>): void =>
-    setForm((prev) => (prev ? { ...prev, main: { ...prev.main, ...p } } : prev));
+    setForm((prev) =>
+      prev ? { ...prev, main: { ...prev.main, ...p } } : prev,
+    );
   const patchSub = (i: number, p: Partial<SubagentNode>): void =>
     setForm((prev) =>
       prev
         ? {
             ...prev,
-            subagents: prev.subagents.map((s, j) => (j === i ? { ...s, ...p } : s)),
+            subagents: prev.subagents.map((s, j) =>
+              j === i ? { ...s, ...p } : s,
+            ),
           }
         : prev,
     );
@@ -182,70 +255,21 @@ export function PoolEditor({ pool, onDirtyChange }: Props) {
       return s;
     });
 
-  // ── save ───────────────────────────────────────────────────────────────────
-  const onSave = async (): Promise<void> => {
-    setSaving(true);
-    setErrors({});
-    try {
-      const saved = await savePool(pool, form);
-      setOriginal(saved);
-      setForm(clone(saved));
-      if (saved.restart_required) restartToast(toast);
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 400) {
-        try {
-          const body = JSON.parse(e.detail) as {
-            fields?: FieldErrors;
-          };
-          if (body.fields) setErrors(body.fields);
-          else toast.show({ message: `Save failed: ${e.detail}`, tone: "warning" });
-        } catch {
-          toast.show({ message: `Save failed: ${e.detail}`, tone: "warning" });
-        }
-      } else {
-        toast.show({
-          message: `Save failed: ${e instanceof ApiError ? `${e.status} ${e.detail}` : String(e)}`,
-          tone: "warning",
-        });
-      }
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const onCancel = (): void => {
-    setForm(clone(original));
-    setErrors({});
-  };
-
-  // ── prompt editing overlay ─────────────────────────────────────────────────
-  if (promptTarget) {
-    const agentName =
-      promptTarget.kind === "main"
-        ? form.main.agent_name
-        : form.subagents[promptTarget.index]?.agent_name ?? `subagent-${promptTarget.index}`;
-    return (
-      <PromptEditor
-        pool={pool}
-        agent={agentName}
-        onClose={() => setPromptTarget(null)}
-      />
-    );
-  }
-
   const errFor = (loc: string): string | undefined => {
     const msgs = errors[loc];
     return msgs && msgs.length > 0 ? msgs[0] : undefined;
   };
 
-  return (
+  const editor = (
     <div className="space-y-5">
-      <h1 className="text-lg font-semibold text-text-primary">Pool: {pool}</h1>
+      <h1 className="text-lg font-semibold text-ink">
+        Pool: {pool}
+      </h1>
 
       {/* MAIN AGENT (fixed-expanded, not collapsible) */}
-      <section className="rounded-lg border border-card-border bg-content-bg">
-        <div className="border-b border-divider px-4 py-2">
-          <h2 className="text-[11px] font-semibold uppercase tracking-wide text-text-disabled">
+      <Card id="main-agent-section">
+        <div className="border-b border-hairline px-4 py-2">
+          <h2 className="text-[11px] font-semibold uppercase tracking-wide text-faint">
             Main agent
           </h2>
         </div>
@@ -254,19 +278,18 @@ export function PoolEditor({ pool, onDirtyChange }: Props) {
             node={form.main}
             savedAgentName={original.main.agent_name}
             promptDisabled={!isValidAgentName(form.main.agent_name)}
-            errors={errors}
             errFor={errFor}
             patch={patchMain}
             pool={pool}
             onEditPrompt={() => setPromptTarget({ kind: "main" })}
           />
         </div>
-      </section>
+      </Card>
 
       {/* SUBAGENTS */}
       <section>
         <div className="mb-2 flex items-center justify-between">
-          <h2 className="text-[11px] font-semibold uppercase tracking-wide text-text-disabled">
+          <h2 className="text-[11px] font-semibold uppercase tracking-wide text-faint">
             Subagents
           </h2>
         </div>
@@ -279,7 +302,6 @@ export function PoolEditor({ pool, onDirtyChange }: Props) {
               savedAgentName={original.subagents[i]?.agent_name ?? sub.agent_name}
               promptDisabled={!isValidAgentName(sub.agent_name)}
               open={expanded.has(i)}
-              errors={errors}
               errFor={errFor}
               confirmingDelete={confirmDeleteSub === i}
               onToggle={() => toggle(i)}
@@ -288,44 +310,75 @@ export function PoolEditor({ pool, onDirtyChange }: Props) {
               onConfirmDelete={() => removeSubagent(i)}
               onCancelDelete={() => setConfirmDeleteSub(null)}
               pool={pool}
-              onEditPrompt={() => setPromptTarget({ kind: "sub", index: i })}
+              onEditPrompt={() =>
+                setPromptTarget({ kind: "sub", index: i })
+              }
             />
           ))}
           {form.subagents.length === 0 && (
-            <p className="rounded-md border border-dashed border-input-border px-3 py-6 text-center text-sm text-text-secondary">
+            <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-sm text-body">
               No subagents in this pool.
             </p>
           )}
-          <button
-            type="button"
-            className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-input-border py-2.5 text-sm text-text-secondary hover:border-text-secondary hover:bg-sidebar-hover hover:text-text-primary"
+          <Button
+            variant="ghost"
+            className="w-full justify-center border border-dashed border-hairline text-body hover:border-ink hover:bg-hairline-soft hover:text-ink"
             onClick={addSubagent}
           >
             <PlusIcon /> Add subagent
-          </button>
+          </Button>
         </div>
       </section>
-
-      {/* Footer: Save / Cancel */}
-      <div className="flex justify-end gap-2 border-t border-divider pt-4">
-        <button
-          type="button"
-          className="rounded border border-divider px-4 py-1.5 text-sm text-text-primary hover:bg-sidebar-hover disabled:opacity-50"
-          onClick={onCancel}
-          disabled={!dirty || saving}
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          className="rounded bg-btn-primary px-4 py-1.5 text-sm text-btn-primary-text hover:opacity-90 disabled:opacity-50"
-          onClick={() => void onSave()}
-          disabled={!dirty || saving}
-        >
-          {saving ? "Saving…" : "Save"}
-        </button>
-      </div>
     </div>
+  );
+
+  return (
+    <>
+      {editor}
+
+      {/* Prompt slide-over — PoolEditor stays mounted underneath so unsaved
+          edits to the pool tree are retained. */}
+      {promptTarget ? (
+        <aside
+          className="fixed inset-y-0 right-0 z-50 w-full max-w-2xl overflow-y-auto border-l border-hairline bg-canvas-elevated shadow-floating"
+          role="dialog"
+          aria-label="System prompt editor"
+        >
+          <PromptEditor
+            pool={pool}
+            agent={
+              promptTarget.kind === "main"
+                ? form.main.agent_name
+                : form.subagents[promptTarget.index]?.agent_name ??
+                  `subagent-${promptTarget.index}`
+            }
+            onClose={() => setPromptTarget(null)}
+            slideOverHeader={
+              <div className="flex items-center justify-between border-b border-hairline px-4 py-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-ink">
+                    System prompt
+                  </h2>
+                  <HelperText>
+                    {promptTarget.kind === "main"
+                      ? "Main agent"
+                      : `Subagent #${promptTarget.index + 1}`}
+                  </HelperText>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-label="Close prompt editor"
+                  onClick={() => setPromptTarget(null)}
+                >
+                  <XIcon /> Close
+                </Button>
+              </div>
+            }
+          />
+        </aside>
+      ) : null}
+    </>
   );
 }
 
@@ -333,64 +386,6 @@ export function PoolEditor({ pool, onDirtyChange }: Props) {
 
 interface ErrFn {
   (loc: string): string | undefined;
-}
-
-function ErrorNote({ msg }: { msg?: string }): ReactNode {
-  if (!msg) return null;
-  return <p className="mt-1 text-xs text-error">{msg}</p>;
-}
-
-function Field({
-  label,
-  required,
-  error,
-  className,
-  children,
-}: {
-  label: string;
-  required?: boolean;
-  error?: string;
-  className?: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className={className}>
-      <label className={LABEL}>
-        {label}
-        {required && <span className="text-error"> *</span>}
-      </label>
-      {children}
-      <ErrorNote msg={error} />
-    </div>
-  );
-}
-
-function PresetSelect({
-  value,
-  onChange,
-  error,
-  id,
-}: {
-  value: ToolPreset;
-  onChange: (v: ToolPreset) => void;
-  /** When true, render the select with error styling. */
-  error?: boolean;
-  id?: string;
-}) {
-  return (
-    <select
-      id={id}
-      className={error ? INPUT_ERR : INPUT}
-      value={value}
-      onChange={(e) => onChange(e.target.value as ToolPreset)}
-    >
-      {PRESETS.map((p) => (
-        <option key={p} value={p}>
-          {p}
-        </option>
-      ))}
-    </select>
-  );
 }
 
 function SupplementsChips({
@@ -416,8 +411,8 @@ function SupplementsChips({
             }
             className={
               selected
-                ? "inline-flex items-center gap-1.5 rounded-full border border-ai-brand bg-user-bubble px-2.5 py-1 text-xs font-medium text-user-bubble-text"
-                : "inline-flex items-center gap-1.5 rounded-full border border-input-border bg-input-bg px-2.5 py-1 text-xs text-text-secondary hover:border-text-secondary hover:text-text-primary"
+                ? "inline-flex items-center gap-1.5 rounded-full border border-link bg-link-soft px-2.5 py-1 text-xs font-medium text-link-deep"
+                : "inline-flex items-center gap-1.5 rounded-full border border-hairline bg-canvas-elevated px-2.5 py-1 text-xs text-body hover:border-ink hover:text-ink"
             }
           >
             {s}
@@ -434,7 +429,6 @@ function MainAgentFields({
   node,
   savedAgentName,
   promptDisabled,
-  errors,
   errFor,
   patch,
   pool,
@@ -443,7 +437,6 @@ function MainAgentFields({
   node: MainAgentNode;
   savedAgentName: string;
   promptDisabled: boolean;
-  errors: FieldErrors;
   errFor: ErrFn;
   patch: (p: Partial<MainAgentNode>) => void;
   pool: string;
@@ -471,55 +464,54 @@ function MainAgentFields({
   return (
     <>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label="Agent name" required error={errFor("main.agent_name")}>
-          <input
-            className={errors["main.agent_name"] ? INPUT_ERR : INPUT}
-            value={node.agent_name}
-            onChange={(e) => patch({ agent_name: e.target.value })}
-          />
-        </Field>
-        <Field label="Max steps" error={errFor("main.max_steps")}>
-          <input
-            type="number"
-            className={errors["main.max_steps"] ? INPUT_ERR : INPUT}
-            value={node.max_steps}
-            onChange={(e) => patch({ max_steps: Number(e.target.value) })}
-          />
-        </Field>
-        <Field label="Tool preset" error={errFor("main.tool_preset")}>
-          <PresetSelect
-            value={node.tool_preset}
-            onChange={(v) => patch({ tool_preset: v })}
-            error={!!errors["main.tool_preset"]}
-          />
-        </Field>
+        <Input
+          label="Agent name"
+          required
+          error={errFor("main.agent_name")}
+          value={node.agent_name}
+          onChange={(e) => patch({ agent_name: e.target.value })}
+        />
+        <Input
+          label="Max steps"
+          type="number"
+          error={errFor("main.max_steps")}
+          value={node.max_steps}
+          onChange={(e) => patch({ max_steps: Number(e.target.value) })}
+        />
+        <Select
+          label="Tool preset"
+          error={errFor("main.tool_preset")}
+          options={PRESET_OPTIONS}
+          value={node.tool_preset}
+          onChange={(e) =>
+            patch({ tool_preset: e.target.value as ToolPreset })
+          }
+        />
         <div>
-          <span className={LABEL}>Terminal</span>
+          <span className="mb-1 block text-xs font-medium text-body">
+            Terminal
+          </span>
           <div className="flex flex-col gap-1.5">
-            <label className="flex items-center gap-2 text-xs text-text-primary">
-              <input
-                type="checkbox"
-                checked={node.use_terminal}
-                onChange={(e) => patch({ use_terminal: e.target.checked })}
-                className="h-3.5 w-3.5"
-              />
-              Enable terminal
-            </label>
-            <label className="flex items-center gap-2 text-xs text-text-primary">
-              <input
-                type="checkbox"
-                checked={node.terminal_visibility}
-                onChange={(e) => patch({ terminal_visibility: e.target.checked })}
-                className="h-3.5 w-3.5"
-              />
-              Visible window
-            </label>
+            <Checkbox
+              label="Enable terminal"
+              checked={node.use_terminal}
+              onChange={(e) => patch({ use_terminal: e.target.checked })}
+            />
+            <Checkbox
+              label="Visible window"
+              checked={node.terminal_visibility}
+              onChange={(e) =>
+                patch({ terminal_visibility: e.target.checked })
+              }
+            />
           </div>
         </div>
       </div>
 
       <div>
-        <label className={LABEL}>Tool supplements</label>
+        <span className="mb-1 block text-xs font-medium text-body">
+          Tool supplements
+        </span>
         <SupplementsChips
           value={node.tool_supplements}
           onChange={(next) => patch({ tool_supplements: next })}
@@ -527,32 +519,30 @@ function MainAgentFields({
       </div>
 
       {/* Approval sub-section */}
-      <div className="rounded-md border border-divider bg-sidebar-bg p-3">
-        <label className="flex items-center gap-2 text-xs font-medium text-text-primary">
-          <input
-            type="checkbox"
-            checked={approval.enabled}
-            onChange={(e) => setApproval({ enabled: e.target.checked })}
-            className="h-3.5 w-3.5"
-          />
-          Approval required for write/edit tools
-        </label>
+      <div className="rounded-md border border-hairline bg-hairline-soft p-3">
+        <Checkbox
+          label="Approval required for write/edit tools"
+          checked={approval.enabled}
+          onChange={(e) => setApproval({ enabled: e.target.checked })}
+        />
         {approval.enabled && (
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label="Write allowed paths (one per line)">
-              <textarea
-                className={`${INPUT} min-h-[60px] font-mono`}
-                value={writePaths}
-                onChange={(e) => setToolPaths("write", e.target.value)}
-              />
-            </Field>
-            <Field label="Edit allowed paths (one per line)">
-              <textarea
-                className={`${INPUT} min-h-[60px] font-mono`}
-                value={editPaths}
-                onChange={(e) => setToolPaths("edit", e.target.value)}
-              />
-            </Field>
+            <Textarea
+              label="Write allowed paths (one per line)"
+              mono
+              helper="One path per line."
+              value={writePaths}
+              onChange={(e) => setToolPaths("write", e.target.value)}
+              style={{ minHeight: "60px" }}
+            />
+            <Textarea
+              label="Edit allowed paths (one per line)"
+              mono
+              helper="One path per line."
+              value={editPaths}
+              onChange={(e) => setToolPaths("edit", e.target.value)}
+              style={{ minHeight: "60px" }}
+            />
           </div>
         )}
       </div>
@@ -562,31 +552,30 @@ function MainAgentFields({
           value={node.mcp}
           onChange={(next) => patch({ mcp: next })}
         />
-        <AgentSkillSelector
-          pool={pool}
-          agent={savedAgentName}
-        />
+        <div>
+          <AgentSkillSelector pool={pool} agent={savedAgentName} />
+          <p className="mt-1 text-xs italic text-body">
+            Skill assignments save immediately.
+          </p>
+        </div>
       </div>
 
       <div>
-        <button
-          type="button"
-          className="text-xs text-ai-brand hover:underline disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:no-underline"
+        <Button
+          variant="link"
           onClick={onEditPrompt}
           disabled={promptDisabled}
           title={
-            promptDisabled
-              ? "Provide an agent name first"
-              : undefined
+            promptDisabled ? "Provide an agent name first" : undefined
           }
         >
           System prompt [Edit]
-        </button>
+        </Button>
         {promptDisabled && (
-          <p className="mt-1 text-[11px] text-text-secondary">
+          <HelperText>
             Provide an agent name (lowercase, letters/digits/_/-) to edit its
             system prompt.
-          </p>
+          </HelperText>
         )}
       </div>
     </>
@@ -601,7 +590,6 @@ function SubagentCard({
   savedAgentName,
   promptDisabled,
   open,
-  errors,
   errFor,
   confirmingDelete,
   onToggle,
@@ -617,7 +605,6 @@ function SubagentCard({
   savedAgentName: string;
   promptDisabled: boolean;
   open: boolean;
-  errors: FieldErrors;
   errFor: ErrFn;
   confirmingDelete: boolean;
   onToggle: () => void;
@@ -628,159 +615,146 @@ function SubagentCard({
   pool: string;
   onEditPrompt: () => void;
 }) {
-  const summary = `${node.tool_preset} · mcp·${node.mcp.length}`;
+  const summary = `${node.tool_preset} · mcp·${node.mcp.length} · ${
+    node.context_mode
+  }`;
   return (
-    <div className="rounded-lg border border-card-border bg-content-bg">
+    <Card>
       <div className="flex items-center gap-2 px-3 py-2.5">
         <button
           type="button"
           onClick={onToggle}
-          className="flex min-w-0 flex-1 items-center gap-2.5 rounded px-1 py-0.5 text-left hover:bg-sidebar-hover"
+          className="flex min-w-0 flex-1 items-center gap-2.5 rounded px-1 py-0.5 text-left hover:bg-hairline-soft"
+          aria-expanded={open}
         >
-          <Chevron open={open} />
-          <span className="truncate text-sm font-medium text-text-primary">
+          <ChevronDownIcon open={open} className="text-body" />
+          <span className="truncate text-sm font-medium text-ink">
             {node.agent_name || (
-              <span className="italic text-text-secondary">Untitled subagent</span>
+              <span className="italic text-body">
+                Untitled subagent
+              </span>
             )}
           </span>
-          <span className="truncate text-xs text-text-secondary">{summary}</span>
+          <span className="truncate text-xs text-body">
+            {summary}
+          </span>
         </button>
         <div className="flex shrink-0 items-center gap-2">
           {confirmingDelete ? (
             <span className="flex items-center gap-2 text-xs">
-              <button
-                type="button"
-                className="font-medium text-error hover:underline"
+              <Button
+                variant="link"
+                size="sm"
+                className="text-error hover:underline"
                 onClick={onConfirmDelete}
               >
                 Delete
-              </button>
-              <button
-                type="button"
-                className="text-text-secondary hover:underline"
+              </Button>
+              <Button
+                variant="link"
+                size="sm"
+                className="text-body hover:underline"
                 onClick={onCancelDelete}
               >
                 Cancel
-              </button>
+              </Button>
             </span>
           ) : (
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="sm"
               aria-label={`Remove subagent ${node.agent_name || index}`}
-              className="text-text-secondary hover:text-error"
+              className="text-body hover:text-error"
               onClick={onRequestDelete}
             >
               <TrashIcon />
-            </button>
+            </Button>
           )}
         </div>
       </div>
       {open && (
-        <div className="space-y-4 border-t border-divider px-4 py-4">
+        <div className="space-y-4 border-t border-hairline px-4 py-4">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field
+            <Input
               label="Agent name"
               required
               error={errFor(`subagents.${index}.agent_name`)}
-            >
-              <input
-                className={errors[`subagents.${index}.agent_name`] ? INPUT_ERR : INPUT}
-                value={node.agent_name}
-                onChange={(e) => onPatch({ agent_name: e.target.value })}
-              />
-            </Field>
-            <Field
+              value={node.agent_name}
+              onChange={(e) => onPatch({ agent_name: e.target.value })}
+            />
+            <Input
               label="Max steps"
+              type="number"
               error={errFor(`subagents.${index}.max_steps`)}
-            >
-              <input
-                type="number"
-                className={errors[`subagents.${index}.max_steps`] ? INPUT_ERR : INPUT}
-                value={node.max_steps}
-                onChange={(e) => onPatch({ max_steps: Number(e.target.value) })}
-              />
-            </Field>
+              value={node.max_steps}
+              onChange={(e) =>
+                onPatch({ max_steps: Number(e.target.value) })
+              }
+            />
           </div>
 
-          <Field
+          <Input
             label="Description"
             required
             error={errFor(`subagents.${index}.description`)}
-          >
-            <input
-              className={errors[`subagents.${index}.description`] ? INPUT_ERR : INPUT}
-              value={node.description}
-              onChange={(e) => onPatch({ description: e.target.value })}
-            />
-          </Field>
+            value={node.description}
+            onChange={(e) => onPatch({ description: e.target.value })}
+          />
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field
+            <Select
               label="Tool preset"
               error={errFor(`subagents.${index}.tool_preset`)}
-            >
-              <PresetSelect
-                value={node.tool_preset}
-                onChange={(v) => onPatch({ tool_preset: v })}
-                error={!!errors[`subagents.${index}.tool_preset`]}
-              />
-            </Field>
-            <Field
-              label="Context mode"
-              error={errFor(`subagents.${index}.context_mode`)}
-            >
-              <select
-                className={errors[`subagents.${index}.context_mode`] ? INPUT_ERR : INPUT}
+              options={PRESET_OPTIONS}
+              value={node.tool_preset}
+              onChange={(e) =>
+                onPatch({ tool_preset: e.target.value as ToolPreset })
+              }
+            />
+            <div>
+              <Select
+                label="Context mode"
+                error={errFor(`subagents.${index}.context_mode`)}
+                options={CONTEXT_MODE_OPTIONS}
                 value={node.context_mode}
-                onChange={(e) => onPatch({ context_mode: e.target.value as ContextMode })}
-              >
-                {CONTEXT_MODES.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-              <p className="mt-1 text-[11px] text-text-secondary">
-                {CONTEXT_MODE_HINT[node.context_mode]}
-              </p>
-            </Field>
-            <Field
-              label="System prompt mode"
-              error={errFor(`subagents.${index}.system_prompt_mode`)}
-            >
-              <select
-                className={
-                  errors[`subagents.${index}.system_prompt_mode`] ? INPUT_ERR : INPUT
+                onChange={(e) =>
+                  onPatch({
+                    context_mode: e.target.value as ContextMode,
+                  })
                 }
+              />
+              <HelperText>
+                {CONTEXT_MODE_HINT[node.context_mode]}
+              </HelperText>
+            </div>
+            <div>
+              <Select
+                label="System prompt mode"
+                error={errFor(`subagents.${index}.system_prompt_mode`)}
+                options={SYSTEM_PROMPT_MODE_OPTIONS}
                 value={node.system_prompt_mode ?? "replace"}
                 onChange={(e) =>
                   onPatch({
                     system_prompt_mode: e.target.value as SystemPromptMode,
                   })
                 }
-              >
-                {SYSTEM_PROMPT_MODES.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-              <p className="mt-1 text-[11px] text-text-secondary">
-                {SYSTEM_PROMPT_MODE_HINT[node.system_prompt_mode ?? "replace"]}
-              </p>
-            </Field>
+              />
+              <HelperText>
+                {
+                  SYSTEM_PROMPT_MODE_HINT[
+                    node.system_prompt_mode ?? "replace"
+                  ]
+                }
+              </HelperText>
+            </div>
             {node.context_mode === "fork" && (
-              <Field
-                label="Fork max messages"
-                error={errFor(`subagents.${index}.fork_max_messages`)}
-              >
-                <input
+              <div>
+                <Input
+                  label="Fork max messages"
                   type="number"
                   min={1}
                   max={FORK_MAX_MAX}
-                  className={
-                    errors[`subagents.${index}.fork_max_messages`] ? INPUT_ERR : INPUT
-                  }
+                  error={errFor(`subagents.${index}.fork_max_messages`)}
                   value={node.fork_max_messages ?? FORK_MAX_DEFAULT}
                   onChange={(e) => {
                     const n = Number.parseInt(e.target.value, 10);
@@ -791,15 +765,18 @@ function SubagentCard({
                     });
                   }}
                 />
-                <p className="mt-1 text-[11px] text-text-secondary">
-                  Parent-message cap (1–{FORK_MAX_MAX}). Default {FORK_MAX_DEFAULT}.
-                </p>
-              </Field>
+                <HelperText>
+                  Parent-message cap (1–{FORK_MAX_MAX}). Default{" "}
+                  {FORK_MAX_DEFAULT}.
+                </HelperText>
+              </div>
             )}
           </div>
 
           <div>
-            <label className={LABEL}>Tool supplements</label>
+            <span className="mb-1 block text-xs font-medium text-body">
+              Tool supplements
+            </span>
             <SupplementsChips
               value={node.tool_supplements}
               onChange={(next) => onPatch({ tool_supplements: next })}
@@ -811,16 +788,17 @@ function SubagentCard({
               value={node.mcp}
               onChange={(next) => onPatch({ mcp: next })}
             />
-            <AgentSkillSelector
-              pool={pool}
-              agent={savedAgentName}
-            />
+            <div>
+              <AgentSkillSelector pool={pool} agent={savedAgentName} />
+              <p className="mt-1 text-xs italic text-body">
+                Skill assignments save immediately.
+              </p>
+            </div>
           </div>
 
           <div>
-            <button
-              type="button"
-              className="text-xs text-ai-brand hover:underline disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:no-underline"
+            <Button
+              variant="link"
               onClick={onEditPrompt}
               disabled={promptDisabled}
               title={
@@ -830,16 +808,16 @@ function SubagentCard({
               }
             >
               System prompt [Edit]
-            </button>
+            </Button>
             {promptDisabled && (
-              <p className="mt-1 text-[11px] text-text-secondary">
+              <HelperText>
                 Provide an agent name (lowercase, letters/digits/_/-) to edit
                 its system prompt.
-              </p>
+              </HelperText>
             )}
           </div>
         </div>
       )}
-    </div>
+    </Card>
   );
 }

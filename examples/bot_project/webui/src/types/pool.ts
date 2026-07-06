@@ -106,4 +106,5 @@ export interface PromptContent {
 export interface SkillEntry {
   name: string;
   source: SkillSource;
+  description?: string;
 }

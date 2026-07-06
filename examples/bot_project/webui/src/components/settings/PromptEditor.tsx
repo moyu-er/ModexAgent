@@ -7,25 +7,33 @@
 // (with "Restart now" action) and arm the persistent indicator.
 //
 // Discarding unsaved edits uses the shared ConfirmDialog (no window.confirm).
+//
+// Rendered as a sibling inside the PoolEditor's slide-over — the pool editor
+// stays mounted behind it so unsaved pool edits aren't lost. The optional
+// `slideOverHeader` slot lets the caller inject a Close button into the
+// slide-over's header strip.
 
 import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import type { PromptContent } from "../../types/pool";
 import { getPrompt, savePrompt } from "../../lib/poolApi";
 import { ApiError } from "../../lib/api";
 import { useToast } from "../ToastContext";
 import { restartToast } from "./restartToast";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { Button } from "../ui/Button";
+import { Textarea } from "../ui/Textarea";
+import { HelperText } from "../ui/HelperText";
 
 interface Props {
   pool: string;
   agent: string;
   onClose: () => void;
+  /** Optional header rendered at the top (used by the slide-over variant). */
+  slideOverHeader?: ReactNode;
 }
 
-const TEXTAREA =
-  "w-full rounded border border-input-border bg-input-bg px-3 py-2 font-mono text-sm text-text-primary focus:border-input-focus focus:outline-none focus:ring-1 focus:ring-input-focus";
-
-export function PromptEditor({ pool, agent, onClose }: Props) {
+export function PromptEditor({ pool, agent, onClose, slideOverHeader }: Props) {
   const toast = useToast();
   const [original, setOriginal] = useState<string | null>(null);
   const [draft, setDraft] = useState<string>("");
@@ -51,21 +59,17 @@ export function PromptEditor({ pool, agent, onClose }: Props) {
 
   if (loadError) {
     return (
-      <div>
+      <div className="space-y-3 p-4">
         <p className="text-sm text-error">Failed to load: {loadError}</p>
-        <button
-          type="button"
-          className="mt-2 text-sm text-ai-brand hover:underline"
-          onClick={onClose}
-        >
-          ← Back
-        </button>
+        <Button variant="link" onClick={onClose}>
+          Back
+        </Button>
       </div>
     );
   }
 
   if (original === null) {
-    return <p className="text-sm text-text-secondary">Loading…</p>;
+    return <p className="p-4 text-sm text-mute">Loading…</p>;
   }
 
   const dirty = draft !== original;
@@ -94,49 +98,63 @@ export function PromptEditor({ pool, agent, onClose }: Props) {
   };
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-sm font-semibold text-text-primary">
-            System prompt — <span className="font-mono">{agent}</span>
-          </h2>
-          <p className="text-xs text-text-secondary">
-            This is the base prompt; the runtime pipeline injects skills/memory
-            on top.
-          </p>
-        </div>
-        <button
-          type="button"
-          className="text-sm text-ai-brand hover:underline"
-          onClick={requestClose}
-        >
-          ← Back
-        </button>
+    <div className="flex h-full flex-col">
+      {slideOverHeader}
+
+      <div className="space-y-3 px-4 py-4">
+        {!slideOverHeader ? (
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-semibold text-ink">
+                System prompt — <span className="font-mono">{agent}</span>
+              </h2>
+              <HelperText>
+                This is the base prompt; the runtime pipeline injects
+                skills/memory on top.
+              </HelperText>
+            </div>
+            <Button variant="link" onClick={requestClose}>
+              Back
+            </Button>
+          </div>
+        ) : (
+          <div>
+            <h3 className="text-sm font-medium text-ink">
+              Agent: <span className="font-mono">{agent}</span>
+            </h3>
+            <HelperText>
+              This is the base prompt; the runtime pipeline injects
+              skills/memory on top.
+            </HelperText>
+          </div>
+        )}
+
+        <Textarea
+          aria-label="Prompt body"
+          mono
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          spellCheck={false}
+          style={{ minHeight: "420px" }}
+          className="text-sm"
+        />
       </div>
 
-      <textarea
-        className={`${TEXTAREA} min-h-[420px]`}
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        spellCheck={false}
-      />
-
-      <div className="flex justify-end gap-2 border-t border-divider pt-3">
-        <button
-          type="button"
-          className="rounded border border-divider px-4 py-1.5 text-sm text-text-primary hover:bg-sidebar-hover disabled:opacity-50"
+      <div className="sticky bottom-0 z-10 mt-auto flex justify-end gap-2 border-t border-hairline bg-canvas-elevated px-4 pb-3 pt-3">
+        <Button
+          variant="secondary"
           onClick={requestClose}
         >
           Cancel
-        </button>
-        <button
-          type="button"
-          className="rounded bg-btn-primary px-4 py-1.5 text-sm text-btn-primary-text hover:opacity-90 disabled:opacity-50"
+        </Button>
+        <Button
+          variant="primary"
           onClick={() => void onSave()}
           disabled={!dirty || saving}
+          loading={saving}
         >
           {saving ? "Saving…" : "Save"}
-        </button>
+        </Button>
       </div>
 
       {confirmDiscard ? (

@@ -50,7 +50,7 @@ export const AttachmentRenderer: FC<AttachmentRendererProps> = ({ view }) => {
         href={view.downloadUrl}
         target="_blank"
         rel="noreferrer"
-        className="mt-1 block max-w-[320px] overflow-hidden rounded-lg border border-card-border"
+        className="mt-1 block max-w-[320px] overflow-hidden rounded-lg border border-hairline"
         title={view.name}
       >
         <img
@@ -70,15 +70,15 @@ export const AttachmentRenderer: FC<AttachmentRendererProps> = ({ view }) => {
     return (
       <div
         aria-disabled="true"
-        className="mt-1 flex max-w-[360px] cursor-not-allowed items-center gap-2.5 rounded-lg border border-card-border bg-content-bg px-3 py-2 opacity-60"
+        className="mt-1 flex max-w-[360px] cursor-not-allowed items-center gap-2.5 rounded-lg border border-hairline bg-canvas-elevated px-3 py-2 opacity-60"
         title={view.name}
       >
         <FileIcon />
         <span className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate text-[13px] font-medium text-text-secondary">
+          <span className="truncate text-[13px] font-medium text-mute">
             {view.name}
           </span>
-          <span className="text-[11px] italic text-text-secondary">
+          <span className="text-[11px] italic text-mute">
             File no longer available
           </span>
         </span>
@@ -106,15 +106,15 @@ export const AttachmentRenderer: FC<AttachmentRendererProps> = ({ view }) => {
       target="_blank"
       rel="noreferrer"
       onClick={onDownloadClick}
-      className="mt-1 flex max-w-[360px] items-center gap-2.5 rounded-lg border border-card-border bg-content-bg px-3 py-2 text-left transition-colors hover:bg-sidebar-hover"
+      className="mt-1 flex max-w-[360px] items-center gap-2.5 rounded-lg border border-hairline bg-canvas-elevated px-3 py-2 text-left transition-colors hover:bg-hairline-soft"
       title={view.name}
     >
       <FileIcon />
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate text-[13px] font-medium text-text-primary">
+        <span className="truncate text-[13px] font-medium text-ink">
           {view.name}
         </span>
-        <span className="text-[11px] text-text-secondary">
+        <span className="text-[11px] text-mute">
           {formatBytes(view.size)}
         </span>
       </span>
@@ -133,7 +133,7 @@ const FileIcon: FC = () => (
     strokeLinecap="round"
     strokeLinejoin="round"
     aria-hidden="true"
-    className="shrink-0 text-text-secondary"
+    className="shrink-0 text-mute"
   >
     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
     <polyline points="14 2 14 8 20 8" />

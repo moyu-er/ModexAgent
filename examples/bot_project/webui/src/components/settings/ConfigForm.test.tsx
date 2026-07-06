@@ -49,4 +49,27 @@ describe("ConfigForm", () => {
     fireEvent.change(input, { target: { value: "a, b ,c" } });
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ allow_from: ["a", "b", "c"] }));
   });
+
+  it("renders description helper text when provided", () => {
+    const f: FieldDescriptor[] = [
+      { name: "app_id", label: "App ID", type: "string", required: true, description: "Your bot's application id" },
+    ];
+    render(<ConfigForm fields={f} values={{ app_id: "" }} onChange={() => {}} />);
+    expect(screen.getByText("Your bot's application id")).toBeTruthy();
+  });
+
+  it("renders field error when passed via errors map", () => {
+    const f: FieldDescriptor[] = [
+      { name: "app_id", label: "App ID", type: "string", required: true },
+    ];
+    render(
+      <ConfigForm
+        fields={f}
+        values={{ app_id: "" }}
+        errors={{ app_id: "required" }}
+        onChange={() => {}}
+      />,
+    );
+    expect(screen.getByRole("alert").textContent).toBe("required");
+  });
 });

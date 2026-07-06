@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { SettingsView } from "./SettingsView";
 import { ToastProvider } from "../ToastContext";
@@ -29,6 +29,12 @@ const imPayload = {
     },
   },
 };
+
+// URL state persists across tests in happy-dom; reset ?tab= so each test
+// starts on the IM view (the default) regardless of the previous test's nav.
+beforeEach(() => {
+  window.history.replaceState(null, "", "/");
+});
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -157,5 +163,39 @@ describe("SettingsView", () => {
         screen.getByText("Global skills available to every pool's agents."),
       ).toBeTruthy(),
     );
+  });
+
+  it("Global Skills: clicking a skill row expands its detail pane", async () => {
+    let skillsCalled = false;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      const body =
+        url.endsWith("/api/skills")
+          ? (skillsCalled = true, [{ name: "weather", source: "global", description: "Get weather forecasts." }])
+          : url.endsWith("/api/config/im")
+            ? imPayload
+            : {};
+      return Promise.resolve(makeResponse(200, JSON.stringify(body)));
+    }));
+    render(
+      <ToastProvider>
+        <SettingsView onExit={() => {}} />
+      </ToastProvider>,
+    );
+    // Wait for IM to load first, then navigate to Global Skills.
+    await waitFor(() => expect(screen.getByText("App ID")).toBeTruthy());
+    fireEvent.click(screen.getByText("Global Skills"));
+    await waitFor(() => {
+      expect(skillsCalled).toBe(true);
+    });
+    // Wait for the weather row.
+    await waitFor(() => expect(screen.getByText("weather")).toBeTruthy());
+    // Click the weather skill row — this should expand the detail pane.
+    fireEvent.click(screen.getByText("weather"));
+    await waitFor(() =>
+      expect(screen.getByText("Get weather forecasts.")).toBeTruthy(),
+    );
+    // Detail pane should also show delete button; source badge stays on the row.
+    expect(screen.getByRole("button", { name: "Delete skill weather" })).toBeTruthy();
   });
 });

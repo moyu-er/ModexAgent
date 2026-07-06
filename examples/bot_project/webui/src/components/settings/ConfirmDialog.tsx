@@ -4,7 +4,10 @@
 // presentational — the caller owns the open state and the onConfirm/onCancel
 // callbacks.
 
+import { useEffect } from "react";
 import type { ReactNode } from "react";
+import { Button } from "../ui/Button";
+import { Card } from "../ui/Card";
 
 export interface ConfirmDialogProps {
   /** Dialog title / heading. */
@@ -30,10 +33,20 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
-  const confirmCls =
-    tone === "danger"
-      ? "border-error text-error hover:bg-sidebar-hover"
-      : "border-ai-brand text-ai-brand hover:bg-sidebar-hover";
+  // Escape cancels — standard dialog keyboard contract.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onCancel();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel]);
+
+  const confirmVariant = tone === "danger" ? "danger" : "primary";
+
   return (
     <div
       role="dialog"
@@ -45,29 +58,20 @@ export function ConfirmDialog({
         if (e.target === e.currentTarget) onCancel();
       }}
     >
-      <div className="w-full max-w-sm rounded-lg border border-card-border bg-content-bg p-4 shadow-lg">
-        <h3 className="text-sm font-semibold text-text-primary">{title}</h3>
+      <Card elevated className="w-full max-w-sm p-4">
+        <h3 className="text-sm font-semibold text-ink">{title}</h3>
         {message ? (
-          <div className="mt-2 text-xs text-text-secondary">{message}</div>
+          <div className="mt-2 text-xs text-body">{message}</div>
         ) : null}
         <div className="mt-4 flex justify-end gap-2">
-          <button
-            type="button"
-            className="rounded border border-divider px-3 py-1.5 text-xs text-text-primary hover:bg-sidebar-hover"
-            onClick={onCancel}
-          >
+          <Button variant="secondary" size="sm" onClick={onCancel} autoFocus>
             {cancelLabel}
-          </button>
-          <button
-            type="button"
-            className={`rounded border px-3 py-1.5 text-xs font-medium ${confirmCls}`}
-            onClick={onConfirm}
-            autoFocus
-          >
+          </Button>
+          <Button variant={confirmVariant} size="sm" onClick={onConfirm}>
             {confirmLabel}
-          </button>
+          </Button>
         </div>
-      </div>
+      </Card>
     </div>
   );
 }

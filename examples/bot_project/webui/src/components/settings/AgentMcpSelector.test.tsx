@@ -23,6 +23,9 @@ describe("AgentMcpSelector", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
     render(<AgentMcpSelector value={["fs"]} onChange={() => {}} />);
+    await waitFor(() =>
+      expect(screen.queryByText("Loading…")).toBeNull(),
+    );
     // header reflects selected count while collapsed
     expect(screen.getByText(/MCP servers \(1 selected\)/)).toBeTruthy();
     // expand
@@ -39,6 +42,9 @@ describe("AgentMcpSelector", () => {
     );
     const onChange = vi.fn();
     render(<AgentMcpSelector value={[]} onChange={onChange} />);
+    await waitFor(() =>
+      expect(screen.queryByText("Loading…")).toBeNull(),
+    );
     fireEvent.click(screen.getByText(/MCP servers/));
     await waitFor(() => expect(screen.getByLabelText("fs")).toBeTruthy());
     // fs not yet selected → checking adds it
@@ -56,6 +62,9 @@ describe("AgentMcpSelector", () => {
       vi.fn(() => Promise.resolve(makeResponse(200, mcpMap))),
     );
     render(<AgentMcpSelector value={["web"]} onChange={() => {}} />);
+    await waitFor(() =>
+      expect(screen.queryByText("Loading…")).toBeNull(),
+    );
     fireEvent.click(screen.getByText(/MCP servers/));
     await waitFor(() => expect(screen.getByLabelText("web")).toBeTruthy());
     expect((screen.getByLabelText("web") as HTMLInputElement).checked).toBe(true);

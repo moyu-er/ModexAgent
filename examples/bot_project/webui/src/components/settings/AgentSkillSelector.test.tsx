@@ -12,11 +12,14 @@ function makeResponse(status: number, body: unknown): Response {
 
 afterEach(() => vi.unstubAllGlobals());
 
-function renderSelector(props: { pool?: string; agent?: string } = {}): void {
+async function renderSelector(props: { pool?: string; agent?: string } = {}): Promise<void> {
   render(
     <ToastProvider>
       <AgentSkillSelector pool={props.pool ?? "default"} agent={props.agent ?? "main"} />
     </ToastProvider>,
+  );
+  await waitFor(() =>
+    expect(screen.queryByText("Loading…")).toBeNull(),
   );
 }
 
@@ -41,7 +44,7 @@ describe("AgentSkillSelector", () => {
       return Promise.resolve(makeResponse(200, []));
     });
     vi.stubGlobal("fetch", fetchMock);
-    renderSelector();
+    await renderSelector();
     fireEvent.click(screen.getByText(/Skills/));
     await waitFor(() => expect(screen.getByText("greet")).toBeTruthy());
     // greet is assigned on disk → checked; scratchpad is local → no checkbox
@@ -73,7 +76,7 @@ describe("AgentSkillSelector", () => {
       return Promise.resolve(makeResponse(200, []));
     });
     vi.stubGlobal("fetch", fetchMock);
-    renderSelector();
+    await renderSelector();
     fireEvent.click(screen.getByText(/Skills/));
     await waitFor(() =>
       expect((screen.getByLabelText("greet") as HTMLInputElement).checked).toBe(true),
@@ -110,7 +113,7 @@ describe("AgentSkillSelector", () => {
       return Promise.resolve(makeResponse(200, []));
     });
     vi.stubGlobal("fetch", fetchMock);
-    renderSelector();
+    await renderSelector();
     fireEvent.click(screen.getByText(/Skills/));
     await waitFor(() =>
       expect((screen.getByLabelText("greet") as HTMLInputElement).checked).toBe(false),
@@ -126,7 +129,7 @@ describe("AgentSkillSelector", () => {
       "fetch",
       vi.fn(() => Promise.resolve(makeResponse(200, []))),
     );
-    renderSelector();
+    await renderSelector();
     fireEvent.click(screen.getByText(/Skills/));
     await waitFor(() =>
       expect(screen.getByText("Skill changes apply immediately.")).toBeTruthy(),

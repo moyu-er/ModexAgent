@@ -116,4 +116,23 @@ describe("PromptEditor", () => {
     fireEvent.click(screen.getByText("Cancel"));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it("renders the slide-over header when one is provided", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(makeResponse(200, baseContent))),
+    );
+    render(
+      <ToastProvider>
+        <PromptEditor
+          pool="default"
+          agent="main"
+          onClose={() => {}}
+          slideOverHeader={<div data-testid="slide-over-header">Close me</div>}
+        />
+      </ToastProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId("slide-over-header")).toBeTruthy());
+    expect(screen.getByRole("textbox")).toBeTruthy();
+  });
 });

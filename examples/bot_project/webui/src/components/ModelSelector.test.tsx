@@ -210,8 +210,8 @@ describe("ModelSelector", () => {
     const listbox = screen.getByRole("listbox");
     const option = screen.getAllByRole("option")[0]!;
 
-    expect(listbox.classList.contains("bg-dropdown-bg")).toBe(true);
-    expect(listbox.classList.contains("border-card-border")).toBe(true);
-    expect(option.classList.contains("hover:bg-dropdown-hover")).toBe(true);
+    expect(listbox.classList.contains("bg-canvas-elevated")).toBe(true);
+    expect(listbox.classList.contains("border-hairline")).toBe(true);
+    expect(option.classList.contains("hover:bg-hairline-soft")).toBe(true);
   });
 });

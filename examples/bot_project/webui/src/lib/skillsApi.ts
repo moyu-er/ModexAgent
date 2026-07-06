@@ -11,6 +11,10 @@ import { ApiError, assertOk, API_BASE } from "./api";
 
 const jsonHeaders = { "Content-Type": "application/json" };
 
+function mapSkillEntry(s: SkillEntry): SkillEntry {
+  return { name: s.name, source: s.source, description: s.description };
+}
+
 export interface SkillFile {
   relpath: string;
   content: string; // base64-encoded bytes
@@ -19,7 +23,8 @@ export interface SkillFile {
 export async function listSkills(): Promise<SkillEntry[]> {
   const resp = await fetch(`${API_BASE}/skills`);
   await assertOk(resp);
-  return resp.json() as Promise<SkillEntry[]>;
+  const data = (await resp.json()) as SkillEntry[];
+  return data.map(mapSkillEntry);
 }
 
 export async function uploadSkill(
@@ -36,7 +41,8 @@ export async function uploadSkill(
     body: JSON.stringify({ name, files: payload }),
   });
   await assertOk(resp);
-  return resp.json() as Promise<SkillEntry>;
+  const data = (await resp.json()) as SkillEntry;
+  return mapSkillEntry(data);
 }
 
 export async function deleteSkill(name: string): Promise<{ deleted: string }> {
@@ -55,7 +61,8 @@ export async function listAgentSkills(
     `${API_BASE}/pools/${encodeURIComponent(pool)}/agents/${encodeURIComponent(agent)}/skills`,
   );
   await assertOk(resp);
-  return resp.json() as Promise<SkillEntry[]>;
+  const data = (await resp.json()) as SkillEntry[];
+  return data.map(mapSkillEntry);
 }
 
 export async function assignSkill(

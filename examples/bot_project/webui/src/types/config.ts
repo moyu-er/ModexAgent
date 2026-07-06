@@ -6,6 +6,8 @@ export interface FieldDescriptor {
   label: string;
   type: FieldType;
   required: boolean;
+  /** Optional helper text shown beneath the input. */
+  description?: string;
 }
 
 export interface SecretMaskValue {

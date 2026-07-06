@@ -60,13 +60,13 @@ const CodeBlock: FC<CodeBlockProps> = ({ language, value, isDark }) => {
   const lang = language || "text";
 
   return (
-    <div className="mb-3 overflow-hidden rounded-lg border border-code-border">
-      <div className="flex items-center justify-between border-b border-code-border bg-code-bg px-4 py-2">
-        <span className="text-xs font-medium text-text-secondary">{lang}</span>
+    <div className="mb-3 overflow-hidden rounded-lg border border-hairline">
+      <div className="flex items-center justify-between border-b border-hairline bg-canvas px-4 py-2">
+        <span className="text-xs font-medium text-mute">{lang}</span>
         <button
           type="button"
           onClick={handleCopy}
-          className="text-xs text-text-secondary transition-colors hover:text-text-primary"
+          className="text-xs text-mute transition-colors hover:text-ink"
         >
           {copied ? "Copied" : "Copy"}
         </button>
@@ -74,7 +74,7 @@ const CodeBlock: FC<CodeBlockProps> = ({ language, value, isDark }) => {
       <SyntaxHighlighter
         language={lang}
         style={isDark ? oneDark : oneLight}
-        className="!m-0 !rounded-none !bg-code-bg !p-4"
+        className="!m-0 !rounded-none !bg-canvas !p-4"
         codeTagProps={{ className: "font-mono text-[13px] leading-relaxed" }}
       >
         {value}

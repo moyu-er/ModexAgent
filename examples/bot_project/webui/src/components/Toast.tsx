@@ -18,13 +18,13 @@ export interface ToastProps {
 }
 
 const TONE_BORDER: Record<ToastTone, string> = {
-  info: "border-ai-brand",
+  info: "border-link",
   success: "border-success",
   warning: "border-warning",
 };
 
 const TONE_DOT: Record<ToastTone, string> = {
-  info: "bg-ai-brand",
+  info: "bg-link",
   success: "bg-success",
   warning: "bg-warning",
 };
@@ -34,14 +34,14 @@ export function Toast({ message, tone = "info", action, onDismiss }: ToastProps)
     <div
       role="status"
       aria-live="polite"
-      className={`pointer-events-auto flex w-80 items-start gap-2.5 rounded-lg border bg-content-bg px-3 py-2.5 shadow-lg ${TONE_BORDER[tone]}`}
+      className={`pointer-events-auto flex w-80 items-start gap-2.5 rounded-lg border bg-canvas-elevated px-3 py-2.5 shadow-lg ${TONE_BORDER[tone]}`}
     >
       <span aria-hidden="true" className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${TONE_DOT[tone]}`} />
-      <p className="flex-1 break-words text-sm text-text-primary">{message}</p>
+      <p className="flex-1 break-words text-sm text-ink">{message}</p>
       {action ? (
         <button
           type="button"
-          className="shrink-0 text-xs font-medium text-ai-brand hover:underline"
+          className="shrink-0 text-xs font-medium text-link hover:underline"
           onClick={() => {
             action.onClick();
             onDismiss();
@@ -53,7 +53,7 @@ export function Toast({ message, tone = "info", action, onDismiss }: ToastProps)
       <button
         type="button"
         aria-label="Dismiss"
-        className="shrink-0 text-text-secondary hover:text-text-primary"
+        className="shrink-0 text-mute hover:text-ink"
         onClick={onDismiss}
       >
         <DismissIcon />

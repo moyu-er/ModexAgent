@@ -8,7 +8,7 @@
 // Switching to another pool while the current PoolEditor is dirty is guarded
 // by a ConfirmDialog at this level (PoolEditor itself never sees the switch).
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { PoolSummary } from "../../types/pool";
 import {
   createPool,
@@ -20,10 +20,16 @@ import { ApiError } from "../../lib/api";
 import { useToast } from "../ToastContext";
 import { PoolEditor } from "./PoolEditor";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { PlusIcon, TrashIcon } from "./icons";
-
-const INPUT =
-  "w-full rounded border border-input-border bg-input-bg px-2 py-1 text-sm text-text-primary focus:border-input-focus focus:outline-none focus:ring-1 focus:ring-input-focus";
+import { ActionBar } from "../ui/ActionBar";
+import { Button } from "../ui/Button";
+import { IconButton } from "../ui/IconButton";
+import { Input } from "../ui/Input";
+import {
+  EditIcon,
+  PlusIcon,
+  SearchIcon,
+  TrashIcon,
+} from "../ui/icons";
 
 type Confirm =
   | { kind: "delete"; name: string }
@@ -46,6 +52,12 @@ export function PoolsView() {
   const [confirm, setConfirm] = useState<Confirm>(null);
   /** Dirty signal: PoolEditor flips this via onDirtyChange. */
   const [dirty, setDirty] = useState<boolean>(false);
+  const [filter, setFilter] = useState<string>("");
+  /** Loading state for the pool Save button. */
+  const [saving, setSaving] = useState<boolean>(false);
+  /** Triggers received from PoolEditor to persist / revert the current pool. */
+  const saveRef = useRef<(() => Promise<void>) | null>(null);
+  const cancelRef = useRef<(() => void) | null>(null);
 
   const load = async (): Promise<void> => {
     setLoadError("");
@@ -62,11 +74,18 @@ export function PoolsView() {
     void load();
   }, []);
 
+  const visiblePools = useMemo<PoolSummary[]>(() => {
+    if (!pools) return [];
+    const q = filter.trim().toLowerCase();
+    if (!q) return pools;
+    return pools.filter((p) => p.name.toLowerCase().includes(q));
+  }, [pools, filter]);
+
   if (loadError) {
     return <p className="text-sm text-error">Failed to load: {loadError}</p>;
   }
   if (!pools) {
-    return <p className="text-sm text-text-secondary">Loading…</p>;
+    return <p className="text-sm text-mute">Loading…</p>;
   }
 
   const onSelect = (name: string): void => {
@@ -95,15 +114,16 @@ export function PoolsView() {
   const onRename = async (): Promise<void> => {
     if (!rename) return;
     const next = rename.draft.trim();
-    if (!next || next === rename.name) {
+    const oldName = rename.name;
+    if (!next || next === oldName) {
       setRename(null);
       return;
     }
     try {
-      await renamePool(rename.name, next);
+      await renamePool(oldName, next);
       setRename(null);
       await load();
-      if (selected === rename.name) setSelected(next);
+      if (selected === oldName) setSelected(next);
     } catch (e) {
       toast.show({
         message: `Rename failed: ${e instanceof ApiError ? `${e.status} ${e.detail}` : String(e)}`,
@@ -111,6 +131,21 @@ export function PoolsView() {
       });
       setRename(null);
     }
+  };
+
+  const handleSave = async (): Promise<void> => {
+    const save = saveRef.current;
+    if (!save) return;
+    setSaving(true);
+    try {
+      await save();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCancel = (): void => {
+    cancelRef.current?.();
   };
 
   const onDelete = async (name: string): Promise<void> => {
@@ -140,120 +175,176 @@ export function PoolsView() {
   return (
     <div className="flex h-full">
       {/* Left: pool list */}
-      <div className="w-56 shrink-0 space-y-2 border-r border-divider pr-3">
+      <div className="flex w-64 shrink-0 flex-col gap-3 border-r border-hairline bg-canvas-elevated pr-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-[11px] font-semibold uppercase tracking-wide text-text-disabled">
+          <h2 className="text-[11px] font-semibold uppercase tracking-wide text-faint">
             Pools
           </h2>
-          <button
-            type="button"
-            aria-label="Add pool"
-            className="text-text-secondary hover:text-ai-brand"
+          <IconButton
+            icon={<PlusIcon />}
+            label="Add pool"
+            variant="ghost"
+            size="sm"
+            className="text-mute hover:text-link"
             onClick={() => setAdding(true)}
-          >
-            <PlusIcon />
-          </button>
+          />
         </div>
 
-        <ul className="space-y-1">
-          {pools.map((p) => {
-            const isSel = p.name === selected;
-            const isRenaming = rename?.name === p.name;
-            return (
-              <li key={p.name} className="space-y-1">
-                {isRenaming ? (
-                  <input
-                    autoFocus
-                    className={INPUT}
-                    value={rename!.draft}
-                    onChange={(e) =>
-                      setRename({ name: rename!.name, draft: e.target.value })
-                    }
-                    onBlur={() => void onRename()}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") void onRename();
-                      if (e.key === "Escape") setRename(null);
-                    }}
-                  />
-                ) : (
-                  <div
-                    className={`flex items-center gap-1 rounded px-2 py-1 ${
-                      isSel
-                        ? "bg-sidebar-hover font-semibold text-text-primary"
-                        : "text-text-secondary hover:bg-sidebar-hover"
-                    }`}
-                  >
-                    <button
-                      type="button"
-                      className="min-w-0 flex-1 truncate text-left text-sm"
-                      onClick={() => onSelect(p.name)}
-                      onDoubleClick={() =>
-                        setRename({ name: p.name, draft: p.name })
-                      }
-                      title={`${p.subagent_count} subagent(s)`}
-                    >
-                      {p.name}
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={`Rename ${p.name}`}
-                      className="text-text-secondary hover:text-ai-brand"
-                      onClick={() =>
-                        setRename({ name: p.name, draft: p.name })
-                      }
-                    >
-                      ✎
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={`Delete ${p.name}`}
-                      className="text-text-secondary hover:text-error"
-                      onClick={() => setConfirm({ kind: "delete", name: p.name })}
-                    >
-                      <TrashIcon />
-                    </button>
-                  </div>
-                )}
-              </li>
-            );
-          })}
-        </ul>
+        <Input
+          aria-label="Filter pools"
+          placeholder="Filter pools…"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !adding) {
+              setAdding(true);
+            }
+          }}
+          iconLeft={<SearchIcon />}
+          className="text-xs"
+        />
 
-        {adding && (
-          <input
-            autoFocus
-            placeholder="new-pool-name"
-            className={INPUT}
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            onBlur={() => void onAdd()}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void onAdd();
-              if (e.key === "Escape") {
-                setAdding(false);
-                setNewName("");
-              }
-            }}
-          />
-        )}
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          {adding && (
+            <input
+              autoFocus
+              placeholder="new-pool-name"
+              className="mb-1 w-full rounded-sm border border-hairline bg-canvas-elevated px-2 py-1 text-sm text-ink focus:border-link focus:outline-none focus:ring-1 focus:ring-link"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onBlur={() => void onAdd()}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void onAdd();
+                if (e.key === "Escape") {
+                  setAdding(false);
+                  setNewName("");
+                }
+              }}
+            />
+          )}
 
-        {pools.length === 0 && !adding && (
-          <p className="rounded-md border border-dashed border-input-border px-3 py-4 text-center text-xs text-text-secondary">
-            No pools. Click + to create one.
-          </p>
-        )}
+          <ul className="space-y-1">
+            {visiblePools.map((p) => {
+              const isSel = p.name === selected;
+              const isRenaming = rename?.name === p.name;
+              return (
+                <li key={p.name} className="space-y-1">
+                  {isRenaming ? (
+                    <input
+                      autoFocus
+                      className="w-full rounded-sm border border-hairline bg-canvas-elevated px-2 py-1 text-sm text-ink focus:border-link focus:outline-none focus:ring-1 focus:ring-link"
+                      value={rename!.draft}
+                      onChange={(e) =>
+                        setRename({
+                          name: rename!.name,
+                          draft: e.target.value,
+                        })
+                      }
+                      onBlur={() => void onRename()}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void onRename();
+                        if (e.key === "Escape") setRename(null);
+                      }}
+                    />
+                  ) : (
+                    <div
+                      className={`flex items-center gap-1 rounded px-2 py-1 ${
+                        isSel
+                          ? "bg-hairline-soft font-semibold text-ink"
+                          : "text-mute hover:bg-hairline-soft"
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        className="min-w-0 flex-1 truncate text-left text-sm"
+                        onClick={() => onSelect(p.name)}
+                        onDoubleClick={() =>
+                          setRename({ name: p.name, draft: p.name })
+                        }
+                        title={`${p.subagent_count} subagent(s)`}
+                      >
+                        {p.name}
+                      </button>
+                      <IconButton
+                        icon={<EditIcon />}
+                        label={`Rename ${p.name}`}
+                        variant="ghost"
+                        size="sm"
+                        className="text-mute hover:text-link"
+                        onClick={() =>
+                          setRename({ name: p.name, draft: p.name })
+                        }
+                      />
+                      <IconButton
+                        icon={<TrashIcon />}
+                        label={`Delete ${p.name}`}
+                        variant="ghost"
+                        size="sm"
+                        className="text-mute hover:text-error"
+                        onClick={() =>
+                          setConfirm({ kind: "delete", name: p.name })
+                        }
+                      />
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+
+          {pools.length > 0 && visiblePools.length === 0 && (
+            <p className="rounded-md border border-dashed border-hairline px-3 py-4 text-center text-xs text-mute">
+              No pools match "{filter}".
+            </p>
+          )}
+
+          {pools.length === 0 && !adding && (
+            <p className="rounded-md border border-dashed border-hairline px-3 py-4 text-center text-xs text-mute">
+              No pools. Click + to create one.
+            </p>
+          )}
+        </div>
       </div>
 
       {/* Right: editor */}
-      <div className="flex-1 overflow-auto pl-4">
+      <div className="flex flex-1 flex-col pl-4">
         {selected ? (
-          <PoolEditor
-            key={selected}
-            pool={selected}
-            onDirtyChange={setDirty}
-          />
+          <>
+            <div className="flex-1 overflow-auto">
+              <PoolEditor
+                key={selected}
+                pool={selected}
+                onDirtyChange={setDirty}
+                onSave={(save) => {
+                  saveRef.current = save;
+                }}
+                onCancel={(cancel) => {
+                  cancelRef.current = cancel;
+                }}
+              />
+            </div>
+            <ActionBar>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleCancel}
+                disabled={!dirty || saving}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleSave}
+                disabled={!dirty || saving}
+                loading={saving}
+              >
+                Save
+              </Button>
+            </ActionBar>
+          </>
         ) : (
-          <p className="text-sm text-text-secondary">
+          <p className="text-sm text-mute">
             Select a pool, or click + to create one.
           </p>
         )}

@@ -23,29 +23,39 @@ function call(mock: { mock: { calls: unknown[] } }, i = 0): FetchArgs {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("skillsApi", () => {
-  it("listSkills GETs /api/skills", async () => {
+  it("listSkills GETs /api/skills and maps description", async () => {
     const fetchMock = vi.fn(() =>
       Promise.resolve(
-        makeResponse(200, [{ name: "fmt", source: "global" }]),
+        makeResponse(200, [
+          { name: "fmt", source: "global", description: "Format code." },
+        ]),
       ),
     );
     vi.stubGlobal("fetch", fetchMock);
     const out = await listSkills();
     expect(out[0]!.name).toBe("fmt");
+    expect(out[0]!.description).toBe("Format code.");
     const [url, init] = call(fetchMock);
     expect(url).toBe("/api/skills");
     expect(init?.method ?? "GET").toBe("GET");
   });
 
-  it("uploadSkill POSTs {name, files:{relpath:base64}} JSON", async () => {
+  it("uploadSkill POSTs {name, files:{relpath:base64}} JSON and maps description", async () => {
     const fetchMock = vi.fn(() =>
-      Promise.resolve(makeResponse(200, { name: "fmt", source: "global" })),
+      Promise.resolve(
+        makeResponse(200, {
+          name: "fmt",
+          source: "global",
+          description: "Format code.",
+        }),
+      ),
     );
     vi.stubGlobal("fetch", fetchMock);
-    await uploadSkill("fmt", [
+    const out = await uploadSkill("fmt", [
       { relpath: "SKILL.md", content: "aGVsbG8=" },
       { relpath: "run.sh", content: "IyEvYmluL2Jhc2g=" },
     ]);
+    expect(out.description).toBe("Format code.");
     const [url, init] = call(fetchMock);
     expect(url).toBe("/api/skills");
     expect(init?.method).toBe("POST");
@@ -69,12 +79,17 @@ describe("skillsApi", () => {
     expect(init?.method).toBe("DELETE");
   });
 
-  it("listAgentSkills / assign / unassign hit the per-agent route", async () => {
+  it("listAgentSkills / assign / unassign hit the per-agent route and maps description", async () => {
     const fetchMock = vi.fn(() =>
-      Promise.resolve(makeResponse(200, { ok: true })),
+      Promise.resolve(
+        makeResponse(200, [
+          { name: "fmt", source: "global", description: "Format code." },
+        ]),
+      ),
     );
     vi.stubGlobal("fetch", fetchMock);
-    await listAgentSkills("p", "a");
+    const out = await listAgentSkills("p", "a");
+    expect(out[0]!.description).toBe("Format code.");
     await assignSkill("p", "a", "fmt");
     await unassignSkill("p", "a", "fmt");
     expect(call(fetchMock, 0)[0]).toBe("/api/pools/p/agents/a/skills");

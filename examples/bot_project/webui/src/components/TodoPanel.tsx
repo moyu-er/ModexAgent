@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, type FC } from "react";
 import type { TodoItemDTO } from "../types/events";
+import { ChevronLeftIcon, ChevronRightIcon } from "./ui/icons";
 
 const PAGE_SIZE = 4;
 
@@ -166,9 +167,11 @@ export const TodoPanel: FC<TodoPanelProps> = ({ todos, sessionId }) => {
                 type="button"
                 disabled={effectivePage === 0}
                 onClick={() => setPage((p) => Math.max(0, p - 1))}
-                className="rounded-lg px-3 py-1 text-[11px] font-medium text-task-text-muted transition-colors hover:bg-task-line disabled:cursor-not-allowed disabled:opacity-30"
+                aria-label="Previous page"
+                className="flex items-center gap-1 rounded-lg px-3 py-1 text-[11px] font-medium text-task-text-muted transition-colors hover:bg-task-line focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-task-accent/50 disabled:cursor-not-allowed disabled:opacity-30"
               >
-                ← prev
+                <ChevronLeftIcon className="h-3 w-3" />
+                prev
               </button>
               <span className="text-[11px] tabular-nums text-task-text-faint">
                 {effectivePage + 1} / {pageCount}
@@ -177,9 +180,11 @@ export const TodoPanel: FC<TodoPanelProps> = ({ todos, sessionId }) => {
                 type="button"
                 disabled={effectivePage >= pageCount - 1}
                 onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
-                className="rounded-lg px-3 py-1 text-[11px] font-medium text-task-text-muted transition-colors hover:bg-task-line disabled:cursor-not-allowed disabled:opacity-30"
+                aria-label="Next page"
+                className="flex items-center gap-1 rounded-lg px-3 py-1 text-[11px] font-medium text-task-text-muted transition-colors hover:bg-task-line focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-task-accent/50 disabled:cursor-not-allowed disabled:opacity-30"
               >
-                next →
+                next
+                <ChevronRightIcon className="h-3 w-3" />
               </button>
             </div>
           )}
@@ -198,7 +203,7 @@ export const TodoPanel: FC<TodoPanelProps> = ({ todos, sessionId }) => {
         }
         aria-label="Toggle task list"
       >
-        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-task-accent text-[10px] font-bold text-white">
+        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-task-accent text-[10px] font-bold text-canvas">
           {todos.length}
         </span>
         <span className="text-[13px] font-medium text-task-text">

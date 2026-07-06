@@ -44,7 +44,7 @@ export const ThemeToggle: FC = () => {
       onClick={toggleTheme}
       title={isDark ? "Switch to light mode" : "Switch to dark mode"}
       aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
-      className="rounded-md p-1.5 text-text-secondary transition-colors hover:bg-sidebar-hover hover:text-text-primary"
+      className="rounded-md p-1.5 text-mute transition-colors hover:bg-hairline-soft hover:text-ink"
     >
       {isDark ? <SunIcon /> : <MoonIcon />}
     </button>

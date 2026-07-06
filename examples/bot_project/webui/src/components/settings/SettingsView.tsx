@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ConfigPayload, RegistrySection } from "../../types/config";
 import { fetchConfig, saveConfig } from "../../lib/api";
 import { ConfigForm } from "./ConfigForm";
@@ -9,6 +9,9 @@ import { PoolsView } from "./PoolsView";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useToast } from "../ToastContext";
 import { restartToast } from "./restartToast";
+import { Button } from "../ui/Button";
+import { ActionBar } from "../ui/ActionBar";
+import { ChevronLeftIcon } from "../ui/icons";
 
 interface Props {
   onExit: () => void;
@@ -38,18 +41,66 @@ const POOLS_GROUP: NavEntry[] = [
 /** Domains backed by the /api/config persisted-config API (shared save footer). */
 const PERSISTED_DOMAINS = new Set<ViewKey>(["im", "model"]);
 
+/** All valid URL ?tab= values, in the canonical order they appear in the sidebar. */
+const VALID_TABS: ReadonlySet<ViewKey> = new Set([
+  "im",
+  "model",
+  "pools",
+  "mcp",
+  "skills",
+]);
+
+/** Read the initial tab from window.location.search without coupling to React Router. */
+function readInitialTab(): ViewKey {
+  if (typeof window === "undefined") return "im";
+  const params = new URLSearchParams(window.location.search);
+  const tab = params.get("tab");
+  return tab && VALID_TABS.has(tab as ViewKey) ? (tab as ViewKey) : "im";
+}
+
+/** Write the current tab back to the URL without adding to the history stack. */
+function writeTabToUrl(tab: ViewKey): void {
+  if (typeof window === "undefined") return;
+  const params = new URLSearchParams(window.location.search);
+  params.set("tab", tab);
+  const next = `${window.location.pathname}?${params.toString()}${window.location.hash}`;
+  window.history.replaceState(window.history.state, "", next);
+}
+
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
+
+/**
+ * Hook owning a single `dirty` boolean. The persisted-domain views derive it
+ * from form/original; non-persisted views leave it false (each child manages
+ * its own internal dirty state for now — see PoolEditor's onDirtyChange).
+ */
+function useDirty(form: ConfigPayload | null, original: ConfigPayload | null): boolean {
+  return useMemo<boolean>(
+    () =>
+      form && original ? JSON.stringify(form) !== JSON.stringify(original) : false,
+    [form, original],
+  );
+}
 
 export function SettingsView({ onExit }: Props) {
   const toast = useToast();
-  const [view, setView] = useState<ViewKey>("im");
+  const [view, setView] = useState<ViewKey>(readInitialTab);
   const [original, setOriginal] = useState<ConfigPayload | null>(null);
   const [form, setForm] = useState<ConfigPayload | null>(null);
   const [error, setError] = useState<string>("");
   /** Open state for the discard-unsaved confirm when switching persisted views. */
   const [discardView, setDiscardView] = useState<ViewKey | null>(null);
+  const [saving, setSaving] = useState<boolean>(false);
 
   const isPersisted = PERSISTED_DOMAINS.has(view);
+  const dirty = useDirty(form, original);
+
+  // Sync tab → URL whenever the active view changes. replaceState (not push)
+  // avoids polluting history on every navigation, and since the effect only
+  // writes (it never reads), it can't loop with the initial URL read.
+  useEffect(() => {
+    writeTabToUrl(view);
+  }, [view]);
 
   const load = async (d: ViewKey): Promise<void> => {
     setError("");
@@ -67,17 +118,16 @@ export function SettingsView({ onExit }: Props) {
   // Loading state only applies to persisted-config views.
   if (isPersisted && (!form || !original)) {
     return (
-      <div className="flex h-full items-center justify-center text-text-secondary">
+      <div className="flex h-full items-center justify-center text-mute">
         {error ? `Failed to load: ${error}` : "Loading…"}
       </div>
     );
   }
 
-  const dirty = form && original ? JSON.stringify(form) !== JSON.stringify(original) : false;
-
   const switchView = (next: ViewKey): void => {
     if (next === view) return;
-    // Only the persisted views carry local dirty state worth a discard prompt.
+    // Only the persisted views carry local dirty state worth a discard prompt;
+    // the pool/mcp/skills views own their own dirty tracking internally.
     if (isPersisted && dirty) {
       setDiscardView(next);
       return;
@@ -100,6 +150,7 @@ export function SettingsView({ onExit }: Props) {
 
   const onSave = async (): Promise<void> => {
     if (!view || !isPersisted) return;
+    setSaving(true);
     setError("");
     try {
       const updated = await saveConfig(view, assemblePayload());
@@ -108,6 +159,8 @@ export function SettingsView({ onExit }: Props) {
       if (updated.restart_required) restartToast(toast);
     } catch (e) {
       setError(`Save failed: ${String(e)}`);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -118,17 +171,25 @@ export function SettingsView({ onExit }: Props) {
 
   return (
     <div className="flex h-full">
-      <aside className="w-52 shrink-0 border-r border-divider p-3">
-        <button className="mb-4 text-sm text-ai-brand hover:underline" onClick={onExit}>
-          ← Back to chat
-        </button>
-        <SidebarGroup
-          title="Configuration"
-          entries={CONFIG_GROUP}
-          active={view}
-          onSelect={switchView}
-        />
-        <div className="mt-4">
+      <aside className="w-52 shrink-0 border-r border-hairline p-3">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onExit}
+          className="mb-4 w-full justify-start gap-2 px-3 text-sm font-medium text-ink hover:bg-hairline-soft"
+        >
+          <ChevronLeftIcon className="h-4 w-4" />
+          Back
+        </Button>
+        <div className="rounded-lg bg-hairline-soft p-2">
+          <SidebarGroup
+            title="Configuration"
+            entries={CONFIG_GROUP}
+            active={view}
+            onSelect={switchView}
+          />
+        </div>
+        <div className="mt-4 rounded-lg bg-hairline-soft p-2">
           <SidebarGroup
             title="Pools & Agents"
             entries={POOLS_GROUP}
@@ -138,23 +199,41 @@ export function SettingsView({ onExit }: Props) {
         </div>
       </aside>
 
-      <section className="flex-1 overflow-auto p-6">
-        {view === "mcp" ? (
-          <GlobalMcpView />
-        ) : view === "skills" ? (
-          <GlobalSkillsView />
-        ) : view === "pools" ? (
-          <PoolsView />
-        ) : form && isPersisted ? (
-          <PersistedDomain
-            form={form}
-            error={error}
-            dirty={dirty}
-            onChange={setForm}
-            onSave={onSave}
-            onCancel={onCancel}
-          />
-        ) : null}
+      <section className="flex flex-1 flex-col">
+        <div className="flex h-full flex-col">
+          <div className="flex-1 overflow-auto p-6">
+            {view === "mcp" ? (
+              <GlobalMcpView />
+            ) : view === "skills" ? (
+              <GlobalSkillsView />
+            ) : view === "pools" ? (
+              <PoolsView />
+            ) : form && isPersisted ? (
+              <PersistedDomain form={form} error={error} onChange={setForm} />
+            ) : null}
+          </div>
+          {isPersisted && form && (
+            <ActionBar>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={onCancel}
+                disabled={!dirty || saving}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={onSave}
+                disabled={!dirty || saving}
+                loading={saving}
+              >
+                Save
+              </Button>
+            </ActionBar>
+          )}
+        </div>
       </section>
 
       {discardView !== null ? (
@@ -189,18 +268,21 @@ function SidebarGroup({
 }) {
   return (
     <div>
-      <h2 className="mb-1 px-2 text-[11px] font-semibold uppercase tracking-wide text-text-disabled">
+      <h2 className="mb-2 px-2 text-[11px] font-mono font-medium uppercase tracking-wider text-faint">
         {title}
       </h2>
       <ul className="space-y-1">
         {entries.map((e) => (
           <li key={e.key}>
             <button
-              className={`w-full rounded px-2 py-1 text-left text-sm hover:bg-sidebar-hover ${
+              type="button"
+              className={[
+                "w-full rounded-sm px-3 py-2 text-left text-sm transition-colors hover:bg-hairline-soft",
+                "flex items-center gap-2",
                 e.key === active
-                  ? "bg-sidebar-hover font-semibold text-text-primary"
-                  : "text-text-secondary"
-              }`}
+                  ? "bg-canvas-elevated font-semibold text-ink border-l-2 border-link"
+                  : "text-body border-l-2 border-transparent",
+              ].join(" ")}
               onClick={() => onSelect(e.key)}
             >
               {e.label}
@@ -215,29 +297,21 @@ function SidebarGroup({
 function PersistedDomain({
   form,
   error,
-  dirty,
   onChange,
-  onSave,
-  onCancel,
 }: {
   form: ConfigPayload;
   error: string;
-  dirty: boolean;
   onChange: (next: ConfigPayload) => void;
-  onSave: () => void;
-  onCancel: () => void;
 }) {
   return (
     <>
-      <h1 className="mb-4 text-lg font-semibold text-text-primary">{form.label}</h1>
-
       {form.flavor === "registry" ? (
         <div className="space-y-6">
           {Object.entries(form.sections ?? {}).map(([key, sec]) => {
             const section = sec as RegistrySection;
             return (
-              <fieldset key={key} className="rounded-lg border border-divider p-4">
-                <legend className="px-1 text-sm font-semibold text-text-primary">
+              <fieldset key={key} className="rounded-lg border border-hairline bg-canvas-elevated p-5">
+                <legend className="px-1 text-sm font-semibold text-ink">
                   {section.label}
                 </legend>
                 <ConfigForm
@@ -271,23 +345,6 @@ function PersistedDomain({
       )}
 
       {error && <p className="mt-4 text-sm text-error">{error}</p>}
-
-      <div className="mt-6 flex justify-end gap-2 border-t border-divider pt-4">
-        <button
-          className="rounded border border-divider px-4 py-1.5 text-sm text-text-primary hover:bg-sidebar-hover disabled:opacity-50"
-          onClick={onCancel}
-          disabled={!dirty}
-        >
-          Cancel
-        </button>
-        <button
-          className="rounded bg-btn-primary px-4 py-1.5 text-sm text-btn-primary-text hover:opacity-90 disabled:opacity-50"
-          onClick={onSave}
-          disabled={!dirty}
-        >
-          Save
-        </button>
-      </div>
     </>
   );
 }

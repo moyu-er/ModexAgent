@@ -1,12 +1,15 @@
 // Global skills manager. Loads listSkills() on mount → list of global skills.
-// Upload via <input type="file" webkitdirectory>: collect files, read each via
-// file.arrayBuffer() → base64, derive skill name from the top dir of
-// webkitRelativePath, POST via uploadSkill(name, files). Delete via deleteSkill.
 //
-// webkitdirectory is a non-standard attribute. We attach it via a spread escape
-// ({...{webkitdirectory: ""}}) so the JSX stays type-clean without a global
-// module declaration. happy-dom does not fully simulate directory input, so the
-// upload is tested by calling the handler with a synthetic FileList.
+// Upload flow: the user drops a directory onto the drop zone (or clicks it to
+// open the native directory picker). Either path populates a `preview` block
+// showing derived skill name, file count, and total bytes. Confirm uploads,
+// cancel clears the preview.
+//
+// webkitdirectory is a non-standard attribute; we attach it via a spread
+// escape ({...{webkitdirectory: ""}}) so the JSX stays type-clean without a
+// global module declaration. happy-dom does not fully simulate the directory
+// input, so the upload is tested by calling the handler with a synthetic
+// FileList or by firing change on the hidden input.
 
 import { useEffect, useRef, useState } from "react";
 import type { SkillEntry } from "../../types/pool";
@@ -15,6 +18,17 @@ import type { SkillFile } from "../../lib/skillsApi";
 import { ApiError } from "../../lib/api";
 import { useToast } from "../ToastContext";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { Button } from "../ui/Button";
+import { Card } from "../ui/Card";
+import { IconButton } from "../ui/IconButton";
+import { TrashIcon, UploadIcon } from "../ui/icons";
+
+interface Preview {
+  name: string;
+  files: SkillFile[];
+  fileCount: number;
+  totalBytes: number;
+}
 
 export function GlobalSkillsView() {
   const toast = useToast();
@@ -22,6 +36,9 @@ export function GlobalSkillsView() {
   const [loadError, setLoadError] = useState<string>("");
   const [uploading, setUploading] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [selectedSkill, setSelectedSkill] = useState<string | null>(null);
+  const [preview, setPreview] = useState<Preview | null>(null);
+  const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const load = async (): Promise<void> => {
@@ -41,25 +58,56 @@ export function GlobalSkillsView() {
     return <p className="text-sm text-error">Failed to load: {loadError}</p>;
   }
   if (!skills) {
-    return <p className="text-sm text-text-secondary">Loading…</p>;
+    return <p className="text-sm text-mute">Loading…</p>;
   }
 
-  const onUpload = async (
-    files: FileList | null,
-  ): Promise<void> => {
+  const showPreview = async (files: FileList | File[] | null): Promise<void> => {
     if (!files || files.length === 0) return;
-    setUploading(true);
     try {
       const built = await buildUpload(files);
       if (!built) {
-        toast.show({ message: "Could not derive a skill name.", tone: "warning" });
+        toast.show({
+          message: "Could not derive a skill name.",
+          tone: "warning",
+        });
         return;
       }
-      await uploadSkill(built.name, built.files);
-      toast.show({ message: `Uploaded skill "${built.name}".`, tone: "success" });
-      await load();
-      // Reset the input so selecting the same dir again re-fires onChange.
+      const totalBytes = built.files.reduce((sum, f) => {
+        // base64 length → bytes: 4 chars → 3 bytes, rounded up.
+        const padding = (f.content.match(/=+$/)?.[0] ?? "").length;
+        return sum + Math.floor((f.content.length * 3) / 4) - padding;
+      }, 0);
+      setPreview({
+        name: built.name,
+        files: built.files,
+        fileCount: built.files.length,
+        totalBytes,
+      });
+    } catch (e) {
+      toast.show({
+        message: `Could not read files: ${String(e)}`,
+        tone: "warning",
+      });
+    }
+  };
+
+  const cancelPreview = (): void => {
+    setPreview(null);
+    if (fileRef.current) fileRef.current.value = "";
+  };
+
+  const confirmUpload = async (): Promise<void> => {
+    if (!preview) return;
+    setUploading(true);
+    try {
+      await uploadSkill(preview.name, preview.files);
+      toast.show({
+        message: `Uploaded skill "${preview.name}".`,
+        tone: "success",
+      });
+      setPreview(null);
       if (fileRef.current) fileRef.current.value = "";
+      await load();
     } catch (e) {
       toast.show({
         message: `Upload failed: ${e instanceof ApiError ? `${e.status} ${e.detail}` : String(e)}`,
@@ -74,6 +122,9 @@ export function GlobalSkillsView() {
     try {
       await deleteSkill(name);
       setSkills((prev) => (prev ?? []).filter((s) => s.name !== name));
+      if (selectedSkill === name) {
+        setSelectedSkill(null);
+      }
       toast.show({ message: `Deleted "${name}".`, tone: "success" });
     } catch (e) {
       toast.show({
@@ -87,57 +138,166 @@ export function GlobalSkillsView() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-xs text-text-secondary">
-          Global skills available to every pool's agents.
-        </p>
-        <label className="cursor-pointer rounded-md border border-input-border px-3 py-1.5 text-sm text-text-primary hover:bg-sidebar-hover">
-          {uploading ? "Uploading…" : "+ Upload directory"}
-          <input
-            ref={fileRef}
-            type="file"
-            // webkitdirectory is non-standard; spread-escape avoids a global
-            // module declaration while keeping the JSX type-clean.
-            {...{ webkitdirectory: "" }}
-            multiple
-            className="hidden"
-            onChange={(ev) => {
-              void onUpload(ev.currentTarget.files);
-            }}
-            disabled={uploading}
-          />
-        </label>
-      </div>
+      <p className="text-xs text-mute">
+        Global skills available to every pool's agents.
+      </p>
 
-      {skills.length === 0 && (
-        <p className="rounded-md border border-dashed border-input-border px-3 py-6 text-center text-sm text-text-secondary">
+      {/* Drop zone — wraps the hidden directory picker input so clicking
+          the zone opens the native picker, and dropping files populates the
+          same upload flow. */}
+      <label
+        htmlFor="skill-upload"
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragEnter={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          // happy-dom / browsers vary on e.dataTransfer.items vs .files;
+          // prefer items when present (lets us filter directories later),
+          // fall back to files for synthetic test events.
+          void showPreview(e.dataTransfer?.files ?? null);
+        }}
+        className={`flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed px-4 py-6 text-sm transition-colors ${
+          dragOver
+            ? "border-link bg-hairline-soft text-link"
+            : "border-hairline text-mute hover:text-ink"
+        }`}
+      >
+        <UploadIcon className="h-4 w-4" />
+        {uploading ? "Uploading…" : "Drop a directory here or click to upload"}
+        <input
+          ref={fileRef}
+          id="skill-upload"
+          type="file"
+          {...{ webkitdirectory: "" }}
+          multiple
+          className="hidden"
+          onChange={(ev) => {
+            void showPreview(ev.currentTarget.files);
+          }}
+          disabled={uploading}
+        />
+      </label>
+
+      {/* Preview block — shown once files are picked. Confirm triggers
+          upload; cancel clears state and resets the file input. */}
+      {preview ? (
+        <Card className="px-4 py-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 space-y-1">
+              <p className="truncate text-sm font-medium text-ink">
+                {preview.name}
+              </p>
+              <p className="text-xs text-mute">
+                {preview.fileCount} file{preview.fileCount === 1 ? "" : "s"}
+                {" · "}
+                {formatBytes(preview.totalBytes)}
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={cancelPreview}
+                disabled={uploading}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                loading={uploading}
+                onClick={() => void confirmUpload()}
+              >
+                Confirm upload
+              </Button>
+            </div>
+          </div>
+        </Card>
+      ) : null}
+
+      {skills.length === 0 && !preview ? (
+        <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-sm text-mute">
           No global skills uploaded yet.
         </p>
-      )}
+      ) : null}
 
-      <ul className="divide-y divide-divider rounded-lg border border-card-border bg-content-bg">
-        {skills.map((s) => (
-          <li
-            key={s.name}
-            className="flex items-center gap-3 px-3 py-2.5"
-          >
-            <span className="truncate text-sm font-medium text-text-primary">
-              {s.name}
-            </span>
-            <span className="rounded-full border border-card-border px-2 py-0.5 text-[11px] text-text-secondary">
-              {s.source}
-            </span>
-            <button
-              type="button"
-              aria-label={`Delete skill ${s.name}`}
-              className="ml-auto text-text-secondary hover:text-error"
-              onClick={() => setPendingDelete(s.name)}
-            >
-              <TrashIcon />
-            </button>
-          </li>
-        ))}
-      </ul>
+      <Card>
+        <ul className="divide-y divide-hairline">
+          {skills.map((s) => {
+            const isSelected = selectedSkill === s.name;
+            return (
+              <li key={s.name}>
+                {/* Row */}
+                <div
+                  className={[
+                    "flex cursor-pointer items-center gap-3 border border-transparent px-3 py-2.5 transition-colors",
+                    isSelected
+                      ? "rounded-t-md bg-canvas-elevated border-hairline"
+                      : "rounded-md hover:bg-hairline-soft",
+                  ].join(" ")}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setSelectedSkill(isSelected ? null : s.name)}
+                  onKeyDown={(e): void => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setSelectedSkill(isSelected ? null : s.name);
+                    }
+                  }}
+                >
+                  <span className="truncate text-sm font-medium text-ink">
+                    {s.name}
+                  </span>
+                  <span className="rounded-full border border-hairline bg-canvas-elevated px-2 py-0.5 text-[11px] text-mute">
+                    {s.source}
+                  </span>
+                </div>
+
+                {/* Inline detail pane */}
+                {isSelected && (
+                  <div className="rounded-b-md border-x border-b border-hairline bg-canvas-elevated px-4 pb-4 pt-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <h3 className="text-sm font-semibold text-ink">{s.name}</h3>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <IconButton
+                          icon={<TrashIcon />}
+                          label={`Delete skill ${s.name}`}
+                          variant="danger"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPendingDelete(s.name);
+                          }}
+                        />
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setSelectedSkill(null)}
+                        >
+                          Close
+                        </Button>
+                      </div>
+                    </div>
+                    {s.description ? (
+                      <p className="mt-2 text-sm text-body">{s.description}</p>
+                    ) : (
+                      <p className="mt-2 text-sm text-faint italic">No description.</p>
+                    )}
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </Card>
 
       {pendingDelete ? (
         <ConfirmDialog
@@ -149,9 +309,14 @@ export function GlobalSkillsView() {
           onCancel={() => setPendingDelete(null)}
         />
       ) : null}
-
     </div>
   );
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 /**
@@ -204,18 +369,4 @@ function bytesToBase64(bytes: Uint8Array): string {
     bin += String.fromCharCode(...bytes.subarray(i, i + chunk));
   }
   return btoa(bin);
-}
-
-function TrashIcon() {
-  return (
-    <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path
-        d="M3 4h10M6.5 4V2.5h3V4M5 4l.5 8.5a1 1 0 0 0 1 .9h3a1 1 0 0 0 1-.9L11 4M6.5 7v4M9.5 7v4"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
 }

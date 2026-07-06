@@ -228,7 +228,7 @@ export const ModelSelector: FC<ModelSelectorProps> = ({
         aria-expanded={open}
         aria-haspopup="listbox"
         aria-controls={open ? listboxId : undefined}
-        className="flex max-w-[160px] items-center gap-1.5 rounded-full border border-card-border bg-input-bg px-3 py-1.5 text-xs text-text-secondary transition-colors motion-reduce:transition-none hover:bg-sidebar-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-input-focus"
+        className="flex max-w-[160px] items-center gap-1.5 rounded-full border border-hairline bg-canvas-elevated px-3 py-1.5 text-xs text-mute transition-colors motion-reduce:transition-none hover:bg-hairline-soft hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-link"
       >
         <span className="truncate">{triggerLabel}</span>
         <ChevronIcon open={open} />
@@ -241,7 +241,7 @@ export const ModelSelector: FC<ModelSelectorProps> = ({
           role="listbox"
           aria-label={ariaLabel}
           tabIndex={-1}
-          className="absolute bottom-full right-0 z-50 mb-2 min-w-[240px] max-h-[min(60vh,320px)] overflow-y-auto rounded-xl border border-card-border bg-dropdown-bg py-1 shadow-[0_8px_24px_var(--color-shadow)] focus:outline-none"
+          className="absolute bottom-full right-0 z-50 mb-2 min-w-[240px] max-h-[min(60vh,320px)] overflow-y-auto rounded-xl border border-hairline bg-canvas-elevated py-1 shadow-[0_8px_24px_var(--shadow-color)] focus:outline-none"
         >
           {groups.map(([provider, providerModels], groupIdx) => (
             <div
@@ -249,15 +249,15 @@ export const ModelSelector: FC<ModelSelectorProps> = ({
               role="group"
               aria-label={provider}
               className={`${
-                groupIdx > 0 ? "border-t border-dropdown-divider" : ""
+                groupIdx > 0 ? "border-t border-hairline" : ""
               }`}
             >
-              <div className="sticky top-0 z-10 flex items-center gap-1.5 border-b border-dropdown-divider bg-dropdown-bg px-3 py-1.5">
+              <div className="sticky top-0 z-10 flex items-center gap-1.5 border-b border-hairline bg-canvas-elevated px-3 py-1.5">
                 <span
                   aria-hidden="true"
-                  className="h-1.5 w-1.5 rounded-full bg-text-secondary/50"
+                  className="h-1.5 w-1.5 rounded-full bg-mute/50"
                 />
-                <span className="text-[11px] font-bold uppercase tracking-wider text-text-secondary">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-mute">
                   {provider}
                 </span>
               </div>
@@ -280,21 +280,21 @@ export const ModelSelector: FC<ModelSelectorProps> = ({
                     onFocus={() => setActiveIndex(m.index)}
                     onKeyDown={(e) => handleOptionKeyDown(m.index, e)}
                     data-active={isActive}
-                    className="relative flex w-full cursor-pointer items-center justify-between pl-7 pr-3 py-2 text-left text-sm font-medium text-text-body transition-colors motion-reduce:transition-none hover:bg-dropdown-hover hover:text-text-primary focus:bg-dropdown-hover focus:outline-none data-[active=true]:bg-dropdown-hover data-[active=true]:text-text-primary"
+                    className="relative flex w-full cursor-pointer items-center justify-between pl-7 pr-3 py-2 text-left text-sm font-medium text-body transition-colors motion-reduce:transition-none hover:bg-hairline-soft hover:text-ink focus:bg-hairline-soft focus:outline-none data-[active=true]:bg-hairline-soft data-[active=true]:text-ink"
                   >
                     <span
                       aria-hidden="true"
-                      className="absolute left-3 top-1/2 h-1 w-1 -translate-y-1/2 rounded-full bg-text-secondary/25"
+                      className="absolute left-3 top-1/2 h-1 w-1 -translate-y-1/2 rounded-full bg-mute/25"
                     />
                     {isSelected && (
                       <span
                         aria-hidden="true"
-                        className="absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-r bg-ai-brand"
+                        className="absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-r bg-link"
                       />
                     )}
                     <span className="truncate">{m.model_name}</span>
                     {m.default && (
-                      <span className="ml-2 shrink-0 text-[10px] font-medium text-ai-brand">
+                      <span className="ml-2 shrink-0 text-[10px] font-medium text-link">
                         Default
                       </span>
                     )}

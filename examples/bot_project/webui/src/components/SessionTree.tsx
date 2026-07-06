@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type FC } from "react";
 import { formatShort } from "../lib/timezone";
 import type { TreeNode } from "../lib/sessionTree";
+import { ChevronToggleIcon, XIcon } from "./ui/icons";
+import { IconButton } from "./ui/IconButton";
 
 // Re-export so existing `import { TreeNode } from "./SessionTree"` callers
 // (e.g. Sidebar) keep working without reaching into the lib directly.
@@ -67,9 +69,9 @@ const SessionNode: FC<{
           <div className="flex shrink-0">
             {Array.from({ length: depth }).map((_, level) => (
               <div key={level} className="relative" style={{ width: "20px" }}>
-                <div className="absolute inset-y-0 left-1.5 border-l border-divider/60" />
+                <div className="absolute inset-y-0 left-1.5 border-l border-hairline/60" />
                 {level === depth - 1 && (
-                  <div className="absolute left-1.5 right-0 top-1/2 border-t border-divider/60" />
+                  <div className="absolute left-1.5 right-0 top-1/2 border-t border-hairline/60" />
                 )}
               </div>
             ))}
@@ -81,39 +83,44 @@ const SessionNode: FC<{
 
         {/* Node content row */}
         <div
-          className={`my-0.5 flex min-w-0 flex-1 items-center rounded-r-md border-l-[3px] ${
+          className={`my-0.5 flex min-w-0 flex-1 items-center rounded-r-sm border-l-[3px] ${
             isSelected
-              ? "border-ai-brand bg-sidebar-hover ring-1 ring-inset ring-ai-brand/20"
-              : "border-transparent hover:bg-sidebar-hover"
+              ? "border-link bg-hairline-soft ring-1 ring-inset ring-link/20"
+              : "border-transparent hover:bg-hairline-soft"
           }`}
         >
           {/* Expand arrow — only if has children */}
           {hasChildren ? (
-            <button
-              type="button"
+            <IconButton
+              label={expanded ? "Collapse" : "Expand"}
+              size="sm"
+              variant="ghost"
               data-testid="expand-arrow"
               onClick={(): void => onToggleExpand(node.session_id)}
-              className="mr-2 w-4 shrink-0 text-center text-[10px] leading-none text-text-secondary transition-colors hover:text-text-primary"
-            >
-              {expanded ? "▼" : "▶"}
-            </button>
+              icon={<ChevronToggleIcon open={expanded} />}
+              className="mr-2 h-7 w-4 rounded-sm text-mute hover:text-ink focus-visible:ring-link/50"
+            />
           ) : (
             <span className="mr-2 w-4 shrink-0" />
           )}
 
-          {/* Session name */}
+          {/* Session name — kept as a styled button because the row is a
+           * composite clickable tree entry (icon + truncated name +
+           * timestamp). The semantic role of the element is a list-row
+           * selection target rather than a discrete action button.
+           * Geist tokens are used for every visual decision. */}
           <button
             type="button"
             onClick={(): void => onSelect(node.session_id)}
             className={`flex-1 min-w-0 py-1.5 text-left font-mono text-sm transition-colors ${
               isSelected
-                ? "text-ai-brand"
-                : "text-text-secondary hover:text-text-primary"
+                ? "text-link"
+                : "text-mute hover:text-ink"
             }`}
           >
             <span className="block truncate">{node.displayName}</span>
             {typeof node.updated_at === "number" && (
-              <span className="block truncate text-[10px] font-sans text-text-disabled">
+              <span className="block truncate text-[10px] font-sans text-faint">
                 {formatShort(node.updated_at)}
               </span>
             )}
@@ -121,17 +128,17 @@ const SessionNode: FC<{
 
           {/* Delete — only for root sessions */}
           {isRoot && (
-            <button
-              type="button"
+            <IconButton
+              label="Delete conversation"
+              size="sm"
+              variant="ghost"
               onClick={(e): void => {
                 e.stopPropagation();
                 onDelete(node.session_id);
               }}
-              title="Delete conversation"
-              className="shrink-0 rounded px-2 py-2 text-sm text-text-disabled transition-colors hover:text-error"
-            >
-              {"✕"}
-            </button>
+              icon={<XIcon className="h-3.5 w-3.5" />}
+              className="text-faint hover:text-error focus-visible:ring-link/50"
+            />
           )}
         </div>
       </div>

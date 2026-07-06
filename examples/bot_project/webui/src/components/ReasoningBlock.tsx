@@ -1,4 +1,5 @@
 import { useState, type FC } from "react";
+import { ChevronToggleIcon } from "./ui/icons";
 
 export interface ReasoningBlockProps {
   reasoning: string;
@@ -20,16 +21,14 @@ export const ReasoningBlock: FC<ReasoningBlockProps> = ({ reasoning }) => {
       <button
         type="button"
         onClick={toggle}
-        className="flex items-center gap-1 text-xs font-medium text-text-secondary transition-colors hover:text-text-primary"
+        className="flex items-center gap-1 text-xs font-medium text-mute transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-link/50"
       >
-        <span className="inline-block text-[10px] transition-transform duration-150">
-          {expanded ? "▼" : "▸"}
-        </span>
+        <ChevronToggleIcon open={expanded} />
         Thinking
       </button>
       {expanded && (
-        <div className="mt-1.5 rounded border-l-2 border-quote-border bg-quote-bg p-3">
-          <pre className="whitespace-pre-wrap break-words font-mono text-xs text-text-secondary">
+        <div className="mt-1.5 rounded border-l-2 border-hairline bg-canvas-elevated p-3">
+          <pre className="whitespace-pre-wrap break-words font-mono text-xs text-mute">
             {reasoning}
           </pre>
         </div>

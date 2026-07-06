@@ -163,75 +163,75 @@ const App: FC = () => {
 
   return (
     <ToastProvider>
-    <div className="flex h-screen w-screen overflow-hidden bg-page-bg">
-      <Sidebar
-        style={{ ["--sidebar-width" as string]: `${sidebarWidth}px` }}
-        sessionTree={sessionTree}
-        pools={pools}
-        selected={selectedId}
-        workspace={workspace}
-        isHome={isHome}
-        activePool={activePool}
-        recentWorkspaces={recentWorkspaces}
-        isLoadingSessions={isLoadingSessions}
-        mobileOpen={sidebarMobileOpen}
-        onCloseMobile={() => setSidebarMobileOpen(false)}
-        onSelect={onSelect}
-        onNew={handleNew}
-        onDelete={handleDelete}
-        onWorkspaceChanged={handleWorkspaceChanged}
-        onGoHome={handleGoHome}
-        onPoolChange={handlePoolChange}
-        revealSessionId={revealSessionId}
-        onOpenSettings={() => setView("settings")}
-      />
-
-      {/* Resize handle — desktop only */}
-      <div
-        onMouseDown={onResizeMouseDown}
-        className="group relative hidden w-2 flex-shrink-0 cursor-col-resize select-none md:block"
-        title="Drag to resize sidebar"
-      >
-        <div
-          className={`absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors ${
-            resizing.current
-              ? "bg-ai-brand"
-              : "bg-divider group-hover:bg-ai-brand/50"
-          }`}
+      <div className="flex h-screen w-screen overflow-hidden bg-canvas">
+        <Sidebar
+          style={{ ["--sidebar-width" as string]: `${sidebarWidth}px` }}
+          sessionTree={sessionTree}
+          pools={pools}
+          selected={selectedId}
+          workspace={workspace}
+          isHome={isHome}
+          activePool={activePool}
+          recentWorkspaces={recentWorkspaces}
+          isLoadingSessions={isLoadingSessions}
+          mobileOpen={sidebarMobileOpen}
+          onCloseMobile={() => setSidebarMobileOpen(false)}
+          onSelect={onSelect}
+          onNew={handleNew}
+          onDelete={handleDelete}
+          onWorkspaceChanged={handleWorkspaceChanged}
+          onGoHome={handleGoHome}
+          onPoolChange={handlePoolChange}
+          revealSessionId={revealSessionId}
+          onOpenSettings={() => setView("settings")}
         />
-      </div>
 
-      <main className="flex flex-1 flex-col min-w-0">
-        {view === "settings" ? (
-          <SettingsView onExit={() => setView("chat")} />
-        ) : (
-          <ChatView
-            messages={messages}
-            isStreaming={isStreaming}
-            isPending={isPending}
-            todos={todos}
-            pendingApprovals={pendingApprovals}
-            isApprovingBatch={isApprovingBatch}
-            submitApproval={submitApproval}
-            onApproveAll={onApproveAll}
-            sessionId={selectedId}
-            workspace={streamWs}
-            onSend={handleSend}
-            onPause={pause}
-            readOnly={isSelectedSubagent}
-            onOpenSidebar={() => setSidebarMobileOpen(true)}
+        {/* Resize handle — desktop only */}
+        <div
+          onMouseDown={onResizeMouseDown}
+          className="group relative hidden w-2 flex-shrink-0 cursor-col-resize select-none md:block"
+          title="Drag to resize sidebar"
+        >
+          <div
+            className={`absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors ${
+              resizing.current
+                ? "bg-link"
+                : "bg-hairline group-hover:bg-link/50"
+            }`}
+          />
+        </div>
+
+        <main className="flex flex-1 flex-col min-w-0">
+          {view === "settings" ? (
+            <SettingsView onExit={() => setView("chat")} />
+          ) : (
+            <ChatView
+              messages={messages}
+              isStreaming={isStreaming}
+              isPending={isPending}
+              todos={todos}
+              pendingApprovals={pendingApprovals}
+              isApprovingBatch={isApprovingBatch}
+              submitApproval={submitApproval}
+              onApproveAll={onApproveAll}
+              sessionId={selectedId}
+              workspace={streamWs}
+              onSend={handleSend}
+              onPause={pause}
+              readOnly={isSelectedSubagent}
+              onOpenSidebar={() => setSidebarMobileOpen(true)}
+            />
+          )}
+        </main>
+
+        {sidebarMobileOpen && (
+          <div
+            className="fixed inset-0 z-30 bg-overlay md:hidden"
+            onClick={() => setSidebarMobileOpen(false)}
+            aria-hidden="true"
           />
         )}
-      </main>
-
-      {sidebarMobileOpen && (
-        <div
-          className="fixed inset-0 z-30 bg-overlay md:hidden"
-          onClick={() => setSidebarMobileOpen(false)}
-          aria-hidden="true"
-        />
-      )}
-    </div>
+      </div>
     </ToastProvider>
   );
 };

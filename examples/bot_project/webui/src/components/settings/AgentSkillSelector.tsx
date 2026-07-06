@@ -22,7 +22,10 @@ import {
 import { ApiError } from "../../lib/api";
 import { useToast } from "../ToastContext";
 import { restartToast } from "./restartToast";
-import { Chevron } from "./icons";
+import { Card } from "../ui/Card";
+import { Checkbox } from "../ui/Checkbox";
+import { IconButton } from "../ui/IconButton";
+import { ChevronDownIcon } from "../ui/icons";
 
 interface Props {
   pool: string;
@@ -97,59 +100,66 @@ export function AgentSkillSelector({ pool, agent }: Props) {
   const header = `Skills (${assignedNames.size} selected)`;
 
   return (
-    <div className="rounded-md border border-divider bg-sidebar-bg">
-      <button
-        type="button"
-        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-sidebar-hover"
+    <Card className="p-0">
+      <div
+        role="button"
+        tabIndex={0}
+        className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left hover:bg-hairline-soft"
         onClick={() => setOpen((v) => !v)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setOpen((v) => !v);
+          }
+        }}
         aria-expanded={open}
       >
-        <Chevron open={open} />
-        <span className="text-xs font-medium text-text-primary">{header}</span>
-      </button>
-      {open ? (
-        <div className="border-t border-divider px-3 py-2">
-          <p className="mb-2 text-[11px] text-text-secondary">
+        <IconButton
+          label={open ? "Collapse" : "Expand"}
+          icon={<ChevronDownIcon open={open} />}
+          variant="ghost"
+          size="sm"
+          onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+        />
+        <span className="text-xs font-medium text-ink">{header}</span>
+      </div>
+      {open && (
+        <div className="border-t border-hairline px-3 py-2">
+          <p className="mb-2 text-[11px] text-mute">
             Skill changes apply immediately.
           </p>
           {loadError ? (
             <p className="text-xs text-error">Failed to load: {loadError}</p>
           ) : !globalSkills || !agentSkills ? (
-            <p className="text-xs text-text-secondary">Loading…</p>
+            <p className="text-xs text-mute">Loading…</p>
           ) : globalSkills.length === 0 && localSkills.length === 0 ? (
-            <p className="text-xs text-text-secondary">No skills available.</p>
+            <p className="text-xs text-mute">No skills available.</p>
           ) : (
             <ul className="space-y-1">
               {globalSkills.map((s) => {
                 const checked = assignedNames.has(s.name);
                 return (
                   <li key={`g-${s.name}`}>
-                    <label className="flex cursor-pointer items-center gap-2 text-xs text-text-primary">
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        disabled={busy !== "" && busy !== s.name}
-                        onChange={() => void toggle(s.name)}
-                        aria-label={s.name}
-                        className="h-3.5 w-3.5"
-                      />
-                      <span className="truncate font-medium">{s.name}</span>
-                      <span className="rounded-full border border-card-border px-1.5 py-0.5 text-[10px] text-text-secondary">
-                        global
-                      </span>
-                    </label>
+                    <Checkbox
+                      label={s.name}
+                      helper="global"
+                      checked={checked}
+                      disabled={busy !== "" && busy !== s.name}
+                      onChange={() => void toggle(s.name)}
+                      aria-label={s.name}
+                    />
                   </li>
                 );
               })}
               {localSkills.map((s) => (
-                <li key={`l-${s.name}`} className="flex items-center gap-2 text-xs">
+                <li key={`l-${s.name}`} className="flex items-center gap-2 text-sm text-ink">
                   <span
                     aria-hidden="true"
-                    className="inline-block h-3.5 w-3.5 rounded border border-text-disabled"
+                    className="inline-block h-4 w-4 shrink-0 rounded-sm border border-hairline bg-canvas-elevated"
                     title="Local skill — edit the agent root on disk to remove"
                   />
-                  <span className="truncate text-text-secondary">{s.name}</span>
-                  <span className="rounded-full border border-card-border px-1.5 py-0.5 text-[10px] text-text-secondary">
+                  <span className="truncate">{s.name}</span>
+                  <span className="rounded-full border border-hairline px-1.5 py-0.5 text-[10px] text-mute">
                     local
                   </span>
                 </li>
@@ -157,7 +167,7 @@ export function AgentSkillSelector({ pool, agent }: Props) {
             </ul>
           )}
         </div>
-      ) : null}
-    </div>
+      )}
+    </Card>
   );
 }

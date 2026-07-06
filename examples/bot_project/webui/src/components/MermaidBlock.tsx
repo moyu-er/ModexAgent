@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState, type FC } from "react";
+import { XIcon } from "./ui/icons";
 
 export interface MermaidBlockProps {
   chart: string;
@@ -132,9 +133,9 @@ export const MermaidBlock: FC<MermaidBlockProps> = ({ chart, isDark }) => {
   const showSource = view === "source" || state.status === "error";
 
   return (
-    <div className="mb-3 overflow-hidden rounded-lg border border-code-border">
-      <div className="flex items-center justify-between gap-2 border-b border-code-border bg-code-bg px-4 py-2">
-        <span className="text-xs font-medium text-text-secondary">
+    <div className="mb-3 overflow-hidden rounded-lg border border-hairline">
+      <div className="flex items-center justify-between gap-2 border-b border-hairline bg-canvas px-4 py-2">
+        <span className="text-xs font-medium text-mute">
           mermaid
           {state.status === "error" ? ` · Render failed (${state.message})` : ""}
         </span>
@@ -143,7 +144,7 @@ export const MermaidBlock: FC<MermaidBlockProps> = ({ chart, isDark }) => {
             <button
               type="button"
               onClick={() => setView((v) => (v === "diagram" ? "source" : "diagram"))}
-              className="text-xs text-text-secondary transition-colors hover:text-text-primary"
+              className="text-xs text-mute transition-colors hover:text-ink"
             >
               {view === "diagram" ? "Source" : "Diagram"}
             </button>
@@ -152,7 +153,7 @@ export const MermaidBlock: FC<MermaidBlockProps> = ({ chart, isDark }) => {
             <button
               type="button"
               onClick={() => setZoomed(true)}
-              className="text-xs text-text-secondary transition-colors hover:text-text-primary"
+              className="text-xs text-mute transition-colors hover:text-ink"
             >
               Zoom
             </button>
@@ -160,7 +161,7 @@ export const MermaidBlock: FC<MermaidBlockProps> = ({ chart, isDark }) => {
           <button
             type="button"
             onClick={handleCopy}
-            className="text-xs text-text-secondary transition-colors hover:text-text-primary"
+            className="text-xs text-mute transition-colors hover:text-ink"
           >
             {copied ? "Copied" : "Copy"}
           </button>
@@ -168,16 +169,16 @@ export const MermaidBlock: FC<MermaidBlockProps> = ({ chart, isDark }) => {
       </div>
 
       {showSource ? (
-        <pre className="overflow-x-auto bg-code-bg p-4 font-mono text-[13px] leading-relaxed text-text-primary">
+        <pre className="overflow-x-auto bg-canvas p-4 font-mono text-[13px] leading-relaxed text-ink">
           <code>{chart}</code>
         </pre>
       ) : svg ? (
         <div
-          className="flex justify-center overflow-x-auto bg-code-bg p-4"
+          className="flex justify-center overflow-x-auto bg-canvas p-4"
           dangerouslySetInnerHTML={{ __html: svg }}
         />
       ) : (
-        <div className="flex items-center justify-center bg-code-bg p-4 text-xs text-text-secondary">
+        <div className="flex items-center justify-center bg-canvas p-4 text-xs text-mute">
           Rendering diagram…
         </div>
       )}
@@ -227,9 +228,10 @@ export const MermaidBlock: FC<MermaidBlockProps> = ({ chart, isDark }) => {
             <button
               type="button"
               onClick={() => setZoomed(false)}
-              className="text-sm text-white/80 transition-colors hover:text-white"
+              className="flex items-center gap-1 text-sm text-white/80 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
             >
-              ✕ Close
+              <XIcon />
+              Close
             </button>
           </div>
           <div

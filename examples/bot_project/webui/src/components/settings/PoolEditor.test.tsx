@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { useRef, useState } from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { PoolEditor } from "./PoolEditor";
 import { ToastProvider } from "../ToastContext";
+import { ActionBar } from "../ui/ActionBar";
+import { Button } from "../ui/Button";
 
 function makeResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -42,10 +45,10 @@ const tree = {
 
 afterEach(() => vi.unstubAllGlobals());
 
-function renderEditor(props: {
+async function renderEditor(props: {
   pool?: string;
   onDirtyChange?: (d: boolean) => void;
-}): void {
+}): Promise<void> {
   render(
     <ToastProvider>
       <PoolEditor
@@ -53,6 +56,55 @@ function renderEditor(props: {
         onDirtyChange={props.onDirtyChange}
       />
     </ToastProvider>,
+  );
+  await waitFor(() =>
+    expect(screen.queryByText("Loading…")).toBeNull(),
+  );
+}
+
+/** Renders PoolEditor together with the ActionBar now hosted by PoolsView. */
+function EditorWithActionBar({ pool }: { pool?: string }) {
+  const saveRef = useRef<(() => Promise<void>) | null>(null);
+  const cancelRef = useRef<(() => void) | null>(null);
+  const [dirty, setDirty] = useState<boolean>(false);
+  return (
+    <ToastProvider>
+      <PoolEditor
+        pool={pool ?? "default"}
+        onDirtyChange={setDirty}
+        onSave={(save) => {
+          saveRef.current = save;
+        }}
+        onCancel={(cancel) => {
+          cancelRef.current = cancel;
+        }}
+      />
+      <ActionBar>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => cancelRef.current?.()}
+          disabled={!dirty}
+        >
+          Cancel
+        </Button>
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={() => saveRef.current?.()}
+          disabled={!dirty}
+        >
+          Save
+        </Button>
+      </ActionBar>
+    </ToastProvider>
+  );
+}
+
+async function renderEditorWithActionBar(pool?: string): Promise<void> {
+  render(<EditorWithActionBar pool={pool} />);
+  await waitFor(() =>
+    expect(screen.queryByText("Loading…")).toBeNull(),
   );
 }
 
@@ -64,7 +116,7 @@ describe("PoolEditor", () => {
         Promise.resolve(makeResponse(200, url.includes("/skills") ? [] : tree)),
       ),
     );
-    renderEditor({});
+    await renderEditor({});
     await waitFor(() =>
       expect((screen.getByDisplayValue("main") as HTMLInputElement).value).toBe(
         "main",
@@ -80,7 +132,7 @@ describe("PoolEditor", () => {
       ),
     );
     const onDirtyChange = vi.fn();
-    renderEditor({ onDirtyChange });
+    await renderEditor({ onDirtyChange });
     await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
     // mcp selector also fires a fetch on mount; ignore it.
     fireEvent.change(screen.getByDisplayValue("main"), {
@@ -102,7 +154,7 @@ describe("PoolEditor", () => {
       );
     });
     vi.stubGlobal("fetch", fetchMock);
-    renderEditor({});
+    await renderEditorWithActionBar();
     await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
     fireEvent.change(screen.getByDisplayValue("main"), {
       target: { value: "boss" },
@@ -138,7 +190,7 @@ describe("PoolEditor", () => {
       );
     });
     vi.stubGlobal("fetch", fetchMock);
-    renderEditor({});
+    await renderEditorWithActionBar();
     await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
     // touch to enable Save
     fireEvent.change(screen.getByDisplayValue("main"), {
@@ -157,7 +209,7 @@ describe("PoolEditor", () => {
         Promise.resolve(makeResponse(200, url.includes("/skills") ? [] : tree)),
       ),
     );
-    renderEditor({});
+    await renderEditorWithActionBar();
     await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
     const input = screen.getByDisplayValue("main") as HTMLInputElement;
     fireEvent.change(input, { target: { value: "boss" } });
@@ -173,11 +225,14 @@ describe("PoolEditor", () => {
         Promise.resolve(makeResponse(200, url.includes("/skills") ? [] : tree)),
       ),
     );
-    renderEditor({});
+    await renderEditor({});
     await waitFor(() =>
       expect(screen.getByText("researcher")).toBeTruthy(),
     );
     fireEvent.click(screen.getByRole("button", { name: /Add subagent/ }));
+    await waitFor(() =>
+      expect(screen.queryAllByText("Loading…")).toHaveLength(0),
+    );
     // one more subagent card with "Untitled subagent" placeholder text
     expect(screen.getAllByText(/Untitled subagent|researcher/).length).toBe(2);
 
@@ -210,11 +265,14 @@ describe("PoolEditor", () => {
         Promise.resolve(makeResponse(200, url.includes("/skills") ? [] : tree)),
       ),
     );
-    renderEditor({});
+    await renderEditor({});
     await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
 
     // Add a subagent — auto-expanded with empty agent_name.
     fireEvent.click(screen.getByRole("button", { name: /Add subagent/ }));
+    await waitFor(() =>
+      expect(screen.queryAllByText("Loading…")).toHaveLength(0),
+    );
 
     const editBtns = screen.getAllByRole("button", {
       name: /System prompt \[Edit\]/,
@@ -233,10 +291,13 @@ describe("PoolEditor", () => {
         Promise.resolve(makeResponse(200, url.includes("/skills") ? [] : tree)),
       ),
     );
-    renderEditor({});
+    await renderEditor({});
     await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
 
     fireEvent.click(screen.getByRole("button", { name: /Add subagent/ }));
+    await waitFor(() =>
+      expect(screen.queryAllByText("Loading…")).toHaveLength(0),
+    );
 
     // After add-subagent (approval disabled, subagent description also rendered)
     // the DOM textboxes (role="textbox") are, in order:
@@ -267,7 +328,7 @@ describe("PoolEditor", () => {
         ),
       ),
     );
-    renderEditor({});
+    await renderEditor({});
     await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
 
     fireEvent.change(screen.getByDisplayValue("main"), {
@@ -279,5 +340,44 @@ describe("PoolEditor", () => {
     }) as HTMLButtonElement[];
     expect(editBtns.length).toBe(1);
     expect(editBtns[0]!.disabled).toBe(true);
+  });
+
+  it("renders the 'Skill assignments save immediately.' caption", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        Promise.resolve(makeResponse(200, url.includes("/skills") ? [] : tree)),
+      ),
+    );
+    await renderEditor({});
+    await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
+    // Main agent's caption is always visible. (Subagent captions only render
+    // when the card is expanded.) We assert main caption exists with Geist styling.
+    const caption = screen.getByText(/Skill assignments save immediately/);
+    expect(caption.className).toContain("italic");
+    expect(caption.className).toContain("text-body");
+  });
+
+  it("System prompt [Edit] opens a slide-over (does not unmount PoolEditor)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        Promise.resolve(makeResponse(200, url.includes("/skills") ? [] : tree)),
+      ),
+    );
+    await renderEditor({});
+    await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
+
+    const editBtn = screen.getByRole("button", {
+      name: /System prompt \[Edit\]/,
+    }) as HTMLButtonElement;
+    fireEvent.click(editBtn);
+
+    // Slide-over dialog renders the prompt editor; the underlying Pool header
+    // is still in the DOM (i.e. the editor was not unmounted).
+    await waitFor(() =>
+      expect(screen.getByRole("dialog", { name: /prompt editor/i })).toBeTruthy(),
+    );
+    expect(screen.getByText(/Pool: default/)).toBeTruthy();
   });
 });
