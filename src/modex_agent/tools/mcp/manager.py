@@ -20,6 +20,10 @@ from modex_agent.tools.mcp.client import (
     StreamableHttpMCPClient,
     TransportType,
 )
+from modex_agent.tools.mcp.injector import (
+    JsonFileMCPTransportInjector,
+    MCPTransportInjector,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -45,18 +49,25 @@ class MCPClientManager:
     3. streamable_http transport (Streamable HTTP)
     """
 
-    def __init__(self, config: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        config: dict[str, Any] | None = None,
+        injector: MCPTransportInjector | None = None,
+    ) -> None:
         """Initialize MCP client manager.
 
         Args:
             config: Custom config dict, format:
                 {server_name: {transport, command, args, url, headers, env, enabled, tool_timeout, enabled_tools, ...}}
                 If None, uses empty config (servers must be provided explicitly).
+            injector: Optional runtime injector for env/headers. If None, a
+                JSON-file injector pointing at ``.modex/mcp_inject.json`` is used.
         """
         self.clients: dict[str, BaseMCPClient] = {}
         self._server_stacks: dict[str, AsyncExitStack] = {}
         self._initialized = False
         self._custom_config = config or {}
+        self._injector = injector if injector is not None else JsonFileMCPTransportInjector()
         self._reconnect_lock = asyncio.Lock()
 
     async def initialize(self) -> None:
@@ -82,7 +93,7 @@ class MCPClientManager:
                     self._connect_single(name, server_config),
                     timeout=_CONNECT_TIMEOUT,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 _logger.warning(
                     "[MCP Manager] %s connect timed out after %.0fs — skipping",
                     name,
@@ -106,7 +117,7 @@ class MCPClientManager:
 
     async def _connect_single(
         self, name: str, server_config: dict[str, Any]
-    ) -> tuple[str, BaseMCPClient] | None:
+    ) -> tuple[str, BaseMCPClient | None] | None:
         """Connect to a single MCP server."""
         server_stack = AsyncExitStack()
         await server_stack.__aenter__()
@@ -185,8 +196,8 @@ class MCPClientManager:
             # Extract root cause from ExceptionGroup (Python 3.11+) — a 401
             # arrives wrapped in a TaskGroup BaseExceptionGroup.
             root_cause: BaseException = e
-            if hasattr(e, "exceptions") and callable(e.exceptions):
-                sub_exceptions = e.exceptions()
+            if isinstance(e, BaseExceptionGroup):
+                sub_exceptions = list(e.exceptions)
                 if sub_exceptions:
                     root_cause = sub_exceptions[0]
 
@@ -215,10 +226,8 @@ class MCPClientManager:
         surfaces when an MCP transport's TaskGroup is torn down) must not escape
         — they are non-fatal during connect failure / shutdown.
         """
-        try:
+        with suppress(BaseException):
             await stack.aclose()
-        except BaseException:
-            pass
 
     async def _create_client(
         self,
@@ -265,6 +274,7 @@ class MCPClientManager:
             args = server_config.get("args", [])
 
         env = server_config.get("env", {})
+        env, _ = self._injector.apply(name, str(TransportType.STDIO), env, {})
 
         params = StdioServerParameters(
             command=command,
@@ -297,6 +307,9 @@ class MCPClientManager:
             raise MCPConnectionError("URL required for sse transport")
 
         config_headers = server_config.get("headers", {})
+        _, config_headers = self._injector.apply(
+            name, str(TransportType.SSE), {}, config_headers
+        )
 
         def httpx_client_factory(
             headers: dict[str, str] | None = None,
@@ -344,6 +357,9 @@ class MCPClientManager:
             raise MCPConnectionError("URL required for http transport")
 
         headers = server_config.get("headers", {})
+        _, headers = self._injector.apply(
+            name, str(TransportType.STREAMABLE_HTTP), {}, headers
+        )
 
         http_client = await server_stack.enter_async_context(
             httpx.AsyncClient(
@@ -444,7 +460,7 @@ class MCPClientManager:
                     return False
                 await self.disconnect(server_name)
                 result = await self._connect_single(server_name, config)
-                if result[1] is not None:
+                if result is not None and result[1] is not None:
                     self.clients[result[0]] = result[1]
                     _logger.info("[MCP Manager] Reconnected to %s", server_name)
                     return True
@@ -454,7 +470,7 @@ class MCPClientManager:
             for name, server_config in list(self._custom_config.items()):
                 await self.disconnect(name)
                 result = await self._connect_single(name, server_config)
-                if result[1] is not None:
+                if result is not None and result[1] is not None:
                     self.clients[result[0]] = result[1]
                     success = True
             return success
@@ -469,7 +485,7 @@ class MCPClientManager:
         """Execute a tool on the specified server."""
         client = self.clients.get(server_name)
         if not client:
-            return {"success": False, "error": "MCP server not connected: %s" % server_name}
+            return {"success": False, "error": f"MCP server not connected: {server_name}"}
 
         return await client.call_tool(tool_name, params, timeout=timeout)
 
@@ -482,7 +498,7 @@ class MCPClientManager:
         """Read a resource from the specified server."""
         client = self.clients.get(server_name)
         if not client:
-            return {"success": False, "error": "MCP server not connected: %s" % server_name}
+            return {"success": False, "error": f"MCP server not connected: {server_name}"}
 
         return await client.read_resource(uri, timeout=timeout)
 
@@ -496,7 +512,7 @@ class MCPClientManager:
         """Get a prompt from the specified server."""
         client = self.clients.get(server_name)
         if not client:
-            return {"success": False, "error": "MCP server not connected: %s" % server_name}
+            return {"success": False, "error": f"MCP server not connected: {server_name}"}
 
         return await client.get_prompt(prompt_name, arguments=arguments, timeout=timeout)
 
