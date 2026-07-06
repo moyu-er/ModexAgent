@@ -41,7 +41,6 @@ from modex_agent.tools.presets import (
     ToolPreset,
 )
 
-
 # ─── Approval ────────────────────────────────────────────────────────────────
 
 
@@ -146,12 +145,13 @@ class PromptContent(BaseModel):
 
 
 class SkillEntry(BaseModel):
-    """A skill name + whether it is a managed global copy or a manually-placed local one."""
+    """A skill name, source, and short description parsed from SKILL.md."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: str
     source: Literal["global", "local"] = "global"
+    description: str = ""
 
 
 # ─── Pool listing ────────────────────────────────────────────────────────────

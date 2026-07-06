@@ -12,8 +12,8 @@ _BOT_PROJECT = Path(__file__).resolve().parents[3]
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
-from bot.config.pool_payloads import SkillEntry
-from bot.config.skills_store import SkillsStore, SkillValidationError
+from bot.config.pool_payloads import SkillEntry  # noqa: E402
+from bot.config.skills_store import SkillsStore, SkillValidationError  # noqa: E402
 
 
 @pytest.fixture
@@ -48,13 +48,15 @@ class TestUploadSkill:
         entry = store.upload_skill(
             "alpha",
             {
-                "SKILL.md": "# Alpha\n",
+                "SKILL.md": "# Alpha\n\nAlpha skill description.\n",
                 "sub/deep.md": "nested\n",
             },
         )
-        assert entry == SkillEntry(name="alpha", source="global")
+        assert entry == SkillEntry(
+            name="alpha", source="global", description="Alpha skill description."
+        )
         root = tmp_path / "global_skills" / "alpha"
-        assert (root / "SKILL.md").read_text(encoding="utf-8") == "# Alpha\n"
+        assert (root / "SKILL.md").read_text(encoding="utf-8") == "# Alpha\n\nAlpha skill description.\n"
         assert (root / "sub" / "deep.md").read_text(encoding="utf-8") == "nested\n"
 
     def test_accepts_bytes_content(self, store: SkillsStore, tmp_path: Path) -> None:
@@ -69,9 +71,7 @@ class TestUploadSkill:
         assert (root / "new.md").read_text(encoding="utf-8") == "y"
 
     @pytest.mark.parametrize("bad", ["..", "../escape", "a/../../b", "/abs"])
-    def test_traversal_rejected(
-        self, store: SkillsStore, tmp_path: Path, bad: str
-    ) -> None:
+    def test_traversal_rejected(self, store: SkillsStore, tmp_path: Path, bad: str) -> None:
         with pytest.raises(SkillValidationError):
             store.upload_skill("alpha", {bad: "x"})
 
@@ -261,6 +261,128 @@ class TestRename:
 
 
 # ─── user-home global source (~/.agents/skills) ──────────────────────────────
+
+
+class TestListGlobalSkillsDescription:
+    """Description extraction from SKILL.md, with repo-first resolution."""
+
+    def test_frontmatter_description_is_preferred(self, store: SkillsStore, tmp_path: Path) -> None:
+        """YAML frontmatter ``description`` wins over body heading/paragraph."""
+        skill_dir = tmp_path / "global_skills" / "frontmatter-desc"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "---\n"
+            "name: frontmatter-desc\n"
+            "description: Triggered description from frontmatter.\n"
+            "---\n"
+            "\n"
+            "# Heading that should be ignored\n"
+            "\n"
+            "Body paragraph that should also be ignored.",
+            encoding="utf-8",
+        )
+
+        result = store.list_global_skills()
+
+        assert result == [
+            SkillEntry(
+                name="frontmatter-desc",
+                source="global",
+                description="Triggered description from frontmatter.",
+            )
+        ]
+
+    def test_body_fallback_skips_headings_and_markdown(self, store: SkillsStore, tmp_path: Path) -> None:
+        """Without a frontmatter description the first body paragraph is extracted as plain text."""
+        skill_dir = tmp_path / "global_skills" / "body-desc"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "# Title\n"
+            "\n"
+            "This is the **real** description with [a link](http://example.com).\n"
+            "Second line of the paragraph.\n"
+            "\n"
+            "Another paragraph.",
+            encoding="utf-8",
+        )
+
+        result = store.list_global_skills()
+
+        assert result == [
+            SkillEntry(
+                name="body-desc",
+                source="global",
+                description="This is the real description with a link. Second line of the paragraph.",
+            )
+        ]
+
+    def test_repo_copy_wins_for_description(self, store: SkillsStore, tmp_path: Path) -> None:
+        """Repo ``global_skills/<name>/SKILL.md`` wins over user-home copy."""
+        repo_skill = tmp_path / "global_skills" / "greeter"
+        repo_skill.mkdir(parents=True)
+        (repo_skill / "SKILL.md").write_text(
+            "---\nname: greeter\ndescription: Repo greeter description.\n---\n",
+            encoding="utf-8",
+        )
+        user_skill = tmp_path / "user_skills" / "greeter"
+        user_skill.mkdir(parents=True)
+        (user_skill / "SKILL.md").write_text(
+            "User-installed greeter description.", encoding="utf-8"
+        )
+
+        result = store.list_global_skills()
+
+        assert result == [
+            SkillEntry(
+                name="greeter",
+                source="global",
+                description="Repo greeter description.",
+            )
+        ]
+
+    def test_multi_line_first_paragraph_is_joined(self, store: SkillsStore, tmp_path: Path) -> None:
+        """The first non-empty paragraph joins consecutive lines by a space."""
+        skill_dir = tmp_path / "global_skills" / "weather"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            "\n\nProvides current weather\nand forecasts.\n\nMore details here.",
+            encoding="utf-8",
+        )
+
+        result = store.list_global_skills()
+
+        assert result == [
+            SkillEntry(
+                name="weather",
+                source="global",
+                description="Provides current weather and forecasts.",
+            )
+        ]
+
+    def test_empty_description_when_no_skill_md(self, store: SkillsStore, tmp_path: Path) -> None:
+        """A skill directory without SKILL.md has an empty description."""
+        skill_dir = tmp_path / "global_skills" / "bare"
+        skill_dir.mkdir(parents=True)
+
+        result = store.list_global_skills()
+
+        assert result == [SkillEntry(name="bare", source="global", description="")]
+
+    def test_description_falls_back_to_user_copy(self, store: SkillsStore, tmp_path: Path) -> None:
+        """When no repo copy exists, the user-home description is used."""
+        user_skill = tmp_path / "user_skills" / "only-user"
+        user_skill.mkdir(parents=True)
+        (user_skill / "SKILL.md").write_text("User-only skill description.", encoding="utf-8")
+
+        result = store.list_global_skills()
+
+        assert result == [
+            SkillEntry(
+                name="only-user",
+                source="global",
+                description="User-only skill description.",
+            )
+        ]
 
 
 class TestUserGlobalSource:

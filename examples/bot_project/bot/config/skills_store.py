@@ -59,6 +59,7 @@ import subprocess
 from pathlib import Path
 
 from bot.config.pool_payloads import SkillEntry
+from modex_agent.core.frontmatter import parse_frontmatter
 
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_-]+$")
 
@@ -69,11 +70,63 @@ class SkillValidationError(ValueError):
 
 def _validate_name(name: str, kind: str) -> None:
     if not isinstance(name, str) or not _NAME_RE.match(name):
-        raise SkillValidationError(
-            f"Invalid {kind} name {name!r}: must match {_NAME_RE.pattern}"
-        )
+        raise SkillValidationError(f"Invalid {kind} name {name!r}: must match {_NAME_RE.pattern}")
     if name in {".", ".."} or "/" in name or "\\" in name:
         raise SkillValidationError(f"Invalid {kind} name {name!r}: traversal")
+
+
+_MARKDOWN_HEADING_RE = re.compile(r"^#{1,6}\s+.*$", re.MULTILINE)
+_MARKDOWN_LINK_RE = re.compile(r"!?\[([^\]]+)\]\([^)]+\)")
+_MARKDOWN_EMPH_RE = re.compile(r"(\*{1,2}|_{1,2})([^*]+?)\1")
+_MARKDOWN_CODE_RE = re.compile(r"`([^`]+)`")
+
+
+def _clean_markdown_line(line: str) -> str:
+    """Remove common Markdown formatting from a line, keeping readable text."""
+    text = line
+    text = _MARKDOWN_LINK_RE.sub(r"\1", text)
+    text = _MARKDOWN_EMPH_RE.sub(r"\2", text)
+    text = _MARKDOWN_CODE_RE.sub(r"\1", text)
+    text = _MARKDOWN_HEADING_RE.sub("", text)
+    return text.strip()
+
+
+def _extract_first_body_paragraph(body: str) -> str:
+    """Return the first non-empty paragraph of a Markdown body as plain text."""
+    paragraph_lines: list[str] = []
+    for line in body.splitlines():
+        cleaned = _clean_markdown_line(line)
+        if not cleaned:
+            if paragraph_lines:
+                break
+            continue
+        paragraph_lines.append(cleaned)
+    return " ".join(paragraph_lines) if paragraph_lines else ""
+
+
+def _read_skill_description(skill_dir: Path) -> str:
+    """Return the human-readable description from ``skill_dir / SKILL.md``.
+
+    Priority:
+    1. YAML frontmatter ``description`` field (parsed with PyYAML via
+       ``modex_agent.core.frontmatter``).
+    2. First non-empty paragraph of the Markdown body, with Markdown markup
+       removed so headings/link targets don't leak into the description.
+
+    Returns the empty string when there is no SKILL.md or no extractable text.
+    """
+    skill_md = skill_dir / "SKILL.md"
+    if not skill_md.exists():
+        return ""
+    text = skill_md.read_text(encoding="utf-8")
+
+    frontmatter, body = parse_frontmatter(text)
+    raw_description = frontmatter.get("description", "")
+    description = raw_description.strip() if isinstance(raw_description, str) else ""
+    if description:
+        return description
+
+    return _extract_first_body_paragraph(body)
 
 
 def _create_dir_link(src: Path, dst: Path) -> None:
@@ -219,10 +272,12 @@ class SkillsStore:
         """List every global skill: repo ``global_skills/`` PLUS user-home
         ``~/.agents/skills/``, deduped by name with REPO PRIORITY.
 
-        A name present in both appears once. Each entry is ``source="global"``.
+        A name present in both appears once. Each entry is ``source="global"``
+        and carries a ``description`` parsed from the resolved source's
+        ``SKILL.md`` (repo copy wins over user-home copy).
         """
         seen: set[str] = set()
-        out: list[SkillEntry] = []
+        order: list[str] = []
         for source_dir in (self.global_dir, self.user_global_dir):
             if not source_dir.exists():
                 continue
@@ -230,13 +285,22 @@ class SkillsStore:
                 if entry.name in seen:
                     continue
                 if self._dir_exists_following_links(entry):
-                    out.append(SkillEntry(name=entry.name, source="global"))
+                    order.append(entry.name)
                     seen.add(entry.name)
+        out: list[SkillEntry] = []
+        for name in order:
+            src = self._resolve_global_source(name)
+            if src is not None:
+                out.append(
+                    SkillEntry(
+                        name=name,
+                        source="global",
+                        description=_read_skill_description(src),
+                    )
+                )
         return out
 
-    def upload_skill(
-        self, name: str, file_tree: dict[str, bytes | str]
-    ) -> SkillEntry:
+    def upload_skill(self, name: str, file_tree: dict[str, bytes | str]) -> SkillEntry:
         """Write a file tree under ``global_skills/<name>/`` (repo library only).
 
         ``file_tree`` maps relative paths (within ``<name>/``) → contents
@@ -253,7 +317,11 @@ class SkillsStore:
         skill_dir.mkdir(parents=True, exist_ok=True)
         for rel, content in file_tree.items():
             self._write_under(skill_dir, rel, content)
-        return SkillEntry(name=name, source="global")
+        return SkillEntry(
+            name=name,
+            source="global",
+            description=_read_skill_description(skill_dir),
+        )
 
     def delete_skill(self, name: str) -> bool:
         """Remove ``global_skills/<name>/`` (repo library only).
@@ -342,9 +410,7 @@ class SkillsStore:
             if not entry.is_dir():
                 continue
             is_global = self._resolve_global_source(entry.name) is not None
-            out.append(
-                SkillEntry(name=entry.name, source="global" if is_global else "local")
-            )
+            out.append(SkillEntry(name=entry.name, source="global" if is_global else "local"))
         return out
 
     def rename_agent_skills(self, pool: str, old_agent: str, new_agent: str) -> None:
@@ -387,9 +453,7 @@ class SkillsStore:
 
     # ─── helpers ────────────────────────────────────────────────────────────
 
-    def _write_under(
-        self, root: Path, rel: str, content: bytes | str
-    ) -> None:
+    def _write_under(self, root: Path, rel: str, content: bytes | str) -> None:
         """Write ``content`` to ``root / normalize(rel)``, refusing traversal.
 
         ``rel`` is a POSIX-style relative path (``a/b.md``). It must normalize
@@ -416,9 +480,7 @@ class SkillsStore:
         try:
             target.relative_to(root_resolved)
         except ValueError as exc:
-            raise SkillValidationError(
-                f"Relative path {rel!r} escapes skill dir {root}"
-            ) from exc
+            raise SkillValidationError(f"Relative path {rel!r} escapes skill dir {root}") from exc
         target.parent.mkdir(parents=True, exist_ok=True)
         if isinstance(content, bytes):
             target.write_bytes(content)
