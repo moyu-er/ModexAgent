@@ -26,7 +26,7 @@ export const SelectPrimitive = forwardRef<
       <select
         ref={ref}
         className={[
-          "w-full cursor-pointer appearance-none rounded-sm border border-hairline bg-canvas-elevated",
+          "w-full cursor-pointer appearance-none rounded-xs border border-hairline bg-canvas-elevated",
           "py-3 pl-7 pr-10 text-base font-semibold text-ink",
           "focus:border-link focus:outline-none focus:ring-1 focus:ring-link/30",
           "hover:bg-hairline-soft",

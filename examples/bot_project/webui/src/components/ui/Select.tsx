@@ -30,7 +30,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
   const selectId = id ?? generatedId;
   const hasError = Boolean(error);
   const selectCls = [
-    "w-full appearance-none rounded-sm border px-3 py-2 pr-8 text-sm",
+    "w-full appearance-none rounded-xs border px-3 py-2 pr-8 text-sm",
     "bg-canvas-elevated text-ink",
     hasError
       ? "border-error focus:border-error focus:ring-error/30"

@@ -26,7 +26,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function 
   const inputId = id ?? generatedId;
   const hasError = Boolean(error);
   const cls = [
-    "w-full rounded-sm border px-3 py-2 text-sm",
+    "w-full rounded-xs border px-3 py-2 text-sm",
     "bg-canvas-elevated text-ink placeholder:text-faint",
     hasError
       ? "border-error focus:border-error focus:ring-error/30"

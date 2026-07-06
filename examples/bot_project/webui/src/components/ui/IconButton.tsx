@@ -25,7 +25,7 @@ const SIZE_CLS: Record<IconButtonSize, string> = {
 };
 
 const VARIANT_CLS: Record<IconButtonVariant, string> = {
-  primary: "bg-ink text-canvas hover:opacity-90 border border-transparent",
+  primary: "bg-link text-canvas-elevated hover:bg-link-deep border border-transparent",
   secondary:
     "bg-canvas-elevated text-ink border border-hairline hover:bg-canvas",
   ghost:

@@ -99,9 +99,9 @@ describe("SettingsView", () => {
 
   // Render-smoke: each non-persisted sidebar route mounts the right child view.
   // The IM view must load first so the persisted-domain gate is satisfied; then
-  // we click into Pools / Global MCP / Global Skills and assert each child's
-  // distinctive copy appears. Guards against the regression where a placeholder
-  // was rendered instead of the real view.
+  // we click into Pools / MCP / Skills and assert each child's distinctive copy
+  // appears. Guards against the regression where a placeholder was rendered
+  // instead of the real view.
   function routeFetch(): ReturnType<typeof vi.fn> {
     return vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
@@ -133,7 +133,7 @@ describe("SettingsView", () => {
     await waitFor(() => expect(screen.getByLabelText("Add pool")).toBeTruthy());
   });
 
-  it("Global MCP sidebar route renders GlobalMcpView", async () => {
+  it("MCP sidebar route renders GlobalMcpView", async () => {
     vi.stubGlobal("fetch", routeFetch());
     render(
       <ToastProvider>
@@ -141,15 +141,15 @@ describe("SettingsView", () => {
       </ToastProvider>,
     );
     await waitFor(() => expect(screen.getByText("App ID")).toBeTruthy());
-    fireEvent.click(screen.getByText("Global MCP"));
+    fireEvent.click(screen.getByText("MCP"));
     await waitFor(() =>
       expect(
-        screen.getByText("Global MCP servers available to every pool's agents."),
+        screen.getByText("MCP servers available to every pool's agents."),
       ).toBeTruthy(),
     );
   });
 
-  it("Global Skills sidebar route renders GlobalSkillsView", async () => {
+  it("Skills sidebar route renders GlobalSkillsView", async () => {
     vi.stubGlobal("fetch", routeFetch());
     render(
       <ToastProvider>
@@ -157,15 +157,15 @@ describe("SettingsView", () => {
       </ToastProvider>,
     );
     await waitFor(() => expect(screen.getByText("App ID")).toBeTruthy());
-    fireEvent.click(screen.getByText("Global Skills"));
+    fireEvent.click(screen.getByText("Skills"));
     await waitFor(() =>
       expect(
-        screen.getByText("Global skills available to every pool's agents."),
+        screen.getByText("Skills available to every pool's agents."),
       ).toBeTruthy(),
     );
   });
 
-  it("Global Skills: clicking a skill row expands its detail pane", async () => {
+  it("Skills: clicking a skill row expands its detail pane", async () => {
     let skillsCalled = false;
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
@@ -182,9 +182,9 @@ describe("SettingsView", () => {
         <SettingsView onExit={() => {}} />
       </ToastProvider>,
     );
-    // Wait for IM to load first, then navigate to Global Skills.
+    // Wait for IM to load first, then navigate to Skills.
     await waitFor(() => expect(screen.getByText("App ID")).toBeTruthy());
-    fireEvent.click(screen.getByText("Global Skills"));
+    fireEvent.click(screen.getByText("Skills"));
     await waitFor(() => {
       expect(skillsCalled).toBe(true);
     });

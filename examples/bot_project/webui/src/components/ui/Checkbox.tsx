@@ -1,8 +1,9 @@
 // Checkbox.tsx — labeled checkbox primitive.
 //
-// Renders a native <input type="checkbox"> paired with a <label> wrapping
-// the visible text, so clicking anywhere on the label toggles the box. The
-// checkbox square uses Geist canvas/hairline/link tokens and a link focus ring.
+// Renders a native <input type="checkbox"> restyled with the Notion-style
+// `.checkbox-custom` class: 4px corners, hairline border, blue fill with a
+// white checkmark when checked. The label wraps the visible text so clicking
+// anywhere on the label toggles the box.
 
 import type { InputHTMLAttributes } from "react";
 import { forwardRef, useId } from "react";
@@ -24,11 +25,8 @@ export const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(function Che
   const inputId = id ?? generatedId;
   const hasError = Boolean(error);
   const boxCls = [
-    "h-4 w-4 shrink-0 rounded-sm border",
-    hasError ? "border-error" : "border-hairline",
-    "bg-canvas-elevated text-link",
-    "focus:outline-none focus:ring-1 focus:ring-link/30",
-    "disabled:cursor-not-allowed disabled:opacity-60",
+    "checkbox-custom",
+    hasError ? "border-error" : "",
     className,
   ]
     .filter(Boolean)

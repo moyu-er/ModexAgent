@@ -3,7 +3,7 @@
 // DISK IS THE SINGLE SOURCE OF TRUTH. Which skills an agent has is decided
 // entirely by what's under skills/<pool>/<agent>/ on disk (symlinks into
 // global_skills/). There is no skills field in the pool tree and nothing is
-// deferred to the PoolEditor Save button: toggling a global skill here calls
+// deferred to the PoolEditor Save button: toggling a skill here calls
 // assignSkill/unassignSkill IMMEDIATELY (eager disk write), refreshes the
 // listing from disk, and surfaces the implied restart via toast + indicator.
 //
@@ -11,7 +11,7 @@
 // shown read-only — they cannot be toggled here; remove them by editing the
 // agent root on disk.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SkillEntry } from "../../types/pool";
 import {
   assignSkill,
@@ -73,12 +73,24 @@ export function AgentSkillSelector({ pool, agent }: Props) {
   }, [open]);
 
   // Assigned = agent skills that exist in the global registry (the checked
-  // global checkboxes). The pool tree is not involved.
-  const globalNames = new Set((globalSkills ?? []).map((s) => s.name));
-  const assignedNames = new Set(
-    (agentSkills ?? []).filter((s) => globalNames.has(s.name)).map((s) => s.name),
+  // checkboxes). The pool tree is not involved.
+  const globalNames = useMemo(
+    () => new Set((globalSkills ?? []).map((s) => s.name)),
+    [globalSkills],
   );
-  const localSkills = (agentSkills ?? []).filter((s) => !globalNames.has(s.name));
+  const assignedNames = useMemo(
+    () =>
+      new Set(
+        (agentSkills ?? [])
+          .filter((s) => globalNames.has(s.name))
+          .map((s) => s.name),
+      ),
+    [agentSkills, globalNames],
+  );
+  const localSkills = useMemo(
+    () => (agentSkills ?? []).filter((s) => !globalNames.has(s.name)),
+    [agentSkills, globalNames],
+  );
 
   const toggle = async (name: string): Promise<void> => {
     if (busy) return;
@@ -156,7 +168,7 @@ export function AgentSkillSelector({ pool, agent }: Props) {
                       <Checkbox
                         label={s.name}
                         checked={checked}
-                        disabled={busy !== "" && busy !== s.name}
+                        disabled={busy === s.name}
                         onChange={() => void toggle(s.name)}
                         aria-label={s.name}
                       />
@@ -167,7 +179,7 @@ export function AgentSkillSelector({ pool, agent }: Props) {
                   <li key={`l-${s.name}`} className="flex items-center gap-2 text-sm text-ink">
                     <span
                       aria-hidden="true"
-                      className="inline-block h-4 w-4 shrink-0 rounded-sm border border-hairline bg-canvas-elevated"
+                      className="inline-block h-4 w-4 shrink-0 rounded-xs border border-hairline bg-canvas-elevated"
                       title="Local skill — edit the agent root on disk to remove"
                     />
                     <span className="truncate">{s.name}</span>

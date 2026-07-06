@@ -54,7 +54,7 @@ describe("AgentSkillSelector", () => {
     expect(screen.getAllByText(/local/).length).toBeGreaterThan(0);
   });
 
-  it("toggling an assigned global skill calls unassign (DELETE) then re-reads disk", async () => {
+  it("toggling an assigned skill calls unassign (DELETE) then re-reads disk", async () => {
     // Mutable disk state: greet is assigned initially, removed after DELETE.
     const disk = new Set<string>(["greet"]);
     const fetchMock = vi.fn((url: string, init?: RequestInit) => {
@@ -92,7 +92,7 @@ describe("AgentSkillSelector", () => {
     );
   });
 
-  it("toggling an unassigned global skill calls assign (POST) then re-reads disk", async () => {
+  it("toggling an unassigned skill calls assign (POST) then re-reads disk", async () => {
     const disk = new Set<string>();
     const fetchMock = vi.fn((url: string, init?: RequestInit) => {
       const method = init?.method ?? "GET";

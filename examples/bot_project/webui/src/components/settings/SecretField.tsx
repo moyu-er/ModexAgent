@@ -94,7 +94,7 @@ export function SecretField({ value, onChange }: Props) {
   return (
     <div className="flex items-center gap-2">
       <input
-        className="w-full rounded-sm border border-hairline bg-canvas-elevated px-2.5 py-1.5 font-mono text-sm text-ink placeholder:text-faint focus:border-link focus:outline-none focus:ring-1 focus:ring-link"
+        className="w-full rounded-xs border border-hairline bg-canvas-elevated px-2.5 py-1.5 font-mono text-sm text-ink placeholder:text-faint focus:border-link focus:outline-none focus:ring-1 focus:ring-link"
         type={revealed ? "text" : "password"}
         role="textbox"
         aria-label="secret value"
