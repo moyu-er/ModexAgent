@@ -32,16 +32,6 @@
   --color-severity-dangerous: #BE3A2F;  /* muted red */
   --color-severity-hardline: #9F1239;   /* deep rose */
 
-  /* TodoPanel iOS 风格专属配色（accent 两种模式同色） */
-  --color-task-accent: #f97316;         /* orange */
-  --color-task-accent-2: #f59e0b;       /* amber (gradient end) */
-  --color-task-surface: #faf9f7;
-  --color-task-surface-hover: #f0ede8;
-  --color-task-line: #e8e5e0;           /* border / badge bg / progress track */
-  --color-task-text: #1d1d1f;
-  --color-task-text-muted: #6e6e73;
-  --color-task-text-faint: #aeaeb2;     /* arrow / page label */
-
   /* 软阴影颜色（私有变量，不映射 Tailwind；供 .composer 与下拉浮层共用） */
   --shadow-color: rgba(0,0,0,0.05);
 
@@ -94,16 +84,6 @@
   --color-severity-sensitive: #FCD34D;
   --color-severity-dangerous: #F0A8A2;
   --color-severity-hardline: #FDA4AF;
-
-  /* TodoPanel iOS 风格专属配色（accent/faint 两种模式同色） */
-  --color-task-accent: #f97316;
-  --color-task-accent-2: #f59e0b;
-  --color-task-surface: #2c2c2e;
-  --color-task-surface-hover: #3a3a3c;
-  --color-task-line: #3a3a3c;
-  --color-task-text: #f5f5f7;
-  --color-task-text-muted: #a1a1a6;
-  --color-task-text-faint: #aeaeb2;
 
   /* 软阴影颜色（私有变量，不映射 Tailwind；供 .composer 与下拉浮层共用） */
   --shadow-color: rgba(0,0,0,0.3);

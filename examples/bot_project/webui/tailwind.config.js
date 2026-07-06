@@ -35,18 +35,6 @@ export default {
           hardline: v("severity-hardline"),
         },
 
-        // TodoPanel iOS 风格专属配色
-        task: {
-          accent: v("task-accent"),
-          "accent-2": v("task-accent-2"),
-          surface: v("task-surface"),
-          "surface-hover": v("task-surface-hover"),
-          line: v("task-line"),
-          text: v("task-text"),
-          "text-muted": v("task-text-muted"),
-          "text-faint": v("task-text-faint"),
-        },
-
         // Vercel Geist token ladder
         ink: v("ink"),
         body: v("body"),
