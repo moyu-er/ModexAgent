@@ -106,13 +106,28 @@ export function GlobalMcpView() {
     });
   };
 
+  const collapse = (id: number): void => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  };
+
+  const removeAndCollapse = (i: number): void => {
+    setCards((prev) => {
+      const removed = prev![i]!;
+      collapse(removed.id);
+      return prev!.filter((_, j) => j !== i);
+    });
+  };
+
   const addCard = (): void => {
     const newId = nextId.current++;
     setCards((prev) => [
       { id: newId, originalName: null, name: "", entry: emptyEntry() },
       ...(prev ?? []),
     ]);
-    // Auto-expand the newly added card so the user can edit immediately.
     setExpanded((prev) => {
       const next = new Set(prev);
       next.add(newId);
@@ -127,22 +142,24 @@ export function GlobalMcpView() {
       toast.show({ message: "Server name is required.", tone: "warning" });
       return;
     }
+
+    const renamed =
+      card.originalName !== null && card.originalName !== name;
+
     try {
-      // Rename: the old server name (if any, and different) must be deleted so
-      // the renamed entry replaces it rather than leaving an orphan. A 409
-      // (in-use) on the old name blocks the rename — the user must unassign it.
-      const renamed =
-        card.originalName !== null && card.originalName !== name;
       if (renamed) {
         await deleteMcp(card.originalName!);
       }
       await upsertMcp(name, card.entry);
       update(i, { originalName: name, name, conflict: undefined });
-      // MCP upsert/delete unconditionally mark the pool dirty (the registry is
-      // read at pool boot, not hot-reloaded), so the restart toast fires
-      // unconditionally.
       restartToast(toast);
     } catch (e) {
+      // If the delete succeeded but the upsert failed, the old config is gone.
+      // Restore the original name locally so the user can retry without losing
+      // the previous identity.
+      if (renamed) {
+        update(i, { name: card.originalName! });
+      }
       if (e instanceof McpInUseError) {
         const where = e.usedBy.map(([p, a]) => `${p}/${a}`).join(", ");
         update(i, { conflict: e.usedBy });
@@ -161,28 +178,12 @@ export function GlobalMcpView() {
     const name = card.originalName ?? card.name.trim();
     if (!card.originalName) {
       // Never persisted — just drop locally.
-      setCards((prev) => {
-        const removed = prev![i]!;
-        setExpanded((cur) => {
-          const next = new Set(cur);
-          next.delete(removed.id);
-          return next;
-        });
-        return prev!.filter((_, j) => j !== i);
-      });
+      removeAndCollapse(i);
       return;
     }
     try {
       await deleteMcp(name);
-      setCards((prev) => {
-        const removed = prev![i]!;
-        setExpanded((cur) => {
-          const next = new Set(cur);
-          next.delete(removed.id);
-          return next;
-        });
-        return prev!.filter((_, j) => j !== i);
-      });
+      removeAndCollapse(i);
       // Deletion also implies a restart; reuse the uniform toast (the message
       // already says "Saved", which is close enough for a delete→restart hint
       // and keeps every restart surface identical).
