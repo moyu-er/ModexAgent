@@ -118,11 +118,16 @@ class ReactLlmClient:
                 if delta:
                     await emitter.emit(ReActEvent.MODEL_REASONING, delta)
 
+            # TODO(model-config-convergence): 模型调用参数 temperature/max_output_tokens 应只由
+            # LLMProvider 持有；此处经 descriptor/context 透传属冗余复制。待 ReactLlmClient
+            # 不再传这两参后，本字段/参数可连同 AgentContext.temperature/max_output_tokens、
+            # AgentLLMConfig、AgentMaterializeDeps 的同名字段一并删除。收敛目标见
+            # docs/superpowers/plans/2026-07-03-bot-multi-model.md §框架配置收敛后续。
             response = await self._provider.chat_stream(
                 messages=messages,
                 tools=context.get_tool_descriptions() if context.tool_manager else None,
                 temperature=context.temperature or 0.7,
-                max_tokens=context.max_tokens,
+                max_output_tokens=context.max_output_tokens,
                 on_content_delta=_on_content_delta,
                 on_reasoning_delta=_on_reasoning_delta,
             )
@@ -193,11 +198,16 @@ class ReactLlmClient:
             if delta and ctx.emitter is not None:
                 await ctx.emitter.emit(ReActEvent.MODEL_REASONING, delta)
 
+        # TODO(model-config-convergence): 模型调用参数 temperature/max_output_tokens 应只由
+        # LLMProvider 持有；此处经 descriptor/context 透传属冗余复制。待 ReactLlmClient
+        # 不再传这两参后，本字段/参数可连同 AgentContext.temperature/max_output_tokens、
+        # AgentLLMConfig、AgentMaterializeDeps 的同名字段一并删除。收敛目标见
+        # docs/superpowers/plans/2026-07-03-bot-multi-model.md §框架配置收敛后续。
         response = await self._provider.chat_stream(
             messages=messages,
             tools=ctx.get_tool_descriptions() if ctx.tool_manager else None,
             temperature=ctx.temperature or 0.7,
-            max_tokens=ctx.max_tokens,
+            max_output_tokens=ctx.max_output_tokens,
             on_content_delta=_on_content,
             on_reasoning_delta=_on_reasoning,
         )
@@ -210,11 +220,16 @@ class ReactLlmClient:
         messages: list[dict[str, object]],
         ctx: AgentContext,
     ) -> LLMResponse:
+        # TODO(model-config-convergence): 模型调用参数 temperature/max_output_tokens 应只由
+        # LLMProvider 持有；此处经 descriptor/context 透传属冗余复制。待 ReactLlmClient
+        # 不再传这两参后，本字段/参数可连同 AgentContext.temperature/max_output_tokens、
+        # AgentLLMConfig、AgentMaterializeDeps 的同名字段一并删除。收敛目标见
+        # docs/superpowers/plans/2026-07-03-bot-multi-model.md §框架配置收敛后续。
         response = await self._provider.chat(
             messages=messages,
             tools=ctx.get_tool_descriptions() if ctx.tool_manager else None,
             temperature=ctx.temperature or 0.7,
-            max_tokens=ctx.max_tokens,
+            max_output_tokens=ctx.max_output_tokens,
         )
         if ctx.emitter is not None:
             if response.content:

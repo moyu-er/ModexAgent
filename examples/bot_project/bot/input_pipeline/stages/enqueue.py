@@ -34,6 +34,13 @@ class EnqueueStage(InputStage):
                 external_id=envelope.external_id,
                 metadata={"channel": envelope.channel},
             )
+        # Register the WebUI-resolved model into the cross-broker carrier keyed
+        # by session id (ModelChoiceBindHook reads it at turn start). IM path
+        # carries no RESOLVED_MODEL and is skipped, falling back to the default.
+        resolved_model = envelope.metadata.get(RoutingMeta.RESOLVED_MODEL)
+        registry = ctx.model_choice_registry
+        if resolved_model is not None and registry is not None:
+            registry.set(session.session_id, resolved_model)
         msg = InputMessage(
             content=llm_content,
             session=session,

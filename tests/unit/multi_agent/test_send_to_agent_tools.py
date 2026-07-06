@@ -550,3 +550,143 @@ class TestSendToAgentToolDynamicSchema:
         after = tool.parameters["properties"]["target_agent"]
         assert before is after
         assert "enum" not in before
+
+
+def _subagent_store() -> CommunicationTargetStore:
+    return CommunicationTargetStore(for_subagent=True)
+
+
+def _subagent_context(parent_name: str = "main") -> AgentContext:
+    """A subagent AgentContext whose parent_session_id points at parent_name."""
+    return AgentContext(
+        system_prompt="",
+        history=object(),  # type: ignore[arg-type]
+        tool_manager=object(),  # type: ignore[arg-type]
+        session=SessionInfo(
+            session_id=f"conv-1.worker",
+            agent_name="worker",
+            parent_session_id=f"conv-1.{parent_name}",
+        ),
+    )
+
+
+class TestSubagentDescriptionContent:
+    """The subagent tool description must reflect what the subagent actually
+    receives (an <agent_message source=...>) and steer it to consultation,
+    not result-return. The main-agent description must NOT carry this text."""
+
+    def test_subagent_description_contains_agent_message_and_source(self) -> None:
+        store = _subagent_store()
+        tool = SendToAgentTool(
+            store=store,
+            source=AgentAddress(name="worker"),
+            broker=object(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            agent_bus=object(),  # type: ignore[arg-type]
+            service=_RecordingService(),  # type: ignore[arg-type]
+        )
+        token = current_agent_context.set(_subagent_context(parent_name="main"))
+        try:
+            desc = tool.description
+        finally:
+            current_agent_context.reset(token)
+        assert "<agent_message" in desc
+        assert "source=" in desc
+        assert "'main'" in desc  # the resolved parent echoed back
+
+    def test_subagent_description_mentions_output_md_and_consultation(self) -> None:
+        store = _subagent_store()
+        tool = SendToAgentTool(
+            store=store,
+            source=AgentAddress(name="worker"),
+            broker=object(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            agent_bus=object(),  # type: ignore[arg-type]
+            service=_RecordingService(),  # type: ignore[arg-type]
+        )
+        token = current_agent_context.set(_subagent_context())
+        try:
+            desc = tool.description
+        finally:
+            current_agent_context.reset(token)
+        assert "OUTPUT.md" in desc
+        assert "consultation" in desc.lower()
+
+    def test_main_description_does_not_carry_subagent_text(self) -> None:
+        """The main-agent description must not contain the subagent-only
+        consultation/agent_message wording."""
+        store = CommunicationTargetStore()  # normal mode
+        store.add(CommunicationTarget(name="scout", kind=AgentCommKind.SUBAGENT))
+        tool = SendToAgentTool(
+            store=store,
+            source=AgentAddress(name="main"),
+            broker=object(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            agent_bus=object(),  # type: ignore[arg-type]
+            service=_RecordingService(),  # type: ignore[arg-type]
+        )
+        desc = tool.description
+        assert "<agent_message" not in desc
+        assert "OUTPUT.md" not in desc
+        assert "consultation" not in desc.lower()
+
+    def test_subagent_description_no_parent_available(self) -> None:
+        store = _subagent_store()
+        tool = SendToAgentTool(
+            store=store,
+            source=AgentAddress(name="worker"),
+            broker=object(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            agent_bus=object(),  # type: ignore[arg-type]
+            service=_RecordingService(),  # type: ignore[arg-type]
+        )
+        # No contextvar set → no resolvable parent.
+        desc = tool.description
+        assert "No parent" in desc
+        assert "<agent_message" in desc  # description template still shown
+
+
+class TestSubagentWiringSelectsSubagentMode:
+    """The template wiring must register send_to_agent in subagent mode
+    (for_subagent=True) — proven by the registered tool's parameters lacking
+    invocation_id. Drives the real _register_send_to_agent wiring."""
+
+    def test_wiring_produces_subagent_mode_tool(self) -> None:
+        import dataclasses
+        from unittest.mock import MagicMock
+
+        from modex_agent.core.llm_struct import RuntimeSafetyPolicy
+        from modex_agent.core.session_id import SessionIdFactory
+        from modex_agent.core.tool_manager import InMemoryToolManager
+        from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
+        from modex_agent.multi_agent.template import AgentTemplate
+
+        pool = MagicMock()
+        pool.list_profiles.return_value = []
+        deps = AgentMaterializeDeps(
+            agent_factory=MagicMock(),
+            pool=pool,
+            session_factory=SessionIdFactory(),
+            broker=MagicMock(),
+            safety=RuntimeSafetyPolicy(),
+            llm_model="gpt-4o",
+            project_dir=None,
+        )
+        # Wire only what _register_send_to_agent reads.
+        deps = dataclasses.replace(
+            deps,
+            agent_bus=MagicMock(),
+            comm_tracker=None,
+            session_registry=None,
+            workspace_path_resolver=None,
+        )
+
+        tm = InMemoryToolManager()
+        AgentTemplate._register_send_to_agent(tm, deps, name="worker")
+
+        descriptions = tm.get_tool_descriptions()
+        send_tools = [d for d in descriptions if d["function"]["name"] == "send_to_agent"]
+        assert len(send_tools) == 1
+        params = send_tools[0]["function"]["parameters"]
+        assert "invocation_id" not in params.get("properties", {})
+        assert "invocation_id" not in params.get("required", [])

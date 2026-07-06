@@ -277,6 +277,7 @@ class TestAttachmentWiring:
         svc._pool_session_store = SimpleNamespace()  # truthy -> skip pool_router branch
         svc._transcript_store = SimpleNamespace()
         svc._session_factory = SimpleNamespace()
+        svc._model_choice_registry = None  # set by BotService.initialize(); unused here
         svc._app_config = SimpleNamespace(
             multi_agent=SimpleNamespace(default_pool="main")
         )

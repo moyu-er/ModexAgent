@@ -59,6 +59,31 @@ config/*.local.json
 config/model.yml
 !config/model.example.yml
 
+# IM adapter config (contains secrets; copy config/im.example.yml)
+config/im.yml
+!config/im.example.yml
+
+# MCP server registry (contains tokens/keys; copy config/mcp/registry.example.json)
+# Bootstrappable from the WebUI — absent registry == no MCP servers until you
+# add them via the Global MCP editor.
+config/mcp/registry.json
+!config/mcp/registry.example.json
+
+# Personal/local "main" pool — not shared via git (config + its agent prompts).
+# Only the template pools ("default", "coding") and shared prompts are committed.
+/config/pools/main/
+/agents/main.md
+/agents/query-12306.md
+
+# Per-agent skill ASSIGNMENTS (skills/<pool>/<agent>/<skill>/) are a runtime /
+# frontend concern — created on disk by the WebUI (as links into the library)
+# or by hand, never committed. Only the global_skills/ library is committed.
+# This keeps symlinks out of git and avoids duplicating the library per agent.
+# On a fresh checkout, agents have no assigned skills until you assign them via
+# the WebUI (the "frontend-configurable" bootstrapping model).
+/skills/main
+
+
 # Node
 node_modules/
 webui/node_modules/

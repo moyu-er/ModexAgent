@@ -20,7 +20,18 @@ from modex_agent.core.tool_manager import Tool
 from modex_agent.core.types import TodoStatus
 from modex_agent.runtime.store import TodoItem, TodoStore
 
-_ACTIVE_STATUSES = (TodoStatus.PENDING, TodoStatus.IN_PROGRESS)
+#: The statuses that count as "active" (still to be done). Shared single source
+#: of truth — ``todo_tool`` (dict view) and ``todo_probe`` (filter) both use it.
+ACTIVE_TODO_STATUSES: tuple[TodoStatus, ...] = (TodoStatus.PENDING, TodoStatus.IN_PROGRESS)
+
+#: Guidance prefix prepended to the active-view JSON in every tool result, so the
+#: model treats the list as an ordered work queue rather than a bare data dump.
+#: Shared by ``todo_write``/``todo_read`` (and therefore by the probe hook, whose
+#: injected ``todo_read`` call produces the same result).
+ACTIVE_VIEW_PREFIX = (
+    "Current unfinished tasks — work through them in the listed order "
+    "(mark each in_progress when you start it, completed/cancelled when done):"
+)
 
 
 def _active_view(items: list[TodoItem]) -> list[dict[str, str]]:
@@ -30,7 +41,18 @@ def _active_view(items: list[TodoItem]) -> list[dict[str, str]]:
     returns this for confirmation and todo_read returns this. Completed/cancelled
     items stay in the store but are never surfaced.
     """
-    return [t.to_dict() for t in items if t.status in _ACTIVE_STATUSES]
+    return [t.to_dict() for t in items if t.status in ACTIVE_TODO_STATUSES]
+
+
+def _active_view_text(items: list[TodoItem]) -> str:
+    """Render the active view as the tool-result string: the guidance prefix
+    followed by the active items as JSON. Returns bare ``"[]"`` when there are
+    no active items (nothing to direct the agent to, so no prefix).
+    """
+    active = _active_view(items)
+    if not active:
+        return "[]"
+    return f"{ACTIVE_VIEW_PREFIX}\n{json.dumps(active, ensure_ascii=False)}"
 
 
 def _resolve_session_id() -> str | None:
@@ -128,7 +150,7 @@ class TodoWriteTool(Tool):
         if err is not None:
             return f"Error: {err}"
         await self._store.save(session_id, items)
-        return json.dumps(_active_view(items), ensure_ascii=False)
+        return _active_view_text(items)
 
 
 class TodoReadTool(Tool):
@@ -159,4 +181,4 @@ class TodoReadTool(Tool):
         if session_id is None:
             return "Error: no active agent session."
         all_items = await self._store.get(session_id)
-        return json.dumps(_active_view(all_items), ensure_ascii=False)
+        return _active_view_text(all_items)

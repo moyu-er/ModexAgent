@@ -47,7 +47,6 @@ def build_qq(ctx: AdapterBuildContext):
     qq_input = QQInputAdapter(
         app_id=qq_cfg["app_id"],
         secret=qq_cfg["secret"],
-        sandbox=qq_cfg.get("sandbox", False),
         allow_from=qq_cfg.get("allow_from", ["*"]),
         project_dir=ctx.project_dir,
     )
@@ -99,9 +98,5 @@ def build_qq(ctx: AdapterBuildContext):
             config=QQEmitterConfig.minimal(),
         )
 
-    logger.info(
-        "QQ adapter: built (app_id=%s, sandbox=%s)",
-        qq_cfg["app_id"],
-        qq_cfg.get("sandbox", False),
-    )
+    logger.info("QQ adapter: built (app_id=%s)", qq_cfg["app_id"])
     return qq_input, _stripped_output, emitter_factory

@@ -45,7 +45,7 @@ class _FakeContext:
         self.attachments: list = []
         self.tool_manager = None
         self.temperature = 0.7
-        self.max_tokens = None
+        self.max_output_tokens = None
         self.session_id = "test-session"
         state = TurnStateBase(
             identity=TurnIdentity(agent_id="test", session=SessionInfo.from_str("s1"), turn_id="t1"),

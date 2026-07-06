@@ -60,7 +60,7 @@ export const TypewriterText: FC<TypewriterTextProps> = ({
     <span className={`${className} whitespace-pre-wrap break-words`}>
       {displayed}
       {isStreaming && (
-        <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse rounded-sm bg-ai-brand-light align-text-bottom dark:bg-ai-brand-dark" />
+        <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse rounded-sm bg-link align-text-bottom" />
       )}
     </span>
   );

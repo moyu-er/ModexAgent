@@ -1,7 +1,7 @@
 """Session cleanup function — prunes old messages and optionally archives them.
 
 This is a standalone async function that handles:
-1. Trigger check (token pressure: non-system session tokens exceed max_tokens * max_token_ratio)
+1. Trigger check (token pressure: non-system session tokens exceed max_context_tokens * max_token_ratio)
 2. Cleanup (sanitize tool chains, compute keep/prune boundary)
 3. Archive agent generation (context.md, knowledge.md, index.md)
 4. Pruned index refresh from archive index.md files
@@ -114,7 +114,7 @@ class _ArchiveOutcome:
 async def _prepare_cleanup_phase(
     session: SessionMemoryManager,
     context: MemoryContext,
-    max_tokens: int | None,
+    max_context_tokens: int | None,
     max_token_ratio: float,
     keep_ratio: float,
     max_backups: int,
@@ -131,7 +131,7 @@ async def _prepare_cleanup_phase(
     # Trigger on the ChatMessage objects directly (reads cached token_count +
     # role via .get). The full to_dict is deferred to after the trigger, so the
     # common under-budget path never serializes the session.
-    trigger_reason = _check_trigger(all_messages, estimator, max_tokens, max_token_ratio)
+    trigger_reason = _check_trigger(all_messages, estimator, max_context_tokens, max_token_ratio)
     if trigger_reason is None:
         return None
 
@@ -169,7 +169,7 @@ async def _prepare_cleanup_phase(
             pruned_messages=all_dicts,
         )
 
-    keep_target_tokens = max(1, int((max_tokens or 0) * keep_ratio))
+    keep_target_tokens = max(1, int((max_context_tokens or 0) * keep_ratio))
     keep_messages, pruned_messages = _compute_boundary(sanitized, keep_target_tokens, estimator)
 
     if not keep_messages:
@@ -539,7 +539,7 @@ async def cleanup_session(
     session: SessionMemoryManager,
     archive: ArchiveMemoryManager | None,
     context: MemoryContext,
-    max_tokens: int | None = None,
+    max_context_tokens: int | None = None,
     max_token_ratio: float = 0.85,
     keep_ratio: float = 0.3,
     max_backups: int = 10,
@@ -566,7 +566,7 @@ async def cleanup_session(
     plan = await _prepare_cleanup_phase(
         session,
         context,
-        max_tokens,
+        max_context_tokens,
         max_token_ratio,
         keep_ratio,
         max_backups,
@@ -708,10 +708,10 @@ def _sum_tokens(
 def _check_trigger(
     messages: Sequence[_MessageLike],
     estimator: TokenEstimator,
-    max_tokens: int | None,
+    max_context_tokens: int | None,
     max_token_ratio: float,
 ) -> CompressionReason | None:
-    """Fire compression when NON-SYSTEM session tokens exceed max_tokens * ratio.
+    """Fire compression when NON-SYSTEM session tokens exceed max_context_tokens * ratio.
 
     System-role tokens are excluded from session pressure (per ADR-0009): the
     system prompt size is hard to predict and is regulated separately by the
@@ -719,9 +719,9 @@ def _check_trigger(
     via ``.get``, so callers may pass ``ChatMessage`` objects without serializing
     them — the common under-budget path does zero ``to_dict`` work.
     """
-    if max_tokens is None:
+    if max_context_tokens is None:
         return None
-    threshold = max_tokens * max_token_ratio
+    threshold = max_context_tokens * max_token_ratio
     pressure = sum(
         _resolve_message_tokens(m, estimator)
         for m in messages

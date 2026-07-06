@@ -126,6 +126,33 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 - `SubagentAutoSendHook` auto-forwards subagent output to parent.
 - Session ID format: `{conversation_id}.{agent_name}[.{invocation_id}]` (via `DefaultSessionIdStrategy`).
 
+## Skills (global library + per-agent assignment)
+
+The global skill **library** has two sources, REPO PRIORITY:
+
+- `global_skills/<name>/` — the repo library (CRUD target: `upload_skill` /
+  `delete_skill` operate here only). A sibling of `skills/`, outside the
+  per-pool tree so it can never collide with a pool literally named "global".
+- `~/.agents/skills/<name>/` — user-installed skills (read-only augment; may
+  themselves be links). On a name clash the repo copy wins
+  (`SkillsStore._resolve_global_source`).
+
+Per-agent skill dirs live at `skills/<pool>/<agent>/<name>/`. Disk is the single
+source of truth: neither `pool.yml` nor the WebUI pool tree carries a `skills`
+field; the runtime `SkillManager` and the WebUI both read
+`skills/<pool>/<agent>/` directly. A per-agent dir may be either:
+
+- a **real copy** — committed in the repo for portability, or manually placed;
+  `unassign` removes it like any other dir, or
+- a **link** created by `assign` → the resolved global source (repo first, then
+  user home): a symlink on POSIX (relative target, portable) and on Windows
+  when the symlink privilege is available, falling back to a directory junction
+  (`mklink /J`, **no privilege / no Developer Mode needed**) otherwise.
+
+`assign` only ever creates a link into a global source (never a copy).
+`unassign` removes either shape. `SkillsStore._create_dir_link` / `_remove_link`
+are the converged seams; no platform preconditions on any OS.
+
 ## Todo Tools (main + coding pools)
 
 `todo_write` (full-replace) and `todo_read` (active-only: pending + in_progress) let the agent track a multi-step task list per session. The `TodoStore` is injected at registration in `pool_builder._build_tools` (same path-injection pattern as the experience tool); persisted to `<ws>/.modex/runtime_state/<pool>/todos/<session_id>.json` (ws+pool+session isolated).

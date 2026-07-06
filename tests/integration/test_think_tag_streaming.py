@@ -48,7 +48,7 @@ def _get_config() -> LLMConfig | None:
         api_key=api_key,
         base_url=base_url,
         temperature=0.1,
-        max_tokens=500,
+        max_output_tokens=500,
     )
 
 

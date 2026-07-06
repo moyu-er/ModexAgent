@@ -41,8 +41,13 @@ class AgentMaterializeDeps:
     comm_tracker: "CommunicationTracker | None" = None
     safety: "RuntimeSafetyPolicy | None" = None
     llm_model: str | None = None
+    # TODO(model-config-convergence): 模型调用参数 temperature/max_output_tokens 应只由
+    # LLMProvider 持有；此处经 descriptor/context 透传属冗余复制。待 ReactLlmClient
+    # 不再传这两参后，本字段/参数可连同 AgentContext.temperature/max_output_tokens、
+    # AgentLLMConfig、AgentMaterializeDeps 的同名字段一并删除。收敛目标见
+    # docs/superpowers/plans/2026-07-03-bot-multi-model.md §框架配置收敛后续。
     llm_temperature: float = 0.7
-    llm_max_tokens: int | None = None
+    llm_max_output_tokens: int | None = None
     project_dir: Path | None = None
     notification_service: "AgentNotificationService | None" = None
     inbox_consumer: "InboxConsumer | None" = None

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, waitFor, cleanup, fireEvent } from "@testing-library/react";
 import { changeWorkspace } from "../lib/api";
 import { Sidebar } from "./Sidebar";
+import { ToastProvider } from "./ToastContext";
 
 vi.mock("../lib/api", () => ({
   changeWorkspace: vi.fn(),
@@ -21,24 +22,26 @@ describe("Sidebar recent workspace click", () => {
 
   function renderSidebar(props: Partial<React.ComponentProps<typeof Sidebar>> = {}) {
     return render(
-      <Sidebar
-        sessionTree={[]}
-        pools={[{ name: "main" }]}
-        selected={null}
-        workspace="/home"
-        isHome
-        activePool="main"
-        recentWorkspaces={[{ path: "/ws_a" }, { path: "/ws_b" }]}
-        mobileOpen={false}
-        onCloseMobile={noop}
-        onSelect={noop}
-        onNew={noop}
-        onDelete={noop}
-        onWorkspaceChanged={noop}
-        onGoHome={noop}
-        onPoolChange={noop}
-        {...props}
-      />,
+      <ToastProvider>
+        <Sidebar
+          sessionTree={[]}
+          pools={[{ name: "main" }]}
+          selected={null}
+          workspace="/home"
+          isHome
+          activePool="main"
+          recentWorkspaces={[{ path: "/ws_a" }, { path: "/ws_b" }]}
+          mobileOpen={false}
+          onCloseMobile={noop}
+          onSelect={noop}
+          onNew={noop}
+          onDelete={noop}
+          onWorkspaceChanged={noop}
+          onGoHome={noop}
+          onPoolChange={noop}
+          {...props}
+        />
+      </ToastProvider>,
     );
   }
 

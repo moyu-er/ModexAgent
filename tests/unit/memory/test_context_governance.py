@@ -158,7 +158,7 @@ async def test_token_budget_snips_from_start():
         {"role": str(MessageRole.USER), "content": "z" * 500},
     ]
     gov = TokenBudgetGovernance(
-        max_tokens=200, safety_buffer=0, token_estimator=_LenStrEstimator()
+        max_context_tokens=200, safety_buffer=0, token_estimator=_LenStrEstimator()
     )
     result = await gov.apply(messages)
 
@@ -181,7 +181,7 @@ async def test_token_budget_keeps_user_start():
         {"role": str(MessageRole.USER), "content": "u"},
     ]
     gov = TokenBudgetGovernance(
-        max_tokens=30, safety_buffer=0, token_estimator=_LenStrEstimator()
+        max_context_tokens=30, safety_buffer=0, token_estimator=_LenStrEstimator()
     )
     result = await gov.apply(messages)
 
@@ -193,7 +193,7 @@ async def test_token_budget_keeps_user_start():
 @pytest.mark.asyncio
 async def test_token_budget_empty_input():
     """空消息列表返回空列表."""
-    gov = TokenBudgetGovernance(max_tokens=100)
+    gov = TokenBudgetGovernance(max_context_tokens=100)
     result = await gov.apply([])
     assert result == []
 
@@ -408,7 +408,7 @@ async def test_all_strategies_return_copies():
     configs = {
         ToolChainRepairGovernance: {},
         MicrocompactGovernance: {},
-        TokenBudgetGovernance: {"max_tokens": 100},
+        TokenBudgetGovernance: {"max_context_tokens": 100},
         LossyContentCompactionGovernance: {"tool_result_head_chars": 10},
     }
     for Gov, kwargs in configs.items():
@@ -542,7 +542,7 @@ async def test_token_budget_governance_uses_injected_estimator() -> None:
         def estimate_text(self, text: str) -> int:
             return 5
 
-    gov = TokenBudgetGovernance(max_tokens=100, token_estimator=FixedEst())
+    gov = TokenBudgetGovernance(max_context_tokens=100, token_estimator=FixedEst())
     msgs = [{"role": "user", "content": "x"}, {"role": "user", "content": "y"}]
     out = await gov.apply(msgs)
     assert isinstance(out, list)

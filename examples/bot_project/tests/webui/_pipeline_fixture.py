@@ -7,11 +7,25 @@ from unittest.mock import MagicMock
 from bot.input_pipeline.assembly import build_webui_pipeline
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.skill_parse import ParsedSkill, SkillRegistry
+from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
 
 
 class _NoSkillRegistry(SkillRegistry):
     async def resolve(self, pool: str, name: str, content: str) -> ParsedSkill | None:
         return None
+
+
+def _bot_model_config() -> BotModelConfig:
+    return BotModelConfig(
+        default_provider="A",
+        default_model="M1",
+        providers=[
+            ProviderCfg(
+                key="a", name="A", url="u", api_key="k",
+                models=[ModelCfg(name="M1", model="m1")],
+            )
+        ],
+    )
 
 
 def attach_default_pipeline(
@@ -23,7 +37,9 @@ def attach_default_pipeline(
     workspace_root: Path | None = None,
 ) -> None:
     agent_pool_map = agent_pool_map or {"main": "main", "coding": "coding"}
-    pipe = build_webui_pipeline(skill_registry=_NoSkillRegistry())
+    pipe = build_webui_pipeline(
+        skill_registry=_NoSkillRegistry(), bot_model_config=_bot_model_config()
+    )
     if pool_session_store is None:
         pool_session_store = MagicMock()
         pool_session_store.get = lambda key, default=None: default

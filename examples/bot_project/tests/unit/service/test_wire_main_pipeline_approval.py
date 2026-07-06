@@ -15,12 +15,15 @@ contract; the function has no role-based branching to regress.
 from __future__ import annotations
 
 import sys
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
 # Bot tests resolve ``bot.*`` via the repo root inserted into sys.path.
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
+from bot.service.model_choice import ModelChoiceRegistry
+from bot.service.model_config import BotModelConfig
 from bot.service.pool_builder import _wire_main_pipeline
 
 from modex_agent.agents.react.approval import ApprovalRuntime, TieredToolApprovalClassifier
@@ -33,6 +36,25 @@ from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.ioc.configs.pool import PoolConfig
 from modex_agent.pipeline.pipeline import AgentPipeline
 from modex_agent.runtime.services import AgentRuntimeServices
+
+_YML = """
+models:
+  default_provider: "A"
+  default_model: "M1"
+  providers:
+    - {key: a, name: "A", url: u, api_key: k, models: [{name: M1, model: openai/m1}]}
+"""
+
+
+def _bot_model_config() -> BotModelConfig:
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "model.yml"
+        p.write_text(_YML, encoding="utf-8")
+        return BotModelConfig.from_yaml(p)
+
+
+_BOT_CFG = _bot_model_config()
+_REGISTRY = ModelChoiceRegistry()
 
 
 class _InputAdapter:
@@ -91,6 +113,20 @@ def _make_pipeline() -> AgentPipeline:
     )
 
 
+def _make_todo_store():
+    """A real ``JsonFileTodoStore`` on a temp dir for the probe-hook wiring.
+
+    Required because ``_wire_main_pipeline`` now constructs
+    ``TodoCompletionProbeHook(store=..., tool_manager=...)`` from the
+    collaborator instances we pass in.
+    """
+    from tempfile import TemporaryDirectory
+
+    from modex_agent.runtime.store import JsonFileTodoStore
+
+    return JsonFileTodoStore(Path(TemporaryDirectory().name))
+
+
 def _make_pool_cfg(*, approval: ApprovalConfig | None) -> PoolConfig:
     main_cfg = AgentConfig(
         name="main",
@@ -98,7 +134,7 @@ def _make_pool_cfg(*, approval: ApprovalConfig | None) -> PoolConfig:
         llm=LLMConfig(),
         approval=approval,
     )
-    return PoolConfig(llm=LLMConfig(), agents=[main_cfg])
+    return PoolConfig(name="main", main_agent_name="main", llm=LLMConfig(), agents=[main_cfg])
 
 
 def _wire(*, approval: ApprovalConfig | None) -> AgentPipeline:
@@ -115,6 +151,10 @@ def _wire(*, approval: ApprovalConfig | None) -> AgentPipeline:
         project_dir=Path("/proj"),
         command_processor=None,  # exercise the default branch
         pool_name="main",
+        todo_store=_make_todo_store(),
+        tool_manager=InMemoryToolManager(),
+        bot_model_config=_BOT_CFG,
+        model_choice_registry=_REGISTRY,
     )
     return pipeline
 
@@ -195,7 +235,11 @@ def test_wired_classifier_anchors_to_live_workspace_root() -> None:
         project_dir=project_dir,
         command_processor=None,
         pool_name="main",
+        todo_store=_make_todo_store(),
+        tool_manager=InMemoryToolManager(),
         root_provider=_Provider(),
+        bot_model_config=_BOT_CFG,
+        model_choice_registry=_REGISTRY,
     )
 
     classifier = pipeline.runtime_services.approval.classifier

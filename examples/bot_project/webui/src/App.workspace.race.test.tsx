@@ -12,6 +12,7 @@ vi.mock("./lib/api", () => ({
   fetchSessions: vi.fn(),
   fetchPools: vi.fn(),
   fetchWorkspace: vi.fn(),
+  fetchModels: vi.fn().mockResolvedValue({ choices: [] }),
   deleteConversation: vi.fn(),
   changeWorkspace: vi.fn(),
   browseWorkspace: vi.fn(),

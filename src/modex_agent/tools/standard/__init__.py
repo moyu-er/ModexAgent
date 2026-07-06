@@ -13,7 +13,8 @@ from .file_tool import (
     WriteFileTool,
 )
 from .search_tool import FindFilesTool, SearchFilesTool
-from .todo_tool import TodoReadTool, TodoWriteTool
+from .todo_tool import ACTIVE_TODO_STATUSES, TodoReadTool, TodoWriteTool
+from .todo_probe import TodoCompletionProbeHook
 
 __all__ = [
     "ReadFileTool",
@@ -24,4 +25,6 @@ __all__ = [
     "FindFilesTool",
     "TodoWriteTool",
     "TodoReadTool",
+    "TodoCompletionProbeHook",
+    "ACTIVE_TODO_STATUSES",
 ]

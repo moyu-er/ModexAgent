@@ -9,6 +9,7 @@ import pytest
 from bot.input_pipeline.assembly import build_im_pipeline, build_webui_pipeline
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.skill_parse import ParsedSkill, SkillRegistry
+from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import UserMessageEvent
 from modex_agent.core.session_id import SessionIdFactory, encode_snowflake
@@ -25,6 +26,19 @@ def _sid(agent: str, conv: str) -> str:
 class _NoSkill(SkillRegistry):
     async def resolve(self, pool: str, name: str, content: str) -> ParsedSkill | None:
         return None
+
+
+def _bot_model_config() -> BotModelConfig:
+    return BotModelConfig(
+        default_provider="A",
+        default_model="M1",
+        providers=[
+            ProviderCfg(
+                key="a", name="A", url="u", api_key="k",
+                models=[ModelCfg(name="M1", model="m1")],
+            )
+        ],
+    )
 
 
 class _FakeSkill(SkillRegistry):
@@ -105,7 +119,9 @@ async def test_webui_explicit_coding_pool_persisted_to_coding() -> None:
             store.set_agent_pool_map({"coding": "coding"})
             enqueued: list[InputMessage] = []
             ctx = _make_ctx(store, enqueued)
-            pipe = build_webui_pipeline(skill_registry=_NoSkill())
+            pipe = build_webui_pipeline(
+                skill_registry=_NoSkill(), bot_model_config=_bot_model_config()
+            )
             env = UserInputEnvelope(
                 external_id="uuid1",
                 content="hi",
@@ -166,7 +182,9 @@ async def test_webui_continue_command_rejected() -> None:
             store.set_agent_pool_map({"main": "main"})
             enqueued: list[InputMessage] = []
             ctx = _make_ctx(store, enqueued)
-            pipe = build_webui_pipeline(skill_registry=_NoSkill())
+            pipe = build_webui_pipeline(
+                skill_registry=_NoSkill(), bot_model_config=_bot_model_config()
+            )
             env = UserInputEnvelope(
                 external_id="uuid1",
                 content="/continue",
@@ -348,7 +366,9 @@ async def test_webui_invalid_skill_terminates_not_persisted() -> None:
             store.set_agent_pool_map({"main": "main"})
             enqueued: list[InputMessage] = []
             ctx = _make_ctx(store, enqueued)
-            pipe = build_webui_pipeline(skill_registry=_NoSkill())
+            pipe = build_webui_pipeline(
+                skill_registry=_NoSkill(), bot_model_config=_bot_model_config()
+            )
             env = UserInputEnvelope(
                 external_id="uuid1",
                 content="/nosuch thing",
@@ -408,7 +428,9 @@ async def test_multi_channel_pool_isolation() -> None:
                 command_adapter=cmd_adapter_ws,
                 current_ws_provider=(lambda r=root: r),
             )
-            pipe_ws = build_webui_pipeline(skill_registry=_NoSkill())
+            pipe_ws = build_webui_pipeline(
+                skill_registry=_NoSkill(), bot_model_config=_bot_model_config()
+            )
 
             # IM switches pool to "coding" via /coding command
             env_im = UserInputEnvelope(external_id="u1", content="/coding", channel="qq")
@@ -448,7 +470,9 @@ async def test_webui_slash_cd_produces_error_not_enqueued() -> None:
             store.set_agent_pool_map({"main": "main"})
             enqueued: list[InputMessage] = []
             ctx = _make_ctx(store, enqueued)
-            pipe = build_webui_pipeline(skill_registry=_NoSkill())
+            pipe = build_webui_pipeline(
+                skill_registry=_NoSkill(), bot_model_config=_bot_model_config()
+            )
             env = UserInputEnvelope(
                 external_id="uuid1",
                 content="/cd /tmp",
@@ -586,7 +610,9 @@ async def test_skill_pool_isolation_webui() -> None:
                 "main": {"brainstorming"},
                 "coding": {"office-expert"},
             })
-            pipe = build_webui_pipeline(skill_registry=registry)
+            pipe = build_webui_pipeline(
+                skill_registry=registry, bot_model_config=_bot_model_config()
+            )
 
             # WebUI with explicit_pool="coding" — /office-expert should work
             env = UserInputEnvelope(

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from modex_agent.core.tool_manager import InMemoryToolManager, Tool, ToolManagerConfig
 from modex_agent.ioc.configs.mcp import MCPConfig
+from modex_agent.tools.mcp_adapter import MCPToolAdapter
 
 
 async def connect_mcp(
@@ -25,13 +26,16 @@ async def connect_mcp(
         return None
 
     from modex_agent.tools.mcp import MCPClientManager
-    from modex_agent.tools.mcp_adapter import MCPToolAdapter
+    from modex_agent.tools.mcp.injector import JsonFileMCPTransportInjector
 
     servers_dict: dict[str, object] = {
         name: entry.model_dump(exclude_none=True) for name, entry in mcp_config.servers.items()
     }
 
-    manager = MCPClientManager(config=servers_dict)
+    manager = MCPClientManager(
+        config=servers_dict,
+        injector=JsonFileMCPTransportInjector(),
+    )
     await manager.initialize()
 
     return MCPToolAdapter(
@@ -61,7 +65,7 @@ async def register_mcp_tools(
     registry = ToolRegistry()
     names = await adapter.register_tools(registry=registry)
     for name in names:
-        tool = registry.get(name)
+        tool = registry.tools.get(name)
         if tool is not None:
             tool_manager.register(tool)
     return names

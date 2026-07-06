@@ -47,7 +47,7 @@ def _write_config_tree(tmp: Path, *, pool_llm: str | None, with_model: bool) -> 
             "  capabilities: [text, image]\n",
             encoding="utf-8",
         )
-    pool = "agents:\n  - name: main\n    role: main\n"
+    pool = "name: main\nmain_agent_name: main\nagents:\n  - name: main\n    role: main\n"
     if pool_llm is not None:
         pool = pool_llm + pool
     (tmp / "pools" / "main" / "pool.yml").write_text(pool, encoding="utf-8")

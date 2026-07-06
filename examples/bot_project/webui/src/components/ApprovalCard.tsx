@@ -1,5 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ApprovalRequestView } from "../types/events";
+import { Button } from "./ui/Button";
+import { ChevronDownIcon } from "./ui/icons";
 
 interface Props {
   view: ApprovalRequestView;
@@ -15,18 +17,17 @@ interface Props {
 const PREVIEW_MAX_LINES = 3;
 
 // Severity-tier badge styling. Each tier gets a calm, low-saturation accent so
-// the higher tiers read as serious without glaring. Light/dark variants follow
-// the severity token convention (-light = light-mode text, -dark = dark-mode
-// text). Unknown tiers fall back to `normal`.
+// the higher tiers read as serious without glaring. Unknown tiers fall back to
+// `normal`.
 const TIER_BADGE: Record<string, string> = {
   normal:
-    "border-severity-normal-light/40 bg-severity-normal-light/10 text-severity-normal-light dark:border-severity-normal-dark/40 dark:bg-severity-normal-dark/10 dark:text-severity-normal-dark",
+    "border-severity-normal/40 bg-severity-normal/10 text-severity-normal",
   sensitive:
-    "border-severity-sensitive-light/40 bg-severity-sensitive-light/10 text-severity-sensitive-light dark:border-severity-sensitive-dark/40 dark:bg-severity-sensitive-dark/10 dark:text-severity-sensitive-dark",
+    "border-severity-sensitive/40 bg-severity-sensitive/10 text-severity-sensitive",
   dangerous:
-    "border-severity-dangerous-light/40 bg-severity-dangerous-light/10 text-severity-dangerous-light dark:border-severity-dangerous-dark/40 dark:bg-severity-dangerous-dark/10 dark:text-severity-dangerous-dark",
+    "border-severity-dangerous/40 bg-severity-dangerous/10 text-severity-dangerous",
   hardline:
-    "border-severity-hardline-light/40 bg-severity-hardline-light/10 text-severity-hardline-light dark:border-severity-hardline-dark/40 dark:bg-severity-hardline-dark/10 dark:text-severity-hardline-dark",
+    "border-severity-hardline/40 bg-severity-hardline/10 text-severity-hardline",
 };
 
 /** Inline pending-approval card. Shows tool name + tier and per-card
@@ -72,7 +73,7 @@ export function ApprovalCard({ view, onApprove, onDeny, disabled }: Props) {
   const badgeClass = TIER_BADGE[view.tier] ?? TIER_BADGE.normal;
 
   return (
-    <div className="my-2 overflow-hidden rounded-lg border border-card-border-light bg-content-bg-light dark:border-card-border-dark dark:bg-content-bg-dark">
+    <div className="my-2 overflow-hidden rounded-md border border-hairline bg-canvas-elevated">
       <div className="p-3">
         <div className="flex items-center gap-2 text-sm">
           <span
@@ -80,42 +81,42 @@ export function ApprovalCard({ view, onApprove, onDeny, disabled }: Props) {
           >
             {view.tier}
           </span>
-          <span className="font-mono font-semibold text-text-primary-light dark:text-text-primary-dark">
+          <span className="font-mono font-semibold text-ink">
             {view.tool_name}
           </span>
-          <span className="text-xs text-text-secondary-light dark:text-text-secondary-dark">
+          <span className="text-xs text-mute">
             awaiting approval
           </span>
         </div>
 
         <div className="mt-3 flex gap-2">
-          <button
-            type="button"
+          <Button
+            variant="primary"
+            size="sm"
             disabled={disabled}
             onClick={() => onApprove(view.tool_call_id)}
-            className="rounded border border-approve-light/50 px-3 py-1 text-sm font-medium text-approve-light transition-colors hover:bg-approve-light/10 disabled:cursor-not-allowed disabled:opacity-50 dark:border-approve-dark/50 dark:text-approve-dark dark:hover:bg-approve-dark/10"
           >
             Approve
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
             disabled={disabled}
             onClick={() => onDeny(view.tool_call_id)}
-            className="rounded border border-deny-light/50 px-3 py-1 text-sm font-medium text-deny-light transition-colors hover:bg-deny-light/10 disabled:cursor-not-allowed disabled:opacity-50 dark:border-deny-dark/50 dark:text-deny-dark dark:hover:bg-deny-dark/10"
           >
             Deny All
-          </button>
+          </Button>
         </div>
       </div>
 
       {/* Tool arguments: clamped to the first few wrapped lines by default,
           full content when expanded. line-clamp counts visual lines, so a
           single very long value wraps and is truncated too. */}
-      <div className="border-t border-divider-light bg-code-bg-light px-3 py-2 dark:border-divider-dark dark:bg-code-bg-dark">
+      <div className="border-t border-hairline bg-canvas px-3 py-2">
         <pre
           ref={preRef}
           className={
-            "whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-text-body-light dark:text-text-body-dark" +
+            "whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-body" +
             (expanded ? "" : " line-clamp-3")
           }
         >
@@ -130,22 +131,14 @@ export function ApprovalCard({ view, onApprove, onDeny, disabled }: Props) {
           onClick={toggle}
           aria-expanded={expanded}
           aria-label={expanded ? "Collapse arguments" : "Expand arguments"}
-          className="flex w-full items-center justify-center gap-1 border-t border-divider-light py-1 text-[11px] text-text-secondary-light transition-colors hover:bg-sidebar-hover-light dark:border-divider-dark dark:text-text-secondary-dark dark:hover:bg-sidebar-hover-dark"
-        >
-          <span>{expanded ? "Show less" : "Show more"}</span>
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            className={"transition-transform duration-200" + (expanded ? " rotate-180" : "")}
+            className="flex w-full items-center justify-center gap-1 border-t border-hairline py-1 text-[11px] text-mute transition-colors hover:bg-hairline-soft"
           >
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
-        </button>
+            <span>{expanded ? "Show less" : "Show more"}</span>
+            <ChevronDownIcon
+              open={expanded}
+              className="transition-transform duration-200"
+            />
+          </button>
       )}
     </div>
   );

@@ -32,7 +32,6 @@ class QQBotService(BotService):
 
         # IOC config — primary config source
         app_cfg = AppConfig.from_yaml(yaml_path)
-        print(f"[IOC] Loaded: {len(app_cfg.agents)} agents, MCP={app_cfg.mcp is not None}")
 
         # QQ adapter config (business layer)
         config_loader = ConfigLoader(config_dir)
@@ -42,7 +41,6 @@ class QQBotService(BotService):
         input_adapter = QQInputAdapter(
             app_id=qq_cfg["app_id"],
             secret=qq_cfg["secret"],
-            sandbox=qq_cfg.get("sandbox", False),
             allow_from=qq_cfg.get("allow_from", ["*"]),
         )
         qq_output_adapter = QQOutputAdapter(input_adapter)

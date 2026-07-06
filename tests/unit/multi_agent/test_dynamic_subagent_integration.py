@@ -26,7 +26,7 @@ def test_template_to_descriptor_pipeline():
     with tempfile.TemporaryDirectory() as tmp:
         project = Path(tmp)
         _write_files(project, "main", "helper",
-            "agent_type: helper\ndescription: Test helper\nmax_steps: 15\n",
+            "agent_name: helper\ndescription: Test helper\nmax_steps: 15\n",
             "You are a helpful assistant."
         )
 
@@ -35,7 +35,7 @@ def test_template_to_descriptor_pipeline():
         assert len(templates) == 1
 
         t = templates[0]
-        assert t.agent_type == "helper"
+        assert t.agent_name == "helper"
         assert t.max_steps == 15
 
         # System prompt resolution (same convention as resolve_system_prompt)
@@ -70,36 +70,50 @@ def test_multiple_templates_per_pool():
     """Multiple templates in one pool are all loaded."""
     with tempfile.TemporaryDirectory() as tmp:
         project = Path(tmp)
-        _write_files(project, "main", "a", "agent_type: a\ndescription: ''\n", "A")
-        _write_files(project, "main", "b", "agent_type: b\ndescription: ''\n", "B")
+        _write_files(project, "main", "a", "agent_name: a\ndescription: ''\n", "A")
+        _write_files(project, "main", "b", "agent_name: b\ndescription: ''\n", "B")
 
         registry = AgentTemplateRegistry(project)
         templates = registry.list_templates("main")
         assert len(templates) == 2
-        types = {t.agent_type for t in templates}
+        types = {t.agent_name for t in templates}
         assert types == {"a", "b"}
 
 
-def test_template_with_memory_config():
-    """Template with memory configuration is loaded correctly."""
+def test_template_memory_is_baked_not_from_yaml():
+    """A template carrying a ``memory:`` block is REJECTED — subagent memory is
+    baked (sub-minimal, immutable, spec §9). The factory's default is the sole
+    source of truth; a stale/hand-edited rich block can never override it."""
     with tempfile.TemporaryDirectory() as tmp:
         project = Path(tmp)
         yml = """\
-agent_type: heavy
+agent_name: heavy
 description: Heavy task agent
 max_steps: 50
 memory:
-  short_term: {max_tokens: 50000}
+  short_term: {max_context_tokens: 50000}
 """
         _write_files(project, "main", "heavy", yml, "Heavy agent.")
-
+        # A memory block is no longer an accepted key → load fails loud (logged)
+        # and the template is not registered.
         registry = AgentTemplateRegistry(project)
-        t = registry.get_template("main", "heavy")
+        assert registry.get_template("main", "heavy") is None
+
+
+def test_template_memory_baked_from_factory_default():
+    """A template WITHOUT a memory block gets the factory's baked preset,
+    identity-equal (the loader stores it directly, never re-validates)."""
+    from modex_agent.ioc.configs.memory import MemoryConfig
+
+    baked = MemoryConfig()
+    with tempfile.TemporaryDirectory() as tmp:
+        project = Path(tmp)
+        yml = "agent_name: light\ndescription: light\n"
+        _write_files(project, "main", "light", yml, "Light agent.")
+        registry = AgentTemplateRegistry(project, default_subagent_memory=baked)
+        t = registry.get_template("main", "light")
         assert t is not None
-        assert t.max_steps == 50
-        assert t.memory is not None
-        # short_term migrates to session; only max_tokens survives.
-        assert t.memory.session.max_tokens == 50000
+        assert t.memory is baked
 
 
 def test_template_not_found_returns_none():

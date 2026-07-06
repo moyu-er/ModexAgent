@@ -4,13 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from modex_agent.ioc.configs.agent import AgentConfig
 from modex_agent.ioc.configs.llm import LLMConfig
-from modex_agent.ioc.configs.mcp import MCPConfig
 from modex_agent.ioc.configs.memory import MemoryConfig
-from modex_agent.ioc.configs.skills import SkillsConfig
 
 # ---------------------------------------------------------------------------
 # Byte-unit constant — single source of truth.
@@ -40,32 +38,20 @@ class MediaConfig:
     max_outbound_bytes: int = _GB
 
 
-class TerminalConfig(BaseModel):
-    """Per-pool terminal settings."""
-
-    storage_dir: str = "data/terminals"
-    max_terminals: int = 5
-
-
 class PoolConfig(BaseModel):
     """Configuration for one agent pool.
 
-    Pool identity = name of the agent with role='main'.
+    ``name`` is the pool's directory-name identity (the pool key). It is
+    decoupled from ``main_agent_name`` (the agent with ``role="main"``) so
+    a pool directory can hold a main agent whose name differs from the
+    directory. Both must be declared explicitly.
     """
 
-    model_config = {"extra": "ignore"}
+    model_config = ConfigDict(extra="forbid")
 
+    name: str
+    main_agent_name: str
     llm: LLMConfig
     agents: list[AgentConfig] = Field(default_factory=list)
-    mcp: MCPConfig | None = None
     memory: MemoryConfig | None = None
-    skills: SkillsConfig | None = None
-    terminal: TerminalConfig = Field(default_factory=TerminalConfig)
     media: MediaConfig = Field(default_factory=MediaConfig)
-
-    @property
-    def main_agent_name(self) -> str:
-        for a in self.agents:
-            if a.role == "main":
-                return a.name
-        raise ValueError("Pool must have exactly one agent with role='main'")

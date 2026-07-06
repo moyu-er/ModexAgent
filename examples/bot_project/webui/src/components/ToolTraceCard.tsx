@@ -1,5 +1,6 @@
 import { useState, type FC } from "react";
 import type { ToolTrace } from "../types/events";
+import { ChevronToggleIcon, WrenchIcon } from "./ui/icons";
 
 export interface ToolTraceCardProps {
   tool: ToolTrace;
@@ -19,33 +20,31 @@ export const ToolTraceCard: FC<ToolTraceCardProps> = ({ tool }) => {
       <button
         type="button"
         onClick={toggle}
-        className="flex w-full items-center gap-1 text-left text-xs font-medium text-text-secondary-light transition-colors hover:text-text-primary-light dark:text-text-secondary-dark dark:hover:text-text-primary-dark"
+        className="flex w-full items-center gap-1 text-left text-xs font-medium text-mute transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-link/50"
       >
-        <span className="inline-block text-[10px] transition-transform duration-150">
-          {expanded ? "▼" : "▸"}
-        </span>
-        <span className="mr-1 text-[11px]">🔧</span>
+        <ChevronToggleIcon open={expanded} />
+        <WrenchIcon className="mr-1" />
         <span className="font-mono">{tool.tool}</span>
         {tool.result !== undefined && (
-          <span className="ml-auto text-[10px] text-success-light dark:text-success-dark">done</span>
+          <span className="ml-auto text-[10px] text-success">done</span>
         )}
       </button>
       {expanded && (
-        <div className="mt-1.5 ml-5 rounded border border-code-border-light bg-code-bg-light p-3 dark:border-code-border-dark dark:bg-code-bg-dark">
+        <div className="mt-1.5 ml-5 rounded border border-hairline bg-canvas p-3">
           <div className="mb-2">
-            <span className="text-[10px] font-semibold uppercase text-text-secondary-light dark:text-text-secondary-dark">
+            <span className="text-[10px] font-semibold uppercase text-mute">
               Args
             </span>
-            <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-xs text-text-body-light dark:text-text-body-dark">
+            <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-xs text-body">
               {argsStr}
             </pre>
           </div>
           {tool.result !== undefined && (
             <div>
-              <span className="text-[10px] font-semibold uppercase text-text-secondary-light dark:text-text-secondary-dark">
+              <span className="text-[10px] font-semibold uppercase text-mute">
                 Result
               </span>
-              <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-xs text-text-primary-light dark:text-text-primary-dark">
+              <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-xs text-ink">
                 {tool.result}
               </pre>
             </div>

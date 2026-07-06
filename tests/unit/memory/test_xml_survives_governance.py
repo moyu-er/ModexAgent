@@ -68,7 +68,7 @@ async def test_system_messages_skip_all_truncation():
             tool_result_head_chars=100,
             assistant_head_chars=100,
         ),
-        TokenBudgetGovernance(max_tokens=100000),
+        TokenBudgetGovernance(max_context_tokens=100000),
     ])
     system_content = "<supplementary-context><content>" + ("x" * 5000) + "</content></supplementary-context>"
     messages = [

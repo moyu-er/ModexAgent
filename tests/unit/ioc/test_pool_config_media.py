@@ -36,6 +36,8 @@ class TestMediaConfigDefaults:
 class TestPoolConfigMediaWiring:
     def _make(self, media: MediaConfig | None = None) -> PoolConfig:
         kwargs: dict = {
+            "name": "main",
+            "main_agent_name": "main",
             "llm": LLMConfig(model="test", api_key="k"),
             "agents": [AgentConfig(name="main", role="main")],
         }

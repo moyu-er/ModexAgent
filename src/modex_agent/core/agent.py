@@ -61,8 +61,13 @@ class AgentContext:
     session: SessionInfo
     comm_kind: AgentCommKind | None = None
     max_iterations: int = 10
+    # TODO(model-config-convergence): 模型调用参数 temperature/max_output_tokens 应只由
+    # LLMProvider 持有；此处经 descriptor/context 透传属冗余复制。待 ReactLlmClient
+    # 不再传这两参后，本字段/参数可连同 AgentContext.temperature/max_output_tokens、
+    # AgentLLMConfig、AgentMaterializeDeps 的同名字段一并删除。收敛目标见
+    # docs/superpowers/plans/2026-07-03-bot-multi-model.md §框架配置收敛后续。
     temperature: float | None = None
-    max_tokens: int | None = None
+    max_output_tokens: int | None = None
     attachments: list[str] = field(default_factory=list)
     emitter: ContentEmitter | None = None
     runtime: AgentRuntime | None = None

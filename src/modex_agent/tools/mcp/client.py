@@ -11,6 +11,7 @@ from enum import StrEnum
 from typing import Any
 
 import httpx
+from mcp import ClientSession
 from mcp.shared.exceptions import McpError
 
 _logger = logging.getLogger(__name__)
@@ -45,7 +46,7 @@ class BaseMCPClient(ABC):
 
     def __init__(self, name: str) -> None:
         self.name = name
-        self.session = None
+        self.session: ClientSession | None = None
         self._tools: list[dict[str, Any]] = []
         self._initialized = False
         self._managed_externally = False
@@ -160,7 +161,7 @@ class BaseMCPClient(ABC):
             )
         except TimeoutError:
             _logger.debug("[MCP:%s] Tool '%s' timed out after %ds", self.name, tool_name, timeout)
-            return {"success": False, "error": "Tool call timed out after %ds" % timeout}
+            return {"success": False, "error": f"Tool call timed out after {timeout:d}s"}
         except asyncio.CancelledError:
             task = asyncio.current_task()
             if task is not None and task.cancelling() > 0:
@@ -177,7 +178,7 @@ class BaseMCPClient(ABC):
             )
             return {
                 "success": False,
-                "error": "MCP error [%s]: %s" % (exc.error.code, exc.error.message),
+                "error": f"MCP error [{exc.error.code}]: {exc.error.message}",
             }
         except Exception as e:
             _logger.debug(
@@ -218,12 +219,12 @@ class BaseMCPClient(ABC):
 
         try:
             result = await asyncio.wait_for(
-                self.session.read_resource(uri),
+                self.session.read_resource(uri),  # type: ignore[arg-type]
                 timeout=timeout,
             )
         except TimeoutError:
             _logger.debug("[MCP:%s] Resource '%s' timed out after %ds", self.name, uri, timeout)
-            return {"success": False, "error": "Resource read timed out after %ds" % timeout}
+            return {"success": False, "error": f"Resource read timed out after {timeout:d}s"}
         except asyncio.CancelledError:
             task = asyncio.current_task()
             if task is not None and task.cancelling() > 0:
@@ -240,7 +241,7 @@ class BaseMCPClient(ABC):
             )
             return {
                 "success": False,
-                "error": "MCP error [%s]: %s" % (exc.error.code, exc.error.message),
+                "error": f"MCP error [{exc.error.code}]: {exc.error.message}",
             }
         except Exception as e:
             _logger.debug(
@@ -253,7 +254,7 @@ class BaseMCPClient(ABC):
             if hasattr(block, "text"):
                 parts.append(block.text)
             elif hasattr(block, "blob"):
-                parts.append("[Binary resource: %d bytes]" % len(block.blob))
+                parts.append(f"[Binary resource: {len(block.blob)} bytes]")
             else:
                 parts.append(str(block))
 
@@ -281,7 +282,7 @@ class BaseMCPClient(ABC):
             _logger.debug(
                 "[MCP:%s] Prompt '%s' timed out after %ds", self.name, prompt_name, timeout
             )
-            return {"success": False, "error": "Prompt call timed out after %ds" % timeout}
+            return {"success": False, "error": f"Prompt call timed out after {timeout:d}s"}
         except asyncio.CancelledError:
             task = asyncio.current_task()
             if task is not None and task.cancelling() > 0:
@@ -298,7 +299,7 @@ class BaseMCPClient(ABC):
             )
             return {
                 "success": False,
-                "error": "MCP error [%s]: %s" % (exc.error.code, exc.error.message),
+                "error": f"MCP error [{exc.error.code}]: {exc.error.message}",
             }
         except Exception as e:
             _logger.debug(

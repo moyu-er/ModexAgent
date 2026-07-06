@@ -122,12 +122,35 @@ class TestStoreDescription:
 
 class TestStoreSubagentDescription:
     def test_subagent_description_shows_parent_name_only(self) -> None:
-        """Subagent only needs parent name — no kind, no description."""
+        """Subagent description echoes the parent NAME resolved from the
+        contextvar (not a static add()), and never leaks kind/description."""
+        from modex_agent.core.agent import AgentContext, current_agent_context
+        from modex_agent.core.session_id import SessionInfo
+        from modex_agent.memory.history import ListMessageHistory
+        from modex_agent.core.tool_manager import InMemoryToolManager
+
+        ctx = AgentContext(
+            system_prompt="",
+            history=ListMessageHistory([]),
+            tool_manager=InMemoryToolManager(),
+            session=SessionInfo(
+                session_id="conv-1.worker",
+                agent_name="worker",
+                parent_session_id="conv-1.main",
+            ),
+        )
         store = CommunicationTargetStore(for_subagent=True)
+        # Static adds must NOT influence the subagent description.
         store.add(_normal("main", "AI assistant"))
-        desc = store.description
-        assert "main" in desc
-        # Must NOT leak kind or description
+
+        token = current_agent_context.set(ctx)
+        try:
+            desc = store.description
+        finally:
+            current_agent_context.reset(token)
+
+        assert "'main'" in desc  # parent name echoed from contextvar
+        # Must NOT leak kind or the static description
         assert "normal" not in desc
         assert "AI assistant" not in desc
 
@@ -135,3 +158,95 @@ class TestStoreSubagentDescription:
         store = CommunicationTargetStore(for_subagent=True)
         desc = store.description
         assert "No parent" in desc
+
+
+class TestStoreSubagentDynamicParent:
+    """In subagent mode the store resolves its single target (the parent) at
+    call time from ``current_agent_context``, ignoring the static ``_targets``
+    dict. The parent must never be baked at materialize time — the instance is
+    reused across different invokers, so a static parent would go stale."""
+
+    def test_list_targets_returns_parent_only(self) -> None:
+        from modex_agent.core.agent import AgentContext, current_agent_context
+        from modex_agent.core.session_id import SessionInfo
+        from modex_agent.memory.history import ListMessageHistory
+        from modex_agent.core.tool_manager import InMemoryToolManager
+
+        ctx = AgentContext(
+            system_prompt="",
+            history=ListMessageHistory([]),
+            tool_manager=InMemoryToolManager(),
+            session=SessionInfo(
+                session_id="conv-1.worker",
+                agent_name="worker",
+                parent_session_id="conv-1.main",
+            ),
+        )
+        store = CommunicationTargetStore(for_subagent=True)
+        # Static adds must be ignored in subagent mode.
+        store.add(_normal("sibling"))
+        store.add(_normal("main"))
+
+        token = current_agent_context.set(ctx)
+        try:
+            targets = store.list()
+        finally:
+            current_agent_context.reset(token)
+
+        assert len(targets) == 1
+        assert targets[0].name == "main"
+        assert targets[0].kind == AgentCommKind.NORMAL
+
+    def test_has_target_matches_parent_only(self) -> None:
+        from modex_agent.core.agent import AgentContext, current_agent_context
+        from modex_agent.core.session_id import SessionInfo
+        from modex_agent.memory.history import ListMessageHistory
+        from modex_agent.core.tool_manager import InMemoryToolManager
+
+        ctx = AgentContext(
+            system_prompt="",
+            history=ListMessageHistory([]),
+            tool_manager=InMemoryToolManager(),
+            session=SessionInfo(
+                session_id="conv-1.worker",
+                agent_name="worker",
+                parent_session_id="conv-1.main",
+            ),
+        )
+        store = CommunicationTargetStore(for_subagent=True)
+        token = current_agent_context.set(ctx)
+        try:
+            assert store.has("main") is True
+            assert store.has("other") is False
+        finally:
+            current_agent_context.reset(token)
+
+    def test_no_context_returns_empty(self) -> None:
+        store = CommunicationTargetStore(for_subagent=True)
+        # No contextvar set → no resolvable parent.
+        assert store.list() == []
+        assert store.has("main") is False
+
+    def test_no_parent_session_id_returns_empty(self) -> None:
+        from modex_agent.core.agent import AgentContext, current_agent_context
+        from modex_agent.core.session_id import SessionInfo
+        from modex_agent.memory.history import ListMessageHistory
+        from modex_agent.core.tool_manager import InMemoryToolManager
+
+        ctx = AgentContext(
+            system_prompt="",
+            history=ListMessageHistory([]),
+            tool_manager=InMemoryToolManager(),
+            session=SessionInfo(
+                session_id="conv-1.worker",
+                agent_name="worker",
+                parent_session_id=None,
+            ),
+        )
+        store = CommunicationTargetStore(for_subagent=True)
+        token = current_agent_context.set(ctx)
+        try:
+            assert store.list() == []
+            assert store.has("main") is False
+        finally:
+            current_agent_context.reset(token)

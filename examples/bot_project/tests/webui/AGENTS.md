@@ -1,9 +1,9 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-22 -->
+<!-- Updated: 2026-07-07 -->
 
 # tests/webui
 
-Tests for the WebUI backend and frontend — server endpoints, WebSocket adapter, event streaming, pool routing, transcript store, workspace isolation, process management, and React reducer behavior.
+Tests for the WebUI backend and frontend — server endpoints, WebSocket adapter, event streaming, pool routing, transcript store, workspace isolation, process management, and React component/hook tests (301 frontend tests across 51 files).
 
 ## Key Files
 
@@ -62,17 +62,27 @@ Tests for the WebUI backend and frontend — server endpoints, WebSocket adapter
 
 ## Frontend Tests
 
-Frontend tests live alongside their source under `webui/src/`:
+Frontend tests live alongside their source under `webui/src/` — 301 tests across 51 files. Key test suites:
 
 | File | Description |
 |------|-------------|
-| `webui/src/hooks/useWebUIStream.reducer.test.ts` | Pure reducer tests — session-scoped event filtering |
-| `webui/src/hooks/useWebUIStream.attach-ws.test.ts` | WebSocket attach behavior |
+| `webui/src/hooks/useWebUIStream.reducer.test.ts` | Pure reducer — session-scoped event filtering, `request_id` dedup |
+| `webui/src/hooks/useWebUIStream.approval.test.ts` | Approval lifecycle in the stream hook |
+| `webui/src/hooks/useWebUIStream.attach-ws.test.ts` | WebSocket attach/detach behavior |
 | `webui/src/hooks/useWebUIStream.newconv.test.ts` | New-conversation lifecycle |
-| `webui/src/lib/api.test.ts` | REST API client tests |
-| `webui/src/lib/ws-client.reconnect.test.ts` | WebSocket reconnect/backoff tests |
-| `webui/src/App.workspace.test.tsx` / `App.workspace.race.test.tsx` | Workspace switch + stale-response race tests |
-| `webui/src/components/Sidebar.recent.test.ts` | Sidebar recent-workspace rendering |
+| `webui/src/hooks/useWebUIStream.fetch-todos.test.ts` | Todo fetch from WebUI stream |
+| `webui/src/components/settings/ModelEditor.test.tsx` | Provider/model editing and CRUD |
+| `webui/src/components/settings/PoolEditor.test.tsx` | Pool tree editing (main agent + subagents) |
+| `webui/src/components/settings/GlobalSkillsView.test.tsx` | Skill list rendering, upload, delete, inline detail pane |
+| `webui/src/components/settings/GlobalMcpView.test.tsx` | MCP server card editing |
+| `webui/src/components/settings/PoolsView.test.tsx` | Pool list creation, rename, delete |
+| `webui/src/components/settings/SettingsView.test.tsx` | Settings nav routing and sub-view rendering |
+| `webui/src/components/settings/ConfigForm.test.tsx` | Generic config field rendering |
+| `webui/src/components/settings/AgentMcpSelector.test.tsx` | MCP checkbox popover |
+| `webui/src/components/settings/AgentSkillSelector.test.tsx` | Skill checkbox popover |
+| `webui/src/components/ui/` | All UI primitive tests (Button, Input, Select, Checkbox, IconButton, Card, Label, KeyValueEditor, etc.) |
+| `webui/src/components/` | Component tests (ChatView, Sidebar, TodoPanel, AttachmentRenderer, etc.) |
+| `webui/src/lib/` | API client tests (api.ts, skillsApi.ts, mcpApi.ts, poolApi.ts) |
 
 Run frontend tests with:
 

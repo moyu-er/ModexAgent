@@ -157,7 +157,7 @@ async def test_subagent_tool_manager_uses_workspace_root_provider(tmp_path: Path
         root_provider=provider,
     )
     template = AgentTemplate(
-        agent_type="scout",
+        agent_name="scout",
         tool_preset=ToolPreset.READ_ONLY,
         description="Test scout",
     )
@@ -177,6 +177,8 @@ async def test_subagent_tool_manager_uses_workspace_root_provider(tmp_path: Path
 
 async def test_main_agent_tool_manager_is_workspace_scoped(tmp_path: Path) -> None:
     """Verify that create_pool's tool_manager contains workspace-scoped tools when handle is given."""
+    from bot.service.model_choice import ModelChoiceRegistry
+    from bot.service.model_config import BotModelConfig
     from bot.service.pool_builder import create_pool
     from bot.workspace.handle import WorkspaceHandle
     from modex_agent.control.channel import InMemoryControlChannel
@@ -195,6 +197,8 @@ async def test_main_agent_tool_manager_is_workspace_scoped(tmp_path: Path) -> No
     target.mkdir()
 
     pool_cfg = PoolConfig(
+        name="test_pool",
+        main_agent_name="main",
         llm=LLMConfig(model="gpt-4", temperature=0.7),
         agents=[AgentConfig(name="main", role="main")],
         memory=MemoryConfig(),
@@ -204,6 +208,16 @@ async def test_main_agent_tool_manager_is_workspace_scoped(tmp_path: Path) -> No
     await broker.start()
 
     workspace_handle = WorkspaceHandle(target=target, data_root=target / ".modex")
+
+    _yml = """
+models:
+  default_provider: "A"
+  default_model: "M1"
+  providers:
+    - {key: a, name: "A", url: u, api_key: k, models: [{name: M1, model: openai/m1}]}
+"""
+    (target / "model.yml").write_text(_yml, encoding="utf-8")
+    bot_model_config = BotModelConfig.from_yaml(target / "model.yml")
 
     pool_instance = await create_pool(
         pool_name="test_pool",
@@ -221,6 +235,8 @@ async def test_main_agent_tool_manager_is_workspace_scoped(tmp_path: Path) -> No
         shared_interceptor_chain=InterceptorChain(),
         control_channel=InMemoryControlChannel(),
         workspace_handle=workspace_handle,
+        bot_model_config=bot_model_config,
+        model_choice_registry=ModelChoiceRegistry(),
     )
 
     tm = pool_instance.tool_manager
@@ -253,6 +269,8 @@ async def test_pool_resources_experience_dir_from_pool_data(tmp_path: Path) -> N
     ctx = WorkspaceContext.from_target(target, data_dir_name=".modex", home=tmp_path)
 
     pool_cfg = PoolConfig(
+        name="test_pool",
+        main_agent_name="main",
         llm=LLMConfig(model="gpt-4", temperature=0.7),
         agents=[AgentConfig(name="main", role="main")],
         memory=MemoryConfig(),

@@ -77,11 +77,11 @@ The swappable component that estimates the token weight of messages and text. A 
 _Avoid_: tokenizer (that is the underlying encoder), counter
 
 **Compression Trigger Ratio** (`max_token_ratio`):
-The fraction of `max_tokens` at which session compression fires. Compression starts when the session's non-system token weight exceeds `max_tokens × max_token_ratio`.
+The fraction of `max_context_tokens` at which session compression fires. Compression starts when the session's non-system token weight exceeds `max_context_tokens × max_token_ratio`.
 _Avoid_: threshold (ambiguous — say trigger ratio or keep ratio)
 
 **Keep Ratio** (`keep_ratio`):
-The hard upper bound, as a fraction of `max_tokens`, on how much the kept region may weigh after compression. The boundary accumulates tokens from the tail until this cap; it never exceeds it.
+The hard upper bound, as a fraction of `max_context_tokens`, on how much the kept region may weigh after compression. The boundary accumulates tokens from the tail until this cap; it never exceeds it.
 _Avoid_: retention ratio, keep target (target implies soft; this is a hard cap)
 
 **CommandTool** (`bash` tool, `modex_agent.tools.terminal.command_tool.CommandTool`):

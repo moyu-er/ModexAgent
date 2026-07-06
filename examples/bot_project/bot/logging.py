@@ -11,8 +11,25 @@ import sys
 from pathlib import Path
 
 
+def _reconfigure_stdio_utf8() -> None:
+    """Ensure stdout/stderr can encode the full Unicode range.
+
+    On Windows the default console code page (e.g. cp936/GBK) cannot encode
+    many characters that legitimately appear in tool output (emoji, box
+    drawing, rare CJK), which crashes ``logging.StreamHandler.emit`` with
+    ``UnicodeEncodeError``. Reconfigure the standard streams to UTF-8 with a
+    safe error handler so logging never raises on any payload.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
 def setup_logging() -> None:
     """Configure root logger with console + rotating file handlers."""
+    _reconfigure_stdio_utf8()
+
     log_dir = Path(__file__).resolve().parent.parent / "logs"
     log_dir.mkdir(exist_ok=True)
 

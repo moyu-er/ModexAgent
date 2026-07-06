@@ -8,16 +8,17 @@ import { AttachmentRenderer, type AttachmentView } from "./AttachmentRenderer";
 import { TypewriterText } from "../hooks/useTypewriter";
 import { formatClock } from "../lib/timezone";
 import { attachmentDownloadUrl } from "../lib/api";
+import { appendWsParam } from "../lib/url";
 
-// ── Agent-specific colors ────────────────────────────────────────────────
+// ── Agent-specific label tones ────────────────────────────────────────────
 
-const AGENT_COLORS: Record<string, string> = {
-  main: "text-ai-brand-light dark:text-ai-brand-dark",
-  coding: "text-success-light dark:text-success-dark",
+const AGENT_LABEL: Record<string, string> = {
+  main: "text-link",
+  coding: "text-body",
 };
 
-function agentColor(agentName: string): string {
-  return AGENT_COLORS[agentName] ?? "text-text-secondary-light dark:text-text-secondary-dark";
+function agentLabelClass(agentName: string): string {
+  return AGENT_LABEL[agentName] ?? "text-mute";
 }
 
 export interface MessageBubbleProps {
@@ -57,8 +58,7 @@ function renderBlock(
   }
   if (block.kind === "attachment") {
     // Outbound card delta — append the active ws to the bare download_url.
-    const url = block.card.download_url;
-    const withWs = ws ? `${url}${url.includes("?") ? "&" : "?"}ws=${encodeURIComponent(ws)}` : url;
+    const withWs = appendWsParam(block.card.download_url, ws);
     return (
       <AttachmentRenderer
         key={`a-${index}`}
@@ -99,7 +99,7 @@ function formatTime(timestamp?: number): string | null {
 }
 
 const UserAvatar: FC = () => (
-  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-sidebar-hover-light text-text-secondary-light dark:bg-sidebar-hover-dark dark:text-text-secondary-dark">
+  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-hairline-soft text-mute">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
       <circle cx="12" cy="7" r="4" />
@@ -108,7 +108,7 @@ const UserAvatar: FC = () => (
 );
 
 const AssistantAvatar: FC = () => (
-  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-ai-brand-light text-[#ffffff] dark:bg-ai-brand-dark">
+  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-ink text-canvas">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" />
       <path d="M5 3v4" />
@@ -132,14 +132,10 @@ export const MessageBubble: FC<MessageBubbleProps> = ({ message, sessionId, work
 
       <div className={`flex min-w-0 flex-1 flex-col ${isUser ? "items-end" : "items-start"}`}>
         <div
-          className={`shadow-sm ${
-            isUser
-              ? "w-fit max-w-[98%] min-w-[50%] rounded-xl rounded-br-md bg-user-bubble-light py-6 px-6 text-user-bubble-text-light dark:bg-user-bubble-dark dark:text-user-bubble-text-dark"
-              : "w-fit max-w-[85%] min-w-[60%] rounded-xl rounded-bl-md bg-ai-bubble-light p-4 text-ai-bubble-text-light dark:bg-ai-bubble-dark dark:text-ai-bubble-text-dark"
-          }`}
+          className={`shadow-sm ${ isUser ? "w-fit max-w-[98%] min-w-[50%] rounded-xl rounded-br-md bg-user-bubble py-6 px-6 text-user-bubble-text" : "w-fit max-w-[85%] min-w-[60%] rounded-xl rounded-bl-md bg-hairline-soft p-4 text-body" }`}
         >
           {!isUser && message.agent_name && (
-            <div className={`mb-1.5 text-[10px] font-semibold uppercase tracking-wide ${agentColor(message.agent_name)}`}>
+            <div className={`mb-1.5 text-[10px] font-semibold uppercase tracking-wide ${agentLabelClass(message.agent_name)}`}>
               {message.agent_name}
             </div>
           )}
@@ -163,16 +159,16 @@ export const MessageBubble: FC<MessageBubbleProps> = ({ message, sessionId, work
             !isUser && (
               <div className="mt-1 flex items-center gap-2">
                 <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-ai-brand-light opacity-40 dark:bg-ai-brand-dark" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-ai-brand-light dark:bg-ai-brand-dark" />
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-link opacity-40" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-link" />
                 </span>
-                <span className="text-xs text-text-secondary-light dark:text-text-secondary-dark">thinking</span>
+                <span className="text-xs text-mute">thinking</span>
               </div>
             )}
         </div>
 
         {timeStr && (
-          <div className="mt-1 px-1 text-[10px] text-text-secondary-light dark:text-text-secondary-dark">
+          <div className="mt-1 px-1 text-[10px] text-mute">
             {timeStr}
           </div>
         )}

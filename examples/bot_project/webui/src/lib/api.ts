@@ -6,8 +6,10 @@ import type {
   TodoItemDTO,
 } from "../types/events";
 import type { MediaConfigResponse, UploadAttachmentResponse } from "../types/attachments";
+import type { ConfigPayload } from "../types/config";
+import { appendWsParam } from "./url";
 
-const API_BASE = "/api";
+export const API_BASE = "/api";
 
 // ── Error handling ──────────────────────────────────────────────────────────
 
@@ -34,7 +36,7 @@ export class ApiError extends Error {
  * Throws ApiError if `resp` is not ok. Reads the body only on the error path so
  * the success path can still call `resp.json()` as normal.
  */
-async function assertOk(resp: Response): Promise<void> {
+export async function assertOk(resp: Response): Promise<void> {
   if (!resp.ok) {
     let detail = "";
     try {
@@ -56,6 +58,20 @@ export async function fetchPools(): Promise<PoolInfo[]> {
   const resp = await fetch(`${API_BASE}/pools`);
   await assertOk(resp);
   return resp.json() as Promise<PoolInfo[]>;
+}
+
+// ── Model choices ───────────────────────────────────────────────────────────
+
+export interface ModelChoice {
+  provider_name: string;
+  model_name: string;
+  default: boolean;
+}
+
+export async function fetchModels(): Promise<{ choices: ModelChoice[] }> {
+  const resp = await fetch(`${API_BASE}/models`);
+  await assertOk(resp);
+  return resp.json() as Promise<{ choices: ModelChoice[] }>;
 }
 
 // ── Session / conversation ──────────────────────────────────────────────────
@@ -156,13 +172,6 @@ export async function submitApproval(
   return resp.json() as Promise<{ accepted: boolean }>;
 }
 
-export async function fetchAllMessages(
-  sessionId: string,
-  ws?: string,
-): Promise<ServerEventUnion[]> {
-  return fetchMessages(sessionId, ws);
-}
-
 export interface WorkspaceInfo {
   home: string;
   recent: { path: string }[];
@@ -257,7 +266,36 @@ export function attachmentDownloadUrl(
   attachmentId: string,
   ws?: string,
 ): string {
-  const base = `${API_BASE}/sessions/${sessionId}/attachments/${attachmentId}`;
-  return ws ? `${base}?ws=${encodeURIComponent(ws)}` : base;
+  return appendWsParam(
+    `${API_BASE}/sessions/${sessionId}/attachments/${attachmentId}`,
+    ws,
+  );
+}
+
+// ── Config domains (ADR: settings/config domain API) ────────────────────────
+
+export async function fetchConfig(domain: string): Promise<ConfigPayload> {
+  const resp = await fetch(`${API_BASE}/config/${domain}`);
+  await assertOk(resp);
+  return resp.json() as Promise<ConfigPayload>;
+}
+
+export async function saveConfig(
+  domain: string,
+  payload: Record<string, unknown>,
+): Promise<ConfigPayload> {
+  const resp = await fetch(`${API_BASE}/config/${domain}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  await assertOk(resp);
+  return resp.json() as Promise<ConfigPayload>;
+}
+
+export async function restartSystem(): Promise<{ restarting: boolean }> {
+  const resp = await fetch(`${API_BASE}/system/restart`, { method: "POST" });
+  await assertOk(resp);
+  return resp.json() as Promise<{ restarting: boolean }>;
 }
 

@@ -22,7 +22,7 @@ def test_constructs_with_required_fields() -> None:
         safety=RuntimeSafetyPolicy(),
         llm_model="gpt-4o",
         llm_temperature=0.7,
-        llm_max_tokens=None,
+        llm_max_output_tokens=None,
         project_dir=Path("."),
         notification_service=None,
         inbox_consumer=None,

@@ -18,8 +18,13 @@ class AgentLLMConfig:
     """Agent 的 LLM 配置子集。"""
 
     model: str | None = None
+    # TODO(model-config-convergence): 模型调用参数 temperature/max_output_tokens 应只由
+    # LLMProvider 持有；此处经 descriptor/context 透传属冗余复制。待 ReactLlmClient
+    # 不再传这两参后，本字段/参数可连同 AgentContext.temperature/max_output_tokens、
+    # AgentLLMConfig、AgentMaterializeDeps 的同名字段一并删除。收敛目标见
+    # docs/superpowers/plans/2026-07-03-bot-multi-model.md §框架配置收敛后续。
     temperature: float = 0.7
-    max_tokens: int | None = None
+    max_output_tokens: int | None = None
     top_p: float = 1.0
     reasoning_effort: str | None = None
     extra_params: dict[str, Any] = field(default_factory=dict)

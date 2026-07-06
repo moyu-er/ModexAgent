@@ -117,6 +117,7 @@ def _make_context(
     agent_name: str = "main",
     comm_kind: AgentCommKind = AgentCommKind.NORMAL,
     invocation_id: str | None = None,
+    parent_session_id: str | None = None,
 ) -> AgentContext:
     metadata: dict[str, str] = {}
     session_str = f"{session_id}.{agent_name}"
@@ -130,6 +131,7 @@ def _make_context(
         session=SessionInfo(
             session_id=session_str,
             agent_name=agent_name,
+            parent_session_id=parent_session_id,
             metadata=metadata,
         ),
         comm_kind=comm_kind,
@@ -351,6 +353,100 @@ class TestRegisteredSubagentBlocksSubagentToSubagent:
 
         assert "Error" in result
         assert "subagent" in result.lower()
+
+
+def _normal_profile(name: str = "main") -> AgentProfile:
+    return AgentProfile(name=name, comm_kind=AgentCommKind.NORMAL)
+
+
+def _normal_descriptor(name: str = "main") -> AgentDescriptor:
+    return AgentDescriptor(
+        address=AgentAddress(name=name),
+        comm_kind=AgentCommKind.NORMAL,
+    )
+
+
+class TestSubagentBlocksNonParentNormal:
+    """Defense-in-depth: a subagent may only address its resolved parent NORMAL
+    agent, not any other NORMAL. Parent is recovered from
+    ``context.session.parent_session_id`` (production poller path populates it).
+    """
+
+    @pytest.mark.asyncio
+    async def test_subagent_sending_to_non_parent_normal_is_rejected(self) -> None:
+        bus = _FakeAgentBus()
+        svc = _make_service(
+            profiles=[_normal_profile("main"), _normal_profile("other")],
+            descriptors=[_normal_descriptor("main"), _normal_descriptor("other")],
+            agent_bus=bus,
+        )
+        # Subagent whose parent is "main"; it must NOT be able to address
+        # sibling NORMAL "other".
+        ctx = _make_context(
+            agent_name="worker",
+            comm_kind=AgentCommKind.SUBAGENT,
+            parent_session_id="conv-1.main",
+        )
+
+        result = await svc.send_async(
+            target_agent="other",
+            content="hi",
+            invocation_id=None,
+            context=ctx,
+        )
+
+        assert "Error" in result
+        assert bus.sent == []  # nothing dispatched
+
+    @pytest.mark.asyncio
+    async def test_subagent_sending_to_resolved_parent_normal_is_allowed(self) -> None:
+        bus = _FakeAgentBus()
+        svc = _make_service(
+            profiles=[_normal_profile("main")],
+            descriptors=[_normal_descriptor("main")],
+            agent_bus=bus,
+        )
+        ctx = _make_context(
+            agent_name="worker",
+            comm_kind=AgentCommKind.SUBAGENT,
+            parent_session_id="conv-1.main",
+        )
+
+        result = await svc.send_async(
+            target_agent="main",
+            content="NEED_DECISION: which?",
+            invocation_id=None,
+            context=ctx,
+        )
+
+        assert "Error" not in result
+        assert len(bus.sent) == 1
+
+    @pytest.mark.asyncio
+    async def test_subagent_without_parent_session_id_still_allowed(self) -> None:
+        """Legacy/fallback path: when parent_session_id is unavailable the
+        defense is best-effort and must not break the send (documented)."""
+        bus = _FakeAgentBus()
+        svc = _make_service(
+            profiles=[_normal_profile("main")],
+            descriptors=[_normal_descriptor("main")],
+            agent_bus=bus,
+        )
+        ctx = _make_context(
+            agent_name="worker",
+            comm_kind=AgentCommKind.SUBAGENT,
+            parent_session_id=None,
+        )
+
+        result = await svc.send_async(
+            target_agent="main",
+            content="hi",
+            invocation_id=None,
+            context=ctx,
+        )
+
+        assert "Error" not in result
+        assert len(bus.sent) == 1
 
 
 # ── Test: Two concurrent tasks to same subagent ──

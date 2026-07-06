@@ -23,11 +23,11 @@ class TestLLMConfig:
             api_key="sk-xxx",
             base_url="https://api.minimaxi.com/v1",
             temperature=0.7,
-            max_tokens=80000,
+            max_output_tokens=80000,
         )
         assert cfg.model == "openai/MiniMax-M2.5"
         assert cfg.base_url == "https://api.minimaxi.com/v1"
-        assert cfg.max_tokens == 80000
+        assert cfg.max_output_tokens == 80000
 
     def test_default_capabilities_text_only(self) -> None:
         cfg = LLMConfig()

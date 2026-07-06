@@ -142,7 +142,7 @@ class _FakeInjectableMemorySystem(MemorySystem):
 
 def _bot_project_system(
     registry: InMemoryStoreRegistry,
-    max_tokens: int = 700,
+    max_context_tokens: int = 700,
     keep_ratio: float = 0.5,
     *,
     archive_agent: object | None = None,
@@ -154,11 +154,11 @@ def _bot_project_system(
     can generate archive entries on the hot path.
 
     Token-driven: cleanup fires when non-system session tokens exceed
-    ``max_tokens * max_token_ratio`` (i.e. ``max_tokens * 0.8``).
+    ``max_context_tokens * max_token_ratio`` (i.e. ``max_context_tokens * 0.8``).
     """
     layer_set = MemoryLayerFactory.single_user(registry=registry)
     cleanup_config: dict[str, int | float] = {
-        "max_tokens": max_tokens,
+        "max_context_tokens": max_context_tokens,
         "max_token_ratio": 0.8,
         "keep_ratio": keep_ratio,
     }
@@ -209,7 +209,7 @@ async def test_cleanup_respects_threshold(tmp_path: Path):
     registry = InMemoryStoreRegistry()
     mock = _MockArchiveGenerator()
     storage = DirArchiveStorage(tmp_path / "archives")
-    system = _bot_project_system(registry, max_tokens=140, archive_agent=mock, archive_storage=storage)
+    system = _bot_project_system(registry, max_context_tokens=140, archive_agent=mock, archive_storage=storage)
     await system.initialize()
     ctx = _make_ctx("threshold")
 
@@ -239,7 +239,7 @@ async def test_second_cleanup_fires_when_over_threshold(tmp_path: Path):
     registry = InMemoryStoreRegistry()
     mock = _MockArchiveGenerator()
     storage = DirArchiveStorage(tmp_path / "archives")
-    system = _bot_project_system(registry, max_tokens=140, archive_agent=mock, archive_storage=storage)
+    system = _bot_project_system(registry, max_context_tokens=140, archive_agent=mock, archive_storage=storage)
     await system.initialize()
     ctx = _make_ctx("recompress")
 
@@ -267,7 +267,7 @@ async def test_tool_chains_intact_after_cascade(tmp_path: Path):
     registry = InMemoryStoreRegistry()
     mock = _MockArchiveGenerator()
     storage = DirArchiveStorage(tmp_path / "archives")
-    system = _bot_project_system(registry, max_tokens=112, archive_agent=mock, archive_storage=storage)
+    system = _bot_project_system(registry, max_context_tokens=112, archive_agent=mock, archive_storage=storage)
     await system.initialize()
     ctx = _make_ctx("tool-chain-cascade")
 
@@ -308,7 +308,7 @@ async def test_archive_uses_mock_summarizer_output(tmp_path: Path):
         canned_knowledge="[MOCK] compressed to archive",
     )
     storage = DirArchiveStorage(tmp_path / "archives")
-    system = _bot_project_system(registry, max_tokens=70, archive_agent=mock, archive_storage=storage)
+    system = _bot_project_system(registry, max_context_tokens=70, archive_agent=mock, archive_storage=storage)
     await system.initialize()
     ctx = _make_ctx("mock-summary")
 
@@ -331,7 +331,7 @@ async def test_archive_skips_empty_generation(tmp_path: Path):
     registry = InMemoryStoreRegistry()
     mock = _EmptyArchiveGenerator()
     storage = DirArchiveStorage(tmp_path / "archives")
-    system = _bot_project_system(registry, max_tokens=70, archive_agent=mock, archive_storage=storage)
+    system = _bot_project_system(registry, max_context_tokens=70, archive_agent=mock, archive_storage=storage)
     await system.initialize()
     ctx = _make_ctx("nothing-sentinel")
 
@@ -460,7 +460,7 @@ async def test_archive_merges_multiple_cleanup_rounds(tmp_path: Path):
         canned_knowledge="[MOCK] round knowledge",
     )
     storage = DirArchiveStorage(tmp_path / "archives")
-    system = _bot_project_system(registry, max_tokens=140, archive_agent=mock, archive_storage=storage)
+    system = _bot_project_system(registry, max_context_tokens=140, archive_agent=mock, archive_storage=storage)
     await system.initialize()
     ctx = _make_ctx("multi-compress")
 
@@ -509,7 +509,7 @@ async def test_session_only_messages_no_duplicate_cleanup_trigger(tmp_path: Path
     registry = InMemoryStoreRegistry()
     mock = _MockArchiveGenerator()
     storage = DirArchiveStorage(tmp_path / "archives")
-    system = _bot_project_system(registry, max_tokens=140, archive_agent=mock, archive_storage=storage)
+    system = _bot_project_system(registry, max_context_tokens=140, archive_agent=mock, archive_storage=storage)
     await system.initialize()
     ctx = _make_ctx("no-dupe")
 
@@ -788,7 +788,7 @@ async def test_three_tier_memory_cascade_preserves_tool_context(tmp_path: Path):
         canned_knowledge="[ARCHIVE] user asked about weather, used shell+web_search, got sunny 28C",
     )
     storage = DirArchiveStorage(tmp_path / "archives")
-    system = _bot_project_system(registry, max_tokens=70, archive_agent=mock, archive_storage=storage)
+    system = _bot_project_system(registry, max_context_tokens=70, archive_agent=mock, archive_storage=storage)
     await system.initialize()
     ctx = _make_ctx("three-tier")
 
@@ -833,7 +833,7 @@ async def test_archive_entries_are_meaningful_for_dream_engine(tmp_path: Path):
                         "decision: use JWT instead of session | state: branch fix/auth, tests fail",
     )
     storage = DirArchiveStorage(tmp_path / "archives")
-    system = _bot_project_system(registry, max_tokens=42, archive_agent=mock, archive_storage=storage)
+    system = _bot_project_system(registry, max_context_tokens=42, archive_agent=mock, archive_storage=storage)
     await system.initialize()
     ctx = _make_ctx("dream-input")
 

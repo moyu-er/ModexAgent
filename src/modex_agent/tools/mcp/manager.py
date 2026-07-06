@@ -20,8 +20,18 @@ from modex_agent.tools.mcp.client import (
     StreamableHttpMCPClient,
     TransportType,
 )
+from modex_agent.tools.mcp.injector import (
+    JsonFileMCPTransportInjector,
+    MCPTransportInjector,
+)
 
 _logger = logging.getLogger(__name__)
+
+# Per-server connect timeout. Bounds startup when an MCP server is unreachable
+# or rejects auth (e.g. streamable_http 401 makes the SDK block on the response
+# stream until the underlying httpx read timeout — 60s — which is too long for
+# an eager startup init). A failing server is skipped after this many seconds.
+_CONNECT_TIMEOUT: float = 20.0
 
 
 class MCPConnectionError(Exception):
@@ -39,18 +49,25 @@ class MCPClientManager:
     3. streamable_http transport (Streamable HTTP)
     """
 
-    def __init__(self, config: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        config: dict[str, Any] | None = None,
+        injector: MCPTransportInjector | None = None,
+    ) -> None:
         """Initialize MCP client manager.
 
         Args:
             config: Custom config dict, format:
                 {server_name: {transport, command, args, url, headers, env, enabled, tool_timeout, enabled_tools, ...}}
                 If None, uses empty config (servers must be provided explicitly).
+            injector: Optional runtime injector for env/headers. If None, a
+                JSON-file injector pointing at ``.modex/mcp_inject.json`` is used.
         """
         self.clients: dict[str, BaseMCPClient] = {}
         self._server_stacks: dict[str, AsyncExitStack] = {}
         self._initialized = False
         self._custom_config = config or {}
+        self._injector = injector if injector is not None else JsonFileMCPTransportInjector()
         self._reconnect_lock = asyncio.Lock()
 
     async def initialize(self) -> None:
@@ -72,7 +89,22 @@ class MCPClientManager:
                 continue
 
             try:
-                result = await self._connect_single(name, server_config)
+                result = await asyncio.wait_for(
+                    self._connect_single(name, server_config),
+                    timeout=_CONNECT_TIMEOUT,
+                )
+            except TimeoutError:
+                _logger.warning(
+                    "[MCP Manager] %s connect timed out after %.0fs — skipping",
+                    name,
+                    _CONNECT_TIMEOUT,
+                )
+                continue
+            except asyncio.CancelledError:
+                # Whole init cancelled (e.g. service shutdown) — propagate without
+                # touching per-server state; partial stacks were already cleaned
+                # in-task by _connect_single.
+                raise
             except Exception as e:
                 _logger.error("[MCP Manager] Failed to connect to %s: %s", name, e)
                 continue
@@ -85,7 +117,7 @@ class MCPClientManager:
 
     async def _connect_single(
         self, name: str, server_config: dict[str, Any]
-    ) -> tuple[str, BaseMCPClient] | None:
+    ) -> tuple[str, BaseMCPClient | None] | None:
         """Connect to a single MCP server."""
         server_stack = AsyncExitStack()
         await server_stack.__aenter__()
@@ -136,7 +168,23 @@ class MCPClientManager:
                 await server_stack.aclose()
                 return name, None
 
-        except Exception as e:
+        except BaseException as e:
+            # Connect failed OR was cancelled. ``except Exception`` alone is
+            # insufficient: a streamable_http 401 makes the SDK tear down its
+            # anyio TaskGroup, which surfaces here as a ``CancelledError``
+            # ("Cancelled by cancel scope") — a ``BaseException`` the general
+            # except would let escape, leaking the half-entered ``server_stack``
+            # so the transport async generator is later GC-closed in a
+            # different task, raising ``RuntimeError: Attempted to exit cancel
+            # scope in a different task than it was entered in``.
+            #
+            # MCP connect is best-effort: clean up the stack IN THIS TASK
+            # (preventing the cross-task GC teardown) and skip the server for
+            # every non-fatal cause. Propagate only true interpreter signals.
+            await self._safe_aclose(server_stack)
+            if isinstance(e, (KeyboardInterrupt, SystemExit)):
+                raise
+
             hint = ""
             text = str(e).lower()
             if any(marker in text for marker in _STDIO_POLLUTION_MARKERS):
@@ -145,29 +193,41 @@ class MCPClientManager:
                     "only JSON-RPC to stdout and sends logs/debug output to stderr instead."
                 )
 
-            # Extract root cause from ExceptionGroup (Python 3.11+)
-            root_cause = e
-            if hasattr(e, "exceptions") and callable(e.exceptions):
-                sub_exceptions = e.exceptions()
+            # Extract root cause from ExceptionGroup (Python 3.11+) — a 401
+            # arrives wrapped in a TaskGroup BaseExceptionGroup.
+            root_cause: BaseException = e
+            if isinstance(e, BaseExceptionGroup):
+                sub_exceptions = list(e.exceptions)
                 if sub_exceptions:
                     root_cause = sub_exceptions[0]
 
-            _logger.error(
-                "[MCP:%s] Failed to connect: %s%s",
-                name,
-                root_cause,
-                hint,
-            )
+            if isinstance(e, asyncio.CancelledError):
+                _logger.warning(
+                    "[MCP:%s] connect cancelled (%s) — skipping%s",
+                    name, type(root_cause).__name__, hint,
+                )
+            else:
+                _logger.error(
+                    "[MCP:%s] Failed to connect: %s%s",
+                    name, root_cause, hint,
+                )
             _logger.debug(
                 "[MCP:%s] Full exception traceback:",
                 name,
                 exc_info=True,
             )
-            try:
-                await server_stack.aclose()
-            except Exception:
-                pass
             return name, None
+
+    @staticmethod
+    async def _safe_aclose(stack: AsyncExitStack) -> None:
+        """Close an AsyncExitStack, swallowing cleanup errors.
+
+        Cleanup failures (including the anyio cross-task ``RuntimeError`` that
+        surfaces when an MCP transport's TaskGroup is torn down) must not escape
+        — they are non-fatal during connect failure / shutdown.
+        """
+        with suppress(BaseException):
+            await stack.aclose()
 
     async def _create_client(
         self,
@@ -214,6 +274,7 @@ class MCPClientManager:
             args = server_config.get("args", [])
 
         env = server_config.get("env", {})
+        env, _ = self._injector.apply(name, str(TransportType.STDIO), env, {})
 
         params = StdioServerParameters(
             command=command,
@@ -246,6 +307,9 @@ class MCPClientManager:
             raise MCPConnectionError("URL required for sse transport")
 
         config_headers = server_config.get("headers", {})
+        _, config_headers = self._injector.apply(
+            name, str(TransportType.SSE), {}, config_headers
+        )
 
         def httpx_client_factory(
             headers: dict[str, str] | None = None,
@@ -293,6 +357,9 @@ class MCPClientManager:
             raise MCPConnectionError("URL required for http transport")
 
         headers = server_config.get("headers", {})
+        _, headers = self._injector.apply(
+            name, str(TransportType.STREAMABLE_HTTP), {}, headers
+        )
 
         http_client = await server_stack.enter_async_context(
             httpx.AsyncClient(
@@ -393,7 +460,7 @@ class MCPClientManager:
                     return False
                 await self.disconnect(server_name)
                 result = await self._connect_single(server_name, config)
-                if result[1] is not None:
+                if result is not None and result[1] is not None:
                     self.clients[result[0]] = result[1]
                     _logger.info("[MCP Manager] Reconnected to %s", server_name)
                     return True
@@ -403,7 +470,7 @@ class MCPClientManager:
             for name, server_config in list(self._custom_config.items()):
                 await self.disconnect(name)
                 result = await self._connect_single(name, server_config)
-                if result[1] is not None:
+                if result is not None and result[1] is not None:
                     self.clients[result[0]] = result[1]
                     success = True
             return success
@@ -418,7 +485,7 @@ class MCPClientManager:
         """Execute a tool on the specified server."""
         client = self.clients.get(server_name)
         if not client:
-            return {"success": False, "error": "MCP server not connected: %s" % server_name}
+            return {"success": False, "error": f"MCP server not connected: {server_name}"}
 
         return await client.call_tool(tool_name, params, timeout=timeout)
 
@@ -431,7 +498,7 @@ class MCPClientManager:
         """Read a resource from the specified server."""
         client = self.clients.get(server_name)
         if not client:
-            return {"success": False, "error": "MCP server not connected: %s" % server_name}
+            return {"success": False, "error": f"MCP server not connected: {server_name}"}
 
         return await client.read_resource(uri, timeout=timeout)
 
@@ -445,7 +512,7 @@ class MCPClientManager:
         """Get a prompt from the specified server."""
         client = self.clients.get(server_name)
         if not client:
-            return {"success": False, "error": "MCP server not connected: %s" % server_name}
+            return {"success": False, "error": f"MCP server not connected: {server_name}"}
 
         return await client.get_prompt(prompt_name, arguments=arguments, timeout=timeout)
 

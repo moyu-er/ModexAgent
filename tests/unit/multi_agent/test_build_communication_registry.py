@@ -51,7 +51,7 @@ class _MockFactory:
 def _descriptor(name: str, comm_kind: AgentCommKind) -> AgentDescriptor:
     return AgentDescriptor(
         address=AgentAddress(kind="agent", name=name),
-        llm_config=AgentLLMConfig(model="m", temperature=0.0, max_tokens=1),
+        llm_config=AgentLLMConfig(model="m", temperature=0.0, max_output_tokens=1),
         system_prompt_template="",
         max_iterations=1,
         execution_strategy="react",

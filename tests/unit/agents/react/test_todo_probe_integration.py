@@ -1,0 +1,100 @@
+"""Integration: the probe hook keeps the ReAct loop alive and keeps the XML out
+of the user-facing stream (it lands only in ctx.history = LLM memory)."""
+from __future__ import annotations
+
+import pytest
+
+from modex_agent.agents.react.constants import ReActNode
+from modex_agent.agents.react.injection_drainer import InjectionDrainer
+from modex_agent.agents.react.llm_client import ReactLlmClient
+from modex_agent.agents.react.nodes.llm import LLMNode
+from modex_agent.agents.react.state import ReActTurnState
+from modex_agent.core.agent import AgentContext
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.tool_manager import InMemoryToolManager
+from modex_agent.core.types import LLMResponse, TodoStatus
+from modex_agent.hook import HookSpec
+from modex_agent.hook.runner import HookRunner
+from modex_agent.memory.history import ListMessageHistory
+from modex_agent.runtime.enums import AgentKind, TurnPhase
+from modex_agent.runtime.models import TurnIdentity
+from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_agent.runtime.store import JsonFileTodoStore, TodoItem
+from modex_agent.tools.standard import TodoCompletionProbeHook, TodoReadTool
+
+
+class _RecordingEmitter:
+    """Captures every string emitted to the user-facing stream."""
+    def __init__(self) -> None:
+        self.streamed: list[str] = []
+
+    async def emit(self, event, data=None): ...
+    async def emit_complete(self, result): ...
+    async def emit_delta(self, delta: str) -> None:
+        self.streamed.append(delta)
+    async def emit_content(self, content: str) -> None:
+        self.streamed.append(content)
+    async def emit_stream_end(self, resuming=False): ...
+    def wants_streaming(self) -> bool:
+        return False  # forces _call_non_streaming -> emit_content path
+
+
+@pytest.mark.asyncio
+async def test_probe_continues_loop_and_keeps_xml_out_of_stream(tmp_path, monkeypatch):
+    # --- collaborators ------------------------------------------------------
+    store = JsonFileTodoStore(tmp_path)
+    tm = InMemoryToolManager()
+    tm.register(TodoReadTool(store))
+
+    state = ReActTurnState(
+        identity=TurnIdentity(agent_id="t", session=SessionInfo.from_str("s1"), turn_id="t1"),
+        agent_kind=AgentKind.REACT, phase=TurnPhase.CREATED,
+    )
+    services = AgentRuntimeServices()
+    services.hooks = HookRunner(
+        [HookSpec(hook=TodoCompletionProbeHook(store=store, tool_manager=tm))]
+    )
+    runtime = AgentRuntime(services=services, state=state)
+
+    ctx = AgentContext(
+        system_prompt="", history=ListMessageHistory(), tool_manager=tm,
+        identity=state.identity, runtime=runtime,
+        session=SessionInfo.from_str("s1"),
+    )
+    ctx.emitter = _RecordingEmitter()
+
+    # Seed an unfinished todo for THIS session id, so gate 3 passes.
+    sid = ctx.session.session_id
+    await store.save(sid, [TodoItem("ship feature", TodoStatus.PENDING)])
+
+    # --- stub the LLM: stream "done." then return a plain (no-tool) response -
+    client = ReactLlmClient(provider=object())
+
+    async def _fake_call(messages, ctx):
+        await ctx.emitter.emit_content("done.")   # user-facing stream (pre-hook)
+        return LLMResponse(content="done.", tool_calls=[], finish_reason="stop")
+
+    monkeypatch.setattr(client, "call", _fake_call)
+
+    node = LLMNode(llm_client=client, injection_drainer=InjectionDrainer())
+
+    # --- act ----------------------------------------------------------------
+    transition = await node.execute(ctx)
+
+    # --- the loop continues (probe injected a tool call) --------------------
+    assert transition.target == ReActNode.TOOL
+
+    # --- memory: the persisted assistant message carries the probe ----------
+    # ChatMessage.tool_calls is stored in OpenAI wire format:
+    # [{"id": ..., "type": "function", "function": {"name": ..., "arguments": ...}}]
+    messages = await ctx.history.to_list()
+    assistant = [m for m in messages if m.role == "assistant"][-1]
+    assert any(
+        (tc.get("function") or {}).get("name") == "todo_read"
+        for tc in (assistant.tool_calls or [])
+    )
+    assert "<system_note" in (assistant.content or "")
+
+    # --- session: the user-facing stream saw the plain text but NOT the XML -
+    assert "done." in ctx.emitter.streamed
+    assert not any("<system_note" in s for s in ctx.emitter.streamed)

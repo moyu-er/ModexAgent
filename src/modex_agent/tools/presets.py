@@ -54,6 +54,13 @@ class SystemPromptMode(str, Enum):
     APPEND = "append"  # subagent prompt appended after parent's
 
 
+# Fork-context truncation bounds (only meaningful when context_mode == FORK).
+# Centralized so the AgentTemplate default, the bot payload schema, and the
+# registry loader share one source of truth.
+DEFAULT_FORK_MAX_MESSAGES: int = 80
+MAX_FORK_MAX_MESSAGES: int = 100
+
+
 def _make_standard_read() -> list[Tool]:
     """Create read-only standard tools."""
     return [ReadFileTool(), ListDirTool(), SearchFilesTool(), FindFilesTool()]
@@ -169,3 +176,45 @@ def get_preset_tools(
         tools.append(bash_tool)
 
     return tools
+
+
+class ToolSupplement(str, Enum):
+    """Additive tool group layered on top of a base ToolPreset.
+
+    Unlike ToolPreset (one-of), supplements are multi-select and combine.
+    """
+
+    AST_GREP = "ast_grep"  # ast_grep_search + ast_grep_replace
+
+
+def _make_ast_grep_tools() -> list[Tool]:
+    from modex_agent.tools.ast import AstGrepReplaceTool, AstGrepSearchTool
+
+    return [AstGrepSearchTool(), AstGrepReplaceTool()]
+
+
+SUPPLEMENT_FACTORIES: dict[ToolSupplement, Callable[[], list[Tool]]] = {
+    ToolSupplement.AST_GREP: _make_ast_grep_tools,
+}
+
+
+def get_supplement_tools(
+    supplements: list[ToolSupplement],
+    *,
+    root_provider: WorkspaceRootProvider | None = None,
+) -> list[Tool]:
+    """Return deduped tool instances for the given additive supplements."""
+    seen: set[str] = set()
+    out: list[Tool] = []
+    for sup in supplements:
+        for tool in SUPPLEMENT_FACTORIES[sup]():
+            if tool.name in seen:
+                continue
+            seen.add(tool.name)
+            out.append(tool)
+    if root_provider is not None and out:
+        wrapped = wrap_standard_tools(out, root_provider)
+        if not wrapped:
+            raise RuntimeError("wrap_standard_tools returned empty for supplements")
+        out = wrapped
+    return out

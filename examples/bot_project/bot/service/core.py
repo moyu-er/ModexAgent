@@ -19,14 +19,20 @@ from collections.abc import Awaitable, Callable, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import yaml
+from pydantic import ValidationError
+
 if TYPE_CHECKING:
     from modex_agent.commands.processor import SlashCommandProcessor
     from modex_agent.runtime.codec import RuntimeStateCodecRegistry
 
 from bot.plugins.integration import PluginIntegration
+from bot.service.model_choice import ModelChoiceRegistry
+from bot.service.model_config import BotModelConfig
+from bot.service.model_provider import BotModelProvider
 from bot.service.pool_router import PoolSessionStore
-from bot.workspace.wiring import build_single_workspace_stack, build_workspace_stack
 from bot.utils.config_loader import ConfigLoader
+from bot.workspace.wiring import build_single_workspace_stack, build_workspace_stack
 from modex_agent import (
     LLMProvider,
 )
@@ -41,10 +47,7 @@ from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.core.session_store import SessionStore
 from modex_agent.hook.abc import Hook
 from modex_agent.hook.runner import HookRunner
-from modex_agent.ioc.configs.agent import AgentConfig as IOCAgentConfig
 from modex_agent.ioc.configs.app import AppConfig
-from modex_agent.ioc.configs.memory import MemoryConfig as IOCMemoryConfig
-from modex_agent.ioc.factories.llm import create_llm_provider
 from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
 
 from .builders import AgentBuilderMixin, resolve_system_prompt
@@ -87,6 +90,16 @@ class BotService(AgentBuilderMixin):
         self.output_adapter = output_adapter
         self.emitter_factory = emitter_factory
         self._app_config = app_config
+        # Multi-model config (config/model.yml 的 models: 块) + per-turn choice
+        # registry。_load_app_config 解析并缓存；_build_*_provider / wiring 读取。
+        self._bot_model_config: BotModelConfig | None = None
+        self._model_choice_registry: ModelChoiceRegistry | None = None
+        if app_config is not None:
+            # 子类（WebUIService/QQBotService）预加载了 AppConfig 传入——立即做
+            # bot 层 model.yml 后处理，确保 _bot_model_config 在 initialize()/
+            # start() 与 server/pipeline 装配读取前就已就位（spec B3）。app_config
+            # 为 None 时，initialize() 经 _load_app_config 加载并应用同样的后处理。
+            self._apply_bot_model_config(app_config)
         self._output_adapter_factory = output_adapter_factory
         self._on_subagent_created = on_subagent_created
 
@@ -154,37 +167,65 @@ class BotService(AgentBuilderMixin):
         return self.webui
 
     def _build_default_provider(self) -> LLMProvider:
-        """Build the default pool's LLM provider.
+        """Build the default pool's LLM provider (memory/summarizer layer).
 
-        The Workspace uses a single provider for its memory (summarizer) layer
-        across all pools — pools may declare different LLMs for chat, but the
-        memory system's summarizer is pool-independent, so the default pool's
-        provider is sufficient.
+        统一用 BotModelProvider：未设置 ContextVar 时（memory summarizer、后台任务）
+        自动落到默认模型。
         """
-        assert self._app_config is not None, "AppConfig not loaded"
-        pool_cfg = self._app_config.pools[self._default_pool_name]
-        return create_llm_provider(pool_cfg.llm)
-
-    @property
-    def _main_agent_cfg(self) -> IOCAgentConfig | None:
-        """Find main agent by role, not by index."""
-        if not self._app_config or not self._app_config.agents:
-            return None
-        for a in self._app_config.agents:
-            if a.role == "main":
-                return a
-        return self._app_config.agents[0]
-
-    @property
-    def _main_memory_cfg(self) -> IOCMemoryConfig | None:
-        """Memory config for the main agent."""
-        if self._main_agent_cfg is None:
-            return None
-        return self._main_agent_cfg.memory
+        assert self._bot_model_config is not None, "BotModelConfig not loaded"
+        return BotModelProvider(self._bot_model_config)
 
     def _load_app_config(self) -> AppConfig:
-        """Load IOC AppConfig from bot_config.yml."""
-        return AppConfig.from_yaml(self.config_dir / "bot_config.yml")
+        """Load IOC AppConfig from bot_config.yml + 多模型后处理。
+
+        框架 AppConfig.from_yaml 从 model.yml 的 model: 块注入 pool_cfg.llm；新格式
+        只有 models: 块，框架会拿到空默认。此处用 BotModelConfig 的默认模型合成
+        LLMConfig 回填每个 pool 的 llm，并把 max_context_tokens 注入
+        memory.session.max_context_tokens（兼容 _wire_main_pipeline 的 governance /
+        model_capabilities 读取与 descriptor）。
+        """
+        app_config = AppConfig.from_yaml(self.config_dir / "bot_config.yml")
+        self._apply_bot_model_config(app_config)
+        return app_config
+
+    def _load_bot_model_config_for_listing(self) -> BotModelConfig | None:
+        """Re-read config/model.yml fresh for GET /api/models (live refresh).
+
+        The selector must reflect CLI edits (``modexbot model``) without a server
+        restart, so the endpoint re-reads the file on each request rather than
+        serving the startup-cached ``_bot_model_config``. Returns None on a
+        missing or unparseable file (endpoint then reports an empty list).
+        Runtime routing still uses the cached config and requires restart.
+        """
+        model_yml = self.config_dir / "model.yml"
+        if not model_yml.exists():
+            return None
+        try:
+            return BotModelConfig.from_yaml(model_yml)
+        except (ValidationError, yaml.YAMLError, OSError):
+            logger.exception("model.yml parse failed for /api/models listing")
+            return None
+
+    def _apply_bot_model_config(self, app_config: AppConfig) -> None:
+        """Bot 层后处理（spec B3）：解析 model.yml 的 models: 块，用默认模型合成
+        LLMConfig 回填每个 pool_cfg.llm，并把 max_context_tokens 注入
+        memory.session.max_context_tokens。无论 AppConfig 由本服务加载还是子类
+        预加载传入，都必须运行——_bot_model_config 是后续 provider/wiring 的依赖。
+
+        model.yml 缺失时（如框架单测用 config_dir=Path('.') + 合成 app_config）
+        静默跳过，_bot_model_config 留 None；真正的缺失判定由 _build_default_provider
+        的 assert 兜底（与框架 AppConfig.from_yaml 的 if model_yml.exists() 一致）。
+        """
+        model_yml = self.config_dir / "model.yml"
+        if not model_yml.exists():
+            return
+        model_cfg = BotModelConfig.from_yaml(model_yml)
+        self._bot_model_config = model_cfg
+        default_llm = model_cfg.synthesize_llm_config()
+        for pool_cfg in app_config.pools.values():
+            pool_cfg.llm = default_llm
+            if pool_cfg.memory is not None:
+                pool_cfg.memory.session.max_context_tokens = model_cfg.max_context_tokens
 
     # ------------------------------------------------------------------ #
     # Path helpers
@@ -227,7 +268,7 @@ class BotService(AgentBuilderMixin):
         if self._app_config is None:
             self._app_config = self._load_app_config()
         assert self._app_config is not None, "AppConfig must be loaded before initialize"
-        print(f"[OK] Config loaded ({len(self._app_config.agents)} agents via IOC)")
+        print(f"[OK] Config loaded ({len(self._app_config.pools)} pools via IOC)")
 
         # Service-level session→pool mapping store. Lives in the project home
         # data dir so every workspace's PoolRouter and the WebUI pipeline share
@@ -253,6 +294,7 @@ class BotService(AgentBuilderMixin):
         # 1.5 Build the default LLM provider + the workspace stack.
         # Branch on workspace.enabled: False -> single-home stack (no /cd);
         # True -> full multi-live stack.
+        self._model_choice_registry = ModelChoiceRegistry()
         self._default_provider = self._build_default_provider()
         self.control_channel = self._build_control_channel()
         self.command_processor = self._build_main_command_processor()
@@ -339,24 +381,6 @@ class BotService(AgentBuilderMixin):
         except BaseException:
             if not suppress_errors:
                 raise
-
-    def _find_subagent_cfg(self) -> IOCAgentConfig | None:
-        """Find the first subagent config by role."""
-        if not self._app_config or not self._app_config.agents:
-            return None
-        for a in self._app_config.agents:
-            if a.role == "subagent":
-                return a
-
-    def _find_additional_subagent_cfgs(self) -> list[IOCAgentConfig]:
-        """Find all subagent configs by role, excluding the primary subagent."""
-        if not self._app_config or not self._app_config.agents:
-            return []
-        primary = self._find_subagent_cfg()
-        primary_name = primary.name if primary else None
-        return [
-            a for a in self._app_config.agents if a.role == "subagent" and a.name != primary_name
-        ]
 
     @property
     def safety_policy(self) -> RuntimeSafetyPolicy:

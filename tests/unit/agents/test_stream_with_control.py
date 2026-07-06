@@ -113,7 +113,7 @@ class TestStreamWithControlPreservesToolCalls:
 
         class StreamingProvider(StreamingLLMProvider):
             async def chat_stream(self, messages, tools=None, temperature=0.7,
-                                  max_tokens=None, on_content_delta=None,
+                                  max_output_tokens=None, on_content_delta=None,
                                   on_reasoning_delta=None, **kwargs):
                 if on_content_delta:
                     await on_content_delta("Let me run a command.")
@@ -176,7 +176,7 @@ class TestStreamWithControlPreservesToolCalls:
 
         class StreamingProviderNoTools(StreamingLLMProvider):
             async def chat_stream(self, messages, tools=None, temperature=0.7,
-                                  max_tokens=None, on_content_delta=None,
+                                  max_output_tokens=None, on_content_delta=None,
                                   on_reasoning_delta=None, **kwargs):
                 if on_content_delta:
                     await on_content_delta("Hello!")
@@ -238,7 +238,7 @@ class TestMidTurnCancelViaInterceptor:
 
         class CancellableStreamProvider(StreamingLLMProvider):
             async def chat_stream(self, messages, tools=None, temperature=0.7,
-                                  max_tokens=None, on_content_delta=None,
+                                  max_output_tokens=None, on_content_delta=None,
                                   on_reasoning_delta=None, **kwargs):
                 if on_content_delta:
                     # This callback drain will find and consume CANCEL_TURN,
@@ -290,7 +290,7 @@ class TestMidTurnCancelViaInterceptor:
 
         class SlowStreamingProvider(StreamingLLMProvider):
             async def chat_stream(self, messages, tools=None, temperature=0.7,
-                                  max_tokens=None, on_content_delta=None,
+                                  max_output_tokens=None, on_content_delta=None,
                                   on_reasoning_delta=None, **kwargs):
                 if on_content_delta:
                     await on_content_delta("正在分析问题...")

@@ -78,7 +78,7 @@ class LiteLLMProvider(StreamingLLMProvider):
         api_key: str | None = None,
         base_url: str | None = None,
         temperature: float = DefaultValues.TEMPERATURE,
-        max_tokens: int | None = None,
+        max_output_tokens: int | None = None,
         timeout: float = DefaultValues.TIMEOUT_SECONDS,
         stream_idle_timeout: float = 90.0,
         parse_think_tags: bool = True,
@@ -90,7 +90,7 @@ class LiteLLMProvider(StreamingLLMProvider):
         self._api_key = api_key
         self._base_url = base_url
         self._temperature = temperature
-        self._max_tokens = max_tokens
+        self._max_output_tokens = max_output_tokens
         self._extra_kwargs = kwargs
         self._acompletion = acompletion
         self._parse_think_tags = parse_think_tags
@@ -168,7 +168,7 @@ class LiteLLMProvider(StreamingLLMProvider):
         messages: list[dict[str, Any]],
         model: str | None = None,
         temperature: float | None = None,
-        max_tokens: int | None = None,
+        max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
         stream: bool = False,
         **kwargs,
@@ -179,7 +179,7 @@ class LiteLLMProvider(StreamingLLMProvider):
             "api_key": self._api_key,
             "base_url": self._base_url,
             "temperature": temperature if temperature is not None else self._temperature,
-            "max_tokens": max_tokens if max_tokens is not None else self._max_tokens,
+            "max_tokens": max_output_tokens if max_output_tokens is not None else self._max_output_tokens,
             "timeout": self._timeout,
             **self._extra_kwargs,
             **kwargs,
@@ -203,7 +203,7 @@ class LiteLLMProvider(StreamingLLMProvider):
         messages: list[dict[str, Any]],
         model: str | None = None,
         temperature: float | None = None,
-        max_tokens: int | None = None,
+        max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
         on_content_delta: Callable[[str], Any] | None = None,
         on_reasoning_delta: Callable[[str], Any] | None = None,
@@ -213,7 +213,7 @@ class LiteLLMProvider(StreamingLLMProvider):
             messages=messages,
             model=model,
             temperature=temperature,
-            max_tokens=max_tokens,
+            max_output_tokens=max_output_tokens,
             tools=tools,
             on_content_delta=on_content_delta,
             on_reasoning_delta=on_reasoning_delta,
@@ -225,7 +225,7 @@ class LiteLLMProvider(StreamingLLMProvider):
         messages: list[dict[str, Any]],
         model: str | None = None,
         temperature: float | None = 0.7,
-        max_tokens: int | None = None,
+        max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
         max_retries: int = 0,
         on_content_delta: Callable[[str], Any] | None = None,
@@ -238,7 +238,7 @@ class LiteLLMProvider(StreamingLLMProvider):
             max_retries,
             model=model,
             temperature=temperature,
-            max_tokens=max_tokens,
+            max_output_tokens=max_output_tokens,
             tools=tools,
             on_content_delta=on_content_delta,
             on_reasoning_delta=on_reasoning_delta,
@@ -250,7 +250,7 @@ class LiteLLMProvider(StreamingLLMProvider):
         messages: list[dict[str, Any]],
         model: str | None = None,
         temperature: float | None = None,
-        max_tokens: int | None = None,
+        max_output_tokens: int | None = None,
         tools: list[dict] | None = None,
         on_content_delta: Callable[[str], Any] | None = None,
         on_reasoning_delta: Callable[[str], Any] | None = None,
@@ -260,7 +260,7 @@ class LiteLLMProvider(StreamingLLMProvider):
             messages=messages,
             model=model,
             temperature=temperature,
-            max_tokens=max_tokens,
+            max_output_tokens=max_output_tokens,
             tools=tools,
             stream=True,
             **kwargs,

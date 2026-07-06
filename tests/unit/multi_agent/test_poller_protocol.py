@@ -229,7 +229,7 @@ async def test_poller_lazy_materializes_missing_subagent():
 
     pool._template_registry = MagicMock()
     pool._template_registry.get_template = MagicMock(
-        return_value=_FakeTemplate(agent_type="scout")
+        return_value=_FakeTemplate(agent_name="scout")
     )
     pool._materialize_deps = MagicMock()
     pool._pool_name = "main"
@@ -264,7 +264,7 @@ async def test_poller_materialize_failure_leaves_message_in_inbox():
 
     pool._template_registry = MagicMock()
     pool._template_registry.get_template = MagicMock(
-        return_value=_FailingTemplate(agent_type="scout")
+        return_value=_FailingTemplate(agent_name="scout")
     )
     pool._materialize_deps = MagicMock()
     pool._pool_name = "main"

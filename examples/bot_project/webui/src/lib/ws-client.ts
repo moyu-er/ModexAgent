@@ -182,6 +182,8 @@ export class WebSocketClient {
     ws?: string,
     requestId?: string,
     attachments?: OutgoingAttachmentRef[],
+    providerName?: string,
+    modelName?: string,
   ): boolean {
     return this.send("send_message", {
       session_id: sessionId,
@@ -195,6 +197,11 @@ export class WebSocketClient {
       // Uploaded-file refs ({local_path, filename?, mime?}) the backend builds
       // AttachmentRefs from so the ingest stage persists + perceives them.
       ...(attachments && attachments.length > 0 ? { attachments } : {}),
+      // Model override: when the composer selects a non-default
+      // (provider, model) pair, both fields ride the send_message payload so
+      // the backend _ws_send_message routes the turn to the chosen model.
+      ...(providerName ? { provider_name: providerName } : {}),
+      ...(modelName ? { model_name: modelName } : {}),
     });
   }
 

@@ -35,7 +35,7 @@ class TestDeepMergeEdgeCases:
 class TestAgentConfigEdgeCases:
     def test_minimal_name_only(self) -> None:
         cfg = AgentConfig(name="x")
-        assert cfg.max_steps == 20
+        assert cfg.max_steps == 100
         assert cfg.memory is None
         assert cfg.skills is None
 
@@ -57,17 +57,11 @@ class TestAgentConfigEdgeCases:
         )
         assert cfg.llm.model == "custom-model"
 
-    def test_tools_empty_default(self) -> None:
-        cfg = AgentConfig(name="x")
-        assert cfg.tools == []
-
 
 class TestAppConfigEdgeCases:
     def test_extra_fields_ignored(self) -> None:
+        """Business-layer extra fields in bot_config.yml are silently ignored."""
         yaml_content = """
-llm:
-  model: "gpt-4"
-  api_key: "sk-test"
 unknown_field: "should be ignored"
 another_extra: 42
 """
@@ -78,27 +72,24 @@ another_extra: 42
             tmp = f.name
         try:
             cfg = AppConfig.from_yaml(tmp)
-            assert cfg.llm.model == "gpt-4"
+            assert cfg.pools == {}
         finally:
             Path(tmp).unlink()
 
-    def test_single_agent_minimal(self) -> None:
+    def test_pools_carried_through(self) -> None:
+        from modex_agent.ioc.configs.pool import PoolConfig
         cfg = AppConfig(
-            llm=LLMConfig(model="gpt-4", api_key="k"),
-            agents=[AgentConfig(name="solo")],
+            pools={
+                "main": PoolConfig(
+                    name="main",
+                    main_agent_name="main",
+                    llm=LLMConfig(model="gpt-4", api_key="k"),
+                    agents=[AgentConfig(name="main", role="main")],
+                ),
+            },
         )
-        assert len(cfg.agents) == 1
-        assert cfg.agents[0].name == "solo"
-
-    def test_multi_agent_independent_configs(self) -> None:
-        cfg = AppConfig(
-            llm=LLMConfig(model="gpt-4", api_key="k"),
-            agents=[
-                AgentConfig(name="a", max_steps=10),
-                AgentConfig(name="b", max_steps=20),
-            ],
-        )
-        assert cfg.agents[0].max_steps != cfg.agents[1].max_steps
+        assert len(cfg.pools) == 1
+        assert cfg.pools["main"].agents[0].name == "main"
 
 
 class TestSafetyConfigDefaults:

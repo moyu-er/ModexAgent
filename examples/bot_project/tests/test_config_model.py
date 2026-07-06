@@ -1,94 +1,95 @@
-"""Tests for modexbot.config_model — model.yml read/write helpers."""
-
+# tests/test_config_model.py
 from __future__ import annotations
 
+import sys
 from pathlib import Path
-from tempfile import TemporaryDirectory
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from modexbot.config_model import (
+    add_provider,
     check_model_config,
-    get_model_section,
-    get_model_value,
-    set_model_value,
+    load_models_section,
+    save_models_section,
+    set_default_model,
 )
 
-
-class TestSetGet:
-    def test_set_then_get_roundtrip(self) -> None:
-        with TemporaryDirectory() as tmp:
-            path = Path(tmp) / "model.yml"
-            set_model_value(path, "model", "openai/foo")
-            set_model_value(path, "url", "https://api.example.com/v1")
-            assert get_model_value(path, "model") == "openai/foo"
-            assert get_model_value(path, "url") == "https://api.example.com/v1"
-
-    def test_api_key_stored_as_literal_value(self) -> None:
-        with TemporaryDirectory() as tmp:
-            path = Path(tmp) / "model.yml"
-            set_model_value(path, "api_key", "sk-secret-literal")
-            # Literal value on disk — not an ${ENV} reference.
-            raw = path.read_text(encoding="utf-8")
-            assert "sk-secret-literal" in raw
-            assert "${" not in raw
-            assert get_model_value(path, "api_key") == "sk-secret-literal"
-
-    def test_set_preserves_other_keys(self) -> None:
-        with TemporaryDirectory() as tmp:
-            path = Path(tmp) / "model.yml"
-            set_model_value(path, "model", "openai/foo")
-            set_model_value(path, "api_key", "sk-1")
-            assert get_model_value(path, "model") == "openai/foo"
-            assert get_model_value(path, "api_key") == "sk-1"
-
-    def test_capabilities_list_roundtrip(self) -> None:
-        with TemporaryDirectory() as tmp:
-            path = Path(tmp) / "model.yml"
-            set_model_value(path, "capabilities", ["text", "image"])
-            assert get_model_value(path, "capabilities") == ["text", "image"]
-
-    def test_get_missing_returns_none(self) -> None:
-        with TemporaryDirectory() as tmp:
-            path = Path(tmp) / "model.yml"
-            assert get_model_value(path, "model") is None
-            assert get_model_section(path) == {}
+_PLACEHOLDER = "your_api_key"
 
 
-class TestCheckModelConfig:
-    def test_complete_when_required_present(self) -> None:
-        with TemporaryDirectory() as tmp:
-            path = Path(tmp) / "model.yml"
-            set_model_value(path, "model", "openai/foo")
-            set_model_value(path, "api_key", "sk-1")
-            set_model_value(path, "url", "https://api.example.com/v1")
-            complete, missing = check_model_config(path)
-            assert complete is True
-            assert missing == []
+def _empty(tmp_path: Path) -> Path:
+    p = tmp_path / "model.yml"
+    p.write_text("", encoding="utf-8")
+    return p
 
-    def test_missing_lists_absent_required_keys(self) -> None:
-        with TemporaryDirectory() as tmp:
-            path = Path(tmp) / "model.yml"
-            set_model_value(path, "model", "openai/foo")
-            complete, missing = check_model_config(path)
-            assert complete is False
-            assert set(missing) == {"api_key", "url"}
 
-    def test_empty_string_counts_as_missing(self) -> None:
-        with TemporaryDirectory() as tmp:
-            path = Path(tmp) / "model.yml"
-            set_model_value(path, "model", "openai/foo")
-            set_model_value(path, "api_key", "   ")
-            set_model_value(path, "url", "https://api.example.com/v1")
-            complete, missing = check_model_config(path)
-            assert complete is False
-            assert missing == ["api_key"]
+def test_round_trip_models_section(tmp_path: Path) -> None:
+    p = _empty(tmp_path)
+    save_models_section(
+        p,
+        {
+            "default_provider": "A",
+            "default_model": "M1",
+            "providers": [
+                {"key": "a", "name": "A", "url": "u", "api_key": "k",
+                 "models": [{"name": "M1", "model": "m1"}]}
+            ],
+        },
+    )
+    section = load_models_section(p)
+    assert section["default_provider"] == "A"
+    assert section["providers"][0]["models"][0]["name"] == "M1"
 
-    def test_template_placeholder_counts_as_missing(self) -> None:
-        with TemporaryDirectory() as tmp:
-            path = Path(tmp) / "model.yml"
-            # Values copied verbatim from model.example.yml.
-            set_model_value(path, "model", "openai/foo")
-            set_model_value(path, "api_key", "your_llm_api_key")
-            set_model_value(path, "url", "https://api.example.com/v1")
-            complete, missing = check_model_config(path)
-            assert complete is False
-            assert missing == ["api_key"]
+
+def test_add_provider_appends(tmp_path: Path) -> None:
+    p = _empty(tmp_path)
+    save_models_section(
+        p,
+        {
+            "default_provider": "A",
+            "default_model": "M1",
+            "providers": [
+                {"key": "a", "name": "A", "url": "u", "api_key": "k",
+                 "models": [{"name": "M1", "model": "m1"}]}
+            ],
+        },
+    )
+    add_provider(p, {"key": "b", "name": "B", "url": "u2", "api_key": "k2", "models": []})
+    names = [pp["name"] for pp in load_models_section(p)["providers"]]
+    assert names == ["A", "B"]
+
+
+def test_set_default_model(tmp_path: Path) -> None:
+    p = _empty(tmp_path)
+    save_models_section(
+        p,
+        {
+            "default_provider": "A",
+            "default_model": "M1",
+            "providers": [
+                {"key": "a", "name": "A", "url": "u", "api_key": "k",
+                 "models": [{"name": "M1", "model": "m1"}, {"name": "M2", "model": "m2"}]}
+            ],
+        },
+    )
+    set_default_model(p, "A", "M2")
+    s = load_models_section(p)
+    assert (s["default_provider"], s["default_model"]) == ("A", "M2")
+
+
+def test_check_model_config_flags_placeholder(tmp_path: Path) -> None:
+    p = _empty(tmp_path)
+    save_models_section(
+        p,
+        {
+            "default_provider": "A",
+            "default_model": "M1",
+            "providers": [
+                {"key": "a", "name": "A", "url": "u", "api_key": _PLACEHOLDER,
+                 "models": [{"name": "M1", "model": "m1"}]}
+            ],
+        },
+    )
+    complete, missing = check_model_config(p)
+    assert complete is False
+    assert "api_key" in missing

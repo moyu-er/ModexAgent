@@ -459,11 +459,11 @@ class TokenBudgetGovernance(ContextGovernance):
 
     def __init__(
         self,
-        max_tokens: int,
+        max_context_tokens: int,
         safety_buffer: int = 1024,
         token_estimator: TokenEstimator | None = None,
     ) -> None:
-        self._max_tokens = max_tokens
+        self._max_context_tokens = max_context_tokens
         self._safety_buffer = safety_buffer
         self._estimator: TokenEstimator = token_estimator or CharTokenEstimator()
 
@@ -480,7 +480,7 @@ class TokenBudgetGovernance(ContextGovernance):
             return system_messages
 
         system_tokens = self._estimator.estimate_messages(system_messages)
-        remaining_budget = max(128, self._max_tokens - system_tokens - self._safety_buffer)
+        remaining_budget = max(128, self._max_context_tokens - system_tokens - self._safety_buffer)
 
         # 从尾部向前累加，直到预算耗尽
         kept: list[dict[str, Any]] = []

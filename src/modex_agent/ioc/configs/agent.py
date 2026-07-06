@@ -10,15 +10,15 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from modex_agent.core.tool_manager import Tool
 from modex_agent.ioc.configs.approval import ApprovalConfig
 from modex_agent.ioc.configs.hooks import HooksConfig
 from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.ioc.configs.safety import SafetyConfig
 from modex_agent.ioc.configs.skills import SkillsConfig
+from modex_agent.tools.presets import ToolPreset, ToolSupplement
 
 DEFAULT_SYSTEM_PROMPT = """\
 You are a capable AI assistant.
@@ -50,22 +50,23 @@ class ExperienceConfig(BaseModel):
 
 
 class AgentConfig(BaseModel):
-    """Configuration for a single agent.
+    """Configuration for a single agent (main or subagent).
+
+    Tools are assembled in code from ``tool_preset`` + ``tool_supplements``
+    (plus terminal/communication tools at pool-build time) — never declared
+    on this config. ``mcp`` is a list of registry server names resolved via
+    ``bot.config.mcp_registry``.
 
     Fields with None defaults are disabled unless explicitly set.
     Fields with non-None defaults (hooks) are enabled by default.
-
-    tools is populated in code, never from YAML.
     """
 
-    model_config = {"arbitrary_types_allowed": True}
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     name: str
     role: Literal["main", "subagent"] = "subagent"
     llm: LLMConfig | None = None
-    system_prompt: str = DEFAULT_SYSTEM_PROMPT
-    max_steps: int = 20
-    tools: list[Tool] = Field(default_factory=list)  # code-passed only
+    max_steps: int = 100
     use_terminal: bool = False  # master switch: false = SubprocessExecutor, skip terminal tools
     terminal_visibility: bool = (
         False  # True=prefer visible, False=prefer hidden; degrades through chain
@@ -77,6 +78,9 @@ class AgentConfig(BaseModel):
     hooks: HooksConfig | None = Field(default_factory=HooksConfig)
     experience: ExperienceConfig | None = None
 
-    # pi-aligned: extra tools registered by name for the main agent
-    # e.g. ["ast_grep_search", "ast_grep_replace", "lsp_diagnostics", "lsp_navigation"]
-    extra_tools: list[str] = Field(default_factory=list)
+    # ── tool policy ──
+    tool_preset: ToolPreset = ToolPreset.FULL
+    tool_supplements: list[ToolSupplement] = Field(default_factory=list)
+
+    # ── MCP servers (registry names resolved via bot.config.mcp_registry) ──
+    mcp: list[str] = Field(default_factory=list)

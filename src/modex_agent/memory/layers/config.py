@@ -6,8 +6,8 @@ Default session cleanup flow:
    both call ``cleanup_session()`` after the append.
 2. ``cleanup_session()`` (in ``framework/memory/cleanup.py``) is
    token-based: it compresses when non-system session tokens exceed
-   ``max_tokens * max_token_ratio``, keeping a tail within
-   ``max_tokens * keep_ratio``.
+   ``max_context_tokens * max_token_ratio``, keeping a tail within
+   ``max_context_tokens * keep_ratio``.
 3. When the threshold is exceeded, messages are pruned using the configured
    ``keep_ratio``. If an ``archive_strategy`` is provided, pruned messages
    are archived before removal.

@@ -4,6 +4,17 @@ import { changeWorkspace } from "../lib/api";
 import { WorkspaceBrowser } from "./WorkspaceBrowser";
 import { SessionTree, type TreeNode } from "./SessionTree";
 import { ThemeToggle } from "./ThemeToggle";
+import { useToast } from "./ToastContext";
+import { Button } from "./ui/Button";
+import { IconButton } from "./ui/IconButton";
+import { SelectPrimitive } from "./ui/SelectPrimitive";
+import {
+  ChevronRightIcon,
+  FolderIcon,
+  FolderOpenIcon,
+  HomeIcon,
+  SettingsGearIcon,
+} from "./ui/icons";
 
 export interface SidebarProps {
   sessionTree: TreeNode[];
@@ -24,6 +35,7 @@ export interface SidebarProps {
   onPoolChange: (pool: string) => void;
   revealSessionId?: string | null;
   style?: CSSProperties;
+  onOpenSettings?: () => void;
 }
 
 export const Sidebar: FC<SidebarProps> = ({
@@ -45,9 +57,14 @@ export const Sidebar: FC<SidebarProps> = ({
   onPoolChange,
   revealSessionId,
   style,
+  onOpenSettings,
 }) => {
   const [browserOpen, setBrowserOpen] = useState(false);
   const [recentOpen, setRecentOpen] = useState(false);
+  // Persistent restart indicator: any restart_required save arms a red dot on
+  // the settings gear. Best-effort clear after restartSystem resolves (see
+  // restartToast); otherwise it stays until page reload.
+  const { restart } = useToast();
 
   const handleNew = (): void => {
     onNew(activePool);
@@ -76,63 +93,69 @@ export const Sidebar: FC<SidebarProps> = ({
   return (
     <div
       style={style}
-      className={`fixed inset-y-0 left-0 z-40 flex h-full w-[260px] flex-col border-r border-divider-light dark:border-divider-dark bg-sidebar-bg-light dark:bg-sidebar-bg-dark transition-transform duration-200 ease-out md:static md:w-[var(--sidebar-width)] md:translate-x-0 ${
+      className={`fixed inset-y-0 left-0 z-40 flex h-full w-[260px] flex-col border-r border-hairline bg-canvas transition-transform duration-200 ease-out md:static md:w-[var(--sidebar-width)] md:translate-x-0 ${
         mobileOpen ? "translate-x-0" : "-translate-x-full"
       }`}
     >
       {/* Workspace indicator (click to browse) */}
-      <div className="border-b border-divider-light dark:border-divider-dark px-4 py-3">
+      <div className="border-b border-hairline px-4 py-3">
         <div className="flex items-center justify-between">
-          <span className="text-xs font-semibold uppercase tracking-wider text-text-secondary-light dark:text-text-secondary-dark">
+          <span className="text-xs font-semibold uppercase tracking-wider text-mute">
             Workspace
           </span>
           {!isHome && (
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={onGoHome}
               title="Return to home workspace (exit)"
-              className="flex items-center gap-0.5 text-text-secondary-light dark:text-text-secondary-dark transition-colors hover:text-text-primary-light dark:hover:text-text-primary-dark"
+              className="gap-0.5 text-mute hover:text-ink"
             >
-              <span className="text-xs">↩</span>
+              <HomeIcon className="h-3.5 w-3.5" />
               <span className="text-xs font-medium">Home</span>
-            </button>
+            </Button>
           )}
         </div>
-        <button
-          type="button"
+        <Button
+          variant="ghost"
+          size="md"
           onClick={(): void => setBrowserOpen(true)}
           title="Browse for workspace folder"
-          className="-ml-2 mt-1.5 flex w-full cursor-pointer items-center gap-1.5 truncate rounded-md px-2 py-1 text-left font-mono text-sm text-text-body-light dark:text-text-body-dark transition-colors hover:bg-sidebar-hover-light dark:hover:bg-sidebar-hover-dark hover:text-text-primary-light dark:hover:text-text-primary-dark"
+          className="-ml-2 mt-1.5 h-auto w-full justify-start gap-1.5 truncate rounded-sm px-2 py-1 text-left font-mono text-sm text-body hover:bg-hairline-soft hover:text-ink"
         >
-          <span className="shrink-0 text-sm">📂</span>
+          <FolderIcon className="h-4 w-4 shrink-0" />
           <span className="truncate">{String(workspace || "(not set)")}</span>
-        </button>
+        </Button>
 
         {/* Recent workspaces dropdown */}
         {recentFiltered.length > 0 && (
           <div className="relative mt-1">
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={(): void => setRecentOpen(!recentOpen)}
-              className="flex w-full items-center gap-1 text-xs text-text-secondary-light dark:text-text-secondary-dark transition-colors hover:text-text-body-light dark:hover:text-text-body-dark"
+              className="h-auto w-full justify-start gap-1.5 pl-0 pr-2 text-xs text-mute hover:text-body"
             >
-              <span className={`inline-block transition-transform ${recentOpen ? "rotate-90" : ""}`}>▸</span>
+              <ChevronRightIcon
+                className={`h-3.5 w-3.5 transition-transform ${recentOpen ? "rotate-90" : ""}`}
+              />
               <span>Recent</span>
-              <span className="text-text-disabled-light dark:text-text-disabled-dark">({recentFiltered.length})</span>
-            </button>
+              <span className="text-faint">({recentFiltered.length})</span>
+            </Button>
             {recentOpen && (
-              <div className="mt-1 max-h-40 overflow-y-auto rounded-md border border-card-border-light dark:border-card-border-dark bg-content-bg-light dark:bg-content-bg-dark">
+              <div className="relative mt-1 max-h-40 overflow-y-auto rounded-sm border-l-2 border-hairline pl-3">
                 {recentFiltered.map((entry) => (
-                  <button
+                  <Button
                     key={String(entry.path)}
-                    type="button"
+                    variant="ghost"
+                    size="md"
                     onClick={(): void => { handleRecentClick(String(entry.path)); }}
                     title={String(entry.path)}
-                    className="flex w-full items-center gap-1.5 truncate px-2.5 py-1.5 text-left font-mono text-xs text-text-body-light dark:text-text-body-dark transition-colors hover:bg-sidebar-hover-light dark:hover:bg-sidebar-hover-dark hover:text-text-primary-light dark:hover:text-text-primary-dark"
+                    className="h-auto w-full justify-start gap-1.5 truncate rounded-sm px-2 py-1 text-left font-mono text-xs text-body hover:bg-hairline-soft hover:text-ink"
                   >
-                    <span className="shrink-0 text-xs opacity-50">📁</span>
+                    <FolderOpenIcon className="h-3.5 w-3.5 shrink-0 opacity-50" />
                     <span className="truncate">{String(entry.path)}</span>
-                  </button>
+                  </Button>
                 ))}
               </div>
             )}
@@ -152,44 +175,52 @@ export const Sidebar: FC<SidebarProps> = ({
       />
 
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-divider-light dark:border-divider-dark px-4 py-3">
-        <h2 className="text-xs font-semibold uppercase tracking-wider text-text-secondary-light dark:text-text-secondary-dark">
+      <div className="flex items-center justify-between border-b border-hairline px-4 py-3">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-mute">
           Conversations
         </h2>
-        <ThemeToggle />
+        <div className="flex items-center gap-1">
+          {onOpenSettings && (
+            <div className="relative">
+              <IconButton
+                label="Settings"
+                size="sm"
+                variant="ghost"
+                icon={<SettingsGearIcon />}
+                onClick={onOpenSettings}
+              />
+              {restart.restartNeeded && (
+                <span
+                  aria-label="Restart required"
+                  title="Restart required to apply saved changes"
+                  className="absolute right-1 top-1 h-2 w-2 rounded-full bg-error"
+                />
+              )}
+            </div>
+          )}
+          <ThemeToggle />
+        </div>
       </div>
 
       {/* Pool selector badge */}
       {pools.length > 1 && (
-        <div className="border-b border-divider-light dark:border-divider-dark px-4 py-3">
-          <div className="relative">
-            <select
-              value={activePool}
-              onChange={(e): void => onPoolChange(e.target.value)}
-              className="w-full cursor-pointer appearance-none rounded-lg border border-card-border-light dark:border-card-border-dark bg-content-bg-light dark:bg-content-bg-dark py-3 pl-7 pr-10 text-base font-semibold text-text-primary-light dark:text-text-primary-dark transition-colors hover:bg-sidebar-hover-light dark:hover:bg-sidebar-hover-dark focus:border-input-focus-light dark:focus:border-input-focus-dark focus:outline-none"
-            >
-              {pools.map((p) => (
-                <option key={p.name} value={p.name}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-            <span className="pointer-events-none absolute left-2 top-1/2 h-2.5 w-2.5 -translate-y-1/2 rounded-full bg-ai-brand-light dark:bg-ai-brand-dark" />
-            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-base leading-none text-text-secondary-light dark:text-text-secondary-dark">
-              ▾
-            </span>
-          </div>
+        <div className="border-b border-hairline px-4 py-3">
+          <SelectPrimitive
+            value={activePool}
+            onChange={(e): void => onPoolChange(e.target.value)}
+            options={pools.map((p) => ({ value: p.name, label: p.name }))}
+          />
         </div>
       )}
 
       {/* Session tree */}
       <div className="flex-1 overflow-y-auto py-2">
         {isLoadingSessions ? (
-          <p className="px-4 py-3 text-sm text-text-secondary-light dark:text-text-secondary-dark">
+          <p className="px-4 py-3 text-sm text-mute">
             Loading…
           </p>
         ) : sessionTree.length === 0 ? (
-          <p className="px-4 py-3 text-sm text-text-secondary-light dark:text-text-secondary-dark">
+          <p className="px-4 py-3 text-sm text-mute">
             No conversations in {activePool}
           </p>
         ) : (
@@ -204,14 +235,15 @@ export const Sidebar: FC<SidebarProps> = ({
       </div>
 
       {/* New Conversation button */}
-      <div className="border-t border-divider-light dark:border-divider-dark p-3">
-        <button
-          type="button"
+      <div className="border-t border-hairline p-3">
+        <Button
+          variant="primary"
+          size="lg"
           onClick={handleNew}
-          className="w-full rounded-lg bg-btn-primary-light px-3 py-2.5 text-sm font-semibold text-btn-primary-text-light transition-opacity hover:opacity-90 active:opacity-80 dark:bg-btn-primary-dark dark:text-btn-primary-text-dark"
+          className="h-auto w-full rounded-sm py-2.5 text-sm"
         >
           + New Conversation
-        </button>
+        </Button>
       </div>
     </div>
   );

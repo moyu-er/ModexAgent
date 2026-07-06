@@ -25,7 +25,7 @@ from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.message_type import AgentMessageType
 from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
-from modex_agent.multi_agent.tools import CommunicationTargetStore
+from modex_agent.multi_agent.tools import CommunicationTargetStore, resolve_parent_name
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
@@ -44,10 +44,18 @@ _TASK_ID_BYTES = 8
 
 async def _load_per_agent_mcp(
     tool_manager: Any,
-    mcp_json: Path,
+    selection: list[str],
+    project_dir: Path,
     agent_name: str,
 ) -> None:
-    """Load MCP servers from a per-agent JSON file and register as tools."""
+    """Resolve an agent's MCP ``selection`` against the registry and register tools.
+
+    Reads ``<project_dir>/config/mcp/registry.json`` (Claude-style
+    ``{"mcpServers": {...}}``), keeps only the servers named in
+    ``selection``, applies ``${ENV}`` interpolation, connects, and registers
+    the adapted tools on ``tool_manager``. Failures are logged and swallowed
+    so subagent creation is never blocked by an unreachable MCP server.
+    """
     import json
 
     from modex_agent.ioc.configs.app import _resolve_env_in
@@ -55,17 +63,36 @@ async def _load_per_agent_mcp(
     from modex_agent.tools.mcp_adapter import MCPToolAdapter
     from modex_agent.tools.registry import ToolRegistry
 
-    with open(mcp_json, encoding="utf-8") as f:
-        raw = json.load(f)
-
-    servers = raw.get("mcpServers") or raw.get("servers") or {}
-    if not servers:
-        logger.info("Agent %s: MCP config %s has no servers defined", agent_name, mcp_json.name)
+    if not selection:
         return
 
+    registry_path = project_dir / "config" / "mcp" / "registry.json"
+    if not registry_path.exists():
+        logger.info("Agent %s: MCP registry %s missing; skipping MCP tools", agent_name, registry_path)
+        return
+
+    with open(registry_path, encoding="utf-8") as f:
+        raw = json.load(f)
+
+    # Fail-soft (framework) vs fail-loud (bot). The bot path
+    # (``bot.config.mcp_registry.resolve_agent_mcp_servers``) raises
+    # ``UnknownMcpServer`` for stale/typo'd selections at pool build; here we
+    # only warn and drop unknown names so a subagent still materializes — a
+    # bad MCP selection must never block subagent construction (the framework
+    # runs under arbitrary business wiring, including stale YAML during tests).
+    all_servers = raw.get("mcpServers") or raw.get("servers") or {}
+    missing = [s for s in selection if s not in all_servers]
+    if missing:
+        logger.warning(
+            "Agent %s: MCP servers not in registry %s: %s",
+            agent_name, registry_path.name, missing,
+        )
+        return
+
+    servers = {name: all_servers[name] for name in selection}
     logger.info(
         "Agent %s: loading MCP from %s — %d server(s): %s",
-        agent_name, mcp_json.name, len(servers), list(servers.keys()),
+        agent_name, registry_path.name, len(servers), list(servers.keys()),
     )
     servers = _resolve_env_in(servers)
     manager = MCPClientManager(config=servers)
@@ -81,13 +108,13 @@ async def _load_per_agent_mcp(
         logger.warning(
             "Agent %s: MCP initialization timed out after 15s for %s — "
             "server(s) %s unreachable; continuing without MCP tools",
-            agent_name, mcp_json.name, list(servers.keys()),
+            agent_name, registry_path.name, list(servers.keys()),
         )
         return
     except Exception:
         logger.exception(
             "Agent %s: MCP initialization failed for %s",
-            agent_name, mcp_json.name,
+            agent_name, registry_path.name,
         )
         return
 
@@ -95,7 +122,7 @@ async def _load_per_agent_mcp(
         logger.warning(
             "Agent %s: MCP config %s — %d server(s) configured but NONE connected "
             "(check MCP_BEARER_TOKEN env var and network)",
-            agent_name, mcp_json.name, len(servers),
+            agent_name, registry_path.name, len(servers),
         )
         return
 
@@ -111,10 +138,10 @@ async def _load_per_agent_mcp(
             registered += 1
 
     logger.info(
-        "Agent %s: %d MCP tools loaded from %s",
+        "Agent %s: %d MCP tools loaded from selection %s",
         agent_name,
         registered,
-        mcp_json.name,
+        selection,
     )
 
 
@@ -267,22 +294,37 @@ class AgentCommunicationService:
 
     @staticmethod
     def _star_topology_error(
-        context: "AgentContext", target_kind: AgentCommKind | None
+        context: "AgentContext",
+        target_kind: AgentCommKind | None,
+        target_agent: str,
     ) -> str | None:
         """Star-topology policy gate. Returns an error string if the send is
         forbidden, else None.
 
-        A subagent may only address its parent (a NORMAL agent); subagent→subagent
-        is rejected. This is the single enforcement point (ADR-0015 D4/D8) — the
-        send trunk never re-checks topology.
+        A subagent may only address its parent (a NORMAL agent); both
+        subagent→subagent and subagent→non-parent-NORMAL are rejected. The
+        parent is recovered from ``context.session.parent_session_id`` (the
+        production poller-driven path populates it) via ``resolve_parent_name``;
+        when it is unavailable (legacy/fallback) the defense is best-effort
+        and the send is allowed. This is the single enforcement point
+        (ADR-0015 D4/D8) — the send trunk never re-checks topology.
         """
-        if (
-            context.comm_kind == AgentCommKind.SUBAGENT
-            and target_kind == AgentCommKind.SUBAGENT
-        ):
+        if context.comm_kind != AgentCommKind.SUBAGENT:
+            return None
+        if target_kind == AgentCommKind.SUBAGENT:
             return (
                 "Subagents can only reply to normal agents; send subagent-to-"
                 "subagent requests through a normal agent."
+            )
+        # Subagent → NORMAL: must be the resolved parent. Best-effort when the
+        # parent cannot be recovered (no parent_session_id on legacy paths).
+        parent_name = resolve_parent_name(context)
+        if parent_name is not None and target_agent != parent_name:
+            return (
+                f"Subagents can only address the agent that assigned their task "
+                f"({parent_name!r}); routing to other normal agents "
+                f"({target_agent!r}) is not allowed. Send the request through "
+                f"your parent."
             )
         return None
 
@@ -399,7 +441,7 @@ class AgentCommunicationService:
             )
 
         # 2. Star topology: a subagent may only address its parent (a NORMAL).
-        if (topo_err := self._star_topology_error(context, target_kind)) is not None:
+        if (topo_err := self._star_topology_error(context, target_kind, target_agent)) is not None:
             return self._error_result(target_agent, target_kind, topo_err)
 
         # 3. Normalize invocation_id (NORMAL → None; SUBAGENT → mint if empty).

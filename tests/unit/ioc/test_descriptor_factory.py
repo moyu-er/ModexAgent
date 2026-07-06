@@ -6,7 +6,6 @@ from pathlib import Path
 import pytest
 
 from modex_agent.ioc.configs.agent import AgentConfig
-from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.ioc.configs.skills import SkillsConfig
 from modex_agent.ioc.factories.descriptors import build_subagent_descriptor
@@ -15,14 +14,14 @@ from modex_agent.ioc.factories.descriptors import build_subagent_descriptor
 class TestBuildSubagentDescriptorQuery12306:
     @pytest.mark.anyio
     async def test_query_12306_standard_tools(self) -> None:
-        app_cfg = AppConfig(llm=LLMConfig())
+        llm_config = LLMConfig()
         agent_cfg = AgentConfig(name="query-12306")
         project_dir = Path("/tmp")
         workspace = Path("/tmp/memory")
 
         desc, tm, sm, mem = await build_subagent_descriptor(
-            agent_cfg, app_cfg, project_dir, workspace,
-            safety=None, llm=None,
+            agent_cfg, llm_config, project_dir, workspace,
+            safety=None,
         )
         assert desc.address.name == "query-12306"
         # Standard tools always registered (read_write default)
@@ -32,7 +31,7 @@ class TestBuildSubagentDescriptorQuery12306:
 
     @pytest.mark.anyio
     async def test_office_expert_standard_tools(self) -> None:
-        app_cfg = AppConfig(llm=LLMConfig())
+        llm_config = LLMConfig()
         agent_cfg = AgentConfig(
             name="office-expert",
             skills=SkillsConfig(roots=["skills/subagents/docx"]),
@@ -41,8 +40,8 @@ class TestBuildSubagentDescriptorQuery12306:
         workspace = Path("/tmp/memory")
 
         desc, tm, sm, mem = await build_subagent_descriptor(
-            agent_cfg, app_cfg, project_dir, workspace,
-            safety=None, llm=None,
+            agent_cfg, llm_config, project_dir, workspace,
+            safety=None,
         )
         tools = tm.list_tools()
         assert "read" in tools
@@ -54,14 +53,14 @@ class TestBuildSubagentDescriptorQuery12306:
 class TestBuildSubagentDescriptor:
     @pytest.mark.anyio
     async def test_standard_tools_denied_communication(self) -> None:
-        app_cfg = AppConfig(llm=LLMConfig())
+        llm_config = LLMConfig()
         agent_cfg = AgentConfig(name="helper-sync")
         project_dir = Path("/tmp")
         workspace = Path("/tmp/memory")
 
         desc, tm, sm, mem = await build_subagent_descriptor(
-            agent_cfg, app_cfg, project_dir, workspace,
-            safety=None, llm=None,
+            agent_cfg, llm_config, project_dir, workspace,
+            safety=None,
         )
         tools = tm.list_tools()
         assert "read" in tools

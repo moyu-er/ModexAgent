@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 from modex_agent.core.tool_manager import InMemoryToolManager, Tool, ToolManagerConfig
 from modex_agent.ioc.configs.agent import AgentConfig
-from modex_agent.ioc.configs.app import AppConfig
+from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.core.scope import MemoryAgentRole
 from modex_agent.memory.injection import RestrictedInjectionPolicy
@@ -104,7 +104,7 @@ def build_session_only_memory(
     if cfg is not None:
         st = cfg.session
         cleanup_config = {
-            "max_tokens": st.max_tokens,
+            "max_context_tokens": st.max_context_tokens,
             "max_token_ratio": st.max_token_ratio,
             "keep_ratio": st.keep_ratio,
         }
@@ -163,16 +163,20 @@ def _build_skill_manager(
 
 async def build_subagent_descriptor(
     agent_cfg: AgentConfig,
-    app_cfg: AppConfig,
+    llm_config: LLMConfig,
     project_dir: Path,
     workspace: Path,
     safety: Any,
-    llm: Any,
+    *,
+    system_prompt: str = "",
 ) -> tuple[AgentDescriptor, InMemoryToolManager, Any | None, Any]:
     """Build a subagent: descriptor + tool_manager + skill_manager + memory_context.
 
     Standard tools are always registered (read_write is the default).
     MCP tools are loaded from config/mcp/{agent_name}.json if available.
+
+    ``llm_config`` supplies the model/temperature/max_output_tokens for the
+    descriptor. ``system_prompt`` defaults to :data:`DEFAULT_SYSTEM_PROMPT`.
     """
     subagent_name = agent_cfg.name
 
@@ -180,17 +184,17 @@ async def build_subagent_descriptor(
     subagent_tools: list[Tool] = list(_make_standard_tools())
     tool_manager = _build_tool_manager(subagent_tools)
 
-    # MCP tools from per-agent config: config/mcp/{agent_name}.json
-    mcp_json = project_dir / "config" / "mcp" / f"{subagent_name}.json"
-    if mcp_json.exists():
+    # MCP tools from the agent's registry selection
+    mcp_selection = list(agent_cfg.mcp) if agent_cfg.mcp else []
+    if mcp_selection:
         try:
             from modex_agent.multi_agent.communication import _load_per_agent_mcp
-            await _load_per_agent_mcp(tool_manager, mcp_json, subagent_name)
+            await _load_per_agent_mcp(tool_manager, mcp_selection, project_dir, subagent_name)
         except Exception:
             import logging
             logging.getLogger(__name__).exception(
-                "Failed to load MCP tools for subagent %s from %s",
-                subagent_name, mcp_json,
+                "Failed to load MCP tools for subagent %s (selection=%s)",
+                subagent_name, mcp_selection,
             )
 
     # Skills
@@ -198,24 +202,23 @@ async def build_subagent_descriptor(
     skill_manager = _build_skill_manager(subagent_name, skill_roots, project_dir)
 
     # Memory
-    system_prompt = agent_cfg.system_prompt or DEFAULT_SYSTEM_PROMPT
+    resolved_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
     memory_ctx = build_session_only_memory(
         agent_cfg.memory,
         workspace,
         subagent_name,
         MemoryAgentRole.SUBAGENT,
-        system_prompt,
+        resolved_prompt,
     )
 
-    _ = llm  # reserved for future per-subagent LLM override
     descriptor = AgentDescriptor(
         address=AgentAddress(name=subagent_name),
         llm_config=AgentLLMConfig(
-            model=app_cfg.llm.model,
-            temperature=app_cfg.llm.temperature,
-            max_tokens=app_cfg.llm.max_tokens,
+            model=llm_config.model,
+            temperature=llm_config.temperature,
+            max_output_tokens=llm_config.max_output_tokens,
         ),
-        system_prompt_template=system_prompt,
+        system_prompt_template=resolved_prompt,
         max_iterations=agent_cfg.max_steps,
         execution_strategy="react",
         context_strategy="persistent",

@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class ShortTermConfig(BaseModel):
     """Session memory: token-budget triggers for compression."""
 
-    max_tokens: int = 200000
+    max_context_tokens: int = 200000
     max_token_ratio: float = 0.85
     keep_ratio: float = 0.3
 
@@ -89,7 +89,7 @@ class LossyConfig(BaseModel):
 class SessionConfig(BaseModel):
     """Session memory: token-budget triggers for compression. Replaces ShortTermConfig."""
 
-    max_tokens: int = 200000
+    max_context_tokens: int = 200000
     max_token_ratio: float = 0.85
     keep_ratio: float = 0.3
 
@@ -190,14 +190,14 @@ class MemoryConfig(BaseModel):
         values with defaults.
         """
         # Migrate short_term → session (only if caller explicitly passed short_term).
-        # Old short_term carried max_tokens (plus now-removed message-count fields);
-        # only max_tokens survives the token-based redesign.
+        # Old short_term carried max_context_tokens (plus now-removed message-count fields);
+        # only max_context_tokens survives the token-based redesign.
         if "short_term" in self.model_fields_set and self.short_term is not None:
             logger.warning("MemoryConfig.short_term is deprecated, use session instead")
             object.__setattr__(
                 self,
                 "session",
-                SessionConfig(max_tokens=self.short_term.max_tokens),
+                SessionConfig(max_context_tokens=self.short_term.max_context_tokens),
             )
 
         # Migrate long_term → archive + knowledge (only if caller explicitly passed long_term)

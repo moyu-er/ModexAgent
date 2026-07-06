@@ -8,6 +8,7 @@ const uploadAttachmentMock = vi.fn();
 vi.mock("../lib/api", () => ({
   fetchMediaConfig: (...args: unknown[]) => fetchMediaConfigMock(...args),
   uploadAttachment: (...args: unknown[]) => uploadAttachmentMock(...args),
+  fetchModels: vi.fn().mockResolvedValue({ choices: [] }),
   attachmentDownloadUrl: (sid: string, id: string, ws?: string) =>
     `/api/sessions/${sid}/attachments/${id}${ws ? `?ws=${ws}` : ""}`,
 }));

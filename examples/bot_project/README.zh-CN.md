@@ -251,7 +251,7 @@ model:
   model: openai/MiniMax-M2.5
   capabilities: [text, image]
   temperature: 0.7
-  max_tokens: 50000
+  max_output_tokens: 50000
 ```
 
 所有 pool 默认继承这份全局配置；`config/bot_config.yml` 与
@@ -411,7 +411,7 @@ skills/
 memory:
   session:
     max_messages: 150
-    max_tokens: 100000
+    max_context_tokens: 100000
   governance:
     tool_chain_repair: true      # 必需：修复孤儿/不完整 tool-call 组
     lossy_compaction:
@@ -561,7 +561,7 @@ llm:
   base_url: "https://api.openai.com/v1"
   model: "openai/gpt-4o"
   temperature: 0.7
-  max_tokens: 80000
+  max_output_tokens: 80000
 ```
 
 ### 记忆
@@ -571,7 +571,7 @@ memory:
   main:
     short_term:
       max_messages: 50
-      max_tokens: 100000
+      max_context_tokens: 100000
       keep_ratio_for_messages: 0.4
     long_term:
       enabled: true
