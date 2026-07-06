@@ -190,10 +190,9 @@ describe("SettingsView", () => {
     });
     // Wait for the weather row.
     await waitFor(() => expect(screen.getByText("weather")).toBeTruthy());
-    // Click the weather skill row — this should expand the detail pane.
-    fireEvent.click(screen.getByText("weather"));
+    fireEvent.click(screen.getAllByText("weather")[0]!);
     await waitFor(() =>
-      expect(screen.getByText("Get weather forecasts.")).toBeTruthy(),
+      expect(screen.getAllByText("Get weather forecasts.").length).toBeGreaterThan(0),
     );
     // Detail pane should also show delete button; source badge stays on the row.
     expect(screen.getByRole("button", { name: "Delete skill weather" })).toBeTruthy();

@@ -27,19 +27,6 @@ interface Props {
   onChange: (next: Record<string, string>) => void;
 }
 
-let ROW_ID = 0;
-const newId = (): number => {
-  ROW_ID += 1;
-  return ROW_ID;
-};
-
-const entriesToRows = (entries: Record<string, string>): Row[] =>
-  Object.entries(entries).map(([key, value]) => ({
-    key,
-    value,
-    id: newId(),
-  }));
-
 const buildRecord = (rows: Row[]): Record<string, string> => {
   const out: Record<string, string> = {};
   for (const r of rows) {
@@ -63,6 +50,17 @@ const sameRecord = (
 };
 
 export const KeyValueEditor: FC<Props> = ({ label, helper, entries, onChange }) => {
+  const idCounter = useRef<number>(0);
+  const nextId = (): number => {
+    idCounter.current += 1;
+    return idCounter.current;
+  };
+  const entriesToRows = (e: Record<string, string>): Row[] =>
+    Object.entries(e).map(([key, value]) => ({
+      key,
+      value,
+      id: nextId(),
+    }));
   const [rows, setRows] = useState<Row[]>(() => entriesToRows(entries));
   const lastEntriesRef = useRef(entries);
 
@@ -92,7 +90,7 @@ export const KeyValueEditor: FC<Props> = ({ label, helper, entries, onChange }) 
   };
 
   const addRow = (): void => {
-    const next = [...rows, { key: "", value: "", id: newId() }];
+    const next = [...rows, { key: "", value: "", id: nextId() }];
     setRows(next);
     commit(next);
   };

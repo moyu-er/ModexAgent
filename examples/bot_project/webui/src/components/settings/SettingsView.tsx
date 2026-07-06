@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { ConfigPayload, RegistrySection } from "../../types/config";
 import { fetchConfig, saveConfig } from "../../lib/api";
 import { ConfigForm } from "./ConfigForm";
+import { SectionLabel } from "../ui/SectionLabel";
 import { ModelEditor } from "./ModelEditor";
 import { GlobalMcpView } from "./GlobalMcpView";
 import { GlobalSkillsView } from "./GlobalSkillsView";
@@ -310,10 +311,8 @@ function PersistedDomain({
           {Object.entries(form.sections ?? {}).map(([key, sec]) => {
             const section = sec as RegistrySection;
             return (
-              <fieldset key={key} className="rounded-lg border border-hairline bg-canvas-elevated p-5">
-                <legend className="px-1 text-sm font-semibold text-ink">
-                  {section.label}
-                </legend>
+              <div key={key} className="rounded-lg border border-hairline bg-canvas-elevated p-5">
+                <SectionLabel>{section.label}</SectionLabel>
                 <ConfigForm
                   fields={section.fields}
                   values={section.values}
@@ -327,7 +326,7 @@ function PersistedDomain({
                     })
                   }
                 />
-              </fieldset>
+              </div>
             );
           })}
         </div>

@@ -20,6 +20,7 @@ import { Input } from "../ui/Input";
 import { IconButton } from "../ui/IconButton";
 import { Button } from "../ui/Button";
 import { Label } from "../ui/Label";
+import { SectionLabel } from "../ui/SectionLabel";
 import {
   ChevronRightIcon,
   PlusIcon,
@@ -44,7 +45,7 @@ interface Provider {
   key: string;
   name: string;
   url: string;
-  api_key: unknown; // SecretMaskValue when read from backend
+  api_key: SecretMaskValue | SecretWrite;
   models: ModelEntry[];
 }
 
@@ -322,9 +323,7 @@ export function ModelEditor({ values, onChange }: Props) {
       {/* Providers */}
       <div>
         <div className="mb-2 flex items-center justify-between">
-          <h2 className="text-[11px] font-semibold uppercase tracking-wide text-faint">
-            Providers
-          </h2>
+          <SectionLabel>Providers</SectionLabel>
         </div>
 
         <div className="space-y-2">
@@ -332,7 +331,7 @@ export function ModelEditor({ values, onChange }: Props) {
             const isDefault = p.name !== "" && p.name === defaultProvider;
             const isOpen = expanded.has(pi);
             const keySet = Boolean(
-              (p.api_key as SecretMaskValue | undefined)?.has_value,
+              (p.api_key as SecretMaskValue)?.has_value,
             );
             const confirmingThis =
               confirm?.kind === "provider" && confirm.pi === pi;
@@ -616,14 +615,6 @@ export function ModelEditor({ values, onChange }: Props) {
 }
 
 /* --- small presentational helpers (locality: only this editor uses them) --- */
-
-function SectionLabel({ children }: { children: ReactNode }) {
-  return (
-    <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-faint">
-      {children}
-    </div>
-  );
-}
 
 function DefaultBadge() {
   return (

@@ -33,6 +33,7 @@ import { AgentMcpSelector } from "./AgentMcpSelector";
 import { AgentSkillSelector } from "./AgentSkillSelector";
 import { PromptEditor } from "./PromptEditor";
 import { Card } from "../ui/Card";
+import { SectionLabel } from "../ui/SectionLabel";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
 import { Select } from "../ui/Select";
@@ -269,9 +270,7 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
       {/* MAIN AGENT (fixed-expanded, not collapsible) */}
       <Card id="main-agent-section">
         <div className="border-b border-hairline px-4 py-2">
-          <h2 className="text-[11px] font-semibold uppercase tracking-wide text-faint">
-            Main agent
-          </h2>
+          <SectionLabel>Main agent</SectionLabel>
         </div>
         <div className="space-y-5 px-4 py-4">
           <MainAgentFields
@@ -289,9 +288,7 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
       {/* SUBAGENTS */}
       <section>
         <div className="mb-2 flex items-center justify-between">
-          <h2 className="text-[11px] font-semibold uppercase tracking-wide text-faint">
-            Subagents
-          </h2>
+          <SectionLabel>Subagents</SectionLabel>
         </div>
         <div className="space-y-2">
           {form.subagents.map((sub, i) => (

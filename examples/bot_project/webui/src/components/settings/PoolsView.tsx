@@ -20,6 +20,7 @@ import { ApiError } from "../../lib/api";
 import { useToast } from "../ToastContext";
 import { PoolEditor } from "./PoolEditor";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { SectionLabel } from "../ui/SectionLabel";
 import { ActionBar } from "../ui/ActionBar";
 import { Button } from "../ui/Button";
 import { IconButton } from "../ui/IconButton";
@@ -177,9 +178,7 @@ export function PoolsView() {
       {/* Left: pool list */}
       <div className="flex w-64 shrink-0 flex-col gap-3 border-r border-hairline bg-canvas-elevated pr-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-[11px] font-semibold uppercase tracking-wide text-faint">
-            Pools
-          </h2>
+          <SectionLabel>Pools</SectionLabel>
           <IconButton
             icon={<PlusIcon />}
             label="Add pool"
@@ -248,10 +247,10 @@ export function PoolsView() {
                     />
                   ) : (
                     <div
-                      className={`flex items-center gap-1 rounded px-2 py-1 ${
+                      className={`flex items-center gap-1 rounded-md border px-3 py-2 ${
                         isSel
-                          ? "bg-hairline-soft font-semibold text-ink"
-                          : "text-mute hover:bg-hairline-soft"
+                          ? "border-hairline bg-hairline-soft font-semibold text-ink"
+                          : "border-transparent text-body hover:bg-hairline-soft"
                       }`}
                     >
                       <button
@@ -307,7 +306,7 @@ export function PoolsView() {
       </div>
 
       {/* Right: editor */}
-      <div className="flex flex-1 flex-col pl-4">
+      <div className="flex flex-1 flex-col rounded-lg border border-hairline bg-canvas-elevated p-4">
         {selected ? (
           <>
             <div className="flex-1 overflow-auto">

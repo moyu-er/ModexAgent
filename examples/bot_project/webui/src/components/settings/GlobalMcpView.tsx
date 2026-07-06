@@ -281,7 +281,7 @@ function McpCard({
             headerClick();
           }
         }}
-        className="flex w-full cursor-pointer items-center gap-2 rounded text-left outline-none focus-visible:ring-2 focus-visible:ring-link/50"
+        className="flex w-full cursor-pointer items-center gap-2 rounded px-3 py-2.5 text-left outline-none hover:bg-hairline-soft focus-visible:ring-2 focus-visible:ring-link/50"
       >
         {dirty && (
           <span
@@ -336,7 +336,7 @@ function McpCard({
       {open && (
         <div
           id={`mcp-card-${card.id}-body`}
-          className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2"
+          className="border-t border-hairline px-4 py-4 grid grid-cols-1 gap-3 sm:grid-cols-2"
         >
           <Input
             label="Name"

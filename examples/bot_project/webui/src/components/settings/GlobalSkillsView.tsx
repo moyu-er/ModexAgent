@@ -39,6 +39,7 @@ export function GlobalSkillsView() {
   const [selectedSkill, setSelectedSkill] = useState<string | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [query, setQuery] = useState<string>("");
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const load = async (): Promise<void> => {
@@ -60,6 +61,10 @@ export function GlobalSkillsView() {
   if (!skills) {
     return <p className="text-sm text-mute">Loading…</p>;
   }
+
+  const filteredSkills = skills.filter((s) =>
+    s.name.toLowerCase().includes(query.toLowerCase()),
+  );
 
   const showPreview = async (files: FileList | File[] | null): Promise<void> => {
     if (!files || files.length === 0) return;
@@ -186,6 +191,34 @@ export function GlobalSkillsView() {
         />
       </label>
 
+      {skills.length > 0 && (
+        <div className="flex items-center gap-2 rounded-md border border-hairline bg-canvas-elevated px-3 py-2">
+          <svg
+            aria-hidden="true"
+            className="h-4 w-4 shrink-0 text-mute"
+            fill="none"
+            viewBox="0 0 16 16"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="M7 12A5 5 0 107 2a5 5 0 000 10zM11 11l4 4"
+              stroke="currentColor"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth="1.5"
+            />
+          </svg>
+          <input
+            type="text"
+            aria-label="Search skills"
+            placeholder="Search skills…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            className="w-full bg-transparent text-sm text-ink placeholder:text-faint focus:outline-none"
+          />
+        </div>
+      )}
+
       {/* Preview block — shown once files are picked. Confirm triggers
           upload; cancel clears state and resets the file input. */}
       {preview ? (
@@ -229,72 +262,87 @@ export function GlobalSkillsView() {
         </p>
       ) : null}
 
-      <Card>
-        <ul className="divide-y divide-hairline">
-          {skills.map((s) => {
-            const isSelected = selectedSkill === s.name;
-            return (
-              <li key={s.name}>
-                {/* Row */}
-                <div
-                  className={[
-                    "flex cursor-pointer items-center gap-3 border border-transparent px-3 py-2.5 transition-colors",
-                    isSelected
-                      ? "rounded-t-md bg-canvas-elevated border-hairline"
-                      : "rounded-md hover:bg-hairline-soft",
-                  ].join(" ")}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setSelectedSkill(isSelected ? null : s.name)}
-                  onKeyDown={(e): void => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      setSelectedSkill(isSelected ? null : s.name);
-                    }
-                  }}
-                >
-                  <span className="truncate text-sm font-medium text-ink">
-                    {s.name}
-                  </span>
-                </div>
-
-                {/* Inline detail pane */}
-                {isSelected && (
-                  <div className="rounded-b-md border-x border-b border-hairline bg-canvas-elevated px-4 pb-4 pt-2">
-                    <div className="flex items-start justify-between gap-3">
-                      <h3 className="text-sm font-semibold text-ink">{s.name}</h3>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <IconButton
-                          icon={<TrashIcon />}
-                          label={`Delete skill ${s.name}`}
-                          variant="danger"
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setPendingDelete(s.name);
-                          }}
-                        />
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setSelectedSkill(null)}
-                        >
-                          Close
-                        </Button>
-                      </div>
-                    </div>
-                    {s.description ? (
-                      <p className="mt-2 text-sm text-body">{s.description}</p>
-                    ) : (
-                      <p className="mt-2 text-sm text-faint italic">No description.</p>
+      {filteredSkills.length > 0 && (
+        <Card>
+          <div className="space-y-1 p-1">
+            {filteredSkills.map((s) => {
+              const isSelected = selectedSkill === s.name;
+              return (
+                <div key={s.name}>
+                  <div
+                    className={[
+                      "flex cursor-pointer items-center gap-3 rounded-md border px-3 py-2.5 transition-colors",
+                      isSelected
+                        ? "border-hairline bg-hairline-soft"
+                        : "border-transparent hover:bg-hairline-soft",
+                    ].join(" ")}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setSelectedSkill(isSelected ? null : s.name)}
+                    onKeyDown={(e): void => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setSelectedSkill(isSelected ? null : s.name);
+                      }
+                    }}
+                  >
+                    <span className="flex-1 truncate text-sm font-medium text-ink">
+                      {s.name}
+                    </span>
+                    {s.description && (
+                      <span className="shrink-0 text-xs text-mute">
+                        {s.description.length > 60
+                          ? s.description.slice(0, 60) + "\u2026"
+                          : s.description}
+                      </span>
                     )}
                   </div>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      </Card>
+
+                  {isSelected && (
+                    <div className="rounded-b-md border-x border-b border-hairline bg-canvas-elevated px-4 pb-4 pt-2">
+                      <div className="flex items-start justify-between gap-3">
+                        <h3 className="text-sm font-semibold text-ink">{s.name}</h3>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <IconButton
+                            icon={<TrashIcon />}
+                            label={`Delete skill ${s.name}`}
+                            variant="danger"
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPendingDelete(s.name);
+                            }}
+                          />
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setSelectedSkill(null)}
+                          >
+                            Close
+                          </Button>
+                        </div>
+                      </div>
+                      {s.description ? (
+                        <p className="mt-2 text-sm text-body">{s.description}</p>
+                      ) : (
+                        <p className="mt-2 text-sm text-faint italic">
+                          No description.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
+      {skills !== null && skills.length > 0 && filteredSkills.length === 0 && (
+        <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-sm text-mute">
+          No skills match &ldquo;{query}&rdquo;.
+        </p>
+      )}
 
       {pendingDelete ? (
         <ConfirmDialog

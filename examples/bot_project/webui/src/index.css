@@ -10,43 +10,43 @@
  * automatically. Edit a color here once — never in the tailwind config.
  */
 :root {
-  /* 背景层 — Vercel Geist palette */
+  /* Background */
   --color-overlay: rgba(0,0,0,0.4);
 
-  /* 消息气泡 — 保留旧名以兼容既有组件；user-bubble 提亮以维持新画布上的对比度 */
+  /* Message bubbles */
   --color-user-bubble: #EFF6FF;
   --color-user-bubble-text: #1E40AF;
 
-  /* 代码块 */
+  /* Code blocks */
   --color-inline-code-bg: #f2f2f2;
   --color-inline-code-text: #BE123C;
 
-  /* 状态反馈 */
+  /* Status */
   --color-success: #0070f3;
   --color-warning: #f5a623;
   --color-error: #ee0000;
 
-  /* 审批严重级别（白天 = 深色可读文字 / 黑夜 = 柔和低饱和文字） */
-  --color-severity-normal: #475569;     /* slate */
-  --color-severity-sensitive: #B45309;  /* amber */
-  --color-severity-dangerous: #BE3A2F;  /* muted red */
-  --color-severity-hardline: #9F1239;   /* deep rose */
+  /* Approval severity */
+  --color-severity-normal: #475569;
+  --color-severity-sensitive: #B45309;
+  --color-severity-dangerous: #BE3A2F;
+  --color-severity-hardline: #9F1239;
 
-  /* 软阴影颜色（私有变量，不映射 Tailwind；供 .composer 与下拉浮层共用） */
+  /* Shadow */
   --shadow-color: rgba(0,0,0,0.05);
 
-  /* Vercel Geist token ladder */
+  /* Vercel Warm token ladder */
   --color-ink: #171717;
-  --color-body: #4d4d4d;
-  --color-mute: #8f8f8f;
-  --color-faint: #a1a1a1;
-  --color-hairline: #ebebeb;
-  --color-hairline-soft: #f2f2f2;
+  --color-body: #4f4d4a;
+  --color-mute: #8f8d89;
+  --color-faint: #a2a09c;
+  --color-hairline: #e9e6e3;
+  --color-hairline-soft: #f4f1ef;
   --color-canvas: #fafafa;
   --color-canvas-elevated: #ffffff;
-  --color-link: #0070f3;
-  --color-link-deep: #0761d1;
-  --color-link-soft: #d3e5ff;
+  --color-link: #1a56db;
+  --color-link-deep: #1040a8;
+  --color-link-soft: #dce5f5;
 
   /* Radius */
   --radius-sm: 6px;
@@ -56,50 +56,50 @@
   --radius-pill: 100px;
   --radius-full: 9999px;
 
-  /* 滚动条 */
+  /* Scrollbar */
   --color-scrollbar-track: transparent;
   --color-scrollbar-thumb: #D1D5DB;
   --color-scrollbar-thumb-hover: #9CA3AF;
 }
 
 .dark {
-  /* 背景层 — Vercel Geist palette */
+  /* Background */
   --color-overlay: rgba(0,0,0,0.6);
 
-  /* 消息气泡 — 保留旧名；user-bubble 已针对暗色画布调过对比度 */
-  --color-user-bubble: #1E3A5F;
-  --color-user-bubble-text: #93C5FD;
+  /* Message bubbles */
+  --color-user-bubble: #3d2e0a;
+  --color-user-bubble-text: #fde68a;
 
-  /* 代码块 */
-  --color-inline-code-bg: #1a1a1a;
-  --color-inline-code-text: #F472B6;
+  /* Code blocks */
+  --color-inline-code-bg: #2d2824;
+  --color-inline-code-text: #fbbf24;
 
-  /* 状态反馈 */
-  --color-success: #60a5fa;
-  --color-warning: #f5a623;
-  --color-error: #ff4d4f;
+  /* Status */
+  --color-success: #34d399;
+  --color-warning: #fbbf24;
+  --color-error: #f87171;
 
-  /* 审批严重级别（夜晚 = 柔和低饱和文字） */
-  --color-severity-normal: #94A3B8;
-  --color-severity-sensitive: #FCD34D;
-  --color-severity-dangerous: #F0A8A2;
-  --color-severity-hardline: #FDA4AF;
+  /* Approval severity */
+  --color-severity-normal: #a8a29e;
+  --color-severity-sensitive: #fbbf24;
+  --color-severity-dangerous: #fca5a5;
+  --color-severity-hardline: #fda4af;
 
-  /* 软阴影颜色（私有变量，不映射 Tailwind；供 .composer 与下拉浮层共用） */
-  --shadow-color: rgba(0,0,0,0.3);
+  /* Shadow */
+  --shadow-color: rgba(0,0,0,0.25);
 
-  /* Vercel Geist token ladder */
-  --color-ink: #fafafa;
-  --color-body: #a1a1a1;
-  --color-mute: #6b6b6b;
-  --color-faint: #525252;
-  --color-hairline: #333333;
-  --color-hairline-soft: #1a1a1a;
-  --color-canvas: #0a0a0a;
-  --color-canvas-elevated: #111111;
-  --color-link: #60a5fa;
-  --color-link-deep: #60a5fa;
-  --color-link-soft: rgba(96,165,250,0.16);
+  /* Stone + Amber token ladder (dark) */
+  --color-ink: #faf7f5;
+  --color-body: #a8a29e;
+  --color-mute: #78716c;
+  --color-faint: #57534e;
+  --color-hairline: #44403c;
+  --color-hairline-soft: #2d2824;
+  --color-canvas: #1c1917;
+  --color-canvas-elevated: #292524;
+  --color-link: #fbbf24;
+  --color-link-deep: #f59e0b;
+  --color-link-soft: rgba(251,191,36,0.12);
 
   /* Radius */
   --radius-sm: 6px;
@@ -109,9 +109,9 @@
   --radius-pill: 100px;
   --radius-full: 9999px;
 
-  /* 滚动条 */
-  --color-scrollbar-thumb: #4B5563;
-  --color-scrollbar-thumb-hover: #6B7280;
+  /* Scrollbar */
+  --color-scrollbar-thumb: #57534e;
+  --color-scrollbar-thumb-hover: #78716c;
 }
 
 @layer base {

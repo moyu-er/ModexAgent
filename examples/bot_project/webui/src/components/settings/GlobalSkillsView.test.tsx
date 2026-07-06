@@ -260,8 +260,10 @@ describe("GlobalSkillsView", () => {
     );
     renderView();
     await waitFor(() => expect(screen.getByText("weather")).toBeTruthy());
-    fireEvent.click(screen.getByText("weather"));
-    await waitFor(() => expect(screen.getByText("Get weather forecasts.")).toBeTruthy());
+    // Click the first element matching "weather" (the row name span;
+    // the description span also contains "weather" as substring).
+    fireEvent.click(screen.getAllByText("weather")[0]!);
+    await waitFor(() => expect(screen.getAllByText("Get weather forecasts.").length).toBeGreaterThan(0));
   });
 
   it("selects a skill without a description and shows the fallback", async () => {
@@ -292,12 +294,14 @@ describe("GlobalSkillsView", () => {
     );
     renderView();
     await waitFor(() => expect(screen.getByText("weather")).toBeTruthy());
-    const row = screen.getByText("weather", { selector: "span" });
-    fireEvent.click(row);
-    await waitFor(() => expect(screen.getByText("Get weather forecasts.")).toBeTruthy());
+    const row = screen.getAllByText("weather")[0]!;
     fireEvent.click(row);
     await waitFor(() =>
-      expect(screen.queryByText("Get weather forecasts.")).toBeNull(),
+      expect(screen.getByRole("button", { name: "Close" })).toBeTruthy(),
+    );
+    fireEvent.click(row);
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Close" })).toBeNull(),
     );
   });
 
@@ -314,13 +318,13 @@ describe("GlobalSkillsView", () => {
     );
     renderView();
     await waitFor(() => expect(screen.getByText("weather")).toBeTruthy());
-    fireEvent.click(screen.getByText("weather", { selector: "span" }));
+    fireEvent.click(screen.getAllByText("weather")[0]!);
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Close" })).toBeTruthy(),
     );
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     await waitFor(() =>
-      expect(screen.queryByText("Get weather forecasts.")).toBeNull(),
+      expect(screen.queryByRole("button", { name: "Close" })).toBeNull(),
     );
     expect(
       screen.queryByRole("button", { name: "Delete skill weather" }),
@@ -341,10 +345,11 @@ describe("GlobalSkillsView", () => {
     );
     renderView();
     await waitFor(() => expect(screen.getByText("alpha")).toBeTruthy());
-    fireEvent.click(screen.getByText("alpha", { selector: "span" }));
-    await waitFor(() => expect(screen.getByText("Alpha desc.")).toBeTruthy());
-    const alpha = screen.getByText("alpha", { selector: "span" }).closest("li")!;
-    const beta = screen.getByText("beta", { selector: "span" }).closest("li")!;
+    fireEvent.click(screen.getAllByText("alpha")[0]!);
+    await waitFor(() => expect(screen.getAllByText("Alpha desc.").length).toBeGreaterThan(0));
+    const alphaTexts = screen.getAllByText("alpha");
+    const alpha = alphaTexts[0]!.closest("div")!.parentElement!;
+    const beta = screen.getAllByText("beta")[0]!.closest("div")!.parentElement!;
     expect(alpha.textContent).toContain("Alpha desc.");
     expect(beta.textContent).not.toContain("Alpha desc.");
   });
