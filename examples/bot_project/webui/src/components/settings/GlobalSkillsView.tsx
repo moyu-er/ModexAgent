@@ -62,9 +62,9 @@ export function GlobalSkillsView() {
     return <p className="text-sm text-mute">Loading…</p>;
   }
 
-  const filteredSkills = skills.filter((s) =>
-    s.name.toLowerCase().includes(query.toLowerCase()),
-  );
+  const sortedSkills = skills
+    .filter((s) => s.name.toLowerCase().includes(query.toLowerCase()))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   const showPreview = async (files: FileList | File[] | null): Promise<void> => {
     if (!files || files.length === 0) return;
@@ -262,10 +262,10 @@ export function GlobalSkillsView() {
         </p>
       ) : null}
 
-      {filteredSkills.length > 0 && (
+      {sortedSkills.length > 0 && (
         <Card>
           <div className="space-y-1 p-1">
-            {filteredSkills.map((s) => {
+            {sortedSkills.map((s) => {
               const isSelected = selectedSkill === s.name;
               return (
                 <div key={s.name}>
@@ -289,6 +289,18 @@ export function GlobalSkillsView() {
                     <span className="flex-1 truncate text-sm font-medium text-ink">
                       {s.name}
                     </span>
+                    {s.origin && (
+                      <span
+                        className="rounded-full border border-hairline px-1.5 py-0.5 text-[10px] text-mute"
+                        title={
+                          s.origin === "repo"
+                            ? "Repo-managed skill — can be deleted"
+                            : "User-installed skill from ~/.agents/skills — cannot be deleted here"
+                        }
+                      >
+                        {s.origin === "repo" ? "local" : "global"}
+                      </span>
+                    )}
                     {s.description && (
                       <span className="shrink-0 text-xs text-mute">
                         {s.description.length > 60
@@ -303,16 +315,18 @@ export function GlobalSkillsView() {
                       <div className="flex items-start justify-between gap-3">
                         <h3 className="text-sm font-semibold text-ink">{s.name}</h3>
                         <div className="flex shrink-0 items-center gap-2">
-                          <IconButton
-                            icon={<TrashIcon />}
-                            label={`Delete skill ${s.name}`}
-                            variant="danger"
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setPendingDelete(s.name);
-                            }}
-                          />
+                          {s.origin === "repo" && (
+                            <IconButton
+                              icon={<TrashIcon />}
+                              label={`Delete skill ${s.name}`}
+                              variant="danger"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPendingDelete(s.name);
+                              }}
+                            />
+                          )}
                           <Button
                             variant="ghost"
                             size="sm"
@@ -338,7 +352,7 @@ export function GlobalSkillsView() {
         </Card>
       )}
 
-      {skills !== null && skills.length > 0 && filteredSkills.length === 0 && (
+      {skills !== null && skills.length > 0 && sortedSkills.length === 0 && (
         <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-sm text-mute">
           No skills match &ldquo;{query}&rdquo;.
         </p>
