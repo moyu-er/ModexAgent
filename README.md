@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/modexagent-intro-en.gif" alt="ModexAgent Intro" width="720">
+  <img src="assets/modexagent-intro.gif" alt="ModexAgent Intro" width="720">
 </p>
 
 ModexAgent is a Python framework for building AI agent applications. It decomposes model inference, tool invocation, memory management, I/O adapters, and multi-agent collaboration into independently evolvable modules. Start with a minimal ReAct agent and gradually expand into a full application with long-term memory, multi-agent coordination, runtime governance, and a browser-based WebUI.
@@ -31,14 +31,14 @@ The framework core replaces traditional loops with a **graph-driven execution en
 
 ## Highlights
 
-| Interruptible Approval | Cross-Platform Terminal | Multi-Agent Collaboration |
+| Browser WebUI | Interruptible Approval | Multi-Agent Collaboration |
 |:---:|:---:|:---:|
-| ![Approval](assets/approval.jpg) | ![Terminal](assets/self_deployment.png) | ![Multi-Agent](assets/office_subagent.jpg) |
-| Sensitive tool calls suspend for human approval with tiered cascade policies | Interactive shell with WinPTY/pexpect/tmux; SSH, multi-tab, visible & headless modes | Star-topology subagents via sync wake, async inbox, and isolated spawn |
+| ![WebUI](assets/webui-settings-pools.png) | ![Approval](assets/webui-approval.png) | ![Multi-Agent](assets/webui-multiagent.png) |
+| Real-time streaming chat with a built-in TodoPanel, per-turn model selector, in-browser config editor, attachments, and mermaid | Sensitive tool calls suspend for human approval with tiered cascade policies | Star-topology subagents via sync wake, async inbox, and isolated spawn |
 
 ## Key Features
 
-- **Graph-driven ReAct Engine** — Execution modeled as `Graph[R] + Node[R] + Edge`. Supports `GraphInterrupt` suspension and state-persistent resumption. Naturally suited for approval and breakpoint-resume scenarios.
+- **Graph-driven ReAct Engine** — Execution modeled as `Graph[R] + Node[R] + Edge`. Supports `GraphInterrupt` suspension and state-persistent resumption. Naturally suited for approval and breakpoint-resume scenarios. Loop detection exits a runaway ReAct loop as a controlled stop instead of burning tokens (ADR-0016).
 - **Interruptible Approval** — The agent asks before making risky changes. When it tries to write or edit files outside your project folder, it pauses and asks for your go-ahead — approve with one click in the WebUI or reply `/approve` in chat, and it continues exactly where it stopped. Off by default; turn it on per agent.
 - **Cross-platform Interactive Terminal** — Built-in terminal toolchain with unified interfaces for Windows (WinPTY/ConPTY), Linux, and macOS (pexpect/tmux); visible and headless PTY modes, covered by 248+ unit tests.
 - **Star-topology Multi-agent Collaboration** — Main agent as communication hub. Subagents collaborate via the single `send_to_agent` tool; the framework routes calls through the broker, the async inbox, or an isolated subagent session as needed. `CommunicationTracker` prevents silent message loss.
@@ -47,9 +47,11 @@ The framework core replaces traditional loops with a **graph-driven execution en
 - **Hook + Interceptor Extension System** — Lifecycle hooks (InboxFlush, SubagentAutoSend) and AOP interceptor chains (ControlDrain, ToolResultLimit) compose orthogonally without core intrusion.
 - **Type Safety** — All interfaces use ABCs (zero Protocols), enums replacing raw strings, mypy strict-level checking.
 - **Native MCP Integration** — Dynamically load MCP servers (SSE/stdio). `MCPToolAdapter` maps MCP capabilities to framework Tool objects.
-- **Browser WebUI** — React + Vite frontend with real-time streaming, multi-conversation sidebar, workspace browser, and pool selector (see `examples/bot_project/`).
+- **Browser WebUI** — React + Vite frontend with real-time streaming, a built-in **TodoPanel** for task tracking, a **per-turn model selector** (multi-provider / multi-model switching), an **in-browser config editor** (pools, models, MCP servers, skills, system prompts — no YAML hand-editing), session tree, attachment upload/download, mermaid diagrams, and light/dark themes (see `examples/bot_project/`).
 
 ## Architecture Overview
+
+The browser WebUI talks to the agent over **WebSocket** (streaming chat, live status) and **REST** (config editing, session/pool/workspace management); IM adapters plug in symmetrically through the same broker.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -115,7 +117,7 @@ modexbot start
 
 Then open `http://localhost:21800/webui/`.
 
-Common commands: `modexbot stop` | `modexbot logs -f` | `modexbot install -f` | `modexbot config`
+Common commands: `modexbot stop` | `modexbot restart` | `modexbot logs -f` | `modexbot install -f` | `modexbot config` | `modexbot model`
 
 > [!TIP]
 > `examples/bot_project/` is a fully functional QQ Bot + WebUI example. See [examples/bot_project/README.md](examples/bot_project/README.md) for detailed capabilities, configuration, and multi-agent setup.
@@ -210,7 +212,7 @@ uv pip install -e ".[all,dev]"
 
 | Document | Description |
 | --- | --- |
-| [ADR index](docs/adr/) | Architecture Decision Records (pool-only assembly, src-layout rename, dependency tree, facade-only, retain real seams, interruptible approval + batch atomicity, token-based compression, two-axis terminal, claim/pass-through input pipeline, attachment system) |
+| [ADR index](docs/adr/) | Architecture Decision Records — pool-only assembly, src-layout rename, dependency tree, facade-only modules, retaining real seams, interruptible approval + batch atomicity, token-based compression, two-axis terminal, claim/pass-through input pipeline, attachment system, native multimodal, unified-inbox agent messaging, ReAct loop detection (ADR-0001 ~ 0016) |
 | [CONTEXT.md](CONTEXT.md) | Domain glossary — Pool, Workspace, ReAct Agent, Graph, GraphInterrupt, Assembly, etc. |
 | [Bot example](examples/bot_project/README.md) | bot_project walkthrough (QQ Bot + WebUI, multi-agent setup, configuration) |
 | Per-module `AGENTS.md` | Every package under `src/modex_agent/` ships an `AGENTS.md` describing its responsibility and key files |

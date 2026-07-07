@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/modexagent-intro-zh.gif" alt="ModexAgent 介绍" width="720">
+  <img src="assets/modexagent-intro.gif" alt="ModexAgent 介绍" width="720">
 </p>
 
 ModexAgent 是一个用于构建 AI Agent 应用的 Python 框架。它将模型推理、工具调用、记忆管理、输入输出适配器和多 Agent 协作拆分为可独立演进的模块。你可以从一个最简单的 ReAct Agent 起步，逐步扩展为具备长期记忆、多 Agent 协作、运行时治理和浏览器 WebUI 的完整应用。
@@ -31,14 +31,14 @@ ModexAgent 是一个用于构建 AI Agent 应用的 Python 框架。它将模型
 
 ## 亮点展示
 
-| 可中断审批 | 跨平台交互终端 | 多 Agent 协作 |
+| 浏览器 WebUI | 可中断审批 | 多 Agent 协作 |
 |:---:|:---:|:---:|
-| ![审批](assets/approval.jpg) | ![终端](assets/self_deployment.png) | ![多Agent](assets/office_subagent.jpg) |
-| 敏感工具调用自动挂起，四级分级策略、级联取消 | WinPTY/pexpect/tmux 统一接口，SSH、多 Tab、可见/后台双模式 | 星型拓扑子 Agent，支持同步唤醒、异步 Inbox 和隔离调用 |
+| ![WebUI](assets/webui-settings-pools.png) | ![审批](assets/webui-approval.png) | ![多Agent](assets/webui-multiagent.png) |
+| 实时流式聊天，内置 TodoPanel 任务面板、每轮模型切换、浏览器内配置编辑器、附件与 Mermaid 图 | 敏感工具调用自动挂起，四级分级策略、级联取消 | 星型拓扑子 Agent，支持同步唤醒、异步 Inbox 和隔离调用 |
 
 ## 核心特性
 
-- **图驱动的 ReAct 引擎** — 执行循环以 `Graph[R] + Node[R] + Edge` 的泛型图结构建模，支持 `GraphInterrupt` 挂起与状态持久化恢复，天然适合审批和断点续跑场景。
+- **图驱动的 ReAct 引擎** — 执行循环以 `Graph[R] + Node[R] + Edge` 的泛型图结构建模，支持 `GraphInterrupt` 挂起与状态持久化恢复，天然适合审批和断点续跑场景。内置循环检测：ReAct 陷入死循环时以受控退出收尾，而不是空烧 token（ADR-0016）。
 - **可中断审批** — Agent 在做出有风险的改动前会先征求你的同意。当它试图写或改项目文件夹之外的文件时，会暂停并请求确认——在 WebUI 点一下「批准」，或在聊天里回复 `/approve`，它就从原地继续。默认关闭，可按 Agent 单独开启。
 - **跨平台交互式终端** — 内置完整终端工具链，支持 Windows（WinPTY/ConPTY）、Linux/macOS（pexpect/tmux）三端统一接口；支持可见终端窗口与后台 PTY 两种模式，248+ 单元测试覆盖。
 - **星型拓扑多 Agent 协作** — 主 Agent 作为通信中枢，把任务派给专门的子 Agent 并自动收集它们的回复；子 Agent 之间不直接通信，统一经主 Agent 转交，结构清晰、便于追踪。
@@ -47,9 +47,11 @@ ModexAgent 是一个用于构建 AI Agent 应用的 Python 框架。它将模型
 - **Hook + Interceptor 扩展体系** — 生命周期 Hook（如 InboxFlush、SubagentAutoSend）与 AOP 拦截器链（ControlDrain、ToolResultLimit）正交组合，框架行为可逐层定制，不侵入核心代码。
 - **类型安全** — 全部使用 ABC 接口（零 Protocol），枚举替代原始字符串，`from __future__ import annotations` 全仓覆盖，mypy strict 级别检查。
 - **MCP 原生集成** — 动态加载 MCP 服务器（SSE/stdio），`MCPToolAdapter` 自动将 MCP 能力映射为框架 Tool 对象，支持工具、资源、Prompt 三类能力。
-- **浏览器 WebUI** — React + Vite 前端，实时流式渲染，多会话侧边栏，工作区浏览器，Pool 选择器（见 `examples/bot_project/`）。
+- **浏览器 WebUI** — React + Vite 前端，实时流式渲染，内置 **TodoPanel** 任务面板、**每轮模型切换**（多 provider/多模型）、**浏览器内配置编辑器**（Pool/模型/MCP/技能/系统提示，免手改 YAML）、会话树、附件上传下载、Mermaid 图与亮/暗主题（见 `examples/bot_project/`）。
 
 ## 架构概览
+
+浏览器 WebUI 经 **WebSocket**（流式聊天、实时状态）与 **REST**（配置编辑、会话/Pool/工作区管理）与 Agent 通信；IM 适配器对称地接入同一套 broker。
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -115,7 +117,7 @@ modexbot start
 
 然后浏览器访问 `http://localhost:21800/webui/`。
 
-常用命令：`modexbot stop` | `modexbot logs -f` | `modexbot install -f` | `modexbot config`
+常用命令：`modexbot stop` | `modexbot restart` | `modexbot logs -f` | `modexbot install -f` | `modexbot config` | `modexbot model`
 
 > [!TIP]
 > `examples/bot_project/` 是一个功能完整的 QQ Bot + WebUI 示例。详细能力、配置和多 Agent 设置见 [examples/bot_project/README.zh-CN.md](examples/bot_project/README.zh-CN.md)。
@@ -210,7 +212,7 @@ uv pip install -e ".[all,dev]"
 
 | 文档 | 说明 |
 | --- | --- |
-| [ADR 索引](docs/adr/) | 架构决策记录（pool-only 装配、src-layout 改名、依赖树、facade-only、保留真实 seam、可中断审批 + 批原子性、基于 token 的压缩、双轴终端、认领/透传 input pipeline、附件系统） |
+| [ADR 索引](docs/adr/) | 架构决策记录——pool-only 装配、src-layout 改名、依赖树、facade-only 模块、保留真实 seam、可中断审批 + 批原子性、基于 token 的压缩、双轴终端、认领/透传 input pipeline、附件系统、原生多模态、统一收件箱驱动消息、ReAct 循环检测（ADR-0001 ~ 0016） |
 | [CONTEXT.md](CONTEXT.md) | 领域术语表——Pool、Workspace、ReAct Agent、Graph、GraphInterrupt、Assembly 等 |
 | [Bot 示例](examples/bot_project/README.md) | bot_project 详解（QQ Bot + WebUI、多 Agent 配置） |
 | 各模块 `AGENTS.md` | `src/modex_agent/` 下每个包都附带 `AGENTS.md`，描述其职责与关键文件 |

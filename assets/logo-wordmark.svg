@@ -1,19 +1,27 @@
 <!-- ModexAgent Wordmark (light background) -->
 <svg viewBox="0 0 380 70" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <g transform="translate(0, 0) scale(0.5)">
-    <circle cx="70" cy="70" r="62" stroke="#2DD4A8" stroke-width="2.5" stroke-dasharray="8 4" opacity="0.3"/>
-    <line x1="70" y1="16" x2="70" y2="42" stroke="#2DD4A8" stroke-width="2"/>
-    <line x1="124" y1="70" x2="98" y2="70" stroke="#2DD4A8" stroke-width="2"/>
-    <line x1="70" y1="124" x2="70" y2="98" stroke="#2DD4A8" stroke-width="2"/>
-    <line x1="16" y1="70" x2="42" y2="70" stroke="#2DD4A8" stroke-width="2"/>
-    <circle cx="70" cy="12" r="5" fill="#2DD4A8"/>
-    <circle cx="128" cy="70" r="5" fill="#2DD4A8"/>
-    <circle cx="70" cy="128" r="5" fill="#2DD4A8"/>
-    <circle cx="12" cy="70" r="5" fill="#2DD4A8"/>
-    <polygon points="70,44 88,62 70,80 52,62" fill="#2DD4A8"/>
-    <circle cx="70" cy="70" r="30" stroke="#2DD4A8" stroke-width="1.5" opacity="0.4"/>
+  <g transform="translate(7, 7) scale(0.56)" stroke="#2DD4A8" stroke-linecap="round">
+    <path d="M50 50 Q58 32 50 14" stroke-width="2.1"/>
+    <path d="M50 50 Q68 42 86 50" stroke-width="2.1"/>
+    <path d="M50 50 Q42 68 50 86" stroke-width="2.1"/>
+    <path d="M50 50 Q32 58 14 50" stroke-width="2.1"/>
+    <path d="M50 50 Q60 40 71.2 28.8" stroke-width="1.2" opacity="0.4"/>
+    <path d="M50 50 Q60 60 71.2 71.2" stroke-width="1.2" opacity="0.4"/>
+    <path d="M50 50 Q40 60 28.8 71.2" stroke-width="1.2" opacity="0.4"/>
+    <path d="M50 50 Q40 40 28.8 28.8" stroke-width="1.2" opacity="0.4"/>
   </g>
-  <text x="82" y="46" font-family="system-ui, -apple-system, sans-serif" font-weight="700" font-size="28" letter-spacing="-0.5" fill="#1A1A2E">
+  <g transform="translate(7, 7) scale(0.56)" fill="#2DD4A8">
+    <polygon points="50,39 61,50 50,61 39,50"/>
+    <circle cx="50" cy="14" r="4.6"/>
+    <circle cx="86" cy="50" r="4.6"/>
+    <circle cx="50" cy="86" r="4.6"/>
+    <circle cx="14" cy="50" r="4.6"/>
+    <circle cx="71.2" cy="28.8" r="2.1" opacity="0.55"/>
+    <circle cx="71.2" cy="71.2" r="2.1" opacity="0.55"/>
+    <circle cx="28.8" cy="71.2" r="2.1" opacity="0.55"/>
+    <circle cx="28.8" cy="28.8" r="2.1" opacity="0.55"/>
+  </g>
+  <text x="74" y="45" font-family="system-ui, -apple-system, sans-serif" font-weight="700" font-size="28" letter-spacing="-0.5" fill="#1A1A2E">
     Modex<tspan fill="#2DD4A8">Agent</tspan>
   </text>
 </svg>
