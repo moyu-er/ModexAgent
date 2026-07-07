@@ -263,11 +263,11 @@ class DefaultAgentFactory(AgentFactory):
             raise ValueError(f"Unsupported execution_strategy: {descriptor.execution_strategy}")
         emitter_factory = builder.build_emitter_factory(emitter_output_adapter)
         # Each agent needs its own HookRunner so that agent-specific hooks
-        # (e.g. SubagentAutoSendHook) don't leak across agents.
-        hook_runner = (
-            HookRunner(self._default_hook_runner.hook_specs)
-            if self._default_hook_runner is not None
-            else None
+        # (e.g. SubagentAutoSendHook) don't leak across agents. The turn loop
+        # dispatches ONLY hook_runner (via runtime.hooks), so we always create
+        # one even when no shared default runner is provided.
+        hook_runner = HookRunner(
+            self._default_hook_runner.hook_specs if self._default_hook_runner is not None else None
         )
         # Per-agent InterceptorChain copy to prevent cross-agent state leakage.
         # Mirrors the HookRunner copy pattern above.
@@ -304,20 +304,19 @@ class DefaultAgentFactory(AgentFactory):
         # follows workspace switches and works for main agents and subagents
         # uniformly — no special-casing, no distinction.
         from modex_agent.hook import HookErrorPolicy, HookSpec
+        from modex_agent.hook.builtin import LoopDetectionHook
         from modex_agent.trace import TraceCollectorHook
 
         # Hooks that must be DISPATCHED (the turn loop only runs hook_runner,
-        # never the pipeline.hooks list) are added here as HookSpecs.
-        live_hooks = [TraceCollectorHook()]
+        # never the pipeline.hooks list) are added here as HookSpecs. We always
+        # have a hook_runner at this point, so no dead-list fallback is needed.
+        live_hooks = [TraceCollectorHook(), LoopDetectionHook()]
         if auto_inbox_flush is not None:
             live_hooks.append(auto_inbox_flush)
-        if pipeline.hook_runner is not None:
-            for hook in live_hooks:
-                pipeline.hook_runner.add(
-                    HookSpec(hook=hook, on_error=HookErrorPolicy.LOG)
-                )
-        else:
-            pipeline.hooks.extend(live_hooks)
+        for hook in live_hooks:
+            pipeline.hook_runner.add(
+                HookSpec(hook=hook, on_error=HookErrorPolicy.LOG)
+            )
 
         return AgentInstance(
             descriptor=descriptor,

@@ -10,6 +10,7 @@ import logging
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING, Any, TypedDict, Unpack
 
+from modex_agent.control.exceptions import AgentControlError
 from modex_agent.hook.abc import (
     AfterIterationHook,
     AfterLLMResponseHook,
@@ -231,6 +232,12 @@ class HookRunner:
                             content_override=result.content_override,
                         )
             except asyncio.CancelledError:
+                raise
+            except AgentControlError:
+                # A controlled-exit signal raised by a hook (e.g.
+                # LoopDetectedError) is intentional, NOT a hook failure.
+                # Propagate it so ReActAgent.run()'s unified
+                # ``except AgentControlError`` handler can render the result.
                 raise
             except TimeoutError:
                 logger.warning(
