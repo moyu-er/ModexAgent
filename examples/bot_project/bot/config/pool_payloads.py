@@ -29,6 +29,7 @@ Phase-1 spec reference: see STEP 0 in the Phase 2A task brief.
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -144,13 +145,24 @@ class PromptContent(BaseModel):
 # ─── Skills ──────────────────────────────────────────────────────────────────
 
 
+class SkillSource(StrEnum):
+    GLOBAL = "global"
+    LOCAL = "local"
+
+
+class SkillOrigin(StrEnum):
+    REPO = "repo"
+    USER = "user"
+
+
 class SkillEntry(BaseModel):
-    """A skill name, source, and short description parsed from SKILL.md."""
+    """A skill name, source, origin, and short description parsed from SKILL.md."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: str
-    source: Literal["global", "local"] = "global"
+    source: SkillSource = SkillSource.GLOBAL
+    origin: SkillOrigin | None = None
     description: str = ""
 
 

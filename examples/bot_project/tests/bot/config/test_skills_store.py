@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -12,7 +13,7 @@ _BOT_PROJECT = Path(__file__).resolve().parents[3]
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
-from bot.config.pool_payloads import SkillEntry  # noqa: E402
+from bot.config.pool_payloads import SkillEntry, SkillOrigin, SkillSource  # noqa: E402
 from bot.config.skills_store import SkillsStore, SkillValidationError  # noqa: E402
 
 
@@ -30,7 +31,7 @@ class TestListGlobalSkills:
         assert store.list_global_skills() == []
 
     def test_lists_dirs(self, store: SkillsStore, tmp_path: Path) -> None:
-        gdir = tmp_path / "global_skills"
+        gdir = tmp_path / "local_skills"
         (gdir / "alpha").mkdir(parents=True)
         (gdir / "beta").mkdir(parents=True)
         # A non-dir entry is ignored.
@@ -53,20 +54,20 @@ class TestUploadSkill:
             },
         )
         assert entry == SkillEntry(
-            name="alpha", source="global", description="Alpha skill description."
+            name="alpha", source=SkillSource.GLOBAL, origin=SkillOrigin.REPO, description="Alpha skill description."
         )
-        root = tmp_path / "global_skills" / "alpha"
+        root = tmp_path / "local_skills" / "alpha"
         assert (root / "SKILL.md").read_text(encoding="utf-8") == "# Alpha\n\nAlpha skill description.\n"
         assert (root / "sub" / "deep.md").read_text(encoding="utf-8") == "nested\n"
 
     def test_accepts_bytes_content(self, store: SkillsStore, tmp_path: Path) -> None:
         store.upload_skill("alpha", {"f.bin": b"\x00\x01"})
-        assert (tmp_path / "global_skills" / "alpha" / "f.bin").read_bytes() == b"\x00\x01"
+        assert (tmp_path / "local_skills" / "alpha" / "f.bin").read_bytes() == b"\x00\x01"
 
     def test_overwrite_recreates_dir(self, store: SkillsStore, tmp_path: Path) -> None:
         store.upload_skill("alpha", {"old.md": "x"})
         store.upload_skill("alpha", {"new.md": "y"})
-        root = tmp_path / "global_skills" / "alpha"
+        root = tmp_path / "local_skills" / "alpha"
         assert not (root / "old.md").exists()  # old file gone after re-upload
         assert (root / "new.md").read_text(encoding="utf-8") == "y"
 
@@ -87,7 +88,7 @@ class TestDeleteSkill:
     def test_removes_global(self, store: SkillsStore, tmp_path: Path) -> None:
         store.upload_skill("alpha", {"SKILL.md": "x"})
         assert store.delete_skill("alpha") is True
-        assert not (tmp_path / "global_skills" / "alpha").exists()
+        assert not (tmp_path / "local_skills" / "alpha").exists()
 
     def test_missing_returns_false(self, store: SkillsStore) -> None:
         assert store.delete_skill("nope") is False
@@ -102,14 +103,14 @@ class TestDeleteSkill:
         store.upload_skill("alpha", {"SKILL.md": "x"})
         store.assign_skill_to_agent("coding", "scout", "alpha")
         store.delete_skill("alpha")
-        assert not (tmp_path / "global_skills" / "alpha").exists()
+        assert not (tmp_path / "local_skills" / "alpha").exists()
         # Dangling link is not a usable skill, so it is not listed.
         assert store.list_agent_skills("coding", "scout") == []
         # Re-upload the global source → the existing link re-resolves.
         store.upload_skill("alpha", {"SKILL.md": "y"})
         assert (tmp_path / "skills" / "coding" / "scout" / "alpha" / "SKILL.md").read_text() == "y"
         assert store.list_agent_skills("coding", "scout") == [
-            SkillEntry(name="alpha", source="global")
+            SkillEntry(name="alpha", source=SkillSource.GLOBAL, origin=SkillOrigin.REPO)
         ]
 
 
@@ -135,6 +136,17 @@ class TestAssignUnassign:
         store.assign_skill_to_agent("coding", "scout", "alpha")  # re-link
         dst = tmp_path / "skills" / "coding" / "scout" / "alpha"
         assert dst.joinpath("SKILL.md").read_text(encoding="utf-8") == "v2"
+
+    def test_assign_cross_drive_falls_back_to_absolute(self, store: SkillsStore, tmp_path: Path) -> None:
+        """Windows: os.path.relpath across drives raises ValueError; we must still link."""
+        store.upload_skill("alpha", {"SKILL.md": "x"})
+        with patch.object(os.path, "relpath", side_effect=ValueError("path is on mount 'C:', start on mount 'F:'")):
+            store.assign_skill_to_agent("coding", "scout", "alpha")
+        dst = tmp_path / "skills" / "coding" / "scout" / "alpha"
+        assert dst.exists()
+        assert (dst / "SKILL.md").read_text(encoding="utf-8") == "x"
+        if dst.is_symlink():
+            assert os.path.isabs(os.readlink(dst))
 
     def test_assign_missing_global_raises(self, store: SkillsStore) -> None:
         with pytest.raises(SkillValidationError):
@@ -168,7 +180,7 @@ class TestListAgentSkills:
         store.upload_skill("alpha", {"SKILL.md": "x"})
         store.assign_skill_to_agent("coding", "scout", "alpha")
         skills = store.list_agent_skills("coding", "scout")
-        assert skills == [SkillEntry(name="alpha", source="global")]
+        assert skills == [SkillEntry(name="alpha", source=SkillSource.GLOBAL, origin=SkillOrigin.REPO)]
 
     def test_local_skill_marked_local(self, store: SkillsStore, tmp_path: Path) -> None:
         # Manually place a skill dir not present in global.
@@ -176,7 +188,7 @@ class TestListAgentSkills:
         (local / "SKILL.md").parent.mkdir(parents=True)
         local.joinpath("SKILL.md").write_text("manual", encoding="utf-8")
         skills = store.list_agent_skills("coding", "scout")
-        assert skills == [SkillEntry(name="handmade", source="local")]
+        assert skills == [SkillEntry(name="handmade", source=SkillSource.LOCAL)]
 
     def test_empty_when_no_dir(self, store: SkillsStore) -> None:
         assert store.list_agent_skills("coding", "scout") == []
@@ -208,7 +220,7 @@ class TestRename:
         assert dst.exists()
         assert (dst / "alpha" / "SKILL.md").read_text(encoding="utf-8") == "x"
         assert store.list_agent_skills("coding", "recon") == [
-            SkillEntry(name="alpha", source="global")
+            SkillEntry(name="alpha", source=SkillSource.GLOBAL, origin=SkillOrigin.REPO)
         ]
 
     def test_rename_agent_skills_noop_when_source_missing(
@@ -268,7 +280,7 @@ class TestListGlobalSkillsDescription:
 
     def test_frontmatter_description_is_preferred(self, store: SkillsStore, tmp_path: Path) -> None:
         """YAML frontmatter ``description`` wins over body heading/paragraph."""
-        skill_dir = tmp_path / "global_skills" / "frontmatter-desc"
+        skill_dir = tmp_path / "local_skills" / "frontmatter-desc"
         skill_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
             "---\n"
@@ -287,14 +299,15 @@ class TestListGlobalSkillsDescription:
         assert result == [
             SkillEntry(
                 name="frontmatter-desc",
-                source="global",
+                source=SkillSource.GLOBAL,
+                origin=SkillOrigin.REPO,
                 description="Triggered description from frontmatter.",
             )
         ]
 
     def test_body_fallback_skips_headings_and_markdown(self, store: SkillsStore, tmp_path: Path) -> None:
         """Without a frontmatter description the first body paragraph is extracted as plain text."""
-        skill_dir = tmp_path / "global_skills" / "body-desc"
+        skill_dir = tmp_path / "local_skills" / "body-desc"
         skill_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
             "# Title\n"
@@ -311,14 +324,15 @@ class TestListGlobalSkillsDescription:
         assert result == [
             SkillEntry(
                 name="body-desc",
-                source="global",
+                source=SkillSource.GLOBAL,
+                origin=SkillOrigin.REPO,
                 description="This is the real description with a link. Second line of the paragraph.",
             )
         ]
 
     def test_repo_copy_wins_for_description(self, store: SkillsStore, tmp_path: Path) -> None:
-        """Repo ``global_skills/<name>/SKILL.md`` wins over user-home copy."""
-        repo_skill = tmp_path / "global_skills" / "greeter"
+        """Repo ``local_skills/<name>/SKILL.md`` wins over user-home copy."""
+        repo_skill = tmp_path / "local_skills" / "greeter"
         repo_skill.mkdir(parents=True)
         (repo_skill / "SKILL.md").write_text(
             "---\nname: greeter\ndescription: Repo greeter description.\n---\n",
@@ -335,14 +349,15 @@ class TestListGlobalSkillsDescription:
         assert result == [
             SkillEntry(
                 name="greeter",
-                source="global",
+                source=SkillSource.GLOBAL,
+                origin=SkillOrigin.REPO,
                 description="Repo greeter description.",
             )
         ]
 
     def test_multi_line_first_paragraph_is_joined(self, store: SkillsStore, tmp_path: Path) -> None:
         """The first non-empty paragraph joins consecutive lines by a space."""
-        skill_dir = tmp_path / "global_skills" / "weather"
+        skill_dir = tmp_path / "local_skills" / "weather"
         skill_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text(
             "\n\nProvides current weather\nand forecasts.\n\nMore details here.",
@@ -354,19 +369,31 @@ class TestListGlobalSkillsDescription:
         assert result == [
             SkillEntry(
                 name="weather",
-                source="global",
+                source=SkillSource.GLOBAL,
+                origin=SkillOrigin.REPO,
                 description="Provides current weather and forecasts.",
             )
         ]
 
     def test_empty_description_when_no_skill_md(self, store: SkillsStore, tmp_path: Path) -> None:
         """A skill directory without SKILL.md has an empty description."""
-        skill_dir = tmp_path / "global_skills" / "bare"
+        skill_dir = tmp_path / "local_skills" / "bare"
         skill_dir.mkdir(parents=True)
 
         result = store.list_global_skills()
 
-        assert result == [SkillEntry(name="bare", source="global", description="")]
+        assert result == [SkillEntry(name="bare", source=SkillSource.GLOBAL, origin=SkillOrigin.REPO, description="")]
+
+    def test_bad_utf8_skill_md_is_non_fatal(self, store: SkillsStore, tmp_path: Path) -> None:
+        """A non-UTF-8 SKILL.md must not break the whole list."""
+        skill_dir = tmp_path / "local_skills" / "bad"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_bytes(b"\xff\xfe not utf-8")
+
+        result = store.list_global_skills()
+
+        assert [s.name for s in result] == ["bad"]
+        assert result[0].description == ""
 
     def test_description_falls_back_to_user_copy(self, store: SkillsStore, tmp_path: Path) -> None:
         """When no repo copy exists, the user-home description is used."""
@@ -379,7 +406,8 @@ class TestListGlobalSkillsDescription:
         assert result == [
             SkillEntry(
                 name="only-user",
-                source="global",
+                source=SkillSource.GLOBAL,
+                origin=SkillOrigin.USER,
                 description="User-only skill description.",
             )
         ]
@@ -405,7 +433,7 @@ class TestUserGlobalSource:
         assert len(alphas) == 1
         # Resolution prefers repo.
         src = store._resolve_global_source("alpha")
-        assert src is not None and src.parent.name == "global_skills"
+        assert src is not None and src.parent.name == "local_skills"
         assert src.joinpath("SKILL.md").read_text(encoding="utf-8") == "repo"
 
     def test_assign_links_user_skill_when_no_repo_copy(
@@ -419,7 +447,7 @@ class TestUserGlobalSource:
         assert dst.joinpath("SKILL.md").read_text(encoding="utf-8") == "u"
         # Listed as global-backed (resolves to the user source).
         skills = store.list_agent_skills("coding", "scout")
-        assert skills == [SkillEntry(name="extra", source="global")]
+        assert skills == [SkillEntry(name="extra", source=SkillSource.GLOBAL, origin=SkillOrigin.USER)]
 
     def test_user_skill_itself_a_symlink_is_resolved(
         self, store: SkillsStore, tmp_path: Path
@@ -465,6 +493,19 @@ class TestUserGlobalSource:
         (user / "alpha" / "SKILL.md").write_text("user", encoding="utf-8")
         store.upload_skill("alpha", {"SKILL.md": "repo"})
         src = store._resolve_global_source("alpha")
-        assert src is not None and src.parent.name == "global_skills"
+        assert src is not None and src.parent.name == "local_skills"
         # User copy untouched.
         assert (user / "alpha" / "SKILL.md").read_text(encoding="utf-8") == "user"
+
+    def test_origin_repo_for_repo_skills_and_user_for_user_skills(
+        self, store: SkillsStore, tmp_path: Path
+    ) -> None:
+        store.upload_skill("alpha", {"SKILL.md": "repo"})
+        user = tmp_path / "user_skills"
+        (user / "beta").mkdir(parents=True)
+        (user / "beta" / "SKILL.md").write_text("user", encoding="utf-8")
+
+        skills = {s.name: s for s in store.list_global_skills()}
+
+        assert skills["alpha"].origin == "repo"
+        assert skills["beta"].origin == "user"

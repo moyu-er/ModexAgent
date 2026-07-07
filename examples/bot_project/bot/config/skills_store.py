@@ -5,24 +5,24 @@ overridable per-instance for ``tmp_path`` tests).
 
 Layout::
 
-    global_skills/<name>/             # the global skill LIBRARY (CRUD here)
+    local_skills/<name>/             # the global skill LIBRARY (CRUD here)
         SKILL.md
         ... arbitrary files ...
     ~/.agents/skills/<name>/          # USER global skills (read-only augment;
                                       # may themselves be links). Loaded into the
-                                      # registry alongside global_skills/.
+                                      # registry alongside local_skills/.
     skills/<pool>/<agent>/<name>/     # per-agent: a real copy (committed in the
                                       # repo / manually placed) OR a link created
                                       # by assign -> a global source
 
-The library lives OUTSIDE ``skills/`` (a sibling ``global_skills/`` dir) so it
-can never collide with a pool literally named "global". Disk is the single
+The library lives OUTSIDE ``skills/`` (a sibling ``local_skills/`` dir) so it
+can never collide with a per-pool skill directory. Disk is the single
 source of truth — no skill selection is persisted in pool.yml; the runtime
 SkillManager and the WebUI both read ``skills/<pool>/<agent>/`` directly.
 
-Two global sources, REPO PRIORITY: a name present in both ``global_skills/``
+Two global sources, REPO PRIORITY: a name present in both ``local_skills/``
 and ``~/.agents/skills/`` resolves to the repo copy (``_resolve_global_source``).
-CRUD (``upload_skill`` / ``delete_skill``) targets the repo ``global_skills/``
+CRUD (``upload_skill`` / ``delete_skill``) targets the repo ``local_skills/``
 ONLY — user-home skills are read-only here.
 
 Per-agent assignment (``assign_skill_to_agent``) is a directory LINK to the
@@ -35,31 +35,38 @@ copied into an agent root can also be deleted through the same operation.
 
 Semantics:
 
-* ``list_global_skills`` aggregates ``global_skills/`` + ``~/.agents/skills/``,
+* ``list_global_skills`` aggregates ``local_skills/`` + ``~/.agents/skills/``,
   deduped by name (repo wins).
-* ``upload_skill`` writes a file tree under ``global_skills/<name>/`` (overwrite
+* ``upload_skill`` writes a file tree under ``local_skills/<name>/`` (overwrite
   allowed on re-upload). Each relative path is normalized and must resolve
   UNDER the skill dir — traversal is rejected. Shadows a same-named user skill.
-* ``delete_skill`` removes a repo ``global_skills/<name>/`` dir only. Per-agent
+* ``delete_skill`` removes a repo ``local_skills/<name>/`` dir only. Per-agent
   links pointing at it go dangling; a same-named user skill, if any, becomes
   the resolved source instead.
 * ``assign_skill_to_agent`` links the resolved source (repo or user).
-* ``list_agent_skills`` marks each entry ``source="global"`` if it resolves to
-  either global source, else ``source="local"`` (a manually-placed copy).
+* ``list_agent_skills`` marks each entry ``source=SkillSource.GLOBAL`` if it resolves to
+  either global source, else ``source=SkillSource.LOCAL`` (a manually-placed copy).
 
 All names validated by ``^[a-z][a-z0-9_-]+$`` (path-traversal guard).
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shutil
 import subprocess
 from pathlib import Path
 
-from bot.config.pool_payloads import SkillEntry
+from bot.config.pool_payloads import SkillEntry, SkillOrigin, SkillSource
 from modex_agent.core.frontmatter import parse_frontmatter
+
+logger = logging.getLogger(__name__)
+
+LOCAL_SKILLS_DIR = "local_skills"
+AGENT_SKILLS_DIR = "skills"
+USER_SKILLS_DIR_NAME = ".agents/skills"
 
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_-]+$")
 
@@ -113,12 +120,17 @@ def _read_skill_description(skill_dir: Path) -> str:
     2. First non-empty paragraph of the Markdown body, with Markdown markup
        removed so headings/link targets don't leak into the description.
 
-    Returns the empty string when there is no SKILL.md or no extractable text.
+    Returns the empty string when there is no SKILL.md, no extractable text,
+    or the file cannot be read (bad UTF-8, permissions, etc.).
     """
     skill_md = skill_dir / "SKILL.md"
     if not skill_md.exists():
         return ""
-    text = skill_md.read_text(encoding="utf-8")
+    try:
+        text = skill_md.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.warning("Cannot read SKILL.md in %s: %s", skill_dir, exc)
+        return ""
 
     frontmatter, body = parse_frontmatter(text)
     raw_description = frontmatter.get("description", "")
@@ -127,6 +139,19 @@ def _read_skill_description(skill_dir: Path) -> str:
         return description
 
     return _extract_first_body_paragraph(body)
+
+
+def _symlink_target(src: Path, dst_parent: Path) -> str:
+    """Return the symlink target string for ``src`` relative to ``dst_parent``.
+
+    Prefer a relative target so the ``skills/`` tree stays portable. When the
+    two paths do not share a common root (e.g., different drives on Windows),
+    ``os.path.relpath`` raises ``ValueError``; fall back to an absolute target.
+    """
+    try:
+        return os.path.relpath(src, dst_parent)
+    except ValueError:
+        return str(src)
 
 
 def _create_dir_link(src: Path, dst: Path) -> None:
@@ -147,9 +172,9 @@ def _create_dir_link(src: Path, dst: Path) -> None:
     """
     src_abs = src.resolve()
     dst_abs = dst.resolve()
-    rel = os.path.relpath(src_abs, dst_abs.parent)
+    link_target = _symlink_target(src_abs, dst_abs.parent)
     try:
-        os.symlink(rel, dst_abs, target_is_directory=True)
+        os.symlink(link_target, dst_abs, target_is_directory=True)
         return
     except OSError as exc:
         # Only the symlink-privilege error falls back to a junction; anything
@@ -208,11 +233,10 @@ class SkillsStore:
         user_global_dir: Path | None = None,
     ) -> None:
         self.base_dir: Path = Path(base_dir) if base_dir is not None else Path(".")
-        self.skills_dir: Path = self.base_dir / "skills"
-        # The global skill library lives OUTSIDE the per-pool ``skills/`` tree
-        # (a sibling ``global_skills/`` dir) so it can never collide with a pool
-        # literally named "global".
-        self.global_dir: Path = self.base_dir / "global_skills"
+        self.skills_dir: Path = self.base_dir / AGENT_SKILLS_DIR
+        # The repo skill library lives OUTSIDE the per-pool ``skills/`` tree
+        # (a sibling ``local_skills/`` dir) so it can never collide with a pool.
+        self.local_dir: Path = self.base_dir / LOCAL_SKILLS_DIR
         # User-installed global skills default to ``~/.agents/skills/`` but are
         # injectable (mainly for tests). ``None`` resolves lazily via the
         # ``user_global_dir`` property so ``Path.home()`` is read at use time.
@@ -223,32 +247,32 @@ class SkillsStore:
         """User-installed global skills: ``~/.agents/skills/`` (cross-platform).
 
         Read-only augmentation of the library: skills here are loaded into the
-        global registry alongside ``global_skills/``. On a name clash the REPO
-        ``global_skills/`` copy wins (see ``_resolve_global_source``). The dir
-        itself need not exist.
+        global registry alongside ``local_skills/``. On a name clash the REPO
+        ``local_skills/`` copy wins (see ``_resolve_global_source``). The dir
+        itself need not exist; if it is missing, it is simply skipped.
         """
         if self._user_global_dir_override is not None:
             return self._user_global_dir_override
-        return Path.home() / ".agents" / "skills"
+        return Path(f"~/{USER_SKILLS_DIR_NAME}").expanduser()
 
     # ─── global skills ──────────────────────────────────────────────────────
 
-    def _global_skill_dir(self, name: str) -> Path:
-        """The REPO-side global skill dir (CRUD target). Always ``global_skills/<name>``."""
+    def _local_skill_dir(self, name: str) -> Path:
+        """The REPO-side skill dir (CRUD target). Always ``local_skills/<name>``."""
         _validate_name(name, "skill")
-        return self.global_dir / name
+        return self.local_dir / name
 
     def _resolve_global_source(self, name: str) -> Path | None:
         """Resolve a global skill name to its source dir, REPO PRIORITY.
 
-        Returns ``global_skills/<name>`` if it exists, else the user-home
+        Returns ``local_skills/<name>`` if it exists, else the user-home
         ``~/.agents/skills/<name>`` if that exists, else ``None``. Used by
         assign + existence checks so a name present in both sources always
         resolves to the repo copy. User-home skills may themselves be links —
         the path is returned as-is (the per-agent link points at it).
         """
         _validate_name(name, "skill")
-        repo = self.global_dir / name
+        repo = self.local_dir / name
         if self._dir_exists_following_links(repo):
             return repo
         user = self.user_global_dir / name
@@ -268,17 +292,28 @@ class SkillsStore:
         except OSError:
             return False
 
+    def _origin_for_source(self, src: Path | None) -> SkillOrigin | None:
+        """Return the origin label for a resolved global skill source."""
+        if src is None:
+            return None
+        if src.parent.resolve() == self.local_dir.resolve():
+            return SkillOrigin.REPO
+        if src.parent.resolve() == self.user_global_dir.resolve():
+            return SkillOrigin.USER
+        logger.warning("Unrecognized skill origin for %s (parent: %s)", src, src.parent)
+        return None
+
     def list_global_skills(self) -> list[SkillEntry]:
-        """List every global skill: repo ``global_skills/`` PLUS user-home
+        """List every global skill: repo ``local_skills/`` PLUS user-home
         ``~/.agents/skills/``, deduped by name with REPO PRIORITY.
 
-        A name present in both appears once. Each entry is ``source="global"``
+        A name present in both appears once. Each entry is ``source=SkillSource.GLOBAL``
         and carries a ``description`` parsed from the resolved source's
         ``SKILL.md`` (repo copy wins over user-home copy).
         """
         seen: set[str] = set()
         order: list[str] = []
-        for source_dir in (self.global_dir, self.user_global_dir):
+        for source_dir in (self.local_dir, self.user_global_dir):
             if not source_dir.exists():
                 continue
             for entry in sorted(source_dir.iterdir()):
@@ -290,18 +325,20 @@ class SkillsStore:
         out: list[SkillEntry] = []
         for name in order:
             src = self._resolve_global_source(name)
-            if src is not None:
-                out.append(
-                    SkillEntry(
-                        name=name,
-                        source="global",
-                        description=_read_skill_description(src),
-                    )
+            if src is None:
+                continue
+            out.append(
+                SkillEntry(
+                    name=name,
+                    source=SkillSource.GLOBAL,
+                    origin=self._origin_for_source(src),
+                    description=_read_skill_description(src),
                 )
+            )
         return out
 
     def upload_skill(self, name: str, file_tree: dict[str, bytes | str]) -> SkillEntry:
-        """Write a file tree under ``global_skills/<name>/`` (repo library only).
+        """Write a file tree under ``local_skills/<name>/`` (repo library only).
 
         ``file_tree`` maps relative paths (within ``<name>/``) → contents
         (bytes or str, UTF-8). Overwrite of an existing skill is allowed.
@@ -311,7 +348,7 @@ class SkillsStore:
         user-home skill (repo wins).
         """
         _validate_name(name, "skill")
-        skill_dir = self._global_skill_dir(name)
+        skill_dir = self._local_skill_dir(name)
         if skill_dir.exists():
             shutil.rmtree(skill_dir)
         skill_dir.mkdir(parents=True, exist_ok=True)
@@ -319,19 +356,20 @@ class SkillsStore:
             self._write_under(skill_dir, rel, content)
         return SkillEntry(
             name=name,
-            source="global",
+            source=SkillSource.GLOBAL,
+            origin=SkillOrigin.REPO,
             description=_read_skill_description(skill_dir),
         )
 
     def delete_skill(self, name: str) -> bool:
-        """Remove ``global_skills/<name>/`` (repo library only).
+        """Remove ``local_skills/<name>/`` (repo library only).
 
         Returns ``True`` if the repo skill existed. Per-agent links pointing at
         it go dangling; a same-named user-home skill, if any, becomes the
         resolved source instead (so deletion does NOT strand the skill when a
         user copy exists). User-home skills are never deleted here.
         """
-        skill_dir = self._global_skill_dir(name)
+        skill_dir = self._local_skill_dir(name)
         if not skill_dir.exists():
             return False
         shutil.rmtree(skill_dir)
@@ -366,7 +404,7 @@ class SkillsStore:
         """Link a global skill → ``skills/<pool>/<agent>/<name>``.
 
         The source is resolved by ``_resolve_global_source`` (repo
-        ``global_skills/<name>`` first, then user-home ``~/.agents/skills/<name>``).
+        ``local_skills/<name>`` first, then user-home ``~/.agents/skills/<name>``).
         Replaces an existing link/copy at the destination. Raises if no global
         source exists. Uses a directory link (symlink, or Windows junction
         without the symlink privilege) — the skill is never copied.
@@ -396,9 +434,11 @@ class SkillsStore:
         """List skills for one agent, marking each as global-backed or local.
 
         A skill entry under ``skills/<pool>/<agent>/`` (a link or a real dir) is
-        ``source="global"`` if it ALSO exists in either global source (repo
-        ``global_skills/`` or user-home ``~/.agents/skills/``), else
-        ``source="local"`` (a manually-placed copy with no global counterpart).
+        ``source=SkillSource.GLOBAL`` if it ALSO exists in either global source (repo
+        ``local_skills/`` or user-home ``~/.agents/skills/``), else
+        ``source=SkillSource.LOCAL``. For global-backed entries, ``origin`` is ``"repo"``
+        when the resolved source is the repo library, or ``"user"`` when it is
+        the user-home directory.
         """
         _validate_name(pool, "pool")
         _validate_name(agent, "agent")
@@ -409,8 +449,15 @@ class SkillsStore:
         for entry in sorted(agent_root.iterdir()):
             if not entry.is_dir():
                 continue
-            is_global = self._resolve_global_source(entry.name) is not None
-            out.append(SkillEntry(name=entry.name, source="global" if is_global else "local"))
+            src = self._resolve_global_source(entry.name)
+            is_global = src is not None
+            out.append(
+                SkillEntry(
+                    name=entry.name,
+                    source=SkillSource.GLOBAL if is_global else SkillSource.LOCAL,
+                    origin=self._origin_for_source(src),
+                )
+            )
         return out
 
     def rename_agent_skills(self, pool: str, old_agent: str, new_agent: str) -> None:

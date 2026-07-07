@@ -605,7 +605,7 @@ async def test_upload_skill_multipart(tmp_path: Path) -> None:
         resp = await client.post("/api/skills", data=form)
         assert resp.status == 200, await resp.text()
         # Verify on-disk layout: keys are relative to <skillName>/.
-        skill_dir = tmp_path / "global_skills" / "greeter"
+        skill_dir = tmp_path / "local_skills" / "greeter"
         assert (skill_dir / "SKILL.md").read_text(encoding="utf-8") == "# greeter skill\n"
         assert (skill_dir / "sub" / "rule.txt").read_text(encoding="utf-8") == "rule-content"
     finally:
@@ -783,7 +783,7 @@ async def test_skill_route_traversal_rejected(tmp_path: Path) -> None:
         resp = await client.post("/api/skills/..", json={"name": "..", "files": files})
         assert resp.status in (400, 404)
         # Nothing escaped: the rejected upload created no global library entry.
-        assert not (tmp_path / "global_skills").exists()
+        assert not (tmp_path / "local_skills").exists()
     finally:
         await client.close()
 
