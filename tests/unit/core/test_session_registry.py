@@ -78,6 +78,63 @@ async def test_load_all_populates_cache_from_store(tmp_path, factory: SessionIdF
     assert await reg.get(session.session_id) == session
 
 
+async def test_register_does_not_reparent_existing_session():
+    """A later register() for the same session must NOT overwrite an already
+    established parent_session_id.
+
+    Regression for the cascade in the phantom-session bug: a phantom main
+    session reused a subagent's invocation_id to resume it, and register()
+    blindly overwrote the subagent's parent_session_id, orphaning it from the
+    real parent. The established parent is authoritative; only fill it in when
+    missing.
+    """
+    from modex_agent.core.session_id import SessionInfo
+
+    reg = InMemorySessionRegistry()
+    worker = SessionInfo(
+        session_id="task-42.worker",
+        agent_name="worker",
+        parent_session_id="real.coding",
+    )
+    await reg.register(worker)
+
+    # Same session id, DIFFERENT parent (the phantom-session reuse path).
+    hijack = SessionInfo(
+        session_id="task-42.worker",
+        agent_name="worker",
+        parent_session_id="phantom.coding",
+    )
+    await reg.register(hijack)
+
+    record = await reg.get("task-42.worker")
+    assert record is not None
+    assert record.parent_session_id == "real.coding"
+
+
+async def test_register_fills_parent_when_missing():
+    """When no parent is recorded yet, register() must still populate it."""
+    from modex_agent.core.session_id import SessionInfo
+
+    reg = InMemorySessionRegistry()
+    orphan = SessionInfo(
+        session_id="task-99.worker",
+        agent_name="worker",
+        parent_session_id=None,
+    )
+    await reg.register(orphan)
+
+    parented = SessionInfo(
+        session_id="task-99.worker",
+        agent_name="worker",
+        parent_session_id="late.coding",
+    )
+    await reg.register(parented)
+
+    record = await reg.get("task-99.worker")
+    assert record is not None
+    assert record.parent_session_id == "late.coding"
+
+
 async def test_concurrent_register_is_safe(factory: SessionIdFactory):
     """Two coroutines registering different sessions must not lose data."""
     reg = InMemorySessionRegistry()

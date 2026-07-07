@@ -57,7 +57,14 @@ class InMemorySessionRegistry(SessionRegistry):
                 # Merge: keep existing richer fields; only update fields
                 # the incoming session explicitly provides (non-None / non-empty).
                 update: dict[str, object] = {}
-                if session.parent_session_id is not None:
+                # The established parent is authoritative: only fill it in when
+                # missing. Blindly overwriting would let a phantom session that
+                # reuses an invocation_id reparent (orphan) an existing
+                # subagent — see test_register_does_not_reparent_existing_session.
+                if (
+                    session.parent_session_id is not None
+                    and existing.parent_session_id is None
+                ):
                     update["parent_session_id"] = session.parent_session_id
                 if session.created_at is not None and existing.created_at is None:
                     update["created_at"] = session.created_at
