@@ -28,9 +28,14 @@ if TYPE_CHECKING:
     from modex_agent.memory.core.models import CompressionReason
     from modex_agent.runtime.store import JsonFileTodoStore
 
+from bot.config.memory_defaults import subagent_memory
+from bot.service.model_choice import ModelChoiceBindHook, ModelChoiceRegistry
+from bot.service.model_config import BotModelConfig
+from bot.service.model_provider import BotModelProvider
 from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.core.emitter import ContentEmitter
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
+from modex_agent.core.scope import MemoryContext
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.core.session_store import SessionStore
@@ -45,7 +50,6 @@ from modex_agent.ioc.configs.agent import AgentConfig
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.ioc.configs.pool import PoolConfig
 from modex_agent.ioc.factories.governance import create_governance
-from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.cleanup_events import MemoryCleanupListener
 from modex_agent.memory.default_system import DefaultMemorySystem
 from modex_agent.memory.injection import FullInjectionPolicy
@@ -57,24 +61,22 @@ from modex_agent.multi_agent import (
     SessionRetentionPolicy,
 )
 from modex_agent.multi_agent.address import AgentAddress
-from modex_agent.multi_agent.comm_tracker import CommunicationTracker
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
 from modex_agent.multi_agent.comm_kind import AgentCommKind
+from modex_agent.multi_agent.comm_tracker import CommunicationTracker
 from modex_agent.multi_agent.communication import AgentCommunicationService
 from modex_agent.multi_agent.context_fork import ContextForkBuilder
-from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
-from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
-
-from bot.config.memory_defaults import subagent_memory
-from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_local import LocalFileInboxServer
+from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
+from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 from modex_agent.multi_agent.tools import (
     CommunicationTarget,
     CommunicationTargetStore,
     SendToAgentTool,
 )
+from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
 from modex_agent.pipeline.adapters import OutputAdapter
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.tools.presets import (
@@ -82,11 +84,6 @@ from modex_agent.tools.presets import (
     ToolSupplement,
     get_preset_tools,
     get_supplement_tools,
-)
-from modex_agent.tools.standard import (
-    FindFilesTool,
-    SearchFilesTool,
-    TodoCompletionProbeHook,
 )
 from modex_agent.tools.terminal import SubprocessExecutor, SubprocessTool
 from modex_agent.tools.terminal.backends.factory import (
@@ -99,11 +96,7 @@ from modex_agent.tools.workspace_scoped import (
     wrap_standard_tools,
 )
 
-from bot.service.model_choice import ModelChoiceBindHook, ModelChoiceRegistry
-from bot.service.model_config import BotModelConfig
-from bot.service.model_provider import BotModelProvider
-
-from .builders import _load_agent_mcp_tools, _make_file_tools, resolve_system_prompt
+from .builders import _load_agent_mcp_tools, resolve_system_prompt
 from .pool_instance import PoolInstance
 
 logger = logging.getLogger(__name__)
@@ -331,7 +324,7 @@ async def create_pool(
         shared_interceptor_chain,
         im_ui, pool_cfg, project_dir,
         command_processor, pool_name,
-        todo_store=todo_store, tool_manager=tool_manager,
+        tool_manager=tool_manager,
         root_provider=root_provider,
         bot_model_config=bot_model_config,
         model_choice_registry=model_choice_registry,
@@ -648,7 +641,12 @@ async def _build_tools(
     # Terminal tools — registered when a terminal manager exists (replaces the
     # preset's bash tool with the stateful Command/Process/Terminal trio).
     if terminal_manager is not None:
-        from modex_agent.tools.terminal import CommandTool, ProcessRegistry, ProcessTool, TerminalTool
+        from modex_agent.tools.terminal import (
+            CommandTool,
+            ProcessRegistry,
+            ProcessTool,
+            TerminalTool,
+        )
         from modex_agent.tools.terminal.config import TerminalRuntimeConfig
 
         cfg = TerminalRuntimeConfig()
@@ -1148,7 +1146,6 @@ def _wire_main_pipeline(
     project_dir: Path,
     command_processor,
     pool_name: str,
-    todo_store: JsonFileTodoStore,
     tool_manager: InMemoryToolManager,
     *,
     root_provider: WorkspaceRootProvider | None = None,
@@ -1185,11 +1182,11 @@ def _wire_main_pipeline(
     # inbox_strategy != "none", so fold-in is wired in one place.
     _add_hook(pipeline, MaxIterationNotifyHook(notification_service=notification_service))
     _add_hook(pipeline, TurnOutcomeNotifyHook(notification_service=notification_service))
-    # Intentionally unconditional: every scanned pool (present + future) gets the probe hook — no per-pool flag.
-    _add_hook(
-        pipeline,
-        TodoCompletionProbeHook(store=todo_store, tool_manager=tool_manager),
-    )
+    # TodoCompletionProbeHook was previously wired here to force a todo_read
+    # when the main agent tried to end a turn with unfinished todos. It is
+    # deprecated: the correct approach is to rely on the system prompt layer
+    # (TodoAwareSystemPromptProvider) and clear tool descriptions instead of
+    # injecting synthetic tool calls into the conversation history.
     _add_hook(pipeline, ModelChoiceBindHook(bot_model_config, model_choice_registry))
 
     # Runtime wiring
