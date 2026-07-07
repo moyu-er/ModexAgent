@@ -24,15 +24,22 @@
 |------|------|
 | **QQ 消息收发** | C2C 私聊 + 群聊，支持附件（图片/文件）自动下载 |
 | **WebUI** | 浏览器端聊天，实时流式渲染、多会话侧边栏、工作区浏览器、Pool 选择器 |
+| **浏览器内配置** | 在 Settings UI 里改 pool、模型、MCP 服务、技能、系统提示词——免手写 YAML |
+| **多模型切换** | `model.yml` 支持多 provider/多模型；在聊天输入框逐轮切换 |
+| **TodoPanel** | Agent 自行维护任务列表，面板实时呈现进度，无需主动追问 |
+| **附件** | WebUI 上传文件（或 QQ 自动下载）；Agent 感知并可选工具查看/对称下载，带类型/魔数/大小门禁 |
+| **富文本渲染** | Markdown、语法高亮代码、Mermaid 图、推理块、流式增量 |
+| **会话树** | 按父/子分支展开的会话树 |
+| **主题** | 亮/暗 UI 切换 |
 | **LLM 对话** | 流式/非流式输出，支持 OpenAI 兼容接口的 100+ 模型 |
-| **ReAct 执行** | Thought → Action → Observation 图驱动循环 |
+| **ReAct 执行** | Thought → Action → Observation 图驱动循环，带循环检测——死循环时受控退出而非空烧 token |
 | **工具调用** | 内置文件/Shell 工具 + MCP 动态工具 + 自定义工具 |
 | **多级记忆** | Session / Archive / Knowledge / UserRetentionBuffer / Pruned / Experience — 支持 UserScope / GlobalScope / SessionScope 可配置隔离范围 |
 | **自学习系统** | ExperienceReviewAgent 将对话沉淀为 EXPERIENCE.md 知识；Dream Engine 定期整合 Archive 为长期记忆 |
 | **上下文治理** | ToolChainRepair + Microcompact + TokenBudget 自动优化 |
 | **工具审批** | Agent 在改动项目外文件前会先征求同意；WebUI 点按钮或在聊天里 `/approve`。默认关闭，按 Agent 开启 |
 | **多 Agent 协作** | 主 Agent + 多个常驻 Subagent，星型拓扑通信 |
-| **技能系统** | 从 Markdown 文件动态构建系统提示词 |
+| **技能系统** | 从 Markdown 文件动态构建系统提示词（`local_skills/` 本地或包内置） |
 | **插件系统** | 动态扩展工具、记忆提供者和技能来源 |
 | **Slash 指令** | `/approve`、`/deny`、`/continue`、`/cd`、`/pool名称`、`/stop` 及技能触发指令 |
 | **Input Pipeline** | 统一消息处理流水线——IM 与 WebUI 共用；阶段「认领或透传」，未知 `/命令` 由唯一终结阶段统一拒绝；IM 10 阶段 / WebUI 8 阶段 |
@@ -242,20 +249,29 @@ MINIMAX_MCP_API_KEY=your_minimax_api_key
 #### 3. 配置模型
 
 模型在 `config/model.yml` 中配置（唯一真相源，从 `config/model.example.yml`
-复制）。用 `modexbot config` 交互式编辑，或手动编辑：
+复制）。用 `modexbot model` 交互向导，或手动编辑。它存放多个 provider，每个
+provider 各自的模型；`default_provider` + `default_model` 是 pool 默认用的，
+你也可在 WebUI 里逐轮切换：
 
 ```yaml
-model:
-  url: https://api.minimaxi.com/v1
-  api_key: your_llm_api_key      # 字面值，已 gitignore —— 不是 ${ENV} 引用
-  model: openai/MiniMax-M2.5
-  capabilities: [text, image]
-  temperature: 0.7
-  max_output_tokens: 50000
+default_provider: "DeepSeek"
+default_model: "deepseek-v4-flash"
+max_context_tokens: 200000
+providers:
+  - key: deepseek
+    name: "DeepSeek"
+    url: https://api.deepseek.com
+    api_key: your_api_key            # 字面值，已 gitignore —— 不是 ${ENV} 引用
+    models:
+      - name: "deepseek-v4-flash"
+        model: openai/deepseek-v4-flash
+        capabilities: [text]
+        temperature: 0.7
+        max_output_tokens: 50000
 ```
 
-所有 pool 默认继承这份全局配置；`config/bot_config.yml` 与
-`config/pools/*.yml` 不再携带 `llm:` 段。
+所有 pool 共享这一份模型配置；`config/bot_config.yml` 与
+`config/pools/*.yml` **不**携带 `llm:` 段。
 
 #### 4. 运行
 
@@ -288,13 +304,48 @@ python bot_service.py
 
 ### WebUI
 
-内置 React 前端提供：
+内置 React 前端（Geist 风格、暖色暗色调）是使用 bot 最快的方式——无需任何 IM 凭证。`modexbot start` 后打开 `http://localhost:21800/webui/`。
 
 - **实时流式渲染** — Agent 输出增量展示，带打字机动画效果
-- **多会话侧边栏** — 可切换不同会话，每个会话完全隔离
+- **多会话侧边栏 + 会话树** — 可切换不同会话，每个会话完全隔离，并按父/子分支展开
 - **工作区浏览器** — 在 UI 中浏览和切换项目目录
 - **Pool 选择器** — 选择用哪个 Agent Pool 处理新会话
 - **历史回放** — 过往会话从 transcript store 加载回显
+
+#### 浏览器内配置
+
+在 Settings UI 里改一切——免手写 YAML、免重启折腾（需要重启的改动会提示你）：
+
+| 标签页 | 可编辑内容 |
+|--------|------------|
+| **Pools** | 新建/重命名 pool、加 subagent、选工具 preset、开关审批、改系统提示词 |
+| **Models** | provider 与模型（`default_provider` / `default_model` + 每个 provider 的模型列表）|
+| **MCP** | 新增/重命名/删除 MCP 服务、管理密钥 |
+| **Skills** | 浏览所有技能及其来源（`local_skills/` 本地 vs 打包内置）|
+
+<img src="../../assets/webui-settings-pools.png" alt="设置 — Pools" width="860">
+
+<img src="../../assets/webui-settings-model.png" alt="设置 — Models" width="860">
+
+<img src="../../assets/webui-settings-mcp.png" alt="设置 — MCP" width="860">
+
+<img src="../../assets/webui-settings-skills.png" alt="设置 — Skills" width="860">
+
+#### 每轮模型切换
+
+在聊天输入框的模型选择器里，每条消息前选 provider + 模型。模型在 `model.yml` 里统一定义、跨 pool 共享。
+
+#### TodoPanel
+
+当 Agent 把工作拆成步骤时，侧边任务面板会实时跟踪任务列表——你能看到进度、及时察觉它跑偏，而不必主动追问。
+
+#### 富文本渲染
+
+Markdown、语法高亮代码、**Mermaid 图**、推理块都内联渲染。
+
+#### 主题
+
+侧边栏可切换亮/暗主题。
 
 ### Input Pipeline（统一消息处理流水线）
 
@@ -357,35 +408,48 @@ approval:
     edit_file:  { allowed_paths: ["./*"] }
 ```
 
-`config/pools/main.yml`、`coding.yml` 里有现成示例。聊天里回复 `/approve` 或 `/deny`；WebUI 里点审批卡片上的按钮。（审批不作用于 subagent。）
+`config/pools/default/pool.yml`、`config/pools/coding/pool.yml` 里有现成示例。聊天里回复 `/approve` 或 `/deny`；WebUI 里点审批卡片上的按钮。（审批不作用于 subagent。）
 
-<img src="../../assets/approval.jpg" alt="工具审批" width="800">
+<img src="../../assets/webui-approval.png" alt="工具审批" width="860">
 
 ### 多 Agent 协作
 
 主 Agent 把任务派给专门的子 Agent，再回收它们的回复。它会自动挑合适的子 Agent 接活，而整段对话——连同子 Agent 的工作过程——都在一处可见。子 Agent 之间不直接对话，所有信息都经主 Agent 中转，脉络清晰。
 
-<img src="../../assets/office_subagent.jpg" alt="多 Agent 协作" width="800">
+<img src="../../assets/webui-multiagent.png" alt="多 Agent 协作" width="860">
 
 ### 自主部署
 
 Agent 通过 SSH 连接远程服务器，执行 `git pull` 并重启自身服务 —— 展示了深度交互式终端能力：
 
-<img src="../../assets/self_deployment.png" alt="通过终端自主部署" width="800">
+<img src="../../assets/self_deployment.png" alt="通过终端自主部署" width="860">
+
+### 附件
+
+文件对称地进出，且 Agent 感知到它们（ADR-0013）：
+
+- **WebUI 上传** — 在输入框附加文件；Agent 看得到，可选工具读取/查看，你也能下载回来。
+- **QQ 自动下载** — IM 里的图片/文件附件自动抓取。
+- **安全门禁** — 类型 + 魔数 + 大小三重校验（默认图片 ≤ 20 MB、其他文件 ≤ 10 MB，前后端可配），带每会话存储预算（超额淘汰最旧）与出站上限。
 
 ### 技能系统
 
-技能从 Markdown 文件自动发现并注入系统提示词：
+技能从 Markdown 文件（可带 YAML frontmatter `description`）自动发现并注入系统提示词。每个技能带一个**来源**标记——`local`（你的 `local_skills/` 目录，可编辑）或 `bundled`（由包/插件提供）：
 
 ```
-skills/
-├── main/                    # 主 Agent 技能（自动发现）
+skills/                     # 每 pool 的技能（自动发现）
+├── main/                   # 主 Agent 技能
 │   ├── weather/SKILL.md
 │   └── github/SKILL.md
-└── subagents/               # Subagent 技能（按 agent name 自动发现）
+└── subagents/              # Subagent 技能（按 agent name 自动发现）
     ├── office-expert/
     └── query-12306/
+
+local_skills/               # 项目级本地技能（来源：local）
+└── huashu-design/SKILL.md
 ```
+
+WebUI 的 **Skills** 标签页列出每个技能及其来源。
 
 ### Slash 指令
 
@@ -405,7 +469,7 @@ skills/
 
 治理在每次调用 LLM 之前作用于模型可见的消息副本。在 Pool 配置或 Subagent 模板的 `memory.governance` 下配置。
 
-主 Agent 示例（`config/pools/main.yml`）：
+主 Agent 示例（`config/pools/default/pool.yml`）：
 
 ```yaml
 memory:
@@ -432,37 +496,42 @@ memory:
     tool_chain_repair: true
 ```
 
-## 添加新 Subagent
+## Pool 与 Workspace
 
-内置的 **`coding` 池**（`config/pools/coding.yml` + `config/pools/coding/templates/`）是多 Agent 参考配置。新增你自己的 subagent 时，照它的结构来：
+### Pool
 
-1. 在 pool 配置（或 subagent 模板）里描述这个 agent——名字、做什么、允许做什么：
+一个 **pool** 是一套自包含的 Agent 部署：一个**主 Agent** 加零到多个 **subagent**，以星型拓扑协作（subagent 只与主 Agent 对话，彼此不直接通信）。各 pool 互相隔离——各自带自己的 agent、系统提示词、工具、记忆与会话。
 
-```yaml
-agents:
-  - name: "my-new-agent"
-    role: subagent
-    max_steps: 60
-    system_prompt: |
-      你是一个...的 Agent。
-      完成后通过 send_to_agent 把结果回复给主 Agent（target_agent="main")。
-    # 这个 agent 能做什么，由一个工具 preset 决定——见 coding.yml：
-    #   read_only / read_write / full / minimal
-    extra_tools: []          # 可选：preset 之外再加的工具名
-    skills:
-      roots:
-        - "skills/subagents/my-new-agent"
+在磁盘上，pool 就是 `config/pools/` 下的一个目录——**目录名即 pool 标识**：
+
+```
+config/pools/
+├── default/                # pool 名 = 目录名
+│   ├── pool.yml            # 主 Agent 配置（max_steps、工具、审批 ……）
+│   └── templates/          # subagent 模板——每个一个 .yml
+│       └── office-expert.yml
+└── coding/
+    ├── pool.yml
+    └── templates/          # 本 pool 的 subagent
 ```
 
-2. （可选）在 `skills/<pool>/my-new-agent/` 放一个 `SKILL.md`，给它专属技能。
+- **主 Agent 名**默认就是目录名（可用 `pool.yml` 里的 `main_agent_name` 覆盖）。
+- **Subagent** 是 `templates/*.yml`，自动注册——主 Agent 通过 `send_to_agent` 把活派给它们。
+- 在 WebUI 的 pool 选择器（或 IM 里 `/pool_name`）选哪个 pool 处理当前会话。
 
-3. 重启服务，新 subagent 自动注册，主 Agent 即可把活派给它。
+内置的 `default` 与 `coding` 两个 pool 是示例——可直接用、可查看、也可替换成你自己的。
 
-## Agent 能力矩阵
+### Workspace
 
-内置的 **`coding` 池**（`config/pools/coding.yml` + 其 `templates/`）是多 Agent 示例：一个 `coding` 主 Agent 带一支子 Agent 团队——scout、context-builder、planner、worker、reviewer、oracle、delegate——各自能做不同范围的事。主 Agent 可调用任意子 Agent，子 Agent 把结果回报给它。
+一个 **workspace** 是 pool 当前的工作目录——文件工具、终端、per-pool 资源都锚定在它上面。多个 workspace 可同时活跃、按 pool 隔离；在 WebUI 工作区浏览器（或 IM 里 `/cd <path>`）切换当前 workspace。Pool 与 workspace 正交：任意 pool 可在任意 workspace 运行。
 
-每个子 Agent 的能力由一个 **preset**（允许它做什么）概括：
+## 自定义 Pool 与 Agent
+
+最快的方式是 **WebUI → Settings → Pools** 标签页：新建/重命名 pool、加 subagent、选工具 preset、开关审批、改系统提示词——应用后按提示重启即可。你在 UI 里的所有改动，都持久化到你可以手改的同一份 `config/pools/<name>/pool.yml` + `templates/*.yml`。
+
+### 工具 preset
+
+一个 subagent 的工具集由一个 **preset**（允许它做什么）概括：
 
 | Preset | 读 | 写 | 编辑 | 列目录 | 搜索 | 查找 | Bash | 终端 |
 |--------|:--:|:--:|:----:|:------:|:----:|:----:|:----:|:----:|
@@ -471,7 +540,26 @@ agents:
 | `read_only` | ✅ | — | — | ✅ | ✅ | ✅ | ✅ | — |
 | `minimal` | ✅ | ✅ | — | ✅ | ✅ | — | — | — |
 
-`*` 终端工具需 `use_terminal: true`。subagent 的 bash 一律走 `SubprocessTool`（无状态）。完整 agent 名单与 preset 见 coding pool 配置。
+`*` 终端工具需 `use_terminal: true`。subagent 的 bash 一律走 `SubprocessTool`（无状态）。
+
+### 手动（YAML）
+
+subagent 模板 `config/pools/<pool>/templates/my-agent.yml`：
+
+```yaml
+name: "my-agent"
+max_steps: 60
+tool_preset: read_write        # read_only / read_write / full / minimal
+extra_tools: []                # 可选：preset 之外再加的工具名
+system_prompt: |
+  你是一个...的 Agent。
+  完成后通过 send_to_agent 把结果回复给主 Agent（target_agent="main")。
+skills:
+  roots:
+    - "skills/subagents/my-agent"
+```
+
+重启服务（或在 WebUI 保存），agent 自动注册——主 Agent 即可把活派给它。
 
 ## 适配其他 IM 平台
 
@@ -551,42 +639,25 @@ qq:
     - "*"                        # "*" 表示允许所有人
 ```
 
-### LLM
+### LLM（模型）
 
-支持任何 OpenAI 兼容的 API：
-
-```yaml
-llm:
-  api_key: "your-api-key"
-  base_url: "https://api.openai.com/v1"
-  model: "openai/gpt-4o"
-  temperature: 0.7
-  max_output_tokens: 80000
-```
+模型配置在 `config/model.yml`——唯一真相源（见「快速开始 → 配置模型」）。任何 OpenAI 兼容的 provider 都可用；可配多个 provider、在 WebUI 里逐轮切换。用 `modexbot model` 或 WebUI 的 **Models** 标签页编辑。
 
 ### 记忆
 
 ```yaml
 memory:
-  main:
-    short_term:
-      max_messages: 50
-      max_context_tokens: 100000
-      keep_ratio_for_messages: 0.4
-    long_term:
-      enabled: true
-    dream_engine:
-      enabled: true
-      interval: 300
-      threshold: 5
-    governance:
-      tool_chain_repair: true
-      lossy_compaction:
-        tool_result_head_chars: 1200
-        assistant_head_chars: 1200
-        agent_head_chars: 2000
-        user_head_chars: 4000
-        compact_range_count: 50
+  session:
+    max_messages: 150
+    max_context_tokens: 100000
+  governance:
+    tool_chain_repair: true
+    lossy_compaction:
+      tool_result_head_chars: 1200
+      assistant_head_chars: 1200
+      agent_head_chars: 2000
+      user_head_chars: 4000
+      compact_range_count: 50
 ```
 
 ### MCP

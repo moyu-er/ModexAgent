@@ -8,6 +8,7 @@ export type ToolPreset = "full" | "read_write" | "read_only" | "minimal" | "none
 export type ContextMode = "fresh" | "fork";
 export type SystemPromptMode = "replace" | "append";
 export type SkillSource = "global" | "local";
+export type SkillOrigin = "repo" | "user";
 
 // ─── Approval ────────────────────────────────────────────────────────────────
 
@@ -106,5 +107,6 @@ export interface PromptContent {
 export interface SkillEntry {
   name: string;
   source: SkillSource;
+  origin?: SkillOrigin;
   description?: string;
 }

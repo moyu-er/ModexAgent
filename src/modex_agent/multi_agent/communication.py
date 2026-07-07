@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from modex_agent.core.session_id import SessionIdFactory
+from modex_agent.core.session_id import SessionIdFactory, SessionInfo
 from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.comm_kind import AgentCommKind
@@ -506,13 +506,24 @@ class AgentCommunicationService:
             )
 
         # 5. NORMAL target — one stable receiver session per conversation.
-        # A subagent replying to its parent echoes the parent's snowflake on the
-        # envelope for trace correlation (it does not participate in routing).
-        target_session = self._session_factory.create(
-            agent_name=target_agent,
-            parent_session_id=parent_sid,
-            external_id=normalized_invocation_id,
-        )
+        # A subagent consulting/replying to its parent MUST route to the
+        # parent's ACTUAL session (``context.session.parent_session_id``), the
+        # same key ``SubagentAutoSendHook`` uses. Minting a fresh session here
+        # (the previous generic-NORMAL path) created a phantom duplicate main
+        # session on every consult — the real parent never saw the message and
+        # the phantom then re-resumed the subagent by invocation_id, orphaning
+        # it. Only the main→main / no-parent fallback mints a new session.
+        if (
+            context.comm_kind == AgentCommKind.SUBAGENT
+            and context.session.parent_session_id
+        ):
+            target_session = SessionInfo.from_str(context.session.parent_session_id)
+        else:
+            target_session = self._session_factory.create(
+                agent_name=target_agent,
+                parent_session_id=parent_sid,
+                external_id=normalized_invocation_id,
+            )
         session_id = str(target_session)
 
         envelope_invocation_id = normalized_invocation_id

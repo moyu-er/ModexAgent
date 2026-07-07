@@ -100,23 +100,59 @@ class TodoWriteTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Plan and track a multi-step task as a structured, evolving checklist.\n"
+            "Plan and track multi-step work as a structured, evolving checklist.\n"
             "\n"
-            "WHEN TO USE\n"
-            "- The task has 3+ distinct steps, or the user gave several tasks at once.\n"
-            "- The work spans multiple files/areas, or must be tracked across several turns.\n"
-            "- A visible plan helps you and the user follow progress without losing context.\n"
-            "Create the list BEFORE starting such work — not after.\n"
-            "SKIP for trivial, single-step, or purely informational requests.\n"
+            "## When to use\n"
+            "Use proactively when:\n"
+            "- The task requires 3+ distinct steps or actions (not just 3 tool calls for one "
+            "conceptual step).\n"
+            "- The work is non-trivial and benefits from planning.\n"
+            "- The user provides multiple tasks (numbered or comma-separated) or explicitly asks "
+            "for a todo list.\n"
+            "- New instructions arrive - capture them as todos.\n"
+            "- You start a task - mark it `in_progress` (only one at a time) before working.\n"
+            "- You finish a task - mark it `completed` and add any follow-ups discovered during "
+            "the work.\n"
             "\n"
-            "DISCIPLINE\n"
-            "- Lifecycle: pending → in_progress → completed/cancelled.\n"
-            "- Mark a task in_progress BEFORE starting it; mark completed ONLY after it is "
-            "done and verified. Never skip in_progress.\n"
-            "- Keep at most one in_progress item. List order is execution order.\n"
-            "- Update in real time; don't batch completions or wait until the end.\n"
+            "## When NOT to use\n"
+            "Skip when:\n"
+            "- The work is a single, straightforward task (or <3 trivial steps).\n"
+            "- The request is purely informational or conversational.\n"
+            "- Tracking adds no organizational value.\n"
             "\n"
-            "Full-replace: send the entire list every call. Returns active items only."
+            "## States\n"
+            "- `pending` - not started.\n"
+            "- `in_progress` - actively working (exactly ONE at a time).\n"
+            "- `completed` - finished successfully.\n"
+            "- `cancelled` - no longer needed.\n"
+            "\n"
+            "## Rules\n"
+            "- Update status in real time; don't batch completions.\n"
+            "- Mark `completed` only after the required work is actually done, including any "
+            "required verification. Never based on intent.\n"
+            "- Keep exactly one `in_progress` while work remains.\n"
+            "- If blocked or partial, keep it `in_progress` and add a follow-up todo describing "
+            "the blocker.\n"
+            "- Preserve user-provided commands verbatim (flags, args, order).\n"
+            "- Items should be specific and actionable; break large work into smaller steps.\n"
+            "- Full-replace: every call sends the COMPLETE list. The store replaces, it does not "
+            "merge. Omitting an item deletes it; reordering the array reorders execution.\n"
+            "\n"
+            "## Examples\n"
+            "\n"
+            "Use it:\n"
+            '- "Add a dark mode toggle and run the tests" -> multi-step feature + explicit '
+            "verification.\n"
+            '- "Rename getCwd -> getCurrentWorkingDirectory across the repo" -> grep reveals 15 '
+            "occurrences in 8 files.\n"
+            '- "Implement registration, catalog, cart, checkout" -> multiple complex features.\n'
+            "\n"
+            "Skip it:\n"
+            '- "How do I print Hello World in Python?" -> informational.\n'
+            '- "Add a comment to calculateTotal" -> single edit.\n'
+            '- "Run npm install and tell me what happened" -> one command.\n'
+            "\n"
+            "When in doubt, use it."
         )
 
     @property
@@ -142,11 +178,11 @@ class TodoWriteTool(Tool):
             "required": ["todos"],
         }
 
-    async def execute(self, todos: list[dict[str, Any]], **kwargs: Any) -> str:
+    async def execute(self, **kwargs: Any) -> str:  # noqa: ANN401
         session_id = _resolve_session_id()
         if session_id is None:
             return "Error: no active agent session."
-        items, err = _parse_todos(todos)
+        items, err = _parse_todos(kwargs.get("todos", []))
         if err is not None:
             return f"Error: {err}"
         await self._store.save(session_id, items)
@@ -167,16 +203,34 @@ class TodoReadTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Return active tasks (pending + in_progress) in execution order. "
-            "Call when resuming work, when unsure what to do next, or when the list "
-            "may be stale."
+            "Read the active task list (pending + in_progress items), in execution order.\n"
+            "\n"
+            "## When to call\n"
+            "- At the START of any resume / continue / 'try again' turn — before doing anything "
+            "else. This is the single most important time to call it.\n"
+            "- When you are unsure what to do next or where you left off.\n"
+            "- When the list may be stale (you have done work since the last read but have not "
+            "updated it with todo_write).\n"
+            "- Before ending a turn, if you suspect there may be unfinished work.\n"
+            "\n"
+            "## What it returns\n"
+            "Only the active subset (pending + in_progress), in the order they should be executed. "
+            "Completed and cancelled items are hidden — they are retained in the store but never "
+            "re-surfaced here.\n"
+            "\n"
+            "## After reading\n"
+            "- If the `in_progress` item is still genuinely in progress, continue it.\n"
+            "- If you have actually finished it since the last update, call todo_write to mark it "
+            "`completed` and promote the next `pending` to `in_progress`.\n"
+            "- If the list no longer reflects reality (wrong order, missing steps, stale items), "
+            "call todo_write with the corrected full list."
         )
 
     @property
     def parameters(self) -> dict[str, Any]:
         return {"type": "object", "properties": {}}
 
-    async def execute(self, **kwargs: Any) -> str:
+    async def execute(self, **kwargs: Any) -> str:  # noqa: ANN401
         session_id = _resolve_session_id()
         if session_id is None:
             return "Error: no active agent session."

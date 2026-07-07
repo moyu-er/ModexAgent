@@ -10,13 +10,14 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from modex_agent.core.skills import ResolutionContext, SkillManager
-from modex_agent.core.message import ChatMessage
 from modex_agent.core.history import ListMessageHistory, MessageHistory
+from modex_agent.core.message import ChatMessage
+from modex_agent.core.skills import ResolutionContext, SkillManager
 
 if TYPE_CHECKING:
     from modex_agent.core.governance import ContextGovernance
     from modex_agent.core.prompt import SystemPromptPipeline
+    from modex_agent.core.tool_manager import ToolManager
     from modex_agent.memory.default_system import DefaultMemorySystem
 
 from .emitter import AgentResult
@@ -36,9 +37,7 @@ class ContextState:
 
     def __post_init__(self) -> None:
         """构造时自动将 list 转换为 ListMessageHistory，确保类型一致性。"""
-        try:
-            self.history.to_list
-        except AttributeError:
+        if not hasattr(self.history, "to_list"):
             self.history = ListMessageHistory(list(self.history))
 
     async def to_messages(self) -> list[dict[str, Any]]:
@@ -92,8 +91,8 @@ class ContextManager(ABC):
         session_id: str,
         runtime_info: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
-        tool_manager: Any = None,
-        skill_manager: Any = None,
+        tool_manager: ToolManager | None = None,
+        skill_manager: SkillManager | None = None,
     ) -> ContextState:
         """加载指定会话的上下文"""
         pass
@@ -119,7 +118,7 @@ class ContextManager(ABC):
     @abstractmethod
     async def build_system_prompt(
         self,
-        tool_manager: Any,
+        tool_manager: ToolManager | None,
         skill_manager: SkillManager | None = None,
         runtime_info: dict[str, Any] | None = None,
     ) -> str:
@@ -142,7 +141,7 @@ class ContextManager(ABC):
         """Load with optional metadata. Default delegates to load()."""
         return await self.load(session_id)
 
-    async def flush(self, session_id: str) -> None:
+    async def flush(self, session_id: str) -> None:  # noqa: B027 - optional override hook
         """Flush working memory to short-term. No-op by default."""
         pass
 
@@ -166,8 +165,8 @@ class InMemoryContextManager(ContextManager):
         session_id: str,
         runtime_info: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
-        tool_manager: Any = None,
-        skill_manager: Any = None,
+        tool_manager: ToolManager | None = None,
+        skill_manager: SkillManager | None = None,
     ) -> ContextState:
         if session_id not in self._sessions:
             self._sessions[session_id] = ContextState(
@@ -197,7 +196,7 @@ class InMemoryContextManager(ContextManager):
 
     async def build_system_prompt(
         self,
-        tool_manager: Any,
+        tool_manager: ToolManager | None,
         skill_manager: SkillManager | None = None,
         runtime_info: dict[str, Any] | None = None,
     ) -> str:

@@ -89,20 +89,21 @@ const SessionNode: FC<{
               : "border-transparent hover:bg-hairline-soft"
           }`}
         >
-          {/* Expand arrow — only if has children */}
-          {hasChildren ? (
-            <IconButton
-              label={expanded ? "Collapse" : "Expand"}
-              size="sm"
-              variant="ghost"
-              data-testid="expand-arrow"
-              onClick={(): void => onToggleExpand(node.session_id)}
-              icon={<ChevronToggleIcon open={expanded} />}
-              className="mr-2 h-7 w-4 rounded-sm text-mute hover:text-ink focus-visible:ring-link/50"
-            />
-          ) : (
-            <span className="mr-2 w-4 shrink-0" />
-          )}
+          {/* Expand/collapse area — fixed-width so leaf nodes align with
+           * branch nodes and the session ID stays at the same x-position. */}
+          <div className="mr-2 flex h-7 w-4 shrink-0 items-center justify-center">
+            {hasChildren && (
+              <IconButton
+                label={expanded ? "Collapse" : "Expand"}
+                size="sm"
+                variant="ghost"
+                data-testid="expand-arrow"
+                onClick={(): void => onToggleExpand(node.session_id)}
+                icon={<ChevronToggleIcon open={expanded} />}
+                className="h-7 w-4 rounded-sm text-mute hover:text-ink focus-visible:ring-link/50"
+              />
+            )}
+          </div>
 
           {/* Session name — kept as a styled button because the row is a
            * composite clickable tree entry (icon + truncated name +

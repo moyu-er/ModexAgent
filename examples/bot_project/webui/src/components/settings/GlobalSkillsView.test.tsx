@@ -58,7 +58,7 @@ describe("GlobalSkillsView", () => {
         return Promise.resolve(makeResponse(200, { deleted: "fmt" }));
       }
       return Promise.resolve(
-        makeResponse(200, [{ name: "fmt", source: "global" }]),
+        makeResponse(200, [{ name: "fmt", source: "global", origin: "repo" }]),
       );
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -352,5 +352,76 @@ describe("GlobalSkillsView", () => {
     const beta = screen.getAllByText("beta")[0]!.closest("div")!.parentElement!;
     expect(alpha.textContent).toContain("Alpha desc.");
     expect(beta.textContent).not.toContain("Alpha desc.");
+  });
+
+  it("sorts skills alphabetically by name", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          makeResponse(200, [
+            { name: "zebra", source: "global", origin: "repo" },
+            { name: "apple", source: "global", origin: "user" },
+            { name: "mango", source: "global", origin: "repo" },
+          ]),
+        ),
+      ),
+    );
+    renderView();
+    await waitFor(() => expect(screen.getByText("apple")).toBeTruthy());
+    const buttons = screen.getAllByRole("button");
+    const skillNames = buttons
+      .map((b) => b.textContent ?? "")
+      .map((t) => ["apple", "mango", "zebra"].find((n) => t.includes(n)))
+      .filter((n): n is string => n !== undefined);
+    expect(skillNames).toEqual(["apple", "mango", "zebra"]);
+  });
+
+  it("shows local badge for repo skills and global badge for user skills", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          makeResponse(200, [
+            { name: "repo-skill", source: "global", origin: "repo" },
+            { name: "user-skill", source: "global", origin: "user" },
+          ]),
+        ),
+      ),
+    );
+    renderView();
+    await waitFor(() => expect(screen.getByText("repo-skill")).toBeTruthy());
+    expect(screen.getByText("local")).toBeTruthy();
+    expect(screen.getByText("global")).toBeTruthy();
+  });
+
+  it("shows delete button only for repo skills when expanded", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          makeResponse(200, [
+            { name: "repo-skill", source: "global", origin: "repo" },
+            { name: "user-skill", source: "global", origin: "user" },
+          ]),
+        ),
+      ),
+    );
+    renderView();
+    await waitFor(() => expect(screen.getByText("repo-skill")).toBeTruthy());
+
+    fireEvent.click(screen.getByText("repo-skill"));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Delete skill repo-skill" }),
+      ).toBeTruthy(),
+    );
+
+    fireEvent.click(screen.getByText("user-skill"));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Delete skill user-skill" }),
+      ).toBeNull(),
+    );
   });
 });

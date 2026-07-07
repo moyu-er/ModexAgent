@@ -2,7 +2,40 @@
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Awaitable, Callable
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from modex_agent.core.context import ContextManager, ContextState
+from modex_agent.core.emitter import AgentResult
+from modex_agent.core.governance import ContextGovernance
+from modex_agent.core.message import ChatMessage
 from modex_agent.core.prompt import SystemPromptProvider
+from modex_agent.core.scope import MemoryAgentRole, MemoryContext
+from modex_agent.core.skills import SkillManager
+from modex_agent.memory.core.system import (
+    MemorySystem,  # noqa: F401 — re-export
+)
+from modex_agent.memory.default_system import DefaultMemorySystem
+from modex_agent.memory.injection.policy import MemoryInjectionPolicy
+from modex_agent.memory.layers.config import MemoryLayerConfigSet
+from modex_agent.memory.layers.factory import MemoryLayerFactory
+from modex_agent.memory.pruned.manager import PrunedManager
+
+# UserRetentionBuffer injection moved to framework.memory.user_buffer (Task 6 stub)
+from modex_agent.memory.registry.file import DefaultMemoryStoreRegistry
+from modex_agent.memory.token_estimator import TokenEstimator
+
+if TYPE_CHECKING:
+    from modex_agent.agents.summarizer.abc import ArchiveGenerator, KnowledgeConsolidatorBase
+    from modex_agent.core.experience import ExperienceManager
+    from modex_agent.core.provider import LLMProvider
+    from modex_agent.core.tool_manager import ToolManager
+    from modex_agent.memory.prompt_pipeline.providers import ForkContextSpec
+    from modex_agent.memory.stores.dir_archive import DirArchiveStorage
+
+logger = logging.getLogger(__name__)
 
 # Default system prompt used when no other content is configured.
 # Kept minimal so the agent is useful even without custom configuration.
@@ -15,40 +48,6 @@ _DEFAULT_SYSTEM_PROMPT = (
     "- Be honest about uncertainty — never fabricate information.\n"
     "- Use code blocks for code and commands."
 )
-
-import logging
-from collections.abc import Awaitable, Callable
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from modex_agent.memory.prompt_pipeline.providers import ForkContextSpec
-
-from modex_agent.core.context import ContextManager, ContextState
-from modex_agent.core.emitter import AgentResult
-from modex_agent.core.skills import SkillManager
-from modex_agent.memory.context_governance import ContextGovernance
-from modex_agent.core.message import ChatMessage
-from modex_agent.core.scope import MemoryAgentRole, MemoryContext
-from modex_agent.memory.core.system import (
-    MemorySystem,  # noqa: F401 — re-export
-)
-from modex_agent.memory.default_system import DefaultMemorySystem
-from modex_agent.memory.layers.config import MemoryLayerConfigSet
-from modex_agent.memory.layers.factory import MemoryLayerFactory
-from modex_agent.memory.pruned.manager import PrunedManager
-
-# UserRetentionBuffer injection moved to framework.memory.user_buffer (Task 6 stub)
-from modex_agent.memory.registry.file import DefaultMemoryStoreRegistry
-from modex_agent.memory.token_estimator import CharTokenEstimator, TokenEstimator
-
-if TYPE_CHECKING:
-    from modex_agent.agents.summarizer.abc import ArchiveGenerator, KnowledgeConsolidatorBase
-    from modex_agent.core.experience import ExperienceManager
-    from modex_agent.core.provider import LLMProvider
-    from modex_agent.memory.stores.dir_archive import DirArchiveStorage
-
-logger = logging.getLogger(__name__)
 
 
 def create_memory_system(
@@ -126,7 +125,7 @@ class MemorySystemContextManager(ContextManager):
         default_agent_id: str | None = None,
         default_agent_role: str | MemoryAgentRole | None = None,
         base_system_prompt: str = "",
-        injection_policy: Any | None = None,
+        injection_policy: MemoryInjectionPolicy | None = None,
         experience_manager: ExperienceManager | None = None,
         output_base_dir: Path | None = None,
         parent_prompt_resolver: Callable[[str], Awaitable[str | None]] | None = None,
@@ -139,7 +138,7 @@ class MemorySystemContextManager(ContextManager):
         self.default_agent_id = default_agent_id
         self.default_agent_role = default_agent_role
         self.base_system_prompt = base_system_prompt
-        self.injection_policy: Any = injection_policy or FullInjectionPolicy()
+        self.injection_policy: MemoryInjectionPolicy = injection_policy or FullInjectionPolicy()
         self._last_session_id: str | None = None
         self._context_cache: dict[str, MemoryContext] = {}
         self._max_context_cache_size = 1000
@@ -198,7 +197,7 @@ class MemorySystemContextManager(ContextManager):
         session_id: str,
         runtime_info: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
-        tool_manager: Any = None,
+        tool_manager: ToolManager | None = None,
         skill_manager: SkillManager | None = None,
     ) -> ContextState:
         self._last_session_id = session_id
@@ -232,8 +231,8 @@ class MemorySystemContextManager(ContextManager):
         # Archive and Pruned have dedicated refreshable providers.
         # The injection_policy provides: disclaimer + knowledge + blocks + prefetch.
         # ────────────────────────────────────────────────────────────────
-        from modex_agent.memory.injection.full_injection import FullInjectionPolicy
         from modex_agent.core.prompt import SystemPromptPipeline
+        from modex_agent.memory.injection.full_injection import FullInjectionPolicy
         from modex_agent.memory.prompt_pipeline.providers import (
             ArchiveProvider,
             BasePromptProvider,
@@ -244,12 +243,14 @@ class MemorySystemContextManager(ContextManager):
             PrunedProvider,
             RuntimeProvider,
             SkillProvider,
+            TodoAwareSystemPromptProvider,
         )
 
         # If the policy injects archive/pruned content itself, those sections are
         # handled by dedicated refreshable providers below; use a clean policy
         # that skips them to avoid double emission.
         policy = self.injection_policy
+        pipeline_policy: MemoryInjectionPolicy
         if policy.injects_pruned() or policy.injects_archive():
             pipeline_policy = FullInjectionPolicy(pruned_manager=None, archive_inject_count=0)
         else:
@@ -300,6 +301,9 @@ class MemorySystemContextManager(ContextManager):
             from modex_agent.memory.prompt_pipeline.providers import OutputMdProvider
 
             providers.append(OutputMdProvider(self._output_base_dir, session_id))
+
+        # 2c. Todo task discipline — gated on tool presence inside the provider
+        providers.append(TodoAwareSystemPromptProvider(tool_manager))
 
         # 3. Memory layers from injection policy (disclaimer + knowledge + blocks + prefetch)
         if result.system_prompt:
@@ -427,7 +431,7 @@ class MemorySystemContextManager(ContextManager):
 
     async def build_system_prompt(
         self,
-        tool_manager: Any,
+        tool_manager: ToolManager | None,
         skill_manager: SkillManager | None = None,
         runtime_info: dict[str, Any] | None = None,
     ) -> str:

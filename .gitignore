@@ -58,3 +58,8 @@ nul
 /trace
 /output
 node_modules
+
+# Media generation artifacts (logo exploration, skill showcase outputs).
+# Kept locally for reference but not version-controlled.
+/assets/logo-concepts/
+/assets/logo-explore/

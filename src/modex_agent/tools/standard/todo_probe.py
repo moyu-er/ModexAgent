@@ -1,4 +1,20 @@
-"""TodoCompletionProbeHook — proactive in-turn todo-completion nudge.
+"""TodoCompletionProbeHook — DEPRECATED.
+
+.. deprecated::
+    This hook is deprecated and no longer wired in the reference bot project.
+    Do not register it in new code. The mechanism of injecting a synthetic
+    ``todo_read`` ToolCall and a guidance XML block into the LLM response writes
+    to the conversation history (``ctx.history``) rather than the persistent
+    memory system. That violates the design principle that todo reminders should
+    live in memory, not in the session transcript.
+
+    Preferred replacement: tune the system prompt layer (e.g.
+    ``TodoAwareSystemPromptProvider``) and the todo tool descriptions so the
+    model is reminded of unfinished tasks before it generates a response, and
+    can read the list via ``todo_read`` naturally when it chooses to. This is
+    how opencode-style task discipline works without a dedicated probe hook.
+
+Historical behavior (kept for unit tests only):
 
 An ``AfterLLMResponseHook``. When an agent that owns the todo tools tries to end
 a turn with a plain assistant message (no tool_calls) while its active task list
@@ -7,12 +23,6 @@ guidance XML block) to the response IN PLACE. The ReAct loop then executes
 ``todo_read`` through the normal ToolNode and continues the same turn — no new
 turn, no inbox/poller, zero engine changes.
 
-Why this is safe re: user-facing output: the assistant content is streamed to
-the user DURING ``ReactLlmClient.call`` (``nodes/llm.py:147``), which finishes
-BEFORE this hook runs (``nodes/llm.py:149``). The XML is appended afterwards,
-so it reaches ``ctx.history`` (LLM memory) but never the emitted stream (the
-user session).
-
 Stall avoidance: a single ``(fp, count)`` state machine in transient turn state
 (``TurnCustomKey.TODO_PROBE``) probes each distinct active-view fingerprint at
 most once; an unchanged ending is let through.
@@ -20,6 +30,7 @@ most once; an unchanged ending is let through.
 from __future__ import annotations
 
 import json
+import warnings
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -57,13 +68,26 @@ def _fingerprint(active: list[TodoItem]) -> str:
 
 
 class TodoCompletionProbeHook(AfterLLMResponseHook):
-    """Append a ``todo_read`` probe when an agent ends with unfinished todos."""
+    """Append a ``todo_read`` probe when an agent ends with unfinished todos.
+
+    .. deprecated::
+        This hook is deprecated. Use system-prompt optimization and clear todo
+        tool descriptions instead of injecting synthetic tool calls into the
+        conversation history. See the module docstring for details.
+    """
 
     @property
     def name(self) -> str:
         return "todo_completion_probe"
 
     def __init__(self, store: TodoStore, tool_manager: InMemoryToolManager) -> None:
+        warnings.warn(
+            "TodoCompletionProbeHook is deprecated: rely on the system prompt "
+            "layer (TodoAwareSystemPromptProvider) and todo tool descriptions "
+            "instead of injecting synthetic todo_read calls into the conversation.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._store = store
         self._tool_manager = tool_manager
 

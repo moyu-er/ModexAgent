@@ -171,7 +171,7 @@ describe("SettingsView", () => {
       const url = String(input);
       const body =
         url.endsWith("/api/skills")
-          ? (skillsCalled = true, [{ name: "weather", source: "global", description: "Get weather forecasts." }])
+          ? (skillsCalled = true, [{ name: "weather", source: "global", origin: "repo", description: "Get weather forecasts." }])
           : url.endsWith("/api/config/im")
             ? imPayload
             : {};

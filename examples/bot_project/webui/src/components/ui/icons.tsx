@@ -82,7 +82,7 @@ export function TrashIcon({ className, ...rest }: IconProps) {
       {...rest}
     >
       <path
-        d="M3 4h10M6.5 4V2.5h3V4M5 4l.5 8.5a1 1 0 0 0 1 .9h3a1 1 0 0 0 1-.9L11 4M6.5 7v4M9.5 7v4"
+        d="M2 4h12M4.5 4v9a1.5 1.5 0 0 0 1.5 1.5h4a1.5 1.5 0 0 0 1.5-1.5V4M6 2.5h4"
         stroke="currentColor"
         strokeWidth={1.3}
         strokeLinecap="round"

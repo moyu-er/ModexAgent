@@ -113,20 +113,6 @@ def _make_pipeline() -> AgentPipeline:
     )
 
 
-def _make_todo_store():
-    """A real ``JsonFileTodoStore`` on a temp dir for the probe-hook wiring.
-
-    Required because ``_wire_main_pipeline`` now constructs
-    ``TodoCompletionProbeHook(store=..., tool_manager=...)`` from the
-    collaborator instances we pass in.
-    """
-    from tempfile import TemporaryDirectory
-
-    from modex_agent.runtime.store import JsonFileTodoStore
-
-    return JsonFileTodoStore(Path(TemporaryDirectory().name))
-
-
 def _make_pool_cfg(*, approval: ApprovalConfig | None) -> PoolConfig:
     main_cfg = AgentConfig(
         name="main",
@@ -151,7 +137,6 @@ def _wire(*, approval: ApprovalConfig | None) -> AgentPipeline:
         project_dir=Path("/proj"),
         command_processor=None,  # exercise the default branch
         pool_name="main",
-        todo_store=_make_todo_store(),
         tool_manager=InMemoryToolManager(),
         bot_model_config=_BOT_CFG,
         model_choice_registry=_REGISTRY,
@@ -204,7 +189,6 @@ def test_wired_classifier_anchors_to_live_workspace_root() -> None:
     so ``./*`` follows the active workspace, not the static bot project_dir."""
     from modex_agent.approval.constants import ApprovalTier
     from modex_agent.core.agent import AgentContext
-    from modex_agent.core.session_id import SessionInfo
     from modex_agent.core.tool_manager import InMemoryToolManager
     from modex_agent.core.types import ToolCall
     from modex_agent.memory.history import ListMessageHistory
@@ -235,7 +219,6 @@ def test_wired_classifier_anchors_to_live_workspace_root() -> None:
         project_dir=project_dir,
         command_processor=None,
         pool_name="main",
-        todo_store=_make_todo_store(),
         tool_manager=InMemoryToolManager(),
         root_provider=_Provider(),
         bot_model_config=_BOT_CFG,

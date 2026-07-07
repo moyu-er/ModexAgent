@@ -24,15 +24,22 @@ Uses **Pool mode** — multi-agent persistent pools with `MessageBroker` + `Agen
 |------------|-------------|
 | **QQ Messaging** | C2C private chat + group chat, with automatic attachment download |
 | **WebUI** | Browser-based chat with real-time streaming, multi-conversation sidebar, workspace browser, pool selector |
+| **In-Browser Config** | Edit pools, models, MCP servers, skills, and system prompts from the Settings UI — no YAML hand-editing |
+| **Multi-Model Switching** | Multiple providers / models in `model.yml`; switch per turn from the chat composer |
+| **TodoPanel** | The agent tracks its own task list live; the panel surfaces progress without prompting |
+| **Attachments** | Upload files in the WebUI (or QQ auto-download); the agent senses them and can view/download symmetrically, with type/magic/size gating |
+| **Rich Rendering** | Markdown, syntax-highlighted code, mermaid diagrams, reasoning blocks, streaming deltas |
+| **Session Tree** | Threaded conversation tree with parent/child branches per session |
+| **Themes** | Light / dark UI toggle |
 | **LLM Dialogue** | Streaming and non-streaming output, supporting 100+ models via OpenAI-compatible APIs |
-| **ReAct Execution** | Thought → Action → Observation via the graph-driven engine |
+| **ReAct Execution** | Thought → Action → Observation via the graph-driven engine, with loop detection that exits a runaway loop as a controlled stop |
 | **Tool Invocation** | Built-in file/shell tools + MCP dynamic tools + custom tools |
 | **Multi-tier Memory** | Session / Archive / Knowledge / UserRetentionBuffer / Pruned / Experience — with configurable scopes (UserScope / GlobalScope / SessionScope) |
 | **Self-Learning** | ExperienceReviewAgent turns conversations into reusable EXPERIENCE.md knowledge; Dream Engine consolidates archives into long-term memory |
 | **Context Governance** | ToolChainRepair + Microcompact + TokenBudget auto-optimization |
 | **Tool Approval** | The agent asks before writing/editing outside your project; approve via WebUI or `/approve`. Off by default; opt-in per agent |
 | **Multi-Agent Collaboration** | Main agent + persistent subagents, star-topology communication |
-| **Skill System** | Dynamic system prompt construction from Markdown skill files |
+| **Skill System** | Dynamic system prompt construction from Markdown skill files (`local_skills/` or bundled by packages) |
 | **Plugin System** | Dynamically extend tools, memory providers, and skill sources |
 | **Slash Commands** | `/approve`, `/deny`, `/continue`, and skill-triggering commands |
 | **Pool Runtime** | Multi-agent persistent pools with `MessageBroker` + `AgentMessageBus` routing |
@@ -241,21 +248,30 @@ MINIMAX_MCP_API_KEY=your_minimax_api_key
 #### 3. Configure the Model
 
 The model is configured in `config/model.yml` (the single source of truth —
-copy it from `config/model.example.yml`). Edit it interactively with
-`modexbot config`, or by hand:
+copy it from `config/model.example.yml`). Run the interactive wizard with
+`modexbot model`, or edit it by hand. It holds multiple providers, each with
+their own models; `default_provider` + `default_model` is what a pool uses
+unless you switch per turn in the WebUI:
 
 ```yaml
-model:
-  url: https://api.minimaxi.com/v1
-  api_key: your_llm_api_key      # literal value, gitignored — not an ${ENV} ref
-  model: openai/MiniMax-M2.5
-  capabilities: [text, image]
-  temperature: 0.7
-  max_output_tokens: 50000
+default_provider: "DeepSeek"
+default_model: "deepseek-v4-flash"
+max_context_tokens: 200000
+providers:
+  - key: deepseek
+    name: "DeepSeek"
+    url: https://api.deepseek.com
+    api_key: your_api_key            # literal value, gitignored — not an ${ENV} ref
+    models:
+      - name: "deepseek-v4-flash"
+        model: openai/deepseek-v4-flash
+        capabilities: [text]
+        temperature: 0.7
+        max_output_tokens: 50000
 ```
 
-All pools inherit this global config. `config/bot_config.yml` and
-`config/pools/*.yml` no longer carry an `llm:` block.
+All pools share this single model config. `config/bot_config.yml` and
+`config/pools/*.yml` do **not** carry an `llm:` block.
 
 #### 4. Run
 
@@ -288,13 +304,48 @@ python bot_service.py
 
 ### WebUI
 
-The built-in React frontend provides:
+The built-in React frontend (Geist-inspired, warm dark palette) is the fastest way to use the bot — no IM credentials required. Open `http://localhost:21800/webui/` after `modexbot start`.
 
 - **Real-time streaming** — agent output renders incrementally with typing animation
-- **Multi-conversation sidebar** — switch between conversations; each is fully isolated
+- **Multi-conversation sidebar + session tree** — switch between conversations; each is fully isolated, with parent/child branches per session
 - **Workspace browser** — browse and switch project directories via the UI
 - **Pool selector** — choose which agent pool handles each new conversation
 - **History replay** — past conversations load from the transcript store
+
+#### In-browser configuration
+
+Edit everything from the Settings UI — no YAML hand-editing, no restart dance (changes that need a restart ask for one):
+
+| Tab | What you edit |
+|-----|---------------|
+| **Pools** | Create/rename pools, add subagents, tool presets, approval, system prompts |
+| **Models** | Providers and models (`default_provider` / `default_model` + per-provider model list) |
+| **MCP** | Add/rename/remove MCP servers, manage keys |
+| **Skills** | Browse skills with their origin (`local_skills/` vs bundled) |
+
+<img src="../../assets/webui-settings-pools.png" alt="Settings — Pools" width="860">
+
+<img src="../../assets/webui-settings-model.png" alt="Settings — Models" width="860">
+
+<img src="../../assets/webui-settings-mcp.png" alt="Settings — MCP" width="860">
+
+<img src="../../assets/webui-settings-skills.png" alt="Settings — Skills" width="860">
+
+#### Per-turn model switching
+
+Pick provider + model in the chat composer's selector before each message. Models are defined once in `model.yml` and shared across pools.
+
+#### TodoPanel
+
+When the agent breaks its work into steps, a side panel tracks the live task list — so you can see progress and catch when it drifts, without prompting it.
+
+#### Rich rendering
+
+Markdown, syntax-highlighted code, **mermaid diagrams**, and reasoning blocks all render inline.
+
+#### Themes
+
+Light / dark toggle in the sidebar.
 
 ### Input Pipeline (Converged Message Processing)
 
@@ -358,35 +409,48 @@ approval:
     edit_file:  { allowed_paths: ["./*"] }
 ```
 
-See `config/pools/main.yml` and `coding.yml` for live examples. In chat, reply `/approve` or `/deny`; in the WebUI, click the button on the approval card. (Approval never applies to subagents.)
+See `config/pools/default/pool.yml` and `config/pools/coding/pool.yml` for live examples. In chat, reply `/approve` or `/deny`; in the WebUI, click the button on the approval card. (Approval never applies to subagents.)
 
-<img src="../../assets/approval.jpg" alt="Tool approval" width="800">
+<img src="../../assets/webui-approval.png" alt="Tool approval" width="860">
 
 ### Multi-Agent Collaboration
 
 The main agent delegates tasks to specialist subagents and gathers their replies. It picks the right subagent for each job, and the whole conversation — including the subagents' work — shows up in one place. Subagents don't talk to each other directly; everything flows through the main agent, so it's easy to follow.
 
-<img src="../../assets/office_subagent.jpg" alt="Multi-agent collaboration" width="800">
+<img src="../../assets/webui-multiagent.png" alt="Multi-agent collaboration" width="860">
 
 ### Self-Deployment
 
 The agent connects to a remote server via SSH, runs `git pull`, and restarts its own service — demonstrating the depth of the interactive terminal:
 
-<img src="../../assets/self_deployment.png" alt="Self-deployment via terminal" width="800">
+<img src="../../assets/self_deployment.png" alt="Self-deployment via terminal" width="860">
+
+### Attachments
+
+Files flow in symmetrically and the agent is aware of them (ADR-0013):
+
+- **WebUI upload** — attach files in the composer; the agent sees them and can pick a tool to read/view them, and you can download them back.
+- **QQ auto-download** — image/file attachments in IM are fetched automatically.
+- **Safety gating** — type + magic-number + size checks (default images ≤ 20 MB, other files ≤ 10 MB, configurable front- and back-end), with a per-session storage budget (oldest evicted) and an outbound cap.
 
 ### Skill System
 
-Skills are auto-discovered from Markdown files and injected into system prompts:
+Skills are auto-discovered from Markdown files (with optional YAML frontmatter `description`) and injected into system prompts. Each skill carries an **origin** — `local` (your `local_skills/` directory, editable) or `bundled` (shipped by a package/plugin):
 
 ```
-skills/
-├── main/                    # Main agent skills (auto-discovered)
+skills/                     # per-pool skills (auto-discovered)
+├── main/                   # Main agent skills
 │   ├── weather/SKILL.md
 │   └── github/SKILL.md
-└── subagents/               # Subagent skills (auto-discovered by agent name)
+└── subagents/              # Subagent skills (auto-discovered by agent name)
     ├── office-expert/
     └── query-12306/
+
+local_skills/               # project-wide local skills (origin: local)
+└── huashu-design/SKILL.md
 ```
+
+The WebUI **Skills** tab shows every skill and its origin.
 
 ### Slash Commands
 
@@ -406,7 +470,7 @@ Commands are resolved inside the input pipeline before reaching the agent — `E
 
 Governance runs on the model-visible message copy before each LLM call. It is configured under `memory.governance` in a pool config or subagent template.
 
-Main-agent example (`config/pools/main.yml`):
+Main-agent example (`config/pools/default/pool.yml`):
 
 ```yaml
 memory:
@@ -433,37 +497,42 @@ memory:
     tool_chain_repair: true
 ```
 
-## Adding a New Subagent
+## Pools & Workspaces
 
-The bundled **`coding` pool** (`config/pools/coding.yml` + `config/pools/coding/templates/`) is the reference multi-agent setup. To add your own subagent, mirror that structure:
+### Pools
 
-1. Describe the agent in the pool config (or a subagent template) — its name, what it does, and what it's allowed to do:
+A **pool** is a self-contained agent deployment: one **main agent** plus zero or more **subagents** that collaborate in a star topology (subagents talk only to the main agent, never to each other). Pools are isolated from each other — each carries its own agents, system prompts, tools, memory, and sessions.
 
-```yaml
-agents:
-  - name: "my-new-agent"
-    role: subagent
-    max_steps: 60
-    system_prompt: |
-      You are a specialized agent for ...
-      Reply to the main agent via send_to_agent (target_agent="main").
-    # What this agent can do is chosen by a tool preset — see coding.yml:
-    #   read_only / read_write / full / minimal
-    extra_tools: []          # optional extra tool names on top of the preset
-    skills:
-      roots:
-        - "skills/subagents/my-new-agent"
+On disk, a pool is a directory under `config/pools/` — **the directory name is the pool identity**:
+
+```
+config/pools/
+├── default/                # pool name = directory name
+│   ├── pool.yml            # main agent config (max_steps, tools, approval, …)
+│   └── templates/          # subagent templates — one .yml each
+│       └── office-expert.yml
+└── coding/
+    ├── pool.yml
+    └── templates/          # this pool's subagents
 ```
 
-2. (Optional) Drop a `SKILL.md` into `skills/<pool>/my-new-agent/` to give it a dedicated skill.
+- The **main agent name** defaults to the directory name (override with `main_agent_name` in `pool.yml`).
+- **Subagents** are `templates/*.yml` and register automatically — the main agent hands work to them via `send_to_agent`.
+- Choose which pool handles a conversation from the WebUI pool selector (or `/pool_name` in IM).
 
-3. Restart the service. The new subagent registers automatically and the main agent can hand work to it.
+The bundled `default` and `coding` pools are examples — use them as-is, inspect them, or replace them with your own.
 
-## Agent Capability Matrix
+### Workspaces
 
-The **`coding` pool** (`config/pools/coding.yml` + its `templates/`) is the bundled multi-agent example: a `coding` main agent plus a team of subagents — scout, context-builder, planner, worker, reviewer, oracle, delegate — each allowed to do a different subset of work. Every subagent can be reached from the main agent; subagents report back to it.
+A **workspace** is the live working directory a pool operates in — file tools, terminal, and per-pool resources are anchored to it. Multiple workspaces can be live at once with per-pool isolation; switch the active workspace from the WebUI workspace browser (or `/cd <path>` in IM). Pools and workspaces are orthogonal: any pool can run in any workspace.
 
-Each subagent's tool set is summarized by a **preset** (what it's allowed to do):
+## Customizing Pools & Agents
+
+The fastest path is the **WebUI → Settings → Pools** tab: create/rename pools, add subagents, pick a tool preset, toggle approval, and edit system prompts — then apply and restart when prompted. Everything you edit there is persisted to the same `config/pools/<name>/pool.yml` + `templates/*.yml` you could edit by hand.
+
+### Tool presets
+
+A subagent's tool set is summarized by a **preset** (what it's allowed to do):
 
 | Preset | Read | Write | Edit | List | Search | Find | Bash | Terminal |
 |--------|:----:|:-----:|:----:|:----:|:------:|:----:|:----:|:--------:|
@@ -472,7 +541,26 @@ Each subagent's tool set is summarized by a **preset** (what it's allowed to do)
 | `read_only` | ✅ | — | — | ✅ | ✅ | ✅ | ✅ | — |
 | `minimal` | ✅ | ✅ | — | ✅ | ✅ | — | — | — |
 
-`*` Terminal tools require `use_terminal: true`. Subagents always use `SubprocessTool` for bash (stateless). See the coding pool config for the full agent roster and presets.
+`*` Terminal tools require `use_terminal: true`. Subagents always use `SubprocessTool` for bash (stateless).
+
+### By hand (YAML)
+
+A subagent template at `config/pools/<pool>/templates/my-agent.yml`:
+
+```yaml
+name: "my-agent"
+max_steps: 60
+tool_preset: read_write        # read_only / read_write / full / minimal
+extra_tools: []                # optional extra tool names on top of the preset
+system_prompt: |
+  You are a specialized agent for …
+  Reply to the main agent via send_to_agent (target_agent="main").
+skills:
+  roots:
+    - "skills/subagents/my-agent"
+```
+
+Restart the service (or save in the WebUI) and the agent registers automatically — the main agent can then delegate to it.
 
 ## Adapting to Other IM Platforms
 
@@ -552,42 +640,25 @@ qq:
     - "*"                        # "*" allows everyone
 ```
 
-### LLM
+### LLM (Models)
 
-Any OpenAI-compatible API:
-
-```yaml
-llm:
-  api_key: "your-api-key"
-  base_url: "https://api.openai.com/v1"
-  model: "openai/gpt-4o"
-  temperature: 0.7
-  max_output_tokens: 80000
-```
+Models live in `config/model.yml` — the single source of truth (see *Quick Start → Configure the Model*). Any OpenAI-compatible provider works; configure multiple providers and switch per turn in the WebUI. Edit with `modexbot model` or the WebUI **Models** tab.
 
 ### Memory
 
 ```yaml
 memory:
-  main:
-    short_term:
-      max_messages: 50
-      max_context_tokens: 100000
-      keep_ratio_for_messages: 0.4
-    long_term:
-      enabled: true
-    dream_engine:
-      enabled: true
-      interval: 300
-      threshold: 5
-    governance:
-      tool_chain_repair: true
-      lossy_compaction:
-        tool_result_head_chars: 1200
-        assistant_head_chars: 1200
-        agent_head_chars: 2000
-        user_head_chars: 4000
-        compact_range_count: 50
+  session:
+    max_messages: 150
+    max_context_tokens: 100000
+  governance:
+    tool_chain_repair: true
+    lossy_compaction:
+      tool_result_head_chars: 1200
+      assistant_head_chars: 1200
+      agent_head_chars: 2000
+      user_head_chars: 4000
+      compact_range_count: 50
 ```
 
 ### MCP

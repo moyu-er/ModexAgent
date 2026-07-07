@@ -1,16 +1,17 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
-import sys
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
-from bot.service.model_choice import ModelChoiceRegistry, ModelChoiceBindHook
+from bot.service.model_choice import ModelChoiceBindHook, ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
 from bot.service.model_provider import BotModelProvider
 from bot.service.pool_builder import _build_llm_provider, _wire_main_pipeline
+
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.hook.runner import HookRunner
 from modex_agent.ioc.configs.agent import AgentConfig
@@ -82,7 +83,6 @@ def test_wire_main_pipeline_adds_model_choice_hook(tmp_path: Path) -> None:
         project_dir=Path("/proj"),
         command_processor=None,
         pool_name="main",
-        todo_store=MagicMock(),
         tool_manager=InMemoryToolManager(),
         bot_model_config=cfg,
         model_choice_registry=reg,

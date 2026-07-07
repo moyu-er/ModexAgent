@@ -2,7 +2,7 @@
 //
 // DISK IS THE SINGLE SOURCE OF TRUTH. Which skills an agent has is decided
 // entirely by what's under skills/<pool>/<agent>/ on disk (symlinks into
-// global_skills/). There is no skills field in the pool tree and nothing is
+// local_skills/). There is no skills field in the pool tree and nothing is
 // deferred to the PoolEditor Save button: toggling a skill here calls
 // assignSkill/unassignSkill IMMEDIATELY (eager disk write), refreshes the
 // listing from disk, and surfaces the implied restart via toast + indicator.

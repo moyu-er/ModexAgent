@@ -6,13 +6,43 @@
 // `{name, files: {relpath: base64}}`. The backend also accepts multipart, but
 // the JSON shape is the simpler contract for the webui (no boundary wrangling).
 
-import type { SkillEntry } from "../types/pool";
+import type { SkillEntry, SkillOrigin, SkillSource } from "../types/pool";
 import { ApiError, assertOk, API_BASE } from "./api";
 
 const jsonHeaders = { "Content-Type": "application/json" };
 
-function mapSkillEntry(s: SkillEntry): SkillEntry {
-  return { name: s.name, source: s.source, description: s.description };
+function asString(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new TypeError(`Expected string, got ${String(value)}`);
+  }
+  return value;
+}
+
+function asSkillSource(value: unknown): SkillSource {
+  if (value === "global" || value === "local") return value;
+  throw new TypeError(`Invalid skill source: ${String(value)}`);
+}
+
+function asSkillOrigin(value: unknown): SkillOrigin | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (value === "repo" || value === "user") return value;
+  throw new TypeError(`Invalid skill origin: ${String(value)}`);
+}
+
+function mapSkillEntry(raw: Record<string, unknown>): SkillEntry {
+  let origin: SkillOrigin | undefined;
+  try {
+    origin = asSkillOrigin(raw.origin);
+  } catch (err) {
+    // One malformed entry should not break the entire skill list.
+    console.warn("Invalid skill origin in API response:", err);
+  }
+  return {
+    name: asString(raw.name),
+    source: asSkillSource(raw.source),
+    origin,
+    description: typeof raw.description === "string" ? raw.description : undefined,
+  };
 }
 
 export interface SkillFile {
@@ -23,7 +53,7 @@ export interface SkillFile {
 export async function listSkills(): Promise<SkillEntry[]> {
   const resp = await fetch(`${API_BASE}/skills`);
   await assertOk(resp);
-  const data = (await resp.json()) as SkillEntry[];
+  const data = (await resp.json()) as Record<string, unknown>[];
   return data.map(mapSkillEntry);
 }
 
@@ -41,7 +71,7 @@ export async function uploadSkill(
     body: JSON.stringify({ name, files: payload }),
   });
   await assertOk(resp);
-  const data = (await resp.json()) as SkillEntry;
+  const data = (await resp.json()) as Record<string, unknown>;
   return mapSkillEntry(data);
 }
 
@@ -61,7 +91,7 @@ export async function listAgentSkills(
     `${API_BASE}/pools/${encodeURIComponent(pool)}/agents/${encodeURIComponent(agent)}/skills`,
   );
   await assertOk(resp);
-  const data = (await resp.json()) as SkillEntry[];
+  const data = (await resp.json()) as Record<string, unknown>[];
   return data.map(mapSkillEntry);
 }
 

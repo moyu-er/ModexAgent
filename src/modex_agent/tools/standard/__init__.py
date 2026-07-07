@@ -13,8 +13,13 @@ from .file_tool import (
     WriteFileTool,
 )
 from .search_tool import FindFilesTool, SearchFilesTool
-from .todo_tool import ACTIVE_TODO_STATUSES, TodoReadTool, TodoWriteTool
+
+# DEPRECATED: TodoCompletionProbeHook is kept for backward compatibility and
+# framework unit tests only. New code should use system-prompt optimization
+# (TodoAwareSystemPromptProvider) and clear todo tool descriptions instead of
+# injecting synthetic tool calls into the conversation history.
 from .todo_probe import TodoCompletionProbeHook
+from .todo_tool import ACTIVE_TODO_STATUSES, TodoReadTool, TodoWriteTool
 
 __all__ = [
     "ReadFileTool",

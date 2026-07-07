@@ -309,6 +309,52 @@ class TestCommunicationService:
         )
 
     @pytest.mark.asyncio
+    async def test_subagent_consult_routes_to_real_parent_session(self) -> None:
+        """A subagent consulting its parent must land in the parent's ACTUAL
+        session inbox — not mint a brand-new parent session.
+
+        Regression for the phantom-session bug: a subagent's send_to_agent to
+        its parent went through the generic NORMAL branch, which called
+        ``session_factory.create(...)`` and minted a fresh snowflake main
+        session every time. The real parent never received the consult and a
+        duplicate main agent spun up under the phantom id.
+        """
+        bus = _FakeAgentBus()
+        svc = self._make_service(
+            profiles=[AgentProfile(name="coding", comm_kind=AgentCommKind.NORMAL)],
+            descriptors=[AgentDescriptor(address=AgentAddress(name="coding"))],
+            agent_bus=bus,
+            source_name="worker",
+        )
+        parent_session_id = "conv-1.coding"
+        worker_session = SessionInfo(
+            session_id="task-42.worker",
+            agent_name="worker",
+            parent_session_id=parent_session_id,
+        )
+        ctx = AgentContext(
+            system_prompt="test",
+            history=ListMessageHistory([]),
+            tool_manager=InMemoryToolManager(),
+            session=worker_session,
+            comm_kind=AgentCommKind.SUBAGENT,
+        )
+
+        result = await svc.send_async(
+            target_agent="coding",
+            content="QUESTION: should I proceed?",
+            invocation_id=None,
+            context=ctx,
+        )
+
+        assert "coding" in result
+        assert len(bus.sent) == 1
+        inbox_key, envelope = bus.sent[0]
+        # MUST route to the real parent session — not a freshly minted snowflake.
+        assert inbox_key == parent_session_id
+        assert envelope.agent_session_id == parent_session_id
+
+    @pytest.mark.asyncio
     async def test_subagent_cannot_send_directly_to_another_subagent(self) -> None:
         svc = self._make_service(
             profiles=[AgentProfile(name="query-12306", comm_kind=AgentCommKind.SUBAGENT)],
