@@ -13,13 +13,34 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.core.session_id import session_id_prefix_of
 from modex_agent.utils.timezone import get_user_timezone
 
+if TYPE_CHECKING:
+    from modex_agent.core.tool_manager import ToolManager
+    from modex_agent.memory.core.system import MemorySystem
+    from modex_agent.memory.pruned.manager import PrunedManager
+
 logger = logging.getLogger(__name__)
+
+_TODO_TASK_DISCIPLINE_PROMPT = """\
+## Task Discipline
+
+You have access to todo_read and todo_write tools. Use them to track multi-step work.
+
+Rules:
+- Use todo_write when the task has 3+ distinct steps, multiple subtasks, or spans multiple turns.
+- Create/update the list BEFORE starting work.
+- Keep exactly one item `in_progress` at a time.
+- Mark `completed` only after the work is done and verified.
+- Update in real time; do not batch completions.
+- If blocked, keep the item `in_progress` and add a `pending` item describing the blocker.
+- On resume / continue / "try again", call `todo_read` first and continue the existing `in_progress` item.
+- Do not end your turn while active todos remain unless blocked or waiting for the user.
+"""
 
 
 class BasePromptProvider(SystemPromptProvider):
@@ -34,6 +55,32 @@ class BasePromptProvider(SystemPromptProvider):
 
     async def _fetch_content(self) -> str:
         return self._base_prompt
+
+
+class TodoAwareSystemPromptProvider(SystemPromptProvider):
+    """Task-discipline reminder injected only when the agent owns todo tools.
+
+    The version is binary and stable per agent (``todo-enabled`` or ``no-todo``),
+    so agents with the same tool set share the same cached prefix. Content is
+    gated independently of version so a ``no-todo`` agent emits nothing.
+    """
+
+    def __init__(self, tool_manager: ToolManager | None) -> None:
+        super().__init__()
+        self._tool_manager = tool_manager
+
+    def _has_todo_tools(self) -> bool:
+        if self._tool_manager is None:
+            return False
+        return self._tool_manager.is_registered("todo_read") and (
+            self._tool_manager.is_registered("todo_write")
+        )
+
+    async def _fetch_version(self) -> str:
+        return "todo-enabled" if self._has_todo_tools() else "no-todo"
+
+    async def _fetch_content(self) -> str:
+        return _TODO_TASK_DISCIPLINE_PROMPT if self._has_todo_tools() else ""
 
 
 class RuntimeProvider(SystemPromptProvider):
@@ -216,7 +263,7 @@ class ArchiveProvider(SystemPromptProvider):
 class PrunedProvider(SystemPromptProvider):
     """Pruned memory catalog. Must refresh on cleanup."""
 
-    def __init__(self, pruned_manager: Any, session_id: str = "") -> None:
+    def __init__(self, pruned_manager: PrunedManager, session_id: str = "") -> None:
         super().__init__()
         self._manager = pruned_manager
         self._session_id = session_id
@@ -350,7 +397,7 @@ class ForkContextProvider(SystemPromptProvider):
         self,
         spec: ForkContextSpec,
         session_id: str,
-        memory_system: Any,
+        memory_system: MemorySystem,
     ) -> None:
         super().__init__()
         self._spec = spec
@@ -391,7 +438,7 @@ class ForkContextProvider(SystemPromptProvider):
                 f"You are a subagent running from a fork of agent '{parent_name}'.\n"
                 "The context below is READ-ONLY reference. Do NOT continue the "
                 "prior conversation. Your task starts now.\n\n"
-                + fork_xml
+                + str(fork_xml)
             )
         except Exception:
             logger.warning(
