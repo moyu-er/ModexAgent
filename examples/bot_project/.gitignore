@@ -77,7 +77,7 @@ config/mcp/registry.json
 
 # Per-agent skill ASSIGNMENTS (skills/<pool>/<agent>/<skill>/) are a runtime /
 # frontend concern — created on disk by the WebUI (as links into the library)
-# or by hand, never committed. Only the global_skills/ library is committed.
+# or by hand, never committed. Only the local_skills/ library is committed.
 # This keeps symlinks out of git and avoids duplicating the library per agent.
 # On a fresh checkout, agents have no assigned skills until you assign them via
 # the WebUI (the "frontend-configurable" bootstrapping model).

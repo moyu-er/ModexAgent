@@ -10,7 +10,7 @@ On-disk layout (Phase-1 spec)::
                                         # fields (flat, no agents list)
     config/pools/<pool>/templates/*.yml # one subagent per file
     agents/<agent>.md                   # prompt md (pool-independent by name)
-    skills/<pool>/<agent>/<skill>       # symlinks -> global_skills/<skill>
+    skills/<pool>/<agent>/<skill>       # symlinks -> local_skills/<skill>
                                         # (disk-only, NOT in pool.yml)
 
 Mapping decisions (see ``pool_payloads.py`` docstring for field-level detail):

@@ -130,7 +130,7 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 
 The global skill **library** has two sources, REPO PRIORITY:
 
-- `global_skills/<name>/` — the repo library (CRUD target: `upload_skill` /
+- `local_skills/<name>/` — the repo library (CRUD target: `upload_skill` /
   `delete_skill` operate here only). A sibling of `skills/`, outside the
   per-pool tree so it can never collide with a pool literally named "global".
 - `~/.agents/skills/<name>/` — user-installed skills (read-only augment; may
