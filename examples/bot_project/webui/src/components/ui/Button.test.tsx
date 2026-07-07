@@ -15,11 +15,11 @@ describe("Button", () => {
     expect(el.getAttribute("aria-label")).toBe("go");
   });
 
-  it("primary variant uses the Geist ink-on-canvas tokens", () => {
+  it("primary variant uses the Notion blue-on-surface tokens", () => {
     render(<Button variant="primary">Save</Button>);
     const el = screen.getByRole("button");
-    expect(el.className).toContain("bg-ink");
-    expect(el.className).toContain("text-canvas");
+    expect(el.className).toContain("bg-link");
+    expect(el.className).toContain("text-canvas-elevated");
     expect(el.className).toContain("rounded-sm");
     expect(el.className).toContain("focus-visible:ring-link/30");
   });

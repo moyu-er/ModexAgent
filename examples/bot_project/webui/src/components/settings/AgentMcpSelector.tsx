@@ -93,7 +93,7 @@ export function AgentMcpSelector({ value, onChange }: Props) {
             ) : !servers ? (
               <p className="text-xs text-mute">Loading…</p>
             ) : Object.keys(servers).length === 0 ? (
-              <p className="text-xs text-mute">No global MCP servers configured.</p>
+              <p className="text-xs text-mute">No MCP servers configured.</p>
             ) : (
               <ul className="space-y-1">
                 {Object.keys(servers).map((name) => (

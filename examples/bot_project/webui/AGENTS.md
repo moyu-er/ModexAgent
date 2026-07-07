@@ -3,7 +3,7 @@
 
 # webui
 
-React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connects to the bot's WebUI backend (aiohttp) via REST API and WebSocket. Uses a Vercel Geist-inspired warm palette (`src/index.css` `:root` / `.dark` blocks) with all color tokens mapped through CSS variables — edit colors once, never in the tailwind config.
+React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connects to the bot's WebUI backend (aiohttp) via REST API and WebSocket. Uses a Notion-inspired warm palette (`src/index.css` `:root` / `.dark` blocks) with all color tokens mapped through CSS variables — edit colors once, never in the tailwind config.
 
 ## Key Files
 
@@ -31,7 +31,7 @@ React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connect
 |------|-------------|
 | `App.tsx` | Root component — manages conversations, pools, workspace state, sidebar resize |
 | `main.tsx` | React entry point |
-| `index.css` | Global styles + single source of truth for Vercel Warm palette (CSS variables in `:root` / `.dark` blocks) |
+| `index.css` | Global styles + single source of truth for Notion palette (CSS variables in `:root` / `.dark` blocks) |
 | `vite-env.d.ts` | Vite type declarations |
 | `components/ChatView.tsx` | Chat area — message list + input box |
 | `components/MessageBubble.tsx` | Individual message rendering (text, reasoning, tool calls) |
@@ -92,8 +92,8 @@ React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connect
 
 ## Design System
 
-- **Palette source of truth**: `src/index.css` — Vercel Warm (subtle warm-grey ladder, warm indigo `#1a56db` link accent). Dark mode unchanged from Vercel Geist origin.
-- **Design reference**: `docs/design/DESIGN-vercel.md` — the original Vercel Geist analysis this palette was derived from.
+- **Palette source of truth**: `src/index.css` — Notion palette (warm paper `#f6f5f4` canvas, near-black `#000000` ink, single `#0075de` blue accent). Dark mode keeps warm stone backgrounds and shifts text/symbol colors to a sky-blue accent (`#62aef0`).
+- **Design reference**: `docs/DESIGN-notion.md` — the Notion design analysis this palette is derived from.
 - **Typography**: Geist (body) + Geist Mono (code, section eyebrows). Loaded from Google Fonts in `index.html`.
 
 ## Dependencies

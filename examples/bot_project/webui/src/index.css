@@ -14,17 +14,17 @@
   --color-overlay: rgba(0,0,0,0.4);
 
   /* Message bubbles */
-  --color-user-bubble: #EFF6FF;
-  --color-user-bubble-text: #1E40AF;
+  --color-user-bubble: rgba(0, 117, 222, 0.08);
+  --color-user-bubble-text: #0075de;
 
   /* Code blocks */
   --color-inline-code-bg: #f2f2f2;
   --color-inline-code-text: #BE123C;
 
   /* Status */
-  --color-success: #0070f3;
-  --color-warning: #f5a623;
-  --color-error: #ee0000;
+  --color-success: #1aae39;
+  --color-warning: #dd5b00;
+  --color-error: #be123c;
 
   /* Approval severity */
   --color-severity-normal: #475569;
@@ -35,20 +35,22 @@
   /* Shadow */
   --shadow-color: rgba(0,0,0,0.05);
 
-  /* Vercel Warm token ladder */
-  --color-ink: #171717;
-  --color-body: #4f4d4a;
-  --color-mute: #8f8d89;
-  --color-faint: #a2a09c;
-  --color-hairline: #e9e6e3;
+  /* Notion token ladder (warm paper canvas, near-black ink, single blue accent) */
+  --color-ink: #000000;
+  --color-body: #31302e;
+  --color-mute: #615d59;
+  --color-faint: #a39e98;
+  --color-hairline: #e6e6e6;
   --color-hairline-soft: #f4f1ef;
-  --color-canvas: #fafafa;
+  --color-canvas: #f6f5f4;
   --color-canvas-elevated: #ffffff;
-  --color-link: #1a56db;
-  --color-link-deep: #1040a8;
-  --color-link-soft: #dce5f5;
+  --color-link: #0075de;
+  --color-link-deep: #005bab;
+  --color-link-soft: rgba(0, 117, 222, 0.12);
 
-  /* Radius */
+  /* Radius (Notion scale: xs 4px for inputs, sm 5px rows, md 8px utility,
+     lg 12px cards, xl 16px wells, full pill/badges) */
+  --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 12px;
   --radius-lg: 16px;
@@ -67,8 +69,8 @@
   --color-overlay: rgba(0,0,0,0.6);
 
   /* Message bubbles */
-  --color-user-bubble: #3d2e0a;
-  --color-user-bubble-text: #fde68a;
+  --color-user-bubble: #0f2744;
+  --color-user-bubble-text: #62aef0;
 
   /* Code blocks */
   --color-inline-code-bg: #2d2824;
@@ -88,20 +90,22 @@
   /* Shadow */
   --shadow-color: rgba(0,0,0,0.25);
 
-  /* Stone + Amber token ladder (dark) */
-  --color-ink: #faf7f5;
-  --color-body: #a8a29e;
-  --color-mute: #78716c;
-  --color-faint: #57534e;
+  /* Dark text/symbol ladder over preserved warm stone backgrounds */
+  --color-ink: #fafafa;
+  --color-body: #d4d4d4;
+  --color-mute: #a8a29e;
+  --color-faint: #78716c;
   --color-hairline: #44403c;
   --color-hairline-soft: #2d2824;
   --color-canvas: #1c1917;
   --color-canvas-elevated: #292524;
-  --color-link: #fbbf24;
-  --color-link-deep: #f59e0b;
-  --color-link-soft: rgba(251,191,36,0.12);
+  --color-link: #62aef0;
+  --color-link-deep: #0075de;
+  --color-link-soft: rgba(98, 174, 240, 0.15);
 
-  /* Radius */
+  /* Radius (Notion scale: xs 4px for inputs, sm 5px rows, md 8px utility,
+     lg 12px cards, xl 16px wells, full pill/badges) */
+  --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 12px;
   --radius-lg: 16px;
@@ -140,6 +144,35 @@
 }
 
 @layer components {
+  /* Notion-style custom checkbox. The native input is restyled so every
+     settings checkbox uses the same blue checked state and 4px corner instead
+     of the browser default. */
+  .checkbox-custom {
+    @apply h-4 w-4 shrink-0 cursor-pointer appearance-none rounded-xs border border-hairline bg-canvas-elevated;
+    @apply transition-colors duration-150 ease-out;
+  }
+  .checkbox-custom:checked {
+    @apply border-link bg-link;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M3.5 8.5L6.5 11.5L12.5 4.5' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-size: 80%;
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+  .checkbox-custom:indeterminate {
+    @apply border-link bg-link;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M4 8H12' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-size: 80%;
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+  .checkbox-custom:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-link) 30%, transparent);
+  }
+  .checkbox-custom:disabled {
+    @apply cursor-not-allowed opacity-60;
+  }
+
   /* Floating composer — large rounded input with a soft shadow. The buttons
    * inside (attachment, send/pause, etc.) come from the IconButton primitive;
    * only the container surface and focus ring are defined here. */

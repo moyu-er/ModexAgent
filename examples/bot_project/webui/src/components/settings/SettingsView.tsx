@@ -35,8 +35,8 @@ const CONFIG_GROUP: NavEntry[] = [
 
 const POOLS_GROUP: NavEntry[] = [
   { key: "pools", label: "Pools" },
-  { key: "mcp", label: "Global MCP" },
-  { key: "skills", label: "Global Skills" },
+  { key: "mcp", label: "MCP" },
+  { key: "skills", label: "Skills" },
 ];
 
 /** Domains backed by the /api/config persisted-config API (shared save footer). */
@@ -172,25 +172,23 @@ export function SettingsView({ onExit }: Props) {
 
   return (
     <div className="flex h-full">
-      <aside className="w-52 shrink-0 border-r border-hairline p-3">
+      <aside className="w-52 shrink-0 border-r border-hairline bg-canvas p-3">
         <Button
           variant="ghost"
           size="sm"
           onClick={onExit}
-          className="mb-4 w-full justify-start gap-2 px-3 text-sm font-medium text-ink hover:bg-hairline-soft"
+          className="mb-5 w-full justify-start gap-2 px-3 text-sm font-medium text-ink hover:bg-hairline-soft"
         >
           <ChevronLeftIcon className="h-4 w-4" />
           Back
         </Button>
-        <div className="rounded-lg bg-hairline-soft p-2">
+        <div className="space-y-4">
           <SidebarGroup
             title="Configuration"
             entries={CONFIG_GROUP}
             active={view}
             onSelect={switchView}
           />
-        </div>
-        <div className="mt-4 rounded-lg bg-hairline-soft p-2">
           <SidebarGroup
             title="Pools & Agents"
             entries={POOLS_GROUP}
@@ -200,7 +198,7 @@ export function SettingsView({ onExit }: Props) {
         </div>
       </aside>
 
-      <section className="flex flex-1 flex-col">
+      <section className="flex flex-1 flex-col bg-canvas">
         <div className="flex h-full flex-col">
           <div className="flex-1 overflow-auto p-6">
             {view === "mcp" ? (
@@ -268,21 +266,21 @@ function SidebarGroup({
   onSelect: (k: ViewKey) => void;
 }) {
   return (
-    <div>
-      <h2 className="mb-2 px-2 text-[11px] font-mono font-medium uppercase tracking-wider text-faint">
+    <div className="rounded-lg border border-hairline bg-canvas-elevated p-2">
+      <h2 className="mb-1.5 px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-widest text-mute border-b border-hairline">
         {title}
       </h2>
-      <ul className="space-y-1">
+      <ul className="mt-1.5 space-y-0.5">
         {entries.map((e) => (
           <li key={e.key}>
             <button
               type="button"
               className={[
-                "w-full rounded-sm px-3 py-2 text-left text-sm transition-colors hover:bg-hairline-soft",
+                "w-full rounded-sm px-2.5 py-1.5 text-left text-sm transition-colors",
                 "flex items-center gap-2",
                 e.key === active
-                  ? "bg-canvas-elevated font-semibold text-ink border-l-2 border-link"
-                  : "text-body border-l-2 border-transparent",
+                  ? "bg-hairline-soft font-semibold text-ink border-l-2 border-link"
+                  : "text-body border-l-2 border-transparent hover:bg-hairline-soft",
               ].join(" ")}
               onClick={() => onSelect(e.key)}
             >

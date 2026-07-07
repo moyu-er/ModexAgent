@@ -121,6 +121,7 @@ class SubagentAutoSendHook(FinallyTurnHook):
         "max_iterations",
         "turn_cancelled",
         "timeout",
+        "loop_detected",
     })
 
     @staticmethod
@@ -147,6 +148,12 @@ class SubagentAutoSendHook(FinallyTurnHook):
                 f"send a message with invocation_id={invocation_id} to continue."
                 if invocation_id
                 else f"Subagent crashed with error: {error}. Task is incomplete."
+            )
+        if stop_reason == "loop_detected":
+            return False, (
+                f"Subagent stopped with {stop_reason} — it was stuck in a loop "
+                f"(repeating the same output or the same tool calls). "
+                f"Task is incomplete.{resume}"
             )
         if stop_reason in SubagentAutoSendHook._NON_NORMAL_STOPS:
             return False, (

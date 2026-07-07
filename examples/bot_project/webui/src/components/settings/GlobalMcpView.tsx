@@ -210,7 +210,7 @@ export function GlobalMcpView() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-xs text-mute">
-          Global MCP servers available to every pool's agents.
+          MCP servers available to every pool's agents.
         </p>
         <Button variant="secondary" size="sm" onClick={addCard}>
           + Add server

@@ -17,7 +17,7 @@ const mcpMap = {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("AgentMcpSelector", () => {
-  it("starts collapsed; expanding reveals the loaded global servers", async () => {
+  it("starts collapsed; expanding reveals the loaded servers", async () => {
     const fetchMock = vi.fn(() =>
       Promise.resolve(makeResponse(200, mcpMap)),
     );

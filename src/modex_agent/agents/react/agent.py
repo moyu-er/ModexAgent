@@ -13,6 +13,7 @@ from modex_agent.control.exceptions import (
     AgentCancelled,
     AgentControlError,
     AgentTimeout,
+    LoopDetectedError,
     PolicyViolation,
 )
 from modex_agent.hook import HookPayload, HookPoint
@@ -95,6 +96,8 @@ def _interrupt_reason_from(exc: BaseException) -> str:
         return "timeout"
     if isinstance(exc, PolicyViolation):
         return "policy"
+    if isinstance(exc, LoopDetectedError):
+        return "loop_detected"
     if isinstance(exc, asyncio.CancelledError):
         return "cancelled"
     return "error"
@@ -281,18 +284,26 @@ class ReActAgent(Agent[ReActEvent]):
             result = None
             raise
         except AgentControlError as e:
-            # Controlled exit (e.g. CANCEL_TURN from the control channel) is
-            # an expected turn outcome, not a failure. Emit the terminal
-            # signal so downstream consumers learn the turn ended — without
-            # this, the WebUI pause button left the frontend stuck streaming
-            # (turn_end never fired) and the pool treated cancel as a dispatch
-            # error. Returning a cancelled result lets the turn close cleanly.
+            # Controlled exit (cancel / timeout / policy / loop-detected) is an
+            # expected turn outcome. The exception carries its own user-facing
+            # content + stop_reason (see control.exceptions), so a single handler
+            # renders every subclass uniformly — no per-subclass catch branches.
             logger.info("ReActAgent control exit: %s", str(e) or "error")
             await _persist_interrupted_partial(context, _interrupt_reason_from(e))
             all_new = _get_turn_messages(context)
+            user_content = e.user_content or ""
+            stop_reason = e.stop_reason or StopReason.CANCELLED
+            # Loop-detected content is constructed in the catch block (not
+            # streamed); ensure it reaches the user even when the streaming
+            # emitter considers the stream already ended.
+            if user_content and emitter is not None:
+                try:
+                    await emitter.emit_content(user_content)
+                except Exception:
+                    logger.exception("emit_content of control-exit content failed")
             result = AgentResult(
-                content="",
-                stop_reason=StopReason.CANCELLED,
+                content=user_content,
+                stop_reason=stop_reason,
                 messages=all_new,
                 attachments=context.attachments,
             )

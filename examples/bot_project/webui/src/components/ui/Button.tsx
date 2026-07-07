@@ -29,7 +29,7 @@ const SIZE_CLS: Record<ButtonSize, string> = {
 
 const VARIANT_CLS: Record<ButtonVariant, string> = {
   primary:
-    "bg-ink text-canvas hover:opacity-90 border border-transparent",
+    "bg-link text-canvas-elevated hover:bg-link-deep border border-transparent",
   secondary:
     "bg-canvas-elevated text-ink border border-hairline hover:bg-hairline-soft",
   ghost:

@@ -144,7 +144,7 @@ export function GlobalSkillsView() {
   return (
     <div className="space-y-4">
       <p className="text-xs text-mute">
-        Global skills available to every pool's agents.
+        Skills available to every pool's agents.
       </p>
 
       {/* Drop zone — wraps the hidden directory picker input so clicking
@@ -258,7 +258,7 @@ export function GlobalSkillsView() {
 
       {skills.length === 0 && !preview ? (
         <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-sm text-mute">
-          No global skills uploaded yet.
+          No skills uploaded yet.
         </p>
       ) : null}
 
@@ -347,7 +347,7 @@ export function GlobalSkillsView() {
       {pendingDelete ? (
         <ConfirmDialog
           title={`Delete skill "${pendingDelete}"?`}
-          message="The global skill will be removed. Per-agent links that referenced it go dangling."
+          message="The skill will be removed. Per-agent links that referenced it go dangling."
           confirmLabel="Delete"
           tone="danger"
           onConfirm={() => void onDeleteConfirmed(pendingDelete)}

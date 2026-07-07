@@ -46,6 +46,7 @@ class StopReason(StrEnum):
     MISSED_COMMUNICATION = "missed_communication"
     COMMAND_INTERCEPTED = "command_intercepted"
     DUPLICATE = "duplicate"
+    LOOP_DETECTED = "loop_detected"
 
 
 class ErrorMessages:
