@@ -2,15 +2,16 @@
 
 # bot_project
 
-Primary end-to-end reference implementation for the ModexAgent framework. Demonstrates **Pool mode** (multi-agent collaboration) and **WebUI** (React frontend with real-time streaming and per-conversation isolation).
+Primary end-to-end reference implementation for the ModexAgent framework. Demonstrates **Pool mode** (multi-agent collaboration), **multi-channel IM** (QQ + Telegram), and **WebUI** (React frontend with real-time streaming and per-conversation isolation).
 
 ## Architecture Overview
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                        Input Adapters                            │
-│  QQ adapter  │  WebSocket adapter (WebUI)  │  CLI (modexbot)    │
-└──────┬───────┴────────────┬─────────────────┴────────┬───────────┘
+│  QQ adapter  │  Telegram adapter  │  WebSocket adapter (WebUI)  │
+│        (auto-discovered by WebUIService via @register)           │
+└──────┬───────┴──────────┬─────────┴────────────┬─────────────────┘
        │                    │                          │
        └────────┬───────────┘                          │
                 ▼                                      │
@@ -69,7 +70,7 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 
 ### WebUI vs IM Differences
 
-| Aspect | WebUI | IM (QQ etc.) |
+| Aspect | WebUI | IM (QQ / Telegram) |
 |--------|-------|-------------|
 | Pool switching | UI selector → `PoolRouter.set_pool()` | `/pool_name` slash command (S2) |
 | Workspace switching | File browser modal → `POST /api/workspace/cd` | `/cd target` command (S2) |
@@ -102,12 +103,13 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 | `bot/workspace/pool_data.py` | `PoolData` — frozen per-pool data bundle |
 | `modex_agent/workspace/registry.py` | `WorkspaceRegistry` — multi-live workspace holder with lazy resource materialization |
 | `modex_agent/workspace/routing.py` | `SessionWorkspaceMap` — per-session workspace pointer |
-| `bot/service/web_ui_service.py` | `WebUIService` — assembles and starts the WebUI HTTP/WS server |
-| `bot/service/qq_service.py` | QQ platform service wiring |
+| `bot/service/web_ui_service.py` | `WebUIService` — the single IM + WebUI entry point; auto-discovers every `bot/adapters/register_*.py` (QQ / Telegram / WebSocket), assembles and starts the HTTP/WS server |
+| `bot/service/qq_service.py` | `QQBotService` — standalone QQ-only `BotService` variant (the CLI start path uses `WebUIService`) |
 | `bot/adapters/qq.py` | QQ platform input/output adapters (C2C + group + file upload) |
+| `bot/adapters/telegram.py` | Telegram input/output adapters (long-polling inbound, HTML chunked outbound) |
 | `bot/adapters/web_socket.py` | WebSocket input adapter for WebUI real-time chat |
 | `bot/adapters/fan_in.py` | Multi-agent output fan-in for WebUI (merges agents' streams to one WS) |
-| `bot/adapters/channels.py` | Conversation→channel tracking (websocket vs qq) |
+| `bot/adapters/channels.py` | Multi-channel spine — `@register` adapter registry (`ADAPTERS`), `ChannelRouterOutputAdapter`, conversation→channel tracking |
 | `bot/webui/server.py` | aiohttp REST+WS server (sessions, pools, workspace APIs) |
 | `bot/webui/transcript_store.py` | Per-agent transcript persistence (JSONL) for history replay |
 | `bot/webui/events.py` | WebUI event types (model deltas, tool calls, turn lifecycle) |

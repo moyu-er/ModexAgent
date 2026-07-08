@@ -55,7 +55,7 @@ The browser WebUI talks to the agent over **WebSocket** (streaming chat, live st
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│        External Platforms (QQ / CLI / HTTP / WebSocket → WebUI)         │
+│        External Platforms (QQ / Telegram / CLI / HTTP / WebSocket → WebUI)         │
 └─────────────────────────────────────────────────────────────────────────┘
                                     │
                     ┌───────────────┴───────────────┐
@@ -120,7 +120,7 @@ Then open `http://localhost:21800/webui/`.
 Common commands: `modexbot stop` | `modexbot restart` | `modexbot logs -f` | `modexbot install -f` | `modexbot config` | `modexbot model`
 
 > [!TIP]
-> `examples/bot_project/` is a fully functional QQ Bot + WebUI example. See [examples/bot_project/README.md](examples/bot_project/README.md) for detailed capabilities, configuration, and multi-agent setup.
+> `examples/bot_project/` is a fully functional **multi-channel agent application** — a browser WebUI plus pluggable IM adapters (QQ, Telegram ship out of the box; Discord/Feishu/DingTalk drop in via one `register_*.py` module). It is the canonical demonstration of every framework capability. See [examples/bot_project/README.md](examples/bot_project/README.md) for detailed capabilities, configuration, and multi-agent setup.
 
 ### Manual Setup
 
@@ -181,7 +181,7 @@ src/modex_agent/        # the framework package (src layout — see ADR-0003)
   utils/             # Root-adjacent pure-leaf primitives (ADR-0006: imports no other package)
 
 examples/
-  bot_project/       # Full QQ Bot + WebUI example (Pool mode)
+  bot_project/       # Multi-channel agent example: WebUI + IM adapters (QQ, Telegram) — Pool mode
   sandbox/           # Sandbox usage examples
 
 tests/               # Unit, integration, and end-to-end tests
@@ -214,7 +214,7 @@ uv pip install -e ".[all,dev]"
 | --- | --- |
 | [ADR index](docs/adr/) | Architecture Decision Records — pool-only assembly, src-layout rename, dependency tree, facade-only modules, retaining real seams, interruptible approval + batch atomicity, token-based compression, two-axis terminal, claim/pass-through input pipeline, attachment system, native multimodal, unified-inbox agent messaging, ReAct loop detection (ADR-0001 ~ 0016) |
 | [CONTEXT.md](CONTEXT.md) | Domain glossary — Pool, Workspace, ReAct Agent, Graph, GraphInterrupt, Assembly, etc. |
-| [Bot example](examples/bot_project/README.md) | bot_project walkthrough (QQ Bot + WebUI, multi-agent setup, configuration) |
+| [Bot example](examples/bot_project/README.md) | bot_project walkthrough (multi-channel IM + WebUI, multi-agent setup, configuration) |
 | Per-module `AGENTS.md` | Every package under `src/modex_agent/` ships an `AGENTS.md` describing its responsibility and key files |
 
 ## Development
