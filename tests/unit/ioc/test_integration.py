@@ -83,7 +83,6 @@ another_extra: 42
                 "main": PoolConfig(
                     name="main",
                     main_agent_name="main",
-                    llm=LLMConfig(model="gpt-4", api_key="k"),
                     agents=[AgentConfig(name="main", role="main")],
                 ),
             },

@@ -436,7 +436,12 @@ async def test_upsert_and_delete_mcp(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_delete_referenced_mcp_returns_409(tmp_path: Path) -> None:
+async def test_delete_referenced_mcp_succeeds_and_filters_stale_refs(
+    tmp_path: Path,
+) -> None:
+    """Deleting a global MCP server succeeds even when a pool references it;
+    the stale reference is lazily filtered on the next pool read.
+    """
     _seed_pool_yml(tmp_path, "main", mcp=["fetch"])
     client = _make_client(_make_controller(tmp_path), tmp_path)
     await client.start_server()
@@ -445,12 +450,15 @@ async def test_delete_referenced_mcp_returns_409(tmp_path: Path) -> None:
             "/api/mcp/fetch", json={"type": "stdio", "command": "x"}
         )
         resp = await client.delete("/api/mcp/fetch")
-        assert resp.status == 409
-        data = await resp.json()
-        assert data["error"] == "in use"
-        assert ["main", "main"] in data["used_by"]
-        # Still present.
-        assert "fetch" in await (await client.get("/api/mcp")).json()
+        assert resp.status == 200, await resp.text()
+        assert (await resp.json()) == {"deleted": "fetch"}
+
+        # Server is removed from the global registry.
+        assert "fetch" not in await (await client.get("/api/mcp")).json()
+
+        # The stale reference is filtered out of the pool tree on read.
+        pool = await (await client.get("/api/pools/main")).json()
+        assert "fetch" not in pool["main"]["mcp"]
     finally:
         await client.close()
 

@@ -4,7 +4,6 @@ from pathlib import Path
 from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.ioc.configs.pool import PoolConfig
 from modex_agent.ioc.configs.agent import AgentConfig
-from modex_agent.ioc.configs.llm import LLMConfig
 
 
 class TestAppConfig:
@@ -19,7 +18,6 @@ class TestAppConfig:
                 "main": PoolConfig(
                     name="main",
                     main_agent_name="main",
-                    llm=LLMConfig(model="gpt-4", api_key="sk-xxx"),
                     agents=[AgentConfig(name="main", role="main")],
                 ),
             },

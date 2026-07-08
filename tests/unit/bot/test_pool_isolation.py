@@ -1,24 +1,19 @@
 """Tests for per-pool resource isolation (refactored schema).
 
 Verifies:
-- Per-pool LLM provider independence
-- Per-pool MemorySystem directory isolation
 - PoolConfig name / main_agent_name decoupling (Task 1.5)
+- Per-pool MemorySystem directory isolation
 """
 from __future__ import annotations
 
 import sys
-import tempfile
 from pathlib import Path
-
-import pytest
 
 _BOT_PROJECT = Path(__file__).parent.parent.parent.parent / "examples" / "bot_project"
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
 from modex_agent.ioc.configs.pool import PoolConfig
-from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.ioc.configs.agent import AgentConfig
 
 
@@ -28,7 +23,6 @@ class TestPoolConfigNameDecouple:
         cfg = PoolConfig(
             name="main",
             main_agent_name="main",
-            llm=LLMConfig(model="gpt-4", api_key="k"),
             agents=[AgentConfig(name="main", role="main")],
         )
         assert cfg.name == "main"
@@ -39,31 +33,11 @@ class TestPoolConfigNameDecouple:
         cfg = PoolConfig(
             name="coding",
             main_agent_name="coder",
-            llm=LLMConfig(model="gpt-4", api_key="k"),
             agents=[AgentConfig(name="coder", role="main")],
         )
         assert cfg.name == "coding"
         assert cfg.main_agent_name == "coder"
         assert cfg.name != cfg.main_agent_name
-
-
-class TestPerPoolLLMIsolation:
-    def test_different_models_per_pool(self):
-        """Pools can use different LLM models."""
-        cfg_main = PoolConfig(
-            name="main",
-            main_agent_name="main",
-            llm=LLMConfig(model="openai/gpt-4", api_key="key-main"),
-            agents=[AgentConfig(name="main", role="main")],
-        )
-        cfg_coding = PoolConfig(
-            name="coding",
-            main_agent_name="coding",
-            llm=LLMConfig(model="openai/MiniMax-M2.5", api_key="key-coding"),
-            agents=[AgentConfig(name="coding", role="main")],
-        )
-        assert cfg_main.llm.model != cfg_coding.llm.model
-        assert cfg_main.llm.api_key != cfg_coding.llm.api_key
 
 
 class TestPerPoolMemoryIsolation:
@@ -72,7 +46,6 @@ class TestPerPoolMemoryIsolation:
         cfg_coding = PoolConfig(
             name="coding",
             main_agent_name="coding",
-            llm=LLMConfig(model="test", api_key="k"),
             agents=[AgentConfig(name="coding", role="main")],
             memory=None,
         )
@@ -84,7 +57,6 @@ class TestPerPoolMemoryIsolation:
         cfg = PoolConfig(
             name="main",
             main_agent_name="main",
-            llm=LLMConfig(model="test", api_key="k"),
             agents=[AgentConfig(name="main", role="main")],
             memory=MemoryConfig(
                 short_term=ShortTermConfig(max_context_tokens=150000),
@@ -117,23 +89,22 @@ class TestPoolInstanceStructure:
         assert addr.name == "coding"
 
 
-class TestPoolConfigExtraForbid:
-    def test_unknown_fields_rejected(self):
-        """extra='forbid' rejects removed fields like mcp/terminal/skills."""
-        from pydantic import ValidationError
-        with pytest.raises(ValidationError):
-            PoolConfig(
-                name="main",
-                main_agent_name="main",
-                llm=LLMConfig(model="gpt-4", api_key="k"),
-                agents=[AgentConfig(name="main", role="main")],
-                mcp={"enabled": True},  # type: ignore[arg-type]
-            )
-        with pytest.raises(ValidationError):
-            PoolConfig(
-                name="main",
-                main_agent_name="main",
-                llm=LLMConfig(model="gpt-4", api_key="k"),
-                agents=[AgentConfig(name="main", role="main")],
-                terminal={"storage_dir": "x"},  # type: ignore[arg-type]
-            )
+class TestPoolConfigExtraIgnore:
+    def test_unknown_fields_ignored(self):
+        """extra='ignore' allows removed fields like mcp/terminal/skills in
+        user files while the loader/pool_store only persists known fields."""
+        cfg_mcp = PoolConfig(
+            name="main",
+            main_agent_name="main",
+            agents=[AgentConfig(name="main", role="main")],
+            mcp={"enabled": True},  # type: ignore[arg-type]
+        )
+        assert not hasattr(cfg_mcp, "mcp")
+
+        cfg_terminal = PoolConfig(
+            name="main",
+            main_agent_name="main",
+            agents=[AgentConfig(name="main", role="main")],
+            terminal={"storage_dir": "x"},  # type: ignore[arg-type]
+        )
+        assert not hasattr(cfg_terminal, "terminal")

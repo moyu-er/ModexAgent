@@ -185,7 +185,6 @@ async def test_main_agent_tool_manager_is_workspace_scoped(tmp_path: Path) -> No
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.hook import HookRunner
     from modex_agent.ioc.configs.agent import AgentConfig
-    from modex_agent.ioc.configs.llm import LLMConfig
     from modex_agent.ioc.configs.memory import MemoryConfig
     from modex_agent.ioc.configs.pool import PoolConfig
     from modex_agent.multi_agent.comm_tracker import CommunicationTracker
@@ -199,7 +198,6 @@ async def test_main_agent_tool_manager_is_workspace_scoped(tmp_path: Path) -> No
     pool_cfg = PoolConfig(
         name="test_pool",
         main_agent_name="main",
-        llm=LLMConfig(model="gpt-4", temperature=0.7),
         agents=[AgentConfig(name="main", role="main")],
         memory=MemoryConfig(),
     )
@@ -260,7 +258,6 @@ async def test_pool_resources_experience_dir_from_pool_data(tmp_path: Path) -> N
     """Verify that experience_dir comes from pool_data, not hard-coded paths."""
     from bot.workspace.pool_data import build_pool_data
     from modex_agent.ioc.configs.agent import AgentConfig
-    from modex_agent.ioc.configs.llm import LLMConfig
     from modex_agent.ioc.configs.memory import MemoryConfig
     from modex_agent.ioc.configs.pool import PoolConfig
 
@@ -271,7 +268,6 @@ async def test_pool_resources_experience_dir_from_pool_data(tmp_path: Path) -> N
     pool_cfg = PoolConfig(
         name="test_pool",
         main_agent_name="main",
-        llm=LLMConfig(model="gpt-4", temperature=0.7),
         agents=[AgentConfig(name="main", role="main")],
         memory=MemoryConfig(),
     )

@@ -7,7 +7,6 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from modex_agent.ioc.configs.agent import AgentConfig
-from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.ioc.configs.pool import MediaConfig, PoolConfig
 
 _MB = 1024 * 1024
@@ -38,7 +37,6 @@ class TestPoolConfigMediaWiring:
         kwargs: dict = {
             "name": "main",
             "main_agent_name": "main",
-            "llm": LLMConfig(model="test", api_key="k"),
             "agents": [AgentConfig(name="main", role="main")],
         }
         if media is not None:

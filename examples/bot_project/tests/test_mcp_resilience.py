@@ -14,7 +14,6 @@ import pytest
 
 from bot.service.pool_builder import _build_tools
 from modex_agent.ioc.configs.agent import AgentConfig
-from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.ioc.configs.pool import PoolConfig
 
@@ -23,7 +22,6 @@ def _pool_cfg() -> PoolConfig:
     return PoolConfig(
         name="main",
         main_agent_name="main",
-        llm=LLMConfig(model="openai/gpt-4", api_key="sk-xxx"),
         agents=[AgentConfig(name="main", role="main")],
         memory=MemoryConfig(),
     )

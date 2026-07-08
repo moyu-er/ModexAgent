@@ -120,7 +120,7 @@ def _make_pool_cfg(*, approval: ApprovalConfig | None) -> PoolConfig:
         llm=LLMConfig(),
         approval=approval,
     )
-    return PoolConfig(name="main", main_agent_name="main", llm=LLMConfig(), agents=[main_cfg])
+    return PoolConfig(name="main", main_agent_name="main", agents=[main_cfg])
 
 
 def _wire(*, approval: ApprovalConfig | None) -> AgentPipeline:
@@ -179,7 +179,7 @@ def test_leaves_approval_untouched_but_threads_capabilities_when_disabled() -> N
     services = pipeline.runtime_services
     assert isinstance(services, AgentRuntimeServices)
     assert services.approval is None  # approval stays default-off
-    # Capabilities threaded from pool_cfg.llm.capabilities (default TEXT-only).
+    # Capabilities threaded from the default resolved model (default TEXT-only).
     assert services.model_capabilities is not None
     assert services.model_capabilities.supports(Modality.TEXT)
 

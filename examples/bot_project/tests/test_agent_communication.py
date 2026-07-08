@@ -13,16 +13,13 @@ _BOT_PROJECT_DIR = Path(__file__).resolve().parent.parent
 
 
 def test_bot_project_subagents_are_configured_as_subagents() -> None:
-    """Subagent templates for office-expert and query-12306 must be loadable."""
+    """Subagent templates for office-expert must be loadable in the default pool."""
     registry = AgentTemplateRegistry(_BOT_PROJECT_DIR)
-    templates = registry.list_templates("main")
+    templates = registry.list_templates("default")
     agent_types = {t.agent_name for t in templates}
 
     assert "office-expert" in agent_types, (
-        "office-expert subagent template should exist in config/pools/main/templates/"
-    )
-    assert "query-12306" in agent_types, (
-        "query-12306 subagent template should exist in config/pools/main/templates/"
+        "office-expert subagent template should exist in config/pools/default/templates/"
     )
 
 

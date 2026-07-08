@@ -21,7 +21,6 @@ from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import InputMessage
 from modex_agent.ioc.configs.app import _validate_pool_name
 from modex_agent.ioc.configs.pool import PoolConfig
-from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.ioc.configs.agent import AgentConfig
 from modex_agent.pipeline.adapters import InputAdapter
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
@@ -47,7 +46,8 @@ class _StubInput(InputAdapter):
 
 def _make_pool_config(name: str) -> PoolConfig:
     return PoolConfig(
-        llm=LLMConfig(model="test", api_key="k"),
+        name=name,
+        main_agent_name=name,
         agents=[AgentConfig(name=name, role="main")],
     )
 
