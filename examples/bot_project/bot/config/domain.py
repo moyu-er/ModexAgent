@@ -326,6 +326,10 @@ def atomic_write(path: Path, text: str) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(text, encoding="utf-8")
     tmp.replace(path)
+    # On some platforms (Windows) ``replace`` may preserve the destination's
+    # mtime. Touch the new file so consumers that compare mtimes can detect
+    # the write.
+    path.touch(exist_ok=True)
 
 
 def _default_loader(path: Path) -> dict[str, Any]:

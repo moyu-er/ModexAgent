@@ -28,12 +28,11 @@ from aiohttp import web
 from bot.adapters.channels import set_conv_channel
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.config_controller import ConfigController, FieldValidationError
+from bot.service.model_config import BotModelConfig
 from bot.service.pool_config_controller import (
     DefaultPoolProtectedError,
-    McpInUseError,
     PoolConfigController,
 )
-from bot.service.model_config import BotModelConfig
 from bot.webui.events import (
     DeltaEnvelope,
     WebSocketAction,
@@ -874,8 +873,9 @@ class WebUIServer:
 
             tree = PoolTree.model_validate(body)
         except Exception as exc:  # noqa: BLE001 - pydantic validation
-            from bot.service.config_controller import _flatten_errors
             from pydantic import ValidationError
+
+            from bot.service.config_controller import _flatten_errors
 
             if isinstance(exc, ValidationError):
                 return web.json_response(
@@ -1028,11 +1028,6 @@ class WebUIServer:
         name = request.match_info["server"]
         try:
             self._pool_config_controller.delete_mcp(name)
-        except McpInUseError as exc:
-            return web.json_response(
-                {"error": "in use", "used_by": [list(pair) for pair in exc.used_by]},
-                status=409,
-            )
         except KeyError:
             return web.json_response(
                 {"error": f"unknown server: {name}"}, status=404

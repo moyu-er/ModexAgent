@@ -357,7 +357,7 @@ class PoolStore:
         #   * main-agent editable fields at top level (no ``agents:`` list,
         #     no ``role: main``, no ``name:``)
         #   * memory baked (main_agent_memory), not persisted
-        # Pool-level baked keys (llm, media) preserved from the existing file.
+        # Pool-level baked media preserved from the existing file.
         data: dict[str, Any] = {}
         if tree.main.agent_name != pool_name:
             data["main_agent_name"] = tree.main.agent_name
@@ -366,10 +366,6 @@ class PoolStore:
             if value in (None, [], {}):
                 continue
             data[field] = value
-        if "llm" in existing:
-            data["llm"] = existing["llm"]
-        else:
-            data["llm"] = {"model": "gpt-4"}
         if "media" in existing:
             data["media"] = existing["media"]
         return data

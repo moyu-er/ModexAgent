@@ -9,11 +9,8 @@ prompt REST API. Every method returns a frozen Pydantic payload (from
   for validation failures — the route maps this to HTTP 400 with the uniform
   ``{"error": "validation", "fields": {...}}`` envelope.
 * :class:`UnknownPoolError` / :class:`UnknownPromptError` /
-  :class:`UnknownMcpServer` (KeyError subclasses) for not-found — the route
-  maps these to HTTP 404.
-* :class:`McpInUseError` (carrying the ``(pool, agent)`` referencer list) when
-  a delete-mcp is refused because the server is referenced — the route maps
-  this to HTTP 409 Conflict.
+   :class:`UnknownMcpServer` (KeyError subclasses) for not-found — the route
+   maps these to HTTP 404.
 * :class:`DefaultPoolProtectedError` when a delete/rename targets the default
   pool — the route maps this to HTTP 409 Conflict.
 
@@ -40,7 +37,6 @@ from bot.config.mcp_registry import (
     UnknownMcpServer,
     delete_server,
     read_registry,
-    server_used_by,
     upsert_server,
 )
 from bot.config.pool_payloads import (
@@ -49,13 +45,11 @@ from bot.config.pool_payloads import (
     PromptContent,
     SkillEntry,
 )
-from modex_agent.ioc.configs.mcp import MCPServerEntry
 from bot.config.pool_store import (
+    _DEFAULT_MAIN_PROMPT,
     PoolStore,
     PoolValidationError,
     RenameReport,
-    UnknownPoolError,
-    _DEFAULT_MAIN_PROMPT,
 )
 from bot.config.prompt_store import (
     PromptStore,
@@ -64,6 +58,7 @@ from bot.config.prompt_store import (
 from bot.config.skills_store import SkillsStore
 from bot.service.config_controller import FieldValidationError
 from bot.service.pool_router import PoolSessionStore
+from modex_agent.ioc.configs.mcp import MCPServerEntry
 
 # Artifact classes that, when written, set ``restart_required``. The marker is
 # coarse (a single bool) — once any of these fires, the next restart re-reads
@@ -71,19 +66,6 @@ from bot.service.pool_router import PoolSessionStore
 _RESTART_DIRTY_CLASSES: frozenset[str] = frozenset(
     {"pool", "mcp", "prompt", "skill_assign"}
 )
-
-
-class McpInUseError(Exception):
-    """Raised when deleting an MCP server still referenced by some agent.
-
-    Carries ``used_by`` — the list of ``(pool, agent)`` referencers — so the
-    route layer can surface it in the HTTP 409 body.
-    """
-
-    def __init__(self, name: str, used_by: list[tuple[str, str]]) -> None:
-        super().__init__(f"MCP server {name!r} in use by {used_by}")
-        self.name = name
-        self.used_by = used_by
 
 
 class DefaultPoolProtectedError(Exception):
@@ -170,11 +152,14 @@ class PoolConfigController:
         return self._pools.list_pools()
 
     def read_pool(self, name: str) -> PoolTree:
-        """Read one pool tree; the ``restart_required`` hint reflects this controller."""
+        """Read one pool tree; filter stale MCP references on the way out."""
         tree = self._pools.read_pool(name)  # raises UnknownPoolError (KeyError)
+        tree = self._filter_stale_mcp(tree)
         return tree.model_copy(update={"restart_required": self.restart_required})
 
     def write_pool(self, name: str, tree: PoolTree) -> PoolTree:
+        """Write a pool tree; stale MCP references are dropped before save."""
+        tree = self._filter_stale_mcp(tree)
         try:
             report = self._pools.write_pool(name, tree)
         except PoolValidationError as exc:
@@ -182,6 +167,22 @@ class PoolConfigController:
         self._apply_agent_renames(name, report)
         self._mark("pool")
         return self.read_pool(name)
+
+    def _filter_stale_mcp(self, tree: PoolTree) -> PoolTree:
+        """Drop MCP server names that no longer exist in the global registry.
+
+        This lazy cleanup keeps the UI honest: deleting a global MCP server
+        does not need to scan every pool first; the next read/write simply
+        purges the stale reference.
+        """
+        registry = set(self.read_mcp().keys())
+        main_mcp = [m for m in tree.main.mcp if m in registry]
+        main = tree.main.model_copy(update={"mcp": main_mcp})
+        subagents = [
+            sub.model_copy(update={"mcp": [m for m in sub.mcp if m in registry]})
+            for sub in tree.subagents
+        ]
+        return tree.model_copy(update={"main": main, "subagents": subagents})
 
     def create_pool(self, name: str) -> PoolTree:
         try:
@@ -270,10 +271,9 @@ class PoolConfigController:
         return coerced
 
     def delete_mcp(self, name: str) -> None:
-        # Refuse if any pool references this server before touching the registry.
-        used_by = server_used_by(name, pools_dir=self._pools.pools_dir)
-        if used_by:
-            raise McpInUseError(name, used_by)
+        # Deleting a global MCP server is allowed even when some pool still
+        # references it. Those references are lazily purged on the next
+        # read/write of each pool via _filter_stale_mcp.
         if not delete_server(name, self._mcp_path):
             raise UnknownMcpServer(f"MCP server not in registry: {name!r}")
         self._mark("mcp")

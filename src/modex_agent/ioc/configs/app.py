@@ -14,9 +14,6 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field
 
-from modex_agent.ioc.configs.agent import AgentConfig
-from modex_agent.ioc.configs.llm import LLMConfig
-from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.ioc.configs.model import GlobalModelConfig
 from modex_agent.ioc.configs.observability import ObservabilityConfig
 from modex_agent.ioc.configs.plugins import PluginConfig
@@ -140,15 +137,12 @@ class AppConfig(BaseModel):
         data = _resolve_env_in(data)
 
         # Load the global model config (config/model.yml, sibling file).
-        # Model settings live here as literal values — NOT via ${ENV}, so this
-        # file is intentionally NOT passed through `_resolve_env_in`. Pools
-        # inherit it unless they declare their own `llm` override.
-        global_model: GlobalModelConfig | None = None
+        # Model settings are owned by the separate backend model system;
+        # PoolConfig no longer carries a per-pool `llm` section.
         model_yml = yaml_path.parent / "model.yml"
         if model_yml.exists():
             with open(model_yml, encoding="utf-8") as fm:
                 model_data = yaml.safe_load(fm) or {}
-            global_model = GlobalModelConfig.model_validate(model_data.get("model", {}))
             data["model"] = model_data.get("model", {})
 
         # Load pool configs from config/pools/<name>/pool.yml (one directory
@@ -166,15 +160,6 @@ class AppConfig(BaseModel):
                 with open(pool_file, encoding="utf-8") as f:
                     pool_data = yaml.safe_load(f) or {}
                 pool_data = _resolve_env_in(pool_data)
-                # Inherit the global model. A pool with no `llm` section uses the
-                # global config wholesale; a pool that declares `llm` overrides
-                # individual fields on top of the global base.
-                if global_model is not None:
-                    base_llm = global_model.to_llm_dict()
-                    pool_llm = pool_data.get("llm")
-                    if isinstance(pool_llm, dict):
-                        base_llm.update(pool_llm)
-                    pool_data["llm"] = base_llm
                 # pool.yml is FLAT — it IS the main agent's config. Pool
                 # identity = directory name; the main agent's name defaults to
                 # the directory name (override with ``main_agent_name:``). No

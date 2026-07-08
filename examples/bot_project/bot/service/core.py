@@ -178,11 +178,8 @@ class BotService(AgentBuilderMixin):
     def _load_app_config(self) -> AppConfig:
         """Load IOC AppConfig from bot_config.yml + 多模型后处理。
 
-        框架 AppConfig.from_yaml 从 model.yml 的 model: 块注入 pool_cfg.llm；新格式
-        只有 models: 块，框架会拿到空默认。此处用 BotModelConfig 的默认模型合成
-        LLMConfig 回填每个 pool 的 llm，并把 max_context_tokens 注入
-        memory.session.max_context_tokens（兼容 _wire_main_pipeline 的 governance /
-        model_capabilities 读取与 descriptor）。
+        框架 AppConfig.from_yaml 不再注入 pool_cfg.llm；模型配置完全由
+        BotModelConfig / BotModelProvider 管理。
         """
         app_config = AppConfig.from_yaml(self.config_dir / "bot_config.yml")
         self._apply_bot_model_config(app_config)
@@ -207,23 +204,23 @@ class BotService(AgentBuilderMixin):
             return None
 
     def _apply_bot_model_config(self, app_config: AppConfig) -> None:
-        """Bot 层后处理（spec B3）：解析 model.yml 的 models: 块，用默认模型合成
-        LLMConfig 回填每个 pool_cfg.llm，并把 max_context_tokens 注入
-        memory.session.max_context_tokens。无论 AppConfig 由本服务加载还是子类
-        预加载传入，都必须运行——_bot_model_config 是后续 provider/wiring 的依赖。
+        """Bot 层后处理（spec B3）：解析 model.yml 的 models: 块，缓存
+        BotModelConfig，并把 max_context_tokens 注入 memory.session.max_context_tokens。
+        无论 AppConfig 由本服务加载还是子类预加载传入，都必须运行——_bot_model_config
+        是后续 provider/wiring 的依赖。
+
+        PoolConfig 不再携带 llm；模型配置由 BotModelConfig / BotModelProvider 独立管理。
 
         model.yml 缺失时（如框架单测用 config_dir=Path('.') + 合成 app_config）
         静默跳过，_bot_model_config 留 None；真正的缺失判定由 _build_default_provider
-        的 assert 兜底（与框架 AppConfig.from_yaml 的 if model_yml.exists() 一致）。
+        的 assert 兜底。
         """
         model_yml = self.config_dir / "model.yml"
         if not model_yml.exists():
             return
         model_cfg = BotModelConfig.from_yaml(model_yml)
         self._bot_model_config = model_cfg
-        default_llm = model_cfg.synthesize_llm_config()
         for pool_cfg in app_config.pools.values():
-            pool_cfg.llm = default_llm
             if pool_cfg.memory is not None:
                 pool_cfg.memory.session.max_context_tokens = model_cfg.max_context_tokens
 
@@ -280,11 +277,15 @@ class BotService(AgentBuilderMixin):
 
         # 1.1 Warn if LLM credentials are missing — the service can still start,
         # but chat will fail until the user runs ``modexbot config``.
-        # Delegates to LLMConfig.missing_required_fields() so the check lives
-        # in the config model, not duplicated here.
-        default_pool_cfg = self._app_config.pools.get(self._app_config.multi_agent.default_pool)
-        if default_pool_cfg is not None:
-            missing_llm = default_pool_cfg.llm.missing_required_fields()
+        # Delegates to the backend model config so the check lives with the
+        # real source of truth (BotModelConfig), not the pool config.
+        if self._bot_model_config is not None:
+            default_resolved = self._bot_model_config.default_resolved()
+            missing_llm: list[str] = []
+            if not default_resolved.provider.api_key:
+                missing_llm.append("api_key")
+            if not default_resolved.provider.url:
+                missing_llm.append("url")
             if missing_llm:
                 print(
                     f"[WARNING] LLM config incomplete: {', '.join(missing_llm)}. "
