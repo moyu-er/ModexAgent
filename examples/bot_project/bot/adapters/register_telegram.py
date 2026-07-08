@@ -131,13 +131,14 @@ def build_telegram(
         user = getattr(update, "effective_user", None)
         sender_id = str(user.id) if user is not None else chat_id
         # Record this conversation as Telegram-originated so the channel-filtered
-        # emitter routes replies here. COUPLING CONTRACT: enqueue_update() builds
-        # the session id "{chat_id}.main", and the emitter resolves the conv id
-        # via session_id_prefix_of(sid) — which yields ``chat_id``. So the map
-        # key here MUST be the bare chat_id (the session prefix), or the filter
-        # in _ChannelFilteredTelegramEmitter would silently drop all output.
+        # emitter routes replies here. COUPLING CONTRACT: handle_text_message()
+        # seeds the pipeline with external_id=chat_id, from which the session
+        # factory builds a "{chat_id}.<agent>" session id; the emitter resolves
+        # the conv id via session_id_prefix_of(sid) — which yields ``chat_id``.
+        # So the map key here MUST be the bare chat_id, or the filter in
+        # _ChannelFilteredTelegramEmitter would silently drop all output.
         set_conv_channel(chat_id, "telegram")
-        inp.enqueue_update(chat_id=chat_id, text=text, sender_id=sender_id)
+        await inp.handle_text_message(chat_id=chat_id, text=text, sender_id=sender_id)
 
     application.add_handler(MessageHandler(filters.TEXT, _on_message))
 
@@ -155,7 +156,13 @@ def build_telegram(
         # is the documented PTB API).
         try:
             if application.updater is not None:
-                await application.updater.stop()
+                try:
+                    await application.updater.stop()
+                except RuntimeError as exc:
+                    # PTB raises "This Updater is not running!" if polling never
+                    # came up (e.g. shutdown during a failed start). Safe to
+                    # ignore; application.stop()/shutdown() still run below.
+                    logger.debug("Telegram updater not running on stop: %s", exc)
             await application.stop()
             await application.shutdown()
         except Exception:  # noqa: BLE001  # external-SDK boundary: never raise into caller

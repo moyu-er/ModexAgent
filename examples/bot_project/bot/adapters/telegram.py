@@ -31,8 +31,8 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from enum import Enum
 from typing import Any
 
-from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import InputMessage, OutputMessage
+from modex_agent.input_pipeline.envelope import UserInputEnvelope
 from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
 
 # --- module constants -------------------------------------------------------
@@ -136,8 +136,11 @@ class TelegramInputAdapter(InputAdapter):
     Sits on the framework's InputAdapter contract. The PTB ``Application``
     (real long-polling) is injected later by the register factory; without it
     ``start()`` is a safe no-op so the adapter is unit-testable in isolation.
-    Inbound updates are normalized into :class:`InputMessage` objects and
-    pushed onto an asyncio queue, which ``receive()`` drains.
+    Inbound text updates are driven through the converged IM input pipeline
+    via :meth:`handle_text_message` (mirrors ``QQInputAdapter._on_message``);
+    on the continue path the pipeline's S8 stage enqueues the final
+    :class:`InputMessage` via :meth:`put_input_message`, which :meth:`receive`
+    then drains.
     """
 
     def __init__(
@@ -183,35 +186,68 @@ class TelegramInputAdapter(InputAdapter):
         """True iff *sender_id* passes the allow_from allowlist."""
         return "*" in self._allow_from or sender_id in self._allow_from
 
-    def enqueue_update(
+    def put_input_message(self, msg: InputMessage) -> None:
+        """Push a fully-built InputMessage onto the receive queue.
+
+        The input pipeline's S8 EnqueueStage calls this via
+        ``ctx.enqueue_message`` so the stage never touches a Telegram-specific
+        method — it just delivers the message and the adapter owns its own
+        queue. Mirrors ``QQInputAdapter.put_input_message``.
+        """
+        self._queue.put_nowait(msg)
+
+    async def handle_text_message(
         self,
         *,
         chat_id: str,
         text: str,
         sender_id: str,
     ) -> None:
-        """Normalize a Telegram update into an InputMessage and queue it.
+        """Drive a Telegram text update through the converged input pipeline.
 
-        Kept as simple typed strings so the method is unit-testable without
-        any PTB object. Disallowed senders are silently dropped.
+        Mirrors ``QQInputAdapter._on_message``: allowlist check → build a
+        :class:`UserInputEnvelope` seed → run the shared IM pipeline. On a
+        ``Terminate`` outcome (pool switch / invalid skill / control notice)
+        the response is surfaced directly to this chat; on ``Continue`` the
+        pipeline's S8 stage enqueues the final ``InputMessage`` via
+        ``ctx.enqueue_message`` (= :meth:`put_input_message`), which
+        :meth:`receive` then yields to the agent loop.
+
+        PTB extraction (``effective_message.text`` / ``chat_id`` / user) stays
+        in the register factory; this method receives plain strings so it
+        remains PTB-free and unit-testable in isolation.
         """
         if not self.is_allowed(sender_id):
             return
-        # chat_id is the external conversation id; it becomes the session
-        # prefix. ``".main"`` keeps SessionInfo separator-clean (no warning)
-        # and binds the default agent.
-        session = SessionInfo.from_str(
-            f"{chat_id}.main",
-            default_agent_name="main",
-        )
-        msg = InputMessage(
+
+        # chat_id is the external conversation id; it seeds the session id
+        # (``{chat_id}.<agent>``) built downstream by the session factory, and
+        # the output adapter resolves it back via _chat_id_from_session.
+        seed = UserInputEnvelope(
+            external_id=chat_id,
             content=text,
-            session=session,
             channel=self.name,
-            sender_id=sender_id,
-            chat_id=chat_id,
+            explicit_pool=None,
+            metadata={
+                "chat_id": chat_id,
+                "sender_id": sender_id,
+            },
         )
-        self._queue.put_nowait(msg)
+        result = await self._input_pipeline.handle(seed, self._input_ctx)
+
+        # Surface Terminate responses (pool switch, invalid skill, etc.)
+        if not result.should_continue():
+            response = result.response
+            msg_text = ""
+            if response is not None:
+                try:
+                    msg_text = str(response.get("message", ""))
+                except AttributeError:
+                    msg_text = ""
+            if msg_text:
+                out = self._output_adapter or self._ctrl_output_adapter
+                if out is not None:
+                    await out.send(OutputMessage(content=msg_text), chat_id)
 
     async def start(self) -> None:
         """Delegate to the injected PTB start hook, if any.

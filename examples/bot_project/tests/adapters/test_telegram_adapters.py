@@ -22,23 +22,63 @@ def test_input_adapter_allow_from_filter() -> None:
     assert wild.is_allowed("anyone") is True
 
 
-def test_input_adapter_enqueue_rejects_disallowed_sender() -> None:
+@pytest.mark.asyncio
+async def test_handle_text_message_rejects_disallowed_sender() -> None:
     inp = TelegramInputAdapter(token="t", allow_from=["123"], proxy=None)
-    # disallowed sender must not enqueue anything
-    inp.enqueue_update(chat_id="42", text="hello", sender_id="999")
+    # disallowed sender must not reach the pipeline / queue
+    await inp.handle_text_message(chat_id="42", text="hello", sender_id="999")
     assert inp._queue.empty()  # noqa: SLF001
 
 
 @pytest.mark.asyncio
-async def test_receive_yields_input_message_after_enqueue() -> None:
+async def test_receive_yields_input_message_after_put() -> None:
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.types import InputMessage
+
     inp = TelegramInputAdapter(token="t", allow_from=["*"], proxy=None)
     await inp.start()
-    inp.enqueue_update(chat_id="42", text="hello", sender_id="42")
+    session = SessionInfo.from_str("42.main", default_agent_name="main")
+    # S8 EnqueueStage path: a fully-built InputMessage is pushed via
+    # put_input_message and drained by receive().
+    inp.put_input_message(
+        InputMessage(content="hello", session=session, channel="telegram")
+    )
     msg = await asyncio.wait_for(inp.receive().__anext__(), timeout=1.0)
     assert msg.content == "hello"
-    # session encodes the telegram chat id (SessionInfo.from_str("telegram:42"))
     assert "42" in str(msg.session)
     await inp.stop()
+
+
+@pytest.mark.asyncio
+async def test_handle_text_message_seeds_pipeline_and_surfaces_terminate() -> None:
+    from modex_agent.input_pipeline.envelope import UserInputEnvelope
+    from modex_agent.input_pipeline.stage import Terminate
+
+    inp = TelegramInputAdapter(token="t", allow_from=["*"], proxy=None)
+
+    captured: dict[str, object] = {}
+
+    async def fake_handle(seed: UserInputEnvelope, ctx: object) -> Terminate:
+        captured["external_id"] = seed.external_id
+        captured["content"] = seed.content
+        captured["channel"] = seed.channel
+        return Terminate(reason="pool_switch", response={"message": "switched pool"})
+
+    pipeline = MagicMock()
+    pipeline.handle = fake_handle  # type: ignore[method-assign]
+    out = MagicMock()
+    out.send = AsyncMock()
+    inp.configure_input_pipeline(pipeline, MagicMock(), out)
+
+    await inp.handle_text_message(chat_id="42", text="hi", sender_id="42")
+
+    # seed is built from the chat id (the session prefix / external_id)
+    assert captured == {"external_id": "42", "content": "hi", "channel": "telegram"}
+    # Terminate response surfaced directly to the owning chat
+    assert out.send.await_count == 1
+    sent_msg, sent_sid = out.send.call_args.args
+    assert sent_sid == "42"
+    assert sent_msg.content == "switched pool"
 
 
 @pytest.mark.asyncio
