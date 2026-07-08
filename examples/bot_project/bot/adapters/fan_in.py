@@ -59,19 +59,55 @@ class FanInInputAdapter(InputAdapter):
         return "fan_in"
 
     async def start(self) -> None:
-        """Start all source adapters and launch pump tasks."""
+        """Start all source adapters and launch pump tasks.
+
+        Per-source isolation: a channel that fails to connect (Telegram
+        behind a firewall, QQ auth failure, any future IM) is logged and
+        **disabled** here — it never aborts startup of the other sources,
+        so the bot stays up on its remaining channels (WebUI, other IM).
+        This is the single convergent point that makes any IM connection
+        failure non-fatal, regardless of which adapter raised; new IM
+        channels inherit it for free.
+        """
+        started: list[InputAdapter] = []
         for src in self._sources:
-            await src.start()
-            task = asyncio.create_task(self._pump_source(src))
-            self._pump_tasks.append(task)
+            try:
+                await src.start()
+            except Exception:
+                logger.error(
+                    "[channel '%s' disabled] failed to start — this channel "
+                    "will not send/receive; other channels continue. Cause:",
+                    src.name,
+                    exc_info=True,
+                )
+                continue
+            started.append(src)
+            self._pump_tasks.append(asyncio.create_task(self._pump_source(src)))
+
+        disabled = [s.name for s in self._sources if s not in started]
+        if disabled:
+            logger.warning(
+                "FanIn: %d channel(s) active %s; %d disabled %s",
+                len(started),
+                [s.name for s in started],
+                len(disabled),
+                disabled,
+            )
 
     async def stop(self) -> None:
-        """Cancel all pump tasks and stop source adapters."""
+        """Cancel all pump tasks and stop source adapters.
+
+        Each source's stop() is isolated: one failing stop (e.g. an adapter
+        that never fully started) must not prevent the others from stopping.
+        """
         for task in self._pump_tasks:
             task.cancel()
         self._pump_tasks.clear()
         for src in self._sources:
-            await src.stop()
+            try:
+                await src.stop()
+            except Exception:
+                logger.exception("FanIn: stop for channel '%s' failed", src.name)
 
     # ------------------------------------------------------------------
     # Control filter propagation
