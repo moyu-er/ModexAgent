@@ -57,7 +57,13 @@ export function AgentMcpSelector({ value, onChange }: Props) {
     );
   };
 
-  const header = `MCP servers (${value.length} selected)`;
+  const selectedKnown = servers
+    ? value.filter((n) => n in servers)
+    : value;
+  const selectedStale = servers
+    ? value.filter((n) => !(n in servers))
+    : [];
+  const header = `MCP servers (${selectedKnown.length} selected)`;
 
   return (
     <div ref={containerRef} className="relative">
@@ -107,6 +113,27 @@ export function AgentMcpSelector({ value, onChange }: Props) {
                   </li>
                 ))}
               </ul>
+            )}
+            {selectedStale.length > 0 && (
+              <div className="mt-2 border-t border-hairline pt-2">
+                <p className="mb-1 text-xs text-warning">
+                  Missing ({selectedStale.length}):
+                </p>
+                <ul className="space-y-1">
+                  {selectedStale.map((name) => (
+                    <li key={name} className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-mute line-through">{name}</span>
+                      <button
+                        type="button"
+                        className="text-xs text-link hover:underline"
+                        onClick={() => onChange(selectedKnown)}
+                      >
+                        Clear all missing
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             )}
           </div>
         </div>

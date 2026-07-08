@@ -162,29 +162,19 @@ describe("GlobalMcpView", () => {
     });
   });
 
-  it("delete-in-use shows conflict (409 surfaces used_by)", async () => {
+  it("delete succeeds even when the server is referenced by agents", async () => {
     const fetchMock = vi.fn((url: string, init?: RequestInit) => {
       const method = init?.method ?? "GET";
       if (url === "/api/mcp") return Promise.resolve(makeResponse(200, mcpMap));
       if (url === "/api/mcp/fs" && method === "DELETE") {
-        return Promise.resolve(
-          makeResponse(409, {
-            error: "in use",
-            used_by: [["default", "main"]],
-          }),
-        );
+        return Promise.resolve(makeResponse(200, { deleted: "fs" }));
       }
       return Promise.resolve(makeResponse(200, {}));
     });
     vi.stubGlobal("fetch", fetchMock);
     renderView();
     await waitFor(() => expect(screen.getByDisplayValue("npx")).toBeTruthy());
-    // Each card header carries a "Delete server" IconButton — click the first
-    // one (the "fs" card, which is the one mounted with that name).
     fireEvent.click(screen.getAllByRole("button", { name: "Delete server" })[0]!);
-    // Both the toast and the inline conflict text surface the used_by list.
-    await waitFor(() =>
-      expect(screen.getAllByText(/In use by default\/main/).length).toBeGreaterThan(0),
-    );
+    await waitFor(() => expect(screen.queryByDisplayValue("npx")).toBeNull());
   });
 });

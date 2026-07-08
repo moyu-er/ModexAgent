@@ -1,30 +1,11 @@
 // Global MCP registry REST client. Mirrors GET /api/mcp,
-// POST/PUT/DELETE /api/mcp/{server}.
-//
-// On a 409 "in use" the backend returns `{error: "in use", used_by: [[pool, agent], ...]}`.
-// `deleteMcp` surfaces this as a typed `McpInUseError` so callers can render the
-// conflict list instead of a generic message.
+// POST/PUT/DELETE /api/mcp/{server}. MCP writes always imply a restart, so
+// callers show a "Saved. Restart to apply." toast after successful mutations.
 
 import type { McpServerEntry } from "../types/pool";
 import { ApiError, assertOk, API_BASE } from "./api";
 
 const jsonHeaders = { "Content-Type": "application/json" };
-
-/** Pair of [pool, agent] that still references a server. */
-export type McpUsage = [string, string];
-
-/** Raised by deleteMcp when the server is still referenced by an agent. */
-export class McpInUseError extends Error {
-  readonly status = 409;
-  readonly usedBy: Array<[string, string]>;
-
-  constructor(usedBy: Array<[string, string]>) {
-    const where = usedBy.map(([p, a]) => `${p}/${a}`).join(", ");
-    super(`MCP server in use by: ${where}`);
-    this.name = "McpInUseError";
-    this.usedBy = usedBy;
-  }
-}
 
 /**
  * GET /api/mcp. The backend serializes with `by_alias=True`, so the transport
@@ -103,16 +84,6 @@ export async function deleteMcp(
   const resp = await fetch(`${API_BASE}/mcp/${encodeURIComponent(name)}`, {
     method: "DELETE",
   });
-  if (resp.status === 409) {
-    let usedBy: Array<[string, string]> = [];
-    try {
-      const body = (await resp.json()) as { used_by?: Array<[string, string]> };
-      usedBy = body.used_by ?? [];
-    } catch {
-      // Body unreadable — surface an empty conflict list.
-    }
-    throw new McpInUseError(usedBy);
-  }
   await assertOk(resp);
   return resp.json() as Promise<{ deleted: string }>;
 }
