@@ -97,3 +97,23 @@ def test_workspace_path_resolver_defaults_none_and_settable() -> None:
         workspace_path_resolver=resolver,
     )
     assert deps_set.workspace_path_resolver is resolver
+
+
+def test_mcp_registry_defaults_none_and_settable() -> None:
+    deps_default = AgentMaterializeDeps(
+        agent_factory=MagicMock(),
+        pool=MagicMock(),
+        session_factory=SessionIdFactory(),
+        broker=MagicMock(),
+    )
+    assert deps_default.mcp_registry is None
+
+    registry = MagicMock()
+    deps_set = AgentMaterializeDeps(
+        agent_factory=MagicMock(),
+        pool=MagicMock(),
+        session_factory=SessionIdFactory(),
+        broker=MagicMock(),
+        mcp_registry=registry,
+    )
+    assert deps_set.mcp_registry is registry

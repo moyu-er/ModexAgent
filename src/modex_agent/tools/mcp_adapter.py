@@ -3,20 +3,25 @@
 Bridges MCP capabilities to the framework's Tool interface.
 Re-exports from framework.tools.mcp for backward compatibility.
 """
+from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from modex_agent.tools.mcp import (
-    MCPClientManager,
     MCPPromptTool,
     MCPResourceTool,
 )
 from modex_agent.tools.mcp import (
     MCPTool as _MCPTool,
 )
+from modex_agent.tools.mcp.backend import McpBackend
 from modex_agent.tools.mcp.client import _DEFAULT_TOOL_TIMEOUT
 
 from .registry import ToolRegistry
+
+if TYPE_CHECKING:
+    from modex_agent.core.tool_manager import Tool
 
 logger = logging.getLogger(__name__)
 
@@ -46,13 +51,13 @@ class MCPToolAdapter:
 
     def __init__(
         self,
-        mcp_manager: MCPClientManager | None = None,
+        mcp_manager: McpBackend | None = None,
         default_prefix: bool = True,
         tool_timeout: int = _DEFAULT_TOOL_TIMEOUT,
     ) -> None:
         if mcp_manager is None:
             raise ValueError("mcp_manager is required")
-        self.mcp_manager = mcp_manager
+        self.mcp_manager: McpBackend = mcp_manager
         self.default_prefix = default_prefix
         self.tool_timeout = tool_timeout
 
@@ -107,7 +112,7 @@ class MCPToolAdapter:
                         server_name=server_name,
                         resource_name=resource["name"],
                         uri=resource["uri"],
-                        description=resource.get("description", resource["name"]),
+                        description=str(resource.get("description", resource["name"])),
                         mcp_manager=self.mcp_manager,
                         resource_timeout=self.tool_timeout,
                     )
@@ -127,7 +132,7 @@ class MCPToolAdapter:
                     prompt_tool = MCPPromptTool(
                         server_name=server_name,
                         prompt_name=prompt["name"],
-                        description=prompt.get("description", prompt["name"]),
+                        description=str(prompt.get("description", prompt["name"])),
                         arguments_def=prompt.get("arguments", []),
                         mcp_manager=self.mcp_manager,
                         prompt_timeout=self.tool_timeout,
@@ -144,7 +149,38 @@ class MCPToolAdapter:
 
     async def close(self) -> None:
         """Close all MCP connections."""
-        await self.mcp_manager.disconnect_all()
+        await self.mcp_manager.release()
+
+
+async def acquire_mcp_tools(
+    backend: McpBackend,
+    *,
+    tool_timeout: int = _DEFAULT_TOOL_TIMEOUT,
+) -> list[Tool]:
+    """Adapt a connected ``McpBackend`` into a flat list of framework ``Tool``s.
+
+    Wraps ``backend`` in an :class:`MCPToolAdapter`, registers every server's
+    tools/resources/prompts into a fresh :class:`ToolRegistry`, and returns the
+    collected ``Tool`` objects. Shared by the bot main-agent path
+    (``bot.service.builders._load_agent_mcp_tools``) and the framework subagent
+    path (``multi_agent.communication._load_per_agent_mcp``) so the
+    acquire → adapt → register → collect dance lives in one place.
+
+    The caller owns the ``backend`` lifecycle: a ``SharedMcpBackend`` is merely
+    detached on ``release()`` (shared connections outlive it), while a private
+    ``MCPClientManager`` is closed by its own ``release()``.
+    """
+    adapter = MCPToolAdapter(
+        mcp_manager=backend, default_prefix=True, tool_timeout=tool_timeout
+    )
+    registry = ToolRegistry()
+    await adapter.register_tools(registry=registry)
+    tools: list[Tool] = []
+    for name in registry.list_tools():
+        tool = registry.get_tool(name)
+        if tool is not None:
+            tools.append(tool)
+    return tools
 
 
 class MCPToolRegistry(ToolRegistry):
@@ -159,7 +195,7 @@ class MCPToolRegistry(ToolRegistry):
 
     def __init__(
         self,
-        mcp_manager: MCPClientManager | None = None,
+        mcp_manager: McpBackend | None = None,
         tool_timeout: int = _DEFAULT_TOOL_TIMEOUT,
     ) -> None:
         super().__init__()

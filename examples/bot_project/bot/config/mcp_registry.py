@@ -18,6 +18,7 @@ loader (preserved unchanged).
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,8 @@ import yaml
 from modex_agent.ioc.configs.mcp import MCPServerEntry
 
 REGISTRY_PATH = Path("config/mcp/registry.json")
+
+_logger = logging.getLogger(__name__)
 
 # Default pools dir used by :func:`server_used_by` when no explicit dir is
 # passed. Resolved relative to the bot project root at call time (so tests
@@ -49,6 +52,34 @@ def read_registry(path: Path | None = None) -> dict[str, dict[str, Any]]:
         return {}
     data = json.loads(p.read_text(encoding="utf-8"))
     return data.get("mcpServers") or data.get("servers") or {}
+
+
+def read_shared_registry_flag(path: Path | None = None) -> bool:
+    """Read the top-level ``sharedRegistry`` boolean (ADR-0017 Task 5a).
+
+    Returns ``True`` (opt INTO the shared MCP connection registry) unless the
+    file explicitly sets ``sharedRegistry: false``. The registry is an
+    optimization, so this FAILS OPEN on every degenerate input — missing file,
+    absent key, non-dict root, malformed JSON — so a corrupted/absent config
+    can never break MCP; the bot simply falls back to today's per-pool
+    ``MCPClientManager`` path.
+
+    The flag's policy is local to MCP config (architecture rule 7, locality):
+    it lives next to ``mcpServers`` rather than in the app-level config.
+    """
+    p = path or REGISTRY_PATH
+    if not p.exists():
+        return True
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        _logger.warning(
+            "sharedRegistry: failed to parse %s (%s); defaulting to True", p, exc
+        )
+        return True
+    if not isinstance(data, dict):
+        return True
+    return bool(data.get("sharedRegistry", True))
 
 
 def resolve_agent_mcp_servers(

@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.pool import AgentPool
     from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
     from modex_agent.pipeline.adapters import OutputAdapter
+    from modex_agent.tools.mcp.registry import McpConnectionRegistry
     from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 
 
@@ -58,3 +59,4 @@ class AgentMaterializeDeps:
     on_subagent_created: "Callable[[str, str], Awaitable[None]] | None" = None
     context_fork_builder: "ContextForkBuilder | None" = None
     workspace_path_resolver: "WorkspacePathResolver | None" = None
+    mcp_registry: "McpConnectionRegistry | None" = None

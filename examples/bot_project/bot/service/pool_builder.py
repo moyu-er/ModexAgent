@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from modex_agent.memory.cleanup import CleanupResult
     from modex_agent.memory.core.models import CompressionReason
     from modex_agent.runtime.store import JsonFileTodoStore
+    from modex_agent.tools.mcp.registry import McpConnectionRegistry
 
 from bot.config.memory_defaults import subagent_memory
 from bot.service.model_choice import ModelChoiceBindHook, ModelChoiceRegistry
@@ -136,6 +137,7 @@ async def create_pool(
     transcript_store: TranscriptStore | None = None,
     bot_model_config: BotModelConfig,
     model_choice_registry: ModelChoiceRegistry,
+    mcp_registry: McpConnectionRegistry | None = None,
 ) -> PoolInstance:
     """Build one PoolInstance's DEPLOYMENT resources from PoolConfig.
 
@@ -203,6 +205,7 @@ async def create_pool(
         output_adapter, pool_name, data_dir, pool_data, root_provider,
         transcript_store=transcript_store,
         sessions_dir_provider=sessions_dir_provider,
+        mcp_registry=mcp_registry,
     )
 
     skill_manager = _build_skill_manager(main_cfg, project_dir, pool_name)
@@ -270,6 +273,7 @@ async def create_pool(
         on_subagent_created=on_subagent_created,
         context_fork_builder=context_fork_builder,
         workspace_path_resolver=path_resolver,
+        mcp_registry=mcp_registry,
     )
     pool._materialize_deps = deps
     pool._template_registry = template_registry
@@ -596,6 +600,7 @@ async def _build_tools(
     *,
     transcript_store: TranscriptStore | None = None,
     sessions_dir_provider: Callable[[], Path | None] | None = None,
+    mcp_registry: McpConnectionRegistry | None = None,
 ) -> tuple[InMemoryToolManager, Any | None, JsonFileTodoStore]:
     """Build the main agent's tool manager from config.
 
@@ -712,6 +717,7 @@ async def _build_tools(
         try:
             mcp_tools, mcp_manager = await _load_agent_mcp_tools(
                 main_cfg.name, list(main_cfg.mcp), project_dir,
+                mcp_registry=mcp_registry,
             )
         except Exception as exc:
             logger.warning(

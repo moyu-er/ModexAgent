@@ -164,6 +164,16 @@ async def _build_resources(
     app_config = service._app_config
     pool_configs = app_config.pools
 
+    # Diagnostic: tie each workspace build to whether the shared registry is
+    # wired + the workspace target, so logs can distinguish the home build from
+    # a switch/create-time build (same agent names appear in both).
+    logger.info(
+        "[workspace-build] target=%s mcp_registry=%s pools=%s",
+        ctx.target,
+        "set" if service._mcp_registry is not None else "None",
+        list(pool_configs),
+    )
+
     # Main-agent memory is a baked default (bot.config.memory_defaults.
     # main_agent_memory) — never persisted in pool.yml, never user-editable.
     # Resolve it once here so BOTH build_pool_data (which constructs the memory
@@ -267,6 +277,7 @@ async def _build_resources(
             transcript_store=service._transcript_store,
             bot_model_config=service._bot_model_config,
             model_choice_registry=service._model_choice_registry,
+            mcp_registry=service._mcp_registry,
         )
 
     resources = PoolWorkspaceResources(
@@ -438,9 +449,14 @@ async def _stop_resources(resources: PoolWorkspaceResources) -> None:
         await asyncio.gather(*tasks, return_exceptions=True)
     # Shut down pools + broker bridges + broker.
     for pi in resources.pools.values():
+        # Teardown convergence (ADR-0017): both MCPClientManager and the shared
+        # facade are McpBackend with ``release()``. On the legacy path
+        # ``release()`` closes connections (== disconnect_all); on the shared
+        # path it only detaches the facade (real connections close at registry
+        # shutdown, owned by BotService). One call works for both.
         if pi.mcp_manager is not None:
             with contextlib.suppress(BaseException):
-                await pi.mcp_manager.disconnect_all()
+                await pi.mcp_manager.release()
         with contextlib.suppress(BaseException):
             await pi.pool.shutdown_all()
         with contextlib.suppress(BaseException):

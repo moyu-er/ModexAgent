@@ -17,7 +17,7 @@ Two layers:
 | `domain.py` | `ConfigDomain` / `DomainFlavor` / `Secret` / `register_domain` + shared `mask`/`merge`/`describe` helpers. The foundation every domain and store builds on |
 | `pool_store.py` | `PoolStore` — read/write one pool's tree across `pool.yml` + `templates/*.yml`; preserves non-editable fields on write |
 | `pool_payloads.py` | Frozen Pydantic wire/value objects (`PoolTree`, `MainAgentNode`, `SubagentNode`, …) crossing the HTTP API ↔ store boundary |
-| `mcp_registry.py` | MCP server registry — single source of truth (`config/mcp/registry.json`); agents reference servers by name. CRUD: `write_registry` / `upsert_server` / `delete_server` / `server_used_by` |
+| `mcp_registry.py` | MCP server registry — single source of truth (`config/mcp/registry.json`); agents reference servers by name. CRUD: `write_registry` / `upsert_server` / `delete_server` / `server_used_by`. Also `read_shared_registry_flag` — the ADR-0017 `sharedRegistry` gate (default on, fail-open) read by `BotService` to opt into the shared MCP connection registry |
 | `skills_store.py` | `SkillsStore` — global skill library (`local_skills/`) + per-agent assignment (`skills/<pool>/<agent>/`, real copy or link into a global source) |
 | `prompt_store.py` | `PromptStore` — read/write agent prompt markdown (`agents/<name>.md`); pool-independent by agent name; atomic UTF-8 writes |
 | `memory_defaults.py` | Baked (non-user-editable) memory presets — `main-rich` (long-term layers) and `sub-minimal` (session-only + pruned + tool_chain_repair) |

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from bot.plugins.integration import PluginIntegration
 
@@ -19,6 +19,13 @@ from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import AgentMessageBus
 from modex_agent.multi_agent.comm_tracker import CommunicationTracker
 from modex_agent.pipeline.adapters import OutputAdapter
+
+if TYPE_CHECKING:
+    # Annotation-only import: the registry type is referenced solely in the
+    # ``_load_agent_mcp_tools`` signature (a string under ``from __future__
+    # import annotations``); deferred to TYPE_CHECKING to keep the import graph
+    # acyclic (the framework registry pulls in connection/injector modules).
+    from modex_agent.tools.mcp.registry import McpConnectionRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -62,24 +69,62 @@ async def _load_agent_mcp_tools(
     agent_name: str,
     selection: list[str],
     project_dir: Path,
+    *,
+    mcp_registry: McpConnectionRegistry | None = None,
 ) -> tuple[list[Tool], Any | None]:
     """Load MCP tools for an agent from its registry selection.
 
     Resolves ``selection`` (server names) against ``config/mcp/registry.json``
     via :mod:`bot.config.mcp_registry`, then connects and adapts the tools.
 
-    Returns ``(tools, mcp_manager)`` — the manager must be kept alive for
-    connection lifecycle and disconnected on shutdown.
-    """
-    from modex_agent.ioc.configs.app import _resolve_env_in
-    from modex_agent.tools.mcp import MCPClientManager
-    from modex_agent.tools.mcp_adapter import MCPToolAdapter
-    from modex_agent.tools.registry import ToolRegistry
+    When ``mcp_registry`` is given (ADR-0017 Task 5a, main-agent path), the
+    selection is obtained from the shared :class:`McpConnectionRegistry` as a
+    :class:`SharedMcpBackend` facade — no private ``MCPClientManager`` is built,
+    and no ``registry.json`` is read here (the registry already holds the full
+    server map). When ``mcp_registry`` is ``None``, today's per-pool path runs
+    byte-for-byte (resolve → ``MCPClientManager`` → ``initialize``).
 
-    from bot.config.mcp_registry import resolve_agent_mcp_servers
+    Returns ``(tools, mcp_manager)`` — the manager must be kept alive for
+    connection lifecycle. Both ``MCPClientManager`` and ``SharedMcpBackend``
+    are ``McpBackend`` and expose ``release()``, so teardown is uniform.
+    """
+    from modex_agent.tools.mcp_adapter import acquire_mcp_tools
 
     if not selection:
         return [], None
+
+    # ── Shared-registry branch (ADR-0017): acquire a facade, no per-pool connect ──
+    if mcp_registry is not None:
+        try:
+            backend = await mcp_registry.acquire(selection)
+        except Exception as exc:  # noqa: BLE001 - fail-soft: MCP must never break the pool
+            logger.warning(
+                "Agent %s: shared MCP acquire failed: %s", agent_name, exc
+            )
+            return [], None
+
+        # Diagnostic: reveal which shared-registry servers were READY at this
+        # acquisition. Empty here ⇒ empty tools below. MCP availability is the
+        # READY-snapshot at materialization time, so this line is the key signal
+        # for "MCP missing after workspace switch" (home vs non-home differ only
+        # in WHEN they acquire — a server that dropped in between is absent).
+        logger.info(
+            "Agent %s: shared MCP acquire connected_servers=%s (selection=%s)",
+            agent_name, backend.connected_servers, selection,
+        )
+
+        tools = await acquire_mcp_tools(backend, tool_timeout=60)
+        logger.info(
+            "Agent %s: %d MCP tools loaded from selection %s",
+            agent_name, len(tools), selection,
+        )
+        return tools, backend
+
+    # ── Legacy per-pool branch (flag-off / non-registry world): byte-for-byte ──
+    from modex_agent.ioc.configs.app import _resolve_env_in
+    from modex_agent.tools.mcp import MCPClientManager
+
+    from bot.config.mcp_registry import resolve_agent_mcp_servers
 
     registry_path = project_dir / "config" / "mcp" / "registry.json"
     try:
@@ -100,15 +145,7 @@ async def _load_agent_mcp_tools(
             logger.warning("Agent %s: MCP config loaded but no servers connected", agent_name)
             return [], manager
 
-        adapter = MCPToolAdapter(mcp_manager=manager, default_prefix=True, tool_timeout=60)
-        registry = ToolRegistry()
-        await adapter.register_tools(registry=registry)
-
-        tools: list[Tool] = []
-        for name in registry.list_tools():
-            t = registry.get_tool(name)
-            if t is not None:
-                tools.append(t)
+        tools = await acquire_mcp_tools(manager, tool_timeout=60)
         logger.info(
             "Agent %s: %d MCP tools loaded from selection %s",
             agent_name, len(tools), selection,

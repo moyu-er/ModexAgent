@@ -101,6 +101,24 @@ class JsonFileMCPTransportInjector(MCPTransportInjector):
     are merged on top for their respective targets. Section keys are matched
     case-insensitively and normalized to lower-case.
 
+    The root-level shapes above are **global**: they apply to EVERY server. To
+    scope a value to a single server (so one server's secret is not propagated
+    to the others), use the top-level ``servers`` map, keyed by server name,
+    whose sections accept the same flat / ``env`` / ``headers`` shapes and
+    **override** the global set for that server only::
+
+        {
+          "env": {"COMMON": "shared"},                       // every server
+          "servers": {
+            "alpha": {"env": {"ALPHA_KEY": "a-only"}},       // alpha only
+            "beta":  {"headers": {"Authorization": "Bearer b"}} // beta only
+          }
+        }
+
+    Here ``alpha`` receives ``COMMON`` + ``ALPHA_KEY`` and ``beta`` receives
+    ``COMMON`` + its header; neither sees the other's secret. An unknown server
+    name falls back to the global set alone.
+
     Missing files are treated as empty: no injection occurs and the original
     configuration is used. Corrupt or unreadable files are logged at error level
     with full traceback, then ignored so the main MCP flow continues.
@@ -135,14 +153,15 @@ class JsonFileMCPTransportInjector(MCPTransportInjector):
             )
             return env, headers
 
-        injected_env, injected_headers = self._extract_injected(data)
+        injected_env, injected_headers = self._extract_injected(data, server_name)
 
         merged_env = {**env, **injected_env}
         merged_headers = {**headers, **injected_headers}
 
         if injected_env or injected_headers:
             _logger.debug(
-                "[MCP Injector] Applied runtime config (env=%d, headers=%d)",
+                "[MCP Injector] Applied runtime config for %s (env=%d, headers=%d)",
+                server_name,
                 len(injected_env),
                 len(injected_headers),
             )
@@ -150,27 +169,63 @@ class JsonFileMCPTransportInjector(MCPTransportInjector):
         return merged_env, merged_headers
 
     @staticmethod
-    def _extract_injected(data: dict[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
-        """Return (env, headers) to inject from the global config object."""
+    def _section_pairs(
+        section: dict[str, Any],
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        """Extract ``(env, headers)`` from one flat + env/headers section.
+
+        Flat keys form the base for both targets; explicit ``env`` / ``headers``
+        sections merge on top for their respective target. The ``servers`` key is
+        never treated as a flat pair — it is the per-server map, handled by
+        :meth:`_extract_injected`. Section keys are matched case-insensitively.
+        """
         unified: dict[str, str] = {}
         env_section: dict[str, str] = {}
         headers_section: dict[str, str] = {}
 
-        for raw_key, value in data.items():
+        for raw_key, value in section.items():
             key = str(raw_key).lower()
             if key == "env":
                 env_section = JsonFileMCPTransportInjector._as_str_map(value)
             elif key == "headers":
                 headers_section = JsonFileMCPTransportInjector._as_str_map(value)
+            elif key == "servers":
+                continue
             else:
                 try:
                     unified[str(raw_key)] = str(value) if value is not None else ""
                 except Exception:
                     continue
 
-        injected_env = {**unified, **env_section}
-        injected_headers = {**unified, **headers_section}
-        return injected_env, injected_headers
+        return {**unified, **env_section}, {**unified, **headers_section}
+
+    @staticmethod
+    def _extract_injected(
+        data: dict[str, Any], server_name: str
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        """Return ``(env, headers)`` to inject for ``server_name``.
+
+        Root-level flat / ``env`` / ``headers`` pairs are **global** (apply to
+        every server — backward compatible). A top-level ``servers`` map scopes
+        pairs to a single server and **overrides** the global set for that
+        server only, so a secret intended for one server does not propagate to
+        the others. An unknown server name falls back to the global set.
+        """
+        global_env, global_headers = JsonFileMCPTransportInjector._section_pairs(data)
+
+        servers_map: dict[str, Any] | None = None
+        for raw_key, value in data.items():
+            if str(raw_key).lower() == "servers" and isinstance(value, dict):
+                servers_map = value
+                break
+
+        if servers_map is not None:
+            section = servers_map.get(server_name)
+            if isinstance(section, dict):
+                per_env, per_headers = JsonFileMCPTransportInjector._section_pairs(section)
+                return {**global_env, **per_env}, {**global_headers, **per_headers}
+
+        return global_env, global_headers
 
     def _load(self) -> _JsonLoadResult:
         if self._cache is not None:

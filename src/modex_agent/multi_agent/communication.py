@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.pool import AgentPool
     from modex_agent.multi_agent.registry import AgentRegistry
     from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
+    from modex_agent.tools.mcp.registry import McpConnectionRegistry
 
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,8 @@ async def _load_per_agent_mcp(
     selection: list[str],
     project_dir: Path,
     agent_name: str,
+    *,
+    registry: McpConnectionRegistry | None = None,
 ) -> None:
     """Resolve an agent's MCP ``selection`` against the registry and register tools.
 
@@ -55,15 +58,44 @@ async def _load_per_agent_mcp(
     ``selection``, applies ``${ENV}`` interpolation, connects, and registers
     the adapted tools on ``tool_manager``. Failures are logged and swallowed
     so subagent creation is never blocked by an unreachable MCP server.
+
+    When ``registry`` is provided (ADR-0017 shared-connection overlay), the
+    registry.json read and private ``MCPClientManager`` are bypassed: a
+    :class:`SharedMcpBackend` is obtained via ``registry.acquire(selection)``
+    instead. ``project_dir`` is then unused for MCP (it stays in the signature
+    for the non-registry path and caller compatibility).
     """
     import json
 
     from modex_agent.ioc.configs.app import _resolve_env_in
     from modex_agent.tools.mcp import MCPClientManager
-    from modex_agent.tools.mcp_adapter import MCPToolAdapter
-    from modex_agent.tools.registry import ToolRegistry
+    from modex_agent.tools.mcp_adapter import acquire_mcp_tools
 
     if not selection:
+        return
+
+    if registry is not None:
+        # Shared-connection path: the registry owns connection lifecycle and
+        # already knows the server configs, so registry.json is not read.
+        try:
+            backend = await registry.acquire(selection)
+        except Exception:
+            logger.exception(
+                "Agent %s: shared MCP acquire failed; continuing without MCP tools",
+                agent_name,
+            )
+            return
+
+        tools = await acquire_mcp_tools(backend, tool_timeout=60)
+        for tool in tools:
+            tool_manager.register(tool)
+
+        logger.info(
+            "Agent %s: %d MCP tools loaded from selection %s",
+            agent_name,
+            len(tools),
+            selection,
+        )
         return
 
     registry_path = project_dir / "config" / "mcp" / "registry.json"
@@ -126,21 +158,14 @@ async def _load_per_agent_mcp(
         )
         return
 
-    adapter = MCPToolAdapter(mcp_manager=manager, default_prefix=True, tool_timeout=60)
-    registry = ToolRegistry()
-    await adapter.register_tools(registry=registry)
-
-    registered = 0
-    for name in registry.list_tools():
-        tool = registry.get_tool(name)
-        if tool is not None:
-            tool_manager.register(tool)
-            registered += 1
+    adapter_tools = await acquire_mcp_tools(manager, tool_timeout=60)
+    for tool in adapter_tools:
+        tool_manager.register(tool)
 
     logger.info(
         "Agent %s: %d MCP tools loaded from selection %s",
         agent_name,
-        registered,
+        len(adapter_tools),
         selection,
     )
 
