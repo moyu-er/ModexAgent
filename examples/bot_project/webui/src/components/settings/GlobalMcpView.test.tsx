@@ -63,9 +63,10 @@ describe("GlobalMcpView", () => {
     await waitFor(() =>
       expect(screen.getByDisplayValue("npx")).toBeTruthy(),
     );
-    // transport normalized type→transport → select shows "stdio"
-    const transportSelect = screen.getAllByRole("combobox")[0] as HTMLSelectElement;
-    expect(transportSelect.value).toBe("stdio");
+    // transport normalized type→transport → the "stdio" category
+    // button is the active one for a stdio entry.
+    const localBtn = screen.getByRole("button", { name: /^stdio/ });
+    expect(localBtn.getAttribute("aria-pressed")).toBe("true");
   });
 
   it("Add server creates a new empty card", async () => {
@@ -75,9 +76,10 @@ describe("GlobalMcpView", () => {
     );
     renderView();
     await waitFor(() => expect(screen.getByDisplayValue("npx")).toBeTruthy());
-    const before = screen.getAllByRole("combobox").length;
-    fireEvent.click(screen.getByText("+ Add server"));
-    expect(screen.getAllByRole("combobox").length).toBe(before + 1);
+    // Count expanded cards via their Name input (only expanded bodies render).
+    const before = screen.getAllByLabelText(/^Name/).length;
+    fireEvent.click(screen.getByText("Add server"));
+    expect(screen.getAllByLabelText(/^Name/).length).toBe(before + 1);
   });
 
   it("addCard inserts the new card at the top of the list", async () => {
@@ -88,7 +90,7 @@ describe("GlobalMcpView", () => {
     renderView();
     await waitFor(() => expect(screen.getByDisplayValue("npx")).toBeTruthy());
 
-    fireEvent.click(screen.getByText("+ Add server"));
+    fireEvent.click(screen.getByText("Add server"));
 
     // The newly added card is auto-expanded and shows a "New server" header.
     // The first body (top-most card) must be the new one — the empty Name
@@ -115,7 +117,7 @@ describe("GlobalMcpView", () => {
     // Both persisted cards exist; only the first ("fs") is expanded by default.
     expect(expandedBodies().length).toBe(1);
 
-    fireEvent.click(screen.getByText("+ Add server"));
+    fireEvent.click(screen.getByText("Add server"));
     await waitFor(() => {
       expect(expandedBodies().length).toBe(2);
     });
@@ -174,7 +176,9 @@ describe("GlobalMcpView", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderView();
     await waitFor(() => expect(screen.getByDisplayValue("npx")).toBeTruthy());
+    // Two-step delete: trash reveals a confirm row, then Delete commits.
     fireEvent.click(screen.getAllByRole("button", { name: "Delete server" })[0]!);
+    fireEvent.click(screen.getAllByText("Delete")[0]!);
     await waitFor(() => expect(screen.queryByDisplayValue("npx")).toBeNull());
   });
 });
