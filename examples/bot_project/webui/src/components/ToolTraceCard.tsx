@@ -1,6 +1,7 @@
 import { useState, type FC } from "react";
+import { Wrench } from "lucide-react";
 import type { ToolTrace } from "../types/events";
-import { ChevronToggleIcon, WrenchIcon } from "./ui/icons";
+import { ChevronToggleIcon } from "./ui/icons";
 
 export interface ToolTraceCardProps {
   tool: ToolTrace;
@@ -23,7 +24,7 @@ export const ToolTraceCard: FC<ToolTraceCardProps> = ({ tool }) => {
         className="flex w-full items-center gap-1 text-left text-xs font-medium text-mute transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-link/50"
       >
         <ChevronToggleIcon open={expanded} />
-        <WrenchIcon className="mr-1" />
+        <Wrench size={13} strokeWidth={1.75} className="mr-1" aria-hidden="true" />
         <span className="font-mono">{tool.tool}</span>
         {tool.result !== undefined && (
           <span className="ml-auto text-[10px] text-success">done</span>

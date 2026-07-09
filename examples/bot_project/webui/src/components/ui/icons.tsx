@@ -511,23 +511,6 @@ export function FileIcon({ className, ...rest }: IconProps) {
   );
 }
 
-/** Wrench glyph for the tool trace header — standalone Tools icon, not paired.
- *  Path adapted from Bootstrap Icons (MIT) for readability at 14x14. */
-export function WrenchIcon({ className, ...rest }: IconProps) {
-  return (
-    <svg
-      className={`h-3.5 w-3.5 shrink-0 ${className ?? ""}`.trim()}
-      {...baseProps}
-      {...rest}
-    >
-      <path
-        d="M.102 2.223A3.004 3.004 0 0 0 3.78 5.897l6.341 6.252A3.003 3.003 0 0 0 13 16a3 3 0 1 0-.851-5.878L5.897 3.781A3.004 3.004 0 0 0 2.223.1l2.141 2.142L4 4l-1.757.364z"
-        fill="currentColor"
-      />
-    </svg>
-  );
-}
-
 export function AudioIcon({ className, ...rest }: IconProps) {
   return (
     <svg
