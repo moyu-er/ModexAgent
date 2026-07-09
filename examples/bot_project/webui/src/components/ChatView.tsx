@@ -70,7 +70,7 @@ export const ChatView: FC<ChatViewProps> = ({
   agentName,
 }) => {
   const [input, setInput] = useState("");
-  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -118,9 +118,15 @@ export const ChatView: FC<ChatViewProps> = ({
       .catch(() => {});
   }, []);
 
-  // Auto-scroll to bottom when messages change
+  // Auto-scroll the message list to the bottom when messages change. We scroll
+  // the scroll container directly (setting scrollTop) rather than calling
+  // scrollIntoView on a sentinel: scrollIntoView defaults to block:"start",
+  // which pins the bottom sentinel to the *top* of the viewport (leaving the
+  // last message scrolled up and blank space below), and it also moves every
+  // scrollable ancestor — both cause the "page jumps, blank below" symptom.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
   // Grow the textarea with its content up to a capped height; once the cap is
@@ -269,7 +275,7 @@ export const ChatView: FC<ChatViewProps> = ({
       </header>
 
       {/* Message area */}
-      <div className="flex-1 overflow-y-auto">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto">
         <div className={`${CONTENT_WIDTH} px-3 py-6 md:px-5`}>
           {messages.length === 0 && (
             <div className="flex h-[55vh] items-center justify-center">
@@ -310,7 +316,6 @@ export const ChatView: FC<ChatViewProps> = ({
               onDeny={(id) => submitApproval(id, "deny")}
             />
           ))}
-          <div ref={bottomRef} />
         </div>
       </div>
 
