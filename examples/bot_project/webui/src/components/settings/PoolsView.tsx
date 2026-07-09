@@ -29,8 +29,9 @@ import {
   EditIcon,
   PlusIcon,
   SearchIcon,
-  TrashIcon,
 } from "../ui/icons";
+import { Trash2 } from "lucide-react";
+import { CATEGORY } from "./categoryMeta";
 
 type Confirm =
   | { kind: "delete"; name: string }
@@ -173,8 +174,25 @@ export function PoolsView() {
     }
   };
 
+  const meta = CATEGORY.pools;
+  const PageHeadIcon = meta.icon;
+
   return (
-    <div className="flex h-full">
+    <div className="flex h-full flex-col">
+      <div className="page-head">
+        <span
+          className="page-head-icon"
+          style={{ ["--cat" as string]: meta.catVar }}
+        >
+          <PageHeadIcon size={18} />
+        </span>
+        <div>
+          <div className="page-title">{meta.title}</div>
+          <div className="page-sub">{meta.sub}</div>
+        </div>
+      </div>
+
+      <div className="flex min-h-0 flex-1">
       {/* Left: pool list */}
       <div className="flex w-64 shrink-0 flex-col gap-3 border-r border-hairline bg-canvas-elevated pr-3">
         <div className="flex items-center justify-between">
@@ -275,7 +293,7 @@ export function PoolsView() {
                         }
                       />
                       <IconButton
-                        icon={<TrashIcon />}
+                        icon={<Trash2 size={16} />}
                         label={`Delete ${p.name}`}
                         variant="ghost"
                         size="sm"
@@ -347,6 +365,7 @@ export function PoolsView() {
             Select a pool, or click + to create one.
           </p>
         )}
+      </div>
       </div>
 
       {confirm?.kind === "delete" ? (

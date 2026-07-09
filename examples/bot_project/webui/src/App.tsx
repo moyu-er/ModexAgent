@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef, type FC } from "react";
+import { Hexagon } from "lucide-react";
 import { Sidebar } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
 import { SettingsView } from "./components/settings/SettingsView";
@@ -88,6 +89,16 @@ const App: FC = () => {
     [selectedId, sessions],
   );
 
+  // Display name of the selected session's owning agent (main or a subagent).
+  // Sourced from the session list — no backend change. Undefined when no
+  // session is open, in which case the chat header shows no label. The "…"
+  // sentinel is the session-list placeholder for not-yet-resolved agent names
+  // (fresh drafts); treat it as unknown so it never leaks into the header.
+  const agentName = useMemo(() => {
+    const s = sessions.find((x) => x.session_id === selectedId);
+    return s && s.agent_name !== "…" ? s.agent_name : undefined;
+  }, [sessions, selectedId]);
+
   const handleSend = useCallback(
     (
       content: string,
@@ -163,7 +174,20 @@ const App: FC = () => {
 
   return (
     <ToastProvider>
-      <div className="flex h-screen w-screen overflow-hidden bg-canvas">
+      <div className="flex h-screen w-screen flex-col overflow-hidden bg-canvas">
+        {/* Top status bar — brand · workspace · pool */}
+        <div className="statusline" role="contentinfo" aria-label="Session status">
+          <span className="brand">
+            <Hexagon size={13} aria-hidden="true" />
+            ModexBot
+          </span>
+          <span className="v" title={workspace || "—"}>
+            {workspace || "—"}
+          </span>
+          <span className="v">{activePool || "default"}</span>
+        </div>
+
+        <div className="flex min-h-0 flex-1 overflow-hidden">
         <Sidebar
           style={{ ["--sidebar-width" as string]: `${sidebarWidth}px` }}
           sessionTree={sessionTree}
@@ -220,6 +244,7 @@ const App: FC = () => {
               onPause={pause}
               readOnly={isSelectedSubagent}
               onOpenSidebar={() => setSidebarMobileOpen(true)}
+              agentName={agentName}
             />
           )}
         </main>
@@ -231,6 +256,7 @@ const App: FC = () => {
             aria-hidden="true"
           />
         )}
+        </div>
       </div>
     </ToastProvider>
   );

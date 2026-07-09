@@ -43,9 +43,9 @@ import { HelperText } from "../ui/HelperText";
 import {
   ChevronDownIcon,
   PlusIcon,
-  TrashIcon,
   XIcon,
 } from "../ui/icons";
+import { Trash2 } from "lucide-react";
 
 interface Props {
   pool: string;
@@ -664,7 +664,7 @@ function SubagentCard({
               className="text-body hover:text-error"
               onClick={onRequestDelete}
             >
-              <TrashIcon />
+              <Trash2 size={16} />
             </Button>
           )}
         </div>

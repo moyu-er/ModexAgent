@@ -8,126 +8,208 @@
  * matching ``var(--color-*)``, so components write ``bg-canvas`` (not the old
  * ``bg-canvas-light dark:bg-canvas-dark`` pair) and pick up the right value
  * automatically. Edit a color here once — never in the tailwind config.
+ *
+ * Visual language: emerald "signal" accent + per-config-category accent colors,
+ * zinc neutral ladder over a warm-white / near-black canvas. Modeled on the
+ * loom token system. ``link`` is repointed to the emerald signal so every
+ * existing ``*-link`` class adoption turns emerald with zero component churn.
  */
 :root {
   /* Background */
-  --color-overlay: rgba(0,0,0,0.4);
+  --color-overlay: rgba(0, 0, 0, 0.45);
 
-  /* Message bubbles */
-  --color-user-bubble: rgba(0, 117, 222, 0.08);
-  --color-user-bubble-text: #0075de;
+  /* Message bubbles — emerald-tinted user, card-surface assistant */
+  --color-user-bubble: rgba(5, 150, 105, 0.08);
+  --color-user-bubble-text: #047857;
 
-  /* Code blocks */
-  --color-inline-code-bg: #f2f2f2;
-  --color-inline-code-text: #BE123C;
+  /* Code blocks — inline code uses the emerald accent (loom-style) */
+  --color-inline-code-bg: rgba(5, 150, 105, 0.1);
+  --color-inline-code-text: #047857;
 
   /* Status */
-  --color-success: #1aae39;
-  --color-warning: #dd5b00;
-  --color-error: #be123c;
+  --color-success: #059669;
+  --color-warning: #b45309;
+  --color-error: #dc2626;
 
   /* Approval severity */
-  --color-severity-normal: #475569;
-  --color-severity-sensitive: #B45309;
-  --color-severity-dangerous: #BE3A2F;
-  --color-severity-hardline: #9F1239;
+  --color-severity-normal: #52525b;
+  --color-severity-sensitive: #b45309;
+  --color-severity-dangerous: #dc2626;
+  --color-severity-hardline: #9f1239;
 
-  /* Shadow */
-  --shadow-color: rgba(0,0,0,0.05);
-
-  /* Notion token ladder (warm paper canvas, near-black ink, single blue accent) */
-  --color-ink: #000000;
-  --color-body: #31302e;
-  --color-mute: #615d59;
-  --color-faint: #a39e98;
-  --color-hairline: #e6e6e6;
-  --color-hairline-soft: #f4f1ef;
-  --color-canvas: #f6f5f4;
+  /* Neutral ladder (zinc over warm-white canvas).
+     Sidebar is the recessed chrome (darkest in dark / grayest in light), the
+     main canvas is the working surface, elevated cards float on top. */
+  --color-canvas: #fbfbfa;
+  --color-canvas-sidebar: #ececee;
   --color-canvas-elevated: #ffffff;
-  --color-link: #0075de;
-  --color-link-deep: #005bab;
-  --color-link-soft: rgba(0, 117, 222, 0.12);
+  --color-ink: #18181b;
+  --color-bright: #09090b;
+  --color-body: #3f3f46;
+  --color-mute: #71717a;
+  --color-faint: #a1a1aa;
+  --color-hairline: #e4e4e7;
+  --color-hairline-strong: #d4d4d8;
+  --color-hairline-soft: #f4f4f5;
 
-  /* Radius (Notion scale: xs 4px for inputs, sm 5px rows, md 8px utility,
-     lg 12px cards, xl 16px wells, full pill/badges) */
+  /* Accent (emerald signal) */
+  --color-link: #059669;
+  --color-link-deep: #047857;
+  --color-link-soft: rgba(5, 150, 105, 0.12);
+  --color-primary: #059669;
+  --color-signal: #059669;
+  --color-accent: rgba(5, 150, 105, 0.08);
+
+  /* Per-config-category accent colors */
+  --color-cat-mcp: #d97757;
+  --color-cat-pools: #0891b2;
+  --color-cat-skills: #8b5cf6;
+  --color-cat-models: #db2777;
+  --color-cat-im: #65a30d;
+
+  /* Radius (8px base, 12px cards, pill for badges) */
   --radius-xs: 4px;
   --radius-sm: 6px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
   --radius-pill-category: 64px;
   --radius-pill: 100px;
   --radius-full: 9999px;
 
+  /* Shadows */
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.12);
+  --shadow-color: rgba(0, 0, 0, 0.06);
+
+  /* Motion */
+  --dur: 0.18s;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+
   /* Scrollbar */
   --color-scrollbar-track: transparent;
-  --color-scrollbar-thumb: #D1D5DB;
-  --color-scrollbar-thumb-hover: #9CA3AF;
+  --color-scrollbar-thumb: rgba(0, 0, 0, 0.15);
+  --color-scrollbar-thumb-hover: rgba(0, 0, 0, 0.25);
 }
 
 .dark {
   /* Background */
-  --color-overlay: rgba(0,0,0,0.6);
+  --color-overlay: rgba(0, 0, 0, 0.65);
 
   /* Message bubbles */
-  --color-user-bubble: #0f2744;
-  --color-user-bubble-text: #62aef0;
+  --color-user-bubble: rgba(16, 185, 129, 0.12);
+  --color-user-bubble-text: #34d399;
 
   /* Code blocks */
-  --color-inline-code-bg: #2d2824;
-  --color-inline-code-text: #fbbf24;
+  --color-inline-code-bg: rgba(16, 185, 129, 0.14);
+  --color-inline-code-text: #34d399;
 
   /* Status */
-  --color-success: #34d399;
+  --color-success: #10b981;
   --color-warning: #fbbf24;
   --color-error: #f87171;
 
   /* Approval severity */
-  --color-severity-normal: #a8a29e;
+  --color-severity-normal: #a1a1aa;
   --color-severity-sensitive: #fbbf24;
   --color-severity-dangerous: #fca5a5;
   --color-severity-hardline: #fda4af;
 
-  /* Shadow */
-  --shadow-color: rgba(0,0,0,0.25);
-
-  /* Dark text/symbol ladder over preserved warm stone backgrounds */
+  /* Neutral ladder over near-black canvas.
+     Sidebar is near-black chrome (Vercel/Linear signature), main is the lit
+     working surface, cards float clearly above it. */
+  --color-canvas: #0d0d0f;
+  --color-canvas-sidebar: #050506;
+  --color-canvas-elevated: #18181c;
   --color-ink: #fafafa;
-  --color-body: #d4d4d4;
-  --color-mute: #a8a29e;
-  --color-faint: #78716c;
-  --color-hairline: #44403c;
-  --color-hairline-soft: #2d2824;
-  --color-canvas: #1c1917;
-  --color-canvas-elevated: #292524;
-  --color-link: #62aef0;
-  --color-link-deep: #0075de;
-  --color-link-soft: rgba(98, 174, 240, 0.15);
+  --color-bright: #ffffff;
+  --color-body: #e4e4e7;
+  --color-mute: #8b8b94;
+  --color-faint: #71717a;
+  --color-hairline: rgba(255, 255, 255, 0.08);
+  --color-hairline-strong: rgba(255, 255, 255, 0.16);
+  --color-hairline-soft: rgba(255, 255, 255, 0.04);
 
-  /* Radius (Notion scale: xs 4px for inputs, sm 5px rows, md 8px utility,
-     lg 12px cards, xl 16px wells, full pill/badges) */
-  --radius-xs: 4px;
-  --radius-sm: 6px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-  --radius-pill-category: 64px;
-  --radius-pill: 100px;
-  --radius-full: 9999px;
+  /* Accent (emerald signal, brightened for dark) */
+  --color-link: #10b981;
+  --color-link-deep: #34d399;
+  --color-link-soft: rgba(16, 185, 129, 0.15);
+  --color-primary: #10b981;
+  --color-signal: #10b981;
+  --color-accent: rgba(16, 185, 129, 0.1);
+
+  /* Per-config-category accent colors (brightened for dark) */
+  --color-cat-mcp: #f59e0b;
+  --color-cat-pools: #22d3ee;
+  --color-cat-skills: #a78bfa;
+  --color-cat-models: #f472b6;
+  --color-cat-im: #a3e635;
+
+  /* Shadows */
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --shadow-color: rgba(0, 0, 0, 0.3);
 
   /* Scrollbar */
-  --color-scrollbar-thumb: #57534e;
-  --color-scrollbar-thumb-hover: #78716c;
+  --color-scrollbar-thumb: rgba(255, 255, 255, 0.15);
+  --color-scrollbar-thumb-hover: rgba(255, 255, 255, 0.25);
 }
 
 @layer base {
+  /* color-scheme makes native form controls (incl. the <select> option popup)
+     render in the active theme. Without it, dark mode paints the option list
+     with the OS default white background while our white ink text cascades in
+     → white-on-white. This is the real fix for the pool dropdown contrast bug. */
+  :root {
+    color-scheme: light;
+  }
+  .dark {
+    color-scheme: dark;
+  }
+
   body {
     @apply antialiased;
+    /* Layered background: flat canvas + two very-low-contrast static radial
+       glows using the signal color. Static only (no animation) so it never
+       fights reduced-motion. Fixed attachment keeps the glow stable on scroll. */
     background-color: var(--color-canvas);
+    background-image:
+      radial-gradient(
+        1100px 560px at 100% -8%,
+        color-mix(in oklab, var(--color-signal) 7%, transparent),
+        transparent 62%
+      ),
+      radial-gradient(
+        820px 480px at -8% 108%,
+        color-mix(in oklab, var(--color-signal) 4%, transparent),
+        transparent 58%
+      );
+    background-attachment: fixed;
     color: var(--color-ink);
     font-family: theme("fontFamily.sans");
   }
+  .dark body {
+    background-image:
+      radial-gradient(
+        1100px 560px at 100% -8%,
+        color-mix(in oklab, var(--color-signal) 6%, transparent),
+        transparent 62%
+      ),
+      radial-gradient(
+        820px 480px at -8% 108%,
+        color-mix(in oklab, var(--color-signal) 3%, transparent),
+        transparent 58%
+      );
+  }
 }
 
-/* 滚动条样式 */
+/* Scrollbar — thin, semi-transparent, theme-aware */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-scrollbar-thumb) transparent;
+}
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -144,9 +226,156 @@
 }
 
 @layer components {
+  /* ── Top status bar (brand · workspace · pool) ────────────────────────── */
+  .statusline {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    height: 32px;
+    padding: 0 16px;
+    /* Gentle chrome tone: halfway between the lit canvas and the recessed
+       sidebar. Reads as a distinct but soft top band in both light and dark
+       — never matching the panels below — while staying in the same neutral
+       family (no harsh contrast). Flips automatically with the theme tokens. */
+    background: color-mix(in oklab, var(--color-canvas), var(--color-canvas-sidebar));
+    border-bottom: 1px solid var(--color-hairline);
+    font-size: 11px;
+    color: var(--color-mute);
+    flex-shrink: 0;
+  }
+  .statusline .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--color-signal);
+    font-family: theme("fontFamily.mono");
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+  .statusline .v {
+    color: var(--color-body);
+    font-family: theme("fontFamily.mono");
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* ── Settings category nav (icon chip + label, per-category color) ────── */
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    min-height: 34px;
+    padding: 7px 9px;
+    border-radius: var(--radius-sm);
+    border-left: 2px solid transparent;
+    color: var(--color-body);
+    font-size: 13px;
+    font-weight: 500;
+    text-align: left;
+    cursor: pointer;
+    transition:
+      background var(--dur) var(--ease),
+      color var(--dur) var(--ease),
+      border-color var(--dur) var(--ease);
+  }
+  .nav-item:hover {
+    background: var(--color-hairline-soft);
+    color: var(--color-ink);
+  }
+  /* The per-category icon chip. Color is set inline via --cat token by caller. */
+  .category-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    flex: 0 0 24px;
+    border-radius: var(--radius-sm);
+    color: var(--cat, var(--color-mute));
+    background: color-mix(in oklab, var(--cat, var(--color-mute)) 12%, transparent);
+    transition:
+      background var(--dur) var(--ease),
+      color var(--dur) var(--ease);
+  }
+  .category-chip svg {
+    width: 14px;
+    height: 14px;
+  }
+  .nav-item.active {
+    color: var(--color-ink);
+    border-left-color: var(--color-signal);
+    background: linear-gradient(
+      90deg,
+      color-mix(in oklab, var(--color-signal) 9%, transparent),
+      transparent
+    );
+  }
+  .nav-item.active .category-chip {
+    color: #fff;
+    background: var(--cat, var(--color-signal));
+  }
+
+  /* ── Session list row ─────────────────────────────────────────────────── */
+  .session-row {
+    display: flex;
+    align-items: center;
+    border-left: 2px solid transparent;
+    transition:
+      background var(--dur) var(--ease),
+      border-color var(--dur) var(--ease);
+  }
+  .session-row:hover {
+    background: var(--color-hairline-soft);
+  }
+  .session-row.active {
+    border-left-color: var(--color-signal);
+    background: linear-gradient(
+      90deg,
+      color-mix(in oklab, var(--color-signal) 10%, transparent),
+      transparent
+    );
+  }
+
+  /* ── Page heading for config views (category icon + title) ────────────── */
+  .page-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+  .page-head-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: var(--radius-md);
+    color: var(--cat, var(--color-signal));
+    background: color-mix(in oklab, var(--cat, var(--color-signal)) 12%, transparent);
+  }
+  .page-head-icon svg {
+    width: 18px;
+    height: 18px;
+  }
+  .page-title {
+    font-family: theme("fontFamily.mono");
+    font-size: 19px;
+    font-weight: 600;
+    color: var(--color-bright);
+    letter-spacing: -0.01em;
+    line-height: 1.2;
+  }
+  .page-sub {
+    color: var(--color-mute);
+    font-size: 12px;
+    margin-top: 2px;
+  }
+
   /* Notion-style custom checkbox. The native input is restyled so every
-     settings checkbox uses the same blue checked state and 4px corner instead
-     of the browser default. */
+     settings checkbox uses the same emerald checked state and 4px corner. */
   .checkbox-custom {
     @apply h-4 w-4 shrink-0 cursor-pointer appearance-none rounded-xs border border-hairline bg-canvas-elevated;
     @apply transition-colors duration-150 ease-out;
@@ -174,21 +403,39 @@
   }
 
   /* Floating composer — large rounded input with a soft shadow. The buttons
-   * inside (attachment, send/pause, etc.) come from the IconButton primitive;
-   * only the container surface and focus ring are defined here. */
+   * inside come from the IconButton primitive; only the container surface and
+   * focus ring live here. */
   .composer {
-    @apply flex items-end gap-3 rounded-3xl border border-hairline bg-canvas-elevated px-4 py-3;
-    box-shadow: 0 2px 8px var(--shadow-color);
+    @apply flex items-end gap-3 rounded-2xl border border-hairline bg-canvas-elevated px-4 py-3;
+    box-shadow: var(--shadow-card);
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
   }
   .composer:focus-within {
     @apply border-link;
-    box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-link) 12%, transparent);
+    box-shadow:
+      0 0 0 3px color-mix(in oklab, var(--color-link) 14%, transparent),
+      var(--shadow-card);
+  }
+
+  /* Native <option> popup: force the themed surface so the dropdown list never
+     falls back to the OS white background (dark-mode white-on-white fix). */
+  select option {
+    background-color: var(--color-canvas-elevated);
+    color: var(--color-ink);
+  }
+
+  /* Message bubbles. */
+  .bubble-user {
+    @apply rounded-2xl rounded-br-md bg-user-bubble px-5 py-3.5 text-user-bubble-text;
+  }
+  .bubble-assistant {
+    @apply rounded-2xl rounded-bl-md border border-hairline bg-canvas-elevated px-4 py-3.5 text-body;
+    box-shadow: var(--shadow-card);
   }
 }
 
 @layer utilities {
-  /* Markdown 渲染辅助 */
+  /* Markdown rendering helpers */
   .prose-chat {
     @apply text-[15px] leading-relaxed;
   }
@@ -212,7 +459,7 @@
     list-style-type: decimal;
   }
   .prose-chat blockquote {
-    @apply mb-3 border-l-4 border-hairline bg-canvas-elevated px-4 py-2 italic;
+    @apply mb-3 border-l-4 border-link bg-link-soft px-4 py-2 italic;
   }
   .prose-chat a {
     @apply underline text-link;

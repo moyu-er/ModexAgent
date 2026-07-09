@@ -21,7 +21,9 @@ import { Select } from "../ui/Select";
 import { Textarea } from "../ui/Textarea";
 import { KeyValueEditor } from "../ui/KeyValueEditor";
 import { IconButton } from "../ui/IconButton";
-import { ChevronDownIcon, TrashIcon } from "../ui/icons";
+import { Trash2 } from "lucide-react";
+import { ChevronDownIcon } from "../ui/icons";
+import { CATEGORY } from "./categoryMeta";
 
 const TRANSPORTS: McpTransport[] = ["stdio", "sse", "streamableHttp"];
 const TRANSPORT_OPTIONS = [
@@ -180,8 +182,24 @@ export function GlobalMcpView() {
     }
   };
 
+  const meta = CATEGORY.mcp;
+  const PageHeadIcon = meta.icon;
+
   return (
     <div className="space-y-4">
+      <div className="page-head">
+        <span
+          className="page-head-icon"
+          style={{ ["--cat" as string]: meta.catVar }}
+        >
+          <PageHeadIcon size={18} />
+        </span>
+        <div>
+          <div className="page-title">{meta.title}</div>
+          <div className="page-sub">{meta.sub}</div>
+        </div>
+      </div>
+
       <div className="flex items-center justify-between">
         <p className="text-xs text-mute">
           MCP servers available to every pool's agents.
@@ -285,7 +303,7 @@ function McpCard({
           </Button>
           <IconButton
             label="Delete server"
-            icon={<TrashIcon />}
+            icon={<Trash2 size={16} />}
             variant="ghost"
             size="sm"
             onClick={(ev) => {

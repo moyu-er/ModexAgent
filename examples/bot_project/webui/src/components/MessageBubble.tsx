@@ -1,4 +1,5 @@
 import { type FC } from "react";
+import { Bot, User } from "lucide-react";
 import type { TurnBlock, UIMessage } from "../types/events";
 import type { AttachmentRecord } from "../types/attachments";
 import { MarkdownRenderer } from "./MarkdownRenderer";
@@ -14,7 +15,7 @@ import { appendWsParam } from "../lib/url";
 
 const AGENT_LABEL: Record<string, string> = {
   main: "text-link",
-  coding: "text-body",
+  coding: "text-cat-pools",
 };
 
 function agentLabelClass(agentName: string): string {
@@ -100,22 +101,13 @@ function formatTime(timestamp?: number): string | null {
 
 const UserAvatar: FC = () => (
   <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-hairline-soft text-mute">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
-      <circle cx="12" cy="7" r="4" />
-    </svg>
+    <User size={14} aria-hidden="true" />
   </div>
 );
 
 const AssistantAvatar: FC = () => (
-  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-ink text-canvas">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z" />
-      <path d="M5 3v4" />
-      <path d="M9 5H5" />
-      <path d="M19 16v4" />
-      <path d="M15 18h4" />
-    </svg>
+  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-link to-link-deep text-white">
+    <Bot size={14} aria-hidden="true" />
   </div>
 );
 
@@ -132,10 +124,10 @@ export const MessageBubble: FC<MessageBubbleProps> = ({ message, sessionId, work
 
       <div className={`flex min-w-0 flex-1 flex-col ${isUser ? "items-end" : "items-start"}`}>
         <div
-          className={`shadow-sm ${ isUser ? "w-fit max-w-[98%] min-w-[50%] rounded-xl rounded-br-md bg-user-bubble py-6 px-6 text-user-bubble-text" : "w-fit max-w-[85%] min-w-[60%] rounded-xl rounded-bl-md bg-hairline-soft p-4 text-body" }`}
+          className={`${ isUser ? "bubble-user w-fit max-w-[98%] min-w-[50%]" : "bubble-assistant w-fit max-w-[85%] min-w-[60%]" }`}
         >
           {!isUser && message.agent_name && (
-            <div className={`mb-1.5 text-[10px] font-semibold uppercase tracking-wide ${agentLabelClass(message.agent_name)}`}>
+            <div className={`mb-1.5 text-[10px] font-semibold uppercase tracking-wide font-mono ${agentLabelClass(message.agent_name)}`}>
               {message.agent_name}
             </div>
           )}

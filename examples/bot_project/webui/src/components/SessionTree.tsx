@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FC } from "react";
+import { MessageSquare } from "lucide-react";
 import { formatShort } from "../lib/timezone";
 import type { TreeNode } from "../lib/sessionTree";
 import { ChevronToggleIcon, XIcon } from "./ui/icons";
@@ -83,10 +84,8 @@ const SessionNode: FC<{
 
         {/* Node content row */}
         <div
-          className={`my-0.5 flex min-w-0 flex-1 items-center rounded-r-sm border-l-[3px] ${
-            isSelected
-              ? "border-link bg-hairline-soft ring-1 ring-inset ring-link/20"
-              : "border-transparent hover:bg-hairline-soft"
+          className={`session-row my-0.5 flex min-w-0 flex-1 items-center rounded-r-sm${
+            isSelected ? " active" : ""
           }`}
         >
           {/* Expand/collapse area — fixed-width so leaf nodes align with
@@ -119,7 +118,12 @@ const SessionNode: FC<{
                 : "text-mute hover:text-ink"
             }`}
           >
-            <span className="block truncate">{node.displayName}</span>
+            <span className="flex items-center gap-1.5">
+              {isRoot && (
+                <MessageSquare size={13} className="shrink-0 text-faint" />
+              )}
+              <span className="truncate">{node.displayName}</span>
+            </span>
             {typeof node.updated_at === "number" && (
               <span className="block truncate text-[10px] font-sans text-faint">
                 {formatShort(node.updated_at)}
