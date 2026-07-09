@@ -3,13 +3,11 @@
 Wraps MCP tools, resources, and prompts as framework Tool objects.
 """
 
-import logging
 from typing import Any
 
 from modex_agent.core.tool_manager import Tool, ToolConfig
+from modex_agent.tools.mcp.backend import McpBackend
 from modex_agent.tools.mcp.client import _DEFAULT_TOOL_TIMEOUT
-
-_logger = logging.getLogger(__name__)
 
 
 def _extract_nullable_branch(options: Any) -> tuple[dict, bool] | None:
@@ -78,7 +76,7 @@ class MCPTool(Tool):
         tool_name: str,
         description: str,
         parameters: dict[str, Any],
-        mcp_manager: Any,
+        mcp_manager: McpBackend,
         config: ToolConfig | None = None,
         tool_timeout: int = _DEFAULT_TOOL_TIMEOUT,
         use_prefix: bool = True,
@@ -102,26 +100,17 @@ class MCPTool(Tool):
         self._tool_timeout = tool_timeout
 
     async def execute(self, **kwargs: Any) -> str:
-        """Execute the MCP tool with automatic reconnection."""
+        """Execute the MCP tool.
+
+        Reconnect-on-disconnect retry lives in the backend (``MCPClientManager``);
+        this wrapper only invokes the backend once and formats the result.
+        """
         result = await self._mcp_manager.execute_tool(
             server_name=self._server_name,
             tool_name=self._tool_name,
             params=kwargs,
             timeout=self._tool_timeout,
         )
-
-        if not result.get("success") and "not connected" in str(result.get("error", "")).lower():
-            _logger.warning(
-                "MCP server '%s' disconnected, attempting reconnection...", self._server_name
-            )
-            reconnected = await self._mcp_manager.reconnect_with_retry(self._server_name)
-            if reconnected:
-                result = await self._mcp_manager.execute_tool(
-                    server_name=self._server_name,
-                    tool_name=self._tool_name,
-                    params=kwargs,
-                    timeout=self._tool_timeout,
-                )
 
         if not result.get("success"):
             error = result.get("error", "Unknown error")
@@ -139,7 +128,7 @@ class MCPResourceTool(Tool):
         resource_name: str,
         uri: str,
         description: str,
-        mcp_manager: Any,
+        mcp_manager: McpBackend,
         config: ToolConfig | None = None,
         resource_timeout: int = _DEFAULT_TOOL_TIMEOUT,
     ) -> None:
@@ -160,20 +149,14 @@ class MCPResourceTool(Tool):
         self._resource_timeout = resource_timeout
 
     async def execute(self, **kwargs: Any) -> str:
-        """Execute the MCP resource read with automatic reconnection."""
+        """Execute the MCP resource read.
+
+        Reconnect-on-disconnect retry lives in the backend; this wrapper only
+        invokes the backend once and formats the result.
+        """
         result = await self._mcp_manager.read_resource(
             self._server_name, self._uri, timeout=self._resource_timeout
         )
-
-        if not result.get("success") and "not connected" in str(result.get("error", "")).lower():
-            _logger.warning(
-                "MCP server '%s' disconnected, attempting reconnection...", self._server_name
-            )
-            reconnected = await self._mcp_manager.reconnect_with_retry(self._server_name)
-            if reconnected:
-                result = await self._mcp_manager.read_resource(
-                    self._server_name, self._uri, timeout=self._resource_timeout
-                )
 
         if not result.get("success"):
             error = result.get("error", "Unknown error")
@@ -191,7 +174,7 @@ class MCPPromptTool(Tool):
         prompt_name: str,
         description: str,
         arguments_def: list[dict[str, Any]],
-        mcp_manager: Any,
+        mcp_manager: McpBackend,
         config: ToolConfig | None = None,
         prompt_timeout: int = _DEFAULT_TOOL_TIMEOUT,
     ) -> None:
@@ -227,23 +210,14 @@ class MCPPromptTool(Tool):
         self._prompt_timeout = prompt_timeout
 
     async def execute(self, **kwargs: Any) -> str:
-        """Execute the MCP prompt with automatic reconnection."""
+        """Execute the MCP prompt.
+
+        Reconnect-on-disconnect retry lives in the backend; this wrapper only
+        invokes the backend once and formats the result.
+        """
         result = await self._mcp_manager.get_prompt(
             self._server_name, self._prompt_name, arguments=kwargs, timeout=self._prompt_timeout
         )
-
-        if not result.get("success") and "not connected" in str(result.get("error", "")).lower():
-            _logger.warning(
-                "MCP server '%s' disconnected, attempting reconnection...", self._server_name
-            )
-            reconnected = await self._mcp_manager.reconnect_with_retry(self._server_name)
-            if reconnected:
-                result = await self._mcp_manager.get_prompt(
-                    self._server_name,
-                    self._prompt_name,
-                    arguments=kwargs,
-                    timeout=self._prompt_timeout,
-                )
 
         if not result.get("success"):
             error = result.get("error", "Unknown error")

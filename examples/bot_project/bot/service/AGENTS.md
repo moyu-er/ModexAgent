@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-22 -->
+<!-- Updated: 2026-07-09 -->
 
 # service
 
@@ -10,13 +10,13 @@ Bot service lifecycle, pool orchestration, and workspace management. This is the
 | File | Description |
 |------|-------------|
 | `__init__.py` | Package marker |
-| `core.py` | `BotService` — initialization, workspace stack assembly (multi-live), pool creation, pipeline assembly, lifecycle management |
-| `builders.py` | Tool registration, MCP tool loading, subagent memory/skill construction, terminal tool setup |
-| `pool_builder.py` | `create_pool()` — assembles an `AgentPool` with main agent + subagent descriptors from config; per-workspace tool wrapping via `WorkspaceRootProvider` |
+| `core.py` | `BotService` — initialization, workspace stack assembly (multi-live), pool creation, pipeline assembly, lifecycle management. **Owns the shared MCP connection registry** (ADR-0017 Task 5a): built once in `initialize()` gated by `config/mcp/registry.json` `sharedRegistry` (default on), shut down in `stop()` after workspaces evict |
+| `builders.py` | Tool registration, MCP tool loading, subagent memory/skill construction, terminal tool setup. `_load_agent_mcp_tools` has a shared-registry branch: when passed a `McpConnectionRegistry` it acquires a `SharedMcpBackend` facade instead of building a private `MCPClientManager` |
+| `pool_builder.py` | `create_pool()` — assembles an `AgentPool` with main agent + subagent descriptors from config; per-workspace tool wrapping via `WorkspaceRootProvider`. Threads `mcp_registry` through to the main-agent MCP tool loader |
 | `pool_instance.py` | `PoolInstance` dataclass — holds pool config, `AgentPool` reference, main agent name |
 | `pool_router.py` | `PoolRouter` — session→pool dispatch; `PoolSessionStore` persists session→pool mapping. Now delegates message processing to input pipeline (adapter produces seed envelope → pipeline stages → enqueue callback enters broker queue) |
-| `web_ui_service.py` | `WebUIService` — assembles and starts the WebUI HTTP + WS server; creates `PoolSkillManagerRegistry` and `BotInputContext`; wires pipeline into adapters |
-| `qq_service.py` | QQ platform service — wires QQ adapters to the bot |
+| `web_ui_service.py` | `WebUIService` — the single IM + WebUI entry point. Assembles and starts the HTTP + WS server; **auto-discovers every `bot/adapters/register_*.py`** (QQ / Telegram / WebSocket) by importing them to fire the `@register` decorators, then builds enabled adapters from `ADAPTERS`; creates `PoolSkillManagerRegistry` and `BotInputContext`; wires pipeline into adapters |
+| `qq_service.py` | `QQBotService` — a QQ-only `BotService` variant. The `modexbot` CLI start path runs `WebUIService` (which itself auto-discovers the QQ adapter), so this is a standalone/alternate entry, not the default |
 | `session_store.py` | `WorkspacePoolSessionStore` — SessionInfo index partitioned by pool under a per-workspace `session_index` dir |
 | `workspace_store.py` | Workspace- and pool-partitioned transcript store (ctxvar-routed writes); cross-cutting business concern |
 | `recent_workspaces.py` | Recent-workspace tracker (JSON, max 20 paths) for the WebUI quick-switch dropdown |
@@ -59,6 +59,17 @@ Defined in `pool_router.py`:
 2. `PoolRouter` looks up session's current pool from `PoolSessionStore` (default: configured default pool).
 3. Routes message to pool's main agent via `BrokerMessage`.
 4. **Pool-switch commands** (`/pool_name`) are handled upstream by the input pipeline (S2), not by `PoolRouter` directly.
+
+## Shared MCP Connection Registry (ADR-0017 Task 5a)
+
+`BotService` owns a service-scoped `McpConnectionRegistry` — one subprocess per configured MCP server, shared across all pools/agents/workspaces, deduped by canonical config-hash. This is the **main-agent path only** in 5a; subagent wiring is deferred to Task 5b.
+
+- **Gate**: `config/mcp/registry.json` top-level `sharedRegistry` boolean (default `true`, read by `bot.config.mcp_registry.read_shared_registry_flag`). Fail-open: missing file / malformed JSON / absent key → `true` (the registry is an optimization; worst case falls back to today's per-pool path). Set `sharedRegistry: false` to disable.
+- **Lifecycle**: built in `initialize()` AFTER config load, BEFORE the workspace stack materializes the home pools. `${ENV}` interpolation runs before the registry hashes/connects (else `${TOKEN}` reaches the subprocess literally). `start_connecting` fires all supervisor tasks concurrently so connections are READY by the time pools call `registry.acquire`.
+- **Main-agent path**: `_load_agent_mcp_tools(agent, selection, project_dir, mcp_registry=reg)` → `reg.acquire(selection)` → `SharedMcpBackend` facade (no `MCPClientManager`, no `registry.json` read — the registry already holds the full server map).
+- **Teardown convergence**: `_stop_resources` calls `mcp_manager.release()`. Both `MCPClientManager` and `SharedMcpBackend` are `McpBackend` with `release()` — on the legacy path it closes connections (== `disconnect_all`), on the shared path it only detaches the facade (real connections close at registry shutdown). One call works for both; no conditional.
+- **Stop ordering**: `stop()` evicts workspaces first (→ `release()` per pool, detach facades), THEN `registry.shutdown()` closes the actual shared subprocesses.
+- **Flag-off path byte-for-byte**: `sharedRegistry: false` (or registry absent) → `self._mcp_registry = None` → `_load_agent_mcp_tools` takes the legacy `MCPClientManager` branch unchanged → `release()` == `disconnect_all()` (today's behavior).
 
 ## For AI Agents
 

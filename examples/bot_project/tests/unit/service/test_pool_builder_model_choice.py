@@ -45,7 +45,7 @@ class _Agent:
 
 def test_build_llm_provider_returns_bot_model_provider(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
-    pool_cfg = PoolConfig(name="main", main_agent_name="main", llm=LLMConfig(), agents=[])
+    pool_cfg = PoolConfig(name="main", main_agent_name="main", agents=[])
     prov = _build_llm_provider(pool_cfg, "main", cfg)
     assert isinstance(prov, BotModelProvider)
 
@@ -56,7 +56,7 @@ def test_wire_main_pipeline_adds_model_choice_hook(tmp_path: Path) -> None:
     main_cfg = AgentConfig(
         name="main", role="main", llm=LLMConfig(), approval=ApprovalConfig(enabled=False)
     )
-    pool_cfg = PoolConfig(name="main", main_agent_name="main", llm=LLMConfig(), agents=[main_cfg], memory=MemoryConfig())
+    pool_cfg = PoolConfig(name="main", main_agent_name="main", agents=[main_cfg], memory=MemoryConfig())
 
     pipeline = AgentPipeline(
         agent=_Agent(),

@@ -1,4 +1,4 @@
-"""Tests for GlobalModelConfig and its injection through AppConfig.from_yaml."""
+"""Tests for GlobalModelConfig and its loading through AppConfig.from_yaml."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import tempfile
 from pathlib import Path
 
 from modex_agent.ioc.configs.app import AppConfig
-from modex_agent.ioc.configs.llm import Modality
 from modex_agent.ioc.configs.model import GlobalModelConfig
 
 
@@ -29,7 +28,7 @@ class TestGlobalModelConfig:
         assert GlobalModelConfig().to_llm_dict()["capabilities"] == ["text"]
 
 
-def _write_config_tree(tmp: Path, *, pool_llm: str | None, with_model: bool) -> Path:
+def _write_config_tree(tmp: Path, *, pool_llm: str | None = None, with_model: bool) -> Path:
     """Build a config/ tree and return the bot_config.yml path.
 
     Uses the dir-based pool layout (``pools/<name>/pool.yml``) that
@@ -55,17 +54,17 @@ def _write_config_tree(tmp: Path, *, pool_llm: str | None, with_model: bool) -> 
 
 
 class TestGlobalModelInjection:
-    def test_pool_without_llm_inherits_global(self) -> None:
+    def test_global_model_loaded_into_app_config(self) -> None:
         with tempfile.TemporaryDirectory() as t:
-            cfg_path = _write_config_tree(Path(t), pool_llm=None, with_model=True)
+            cfg_path = _write_config_tree(Path(t), with_model=True)
             cfg = AppConfig.from_yaml(cfg_path)
-            llm = cfg.pools["main"].llm
-            assert llm.model == "openai/global-model"
-            assert llm.base_url == "https://api.example.com/v1"
-            assert llm.api_key == "sk-global"
-            assert llm.capabilities.supports(Modality.IMAGE)
+            assert cfg.model is not None
+            assert cfg.model.model == "openai/global-model"
+            assert cfg.model.url == "https://api.example.com/v1"
+            assert cfg.model.api_key == "sk-global"
+            assert "image" in cfg.model.capabilities
 
-    def test_pool_llm_overrides_global_per_field(self) -> None:
+    def test_pool_llm_block_is_ignored(self) -> None:
         with tempfile.TemporaryDirectory() as t:
             cfg_path = _write_config_tree(
                 Path(t),
@@ -73,19 +72,14 @@ class TestGlobalModelInjection:
                 with_model=True,
             )
             cfg = AppConfig.from_yaml(cfg_path)
-            llm = cfg.pools["main"].llm
-            # Field-level override; the rest still comes from the global config.
-            assert llm.model == "openai/pool-override"
-            assert llm.api_key == "sk-global"
+            assert cfg.model is not None
+            assert cfg.model.model == "openai/global-model"
+            assert "main" in cfg.pools
 
-    def test_no_model_yml_keeps_pool_llm(self) -> None:
+    def test_no_model_yml_loads_pool_without_model(self) -> None:
         with tempfile.TemporaryDirectory() as t:
-            cfg_path = _write_config_tree(
-                Path(t),
-                pool_llm="llm:\n  model: openai/legacy\n  api_key: sk-legacy\n",
-                with_model=False,
-            )
+            cfg_path = _write_config_tree(Path(t), with_model=False)
             cfg = AppConfig.from_yaml(cfg_path)
-            llm = cfg.pools["main"].llm
-            assert llm.model == "openai/legacy"
-            assert llm.api_key == "sk-legacy"
+            assert cfg.model is None
+            assert "main" in cfg.pools
+            assert cfg.pools["main"].main_agent_name == "main"

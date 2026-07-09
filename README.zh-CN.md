@@ -55,7 +55,7 @@ ModexAgent 是一个用于构建 AI Agent 应用的 Python 框架。它将模型
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│              外部平台（QQ / CLI / HTTP / WebSocket → WebUI）               │
+│              外部平台（QQ / Telegram / CLI / HTTP / WebSocket → WebUI）              │
 └─────────────────────────────────────────────────────────────────────────┘
                                     │
                     ┌───────────────┴───────────────┐
@@ -120,7 +120,7 @@ modexbot start
 常用命令：`modexbot stop` | `modexbot restart` | `modexbot logs -f` | `modexbot install -f` | `modexbot config` | `modexbot model`
 
 > [!TIP]
-> `examples/bot_project/` 是一个功能完整的 QQ Bot + WebUI 示例。详细能力、配置和多 Agent 设置见 [examples/bot_project/README.zh-CN.md](examples/bot_project/README.zh-CN.md)。
+> `examples/bot_project/` 是一个功能完整的**多通道 Agent 应用** —— 浏览器 WebUI 加上可插拔的 IM 适配器（QQ、Telegram 开箱即用；Discord/飞书/钉钉通过一个 `register_*.py` 模块即可接入）。它是框架各项能力的集大成示例。详细能力、配置和多 Agent 设置见 [examples/bot_project/README.zh-CN.md](examples/bot_project/README.zh-CN.md)。
 
 ### 手动配置
 
@@ -181,7 +181,7 @@ src/modex_agent/        # 框架包（src layout，见 ADR-0003）
   utils/             # 根邻接的纯叶子原语（ADR-0006：不依赖任何其他包）
 
 examples/
-  bot_project/       # 完整 QQ Bot + WebUI 示例（Pool 模式）
+  bot_project/       # 多通道 Agent 示例：WebUI + IM 适配器（QQ、Telegram）—— Pool 模式
   sandbox/           # 沙箱使用示例
 
 tests/               # 单元、集成和端到端测试
@@ -214,7 +214,7 @@ uv pip install -e ".[all,dev]"
 | --- | --- |
 | [ADR 索引](docs/adr/) | 架构决策记录——pool-only 装配、src-layout 改名、依赖树、facade-only 模块、保留真实 seam、可中断审批 + 批原子性、基于 token 的压缩、双轴终端、认领/透传 input pipeline、附件系统、原生多模态、统一收件箱驱动消息、ReAct 循环检测（ADR-0001 ~ 0016） |
 | [CONTEXT.md](CONTEXT.md) | 领域术语表——Pool、Workspace、ReAct Agent、Graph、GraphInterrupt、Assembly 等 |
-| [Bot 示例](examples/bot_project/README.md) | bot_project 详解（QQ Bot + WebUI、多 Agent 配置） |
+| [Bot 示例](examples/bot_project/README.md) | bot_project 详解（多通道 IM + WebUI、多 Agent 配置） |
 | 各模块 `AGENTS.md` | `src/modex_agent/` 下每个包都附带 `AGENTS.md`，描述其职责与关键文件 |
 
 ## 开发命令

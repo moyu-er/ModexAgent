@@ -20,7 +20,7 @@
 - `modex_agent/commands/`: slash command processor with two-stage dispatch (pre-lock routing + in-lock execution).
 - `modex_agent/sandbox/`: sandboxed execution adapters (Subprocess/Docker/E2B/Landlock).
 
-`examples/bot_project/` is the primary end-to-end reference (Pool mode, WebUI React frontend, QQ adapter). Framework-generic behavior in `src/modex_agent/`; business wiring in `examples/`.
+`examples/bot_project/` is the primary end-to-end reference (Pool mode, WebUI React frontend, multi-channel IM adapters: QQ + Telegram). Framework-generic behavior in `src/modex_agent/`; business wiring in `examples/`.
 
 ## Commands
 

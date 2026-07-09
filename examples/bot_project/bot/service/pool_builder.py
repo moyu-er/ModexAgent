@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from modex_agent.memory.cleanup import CleanupResult
     from modex_agent.memory.core.models import CompressionReason
     from modex_agent.runtime.store import JsonFileTodoStore
+    from modex_agent.tools.mcp.registry import McpConnectionRegistry
 
 from bot.config.memory_defaults import subagent_memory
 from bot.service.model_choice import ModelChoiceBindHook, ModelChoiceRegistry
@@ -136,6 +137,7 @@ async def create_pool(
     transcript_store: TranscriptStore | None = None,
     bot_model_config: BotModelConfig,
     model_choice_registry: ModelChoiceRegistry,
+    mcp_registry: McpConnectionRegistry | None = None,
 ) -> PoolInstance:
     """Build one PoolInstance's DEPLOYMENT resources from PoolConfig.
 
@@ -155,6 +157,7 @@ async def create_pool(
 
     provider = _build_llm_provider(pool_cfg, pool_name, bot_model_config)
     terminal_manager = _build_terminal_manager(pool_cfg, pool_name, workspace_handle)
+    default_resolved = bot_model_config.default_resolved()
 
     # Task 7: PER-POOL inbox + bus. Each pool owns its own LocalFileInboxServer
     # (own storage dir), producer, consumer, and LocalAgentMessageBus — instead
@@ -202,6 +205,7 @@ async def create_pool(
         output_adapter, pool_name, data_dir, pool_data, root_provider,
         transcript_store=transcript_store,
         sessions_dir_provider=sessions_dir_provider,
+        mcp_registry=mcp_registry,
     )
 
     skill_manager = _build_skill_manager(main_cfg, project_dir, pool_name)
@@ -256,9 +260,9 @@ async def create_pool(
         broker=broker,
         comm_tracker=comm_tracker,
         safety=safety,
-        llm_model=pool_cfg.llm.model,
-        llm_temperature=pool_cfg.llm.temperature,
-        llm_max_output_tokens=pool_cfg.llm.max_output_tokens,
+        llm_model=default_resolved.model.model,
+        llm_temperature=default_resolved.model.temperature,
+        llm_max_output_tokens=default_resolved.model.max_output_tokens,
         project_dir=project_dir,
         notification_service=notification_service,
         inbox_consumer=inbox_consumer,
@@ -269,6 +273,7 @@ async def create_pool(
         on_subagent_created=on_subagent_created,
         context_fork_builder=context_fork_builder,
         workspace_path_resolver=path_resolver,
+        mcp_registry=mcp_registry,
     )
     pool._materialize_deps = deps
     pool._template_registry = template_registry
@@ -287,6 +292,7 @@ async def create_pool(
     await _register_main_agent(
         pool, main_cfg, pool_cfg, system_prompt, safety, pool_name,
         factory=factory, broker=broker, context_manager=context_manager,
+        bot_model_config=bot_model_config,
     )
 
     # Register a compaction listener that notifies the user when session memory
@@ -594,6 +600,7 @@ async def _build_tools(
     *,
     transcript_store: TranscriptStore | None = None,
     sessions_dir_provider: Callable[[], Path | None] | None = None,
+    mcp_registry: McpConnectionRegistry | None = None,
 ) -> tuple[InMemoryToolManager, Any | None, JsonFileTodoStore]:
     """Build the main agent's tool manager from config.
 
@@ -710,6 +717,7 @@ async def _build_tools(
         try:
             mcp_tools, mcp_manager = await _load_agent_mcp_tools(
                 main_cfg.name, list(main_cfg.mcp), project_dir,
+                mcp_registry=mcp_registry,
             )
         except Exception as exc:
             logger.warning(
@@ -977,8 +985,9 @@ async def _register_main_agent(
     pool_name: str,
     *,
     factory: DefaultAgentFactory,
-    broker: Any,
+    broker: MessageBroker,
     context_manager: Any,
+    bot_model_config: BotModelConfig,
 ) -> None:
     """Register the main (NORMAL) agent with factory defaults (Design B).
 
@@ -996,12 +1005,13 @@ async def _register_main_agent(
         AgentLLMConfig,
     )
 
+    default_resolved = bot_model_config.default_resolved()
     descriptor = AgentDescriptor(
         address=AgentAddress(kind="agent", name=main_cfg.name),
         llm_config=AgentLLMConfig(
-            model=pool_cfg.llm.model,
-            temperature=pool_cfg.llm.temperature,
-            max_output_tokens=pool_cfg.llm.max_output_tokens,
+            model=default_resolved.model.model,
+            temperature=default_resolved.model.temperature,
+            max_output_tokens=default_resolved.model.max_output_tokens,
         ),
         system_prompt_template=system_prompt,
         max_iterations=main_cfg.max_steps,
@@ -1211,9 +1221,10 @@ def _wire_main_pipeline(
     # otherwise clobber the pipeline's configured policy.
     # model_capabilities threads the per-pool modality declaration so
     # the inline renderer can bind to it per turn (ADR-0014 §1/§3).
+    default_resolved = bot_model_config.default_resolved()
     services_kwargs: dict[str, Any] = dict(
         safety=pipeline.safety,
-        model_capabilities=pool_cfg.llm.capabilities,
+        model_capabilities=default_resolved.capabilities,
     )
     if approval_runtime is not None:
         services_kwargs["approval"] = approval_runtime

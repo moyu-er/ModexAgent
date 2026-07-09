@@ -35,18 +35,35 @@ export default {
           hardline: v("severity-hardline"),
         },
 
-        // Vercel Geist token ladder
+        // 中性 token 阶梯（loom 风格：暖白底 / 近黑底，zinc 文字梯度）
         ink: v("ink"),
+        bright: v("bright"),
         body: v("body"),
         mute: v("mute"),
         faint: v("faint"),
         hairline: v("hairline"),
+        "hairline-strong": v("hairline-strong"),
         "hairline-soft": v("hairline-soft"),
         canvas: v("canvas"),
+        "canvas-sidebar": v("canvas-sidebar"),
         "canvas-elevated": v("canvas-elevated"),
+
+        // 强调色（emerald 体系；link 复用为 primary/signal，使所有 *-link 类自动转翡翠绿）
         link: v("link"),
         "link-deep": v("link-deep"),
         "link-soft": v("link-soft"),
+        primary: v("primary"),
+        signal: v("signal"),
+        accent: v("accent"),
+
+        // 每个配置大类的独立强调色（解决「mcp 等缺少图案」）
+        cat: {
+          mcp: v("cat-mcp"),
+          pools: v("cat-pools"),
+          skills: v("cat-skills"),
+          models: v("cat-models"),
+          im: v("cat-im"),
+        },
       },
       fontFamily: {
         sans: [
@@ -79,6 +96,15 @@ export default {
       boxShadow: {
         floating:
           "0 2px 2px rgba(0,0,0,0.04), 0 8px 16px -4px rgba(0,0,0,0.08)",
+        card: "var(--shadow-card)",
+        "card-hover": "var(--shadow-card-hover)",
+        popover: "var(--shadow-popover)",
+      },
+      transitionTimingFunction: {
+        app: "var(--ease)",
+      },
+      transitionDuration: {
+        app: "var(--dur)",
       },
     },
   },

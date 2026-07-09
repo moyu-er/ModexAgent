@@ -6,8 +6,9 @@ templates.
 
 ## Input pipeline domain language
 
-**Channel** — an origin a user message arrives from: IM (QQ) or WebUI. The two
-channels run different stage subsets over the same envelope.
+**Channel** — an origin a user message arrives from: an IM platform (QQ,
+Telegram) or WebUI. IM channels run the same stage subset; WebUI runs a
+narrower one. Both run over the same envelope.
 
 **Stage** — one ordered step in the input pipeline. A stage either *passes
 through* (lets the envelope continue) or *claims* the input (handles it).

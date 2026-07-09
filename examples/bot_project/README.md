@@ -13,16 +13,16 @@
 
 This is a **production-grade example** of the ModexAgent framework. It demonstrates how to build a multi-channel AI assistant with LLM dialogue, tool invocation, MCP integration, multi-tier memory, multi-agent collaboration, self-learning experience system, and a browser-based WebUI.
 
-Uses **Pool mode** — multi-agent persistent pools with `MessageBroker` + `AgentMessageBus` routing. Input/Output adapters (QQ, WebSocket) are fully decoupled from agent logic.
+Uses **Pool mode** — multi-agent persistent pools with `MessageBroker` + `AgentMessageBus` routing. Input/Output adapters (QQ, Telegram, WebSocket) are fully decoupled from agent logic.
 
 > [!TIP]
-> QQ Bot is just one possible adapter. The same architecture works for Discord, Feishu, DingTalk, Telegram, CLI, or any platform with an `InputAdapter`/`OutputAdapter` implementation. **No QQ credentials are needed to use the WebUI.**
+> The fastest way to try it is the **WebUI** — no IM credentials required. IM support is plugin-style: QQ and Telegram ship out of the box, and adding another platform (Discord, Feishu, DingTalk, …) is a single `register_<name>.py` module. **No IM credentials are needed to use the WebUI.**
 
 ## Capabilities
 
 | Capability | Description |
 |------------|-------------|
-| **QQ Messaging** | C2C private chat + group chat, with automatic attachment download |
+| **IM Messaging** | QQ (C2C private chat + group chat, with automatic attachment download) and Telegram (long-polling, text + single media) |
 | **WebUI** | Browser-based chat with real-time streaming, multi-conversation sidebar, workspace browser, pool selector |
 | **In-Browser Config** | Edit pools, models, MCP servers, skills, and system prompts from the Settings UI — no YAML hand-editing |
 | **Multi-Model Switching** | Multiple providers / models in `model.yml`; switch per turn from the chat composer |
@@ -87,15 +87,15 @@ Browser (React)
 For multi-agent persistent collaboration. I/O is fully decoupled from agent logic via the Broker.
 
 ```
-QQ User / Group Chat                Browser (WebUI)
-    │                                      │
-    ▼                                      ▼
-┌─────────────────┐              ┌──────────────────┐
-│ QQInputAdapter  │              │ WebSocketInput   │
-└────────┬────────┘              │    Adapter       │
-         │                       └────────┬─────────┘
-         │                                │
-         ▼                                ▼
+QQ User / Group      Telegram Chat        Browser (WebUI)
+    │                      │                     │
+    ▼                      ▼                     ▼
+┌─────────────────┐ ┌─────────────────┐ ┌──────────────────┐
+│ QQInputAdapter  │ │ TelegramInput   │ │ WebSocketInput   │
+└────────┬────────┘ │    Adapter      │ │    Adapter       │
+         │          └────────┬────────┘ └────────┬─────────┘
+         │                   │                   │
+         ▼                   ▼                   ▼
 ┌──────────────────────────────────────────────────────┐
 │         Input Pipeline (claim / pass-through)        │
 │  IM:    SetChannel→ResolveWs→EnvCtrl→SessCtrl→       │
@@ -124,12 +124,12 @@ QQ User / Group Chat                Browser (WebUI)
 │  └───────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────┘
          │
-         ├──────────────────────────────┐
-         ▼                              ▼
-┌──────────────────┐          ┌──────────────────┐
-│ QQOutputAdapter  │          │ WebBotEmitter    │
-│ (QQ replies)     │          │ (WebSocket deltas)│
-└──────────────────┘          └──────────────────┘
+         ├──────────────────┬─────────────────────┐
+         ▼                  ▼                     ▼
+┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐
+│ QQOutputAdapter  │ │TelegramOutput    │ │ WebBotEmitter    │
+│ (QQ replies)     │ │Adapter           │ │ (WebSocket deltas)│
+└──────────────────┘ └──────────────────┘ └──────────────────┘
 ```
 
 ## Quick Start
@@ -232,9 +232,8 @@ cp .env.example .env
 Key fields in `.env`:
 
 ```env
-# QQ Bot credentials (from https://q.qq.com/) — OPTIONAL for WebUI-only use
-QQ_APP_ID=your_qq_app_id
-QQ_SECRET=your_qq_bot_secret
+# Timezone for timestamps
+TIMEZONE=Asia/Shanghai
 
 # MCP server credentials
 MCP_BEARER_TOKEN=your_modelscope_bearer_token
@@ -242,8 +241,10 @@ MINIMAX_MCP_API_KEY=your_minimax_api_key
 ```
 
 > [!NOTE]
-> Model settings (model / api_key / base URL / capabilities) do **not** live in
-> `.env`. They live in `config/model.yml` — see the next step.
+> **IM credentials do not live in `.env`.** QQ and Telegram credentials live in
+> `config/im.yml` (one section per platform) — see *Configuration Reference → IM
+> Adapters*. Model settings (model / api_key / base URL / capabilities) also do
+> **not** live in `.env`; they live in `config/model.yml` — see the next step.
 
 #### 3. Configure the Model
 
@@ -349,7 +350,7 @@ Light / dark toggle in the sidebar.
 
 ### Input Pipeline (Converged Message Processing)
 
-All user messages — from IM (QQ) and WebUI — flow through a shared pipeline before reaching the agent. Stages **claim or pass through**: a stage that recognises an input handles it (control commands terminate; skills/approval claim-and-continue), and a stage that doesn't recognise it leaves the envelope untouched. A single terminal `UnsupportedCommand` stage rejects any slash command no stage claimed, with one generic notice — so command recognition and rejection live in one place, not scattered across stages. The IM pipeline runs 10 stages, WebUI 8 (no environment/session control — the browser has GUI equivalents), in this order:
+All user messages — from IM (QQ, Telegram) and WebUI — flow through a shared pipeline before reaching the agent. Stages **claim or pass through**: a stage that recognises an input handles it (control commands terminate; skills/approval claim-and-continue), and a stage that doesn't recognise it leaves the envelope untouched. A single terminal `UnsupportedCommand` stage rejects any slash command no stage claimed, with one generic notice — so command recognition and rejection live in one place, not scattered across stages. The IM pipeline runs 10 stages, WebUI 8 (no environment/session control — the browser has GUI equivalents), in this order:
 
 | Stage | IM | WebUI | Purpose |
 |-------|:--:|:-----:|---------|
@@ -564,7 +565,7 @@ Restart the service (or save in the WebUI) and the agent registers automatically
 
 ## Adapting to Other IM Platforms
 
-`BotService` is a generic base class, not bound to QQ. Adding a new platform (Discord, Feishu, DingTalk, Telegram, etc.) is plug-and-play:
+`BotService` is a generic base class, not bound to any platform. QQ and Telegram are the two bundled adapters, and both follow the exact same plug-and-play pattern — so adding a new platform (Discord, Feishu, DingTalk, …) is the same process that produced them:
 
 1. Create `bot/adapters/<platform>.py` with three classes:
    - `<Platform>InputAdapter` — subclass of `InputAdapter`, receives messages and produces seed `UserInputEnvelope` for the input pipeline.
@@ -598,9 +599,11 @@ def build_discord(ctx: AdapterBuildContext):
     return discord_input, discord_output, emitter_factory
 ```
 
-3. Restart the service. `WebUIService` automatically discovers and imports every `bot/adapters/register_*.py` module, so **no changes to `WebUIService` are required**.
+3. (Optional) Declare a typed config section in `bot/config/domains/im.py` via `register_kind`, and add a matching section to `config/im.yml`.
 
-The same `ChannelRouterOutputAdapter` used for QQ and WebUI guarantees that slash-command replies from one platform never leak to another.
+4. Restart the service. `WebUIService` automatically discovers and imports every `bot/adapters/register_*.py` module, so **no changes to `WebUIService` are required**.
+
+The `ChannelRouterOutputAdapter` guarantees that slash-command replies from one platform never leak to another — each emitter is channel-filtered, and WebUI acts as a universal observer that records every conversation regardless of origin.
 
 ```python
 from modex_agent import AgentPipeline
@@ -627,18 +630,29 @@ class DiscordOutputAdapter(OutputAdapter):
 
 ## Configuration Reference
 
-### QQ Bot
+### IM Adapters
 
-Get App ID and Secret from [QQ Open Platform](https://q.qq.com/).
+IM credentials live in `config/im.yml` (gitignored — it holds secrets). Copy `config/im.example.yml` to get started. Each platform is one top-level section; an adapter reads only its own section and is skipped entirely when `enabled: false`.
 
 ```yaml
+# QQ — get App ID and Secret from https://q.qq.com/
 qq:
-  app_id: "${QQ_APP_ID}"
-  secret: "${QQ_SECRET}"
-  sandbox: false
+  enabled: true
+  app_id: "your_qq_app_id"
+  secret: "your_qq_secret"
   allow_from:
-    - "*"                        # "*" allows everyone
+    - "*"                        # "*" allows everyone, or list user/group ids
+
+# Telegram — get a token from @BotFather
+telegram:
+  enabled: true
+  token: "your_telegram_bot_token"
+  proxy: null                    # optional, e.g. "http://127.0.0.1:7890"
+  allow_from:
+    - "*"
 ```
+
+Both `qq` and `telegram` are registered as typed config kinds in `bot/config/domains/im.py`; secrets are masked on read. To add another platform, see *Adapting to Other IM Platforms*.
 
 ### LLM (Models)
 

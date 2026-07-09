@@ -2,15 +2,10 @@
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
-
-import pytest
-from pydantic import ValidationError
 
 from modex_agent.ioc.configs.agent import AgentConfig
 from modex_agent.ioc.configs.app import AppConfig
-from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.ioc.configs.pool import PoolConfig
 
 
@@ -19,7 +14,6 @@ class TestPoolConfigNameFields:
         cfg = PoolConfig(
             name="main",
             main_agent_name="main",
-            llm=LLMConfig(model="gpt-4", api_key="k"),
             agents=[AgentConfig(name="main", role="main")],
         )
         assert cfg.name == "main"
@@ -29,20 +23,19 @@ class TestPoolConfigNameFields:
         cfg = PoolConfig(
             name="coding",
             main_agent_name="coder",
-            llm=LLMConfig(model="gpt-4", api_key="k"),
             agents=[AgentConfig(name="coder", role="main")],
         )
         assert cfg.name != cfg.main_agent_name
 
-    def test_extra_forbid_rejects_terminal(self) -> None:
-        with pytest.raises(ValidationError):
-            PoolConfig(
-                name="main",
-                main_agent_name="main",
-                llm=LLMConfig(model="gpt-4", api_key="k"),
-                agents=[AgentConfig(name="main", role="main")],
-                terminal={"storage_dir": "x"},  # type: ignore[arg-type]
-            )
+    def test_extra_ignored_silently(self) -> None:
+        cfg = PoolConfig(
+            name="main",
+            main_agent_name="main",
+            agents=[AgentConfig(name="main", role="main")],
+            terminal={"storage_dir": "x"},  # type: ignore[arg-type]
+        )
+        assert cfg.name == "main"
+        assert not hasattr(cfg, "terminal")
 
 
 class TestFromYamlPoolLoading:
@@ -62,7 +55,6 @@ class TestFromYamlPoolLoading:
         (pools_dir / "pool.yml").write_text(
             "name: not-main\n"  # ignored — dir name wins
             "main_agent_name: main\n"
-            "llm:\n  model: gpt-4\n  api_key: k\n"
             "agents:\n  - name: main\n    role: main\n",
             encoding="utf-8",
         )
@@ -78,8 +70,7 @@ class TestFromYamlPoolLoading:
         pools_dir = config_dir / "pools" / "main"
         pools_dir.mkdir(parents=True)
         (pools_dir / "pool.yml").write_text(
-            "main_agent_name: lead\n"
-            "llm:\n  model: gpt-4\n  api_key: k\n",
+            "main_agent_name: lead\n",
             encoding="utf-8",
         )
         cfg = AppConfig.from_yaml(config_dir / "bot_config.yml")
@@ -92,7 +83,7 @@ class TestFromYamlPoolLoading:
         pools_dir = config_dir / "pools" / "main"
         pools_dir.mkdir(parents=True)
         (pools_dir / "pool.yml").write_text(
-            "llm:\n  model: gpt-4\n  api_key: k\n",
+            "agents:\n  - name: main\n    role: main\n",
             encoding="utf-8",
         )
         cfg = AppConfig.from_yaml(config_dir / "bot_config.yml")
@@ -104,7 +95,7 @@ class TestFromYamlPoolLoading:
         pools_dir = config_dir / "pools" / "main"
         pools_dir.mkdir(parents=True)
         (pools_dir / "pool.yml").write_text(
-            "llm:\n  model: gpt-4\n  api_key: k\n",
+            "agents:\n  - name: main\n    role: main\n",
             encoding="utf-8",
         )
         cfg = AppConfig.from_yaml(config_dir / "bot_config.yml")
@@ -118,7 +109,6 @@ class TestFromYamlPoolLoading:
         pools_dir = config_dir / "pools" / "main"
         pools_dir.mkdir(parents=True)
         (pools_dir / "pool.yml").write_text(
-            "llm:\n  model: gpt-4\n  api_key: k\n"
             "max_steps: 77\n"
             "tool_preset: read_only\n"
             "mcp:\n  - playwright\n",

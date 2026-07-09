@@ -12,7 +12,8 @@
 import { useCallback, useRef, useState, type FC } from "react";
 import { Input } from "./Input";
 import { IconButton } from "./IconButton";
-import { PlusIcon, TrashIcon } from "./icons";
+import { Trash2 } from "lucide-react";
+import { PlusIcon } from "./icons";
 
 interface Row {
   key: string;
@@ -128,7 +129,7 @@ export const KeyValueEditor: FC<Props> = ({ label, helper, entries, onChange }) 
               className="flex-1"
             />
             <IconButton
-              icon={<TrashIcon />}
+              icon={<Trash2 size={16} />}
               label={`Remove ${entryLabel.toLowerCase()}`}
               variant="ghost"
               size="sm"

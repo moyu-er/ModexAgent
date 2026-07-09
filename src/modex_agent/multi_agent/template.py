@@ -360,7 +360,9 @@ class AgentTemplate:
             try:
                 from modex_agent.multi_agent.communication import _load_per_agent_mcp
 
-                await _load_per_agent_mcp(tm, list(self.mcp), deps.project_dir, name)
+                await _load_per_agent_mcp(
+                    tm, list(self.mcp), deps.project_dir, name, registry=deps.mcp_registry
+                )
             except Exception:
                 import logging
 

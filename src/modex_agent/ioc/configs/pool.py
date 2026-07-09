@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from pydantic import BaseModel, ConfigDict, Field
 
 from modex_agent.ioc.configs.agent import AgentConfig
-from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.ioc.configs.memory import MemoryConfig
 
 # ---------------------------------------------------------------------------
@@ -47,11 +46,10 @@ class PoolConfig(BaseModel):
     directory. Both must be declared explicitly.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     name: str
     main_agent_name: str
-    llm: LLMConfig
     agents: list[AgentConfig] = Field(default_factory=list)
     memory: MemoryConfig | None = None
     media: MediaConfig = Field(default_factory=MediaConfig)

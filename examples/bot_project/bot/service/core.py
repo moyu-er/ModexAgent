@@ -25,6 +25,7 @@ from pydantic import ValidationError
 if TYPE_CHECKING:
     from modex_agent.commands.processor import SlashCommandProcessor
     from modex_agent.runtime.codec import RuntimeStateCodecRegistry
+    from modex_agent.tools.mcp.registry import McpConnectionRegistry
 
 from bot.plugins.integration import PluginIntegration
 from bot.service.model_choice import ModelChoiceRegistry
@@ -130,6 +131,13 @@ class BotService(AgentBuilderMixin):
         self._pool_session_store: PoolSessionStore | None = None
         self.plugin_integration: PluginIntegration | None = None
 
+        # Shared MCP connection registry (ADR-0017 Task 5a). Service-scoped,
+        # concurrent, dedup-by-config-hash. Built in initialize() when the
+        # ``sharedRegistry`` flag (config/mcp/registry.json, default ON) is set;
+        # pools then acquire SharedMcpBackend facades via registry.acquire.
+        # None when the flag is off (or registry absent) → legacy per-pool path.
+        self._mcp_registry: McpConnectionRegistry | None = None
+
 
         # Maintenance
         self._maintenance_task: asyncio.Task | None = None
@@ -178,11 +186,8 @@ class BotService(AgentBuilderMixin):
     def _load_app_config(self) -> AppConfig:
         """Load IOC AppConfig from bot_config.yml + 多模型后处理。
 
-        框架 AppConfig.from_yaml 从 model.yml 的 model: 块注入 pool_cfg.llm；新格式
-        只有 models: 块，框架会拿到空默认。此处用 BotModelConfig 的默认模型合成
-        LLMConfig 回填每个 pool 的 llm，并把 max_context_tokens 注入
-        memory.session.max_context_tokens（兼容 _wire_main_pipeline 的 governance /
-        model_capabilities 读取与 descriptor）。
+        框架 AppConfig.from_yaml 不再注入 pool_cfg.llm；模型配置完全由
+        BotModelConfig / BotModelProvider 管理。
         """
         app_config = AppConfig.from_yaml(self.config_dir / "bot_config.yml")
         self._apply_bot_model_config(app_config)
@@ -207,23 +212,23 @@ class BotService(AgentBuilderMixin):
             return None
 
     def _apply_bot_model_config(self, app_config: AppConfig) -> None:
-        """Bot 层后处理（spec B3）：解析 model.yml 的 models: 块，用默认模型合成
-        LLMConfig 回填每个 pool_cfg.llm，并把 max_context_tokens 注入
-        memory.session.max_context_tokens。无论 AppConfig 由本服务加载还是子类
-        预加载传入，都必须运行——_bot_model_config 是后续 provider/wiring 的依赖。
+        """Bot 层后处理（spec B3）：解析 model.yml 的 models: 块，缓存
+        BotModelConfig，并把 max_context_tokens 注入 memory.session.max_context_tokens。
+        无论 AppConfig 由本服务加载还是子类预加载传入，都必须运行——_bot_model_config
+        是后续 provider/wiring 的依赖。
+
+        PoolConfig 不再携带 llm；模型配置由 BotModelConfig / BotModelProvider 独立管理。
 
         model.yml 缺失时（如框架单测用 config_dir=Path('.') + 合成 app_config）
         静默跳过，_bot_model_config 留 None；真正的缺失判定由 _build_default_provider
-        的 assert 兜底（与框架 AppConfig.from_yaml 的 if model_yml.exists() 一致）。
+        的 assert 兜底。
         """
         model_yml = self.config_dir / "model.yml"
         if not model_yml.exists():
             return
         model_cfg = BotModelConfig.from_yaml(model_yml)
         self._bot_model_config = model_cfg
-        default_llm = model_cfg.synthesize_llm_config()
         for pool_cfg in app_config.pools.values():
-            pool_cfg.llm = default_llm
             if pool_cfg.memory is not None:
                 pool_cfg.memory.session.max_context_tokens = model_cfg.max_context_tokens
 
@@ -278,48 +283,98 @@ class BotService(AgentBuilderMixin):
             data_dir=self.config_dir.parent / self._app_config.paths.data_dir_name
         )
 
-        # 1.1 Warn if LLM credentials are missing — the service can still start,
-        # but chat will fail until the user runs ``modexbot config``.
-        # Delegates to LLMConfig.missing_required_fields() so the check lives
-        # in the config model, not duplicated here.
-        default_pool_cfg = self._app_config.pools.get(self._app_config.multi_agent.default_pool)
-        if default_pool_cfg is not None:
-            missing_llm = default_pool_cfg.llm.missing_required_fields()
-            if missing_llm:
-                print(
-                    f"[WARNING] LLM config incomplete: {', '.join(missing_llm)}. "
-                    "Run 'modexbot config' to set them. Chat will fail until configured."
+        # Shared MCP connection registry (ADR-0017 Task 5a). Service-scoped,
+        # concurrent, dedup-by-config-hash. When the sharedRegistry flag is on
+        # (default), all pools/agents/workspaces share one subprocess per
+        # configured server and switching/first-open of workspaces is free.
+        # start_connecting fires all supervisors now so connections are READY
+        # by the time the home workspace's pools build (which call
+        # _load_agent_mcp_tools → registry.acquire and find them instantly).
+        # Set ``sharedRegistry: false`` in config/mcp/registry.json to disable
+        # and fall back to today's per-pool MCPClientManager path.
+        from bot.config.mcp_registry import read_registry, read_shared_registry_flag
+        from modex_agent.ioc.configs.app import _resolve_env_in
+        from modex_agent.tools.mcp.injector import JsonFileMCPTransportInjector
+        from modex_agent.tools.mcp.registry import McpConnectionRegistry
+
+        mcp_registry_path = self._project_dir / "config" / "mcp" / "registry.json"
+        if read_shared_registry_flag(mcp_registry_path):
+            raw_servers = read_registry(mcp_registry_path)
+            if raw_servers:
+                # ${ENV} interpolation MUST happen before the registry hashes
+                # and connects, else tokens like ${MY_TOKEN} reach the
+                # subprocess literally.
+                servers = _resolve_env_in(raw_servers)
+                self._mcp_registry = McpConnectionRegistry(
+                    servers=servers,
+                    injector=JsonFileMCPTransportInjector(),
                 )
-
-        # 1.5 Build the default LLM provider + the workspace stack.
-        # Branch on workspace.enabled: False -> single-home stack (no /cd);
-        # True -> full multi-live stack.
-        self._model_choice_registry = ModelChoiceRegistry()
-        self._default_provider = self._build_default_provider()
-        self.control_channel = self._build_control_channel()
-        self.command_processor = self._build_main_command_processor()
-        self.plugin_integration = PluginIntegration(config={"enabled": False})
-        if self._app_config.workspace.enabled:
-            self.workspace_stack = build_workspace_stack(
-                self, data_dir_name=self._app_config.paths.data_dir_name
-            )
+                self._mcp_registry.start_connecting(list(servers.keys()))
+                print(
+                    f"[OK] Shared MCP registry: {len(servers)} server(s) connecting concurrently"
+                )
+            else:
+                self._mcp_registry = None
         else:
-            self.workspace_stack = build_single_workspace_stack(
-                self, data_dir_name=self._app_config.paths.data_dir_name
+            self._mcp_registry = None
+
+        # The shared MCP registry (if started above) spawned long-lived
+        # supervisor tasks holding real MCP subprocesses. If any later step of
+        # initialize() raises, those supervisors would leak until process exit.
+        # Guard the post-start_connecting tail so the registry is shut down
+        # (subprocesses closed in-task) before the exception propagates.
+        try:
+            # 1.1 Warn if LLM credentials are missing — the service can still
+            # start, but chat will fail until the user runs ``modexbot config``.
+            # Delegates to the backend model config so the check lives with the
+            # real source of truth (BotModelConfig), not the pool config.
+            if self._bot_model_config is not None:
+                default_resolved = self._bot_model_config.default_resolved()
+                missing_llm: list[str] = []
+                if not default_resolved.provider.api_key:
+                    missing_llm.append("api_key")
+                if not default_resolved.provider.url:
+                    missing_llm.append("url")
+                if missing_llm:
+                    print(
+                        f"[WARNING] LLM config incomplete: {', '.join(missing_llm)}. "
+                        "Run 'modexbot config' to set them. Chat will fail until configured."
+                    )
+
+            # 1.5 Build the default LLM provider + the workspace stack.
+            # Branch on workspace.enabled: False -> single-home stack (no /cd);
+            # True -> full multi-live stack.
+            self._model_choice_registry = ModelChoiceRegistry()
+            self._default_provider = self._build_default_provider()
+            self.control_channel = self._build_control_channel()
+            self.command_processor = self._build_main_command_processor()
+            self.plugin_integration = PluginIntegration(config={"enabled": False})
+            if self._app_config.workspace.enabled:
+                self.workspace_stack = build_workspace_stack(
+                    self, data_dir_name=self._app_config.paths.data_dir_name
+                )
+            else:
+                self.workspace_stack = build_single_workspace_stack(
+                    self, data_dir_name=self._app_config.paths.data_dir_name
+                )
+            self.workspace_context = self.workspace_stack.controller
+
+            # Eagerly materialize the HOME workspace so its pools/router are live
+            # for BotService.start/stop (v1 = home-only materialization). The
+            # dispatcher lazily materializes other workspaces on first turn.
+            self._home_resources = await self.workspace_stack.registry.materialize(
+                self.workspace_stack.registry.home_context
             )
-        self.workspace_context = self.workspace_stack.controller
+            self._pools = self._home_resources.pools
+            self.pool_router = self._home_resources.pool_router
+            self._print_pool_info()
 
-        # Eagerly materialize the HOME workspace so its pools/router are live
-        # for BotService.start/stop (v1 = home-only materialization). The
-        # dispatcher lazily materializes other workspaces on first turn.
-        self._home_resources = await self.workspace_stack.registry.materialize(
-            self.workspace_stack.registry.home_context
-        )
-        self._pools = self._home_resources.pools
-        self.pool_router = self._home_resources.pool_router
-        self._print_pool_info()
-
-        print("=" * 60)
+            print("=" * 60)
+        except BaseException:
+            if self._mcp_registry is not None:
+                with contextlib.suppress(BaseException):
+                    await self._mcp_registry.shutdown()
+            raise
 
     def _print_pool_info(self) -> None:
         """Display pool configuration summary."""
@@ -557,5 +612,13 @@ class BotService(AgentBuilderMixin):
         if self.workspace_stack is not None:
             with contextlib.suppress(BaseException):
                 await self.workspace_stack.registry.evict_all()
+        # Shut down the shared MCP registry AFTER evicting workspaces: evict_all
+        # calls _stop_resources → McpBackend.release() per pool, which on the
+        # shared path only DETACHES the facade (real connections are shared and
+        # service-scoped). The registry then closes the actual subprocesses.
+        # Order matters: release facades first, then close the real connections.
+        if self._mcp_registry is not None:
+            with contextlib.suppress(BaseException):
+                await self._mcp_registry.shutdown()
         with contextlib.suppress(BaseException):
             await self.input_adapter.stop()

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { getMcp, upsertMcp, deleteMcp, McpInUseError } from "./mcpApi";
+import { getMcp, upsertMcp, deleteMcp } from "./mcpApi";
 import type { McpServerEntry } from "../types/pool";
 
 function makeResponse(
@@ -100,33 +100,5 @@ describe("mcpApi", () => {
     const [url, init] = call(fetchMock, 0);
     expect(url).toBe("/api/mcp/fs");
     expect(init?.method).toBe("DELETE");
-  });
-
-  it("deleteMcp throws McpInUseError carrying used_by on 409", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(() =>
-        Promise.resolve(
-          makeResponse(409, {
-            error: "in use",
-            used_by: [
-              ["default", "main"],
-              ["other", "helper"],
-            ],
-          }),
-        ),
-      ),
-    );
-    await expect(deleteMcp("fs")).rejects.toMatchObject({ name: "McpInUseError" });
-    try {
-      await deleteMcp("fs");
-    } catch (e) {
-      const err = e as McpInUseError;
-      expect(err.usedBy).toEqual([
-        ["default", "main"],
-        ["other", "helper"],
-      ]);
-      expect(err.status).toBe(409);
-    }
   });
 });

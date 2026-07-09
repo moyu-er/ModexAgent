@@ -6,6 +6,15 @@ import pytest
 from bot.adapters.channels import AdapterBuildContext
 from bot.adapters.register_telegram import _telegram_enabled, build_telegram
 
+try:
+    import telegram.ext  # noqa: F401
+except ModuleNotFoundError:
+    _TG_AVAILABLE = False
+else:
+    _TG_AVAILABLE = True
+
+_tg_required = pytest.mark.skipif(not _TG_AVAILABLE, reason="python-telegram-bot not installed")
+
 
 def _ctx(raw: dict[str, object]) -> AdapterBuildContext:
     return AdapterBuildContext(
@@ -97,6 +106,7 @@ class _FakeBuilder:
         return self._app
 
 
+@_tg_required
 def test_build_returns_triple_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_app = _FakeApp()
     fake_app.updater = _FakeUpdater()
@@ -136,6 +146,7 @@ def test_build_returns_triple_when_enabled(monkeypatch: pytest.MonkeyPatch) -> N
     assert emitter is not None
 
 
+@_tg_required
 def test_build_sets_lifecycle_hooks_on_input(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_app = _FakeApp()
     fake_app.updater = _FakeUpdater()

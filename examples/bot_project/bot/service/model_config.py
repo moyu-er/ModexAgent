@@ -144,7 +144,7 @@ class BotModelConfig(BaseModel):
         return [(p.name, m.name) for p in self.providers for m in p.models]
 
     def synthesize_llm_config(self, resolved: ResolvedModel | None = None) -> LLMConfig:
-        """用某个模型合成框架 LLMConfig（供 AppConfig 后处理回填 pool_cfg.llm）。"""
+        """用某个模型合成框架 LLMConfig（供运行时构建 LLMProvider 使用）。"""
         r = resolved or self.default_resolved()
         return LLMConfig(
             model=_routing_model(r.model.model),

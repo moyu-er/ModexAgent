@@ -3,11 +3,16 @@ import { Background } from "../components/Background";
 import { Kicker, useRiseIn } from "../components/primitives";
 import { C, MONO, SORA } from "../theme";
 
-const SATS: { x: number; y: number; label: string }[] = [
-  { x: 150, y: 70, label: "Office" },
-  { x: 300, y: 200, label: "Query" },
-  { x: 150, y: 330, label: "Helper" },
-  { x: 0, y: 200, label: "Custom" },
+// Generic pluggable nodes around the orchestrator. No fabricated agent names —
+// pools are user-defined and configured in the WebUI. Laid out on a circle of
+// radius 120 around (180,180), node r=28, all within the 360x360 viewBox with
+// safe margins so nothing is clipped at the left/right edges.
+const SATS: { x: number; y: number }[] = [
+  { x: 180, y: 60 },
+  { x: 294, y: 143 },
+  { x: 250, y: 277 },
+  { x: 110, y: 277 },
+  { x: 66, y: 143 },
 ];
 const MEM = [
   { name: "Session", caption: "per-conversation" },
@@ -50,49 +55,77 @@ export const StarMemory: React.FC = () => {
 
         <div style={{ display: "flex", gap: 60, width: "100%", maxWidth: 1400, alignItems: "center" }}>
           {/* star topology */}
-          <div style={{ flex: 1, display: "flex", justifyContent: "center" }}>
-            <svg viewBox="0 0 300 400" width={420} height={560}>
+          <div
+            style={{
+              flex: 1,
+              display: "flex",
+              flexDirection: "column",
+              justifyContent: "center",
+              alignItems: "center",
+              gap: 20,
+            }}
+          >
+            <svg viewBox="0 0 360 360" width={440} height={440}>
               {/* edges */}
-              {SATS.map((s) => (
-                <line
-                  key={s.label}
-                  x1={150}
-                  y1={200}
-                  x2={s.x}
-                  y2={s.y}
-                  stroke={C.accent}
-                  strokeWidth={2}
-                  strokeDasharray="6 6"
-                  opacity={0.5}
-                />
-              ))}
-              {/* satellites */}
               {SATS.map((s, i) => {
-                const pulse = interpolate(Math.sin(frame / 20 + i * 1.6), [-1, 1], [0.6, 1]);
+                const draw = interpolate(frame, [6 + i * 3, 22 + i * 3], [0, 1], {
+                  extrapolateLeft: "clamp",
+                  extrapolateRight: "clamp",
+                });
                 return (
-                  <g key={s.label} opacity={pulse}>
-                    <circle cx={s.x} cy={s.y} r={22} fill={C.surfaceRaised} stroke={C.accent} strokeWidth={2} />
-                    <text
-                      x={s.x}
-                      y={s.y + 6}
-                      textAnchor="middle"
-                      fontFamily="monospace"
-                      fontSize={15}
-                      fill={C.fg}
-                    >
-                      {s.label}
-                    </text>
+                  <line
+                    key={`e${i}`}
+                    x1={180}
+                    y1={180}
+                    x2={s.x}
+                    y2={s.y}
+                    stroke={C.accent}
+                    strokeWidth={2}
+                    strokeDasharray="6 7"
+                    opacity={0.5 * draw}
+                  />
+                );
+              })}
+              {/* generic pluggable sub-agent nodes (no fabricated names) */}
+              {SATS.map((s, i) => {
+                const pulse = interpolate(Math.sin(frame / 20 + i * 1.6), [-1, 1], [0.55, 1]);
+                const appear = interpolate(frame, [6 + i * 3, 22 + i * 3], [0, 1], {
+                  extrapolateLeft: "clamp",
+                  extrapolateRight: "clamp",
+                });
+                return (
+                  <g key={`s${i}`} opacity={appear}>
+                    <circle
+                      cx={s.x}
+                      cy={s.y}
+                      r={28}
+                      fill={C.surfaceRaised}
+                      stroke={C.accent}
+                      strokeWidth={2}
+                      opacity={pulse}
+                    />
+                    <circle cx={s.x} cy={s.y} r={6} fill={C.accent} />
                   </g>
                 );
               })}
-              {/* center main */}
-              <circle cx={150} cy={200} r={40} fill={C.accent} />
-              <circle cx={150} cy={200} r={40} fill="none" stroke={C.accent} strokeWidth={2} opacity={0.4}>
-              </circle>
-              <text x={150} y={206} textAnchor="middle" fontFamily="monospace" fontWeight={700} fontSize={20} fill={C.bg}>
+              {/* center orchestrator */}
+              <circle cx={180} cy={180} r={44} fill={C.accent} />
+              <circle cx={180} cy={180} r={44} fill="none" stroke={C.accent} strokeWidth={2} opacity={0.4} />
+              <text
+                x={180}
+                y={188}
+                textAnchor="middle"
+                fontFamily="monospace"
+                fontWeight={700}
+                fontSize={22}
+                fill={C.bg}
+              >
                 Main
               </text>
             </svg>
+            <div style={{ fontFamily: MONO, fontSize: 20, color: C.muted, textAlign: "center", maxWidth: 440 }}>
+              pluggable sub-agents · configured per pool in WebUI
+            </div>
           </div>
 
           {/* memory stack */}

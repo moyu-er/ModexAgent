@@ -1,21 +1,16 @@
 // Global MCP registry editor. Loads getMcp() on mount → list of server cards.
-// Add/edit/delete entries; Save per-card via upsertMcp; Delete via deleteMcp
-// (surfaces the used_by conflict list on 409). MCP writes always imply a
-// restart, so successful save/delete shows a "Saved. Restart to apply." toast.
+// Add/edit/delete entries; Save per-card via upsertMcp; Delete via deleteMcp.
+// MCP writes always imply a restart, so successful save/delete shows a
+// "Saved. Restart to apply." toast.
 //
 // Each card is collapsible (first card / newly-added cards start expanded).
 // Header row carries name, transport · command|URL summary, save link, trash
 // icon, and a chevron that rotates by `open`. The body uses the standard
-// form primitives (Input / Select / Textarea / HelperText).
+// form primitives (Input / Select / Textarea).
 
 import { useEffect, useRef, useState } from "react";
 import type { McpServerEntry, McpTransport } from "../../types/pool";
-import {
-  getMcp,
-  upsertMcp,
-  deleteMcp,
-  McpInUseError,
-} from "../../lib/mcpApi";
+import { getMcp, upsertMcp, deleteMcp } from "../../lib/mcpApi";
 import { ApiError } from "../../lib/api";
 import { useToast } from "../ToastContext";
 import { restartToast } from "./restartToast";
@@ -25,9 +20,10 @@ import { Input } from "../ui/Input";
 import { Select } from "../ui/Select";
 import { Textarea } from "../ui/Textarea";
 import { KeyValueEditor } from "../ui/KeyValueEditor";
-import { HelperText } from "../ui/HelperText";
 import { IconButton } from "../ui/IconButton";
-import { ChevronDownIcon, TrashIcon } from "../ui/icons";
+import { Trash2 } from "lucide-react";
+import { ChevronDownIcon } from "../ui/icons";
+import { CATEGORY } from "./categoryMeta";
 
 const TRANSPORTS: McpTransport[] = ["stdio", "sse", "streamableHttp"];
 const TRANSPORT_OPTIONS = [
@@ -43,8 +39,6 @@ interface CardState {
   /** Currently-edited name. */
   name: string;
   entry: McpServerEntry;
-  /** Conflict list surfaced when delete hits 409. */
-  conflict?: Array<[string, string]>;
 }
 
 const emptyEntry = (): McpServerEntry => ({
@@ -152,7 +146,7 @@ export function GlobalMcpView() {
         await deleteMcp(card.originalName!);
       }
       await upsertMcp(name, card.entry);
-      update(i, { originalName: name, name, conflict: undefined });
+      update(i, { originalName: name, name });
       restartToast(toast);
     } catch (e) {
       // If the delete succeeded but the upsert failed, the old config is gone.
@@ -161,16 +155,7 @@ export function GlobalMcpView() {
       if (renamed) {
         update(i, { name: card.originalName! });
       }
-      if (e instanceof McpInUseError) {
-        const where = e.usedBy.map(([p, a]) => `${p}/${a}`).join(", ");
-        update(i, { conflict: e.usedBy });
-        toast.show({
-          message: `Rename blocked — "${card.originalName}" in use by ${where}. Unassign first.`,
-          tone: "warning",
-        });
-      } else {
-        toast.show({ message: `Save failed: ${errDetail(e)}`, tone: "warning" });
-      }
+      toast.show({ message: `Save failed: ${errDetail(e)}`, tone: "warning" });
     }
   };
 
@@ -190,24 +175,31 @@ export function GlobalMcpView() {
       // and keeps every restart surface identical).
       restartToast(toast);
     } catch (e) {
-      if (e instanceof McpInUseError) {
-        const where = e.usedBy.map(([p, a]) => `${p}/${a}`).join(", ");
-        update(i, { conflict: e.usedBy });
-        toast.show({
-          message: `In use by ${where}. Unassign first.`,
-          tone: "warning",
-        });
-      } else {
-        toast.show({
-          message: `Delete failed: ${errDetail(e)}`,
-          tone: "warning",
-        });
-      }
+      toast.show({
+        message: `Delete failed: ${errDetail(e)}`,
+        tone: "warning",
+      });
     }
   };
 
+  const meta = CATEGORY.mcp;
+  const PageHeadIcon = meta.icon;
+
   return (
     <div className="space-y-4">
+      <div className="page-head">
+        <span
+          className="page-head-icon"
+          style={{ ["--cat" as string]: meta.catVar }}
+        >
+          <PageHeadIcon size={18} />
+        </span>
+        <div>
+          <div className="page-title">{meta.title}</div>
+          <div className="page-sub">{meta.sub}</div>
+        </div>
+      </div>
+
       <div className="flex items-center justify-between">
         <p className="text-xs text-mute">
           MCP servers available to every pool's agents.
@@ -311,7 +303,7 @@ function McpCard({
           </Button>
           <IconButton
             label="Delete server"
-            icon={<TrashIcon />}
+            icon={<Trash2 size={16} />}
             variant="ghost"
             size="sm"
             onClick={(ev) => {
@@ -406,16 +398,6 @@ function McpCard({
             value={e.timeout ?? 30}
             onChange={(ev) => setEntry({ timeout: Number(ev.target.value) })}
           />
-
-          {card.conflict && card.conflict.length > 0 && (
-            <div className="sm:col-span-2">
-              <HelperText className="text-warning">
-                In use by{" "}
-                {card.conflict.map(([p, a]) => `${p}/${a}`).join(", ")}. Unassign
-                from those agents before deleting.
-              </HelperText>
-            </div>
-          )}
         </div>
       )}
     </Card>

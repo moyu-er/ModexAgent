@@ -12,7 +12,12 @@ import { useToast } from "../ToastContext";
 import { restartToast } from "./restartToast";
 import { Button } from "../ui/Button";
 import { ActionBar } from "../ui/ActionBar";
-import { ChevronLeftIcon } from "../ui/icons";
+import { ChevronLeft } from "lucide-react";
+import { CATEGORY, type ViewKey } from "./categoryMeta";
+
+// Re-export so any existing `import { ViewKey } from "./SettingsView"` keeps
+// resolving; categoryMeta.ts is now the canonical declaration.
+export type { ViewKey };
 
 interface Props {
   onExit: () => void;
@@ -21,8 +26,6 @@ interface Props {
 // Sidebar groups. The Configuration group holds the persisted-config domains
 // (IM/Models) that share the dirty/save footer. The "Pools & Agents" group
 // holds the new standalone views (each owns its own persistence + toasts).
-type ViewKey = "im" | "model" | "pools" | "mcp" | "skills";
-
 interface NavEntry {
   key: ViewKey;
   label: string;
@@ -179,7 +182,7 @@ export function SettingsView({ onExit }: Props) {
           onClick={onExit}
           className="mb-5 w-full justify-start gap-2 px-3 text-sm font-medium text-ink hover:bg-hairline-soft"
         >
-          <ChevronLeftIcon className="h-4 w-4" />
+          <ChevronLeft className="h-4 w-4" />
           Back
         </Button>
         <div className="space-y-4">
@@ -271,23 +274,25 @@ function SidebarGroup({
         {title}
       </h2>
       <ul className="mt-1.5 space-y-0.5">
-        {entries.map((e) => (
-          <li key={e.key}>
-            <button
-              type="button"
-              className={[
-                "w-full rounded-sm px-2.5 py-1.5 text-left text-sm transition-colors",
-                "flex items-center gap-2",
-                e.key === active
-                  ? "bg-hairline-soft font-semibold text-ink border-l-2 border-link"
-                  : "text-body border-l-2 border-transparent hover:bg-hairline-soft",
-              ].join(" ")}
-              onClick={() => onSelect(e.key)}
-            >
-              {e.label}
-            </button>
-          </li>
-        ))}
+        {entries.map((e) => {
+          const meta = CATEGORY[e.key];
+          const Icon = meta.icon;
+          return (
+            <li key={e.key}>
+              <button
+                type="button"
+                className={`nav-item${e.key === active ? " active" : ""}`}
+                style={{ ["--cat" as string]: meta.catVar }}
+                onClick={() => onSelect(e.key)}
+              >
+                <span className="category-chip">
+                  <Icon size={14} />
+                </span>
+                {e.label}
+              </button>
+            </li>
+          );
+        })}
       </ul>
     </div>
   );

@@ -14,7 +14,7 @@ Pure factory functions that consume Pydantic config objects from `modex_agent/io
 | `agent.py` | `create_agent(cfg, default_llm_provider, default_safety)` — creates a `ReActAgent` from `AgentConfig` with LLM inheritance logic |
 | `llm.py` | `create_llm_provider(config, safety)` — creates `LiteLLMProvider` or `OpenAIProvider` based on model name prefix; wraps safety config into `RuntimeSafetyPolicy` |
 | `memory.py` | `create_memory(cfg, llm_provider, workspace)` — creates `DefaultMemorySystem` from `MemoryConfig`, converting Pydantic config to `MemoryLayerConfigSet` |
-| `tools.py` | `connect_mcp(mcp_config)` — connects to MCP servers; `register_mcp_tools(adapter, tool_manager)` — registers MCP tools; `create_tool_manager(tools)` — creates pre-populated `InMemoryToolManager` |
+| `tools.py` | `connect_mcp(mcp_config, *, registry=None)` — connects to MCP servers (optional `registry` = ADR-0017 shared-connection overlay; when set, wraps a `SharedMcpBackend` from `registry.acquire` instead of a private `MCPClientManager`); `register_mcp_tools(adapter, tool_manager)` — registers MCP tools; `create_tool_manager(tools)` — creates pre-populated `InMemoryToolManager` |
 | `governance.py` | `create_governance(cfg, ...)` — builds `CompositeGovernance` chain (lossy compaction → tool chain repair → final legality); `create_subagent_governance(cfg, ...)` — lightweight governance (no compaction) |
 | `descriptors.py` | `build_subagent_descriptor(...)` — builds `AgentDescriptor` + tool_manager + skill_manager for subagents from `AppConfig`; contains standard tool builders (file, shell, search tools) |
 | `__init__.py` | Re-exports all factory functions from sub-modules |

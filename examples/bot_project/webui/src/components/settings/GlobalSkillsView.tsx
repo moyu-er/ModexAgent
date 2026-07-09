@@ -21,7 +21,9 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
 import { IconButton } from "../ui/IconButton";
-import { TrashIcon, UploadIcon } from "../ui/icons";
+import { Trash2 } from "lucide-react";
+import { UploadIcon } from "../ui/icons";
+import { CATEGORY } from "./categoryMeta";
 
 interface Preview {
   name: string;
@@ -141,8 +143,24 @@ export function GlobalSkillsView() {
     }
   };
 
+  const meta = CATEGORY.skills;
+  const PageHeadIcon = meta.icon;
+
   return (
     <div className="space-y-4">
+      <div className="page-head">
+        <span
+          className="page-head-icon"
+          style={{ ["--cat" as string]: meta.catVar }}
+        >
+          <PageHeadIcon size={18} />
+        </span>
+        <div>
+          <div className="page-title">{meta.title}</div>
+          <div className="page-sub">{meta.sub}</div>
+        </div>
+      </div>
+
       <p className="text-xs text-mute">
         Skills available to every pool's agents.
       </p>
@@ -317,7 +335,7 @@ export function GlobalSkillsView() {
                         <div className="flex shrink-0 items-center gap-2">
                           {s.origin === "repo" && (
                             <IconButton
-                              icon={<TrashIcon />}
+                              icon={<Trash2 size={16} />}
                               label={`Delete skill ${s.name}`}
                               variant="danger"
                               size="sm"

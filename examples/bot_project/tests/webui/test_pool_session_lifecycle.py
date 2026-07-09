@@ -56,13 +56,13 @@ def _make_server(
     )
     server.set_workspace_index(store)
     server.set_data_dir_name(".modex")
-    server.set_pool_agent_names(["main", "coding"])
+    server.set_pool_agent_names(["default", "coding"])
     server.set_agent_pool_map(mapping)
     server.set_agent_resolver(lambda pool_name: mapping.get(pool_name, pool_name))
     # Inject session store + factory so POST /api/sessions auto-saves.
     session_store = WorkspacePoolSessionStore(
         base_dir=data_dir,
-        pool_resolver=lambda s: mapping.get(s.agent_name, "main"),
+        pool_resolver=lambda s: mapping.get(s.agent_name, "default"),
     )
     server.set_session_store(session_store)
     server.set_session_factory(SessionIdFactory())
@@ -114,7 +114,7 @@ async def test_pool_filter_hides_and_shows_sessions() -> None:
     try:
         # Write transcripts directly (no session store entries — test transcript fallback).
         await _simulate_qa_turn(server._store, "conv1", "coding", "hi", "hello", data_dir)
-        await _simulate_qa_turn(server._store, "conv2", "main", "hi", "hello", data_dir)
+        await _simulate_qa_turn(server._store, "conv2", "default", "hi", "hello", data_dir)
 
         # Without pool filter, both sessions visible.
         resp = await client.get("/api/sessions")
@@ -122,7 +122,7 @@ async def test_pool_filter_hides_and_shows_sessions() -> None:
         sessions = await resp.json()
         sids = {s["session_id"] for s in sessions}
         assert "conv1.coding" in sids
-        assert "conv2.main" in sids
+        assert "conv2.default" in sids
 
         # Filter to coding pool.
         resp = await client.get("/api/sessions?pool=coding")
@@ -130,15 +130,14 @@ async def test_pool_filter_hides_and_shows_sessions() -> None:
         sessions = await resp.json()
         sids = {s["session_id"] for s in sessions}
         assert "conv1.coding" in sids
-        assert "conv2.main" not in sids
+        assert "conv2.default" not in sids
 
-        # Filter to main pool.
-        resp = await client.get("/api/sessions?pool=main")
+        resp = await client.get("/api/sessions?pool=default")
         assert resp.status == 200
         sessions = await resp.json()
         sids = {s["session_id"] for s in sessions}
         assert "conv1.coding" not in sids
-        assert "conv2.main" in sids
+        assert "conv2.default" in sids
     finally:
         await client.close()
 
@@ -160,27 +159,27 @@ async def test_workspace_switch_hides_and_shows_sessions() -> None:
     client = TestClient(TestServer(server.app))
     await client.start_server()
     try:
-        resp = await client.post("/api/sessions", json={"pool": "main"})
+        resp = await client.post("/api/sessions", json={"pool": "default"})
         assert resp.status == 200
         session_a = await resp.json()
         sid_a: str = session_a["session_id"]
         conv_a = sid_a.split(".")[0]
-        await _simulate_qa_turn(server._store, conv_a, "main", "hi A", "hello A", data_dir_a)
+        await _simulate_qa_turn(server._store, conv_a, "default", "hi A", "hello A", data_dir_a)
 
         # Verify workspace A transcript exists
-        assert (data_dir_a / ".modex" / "sessions" / "main" / f"{sid_a}.jsonl").exists()
+        assert (data_dir_a / ".modex" / "sessions" / "default" / f"{sid_a}.jsonl").exists()
 
         # Switch to workspace B (route this turn's writes to data_dir_b).
-        resp = await client.post("/api/sessions", json={"pool": "main"})
+        resp = await client.post("/api/sessions", json={"pool": "default"})
         assert resp.status == 200
         session_b = await resp.json()
         sid_b: str = session_b["session_id"]
         conv_b = sid_b.split(".")[0]
-        await _simulate_qa_turn(server._store, conv_b, "main", "hi B", "hello B", data_dir_b)
+        await _simulate_qa_turn(server._store, conv_b, "default", "hi B", "hello B", data_dir_b)
 
         # Verify workspace B transcript exists and A's is not in B
-        assert (data_dir_b / ".modex" / "sessions" / "main" / f"{sid_b}.jsonl").exists()
-        assert not (data_dir_b / ".modex" / "sessions" / "main" / f"{sid_a}.jsonl").exists()
+        assert (data_dir_b / ".modex" / "sessions" / "default" / f"{sid_b}.jsonl").exists()
+        assert not (data_dir_b / ".modex" / "sessions" / "default" / f"{sid_a}.jsonl").exists()
     finally:
         await client.close()
 
@@ -209,18 +208,18 @@ async def test_pool_and_workspace_filter_combined() -> None:
         await _simulate_qa_turn(server._store, conv_a, "coding", "hi", "hello", data_dir_a)
 
         # Switch to workspace B (route this turn's writes to data_dir_b).
-        resp = await client.post("/api/sessions", json={"pool": "main"})
+        resp = await client.post("/api/sessions", json={"pool": "default"})
         assert resp.status == 200
         main_b = await resp.json()
         sid_b: str = main_b["session_id"]
         conv_b = sid_b.split(".")[0]
-        await _simulate_qa_turn(server._store, conv_b, "main", "hi", "hello", data_dir_b)
+        await _simulate_qa_turn(server._store, conv_b, "default", "hi", "hello", data_dir_b)
 
         # Verify physical isolation: each session is in its workspace dir
         assert (data_dir_a / ".modex" / "sessions" / "coding" / f"{sid_a}.jsonl").exists()
         assert not (data_dir_b / ".modex" / "sessions" / "coding" / f"{sid_a}.jsonl").exists()
-        assert (data_dir_b / ".modex" / "sessions" / "main" / f"{sid_b}.jsonl").exists()
-        assert not (data_dir_a / ".modex" / "sessions" / "main" / f"{sid_b}.jsonl").exists()
+        assert (data_dir_b / ".modex" / "sessions" / "default" / f"{sid_b}.jsonl").exists()
+        assert not (data_dir_a / ".modex" / "sessions" / "default" / f"{sid_b}.jsonl").exists()
     finally:
         await client.close()
 
@@ -234,12 +233,12 @@ async def test_sessions_list_includes_updated_at() -> None:
     client = TestClient(TestServer(server.app))
     await client.start_server()
     try:
-        resp = await client.post("/api/sessions", json={"pool": "main"})
+        resp = await client.post("/api/sessions", json={"pool": "default"})
         assert resp.status == 200
         session = await resp.json()
         sid: str = session["session_id"]
         conv = sid.split(".")[0]
-        await _simulate_qa_turn(server._store, conv, "main", "hi", "hello", data_dir)
+        await _simulate_qa_turn(server._store, conv, "default", "hi", "hello", data_dir)
 
         resp = await client.get("/api/sessions")
         assert resp.status == 200

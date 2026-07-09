@@ -61,13 +61,13 @@ def _make_server(
     )
     server.set_workspace_index(store)
     server.set_data_dir_name(".modex")
-    server.set_pool_agent_names(["main", "coding"])
+    server.set_pool_agent_names(["default", "coding"])
     server.set_agent_pool_map(mapping)
     server.set_agent_resolver(lambda pool_name: mapping.get(pool_name, pool_name))
     # Inject session store + factory so POST /api/sessions auto-saves.
     session_store = WorkspacePoolSessionStore(
         base_dir=data_dir,
-        pool_resolver=lambda s: mapping.get(s.agent_name, "main"),
+        pool_resolver=lambda s: mapping.get(s.agent_name, "default"),
     )
     server.set_session_store(session_store)
     server.set_session_factory(SessionIdFactory())
@@ -127,31 +127,31 @@ async def test_sessions_filter_by_workspace() -> None:
     try:
         # Writes route by the bound workspace root (ctxvar), not a resolver.
         await _simulate_qa_turn(
-            server2._store, "conv-a", "main", "hi A", "hello A", root=ws_a
+            server2._store, "conv-a", "default", "hi A", "hello A", root=ws_a
         )
         await _simulate_qa_turn(
-            server2._store, "conv-b", "main", "hi B", "hello B", root=ws_b
+            server2._store, "conv-b", "default", "hi B", "hello B", root=ws_b
         )
 
         # Verify physical layout
-        assert (ws_a / ".modex" / "sessions" / "main" / "conv-a.main.jsonl").exists()
-        assert (ws_b / ".modex" / "sessions" / "main" / "conv-b.main.jsonl").exists()
+        assert (ws_a / ".modex" / "sessions" / "default" / "conv-a.default.jsonl").exists()
+        assert (ws_b / ".modex" / "sessions" / "default" / "conv-b.default.jsonl").exists()
 
         # Query workspace A
         resp = await client2.get("/api/sessions", params={"ws": str(ws_a)})
         assert resp.status == 200
         sessions = await resp.json()
         sids = {s["session_id"] for s in sessions}
-        assert "conv-a.main" in sids, f"Expected conv-a.main in {sids}"
-        assert "conv-b.main" not in sids, f"Expected conv-b.main NOT in {sids}"
+        assert "conv-a.default" in sids, f"Expected conv-a.default in {sids}"
+        assert "conv-b.default" not in sids, f"Expected conv-b.default NOT in {sids}"
 
         # Query workspace B
         resp = await client2.get("/api/sessions", params={"ws": str(ws_b)})
         assert resp.status == 200
         sessions = await resp.json()
         sids = {s["session_id"] for s in sessions}
-        assert "conv-a.main" not in sids, f"Expected conv-a.main NOT in {sids}"
-        assert "conv-b.main" in sids, f"Expected conv-b.main in {sids}"
+        assert "conv-a.default" not in sids, f"Expected conv-a.default NOT in {sids}"
+        assert "conv-b.default" in sids, f"Expected conv-b.default in {sids}"
 
         # Query without ws parameter (should default to home)
         resp = await client2.get("/api/sessions")
@@ -159,8 +159,8 @@ async def test_sessions_filter_by_workspace() -> None:
         sessions = await resp.json()
         sids = {s["session_id"] for s in sessions}
         # Both should be absent because home data_dir has no transcripts
-        assert "conv-a.main" not in sids
-        assert "conv-b.main" not in sids
+        assert "conv-a.default" not in sids
+        assert "conv-b.default" not in sids
     finally:
         await client2.close()
 
@@ -190,7 +190,7 @@ async def test_sessions_filter_by_workspace_with_relative_path() -> None:
         store_sub = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
         store_sub.set_agent_pool_map(_real_agent_pool_map())
         await _simulate_qa_turn(
-            store_sub, "conv-sub", "main", "hi sub", "hello sub", root=sub
+            store_sub, "conv-sub", "default", "hi sub", "hello sub", root=sub
         )
 
         # Query with relative path "sub" should resolve to home/sub
@@ -198,6 +198,6 @@ async def test_sessions_filter_by_workspace_with_relative_path() -> None:
         assert resp.status == 200
         sessions = await resp.json()
         sids = {s["session_id"] for s in sessions}
-        assert "conv-sub.main" in sids, f"Expected conv-sub.main in {sids}"
+        assert "conv-sub.default" in sids, f"Expected conv-sub.default in {sids}"
     finally:
         await client.close()

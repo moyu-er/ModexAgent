@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
 from bot.service.core import BotService
+from bot.service.model_config import BotModelConfig
 
 from modex_agent.ioc.configs.app import AppConfig
 
@@ -46,13 +47,16 @@ def test_load_app_config_injects_default_llm_and_max_context(tmp_path: Path) -> 
     app_cfg = svc._load_app_config()
     assert isinstance(app_cfg, AppConfig)
     pool = app_cfg.pools["main"]
-    # 默认模型字段被注入
-    assert pool.llm.model == "openai/m1"
-    assert pool.llm.api_key == "KEY"
-    assert pool.llm.base_url == "https://u/v"
-    # max_context_tokens 注入 memory.session.max_context_tokens
+    # Model config is now owned by BotModelConfig, not PoolConfig.llm.
+    assert svc._bot_model_config is not None
+    assert isinstance(svc._bot_model_config, BotModelConfig)
+    resolved = svc._bot_model_config.default_resolved()
+    assert resolved.model.model == "openai/m1"
+    assert resolved.provider.api_key == "KEY"
+    assert resolved.provider.url == "https://u/v"
+    # max_context_tokens is injected into memory.session.max_context_tokens.
     assert pool.memory.session.max_context_tokens == 99999
-    # BotModelConfig 缓存
+    # BotModelConfig is cached.
     assert svc._bot_model_config.default_resolved().model.model == "openai/m1"
 
 
@@ -79,6 +83,5 @@ def test_pre_supplied_app_config_still_applies_bot_model_config(tmp_path: Path) 
     # No _load_app_config() call — __init__ must have applied the post-process.
     assert svc._bot_model_config is not None
     assert svc._bot_model_config.default_resolved().model.model == "openai/m1"
-    # The pre-supplied AppConfig's pools were mutated in place.
-    assert pre_loaded.pools["main"].llm.model == "openai/m1"
+    # The pre-supplied AppConfig's pools were mutated in place (max_context_tokens).
     assert pre_loaded.pools["main"].memory.session.max_context_tokens == 99999

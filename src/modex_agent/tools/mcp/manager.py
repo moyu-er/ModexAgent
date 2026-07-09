@@ -8,17 +8,15 @@ import logging
 from contextlib import AsyncExitStack, suppress
 from typing import Any
 
-from mcp import ClientSession
-
+from modex_agent.tools.mcp.backend import McpBackend
 from modex_agent.tools.mcp.client import (
     _DEFAULT_TOOL_TIMEOUT,
     _STDIO_POLLUTION_MARKERS,
-    _TRANSPORT_ALIASES,
     BaseMCPClient,
-    SSEMCPClient,
-    StdioMCPClient,
-    StreamableHttpMCPClient,
-    TransportType,
+)
+from modex_agent.tools.mcp.connection import (
+    MCPConnectionError,
+    connect_single_server,
 )
 from modex_agent.tools.mcp.injector import (
     JsonFileMCPTransportInjector,
@@ -34,13 +32,7 @@ _logger = logging.getLogger(__name__)
 _CONNECT_TIMEOUT: float = 20.0
 
 
-class MCPConnectionError(Exception):
-    """MCP connection error."""
-
-    pass
-
-
-class MCPClientManager:
+class MCPClientManager(McpBackend):
     """MCP client manager.
 
     Unified management of MCP connections, supporting:
@@ -123,36 +115,12 @@ class MCPClientManager:
         await server_stack.__aenter__()
 
         try:
-            # Normalize raw dict input: "environment" alias → "env"
-            if "environment" in server_config and "env" not in server_config:
-                server_config = {**server_config, "env": server_config["environment"]}
-
-            # Normalize "type" → "transport" (Claude mcp.json convention)
-            raw_type = server_config.get("type") or server_config.get("transport", "")
-            transport = raw_type.lower() if isinstance(raw_type, str) else ""
-
-            # "local" → stdio
-            if transport == "local":
-                transport = TransportType.STDIO
-
-            if not transport:
-                cmd = server_config.get("command")
-                if cmd and (isinstance(cmd, str) and cmd.strip() or isinstance(cmd, list) and cmd):
-                    transport = TransportType.STDIO
-                elif server_config.get("url"):
-                    url = server_config["url"]
-                    transport = (
-                        TransportType.SSE
-                        if url.rstrip("/").endswith("/sse")
-                        else TransportType.STREAMABLE_HTTP
-                    )
-                else:
-                    _logger.warning("[MCP:%s] No command or url configured, skipping", name)
-                    await server_stack.aclose()
-                    return name, None
-
-            transport = _TRANSPORT_ALIASES.get(transport, transport)
-            client = await self._create_client(name, transport, server_config, server_stack)
+            client = await connect_single_server(
+                name,
+                server_config,
+                injector=self._injector,
+                stack=server_stack,
+            )
 
             if client and client.session is not None:
                 self._server_stacks[name] = server_stack
@@ -167,6 +135,17 @@ class MCPClientManager:
             else:
                 await server_stack.aclose()
                 return name, None
+
+        except MCPConnectionError as e:
+            # Connect-level misconfiguration (no transport inferable, missing
+            # command/url, unknown transport). Today this is a skip + warning,
+            # not a hard failure — clean up the stack and continue.
+            # Log-level consolidation: config-level errors (MCPConnectionError)
+            # previously surfaced at ERROR via the BaseException branch below;
+            # they now warn uniformly at WARNING as skippable misconfiguration.
+            await self._safe_aclose(server_stack)
+            _logger.warning("[MCP:%s] %s, skipping", name, e)
+            return name, None
 
         except BaseException as e:
             # Connect failed OR was cancelled. ``except Exception`` alone is
@@ -228,157 +207,6 @@ class MCPClientManager:
         """
         with suppress(BaseException):
             await stack.aclose()
-
-    async def _create_client(
-        self,
-        name: str,
-        transport: str,
-        server_config: dict[str, Any],
-        server_stack: AsyncExitStack,
-    ) -> BaseMCPClient | None:
-        """Create MCP client based on transport type."""
-
-        if transport == TransportType.STDIO:
-            return await self._create_stdio_client(name, server_config, server_stack)
-        elif transport == TransportType.SSE:
-            return await self._create_sse_client(name, server_config, server_stack)
-        elif transport == TransportType.STREAMABLE_HTTP:
-            return await self._create_streamable_http_client(name, server_config, server_stack)
-        else:
-            raise MCPConnectionError(f"Unknown transport: {transport}")
-
-    async def _create_stdio_client(
-        self,
-        name: str,
-        server_config: dict[str, Any],
-        server_stack: AsyncExitStack,
-    ) -> BaseMCPClient:
-        """Create stdio MCP client."""
-        from mcp import StdioServerParameters
-        from mcp.client.stdio import stdio_client
-
-        raw_command = server_config.get("command")
-        if not raw_command:
-            raise MCPConnectionError("Command required for stdio transport")
-
-        # Support command as list: ["npx", "-y", "@playwright/mcp"]
-        # First element → command, rest → prepend to args
-        if isinstance(raw_command, list):
-            if not raw_command:
-                raise MCPConnectionError("Command list must not be empty")
-            command = str(raw_command[0])
-            extra_args = [str(a) for a in raw_command[1:]]
-            args = extra_args + server_config.get("args", [])
-        else:
-            command = str(raw_command)
-            args = server_config.get("args", [])
-
-        env = server_config.get("env", {})
-        env, _ = self._injector.apply(name, str(TransportType.STDIO), env, {})
-
-        params = StdioServerParameters(
-            command=command,
-            args=args or [],
-            env=env or None,
-        )
-
-        read, write = await server_stack.enter_async_context(stdio_client(params))
-        session = await server_stack.enter_async_context(ClientSession(read, write))
-        await session.initialize()
-
-        client = StdioMCPClient(name=name, command=command, args=args, env=env)
-        client.session = session
-        client._initialized = True
-        client._managed_externally = True
-        return client
-
-    async def _create_sse_client(
-        self,
-        name: str,
-        server_config: dict[str, Any],
-        server_stack: AsyncExitStack,
-    ) -> BaseMCPClient:
-        """Create SSE MCP client."""
-        import httpx
-        from mcp.client.sse import sse_client
-
-        url = server_config.get("url")
-        if not url:
-            raise MCPConnectionError("URL required for sse transport")
-
-        config_headers = server_config.get("headers", {})
-        _, config_headers = self._injector.apply(
-            name, str(TransportType.SSE), {}, config_headers
-        )
-
-        def httpx_client_factory(
-            headers: dict[str, str] | None = None,
-            timeout: httpx.Timeout | None = None,
-            auth: httpx.Auth | None = None,
-        ) -> httpx.AsyncClient:
-            merged_headers = {
-                "Accept": "application/json, text/event-stream",
-                **(config_headers or {}),
-                **(headers or {}),
-            }
-            return httpx.AsyncClient(
-                headers=merged_headers or None,
-                follow_redirects=True,
-                timeout=timeout,
-                auth=auth,
-            )
-
-        sse_transport = await server_stack.enter_async_context(
-            sse_client(url, httpx_client_factory=httpx_client_factory)
-        )
-        session = await server_stack.enter_async_context(
-            ClientSession(sse_transport[0], sse_transport[1])
-        )
-        await session.initialize()
-
-        client = SSEMCPClient(name=name, url=url, headers=config_headers)
-        client.session = session
-        client._initialized = True
-        client._managed_externally = True
-        return client
-
-    async def _create_streamable_http_client(
-        self,
-        name: str,
-        server_config: dict[str, Any],
-        server_stack: AsyncExitStack,
-    ) -> BaseMCPClient:
-        """Create Streamable HTTP MCP client."""
-        import httpx
-        from mcp.client.streamable_http import streamable_http_client
-
-        url = server_config.get("url")
-        if not url:
-            raise MCPConnectionError("URL required for http transport")
-
-        headers = server_config.get("headers", {})
-        _, headers = self._injector.apply(
-            name, str(TransportType.STREAMABLE_HTTP), {}, headers
-        )
-
-        http_client = await server_stack.enter_async_context(
-            httpx.AsyncClient(
-                headers=headers or None,
-                follow_redirects=True,
-                timeout=httpx.Timeout(connect=10.0, read=60.0, write=30.0, pool=5.0),
-            )
-        )
-        read, write, _ = await server_stack.enter_async_context(
-            streamable_http_client(url, http_client=http_client)
-        )
-        session = await server_stack.enter_async_context(ClientSession(read, write))
-        await session.initialize()
-
-        client = StreamableHttpMCPClient(name=name, url=url, headers=headers)
-        client.session = session
-        client._initialized = True
-        client._managed_externally = True
-        return client
 
     async def disconnect(self, name: str) -> bool:
         """Disconnect from an MCP server."""
@@ -475,6 +303,23 @@ class MCPClientManager:
                     success = True
             return success
 
+    def _client_for(self, name: str) -> BaseMCPClient | None:
+        """Return the client for ``name``, or ``None`` if not connected."""
+        return self.clients.get(name)
+
+    async def release(self) -> None:
+        """Release all MCP connections (teardown contract from McpBackend)."""
+        await self.disconnect_all()
+
+    # -- invocation with reconnect-on-disconnect --------------------------------
+    #
+    # These override the ABC's pure-delegation defaults: when the first call
+    # reports "not connected" (the client has dropped), the owning backend
+    # reconnects once and retries the same call. Consumers (MCPTool, ...) thus
+    # depend only on the McpBackend surface — they do not call
+    # ``reconnect_with_retry`` directly, so a backend without reconnect (e.g.
+    # the future SharedMcpBackend facade) remains a valid backend.
+
     async def execute_tool(
         self,
         server_name: str,
@@ -482,12 +327,13 @@ class MCPClientManager:
         params: dict[str, Any],
         timeout: int = _DEFAULT_TOOL_TIMEOUT,
     ) -> dict[str, Any]:
-        """Execute a tool on the specified server."""
-        client = self.clients.get(server_name)
-        if not client:
-            return {"success": False, "error": f"MCP server not connected: {server_name}"}
-
-        return await client.call_tool(tool_name, params, timeout=timeout)
+        """Execute a tool, reconnecting once on a dropped connection."""
+        result = await super().execute_tool(server_name, tool_name, params, timeout=timeout)
+        if not result.get("success") and "not connected" in str(result.get("error", "")).lower():
+            _logger.warning("[MCP:%s] connection dropped mid-call, reconnecting...", server_name)
+            if await self.reconnect_with_retry(server_name):
+                result = await super().execute_tool(server_name, tool_name, params, timeout=timeout)
+        return result
 
     async def read_resource(
         self,
@@ -495,12 +341,13 @@ class MCPClientManager:
         uri: str,
         timeout: int = _DEFAULT_TOOL_TIMEOUT,
     ) -> dict[str, Any]:
-        """Read a resource from the specified server."""
-        client = self.clients.get(server_name)
-        if not client:
-            return {"success": False, "error": f"MCP server not connected: {server_name}"}
-
-        return await client.read_resource(uri, timeout=timeout)
+        """Read a resource, reconnecting once on a dropped connection."""
+        result = await super().read_resource(server_name, uri, timeout=timeout)
+        if not result.get("success") and "not connected" in str(result.get("error", "")).lower():
+            _logger.warning("[MCP:%s] connection dropped mid-call, reconnecting...", server_name)
+            if await self.reconnect_with_retry(server_name):
+                result = await super().read_resource(server_name, uri, timeout=timeout)
+        return result
 
     async def get_prompt(
         self,
@@ -509,36 +356,17 @@ class MCPClientManager:
         arguments: dict[str, Any] | None = None,
         timeout: int = _DEFAULT_TOOL_TIMEOUT,
     ) -> dict[str, Any]:
-        """Get a prompt from the specified server."""
-        client = self.clients.get(server_name)
-        if not client:
-            return {"success": False, "error": f"MCP server not connected: {server_name}"}
-
-        return await client.get_prompt(prompt_name, arguments=arguments, timeout=timeout)
-
-    async def list_tools(self, server_name: str) -> list[dict[str, Any]]:
-        """List tools on the specified server."""
-        client = self.clients.get(server_name)
-        if not client:
-            return []
-
-        return await client.list_tools()
-
-    async def list_resources(self, server_name: str) -> list[dict[str, Any]]:
-        """List resources on the specified server."""
-        client = self.clients.get(server_name)
-        if not client:
-            return []
-
-        return await client.list_resources()
-
-    async def list_prompts(self, server_name: str) -> list[dict[str, Any]]:
-        """List prompts on the specified server."""
-        client = self.clients.get(server_name)
-        if not client:
-            return []
-
-        return await client.list_prompts()
+        """Get a prompt, reconnecting once on a dropped connection."""
+        result = await super().get_prompt(
+            server_name, prompt_name, arguments=arguments, timeout=timeout
+        )
+        if not result.get("success") and "not connected" in str(result.get("error", "")).lower():
+            _logger.warning("[MCP:%s] connection dropped mid-call, reconnecting...", server_name)
+            if await self.reconnect_with_retry(server_name):
+                result = await super().get_prompt(
+                    server_name, prompt_name, arguments=arguments, timeout=timeout
+                )
+        return result
 
     async def list_all_tools(self) -> dict[str, list[dict[str, Any]]]:
         """List tools on all servers."""

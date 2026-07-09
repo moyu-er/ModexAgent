@@ -13,16 +13,16 @@
 
 本项目是 ModexAgent 框架的**生产级示例**，展示如何构建一个支持 LLM 对话、工具调用、MCP 集成、多级记忆、多 Agent 协作、自学习经验系统和浏览器 WebUI 的多通道 AI 助手。
 
-采用 **Pool 模式** — 多 Agent 常驻池，通过 `MessageBroker` + `AgentMessageBus` 路由消息，Input/Output 适配器（QQ、WebSocket）与 Agent 逻辑完全解耦。
+采用 **Pool 模式** — 多 Agent 常驻池，通过 `MessageBroker` + `AgentMessageBus` 路由消息，Input/Output 适配器（QQ、Telegram、WebSocket）与 Agent 逻辑完全解耦。
 
 > [!TIP]
-> QQ Bot 平台只是众多适配器之一。同样的架构可以接入 Discord、飞书、钉钉、Telegram、CLI 或任何实现了 `InputAdapter`/`OutputAdapter` 的平台。**仅使用 WebUI 无需 QQ 凭据。**
+> 上手最快的方式是 **WebUI** —— 无需任何 IM 凭证。IM 支持是插件式的：QQ 与 Telegram 开箱即用，新增其他平台（Discord、飞书、钉钉……）只需一个 `register_<name>.py` 模块。**仅使用 WebUI 无需任何 IM 凭证。**
 
 ## 能力一览
 
 | 能力 | 说明 |
 |------|------|
-| **QQ 消息收发** | C2C 私聊 + 群聊，支持附件（图片/文件）自动下载 |
+| **IM 消息收发** | QQ（C2C 私聊 + 群聊，支持附件自动下载）与 Telegram（长轮询，文本 + 单媒体） |
 | **WebUI** | 浏览器端聊天，实时流式渲染、多会话侧边栏、工作区浏览器、Pool 选择器 |
 | **浏览器内配置** | 在 Settings UI 里改 pool、模型、MCP 服务、技能、系统提示词——免手写 YAML |
 | **多模型切换** | `model.yml` 支持多 provider/多模型；在聊天输入框逐轮切换 |
@@ -88,15 +88,15 @@
 适合多 Agent 常驻协作。Input/Output 与 Agent 逻辑完全解耦，通过 Broker 路由消息。
 
 ```
-QQ 用户 / 群聊                    浏览器 (WebUI)
-    │                                      │
-    ▼                                      ▼
-┌─────────────────┐              ┌──────────────────┐
-│ QQInputAdapter  │              │ WebSocketInput   │
-└────────┬────────┘              │    Adapter       │
-         │                       └────────┬─────────┘
-         │                                │
-         ▼                                ▼
+QQ 用户 / 群        Telegram 聊天        浏览器 (WebUI)
+    │                      │                     │
+    ▼                      ▼                     ▼
+┌─────────────────┐ ┌─────────────────┐ ┌──────────────────┐
+│ QQInputAdapter  │ │ TelegramInput   │ │ WebSocketInput   │
+└────────┬────────┘ │    Adapter      │ │    Adapter       │
+         │          └────────┬────────┘ └────────┬─────────┘
+         │                   │                   │
+         ▼                   ▼                   ▼
 ┌──────────────────────────────────────────────────────┐
 │           Input Pipeline（认领 / 透传）              │
 │  IM:    SetChannel→ResolveWs→EnvCtrl→SessCtrl→       │
@@ -125,12 +125,12 @@ QQ 用户 / 群聊                    浏览器 (WebUI)
 │  └───────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────┘
          │
-         ├──────────────────────────────┐
-         ▼                              ▼
-┌──────────────────┐          ┌──────────────────┐
-│ QQOutputAdapter  │          │ WebBotEmitter    │
-│ (QQ 回复)        │          │ (WebSocket 增量) │
-└──────────────────┘          └──────────────────┘
+         ├──────────────────┬─────────────────────┐
+         ▼                  ▼                     ▼
+┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐
+│ QQOutputAdapter  │ │TelegramOutput    │ │ WebBotEmitter    │
+│ (QQ 回复)        │ │Adapter           │ │ (WebSocket 增量) │
+└──────────────────┘ └──────────────────┘ └──────────────────┘
 ```
 
 ## 快速开始
@@ -233,9 +233,8 @@ cp .env.example .env
 `.env` 关键字段：
 
 ```env
-# QQ Bot 凭证（从 https://q.qq.com/ 获取）—— 仅用 WebUI 可不填
-QQ_APP_ID=your_qq_app_id
-QQ_SECRET=your_qq_bot_secret
+# 时间戳时区
+TIMEZONE=Asia/Shanghai
 
 # MCP 服务凭证
 MCP_BEARER_TOKEN=your_modelscope_bearer_token
@@ -243,8 +242,9 @@ MINIMAX_MCP_API_KEY=your_minimax_api_key
 ```
 
 > [!NOTE]
-> 模型配置（model / api_key / base URL / capabilities）**不在** `.env` 里，
-> 而在 `config/model.yml` —— 见下一步。
+> **IM 凭证不在 `.env` 里。** QQ 与 Telegram 凭证在 `config/im.yml`（每个平台一节）——
+> 见「配置参考 → IM 适配器」。模型配置（model / api_key / base URL / capabilities）也**不在**
+> `.env` 里，而在 `config/model.yml` —— 见下一步。
 
 #### 3. 配置模型
 
@@ -349,7 +349,7 @@ Markdown、语法高亮代码、**Mermaid 图**、推理块都内联渲染。
 
 ### Input Pipeline（统一消息处理流水线）
 
-所有用户消息——来自 IM（QQ）和 WebUI——在到达 Agent 之前经过共享流水线。阶段遵循**认领或透传**：识别该输入的阶段负责处理（控制指令直接终结，技能/审批认领后继续），不识别的阶段原样放行；唯一的终结阶段 `UnsupportedCommand` 拒绝任何无人认领的 `/命令` 并给出统一提示——命令识别与拒绝集中在一处，不再散落各阶段。IM 流水线 10 阶段，WebUI 8 阶段（无环境/会话控制，浏览器有等价 GUI），顺序如下：
+所有用户消息——来自 IM（QQ、Telegram）和 WebUI——在到达 Agent 之前经过共享流水线。阶段遵循**认领或透传**：识别该输入的阶段负责处理（控制指令直接终结，技能/审批认领后继续），不识别的阶段原样放行；唯一的终结阶段 `UnsupportedCommand` 拒绝任何无人认领的 `/命令` 并给出统一提示——命令识别与拒绝集中在一处，不再散落各阶段。IM 流水线 10 阶段，WebUI 8 阶段（无环境/会话控制，浏览器有等价 GUI），顺序如下：
 
 | 阶段 | IM | WebUI | 功能 |
 |------|:--:|:-----:|------|
@@ -563,7 +563,7 @@ skills:
 
 ## 适配其他 IM 平台
 
-`BotService` 是通用基类，不绑定 QQ。新增一个平台（Discord、飞书、钉钉、Telegram 等）是即插即用的：
+`BotService` 是通用基类，不绑定任何平台。QQ 与 Telegram 是内置的两个适配器，二者遵循完全相同的即插即用模式——因此新增一个平台（Discord、飞书、钉钉……）就是同样的流程：
 
 1. 创建 `bot/adapters/<platform>.py`，包含三个类：
    - `<Platform>InputAdapter` —— 继承 `InputAdapter`，接收消息并产生 seed `UserInputEnvelope` 供 Input Pipeline 处理。
@@ -597,9 +597,11 @@ def build_discord(ctx: AdapterBuildContext):
     return discord_input, discord_output, emitter_factory
 ```
 
-3. 重启服务。`WebUIService` 会自动发现并导入所有 `bot/adapters/register_*.py` 模块，因此**无需修改 `WebUIService`**。
+3. （可选）在 `bot/config/domains/im.py` 里用 `register_kind` 声明该平台的类型化配置段，并在 `config/im.yml` 加对应一节。
 
-与 QQ、WebUI 一样，`ChannelRouterOutputAdapter` 会保证一个平台的 slash 命令回复不会串到另一个平台。
+4. 重启服务。`WebUIService` 会自动发现并导入所有 `bot/adapters/register_*.py` 模块，因此**无需修改 `WebUIService`**。
+
+`ChannelRouterOutputAdapter` 会保证一个平台的 slash 命令回复不会串到另一个平台——每个 emitter 按通道过滤，而 WebUI 作为通用观察者，记录所有来源的会话。
 
 ```python
 from modex_agent import AgentPipeline
@@ -626,18 +628,29 @@ class DiscordOutputAdapter(OutputAdapter):
 
 ## 配置参考
 
-### QQ Bot
+### IM 适配器
 
-从 [QQ 开放平台](https://q.qq.com/) 获取 App ID 和 Secret。
+IM 凭证在 `config/im.yml`（已 gitignore——含密钥）。从 `config/im.example.yml` 复制起步。每个平台是顶层一节；适配器只读自己那一节，`enabled: false` 时整体跳过。
 
 ```yaml
+# QQ —— 从 https://q.qq.com/ 获取 App ID 和 Secret
 qq:
-  app_id: "${QQ_APP_ID}"
-  secret: "${QQ_SECRET}"
-  sandbox: false
+  enabled: true
+  app_id: "your_qq_app_id"
+  secret: "your_qq_secret"
   allow_from:
-    - "*"                        # "*" 表示允许所有人
+    - "*"                        # "*" 允许所有人，或列出用户/群 id
+
+# Telegram —— 从 @BotFather 获取 token
+telegram:
+  enabled: true
+  token: "your_telegram_bot_token"
+  proxy: null                    # 可选，如 "http://127.0.0.1:7890"
+  allow_from:
+    - "*"
 ```
+
+`qq` 与 `telegram` 都在 `bot/config/domains/im.py` 里注册为类型化配置 kind；密钥读取时自动脱敏。新增其他平台见「适配其他 IM 平台」。
 
 ### LLM（模型）
 

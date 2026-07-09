@@ -91,17 +91,12 @@ models:
 """
     (tmp / "model.yml").write_text(model_yml, encoding="utf-8")
 
-    # Pool config with llm. Dir-based layout (pools/<name>/pool.yml) — the
+    # Pool config. Dir-based layout (pools/<name>/pool.yml) — the
     # loader scans directories, not legacy single pools/<name>.yml files.
     # name + main_agent_name are strictly required (no derivation).
     pool_config = """
 name: testpool
 main_agent_name: testpool
-llm:
-  model: "test-model"
-  api_key: "test-key"
-  temperature: 0.5
-  max_output_tokens: 1000
 agents:
   - name: testpool
     role: main
@@ -125,7 +120,6 @@ class TestPoolModeInitializeNoTopLevelLlm:
 
         # Pools should be loaded
         assert "testpool" in cfg.pools
-        assert cfg.pools["testpool"].llm.model == "test-model"
         assert cfg.pools["testpool"].main_agent_name == "testpool"
 
     def test_bot_service_initialize_pool_mode_no_crash(self, pool_mode_config_dir: Path) -> None:
@@ -163,4 +157,4 @@ class TestPoolModeInitializeNoTopLevelLlm:
         # synthesize_llm_config (_routing_model prepends "openai/").
         assert len(cfg.pools) == 1
         pool_cfg = list(cfg.pools.values())[0]
-        assert pool_cfg.llm.model == "openai/test-model"
+        assert pool_cfg.name == "testpool"

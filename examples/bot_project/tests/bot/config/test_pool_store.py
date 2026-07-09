@@ -166,9 +166,9 @@ class TestWritePoolRoundTrip:
         assert reread.subagents[0].description == "recon"
         assert reread.subagents[1].max_steps == 150
 
-    def test_preserves_llm_not_memory(self, store: PoolStore, tmp_path: Path) -> None:
-        """llm (and other baked pool keys) round-trip; memory does NOT — it's
-        a baked main-agent default injected at pool-build, never persisted."""
+    def test_llm_not_persisted_and_memory_not_persisted(self, store: PoolStore, tmp_path: Path) -> None:
+        """llm is no longer a pool-level key; memory is a baked main-agent
+        default injected at pool-build, never persisted."""
         pool_dir = tmp_path / "config" / "pools" / "main"
         pool_dir.mkdir(parents=True)
         (pool_dir / "pool.yml").write_text(
@@ -186,7 +186,7 @@ class TestWritePoolRoundTrip:
         tree = store.read_pool("main")
         store.write_pool("main", tree)
         raw = yaml.safe_load((pool_dir / "pool.yml").read_text(encoding="utf-8"))
-        assert raw["llm"] == {"model": "claude-opus-4"}
+        assert "llm" not in raw  # removed: model config lives in model.yml
         assert "memory" not in raw  # baked default, not persisted
         assert "name" not in raw  # pool name = dir name, not persisted
 
@@ -552,12 +552,12 @@ class TestCreateDeleteRenameList:
         assert tree.main.agent_name == "research"
         assert (tmp_path / "config" / "pools" / "research" / "pool.yml").exists()
         assert (tmp_path / "agents" / "research.md").exists()
-        # Default llm present; memory NOT persisted (baked default injected at
-        # pool-build); name NOT persisted (pool identity = directory name).
+        # Default llm is NOT persisted; memory is a baked main-agent default
+        # injected at pool-build; name is derived from the directory name.
         raw = yaml.safe_load(
             (tmp_path / "config" / "pools" / "research" / "pool.yml").read_text("utf-8")
         )
-        assert "llm" in raw
+        assert "llm" not in raw
         assert "memory" not in raw
         assert "name" not in raw
 

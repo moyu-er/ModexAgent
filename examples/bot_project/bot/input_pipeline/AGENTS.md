@@ -3,7 +3,7 @@
 
 # input_pipeline
 
-Converged user-input stage pipeline that processes incoming messages identically across IM (QQ) and WebUI channels. Both channels persist user messages to the same transcript store via the same mechanism, with control commands excluded from persistence.
+Converged user-input stage pipeline that processes incoming messages identically across IM (QQ, Telegram) and WebUI channels. All channels persist user messages to the same transcript store via the same mechanism, with control commands excluded from persistence.
 
 ## Architecture
 
@@ -29,7 +29,7 @@ Converged user-input stage pipeline that processes incoming messages identically
     └─────────────────────────────────────────┘
 ```
 
-- **S0 (adapter-side normalization)**: NOT a pipeline stage. Each channel adapter (QQ `_on_message`, WebSocket `_ws_send_message`) handles dedup, attachment download, content extraction and produces a seed `UserInputEnvelope`. This keeps channel-specific concerns in the adapter layer.
+- **S0 (adapter-side normalization)**: NOT a pipeline stage. Each channel adapter (QQ / Telegram `_on_message`, WebSocket `_ws_send_message`) handles dedup, attachment download, content extraction and produces a seed `UserInputEnvelope`. This keeps channel-specific concerns in the adapter layer.
 - **IM pipeline** (7 stages: S4→S2→S3→S5→S6→S7→S8): Full path for IM channels. S4 runs FIRST so ``ChannelRouterOutputAdapter`` can route command responses to the correct channel. S2/S3 intercept control commands before they reach persistence or the agent queue.
 - **WebUI pipeline** (5 stages: S4→S5→S6→S7→S8): WebUI has UI-level controls for workspace/pool/session operations, so S2/S3 are skipped. Unknown `/command` typed in the chat box reaches S6 and terminates with an error notice. The pause button sends a WebSocket `pause` action which invokes the same control-channel cancellation as IM `/stop`.
 

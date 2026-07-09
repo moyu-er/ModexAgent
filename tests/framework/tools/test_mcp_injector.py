@@ -217,3 +217,77 @@ class TestJsonFileMCPTransportInjector:
         injector.apply("srv", "stdio", original_env, original_headers)
         assert original_env == {"STATIC": "s"}
         assert original_headers == {"X-Static": "x"}
+
+
+class TestPerServerScoping:
+    """The top-level ``servers`` map scopes env/headers to one server so a
+    secret for server A is not propagated to server B."""
+
+    def test_server_section_applies_only_to_that_server(self, tmp_path: Path) -> None:
+        path = tmp_path / "inject.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "servers": {
+                        "alpha": {"env": {"ALPHA_KEY": "a-only"}},
+                        "beta": {"headers": {"Authorization": "Bearer b"}},
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        injector = JsonFileMCPTransportInjector(path)
+
+        alpha_env, alpha_headers = injector.apply("alpha", "stdio", {}, {})
+        beta_env, beta_headers = injector.apply("beta", "streamableHttp", {}, {})
+        other_env, other_headers = injector.apply("other", "stdio", {}, {})
+
+        assert alpha_env == {"ALPHA_KEY": "a-only"}
+        assert alpha_headers == {}
+        # alpha's secret does NOT leak to beta or other.
+        assert "ALPHA_KEY" not in beta_env and "ALPHA_KEY" not in other_env
+        assert beta_env == {}
+        assert beta_headers == {"Authorization": "Bearer b"}
+        assert other_env == {} and other_headers == {}
+
+    def test_server_section_overrides_global(self, tmp_path: Path) -> None:
+        path = tmp_path / "inject.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "env": {"COMMON": "shared", "OVERRIDE": "global"},
+                    "servers": {"alpha": {"env": {"OVERRIDE": "alpha"}}},
+                }
+            ),
+            encoding="utf-8",
+        )
+        injector = JsonFileMCPTransportInjector(path)
+
+        alpha_env, _ = injector.apply("alpha", "stdio", {}, {})
+        beta_env, _ = injector.apply("beta", "stdio", {}, {})
+
+        # alpha gets the global COMMON + its own OVERRIDE on top.
+        assert alpha_env == {"COMMON": "shared", "OVERRIDE": "alpha"}
+        # beta gets only the global set.
+        assert beta_env == {"COMMON": "shared", "OVERRIDE": "global"}
+
+    def test_global_pairs_still_apply_to_every_server(self, tmp_path: Path) -> None:
+        # No servers map → behavior is unchanged (backward compatible): global
+        # pairs reach every server.
+        path = tmp_path / "inject.json"
+        path.write_text(json.dumps({"env": {"TOKEN": "t"}}), encoding="utf-8")
+        injector = JsonFileMCPTransportInjector(path)
+        for name in ("alpha", "beta", "anything"):
+            env, _ = injector.apply(name, "stdio", {}, {})
+            assert env == {"TOKEN": "t"}
+
+    def test_servers_key_is_not_treated_as_a_flat_pair(self, tmp_path: Path) -> None:
+        path = tmp_path / "inject.json"
+        path.write_text(
+            json.dumps({"servers": {"alpha": {"env": {"K": "v"}}}}),
+            encoding="utf-8",
+        )
+        injector = JsonFileMCPTransportInjector(path)
+        # An unknown server must NOT receive a leaked "servers" flat pair.
+        env, headers = injector.apply("unknown", "stdio", {}, {})
+        assert env == {} and headers == {}

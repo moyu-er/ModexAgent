@@ -30,7 +30,7 @@ CLI entry point for the ModexAgent bot. Provides start/stop/restart/install comm
 
 ### Working In This Directory
 - `cli.py` uses 3-layer process discovery: (1) PID file check, (2) `psutil` process scan, (3) port probe.
-- `main.py` is the actual runtime entry — it constructs `BotService`, calls `initialize()`, and starts the QQ/WebUI services.
+- `main.py` is the actual runtime entry — it constructs `BotService`, calls `initialize()`, and starts `WebUIService` (which auto-discovers every IM adapter: QQ / Telegram / WebSocket).
 - `_build_webui()` in `cli.py` compares `bot/web/dist/index.html` mtime against `webui/src/` and config files to decide whether to rebuild.
 - The CLI recently had changes (check git status for current modifications).
 

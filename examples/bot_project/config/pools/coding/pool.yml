@@ -1,7 +1,3 @@
-# config/pools/coding/pool.yml — the main agent's config (pool identity = directory name).
-# memory + experience: baked main-agent defaults, not persisted/editable.
-# main agent name defaults to the directory name; set main_agent_name to override.
-
 max_steps: 100
 use_terminal: false
 terminal_visibility: false

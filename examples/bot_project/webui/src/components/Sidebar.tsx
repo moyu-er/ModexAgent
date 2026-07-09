@@ -1,4 +1,5 @@
 import { useState, type FC, type CSSProperties } from "react";
+import { ChevronRight, Folder, FolderOpen, Home, Plus, Settings } from "lucide-react";
 import type { PoolInfo } from "../lib/api";
 import { changeWorkspace } from "../lib/api";
 import { WorkspaceBrowser } from "./WorkspaceBrowser";
@@ -7,14 +8,7 @@ import { ThemeToggle } from "./ThemeToggle";
 import { useToast } from "./ToastContext";
 import { Button } from "./ui/Button";
 import { IconButton } from "./ui/IconButton";
-import { SelectPrimitive } from "./ui/SelectPrimitive";
-import {
-  ChevronRightIcon,
-  FolderIcon,
-  FolderOpenIcon,
-  HomeIcon,
-  SettingsGearIcon,
-} from "./ui/icons";
+import { SelectMenu } from "./ui/SelectMenu";
 
 export interface SidebarProps {
   sessionTree: TreeNode[];
@@ -93,7 +87,7 @@ export const Sidebar: FC<SidebarProps> = ({
   return (
     <div
       style={style}
-      className={`fixed inset-y-0 left-0 z-40 flex h-full w-[260px] flex-col border-r border-hairline bg-canvas transition-transform duration-200 ease-out md:static md:w-[var(--sidebar-width)] md:translate-x-0 ${
+      className={`fixed inset-y-0 left-0 z-40 flex h-full w-[260px] flex-col border-r border-hairline-strong bg-canvas-sidebar transition-transform duration-200 ease-out md:static md:w-[var(--sidebar-width)] md:translate-x-0 ${
         mobileOpen ? "translate-x-0" : "-translate-x-full"
       }`}
     >
@@ -111,7 +105,7 @@ export const Sidebar: FC<SidebarProps> = ({
               title="Return to home workspace (exit)"
               className="gap-0.5 text-mute hover:text-ink"
             >
-              <HomeIcon className="h-3.5 w-3.5" />
+              <Home size={14} className="shrink-0" />
               <span className="text-xs font-medium">Home</span>
             </Button>
           )}
@@ -123,7 +117,7 @@ export const Sidebar: FC<SidebarProps> = ({
           title="Browse for workspace folder"
           className="-ml-2 mt-1.5 h-auto w-full justify-start gap-1.5 truncate rounded-sm px-2 py-1 text-left font-mono text-sm text-body hover:bg-hairline-soft hover:text-ink"
         >
-          <FolderIcon className="h-4 w-4 shrink-0" />
+          <Folder size={16} className="shrink-0" />
           <span className="truncate">{String(workspace || "(not set)")}</span>
         </Button>
 
@@ -136,8 +130,9 @@ export const Sidebar: FC<SidebarProps> = ({
               onClick={(): void => setRecentOpen(!recentOpen)}
               className="h-auto w-full justify-start gap-1.5 pl-0 pr-2 text-xs text-mute hover:text-body"
             >
-              <ChevronRightIcon
-                className={`h-3.5 w-3.5 transition-transform ${recentOpen ? "rotate-90" : ""}`}
+              <ChevronRight
+                size={14}
+                className={`shrink-0 transition-transform ${recentOpen ? "rotate-90" : ""}`}
               />
               <span>Recent</span>
               <span className="text-faint">({recentFiltered.length})</span>
@@ -153,7 +148,7 @@ export const Sidebar: FC<SidebarProps> = ({
                     title={String(entry.path)}
                     className="h-auto w-full justify-start gap-1.5 truncate rounded-sm px-2 py-1 text-left font-mono text-xs text-body hover:bg-hairline-soft hover:text-ink"
                   >
-                    <FolderOpenIcon className="h-3.5 w-3.5 shrink-0 opacity-50" />
+                    <FolderOpen size={14} className="shrink-0 opacity-50" />
                     <span className="truncate">{String(entry.path)}</span>
                   </Button>
                 ))}
@@ -186,7 +181,7 @@ export const Sidebar: FC<SidebarProps> = ({
                 label="Settings"
                 size="sm"
                 variant="ghost"
-                icon={<SettingsGearIcon />}
+                icon={<Settings size={16} />}
                 onClick={onOpenSettings}
               />
               {restart.restartNeeded && (
@@ -205,9 +200,10 @@ export const Sidebar: FC<SidebarProps> = ({
       {/* Pool selector badge */}
       {pools.length > 1 && (
         <div className="border-b border-hairline px-4 py-3">
-          <SelectPrimitive
+          <SelectMenu
+            ariaLabel="Agent pool"
             value={activePool}
-            onChange={(e): void => onPoolChange(e.target.value)}
+            onChange={onPoolChange}
             options={pools.map((p) => ({ value: p.name, label: p.name }))}
           />
         </div>
@@ -242,7 +238,8 @@ export const Sidebar: FC<SidebarProps> = ({
           onClick={handleNew}
           className="h-auto w-full rounded-sm py-2.5 text-sm"
         >
-          + New Conversation
+          <Plus size={16} />
+          New Conversation
         </Button>
       </div>
     </div>

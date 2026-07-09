@@ -24,14 +24,15 @@ import { SectionLabel } from "../ui/SectionLabel";
 import {
   ChevronRightIcon,
   PlusIcon,
-  TrashIcon,
   DefaultStarIcon,
   TextIcon,
   ImageIcon,
   VideoIcon,
   AudioIcon,
 } from "../ui/icons";
+import { Trash2 } from "lucide-react";
 import type { SelectOption } from "../ui/Select";
+import { CATEGORY } from "./categoryMeta";
 
 interface ModelEntry {
   name: string;
@@ -293,8 +294,24 @@ export function ModelEditor({ values, onChange }: Props) {
     [providers],
   );
 
+  const meta = CATEGORY.model;
+  const PageHeadIcon = meta.icon;
+
   return (
     <div className="space-y-6">
+      <div className="page-head">
+        <span
+          className="page-head-icon"
+          style={{ ["--cat" as string]: meta.catVar }}
+        >
+          <PageHeadIcon size={18} />
+        </span>
+        <div>
+          <div className="page-title">{meta.title}</div>
+          <div className="page-sub">{meta.sub}</div>
+        </div>
+      </div>
+
       {/* Top: default model + max context tokens */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_220px]">
         <Select
@@ -391,7 +408,7 @@ export function ModelEditor({ values, onChange }: Props) {
                       </span>
                     ) : (
                       <IconButton
-                        icon={<TrashIcon />}
+                        icon={<Trash2 size={16} />}
                         label="Remove provider"
                         variant="ghost"
                         size="sm"
@@ -503,7 +520,7 @@ export function ModelEditor({ values, onChange }: Props) {
                                     </span>
                                   ) : (
                                     <IconButton
-                                      icon={<TrashIcon />}
+                                      icon={<Trash2 size={16} />}
                                       label="Remove model"
                                       variant="ghost"
                                       size="sm"

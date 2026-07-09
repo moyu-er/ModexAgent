@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, type FC, type FormEvent, type KeyboardEvent } from "react";
+import { Bot, File, Menu, Paperclip, Pause, SendHorizonal, X } from "lucide-react";
 import type { ApprovalRequestView, TodoItemDTO, UIMessage } from "../types/events";
 import type { MediaConfigResponse, OutgoingAttachmentRef, UploadAttachmentResponse } from "../types/attachments";
 import { ApprovalCard } from "./ApprovalCard";
@@ -38,6 +39,9 @@ export interface ChatViewProps {
   onPause?: () => void;
   readOnly?: boolean;
   onOpenSidebar?: () => void;
+  /** Display name of the selected session's agent (shown in the chat header).
+   * Omitted/empty when no session is open → the header label is blank. */
+  agentName?: string;
 }
 
 // Input box starts as a single comfortable line and grows with content.
@@ -63,6 +67,7 @@ export const ChatView: FC<ChatViewProps> = ({
   onPause,
   readOnly = false,
   onOpenSidebar,
+  agentName,
 }) => {
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -243,7 +248,7 @@ export const ChatView: FC<ChatViewProps> = ({
         <div className="flex items-center gap-3">
           {onOpenSidebar && (
             <IconButton
-              icon={<MenuIcon />}
+              icon={<Menu size={18} />}
               label="Open sidebar"
               variant="ghost"
               size="md"
@@ -251,9 +256,14 @@ export const ChatView: FC<ChatViewProps> = ({
               className="md:hidden"
             />
           )}
-          <span className="text-sm font-semibold text-ink">
-            ModexBot
-          </span>
+          {agentName && (
+            <>
+              <Bot size={15} className="text-signal" aria-hidden="true" />
+              <span className="font-mono text-sm font-semibold text-ink">
+                {agentName}
+              </span>
+            </>
+          )}
         </div>
         <div />
       </header>
@@ -319,7 +329,7 @@ export const ChatView: FC<ChatViewProps> = ({
                 className="flex-1 cursor-not-allowed bg-transparent py-1 text-sm text-faint placeholder:text-faint outline-none"
               />
               <IconButton
-                icon={<SendIcon />}
+                icon={<SendHorizonal size={18} />}
                 label="Read only"
                 variant="ghost"
                 size="md"
@@ -341,7 +351,7 @@ export const ChatView: FC<ChatViewProps> = ({
                       key={p.ref.local_path}
                       className="flex items-center gap-2 rounded-md border border-hairline bg-canvas-elevated px-2.5 py-1.5 text-xs"
                     >
-                      <FileChipIcon />
+                      <File size={14} className="shrink-0 text-body" aria-hidden="true" />
                       <span className="min-w-0 flex-1 truncate text-ink">
                         {p.name}
                       </span>
@@ -349,7 +359,7 @@ export const ChatView: FC<ChatViewProps> = ({
                         {formatBytes(p.size)}
                       </span>
                       <IconButton
-                        icon={<RemoveIcon />}
+                        icon={<X size={14} />}
                         label={`Remove ${p.name}`}
                         variant="ghost"
                         size="sm"
@@ -370,7 +380,7 @@ export const ChatView: FC<ChatViewProps> = ({
                   tabIndex={-1}
                 />
                 <IconButton
-                  icon={<PaperclipIcon />}
+                  icon={<Paperclip size={18} />}
                   label="Attach file"
                   variant="ghost"
                   size="md"
@@ -402,7 +412,7 @@ export const ChatView: FC<ChatViewProps> = ({
                 )}
                 {isBusy ? (
                   <IconButton
-                    icon={<PauseIcon />}
+                    icon={<Pause size={16} />}
                     label="Pause"
                     variant="secondary"
                     size="md"
@@ -410,7 +420,7 @@ export const ChatView: FC<ChatViewProps> = ({
                   />
                 ) : canSend ? (
                   <IconButton
-                    icon={<SendIcon />}
+                    icon={<SendHorizonal size={18} />}
                     label="Send"
                     variant="primary"
                     size="md"
@@ -418,7 +428,7 @@ export const ChatView: FC<ChatViewProps> = ({
                   />
                 ) : (
                   <IconButton
-                    icon={<SendIcon />}
+                    icon={<SendHorizonal size={18} />}
                     label="Send"
                     variant="ghost"
                     size="md"
@@ -434,86 +444,3 @@ export const ChatView: FC<ChatViewProps> = ({
     </div>
   );
 };
-
-const MenuIcon: FC = () => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <line x1="4" y1="6" x2="20" y2="6" />
-    <line x1="4" y1="12" x2="20" y2="12" />
-    <line x1="4" y1="18" x2="20" y2="18" />
-  </svg>
-);
-
-const SendIcon: FC = () => (
-  <svg
-    width="18"
-    height="18"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    aria-hidden="true"
-  >
-    <path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z" />
-    <path d="m21.854 2.147-10.94 10.939" />
-  </svg>
-);
-
-const PauseIcon: FC = () => (
-  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-    <rect x="6" y="5" width="4" height="14" rx="1.2" />
-    <rect x="14" y="5" width="4" height="14" rx="1.2" />
-  </svg>
-);
-
-const PaperclipIcon: FC = () => (
-  <svg
-    width="18"
-    height="18"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    aria-hidden="true"
-  >
-    <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-  </svg>
-);
-
-const FileChipIcon: FC = () => (
-  <svg
-    width="14"
-    height="14"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    aria-hidden="true"
-    className="shrink-0 text-body"
-  >
-    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-    <polyline points="14 2 14 8 20 8" />
-  </svg>
-);
-
-const RemoveIcon: FC = () => (
-  <svg
-    width="14"
-    height="14"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    aria-hidden="true"
-  >
-    <line x1="18" y1="6" x2="6" y2="18" />
-    <line x1="6" y1="6" x2="18" y2="18" />
-  </svg>
-);
