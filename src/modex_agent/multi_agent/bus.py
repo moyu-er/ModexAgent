@@ -47,6 +47,16 @@ class AgentMessageBus(ABC):
         """
         ...
 
+    async def peek(self, session_id: str, limit: int = 1) -> list[AgentMessageEnvelope]:
+        """Non-destructive read of up to ``limit`` pending envelopes.
+
+        Default returns empty; override for a real implementation. Used by the
+        InboxPoller to read the parent link off the first pending envelope
+        WITHOUT consuming the batch (so a materialize failure still leaves the
+        messages in the inbox).
+        """
+        return []
+
     async def sessions_with_pending(self) -> list[str]:
         """Session ids with >=1 pending message (default empty; override for real)."""
         return []
@@ -119,37 +129,46 @@ class LocalAgentMessageBus(AgentMessageBus):
         messages = await self._consumer.consume(
             session_id, limit, only_types=only_types
         )
+        return [self._reconstruct(msg, session_id) for msg in messages]
+
+    async def peek(self, session_id: str, limit: int = 1) -> list[AgentMessageEnvelope]:
+        """Non-destructive read of up to ``limit`` pending envelopes."""
+        messages = await self._consumer.peek(session_id, limit=limit)
+        return [self._reconstruct(msg, session_id) for msg in messages]
+
+    @staticmethod
+    def _reconstruct(msg, session_id: str) -> AgentMessageEnvelope:
         from modex_agent.multi_agent.address import AgentAddress
         from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 
-        envelopes: list[AgentMessageEnvelope] = []
-        for msg in messages:
-            payload = msg.metadata.get("payload") if msg.metadata else None
-            if payload is None:
-                payload = {"content": msg.content, "message_type": msg.message_type}
-            # Preserve the original source kind/name (producer stores them in
-            # metadata). Hardcoding kind="agent" here would erase the
-            # channel/human origin of external_input envelopes, mis-classifying
-            # human DMs as agent-source -> role=agent in session memory.
-            meta = msg.metadata or {}
-            src_kind = meta.get("source_kind") or "agent"
-            src_name = meta.get("source_name") or msg.source
-            envelope = AgentMessageEnvelope(
-                payload=payload,
-                source=AgentAddress(kind=src_kind, name=src_name),
-                message_type=msg.message_type,
-                session_id=msg.metadata.get("session_id", session_id),
-                agent_session_id=msg.metadata.get("agent_session_id", session_id),
-                invocation_id=msg.metadata.get("invocation_id") if msg.metadata else None,
-                message_id=msg.message_id,
-                timestamp=msg.timestamp,
-                metadata={
-                    k: v for k, v in msg.metadata.items() if k not in ("payload", "invocation_id")
-                },
-            )
-            envelopes.append(envelope)
-
-        return envelopes
+        payload = msg.metadata.get("payload") if msg.metadata else None
+        if payload is None:
+            payload = {"content": msg.content, "message_type": msg.message_type}
+        # Preserve the original source kind/name (producer stores them in
+        # metadata). Hardcoding kind="agent" here would erase the
+        # channel/human origin of external_input envelopes, mis-classifying
+        # human DMs as agent-source -> role=agent in session memory.
+        meta = msg.metadata or {}
+        src_kind = meta.get("source_kind") or "agent"
+        src_name = meta.get("source_name") or msg.source
+        return AgentMessageEnvelope(
+            payload=payload,
+            source=AgentAddress(kind=src_kind, name=src_name),
+            message_type=msg.message_type,
+            session_id=msg.metadata.get("session_id", session_id),
+            agent_session_id=msg.metadata.get("agent_session_id", session_id),
+            parent_session_id=msg.metadata.get("parent_session_id")
+            if msg.metadata
+            else None,
+            invocation_id=msg.metadata.get("invocation_id") if msg.metadata else None,
+            message_id=msg.message_id,
+            timestamp=msg.timestamp,
+            metadata={
+                k: v
+                for k, v in msg.metadata.items()
+                if k not in ("payload", "invocation_id", "parent_session_id")
+            },
+        )
 
     async def sessions_with_pending(self) -> list[str]:  # type: ignore[override]
         """Forward to the consumer's session enumeration."""

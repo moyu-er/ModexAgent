@@ -82,6 +82,13 @@ async def assemble_context(
         for key in ("user_id", "tenant_id", "channel", "chat_id"):
             if key in input_metadata:
                 runtime_info[key] = input_metadata[key]
+    # Thread the authoritative parent link (stamped on the session by
+    # dispatch_envelope from the envelope) into the prompt providers, so
+    # APPEND/FORK read it from the turn instead of recovering it from a
+    # workspace-partitioned session store.
+    parent_sid = input_msg.session.parent_session_id if input_msg.session else None
+    if parent_sid:
+        runtime_info["parent_session_id"] = parent_sid
     context_state = await ctx_mgr.load(
         session_id,
         tool_manager=tool_manager,

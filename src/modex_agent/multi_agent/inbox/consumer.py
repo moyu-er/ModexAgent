@@ -25,6 +25,15 @@ class BaseInboxConsumer(ABC):
         """返回待处理消息数量（非破坏性检查）。"""
         return 0
 
+    async def peek(self, session_id: str, limit: int = 1) -> list[InboxMessage]:
+        """Non-destructive read of up to ``limit`` pending messages.
+
+        Default returns empty; override for a real implementation. Used by the
+        bus/poller to inspect pending envelopes (e.g. the parent link) without
+        consuming them.
+        """
+        return []
+
     async def sessions_with_pending(self) -> list[str]:
         """返回当前有 pending 消息（count > 0）的会话 ID 列表。"""
         return []
@@ -69,6 +78,11 @@ class InboxConsumer(BaseInboxConsumer):
     async def count(self, session_id: str) -> int:
         """返回待处理消息数量（非破坏性检查，不消费消息）。"""
         return await self._server.count(session_id)
+
+    async def peek(self, session_id: str, limit: int = 1) -> list[InboxMessage]:
+        """Non-destructive read of up to ``limit`` pending messages (no dedup)."""
+        messages = await self._server.peek(session_id)
+        return messages[:limit]
 
     async def sessions_with_pending(self) -> list[str]:
         """返回当前有 pending 消息（count > 0）的会话 ID 列表。"""

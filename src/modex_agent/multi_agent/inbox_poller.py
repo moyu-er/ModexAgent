@@ -113,7 +113,16 @@ class InboxPoller:
 
     async def _materialize_then_turn(self, sid: str, template: "AgentTemplate") -> None:
         try:
-            instance = await self._pool.materialize_agent(sid, template)
+            # Peek (non-destructive) the first pending envelope to read the
+            # authoritative parent link — every envelope in a subagent inbox is
+            # from the same parent. The batch is consumed only AFTER a
+            # successful materialize, so a materialize failure still leaves the
+            # messages in the inbox.
+            peeked = await self._pool.peek_inbox(sid, limit=1)
+            parent_sid = peeked[0].parent_session_id if peeked else None
+            instance = await self._pool.materialize_agent(
+                sid, template, parent_session_id=parent_sid
+            )
             await self._dispatch_batch(sid, instance)
         except Exception:
             logger.exception("Materialize/turn failed for %s; message stays in inbox", sid)

@@ -117,9 +117,14 @@ def _deps(
 # ── Q1: is the system prompt frozen at materialize? ─────────────────────
 
 
-async def _assembled_prompt(ctx_mgr, session_id: str) -> str:
-    """load() the context manager for a session and resolve its full pipeline."""
-    state = await ctx_mgr.load(session_id=session_id)
+async def _assembled_prompt(ctx_mgr, session_id: str, parent_sid: str | None = None) -> str:
+    """load() the context manager for a session and resolve its full pipeline.
+
+    ``parent_sid`` is the authoritative parent link, threaded in via
+    runtime_info exactly as dispatch_envelope does at turn time.
+    """
+    runtime_info = {"parent_session_id": parent_sid} if parent_sid else None
+    state = await ctx_mgr.load(session_id=session_id, runtime_info=runtime_info)
     return await state.system_prompt_pipeline.get_or_refresh()
 
 
@@ -133,12 +138,6 @@ async def test_materialize_appends_the_current_parent_prompt():
     parent_b = _instance("mainB", prompt="PROMPT_B")
     deps.pool.get = MagicMock(side_effect=lambda n: parent_a if n == "mainA" else parent_b)
 
-    async def recover(sid: str):
-        name = "mainA" if sid.startswith("inv1") else "mainB"
-        return SessionIdFactory().create(agent_name=name)
-
-    deps.pool.recover_parent_session = recover
-
     template = AgentTemplate(agent_name="scout", system_prompt_mode=SystemPromptMode.APPEND)
     await template.materialize(
         parent_session=SessionIdFactory().create(agent_name="mainA"),
@@ -147,8 +146,10 @@ async def test_materialize_appends_the_current_parent_prompt():
     ctx_mgr = factory.create_agent.call_args.kwargs["context_manager"]
     static = _descriptor_of(factory.create_agent.call_args).system_prompt_template
 
-    prompt_a = await _assembled_prompt(ctx_mgr, "inv1.scout")
-    prompt_b = await _assembled_prompt(ctx_mgr, "inv2.scout")
+    # Parent link now travels via runtime_info (the dispatch envelope path),
+    # not a registry resolver. Each session's own parent selects its prompt.
+    prompt_a = await _assembled_prompt(ctx_mgr, "inv1.scout", parent_sid="conv.mainA")
+    prompt_b = await _assembled_prompt(ctx_mgr, "inv2.scout", parent_sid="conv.mainB")
 
     # APPEND content lives in the per-session pipeline, not the static template.
     assert "PROMPT_A" not in static
@@ -166,12 +167,6 @@ async def test_materialize_forks_per_parent_via_load():
     fork.register("mainB", "<fork>CONTEXT_B</fork>")
     deps, factory = _deps(fork=fork)
 
-    async def recover(sid: str):
-        name = "mainA" if sid.startswith("inv1") else "mainB"
-        return SessionIdFactory().create(agent_name=name)
-
-    deps.pool.recover_parent_session = recover
-
     template = AgentTemplate(
         agent_name="planner", context_mode=ContextMode.FORK, fork_max_messages=10,
     )
@@ -182,8 +177,8 @@ async def test_materialize_forks_per_parent_via_load():
     ctx_mgr = factory.create_agent.call_args.kwargs["context_manager"]
     static = _descriptor_of(factory.create_agent.call_args).system_prompt_template
 
-    prompt_a = await _assembled_prompt(ctx_mgr, "inv1.planner")
-    prompt_b = await _assembled_prompt(ctx_mgr, "inv2.planner")
+    prompt_a = await _assembled_prompt(ctx_mgr, "inv1.planner", parent_sid="conv.mainA")
+    prompt_b = await _assembled_prompt(ctx_mgr, "inv2.planner", parent_sid="conv.mainB")
 
     assert "CONTEXT_A" not in static  # not baked
     assert "CONTEXT_A" in prompt_a and "CONTEXT_B" not in prompt_a
@@ -203,12 +198,6 @@ async def test_reused_instance_serves_per_invocation_append_and_fork():
     parent_b = _instance("mainB", prompt="PB")
     deps.pool.get = MagicMock(side_effect=lambda n: parent_a if n == "mainA" else parent_b)
 
-    async def recover(sid: str):
-        name = "mainA" if sid.startswith("inv1") else "mainB"
-        return SessionIdFactory().create(agent_name=name)
-
-    deps.pool.recover_parent_session = recover
-
     template = AgentTemplate(
         agent_name="planner",
         system_prompt_mode=SystemPromptMode.APPEND,
@@ -221,8 +210,8 @@ async def test_reused_instance_serves_per_invocation_append_and_fork():
     )
     ctx_mgr = factory.create_agent.call_args.kwargs["context_manager"]
 
-    a = await _assembled_prompt(ctx_mgr, "inv1.planner")
-    b = await _assembled_prompt(ctx_mgr, "inv2.planner")
+    a = await _assembled_prompt(ctx_mgr, "inv1.planner", parent_sid="conv.mainA")
+    b = await _assembled_prompt(ctx_mgr, "inv2.planner", parent_sid="conv.mainB")
 
     assert "PA" in a and "FA" in a and "PB" not in a and "FB" not in a
     assert "PB" in b and "FB" in b and "PA" not in b and "FA" not in b

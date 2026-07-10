@@ -36,14 +36,16 @@ def build_session_only_memory(
     system_prompt: str = "",
     pruned_manager: Any | None = None,
     output_base_dir: Path | None = None,
-    parent_prompt_resolver: Callable[[str], Awaitable[str | None]] | None = None,
+    parent_prompt_lookup: Callable[[str], Awaitable[str | None]] | None = None,
     fork_context_spec: ForkContextSpec | None = None,
 ) -> MemorySystemContextManager:
     """Create a session-only memory system for a subagent.
 
-    ``parent_prompt_resolver`` / ``fork_context_spec`` wire the per-invocation
+    ``parent_prompt_lookup`` / ``fork_context_spec`` wire the per-invocation
     APPEND/FORK prompt providers (subagent-only). Both default to None — normal
-    agents skip the providers.
+    agents skip the providers. The lookup takes the parent session id (supplied
+    per turn via runtime_info) and resolves the parent's prompt from the
+    in-memory pool — it never reads a session store.
     """
     layer_config = MemoryLayerConfigSet(
         session=SessionMemoryConfig(),
@@ -76,7 +78,7 @@ def build_session_only_memory(
         base_system_prompt=system_prompt,
         injection_policy=RestrictedInjectionPolicy(pruned_manager=pruned_manager),
         output_base_dir=output_base_dir,
-        parent_prompt_resolver=parent_prompt_resolver,
+        parent_prompt_lookup=parent_prompt_lookup,
         fork_context_spec=fork_context_spec,
     )
 

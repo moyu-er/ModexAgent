@@ -72,6 +72,8 @@ class InboxProducer(BaseInboxProducer):
         metadata["session_id"] = envelope.session_id
         if envelope.agent_session_id:
             metadata["agent_session_id"] = envelope.agent_session_id
+        if envelope.parent_session_id is not None:
+            metadata["parent_session_id"] = envelope.parent_session_id
         if envelope.invocation_id is not None:
             metadata["invocation_id"] = envelope.invocation_id
         msg = InboxMessage(

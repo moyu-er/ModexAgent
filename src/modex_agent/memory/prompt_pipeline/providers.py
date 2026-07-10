@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.prompt import SystemPromptProvider
-from modex_agent.core.session_id import session_id_prefix_of
+from modex_agent.core.session_id import SessionInfo, session_id_prefix_of
 from modex_agent.utils.timezone import get_user_timezone
 
 if TYPE_CHECKING:
@@ -334,10 +334,12 @@ class ForkContextSpec:
 
     Frozen dataclass (type-safety rule 11 escape hatch): a tuple-like internal
     record that crosses the materialize → MemorySystemContextManager seam. It
-    holds a mutable builder + a callable; no runtime field validation is
-    required, and it carries no behaviour beyond field access. ``memory_system``
-    is deliberately NOT here — it is injected by ``load()`` from the context
-    manager's own memory system to avoid a construction cycle.
+    holds a mutable builder; no runtime field validation is required, and it
+    carries no behaviour beyond field access. ``memory_system`` and the parent
+    session are deliberately NOT here — the parent arrives per turn via
+    ``runtime_info`` (threaded from the dispatch envelope), and
+    ``memory_system`` is injected by ``load()`` from the context manager's own
+    memory system to avoid a construction cycle.
     """
 
     builder: Any
@@ -345,38 +347,37 @@ class ForkContextSpec:
     fork_max_messages: int
     fork_workspace: Path | None
     template_memory: Any
-    parent_session_resolver: Callable[[str], Awaitable[Any]]
 
 
 class AppendParentPromptProvider(SystemPromptProvider):
     """Subagent APPEND mode — prepend the current parent's system prompt.
 
-    Per-invocation: rebuilt every ``load()`` with the live session_id (mirrors
-    OutputMdProvider). ``resolver(session_id)`` recovers the session's parent
-    and returns its ``system_prompt_template`` (or ``None``), so a reused
-    instance reflects each invocation's own parent instead of the first one
-    captured at materialize time.
+    Per-invocation: rebuilt every ``load()``. ``parent_session_id`` is the
+    authoritative parent for THIS turn (threaded from the dispatch envelope via
+    runtime_info, not recovered from a store); ``lookup(parent_session_id)``
+    resolves the parent's ``system_prompt_template`` from the in-memory pool (or
+    ``None``), so a reused instance reflects each invocation's own parent.
     """
 
     def __init__(
         self,
-        resolver: Callable[[str], Awaitable[str | None]],
-        session_id: str,
+        lookup: Callable[[str], Awaitable[str | None]],
+        parent_session_id: str,
     ) -> None:
         super().__init__()
-        self._resolver = resolver
-        self._session_id = session_id
+        self._lookup = lookup
+        self._parent_session_id = parent_session_id
 
     async def _fetch_version(self) -> str:
-        return self._session_id  # refresh on session change
+        return self._parent_session_id  # refresh when the parent changes
 
     async def _fetch_content(self) -> str:
         try:
-            prompt = await self._resolver(self._session_id)
+            prompt = await self._lookup(self._parent_session_id)
         except Exception:
             logger.warning(
-                "AppendParentPromptProvider: resolver failed for %s",
-                self._session_id,
+                "AppendParentPromptProvider: lookup failed for parent %s",
+                self._parent_session_id,
                 exc_info=True,
             )
             return ""
@@ -386,9 +387,10 @@ class AppendParentPromptProvider(SystemPromptProvider):
 class ForkContextProvider(SystemPromptProvider):
     """Subagent FORK context — parent history snapshot, per-invocation.
 
-    Rebuilt every ``load()`` with the live session_id. ``ContextForkBuilder.
-    build`` is idempotent per ``(agent_type, invocation_id)`` (first turn of a
-    session writes the fork file, later turns read it), so the per-turn cost is
+    ``parent_session_id`` is the authoritative parent for this turn (threaded
+    from the dispatch envelope via runtime_info). ``ContextForkBuilder.build``
+    is idempotent per ``(agent_type, invocation_id)`` (first turn of a session
+    writes the fork file, later turns read it), so the per-turn cost is
     bounded. The provider registers the fork file for eviction-driven cleanup
     on first build.
     """
@@ -398,20 +400,20 @@ class ForkContextProvider(SystemPromptProvider):
         spec: ForkContextSpec,
         session_id: str,
         memory_system: MemorySystem,
+        parent_session_id: str,
     ) -> None:
         super().__init__()
         self._spec = spec
         self._session_id = session_id
         self._memory_system = memory_system
+        self._parent_session_id = parent_session_id
 
     async def _fetch_version(self) -> str:
         return self._session_id  # refresh on session change
 
     async def _fetch_content(self) -> str:
         try:
-            parent = await self._spec.parent_session_resolver(self._session_id)
-            if parent is None:
-                return ""
+            parent = SessionInfo.from_str(self._parent_session_id)
             parent_name = str(parent).split(".")[-1]
             invocation_id = session_id_prefix_of(self._session_id)
             fork_xml = await self._spec.builder.build(
