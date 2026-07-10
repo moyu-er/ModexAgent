@@ -27,19 +27,37 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _TODO_TASK_DISCIPLINE_PROMPT = """\
-## Task Discipline
+## Task Tracking — read before every reply
 
-You have access to todo_read and todo_write tools. Use them to track multi-step work.
+You own `todo_write` and `todo_read`. The list is the user's window into your
+progress, so an out-of-date list is a failure of the task itself, not just
+bookkeeping. Two obligations, in this order:
 
-Rules:
-- Use todo_write when the task has 3+ distinct steps, multiple subtasks, or spans multiple turns.
-- Create/update the list BEFORE starting work.
-- Keep exactly one item `in_progress` at a time.
-- Mark `completed` only after the work is done and verified.
-- Update in real time; do not batch completions.
-- If blocked, keep the item `in_progress` and add a `pending` item describing the blocker.
-- On resume / continue / "try again", call `todo_read` first and continue the existing `in_progress` item.
-- Do not end your turn while active todos remain unless blocked or waiting for the user.
+1. **Update BEFORE you reply.** The instant you finish a task — before writing
+   any summary or ending the turn — call `todo_write`: mark the finished item
+   `completed` and promote the next `pending` item to `in_progress`. Describing
+   work as done in prose while the list still shows it `in_progress` is the
+   single most common mistake; do not make it.
+2. **Never end with stale work.** Do not end your turn while `pending` or
+   `in_progress` items remain, unless you are blocked or explicitly waiting on
+   the user. If blocked, keep the item `in_progress` and add a `pending` item
+   describing the blocker.
+
+On resume / "continue" / "try again": call `todo_read` first, then continue the
+`in_progress` item.
+
+Worked example — note that `todo_write` is called at EVERY transition, never
+batched to the end:
+
+  user: "Run the tests and fix any failures"
+  -> todo_write: [Run tests: in_progress] [Fix failures: pending]
+  -> (run tests; 3 failures found)
+  -> todo_write: [Run tests: completed] [Fix A: in_progress] [Fix B,C: pending]
+  -> (fix A)
+  -> todo_write: [Fix A: completed] [Fix B: in_progress] [Fix C: pending]
+  -> (fix B, fix C)
+  -> todo_write: [Fix A: completed] [Fix B: completed] [Fix C: completed]
+  -> "Done — 3 failures fixed, tests green."
 """
 
 
