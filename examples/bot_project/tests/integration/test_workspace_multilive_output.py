@@ -1,0 +1,315 @@
+"""Multi-workspace end-to-end output delivery (regression for the silent
+switched/new workspace bug).
+
+Regression being locked down
+----------------------------
+Before the fix, ``BrokerBridgeService.start()`` (the loop that forwards agent
+output published on a workspace's broker to the output adapter) was called ONLY
+for the HOME workspace, in ``BotService.start()``. Lazily-materialized
+workspaces — every workspace you ``/cd`` into or create after startup — had
+their pools' output bridges built but NEVER started, so a turn ran but its
+output never left that workspace's broker: the agent looked silent.
+
+This test materializes the HOME workspace PLUS several non-home workspaces
+through the REAL ``_build_resources`` path, drives one message per workspace
+through the real workspace dispatcher, runs each turn against a scripted
+(mocked) LLM provider, and asserts that EVERY workspace's reply reaches the
+output adapter. The LLM is mocked; everything else (registry, factory,
+create_pool, broker, bridge, InboxPoller, dispatcher, pool_router) is real.
+"""
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from bot.adapters.web_socket import WebSocketInputAdapter
+from bot.service.core import BotService
+from bot.workspace.wiring import build_workspace_stack
+from modex_agent.core.emitter import StreamingAwareEmitter
+from modex_agent.core.provider import LLMProvider
+from modex_agent.core.session_id import SessionIdFactory
+from modex_agent.core.types import InputMessage, LLMResponse, OutputMessage
+from modex_agent.ioc.configs.app import AppConfig
+from modex_agent.pipeline.adapters import OutputAdapter
+
+pytestmark = pytest.mark.integration
+
+# Number of NON-home workspaces to materialize and drive (home is +1).
+NUM_EXTRA_WORKSPACES = 3
+
+
+# ---------------------------------------------------------------------------
+# Fakes — scripted LLM provider + recording output adapter
+# ---------------------------------------------------------------------------
+
+
+def _last_user_content(messages: list[Any]) -> str:
+    """Best-effort extract the last user message content from a chat history."""
+    last = ""
+    for m in messages:
+        role = m.get("role") if isinstance(m, dict) else getattr(m, "role", None)
+        content = m.get("content") if isinstance(m, dict) else getattr(m, "content", None)
+        if role == "user" and content:
+            last = str(content)
+    return last
+
+
+class _ScriptedProvider(LLMProvider):
+    """Echoes the last user message back as the assistant reply.
+
+    Subclasses ``LLMProvider`` so it passes the ``isinstance`` gate inside the
+    memory summarizer (ArchiveSummarizer). One shared instance serves every
+    pool/workspace/turn. ``calls`` counts ``chat`` invocations so the test can
+    assert a turn actually ran per workspace.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
+    def get_default_model(self) -> str:
+        return "dummy-mini"
+
+    async def chat(
+        self,
+        messages: list[Any],
+        model: str | None = None,
+        temperature: float = 0.7,
+        max_output_tokens: int | None = None,
+        tools: list[dict] | None = None,
+        **kwargs: Any,
+    ) -> LLMResponse:
+        self.calls += 1
+        content = _last_user_content(messages)
+        return LLMResponse(content=f"echo:{content}" if content else "echo:ok")
+
+
+class _RecordingOutputAdapter(OutputAdapter):
+    """Non-streaming adapter that records every ``(session_id, content)`` send."""
+
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, str]] = []
+
+    @property
+    def name(self) -> str:
+        return "recording"
+
+    @property
+    def streaming_mode(self) -> Any:  # None => non-streaming => emitter buffers + flushes
+        return None
+
+    async def start(self) -> None: ...
+    async def stop(self) -> None: ...
+
+    async def send(self, message: OutputMessage, session_id: str) -> None:
+        self.sent.append((session_id, message.content or ""))
+
+    async def send_delta(self, delta: str, session_id: str, metadata: Any = None) -> None: ...
+    async def flush_deltas(self, session_id: str) -> None: ...
+
+
+# ---------------------------------------------------------------------------
+# Minimal on-disk config (real AppConfig.from_yaml path)
+# ---------------------------------------------------------------------------
+
+
+def _write_minimal_config(project_dir: Path) -> Path:
+    """Write a one-pool (``main``) workspace-enabled config tree under tmp."""
+    config_dir = project_dir / "config"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (project_dir / "agents").mkdir(parents=True, exist_ok=True)
+
+    (project_dir / "agents" / "main.md").write_text(
+        "You are a helpful assistant. Reply briefly.\n", encoding="utf-8"
+    )
+
+    (config_dir / "bot_config.yml").write_text(
+        """
+safety:
+  llm: {request_timeout: 45.0, stream_idle_timeout: 90.0, max_retries: 1, retry_backoff: [2.0, 8.0]}
+  turn: {agent_run_timeout: 60.0, hook_timeout: 10.0, tool_timeout: 30.0}
+paths:
+  data_dir_name: ".modex"
+workspace:
+  enabled: true
+multi_agent:
+  default_pool: "main"
+""",
+        encoding="utf-8",
+    )
+
+    (config_dir / "model.yml").write_text(
+        """
+default_provider: dummy
+default_model: dummy-mini
+max_context_tokens: 32000
+providers:
+  - key: dummy
+    name: dummy
+    url: http://localhost
+    api_key: dummy
+    models:
+      - name: dummy-mini
+        model: openai/dummy-mini
+        capabilities: [text]
+        temperature: 0.7
+        max_output_tokens: 1000
+""",
+        encoding="utf-8",
+    )
+
+    main_pool_dir = config_dir / "pools" / "main"
+    main_pool_dir.mkdir(parents=True, exist_ok=True)
+    (main_pool_dir / "pool.yml").write_text(
+        """
+max_steps: 5
+use_terminal: false
+tool_preset: minimal
+""",
+        encoding="utf-8",
+    )
+
+    # Disable the shared MCP registry and define no servers, so materialize
+    # spawns zero MCP subprocesses (the pool's mcp selection is empty too).
+    mcp_dir = config_dir / "mcp"
+    mcp_dir.mkdir(parents=True, exist_ok=True)
+    (mcp_dir / "registry.json").write_text('{"sharedRegistry": false}', encoding="utf-8")
+
+    return config_dir
+
+
+# ---------------------------------------------------------------------------
+# Test
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_every_materialized_workspace_delivers_output(tmp_path: Path) -> None:
+    """Home + N non-home workspaces: each turn's output reaches the adapter."""
+    config_dir = _write_minimal_config(tmp_path)
+    app_config = AppConfig.from_yaml(config_dir / "bot_config.yml")
+
+    input_adapter = WebSocketInputAdapter()
+    output_adapter = _RecordingOutputAdapter()
+
+    def emitter_factory(session_id: str) -> StreamingAwareEmitter:
+        return StreamingAwareEmitter(output_adapter, session_id)
+
+    service = BotService(
+        config_dir=config_dir,
+        input_adapter=input_adapter,
+        output_adapter=output_adapter,
+        emitter_factory=emitter_factory,
+        app_config=app_config,
+    )
+    # Base BotService does not set _transcript_store (WebUIService-only), but
+    # _build_resources reads it — provide None so materialize works for home too.
+    service._transcript_store = None
+
+    provider = _ScriptedProvider()
+
+    # Mock the LLM everywhere it could be reached: per-pool provider (turns) and
+    # the service default provider (memory summarizer / background).
+    import bot.service.pool_builder as pool_builder_mod
+    import bot.service.core as core_mod
+
+    original_llm_provider = pool_builder_mod._build_llm_provider
+    original_default_provider = core_mod.BotService._build_default_provider
+    pool_builder_mod._build_llm_provider = lambda *a, **k: provider
+    core_mod.BotService._build_default_provider = lambda self: provider  # type: ignore[assignment]
+
+    # _project_dir is hard-coded to the bot project source tree; repoint it at
+    # the temp dir so home / agents / MCP / pool-session-store are all isolated
+    # under tmp (no real MCP subprocesses, no writing into the repo).
+    original_project_dir = core_mod.BotService._project_dir
+    core_mod.BotService._project_dir = property(lambda self: tmp_path)  # type: ignore[assignment]
+
+    try:
+        await service.initialize()
+
+        # HOME is materialized by initialize(); its bridges must be running too.
+        home_resources = service._home_resources
+        for pi in home_resources.pools.values():
+            assert pi.broker_bridge._tasks, "home pool bridge must be running"
+
+        registry = service.workspace_stack.registry
+
+        # Pre-create N non-home workspace target dirs.
+        ws_targets = [tmp_path / f"ws{i}" for i in range(NUM_EXTRA_WORKSPACES)]
+        for ws in ws_targets:
+            ws.mkdir()
+
+        # Start the dispatcher (what production BotService.start() runs) so the
+        # real resolve -> materialize -> route -> submit_input -> poller -> turn
+        # chain executes per message. Bridges start inside _build_resources.
+        await input_adapter.start()
+        router_task = asyncio.create_task(service.workspace_stack.dispatcher.run())
+
+        session_factory = SessionIdFactory()
+        marker = [f"ws{i}-hi" for i in range(NUM_EXTRA_WORKSPACES)]
+
+        # Push one message per non-home workspace, each carrying its workspace.
+        for i, ws in enumerate(ws_targets):
+            session = session_factory.create(agent_name="main", external_id=f"ws{i}")
+            msg = InputMessage(
+                content=marker[i],
+                session=session,
+                workspace=ws,
+                channel="test",
+            )
+            input_adapter.put_input_message(msg)
+
+        # Wait until every workspace's echoed reply lands in the adapter.
+        async def _wait_for_all(timeout: float = 30.0) -> None:
+            deadline = asyncio.get_running_loop().time() + timeout
+            while asyncio.get_running_loop().time() < deadline:
+                contents = [c for _, c in output_adapter.sent]
+                if all(f"echo:{m}" in contents for m in marker):
+                    return
+                await asyncio.sleep(0.1)
+            raise AssertionError(
+                f"Timed out waiting for replies. Got sends: {output_adapter.sent!r} "
+                f"(provider.calls={provider.calls})"
+            )
+
+        await _wait_for_all()
+
+        # 1. Every non-home workspace was materialized (cached in the registry).
+        resolved_targets = {Path(ws).resolve() for ws in ws_targets}
+        cached_targets = {
+            Path(t).resolve() for t in registry._resources.keys()  # type: ignore[attr-defined]
+        }
+        assert resolved_targets.issubset(cached_targets), (
+            f"Not all workspaces materialized: missing={resolved_targets - cached_targets}"
+        )
+
+        # 2. EVERY materialized workspace's pool bridge is running — the fix.
+        for resources in registry.iter_materialized_resources():
+            for pi in resources.pools.values():
+                assert pi.broker_bridge._tasks, (
+                    f"workspace {resources.target} pool bridge not running "
+                    f"(the silent-switch bug)"
+                )
+
+        # 3. Each workspace's distinct reply was delivered end-to-end.
+        contents = [c for _, c in output_adapter.sent]
+        for m in marker:
+            assert f"echo:{m}" in contents, (
+                f"reply {m!r} not delivered; got {contents!r}"
+            )
+
+    finally:
+        if "router_task" in locals():
+            router_task.cancel()
+            import contextlib
+
+            with contextlib.suppress(BaseException):
+                await router_task
+        pool_builder_mod._build_llm_provider = original_llm_provider
+        core_mod.BotService._build_default_provider = original_default_provider  # type: ignore[assignment]
+        core_mod.BotService._project_dir = original_project_dir  # type: ignore[assignment]
+        with __import__("contextlib").suppress(BaseException):
+            await service.workspace_stack.registry.evict_all()
