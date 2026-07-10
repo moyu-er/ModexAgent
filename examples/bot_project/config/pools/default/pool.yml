@@ -12,4 +12,5 @@ approval:
       allowed_paths:
       - ./*
 mcp:
+- playwright
 - fetch
