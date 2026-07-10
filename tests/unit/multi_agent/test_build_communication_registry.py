@@ -127,9 +127,11 @@ async def test_build_communication_wires_session_registry(tmp_path):
     assert result and result.session_id, "send did not produce a child session id"
 
     # The child must be registered WITH its parent — this is the root-cause
-    # assertion. Before the fix, recover_parent_session returned None.
-    parent = await pool.recover_parent_session(result.session_id)
-    assert parent is not None, (
+    # assertion. The registry still records parent_session_id (for the WebUI
+    # session tree / listing); the agent loop just no longer reads it to
+    # recover the parent at turn time.
+    child = await registry.get(result.session_id)
+    assert child is not None and child.parent_session_id, (
         "child session was not registered with parent_session_id — "
         "_build_communication did not wire session_registry into the service"
     )

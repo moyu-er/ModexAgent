@@ -46,3 +46,50 @@ machine locates *which* request a decision applies to. IM carries no
 order; WebUI carries an explicit `tool_call_id` and targets exactly that one.
 This is the only surviving approval divergence between channels — the input path
 and the resume machine are otherwise one.
+
+## Session lifecycle domain language
+
+**Session Record** — the two artifacts that mark a session as existing: the
+transcript (`sessions/<pool>/<id>.jsonl`) and the index record
+(`session_index/<pool>/<id>.json`, which carries `parent_session_id`). A session
+is live iff its index record exists. The index is the single source of truth for
+the parent→child graph.
+_Avoid_: session metadata, session entry.
+
+**Session Artifacts** — the per-session satellite data derived from a session's
+activity (memory messages, pruned batches, fork context, media uploads, runtime
+trace/todos/turns/output). They are not the source of truth for existence; an
+artifact may outlive its session record after an interrupted deletion.
+_Avoid_: session files, session data (too vague).
+
+**Root session** — a session whose `parent_session_id` is null; a top-level
+conversation. Every subagent invocation is a non-root session pointing at its
+parent. The session-id prefix is NOT shared down the cascade — each subagent has
+its own prefix — so the parent link is the only reliable cascade association.
+_Avoid_: main session, top session.
+
+**Cascade** — the closure of a session plus all its descendants reachable via
+`parent_session_id`. Deleting a root means deleting its whole cascade; the
+traversal is incremental and delete-driven, not collected up front.
+_Avoid_: session tree (reserve for the UI grouping).
+
+**Orphan Session** — a non-root session whose parent's index record no longer
+exists. Detectable by the parent-gone rule; the entry point a sweep acts on.
+_Avoid_: dangling session, stale session.
+
+**Orphan Artifact** — a session artifact whose session id has no index record.
+Detectable by the no-record rule; the backstop for a session record that was
+removed before its artifacts.
+_Avoid_: leftover, garbage file.
+
+**clean_session** — the idempotent unit of work that removes one session's record
+and all its artifacts, then propagates to its children. Safe to call any number
+of times; a missing target is a no-op. It owns cascade propagation, so every
+trigger is just an entry-point injector.
+_Avoid_: delete handler, purge.
+
+**Deletion Backstop** — the periodic sweep that finds orphan sessions and orphan
+artifacts from disk state alone and enqueues `clean_session` for them. It is the
+sole retry authority: any deletion interrupted by a crash or a transient failure
+is eventually completed by it, because its authority is disk, not in-memory state.
+_Avoid_: cleanup cron, janitor.

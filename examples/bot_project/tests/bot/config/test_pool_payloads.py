@@ -20,7 +20,7 @@ _BOT_PROJECT = Path(__file__).resolve().parents[3]
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
-from bot.config.pool_payloads import (
+from bot.config.pool_payloads import (  # noqa: E402
     ApprovalConfig,
     ApprovalEntry,
     MainAgentNode,
@@ -28,9 +28,11 @@ from bot.config.pool_payloads import (
     PoolTree,
     PromptContent,
     SkillEntry,
+    SkillSource,
     SubagentNode,
 )
 
+from modex_agent.tools.presets import ContextMode, ToolPreset  # noqa: E402
 
 # ─── PoolTree round-trip ─────────────────────────────────────────────────────
 
@@ -44,7 +46,7 @@ def _sample_tree() -> PoolTree:
             max_steps=100,
             use_terminal=False,
             terminal_visibility=False,
-            tool_preset="full",
+            tool_preset=ToolPreset.FULL,
             tool_supplements=["ast_grep"],
             approval=ApprovalConfig(
                 enabled=True,
@@ -60,15 +62,15 @@ def _sample_tree() -> PoolTree:
                 agent_name="scout",
                 description="recon",
                 max_steps=60,
-                tool_preset="read_only",
-                context_mode="fresh",
+                tool_preset=ToolPreset.READ_ONLY,
+                context_mode=ContextMode.FRESH,
             ),
             SubagentNode(
                 agent_name="worker",
                 description="writer",
                 max_steps=150,
-                tool_preset="full",
-                context_mode="fork",
+                tool_preset=ToolPreset.FULL,
+                context_mode=ContextMode.FORK,
             ),
         ],
     )
@@ -129,7 +131,7 @@ class TestSmallPayloads:
         assert s.source == "global"
 
     def test_skill_entry_local(self) -> None:
-        s = SkillEntry(name="tdd", source="local")
+        s = SkillEntry(name="tdd", source=SkillSource.LOCAL)
         assert s.source == "local"
 
     def test_skill_entry_bad_source(self) -> None:
@@ -161,7 +163,7 @@ class TestMainAgentNodeDefaults:
         assert n.use_terminal is False
         assert n.terminal_visibility is False
         assert n.tool_preset == "full"
-        assert n.tool_supplements == []
+        assert n.tool_supplements == ["todo"]
         assert n.mcp == []
 
 

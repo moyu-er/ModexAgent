@@ -1,6 +1,6 @@
 max_steps: 50
-use_terminal: true
-terminal_visibility: true
+use_terminal: false
+terminal_visibility: false
 tool_preset: full
 approval:
   enabled: true
@@ -12,7 +12,5 @@ approval:
       allowed_paths:
       - ./*
 mcp:
-- '12306'
 - playwright
 - fetch
-- MiniMax

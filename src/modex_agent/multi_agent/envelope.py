@@ -19,6 +19,7 @@ _ROUTING_HEADERS: frozenset[str] = frozenset(
     {
         "session_id",
         "agent_session_id",
+        "parent_session_id",
         "message_id",
         "in_reply_to",
         "message_type",
@@ -43,6 +44,15 @@ class AgentMessageEnvelope:
     message_type: str = AgentMessageType.AGENT_MESSAGE
     session_id: str = ""
     agent_session_id: str = ""
+    parent_session_id: str | None = None
+    """Authoritative parent link for a subagent task dispatch.
+
+    Set by the dispatching parent at send time (``_send`` SUBAGENT branch) and
+    read by ``dispatch_envelope`` to stamp ``ctx.session.parent_session_id``.
+    Carrying the parent in the message — instead of recovering it from a
+    workspace-partitioned session store — is what makes subagent messaging
+    independent of which workspace is active.
+    """
     invocation_id: str | None = None
     """Source subagent's snowflake, for trace correlation only."""
     message_id: str = field(default_factory=lambda: uuid.uuid4().hex)
@@ -64,6 +74,8 @@ class AgentMessageEnvelope:
         }
         if self.invocation_id is not None:
             headers["invocation_id"] = self.invocation_id
+        if self.parent_session_id is not None:
+            headers["parent_session_id"] = self.parent_session_id
         return BrokerMessage(
             payload=self.payload,
             sender=Address(kind=self.source.kind, name=self.source.name),
@@ -89,6 +101,7 @@ class AgentMessageEnvelope:
         from modex_agent.multi_agent.address import AgentAddress
 
         envelope_invocation_id = headers.get("invocation_id") or None
+        envelope_parent_session_id = headers.get("parent_session_id") or None
 
         return cls(
             payload=msg.payload,
@@ -100,6 +113,7 @@ class AgentMessageEnvelope:
             message_type=headers.get("message_type", AgentMessageType.AGENT_MESSAGE),
             session_id=session_id,
             agent_session_id=agent_session_id,
+            parent_session_id=envelope_parent_session_id,
             invocation_id=envelope_invocation_id,
             message_id=headers.get("message_id") or uuid.uuid4().hex,
             in_reply_to=headers.get("in_reply_to") or None,

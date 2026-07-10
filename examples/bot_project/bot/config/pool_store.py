@@ -110,6 +110,15 @@ _MAIN_AGENT_EDITABLE_FIELDS: tuple[str, ...] = (
     "mcp",
 )
 
+# Per-field defaults for the main-agent editable fields. Values equal to their
+# default are omitted when writing pool.yml so the file stays free of default
+# noise. ``tool_supplements`` defaults to ["todo"] because main agents receive
+# todo tools by default; an explicit empty list disables them.
+_MAIN_AGENT_DEFAULTS: dict[str, object] = {
+    "tool_supplements": ["todo"],
+    "mcp": [],
+}
+
 
 class UnknownPoolError(KeyError):
     """Raised when a pool name is not present under the pools dir."""
@@ -190,14 +199,18 @@ class PoolStore:
         # Flat pool.yml: main-agent editable fields are top-level. Main agent
         # name = main_agent_name (defaults to the pool/dir name). Skills are NOT
         # read here — they live on disk as symlinks (SkillsStore, single source).
+        # Main agents receive todo tools by default, so tool_supplements defaults
+        # to ["todo"] when absent; an explicit empty list disables them.
         agent_name = data.get("main_agent_name", pool_name)
+        raw_supplements = data.get("tool_supplements")
+        tool_supplements: list[str] = ["todo"] if raw_supplements is None else list(raw_supplements)
         return MainAgentNode(
             agent_name=agent_name,
             max_steps=data.get("max_steps", 100),
             use_terminal=data.get("use_terminal", False),
             terminal_visibility=data.get("terminal_visibility", False),
             tool_preset=data.get("tool_preset") or ToolPreset.FULL,
-            tool_supplements=list(data.get("tool_supplements") or []),
+            tool_supplements=tool_supplements,
             approval=data.get("approval"),
             mcp=list(data.get("mcp") or []),
         )
@@ -363,7 +376,8 @@ class PoolStore:
             data["main_agent_name"] = tree.main.agent_name
         for field in _MAIN_AGENT_EDITABLE_FIELDS:
             value = _payload_field(tree.main, field)
-            if value in (None, [], {}):
+            default = _MAIN_AGENT_DEFAULTS.get(field, _MISSING)
+            if value is None or value == default:
                 continue
             data[field] = value
         if "media" in existing:

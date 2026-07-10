@@ -1,5 +1,7 @@
 agent_name: office-expert
-description: 处理 Office 文档（Word/Excel/PPT/PDF），支持格式转换、内容提取、编辑批注
-max_steps: 30
+description: Process Office documents (Word/Excel/PowerPoint/PDF) including format conversion, content extraction, editing, and annotations.
+max_steps: 100
 tool_preset: read_write
+tool_supplements:
+- todo
 context_mode: fresh

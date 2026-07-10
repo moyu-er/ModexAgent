@@ -128,7 +128,7 @@ class MemorySystemContextManager(ContextManager):
         injection_policy: MemoryInjectionPolicy | None = None,
         experience_manager: ExperienceManager | None = None,
         output_base_dir: Path | None = None,
-        parent_prompt_resolver: Callable[[str], Awaitable[str | None]] | None = None,
+        parent_prompt_lookup: Callable[[str], Awaitable[str | None]] | None = None,
         fork_context_spec: ForkContextSpec | None = None,
     ) -> None:
         from modex_agent.memory.injection import FullInjectionPolicy
@@ -145,9 +145,12 @@ class MemorySystemContextManager(ContextManager):
         self._experience_manager = experience_manager
         self._output_base_dir: Path | None = output_base_dir
         # Subagent per-invocation context (APPEND parent prompt + FORK context).
-        # None for normal agents and cold-path subagents → providers are skipped,
-        # so load() is unchanged for every non-subagent caller.
-        self._parent_prompt_resolver = parent_prompt_resolver
+        # None for normal agents → providers are skipped, so load() is unchanged
+        # for every non-subagent caller. The parent *value* arrives per turn via
+        # runtime_info["parent_session_id"] (set by dispatch_envelope from the
+        # envelope); the lookup closure only resolves the parent's prompt from
+        # the in-memory pool, never from a session store.
+        self._parent_prompt_lookup = parent_prompt_lookup
         self._fork_context_spec = fork_context_spec
 
     def wrap_governance(
@@ -269,14 +272,17 @@ class MemorySystemContextManager(ContextManager):
 
         # 1b. APPEND parent prompt — per-invocation (subagents only). Sits BEFORE
         # the base prompt so the agent's own prompt follows its parent's, mirroring
-        # the pre-refactor "[parent] --- [base]" ordering.
-        if self._parent_prompt_resolver is not None:
+        # the pre-refactor "[parent] --- [base]" ordering. The parent arrives via
+        # runtime_info (threaded from the envelope by dispatch_envelope), not by
+        # recovering it from a session store.
+        parent_sid = (runtime_info or {}).get("parent_session_id") if runtime_info else None
+        if self._parent_prompt_lookup is not None and parent_sid:
             from modex_agent.memory.prompt_pipeline.providers import (
                 AppendParentPromptProvider,
             )
 
             providers.append(
-                AppendParentPromptProvider(self._parent_prompt_resolver, session_id)
+                AppendParentPromptProvider(self._parent_prompt_lookup, parent_sid)
             )
 
         # 2. Base system prompt (static)
@@ -285,14 +291,14 @@ class MemorySystemContextManager(ContextManager):
 
         # 2a. FORK context — per-invocation (subagents only). Sits AFTER the base
         # prompt as READ-ONLY reference, mirroring the pre-refactor ordering.
-        if self._fork_context_spec is not None:
+        if self._fork_context_spec is not None and parent_sid:
             from modex_agent.memory.prompt_pipeline.providers import (
                 ForkContextProvider,
             )
 
             providers.append(
                 ForkContextProvider(
-                    self._fork_context_spec, session_id, self.memory_system
+                    self._fork_context_spec, session_id, self.memory_system, parent_sid
                 )
             )
 

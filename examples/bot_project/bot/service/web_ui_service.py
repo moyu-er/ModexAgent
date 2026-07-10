@@ -165,6 +165,7 @@ class WebUIService(BotService):
         # Merge IM sections from config/im.yml so adapters read their config
         # from ctx.raw_config["<im>"] without each adapter parsing the file.
         raw_config.update(load_im_sections(config_dir / "im.yml"))
+        self._raw_config = raw_config
 
         # ── 2. Shared transcript store + workspace membership ──────────
         # Stores are created from the project home dir for initial adapter
@@ -351,6 +352,7 @@ class WebUIService(BotService):
 
         self._port = port
         self._static_dist = static_dist
+        self._session_gc = None
         self._server = WebUIServer(
             _ws_in(),
             transcript_store,
@@ -434,6 +436,14 @@ class WebUIService(BotService):
         """
         return RecentWorkspaces(self._project_dir / self._app_config.paths.data_dir_name)
 
+    def _workspace_roots_provider(self):
+        """Home + every known non-home workspace (authoritative full set)."""
+        home = self._project_dir
+        targets: list = []
+        if self.workspace_stack is not None:
+            targets = list(self.workspace_stack.store.load_known_targets())
+        return [home, *targets]
+
     def _pool_for_agent(self, agent_name: str) -> str:
         """Return the pool name for *agent_name*, defaulting to ``main``."""
         return self._agent_pool_map.get(agent_name, _DEFAULT_AGENT_NAME)
@@ -455,6 +465,17 @@ class WebUIService(BotService):
 
         if self.workspace_stack is not None:
             self._server.set_workspace_control(self.workspace_stack.controller)
+
+        from bot.service.session_gc import SessionGarbageCollector, load_session_gc_config
+
+        gc_cfg = load_session_gc_config(self._raw_config)
+        self._session_gc = SessionGarbageCollector(
+            workspace_roots_provider=self._workspace_roots_provider,
+            data_dir_name=self._app_config.paths.data_dir_name,
+            config=gc_cfg,
+        )
+        self._server.set_session_gc(self._session_gc)
+        await self._session_gc.start()
 
         # The shared transcript store physically partitions sessions by
         # (workspace, pool) and serves as the WebUI's partition index.
@@ -680,4 +701,6 @@ class WebUIService(BotService):
         return mapping
 
     async def stop(self) -> None:
+        if self._session_gc is not None:
+            await self._session_gc.stop()
         await super().stop()

@@ -274,6 +274,7 @@ async def create_pool(
         context_fork_builder=context_fork_builder,
         workspace_path_resolver=path_resolver,
         mcp_registry=mcp_registry,
+        todo_store=todo_store,
     )
     pool._materialize_deps = deps
     pool._template_registry = template_registry
@@ -621,6 +622,16 @@ async def _build_tools(
 
     tm = InMemoryToolManager(config=ToolManagerConfig())
 
+    # Todo store — created early so it can be supplied to supplement-based
+    # todo tool registration (main agent) and subagent materialization.
+    from modex_agent.runtime.store import JsonFileTodoStore
+
+    if pool_data is not None and pool_data.runtime_dir is not None:
+        todo_dir: Path = pool_data.runtime_dir / "todos"
+    else:
+        todo_dir = data_dir / "runtime_state" / pool_name / "todos"
+    todo_store = JsonFileTodoStore(todo_dir)
+
     # Preset tools: file/search/bash gated by main_cfg.tool_preset. A bash
     # factory is provided so FULL/READ_WRITE/READ_ONLY presets get a
     # workspace-scoped SubprocessTool; the terminal manager (when present)
@@ -636,8 +647,10 @@ async def _build_tools(
     for tool in get_preset_tools(preset, subprocess_tool_factory=_make_bash, root_provider=root_provider):
         tm.register(tool)
 
-    # Additive supplement tools (e.g. ast_grep) layered on top of the preset.
-    for tool in get_supplement_tools(main_cfg.tool_supplements, root_provider=root_provider):
+    # Additive supplement tools (e.g. ast_grep, todo) layered on top of the preset.
+    for tool in get_supplement_tools(
+        main_cfg.tool_supplements, root_provider=root_provider, todo_store=todo_store
+    ):
         tm.register(tool)
     if main_cfg.tool_supplements:
         logger.info(
@@ -694,20 +707,6 @@ async def _build_tools(
     exp_meta = PerFileExperienceMetaStore(_exp_path)
     tm.register(ExperienceTool(_exp_path, exp_meta))
     logger.info("Pool '%s': experience tool registered", pool_name)
-
-    # Todo tools — path from pool_data (pool-aware) or data_dir fallback,
-    # mirroring the experience-tool path resolution above.
-    from modex_agent.runtime.store import JsonFileTodoStore
-    from modex_agent.tools.standard import TodoReadTool, TodoWriteTool
-
-    if pool_data is not None and pool_data.runtime_dir is not None:
-        todo_dir: Path = pool_data.runtime_dir / "todos"
-    else:
-        todo_dir = data_dir / "runtime_state" / pool_name / "todos"
-    todo_store = JsonFileTodoStore(todo_dir)
-    tm.register(TodoWriteTool(todo_store))
-    tm.register(TodoReadTool(todo_store))
-    logger.info("Pool '%s': todo tools registered (dir=%s)", pool_name, todo_dir)
 
     # MCP tools resolved from main_cfg.mcp (registry names) — never let MCP
     # failures break the rest of the tool manager / pool creation.

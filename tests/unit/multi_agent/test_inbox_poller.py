@@ -11,7 +11,7 @@ class _FakePool:
 
     Exposes exactly the helper surface the real AgentPool exposes to the
     poller: sessions_with_pending / get / get_template / consume_inbox /
-    recover_parent_session / materialize_agent / dispatch_envelope.
+    peek_inbox / materialize_agent / dispatch_envelope.
     """
     def __init__(self, pending_sessions: set[str], instances: dict, templates: dict | None = None):
         self._pending = set(pending_sessions)
@@ -33,13 +33,16 @@ class _FakePool:
             return [MagicMock(message_type="task_request")]
         return []
 
-    async def recover_parent_session(self, sid):
-        return None
+    async def peek_inbox(self, sid, limit=1):
+        # Non-destructive peek; mirrors the real pool surface the poller uses
+        # to read the parent link before materializing.
+        if sid in self._pending:
+            return [MagicMock(parent_session_id=None)]
+        return []
 
-    async def materialize_agent(self, sid, template):
-        parent = await self.recover_parent_session(sid)
+    async def materialize_agent(self, sid, template, *, parent_session_id=None):
         inv = sid.split(".")[0]
-        return await template.materialize(parent, inv, self._materialize_deps)
+        return await template.materialize(None, inv, self._materialize_deps)
 
     def get_template(self, name):
         return self._templates.get(name)

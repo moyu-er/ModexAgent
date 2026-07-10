@@ -566,11 +566,13 @@ class BotService(AgentBuilderMixin):
     # ------------------------------------------------------------------ #
 
     async def start(self) -> None:
-        # Start the input adapter, each HOME pool's broker bridge, then the
-        # workspace dispatcher (resolves the conversation's workspace per
-        # message and routes into that workspace's pool_router).
-        # Dream + curator background tasks are workspace-scoped and were
-        # started inside build_resources when each workspace materialized.
+        # Start the input adapter, then the workspace dispatcher (resolves
+        # the conversation's workspace per message and routes into that
+        # workspace's pool_router).
+        # Broker bridges, dream + curator background tasks are workspace-scoped
+        # and are started inside build_resources when EACH workspace
+        # materializes — home and non-home alike, so every switched-to /
+        # newly-created workspace is fully wired (not just home).
 
         # Wire the shared control filter BEFORE the input adapter starts so
         # IM /stop (and the WebUI pause button, which reuses /stop) actually
@@ -585,8 +587,6 @@ class BotService(AgentBuilderMixin):
         )
 
         await self.input_adapter.start()
-        for pool in self._home_resources.pools.values():
-            await pool.broker_bridge.start()
 
         self._router_task = asyncio.create_task(self.workspace_stack.dispatcher.run())
         print(f"[OK] WorkspaceDispatcher running, {len(self._pools)} pools active")

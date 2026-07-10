@@ -276,3 +276,54 @@ async def test_poller_materialize_failure_leaves_message_in_inbox():
         assert "inv2.scout" in await bus.sessions_with_pending()
     finally:
         await poller.stop()
+
+
+# ── Convergence: parent link travels in the message ───────────────────────
+
+
+@pytest.mark.asyncio
+async def test_dispatch_stamps_parent_from_envelope_without_registry():
+    """Convergence proof: ``ctx.session.parent_session_id`` comes from the
+    envelope, NOT recovered from a session store. A pool wired with NO session
+    registry and NO session store still yields a turn session carrying the
+    envelope's parent link — so subagent messaging is independent of which
+    workspace is active (workspace home-vs-not can no longer drop the parent).
+
+    Must fail on the pre-convergence code, which read the parent from
+    ``_resolve_session_info`` (registry/store) and got ``None`` here.
+    """
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.multi_agent.message_type import AgentMessageType
+
+    pool, _bus, poller = await _make_poller_pool()  # no session_registry / no store
+    try:
+        captured: dict[str, object] = {}
+
+        inst = MagicMock()
+        inst.pipeline = MagicMock()
+
+        async def _capture(msg):
+            captured["session"] = msg.session
+
+        inst.pipeline.process_message = _capture
+        pool._agents["scout"] = inst
+        pool._status["scout"] = AgentState.IDLE
+
+        envelope = AgentMessageEnvelope(
+            payload={"content": "hi", "message_type": AgentMessageType.TASK_REQUEST},
+            source=AgentAddress(name="main"),
+            target=AgentAddress(name="scout"),
+            message_type=AgentMessageType.TASK_REQUEST,
+            session_id="conv.main",
+            agent_session_id="inv1.scout",
+            parent_session_id="conv.main",
+            invocation_id="inv1",
+        )
+        await pool.dispatch_envelope("inv1.scout", inst, envelope)
+
+        session: SessionInfo | None = captured.get("session")  # type: ignore[assignment]
+        assert session is not None, "process_message was not invoked"
+        assert session.parent_session_id == "conv.main"
+        assert session.session_id == "inv1.scout"
+    finally:
+        await poller.stop()

@@ -25,7 +25,6 @@ import {
   ImageIcon,
   VideoIcon,
   AudioIcon,
-  WrenchIcon,
   SpinnerIcon,
   CircleRingIcon,
 } from "./icons";
@@ -55,7 +54,6 @@ const all = [
   ["ImageIcon", ImageIcon],
   ["VideoIcon", VideoIcon],
   ["AudioIcon", AudioIcon],
-  ["WrenchIcon", WrenchIcon],
   ["SpinnerIcon", SpinnerIcon],
   ["CircleRingIcon", CircleRingIcon],
 ] as const;

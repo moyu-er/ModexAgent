@@ -106,32 +106,26 @@ class RecordingBuilder:
         self.cleanup_calls.append(session_id)
 
 
-def _spec(builder, *, parent_resolver) -> ForkContextSpec:
+def _spec(builder) -> ForkContextSpec:
     return ForkContextSpec(
         builder=builder,
         agent_type="planner",
         fork_max_messages=10,
         fork_workspace=Path("/tmp/fork"),
         template_memory=None,
-        parent_session_resolver=parent_resolver,
     )
 
 
-def _parent_named(name: str):
-    async def resolver(sid: str):
-        # A plain str: the provider only does str(parent).split(".")[-1] and
-        # forwards parent_session to the builder. (Instance-level __str__ on a
-        # SimpleNamespace is ignored — dunders resolve on the type.)
-        return f"abc.{name}"
-
-    return resolver
+# The parent arrives as an authoritative session-id string (threaded from the
+# dispatch envelope via runtime_info), not via a resolver callback.
+_PARENT_SID = "abc.main"
 
 
 @pytest.mark.asyncio
 async def test_fork_provider_wraps_builder_xml():
     builder = RecordingBuilder("<fork>FORK_BODY</fork>")
     out = await ForkContextProvider(
-        _spec(builder, parent_resolver=_parent_named("main")), "inv1.planner", _MockMemory()
+        _spec(builder), "inv1.planner", _MockMemory(), _PARENT_SID
     ).get_or_refresh()
 
     assert "## Fork Context" in out
@@ -139,30 +133,28 @@ async def test_fork_provider_wraps_builder_xml():
     call = builder.build_calls[-1]
     assert call["agent_type"] == "planner"
     assert call["invocation_id"] == "inv1"  # derived via session_id_prefix_of
-    assert call["parent_name"] == "main"
+    assert call["parent_name"] == "main"  # derived from the parent session id
 
 
 @pytest.mark.asyncio
 async def test_fork_provider_registers_cleanup_for_session():
     builder = RecordingBuilder()
     await ForkContextProvider(
-        _spec(builder, parent_resolver=_parent_named("main")), "inv1.planner", _MockMemory()
+        _spec(builder), "inv1.planner", _MockMemory(), _PARENT_SID
     ).get_or_refresh()
     assert "inv1.planner" in builder.cleanup_calls
 
 
 @pytest.mark.asyncio
-async def test_fork_provider_empty_when_no_parent():
-    builder = RecordingBuilder()
-
-    async def none_resolver(sid: str):
-        return None
+async def test_fork_provider_empty_when_builder_returns_empty():
+    """Parent presence is now gated at load(); the provider always has a parent.
+    An empty fork body still yields an empty section."""
+    builder = RecordingBuilder("")
 
     out = await ForkContextProvider(
-        _spec(builder, parent_resolver=none_resolver), "inv1.planner", _MockMemory()
+        _spec(builder), "inv1.planner", _MockMemory(), _PARENT_SID
     ).get_or_refresh()
     assert out == ""
-    assert builder.build_calls == []  # never built without a parent
 
 
 @pytest.mark.asyncio
@@ -173,7 +165,7 @@ async def test_fork_provider_swallows_builder_exception():
 
     builder = BoomBuilder()
     out = await ForkContextProvider(
-        _spec(builder, parent_resolver=_parent_named("main")), "inv1.planner", _MockMemory()
+        _spec(builder), "inv1.planner", _MockMemory(), _PARENT_SID
     ).get_or_refresh()
     assert out == ""
 
@@ -187,8 +179,8 @@ async def test_fork_provider_differs_per_session():
             return f"<fork>{kw['invocation_id']}</fork>"
 
     builder = PerSessionBuilder()
-    spec = _spec(builder, parent_resolver=_parent_named("main"))
-    a = await ForkContextProvider(spec, "inv1.planner", _MockMemory()).get_or_refresh()
-    b = await ForkContextProvider(spec, "inv2.planner", _MockMemory()).get_or_refresh()
+    spec = _spec(builder)
+    a = await ForkContextProvider(spec, "inv1.planner", _MockMemory(), _PARENT_SID).get_or_refresh()
+    b = await ForkContextProvider(spec, "inv2.planner", _MockMemory(), _PARENT_SID).get_or_refresh()
     assert "inv1" in a and "inv2" not in a
     assert "inv2" in b and "inv1" not in b

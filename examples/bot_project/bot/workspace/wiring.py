@@ -62,6 +62,7 @@ class WorkspaceStack:
     controller: WorkspaceController
     dispatcher: WorkspaceMessageDispatcher
     factory: PoolResourceFactory
+    store: GlobalWorkspaceStore
 
 
 def build_single_workspace_stack(service: Any, *, data_dir_name: str) -> WorkspaceStack:
@@ -117,6 +118,7 @@ def build_workspace_stack(
         controller=controller,
         dispatcher=dispatcher,
         factory=factory,
+        store=store,
     )
 
 
@@ -303,6 +305,12 @@ async def _build_resources(
     # 8 disables them) operate on each pool's own bus.
     for name, pi in pools.items():
         _wire_pool_to_resources(pi, name, pool_configs[name], resources)
+        # Start this pool's output broker bridge so agent output published to
+        # THIS workspace's broker reaches the output adapter. This MUST happen
+        # at materialization for EVERY workspace — home and non-home alike —
+        # otherwise a switched-to / newly-created workspace's turns run but
+        # their output never leaves the broker (the agent looks silent).
+        await pi.broker_bridge.start()
 
     # 6. Background tasks (dream/curator) — per workspace.
     background = BackgroundTaskRunner(

@@ -504,6 +504,7 @@ class AgentCommunicationService:
                 message_type=AgentMessageType.TASK_REQUEST,
                 session_id=str(parent_sid),
                 agent_session_id=session_id,
+                parent_session_id=str(parent_sid),
                 invocation_id=normalized_invocation_id,
             )
             if self._comm_tracker is not None:

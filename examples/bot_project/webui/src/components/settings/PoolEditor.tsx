@@ -81,7 +81,7 @@ const SYSTEM_PROMPT_MODE_HINT: Record<SystemPromptMode, string> = {
 };
 const FORK_MAX_DEFAULT = 80;
 const FORK_MAX_MAX = 100;
-const SUPPLEMENTS = ["ast_grep"] as const;
+const SUPPLEMENTS = ["ast_grep", "todo"] as const;
 
 const PRESET_OPTIONS = PRESETS.map((p) => ({ value: p, label: p }));
 const CONTEXT_MODE_OPTIONS = CONTEXT_MODES.map((m) => ({ value: m, label: m }));

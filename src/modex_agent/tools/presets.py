@@ -5,6 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from modex_agent.runtime.store import TodoStore
 
 from modex_agent.tools.workspace_scoped import WorkspaceRootProvider, wrap_standard_tools
 from modex_agent.core.tool_manager import Tool
@@ -185,12 +189,19 @@ class ToolSupplement(str, Enum):
     """
 
     AST_GREP = "ast_grep"  # ast_grep_search + ast_grep_replace
+    TODO = "todo"  # todo_read + todo_write
 
 
 def _make_ast_grep_tools() -> list[Tool]:
     from modex_agent.tools.ast import AstGrepReplaceTool, AstGrepSearchTool
 
     return [AstGrepSearchTool(), AstGrepReplaceTool()]
+
+
+def _make_todo_tools(todo_store: "TodoStore") -> list[Tool]:
+    from modex_agent.tools.standard import TodoReadTool, TodoWriteTool
+
+    return [TodoWriteTool(todo_store), TodoReadTool(todo_store)]
 
 
 SUPPLEMENT_FACTORIES: dict[ToolSupplement, Callable[[], list[Tool]]] = {
@@ -202,11 +213,21 @@ def get_supplement_tools(
     supplements: list[ToolSupplement],
     *,
     root_provider: WorkspaceRootProvider | None = None,
+    todo_store: "TodoStore | None" = None,
 ) -> list[Tool]:
     """Return deduped tool instances for the given additive supplements."""
     seen: set[str] = set()
     out: list[Tool] = []
     for sup in supplements:
+        if sup == ToolSupplement.TODO:
+            if todo_store is None:
+                raise ValueError("ToolSupplement.TODO requires a todo_store")
+            for tool in _make_todo_tools(todo_store):
+                if tool.name in seen:
+                    continue
+                seen.add(tool.name)
+                out.append(tool)
+            continue
         for tool in SUPPLEMENT_FACTORIES[sup]():
             if tool.name in seen:
                 continue

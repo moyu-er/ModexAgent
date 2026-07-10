@@ -30,6 +30,8 @@ if TYPE_CHECKING:
     from modex_agent.tools.mcp.registry import McpConnectionRegistry
     from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 
+from modex_agent.runtime.store import TodoStore
+
 
 @dataclass(frozen=True)
 class AgentMaterializeDeps:
@@ -60,3 +62,4 @@ class AgentMaterializeDeps:
     context_fork_builder: "ContextForkBuilder | None" = None
     workspace_path_resolver: "WorkspacePathResolver | None" = None
     mcp_registry: "McpConnectionRegistry | None" = None
+    todo_store: TodoStore | None = None

@@ -240,6 +240,17 @@ class AgentPool(AgentRegistry):
         )
         payload: dict[str, Any] = payload_model.model_dump(exclude_none=True)
 
+        # Stamp the parent link when the target is a subagent session, so the
+        # poller's dispatch path can read it from the envelope. submit_input
+        # runs on the (workspace-bound) dispatcher path, so a single registry
+        # lookup here is fine — it is NOT the per-turn hot path. Main-agent
+        # targets carry no parent.
+        parent_sid: str | None = None
+        if self._session_registry is not None:
+            child = await self._session_registry.get(session_id)
+            if child is not None and child.parent_session_id:
+                parent_sid = child.parent_session_id
+
         envelope = AgentMessageEnvelope(
             payload=payload,
             source=AgentAddress(kind="channel", name=message.source or "user"),
@@ -249,6 +260,7 @@ class AgentPool(AgentRegistry):
             message_type=AgentMessageType.EXTERNAL_INPUT,
             session_id=message.session.session_id_prefix,
             agent_session_id=session_id,
+            parent_session_id=parent_sid,
         )
         if self._agent_bus is not None:
             await self._agent_bus.send(session_id, envelope)
@@ -273,32 +285,35 @@ class AgentPool(AgentRegistry):
             )
         return []
 
-    async def recover_parent_session(self, session_id: str) -> SessionInfo | None:
-        """Recover the parent SessionInfo for a child session, if any.
+    async def peek_inbox(
+        self, session_id: str, limit: int = 1
+    ) -> list[AgentMessageEnvelope]:
+        """Non-destructive read of up to ``limit`` pending envelopes.
 
-        Used by the poller when materializing a subagent: ``session_id`` is the
-        child, so ``SessionInfo.from_str`` would yield the child's own info
-        (parent_session_id=None). The real parent lives in the registry.
+        Used by the InboxPoller to read the parent link off the first pending
+        envelope WITHOUT consuming the batch — so a materialize failure still
+        leaves the messages in the inbox.
         """
-        if self._session_registry is None:
-            return None
-        child = await self._session_registry.get(session_id)
-        if child is not None and child.parent_session_id:
-            return SessionInfo.from_str(child.parent_session_id)
-        return None
+        if self._agent_bus is not None:
+            return await self._agent_bus.peek(session_id, limit=limit)
+        return []
 
     async def materialize_agent(
-        self, session_id: str, template: AgentTemplate
+        self,
+        session_id: str,
+        template: AgentTemplate,
+        *,
+        parent_session_id: str | None = None,
     ) -> AgentInstance:
         """Materialize a subagent instance for ``session_id`` via ``template``.
 
-        Thin accessor for the InboxPoller: recovers the parent session from
-        the registry, derives the invocation_id from the session_id prefix,
-        and calls ``template.materialize`` with this pool's materialize deps.
-        Keeps the poller from reaching into ``self._materialize_deps``
-        directly.
+        ``parent_session_id`` is the authoritative parent link, carried by the
+        dispatching envelope and threaded in by the InboxPoller (it peeks the
+        first pending envelope before materializing). Deriving the parent from
+        the message — not recovering it from a workspace-partitioned session
+        store — keeps subagent messaging independent of the active workspace.
         """
-        parent = await self.recover_parent_session(session_id)
+        parent = SessionInfo.from_str(parent_session_id) if parent_session_id else None
         inv_id = session_id_prefix_of(session_id)
         assert self._materialize_deps is not None  # set by pool wiring before poller runs
         return await template.materialize(parent, inv_id, self._materialize_deps)
@@ -332,7 +347,23 @@ class AgentPool(AgentRegistry):
             )
         else:
             self._touch_session(session_id)
-        session = await self._resolve_session_info(session_id, agent_name)
+        # Authoritative parent link comes from the envelope (set by the
+        # dispatching producer), NOT recovered from a session store. This
+        # single stamp feeds every ctx.session.parent_session_id reader
+        # (SubagentAutoSendHook, consult routing, star-topology) and the
+        # APPEND/FORK prompt providers (via runtime_info).
+        session = SessionInfo.from_str(session_id, default_agent_name=agent_name)
+        if envelope.parent_session_id:
+            session = session.model_copy(
+                update={"parent_session_id": envelope.parent_session_id}
+            )
+        elif envelope.message_type == AgentMessageType.TASK_REQUEST:
+            logger.warning(
+                "dispatch_envelope: TASK_REQUEST for session %s carried no "
+                "parent_session_id; ctx.session.parent_session_id will be None "
+                "— result passback will be degraded.",
+                session_id,
+            )
         metadata = self._envelope_metadata(envelope)
         if self._comm_tracker is not None:
             self._comm_tracker.build_prompt_section(agent_name)
@@ -517,28 +548,6 @@ class AgentPool(AgentRegistry):
                 await asyncio.sleep(min(remaining, self._WATCHDOG_POLL_INTERVAL))
         except asyncio.CancelledError:
             return
-
-    async def _resolve_session_info(
-        self,
-        session_id: str,
-        default_agent_name: str = "main",
-    ) -> SessionInfo:
-        """Resolve a full SessionInfo (including parent_session_id) from registry/store.
-
-        Session id strings do not encode the parent relationship.  Prefer the
-        runtime registry, then the persistent store, so subagent contexts keep
-        their parent_session_id.  Fall back to parsing the string only when no
-        richer record exists.
-        """
-        if self._session_registry is not None:
-            session = await self._session_registry.get(session_id)
-            if session is not None:
-                return session
-        if self._session_store is not None:
-            session = await self._session_store.get(session_id)
-            if session is not None:
-                return session
-        return SessionInfo.from_str(session_id, default_agent_name=default_agent_name)
 
     def get(self, name: str) -> AgentInstance | None:
         return self._agents.get(name)

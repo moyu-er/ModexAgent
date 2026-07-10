@@ -20,7 +20,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from aiohttp import web
@@ -52,6 +52,9 @@ from modex_agent.utils.timezone import get_user_timezone
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.port import WorkspaceControlPort
 from modex_agent.workspace.runtime import resolve_workspace_root
+
+if TYPE_CHECKING:
+    from bot.service.session_gc import SessionGarbageCollector
 
 logger = logging.getLogger(__name__)
 
@@ -303,6 +306,9 @@ class WebUIServer:
         # /api/mcp, /api/skills and the per-agent prompt/skills sub-routes. None
         # degrades the endpoints to 503 (matches ConfigController convention).
         self._pool_config_controller: PoolConfigController | None = None
+        # SessionGarbageCollector -- injected by WebUIService for cascade
+        # session deletion. None until wired (handler delegation is separate).
+        self._session_gc = None
 
         self.app = web.Application()
         self._setup_routes()
@@ -514,6 +520,10 @@ class WebUIServer:
     def set_workspace_control(self, control: WorkspaceControlPort) -> None:
         """Inject the WorkspaceControlPort for the workspace API."""
         self._workspace_control = control
+
+    def set_session_gc(self, gc: SessionGarbageCollector | None) -> None:
+        """Inject the SessionGarbageCollector for cascade session deletion."""
+        self._session_gc = gc
 
     def set_workspace_index(self, index: WorkspaceIndex) -> None:
         """Inject the session→workspace membership index."""
@@ -1875,22 +1885,32 @@ class WebUIServer:
         )
 
     async def _handle_delete_session(self, request: web.Request) -> web.Response:
-        """DELETE /api/sessions/{session_id} -- delete a session.
+        """DELETE /api/sessions/{session_id} -- delete a conversation's cascade.
 
-        Removes the transcript keyed by the FULL session id.  Because the
-        dispatcher keys by session id (not conv+agent), a single delete removes
-        exactly one session even when several subagents share a conversation.
+        Delegates to the SessionGarbageCollector: resolves the workspace root +
+        pool, then the collector sync-removes the root's record + transcript
+        (conversation leaves the list immediately) and drains the full subagent
+        cascade + all ten artifact types via the background pool. Keeps the
+        {deleted: id} contract. If no collector is wired (should not happen in
+        production), logs a warning and returns without deleting.
         """
         session_id: str = request.match_info["session_id"]
+        if self._session_gc is None:
+            # No collector wired (should not happen in production — web_ui_service
+            # wires one unconditionally at start). Surface it loudly rather than
+            # silently re-running the old shallow delete (which would skip the
+            # cascade + artifacts this feature exists to clean).
+            logger.warning(
+                "delete_session: no SessionGarbageCollector wired; skipping cascade "
+                "deletion for %s", session_id
+            )
+            return web.json_response({"deleted": session_id})
         ws_raw = request.query.get("ws", "")
-        sessions_dir = self._sessions_dir_of_ws(ws_raw)
+        ws_root = self._ws_root_of(ws_raw)
         index_dir = self._index_dir_of_ws(ws_raw)
-        self._store.delete_session(session_id, sessions_dir=sessions_dir)
-
-        # Delete from session store if available.
-        if self._session_store is not None:
-            await self._session_store.delete(session_id, index_dir=index_dir)
-
+        resolved = await self._resolve_session(session_id, index_dir=index_dir)
+        pool = self._pool_of_agent(resolved.agent_name)
+        await self._session_gc.delete_session_tree(session_id, ws_root=ws_root, pool=pool)
         return web.json_response({"deleted": session_id})
 
     # ------------------------------------------------------------------
@@ -2398,22 +2418,31 @@ class WebUIServer:
         ws: web.WebSocketResponse,
         data: dict[str, object],
     ) -> None:
+        """Delete a conversation's full cascade (delegates to the collector).
+
+        Mirrors the REST delete handler: resolves ws root + pool and delegates to
+        the SessionGarbageCollector, which removes the root's record synchronously
+        and drains the cascade + ten artifact types via the background pool.
+        Supersedes the old prefix-based delete (subagents carry their own prefix,
+        so prefix-delete missed the cascade — ADR-0018).
+        """
         session_id = str(data.get("session_id", ""))
         if "." not in session_id:
             return
         ws_raw = str(data.get("ws", ""))
-        sessions_dir = self._sessions_dir_of_ws(ws_raw)
         index_dir = self._index_dir_of_ws(ws_raw)
         resolved = await self._resolve_session(session_id, index_dir=index_dir)
-        uuid_prefix = resolved.session_id_prefix
         agent_name = resolved.agent_name
         pool = self._pool_of_agent(agent_name)
-        self._store.delete_sessions_by_prefix(uuid_prefix, sessions_dir=sessions_dir)
-        # Also remove session-index records for the whole conversation so
-        # subagent invocation files don't linger as orphans (mirrors the
-        # single-session delete path below).
-        if self._session_store is not None:
-            await self._session_store.delete_sessions_by_prefix(uuid_prefix, index_dir=index_dir)
+        if self._session_gc is not None:
+            await self._session_gc.delete_session_tree(
+                session_id, ws_root=self._ws_root_of(ws_raw), pool=pool
+            )
+        else:
+            logger.warning(
+                "delete_conversation: no SessionGarbageCollector wired; skipping "
+                "cascade deletion for %s", session_id
+            )
         await _safe_send_json(
             ws,
             DeltaEnvelope(

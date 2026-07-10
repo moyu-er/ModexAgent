@@ -10,7 +10,7 @@ from modex_agent.core.emitter import AgentResult
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
-from modex_agent.core.types import LLMResponse
+from modex_agent.core.types import LLMResponse, ToolCall
 from modex_agent.hook import HookErrorPolicy, HookSpec, HookRunner
 from modex_agent.hook.builtin import SubagentAutoSendHook
 from modex_agent.hook.builtin.loop_detection import LoopDetectionHook
@@ -89,9 +89,15 @@ async def test_subagent_loop_routes_to_parent_inbox():
     """A subagent that hits LOOP_DETECTED must notify its parent, not the user."""
     bus = _FakeBus()
     ctx = _make_subagent_ctx()
-    # Seed history so window_size=2 fires on the first LLM response.
+    # Seed a prior assistant step with the same content AND the same tool call,
+    # so the AND-based loop detector fires on the first LLM response.
     await ctx.history.append(
-        ChatMessage(role="assistant", content="I am stuck doing the same thing.")
+        ChatMessage(
+            role="assistant",
+            content="I am stuck doing the same thing.",
+            tool_calls=[{"id": "c0", "type": "function",
+                         "function": {"name": "read", "arguments": '{"path": "/a"}'}}],
+        )
     )
 
     provider = MagicMock()
@@ -99,6 +105,7 @@ async def test_subagent_loop_routes_to_parent_inbox():
         return_value=LLMResponse(
             content="I am stuck doing the same thing.",
             finish_reason=FinishReason.STOP.value,
+            tool_calls=[ToolCall(tool_name="read", arguments={"path": "/a"})],
         )
     )
     provider.get_default_model = lambda: "mock"

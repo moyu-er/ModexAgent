@@ -1,6 +1,0 @@
-Slides found: 5
-ppt/slides/slide1.xml
-ppt/slides/slide2.xml
-ppt/slides/slide3.xml
-ppt/slides/slide4.xml
-ppt/slides/slide5.xml

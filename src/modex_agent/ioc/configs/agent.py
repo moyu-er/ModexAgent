@@ -8,9 +8,9 @@ it is just an Agent with different tools and configs passed in code.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from modex_agent.ioc.configs.approval import ApprovalConfig
 from modex_agent.ioc.configs.hooks import HooksConfig
@@ -84,3 +84,20 @@ class AgentConfig(BaseModel):
 
     # ── MCP servers (registry names resolved via bot.config.mcp_registry) ──
     mcp: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _inject_main_todo_default(cls, values: Any) -> Any:
+        """Main agents default to the todo supplement unless explicitly set.
+
+        Subagents keep the empty default. Only injects when ``tool_supplements``
+        is absent from the input; an explicit empty list disables todo tools.
+        """
+        if not isinstance(values, dict):
+            return values
+        if "tool_supplements" in values:
+            return values
+        role = values.get("role", "subagent")
+        if role == "main":
+            values["tool_supplements"] = [ToolSupplement.TODO]
+        return values

@@ -174,36 +174,33 @@ class AgentTemplate:
         )
         pruned_manager = resolver.pruned_manager() if resolver else None
 
-        # ── Per-invocation resolvers (APPEND parent prompt + FORK context) ──
+        # ── Per-invocation providers (APPEND parent prompt + FORK context) ──
         # These move the invocation-specific parts of the system prompt OUT of
-        # the baked string and into per-session pipeline providers, so a reused
+        # the baked string and into per-turn pipeline providers, so a reused
         # instance (one slot per agent_type in the pool) rebuilds them per
-        # invocation. Built here closing over deps.pool / deps.context_fork_builder;
-        # None when there is no parent or the mode is off → providers are skipped.
-        parent_prompt_resolver = None
+        # invocation. The parent *value* for each turn arrives via runtime_info
+        # (threaded from the dispatch envelope); the lookup below only resolves
+        # the parent's prompt from the in-memory pool. None when there is no
+        # parent or the mode is off → providers are skipped.
+        parent_prompt_lookup = None
         fork_context_spec = None
         if parent_session is not None:
             if self.system_prompt_mode == SystemPromptMode.APPEND:
                 pool_ref = deps.pool
 
-                async def _parent_prompt_of(sid: str, _pool=pool_ref) -> str | None:
-                    parent = await _pool.recover_parent_session(sid)
-                    if parent is None:
-                        return None
-                    inst = _pool.get(str(parent).split(".")[-1])
+                async def _parent_prompt_of(
+                    parent_sid: str, _pool=pool_ref
+                ) -> str | None:
+                    # In-memory instance lookup only — never a session store.
+                    inst = _pool.get(str(parent_sid).split(".")[-1])
                     if inst is None or not inst.descriptor.system_prompt_template:
                         return None
                     return inst.descriptor.system_prompt_template
 
-                parent_prompt_resolver = _parent_prompt_of
+                parent_prompt_lookup = _parent_prompt_of
 
             if self.context_mode == ContextMode.FORK and deps.context_fork_builder is not None:
                 from modex_agent.memory.prompt_pipeline.providers import ForkContextSpec
-
-                pool_ref = deps.pool
-
-                async def _parent_session_of(sid: str, _pool=pool_ref):
-                    return await _pool.recover_parent_session(sid)
 
                 fork_context_spec = ForkContextSpec(
                     builder=deps.context_fork_builder,
@@ -211,7 +208,6 @@ class AgentTemplate:
                     fork_max_messages=self.fork_max_messages,
                     fork_workspace=(resolver.memory_dir() if resolver else None),
                     template_memory=self.memory,
-                    parent_session_resolver=_parent_session_of,
                 )
 
         subagent_ctx = build_session_only_memory(
@@ -222,7 +218,7 @@ class AgentTemplate:
             system_prompt=system_prompt,
             pruned_manager=pruned_manager,
             output_base_dir=output_base_dir,
-            parent_prompt_resolver=parent_prompt_resolver,
+            parent_prompt_lookup=parent_prompt_lookup,
             fork_context_spec=fork_context_spec,
         )
 
@@ -351,8 +347,12 @@ class AgentTemplate:
         ):
             tm.register(tool)
 
-        # Additive supplement tools (e.g. AST_GREP) layered on top of the preset.
-        for tool in get_supplement_tools(self.tool_supplements, root_provider=deps.root_provider):
+        # Additive supplement tools (e.g. AST_GREP, TODO) layered on top of the preset.
+        for tool in get_supplement_tools(
+            self.tool_supplements,
+            root_provider=deps.root_provider,
+            todo_store=deps.todo_store,
+        ):
             tm.register(tool)
 
         # MCP tools resolved from the registry by this template's mcp selection.

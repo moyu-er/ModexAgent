@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.prompt import SystemPromptProvider
-from modex_agent.core.session_id import session_id_prefix_of
+from modex_agent.core.session_id import SessionInfo, session_id_prefix_of
 from modex_agent.utils.timezone import get_user_timezone
 
 if TYPE_CHECKING:
@@ -27,19 +27,37 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _TODO_TASK_DISCIPLINE_PROMPT = """\
-## Task Discipline
+## Task Tracking — read before every reply
 
-You have access to todo_read and todo_write tools. Use them to track multi-step work.
+You own `todo_write` and `todo_read`. The list is the user's window into your
+progress, so an out-of-date list is a failure of the task itself, not just
+bookkeeping. Two obligations, in this order:
 
-Rules:
-- Use todo_write when the task has 3+ distinct steps, multiple subtasks, or spans multiple turns.
-- Create/update the list BEFORE starting work.
-- Keep exactly one item `in_progress` at a time.
-- Mark `completed` only after the work is done and verified.
-- Update in real time; do not batch completions.
-- If blocked, keep the item `in_progress` and add a `pending` item describing the blocker.
-- On resume / continue / "try again", call `todo_read` first and continue the existing `in_progress` item.
-- Do not end your turn while active todos remain unless blocked or waiting for the user.
+1. **Update BEFORE you reply.** The instant you finish a task — before writing
+   any summary or ending the turn — call `todo_write`: mark the finished item
+   `completed` and promote the next `pending` item to `in_progress`. Describing
+   work as done in prose while the list still shows it `in_progress` is the
+   single most common mistake; do not make it.
+2. **Never end with stale work.** Do not end your turn while `pending` or
+   `in_progress` items remain, unless you are blocked or explicitly waiting on
+   the user. If blocked, keep the item `in_progress` and add a `pending` item
+   describing the blocker.
+
+On resume / "continue" / "try again": call `todo_read` first, then continue the
+`in_progress` item.
+
+Worked example — note that `todo_write` is called at EVERY transition, never
+batched to the end:
+
+  user: "Run the tests and fix any failures"
+  -> todo_write: [Run tests: in_progress] [Fix failures: pending]
+  -> (run tests; 3 failures found)
+  -> todo_write: [Run tests: completed] [Fix A: in_progress] [Fix B,C: pending]
+  -> (fix A)
+  -> todo_write: [Fix A: completed] [Fix B: in_progress] [Fix C: pending]
+  -> (fix B, fix C)
+  -> todo_write: [Fix A: completed] [Fix B: completed] [Fix C: completed]
+  -> "Done — 3 failures fixed, tests green."
 """
 
 
@@ -334,10 +352,12 @@ class ForkContextSpec:
 
     Frozen dataclass (type-safety rule 11 escape hatch): a tuple-like internal
     record that crosses the materialize → MemorySystemContextManager seam. It
-    holds a mutable builder + a callable; no runtime field validation is
-    required, and it carries no behaviour beyond field access. ``memory_system``
-    is deliberately NOT here — it is injected by ``load()`` from the context
-    manager's own memory system to avoid a construction cycle.
+    holds a mutable builder; no runtime field validation is required, and it
+    carries no behaviour beyond field access. ``memory_system`` and the parent
+    session are deliberately NOT here — the parent arrives per turn via
+    ``runtime_info`` (threaded from the dispatch envelope), and
+    ``memory_system`` is injected by ``load()`` from the context manager's own
+    memory system to avoid a construction cycle.
     """
 
     builder: Any
@@ -345,38 +365,37 @@ class ForkContextSpec:
     fork_max_messages: int
     fork_workspace: Path | None
     template_memory: Any
-    parent_session_resolver: Callable[[str], Awaitable[Any]]
 
 
 class AppendParentPromptProvider(SystemPromptProvider):
     """Subagent APPEND mode — prepend the current parent's system prompt.
 
-    Per-invocation: rebuilt every ``load()`` with the live session_id (mirrors
-    OutputMdProvider). ``resolver(session_id)`` recovers the session's parent
-    and returns its ``system_prompt_template`` (or ``None``), so a reused
-    instance reflects each invocation's own parent instead of the first one
-    captured at materialize time.
+    Per-invocation: rebuilt every ``load()``. ``parent_session_id`` is the
+    authoritative parent for THIS turn (threaded from the dispatch envelope via
+    runtime_info, not recovered from a store); ``lookup(parent_session_id)``
+    resolves the parent's ``system_prompt_template`` from the in-memory pool (or
+    ``None``), so a reused instance reflects each invocation's own parent.
     """
 
     def __init__(
         self,
-        resolver: Callable[[str], Awaitable[str | None]],
-        session_id: str,
+        lookup: Callable[[str], Awaitable[str | None]],
+        parent_session_id: str,
     ) -> None:
         super().__init__()
-        self._resolver = resolver
-        self._session_id = session_id
+        self._lookup = lookup
+        self._parent_session_id = parent_session_id
 
     async def _fetch_version(self) -> str:
-        return self._session_id  # refresh on session change
+        return self._parent_session_id  # refresh when the parent changes
 
     async def _fetch_content(self) -> str:
         try:
-            prompt = await self._resolver(self._session_id)
+            prompt = await self._lookup(self._parent_session_id)
         except Exception:
             logger.warning(
-                "AppendParentPromptProvider: resolver failed for %s",
-                self._session_id,
+                "AppendParentPromptProvider: lookup failed for parent %s",
+                self._parent_session_id,
                 exc_info=True,
             )
             return ""
@@ -386,9 +405,10 @@ class AppendParentPromptProvider(SystemPromptProvider):
 class ForkContextProvider(SystemPromptProvider):
     """Subagent FORK context — parent history snapshot, per-invocation.
 
-    Rebuilt every ``load()`` with the live session_id. ``ContextForkBuilder.
-    build`` is idempotent per ``(agent_type, invocation_id)`` (first turn of a
-    session writes the fork file, later turns read it), so the per-turn cost is
+    ``parent_session_id`` is the authoritative parent for this turn (threaded
+    from the dispatch envelope via runtime_info). ``ContextForkBuilder.build``
+    is idempotent per ``(agent_type, invocation_id)`` (first turn of a session
+    writes the fork file, later turns read it), so the per-turn cost is
     bounded. The provider registers the fork file for eviction-driven cleanup
     on first build.
     """
@@ -398,20 +418,20 @@ class ForkContextProvider(SystemPromptProvider):
         spec: ForkContextSpec,
         session_id: str,
         memory_system: MemorySystem,
+        parent_session_id: str,
     ) -> None:
         super().__init__()
         self._spec = spec
         self._session_id = session_id
         self._memory_system = memory_system
+        self._parent_session_id = parent_session_id
 
     async def _fetch_version(self) -> str:
         return self._session_id  # refresh on session change
 
     async def _fetch_content(self) -> str:
         try:
-            parent = await self._spec.parent_session_resolver(self._session_id)
-            if parent is None:
-                return ""
+            parent = SessionInfo.from_str(self._parent_session_id)
             parent_name = str(parent).split(".")[-1]
             invocation_id = session_id_prefix_of(self._session_id)
             fork_xml = await self._spec.builder.build(
