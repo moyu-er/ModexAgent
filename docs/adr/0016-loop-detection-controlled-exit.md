@@ -2,6 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-07-07
+- **Revised:** 2026-07-10 — 检测语义由「内容循环 OR 工具循环」改为「内容相似 AND 工具相同」的合取判定（见 §4）。原 OR 方案对正当的重复步骤（多步确认、迭代探查）误报过多；合取要求两个信号在同一段连续窗口上同时成立才介入。
 - **Related:** ADR-0008（审批主 agent 镜像与 sanitizer）、`TodoCompletionProbeHook`（`src/modex_agent/tools/standard/todo_probe.py`）、`AgentControlError` 退出模型（`src/modex_agent/control/exceptions.py`）
 
 ## Context
@@ -108,7 +109,7 @@ except Exception:
 
 ```python
 class LoopDetectionHook(AfterLLMResponseHook):
-    """每次 assistant 完整 response 拿到后，无状态检测内容/工具循环。
+    """每次 assistant 完整 response 拿到后，无状态检测「内容相似 AND 工具相同」循环。
     命中即抛 LoopDetectedError，结束当前 turn。
     """
 ```
@@ -121,7 +122,8 @@ class LoopDetectionHook(AfterLLMResponseHook):
 
 - 跳过（忽略）`role == tool` 的消息（工具结果是 ReAct 中间态，不属于 assistant 输出）。
 - 遇到 `role == user` 立即停止（user 消息标志新 turn 开始，再往前属另一 turn）。
-- 只收集 `role == assistant` 的消息，直到收集到 N 条或窗口被打断。
+- 遇到**不含 tool_calls** 的 `role == assistant` 消息也立即停止——它不可能属于「工具重复窗口」，与 user 边界一样终结当前连续段。
+- 只收集**含 tool_calls** 的 `role == assistant` 消息，直到收集到 N 条或窗口被打断。
 
 > 注意：当前刚返回的 response 对应的 assistant 消息此时**尚未** append 到 history（`after_llm_response` 在 `ctx.history.append(assistant_msg)` **之前**调度，见 `nodes/llm.py:149` vs `:183`）。因此待检测序列 = 「history 末尾的连续 assistant 消息」+「本次 response」。Hook 把本次 response 虚拟成一条 assistant 消息补到序列尾部参与比较。
 
@@ -129,20 +131,25 @@ class LoopDetectionHook(AfterLLMResponseHook):
 
 设可配置窗口 `N`（默认 **5**，见 §5）。当连续 assistant 消息不足 N 条时，不判定。
 
-**A. 内容循环（content loop）**：
+**单一判定：内容相似 AND 工具相同（conjunction）**
 
-仅取**归一化后非空**的 assistant `content` 参与内容循环判定（含 tool_calls 但 content 为空的 assistant 消息**跳过**，避免工具循环被误报成内容循环）。若当前 turn 末尾连续的、非空 content 的 assistant 消息达到 N 条，且这 N 条文本**两两相似度都 ≥ 阈值** `content_similarity_threshold`（默认 **0.85**），判定为内容循环。
+只有当末尾连续 `N` 条 assistant 步骤**同时**满足两个信号时才判定为循环：
 
-相似度函数：纯 Python 实现，无外部依赖。采用归一化后的 **SequenceMatcher.ratio()**（`difflib`，标准库）。输入先归一化，再截断到固定样本长度（与 XML 输出截断一致，默认 500 字符），避免长上下文下 `SequenceMatcher` 的 O(n²) 开销：
+1. **内容相似**：这 N 条的 `content` 两两相似度都 ≥ 阈值 `content_similarity_threshold`（默认 **0.85**），且每条 content 非空（纯空白视为空）。
+2. **工具相同**：这 N 条各自的工具调用集合 fingerprint **完全相同且非空**——即同名、同参数（参数 JSON 按 key 排序归一化）的工具集合逐条重复。
+
+两个信号必须在**同一段连续窗口**上同时成立。仅内容重复（无工具）或仅工具重复（内容各异）都**不**判定为循环——合取大幅降低把正当的重复步骤（多步确认、迭代探查、轮询）误判为死循环的概率。
+
+> 单条 assistant 内重复同名同参工具不算（那是单次决策）；必须**跨多条 assistant 消息**重复才构成循环。
+
+**工具相同的快速预检**：在比较（可能很大的）参数 fingerprint 之前，先比较每条 assistant 的**工具调用数量**。数量不同则一定不匹配，立即跳过——既避免大参数字符串的昂贵比较，也能区分 fingerprint（基于集合、去重）无法区分的重复批次（`[read/a, read/a]` 数量为 2，`[read/a]` 数量为 1）。
+
+**相似度函数**：纯 Python 实现，无外部依赖。采用**截断后的原始字符串**的 **SequenceMatcher.ratio()**（`difflib`，标准库）。输入先截断到固定样本长度（与 XML 输出截断一致，默认 500 字符），避免长上下文下 `SequenceMatcher` 的 O(n²) 开销。空 content 判定用 `.strip()`（纯空白即空）：
 
 ```python
-def _normalize_text(s: str) -> str:
-    # 折叠空白、统一大小写、去首尾
-    return " ".join(s.lower().split()).strip()
-
 def _similarity(a: str, b: str) -> float:
-    na = _normalize_text(a)[:500]
-    nb = _normalize_text(b)[:500]
+    na = (a or "")[:500]
+    nb = (b or "")[:500]
     if not na and not nb:
         return 1.0
     if not na or not nb:
@@ -150,56 +157,45 @@ def _similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, na, nb).ratio()
 ```
 
-阈值在调用方 `content_similarity_threshold` 控制（默认 **0.85**），`_similarity` 只返回 ratio。
+> 不做大小写/空白归一化：真实循环的近重复文本即便存在大小写/空白差异，相似度也远高于 0.85，不影响判定；省去归一化步骤。阈值在调用方 `content_similarity_threshold` 控制（默认 **0.85**），`_similarity` 只返回 ratio。
 
-**B. 工具循环（tool loop）**：
-
-仅取**含非空 tool_calls**的 assistant 消息参与工具循环判定。若当前 turn 末尾连续的、含工具调用的 assistant 消息达到 N 条，则对每条消息计算其工具调用集合的 fingerprint：
+**工具 fingerprint 与数量**：
 
 ```python
-def _tool_fingerprint(tool_calls: list[ToolCall]) -> frozenset[tuple[str, str]]:
-    # (tool_name, arguments_json_canonical)。忽略 call_id。
-    # arguments 用 json.dumps(sort_keys=True, ensure_ascii=False) 归一化。
+def _tool_calls_fingerprint(tool_calls) -> frozenset[tuple[str, str]]:
+    # (tool_name, arguments_json_canonical)。忽略 call_id，忽略顺序。
     return frozenset(
-        (tc.tool_name, json.dumps(tc.arguments or {}, sort_keys=True, ensure_ascii=False))
-        for tc in tool_calls
+        (name, json.dumps(args or {}, sort_keys=True, ensure_ascii=False))
+        for name, args in _extract_tool_pairs(tool_calls)
     )
+
+def _tool_calls_count(tool_calls) -> int:
+    # 与 fingerprint 不同：fingerprint 是集合（去重），count 保留重复。
+    return sum(1 for _ in _extract_tool_pairs(tool_calls))
 ```
 
-若连续 N 条 assistant 消息的 tool fingerprint **完全相同且非空**（即同名同参数的工具集合逐条重复），判定为工具循环。
-
-> 单条 assistant 内重复同名同参工具不算（那是单次决策）；必须**跨多条 assistant 消息**重复才构成循环。
-
-**触发**：A 或 B 任一命中，Hook 构造英文 XML 说明（见下）并抛 `LoopDetectedError(user_content=xml, loop_type="content"|"tool")`。
+**触发**：合取命中时，Hook 构造英文 XML 说明（见下）并抛 `LoopDetectedError(user_content=xml, loop_type="tool")`。`loop_type` 统一为 `"tool"`（重复工具调用是最具体、可操作的信号）；XML 内容同时描述工具重复与文本近重复。
 
 #### XML 反馈内容（英文，写死）
 
-`loop_type == "content"`：
-
-```
-<loop_detected type="content">
-The agent produced the same text output N times in a row and appears stuck in a loop.
-Last output (truncated to 500 chars):
-<last_output>{escaped_content}</last_output>
-
-How to break out:
-- Rephrase your request with more specific instructions or constraints.
-- Ask the agent to use a different approach or tool.
-- If the goal is already met, tell the agent to stop.
-</loop_detected>
-```
-
-`loop_type == "tool"`：
+合取命中时只有一种模板（同时描述工具重复与文本近重复）：
 
 ```
 <loop_detected type="tool">
-The agent repeatedly called the same tool(s) with identical arguments N times and appears stuck in a loop.
+The agent repeated the same tool call(s) with identical arguments and near-identical text N times in a row and appears stuck in a loop.
 Repeated tool(s): {tool_names}
 Last repeated arguments (truncated to 500 chars per call):
-<repeated_calls>{escaped_args}</repeated_calls>
+<repeated_calls>
+{escaped_args}
+</repeated_calls>
+Last output (truncated to 500 chars):
+<last_output>
+{escaped_content}
+</last_output>
 
 How to break out:
 - Point the agent to different inputs (paths, queries, parameters).
+- Rephrase your request with more specific instructions or constraints.
 - Ask the agent to reconsider whether this tool can make progress.
 - If the task is done, tell the agent to stop.
 </loop_detected>
@@ -210,7 +206,7 @@ How to break out:
 #### 安全闸门
 
 - LLM error response（`finish_reason == "error"`）直接 return，不检测（turn 本身就要结束）。
-- 本次 response 为空（无 content 且无 tool_calls）直接 return。
+- 本次 response **无 tool_calls** 直接 return（合取判定需要工具；无工具的 response 不可能开启工具重复窗口）。
 - 不足 N 条直接 return。
 
 ### 5. 配置
@@ -289,7 +285,7 @@ if stop_reason == "loop_detected":
 </subagent_notification>
 ```
 
-`<summary>` 字段已携带循环 XML 的截断内容（`_truncate_content`，上限 1500 字符），父 agent 据此可判断是内容循环还是工具循环、最后在重复什么，从而决定是换参数重派、自行接管，还是放弃。
+`<summary>` 字段已携带循环 XML 的截断内容（`_truncate_content`，上限 1500 字符），父 agent 据此可看到重复的工具调用与近重复文本、最后在重复什么，从而决定是换参数重派、自行接管，还是放弃。
 
 #### 设计要点
 
@@ -309,7 +305,7 @@ if stop_reason == "loop_detected":
 ### 负面
 
 - **N=3 仍可能漏判**：交替式循环（A,B,A,B）不会被“连续 N 条相同”捕获。本设计有意只覆盖最常见、最明确的完全重复；交替循环留给后续增强。
-- **SequenceMatcher 相似度**对长文本开销随长度平方级增长；已通过归一化 + 输入截断（500 字符样本）避免长上下文下的性能问题。XML 输出也截断到 500 字符。
+- **SequenceMatcher 相似度**对长文本开销随长度平方级增长；已通过输入截断（500 字符样本）避免长上下文下的性能问题。XML 输出也截断到 500 字符。
 - **全局默认启用**意味着所有 pool 多一次历史扫描 + 相似度计算的开销。历史通常不大，且仅在每轮 assistant 完成后算一次；可接受。关闭开关保留。
 - **chunk 级早期检测不在本 ADR 范围**（用户确认后续再补）。届时可在 `ReactLlmClient` / LLM_STREAM interceptor 增量检测重复片段，复用本 ADR 的相似度函数与 `LoopDetectedError`。
 
@@ -319,7 +315,7 @@ if stop_reason == "loop_detected":
 2. `src/modex_agent/control/exceptions.py` — `AgentControlError` 加 `user_content`/`stop_reason` 类属性默认值；`AgentCancelled`/`AgentTimeout`/`PolicyViolation` 各自 `stop_reason` 默认值；新增 `LoopDetectedError`。
 3. `src/modex_agent/hook/runner.py` — `dispatch()` 新增 `except AgentControlError: raise` 透传分支。
 4. `src/modex_agent/agents/react/agent.py` — `except AgentControlError` 块改用 `e.user_content` / `e.stop_reason` 构造 `AgentResult`。
-5. `src/modex_agent/hook/builtin/loop_detection.py` — 新增 `LoopDetectionHook` + 相似度/归一化/工具 fingerprint 辅助函数 + XML 模板。
+5. `src/modex_agent/hook/builtin/loop_detection.py` — 新增 `LoopDetectionHook` + 相似度/工具 fingerprint 与 count 辅助函数 + 合取判定 + XML 模板。
 6. `src/modex_agent/hook/builtin/__init__.py` — 导出 `LoopDetectionHook`。
 7. `src/modex_agent/ioc/configs/hooks.py` — （未来增强）`HooksConfig` 增 `loop_detection` 子配置（`enabled` / `window_size` / `content_similarity_threshold`）。v1 使用构造函数默认值在 `DefaultAgentFactory` 中装配。
 8. pool builder（`examples/bot_project/bot/service/pool_builder.py` 或对应装配点）— v1 通过 `DefaultAgentFactory` 无条件装配 `LoopDetectionHook()`；未来可在此传入配置。
@@ -327,8 +323,8 @@ if stop_reason == "loop_detected":
 
 ### 测试
 
-- 单元：`_similarity` 边界（空串、完全相同、相似、不同）；`_tool_fingerprint` 忽略 call_id、参数顺序无关；`_collect_recent_assistants` 窗口被 user 打断、忽略 tool。
-- hook 集成：构造 history 连续 N 条相同内容 → 抛 `LoopDetectedError` 且 `loop_type=="content"`；连续 N 条同参工具 → `loop_type=="tool"`；内容循环忽略空 content 消息、工具循环忽略空 tool_calls 消息；不足 N 条 / 被 user 打断 → 不抛；LLM error → 不抛。
+- 单元：`_similarity` 边界（空串、完全相同、相似、不同）；`_tool_calls_fingerprint` 忽略 call_id、参数顺序无关；`_tool_calls_count` 保留重复（与去重 fingerprint 区分）；`_collect_recent_assistants` 窗口被 user 打断、被无工具 assistant 打断、忽略 tool。
+- hook 集成：构造 history 连续 N 条「相同内容 + 同参工具」→ 抛 `LoopDetectedError` 且 `loop_type=="tool"`、XML 同时含工具名与重复文本；仅相似内容无工具 → 不抛；仅同参工具但内容各异 → 不抛；不足 N 条 / 被 user 打断 → 不抛；LLM error → 不抛。
 - runner 透传：mock hook 抛 `AgentControlError`，`dispatch()` 透传而非吞掉。
 - main agent 退出：`LoopDetectedError` 经 `ReActAgent.run()` 产出 `AgentResult(stop_reason=LOOP_DETECTED, content=<xml>)`，`emit_complete` 送达用户。
 - subagent 路由：subagent `comm_kind` 下 `LoopDetectedError` → `SubagentAutoSendHook` 产出 `status=incomplete`、`stop_reason=loop_detected`、hint 含"stuck in a loop" 的通知，发往**父 inbox**（断言不触发用户 `_notify_user` 路径）。

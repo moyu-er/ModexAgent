@@ -7,7 +7,7 @@ from modex_agent.agents.react.agent import ReActAgent
 from modex_agent.control.exceptions import LoopDetectedError
 from modex_agent.core.constants import FinishReason, StopReason
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.types import LLMResponse
+from modex_agent.core.types import LLMResponse, ToolCall
 
 
 def _make_ctx():
@@ -70,13 +70,21 @@ async def test_loop_detected_renders_loop_result(monkeypatch):
     provider = MagicMock()
     provider.chat = AsyncMock(return_value=LLMResponse(
         content="I am stuck doing the same thing.", finish_reason=FinishReason.STOP.value,
+        tool_calls=[ToolCall(tool_name="read", arguments={"path": "/a"})],
     ))
     provider.get_default_model = lambda: "mock"
     agent = ReActAgent(provider=provider)
 
     ctx = _make_ctx()
+    # Seed a prior assistant step with the same content AND the same tool call,
+    # so the AND-based loop detector fires on the first LLM response.
     await ctx.history.append(
-        ChatMessage(role="assistant", content="I am stuck doing the same thing.")
+        ChatMessage(
+            role="assistant",
+            content="I am stuck doing the same thing.",
+            tool_calls=[{"id": "c0", "type": "function",
+                         "function": {"name": "read", "arguments": '{"path": "/a"}'}}],
+        )
     )
     ctx.runtime.services.hooks.add(
         HookSpec(hook=LoopDetectionHook(window_size=2, content_similarity_threshold=0.85),
