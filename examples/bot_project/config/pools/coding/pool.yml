@@ -4,6 +4,7 @@ terminal_visibility: false
 tool_preset: full
 tool_supplements:
 - ast_grep
+- todo
 approval:
   enabled: true
   tools:

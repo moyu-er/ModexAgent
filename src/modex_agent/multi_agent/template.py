@@ -347,8 +347,12 @@ class AgentTemplate:
         ):
             tm.register(tool)
 
-        # Additive supplement tools (e.g. AST_GREP) layered on top of the preset.
-        for tool in get_supplement_tools(self.tool_supplements, root_provider=deps.root_provider):
+        # Additive supplement tools (e.g. AST_GREP, TODO) layered on top of the preset.
+        for tool in get_supplement_tools(
+            self.tool_supplements,
+            root_provider=deps.root_provider,
+            todo_store=deps.todo_store,
+        ):
             tm.register(tool)
 
         # MCP tools resolved from the registry by this template's mcp selection.

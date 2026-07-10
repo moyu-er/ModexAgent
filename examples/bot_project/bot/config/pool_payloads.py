@@ -86,7 +86,7 @@ class MainAgentNode(BaseModel):
     use_terminal: bool = False
     terminal_visibility: bool = False
     tool_preset: ToolPreset = ToolPreset.FULL
-    tool_supplements: list[str] = Field(default_factory=list)
+    tool_supplements: list[str] = Field(default_factory=lambda: ["todo"])
     approval: ApprovalConfig | None = None
     mcp: list[str] = Field(default_factory=list)
 
