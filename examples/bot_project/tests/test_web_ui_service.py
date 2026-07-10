@@ -126,6 +126,16 @@ async def test_coding_session_transcript_written_to_coding_pool_directory() -> N
     server.set_agent_pool_map(mapping)
     server.set_agent_resolver(lambda pool_name: mapping.get(pool_name, pool_name))
 
+    from bot.service.session_gc import SessionGarbageCollector, SessionGcConfig
+
+    server.set_session_gc(
+        SessionGarbageCollector(
+            workspace_roots_provider=lambda: [data_dir],
+            data_dir_name=".modex",
+            config=SessionGcConfig(),
+        )
+    )
+
     from tests.webui._pipeline_fixture import attach_default_pipeline
     attach_default_pipeline(
         server, store, input_adapter, agent_pool_map=mapping, workspace_root=data_dir

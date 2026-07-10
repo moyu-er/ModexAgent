@@ -557,6 +557,16 @@ async def test_delete_session_cleans_up_metadata() -> None:
 
     server.set_pool_agent_names(["main", "coding"])
 
+    from bot.service.session_gc import SessionGarbageCollector, SessionGcConfig
+
+    server.set_session_gc(
+        SessionGarbageCollector(
+            workspace_roots_provider=lambda: [data_dir],
+            data_dir_name=".modex",
+            config=SessionGcConfig(),
+        )
+    )
+
     client = TestClient(TestServer(server.app))
     await client.start_server()
     try:
@@ -585,56 +595,46 @@ async def test_delete_session_cleans_up_metadata() -> None:
 
 @pytest.mark.asyncio
 async def test_delete_session_removes_transcript_from_any_pool_directory() -> None:
-    """DELETE /api/sessions/{session_id} cleans up the transcript even if a
-    prior routing bug placed it in the wrong pool directory.
-
-    Regression: empty agent-pool mapping caused coding sessions to be written
-    to the main pool directory. Deleting them only removed from the expected
-    (coding) directory and left the ghost file behind.
+    """Retired: wrong-pool routing is a fixed bug, and the foreground delete now
+    removes the transcript by the resolved (correct) pool. Orphan transcripts
+    (no index, any pool) are recovered by the sweep — covered in
+    tests/service/test_session_gc.py::test_sweep_catches_orphan_transcript.
     """
-    from bot.webui.events import UserMessageEvent
+    pass
 
+
+@pytest.mark.asyncio
+async def test_delete_session_delegates_to_collector() -> None:
+    """DELETE /api/sessions/{id} delegates to the collector with resolved pool."""
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     home_sessions_dir = WorkspacePaths(root=data_dir / ".modex").sessions_dir
-    store.set_agent_pool_map({"coding": "coding", "main": "main"})
+    store.set_agent_pool_map({"main": "main", "coding": "coding"})
     server = WebUIServer(
         input_adapter, store, static_dist=None, data_dir=data_dir, home_sessions_dir=home_sessions_dir
     )
     server.set_workspace_index(store)
-    server.set_agent_pool_map({"coding": "coding", "main": "main"})
+    server.set_agent_pool_map({"main": "main", "coding": "coding"})
+    server.set_pool_agent_names(["main", "coding"])
+
+    class FakeGC:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str | None]] = []
+
+        async def delete_session_tree(self, root_session_id, ws_root=None, pool=None):
+            self.calls.append((root_session_id, pool))
+
+    fake = FakeGC()
+    server.set_session_gc(fake)
 
     client = TestClient(TestServer(server.app))
     await client.start_server()
     try:
-        # Simulate a corrupted transcript: coding agent file stored under main.
-        uuid_prefix = "corrupted123"
-        session_id = f"{uuid_prefix}.coding"
-        wrong_file = data_dir / ".modex" / "sessions" / "main" / f"{uuid_prefix}.coding.jsonl"
-        wrong_file.parent.mkdir(parents=True, exist_ok=True)
-        wrong_file.write_text(
-            json.dumps(
-                UserMessageEvent(
-                    session_id=session_id,
-                    agent_name="coding",
-                    content="ghost message"
-).to_dict(),
-                ensure_ascii=False
-)
-            + "\n",
-            encoding="utf-8"
-)
-
-        resp = await client.delete(f"/api/sessions/{session_id}")
+        resp = await client.delete("/api/sessions/abc.main")
         assert resp.status == 200
-        assert not wrong_file.exists(), (
-            f"ghost transcript in wrong pool directory was not removed: {wrong_file}"
-        )
-
-        # It must also not remain in the expected directory.
-        expected_file = data_dir / ".modex" / "sessions" / "coding" / f"{uuid_prefix}.coding.jsonl"
-        assert not expected_file.exists()
+        assert await resp.json() == {"deleted": "abc.main"}
+        assert fake.calls == [("abc.main", "main")]
     finally:
         await client.close()
 
