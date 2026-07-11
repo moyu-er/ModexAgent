@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from modex_agent.messaging.broker import Address, BrokerMessage
+from modex_agent.messaging.broker import Address, AddressKind, BrokerMessage
 from modex_agent.multi_agent.message_type import AgentMessageType
 
 if TYPE_CHECKING:
@@ -63,7 +63,7 @@ class AgentMessageEnvelope:
 
     def to_broker_message(self) -> BrokerMessage:
         """转换为 BrokerMessage，所有路由字段放入 headers。"""
-        recipient = self.target or Address(kind="agent", name="")
+        recipient = self.target or Address(kind=AddressKind.AGENT, name="")
         headers: dict[str, str] = {
             "session_id": self.session_id,
             "agent_session_id": self.agent_session_id,

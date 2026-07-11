@@ -15,7 +15,6 @@ from modex_agent.multi_agent import (
     DefaultAgentFactory,
     SessionRetentionPolicy,
 )
-from modex_agent.multi_agent.comm_tracker import CommunicationTracker
 from modex_agent.multi_agent.state import AgentState
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
@@ -100,56 +99,6 @@ async def test_agent_pool_invalid_state_transition(any_broker):
     pool._status["x"] = AgentState.SHUTDOWN
     pool._transition("x", AgentState.WORKING)
     assert pool.get_status("x") == AgentState.WORKING  # logged warning but applied
-
-
-def test_communication_tracker_acknowledges_owner_digest():
-    tracker = CommunicationTracker()
-    tracker.record_send(
-        agent_name="main",
-        target_agent="worker",
-        invocation_id="inv_1",
-        session_id="conv:worker:inv_1",
-        content_summary="review file",
-    )
-
-    assert len(tracker.get_pending_for_agent("main")) == 1
-
-    record = tracker.acknowledge(
-        invocation_id="inv_1",
-        reply_from="worker",
-        reply_summary="done",
-    )
-
-    assert record is not None
-    assert tracker.get_pending_for_agent("main") == []
-    digest = tracker.get_digest_for_agent("main")
-    assert digest.acknowledged == [record]
-
-
-def test_communication_tracker_reply_closes_received_bracket():
-    tracker = CommunicationTracker()
-    tracker.record_receive(
-        agent_name="worker",
-        source_agent="main",
-        invocation_id="inv_1",
-        content_summary="review file",
-    )
-
-    assert len(tracker.get_pending_for_agent("worker")) == 1
-
-    record = tracker.record_send(
-        agent_name="worker",
-        target_agent="main",
-        invocation_id="inv_1",
-        session_id="conv:worker:inv_1",
-        content_summary="done",
-    )
-
-    assert tracker.get_pending_for_agent("worker") == []
-    digest = tracker.get_digest_for_agent("worker")
-    assert digest.acknowledged == [record]
-
-
 
 
 @pytest.mark.asyncio

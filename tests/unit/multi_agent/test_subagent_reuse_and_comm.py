@@ -34,6 +34,11 @@ from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
 from modex_agent.multi_agent.pool import AgentPool
 from modex_agent.multi_agent.template import AgentTemplate
+from modex_agent.multi_agent.tools import CommunicationTarget
+
+
+def _tgt(name: str, kind: AgentCommKind) -> CommunicationTarget:
+    return CommunicationTarget(name=name, kind=kind)
 from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
 from modex_agent.tools.presets import ContextMode, SystemPromptMode
 
@@ -400,8 +405,10 @@ async def test_send_to_agent_routes_through_agent_bus():
         comm_kind=AgentCommKind.NORMAL,
     )
     await svc._send(
-        target_agent="scout", content="do X", invocation_id=None,
-        context=ctx, async_mode=True,
+        target=_tgt("scout", AgentCommKind.SUBAGENT),
+        content="do X",
+        invocation_id=None,
+        context=ctx,  # type: ignore[arg-type]
     )
     assert bus.send.await_count == 1
     _sid, envelope = bus.send.await_args.args

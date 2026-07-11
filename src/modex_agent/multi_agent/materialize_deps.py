@@ -20,7 +20,6 @@ if TYPE_CHECKING:
     from modex_agent.hook.notification import AgentNotificationService
     from modex_agent.messaging.broker import MessageBroker
     from modex_agent.multi_agent.bus import AgentMessageBus
-    from modex_agent.multi_agent.comm_tracker import CommunicationTracker
     from modex_agent.multi_agent.context_fork import ContextForkBuilder
     from modex_agent.multi_agent.factory import AgentFactory
     from modex_agent.multi_agent.inbox.consumer import InboxConsumer
@@ -41,7 +40,6 @@ class AgentMaterializeDeps:
     pool: "AgentPool"
     session_factory: "SessionIdFactory"
     broker: "MessageBroker"
-    comm_tracker: "CommunicationTracker | None" = None
     safety: "RuntimeSafetyPolicy | None" = None
     llm_model: str | None = None
     # TODO(model-config-convergence): 模型调用参数 temperature/max_output_tokens 应只由

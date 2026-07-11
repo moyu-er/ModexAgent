@@ -65,6 +65,7 @@ class AgentConfig(BaseModel):
 
     name: str
     role: Literal["main", "subagent"] = "subagent"
+    description: str = ""
     llm: LLMConfig | None = None
     max_steps: int = 100
     use_terminal: bool = False  # master switch: false = SubprocessExecutor, skip terminal tools

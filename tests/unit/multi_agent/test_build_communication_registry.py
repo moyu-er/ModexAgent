@@ -27,12 +27,16 @@ from modex_agent.multi_agent import AgentPool, SessionRetentionPolicy
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
 from modex_agent.multi_agent.comm_kind import AgentCommKind
-from modex_agent.multi_agent.comm_tracker import CommunicationTracker
 from modex_agent.multi_agent.descriptor import AgentDescriptor, AgentLLMConfig
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
 from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
+from modex_agent.multi_agent.tools import CommunicationTarget
+
+
+def _tgt(name: str, kind: AgentCommKind) -> CommunicationTarget:
+    return CommunicationTarget(name=name, kind=kind)
 
 
 class _MockFactory:
@@ -102,7 +106,6 @@ async def test_build_communication_wires_session_registry(tmp_path):
         "main",
         pool._broker,
         bus,
-        CommunicationTracker(),
         tmp_path,
         "main",
         [],  # no extra templates; helper is a registered subagent
@@ -118,11 +121,10 @@ async def test_build_communication_wires_session_registry(tmp_path):
         comm_kind=AgentCommKind.NORMAL,
     )
     result = await service._send(
-        target_agent="helper",
+        target=_tgt("helper", AgentCommKind.SUBAGENT),
         content="do something",
         invocation_id="",
         context=ctx,
-        async_mode=True,
     )
     assert result and result.session_id, "send did not produce a child session id"
 
@@ -155,7 +157,6 @@ async def test_build_communication_restores_subagent_output_path(tmp_path):
         "main",
         pool._broker,
         bus,
-        CommunicationTracker(),
         tmp_path,
         "main",
         [],
@@ -171,11 +172,10 @@ async def test_build_communication_restores_subagent_output_path(tmp_path):
         comm_kind=AgentCommKind.NORMAL,
     )
     result = await service._send(
-        target_agent="helper",
+        target=_tgt("helper", AgentCommKind.SUBAGENT),
         content="do something",
         invocation_id="",
         context=ctx,
-        async_mode=True,
     )
     assert result and result.session_id
     # output_path must be computed for subagent targets so the ack text shows
@@ -189,7 +189,7 @@ async def test_build_communication_restores_subagent_output_path(tmp_path):
     # send_async's ack must explain what each artifact IS, not just give paths:
     # trace = live, runtime-observable execution log; output = final deliverable.
     ack = await service.send_async(
-        target_agent="helper", content="more", invocation_id="", context=ctx,
+        target=_tgt("helper", AgentCommKind.SUBAGENT), content="more", invocation_id="", context=ctx,
     )
     assert "Trace" in ack and "live execution log" in ack
     assert "operations.jsonl" in ack

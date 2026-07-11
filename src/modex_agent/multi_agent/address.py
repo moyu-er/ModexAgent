@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from modex_agent.messaging.broker import Address
+from modex_agent.messaging.broker import Address, AddressKind
 
 
 @dataclass(frozen=True, slots=True)
 class AgentAddress(Address):
     """Agent-specific address with role and capability metadata."""
 
-    kind: str = "agent"
+    kind: AddressKind = AddressKind.AGENT
     name: str = ""
     role: str | None = None
     capabilities: list[str] = field(default_factory=list)

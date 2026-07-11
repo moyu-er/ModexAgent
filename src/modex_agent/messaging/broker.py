@@ -4,15 +4,31 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import StrEnum
 from typing import Any
+
+
+class AddressKind(StrEnum):
+    """Closed set of address kinds used across the messaging layer.
+
+    ``Address.kind`` is annotated as ``AddressKind`` but accepts raw strings
+    too (``StrEnum`` compares equal to its value), so existing literal
+    construction sites keep working without modification.
+    """
+
+    AGENT = "agent"
+    USER = "user"
+    CHANNEL = "channel"
+    SYSTEM = "system"
+    GROUP = "group"
 
 
 @dataclass(frozen=True, slots=True)
 class Address:
     """消息寻址实体。"""
 
-    kind: str  # 合法值: "agent", "user", "channel", "system", "group"
-    name: str  # 实体标识，如 "react_1", "123456", "qq_main"
+    kind: AddressKind = AddressKind.AGENT
+    name: str = ""
 
     def __str__(self) -> str:
         return f"{self.kind}:{self.name}"
@@ -20,7 +36,7 @@ class Address:
     @classmethod
     def parse(cls, raw: str) -> Address:
         kind, name = raw.split(":", 1)
-        return cls(kind=kind, name=name)
+        return cls(kind=AddressKind(kind), name=name)
 
 
 @dataclass

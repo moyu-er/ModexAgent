@@ -109,6 +109,7 @@ class TestFromYamlPoolLoading:
         pools_dir = config_dir / "pools" / "main"
         pools_dir.mkdir(parents=True)
         (pools_dir / "pool.yml").write_text(
+            "description: General-purpose assistant\n"
             "max_steps: 77\n"
             "tool_preset: read_only\n"
             "mcp:\n  - playwright\n",
@@ -119,3 +120,4 @@ class TestFromYamlPoolLoading:
         assert main.max_steps == 77
         assert main.tool_preset.value == "read_only"
         assert main.mcp == ["playwright"]
+        assert main.description == "General-purpose assistant"

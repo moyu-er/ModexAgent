@@ -358,9 +358,9 @@ class AgentTemplate:
         # MCP tools resolved from the registry by this template's mcp selection.
         if deps.project_dir is not None and self.mcp:
             try:
-                from modex_agent.multi_agent.communication import _load_per_agent_mcp
+                from modex_agent.tools.mcp_loader import load_per_agent_mcp
 
-                await _load_per_agent_mcp(
+                await load_per_agent_mcp(
                     tm, list(self.mcp), deps.project_dir, name, registry=deps.mcp_registry
                 )
             except Exception:
@@ -414,7 +414,6 @@ class AgentTemplate:
                 broker=deps.broker,
                 registry=deps.pool,
                 agent_bus=deps.agent_bus,
-                comm_tracker=deps.comm_tracker,
                 pool=deps.pool,
                 pool_name=_pool_name(deps),
                 project_dir=deps.project_dir,
@@ -429,7 +428,6 @@ class AgentTemplate:
                     registry=deps.pool,
                     agent_bus=deps.agent_bus,
                     service=service,
-                    comm_tracker=deps.comm_tracker,
                 )
             )
         except Exception:

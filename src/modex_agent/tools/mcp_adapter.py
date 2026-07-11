@@ -163,7 +163,7 @@ async def acquire_mcp_tools(
     tools/resources/prompts into a fresh :class:`ToolRegistry`, and returns the
     collected ``Tool`` objects. Shared by the bot main-agent path
     (``bot.service.builders._load_agent_mcp_tools``) and the framework subagent
-    path (``multi_agent.communication._load_per_agent_mcp``) so the
+    path (``tools.mcp_loader.load_per_agent_mcp``) so the
     acquire → adapt → register → collect dance lives in one place.
 
     The caller owns the ``backend`` lifecycle: a ``SharedMcpBackend`` is merely

@@ -6,7 +6,7 @@ import logging
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-from modex_agent.messaging.broker import Address, BrokerMessage
+from modex_agent.messaging.broker import Address, AddressKind, BrokerMessage
 from modex_agent.multi_agent.address import AgentAddress
 
 if TYPE_CHECKING:
@@ -105,11 +105,11 @@ class LocalAgentMessageBus(AgentMessageBus):
             try:
                 wakeup = BrokerMessage(
                     payload={"_inbox_wakeup": True, "session_id": session_id},
-                    sender=Address(kind="system", name="local_agent_message_bus"),
+                    sender=Address(kind=AddressKind.SYSTEM, name="local_agent_message_bus"),
                 )
                 target_name = envelope.target.name if envelope.target else session_id
                 await self._broker.send_to(
-                    AgentAddress(kind="agent", name=target_name),
+                    AgentAddress(kind=AddressKind.AGENT, name=target_name),
                     wakeup,
                 )
             except Exception:
@@ -149,7 +149,8 @@ class LocalAgentMessageBus(AgentMessageBus):
         # channel/human origin of external_input envelopes, mis-classifying
         # human DMs as agent-source -> role=agent in session memory.
         meta = msg.metadata or {}
-        src_kind = meta.get("source_kind") or "agent"
+        src_kind_raw = meta.get("source_kind") or "agent"
+        src_kind = AddressKind(src_kind_raw) if isinstance(src_kind_raw, str) else AddressKind.AGENT
         src_name = meta.get("source_name") or msg.source
         return AgentMessageEnvelope(
             payload=payload,

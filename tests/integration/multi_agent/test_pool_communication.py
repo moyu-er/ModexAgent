@@ -30,6 +30,11 @@ from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
 from modex_agent.multi_agent.pool import AgentPool
 from modex_agent.multi_agent.state import AgentState
+from modex_agent.multi_agent.tools import CommunicationTarget
+
+
+def _tgt(name: str, kind: AgentCommKind) -> CommunicationTarget:
+    return CommunicationTarget(name=name, kind=kind)
 
 
 def _make_context(
@@ -141,7 +146,7 @@ async def test_main_sends_to_subagent_via_communication_service():
         comm_kind=AgentCommKind.NORMAL,
     )
     result = await main_service.send_async(
-        target_agent="worker",
+        target=_tgt("worker", AgentCommKind.SUBAGENT),
         content="do some work",
         invocation_id="",
         context=ctx,
@@ -185,8 +190,8 @@ async def test_subagent_replies_to_main_via_communication_service():
         invocation_id="task-abc1",
     )
     result = await worker_service.send_async(
-        target_agent="main",
-        content="task completed",
+        target=_tgt("main", AgentCommKind.NORMAL),
+        content="done",
         invocation_id=None,
         context=ctx,
     )
@@ -213,7 +218,6 @@ async def test_subagent_cannot_send_to_another_subagent():
     pool._agents["main"] = _make_fake_instance("main", AgentCommKind.NORMAL)[0]
     pool._agents["worker_a"] = _make_fake_instance("worker_a", AgentCommKind.SUBAGENT)[0]
     pool._agents["worker_b"] = _make_fake_instance("worker_b", AgentCommKind.SUBAGENT)[0]
-    from modex_agent.multi_agent.state import AgentState
     pool._status["main"] = AgentState.IDLE
     pool._status["worker_a"] = AgentState.IDLE
     pool._status["worker_b"] = AgentState.IDLE
@@ -232,8 +236,8 @@ async def test_subagent_cannot_send_to_another_subagent():
         invocation_id="task-1",
     )
     result = await service.send_async(
-        target_agent="worker_b",
-        content="help me",
+        target=_tgt("worker_b", AgentCommKind.SUBAGENT),
+        content="hello worker b",
         invocation_id="",
         context=ctx,
     )
@@ -293,11 +297,10 @@ async def test_subagent_session_registered_with_parent_in_registry():
     # Use _send directly — it returns AgentSendResult with .session_id
     # and creates the session + registers it in the registry before dispatch.
     result = await main_service._send(
-        target_agent="worker",
+        target=_tgt("worker", AgentCommKind.SUBAGENT),
         content="please do something",
         invocation_id="task-1",  # non-empty → general _send path
         context=ctx,
-        async_mode=True,
     )
 
     assert result is not None

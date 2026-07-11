@@ -18,17 +18,19 @@ from modex_agent.multi_agent.tools import (
 class _RecordingService:
     def __init__(self) -> None:
         self.async_invocation_id: str | None = None
+        self.last_target: CommunicationTarget | None = None
 
     async def send_async(
         self,
         *,
-        target_agent: str,
+        target: CommunicationTarget,
         content: str,
         invocation_id: str | None,
         context: AgentContext,
     ) -> str:
-        _ = target_agent, content, context
+        _ = content, context
         self.async_invocation_id = invocation_id
+        self.last_target = target
         return "ok"
 
 
@@ -283,7 +285,7 @@ class TestToolManagerIntegration:
         assert "scout" in desc, f"expected 'scout' in description, got: {desc}"
         assert "Fast recon" in desc, f"expected 'Fast recon' in description, got: {desc}"
         assert "worker" in desc, f"expected 'worker' in description, got: {desc}"
-        assert "Send a message to another agent" in desc  # base instruction preserved
+        assert "Communicate with another agent" in desc  # base instruction preserved
 
 
 class TestSendToAgentToolDescription:
@@ -344,7 +346,8 @@ class TestSendToAgentToolDescription:
         assert "scout" not in tool.description
         assert "worker" in tool.description
 
-    def test_duplicate_add_does_not_change_description(self) -> None:
+    def test_duplicate_add_raises_value_error(self) -> None:
+        """Duplicate target name must surface ValueError through add_target too."""
         store = _store_with_target()
         tool = SendToAgentTool(
             store=store,
@@ -354,11 +357,10 @@ class TestSendToAgentToolDescription:
             agent_bus=object(),  # type: ignore[arg-type]
             service=_RecordingService(),  # type: ignore[arg-type]
         )
-        before = tool.description
-        tool.add_target(CommunicationTarget(
-            name="office-expert", kind=AgentCommKind.SUBAGENT,
-        ))
-        assert tool.description is before  # same object, no refresh
+        with pytest.raises(ValueError, match="office-expert"):
+            tool.add_target(CommunicationTarget(
+                name="office-expert", kind=AgentCommKind.SUBAGENT,
+            ))
 
     def test_pop_nonexistent_does_not_change_description(self) -> None:
         store = _store_with_target()
@@ -531,8 +533,37 @@ class TestSendToAgentToolDynamicSchema:
         desc = schema["function"]["parameters"]["properties"]["invocation_id"]["description"]
         assert "tool result" in desc.lower()
         assert "invocation_id" in desc.lower()
-        assert "continue" in desc.lower()
+        assert "follow-up" in desc.lower() or "continue" in desc.lower()
         assert "{invocation_id}.{target_agent}" in desc
+
+    def test_invocation_id_description_explains_peer_ignore(self) -> None:
+        """invocation_id handling MUST be documented per-kind in the tool
+        description — subagent threads an id, normal peers reuse the
+        sender's prefix and ignore this field.
+
+        Verified against the tool description (dynamic), not the static
+        parameter schema, because the per-kind behaviour is itself dynamic.
+        The static parameter schema stays kind-agnostic.
+        """
+        store = CommunicationTargetStore()
+        store.add(
+            CommunicationTarget(name="scout", kind=AgentCommKind.SUBAGENT)
+        )
+        store.add(
+            CommunicationTarget(name="coding_main", kind=AgentCommKind.NORMAL)
+        )
+        tool = SendToAgentTool(
+            store=store,
+            source=AgentAddress(name="main"),
+            broker=object(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            agent_bus=object(),  # type: ignore[arg-type]
+            service=_RecordingService(),  # type: ignore[arg-type]
+        )
+        desc = tool.description.lower()
+        assert "thread `invocation_id`" in desc
+        assert "`invocation_id` is ignored" in desc
+        assert "sender's session prefix is reused" in desc
 
     def test_static_parameters_not_mutated_by_dynamic_schema(self) -> None:
         """get_dynamic_schema() must not modify the shared parameter template."""
@@ -676,7 +707,6 @@ class TestSubagentWiringSelectsSubagentMode:
         deps = dataclasses.replace(
             deps,
             agent_bus=MagicMock(),
-            comm_tracker=None,
             session_registry=None,
             workspace_path_resolver=None,
         )

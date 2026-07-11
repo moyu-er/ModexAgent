@@ -1,7 +1,11 @@
 # tests/unit/multi_agent/test_message_xml.py
 """Tests for message_xml builders."""
 
-from modex_agent.multi_agent.message_xml import build_agent_message, build_agent_result
+from modex_agent.multi_agent.message_xml import (
+    build_agent_message,
+    build_agent_result,
+    build_peer_agent_message,
+)
 
 
 def test_build_agent_message_with_invocation_id():
@@ -60,3 +64,49 @@ def test_xml_escapes_special_chars():
     assert 'id&quot;&amp;' in result
     # Element text uses CDATA when special chars present
     assert "<![CDATA[\n<hello> & world\n]]>" in result
+
+
+def test_build_peer_agent_message_has_source_and_content():
+    result = build_peer_agent_message(
+        source="coding",
+        content="What's your status?",
+    )
+    assert '<agent_message source="coding">' in result
+    assert "<content>What's your status?</content>" in result
+
+
+def test_build_peer_agent_message_has_reply_contract():
+    """Peer XML MUST include a reply_contract so the receiver knows normal
+    output is invisible and the only reply path is send_to_agent."""
+    result = build_peer_agent_message(source="coding", content="hi")
+    assert "<reply_contract>" in result
+    assert "INVISIBLE" in result
+    assert "send_to_agent" in result
+
+
+def test_build_peer_agent_message_names_source_as_reply_target():
+    """The reply_contract MUST tell the receiver to send back to the source
+    by exact name — otherwise the receiver cannot reply."""
+    result = build_peer_agent_message(source="coding", content="hi")
+    assert 'target_agent="coding"' in result
+
+
+def test_build_peer_agent_message_marks_reply_optional():
+    """Reply must be marked OPTIONAL — forcing it would ping-pong forever."""
+    result = build_peer_agent_message(source="coding", content="hi")
+    assert "optional" in result.lower()
+    assert "ping-pong" in result
+
+
+def test_build_peer_agent_message_has_no_invocation_id_attr():
+    """Peer XML never carries invocation_id — the sender's prefix is reused,
+    and exposing an invocation_id would mislead the receiver into thinking
+    it needs to continue a task session."""
+    result = build_peer_agent_message(source="coding", content="hi")
+    assert "invocation_id" not in result
+
+
+def test_build_peer_agent_message_escapes_source_in_reply_target():
+    """Source name is echoed into target_agent= attribute — must be escaped."""
+    result = build_peer_agent_message(source='naughty"&me', content="hi")
+    assert 'target_agent="naughty&quot;&amp;me"' in result

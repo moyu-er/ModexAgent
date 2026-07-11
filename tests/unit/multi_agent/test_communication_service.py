@@ -11,10 +11,14 @@ from modex_agent.memory.history import ListMessageHistory
 from modex_agent.messaging.broker import BrokerMessage, MessageBroker
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.comm_kind import AgentCommKind
-from modex_agent.multi_agent.comm_tracker import CommDirection, CommStatus, CommunicationTracker
 from modex_agent.multi_agent.descriptor import AgentDescriptor
 from modex_agent.multi_agent.registry import AgentProfile
 from modex_agent.multi_agent.communication import AgentCommunicationService
+from modex_agent.multi_agent.tools import CommunicationTarget
+
+
+def _tgt(name: str, kind: AgentCommKind) -> CommunicationTarget:
+    return CommunicationTarget(name=name, kind=kind)
 
 
 class _FakeRegistry:
@@ -127,7 +131,6 @@ class TestCommunicationService:
         profiles: list[AgentProfile] | None = None,
         descriptors: list[AgentDescriptor] | None = None,
         agent_bus: object | None = None,
-        comm_tracker: CommunicationTracker | None = None,
         source_name: str = "main",
     ) -> AgentCommunicationService:
         registry = _FakeRegistry(profiles=profiles, descriptors=descriptors)
@@ -137,7 +140,6 @@ class TestCommunicationService:
             broker=broker,
             registry=registry,
             agent_bus=agent_bus,  # type: ignore[arg-type]
-            comm_tracker=comm_tracker,
         )
 
     @pytest.mark.asyncio
@@ -148,7 +150,10 @@ class TestCommunicationService:
         )
         ctx = _make_context()
         result = await svc.send_async(
-            target_agent="main", content="hello", invocation_id=None, context=ctx,
+            target=_tgt("main", AgentCommKind.NORMAL),
+            content="hello",
+            invocation_id=None,
+            context=ctx,
         )
         assert "main" in result
 
@@ -160,7 +165,10 @@ class TestCommunicationService:
         )
         ctx = _make_context()
         result = await svc.send_async(
-            target_agent="reviewer", content="hello", invocation_id="", context=ctx,
+            target=_tgt("reviewer", AgentCommKind.NORMAL),
+            content="hello",
+            invocation_id="",
+            context=ctx,
         )
         assert "Task dispatched to 'reviewer'" in result
 
@@ -172,7 +180,10 @@ class TestCommunicationService:
         )
         ctx = _make_context()
         result = await svc.send_async(
-            target_agent="reviewer", content="hello", invocation_id="abc123", context=ctx,
+            target=_tgt("reviewer", AgentCommKind.NORMAL),
+            content="hello",
+            invocation_id="abc123",
+            context=ctx,
         )
         assert "Task dispatched to 'reviewer'" in result
 
@@ -186,7 +197,10 @@ class TestCommunicationService:
         )
         ctx = _make_context()
         result = await svc.send_async(
-            target_agent="office-expert", content="do task", invocation_id="", context=ctx,
+            target=_tgt("office-expert", AgentCommKind.SUBAGENT),
+            content="do task",
+            invocation_id="",
+            context=ctx,
         )
         assert "office-expert" in result
         assert "invocation_id:" in result
@@ -201,7 +215,10 @@ class TestCommunicationService:
         )
         ctx = _make_context()
         result = await svc.send_async(
-            target_agent="office-expert", content="follow-up", invocation_id="a1b2c3d4", context=ctx,
+            target=_tgt("office-expert", AgentCommKind.SUBAGENT),
+            content="follow-up",
+            invocation_id="a1b2c3d4",
+            context=ctx,
         )
         assert "office-expert" in result
         assert "a1b2c3d4" in result
@@ -219,7 +236,7 @@ class TestCommunicationService:
         ctx = _make_context()
 
         result = await svc.send_async(
-            target_agent="office-expert",
+            target=_tgt("office-expert", AgentCommKind.SUBAGENT),
             content="follow-up",
             invocation_id="task-42",
             context=ctx,
@@ -252,61 +269,12 @@ class TestCommunicationService:
         )
         ctx = _make_context()
         result = await svc.send_async(
-            target_agent="office-expert", content="hello", invocation_id=None, context=ctx,
-        )
-        assert "invocation_id" in result.lower() or "Error" in result or "not found" in result.lower()
-
-    @pytest.mark.asyncio
-    async def test_subagent_reply_to_normal_acknowledges_parent_pending_send(self) -> None:
-        tracker = CommunicationTracker()
-        # In the new model, trace correlation uses the subagent's snowflake
-        tracker.record_send(
-            agent_name="main",
-            target_agent="office-expert",
-            invocation_id="conv-1",
-            session_id="conv-1.office-expert.task-42",
-            content_summary="please do work",
-        )
-        tracker.record_receive(
-            agent_name="office-expert",
-            source_agent="main",
-            invocation_id="conv-1",
-            content_summary="please do work",
-        )
-        svc = self._make_service(
-            profiles=[AgentProfile(name="main", comm_kind=AgentCommKind.NORMAL)],
-            descriptors=[AgentDescriptor(address=AgentAddress(name="main"))],
-            comm_tracker=tracker,
-            source_name="office-expert",
-        )
-        ctx = _make_context(
-            agent_name="office-expert",
-            comm_kind=AgentCommKind.SUBAGENT,
-            invocation_id="task-42",
-        )
-
-        result = await svc.send_async(
-            target_agent="main",
-            content="done",
+            target=_tgt("office-expert", AgentCommKind.SUBAGENT),
+            content="hello",
             invocation_id=None,
             context=ctx,
         )
-
-        assert "main" in result
-        main_digest = tracker.get_digest_for_agent("main")
-        office_digest = tracker.get_digest_for_agent("office-expert")
-        assert main_digest.pending_sent == []
-        assert office_digest.pending_received == []
-        assert any(
-            record.direction == CommDirection.SENT
-            and record.status == CommStatus.ACKNOWLEDGED
-            for record in main_digest.acknowledged
-        )
-        assert any(
-            record.direction == CommDirection.RECEIVED
-            and record.status == CommStatus.ACKNOWLEDGED
-            for record in office_digest.acknowledged
-        )
+        assert "invocation_id" in result.lower() or "Error" in result or "not found" in result.lower()
 
     @pytest.mark.asyncio
     async def test_subagent_consult_routes_to_real_parent_session(self) -> None:
@@ -341,7 +309,7 @@ class TestCommunicationService:
         )
 
         result = await svc.send_async(
-            target_agent="coding",
+            target=_tgt("coding", AgentCommKind.NORMAL),
             content="QUESTION: should I proceed?",
             invocation_id=None,
             context=ctx,
@@ -370,7 +338,7 @@ class TestCommunicationService:
         )
 
         result = await svc.send_async(
-            target_agent="query-12306",
+            target=_tgt("query-12306", AgentCommKind.SUBAGENT),
             content="please query train info",
             invocation_id="",
             context=ctx,

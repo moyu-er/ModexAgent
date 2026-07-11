@@ -10,6 +10,11 @@ from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.message_xml import build_agent_message, build_agent_result
 from modex_agent.multi_agent.template import AgentTemplate
 from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
+from modex_agent.multi_agent.tools import CommunicationTarget
+
+
+def _tgt(name: str, kind: AgentCommKind) -> CommunicationTarget:
+    return CommunicationTarget(name=name, kind=kind)
 
 
 def _write_files(base: Path, pool: str, agent_type: str, yml_content: str, md_content: str):
@@ -177,7 +182,7 @@ class TestInvocationIdNullCreatesNewSubagent:
         )
 
         result = await service.send_async(
-            target_agent="other-agent",
+            target=_tgt("other-agent", AgentCommKind.SUBAGENT),
             content="Hello",
             invocation_id=None,
             context=ctx,
@@ -214,7 +219,7 @@ class TestInvocationIdNullCreatesNewSubagent:
         )
 
         result = await service.send_async(
-            target_agent="helper",
+            target=_tgt("helper", AgentCommKind.SUBAGENT),
             content="Continue task",
             invocation_id="abc12345",
             context=ctx,
@@ -295,7 +300,7 @@ class TestSubagentIdentityResolution:
         token = current_agent_context.set(ctx)
         try:
             result = await service.send_async(
-                target_agent="main",
+                target=_tgt("main", AgentCommKind.NORMAL),
                 content="Task done",
                 invocation_id=None,
                 context=ctx,
@@ -379,7 +384,7 @@ class TestAgentMessageXmlWrapping:
         )
 
         result = await service.send_async(
-            target_agent="helper", content="Follow-up question",
+            target=_tgt("helper", AgentCommKind.SUBAGENT), content="Follow-up question",
             invocation_id="existing123", context=ctx,
         )
 

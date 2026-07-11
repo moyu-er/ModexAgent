@@ -22,6 +22,11 @@ class TestAgentConfigDefaults:
         assert cfg.mcp == []
         assert cfg.max_steps == 100
         assert cfg.use_terminal is False
+        assert cfg.description == ""
+
+    def test_description_settable(self) -> None:
+        cfg = AgentConfig(name="a", description="Team lead for coding tasks.")
+        assert cfg.description == "Team lead for coding tasks."
 
 
 class TestAgentConfigDeadFieldsGone:

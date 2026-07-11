@@ -18,7 +18,6 @@ def test_constructs_with_required_fields() -> None:
         pool=MagicMock(),
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
-        comm_tracker=None,
         safety=RuntimeSafetyPolicy(),
         llm_model="gpt-4o",
         llm_temperature=0.7,
@@ -54,7 +53,6 @@ def test_optional_fields_default_none() -> None:
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
     )
-    assert deps.comm_tracker is None
     assert deps.project_dir is None
     assert deps.on_subagent_created is None
 

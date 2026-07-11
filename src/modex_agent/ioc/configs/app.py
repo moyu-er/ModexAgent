@@ -63,6 +63,7 @@ def _validate_pool_name(name: str) -> None:
 # under skills/<pool>/<agent>/, single source = disk). A stale top-level
 # ``skills:`` block in pool.yml is ignored, not honored.
 _MAIN_AGENT_YAML_FIELDS: tuple[str, ...] = (
+    "description",
     "max_steps", "use_terminal", "terminal_visibility",
     "approval", "safety", "hooks", "experience",
     "tool_preset", "tool_supplements", "mcp",
