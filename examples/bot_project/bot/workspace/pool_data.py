@@ -16,8 +16,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from modex_agent.workspace.context import WorkspaceContext
-
 from modex_agent.core.experience import (
     ExperienceManager,
     FileExperienceSource,
@@ -28,6 +26,7 @@ from modex_agent.ioc.configs.pool import PoolConfig
 from modex_agent.memory.system import MemorySystemContextManager
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.trace import JsonFileTraceStore
+from modex_agent.workspace.context import WorkspaceContext
 
 logger = logging.getLogger(__name__)
 

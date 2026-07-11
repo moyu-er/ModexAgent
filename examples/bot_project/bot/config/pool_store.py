@@ -101,6 +101,7 @@ _SUBAGENT_DEFAULTS: dict[str, object] = {
 # skill assignment is disk-only (symlinks under skills/<pool>/<agent>/), never
 # persisted in pool.yml. ``memory`` / ``experience`` are baked, also not here.
 _MAIN_AGENT_EDITABLE_FIELDS: tuple[str, ...] = (
+    "description",
     "max_steps",
     "use_terminal",
     "terminal_visibility",
@@ -115,6 +116,7 @@ _MAIN_AGENT_EDITABLE_FIELDS: tuple[str, ...] = (
 # noise. ``tool_supplements`` defaults to ["todo"] because main agents receive
 # todo tools by default; an explicit empty list disables them.
 _MAIN_AGENT_DEFAULTS: dict[str, object] = {
+    "description": "",
     "tool_supplements": ["todo"],
     "mcp": [],
 }
@@ -193,6 +195,7 @@ class PoolStore:
             main_agent_name=data.get("main_agent_name", main_node.agent_name),
             main=main_node,
             subagents=subagents,
+            peers=list(data.get("peers") or []),
         )
 
     def _extract_main_agent(self, pool_name: str, data: dict[str, Any]) -> MainAgentNode:
@@ -206,6 +209,7 @@ class PoolStore:
         tool_supplements: list[str] = ["todo"] if raw_supplements is None else list(raw_supplements)
         return MainAgentNode(
             agent_name=agent_name,
+            description=data.get("description", ""),
             max_steps=data.get("max_steps", 100),
             use_terminal=data.get("use_terminal", False),
             terminal_visibility=data.get("terminal_visibility", False),
@@ -324,7 +328,7 @@ class PoolStore:
 
         return RenameReport(agent_renames=agent_renames)
 
-    def _validate_tree(self, pool_name: str, tree: PoolTree) -> None:
+    def _validate_tree(self, pool_name: str, tree: PoolTree, *, skip_peers: bool = False) -> None:
         _validate_name(tree.name, "pool")
         _validate_name(tree.main.agent_name, "agent")
         if tree.main_agent_name != tree.main.agent_name:
@@ -343,6 +347,54 @@ class PoolStore:
                     f"Pool {pool_name!r}: duplicate agent name {n!r}"
                 )
             seen.add(n)
+        if not skip_peers:
+            self._validate_peers(pool_name, tree)
+
+    def _validate_peers(self, pool_name: str, tree: PoolTree) -> None:
+        """Enforce the pool peer invariants on write (ADR-0019).
+
+        Two checks per declared peer:
+
+        * **Existence** — the peer name must be a pool directory under the
+          pools root. Dangling references raise :class:`PoolValidationError`.
+        * **Bidirectional** — if pool A lists pool B, pool B's ``peers`` must
+          list A back. Half-edges raise :class:`PoolValidationError`.
+
+        The bidirectional check is **skipped** while the current pool is being
+        created for the first time (its dir didn't exist before this write).
+        That keeps the "first pool of a new pair" flow unblocked: writing A
+        with ``peers: [B]`` is allowed even before B reciprocates — atomic
+        two-file updates are the WebUI's concern (T7). Once both pools have
+        pool.yml files on disk, the invariant is enforced strictly.
+        """
+        if not tree.peers:
+            return
+
+        current_pool_dir_existed = self._pool_dir(tree.name).exists()
+
+        for peer in tree.peers:
+            _validate_name(peer, "pool")
+            peer_dir = self.pools_dir / peer
+            if not peer_dir.is_dir():
+                raise PoolValidationError(
+                    f"Pool {pool_name!r}: peer {peer!r} is not a pool "
+                    f"directory under {self.pools_dir}"
+                )
+            if not current_pool_dir_existed:
+                continue
+            peer_yml = peer_dir / "pool.yml"
+            if not peer_yml.exists():
+                continue
+            raw: dict[str, Any] = (
+                yaml.safe_load(peer_yml.read_text(encoding="utf-8")) or {}
+            )
+            peer_peers: list[str] = list(raw.get("peers") or [])
+            if pool_name not in peer_peers:
+                raise PoolValidationError(
+                    f"Pool {pool_name!r}: peer {peer!r} does not list this "
+                    f"pool back in its peers list (bidirectional invariant "
+                    f"violated)"
+                )
 
     def _read_existing_pool_yml(self, name: str) -> dict[str, Any]:
         pool_yml = self._pool_yml_path(name)
@@ -380,6 +432,8 @@ class PoolStore:
             if value is None or value == default:
                 continue
             data[field] = value
+        if tree.peers:
+            data["peers"] = list(tree.peers)
         if "media" in existing:
             data["media"] = existing["media"]
         return data
@@ -688,6 +742,115 @@ class PoolStore:
         if new_dir.exists():
             raise PoolValidationError(f"Pool {new!r} already exists")
         old_dir.rename(new_dir)
+
+    def add_peer_pair(self, name_a: str, name_b: str) -> None:
+        """Atomically add a bidirectional peer relationship between two pools.
+
+        Both ``pool.yml`` files are updated together: A lists B and B lists A.
+        If either write fails, neither is committed. Validation (existence,
+        bidirectional invariant, and all non-peer tree rules) runs before any
+        disk touch so a failed validation leaves the filesystem unchanged.
+
+        Raises :class:`UnknownPoolError` if either pool does not exist and
+        :class:`PoolValidationError` for any invariant violation.
+        """
+        self._update_peer_pair(name_a, name_b, add=True)
+
+    def remove_peer_pair(self, name_a: str, name_b: str) -> None:
+        """Atomically remove a bidirectional peer relationship between two pools.
+
+        Both ``pool.yml`` files are updated together: A removes B and B
+        removes A. If either write fails, neither is committed.
+
+        Raises :class:`UnknownPoolError` if either pool does not exist and
+        :class:`PoolValidationError` if the relationship did not exist.
+        """
+        self._update_peer_pair(name_a, name_b, add=False)
+
+    def _update_peer_pair(
+        self, name_a: str, name_b: str, *, add: bool
+    ) -> None:
+        """Shared implementation for :meth:`add_peer_pair` / :meth:`remove_peer_pair`."""
+        _validate_name(name_a, "pool")
+        _validate_name(name_b, "pool")
+        if name_a == name_b:
+            raise PoolValidationError(
+                f"Cannot manage peer relationship of a pool with itself: {name_a!r}"
+            )
+        if not self._pool_dir(name_a).is_dir():
+            raise UnknownPoolError(f"Unknown pool: {name_a!r}")
+        if not self._pool_dir(name_b).is_dir():
+            raise UnknownPoolError(f"Unknown pool: {name_b!r}")
+
+        tree_a = self.read_pool(name_a)
+        tree_b = self.read_pool(name_b)
+
+        a_has_b = name_b in tree_a.peers
+        b_has_a = name_a in tree_b.peers
+
+        if add:
+            if a_has_b or b_has_a:
+                raise PoolValidationError(
+                    f"Peer relationship between {name_a!r} and {name_b!r} already exists"
+                )
+            new_peers_a = sorted([*tree_a.peers, name_b])
+            new_peers_b = sorted([*tree_b.peers, name_a])
+        else:
+            if not (a_has_b and b_has_a):
+                raise PoolValidationError(
+                    f"Peer relationship between {name_a!r} and {name_b!r} does not exist"
+                )
+            new_peers_a = [p for p in tree_a.peers if p != name_b]
+            new_peers_b = [p for p in tree_b.peers if p != name_a]
+
+        new_a = tree_a.model_copy(update={"peers": new_peers_a})
+        new_b = tree_b.model_copy(update={"peers": new_peers_b})
+
+        # Validate non-peer tree rules (names, duplicates, main-agent mismatch).
+        self._validate_tree(name_a, new_a, skip_peers=True)
+        self._validate_tree(name_b, new_b, skip_peers=True)
+        # Validate the pair forms a consistent bidirectional edge.
+        self._validate_peer_pair(name_a, new_a, name_b, new_b)
+
+        existing_a = self._read_existing_pool_yml(name_a)
+        existing_b = self._read_existing_pool_yml(name_b)
+        data_a = self._build_pool_yml(name_a, new_a, existing_a)
+        data_b = self._build_pool_yml(name_b, new_b, existing_b)
+
+        tmp_files: list[Path] = []
+        try:
+            tmp_a = self._stage_pool_yml(name_a, data_a)
+            tmp_files.append(tmp_a)
+            tmp_b = self._stage_pool_yml(name_b, data_b)
+            tmp_files.append(tmp_b)
+            self._commit_tmp(tmp_a)
+            self._commit_tmp(tmp_b)
+        except Exception:
+            for t in tmp_files:
+                try:
+                    if t.exists():
+                        t.unlink()
+                except OSError:
+                    pass
+            raise
+
+    def _validate_peer_pair(
+        self, name_a: str, tree_a: PoolTree, name_b: str, tree_b: PoolTree
+    ) -> None:
+        """Verify that the peer relationship between A and B is bidirectional.
+
+        After a transactional update both sides must agree: either both list
+        each other or neither does. This is the counterpart to
+        :meth:`_validate_peers` for pair updates where the per-pool check is
+        intentionally skipped during staging.
+        """
+        a_lists_b = name_b in tree_a.peers
+        b_lists_a = name_a in tree_b.peers
+        if a_lists_b != b_lists_a:
+            raise PoolValidationError(
+                f"Peer relationship between {name_a!r} and {name_b!r} is not "
+                f"bidirectional (one side lists the other, but not both)"
+            )
 
 
 # ─── helpers ─────────────────────────────────────────────────────────────────

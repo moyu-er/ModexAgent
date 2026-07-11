@@ -14,8 +14,13 @@ import contextlib
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+if TYPE_CHECKING:
+    from bot.service.core import BotService
+    from bot.service.pool_instance import PoolInstance
+
+from bot.config.pool_store import PoolStore
 from bot.service.pool_builder import create_pool
 from bot.service.pool_router import PoolRouter, PoolSessionStore
 from bot.service.session_store import WorkspacePoolSessionStore
@@ -28,23 +33,26 @@ from bot.workspace.handle import (
     WorkspaceResolverCell,
 )
 from bot.workspace.pool_data import build_pool_data
-from modex_agent.workspace.context import WorkspaceContext
-from modex_agent.workspace.control import WorkspaceController
-from modex_agent.workspace.registry import WorkspaceRegistry
-from modex_agent.workspace.routing import WorkspaceResolver
-from modex_agent.workspace.store import GlobalWorkspaceStore
 from modex_agent.approval.ui import IMUserInterface
 from modex_agent.commands.models import CommandContext
 from modex_agent.core.session_id import session_id_prefix_of
 from modex_agent.core.types import InputMessage
 from modex_agent.interceptor.builtin import ToolResultLimitInterceptor
 from modex_agent.interceptor.chain import InterceptorChain
+from modex_agent.ioc.configs.pool import PoolConfig
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
-from modex_agent.multi_agent.comm_tracker import CommunicationTracker
 from modex_agent.multi_agent import SessionRetentionPolicy
+from modex_agent.multi_agent.comm_kind import AgentCommKind
+from modex_agent.multi_agent.tools import CommunicationTarget
 from modex_agent.tools.overflow.cleaner import OverflowCleaner
 from modex_agent.tools.overflow.handler import ToolResultOverflowHandler
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
+from modex_agent.tools.terminal.managers import TerminalManagerBase
+from modex_agent.workspace.context import WorkspaceContext
+from modex_agent.workspace.control import WorkspaceController
+from modex_agent.workspace.registry import WorkspaceRegistry
+from modex_agent.workspace.routing import WorkspaceResolver
+from modex_agent.workspace.store import GlobalWorkspaceStore
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +73,7 @@ class WorkspaceStack:
     store: GlobalWorkspaceStore
 
 
-def build_single_workspace_stack(service: Any, *, data_dir_name: str) -> WorkspaceStack:
+def build_single_workspace_stack(service: BotService, *, data_dir_name: str) -> WorkspaceStack:
     """Wire a single-home (workspace disabled) stack against ``service``.
 
     Uses a WorkspaceController that rejects /cd /exit.
@@ -74,7 +82,7 @@ def build_single_workspace_stack(service: Any, *, data_dir_name: str) -> Workspa
 
 
 def build_workspace_stack(
-    service: Any, *, data_dir_name: str, enabled: bool = True
+    service: BotService, *, data_dir_name: str, enabled: bool = True
 ) -> WorkspaceStack:
     """Wire the full multi-live stack against ``service``.
 
@@ -132,7 +140,7 @@ def _command_session_id_of(context: CommandContext) -> str:
     return session_id_prefix_of(context.session_id)
 
 
-def _build_dispatcher(service: Any, resolver: WorkspaceResolver) -> Any:
+def _build_dispatcher(service: BotService, resolver: WorkspaceResolver) -> WorkspaceMessageDispatcher:
     from bot.workspace.dispatch import WorkspaceMessageDispatcher
 
     async def _route_one(resources: PoolWorkspaceResources, message: InputMessage) -> None:
@@ -155,7 +163,7 @@ def _build_dispatcher(service: Any, resolver: WorkspaceResolver) -> Any:
 
 
 async def _build_resources(
-    service: Any, ctx: WorkspaceContext
+    service: BotService, ctx: WorkspaceContext
 ) -> PoolWorkspaceResources:
     """Build one workspace's full resource bundle (the business ``R``).
 
@@ -259,7 +267,6 @@ async def _build_resources(
             output_adapter=service.output_adapter,
             safety=service.safety_policy,
             retention=retention,
-            comm_tracker=CommunicationTracker(),
             im_ui=im_ui,
             shared_hooks=shared_hooks,
             shared_hook_runner=shared_hook_runner,
@@ -293,6 +300,27 @@ async def _build_resources(
         pool_router=None,
         background=None,
     )
+
+    # Phase 2: cross-pool peer wiring. Must run after all Phase 1 pools are built
+    # so subagent targets precede peer targets in each store's insertion order.
+    pool_store = PoolStore(base_dir=service.project_dir)
+    for pool_name, instance in resources.pools.items():
+        pool_tree = pool_store.read_pool(pool_name)
+        for peer_pool_name in pool_tree.peers:
+            peer_instance = resources.pools[peer_pool_name]
+            peer_tree = pool_store.read_pool(peer_pool_name)
+            description = (
+                peer_tree.main.description
+                or f"Peer pool {peer_pool_name}'s main agent"
+            )
+            target = CommunicationTarget(
+                name=peer_instance.main_agent_name,
+                kind=AgentCommKind.NORMAL,
+                pool_name=peer_pool_name,
+                bus_ref=peer_instance.agent_bus,
+                description=description,
+            )
+            instance.target_store.add(target)
 
     # Wire each pool's main pipeline + communication service to THIS workspace
     # (R), then run the experience-hook wiring that used to live in
@@ -355,7 +383,7 @@ async def _build_resources(
 
 
 def _build_workspace_interceptor_chain(
-    service: Any, overflow_store: LocalFileToolOverflowStore
+    service: BotService, overflow_store: LocalFileToolOverflowStore
 ) -> InterceptorChain:
     """Per-workspace interceptor chain rooted at THIS workspace's overflow dir.
 
@@ -384,9 +412,9 @@ def _build_workspace_interceptor_chain(
 
 
 def _wire_pool_to_resources(
-    pool_instance: Any,
+    pool_instance: PoolInstance,
     name: str,
-    pool_cfg: Any,
+    pool_cfg: PoolConfig,
     resources: PoolWorkspaceResources,
 ) -> None:
     """Wire one pool's main pipeline + experience hook to the workspace R.
@@ -473,7 +501,7 @@ async def _stop_resources(resources: PoolWorkspaceResources) -> None:
         await resources.broker.stop()
 
 
-async def _close_terminal(mgr: Any, name: str) -> None:
+async def _close_terminal(mgr: TerminalManagerBase, name: str) -> None:
     try:
         await mgr.close(name)
     except BaseException:

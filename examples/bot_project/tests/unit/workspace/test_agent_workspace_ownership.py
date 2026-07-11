@@ -187,7 +187,6 @@ async def test_main_agent_tool_manager_is_workspace_scoped(tmp_path: Path) -> No
     from modex_agent.ioc.configs.agent import AgentConfig
     from modex_agent.ioc.configs.memory import MemoryConfig
     from modex_agent.ioc.configs.pool import PoolConfig
-    from modex_agent.multi_agent.comm_tracker import CommunicationTracker
     from modex_agent.multi_agent import SessionRetentionPolicy
 
     from modex_agent.interceptor.chain import InterceptorChain
@@ -226,7 +225,6 @@ models:
         output_adapter=object(),  # type: ignore[arg-type]
         safety=RuntimeSafetyPolicy(),
         retention=SessionRetentionPolicy(),
-        comm_tracker=CommunicationTracker(),
         im_ui=object(),  # type: ignore[arg-type]
         shared_hooks=[],
         shared_hook_runner=HookRunner(),

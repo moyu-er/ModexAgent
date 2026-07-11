@@ -367,9 +367,9 @@ class TestQQBotServiceIntegration:
             SkillManager,
         )
 
-        skills_dir = Path(__file__).parent.parent.parent / 'examples' / 'bot_project' / 'skills' / 'main' / 'main'
+        skills_dir = Path(__file__).parent.parent.parent / 'examples' / 'bot_project' / 'skills' / 'default' / 'default'
         if not skills_dir.exists():
-            pytest.skip("bot_project/skills/main directory not found")
+            pytest.skip("bot_project/skills/default/default directory not found")
 
         source = FileSkillSource(
             directories=[skills_dir],
@@ -525,9 +525,9 @@ memory:
             from modex_agent.agents.react import ReActEvent
             return _BufferingEmitter[ReActEvent]()
 
-        with patch("bot.service.pool_builder.create_llm_provider", return_value=_MockProvider()), patch(
+        with patch("bot.service.pool_builder._build_llm_provider", return_value=_MockProvider()), patch(
             "bot.service.pool_builder._load_agent_mcp_tools", return_value=([], None)
-        ):
+        ), patch("bot.service.core.BotService._build_default_provider", return_value=_MockProvider()):
             service = BotService(
                 config_dir=config_dir,
                 input_adapter=input_adapter,
@@ -638,9 +638,9 @@ memory:
             encoding="utf-8",
         )
 
-        with patch("bot.service.pool_builder.create_llm_provider", return_value=_MockProvider()), patch(
+        with patch("bot.service.pool_builder._build_llm_provider", return_value=_MockProvider()), patch(
             "bot.service.pool_builder._load_agent_mcp_tools", return_value=([], None)
-        ):
+        ), patch("bot.service.core.BotService._build_default_provider", return_value=_MockProvider()):
             service = BotService(
                 config_dir=config_dir,
                 input_adapter=_MockInputAdapter(),

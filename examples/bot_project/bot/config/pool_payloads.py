@@ -77,11 +77,18 @@ class MainAgentNode(BaseModel):
     likewise excluded: experience is baked-on for main agents, and skills are
     disk-only symlinks under ``skills/<pool>/<agent>/`` (single source of
     truth = disk, managed by :class:`bot.config.skills_store.SkillsStore`).
+
+    ``description`` is shown to peer agents (and to the user in the WebUI) to
+    explain what this pool's main agent specializes in. Unlike a subagent
+    description it should convey the agent's role as a team lead — it may
+    coordinate a multi-subagent workflow focused on one domain (e.g. coding,
+    research, ops), rather than performing a single narrow task.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     agent_name: str
+    description: str = ""
     max_steps: int = 100
     use_terminal: bool = False
     terminal_visibility: bool = False
@@ -119,6 +126,11 @@ class PoolTree(BaseModel):
 
     ``restart_required`` is an API-side hint (set by callers when a structural
     change needs a pool restart); it is NOT persisted to disk by the store.
+    ``peers`` declares the cross-pool communication partners this pool can
+    exchange messages with (ADR-0019); empty list means no peer relationships.
+    The list is bidirectional — every entry here MUST also appear in the
+    peer's own ``peers`` list. Validation of that invariant lives in
+    :class:`bot.config.pool_store.PoolStore`.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -127,6 +139,7 @@ class PoolTree(BaseModel):
     main_agent_name: str
     main: MainAgentNode
     subagents: list[SubagentNode] = Field(default_factory=list)
+    peers: list[str] = Field(default_factory=list)
     restart_required: bool = False
 
 

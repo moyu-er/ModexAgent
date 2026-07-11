@@ -216,6 +216,24 @@ class PoolConfigController:
         self._mark("pool")
         return self.read_pool(new)
 
+    def add_peer(self, name_a: str, name_b: str) -> tuple[PoolTree, PoolTree]:
+        """Atomically add a bidirectional peer edge and return both updated trees."""
+        try:
+            self._pools.add_peer_pair(name_a, name_b)
+        except PoolValidationError as exc:
+            raise FieldValidationError({"peer": [str(exc)]}) from exc
+        self._mark("pool")
+        return self.read_pool(name_a), self.read_pool(name_b)
+
+    def remove_peer(self, name_a: str, name_b: str) -> tuple[PoolTree, PoolTree]:
+        """Atomically remove a bidirectional peer edge and return both updated trees."""
+        try:
+            self._pools.remove_peer_pair(name_a, name_b)
+        except PoolValidationError as exc:
+            raise FieldValidationError({"peer": [str(exc)]}) from exc
+        self._mark("pool")
+        return self.read_pool(name_a), self.read_pool(name_b)
+
     # ------------------------------------------------------------------ #
     # prompts
     # ------------------------------------------------------------------ #

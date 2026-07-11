@@ -16,8 +16,8 @@ describe("unwrapEnvelope", () => {
       session_id: "conv.reviewer.aa11",
       agent_name: "reviewer",
       event_type: "tool_call_start",
-      pool: "coding",
-      parent_session_id: "conv.coding",
+      pool: "testpool",
+      parent_session_id: "conv.testpool",
       metadata: { turn_id: "turn_1" },
       payload: { tool: "read", args: { path: "x" }, turn_id: "turn_1" },
       timestamp: 1781300000000,
@@ -27,8 +27,8 @@ describe("unwrapEnvelope", () => {
     expect(event.session_id).toBe("conv.reviewer.aa11");
     expect(event.agent_name).toBe("reviewer");
     expect((event as unknown as Record<string, unknown>).tool).toBe("read");
-    expect((event as unknown as Record<string, unknown>)._pool).toBe("coding");
-    expect((event as unknown as Record<string, unknown>)._parent_session_id).toBe("conv.coding");
+    expect((event as unknown as Record<string, unknown>)._pool).toBe("testpool");
+    expect((event as unknown as Record<string, unknown>)._parent_session_id).toBe("conv.testpool");
     expect((event as unknown as Record<string, unknown>)._metadata).toEqual({ turn_id: "turn_1" });
   });
 
@@ -122,9 +122,9 @@ describe("applyServerEvent session isolation", () => {
       emptyState(),
       {
         event: "model_content_delta",
-        session_id: "conv-a.coding",
-        agent_name: "coding",
-        text: "hello from coding",
+        session_id: "conv-a.subagent",
+        agent_name: "subagent",
+        text: "hello from subagent",
         turn_id: "turn_1",
       },
       "conv-a.main",
@@ -133,8 +133,8 @@ describe("applyServerEvent session isolation", () => {
     // Selected session unchanged
     expect(state.messages).toHaveLength(0);
     // Subagent session buffered
-    expect(state.sessionMessages["conv-a.coding"]).toHaveLength(1);
-    expect(state.sessionStreaming["conv-a.coding"]).toBe(true);
+    expect(state.sessionMessages["conv-a.subagent"]).toHaveLength(1);
+    expect(state.sessionStreaming["conv-a.subagent"]).toBe(true);
   });
 
   it("buffers turn_end for a different session", () => {
@@ -367,8 +367,8 @@ describe("applyServerEvent approval_request", () => {
     };
     const ev = {
       event: "approval_request",
-      session_id: "s.coding",
-      agent_name: "coding",
+      session_id: "s.subagent",
+      agent_name: "subagent",
       tool_call_id: "c9",
       tool_name: "edit_file",
       tier: "dangerous",
@@ -376,8 +376,8 @@ describe("applyServerEvent approval_request", () => {
       status: "pending",
     } as unknown as ServerEventUnion;
     const next = applyServerEvent(state, ev, "s.main", ref);
-    expect(next.pendingApprovals["s.coding"]).toHaveLength(1);
-    expect(next.sessionMessages["s.coding"]).toBeUndefined();
+    expect(next.pendingApprovals["s.subagent"]).toHaveLength(1);
+    expect(next.sessionMessages["s.subagent"]).toBeUndefined();
   });
 });
 
@@ -430,7 +430,7 @@ describe("clearPendingApproval", () => {
             status: "pending",
           },
         ],
-        "s.coding": [
+        "s.subagent": [
           {
             tool_call_id: "c2",
             tool_name: "edit_file",
@@ -443,6 +443,6 @@ describe("clearPendingApproval", () => {
     };
     const next = clearPendingApproval(state, "s.main", "c1");
     expect(next.pendingApprovals["s.main"]).toHaveLength(0);
-    expect(next.pendingApprovals["s.coding"]).toHaveLength(1);
+    expect(next.pendingApprovals["s.subagent"]).toHaveLength(1);
   });
 });

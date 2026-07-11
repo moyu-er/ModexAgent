@@ -149,6 +149,39 @@ class TestWritePoolRoundTrip:
         assert reread.main.max_steps == 42
         assert reread.main.use_terminal is True
 
+    def test_main_description_round_trips_and_omits_when_default(
+        self, store: PoolStore, tmp_path: Path
+    ) -> None:
+        """A non-empty main-agent description persists to pool.yml and reads
+        back; an empty (default) description is omitted from the file."""
+        _seed_pool_yml(tmp_path, "coding", main_agent="coding")
+        tree = PoolTree(
+            name="coding",
+            main_agent_name="coding",
+            main=MainAgentNode(
+                agent_name="coding",
+                description="Software engineering lead that coordinates a subagent team.",
+            ),
+        )
+        store.write_pool("coding", tree)
+        reread = store.read_pool("coding")
+        assert (
+            reread.main.description
+            == "Software engineering lead that coordinates a subagent team."
+        )
+        raw = yaml.safe_load(
+            (tmp_path / "config" / "pools" / "coding" / "pool.yml").read_text("utf-8")
+        )
+        assert raw["description"].startswith("Software engineering lead")
+
+        cleared = reread.model_copy(update={"main": MainAgentNode(agent_name="coding")})
+        store.write_pool("coding", cleared)
+        raw_after = yaml.safe_load(
+            (tmp_path / "config" / "pools" / "coding" / "pool.yml").read_text("utf-8")
+        )
+        assert "description" not in raw_after
+        assert store.read_pool("coding").main.description == ""
+
     def test_round_trip_with_subagents(self, store: PoolStore, tmp_path: Path) -> None:
         _seed_pool_yml(tmp_path, "coding", main_agent="coding")
         tree = PoolTree(
@@ -627,3 +660,206 @@ class TestCreateDeleteRenameList:
 
     def test_list_pools_empty(self, store: PoolStore, tmp_path: Path) -> None:
         assert store.list_pools() == []
+
+
+# ─── peers (ADR-0019) ────────────────────────────────────────────────────────
+
+
+class TestPoolPeers:
+    def test_pool_yml_peers_field_parses(
+        self, store: PoolStore, tmp_path: Path
+    ) -> None:
+        """A pool.yml with a top-level `peers:` key parses into PoolTree.peers."""
+        # Peer dirs must exist for the existence check. The current pool is
+        # being freshly created (no pre-existing pool.yml), so the bidirectional
+        # check is lenient and just looks at the peer dirs.
+        for peer in ("coding", "research"):
+            peer_dir = tmp_path / "config" / "pools" / peer
+            peer_dir.mkdir(parents=True)
+            (peer_dir / "templates").mkdir()
+        tree = PoolTree(
+            name="main",
+            main_agent_name="main",
+            main=MainAgentNode(agent_name="main"),
+            peers=["coding", "research"],
+        )
+        store.write_pool("main", tree)
+        reread = store.read_pool("main")
+        assert reread.peers == ["coding", "research"]
+        # The peers list is also persisted to disk verbatim.
+        raw = yaml.safe_load(
+            (tmp_path / "config" / "pools" / "main" / "pool.yml").read_text("utf-8")
+        )
+        assert raw["peers"] == ["coding", "research"]
+
+    def test_peers_bidirectional_invariant_violated(
+        self, store: PoolStore, tmp_path: Path
+    ) -> None:
+        """A half-edge (A lists B, B does not list A) raises PoolValidationError.
+
+        Both pools exist on disk with empty pool.yml; A is being UPDATED (its
+        dir already existed), so the bidirectional check is strict: B's pool.yml
+        must list A back.
+        """
+        store.create_pool("alpha")
+        store.create_pool("bravo")
+        tree_alpha = PoolTree(
+            name="alpha",
+            main_agent_name="alpha",
+            main=MainAgentNode(agent_name="alpha"),
+            peers=["bravo"],
+        )
+        with pytest.raises(PoolValidationError):
+            store.write_pool("alpha", tree_alpha)
+        # Disk is untouched after the rejected write.
+        alpha_yml = tmp_path / "config" / "pools" / "alpha" / "pool.yml"
+        assert "peers" not in alpha_yml.read_text("utf-8")
+
+    def test_peers_dangling_reference(
+        self, store: PoolStore, tmp_path: Path
+    ) -> None:
+        """A peer name that does not exist as a pool directory raises."""
+        store.create_pool("alpha")
+        tree_alpha = PoolTree(
+            name="alpha",
+            main_agent_name="alpha",
+            main=MainAgentNode(agent_name="alpha"),
+            peers=["nonexistent"],
+        )
+        with pytest.raises(PoolValidationError):
+            store.write_pool("alpha", tree_alpha)
+
+    def test_peers_bidirectional_round_trip(
+        self, store: PoolStore, tmp_path: Path
+    ) -> None:
+        """Writing A with peers: [B] then B with peers: [A] round-trips correctly.
+
+        B's pool.yml is pre-seeded with peers: [alpha] so the very first write
+        of alpha is allowed under the "freshly created" leniency, and the
+        subsequent write of bravo sees alpha already reciprocating.
+        """
+        b_dir = tmp_path / "config" / "pools" / "bravo"
+        b_dir.mkdir(parents=True)
+        (b_dir / "templates").mkdir()
+        (b_dir / "pool.yml").write_text(
+            yaml.safe_dump({"peers": ["alpha"]}, sort_keys=False),
+            encoding="utf-8",
+        )
+        tree_alpha = PoolTree(
+            name="alpha",
+            main_agent_name="alpha",
+            main=MainAgentNode(agent_name="alpha"),
+            peers=["bravo"],
+        )
+        store.write_pool("alpha", tree_alpha)
+        tree_bravo = PoolTree(
+            name="bravo",
+            main_agent_name="bravo",
+            main=MainAgentNode(agent_name="bravo"),
+            peers=["alpha"],
+        )
+        store.write_pool("bravo", tree_bravo)
+        assert store.read_pool("alpha").peers == ["bravo"]
+        assert store.read_pool("bravo").peers == ["alpha"]
+
+    def test_add_peer_pair_writes_both_sides(
+        self, store: PoolStore, tmp_path: Path
+    ) -> None:
+        """add_peer_pair atomically creates a bidirectional edge."""
+        store.create_pool("alpha")
+        store.create_pool("bravo")
+        store.add_peer_pair("alpha", "bravo")
+        assert store.read_pool("alpha").peers == ["bravo"]
+        assert store.read_pool("bravo").peers == ["alpha"]
+        raw_a = yaml.safe_load(
+            (tmp_path / "config" / "pools" / "alpha" / "pool.yml").read_text("utf-8")
+        )
+        raw_b = yaml.safe_load(
+            (tmp_path / "config" / "pools" / "bravo" / "pool.yml").read_text("utf-8")
+        )
+        assert raw_a["peers"] == ["bravo"]
+        assert raw_b["peers"] == ["alpha"]
+
+    def test_add_peer_pair_idempotent_rejects_duplicate(
+        self, store: PoolStore, tmp_path: Path
+    ) -> None:
+        """Adding an existing edge is rejected rather than silently ignored."""
+        store.create_pool("alpha")
+        store.create_pool("bravo")
+        store.add_peer_pair("alpha", "bravo")
+        with pytest.raises(PoolValidationError):
+            store.add_peer_pair("alpha", "bravo")
+
+    def test_remove_peer_pair_removes_both_sides(
+        self, store: PoolStore, tmp_path: Path
+    ) -> None:
+        """remove_peer_pair atomically drops a bidirectional edge."""
+        store.create_pool("alpha")
+        store.create_pool("bravo")
+        store.add_peer_pair("alpha", "bravo")
+        store.remove_peer_pair("alpha", "bravo")
+        assert store.read_pool("alpha").peers == []
+        assert store.read_pool("bravo").peers == []
+        raw_a = yaml.safe_load(
+            (tmp_path / "config" / "pools" / "alpha" / "pool.yml").read_text("utf-8")
+        )
+        raw_b = yaml.safe_load(
+            (tmp_path / "config" / "pools" / "bravo" / "pool.yml").read_text("utf-8")
+        )
+        assert "peers" not in raw_a
+        assert "peers" not in raw_b
+
+    def test_remove_peer_pair_rejects_missing_relationship(
+        self, store: PoolStore, tmp_path: Path
+    ) -> None:
+        """Removing a non-existent edge is rejected."""
+        store.create_pool("alpha")
+        store.create_pool("bravo")
+        with pytest.raises(PoolValidationError):
+            store.remove_peer_pair("alpha", "bravo")
+
+    def test_peer_pair_preserves_other_pool_fields(
+        self, store: PoolStore, tmp_path: Path
+    ) -> None:
+        """Peer updates only touch the peers list; other fields are preserved."""
+        _seed_pool_yml(
+            tmp_path, "alpha", extra_main_fields={"max_steps": 42, "media": {"enable": True}}
+        )
+        _seed_pool_yml(
+            tmp_path, "bravo", extra_main_fields={"max_steps": 60}
+        )
+        store.add_peer_pair("alpha", "bravo")
+        raw_a = yaml.safe_load(
+            (tmp_path / "config" / "pools" / "alpha" / "pool.yml").read_text("utf-8")
+        )
+        raw_b = yaml.safe_load(
+            (tmp_path / "config" / "pools" / "bravo" / "pool.yml").read_text("utf-8")
+        )
+        assert raw_a["peers"] == ["bravo"]
+        assert raw_a["max_steps"] == 42
+        assert raw_a["media"] == {"enable": True}
+        assert raw_b["peers"] == ["alpha"]
+        assert raw_b["max_steps"] == 60
+
+    def test_peer_pair_transactional_cleanup_on_failure(
+        self, store: PoolStore, tmp_path: Path
+    ) -> None:
+        """If the second side cannot be staged, the first .tmp is cleaned up."""
+        store.create_pool("alpha")
+        store.create_pool("bravo")
+        # Pre-seed alpha with a peer that does not reciprocate, then break the
+        # second pool by making its directory non-writable (simulate failure).
+        (tmp_path / "config" / "pools" / "alpha" / "pool.yml").write_text(
+            yaml.safe_dump({"peers": ["bravo"]}, sort_keys=False),
+            encoding="utf-8",
+        )
+        # Make bravo's pool.yml read-only so staging fails.
+        bravo_yml = tmp_path / "config" / "pools" / "bravo" / "pool.yml"
+        bravo_yml.chmod(0o444)
+        try:
+            with pytest.raises(Exception):  # noqa: B017 - any OS-level failure is fine
+                store.add_peer_pair("bravo", "alpha")
+        finally:
+            bravo_yml.chmod(0o666)
+        # No leftover .tmp files.
+        assert not list((tmp_path / "config" / "pools").rglob("*.tmp"))

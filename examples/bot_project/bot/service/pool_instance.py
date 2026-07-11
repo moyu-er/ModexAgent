@@ -11,6 +11,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.multi_agent.bus import AgentMessageBus
+from modex_agent.multi_agent.tools import CommunicationTargetStore
+from modex_agent.tools.terminal.managers import TerminalManagerBase
+
 
 @dataclass
 class PoolInstance:
@@ -29,14 +34,14 @@ class PoolInstance:
     tool_manager: Any  # InMemoryToolManager
     skill_manager: Any | None
     mcp_manager: Any | None
-    terminal_manager: Any | None
+    terminal_manager: TerminalManagerBase | None
     main_agent_name: str
     provider: Any
     notification_service: Any  # AgentNotificationService
     communication_service: Any  # AgentCommunicationService — resolves paths from workspace at runtime
+    agent_bus: AgentMessageBus  # exposed for cross-pool peer wiring
+    target_store: CommunicationTargetStore  # exposed for cross-pool peer wiring
 
     @property
-    def main_address(self):
-        from modex_agent.multi_agent.address import AgentAddress
-
+    def main_address(self) -> AgentAddress:
         return AgentAddress(kind="agent", name=self.main_agent_name)

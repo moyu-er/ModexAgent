@@ -58,6 +58,7 @@ export interface McpServerEntry {
 
 export interface MainAgentNode {
   agent_name: string;
+  description: string;
   max_steps: number;
   use_terminal: boolean;
   terminal_visibility: boolean;
@@ -86,6 +87,7 @@ export interface PoolTree {
   main_agent_name: string;
   main: MainAgentNode;
   subagents: SubagentNode[];
+  peers: string[];
   restart_required: boolean;
 }
 

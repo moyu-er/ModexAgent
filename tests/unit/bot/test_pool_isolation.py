@@ -69,6 +69,8 @@ class TestPerPoolMemoryIsolation:
 class TestPoolInstanceStructure:
     def test_pool_instance_main_address(self):
         """PoolInstance.main_address returns correct AgentAddress."""
+        from unittest.mock import MagicMock
+
         from bot.service.pool_instance import PoolInstance
         pi = PoolInstance(
             name="coding",
@@ -83,6 +85,8 @@ class TestPoolInstanceStructure:
             provider=None,
             notification_service=None,
             communication_service=None,
+            agent_bus=MagicMock(),
+            target_store=MagicMock(),
         )
         addr = pi.main_address
         assert addr.kind == "agent"

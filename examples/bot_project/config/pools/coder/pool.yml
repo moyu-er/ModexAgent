@@ -1,0 +1,25 @@
+description: >-
+  Software engineering lead. Plans, writes, reviews, and debugs code across
+  the project; runs shell commands and reads/writes files directly. Manages a
+  multi-subagent workflow — planner, worker, reviewer, scout, oracle, delegate,
+  context-builder — handing implementation, verification, and exploration
+  subtasks to the right specialist and integrating their results. Use for any
+  code change, refactoring, bug fix, or repo exploration.
+max_steps: 100
+use_terminal: false
+terminal_visibility: false
+tool_preset: full
+tool_supplements:
+- ast_grep
+- todo
+approval:
+  enabled: true
+  tools:
+    write:
+      allowed_paths:
+      - ./*
+    edit:
+      allowed_paths:
+      - ./*
+peers:
+- default

@@ -14,11 +14,10 @@ import asyncio
 import contextlib
 import logging
 
+from bot.workspace.pool_data import PoolData
 from modex_agent.core.experience import ExperienceCurator
 from modex_agent.ioc.configs.pool import PoolConfig
 from modex_agent.memory.consolidation.dream_engine import DreamEngine
-
-from bot.workspace.pool_data import PoolData
 
 logger = logging.getLogger(__name__)
 

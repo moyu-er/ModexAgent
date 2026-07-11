@@ -250,6 +250,11 @@ class BotService(AgentBuilderMixin):
         """
         return Path(__file__).resolve().parent.parent.parent
 
+    @property
+    def project_dir(self) -> Path:
+        """Public accessor for the project root directory."""
+        return self._project_dir
+
     def _resolve_path(self, config_key: str, default_relative: str) -> Path:
         """Resolve a path from AppConfig paths, falling back to a relative default."""
         assert self._app_config is not None, "AppConfig not loaded"

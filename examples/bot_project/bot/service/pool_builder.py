@@ -13,6 +13,8 @@ from dataclasses import replace as _dc_replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from modex_agent.messaging import MessageBroker
+
 if TYPE_CHECKING:
     # ``WorkspaceHandle`` / ``WorkspaceResolverCell`` live in the bundle,
     # which is imported by BotService via this module; deferring them to
@@ -40,7 +42,7 @@ from modex_agent.core.scope import MemoryContext
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.core.session_store import SessionStore
-from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
+from modex_agent.core.tool_manager import InMemoryToolManager, Tool, ToolManagerConfig
 from modex_agent.hook import HookErrorPolicy, HookRunner, HookSpec
 from modex_agent.hook.notification import (
     AgentNotificationService,
@@ -64,7 +66,6 @@ from modex_agent.multi_agent import (
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
 from modex_agent.multi_agent.comm_kind import AgentCommKind
-from modex_agent.multi_agent.comm_tracker import CommunicationTracker
 from modex_agent.multi_agent.communication import AgentCommunicationService
 from modex_agent.multi_agent.context_fork import ContextForkBuilder
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
@@ -118,7 +119,6 @@ async def create_pool(
     output_adapter: OutputAdapter,
     safety: RuntimeSafetyPolicy,
     retention: SessionRetentionPolicy,
-    comm_tracker: CommunicationTracker,
     im_ui: Any,
     shared_hooks: list,
     shared_hook_runner: HookRunner,
@@ -218,7 +218,7 @@ async def create_pool(
     session_factory = SessionIdFactory()
     pool = _build_agent_pool(
         broker, factory, context_manager, agent_bus,
-        inbox_consumer, session_factory, safety, retention, comm_tracker,
+        inbox_consumer, session_factory, safety, retention,
         pool_name,
         session_registry=session_registry,
         session_store=session_store,
@@ -258,7 +258,6 @@ async def create_pool(
         pool=pool,
         session_factory=session_factory,
         broker=broker,
-        comm_tracker=comm_tracker,
         safety=safety,
         llm_model=default_resolved.model.model,
         llm_temperature=default_resolved.model.temperature,
@@ -307,7 +306,7 @@ async def create_pool(
             )
     main_service, main_store = _build_communication(
         pool, main_agent_name, broker, agent_bus,
-        comm_tracker, project_dir, pool_name, templates, template_registry,
+        project_dir, pool_name, templates, template_registry,
         session_registry=session_registry,
         workspace_path_resolver=path_resolver,
     )
@@ -319,7 +318,6 @@ async def create_pool(
             registry=pool,
             agent_bus=agent_bus,
             service=main_service,
-            comm_tracker=comm_tracker,
         )
     )
     main_service._target_store = main_store
@@ -361,6 +359,8 @@ async def create_pool(
         provider=provider,
         notification_service=notification_service,
         communication_service=main_service,
+        agent_bus=agent_bus,
+        target_store=main_store,
     )
 
 
@@ -949,7 +949,6 @@ def _build_agent_pool(
     session_factory,
     safety,
     retention,
-    comm_tracker,
     pool_name: str,
     *,
     session_registry: SessionRegistry | None = None,
@@ -964,7 +963,6 @@ def _build_agent_pool(
         session_factory=session_factory,
         safety=safety,
         retention=retention,
-        comm_tracker=comm_tracker,
         session_registry=session_registry,
         session_store=session_store,
     )
@@ -1043,7 +1041,6 @@ def _build_communication(
     main_agent_name: str,
     broker,
     agent_bus,
-    comm_tracker,
     project_dir: Path,
     pool_name: str,
     templates: list,
@@ -1066,7 +1063,6 @@ def _build_communication(
         broker=broker,
         registry=pool,
         agent_bus=agent_bus,
-        comm_tracker=comm_tracker,
         template_registry=template_registry,
         pool=pool,
         pool_name=pool_name,

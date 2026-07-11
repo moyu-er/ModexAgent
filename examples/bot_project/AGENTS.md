@@ -30,7 +30,7 @@ Primary end-to-end reference implementation for the ModexAgent framework. Demons
   ┌───────────┼───────────┐                           │
   ▼           ▼           ▼                           │
 ┌────────┐ ┌────────┐ ┌────────┐                       │
-│ main   │ │ coding │ │  ...   │  ← AgentPool instances│
+│ main   │ │ coder │ │  ...   │  ← AgentPool instances│
 │  pool  │ │  pool  │ │  pool  │    (each has main +   │
 └────────┘ └────────┘ └────────┘     subagents)        │
                                                        │
@@ -123,7 +123,7 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 ## Multi-Agent Setup
 
 - `main` pool: Main agent with all MCP tools, file/shell tools, communication tools + subagents (office-expert, query-12306).
-- `coding` pool: Main agent + subagents (planner, worker, reviewer, scout, oracle, delegate, context-builder).
+- `coder` pool: Main agent + subagents (planner, worker, reviewer, scout, oracle, delegate, context-builder).
 - Communication: `send_to_agent` (async inbox-based).
 - `SubagentAutoSendHook` auto-forwards subagent output to parent.
 - Session ID format: `{conversation_id}.{agent_name}[.{invocation_id}]` (via `DefaultSessionIdStrategy`).
@@ -155,7 +155,7 @@ field; the runtime `SkillManager` and the WebUI both read
 `unassign` removes either shape. `SkillsStore._create_dir_link` / `_remove_link`
 are the converged seams; no platform preconditions on any OS.
 
-## Todo Tools (main + coding pools)
+## Todo Tools (main + coder pools)
 
 `todo_write` (full-replace) and `todo_read` (active-only: pending + in_progress) let the agent track a multi-step task list per session. The `TodoStore` is injected at registration in `pool_builder._build_tools` (same path-injection pattern as the experience tool); persisted to `<ws>/.modex/runtime_state/<pool>/todos/<session_id>.json` (ws+pool+session isolated).
 
@@ -165,7 +165,7 @@ are the converged seams; no platform preconditions on any OS.
   scans the loaded assistant messages for the most recent todo tool block with a
   result and parses it. If history doesn't carry results reliably, fall back to
   a server fetch endpoint (see spec §12 — deferred).
-- Enabled only for the `main` and `coding` pools' main agents (registered in `_build_tools`; subagents do not get these tools).
+- Enabled only for the `main` and `coder` pools' main agents (registered in `_build_tools`; subagents do not get these tools).
 - No prompt injection (v1); the agent reads state via `todo_read` or tool results in history.
 
 ## Subdirectories

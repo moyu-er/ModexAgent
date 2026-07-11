@@ -824,3 +824,127 @@ async def test_pool_mutation_round_trip(tmp_path: Path) -> None:
         assert got2["main"]["max_steps"] == before + 1
     finally:
         await client.close()
+
+
+# ─── peer relationships (ADR-0019) ────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_add_peer_updates_both_sides(tmp_path: Path) -> None:
+    """POST /api/pools/{pool}/peers creates a bidirectional edge and returns both trees."""
+    _seed_pool_yml(tmp_path, "alpha", main_agent="alpha")
+    _seed_pool_yml(tmp_path, "bravo", main_agent="bravo")
+    client = _make_client(_make_controller(tmp_path), tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.post("/api/pools/alpha/peers", json={"peer": "bravo"})
+        assert resp.status == 200, await resp.text()
+        data = await resp.json()
+        assert data["pool_a"]["peers"] == ["bravo"]
+        assert data["pool_b"]["peers"] == ["alpha"]
+        # Re-reading each pool reflects the atomic write.
+        assert (await (await client.get("/api/pools/alpha")).json())["peers"] == ["bravo"]
+        assert (await (await client.get("/api/pools/bravo")).json())["peers"] == ["alpha"]
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_remove_peer_updates_both_sides(tmp_path: Path) -> None:
+    """DELETE /api/pools/{pool}/peers/{peer} drops a bidirectional edge."""
+    _seed_pool_yml(tmp_path, "alpha", main_agent="alpha")
+    _seed_pool_yml(tmp_path, "bravo", main_agent="bravo")
+    client = _make_client(_make_controller(tmp_path), tmp_path)
+    await client.start_server()
+    try:
+        await client.post("/api/pools/alpha/peers", json={"peer": "bravo"})
+        resp = await client.delete("/api/pools/alpha/peers/bravo")
+        assert resp.status == 200, await resp.text()
+        data = await resp.json()
+        assert data["pool_a"]["peers"] == []
+        assert data["pool_b"]["peers"] == []
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_add_peer_unknown_peer_404(tmp_path: Path) -> None:
+    """Adding a peer that does not exist as a pool returns 404."""
+    _seed_pool_yml(tmp_path, "alpha", main_agent="alpha")
+    client = _make_client(_make_controller(tmp_path), tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.post("/api/pools/alpha/peers", json={"peer": "missing"})
+        assert resp.status == 404
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_add_peer_missing_body_field_400(tmp_path: Path) -> None:
+    """The peer key is required in the request body."""
+    _seed_pool_yml(tmp_path, "alpha", main_agent="alpha")
+    client = _make_client(_make_controller(tmp_path), tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.post("/api/pools/alpha/peers", json={})
+        assert resp.status == 400
+        data = await resp.json()
+        assert data["error"] == "validation"
+        assert "peer" in data["fields"]
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_add_peer_duplicate_400(tmp_path: Path) -> None:
+    """Adding an already-existing edge is rejected with a validation error."""
+    _seed_pool_yml(tmp_path, "alpha", main_agent="alpha")
+    _seed_pool_yml(tmp_path, "bravo", main_agent="bravo")
+    client = _make_client(_make_controller(tmp_path), tmp_path)
+    await client.start_server()
+    try:
+        await client.post("/api/pools/alpha/peers", json={"peer": "bravo"})
+        resp = await client.post("/api/pools/alpha/peers", json={"peer": "bravo"})
+        assert resp.status == 400
+        data = await resp.json()
+        assert data["error"] == "validation"
+        assert "peer" in data["fields"]
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_remove_peer_nonexistent_400(tmp_path: Path) -> None:
+    """Removing a peer relationship that does not exist is rejected."""
+    _seed_pool_yml(tmp_path, "alpha", main_agent="alpha")
+    _seed_pool_yml(tmp_path, "bravo", main_agent="bravo")
+    client = _make_client(_make_controller(tmp_path), tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.delete("/api/pools/alpha/peers/bravo")
+        assert resp.status == 400
+        data = await resp.json()
+        assert data["error"] == "validation"
+        assert "peer" in data["fields"]
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_peer_routes_503_without_controller(tmp_path: Path) -> None:
+    """Peer routes degrade to 503 when no PoolConfigController is wired."""
+    store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
+    server = WebUIServer(
+        WebSocketInputAdapter(),
+        store,
+        static_dist=None,
+        home_sessions_dir=tmp_path / ".modex",
+    )
+    client = TestClient(TestServer(server.app))
+    await client.start_server()
+    try:
+        assert (await client.post("/api/pools/alpha/peers", json={"peer": "bravo"})).status == 503
+        assert (await client.delete("/api/pools/alpha/peers/bravo")).status == 503
+    finally:
+        await client.close()

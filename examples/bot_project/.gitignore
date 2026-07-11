@@ -70,7 +70,7 @@ config/mcp/registry.json
 !config/mcp/registry.example.json
 
 # Personal/local "main" pool — not shared via git (config + its agent prompts).
-# Only the template pools ("default", "coding") and shared prompts are committed.
+# Only the template pools ("default", "coder") and shared prompts are committed.
 /config/pools/main/
 /agents/main.md
 /agents/query-12306.md

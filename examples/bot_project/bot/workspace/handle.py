@@ -5,12 +5,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from modex_agent.workspace.context import WorkspaceContext
-from modex_agent.core.session_store import LocalFileSessionStore
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
 from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
+from modex_agent.workspace import WorkspaceManager
+from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.resources import WorkspaceResources
 
 if TYPE_CHECKING:
@@ -20,7 +20,6 @@ if TYPE_CHECKING:
     from bot.service.pool_instance import PoolInstance
     from bot.service.pool_router import PoolRouter
     from bot.service.session_store import WorkspacePoolSessionStore
-    from bot.service.workspace_store import WorkspaceScopedTranscriptStore
     from bot.workspace.background import BackgroundTaskRunner
 
 
@@ -37,9 +36,6 @@ class WorkspaceHandleRootProvider(WorkspaceRootProvider):
 
     def current(self) -> Path:
         return self._handle.current
-
-
-from modex_agent.workspace import WorkspaceManager
 
 
 class WorkspaceResolverCell(WorkspaceManager):

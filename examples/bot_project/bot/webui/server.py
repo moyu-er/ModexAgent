@@ -693,6 +693,10 @@ class WebUIServer:
         self.app.router.add_put(
             "/api/pools/{pool}/agents/{agent}/prompt", self._handle_write_prompt
         )
+        self.app.router.add_post("/api/pools/{pool}/peers", self._handle_add_peer)
+        self.app.router.add_delete(
+            "/api/pools/{pool}/peers/{peer}", self._handle_remove_peer
+        )
         self.app.router.add_get("/api/mcp", self._handle_read_mcp)
         self.app.router.add_post("/api/mcp/{server}", self._handle_upsert_mcp)
         self.app.router.add_put("/api/mcp/{server}", self._handle_upsert_mcp)
@@ -953,6 +957,65 @@ class WebUIServer:
             logger.exception("rename_pool failed")
             return web.json_response({"error": "rename failed"}, status=500)
         return web.json_response(tree.model_dump(mode="json"))
+
+    async def _handle_add_peer(self, request: web.Request) -> web.Response:
+        """POST /api/pools/{pool}/peers -- add a bidirectional peer edge.
+
+        Body: {"peer": "<other_pool>"}. On success both sides of the edge
+        are written and both updated pool trees are returned so the UI can
+        refresh the current pool and any visible peer pool.
+        """
+        if (miss := self._pool_cfg_required()) is not None:
+            return miss
+        pool = request.match_info["pool"]
+        try:
+            body = await request.json()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("add_peer: bad JSON body: %s", exc)
+            return web.json_response({"error": "invalid body"}, status=400)
+        peer = body.get("peer") if isinstance(body, dict) else None
+        if not isinstance(peer, str) or not peer:
+            return web.json_response(
+                {"error": "validation", "fields": {"peer": ["required"]}},
+                status=400,
+            )
+        try:
+            tree_a, tree_b = self._pool_config_controller.add_peer(pool, peer)
+        except KeyError:
+            return web.json_response({"error": f"unknown pool: {pool}"}, status=404)
+        except FieldValidationError as exc:
+            return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
+        except Exception:  # noqa: BLE001
+            logger.exception("add_peer failed")
+            return web.json_response({"error": "add peer failed"}, status=500)
+        return web.json_response({
+            "pool_a": tree_a.model_dump(mode="json"),
+            "pool_b": tree_b.model_dump(mode="json"),
+        })
+
+    async def _handle_remove_peer(self, request: web.Request) -> web.Response:
+        """DELETE /api/pools/{pool}/peers/{peer} -- remove a bidirectional peer edge.
+
+        Both sides of the edge are removed atomically. Returns both updated
+        pool trees.
+        """
+        if (miss := self._pool_cfg_required()) is not None:
+            return miss
+        pool = request.match_info["pool"]
+        peer = request.match_info["peer"]
+        try:
+            tree_a, tree_b = self._pool_config_controller.remove_peer(pool, peer)
+        except KeyError:
+            return web.json_response({"error": f"unknown pool: {pool}"}, status=404)
+        except FieldValidationError as exc:
+            return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
+        except Exception:  # noqa: BLE001
+            logger.exception("remove_peer failed")
+            return web.json_response({"error": "remove peer failed"}, status=500)
+        return web.json_response({
+            "pool_a": tree_a.model_dump(mode="json"),
+            "pool_b": tree_b.model_dump(mode="json"),
+        })
 
     async def _handle_read_prompt(self, request: web.Request) -> web.Response:
         """GET /api/pools/{pool}/agents/{agent}/prompt -- read the agent prompt md."""
