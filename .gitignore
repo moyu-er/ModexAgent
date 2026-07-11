@@ -50,6 +50,7 @@ references
 !.gitignore
 !.python-version
 !.github
+!.scratch
 uv.lock
 bun.lock
 trace
