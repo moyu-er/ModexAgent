@@ -12,6 +12,7 @@ They are written test-first per TDD: tests asserting the *desired* model are
 expected to FAIL and reveal the design gap; tests asserting *current* behavior
 PASS and document reality.
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -33,12 +34,15 @@ from modex_agent.multi_agent.descriptor import AgentDescriptor, AgentInstance
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
 from modex_agent.multi_agent.pool import AgentPool
+from modex_agent.multi_agent.pool_config.specs import SubagentSpec
 from modex_agent.multi_agent.template import AgentTemplate
 from modex_agent.multi_agent.tools import CommunicationTarget
 
 
 def _tgt(name: str, kind: AgentCommKind) -> CommunicationTarget:
     return CommunicationTarget(name=name, kind=kind)
+
+
 from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
 from modex_agent.tools.presets import ContextMode, SystemPromptMode
 
@@ -143,10 +147,13 @@ async def test_materialize_appends_the_current_parent_prompt():
     parent_b = _instance("mainB", prompt="PROMPT_B")
     deps.pool.get = MagicMock(side_effect=lambda n: parent_a if n == "mainA" else parent_b)
 
-    template = AgentTemplate(agent_name="scout", system_prompt_mode=SystemPromptMode.APPEND)
+    template = AgentTemplate(
+        spec=SubagentSpec(agent_name="scout", system_prompt_mode=SystemPromptMode.APPEND)
+    )
     await template.materialize(
         parent_session=SessionIdFactory().create(agent_name="mainA"),
-        invocation_id="inv1", deps=deps,
+        invocation_id="inv1",
+        deps=deps,
     )
     ctx_mgr = factory.create_agent.call_args.kwargs["context_manager"]
     static = _descriptor_of(factory.create_agent.call_args).system_prompt_template
@@ -173,11 +180,16 @@ async def test_materialize_forks_per_parent_via_load():
     deps, factory = _deps(fork=fork)
 
     template = AgentTemplate(
-        agent_name="planner", context_mode=ContextMode.FORK, fork_max_messages=10,
+        spec=SubagentSpec(
+            agent_name="planner",
+            context_mode=ContextMode.FORK,
+            fork_max_messages=10,
+        )
     )
     await template.materialize(
         parent_session=SessionIdFactory().create(agent_name="mainA"),
-        invocation_id="inv1", deps=deps,
+        invocation_id="inv1",
+        deps=deps,
     )
     ctx_mgr = factory.create_agent.call_args.kwargs["context_manager"]
     static = _descriptor_of(factory.create_agent.call_args).system_prompt_template
@@ -204,14 +216,17 @@ async def test_reused_instance_serves_per_invocation_append_and_fork():
     deps.pool.get = MagicMock(side_effect=lambda n: parent_a if n == "mainA" else parent_b)
 
     template = AgentTemplate(
-        agent_name="planner",
-        system_prompt_mode=SystemPromptMode.APPEND,
-        context_mode=ContextMode.FORK,
-        fork_max_messages=10,
+        spec=SubagentSpec(
+            agent_name="planner",
+            system_prompt_mode=SystemPromptMode.APPEND,
+            context_mode=ContextMode.FORK,
+            fork_max_messages=10,
+        )
     )
     await template.materialize(
         parent_session=SessionIdFactory().create(agent_name="mainA"),
-        invocation_id="inv1", deps=deps,
+        invocation_id="inv1",
+        deps=deps,
     )
     ctx_mgr = factory.create_agent.call_args.kwargs["context_manager"]
 
@@ -249,8 +264,11 @@ async def test_output_md_path_session_leaf_is_dynamic(tmp_path):
     even a reused instance points each invocation at its own OUTPUT.md leaf.
     The OUTPUT path is therefore NOT frozen by instance reuse."""
     ctx_mgr = build_session_only_memory(
-        cfg=None, workspace=tmp_path, agent_id="scout",
-        agent_role=MemoryAgentRole.SUBAGENT, system_prompt="",
+        cfg=None,
+        workspace=tmp_path,
+        agent_id="scout",
+        agent_role=MemoryAgentRole.SUBAGENT,
+        system_prompt="",
         output_base_dir=tmp_path / "output",
     )
     state_a = await ctx_mgr.load(session_id="invA")
@@ -305,10 +323,11 @@ async def test_output_base_dir_is_baked_at_materialize_not_per_turn(tmp_path):
     resolver = _RecordingResolver(runtime=ws_a, memory=ws_a / "mem")
 
     deps, factory = _deps(resolver=resolver)
-    template = AgentTemplate(agent_name="scout")
+    template = AgentTemplate(spec=SubagentSpec(agent_name="scout"))
     await template.materialize(
         parent_session=SessionIdFactory().create(agent_name="main"),
-        invocation_id="inv1", deps=deps,
+        invocation_id="inv1",
+        deps=deps,
     )
     ctx_mgr = factory.create_agent.call_args.kwargs["context_manager"]
     runtime_calls_after_materialize = resolver.runtime_calls
@@ -337,10 +356,11 @@ async def test_memory_workspace_is_baked_at_materialize(tmp_path):
     resolver = _RecordingResolver(runtime=ws_a, memory=ws_a / "mem")
 
     deps, factory = _deps(resolver=resolver)
-    template = AgentTemplate(agent_name="scout")
+    template = AgentTemplate(spec=SubagentSpec(agent_name="scout"))
     await template.materialize(
         parent_session=SessionIdFactory().create(agent_name="main"),
-        invocation_id="inv1", deps=deps,
+        invocation_id="inv1",
+        deps=deps,
     )
     ctx_mgr = factory.create_agent.call_args.kwargs["context_manager"]
     queries_after_materialize = resolver.memory_calls
@@ -424,7 +444,9 @@ async def test_subagent_auto_send_hook_routes_through_same_bus():
     bus = MagicMock()
     bus.send = AsyncMock()
     hook = SubagentAutoSendHook(
-        agent_bus=bus, self_name="scout", parent_name="main",
+        agent_bus=bus,
+        self_name="scout",
+        parent_name="main",
         runtime_dir=Path("."),
     )
     session = SimpleNamespace(

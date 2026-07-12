@@ -31,9 +31,8 @@ class TestGlobalModelConfig:
 def _write_config_tree(tmp: Path, *, pool_llm: str | None = None, with_model: bool) -> Path:
     """Build a config/ tree and return the bot_config.yml path.
 
-    Uses the dir-based pool layout (``pools/<name>/pool.yml``) that
-    ``AppConfig.from_yaml`` scans — not the legacy single ``pools/<name>.yml``
-    file, which the loader ignores.
+    ``AppConfig.from_yaml`` no longer scans ``pools/``; the pool files are
+    kept here only to prove they are ignored.
     """
     (tmp / "pools" / "main").mkdir(parents=True)
     (tmp / "bot_config.yml").write_text("workspace:\n  enabled: false\n", encoding="utf-8")
@@ -74,12 +73,11 @@ class TestGlobalModelInjection:
             cfg = AppConfig.from_yaml(cfg_path)
             assert cfg.model is not None
             assert cfg.model.model == "openai/global-model"
-            assert "main" in cfg.pools
+            assert "pools" not in cfg.model_fields
 
     def test_no_model_yml_loads_pool_without_model(self) -> None:
         with tempfile.TemporaryDirectory() as t:
             cfg_path = _write_config_tree(Path(t), with_model=False)
             cfg = AppConfig.from_yaml(cfg_path)
             assert cfg.model is None
-            assert "main" in cfg.pools
-            assert cfg.pools["main"].main_agent_name == "main"
+            assert "pools" not in cfg.model_fields

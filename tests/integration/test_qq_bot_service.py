@@ -479,7 +479,6 @@ llm:
   max_output_tokens: 100
 
 multi_agent:
-  default_pool: main
   enabled: false
 
 tools:
@@ -605,7 +604,6 @@ llm:
   api_key: key
 multi_agent:
   enabled: true
-  default_pool: main
 tools:
   file_tools:
     enabled: false

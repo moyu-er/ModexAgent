@@ -14,17 +14,16 @@ from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from bot.service.attachment_index import find_attachment
 from bot.tools.custom import SendFileToUserTool
 from bot.webui.transcript_store import JSONLTranscriptStore
+
 from modex_agent.core.agent import AgentContext, current_agent_context
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
-from modex_agent.ioc.configs.pool import MediaConfig
 from modex_agent.media.models import AttachmentLocator, Kind
 from modex_agent.memory.history import ListMessageHistory
-
+from modex_agent.multi_agent.pool_config.media import MediaConfig
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 

@@ -31,6 +31,7 @@ from modex_agent.multi_agent.descriptor import AgentDescriptor, AgentLLMConfig
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
+from modex_agent.multi_agent.pool_config import PoolStore
 from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 from modex_agent.multi_agent.tools import CommunicationTarget
 
@@ -109,7 +110,7 @@ async def test_build_communication_wires_session_registry(tmp_path):
         tmp_path,
         "main",
         [],  # no extra templates; helper is a registered subagent
-        AgentTemplateRegistry(tmp_path),
+        AgentTemplateRegistry(PoolStore(base_dir=tmp_path)),
         session_registry=registry,
     )
 
@@ -160,7 +161,7 @@ async def test_build_communication_restores_subagent_output_path(tmp_path):
         tmp_path,
         "main",
         [],
-        AgentTemplateRegistry(tmp_path),
+        AgentTemplateRegistry(PoolStore(base_dir=tmp_path)),
         session_registry=registry,
         workspace_path_resolver=resolver,
     )

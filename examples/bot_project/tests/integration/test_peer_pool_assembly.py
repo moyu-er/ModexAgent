@@ -87,8 +87,6 @@ paths:
   data_dir_name: ".modex"
 workspace:
   enabled: true
-multi_agent:
-  default_pool: "alpha"
 """,
         encoding="utf-8",
     )

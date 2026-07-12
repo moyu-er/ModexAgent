@@ -14,11 +14,11 @@ from bot.service.pool_builder import _build_llm_provider, _wire_main_pipeline
 
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.hook.runner import HookRunner
-from modex_agent.ioc.configs.agent import AgentConfig
 from modex_agent.ioc.configs.approval import ApprovalConfig
 from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.ioc.configs.memory import MemoryConfig
-from modex_agent.ioc.configs.pool import PoolConfig
+from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
+from modex_agent.multi_agent.pool_config.specs import MainAgentSpec
 from modex_agent.pipeline.pipeline import AgentPipeline
 
 _YML = """
@@ -45,18 +45,17 @@ class _Agent:
 
 def test_build_llm_provider_returns_bot_model_provider(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
-    pool_cfg = PoolConfig(name="main", main_agent_name="main", agents=[])
-    prov = _build_llm_provider(pool_cfg, "main", cfg)
+    prov = _build_llm_provider("main", cfg)
     assert isinstance(prov, BotModelProvider)
 
 
 def test_wire_main_pipeline_adds_model_choice_hook(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
     reg = ModelChoiceRegistry()
-    main_cfg = AgentConfig(
-        name="main", role="main", llm=LLMConfig(), approval=ApprovalConfig(enabled=False)
+    main_spec = MainAgentSpec(
+        agent_name="main", approval=ApprovalConfig(enabled=False)
     )
-    pool_cfg = PoolConfig(name="main", main_agent_name="main", agents=[main_cfg], memory=MemoryConfig())
+    assembly_deps = PoolAssemblyDeps(memory=MemoryConfig())
 
     pipeline = AgentPipeline(
         agent=_Agent(),
@@ -79,7 +78,8 @@ def test_wire_main_pipeline_adds_model_choice_hook(tmp_path: Path) -> None:
         notification_service=MagicMock(),
         shared_interceptor_chain=MagicMock(),
         im_ui=MagicMock(),
-        pool_cfg=pool_cfg,
+        main_spec=main_spec,
+        assembly_deps=assembly_deps,
         project_dir=Path("/proj"),
         command_processor=None,
         pool_name="main",

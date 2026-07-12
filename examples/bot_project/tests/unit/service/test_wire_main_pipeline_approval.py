@@ -30,10 +30,10 @@ from modex_agent.agents.react.approval import ApprovalRuntime, TieredToolApprova
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
-from modex_agent.ioc.configs.agent import AgentConfig
 from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
 from modex_agent.ioc.configs.llm import LLMConfig
-from modex_agent.ioc.configs.pool import PoolConfig
+from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
+from modex_agent.multi_agent.pool_config.specs import MainAgentSpec
 from modex_agent.pipeline.pipeline import AgentPipeline
 from modex_agent.runtime.services import AgentRuntimeServices
 
@@ -113,14 +113,8 @@ def _make_pipeline() -> AgentPipeline:
     )
 
 
-def _make_pool_cfg(*, approval: ApprovalConfig | None) -> PoolConfig:
-    main_cfg = AgentConfig(
-        name="main",
-        role="main",
-        llm=LLMConfig(),
-        approval=approval,
-    )
-    return PoolConfig(name="main", main_agent_name="main", agents=[main_cfg])
+def _make_main_spec(*, approval: ApprovalConfig | None) -> MainAgentSpec:
+    return MainAgentSpec(agent_name="main", approval=approval)
 
 
 def _wire(*, approval: ApprovalConfig | None) -> AgentPipeline:
@@ -133,9 +127,10 @@ def _wire(*, approval: ApprovalConfig | None) -> AgentPipeline:
         notification_service=MagicMock(name="notification_service"),
         shared_interceptor_chain=MagicMock(name="interceptor_chain"),
         im_ui=MagicMock(name="im_ui"),
-        pool_cfg=_make_pool_cfg(approval=approval),
+        main_spec=_make_main_spec(approval=approval),
+        assembly_deps=PoolAssemblyDeps(),
         project_dir=Path("/proj"),
-        command_processor=None,  # exercise the default branch
+        command_processor=None,
         pool_name="main",
         tool_manager=InMemoryToolManager(),
         bot_model_config=_BOT_CFG,
@@ -210,12 +205,13 @@ def test_wired_classifier_anchors_to_live_workspace_root() -> None:
         notification_service=MagicMock(name="notification_service"),
         shared_interceptor_chain=MagicMock(name="interceptor_chain"),
         im_ui=MagicMock(name="im_ui"),
-        pool_cfg=_make_pool_cfg(
+        main_spec=_make_main_spec(
             approval=ApprovalConfig(
                 enabled=True,
                 tools={"write": ToolApprovalEntry(allowed_paths=["./*"])},
             )
         ),
+        assembly_deps=PoolAssemblyDeps(),
         project_dir=project_dir,
         command_processor=None,
         pool_name="main",

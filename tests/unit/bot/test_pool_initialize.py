@@ -1,11 +1,10 @@
-"""Test pool-mode initialization with pools-loaded config (no llm in top-level)."""
+"""Test pool-mode initialization with pool.yml loaded via PoolStore (no llm in top-level)."""
 from __future__ import annotations
 
-import json
 import sys
 import tempfile
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import AsyncIterator
 
 import pytest
 
@@ -16,6 +15,7 @@ if str(_BOT_PROJECT) not in sys.path:
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import InputMessage, OutputMessage
 from modex_agent.ioc.configs.app import AppConfig
+from modex_agent.multi_agent.pool_config import PoolStore
 from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
 
 
@@ -59,10 +59,9 @@ def pool_mode_config_dir() -> Path:
     pools_dir = tmp / "pools"
     pools_dir.mkdir(parents=True, exist_ok=True)
 
-    # bot_config.yml — shared infra only, NO llm section
+    # bot_config.yml — shared infra only, NO llm section, NO pools section
     bot_config = """
 multi_agent:
-  default_pool: "testpool"
   session_retention:
     max_sessions_per_subagent: 5
     max_sessions_global: 50
@@ -74,8 +73,7 @@ paths:
     (tmp / "bot_config.yml").write_text(bot_config, encoding="utf-8")
 
     # model.yml — required by the bot layer (BotModelConfig parses the models:
-    # block; BotService._load_app_config injects the default model into each
-    # pool's llm). Minimal valid block matching the pool's test-model below.
+    # block). Minimal valid block matching the pool's test-model below.
     model_yml = """
 models:
   default_provider: "Test"
@@ -91,19 +89,19 @@ models:
 """
     (tmp / "model.yml").write_text(model_yml, encoding="utf-8")
 
-    # Pool config. Dir-based layout (pools/<name>/pool.yml) — the
-    # loader scans directories, not legacy single pools/<name>.yml files.
-    # name + main_agent_name are strictly required (no derivation).
+    # Pool config. Dir-based layout (config/pools/<name>/pool.yml) — PoolStore reads this.
     pool_config = """
-name: testpool
-main_agent_name: testpool
+name: default
+main_agent_name: default
 agents:
-  - name: testpool
+  - name: default
     role: main
     max_steps: 5
 """
-    (pools_dir / "testpool").mkdir(parents=True, exist_ok=True)
-    (pools_dir / "testpool" / "pool.yml").write_text(pool_config, encoding="utf-8")
+    pools_dir = tmp / "config" / "pools"
+    pools_dir.mkdir(parents=True, exist_ok=True)
+    (pools_dir / "default").mkdir(parents=True, exist_ok=True)
+    (pools_dir / "default" / "pool.yml").write_text(pool_config, encoding="utf-8")
 
     yield tmp
 
@@ -114,16 +112,23 @@ agents:
 class TestPoolModeInitializeNoTopLevelLlm:
     """Verify pool-mode initialization works when bot_config.yml has no llm section."""
 
-    def test_config_loads_pools_without_top_level_llm(self, pool_mode_config_dir: Path) -> None:
-        """AppConfig loads pools correctly (pool mode is the only mode)."""
+    def test_pool_store_loads_pools_without_top_level_llm(
+        self, pool_mode_config_dir: Path
+    ) -> None:
+        """PoolStore loads pool.yml correctly; AppConfig no longer reads pools."""
         cfg = AppConfig.from_yaml(str(pool_mode_config_dir / "bot_config.yml"))
+        assert "pools" not in cfg.model_fields
 
-        # Pools should be loaded
-        assert "testpool" in cfg.pools
-        assert cfg.pools["testpool"].main_agent_name == "testpool"
+        pool_store = PoolStore(base_dir=pool_mode_config_dir)
+        pool_names = {s.name for s in pool_store.list_pools()}
+        assert "default" in pool_names
+        spec = pool_store.read_pool("default")
+        assert spec.main.agent_name == "default"
 
-    def test_bot_service_initialize_pool_mode_no_crash(self, pool_mode_config_dir: Path) -> None:
-        """BotService.initialize() in pool mode doesn't crash."""
+    def test_bot_service_constructor_pool_mode_no_crash(
+        self, pool_mode_config_dir: Path
+    ) -> None:
+        """BotService construction in pool mode doesn't crash."""
         from bot.service.core import BotService
 
         bot = BotService(
@@ -132,15 +137,14 @@ class TestPoolModeInitializeNoTopLevelLlm:
             output_adapter=_StubOutput(),
             emitter_factory=lambda s: None,
         )
-        # Simulate what initialize() does — load config first
         bot._app_config = bot._load_app_config()
+        assert bot._app_config is not None
+        assert "pools" not in bot._app_config.model_fields
 
-        assert bot._app_config.pools
-
-    def test_pool_mode_llm_provider_from_pool_not_top_level(
+    def test_pool_mode_llm_from_model_yml_not_pool(
         self, pool_mode_config_dir: Path,
     ) -> None:
-        """In pool mode, LLM config comes from pool configs."""
+        """In pool mode, LLM config comes from model.yml, not pool.yml."""
         from bot.service.core import BotService
 
         cfg = AppConfig.from_yaml(str(pool_mode_config_dir / "bot_config.yml"))
@@ -152,9 +156,11 @@ class TestPoolModeInitializeNoTopLevelLlm:
             app_config=cfg,
         )
 
-        # Pool mode: pools have their own llm. BotService.__init__ runs
-        # _apply_bot_model_config which routes the bare model name through
-        # synthesize_llm_config (_routing_model prepends "openai/").
-        assert len(cfg.pools) == 1
-        pool_cfg = list(cfg.pools.values())[0]
-        assert pool_cfg.name == "testpool"
+        pool_store = PoolStore(base_dir=pool_mode_config_dir)
+        pool_names = {s.name for s in pool_store.list_pools()}
+        assert "default" in pool_names
+        spec = pool_store.read_pool("default")
+        assert spec.main.agent_name == "default"
+        assert bot._bot_model_config is not None
+        default = bot._bot_model_config.default_resolved()
+        assert default.model.model == "test-model"

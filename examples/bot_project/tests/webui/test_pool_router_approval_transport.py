@@ -21,15 +21,15 @@ from typing import Any
 
 import pytest
 
-from bot.service.pool_router import PoolRouter, PoolSessionStore
 from modex_agent.approval.types import ApprovalAction
 from modex_agent.approval.views import ApprovalDecisionInput
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import InputMessage
 from modex_agent.messaging.broker_bridge import BrokerInputPayload
-from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.pool import input_message_from_dispatch_envelope
+from modex_agent.multi_agent.pool_router import PoolRouter, PoolSessionStore
 
 
 class _MockBroker:

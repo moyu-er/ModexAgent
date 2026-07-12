@@ -15,13 +15,13 @@ from unittest.mock import MagicMock
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-
 from bot.adapters.web_socket import WebSocketInputAdapter
-from bot.service.pool_router import PoolSessionStore
-from bot.webui.server import WebUIServer, _new_uuid_prefix
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import UserMessageEvent, _unwrap_envelope
+from bot.webui.server import WebUIServer, _new_uuid_prefix
 from bot.webui.transcript_store import JSONLTranscriptStore
+
+from modex_agent.multi_agent.pool_router import PoolSessionStore
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.runtime import bind_workspace_root
 
@@ -186,6 +186,7 @@ async def test_im_conversation_stored_in_current_workspace() -> None:
     """IM messages written while on the default workspace are visible there."""
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
+
     from modex_agent.core.session_id import SessionInfo, now_ms
 
     data_dir = Path(tempfile.mkdtemp())
@@ -239,6 +240,7 @@ async def test_sessions_from_different_workspaces_are_isolated() -> None:
     """
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
+
     from modex_agent.core.session_id import SessionInfo, now_ms
 
     data_dir_a = Path(tempfile.mkdtemp())
@@ -359,7 +361,7 @@ def test_append_follows_current_workspace_after_switch() -> None:
     # 4. Verify the second write went to workspace B (CURRENT), not A (sticky)
     events_b = list(JSONLTranscriptStore(ws_b / ".modex" / "sessions" / "main").load(sid))
     assert len(events_b) >= 1, (
-        f"Expected events in workspace B, but none found. "
+        "Expected events in workspace B, but none found. "
         "append() must use CURRENT workspace, not sticky."
     )
     assert any("msg-after-cd" in str(e.to_dict()) for e in events_b), (
@@ -426,6 +428,7 @@ def test_relation_store_follows_workspace_switch() -> None:
     import asyncio
 
     from bot.service.session_store import WorkspacePoolSessionStore
+
     from modex_agent.core.session_id import SessionInfo
 
     data_dir = Path(tempfile.mkdtemp())

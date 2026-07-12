@@ -15,6 +15,7 @@ Per-pool isolation is now STRUCTURAL (each pool owns its bus + poller), so
 the old shared-bus signal-routing test is moot here — Task 13 covers the
 real multi-pool isolation test.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -33,6 +34,7 @@ from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
 from modex_agent.multi_agent.inbox_poller import InboxPoller
+from modex_agent.multi_agent.pool_config.specs import SubagentSpec
 from modex_agent.multi_agent.state import AgentState
 
 
@@ -192,9 +194,7 @@ async def test_poller_no_drop_under_concurrent_sends():
     pool, bus, poller = await _make_poller_pool()
     try:
         main = pool._agents["main"]
-        await asyncio.gather(
-            *[bus.send("pfx.main", _envelope(f"c{i}")) for i in range(5)]
-        )
+        await asyncio.gather(*[bus.send("pfx.main", _envelope(f"c{i}")) for i in range(5)])
         await asyncio.sleep(0.2)
         assert "pfx.main" not in await bus.sessions_with_pending()
         assert main.pipeline.process_message.await_count >= 1
@@ -220,7 +220,7 @@ async def test_poller_lazy_materializes_missing_subagent():
     class _FakeTemplate(AgentTemplate):
         async def materialize(self, parent_session, invocation_id, deps):
             materialized["called"] = True
-            captured_parent_session["value"] = parent_session
+            captured_parent["parent_session"] = parent_session
             inst = MagicMock()
             inst.pipeline = MagicMock()
             inst.pipeline.process_message = AsyncMock()
@@ -229,7 +229,7 @@ async def test_poller_lazy_materializes_missing_subagent():
 
     pool._template_registry = MagicMock()
     pool._template_registry.get_template = MagicMock(
-        return_value=_FakeTemplate(agent_name="scout")
+        return_value=_FakeTemplate(spec=SubagentSpec(agent_name="scout"))
     )
     pool._materialize_deps = MagicMock()
     pool._pool_name = "main"
@@ -264,7 +264,7 @@ async def test_poller_materialize_failure_leaves_message_in_inbox():
 
     pool._template_registry = MagicMock()
     pool._template_registry.get_template = MagicMock(
-        return_value=_FailingTemplate(agent_name="scout")
+        return_value=_FailingTemplate(spec=SubagentSpec(agent_name="scout"))
     )
     pool._materialize_deps = MagicMock()
     pool._pool_name = "main"

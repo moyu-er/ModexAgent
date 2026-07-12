@@ -16,10 +16,9 @@ import asyncio
 import contextlib
 import json
 import sys
-import tempfile
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, AsyncIterator
 
 import pytest
 
@@ -29,12 +28,11 @@ if str(_BOT_PROJECT) not in sys.path:
 
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import InputMessage, OutputMessage
-from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.messaging.broker import BrokerMessage
 from modex_agent.messaging.broker_bridge import BrokerBridgeService, OutputRoute
+from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
-
 
 # ── Stubs ──
 
@@ -100,7 +98,7 @@ def _msg(content: str, session_id: str = "sess-1") -> InputMessage:
 class TestNormalMessageRouting:
     @pytest.mark.asyncio
     async def test_message_routed_to_default_pool(self, tmp_path):
-        from bot.service.pool_router import PoolRouter, PoolSessionStore
+        from modex_agent.multi_agent.pool_router import PoolRouter, PoolSessionStore
 
         broker = InMemoryMessageBroker()
         await broker.start()
@@ -143,7 +141,7 @@ class TestNormalMessageRouting:
 
     @pytest.mark.asyncio
     async def test_message_routed_to_stored_pool(self, tmp_path):
-        from bot.service.pool_router import PoolRouter, PoolSessionStore
+        from modex_agent.multi_agent.pool_router import PoolRouter, PoolSessionStore
 
         broker = InMemoryMessageBroker()
         await broker.start()
@@ -192,7 +190,7 @@ class TestNormalMessageRouting:
 class TestPoolSwitchFlow:
     @pytest.mark.asyncio
     async def test_switch_updates_session_store(self, tmp_path):
-        from bot.service.pool_router import PoolRouter, PoolSessionStore
+        from modex_agent.multi_agent.pool_router import PoolRouter, PoolSessionStore
 
         broker = InMemoryMessageBroker()
         await broker.start()
@@ -214,7 +212,7 @@ class TestPoolSwitchFlow:
     @pytest.mark.asyncio
     async def test_switch_then_back(self, tmp_path):
         """Switch main -> coding -> main via set_pool."""
-        from bot.service.pool_router import PoolRouter, PoolSessionStore
+        from modex_agent.multi_agent.pool_router import PoolRouter, PoolSessionStore
 
         broker = InMemoryMessageBroker()
         await broker.start()
@@ -377,7 +375,7 @@ class TestApprovalCrossPool:
 
 class TestSessionPersistence:
     def test_session_mapping_persists_to_disk(self, tmp_path):
-        from bot.service.pool_router import PoolSessionStore
+        from modex_agent.multi_agent.pool_router import PoolSessionStore
         store = PoolSessionStore(tmp_path)
         store.set("sess-persist", "coding")
 
@@ -385,7 +383,7 @@ class TestSessionPersistence:
         assert store2.get("sess-persist", "main") == "coding"
 
     def test_session_file_valid_json(self, tmp_path):
-        from bot.service.pool_router import PoolSessionStore
+        from modex_agent.multi_agent.pool_router import PoolSessionStore
         store = PoolSessionStore(tmp_path)
         store.set("sess-json", "main")
 

@@ -18,13 +18,14 @@ import yaml
 from aiohttp.test_utils import TestClient, TestServer
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.config.mcp_registry import REGISTRY_PATH
-from bot.config.pool_store import PoolStore
 from bot.config.prompt_store import PromptStore
 from bot.config.skills_store import SkillsStore
 from bot.service.pool_config_controller import PoolConfigController
-from bot.service.pool_router import PoolSessionStore
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.server import WebUIServer
+
+from modex_agent.multi_agent.pool_config import PoolStore
+from modex_agent.multi_agent.pool_router import PoolSessionStore
 
 _BOT_PROJECT = Path(__file__).resolve().parents[2]
 if str(_BOT_PROJECT) not in sys.path:

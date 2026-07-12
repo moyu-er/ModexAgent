@@ -8,6 +8,7 @@ from modex_agent.core.agent import AgentContext
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.message_xml import build_agent_message, build_agent_result
+from modex_agent.multi_agent.pool_config import PoolStore
 from modex_agent.multi_agent.template import AgentTemplate
 from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 from modex_agent.multi_agent.tools import CommunicationTarget
@@ -18,9 +19,14 @@ def _tgt(name: str, kind: AgentCommKind) -> CommunicationTarget:
 
 
 def _write_files(base: Path, pool: str, agent_type: str, yml_content: str, md_content: str):
-    tpl_dir = base / "config" / "pools" / pool / "templates"
+    pool_dir = base / "config" / "pools" / pool
+    tpl_dir = pool_dir / "templates"
     tpl_dir.mkdir(parents=True, exist_ok=True)
     (tpl_dir / f"{agent_type}.yml").write_text(yml_content, encoding="utf-8")
+    if not (pool_dir / "pool.yml").exists():
+        (pool_dir / "pool.yml").write_text(
+            f"main_agent_name: {pool}\n", encoding="utf-8"
+        )
     agents_dir = base / "agents" / pool
     agents_dir.mkdir(parents=True, exist_ok=True)
     (agents_dir / f"{agent_type}.md").write_text(md_content, encoding="utf-8")
@@ -30,18 +36,21 @@ def test_template_to_descriptor_pipeline():
     """Full pipeline: YAML template → AgentTemplate → system prompt resolution."""
     with tempfile.TemporaryDirectory() as tmp:
         project = Path(tmp)
-        _write_files(project, "main", "helper",
+        _write_files(
+            project,
+            "main",
+            "helper",
             "agent_name: helper\ndescription: Test helper\nmax_steps: 15\n",
-            "You are a helpful assistant."
+            "You are a helpful assistant.",
         )
 
-        registry = AgentTemplateRegistry(project)
+        registry = AgentTemplateRegistry(PoolStore(base_dir=project))
         templates = registry.list_templates("main")
         assert len(templates) == 1
 
         t = templates[0]
-        assert t.agent_name == "helper"
-        assert t.max_steps == 15
+        assert t.spec.agent_name == "helper"
+        assert t.spec.max_steps == 15
 
         # System prompt resolution (same convention as resolve_system_prompt)
         md_path = project / "agents" / "main" / "helper.md"
@@ -53,7 +62,8 @@ def test_xml_message_round_trip():
     """Verify XML formats are self-describing and parseable."""
     # Agent sends a message
     msg = build_agent_message(
-        source="office-expert", invocation_id="abc123",
+        source="office-expert",
+        invocation_id="abc123",
         content="PDF 转换完成，共 12 页。",
     )
     assert "<agent_message" in msg
@@ -62,8 +72,10 @@ def test_xml_message_round_trip():
 
     # Hook generates a result
     result = build_agent_result(
-        source="office-expert", invocation_id="abc123",
-        status="completed", stop_reason="missed_communication",
+        source="office-expert",
+        invocation_id="abc123",
+        status="completed",
+        stop_reason="missed_communication",
         content="任务完成。文件路径：/output/result.docx",
     )
     assert "<agent_result" in result
@@ -78,17 +90,18 @@ def test_multiple_templates_per_pool():
         _write_files(project, "main", "a", "agent_name: a\ndescription: ''\n", "A")
         _write_files(project, "main", "b", "agent_name: b\ndescription: ''\n", "B")
 
-        registry = AgentTemplateRegistry(project)
+        registry = AgentTemplateRegistry(PoolStore(base_dir=project))
         templates = registry.list_templates("main")
         assert len(templates) == 2
-        types = {t.agent_name for t in templates}
+        types = {t.spec.agent_name for t in templates}
         assert types == {"a", "b"}
 
 
 def test_template_memory_is_baked_not_from_yaml():
-    """A template carrying a ``memory:`` block is REJECTED — subagent memory is
-    baked (sub-minimal, immutable, spec §9). The factory's default is the sole
-    source of truth; a stale/hand-edited rich block can never override it."""
+    """A ``memory:`` block on disk is ignored by PoolStore; subagent memory is
+    baked from the caller's default (sub-minimal, immutable, spec §9). The
+    factory's default is the sole source of truth; a stale/hand-edited rich
+    block can never override it."""
     with tempfile.TemporaryDirectory() as tmp:
         project = Path(tmp)
         yml = """\
@@ -99,10 +112,10 @@ memory:
   short_term: {max_context_tokens: 50000}
 """
         _write_files(project, "main", "heavy", yml, "Heavy agent.")
-        # A memory block is no longer an accepted key → load fails loud (logged)
-        # and the template is not registered.
-        registry = AgentTemplateRegistry(project)
-        assert registry.get_template("main", "heavy") is None
+        registry = AgentTemplateRegistry(PoolStore(base_dir=project))
+        t = registry.get_template("main", "heavy")
+        assert t is not None
+        assert t.memory is None  # on-disk memory ignored; caller's default wins
 
 
 def test_template_memory_baked_from_factory_default():
@@ -115,7 +128,9 @@ def test_template_memory_baked_from_factory_default():
         project = Path(tmp)
         yml = "agent_name: light\ndescription: light\n"
         _write_files(project, "main", "light", yml, "Light agent.")
-        registry = AgentTemplateRegistry(project, default_subagent_memory=baked)
+        registry = AgentTemplateRegistry(
+            PoolStore(base_dir=project), default_subagent_memory=baked
+        )
         t = registry.get_template("main", "light")
         assert t is not None
         assert t.memory is baked
@@ -124,7 +139,7 @@ def test_template_memory_baked_from_factory_default():
 def test_template_not_found_returns_none():
     """get_template returns None for missing agent types."""
     with tempfile.TemporaryDirectory() as tmp:
-        registry = AgentTemplateRegistry(Path(tmp))
+        registry = AgentTemplateRegistry(PoolStore(base_dir=Path(tmp)))
         assert registry.get_template("main", "nonexistent") is None
 
 
@@ -310,9 +325,7 @@ class TestSubagentIdentityResolution:
             # The envelope source must be the subagent, not "main"
             assert len(sent_envelopes) == 1
             broker_msg = sent_envelopes[0]
-            assert broker_msg.sender.name != "main", (
-                "Subagent's envelope source must NOT be 'main'"
-            )
+            assert broker_msg.sender.name != "main", "Subagent's envelope source must NOT be 'main'"
         finally:
             current_agent_context.reset(token)
 
@@ -384,8 +397,10 @@ class TestAgentMessageXmlWrapping:
         )
 
         result = await service.send_async(
-            target=_tgt("helper", AgentCommKind.SUBAGENT), content="Follow-up question",
-            invocation_id="existing123", context=ctx,
+            target=_tgt("helper", AgentCommKind.SUBAGENT),
+            content="Follow-up question",
+            invocation_id="existing123",
+            context=ctx,
         )
 
         assert "Error" not in str(result)
@@ -414,10 +429,12 @@ class TestSessionRoutingSameAgentDifferentInvocation:
         factory = SessionIdFactory()
 
         sid_a = factory.create(
-            agent_name="query-12306", external_id="abc123",
+            agent_name="query-12306",
+            external_id="abc123",
         )
         sid_b = factory.create(
-            agent_name="query-12306", external_id="def456",
+            agent_name="query-12306",
+            external_id="def456",
         )
 
         # Different invocation_ids must produce different session IDs
@@ -431,10 +448,12 @@ class TestSessionRoutingSameAgentDifferentInvocation:
         factory = SessionIdFactory()
 
         sid_1 = factory.create(
-            agent_name="query-12306", external_id="abc123",
+            agent_name="query-12306",
+            external_id="abc123",
         )
         sid_2 = factory.create(
-            agent_name="query-12306", external_id="abc123",
+            agent_name="query-12306",
+            external_id="abc123",
         )
 
         # Same external_id → same snowflake → same session (memory inheritance)
@@ -446,10 +465,12 @@ class TestSessionRoutingSameAgentDifferentInvocation:
         factory = SessionIdFactory()
 
         sid_a = factory.create(
-            agent_name="query-12306", external_id="abc123",
+            agent_name="query-12306",
+            external_id="abc123",
         )
         sid_b = factory.create(
-            agent_name="office-expert", external_id="abc123",
+            agent_name="office-expert",
+            external_id="abc123",
         )
 
         # Different agent names → different sessions even with same external_id
@@ -482,7 +503,8 @@ class TestOutputMdInjection:
 
         factory = SessionIdFactory()
         session = factory.create(
-            agent_name="reviewer", external_id="abc123",
+            agent_name="reviewer",
+            external_id="abc123",
         )
         session_id = session.session_id
         runtime_dir = _Path(tempfile.gettempdir()) / "runtime_state" / "coding"
@@ -502,7 +524,8 @@ class TestOutputMdInjection:
 
         factory = SessionIdFactory()
         session = factory.create(
-            agent_name="scout", external_id="xyz789",
+            agent_name="scout",
+            external_id="xyz789",
         )
         session_id = session.session_id
         runtime_dir = _Path(tempfile.gettempdir()) / "runtime_state" / "coding"
@@ -513,8 +536,7 @@ class TestOutputMdInjection:
         output_resolved = output_path.resolve()
         scoped_resolved = scoped_write_dir.resolve()
         assert str(output_resolved).startswith(str(scoped_resolved)), (
-            f"OUTPUT.md path ({output_resolved}) must be under "
-            f"scoped_write_dir ({scoped_resolved})"
+            f"OUTPUT.md path ({output_resolved}) must be under scoped_write_dir ({scoped_resolved})"
         )
 
     def test_read_only_template_gets_scoped_write_tools(self):
@@ -553,12 +575,8 @@ class TestOutputMdInjection:
         tools = get_preset_tools(ToolPreset.READ_ONLY, scoped_write_dir=None)
         tool_names = {t.name for t in tools}
 
-        assert "write" not in tool_names, (
-            "Without scoped_write_dir, READ_ONLY must not get write"
-        )
-        assert "edit" not in tool_names, (
-            "Without scoped_write_dir, READ_ONLY must not get edit"
-        )
+        assert "write" not in tool_names, "Without scoped_write_dir, READ_ONLY must not get write"
+        assert "edit" not in tool_names, "Without scoped_write_dir, READ_ONLY must not get edit"
 
     # ADR-0015 D3: test_system_prompt_includes_output_md_protocol deleted —
     # prompt assembly moved into AgentTemplate.materialize. OUTPUT.md injection
@@ -613,4 +631,3 @@ class TestSubagentToolInstanceIsolation:
     # ADR-0015 D3: test_two_subagents_get_distinct_tool_managers deleted.
     # ADR-0015 D3: test_tool_instances_not_shared_between_subagents deleted.
     # ADR-0015 D3: test_subagents_have_independent_preset_tool_instances deleted.
-

@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -13,9 +11,9 @@ from bot.service.web_ui_service import WebUIService
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import AssistantTurnEvent, UserMessageEvent
 from bot.webui.server import WebUIServer
-from modex_agent.workspace.paths import WorkspacePaths
 
 from modex_agent.core.session_id import SessionIdFactory
+from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.runtime import bind_workspace_root
 
 
@@ -51,12 +49,15 @@ def _make_server(
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     store.set_agent_pool_map(mapping)
     server = WebUIServer(
-        inp, store, static_dist=None, data_dir=data_dir,
+        inp,
+        store,
+        static_dist=None,
+        data_dir=data_dir,
         home_sessions_dir=WorkspacePaths(root=data_dir / ".modex").sessions_dir,
     )
     server.set_workspace_index(store)
     server.set_data_dir_name(".modex")
-    server.set_pool_agent_names(["default", "coding"])
+    server.set_pool_agent_names(["default", "coder"])
     server.set_agent_pool_map(mapping)
     server.set_agent_resolver(lambda pool_name: mapping.get(pool_name, pool_name))
     # Inject session store + factory so POST /api/sessions auto-saves.
@@ -113,7 +114,7 @@ async def test_pool_filter_hides_and_shows_sessions() -> None:
     await client.start_server()
     try:
         # Write transcripts directly (no session store entries — test transcript fallback).
-        await _simulate_qa_turn(server._store, "conv1", "coding", "hi", "hello", data_dir)
+        await _simulate_qa_turn(server._store, "conv1", "coder", "hi", "hello", data_dir)
         await _simulate_qa_turn(server._store, "conv2", "default", "hi", "hello", data_dir)
 
         # Without pool filter, both sessions visible.
@@ -121,22 +122,22 @@ async def test_pool_filter_hides_and_shows_sessions() -> None:
         assert resp.status == 200
         sessions = await resp.json()
         sids = {s["session_id"] for s in sessions}
-        assert "conv1.coding" in sids
+        assert "conv1.coder" in sids
         assert "conv2.default" in sids
 
-        # Filter to coding pool.
-        resp = await client.get("/api/sessions?pool=coding")
+        # Filter to coder pool.
+        resp = await client.get("/api/sessions?pool=coder")
         assert resp.status == 200
         sessions = await resp.json()
         sids = {s["session_id"] for s in sessions}
-        assert "conv1.coding" in sids
+        assert "conv1.coder" in sids
         assert "conv2.default" not in sids
 
         resp = await client.get("/api/sessions?pool=default")
         assert resp.status == 200
         sessions = await resp.json()
         sids = {s["session_id"] for s in sessions}
-        assert "conv1.coding" not in sids
+        assert "conv1.coder" not in sids
         assert "conv2.default" in sids
     finally:
         await client.close()
@@ -200,12 +201,12 @@ async def test_pool_and_workspace_filter_combined() -> None:
     client = TestClient(TestServer(server.app))
     await client.start_server()
     try:
-        resp = await client.post("/api/sessions", json={"pool": "coding"})
+        resp = await client.post("/api/sessions", json={"pool": "coder"})
         assert resp.status == 200
-        coding_a = await resp.json()
-        sid_a: str = coding_a["session_id"]
+        coder_a = await resp.json()
+        sid_a: str = coder_a["session_id"]
         conv_a = sid_a.split(".")[0]
-        await _simulate_qa_turn(server._store, conv_a, "coding", "hi", "hello", data_dir_a)
+        await _simulate_qa_turn(server._store, conv_a, "coder", "hi", "hello", data_dir_a)
 
         # Switch to workspace B (route this turn's writes to data_dir_b).
         resp = await client.post("/api/sessions", json={"pool": "default"})
@@ -216,8 +217,8 @@ async def test_pool_and_workspace_filter_combined() -> None:
         await _simulate_qa_turn(server._store, conv_b, "default", "hi", "hello", data_dir_b)
 
         # Verify physical isolation: each session is in its workspace dir
-        assert (data_dir_a / ".modex" / "sessions" / "coding" / f"{sid_a}.jsonl").exists()
-        assert not (data_dir_b / ".modex" / "sessions" / "coding" / f"{sid_a}.jsonl").exists()
+        assert (data_dir_a / ".modex" / "sessions" / "coder" / f"{sid_a}.jsonl").exists()
+        assert not (data_dir_b / ".modex" / "sessions" / "coder" / f"{sid_a}.jsonl").exists()
         assert (data_dir_b / ".modex" / "sessions" / "default" / f"{sid_b}.jsonl").exists()
         assert not (data_dir_a / ".modex" / "sessions" / "default" / f"{sid_b}.jsonl").exists()
     finally:

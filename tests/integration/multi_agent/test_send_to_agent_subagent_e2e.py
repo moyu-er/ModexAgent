@@ -48,6 +48,7 @@ from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
 from modex_agent.multi_agent.pool import AgentPool
+from modex_agent.multi_agent.pool_config import PoolStore
 from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 from modex_agent.multi_agent.tools import CommunicationTarget
 
@@ -188,7 +189,10 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
         "max_steps: 5\n",
         encoding="utf-8",
     )
-    template_registry = AgentTemplateRegistry(project)
+    (tpl_dir.parent / "pool.yml").write_text(
+        "main_agent_name: main\n", encoding="utf-8"
+    )
+    template_registry = AgentTemplateRegistry(PoolStore(base_dir=project))
 
     # --- workspace (fake) ---
     runtime_dir = tmp_path / "workspace" / "runtime_state" / "main"

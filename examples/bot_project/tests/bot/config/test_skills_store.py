@@ -13,7 +13,7 @@ _BOT_PROJECT = Path(__file__).resolve().parents[3]
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
-from bot.config.pool_payloads import SkillEntry, SkillOrigin, SkillSource  # noqa: E402
+from bot.config import SkillEntry, SkillOrigin, SkillSource  # noqa: E402
 from bot.config.skills_store import SkillsStore, SkillValidationError  # noqa: E402
 
 
