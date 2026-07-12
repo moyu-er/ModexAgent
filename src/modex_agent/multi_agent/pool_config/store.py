@@ -15,19 +15,21 @@ On-disk layout (Phase-1 spec)::
 
 Mapping decisions (see ``pool_payloads.py`` docstring for field-level detail):
 
-* ``PoolTree`` carries ONLY the editable fields. ``write_pool`` PRESERVES the
+* ``PoolSpec`` carries ONLY the editable fields. ``write_pool`` PRESERVES the
   baked pool-level keys (``llm``, ``memory``, ``media``) and the main agent's
   baked fields (``experience``) by reading the existing pool.yml first, then
-  overlaying the editable ``PoolTree`` fields. It overwrites ``name``,
+  overlaying the editable ``PoolSpec`` fields. It overwrites ``name``,
   ``main_agent_name``, and the main agent's editable fields; it rewrites the
   whole ``templates/`` directory from ``tree.subagents``. Skills are NEVER read
   or written here — disk symlinks are the single source (SkillsStore).
-* Subagent template yml files preserve ALL baked template keys
-  (``memory`` / ``approval`` / ``experience``) by reading the existing template
-  first, then overlaying the editable ``SubagentNode`` fields. For a NEW
-  subagent (no existing template) a sub-minimal ``memory:`` block is baked in
-  from :func:`bot.config.memory_defaults.subagent_memory`. On rename the prior
-  template's baked fields follow to the new file name.
+* Subagent template yml files preserve the baked ``memory`` key (if any) by
+  reading the existing template first, then overlaying the editable
+  ``SubagentSpec`` fields. For a NEW subagent (no existing template) a
+  sub-minimal ``memory:`` block is baked in from
+  :func:`bot.config.memory_defaults.subagent_memory`. On rename the prior
+  template's baked ``memory`` follows to the new file name. ``approval`` and
+  ``experience`` are **never** subagent fields; any legacy occurrences are
+  dropped on write.
 * Prompt-md coupling: when an agent is renamed or removed, the matching
   ``agents/<name>.md`` is renamed/removed too. The store never WRITES md
   content (that is :class:`bot.config.prompt_store.PromptStore`); only
@@ -39,6 +41,7 @@ any disk touch, so a failed validation leaves the filesystem unchanged.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shutil
@@ -47,30 +50,31 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from modex_agent.tools.presets import (
     DEFAULT_FORK_MAX_MESSAGES,
-    ContextMode,
     SystemPromptMode,
-    ToolPreset,
 )
-from bot.config.pool_payloads import (
-    MainAgentNode,
-    PoolSummary,
-    PoolTree,
-    SubagentNode,
+
+from modex_agent.multi_agent.pool_config.specs import (
+    MainAgentSpec,
+    PoolSpec,
+    SubagentSpec,
 )
+
+logger = logging.getLogger(__name__)
 
 # ─── name validation ─────────────────────────────────────────────────────────
 # Pool and agent names: lowercase letter, then lowercase alnum / underscore /
 # dash. Rejects "..", separators, and anything that could escape the pool dir.
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_-]+$")
 
-# Editable SubagentNode fields overlaid onto a subagent template yml on write.
-# Non-editable baked keys (system_prompt_mode / fork_max_messages /
-#memory / approval / experience) are preserved from the
-# existing template when present, and a sub-minimal memory block is seeded for
-# brand-new subagents.
+# Editable SubagentSpec fields overlaid onto a subagent template yml on write.
+# Non-editable baked keys (system_prompt_mode / fork_max_messages / memory)
+# are preserved from the existing template when present, and a sub-minimal
+# memory block is seeded for brand-new subagents. ``approval`` and
+# ``experience`` are never subagent fields and are dropped on write.
 _SUBAGENT_YAML_FIELDS: tuple[str, ...] = (
     "agent_name",
     "description",
@@ -92,7 +96,7 @@ _MISSING: object = object()
 _SUBAGENT_DEFAULTS: dict[str, object] = {
     "tool_supplements": [],
     "mcp": [],
-    "system_prompt_mode": SystemPromptMode.REPLACE,
+    "system_prompt_mode": SystemPromptMode.REPLACE.value,
     "fork_max_messages": DEFAULT_FORK_MAX_MESSAGES,
 }
 
@@ -142,12 +146,20 @@ class RenameReport:
     agent_renames: dict[str, str]
 
 
+class PoolSummary(BaseModel):
+    """A one-line summary of a pool for the listing endpoint."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str
+    main_agent_name: str
+    subagent_count: int
+
+
 def _validate_name(name: str, kind: str) -> None:
     """Reject names that fail the regex or could traverse the filesystem."""
     if not isinstance(name, str) or not _NAME_RE.match(name):
-        raise PoolValidationError(
-            f"Invalid {kind} name {name!r}: must match {_NAME_RE.pattern}"
-        )
+        raise PoolValidationError(f"Invalid {kind} name {name!r}: must match {_NAME_RE.pattern}")
     # Defence in depth: the regex already excludes '.', '/', '\\', but be explicit.
     if name in {".", ".."} or "/" in name or "\\" in name:
         raise PoolValidationError(f"Invalid {kind} name {name!r}: traversal")
@@ -179,7 +191,7 @@ class PoolStore:
     def _templates_dir(self, name: str) -> Path:
         return self._pool_dir(name) / "templates"
 
-    def read_pool(self, name: str) -> PoolTree:
+    def read_pool(self, name: str) -> PoolSpec:
         """Load one pool's tree. Raises :class:`UnknownPoolError` if absent."""
         pool_yml = self._pool_yml_path(name)
         if not pool_yml.exists():
@@ -190,7 +202,7 @@ class PoolStore:
         main_node = self._extract_main_agent(name, data)
         subagents = self._read_subagents(name)
 
-        return PoolTree(
+        return PoolSpec(
             name=name,  # pool name IS the directory name; never read from YAML
             main_agent_name=data.get("main_agent_name", main_node.agent_name),
             main=main_node,
@@ -198,70 +210,50 @@ class PoolStore:
             peers=list(data.get("peers") or []),
         )
 
-    def _extract_main_agent(self, pool_name: str, data: dict[str, Any]) -> MainAgentNode:
-        # Flat pool.yml: main-agent editable fields are top-level. Main agent
-        # name = main_agent_name (defaults to the pool/dir name). Skills are NOT
-        # read here — they live on disk as symlinks (SkillsStore, single source).
-        # Main agents receive todo tools by default, so tool_supplements defaults
-        # to ["todo"] when absent; an explicit empty list disables them.
-        agent_name = data.get("main_agent_name", pool_name)
-        raw_supplements = data.get("tool_supplements")
-        tool_supplements: list[str] = ["todo"] if raw_supplements is None else list(raw_supplements)
-        return MainAgentNode(
-            agent_name=agent_name,
-            description=data.get("description", ""),
-            max_steps=data.get("max_steps", 100),
-            use_terminal=data.get("use_terminal", False),
-            terminal_visibility=data.get("terminal_visibility", False),
-            tool_preset=data.get("tool_preset") or ToolPreset.FULL,
-            tool_supplements=tool_supplements,
-            approval=data.get("approval"),
-            mcp=list(data.get("mcp") or []),
-        )
+    def _extract_main_agent(self, pool_name: str, data: dict[str, Any]) -> MainAgentSpec:
+        main_fields = set(MainAgentSpec.model_fields.keys())
+        filtered = {k: v for k, v in data.items() if k in main_fields}
+        filtered["agent_name"] = data.get("main_agent_name", pool_name)
+        try:
+            return MainAgentSpec.model_validate(filtered)
+        except ValidationError as exc:
+            raise PoolValidationError(
+                f"Invalid main agent configuration for pool {pool_name!r}: {exc}"
+            ) from exc
 
-    def _read_subagents(self, pool_name: str) -> list[SubagentNode]:
+    def _read_subagents(self, pool_name: str) -> list[SubagentSpec]:
         tdir = self._templates_dir(pool_name)
         if not tdir.exists():
             return []
-        out: list[SubagentNode] = []
+        out: list[SubagentSpec] = []
         for yml in sorted(tdir.glob("*.yml")):
             raw: dict[str, Any] = yaml.safe_load(yml.read_text(encoding="utf-8")) or {}
             if not raw or "agent_name" not in raw:
                 continue
-            out.append(
-                SubagentNode(
-                    agent_name=raw["agent_name"],
-                    description=raw.get("description", ""),
-                    max_steps=raw.get("max_steps", 80),
-                    tool_preset=raw.get("tool_preset") or ToolPreset.READ_WRITE,
-                    tool_supplements=list(raw.get("tool_supplements") or []),
-                    context_mode=raw.get("context_mode") or ContextMode.FRESH,
-                    mcp=list(raw.get("mcp") or []),
-                    system_prompt_mode=(
-                        raw.get("system_prompt_mode") or SystemPromptMode.REPLACE
-                    ),
-                    fork_max_messages=raw.get(
-                        "fork_max_messages", DEFAULT_FORK_MAX_MESSAGES
-                    ),
-                )
-            )
+            # ``memory`` and ``skills`` are baked/runtime-only keys that may
+            # exist in legacy templates; they are not part of the editable
+            # ``SubagentSpec`` schema, so strip them before Pydantic validation.
+            filtered = {k: v for k, v in raw.items() if k not in ("memory", "skills")}
+            try:
+                out.append(SubagentSpec.model_validate(filtered))
+            except ValidationError:
+                logger.warning("Skipping invalid subagent template %s", yml, exc_info=True)
         return out
 
     # ─── write ──────────────────────────────────────────────────────────────
 
-    def write_pool(self, name: str, tree: PoolTree) -> RenameReport:
+    def write_pool(self, name: str, tree: PoolSpec) -> RenameReport:
         """Validate ``tree`` and atomically write pool.yml + templates.
 
         Validates everything FIRST; on any failure the filesystem is untouched.
         Preserves the baked pool-level keys (``llm``/``memory``/``media``) and
         the main agent's ``experience`` from the existing pool.yml when present.
         Subagent template baked fields (``memory`` / ``system_prompt_mode`` /
-        ``fork_max_messages`` /``approval`` /
-        ``experience``) are preserved from each existing template by overlaying
-        the editable fields on top; on rename the prior template's baked fields
-        follow to the new file name. On agent rename/remove, the matching
-        ``agents/<name>.md`` is renamed/removed (prompt-md coupling); md CONTENT
-        is never written here.
+        ``fork_max_messages``) are preserved from each existing template by
+        overlaying the editable fields on top; ``approval`` and ``experience``
+        are never subagent fields and are dropped on write. On agent
+        rename/remove, the matching ``agents/<name>.md`` is renamed/removed
+        (prompt-md coupling); md CONTENT is never written here.
 
         Returns a :class:`RenameReport` describing which agents were renamed so
         callers can converge other per-agent resources (skills) in one place.
@@ -286,7 +278,7 @@ class PoolStore:
         if prior_main_name is not None and prior_main_name != tree.main.agent_name:
             agent_renames[prior_main_name] = tree.main.agent_name
         for new_name in new_subagent_names:
-            prior_name = rename_map.get(new_name, new_name)
+            prior_name = rename_map.get(new_name) or new_name
             if prior_name != new_name:
                 agent_renames[prior_name] = new_name
 
@@ -328,7 +320,7 @@ class PoolStore:
 
         return RenameReport(agent_renames=agent_renames)
 
-    def _validate_tree(self, pool_name: str, tree: PoolTree, *, skip_peers: bool = False) -> None:
+    def _validate_tree(self, pool_name: str, tree: PoolSpec, *, skip_peers: bool = False) -> None:
         _validate_name(tree.name, "pool")
         _validate_name(tree.main.agent_name, "agent")
         if tree.main_agent_name != tree.main.agent_name:
@@ -343,14 +335,12 @@ class PoolStore:
         seen: set[str] = set()
         for n in all_names:
             if n in seen:
-                raise PoolValidationError(
-                    f"Pool {pool_name!r}: duplicate agent name {n!r}"
-                )
+                raise PoolValidationError(f"Pool {pool_name!r}: duplicate agent name {n!r}")
             seen.add(n)
         if not skip_peers:
             self._validate_peers(pool_name, tree)
 
-    def _validate_peers(self, pool_name: str, tree: PoolTree) -> None:
+    def _validate_peers(self, pool_name: str, tree: PoolSpec) -> None:
         """Enforce the pool peer invariants on write (ADR-0019).
 
         Two checks per declared peer:
@@ -385,9 +375,7 @@ class PoolStore:
             peer_yml = peer_dir / "pool.yml"
             if not peer_yml.exists():
                 continue
-            raw: dict[str, Any] = (
-                yaml.safe_load(peer_yml.read_text(encoding="utf-8")) or {}
-            )
+            raw: dict[str, Any] = yaml.safe_load(peer_yml.read_text(encoding="utf-8")) or {}
             peer_peers: list[str] = list(raw.get("peers") or [])
             if pool_name not in peer_peers:
                 raise PoolValidationError(
@@ -413,7 +401,7 @@ class PoolStore:
         return names
 
     def _build_pool_yml(
-        self, pool_name: str, tree: PoolTree, existing: dict[str, Any]
+        self, pool_name: str, tree: PoolSpec, existing: dict[str, Any]
     ) -> dict[str, Any]:
         # Flat pool.yml — the file IS the main agent's config:
         #   * pool identity = directory name (not written)
@@ -426,8 +414,9 @@ class PoolStore:
         data: dict[str, Any] = {}
         if tree.main.agent_name != pool_name:
             data["main_agent_name"] = tree.main.agent_name
+        main_dump = tree.main.model_dump(mode="json")
         for field in _MAIN_AGENT_EDITABLE_FIELDS:
-            value = _payload_field(tree.main, field)
+            value = main_dump[field]
             default = _MAIN_AGENT_DEFAULTS.get(field, _MISSING)
             if value is None or value == default:
                 continue
@@ -439,14 +428,14 @@ class PoolStore:
         return data
 
     def _subagent_rename_map(
-        self, tree: PoolTree, prior_subagent_names: set[str]
+        self, tree: PoolSpec, prior_subagent_names: set[str]
     ) -> dict[str, str]:
         """Map each NEW subagent name to the PRIOR template name whose baked
         fields it should inherit.
 
         Each new subagent's baked fields (``system_prompt_mode``,
-        ``fork_max_messages``, ``approval``, ``experience``) come from a prior
-        on-disk template. The mapping is unambiguous in exactly these cases:
+        ``fork_max_messages``, ``memory``) come from a prior on-disk template.
+        The mapping is unambiguous in exactly these cases:
 
         * name unchanged -> its own prior file;
         * exactly one leftover prior AND one leftover new -> a single rename;
@@ -493,7 +482,7 @@ class PoolStore:
         return rename_map
 
     def _build_template_payloads(
-        self, pool_name: str, tree: PoolTree, rename_map: dict[str, str]
+        self, pool_name: str, tree: PoolSpec, rename_map: dict[str, str]
     ) -> list[dict[str, Any]]:
         payloads: list[dict[str, Any]] = []
         for sub in tree.subagents:
@@ -503,19 +492,21 @@ class PoolStore:
         return payloads
 
     def _build_template_payload(
-        self, node: SubagentNode, existing_template_path: Path
+        self, node: SubagentSpec, existing_template_path: Path
     ) -> dict[str, Any]:
         """Build the dict to be written as ``templates/<agent_name>.yml``.
 
         Lossless for baked ``AgentTemplate`` fields: if the file exists, load it
-        and OVERLAY the editable ``SubagentNode`` fields, preserving
-        ``approval``, ``experience``. ``memory`` is NOT persisted — the registry
-        injects ``subagent_memory()`` at load for any template that omits it
-        (single source of truth = the factory). Editable values equal to their
-        field default (``tool_supplements: []``, ``mcp: []``,
-        ``system_prompt_mode: replace``, ``fork_max_messages: 80``) are omitted
-        so the file stays free of default noise. ``skills`` is never written —
-        skill assignment is disk-only.
+        and OVERLAY the editable ``SubagentSpec`` fields, preserving
+        ``system_prompt_mode`` and ``fork_max_messages`` (which are editable but
+        often omitted when equal to their defaults). ``memory`` is NOT persisted
+        — the registry injects ``subagent_memory()`` at load for any template
+        that omits it (single source of truth = the factory). ``approval`` and
+        ``experience`` are never subagent fields and are dropped on write.
+        Editable values equal to their field default (``tool_supplements: []``,
+        ``mcp: []``, ``system_prompt_mode: replace``, ``fork_max_messages: 80``)
+        are omitted so the file stays free of default noise. ``skills`` is never
+        written — skill assignment is disk-only.
         """
         if existing_template_path.exists():
             raw: dict[str, Any] = (
@@ -523,15 +514,16 @@ class PoolStore:
             )
             if not isinstance(raw, dict):
                 raw = {}
-            # Drop memory/skills carried over from the prior on-disk form —
-            # memory is load-injected; skills live on disk as symlinks.
             payload = {
-                k: v for k, v in raw.items() if k not in ("memory", "skills")
+                k: v
+                for k, v in raw.items()
+                if k not in ("memory", "skills", "approval", "experience")
             }
         else:
             payload = {}
+        sub_dump = node.model_dump(mode="json")
         for field in _SUBAGENT_YAML_FIELDS:
-            value = _payload_field(node, field)
+            value = sub_dump[field]
             if value == _SUBAGENT_DEFAULTS.get(field, _MISSING):
                 payload.pop(field, None)
             else:
@@ -543,9 +535,7 @@ class PoolStore:
         pool_yml.parent.mkdir(parents=True, exist_ok=True)
         return _atomic_stage(pool_yml, yaml.safe_dump(data, sort_keys=False, allow_unicode=True))
 
-    def _stage_templates(
-        self, name: str, payloads: list[dict[str, Any]]
-    ) -> list[Path]:
+    def _stage_templates(self, name: str, payloads: list[dict[str, Any]]) -> list[Path]:
         tdir = self._templates_dir(name)
         tdir.mkdir(parents=True, exist_ok=True)
         staged: list[Path] = []
@@ -677,7 +667,7 @@ class PoolStore:
             )
         return summaries
 
-    def create_pool(self, name: str) -> PoolTree:
+    def create_pool(self, name: str) -> PoolSpec:
         """Create a new pool dir + seed pool.yml + main agent md.
 
         Seeds a minimal pool.yml (main agent whose name == ``name``; default
@@ -689,10 +679,10 @@ class PoolStore:
         pool_dir = self._pool_dir(name)
         if pool_dir.exists():
             raise PoolValidationError(f"Pool {name!r} already exists")
-        tree = PoolTree(
+        tree = PoolSpec(
             name=name,
             main_agent_name=name,
-            main=MainAgentNode(agent_name=name),
+            main=MainAgentSpec(agent_name=name),
         )
         # write_pool seeds pool.yml + an empty templates dir.
         self.write_pool(name, tree)
@@ -709,9 +699,7 @@ class PoolStore:
         """
         _validate_name(name, "pool")
         if name == default_pool:
-            raise PoolValidationError(
-                f"Refusing to delete the default pool {name!r}"
-            )
+            raise PoolValidationError(f"Refusing to delete the default pool {name!r}")
         pool_dir = self._pool_dir(name)
         if not pool_dir.exists():
             raise UnknownPoolError(f"Unknown pool: {name!r}")
@@ -767,9 +755,7 @@ class PoolStore:
         """
         self._update_peer_pair(name_a, name_b, add=False)
 
-    def _update_peer_pair(
-        self, name_a: str, name_b: str, *, add: bool
-    ) -> None:
+    def _update_peer_pair(self, name_a: str, name_b: str, *, add: bool) -> None:
         """Shared implementation for :meth:`add_peer_pair` / :meth:`remove_peer_pair`."""
         _validate_name(name_a, "pool")
         _validate_name(name_b, "pool")
@@ -835,7 +821,7 @@ class PoolStore:
             raise
 
     def _validate_peer_pair(
-        self, name_a: str, tree_a: PoolTree, name_b: str, tree_b: PoolTree
+        self, name_a: str, tree_a: PoolSpec, name_b: str, tree_b: PoolSpec
     ) -> None:
         """Verify that the peer relationship between A and B is bidirectional.
 
@@ -854,23 +840,6 @@ class PoolStore:
 
 
 # ─── helpers ─────────────────────────────────────────────────────────────────
-
-
-def _payload_field(node: Any, field: str) -> Any:
-    """Read ``field`` from a payload node for YAML serialization.
-
-    Nested pydantic models -> ``model_dump``; enums -> their ``.value`` (PyYAML
-    SafeDumper does not walk MRO, so a ``StrEnum`` must be coerced to its plain
-    string value); everything else passes through.
-    """
-    import enum
-
-    value = getattr(node, field)
-    if hasattr(value, "model_dump"):
-        return value.model_dump(exclude_none=True)
-    if isinstance(value, enum.Enum):
-        return value.value
-    return value
 
 
 def _atomic_stage(target: Path, text: str) -> Path:

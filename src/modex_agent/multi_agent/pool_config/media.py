@@ -1,16 +1,11 @@
-"""PoolConfig — configuration for one agent pool (system)."""
+"""Media configuration value object."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pydantic import BaseModel, ConfigDict, Field
-
-from modex_agent.ioc.configs.agent import AgentConfig
-from modex_agent.ioc.configs.memory import MemoryConfig
-
 # ---------------------------------------------------------------------------
-# Byte-unit constant — single source of truth.
+# Byte-unit constants — local to this module so the value object stays portable.
 # ---------------------------------------------------------------------------
 _MB: int = 1024 * 1024
 _GB: int = 1024 * _MB
@@ -35,21 +30,3 @@ class MediaConfig:
     max_text_doc_bytes: int = 10 * _MB
     session_budget_bytes: int = 500 * _MB
     max_outbound_bytes: int = _GB
-
-
-class PoolConfig(BaseModel):
-    """Configuration for one agent pool.
-
-    ``name`` is the pool's directory-name identity (the pool key). It is
-    decoupled from ``main_agent_name`` (the agent with ``role="main"``) so
-    a pool directory can hold a main agent whose name differs from the
-    directory. Both must be declared explicitly.
-    """
-
-    model_config = ConfigDict(extra="ignore")
-
-    name: str
-    main_agent_name: str
-    agents: list[AgentConfig] = Field(default_factory=list)
-    memory: MemoryConfig | None = None
-    media: MediaConfig = Field(default_factory=MediaConfig)

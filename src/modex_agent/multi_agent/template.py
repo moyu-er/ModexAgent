@@ -12,32 +12,29 @@ context, SubagentAutoSendHook).
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from modex_agent.ioc.configs.agent import ExperienceConfig
-from modex_agent.ioc.configs.approval import ApprovalConfig
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.ioc.configs.skills import SkillsConfig
+from modex_agent.multi_agent.pool_config.specs import SubagentSpec
 from modex_agent.tools.presets import (
-    DEFAULT_FORK_MAX_MESSAGES,
     ContextMode,
     SystemPromptMode,
     ToolPreset,
-    ToolSupplement,
 )
 
 if TYPE_CHECKING:
     from modex_agent.core.session_id import SessionInfo
-    from modex_agent.core.tool_manager import InMemoryToolManager
     from modex_agent.core.skills import SkillManager
+    from modex_agent.core.tool_manager import InMemoryToolManager
     from modex_agent.hook.abc import Hook
     from modex_agent.multi_agent.descriptor import AgentInstance
     from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
 
 
-def _pool_name(deps: "AgentMaterializeDeps") -> str:
+def _pool_name(deps: AgentMaterializeDeps) -> str:
     """Read the authoritative pool name from the workspace path resolver.
 
     ``AgentPool`` carries no pool-name attribute; the resolver is the single
@@ -71,40 +68,16 @@ class AgentTemplate:
     ``bot.config.mcp_registry``.
     """
 
-    agent_name: str
-    description: str = ""
-
-    # ── lifecycle ──
-    max_steps: int = 80
-
-    # ── tool policy ──
-    tool_preset: ToolPreset = ToolPreset.READ_WRITE
-    tool_supplements: list[ToolSupplement] = field(default_factory=list)
-
-    # ── pi-aligned fields ──
-    context_mode: ContextMode = ContextMode.FRESH
-
-    # ── system prompt control ──
-    system_prompt_mode: SystemPromptMode = SystemPromptMode.REPLACE
-
-    # ── fork context control ──
-    fork_max_messages: int = DEFAULT_FORK_MAX_MESSAGES  # only meaningful when context_mode == FORK
-
-    # ── MCP servers (registry names) ──
-    mcp: list[str] = field(default_factory=list)
-
-    # ── optional subsystems ──
+    spec: SubagentSpec
     memory: MemoryConfig | None = None
     skills: SkillsConfig | None = None
-    approval: ApprovalConfig | None = None
-    experience: ExperienceConfig | None = None
 
     async def materialize(
         self,
-        parent_session: "SessionInfo | str | None",
+        parent_session: SessionInfo | str | None,
         invocation_id: str | None,
-        deps: "AgentMaterializeDeps",
-    ) -> "AgentInstance":
+        deps: AgentMaterializeDeps,
+    ) -> AgentInstance:
         """Build a subagent AgentInstance from this template (ADR-0015 D3, Design B).
 
         subagent-only construction; ``parent_session`` gates parent-dependent
@@ -121,7 +94,7 @@ class AgentTemplate:
         from modex_agent.multi_agent.comm_kind import AgentCommKind
         from modex_agent.multi_agent.descriptor import AgentDescriptor, AgentLLMConfig
 
-        name = self.agent_name
+        name = self.spec.agent_name
         comm_kind = AgentCommKind.SUBAGENT
         parent_name = str(parent_session).split(".")[-1] if parent_session else ""
 
@@ -137,7 +110,7 @@ class AgentTemplate:
             system_prompt = DEFAULT_SYSTEM_PROMPT
 
         # ── Read-only guard (match source exactly) ──
-        if self.tool_preset == ToolPreset.READ_ONLY:
+        if self.spec.tool_preset == ToolPreset.READ_ONLY:
             guard = (
                 "\n\n---\n\n"
                 "## Read-Only Mode\n\n"
@@ -169,9 +142,7 @@ class AgentTemplate:
             if deps.project_dir
             else Path(".")
         )
-        output_base_dir: Path | None = (
-            (runtime_dir / "output") if runtime_dir is not None else None
-        )
+        output_base_dir: Path | None = (runtime_dir / "output") if runtime_dir is not None else None
         pruned_manager = resolver.pruned_manager() if resolver else None
 
         # ── Per-invocation providers (APPEND parent prompt + FORK context) ──
@@ -185,12 +156,10 @@ class AgentTemplate:
         parent_prompt_lookup = None
         fork_context_spec = None
         if parent_session is not None:
-            if self.system_prompt_mode == SystemPromptMode.APPEND:
+            if self.spec.system_prompt_mode == SystemPromptMode.APPEND:
                 pool_ref = deps.pool
 
-                async def _parent_prompt_of(
-                    parent_sid: str, _pool=pool_ref
-                ) -> str | None:
+                async def _parent_prompt_of(parent_sid: str, _pool=pool_ref) -> str | None:
                     # In-memory instance lookup only — never a session store.
                     inst = _pool.get(str(parent_sid).split(".")[-1])
                     if inst is None or not inst.descriptor.system_prompt_template:
@@ -199,13 +168,13 @@ class AgentTemplate:
 
                 parent_prompt_lookup = _parent_prompt_of
 
-            if self.context_mode == ContextMode.FORK and deps.context_fork_builder is not None:
+            if self.spec.context_mode == ContextMode.FORK and deps.context_fork_builder is not None:
                 from modex_agent.memory.prompt_pipeline.providers import ForkContextSpec
 
                 fork_context_spec = ForkContextSpec(
                     builder=deps.context_fork_builder,
                     agent_type=name,
-                    fork_max_messages=self.fork_max_messages,
+                    fork_max_messages=self.spec.fork_max_messages,
                     fork_workspace=(resolver.memory_dir() if resolver else None),
                     template_memory=self.memory,
                 )
@@ -264,7 +233,7 @@ class AgentTemplate:
                 max_output_tokens=deps.llm_max_output_tokens,
             ),
             system_prompt_template=system_prompt,
-            max_iterations=self.max_steps,
+            max_iterations=self.spec.max_steps,
             execution_strategy="react",
             context_strategy="persistent",
             safety_policy=deps.safety,
@@ -293,9 +262,7 @@ class AgentTemplate:
                 from modex_agent.hook import HookErrorPolicy, HookSpec
 
                 for hook in hooks:
-                    pipeline_hook_runner.add(
-                        HookSpec(hook=hook, on_error=HookErrorPolicy.LOG)
-                    )
+                    pipeline_hook_runner.add(HookSpec(hook=hook, on_error=HookErrorPolicy.LOG))
             else:
                 instance.pipeline.hooks.extend(hooks)
 
@@ -311,10 +278,10 @@ class AgentTemplate:
 
     async def _build_tool_manager(
         self,
-        deps: "AgentMaterializeDeps",
+        deps: AgentMaterializeDeps,
         name: str,
         runtime_dir: Path | None,
-    ) -> "InMemoryToolManager":
+    ) -> InMemoryToolManager:
         """Build the agent tool manager from this template's tool policy.
 
         Registers, in order: preset tools (with a scoped write dir so
@@ -340,7 +307,7 @@ class AgentTemplate:
             scoped_write_dir = runtime_dir / "output"
 
         for tool in get_preset_tools(
-            self.tool_preset,
+            self.spec.tool_preset,
             subprocess_tool_factory=_make_bash,
             scoped_write_dir=scoped_write_dir,
             root_provider=deps.root_provider,
@@ -349,19 +316,19 @@ class AgentTemplate:
 
         # Additive supplement tools (e.g. AST_GREP, TODO) layered on top of the preset.
         for tool in get_supplement_tools(
-            self.tool_supplements,
+            self.spec.tool_supplements,
             root_provider=deps.root_provider,
             todo_store=deps.todo_store,
         ):
             tm.register(tool)
 
         # MCP tools resolved from the registry by this template's mcp selection.
-        if deps.project_dir is not None and self.mcp:
+        if deps.project_dir is not None and self.spec.mcp:
             try:
                 from modex_agent.tools.mcp_loader import load_per_agent_mcp
 
                 await load_per_agent_mcp(
-                    tm, list(self.mcp), deps.project_dir, name, registry=deps.mcp_registry
+                    tm, list(self.spec.mcp), deps.project_dir, name, registry=deps.mcp_registry
                 )
             except Exception:
                 import logging
@@ -369,7 +336,7 @@ class AgentTemplate:
                 logging.getLogger(__name__).exception(
                     "Failed to load MCP tools for agent %s (selection=%s)",
                     name,
-                    list(self.mcp),
+                    list(self.spec.mcp),
                 )
 
         # Baked default: every subagent gets send_to_agent for CONSULTATION
@@ -383,8 +350,8 @@ class AgentTemplate:
 
     @staticmethod
     def _register_send_to_agent(
-        tm: "InMemoryToolManager",
-        deps: "AgentMaterializeDeps",
+        tm: InMemoryToolManager,
+        deps: AgentMaterializeDeps,
         name: str,
     ) -> None:
         """Register a subagent-scoped ``SendToAgentTool`` against deps.
@@ -434,14 +401,15 @@ class AgentTemplate:
             import logging
 
             logging.getLogger(__name__).exception(
-                "Failed to register SendToAgentTool for subagent %s", name,
+                "Failed to register SendToAgentTool for subagent %s",
+                name,
             )
 
     def _build_skill_manager(
         self,
-        deps: "AgentMaterializeDeps",
+        deps: AgentMaterializeDeps,
         name: str,
-    ) -> "SkillManager | None":
+    ) -> SkillManager | None:
         """Build a SkillManager so the skill-injection pipeline stage is always present.
 
         Baked default (ADR: skill injection default-on): every subagent gets
@@ -465,7 +433,10 @@ class AgentTemplate:
             logger.debug(
                 "_build_skill_manager: agent %r has no explicit skill roots; "
                 "using convention root skills/%s/%s/ (resolver wired=%s).",
-                name, pool_name, name, deps.workspace_path_resolver is not None,
+                name,
+                pool_name,
+                name,
+                deps.workspace_path_resolver is not None,
             )
         skill_roots = [deps.project_dir / r for r in explicit_roots]
         from modex_agent.core.skills import (
