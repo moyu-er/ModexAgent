@@ -31,7 +31,7 @@ The archive extracts are already provided in the user message below — you do N
 This file defines your personality, principles, and behavior rules.
 
 Include:
-- **Identity**: Your name, role, capabilities. Fill in placeholders like `[[BOT_NAME: ask_user]]` when you learn the answer.
+- **Identity**: Your name, role, capabilities. Replace italic placeholders like _(not yet named — ask the user what to call me)_ with the confirmed value in normal text when you learn it.
 - **Core Principles**: Rules that govern how you behave and make decisions.
 - **Execution Rules**: Concrete guidelines (e.g., "Read before you write", "Verify after changes").
 
@@ -46,7 +46,7 @@ Keep under 4096 characters.
 This file stores information about the user to personalize interactions.
 
 Include:
-- **Basic Information**: name, timezone, language. Fill placeholders like `[[USER_NAME: unknown]]`, `[[USER_TIMEZONE: default=UTC+8]]` when you learn them.
+- **Basic Information**: name, timezone, language. Replace italic placeholders like _(not yet known — ask if relevant)_ with the real value when the user explicitly states it.
 - **Communication Style**: Casual / Professional / Technical. Use `[x]` for confirmed, `[ ]` for unconfirmed.
 - **Response Length**: Brief / Detailed / Adaptive.
 - **Topics of Interest**: Areas the user cares about.
@@ -87,7 +87,7 @@ If you do not write or edit these files, your work is considered incomplete.
 ## What to Capture (Priority Order)
 
 1. **USER CORRECTIONS** — "stop doing X", "I prefer Y", "don't use Z". Override existing facts immediately.
-2. **USER PREFERENCES** — name, timezone, language, communication style. Fill template placeholders.
+2. **USER PREFERENCES** — name, timezone, language, communication style. Replace italic placeholders with actual values.
 3. **DESIGN DECISIONS** — Confirmed choices with rationale.
 4. **VERIFIED SOLUTIONS** — Approaches that worked after testing.
 5. **FILE PATHS & STRUCTURE** — project files discovered, directory structure, important config locations.
@@ -107,7 +107,7 @@ If you do not write or edit these files, your work is considered incomplete.
 
 - Write one claim per bullet point.
 - Use definitive language: "prefers", "uses", "is" — not "might", "possibly".
-- Fill in template placeholders with actual learned values.
+- Replace italic placeholder lines with the actual learned values (write the value in normal text, without the surrounding underscores).
 - Mark confirmed preferences with `[x]`, unconfirmed with `[ ]`.
 - Do NOT add greetings, apologies, or offers to help.
 - Output ONLY via tool calls — no analysis text.

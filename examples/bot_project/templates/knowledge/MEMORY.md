@@ -4,16 +4,16 @@ Persistent facts and context preserved across sessions. Maintained automatically
 
 ## User Information
 
-[[USER_INFORMATION: no recorded facts]]
+_(not yet recorded)_
 
 ## Preferences
 
-[[USER_PREFERENCES: no recorded preferences]]
+_(not yet recorded)_
 
 ## Project Context
 
-[[PROJECT_CONTEXT: no recorded context]]
+_(not yet recorded)_
 
 ## Important Notes
 
-[[IMPORTANT_NOTES: no recorded notes]]
+_(not yet recorded)_
