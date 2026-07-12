@@ -11,8 +11,8 @@
 - `modex_agent/agents/experience/`: `ExperienceReviewAgent` — ReAct agent that reviews conversations and creates/updates EXPERIENCE.md files.
 - `modex_agent/core/experience/`: experience layer — `ExperienceManager`, `FileExperienceSource`, `ExperiencePromptBuilder`, `ExperienceCurator`, validation, metadata tracking.
 - `modex_agent/memory/`: three-layer memory (session/archive/knowledge) + compression + governance + injection policies.
-- `modex_agent/multi_agent/`: star-topology subagent coordination, `AgentPool`, inbox, `CommunicationTracker`, `AgentMessageBus`.
-- `modex_agent/ioc/`: typed config (`AppConfig` via Pydantic) + 8 factory modules + `PoolConfig`.
+- `modex_agent/multi_agent/`: star-topology subagent coordination, `AgentPool`, inbox, `AgentMessageBus`.
+- `modex_agent/ioc/`: typed config (`AppConfig` via Pydantic) + 7 factory modules. Pool configuration lives in `modex_agent/multi_agent/pool_config/`.
 - `modex_agent/runtime/`: `AgentRuntime`, `AgentRuntimeServices`, `TurnStateStore`, typed enums/models.
 - `modex_agent/pipeline/`: `AgentPipeline` end-to-end orchestration, I/O adapters, approval renderer, slash commands.
 - `modex_agent/hook/` + `modex_agent/interceptor/` + `modex_agent/control/`: three-layer runtime model (observe/AOP/control).
@@ -31,24 +31,21 @@
 - `ruff format src/modex_agent tests/`: format
 - `mypy src/modex_agent`: type check
 
-## Type Safety Rules (from rules/type-safety.md)
+## Type Safety Rules
 
-1. **Enums/constants over raw strings** for categories, roles, states, protocol values. Use `MessageRole`, `MessageType`, `FinishReason`, `DefaultValues`.
-2. **Typed structures over loose dicts**. Use existing dataclasses: `ChatMessage`, `ToolCall`, `LLMResponse`, `InputMessage`, `OutputMessage`.
-3. **Typed signatures**. No bare `Any`, `list`, `dict`, `object`, `list[Any]` in framework-facing APIs. Declare parameter and return types.
-4. **ABCs before implementations**. No concrete dependency where a pluggable contract exists. All extension points use ABCs (zero Protocols).
-5. **Framework vs examples separation**. `src/modex_agent/` = reusable behavior; `examples/` = business wiring. No example-specific config in the framework.
-6. **No dynamic access** (`getattr`/`hasattr`) except at real extension boundaries. Prefer explicit typed attributes and method calls.
+Full rules: `rules/type-safety.md` — read before any framework code change.
 
-## Architecture Rules (from rules/architecture.md)
+Core principles: enums/constants over raw strings (rule 1); typed structures over loose dicts (rule 2); declared parameter and return types, no bare `Any`/`list`/`dict` in framework-facing APIs (rule 3); ABCs before implementations, zero Protocols (rules 4, 7); framework vs examples separation (rule 5); no `getattr`/`hasattr`/`isinstance` except at real extension boundaries (rules 6, 9); exact field match on typed objects (rule 8).
 
-- Python 3.12+, `from __future__ import annotations` in all framework modules.
-- `Agent[E]`, `ContentEmitter[E]` with `TypeVar("E", bound=AgentEvent)`.
-- Per-turn state in `runtime.state` (typed `ReActTurnState`), not instance attributes or `ctx.metadata`.
-- Frozen dataclasses for config/value objects; runtime objects hold state/connections.
-- `MessageRole` lives in `modex_agent.core.types.MessageRole`.
-- `GraphInterrupt` for approval suspension — never catch and swallow it.
-- `TurnCustomKey` enum for per-turn custom state keys in `TurnStateBase.custom`.
+**Pydantic-first structured data (rules 10–16):** cross-module internal data structures MUST be `BaseModel`, not `dict`/`TypedDict`/`@dataclass`. Frozen `@dataclass` is only a leaf value-object escape hatch (single-module, no serialization, no nested validation). Serialization boundaries go through `model_dump()`/`model_validate()`, never hand-rolled `json.dumps`. Nested structured fields are typed models, not `dict[str, Any]`. Discriminated unions over `Union[...]` of models. All public framework types are importable and documented in `AGENTS.md`.
+
+## Architecture Rules
+
+Full rules: `rules/architecture.md` — read before any module design or refactor.
+
+Deep modules whose interface is simpler than implementation (rules 1, 3). Apply the deletion test before extracting or keeping a module (rule 4). Interface is the test surface (rule 5). One adapter is hypothetical; two make a real seam (rule 6). Preserve locality (rule 7). Name modules after domain concepts, not machinery (rule 8). Framework vs examples separation (rule 9). ABCs for interfaces, not Protocols (rule 10). Per-turn state in `runtime.state` (`ReActTurnState`), not instance attributes or `ctx.metadata` (rule 11). Config/value objects use Pydantic `BaseModel` with `frozen=True`; runtime objects with state/connections are regular classes (rule 12). `GraphInterrupt` for approval suspension — never catch and swallow it; approval state in `ApprovalTransaction` (rule 13). Centralize domain constants/enums, replace raw strings (rule 14).
+
+Shared vocabulary: module, interface, depth, seam, adapter, leverage, locality (rule 2).
 
 ## Memory Rules
 
@@ -65,7 +62,6 @@
 - Star topology: subagents communicate only through main agent. `subagent_validator.py` enforces at registration.
 - Communication is exposed as a single tool: `send_to_agent`. The framework decides internally whether to use broker delivery, inbox delivery, or a new isolated subagent session.
 - `AgentMessageBus` is the primary async channel. `InboxProducer`/`InboxConsumer` wrap `InboxServer` with local-cache dedup.
-- `CommunicationTracker` provides sideband memory: send/acknowledge bracket matching prevents memory compression from silently dropping pending communications.
 - Session ID format: `{prefix}.{agent_name}` (dot-separated; via `SessionIdFactory` / `DefaultSessionIdStrategy`). Subagent runs carry an `invocation_id` in `AgentContext` metadata, not in the session id.
 - `AgentPool` manages resident agent lifecycle: consumer loop, inbox wakeup polling, per-session locks, TTL + LRU session eviction.
 - `SubagentAutoSendHook` safety net: auto-forwards final output to parent if LLM forgets to use communication tools.
@@ -96,3 +92,17 @@ Architecture Decision Records (ADRs) in `docs/adr/` and superpowers documentatio
 | Tests Overview | `tests/AGENTS.md` | Unit, framework, and integration test suites |
 | Docs Overview | `docs/AGENTS.md` | ADRs and superpowers documentation |
 | Bot Reference | `examples/bot_project/AGENTS.md` | End-to-end reference implementation |
+
+## Agent skills
+
+### Issue tracker
+
+Issues live as local markdown under `docs/design/<feature>/`. External PRs are not a triage surface. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Canonical defaults: needs-triage, needs-info, ready-for-agent, ready-for-human, wontfix. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Multi-context: `CONTEXT-MAP.md` at root points to per-context `CONTEXT.md` files. See `docs/agents/domain.md`.

@@ -11,6 +11,7 @@ Shared utility types and functions used by LLM provider implementations. Provide
 
 | File | Description |
 |------|-------------|
+| `constants.py` | Shared provider parameter keys (`REASONING_EFFORT_PARAM`) and injection helpers (`inject_reasoning_effort`) |
 | `delta.py` | `StreamDelta` dataclass — structured extraction from streaming chunks (content, reasoning_content, tool_call_chunks, finish_reason); `ParsedResponse` dataclass — non-streaming response extraction; `extract_reasoning()` — extracts `reasoning_content` from Pydantic `model_extra` |
 | `errors.py` | `classify_openai_error(exc)` — isinstance-based error classification mapping openai SDK exceptions to `LLMErrorInfo` with kind, should_retry, and status_code; supports `APITimeoutError`, `APIConnectionError`, `InternalServerError`, `RateLimitError`, `AuthenticationError`, `PermissionDeniedError`, `BadRequestError` |
 | `__init__.py` | Module docstring documenting the exported types |

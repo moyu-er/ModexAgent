@@ -49,6 +49,31 @@ class StopReason(StrEnum):
     LOOP_DETECTED = "loop_detected"
 
 
+class ReasoningEffort(StrEnum):
+    """模型 reasoning effort 参数的可选值。
+
+    OpenAI 兼容 API 用于控制模型内部推理量的参数。``NONE`` 表示不发送该
+    参数，保持与未配置时一致的行为。
+    """
+
+    NONE = "none"
+    MINIMAL = "minimal"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    XHIGH = "xhigh"
+
+
+class InterfaceFormat(StrEnum):
+    """LLM 接口格式。
+
+    决定后端使用哪个 provider 以及是否需要在模型名前补充 provider 前缀。
+    """
+
+    OPENAI_COMPATIBLE = "openai_compatible"
+    ANTHROPIC = "anthropic"
+
+
 class ErrorMessages:
     """错误消息常量"""
 

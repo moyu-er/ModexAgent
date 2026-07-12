@@ -6,12 +6,13 @@
 - Pipeline 桥接: BrokerInputAdapter, BrokerOutputAdapter, BrokerBridgeService, OutputRoute
 """
 
-from .broker import Address, BrokerMessage, DeliveryError, MessageBroker
+from .broker import Address, AddressKind, BrokerMessage, DeliveryError, MessageBroker
 from .broker_bridge import BrokerBridgeService, BrokerInputAdapter, BrokerOutputAdapter, OutputRoute
 from .broker_memory import InMemoryMessageBroker
 
 __all__ = [
     "Address",
+    "AddressKind",
     "BrokerMessage",
     "DeliveryError",
     "MessageBroker",

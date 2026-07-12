@@ -60,6 +60,41 @@ export async function renamePool(
   return resp.json() as Promise<PoolTree>;
 }
 
+export interface PeerPairResult {
+  pool_a: PoolTree;
+  pool_b: PoolTree;
+}
+
+export async function addPeer(
+  pool: string,
+  peer: string,
+): Promise<PeerPairResult> {
+  const resp = await fetch(
+    `${API_BASE}/pools/${encodeURIComponent(pool)}/peers`,
+    {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({ peer }),
+    },
+  );
+  await assertOk(resp);
+  return resp.json() as Promise<PeerPairResult>;
+}
+
+export async function removePeer(
+  pool: string,
+  peer: string,
+): Promise<PeerPairResult> {
+  const resp = await fetch(
+    `${API_BASE}/pools/${encodeURIComponent(pool)}/peers/${encodeURIComponent(peer)}`,
+    {
+      method: "DELETE",
+    },
+  );
+  await assertOk(resp);
+  return resp.json() as Promise<PeerPairResult>;
+}
+
 export async function getPrompt(
   pool: string,
   agent: string,

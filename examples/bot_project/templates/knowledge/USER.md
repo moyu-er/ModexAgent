@@ -4,13 +4,15 @@ Information about the user to personalize interactions.
 
 ## Basic Information
 
-- **Name**: [[USER_NAME: unknown]]
-- **Timezone**: [[USER_TIMEZONE: default=UTC+8]]
-- **Language**: [[USER_LANGUAGE: unknown]]
+- **Name**: _(not yet known — ask if relevant)_
+- **Timezone**: _(not yet known — observe from message timestamps or ask)_
+- **Language**: _(not yet known — infer from the user's messages)_
 
 ## Preferences
 
 ### Communication Style
+
+_(no preference observed yet — check one box below only after the user states or shows a preference)_
 
 - [ ] Casual
 - [ ] Professional
@@ -18,14 +20,16 @@ Information about the user to personalize interactions.
 
 ### Response Length
 
+_(no preference observed yet — check one box below only after observing the user's reactions)_
+
 - [ ] Brief and concise
 - [ ] Detailed explanations
 - [ ] Adaptive based on question
 
 ## Topics of Interest
 
-- [[TOPIC_OF_INTEREST: none specified yet]]
+_(none mentioned yet — update when the user shares interests)_
 
 ## Special Instructions
 
-[[SPECIAL_INSTRUCTIONS: none provided yet]]
+_(none given yet — update when the user provides explicit behavioral requests)_

@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from modex_agent.core.constants import ReasoningEffort
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
@@ -18,7 +19,6 @@ def test_constructs_with_required_fields() -> None:
         pool=MagicMock(),
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
-        comm_tracker=None,
         safety=RuntimeSafetyPolicy(),
         llm_model="gpt-4o",
         llm_temperature=0.7,
@@ -54,7 +54,6 @@ def test_optional_fields_default_none() -> None:
         session_factory=SessionIdFactory(),
         broker=MagicMock(),
     )
-    assert deps.comm_tracker is None
     assert deps.project_dir is None
     assert deps.on_subagent_created is None
 
@@ -117,3 +116,22 @@ def test_mcp_registry_defaults_none_and_settable() -> None:
         mcp_registry=registry,
     )
     assert deps_set.mcp_registry is registry
+
+
+def test_llm_reasoning_effort_defaults_to_none_and_settable() -> None:
+    deps_default = AgentMaterializeDeps(
+        agent_factory=MagicMock(),
+        pool=MagicMock(),
+        session_factory=SessionIdFactory(),
+        broker=MagicMock(),
+    )
+    assert deps_default.llm_reasoning_effort == ReasoningEffort.NONE
+
+    deps_set = AgentMaterializeDeps(
+        agent_factory=MagicMock(),
+        pool=MagicMock(),
+        session_factory=SessionIdFactory(),
+        broker=MagicMock(),
+        llm_reasoning_effort=ReasoningEffort.HIGH,
+    )
+    assert deps_set.llm_reasoning_effort == ReasoningEffort.HIGH

@@ -5,11 +5,10 @@ persists the chosen pool (``set_pool``) and routes incoming messages to it.
 """
 from __future__ import annotations
 
-import json
 import sys
 import tempfile
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any, AsyncIterator
 
 import pytest
 
@@ -19,14 +18,10 @@ if str(_BOT_PROJECT) not in sys.path:
 
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import InputMessage
-from modex_agent.ioc.configs.app import _validate_pool_name
-from modex_agent.ioc.configs.pool import PoolConfig
-from modex_agent.ioc.configs.agent import AgentConfig
-from modex_agent.pipeline.adapters import InputAdapter
-from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.messaging.broker import BrokerMessage
+from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent.address import AgentAddress
-
+from modex_agent.pipeline.adapters import InputAdapter
 
 # ── Stubs ──
 
@@ -42,14 +37,6 @@ class _StubInput(InputAdapter):
     async def receive(self) -> AsyncIterator[InputMessage]:
         for msg in self._messages:
             yield msg
-
-
-def _make_pool_config(name: str) -> PoolConfig:
-    return PoolConfig(
-        name=name,
-        main_agent_name=name,
-        agents=[AgentConfig(name=name, role="main")],
-    )
 
 
 class _FakePoolInstance:
@@ -78,20 +65,20 @@ class _FakePoolInstance:
 class TestPoolSessionStore:
     def test_get_returns_default_when_no_file(self):
         with tempfile.TemporaryDirectory() as d:
-            from bot.service.pool_router import PoolSessionStore
+            from modex_agent.multi_agent.pool_router import PoolSessionStore
             store = PoolSessionStore(Path(d))
             assert store.get("unknown_session", "default") == "default"
 
     def test_set_and_get_roundtrip(self):
         with tempfile.TemporaryDirectory() as d:
-            from bot.service.pool_router import PoolSessionStore
+            from modex_agent.multi_agent.pool_router import PoolSessionStore
             store = PoolSessionStore(Path(d))
             store.set("sess-123", "coding")
             assert store.get("sess-123", "main") == "coding"
 
     def test_multiple_sessions_independent(self):
         with tempfile.TemporaryDirectory() as d:
-            from bot.service.pool_router import PoolSessionStore
+            from modex_agent.multi_agent.pool_router import PoolSessionStore
             store = PoolSessionStore(Path(d))
             store.set("sess-a", "main")
             store.set("sess-b", "coding")
@@ -100,7 +87,7 @@ class TestPoolSessionStore:
 
     def test_corrupted_file_returns_default(self):
         with tempfile.TemporaryDirectory() as d:
-            from bot.service.pool_router import PoolSessionStore
+            from modex_agent.multi_agent.pool_router import PoolSessionStore
             store = PoolSessionStore(Path(d))
             # Write corrupted JSON
             fp = store._file("corrupt")
@@ -122,7 +109,7 @@ class TestPoolRouterSetPool:
 
     @pytest.fixture
     def router(self, pools, tmp_path):
-        from bot.service.pool_router import PoolRouter, PoolSessionStore
+        from modex_agent.multi_agent.pool_router import PoolRouter, PoolSessionStore
         return PoolRouter(
             input_adapter=_StubInput(),
             broker=object(),
@@ -156,7 +143,7 @@ class TestPoolRouterRouting:
 
     @pytest.fixture
     def router(self, broker, pools, tmp_path):
-        from bot.service.pool_router import PoolRouter, PoolSessionStore
+        from modex_agent.multi_agent.pool_router import PoolRouter, PoolSessionStore
         return PoolRouter(
             input_adapter=_StubInput(),
             broker=broker,
@@ -181,7 +168,7 @@ class TestPoolRouterRouting:
     @pytest.mark.asyncio
     async def test_run_routes_to_stored_pool(self, router, pools, broker, tmp_path):
         """Messages are routed to the pool stored for their snowflake."""
-        from bot.service.pool_router import PoolSessionStore
+        from modex_agent.multi_agent.pool_router import PoolSessionStore
 
         store = PoolSessionStore(tmp_path)
         store.set("sess-route", "coding")
@@ -221,31 +208,3 @@ class TestPoolRouterRouting:
 
         assert pools["coding"].submitted, "coding pool received no submission"
         assert pools["coding"].submitted[0][1].content == "hello"
-
-
-# ── Reserved Pool Name Validation Tests ──
-
-class TestPoolNameValidation:
-    def test_valid_pool_names(self):
-        _validate_pool_name("main")
-        _validate_pool_name("coding")
-        _validate_pool_name("my-pool")
-        _validate_pool_name("pool_123")
-
-    def test_reserved_name_approve_rejected(self):
-        with pytest.raises(ValueError, match="built-in command"):
-            _validate_pool_name("approve")
-
-    def test_reserved_name_deny_rejected(self):
-        with pytest.raises(ValueError, match="built-in command"):
-            _validate_pool_name("deny")
-
-    def test_reserved_name_continue_rejected(self):
-        with pytest.raises(ValueError, match="built-in command"):
-            _validate_pool_name("continue")
-
-    def test_invalid_format_rejected(self):
-        with pytest.raises(ValueError, match="Invalid pool name"):
-            _validate_pool_name("InvalidPool")  # uppercase
-        with pytest.raises(ValueError, match="Invalid pool name"):
-            _validate_pool_name("123abc")  # starts with digit

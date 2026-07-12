@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from modex_agent.core.constants import FinishReason
+from modex_agent.core.constants import FinishReason, ReasoningEffort
 from modex_agent.core.llm_struct import (
     LLMErrorKind,
     LLMTimeoutPolicy,
@@ -15,6 +15,7 @@ from modex_agent.core.llm_struct import (
 )
 from modex_agent.core.types import LLMResponse
 from modex_agent.providers.openai_provider import OpenAIProvider
+from modex_agent.providers.shared.constants import REASONING_EFFORT_PARAM
 
 
 class TestOpenAIProviderChat:
@@ -157,6 +158,75 @@ class TestOpenAIProviderChat:
         assert len(call_kwargs["tools"]) == 1
         # chat() now uses streaming internally for cache benefits
         assert call_kwargs["stream"] is True
+
+
+class TestOpenAIProviderReasoningEffort:
+    """OpenAIProvider reasoning_effort parameter tests."""
+
+    def _make_chunk(self, content=None, finish_reason=None, reasoning=None, usage=None):
+        """Build a mock ChatCompletionChunk."""
+        delta = MagicMock()
+        delta.content = content
+        delta.tool_calls = None
+        delta.model_extra = {"reasoning_content": reasoning} if reasoning else None
+
+        choice = MagicMock()
+        choice.delta = delta
+        choice.finish_reason = finish_reason
+
+        chunk = MagicMock()
+        chunk.choices = [choice]
+        chunk.usage = usage
+        return chunk
+
+    async def _stream_chunks(self, chunks):
+        for c in chunks:
+            yield c
+
+    @pytest.fixture
+    def provider(self):
+        safety = RuntimeSafetyPolicy(
+            llm=LLMTimeoutPolicy(request_timeout_seconds=10, stream_idle_timeout_seconds=30),
+            turn=TurnTimeoutPolicy(),
+        )
+        with patch("modex_agent.providers.openai_provider.AsyncOpenAI") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client_cls.return_value = mock_client
+            p = OpenAIProvider(
+                model="gpt-4o",
+                api_key="sk-test",
+                reasoning_effort=ReasoningEffort.MEDIUM,
+                safety=safety,
+            )
+            p._client = mock_client
+            yield p
+
+    @pytest.mark.asyncio
+    async def test_reasoning_effort_passed_when_non_none(self, provider):
+        chunks = [self._make_chunk(content="ok", finish_reason="stop")]
+        provider._client.chat.completions.create = AsyncMock(
+            return_value=self._stream_chunks(chunks)
+        )
+        await provider.chat(messages=[{"role": "user", "content": "hi"}])
+        assert provider._client.chat.completions.create.call_args.kwargs[REASONING_EFFORT_PARAM] == ReasoningEffort.MEDIUM.value
+
+    def test_reasoning_effort_omitted_when_none(self):
+        safety = RuntimeSafetyPolicy(
+            llm=LLMTimeoutPolicy(request_timeout_seconds=10, stream_idle_timeout_seconds=30),
+            turn=TurnTimeoutPolicy(),
+        )
+        with patch("modex_agent.providers.openai_provider.AsyncOpenAI") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client_cls.return_value = mock_client
+            p = OpenAIProvider(
+                model="gpt-4o",
+                api_key="sk-test",
+                reasoning_effort=ReasoningEffort.NONE,
+                safety=safety,
+            )
+            p._client = mock_client
+            params = p._build_params(messages=[{"role": "user", "content": "hi"}])
+            assert REASONING_EFFORT_PARAM not in params
 
 
 class TestBuildParamsStripsGovernanceFields:

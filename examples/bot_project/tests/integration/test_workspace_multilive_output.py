@@ -135,8 +135,6 @@ paths:
   data_dir_name: ".modex"
 workspace:
   enabled: true
-multi_agent:
-  default_pool: "main"
 """,
         encoding="utf-8",
     )

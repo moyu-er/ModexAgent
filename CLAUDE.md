@@ -68,7 +68,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ### Issue tracker
 
-Issues live as local markdown under `.scratch/<feature>/`. External PRs are not a triage surface. See `docs/agents/issue-tracker.md`.
+Issues live as local markdown under `docs/design/<feature>/`. External PRs are not a triage surface. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

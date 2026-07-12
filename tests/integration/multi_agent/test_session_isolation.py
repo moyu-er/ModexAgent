@@ -74,20 +74,3 @@ async def test_coder_and_planner_history_isolation():
 
     assert "Plan the project." in planner_history
     assert "Write Python code." not in planner_history
-
-
-@pytest.mark.asyncio
-async def test_same_agent_session_concurrency_protected():
-    """同一 agent_session_id 的并发请求应被串行化。"""
-    from modex_agent.messaging.broker_memory import InMemoryMessageBroker
-    from modex_agent.multi_agent import AgentPool
-
-    broker = InMemoryMessageBroker()
-    pool = AgentPool(broker=broker, agent_factory=DefaultAgentFactory())
-
-    lock1 = pool.get_lock("session_001:coder")
-    lock2 = pool.get_lock("session_001:coder")
-    lock3 = pool.get_lock("session_001:planner")
-
-    assert lock1 is lock2, "同一 session 应返回同一个锁"
-    assert lock1 is not lock3, "不同 session 应使用不同锁"

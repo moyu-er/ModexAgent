@@ -2,31 +2,16 @@ import tempfile
 from pathlib import Path
 
 from modex_agent.ioc.configs.app import AppConfig
-from modex_agent.ioc.configs.pool import PoolConfig
-from modex_agent.ioc.configs.agent import AgentConfig
 
 
 class TestAppConfig:
     def test_minimal_app(self) -> None:
         cfg = AppConfig()
-        assert cfg.pools == {}
+        assert "pools" not in cfg.model_fields
         assert cfg.model is None
 
-    def test_with_pools(self) -> None:
-        cfg = AppConfig(
-            pools={
-                "main": PoolConfig(
-                    name="main",
-                    main_agent_name="main",
-                    agents=[AgentConfig(name="main", role="main")],
-                ),
-            },
-        )
-        assert len(cfg.pools) == 1
-        assert cfg.pools["main"].main_agent_name == "main"
-
     def test_from_yaml_minimal(self) -> None:
-        """A bare YAML with no pools loads cleanly (pools come from pools/ dir)."""
+        """A bare YAML loads cleanly; pools are not read from config/pools/."""
         yaml_content = """
 paths:
   data_dir_name: ".modex"
@@ -39,7 +24,7 @@ paths:
 
         try:
             cfg = AppConfig.from_yaml(tmp)
-            assert cfg.pools == {}
+            assert "pools" not in cfg.model_fields
         finally:
             Path(tmp).unlink()
 
@@ -63,3 +48,24 @@ paths:
             assert cfg.paths.data_dir_name == ".custom-modex"
         finally:
             Path(tmp).unlink()
+
+    def test_multi_agent_has_no_default_pool(self) -> None:
+        cfg = AppConfig()
+        assert "default_pool" not in cfg.multi_agent.model_fields
+
+    def test_from_yaml_ignores_pools_directory(self) -> None:
+        """AppConfig.from_yaml() no longer reads config/pools/*."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            config_yml = tmp_path / "bot_config.yml"
+            config_yml.write_text("paths:\n  data_dir_name: .modex\n", encoding="utf-8")
+            # Create a pools directory with a pool.yml; it should be ignored.
+            pools_dir = tmp_path / "pools"
+            pools_dir.mkdir()
+            (pools_dir / "default").mkdir()
+            (pools_dir / "default" / "pool.yml").write_text(
+                "max_steps: 50\n", encoding="utf-8"
+            )
+
+            cfg = AppConfig.from_yaml(config_yml)
+            assert "pools" not in cfg.model_fields

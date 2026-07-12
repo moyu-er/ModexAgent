@@ -26,10 +26,14 @@ from modex_agent.memory.history import ListMessageHistory
 from modex_agent.messaging.broker import BrokerMessage, MessageBroker
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.comm_kind import AgentCommKind
-from modex_agent.multi_agent.comm_tracker import CommunicationTracker
 from modex_agent.multi_agent.descriptor import AgentDescriptor
 from modex_agent.multi_agent.registry import AgentProfile
 from modex_agent.multi_agent.communication import AgentCommunicationService
+from modex_agent.multi_agent.tools import CommunicationTarget
+
+
+def _tgt(name: str, kind: AgentCommKind) -> CommunicationTarget:
+    return CommunicationTarget(name=name, kind=kind)
 
 
 # ── Shared test fixtures ──
@@ -142,7 +146,6 @@ def _make_service(
     profiles: list[AgentProfile] | None = None,
     descriptors: list[AgentDescriptor] | None = None,
     agent_bus: _FakeAgentBus | None = None,
-    comm_tracker: CommunicationTracker | None = None,
     source_name: str = "main",
 ) -> AgentCommunicationService:
     registry = _FakeRegistry(profiles=profiles, descriptors=descriptors)
@@ -152,7 +155,6 @@ def _make_service(
         broker=broker,
         registry=registry,  # type: ignore[arg-type]
         agent_bus=agent_bus,
-        comm_tracker=comm_tracker,
     )
 
 
@@ -194,7 +196,7 @@ class TestRegisteredSubagentNewTaskUsesSend:
         ctx = _make_context()
 
         result = await svc.send_async(
-            target_agent="scout",
+            target=_tgt("scout", AgentCommKind.SUBAGENT),
             content="task 1",
             invocation_id="",
             context=ctx,
@@ -222,10 +224,10 @@ class TestRegisteredSubagentNewTaskUsesSend:
         ctx = _make_context()
 
         result1 = await svc.send_async(
-            target_agent="scout", content="task 1", invocation_id="", context=ctx,
+            target=_tgt("scout", AgentCommKind.SUBAGENT), content="task 1", invocation_id="", context=ctx,
         )
         result2 = await svc.send_async(
-            target_agent="scout", content="task 2", invocation_id="", context=ctx,
+            target=_tgt("scout", AgentCommKind.SUBAGENT), content="task 2", invocation_id="", context=ctx,
         )
 
         assert "Error" not in result1
@@ -250,7 +252,7 @@ class TestRegisteredSubagentNewTaskUsesSend:
         ctx = _make_context()
 
         result = await svc.send_async(
-            target_agent="scout", content="task 1", invocation_id="", context=ctx,
+            target=_tgt("scout", AgentCommKind.SUBAGENT), content="task 1", invocation_id="", context=ctx,
         )
         assert "Error" not in result
         assert len(bus.sent) == 1
@@ -273,7 +275,7 @@ class TestRegisteredSubagentNewTaskUsesSend:
         ctx = _make_context()
 
         result = await svc.send_async(
-            target_agent="scout", content="task 1", invocation_id="", context=ctx,
+            target=_tgt("scout", AgentCommKind.SUBAGENT), content="task 1", invocation_id="", context=ctx,
         )
         assert "invocation_id:" in result, (
             f"New task ack should include invocation_id, got: {result}"
@@ -299,7 +301,7 @@ class TestRegisteredSubagentContinuationPreserved:
         ctx = _make_context()
 
         result = await svc.send_async(
-            target_agent="scout",
+            target=_tgt("scout", AgentCommKind.SUBAGENT),
             content="follow-up",
             invocation_id="existing-task-42",
             context=ctx,
@@ -321,7 +323,7 @@ class TestRegisteredSubagentContinuationPreserved:
         ctx = _make_context()
 
         result = await svc.send_async(
-            target_agent="scout",
+            target=_tgt("scout", AgentCommKind.SUBAGENT),
             content="follow-up",
             invocation_id="existing-task-42",
             context=ctx,
@@ -348,7 +350,7 @@ class TestRegisteredSubagentBlocksSubagentToSubagent:
         ctx = _make_context(comm_kind=AgentCommKind.SUBAGENT)
 
         result = await svc.send_async(
-            target_agent="scout", content="task", invocation_id="", context=ctx,
+            target=_tgt("scout", AgentCommKind.SUBAGENT), content="task", invocation_id="", context=ctx,
         )
 
         assert "Error" in result
@@ -389,7 +391,7 @@ class TestSubagentBlocksNonParentNormal:
         )
 
         result = await svc.send_async(
-            target_agent="other",
+            target=_tgt("other", AgentCommKind.SUBAGENT),
             content="hi",
             invocation_id=None,
             context=ctx,
@@ -413,7 +415,7 @@ class TestSubagentBlocksNonParentNormal:
         )
 
         result = await svc.send_async(
-            target_agent="main",
+            target=_tgt("main", AgentCommKind.NORMAL),
             content="NEED_DECISION: which?",
             invocation_id=None,
             context=ctx,
@@ -439,7 +441,7 @@ class TestSubagentBlocksNonParentNormal:
         )
 
         result = await svc.send_async(
-            target_agent="main",
+            target=_tgt("main", AgentCommKind.NORMAL),
             content="hi",
             invocation_id=None,
             context=ctx,
@@ -468,10 +470,10 @@ class TestConcurrentSubagentTasks:
         ctx = _make_context()
 
         r1 = await svc.send_async(
-            target_agent="scout", content="task A", invocation_id="", context=ctx,
+            target=_tgt("scout", AgentCommKind.SUBAGENT), content="task A", invocation_id="", context=ctx,
         )
         r2 = await svc.send_async(
-            target_agent="scout", content="task B", invocation_id="", context=ctx,
+            target=_tgt("scout", AgentCommKind.SUBAGENT), content="task B", invocation_id="", context=ctx,
         )
 
         assert "Error" not in r1
@@ -500,10 +502,10 @@ class TestConcurrentSubagentTasks:
         ctx = _make_context()
 
         r1 = await svc.send_async(
-            target_agent="scout", content="task A", invocation_id="", context=ctx,
+            target=_tgt("scout", AgentCommKind.SUBAGENT), content="task A", invocation_id="", context=ctx,
         )
         r2 = await svc.send_async(
-            target_agent="scout", content="task B", invocation_id="", context=ctx,
+            target=_tgt("scout", AgentCommKind.SUBAGENT), content="task B", invocation_id="", context=ctx,
         )
 
         inv1 = _extract_invocation_id_from_result(r1)
@@ -525,7 +527,7 @@ class TestConcurrentSubagentTasks:
 
         # New task -> send()
         r_new = await svc.send_async(
-            target_agent="scout", content="new task", invocation_id="", context=ctx,
+            target=_tgt("scout", AgentCommKind.SUBAGENT), content="new task", invocation_id="", context=ctx,
         )
         assert "Error" not in r_new
         assert len(bus.sent) == 1
@@ -536,7 +538,7 @@ class TestConcurrentSubagentTasks:
 
         # Continuation — also uses send()
         r_cont = await svc.send_async(
-            target_agent="scout",
+            target=_tgt("scout", AgentCommKind.SUBAGENT),
             content="follow-up",
             invocation_id=inv_new,
             context=ctx,

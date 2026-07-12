@@ -38,7 +38,7 @@ Uses **Pool mode** — multi-agent persistent pools with `MessageBroker` + `Agen
 | **Self-Learning** | ExperienceReviewAgent turns conversations into reusable EXPERIENCE.md knowledge; Dream Engine consolidates archives into long-term memory |
 | **Context Governance** | ToolChainRepair + Microcompact + TokenBudget auto-optimization |
 | **Tool Approval** | The agent asks before writing/editing outside your project; approve via WebUI or `/approve`. Off by default; opt-in per agent |
-| **Multi-Agent Collaboration** | Main agent + persistent subagents, star-topology communication |
+| **Multi-Agent Collaboration** | Per-pool star (main agent + subagents via `send_to_agent`) + cross-pool peer messaging between main agents |
 | **Skill System** | Dynamic system prompt construction from Markdown skill files (`local_skills/` or bundled by packages) |
 | **Plugin System** | Dynamically extend tools, memory providers, and skill sources |
 | **Slash Commands** | `/approve`, `/deny`, `/continue`, and skill-triggering commands |
@@ -74,7 +74,7 @@ Browser (React)
     ┌────┴─────┬─────────┐
     ▼          ▼         ▼
 ┌────────┐ ┌────────┐ ┌────────┐
-│ main   │ │ coding │ │  ...   │  ← AgentPool instances
+│ main   │ │ coder  │ │  ...   │  ← AgentPool instances
 │  pool  │ │  pool  │ │  pool  │
 └────┬───┘ └────┬───┘ └────┬───┘
      │          │          │
@@ -410,7 +410,7 @@ approval:
     edit_file:  { allowed_paths: ["./*"] }
 ```
 
-See `config/pools/default/pool.yml` and `config/pools/coding/pool.yml` for live examples. In chat, reply `/approve` or `/deny`; in the WebUI, click the button on the approval card. (Approval never applies to subagents.)
+See `config/pools/default/pool.yml` and `config/pools/coder/pool.yml` for live examples. In chat, reply `/approve` or `/deny`; in the WebUI, click the button on the approval card. (Approval never applies to subagents.)
 
 <img src="../../assets/webui-approval.png" alt="Tool approval" width="860">
 
@@ -502,7 +502,7 @@ memory:
 
 ### Pools
 
-A **pool** is a self-contained agent deployment: one **main agent** plus zero or more **subagents** that collaborate in a star topology (subagents talk only to the main agent, never to each other). Pools are isolated from each other — each carries its own agents, system prompts, tools, memory, and sessions.
+A **pool** is a self-contained agent deployment: one **main agent** plus zero or more **subagents** that collaborate in a star topology (subagents talk only to the main agent, never to each other). Pools are isolated from each other — each carries its own agents, system prompts, tools, memory, and sessions. Main agents of different pools can talk to each other as peers via `send_to_agent` (cross-pool messaging), so a task in one pool can ask a specialist in another pool for help.
 
 On disk, a pool is a directory under `config/pools/` — **the directory name is the pool identity**:
 
@@ -512,7 +512,7 @@ config/pools/
 │   ├── pool.yml            # main agent config (max_steps, tools, approval, …)
 │   └── templates/          # subagent templates — one .yml each
 │       └── office-expert.yml
-└── coding/
+└── coder/
     ├── pool.yml
     └── templates/          # this pool's subagents
 ```
@@ -521,7 +521,7 @@ config/pools/
 - **Subagents** are `templates/*.yml` and register automatically — the main agent hands work to them via `send_to_agent`.
 - Choose which pool handles a conversation from the WebUI pool selector (or `/pool_name` in IM).
 
-The bundled `default` and `coding` pools are examples — use them as-is, inspect them, or replace them with your own.
+The bundled `default` and `coder` pools are examples — use them as-is, inspect them, or replace them with your own.
 
 ### Workspaces
 

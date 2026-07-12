@@ -13,7 +13,7 @@ import pytest
 from modex_agent.commands.handlers import SkillCommandHandler
 from modex_agent.commands.models import CommandContext, SlashCommandInvocation
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.skills import FileSkillSource, DefaultSkillBuilder, SkillManager
+from modex_agent.core.skills import DefaultSkillBuilder, FileSkillSource, SkillManager
 from modex_agent.core.skills.cache import DirectorySkillCache
 from modex_agent.core.types import InputMessage
 
@@ -109,12 +109,10 @@ async def test_build_pool_skill_manager_finds_skills() -> None:
         tmp_path = Path(tmp)
         skills_root = _setup_skill_dir(tmp_path)
 
-        # Simulate _build_pool_skill_manager logic
-        from modex_agent.ioc.configs.agent import AgentConfig
-
-        main_cfg = AgentConfig(name="main", role="main")
+        # Simulate _build_pool_skill_manager logic: agent name is now a string.
+        main_agent_name = "main"
         pool_name = "main"
-        directories = [tmp_path / "skills" / pool_name / main_cfg.name]
+        directories = [tmp_path / "skills" / pool_name / main_agent_name]
         found = [d for d in directories if d.exists()]
 
         assert len(found) > 0, "skills/main/main/ directory should exist"

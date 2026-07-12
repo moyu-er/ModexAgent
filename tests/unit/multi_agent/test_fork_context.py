@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from modex_agent.tools.presets import ContextMode, SystemPromptMode, ToolPreset
+from modex_agent.multi_agent.pool_config.specs import SubagentSpec
+from modex_agent.multi_agent.template import AgentTemplate
+from modex_agent.tools.presets import ContextMode, SystemPromptMode
 
 
 class TestForkContextPersistence:
@@ -50,7 +52,7 @@ class TestForkContextXMLFormat:
         """Each message has index, role, and CDATA content."""
         xml = (
             '<forked_context source="main">\n'
-            '  <info>Inherited 1 messages</info>\n'
+            "  <info>Inherited 1 messages</info>\n"
             '  <message index="0" role="user">\n'
             "    <![CDATA[Hello]]>\n"
             "  </message>\n"
@@ -65,27 +67,25 @@ class TestForkContextTemplateFields:
     """Template fork fields are parsed correctly."""
 
     def test_fork_max_messages_default(self) -> None:
-        from modex_agent.multi_agent.template import AgentTemplate
-
-        t = AgentTemplate(agent_name="test", context_mode=ContextMode.FORK)
-        assert t.fork_max_messages == 80
+        t = AgentTemplate(spec=SubagentSpec(agent_name="test", context_mode=ContextMode.FORK))
+        assert t.spec.fork_max_messages == 80
 
     def test_fork_max_messages_custom(self) -> None:
-        from modex_agent.multi_agent.template import AgentTemplate
-
         t = AgentTemplate(
-            agent_name="test",
-            context_mode=ContextMode.FORK,
-            fork_max_messages=50,
+            spec=SubagentSpec(
+                agent_name="test",
+                context_mode=ContextMode.FORK,
+                fork_max_messages=50,
+            )
         )
-        assert t.fork_max_messages == 50
+        assert t.spec.fork_max_messages == 50
 
     def test_system_prompt_mode_replace_for_oracle(self) -> None:
-        from modex_agent.multi_agent.template import AgentTemplate
-
         t = AgentTemplate(
-            agent_name="oracle",
-            context_mode=ContextMode.FORK,
-            system_prompt_mode=SystemPromptMode.REPLACE,
+            spec=SubagentSpec(
+                agent_name="oracle",
+                context_mode=ContextMode.FORK,
+                system_prompt_mode=SystemPromptMode.REPLACE,
+            )
         )
-        assert t.system_prompt_mode == SystemPromptMode.REPLACE
+        assert t.spec.system_prompt_mode == SystemPromptMode.REPLACE

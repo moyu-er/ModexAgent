@@ -241,6 +241,7 @@ class MemorySystemContextManager(ContextManager):
             BasePromptProvider,
             ExperienceProvider,
             KnowledgeProvider,
+            PeerCommunicationSystemPromptProvider,
             ProviderBlocksProvider,
             ProviderPrefetchProvider,
             PrunedProvider,
@@ -310,6 +311,8 @@ class MemorySystemContextManager(ContextManager):
 
         # 2c. Todo task discipline — gated on tool presence inside the provider
         providers.append(TodoAwareSystemPromptProvider(tool_manager))
+
+        providers.append(PeerCommunicationSystemPromptProvider(tool_manager))
 
         # 3. Memory layers from injection policy (disclaimer + knowledge + blocks + prefetch)
         if result.system_prompt:

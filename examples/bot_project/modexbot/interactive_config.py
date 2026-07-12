@@ -10,6 +10,7 @@ import questionary
 from rich.console import Console
 from rich.table import Table
 
+from modex_agent.core.constants import InterfaceFormat
 from modexbot.config_model import (
     load_models_section,
     save_models_section,
@@ -38,20 +39,31 @@ def _print_summary(section: dict[str, Any]) -> None:
 def _add_provider(p: Path, section: dict[str, Any]) -> None:
     key = questionary.text("provider key:", instruction=f"({_TEXT_HINT})").ask()
     name = questionary.text("provider display name:", instruction=f"({_TEXT_HINT})").ask()
-    url = questionary.text("base url:", instruction=f"({_TEXT_HINT})").ask()
+    base_url = questionary.text("base url:", instruction=f"({_TEXT_HINT})").ask()
     api_key = questionary.password("api key:").ask()
-    if not (key and name and url and api_key):
+    interface_format = questionary.select(
+        "interface format:",
+        choices=[
+            questionary.Choice("OpenAI Compatible", InterfaceFormat.OPENAI_COMPATIBLE.value),
+            questionary.Choice("Anthropic", InterfaceFormat.ANTHROPIC.value),
+        ],
+        default=InterfaceFormat.OPENAI_COMPATIBLE.value,
+        instruction=f"({_SELECT_HINT})",
+    ).ask()
+    if not (key and name and base_url and api_key and interface_format):
         _CONSOLE.print("Missing fields; provider not added.")
         return
     m_name = questionary.text("first model name:", instruction=f"({_TEXT_HINT})").ask()
-    m_model = questionary.text(
-        "model string (openai/... routes to OpenAI):", instruction=f"({_TEXT_HINT})"
-    ).ask()
+    m_model = questionary.text("model string:", instruction=f"({_TEXT_HINT})").ask()
     caps = questionary.checkbox(
         "capabilities:", choices=list(_CAPABILITY_CHOICES), instruction=f"({_CHECKBOX_HINT})"
     ).ask() or ["text"]
     provider = {
-        "key": key, "name": name, "url": url, "api_key": api_key,
+        "key": key,
+        "name": name,
+        "base_url": base_url,
+        "api_key": api_key,
+        "interface_format": interface_format,
         "models": [{"name": m_name, "model": m_model, "capabilities": caps}],
     }
     section.setdefault("providers", []).append(provider)
@@ -67,7 +79,9 @@ def _set_default(p: Path, section: dict[str, Any]) -> None:
     if not providers:
         _CONSOLE.print("No providers yet.")
         return
-    pname = questionary.select("provider:", choices=providers, instruction=f"({_SELECT_HINT})").ask()
+    pname = questionary.select(
+        "provider:", choices=providers, instruction=f"({_SELECT_HINT})"
+    ).ask()
     provider = next(pp for pp in section["providers"] if pp["name"] == pname)
     models = [m["name"] for m in provider.get("models") or []]
     mname = questionary.select("model:", choices=models, instruction=f"({_SELECT_HINT})").ask()
@@ -98,6 +112,4 @@ def run_config_wizard(model_path: Path) -> None:
 
 
 if __name__ == "__main__":
-    run_config_wizard(
-        Path(__file__).resolve().parent.parent / "config" / "model.yml"
-    )
+    run_config_wizard(Path(__file__).resolve().parent.parent / "config" / "model.yml")

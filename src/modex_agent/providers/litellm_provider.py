@@ -12,7 +12,7 @@ import time
 from collections.abc import Callable
 from typing import Any, ClassVar
 
-from modex_agent.core.constants import DefaultValues, FinishReason, ToolChoice
+from modex_agent.core.constants import DefaultValues, FinishReason, ReasoningEffort, ToolChoice
 from modex_agent.core.llm_struct import (
     RuntimeSafetyPolicy,
     build_timeout_response,
@@ -24,6 +24,7 @@ from modex_agent.core.tool_call_accumulator import (
     parse_tool_call_chunks_from_delta,
 )
 from modex_agent.core.types import LLMResponse, ToolCall
+from modex_agent.providers.shared.constants import inject_reasoning_effort
 from modex_agent.utils.think_tag import ThinkTagExtractor
 
 try:
@@ -82,7 +83,7 @@ class LiteLLMProvider(StreamingLLMProvider):
         timeout: float = DefaultValues.TIMEOUT_SECONDS,
         stream_idle_timeout: float = 90.0,
         parse_think_tags: bool = True,
-        reasoning_effort: str | None = None,
+        reasoning_effort: ReasoningEffort = ReasoningEffort.NONE,
         safety: RuntimeSafetyPolicy | None = None,
         **kwargs,
     ) -> None:
@@ -188,8 +189,7 @@ class LiteLLMProvider(StreamingLLMProvider):
         if stream:
             params["stream"] = True
 
-        if self._reasoning_effort is not None and "reasoning_effort" not in params:
-            params["reasoning_effort"] = self._reasoning_effort
+        inject_reasoning_effort(params, self._reasoning_effort)
 
         if tools:
             params["tools"] = tools

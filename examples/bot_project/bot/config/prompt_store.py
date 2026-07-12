@@ -18,7 +18,7 @@ import os
 import re
 from pathlib import Path
 
-from bot.config.pool_payloads import PromptContent
+from bot.config import PromptContent
 
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_-]+$")
 
@@ -47,9 +47,7 @@ class PromptValidationError(ValueError):
 
 def _validate_agent_name(name: str) -> None:
     if not isinstance(name, str) or not _NAME_RE.match(name):
-        raise PromptValidationError(
-            f"Invalid agent name {name!r}: must match {_NAME_RE.pattern}"
-        )
+        raise PromptValidationError(f"Invalid agent name {name!r}: must match {_NAME_RE.pattern}")
     if name in {".", ".."} or "/" in name or "\\" in name:
         raise PromptValidationError(f"Invalid agent name {name!r}: traversal")
 

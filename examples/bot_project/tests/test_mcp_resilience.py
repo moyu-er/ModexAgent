@@ -1,9 +1,3 @@
-"""Tests for MCP resilience in pool building.
-
-Ensures MCP selection resolution / failures do not block the main
-tool-manager / pool creation flow.
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -13,28 +7,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from bot.service.pool_builder import _build_tools
-from modex_agent.ioc.configs.agent import AgentConfig
-from modex_agent.ioc.configs.memory import MemoryConfig
-from modex_agent.ioc.configs.pool import PoolConfig
-
-
-def _pool_cfg() -> PoolConfig:
-    return PoolConfig(
-        name="main",
-        main_agent_name="main",
-        agents=[AgentConfig(name="main", role="main")],
-        memory=MemoryConfig(),
-    )
+from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
+from modex_agent.multi_agent.pool_config.specs import MainAgentSpec
 
 
 class TestBuildToolsMcpResilience:
     @pytest.fixture
-    def minimal_pool_cfg(self) -> PoolConfig:
-        return _pool_cfg()
+    def main_spec(self) -> MainAgentSpec:
+        return MainAgentSpec(agent_name="main")
 
     @pytest.fixture
-    def minimal_main_cfg(self) -> AgentConfig:
-        return AgentConfig(name="main", role="main")
+    def assembly_deps(self) -> PoolAssemblyDeps:
+        return PoolAssemblyDeps()
 
     @pytest.fixture
     def project_dir(self) -> Path:
@@ -48,14 +32,12 @@ class TestBuildToolsMcpResilience:
     @pytest.mark.asyncio
     async def test_mcp_empty_selection_skips_loading(
         self,
-        minimal_pool_cfg: PoolConfig,
-        minimal_main_cfg: AgentConfig,
+        main_spec: MainAgentSpec,
+        assembly_deps: PoolAssemblyDeps,
         project_dir: Path,
         data_dir: Path,
     ) -> None:
-        """Empty mcp selection → no MCP tools loaded."""
-        # main_cfg.mcp defaults to []
-        assert minimal_main_cfg.mcp == []
+        assert main_spec.mcp == []
 
         output_adapter = MagicMock()
 
@@ -64,8 +46,8 @@ class TestBuildToolsMcpResilience:
             new=AsyncMock(return_value=([], None)),
         ) as mock_load_mcp:
             tool_manager, mcp_manager, _todo_store = await _build_tools(
-                pool_cfg=minimal_pool_cfg,
-                main_cfg=minimal_main_cfg,
+                main_spec=main_spec,
+                assembly_deps=assembly_deps,
                 terminal_manager=None,
                 project_dir=project_dir,
                 output_adapter=output_adapter,
@@ -83,12 +65,11 @@ class TestBuildToolsMcpResilience:
     @pytest.mark.asyncio
     async def test_mcp_failure_does_not_block_tool_manager(
         self,
-        minimal_pool_cfg: PoolConfig,
+        assembly_deps: PoolAssemblyDeps,
         project_dir: Path,
         data_dir: Path,
     ) -> None:
-        """When MCP loading raises, the tool manager is still built."""
-        main_cfg = AgentConfig(name="main", role="main", mcp=["playwright"])
+        main_spec = MainAgentSpec(agent_name="main", mcp=["playwright"])
 
         output_adapter = MagicMock()
 
@@ -97,8 +78,8 @@ class TestBuildToolsMcpResilience:
             new=AsyncMock(side_effect=RuntimeError("MCP boom")),
         ) as mock_load_mcp:
             tool_manager, mcp_manager, _todo_store = await _build_tools(
-                pool_cfg=minimal_pool_cfg,
-                main_cfg=main_cfg,
+                main_spec=main_spec,
+                assembly_deps=assembly_deps,
                 terminal_manager=None,
                 project_dir=project_dir,
                 output_adapter=output_adapter,

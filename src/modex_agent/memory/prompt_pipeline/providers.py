@@ -101,6 +101,68 @@ class TodoAwareSystemPromptProvider(SystemPromptProvider):
         return _TODO_TASK_DISCIPLINE_PROMPT if self._has_todo_tools() else ""
 
 
+class PeerCommunicationSystemPromptProvider(SystemPromptProvider):
+    """Injects the remote-agent reply contract.
+
+    Fires only when the agent owns ``send_to_agent`` AND at least one of its
+    targets is a remote agent (a ``CommunicationTarget`` whose ``bus_ref`` is
+    set — the target does not share this agent's bus, so there is no implicit
+    reply path). For those targets the agent's ordinary output is invisible
+    and a reply is only possible via ``send_to_agent``.
+
+    The contract makes this unmissable without ever naming the underlying
+    topology (the agent stays unaware of pools, main-vs-subagent roles, or any
+    routing machinery): it only knows some reachable agents require explicit
+    sends to receive anything back.
+
+    Replies are OPTIONAL — forcing them would create infinite ping-pong.
+
+    Version is derived from the sorted remote target names so the cache
+    invalidates exactly when the reachable set changes.
+    """
+
+    def __init__(self, tool_manager: ToolManager | None) -> None:
+        super().__init__()
+        self._tool_manager = tool_manager
+
+    def _remote_target_names(self) -> list[str]:
+        if self._tool_manager is None:
+            return []
+        tool = self._tool_manager.get_tool("send_to_agent")
+        if tool is None:
+            return []
+        from modex_agent.multi_agent.tools import SendToAgentTool
+
+        if not isinstance(tool, SendToAgentTool):
+            return []
+        return sorted(
+            t.name for t in tool.list_targets() if t.bus_ref is not None
+        )
+
+    async def _fetch_version(self) -> str:
+        names = self._remote_target_names()
+        return "remote-comm:" + ",".join(names) if names else "no-remote-comm"
+
+    async def _fetch_content(self) -> str:
+        names = self._remote_target_names()
+        if not names:
+            return ""
+        name_list = "\n".join(f"  - {name}" for name in names)
+        return (
+            "## Communicating With Remote Agents\n\n"
+            "Some agents you can reach via `send_to_agent` cannot see anything "
+            "you produce normally — not this reply, not your reasoning, not your "
+            "tool output. For these agents the ONLY way they ever hear from you "
+            "is a `send_to_agent` call aimed at them.\n\n"
+            "Agents that require explicit sends:\n"
+            f"{name_list}\n\n"
+            "Replies are OPTIONAL. Only call `send_to_agent` back when the sender "
+            "actually needs your response — do NOT acknowledge just to be polite, "
+            "and do NOT ping-pong. If the incoming message does not require action "
+            "from you, end your turn without replying.\n"
+        )
+
+
 class RuntimeProvider(SystemPromptProvider):
     """Runtime metadata — current date/hour and platform. Refreshes hourly."""
 

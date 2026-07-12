@@ -36,12 +36,72 @@ class TestStoreAdd:
         store.add(_normal("coding", "Coding expert"))
         assert store.has("coding")
 
-    def test_add_duplicate_is_noop(self) -> None:
+    def test_communication_target_store_rejects_duplicate_name(self) -> None:
+        """ValueError MUST include both pool names so cross-pool peer wiring
+        can never silently overwrite an existing target."""
         store = CommunicationTargetStore()
-        store.add(_normal("coding", "desc1"))
-        store.add(_normal("coding", "desc2"))
+        existing = CommunicationTarget(
+            name="peer-main",
+            kind=AgentCommKind.NORMAL,
+            description="local",
+            pool_name="local-pool",
+        )
+        incoming = CommunicationTarget(
+            name="peer-main",
+            kind=AgentCommKind.NORMAL,
+            description="remote",
+            pool_name="peer-pool",
+        )
+        store.add(existing)
+        with pytest.raises(ValueError) as excinfo:
+            store.add(incoming)
+        msg = str(excinfo.value)
+        assert "peer-main" in msg
+        assert "local-pool" in msg
+        assert "peer-pool" in msg
+        assert store.get("peer-main") is existing
         assert len(store.list()) == 1
-        assert store.list()[0].description == "desc1"
+
+
+class TestStoreGet:
+    def test_communication_target_get_returns_target_or_none(self) -> None:
+        store = CommunicationTargetStore()
+        registered = CommunicationTarget(
+            name="alpha",
+            kind=AgentCommKind.NORMAL,
+            description="first",
+            pool_name="pool-a",
+        )
+        store.add(registered)
+        assert store.get("alpha") is registered
+        assert store.get("missing") is None
+
+    def test_get_in_subagent_mode_resolves_parent(self) -> None:
+        from modex_agent.core.agent import AgentContext, current_agent_context
+        from modex_agent.core.session_id import SessionInfo
+        from modex_agent.core.tool_manager import InMemoryToolManager
+        from modex_agent.memory.history import ListMessageHistory
+
+        ctx = AgentContext(
+            system_prompt="",
+            history=ListMessageHistory([]),
+            tool_manager=InMemoryToolManager(),
+            session=SessionInfo(
+                session_id="conv-1.worker",
+                agent_name="worker",
+                parent_session_id="conv-1.main",
+            ),
+        )
+        store = CommunicationTargetStore(for_subagent=True)
+        token = current_agent_context.set(ctx)
+        try:
+            resolved = store.get("main")
+        finally:
+            current_agent_context.reset(token)
+        assert resolved is not None
+        assert resolved.name == "main"
+        assert resolved.kind == AgentCommKind.NORMAL
+        assert store.get("other") is None
 
 
 class TestStorePop:
@@ -120,14 +180,61 @@ class TestStoreDescription:
         assert "scout" not in second
 
 
+class TestNormalDescriptionTwoKindContract:
+    """Description MUST distinguish subagent vs normal targets so the LLM
+    picks the right relationship: subagent = helper to delegate to;
+    normal = independent peer to communicate with as equals."""
+
+    def test_empty_store_silent_on_kind(self) -> None:
+        store = CommunicationTargetStore()
+        desc = store.description.lower()
+        assert "subagent" not in desc
+        assert "normal" not in desc
+
+    def test_with_targets_explains_two_kinds(self) -> None:
+        store = CommunicationTargetStore()
+        store.add(_subagent("scout"))
+        store.add(_normal("coding"))
+        desc = store.description
+        assert "(subagent)" in desc
+        assert "(normal)" in desc
+        assert "your helper" in desc.lower()
+        assert "independent peer" in desc.lower()
+        assert "as equals" in desc.lower()
+
+    def test_with_targets_emphasizes_only_channel(self) -> None:
+        store = CommunicationTargetStore()
+        store.add(_normal("coding"))
+        desc = store.description
+        assert "ONLY channel" in desc
+
+    def test_with_targets_warns_against_acknowledgement_spam(self) -> None:
+        store = CommunicationTargetStore()
+        store.add(_normal("coding"))
+        desc = store.description.lower()
+        assert "acknowledge" in desc
+
+    def test_content_param_hint_differs_per_kind(self) -> None:
+        """Each kind bullet MUST cover both content style and invocation_id
+        handling — they are inseparable from the relationship itself."""
+        store = CommunicationTargetStore()
+        store.add(_subagent("scout"))
+        store.add(_normal("coding"))
+        desc = store.description.lower()
+        assert "put the task in `content`" in desc
+        assert "colleague" in desc
+        assert "thread `invocation_id`" in desc
+        assert "`invocation_id` is ignored" in desc
+
+
 class TestStoreSubagentDescription:
     def test_subagent_description_shows_parent_name_only(self) -> None:
         """Subagent description echoes the parent NAME resolved from the
         contextvar (not a static add()), and never leaks kind/description."""
         from modex_agent.core.agent import AgentContext, current_agent_context
         from modex_agent.core.session_id import SessionInfo
-        from modex_agent.memory.history import ListMessageHistory
         from modex_agent.core.tool_manager import InMemoryToolManager
+        from modex_agent.memory.history import ListMessageHistory
 
         ctx = AgentContext(
             system_prompt="",
@@ -169,8 +276,8 @@ class TestStoreSubagentDynamicParent:
     def test_list_targets_returns_parent_only(self) -> None:
         from modex_agent.core.agent import AgentContext, current_agent_context
         from modex_agent.core.session_id import SessionInfo
-        from modex_agent.memory.history import ListMessageHistory
         from modex_agent.core.tool_manager import InMemoryToolManager
+        from modex_agent.memory.history import ListMessageHistory
 
         ctx = AgentContext(
             system_prompt="",
@@ -200,8 +307,8 @@ class TestStoreSubagentDynamicParent:
     def test_has_target_matches_parent_only(self) -> None:
         from modex_agent.core.agent import AgentContext, current_agent_context
         from modex_agent.core.session_id import SessionInfo
-        from modex_agent.memory.history import ListMessageHistory
         from modex_agent.core.tool_manager import InMemoryToolManager
+        from modex_agent.memory.history import ListMessageHistory
 
         ctx = AgentContext(
             system_prompt="",
@@ -230,8 +337,8 @@ class TestStoreSubagentDynamicParent:
     def test_no_parent_session_id_returns_empty(self) -> None:
         from modex_agent.core.agent import AgentContext, current_agent_context
         from modex_agent.core.session_id import SessionInfo
-        from modex_agent.memory.history import ListMessageHistory
         from modex_agent.core.tool_manager import InMemoryToolManager
+        from modex_agent.memory.history import ListMessageHistory
 
         ctx = AgentContext(
             system_prompt="",

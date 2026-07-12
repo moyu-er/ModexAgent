@@ -22,7 +22,7 @@ from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.core.session_store import SessionStore
 from modex_agent.core.types import InputMessage
-from modex_agent.messaging.broker import MessageBroker
+from modex_agent.messaging.broker import AddressKind, MessageBroker
 from modex_agent.messaging.broker_bridge import (
     BrokerInputPayload,
     approval_decision_from_payload,
@@ -32,7 +32,6 @@ from modex_agent.runtime.dispatch import DispatchDeadline, current_dispatch_dead
 
 from .address import AgentAddress
 from .bus import AgentMessageBus
-from .comm_tracker import CommunicationTracker
 from .descriptor import AgentDescriptor, AgentInstance
 from .envelope import AgentMessageEnvelope
 from .factory import AgentFactory
@@ -108,7 +107,6 @@ class AgentPool(AgentRegistry):
         session_factory: SessionIdFactory | None = None,
         safety: RuntimeSafetyPolicy | None = None,
         retention: SessionRetentionPolicy | None = None,
-        comm_tracker: CommunicationTracker | None = None,
         session_registry: SessionRegistry | None = None,
         session_store: SessionStore | None = None,
     ) -> None:
@@ -129,7 +127,6 @@ class AgentPool(AgentRegistry):
         self._session_registry = session_registry
         self._session_store = session_store
         self._retention = retention or SessionRetentionPolicy()
-        self._comm_tracker = comm_tracker
         self._cleanup_task: asyncio.Task[None] | None = None
         self._active_session_counts: dict[str, int] = {}
         self._error_counts: dict[str, int] = {}
@@ -202,6 +199,11 @@ class AgentPool(AgentRegistry):
         """Attach this pool's InboxPoller (created by create_pool wiring)."""
         self._poller = poller
 
+    @property
+    def session_registry(self) -> SessionRegistry | None:
+        """Expose the session registry for poller and wiring access."""
+        return self._session_registry
+
     def start_poller(self) -> None:
         """Start the attached poller, if any."""
         if self._poller is not None:
@@ -253,9 +255,9 @@ class AgentPool(AgentRegistry):
 
         envelope = AgentMessageEnvelope(
             payload=payload,
-            source=AgentAddress(kind="channel", name=message.source or "user"),
+            source=AgentAddress(kind=AddressKind.CHANNEL, name=message.source or "user"),
             target=AgentAddress(
-                kind="agent", name=SessionInfo.from_str(session_id).agent_name
+                kind=AddressKind.AGENT, name=SessionInfo.from_str(session_id).agent_name
             ),
             message_type=AgentMessageType.EXTERNAL_INPUT,
             session_id=message.session.session_id_prefix,
@@ -365,8 +367,6 @@ class AgentPool(AgentRegistry):
                 session_id,
             )
         metadata = self._envelope_metadata(envelope)
-        if self._comm_tracker is not None:
-            self._comm_tracker.build_prompt_section(agent_name)
         await self._run_dispatch(
             agent_name,
             instance.pipeline.process_message(

@@ -1,7 +1,7 @@
 """Tests for the opt-in shared-registry branch at the two MCP call sites.
 
 Per ADR-0017 Task 4. ``connect_mcp`` (ioc.factories.tools) and
-``_load_per_agent_mcp`` (multi_agent.communication) gain an optional ``registry``
+``load_per_agent_mcp`` (tools.mcp_loader) gain an optional ``registry``
 keyword. When set, they obtain a :class:`SharedMcpBackend` via
 ``registry.acquire(selection)`` instead of building a private ``MCPClientManager``.
 When ``registry=None`` (default), today's behavior is byte-for-byte unchanged.
@@ -22,13 +22,13 @@ import pytest
 
 from modex_agent.ioc.configs.mcp import MCPConfig, MCPServerEntry
 from modex_agent.ioc.factories.tools import connect_mcp
-from modex_agent.multi_agent.communication import _load_per_agent_mcp
 from modex_agent.tools.mcp.client import BaseMCPClient
 from modex_agent.tools.mcp.injector import MCPTransportInjector
 from modex_agent.tools.mcp.registry import (
     McpConnectionRegistry,
     SharedMcpBackend,
 )
+from modex_agent.tools.mcp_loader import load_per_agent_mcp
 
 
 class _StubClient(BaseMCPClient):
@@ -170,7 +170,7 @@ async def test_connect_mcp_none_config_returns_none() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# _load_per_agent_mcp (multi_agent.communication)
+# load_per_agent_mcp (tools.mcp_loader)
 # --------------------------------------------------------------------------- #
 
 @pytest.mark.asyncio
@@ -187,7 +187,7 @@ async def test_load_per_agent_mcp_uses_registry_when_provided(tmp_path: Path) ->
         tm = InMemoryToolManager()
         # tmp_path has NO config/mcp/registry.json — the registry branch must
         # not touch it, proving registry.json was bypassed.
-        await _load_per_agent_mcp(
+        await load_per_agent_mcp(
             tm, ["s1"], project_dir=tmp_path, agent_name="a", registry=reg,
         )
         # default_prefix=True → mcp_<server>_<tool>
@@ -210,7 +210,7 @@ async def test_load_per_agent_mcp_registry_acquire_failure_is_fail_soft(
     try:
         tm = InMemoryToolManager()
         # Must not raise; the selected server fails to connect → no tools.
-        await _load_per_agent_mcp(
+        await load_per_agent_mcp(
             tm, ["s1"], project_dir=tmp_path, agent_name="a", registry=reg,
         )
         assert tm.list_tools() == []
@@ -225,7 +225,7 @@ async def test_load_per_agent_mcp_falls_back_without_registry(tmp_path: Path) ->
 
     tm = InMemoryToolManager()
     # tmp_path has no config/mcp/registry.json → early "missing; skipping" return.
-    await _load_per_agent_mcp(
+    await load_per_agent_mcp(
         tm, ["s1"], project_dir=tmp_path, agent_name="a",
     )
     assert tm.list_tools() == []

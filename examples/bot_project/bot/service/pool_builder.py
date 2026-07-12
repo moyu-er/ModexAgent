@@ -1,7 +1,7 @@
-"""Pool builder — IOC-style factory that builds one PoolInstance from PoolConfig.
+"""Pool builder — IOC-style factory that builds one PoolInstance from PoolSpec.
 
 Each build step is a focused method.  Convention over configuration:
-config drives behaviour; methods read from PoolConfig / AgentConfig with
+config drives behaviour; methods read from PoolSpec / MainAgentSpec with
 sensible defaults.  No giant if-else chains.
 """
 
@@ -12,6 +12,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import replace as _dc_replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from modex_agent.messaging import MessageBroker
 
 if TYPE_CHECKING:
     # ``WorkspaceHandle`` / ``WorkspaceResolverCell`` live in the bundle,
@@ -40,16 +42,14 @@ from modex_agent.core.scope import MemoryContext
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.core.session_store import SessionStore
-from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
+from modex_agent.core.tool_manager import InMemoryToolManager, Tool, ToolManagerConfig
 from modex_agent.hook import HookErrorPolicy, HookRunner, HookSpec
 from modex_agent.hook.notification import (
     AgentNotificationService,
     MaxIterationNotifyHook,
     TurnOutcomeNotifyHook,
 )
-from modex_agent.ioc.configs.agent import AgentConfig
 from modex_agent.ioc.configs.memory import MemoryConfig
-from modex_agent.ioc.configs.pool import PoolConfig
 from modex_agent.ioc.factories.governance import create_governance
 from modex_agent.memory.cleanup_events import MemoryCleanupListener
 from modex_agent.memory.default_system import DefaultMemorySystem
@@ -64,13 +64,15 @@ from modex_agent.multi_agent import (
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import LocalAgentMessageBus
 from modex_agent.multi_agent.comm_kind import AgentCommKind
-from modex_agent.multi_agent.comm_tracker import CommunicationTracker
 from modex_agent.multi_agent.communication import AgentCommunicationService
 from modex_agent.multi_agent.context_fork import ContextForkBuilder
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_local import LocalFileInboxServer
 from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
+from modex_agent.multi_agent.pool_config import PoolAssemblyDeps, PoolStore
+from modex_agent.multi_agent.pool_config.specs import MainAgentSpec, PoolSpec
+from modex_agent.multi_agent.pool_instance import PoolInstance
 from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 from modex_agent.multi_agent.tools import (
     CommunicationTarget,
@@ -98,7 +100,6 @@ from modex_agent.tools.workspace_scoped import (
 )
 
 from .builders import _load_agent_mcp_tools, resolve_system_prompt
-from .pool_instance import PoolInstance
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +111,8 @@ logger = logging.getLogger(__name__)
 
 async def create_pool(
     pool_name: str,
-    pool_cfg: PoolConfig,
+    pool_spec: PoolSpec,
+    assembly_deps: PoolAssemblyDeps,
     *,
     project_dir: Path,
     data_dir: Path,
@@ -118,7 +120,6 @@ async def create_pool(
     output_adapter: OutputAdapter,
     safety: RuntimeSafetyPolicy,
     retention: SessionRetentionPolicy,
-    comm_tracker: CommunicationTracker,
     im_ui: Any,
     shared_hooks: list,
     shared_hook_runner: HookRunner,
@@ -139,7 +140,7 @@ async def create_pool(
     model_choice_registry: ModelChoiceRegistry,
     mcp_registry: McpConnectionRegistry | None = None,
 ) -> PoolInstance:
-    """Build one PoolInstance's DEPLOYMENT resources from PoolConfig.
+    """Build one PoolInstance's DEPLOYMENT resources from PoolSpec + deps.
 
     Per-pool data (memory / runtime stores / experience layer) is owned by
     the workspace and passed in as the already-built ``pool_data`` snapshot;
@@ -148,15 +149,12 @@ async def create_pool(
     is the FIXED per-workspace target/data-root used to scope file/shell tools
     to this workspace (None = legacy/non-workspace path, e.g. unit tests).
     """
-    main_cfg = _require_main_agent(pool_cfg)
-    # Main-agent memory is a baked default, resolved once at workspace wiring
-    # (bot.workspace.wiring._build_resources) before this factory runs — so
-    # pool_cfg.memory is already non-None here.
-    main_agent_name = main_cfg.name
-    system_prompt = resolve_system_prompt(main_cfg, project_dir)
+    main_spec = pool_spec.main
+    main_agent_name = main_spec.agent_name
+    system_prompt = resolve_system_prompt(main_agent_name, project_dir)
 
-    provider = _build_llm_provider(pool_cfg, pool_name, bot_model_config)
-    terminal_manager = _build_terminal_manager(pool_cfg, pool_name, workspace_handle)
+    provider = _build_llm_provider(pool_name, bot_model_config)
+    terminal_manager = _build_terminal_manager(main_spec, pool_name, workspace_handle)
     default_resolved = bot_model_config.default_resolved()
 
     # Task 7: PER-POOL inbox + bus. Each pool owns its own LocalFileInboxServer
@@ -178,11 +176,11 @@ async def create_pool(
     context_manager = (
         pool_data.context_manager
         if pool_data is not None
-        else _fallback_context_manager(main_cfg, system_prompt)
+        else _fallback_context_manager(main_spec, system_prompt)
     )
     if pool_data is not None:
         await ensure_long_term_defaults(
-            project_dir, pool_cfg.memory, pool_data.context_manager.memory_system
+            project_dir, assembly_deps.memory, pool_data.context_manager.memory_system
         )
 
     root_provider: WorkspaceRootProvider | None = None
@@ -201,14 +199,14 @@ async def create_pool(
     if workspace_resolver is not None:
         sessions_dir_provider = lambda: _cell_sessions_dir(workspace_resolver)
     tool_manager, mcp_manager, todo_store = await _build_tools(
-        pool_cfg, main_cfg, terminal_manager, project_dir,
+        main_spec, assembly_deps, terminal_manager, project_dir,
         output_adapter, pool_name, data_dir, pool_data, root_provider,
         transcript_store=transcript_store,
         sessions_dir_provider=sessions_dir_provider,
         mcp_registry=mcp_registry,
     )
 
-    skill_manager = _build_skill_manager(main_cfg, project_dir, pool_name)
+    skill_manager = _build_skill_manager(main_agent_name, project_dir, pool_name)
     factory = _build_agent_factory(
         provider, tool_manager, skill_manager,
         inbox_server, shared_hooks, shared_hook_runner,
@@ -218,7 +216,7 @@ async def create_pool(
     session_factory = SessionIdFactory()
     pool = _build_agent_pool(
         broker, factory, context_manager, agent_bus,
-        inbox_consumer, session_factory, safety, retention, comm_tracker,
+        inbox_consumer, session_factory, safety, retention,
         pool_name,
         session_registry=session_registry,
         session_store=session_store,
@@ -229,11 +227,11 @@ async def create_pool(
     # ── Materialize deps + template registry (built once, injected into pool) ──
     # ADR-0015 D5: the deps bundle carries subagent construction params; the
     # template registry holds the YAML-defined SUBAGENT templates (the normal
-    # agent is a plain AgentConfig inline in pool.yml, NOT a template). Both
+    # agent is the main-agent MainAgentSpec inline in pool.yml, NOT a template). Both
     # are constructed here (before _register_main_agent) so the lazy
     # InboxPoller-spawner shares the same bundle.
     template_registry = AgentTemplateRegistry(
-        project_dir,
+        PoolStore(base_dir=project_dir),
         default_subagent_memory=subagent_memory(),
     )
     templates = template_registry.list_templates(pool_name)
@@ -258,11 +256,11 @@ async def create_pool(
         pool=pool,
         session_factory=session_factory,
         broker=broker,
-        comm_tracker=comm_tracker,
         safety=safety,
         llm_model=default_resolved.model.model,
         llm_temperature=default_resolved.model.temperature,
         llm_max_output_tokens=default_resolved.model.max_output_tokens,
+        llm_reasoning_effort=default_resolved.model.reasoning_effort,
         project_dir=project_dir,
         notification_service=notification_service,
         inbox_consumer=inbox_consumer,
@@ -291,7 +289,7 @@ async def create_pool(
     pool.start_poller()
 
     await _register_main_agent(
-        pool, main_cfg, pool_cfg, system_prompt, safety, pool_name,
+        pool, main_spec, assembly_deps, system_prompt, safety, pool_name,
         factory=factory, broker=broker, context_manager=context_manager,
         bot_model_config=bot_model_config,
     )
@@ -307,7 +305,7 @@ async def create_pool(
             )
     main_service, main_store = _build_communication(
         pool, main_agent_name, broker, agent_bus,
-        comm_tracker, project_dir, pool_name, templates, template_registry,
+        project_dir, pool_name, templates, template_registry,
         session_registry=session_registry,
         workspace_path_resolver=path_resolver,
     )
@@ -319,7 +317,6 @@ async def create_pool(
             registry=pool,
             agent_bus=agent_bus,
             service=main_service,
-            comm_tracker=comm_tracker,
         )
     )
     main_service._target_store = main_store
@@ -329,7 +326,7 @@ async def create_pool(
         pool, main_agent_name, inbox_consumer,
         notification_service,
         shared_interceptor_chain,
-        im_ui, pool_cfg, project_dir,
+        im_ui, main_spec, assembly_deps, project_dir,
         command_processor, pool_name,
         tool_manager=tool_manager,
         root_provider=root_provider,
@@ -350,7 +347,8 @@ async def create_pool(
 
     return PoolInstance(
         name=pool_name,
-        config=pool_cfg,
+        media=assembly_deps.media,
+        subagent_count=len(pool_spec.subagents),
         pool=pool,
         broker_bridge=bridge,
         tool_manager=tool_manager,
@@ -361,10 +359,12 @@ async def create_pool(
         provider=provider,
         notification_service=notification_service,
         communication_service=main_service,
+        agent_bus=agent_bus,
+        target_store=main_store,
     )
 
 
-def _fallback_context_manager(main_cfg: AgentConfig, system_prompt: str) -> Any:
+def _fallback_context_manager(main_spec: MainAgentSpec, system_prompt: str) -> Any:
     """A minimal context_manager for tests / non-workspace wiring.
 
     The main agent's real context manager comes from the workspace pool_data;
@@ -374,7 +374,7 @@ def _fallback_context_manager(main_cfg: AgentConfig, system_prompt: str) -> Any:
 
     return MemorySystemContextManager(
         memory_system=None,
-        default_agent_id=main_cfg.name,
+        default_agent_id=main_spec.agent_name,
         default_agent_role="main",
         base_system_prompt=system_prompt,
         injection_policy=FullInjectionPolicy(pruned_manager=None),
@@ -387,15 +387,8 @@ def _fallback_context_manager(main_cfg: AgentConfig, system_prompt: str) -> Any:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-def _require_main_agent(pool_cfg: PoolConfig) -> AgentConfig:
-    for a in pool_cfg.agents:
-        if a.role == "main":
-            return a
-    raise ValueError(f"Pool has no agent with role='main': {pool_cfg}")
-
-
 def _build_llm_provider(
-    pool_cfg: PoolConfig, pool_name: str, bot_model_config: BotModelConfig
+    pool_name: str, bot_model_config: BotModelConfig
 ) -> BotModelProvider:
     provider = BotModelProvider(bot_model_config)
     logger.info("Pool '%s': BotModelProvider (default=%s)", pool_name, provider.model)
@@ -406,19 +399,18 @@ def _build_llm_provider(
 
 
 def _build_terminal_manager(
-    pool_cfg: PoolConfig,
+    main_spec: MainAgentSpec,
     pool_name: str,
     workspace_handle: WorkspaceHandle | None,
 ) -> Any | None:
-    """Create terminal manager from pool config.
+    """Create terminal manager from main agent spec.
 
     ADR-0010 two-axis construction. The user-facing YAML fields ``use_terminal``
     (bool) and ``terminal_visibility`` (bool) live on the pool's main-agent
-    ``AgentConfig`` (inline in ``config/pools/<pool>/pool.yml`` `agents:`
-    block). The framework translates ``True`` → ``TerminalVisibility.VISIBLE``
-    and ``False`` → ``TerminalVisibility.HIDDEN`` and constructs the manager via
-    the two-axis ``create_terminal_manager(shell_info=..., visibility=...)``
-    signature.
+    ``MainAgentSpec``. The framework translates ``True`` →
+    ``TerminalVisibility.VISIBLE`` and ``False`` → ``TerminalVisibility.HIDDEN``
+    and constructs the manager via the two-axis
+    ``create_terminal_manager(shell_info=..., visibility=...)`` signature.
 
     Fallback chain: if the requested VISIBLE backend cannot be created on this
     platform (``UnsupportedVisibilityForTransport``), retry with HIDDEN. If HIDDEN
@@ -431,16 +423,11 @@ def _build_terminal_manager(
     combination surfaces as ``UnsupportedVisibilityForTransport`` from the call
     below (validation is encapsulated in the factory, not duplicated here).
     """
-    use_terminal = any(getattr(a, "use_terminal", False) for a in pool_cfg.agents)
-    if not use_terminal:
+    if not main_spec.use_terminal:
         logger.info("Pool '%s': use_terminal=false, skipping terminal tools", pool_name)
         return None
 
-    visibility_bool: bool = True
-    for a in pool_cfg.agents:
-        if getattr(a, "role", None) == "main":
-            visibility_bool = getattr(a, "terminal_visibility", True)
-            break
+    visibility_bool: bool = main_spec.terminal_visibility
 
     shell_info = detect_platform_shell()
     if shell_info is None:
@@ -589,8 +576,8 @@ async def ensure_long_term_defaults(
 
 
 async def _build_tools(
-    pool_cfg: PoolConfig,
-    main_cfg: AgentConfig,
+    main_spec: MainAgentSpec,
+    assembly_deps: PoolAssemblyDeps,
     terminal_manager,
     project_dir: Path,
     output_adapter,
@@ -606,10 +593,10 @@ async def _build_tools(
     """Build the main agent's tool manager from config.
 
     Tool assembly order: preset tools (file/search/bash gated by
-    ``main_cfg.tool_preset``), additive supplements (``main_cfg.tool_supplements``,
+    ``main_spec.tool_preset``), additive supplements (``main_spec.tool_supplements``,
     e.g. ast_grep), terminal tools (when ``terminal_manager`` is set), the
     custom send_file_to_user tool, the experience tool (when enabled), todo
-    tools, and MCP tools resolved from ``main_cfg.mcp`` via the registry.
+    tools, and MCP tools resolved from ``main_spec.mcp`` via the registry.
     ``send_to_agent`` is registered separately in ``create_pool`` after the
     communication service is wired.
 
@@ -632,7 +619,7 @@ async def _build_tools(
         todo_dir = data_dir / "runtime_state" / pool_name / "todos"
     todo_store = JsonFileTodoStore(todo_dir)
 
-    # Preset tools: file/search/bash gated by main_cfg.tool_preset. A bash
+    # Preset tools: file/search/bash gated by main_spec.tool_preset. A bash
     # factory is provided so FULL/READ_WRITE/READ_ONLY presets get a
     # workspace-scoped SubprocessTool; the terminal manager (when present)
     # registers the richer Command/Process/Terminal tools below.
@@ -643,19 +630,19 @@ async def _build_tools(
             return wrapped[0]
         return sub
 
-    preset = main_cfg.tool_preset if main_cfg.tool_preset is not None else ToolPreset.FULL
+    preset = main_spec.tool_preset if main_spec.tool_preset is not None else ToolPreset.FULL
     for tool in get_preset_tools(preset, subprocess_tool_factory=_make_bash, root_provider=root_provider):
         tm.register(tool)
 
     # Additive supplement tools (e.g. ast_grep, todo) layered on top of the preset.
     for tool in get_supplement_tools(
-        main_cfg.tool_supplements, root_provider=root_provider, todo_store=todo_store
+        main_spec.tool_supplements, root_provider=root_provider, todo_store=todo_store
     ):
         tm.register(tool)
-    if main_cfg.tool_supplements:
+    if main_spec.tool_supplements:
         logger.info(
             "Pool '%s': supplement tools registered: %s",
-            pool_name, [s.value for s in main_cfg.tool_supplements],
+            pool_name, [s.value for s in main_spec.tool_supplements],
         )
 
     # Terminal tools — registered when a terminal manager exists (replaces the
@@ -683,7 +670,7 @@ async def _build_tools(
         SendFileToUserTool(
             output_adapter=output_adapter,
             transcript_store=transcript_store,
-            media_config=pool_cfg.media,
+            media_config=assembly_deps.media,
             sessions_dir_provider=sessions_dir_provider,
         )
     )
@@ -698,7 +685,7 @@ async def _build_tools(
         base_exp_dir: Path = pool_data.experience_dir
         _exp_path: Callable[[], Path] = lambda: base_exp_dir
     else:
-        fallback = data_dir / "experiences" / pool_name / main_cfg.name
+        fallback = data_dir / "experiences" / pool_name / main_spec.agent_name
 
         def _exp_path() -> Path:
             return fallback
@@ -708,14 +695,14 @@ async def _build_tools(
     tm.register(ExperienceTool(_exp_path, exp_meta))
     logger.info("Pool '%s': experience tool registered", pool_name)
 
-    # MCP tools resolved from main_cfg.mcp (registry names) — never let MCP
+    # MCP tools resolved from main_spec.mcp (registry names) — never let MCP
     # failures break the rest of the tool manager / pool creation.
     mcp_tools: list[Any] = []
     mcp_manager: Any | None = None
-    if main_cfg.mcp:
+    if main_spec.mcp:
         try:
             mcp_tools, mcp_manager = await _load_agent_mcp_tools(
-                main_cfg.name, list(main_cfg.mcp), project_dir,
+                main_spec.agent_name, list(main_spec.mcp), project_dir,
                 mcp_registry=mcp_registry,
             )
         except Exception as exc:
@@ -792,15 +779,9 @@ def build_main_agent_tool_names(
 # ── Skill manager ────────────────────────────────────────────────────────
 
 
-def _build_skill_manager(main_cfg: AgentConfig, project_dir: Path, pool_name: str):
-    """Convention: skills/{pool_name}/{agent_name}/ — or explicit roots in config."""
-    skill_roots = getattr(main_cfg, "skills", None)
-    explicit_roots: list[str] = getattr(skill_roots, "roots", None) or []
-
-    if explicit_roots:
-        directories = [project_dir / r for r in explicit_roots]
-    else:
-        directories = [project_dir / "skills" / pool_name / main_cfg.name]
+def _build_skill_manager(main_agent_name: str, project_dir: Path, pool_name: str):
+    """Convention: skills/{pool_name}/{agent_name}/."""
+    directories = [project_dir / "skills" / pool_name / main_agent_name]
 
     logger.info(
         "Pool '%s': scanning skills: %s (exists=%s)",
@@ -949,7 +930,6 @@ def _build_agent_pool(
     session_factory,
     safety,
     retention,
-    comm_tracker,
     pool_name: str,
     *,
     session_registry: SessionRegistry | None = None,
@@ -964,7 +944,6 @@ def _build_agent_pool(
         session_factory=session_factory,
         safety=safety,
         retention=retention,
-        comm_tracker=comm_tracker,
         session_registry=session_registry,
         session_store=session_store,
     )
@@ -977,8 +956,8 @@ def _build_agent_pool(
 
 async def _register_main_agent(
     pool: AgentPool,
-    main_cfg: AgentConfig,
-    pool_cfg: PoolConfig,
+    main_spec: MainAgentSpec,
+    assembly_deps: PoolAssemblyDeps,
     system_prompt: str,
     safety: RuntimeSafetyPolicy,
     pool_name: str,
@@ -990,14 +969,9 @@ async def _register_main_agent(
 ) -> None:
     """Register the main (NORMAL) agent with factory defaults (Design B).
 
-    The normal agent is a plain ``AgentConfig`` (inline in ``pool.yml``); its
+    The normal agent is a plain ``MainAgentSpec`` (inline in ``pool.yml``); its
     ``max_steps`` / ``tool_preset`` / ``tool_supplements`` / ``approval`` /
-    ``use_terminal`` / ``terminal_visibility`` are read from ``main_cfg``.
-    It is NOT an ``AgentTemplate`` — only subagents are templated. Normals get
-    the rich toolset ``create_pool`` assembles (terminal, send_to_agent,
-    workspace memory) via the factory's default tool/skill
-    managers (``tool_manager=None`` / ``skill_manager=None`` → factory
-    substitutes its pre-built defaults).
+    ``use_terminal`` / ``terminal_visibility`` are read from ``main_spec``.
     """
     from modex_agent.multi_agent.descriptor import (
         AgentDescriptor,
@@ -1006,19 +980,20 @@ async def _register_main_agent(
 
     default_resolved = bot_model_config.default_resolved()
     descriptor = AgentDescriptor(
-        address=AgentAddress(kind="agent", name=main_cfg.name),
+        address=AgentAddress(kind="agent", name=main_spec.agent_name),
         llm_config=AgentLLMConfig(
             model=default_resolved.model.model,
             temperature=default_resolved.model.temperature,
             max_output_tokens=default_resolved.model.max_output_tokens,
+            reasoning_effort=default_resolved.model.reasoning_effort,
         ),
         system_prompt_template=system_prompt,
-        max_iterations=main_cfg.max_steps,
+        max_iterations=main_spec.max_steps,
         execution_strategy="react",
         context_strategy="persistent",
         safety_policy=safety,
         comm_kind=AgentCommKind.NORMAL,
-        memory_config=main_cfg.memory,
+        memory_config=assembly_deps.memory,
     )
     instance = await factory.create_agent(
         descriptor,
@@ -1031,7 +1006,7 @@ async def _register_main_agent(
     await pool.register_resident(descriptor, instance)
     logger.info(
         "Pool '%s': main agent '%s' registered (factory defaults)",
-        pool_name, main_cfg.name,
+        pool_name, main_spec.agent_name,
     )
 
 
@@ -1043,7 +1018,6 @@ def _build_communication(
     main_agent_name: str,
     broker,
     agent_bus,
-    comm_tracker,
     project_dir: Path,
     pool_name: str,
     templates: list,
@@ -1066,7 +1040,6 @@ def _build_communication(
         broker=broker,
         registry=pool,
         agent_bus=agent_bus,
-        comm_tracker=comm_tracker,
         template_registry=template_registry,
         pool=pool,
         pool_name=pool_name,
@@ -1089,9 +1062,9 @@ def _build_communication(
     for t in templates:
         main_store.add(
             CommunicationTarget(
-                name=t.agent_name,
+                name=t.spec.agent_name,
                 kind=AgentCommKind.SUBAGENT,
-                description=t.description,
+                description=t.spec.description,
             )
         )
     logger.info("Pool '%s': communication store (%d targets)", pool_name, len(main_store.list()))
@@ -1151,7 +1124,8 @@ def _wire_main_pipeline(
     notification_service,
     shared_interceptor_chain,
     im_ui,
-    pool_cfg: PoolConfig,
+    main_spec: MainAgentSpec,
+    assembly_deps: PoolAssemblyDeps,
     project_dir: Path,
     command_processor,
     pool_name: str,
@@ -1201,7 +1175,7 @@ def _wire_main_pipeline(
     # Runtime wiring
     pipeline.interceptor_chain = shared_interceptor_chain
     pipeline._user_interface = im_ui
-    pipeline.governance = create_governance(pool_cfg.memory)
+    pipeline.governance = create_governance(assembly_deps.memory)
 
     # Approval runtime — main agent only (subagents never pass through this
     # function). Opt-in: build_approval_runtime returns None when disabled or
@@ -1209,9 +1183,8 @@ def _wire_main_pipeline(
     from modex_agent.ioc.factories.approval import build_approval_runtime
     from modex_agent.runtime.services import AgentRuntimeServices
 
-    main_cfg = next(a for a in pool_cfg.agents if a.role == "main")
     approval_runtime = build_approval_runtime(
-        main_cfg.approval, project_root=project_dir, root_provider=root_provider
+        main_spec.approval, project_root=project_dir, root_provider=root_provider
     )
     # Sparse services: hooks/interceptors/governance stay None and are
     # sourced per-field from the builder defaults at turn time (identical

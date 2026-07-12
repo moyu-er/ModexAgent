@@ -13,18 +13,15 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from bot.adapters.channels import (
     ChannelRouterOutputAdapter,
-    get_conv_channel,
     set_conv_channel,
 )
-from bot.adapters.web_socket import WebSocketInputAdapter
-from bot.service.pool_router import PoolRouter, PoolSessionStore
+
 from modex_agent.commands.handlers import build_default_builtin_handlers
 from modex_agent.commands.processor import SlashCommandProcessor
-from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.core.types import OutputMessage
+from modex_agent.multi_agent.pool_router import PoolRouter, PoolSessionStore
 from modex_agent.pipeline.adapters import OutputAdapter
 
 
@@ -57,7 +54,6 @@ def _workspace_control(cwd: Path, home: Path):
     Per-conversation port: ``current(conv)`` / ``switch(conv, target)`` /
     ``exit(conv)`` / ``pwd(conv)``.
     """
-    from unittest.mock import MagicMock
 
     ctx = MagicMock()
     ctx.home = home
@@ -130,10 +126,10 @@ async def test_control_command_notice_routes_to_websocket(adapters, tmp_path: Pa
     # S2 handles /cd directly and produces a Terminate with a notice.
     # The adapter's _on_message sends this notice back to the user.
     # This test verifies the channel routing of the notice.
-    from bot.input_pipeline.stages.environment_control import EnvironmentControlStage
     from bot.input_pipeline.context import BotInputContext
+    from bot.input_pipeline.stages.environment_control import EnvironmentControlStage
+
     from modex_agent.input_pipeline.envelope import UserInputEnvelope
-    from unittest.mock import MagicMock
     from modex_agent.workspace.control import WorkspaceController
     from modex_agent.workspace.models import CdResult
 
@@ -183,10 +179,10 @@ async def test_control_command_notice_routes_to_qq(adapters, tmp_path: Path):
     """S2 Terminate response for /cd on QQ channel."""
     qq, ws, router = adapters
 
-    from bot.input_pipeline.stages.environment_control import EnvironmentControlStage
     from bot.input_pipeline.context import BotInputContext
+    from bot.input_pipeline.stages.environment_control import EnvironmentControlStage
+
     from modex_agent.input_pipeline.envelope import UserInputEnvelope
-    from unittest.mock import MagicMock
     from modex_agent.workspace.control import WorkspaceController
     from modex_agent.workspace.models import CdResult
 

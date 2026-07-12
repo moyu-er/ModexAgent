@@ -10,25 +10,26 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from bot.config.domain import Secret
+from modex_agent.core.constants import InterfaceFormat, ReasoningEffort
 from modex_agent.ioc.configs.llm import LLMConfig, Modality, ModelCapabilities
 
-_DEFAULTS_CAPS = [Modality.TEXT]
 _OPENAI_PREFIX = "openai/"
+_ANTHROPIC_PREFIX = "anthropic/"
 _ROUTE_SEPARATOR = "/"
 
 
-def _routing_model(model: str) -> str:
-    """Normalize a model string for provider routing.
+def _strip_model_prefix(model: str) -> str:
+    if model.startswith(_OPENAI_PREFIX):
+        return model[len(_OPENAI_PREFIX) :]
+    if model.startswith(_ANTHROPIC_PREFIX):
+        return model[len(_ANTHROPIC_PREFIX) :]
+    return model
 
-    A ``provider/`` prefix is a routing directive consumed by the framework
-    factory: ``openai/X`` -> OpenAIProvider with ``X`` (prefix stripped);
-    any other ``provider/X`` (anthropic/, mistral/, ...) -> LiteLLMProvider
-    which expects the prefix kept. A bare name with no ``/`` defaults to the
-    OpenAI-compatible provider (``openai/`` prepended).
-    """
-    if _ROUTE_SEPARATOR in model:
-        return model
-    return _OPENAI_PREFIX + model
+
+def _prefix_to_interface_format(model: str) -> InterfaceFormat:
+    if model.startswith(_ANTHROPIC_PREFIX):
+        return InterfaceFormat.ANTHROPIC
+    return InterfaceFormat.OPENAI_COMPATIBLE
 
 
 class ModelCfg(BaseModel):
@@ -38,15 +39,26 @@ class ModelCfg(BaseModel):
 
     name: str
     model: str
-    capabilities: list[Modality] = Field(default_factory=lambda: list(_DEFAULTS_CAPS))
+    capabilities: list[Modality] = Field(default_factory=lambda: [Modality.TEXT])
     temperature: float = 0.7
     max_output_tokens: int = 50000
+    reasoning_effort: ReasoningEffort = ReasoningEffort.NONE
+
+    @field_validator("model")
+    @classmethod
+    def _no_routing_prefix(cls, value: str) -> str:
+        if value.startswith(_OPENAI_PREFIX) or value.startswith(_ANTHROPIC_PREFIX):
+            raise ValueError(
+                f"model name must not use routing prefix '{value.split(_ROUTE_SEPARATOR, 1)[0]}/'; "
+                "use interface_format to select the provider"
+            )
+        return value
 
     @field_validator("capabilities", mode="before")
     @classmethod
     def _coerce_caps(cls, value: Any) -> Any:  # noqa: ANN401  pre-coercion raw YAML input
         if value is None:
-            return list(_DEFAULTS_CAPS)
+            return [Modality.TEXT]
         if isinstance(value, list | tuple):
             return [Modality(m) for m in value]
         return value
@@ -55,13 +67,58 @@ class ModelCfg(BaseModel):
 class ProviderCfg(BaseModel):
     """一个 provider 及其下属模型。"""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
     key: str
     name: str
-    url: str
+    base_url: str = ""
+    interface_format: InterfaceFormat = InterfaceFormat.OPENAI_COMPATIBLE
     api_key: Annotated[str, Secret()]
     models: list[ModelCfg] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate(cls, data: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(data, dict):
+            return data
+
+        if "url" in data and "base_url" not in data:
+            data = {**data, "base_url": data["url"]}
+        data = {k: v for k, v in data.items() if k != "url"}
+
+        models = data.get("models")
+        if isinstance(models, list):
+            inferred_formats: set[InterfaceFormat] = set()
+            stripped_models: list[Any] = []
+            for item in models:
+                if isinstance(item, dict):
+                    model = item.get("model", "")
+                    if isinstance(model, str):
+                        inferred_formats.add(_prefix_to_interface_format(model))
+                        model = _strip_model_prefix(model)
+                        item = {**item, "model": model}
+                stripped_models.append(item)
+            data = {**data, "models": stripped_models}
+
+            if "interface_format" not in data:
+                if (
+                    InterfaceFormat.ANTHROPIC in inferred_formats
+                    and InterfaceFormat.OPENAI_COMPATIBLE in inferred_formats
+                ):
+                    raise ValueError(
+                        "mixed openai/ and anthropic/ model prefixes within a provider "
+                        "require an explicit interface_format"
+                    )
+                data = {
+                    **data,
+                    "interface_format": (
+                        InterfaceFormat.ANTHROPIC
+                        if InterfaceFormat.ANTHROPIC in inferred_formats
+                        else InterfaceFormat.OPENAI_COMPATIBLE
+                    ),
+                }
+
+        return data
 
 
 class ResolvedModel(BaseModel):
@@ -147,10 +204,12 @@ class BotModelConfig(BaseModel):
         """用某个模型合成框架 LLMConfig（供运行时构建 LLMProvider 使用）。"""
         r = resolved or self.default_resolved()
         return LLMConfig(
-            model=_routing_model(r.model.model),
+            model=r.model.model,
             api_key=r.provider.api_key,
-            base_url=r.provider.url,
+            base_url=r.provider.base_url,
             temperature=r.model.temperature,
             max_output_tokens=r.model.max_output_tokens,
             capabilities=r.capabilities,
+            reasoning_effort=r.model.reasoning_effort,
+            interface_format=r.provider.interface_format,
         )

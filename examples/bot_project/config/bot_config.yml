@@ -27,7 +27,6 @@ workspace:
 
 # ---- Multi-agent ----
 multi_agent:
-  default_pool: "default"
   session_retention:
     max_sessions_per_subagent: 10
     max_sessions_global: 200

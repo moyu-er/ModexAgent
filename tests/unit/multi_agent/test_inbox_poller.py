@@ -18,6 +18,7 @@ class _FakePool:
         self._instances = instances
         self._templates = templates or {}
         self._materialize_deps = MagicMock()
+        self.session_registry = None
         self.dispatched: list = []
 
     async def sessions_with_pending(self):

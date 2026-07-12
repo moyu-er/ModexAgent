@@ -31,7 +31,7 @@ from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.core.emitter import ContentEmitter
 from modex_agent.core.session_store import LocalFileSessionStore
 from modex_agent.ioc.configs.app import AppConfig
-from modex_agent.ioc.configs.pool import MediaConfig
+from modex_agent.multi_agent.pool_config.media import MediaConfig
 from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
 
 logger = logging.getLogger(__name__)
@@ -124,9 +124,7 @@ class WebUIService(BotService):
             try:
                 spec = importlib.util.spec_from_file_location(module_name, path)
                 if spec is None or spec.loader is None:
-                    logger.warning(
-                        "Cannot load adapter registration module %s", module_name
-                    )
+                    logger.warning("Cannot load adapter registration module %s", module_name)
                     continue
                 module = importlib.util.module_from_spec(spec)
                 sys.modules[module_name] = module
@@ -156,10 +154,7 @@ class WebUIService(BotService):
         from modex_agent.ioc.configs.app import _resolve_env_in
 
         raw_config: dict[str, Any] = _resolve_env_in(
-            yaml.safe_load(
-                (config_dir / "bot_config.yml").read_text(encoding="utf-8")
-            )
-            or {}
+            yaml.safe_load((config_dir / "bot_config.yml").read_text(encoding="utf-8")) or {}
         )
 
         # Merge IM sections from config/im.yml so adapters read their config
@@ -193,9 +188,7 @@ class WebUIService(BotService):
         # build time in a closure. The _sessions_dir_for_prefix callback
         # resolves the workspace sessions_dir per conversation prefix so the
         # transcript store routes writes to the correct workspace.
-        self._emitter_transcript_store: WorkspaceScopedTranscriptStore | None = (
-            transcript_store
-        )
+        self._emitter_transcript_store: WorkspaceScopedTranscriptStore | None = transcript_store
 
         # ── 2.5 Session store + registry ───────────────────────────────
         from bot.service.session_store import WorkspacePoolSessionStore
@@ -286,9 +279,7 @@ class WebUIService(BotService):
         # Control command output (cd/exit notices), pool switch replies,
         # and pipeline command responses are routed back to the channel
         # that originated the conversation via ChannelRouterOutputAdapter.
-        primary_output = channels.ChannelRouterOutputAdapter(
-            self._channel_outputs_by_name
-        )
+        primary_output = channels.ChannelRouterOutputAdapter(self._channel_outputs_by_name)
 
         # output_adapter_factory: returns WS output adapter so dynamic
         # subagents stream to the browser instead of NullOutputAdapter.
@@ -369,12 +360,12 @@ class WebUIService(BotService):
         self._server.set_data_dir_name(_data_dir_name)
         # Pool/MCP/skills/prompt REST API (Phase 2B). All four stores share the
         # same base dir (the bot project root) and the MCP registry path under
-        # ``config/mcp/registry.json``; default_pool comes from AppConfig.
+        # ``config/mcp/registry.json``; default_pool comes from BotService.
         from bot.config.mcp_registry import REGISTRY_PATH as _mcp_registry_path
-        from bot.config.pool_store import PoolStore
         from bot.config.prompt_store import PromptStore
         from bot.config.skills_store import SkillsStore
         from bot.service.pool_config_controller import PoolConfigController
+        from modex_agent.multi_agent.pool_config import PoolStore
 
         self._server.set_pool_config_controller(
             PoolConfigController(
@@ -382,7 +373,7 @@ class WebUIService(BotService):
                 skills_store=SkillsStore(base_dir=project_dir),
                 prompt_store=PromptStore(base_dir=project_dir),
                 mcp_registry_path=project_dir / _mcp_registry_path,
-                default_pool=app_cfg.multi_agent.default_pool,
+                default_pool=self._default_pool_name,
                 restarter=_trigger_restart,
                 pool_session_store=self._pool_session_store,
             )
@@ -613,11 +604,11 @@ class WebUIService(BotService):
 
     def _media_config_for_pool(self, pool: str) -> MediaConfig:
         """ADR-0013 §7 per-pool override: each pool's ingest path uses its own
-        ``PoolConfig.media``. Unknown pool → the default instance. Exposed as a
+        ``PoolAssemblyDeps.media``. Unknown pool → the default instance. Exposed as a
         method (not a closure) so the production media-wiring has a testable
         seam (architecture rule 5 — the interface is the test surface)."""
         pi = self._pools.get(pool)
-        return pi.config.media if pi is not None else MediaConfig()
+        return pi.media if pi is not None else MediaConfig()
 
     def _build_input_context(
         self,
@@ -655,7 +646,7 @@ class WebUIService(BotService):
             )
             pool_store = self.pool_router._session_store
         return BotInputContext(
-            default_pool=self._app_config.multi_agent.default_pool,
+            default_pool=self._default_pool_name,
             pool_session_store=pool_store,
             agent_pool_map=self._agent_pool_map,
             agent_resolver=agent_resolver,
@@ -670,34 +661,17 @@ class WebUIService(BotService):
         )
 
     def _build_agent_pool_map(self) -> dict[str, str]:
-        """Complete agent -> pool mapping from pool configs + subagent templates.
+        """Complete agent -> pool mapping from PoolSpec + subagent templates."""
+        from modex_agent.multi_agent.pool_config import PoolStore
 
-        Covers main agents, resident subagents (pool config), and
-        dynamic-subagent template types so the transcript dispatcher can route
-        every write by agent name alone.
-        """
-        from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
+        pool_store = PoolStore(base_dir=self._project_dir)
+        mapping: dict[str, str] = {}
+        for summary in pool_store.list_pools():
+            spec = pool_store.read_pool(summary.name)
+            mapping[spec.main.agent_name] = summary.name
+            for sub in spec.subagents:
+                mapping[sub.agent_name] = summary.name
 
-        from bot.config.memory_defaults import subagent_memory
-
-        # Use the already-loaded AppConfig instead of re-parsing YAML files.
-        mapping: dict[str, str] = {
-            agent.name: pool_name
-            for pool_name, pool_cfg in self._app_config.pools.items()
-            for agent in pool_cfg.agents
-        }
-
-        # Dynamic-subagent template types per pool.
-        try:
-            reg = AgentTemplateRegistry(
-                self._project_dir,
-                default_subagent_memory=subagent_memory(),
-            )
-        except Exception:
-            return mapping
-        for pool_name in list(mapping.values()):
-            for tmpl in reg.list_templates(pool_name):
-                mapping.setdefault(tmpl.agent_name, pool_name)
         return mapping
 
     async def stop(self) -> None:

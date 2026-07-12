@@ -18,6 +18,7 @@ const pools = [
 const tree = (name: string) => ({
   name,
   main_agent_name: "main",
+  peers: [],
   main: {
     agent_name: "main",
     max_steps: 12,

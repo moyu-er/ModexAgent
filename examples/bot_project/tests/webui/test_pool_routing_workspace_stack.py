@@ -19,26 +19,26 @@ from unittest.mock import MagicMock
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.input_pipeline.assembly import build_webui_pipeline
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.skill_parse import SkillRegistry
 from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
-from bot.service.pool_router import PoolRouter, PoolSessionStore
 from bot.service.session_store import WorkspacePoolSessionStore
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import _unwrap_envelope
 from bot.webui.server import WebUIServer, _new_uuid_prefix
 from bot.workspace.dispatch import WorkspaceMessageDispatcher
 from bot.workspace.handle import PoolWorkspaceResources
-from modex_agent.workspace.context import WorkspaceContext
-from modex_agent.workspace.registry import InMemoryRegistryStore, WorkspaceRegistry
-from modex_agent.workspace.routing import WorkspaceResolver
-from modex_agent.core.session_id import SessionIdFactory, SessionInfo
+
+from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.core.types import InputMessage
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent.address import AgentAddress
+from modex_agent.multi_agent.pool_router import PoolRouter, PoolSessionStore
+from modex_agent.workspace.context import WorkspaceContext
+from modex_agent.workspace.registry import InMemoryRegistryStore, WorkspaceRegistry
+from modex_agent.workspace.routing import WorkspaceResolver
 
 
 class _NoSkillRegistry(SkillRegistry):

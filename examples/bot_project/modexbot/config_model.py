@@ -13,7 +13,7 @@ import yaml
 
 _MODELS_KEY = "models"
 _PLACEHOLDER_VALUES = {"your_api_key", "your_llm_api_key", "your_llm_base_url", "your_model", ""}
-_PROVIDER_FIELDS = ("key", "name", "url", "api_key")
+_PROVIDER_FIELDS = ("key", "name", "base_url", "interface_format", "api_key")
 _HEADER = (
     "# config/model.yml — Multi-provider model configuration (CLI-managed).\n"
     "# Single source of truth for models. Edit with `modexbot model`.\n"
@@ -73,6 +73,8 @@ def check_model_config(model_path: Path) -> tuple[bool, list[str]]:
     missing: list[str] = []
     for field in _PROVIDER_FIELDS:
         val = provider.get(field)
+        if field == "base_url" and val is None:
+            val = provider.get("url")
         if val is None or (isinstance(val, str) and val.strip() in _PLACEHOLDER_VALUES):
             missing.append(field)
     return (len(missing) == 0), missing

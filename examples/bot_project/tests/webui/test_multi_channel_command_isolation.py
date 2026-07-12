@@ -12,21 +12,19 @@ import tempfile
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from bot.adapters.channels import (
     ChannelRouterOutputAdapter,
-    get_conv_channel,
     set_conv_channel,
 )
 from bot.adapters.fan_in import FanInInputAdapter
-from bot.adapters.web_socket import WebSocketInputAdapter
-from bot.service.pool_router import PoolRouter, PoolSessionStore
+
 from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import InputMessage, OutputMessage
+from modex_agent.multi_agent.pool_router import PoolRouter, PoolSessionStore
 from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
 
 
@@ -122,10 +120,12 @@ class _FakeAdapter:
 @pytest.mark.asyncio
 async def test_control_commands_isolated_across_im_channels(tmp_path: Path):
     """S2 handles /cd and /exit directly; each adapter's current_ws is updated."""
-    from bot.input_pipeline.stages.environment_control import EnvironmentControlStage
-    from bot.input_pipeline.context import BotInputContext
-    from modex_agent.input_pipeline.envelope import UserInputEnvelope
     from unittest.mock import MagicMock
+
+    from bot.input_pipeline.context import BotInputContext
+    from bot.input_pipeline.stages.environment_control import EnvironmentControlStage
+
+    from modex_agent.input_pipeline.envelope import UserInputEnvelope
     from modex_agent.workspace.control import WorkspaceController
     from modex_agent.workspace.models import CdResult
 
@@ -220,8 +220,9 @@ async def test_pool_switch_isolated_across_im_channels():
 @pytest.mark.asyncio
 async def test_webui_control_command_does_not_leak_to_im(tmp_path: Path):
     """A /cd typed in the WebUI input box is handled by S2 for the websocket adapter only."""
-    from bot.input_pipeline.stages.environment_control import EnvironmentControlStage
     from bot.input_pipeline.context import BotInputContext
+    from bot.input_pipeline.stages.environment_control import EnvironmentControlStage
+
     from modex_agent.input_pipeline.envelope import UserInputEnvelope
     from modex_agent.workspace.control import WorkspaceController
     from modex_agent.workspace.models import CdResult

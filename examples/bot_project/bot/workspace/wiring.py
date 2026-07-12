@@ -14,10 +14,13 @@ import contextlib
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from bot.service.core import BotService
+    from modex_agent.multi_agent.pool_instance import PoolInstance
 
 from bot.service.pool_builder import create_pool
-from bot.service.pool_router import PoolRouter, PoolSessionStore
 from bot.service.session_store import WorkspacePoolSessionStore
 from bot.workspace.background import BackgroundTaskRunner
 from bot.workspace.dispatch import WorkspaceMessageDispatcher
@@ -28,11 +31,6 @@ from bot.workspace.handle import (
     WorkspaceResolverCell,
 )
 from bot.workspace.pool_data import build_pool_data
-from modex_agent.workspace.context import WorkspaceContext
-from modex_agent.workspace.control import WorkspaceController
-from modex_agent.workspace.registry import WorkspaceRegistry
-from modex_agent.workspace.routing import WorkspaceResolver
-from modex_agent.workspace.store import GlobalWorkspaceStore
 from modex_agent.approval.ui import IMUserInterface
 from modex_agent.commands.models import CommandContext
 from modex_agent.core.session_id import session_id_prefix_of
@@ -40,11 +38,22 @@ from modex_agent.core.types import InputMessage
 from modex_agent.interceptor.builtin import ToolResultLimitInterceptor
 from modex_agent.interceptor.chain import InterceptorChain
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
-from modex_agent.multi_agent.comm_tracker import CommunicationTracker
 from modex_agent.multi_agent import SessionRetentionPolicy
+from modex_agent.multi_agent.comm_kind import AgentCommKind
+from modex_agent.multi_agent.pool_config import PoolStore
+from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
+from modex_agent.multi_agent.pool_config.specs import PoolSpec
+from modex_agent.multi_agent.pool_router import PoolRouter, PoolSessionStore
+from modex_agent.multi_agent.tools import CommunicationTarget
 from modex_agent.tools.overflow.cleaner import OverflowCleaner
 from modex_agent.tools.overflow.handler import ToolResultOverflowHandler
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
+from modex_agent.tools.terminal.managers import TerminalManagerBase
+from modex_agent.workspace.context import WorkspaceContext
+from modex_agent.workspace.control import WorkspaceController
+from modex_agent.workspace.registry import WorkspaceRegistry
+from modex_agent.workspace.routing import WorkspaceResolver
+from modex_agent.workspace.store import GlobalWorkspaceStore
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +74,7 @@ class WorkspaceStack:
     store: GlobalWorkspaceStore
 
 
-def build_single_workspace_stack(service: Any, *, data_dir_name: str) -> WorkspaceStack:
+def build_single_workspace_stack(service: BotService, *, data_dir_name: str) -> WorkspaceStack:
     """Wire a single-home (workspace disabled) stack against ``service``.
 
     Uses a WorkspaceController that rejects /cd /exit.
@@ -74,7 +83,7 @@ def build_single_workspace_stack(service: Any, *, data_dir_name: str) -> Workspa
 
 
 def build_workspace_stack(
-    service: Any, *, data_dir_name: str, enabled: bool = True
+    service: BotService, *, data_dir_name: str, enabled: bool = True
 ) -> WorkspaceStack:
     """Wire the full multi-live stack against ``service``.
 
@@ -132,7 +141,7 @@ def _command_session_id_of(context: CommandContext) -> str:
     return session_id_prefix_of(context.session_id)
 
 
-def _build_dispatcher(service: Any, resolver: WorkspaceResolver) -> Any:
+def _build_dispatcher(service: BotService, resolver: WorkspaceResolver) -> WorkspaceMessageDispatcher:
     from bot.workspace.dispatch import WorkspaceMessageDispatcher
 
     async def _route_one(resources: PoolWorkspaceResources, message: InputMessage) -> None:
@@ -155,7 +164,7 @@ def _build_dispatcher(service: Any, resolver: WorkspaceResolver) -> Any:
 
 
 async def _build_resources(
-    service: Any, ctx: WorkspaceContext
+    service: BotService, ctx: WorkspaceContext
 ) -> PoolWorkspaceResources:
     """Build one workspace's full resource bundle (the business ``R``).
 
@@ -164,32 +173,43 @@ async def _build_resources(
     PER-WORKSPACE broker/inbox/bus/interceptor rooted at ``ctx.paths``.
     """
     app_config = service._app_config
-    pool_configs = app_config.pools
+    pool_store = PoolStore(base_dir=service._project_dir)
+    pool_names = [s.name for s in pool_store.list_pools()]
+    pool_specs: dict[str, PoolSpec] = {
+        name: pool_store.read_pool(name) for name in pool_names
+    }
 
-    # Diagnostic: tie each workspace build to whether the shared registry is
-    # wired + the workspace target, so logs can distinguish the home build from
-    # a switch/create-time build (same agent names appear in both).
     logger.info(
         "[workspace-build] target=%s mcp_registry=%s pools=%s",
         ctx.target,
         "set" if service._mcp_registry is not None else "None",
-        list(pool_configs),
+        list(pool_specs),
     )
 
-    # Main-agent memory is a baked default (bot.config.memory_defaults.
-    # main_agent_memory) — never persisted in pool.yml, never user-editable.
-    # Resolve it once here so BOTH build_pool_data (which constructs the memory
-    # system via create_memory) and create_pool (which seeds long-term defaults)
-    # see a non-None memory block. This is the single source of truth.
     from bot.config.memory_defaults import main_agent_memory
+    from modex_agent.ioc.configs.memory import MemoryConfig
 
-    pool_configs = {
-        name: (
-            cfg
-            if cfg.memory is not None
-            else cfg.model_copy(update={"memory": main_agent_memory()})
+    def _main_agent_memory(max_context_tokens: int | None) -> MemoryConfig:
+        cfg = main_agent_memory()
+        if max_context_tokens is None:
+            return cfg
+        return cfg.model_copy(
+            update={
+                "session": cfg.session.model_copy(
+                    update={"max_context_tokens": max_context_tokens}
+                )
+            }
         )
-        for name, cfg in pool_configs.items()
+
+    max_context_tokens = (
+        service._bot_model_config.max_context_tokens
+        if service._bot_model_config is not None
+        else None
+    )
+    memory = _main_agent_memory(max_context_tokens)
+    assembly_deps: dict[str, PoolAssemblyDeps] = {
+        name: PoolAssemblyDeps(memory=memory)
+        for name in pool_names
     }
 
     # 1. Workspace-level stores.
@@ -233,13 +253,13 @@ async def _build_resources(
 
     # 4. Per-pool data snapshots.
     pool_data: dict[str, Any] = {}
-    for name, cfg in pool_configs.items():
+    for name in pool_names:
         pool_data[name] = await build_pool_data(
             ctx,
             name,
-            cfg,
+            pool_specs[name],
             service._default_provider,
-            lambda pc: pc.memory,
+            assembly_deps[name],
             service._system_prompt_for(name),
         )
 
@@ -249,17 +269,17 @@ async def _build_resources(
     #    R after assembly so per-turn pool_data resolution lands back here.
     pools: dict[str, Any] = {}
     resolver_cell = WorkspaceResolverCell()
-    for name, cfg in pool_configs.items():
+    for name in pool_names:
         pools[name] = await create_pool(
             pool_name=name,
-            pool_cfg=cfg,
+            pool_spec=pool_specs[name],
+            assembly_deps=assembly_deps[name],
             project_dir=service._project_dir,
             data_dir=ctx.paths.root,
             broker=broker,
             output_adapter=service.output_adapter,
             safety=service.safety_policy,
             retention=retention,
-            comm_tracker=CommunicationTracker(),
             im_ui=im_ui,
             shared_hooks=shared_hooks,
             shared_hook_runner=shared_hook_runner,
@@ -294,6 +314,27 @@ async def _build_resources(
         background=None,
     )
 
+    # Phase 2: cross-pool peer wiring. Must run after all Phase 1 pools are built
+    # so subagent targets precede peer targets in each store's insertion order.
+    pool_store = PoolStore(base_dir=service.project_dir)
+    for pool_name, instance in resources.pools.items():
+        pool_tree = pool_store.read_pool(pool_name)
+        for peer_pool_name in pool_tree.peers:
+            peer_instance = resources.pools[peer_pool_name]
+            peer_tree = pool_store.read_pool(peer_pool_name)
+            description = (
+                peer_tree.main.description
+                or f"Peer pool {peer_pool_name}'s main agent"
+            )
+            target = CommunicationTarget(
+                name=peer_instance.main_agent_name,
+                kind=AgentCommKind.NORMAL,
+                pool_name=peer_pool_name,
+                bus_ref=peer_instance.agent_bus,
+                description=description,
+            )
+            instance.target_store.add(target)
+
     # Wire each pool's main pipeline + communication service to THIS workspace
     # (R), then run the experience-hook wiring that used to live in
     # _wire_pool_to_workspace. Subagent pipelines pick up R via the resolver
@@ -304,7 +345,7 @@ async def _build_resources(
     # superseded. The Drainer + idle poller (still spawned per pool until Task
     # 8 disables them) operate on each pool's own bus.
     for name, pi in pools.items():
-        _wire_pool_to_resources(pi, name, pool_configs[name], resources)
+        _wire_pool_to_resources(pi, name, assembly_deps[name], resources)
         # Start this pool's output broker bridge so agent output published to
         # THIS workspace's broker reaches the output adapter. This MUST happen
         # at materialization for EVERY workspace — home and non-home alike —
@@ -312,11 +353,24 @@ async def _build_resources(
         # their output never leaves the broker (the agent looks silent).
         await pi.broker_bridge.start()
 
+    default_pool = service._default_pool_name
+    if default_pool not in pools:
+        fallback = next(iter(pools), default_pool)
+        if fallback != default_pool:
+            logger.warning(
+                "[pool-routing] nominated default pool %r not found; "
+                "falling back to %r (pools=%s)",
+                default_pool,
+                fallback,
+                list(pools),
+            )
+            default_pool = fallback
+
     # 6. Background tasks (dream/curator) — per workspace.
     background = BackgroundTaskRunner(
         pool_data=pool_data,
-        pools_config=pool_configs,
-        default_pool_name=service._default_pool_name,
+        assembly_deps=assembly_deps,
+        default_pool_name=default_pool,
     )
     await background.start()
     resources.background = background
@@ -348,14 +402,14 @@ async def _build_resources(
         broker=broker,
         pools=pools,
         session_store=session_store,
-        default_pool=service._default_pool_name,
+        default_pool=default_pool,
     )
 
     return resources
 
 
 def _build_workspace_interceptor_chain(
-    service: Any, overflow_store: LocalFileToolOverflowStore
+    service: BotService, overflow_store: LocalFileToolOverflowStore
 ) -> InterceptorChain:
     """Per-workspace interceptor chain rooted at THIS workspace's overflow dir.
 
@@ -384,33 +438,21 @@ def _build_workspace_interceptor_chain(
 
 
 def _wire_pool_to_resources(
-    pool_instance: Any,
+    pool_instance: PoolInstance,
     name: str,
-    pool_cfg: Any,
+    deps: PoolAssemblyDeps,
     resources: PoolWorkspaceResources,
 ) -> None:
-    """Wire one pool's main pipeline + experience hook to the workspace R.
+    """Wire one pool's main pipeline + experience hook to the workspace R."""
 
-    Re-homes the body of the old ``_wire_pool_to_workspace`` +
-    ``_wire_experience_hook``: set ``pipeline.workspace_manager`` is already
-    done by the factory wrap (via the resolver cell); here we register the
-    experience review hook from this workspace's pool_data when enabled.
-    """
     main_inst = pool_instance.pool._agents.get(pool_instance.main_agent_name)
     pipeline = main_inst.pipeline if main_inst is not None else None
     if pipeline is None:
         return
 
-    main_cfg = next(
-        (a for a in pool_cfg.agents if a.role == "main"), None
-    )
-    if main_cfg is None:
+    exp_cfg = deps.experience
+    if exp_cfg is None or not exp_cfg.enabled:
         return
-    # Experience review is always enabled for main agents (baked). Params come
-    # from ExperienceConfig defaults when the agent's block is absent.
-    from modex_agent.ioc.configs.agent import ExperienceConfig
-
-    exp_cfg = getattr(main_cfg, "experience", None) or ExperienceConfig()
 
     pool_data = resources.pool_data.get(name)
     if pool_data is None:
@@ -473,7 +515,7 @@ async def _stop_resources(resources: PoolWorkspaceResources) -> None:
         await resources.broker.stop()
 
 
-async def _close_terminal(mgr: Any, name: str) -> None:
+async def _close_terminal(mgr: TerminalManagerBase, name: str) -> None:
     try:
         await mgr.close(name)
     except BaseException:

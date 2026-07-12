@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from .constants import DefaultValues
+from .constants import DefaultValues, ReasoningEffort
 
 if TYPE_CHECKING:
     from .types import LLMResponse
@@ -160,7 +160,7 @@ class LLMProviderConfig:
     timeout: float = DefaultValues.TIMEOUT_SECONDS
     stream_idle_timeout: float = 90.0
     parse_think_tags: bool = True
-    reasoning_effort: str | None = None
+    reasoning_effort: ReasoningEffort = ReasoningEffort.NONE
     extra_headers: dict[str, str] | None = None
 
 

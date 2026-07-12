@@ -168,6 +168,7 @@ def _skill_relpath(filename: str) -> str | None:
         return None
     return norm
 
+
 # Multipart upload read chunk. Large enough to amortize per-chunk overhead on a
 # 20 MB image, small enough that the size pre-check fires promptly.
 _UPLOAD_CHUNK_BYTES: int = 64 * 1024
@@ -687,12 +688,12 @@ class WebUIServer:
         self.app.router.add_put("/api/pools/{pool}", self._handle_write_pool)
         self.app.router.add_delete("/api/pools/{pool}", self._handle_delete_pool)
         self.app.router.add_patch("/api/pools/{pool}", self._handle_rename_pool)
-        self.app.router.add_get(
-            "/api/pools/{pool}/agents/{agent}/prompt", self._handle_read_prompt
-        )
+        self.app.router.add_get("/api/pools/{pool}/agents/{agent}/prompt", self._handle_read_prompt)
         self.app.router.add_put(
             "/api/pools/{pool}/agents/{agent}/prompt", self._handle_write_prompt
         )
+        self.app.router.add_post("/api/pools/{pool}/peers", self._handle_add_peer)
+        self.app.router.add_delete("/api/pools/{pool}/peers/{peer}", self._handle_remove_peer)
         self.app.router.add_get("/api/mcp", self._handle_read_mcp)
         self.app.router.add_post("/api/mcp/{server}", self._handle_upsert_mcp)
         self.app.router.add_put("/api/mcp/{server}", self._handle_upsert_mcp)
@@ -760,9 +761,7 @@ class WebUIServer:
             return web.json_response({"error": f"unknown domain: {domain}"}, status=404)
         except Exception as exc:  # noqa: BLE001 - malformed YAML / IO errors surface readably
             logger.exception("config read failed for domain %s", domain)
-            return web.json_response(
-                {"error": f"config read failed: {exc}"}, status=500
-            )
+            return web.json_response({"error": f"config read failed: {exc}"}, status=500)
         return web.json_response(payload.model_dump(mode="json"))
 
     async def _handle_put_config(self, request: web.Request) -> web.Response:
@@ -810,9 +809,7 @@ class WebUIServer:
     def _pool_cfg_required(self) -> web.Response | None:
         """Return a 503 response if no PoolConfigController is wired, else None."""
         if self._pool_config_controller is None:
-            return web.json_response(
-                {"error": "pool config not configured"}, status=503
-            )
+            return web.json_response({"error": "pool config not configured"}, status=503)
         return None
 
     async def _handle_list_pools(self, request: web.Request) -> web.Response:
@@ -858,9 +855,7 @@ class WebUIServer:
         try:
             tree = self._pool_config_controller.read_pool(pool)
         except KeyError:
-            return web.json_response(
-                {"error": f"unknown pool: {pool}"}, status=404
-            )
+            return web.json_response({"error": f"unknown pool: {pool}"}, status=404)
         except FieldValidationError as exc:
             return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
         except Exception:  # noqa: BLE001
@@ -879,9 +874,9 @@ class WebUIServer:
             logger.warning("write_pool: bad JSON body: %s", exc)
             return web.json_response({"error": "invalid body"}, status=400)
         try:
-            from bot.config.pool_payloads import PoolTree
+            from modex_agent.multi_agent.pool_config import PoolSpec
 
-            tree = PoolTree.model_validate(body)
+            tree = PoolSpec.model_validate(body)
         except Exception as exc:  # noqa: BLE001 - pydantic validation
             from pydantic import ValidationError
 
@@ -954,6 +949,69 @@ class WebUIServer:
             return web.json_response({"error": "rename failed"}, status=500)
         return web.json_response(tree.model_dump(mode="json"))
 
+    async def _handle_add_peer(self, request: web.Request) -> web.Response:
+        """POST /api/pools/{pool}/peers -- add a bidirectional peer edge.
+
+        Body: {"peer": "<other_pool>"}. On success both sides of the edge
+        are written and both updated pool trees are returned so the UI can
+        refresh the current pool and any visible peer pool.
+        """
+        if (miss := self._pool_cfg_required()) is not None:
+            return miss
+        pool = request.match_info["pool"]
+        try:
+            body = await request.json()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("add_peer: bad JSON body: %s", exc)
+            return web.json_response({"error": "invalid body"}, status=400)
+        peer = body.get("peer") if isinstance(body, dict) else None
+        if not isinstance(peer, str) or not peer:
+            return web.json_response(
+                {"error": "validation", "fields": {"peer": ["required"]}},
+                status=400,
+            )
+        try:
+            tree_a, tree_b = self._pool_config_controller.add_peer(pool, peer)
+        except KeyError:
+            return web.json_response({"error": f"unknown pool: {pool}"}, status=404)
+        except FieldValidationError as exc:
+            return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
+        except Exception:  # noqa: BLE001
+            logger.exception("add_peer failed")
+            return web.json_response({"error": "add peer failed"}, status=500)
+        return web.json_response(
+            {
+                "pool_a": tree_a.model_dump(mode="json"),
+                "pool_b": tree_b.model_dump(mode="json"),
+            }
+        )
+
+    async def _handle_remove_peer(self, request: web.Request) -> web.Response:
+        """DELETE /api/pools/{pool}/peers/{peer} -- remove a bidirectional peer edge.
+
+        Both sides of the edge are removed atomically. Returns both updated
+        pool trees.
+        """
+        if (miss := self._pool_cfg_required()) is not None:
+            return miss
+        pool = request.match_info["pool"]
+        peer = request.match_info["peer"]
+        try:
+            tree_a, tree_b = self._pool_config_controller.remove_peer(pool, peer)
+        except KeyError:
+            return web.json_response({"error": f"unknown pool: {pool}"}, status=404)
+        except FieldValidationError as exc:
+            return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
+        except Exception:  # noqa: BLE001
+            logger.exception("remove_peer failed")
+            return web.json_response({"error": "remove peer failed"}, status=500)
+        return web.json_response(
+            {
+                "pool_a": tree_a.model_dump(mode="json"),
+                "pool_b": tree_b.model_dump(mode="json"),
+            }
+        )
+
     async def _handle_read_prompt(self, request: web.Request) -> web.Response:
         """GET /api/pools/{pool}/agents/{agent}/prompt -- read the agent prompt md."""
         if (miss := self._pool_cfg_required()) is not None:
@@ -962,9 +1020,7 @@ class WebUIServer:
         try:
             prompt = self._pool_config_controller.read_prompt(agent)
         except KeyError:
-            return web.json_response(
-                {"error": f"unknown agent: {agent}"}, status=404
-            )
+            return web.json_response({"error": f"unknown agent: {agent}"}, status=404)
         except FieldValidationError as exc:
             return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
         except Exception:  # noqa: BLE001
@@ -1039,9 +1095,7 @@ class WebUIServer:
         try:
             self._pool_config_controller.delete_mcp(name)
         except KeyError:
-            return web.json_response(
-                {"error": f"unknown server: {name}"}, status=404
-            )
+            return web.json_response({"error": f"unknown server: {name}"}, status=404)
         except FieldValidationError as exc:
             return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
         except Exception:  # noqa: BLE001
@@ -1102,13 +1156,19 @@ class WebUIServer:
             data = bytes(data)
             if len(data) > _SKILL_MAX_FILE_BYTES:
                 return web.json_response(
-                    {"error": "validation", "fields": {"file": [f"{filename} exceeds {_SKILL_MAX_FILE_MB}MB"]}},
+                    {
+                        "error": "validation",
+                        "fields": {"file": [f"{filename} exceeds {_SKILL_MAX_FILE_MB}MB"]},
+                    },
                     status=400,
                 )
             total += len(data)
             if total > _SKILL_MAX_TOTAL_BYTES:
                 return web.json_response(
-                    {"error": "validation", "fields": {"upload": [f"exceeds {_SKILL_MAX_TOTAL_MB}MB total"]}},
+                    {
+                        "error": "validation",
+                        "fields": {"upload": [f"exceeds {_SKILL_MAX_TOTAL_MB}MB total"]},
+                    },
                     status=400,
                 )
             rel = _skill_relpath(filename)
@@ -1185,13 +1245,19 @@ class WebUIServer:
                 )
             if len(data) > _SKILL_MAX_FILE_BYTES:
                 return web.json_response(
-                    {"error": "validation", "fields": {"file": [f"{rel_b64} exceeds {_SKILL_MAX_FILE_MB}MB"]}},
+                    {
+                        "error": "validation",
+                        "fields": {"file": [f"{rel_b64} exceeds {_SKILL_MAX_FILE_MB}MB"]},
+                    },
                     status=400,
                 )
             total += len(data)
             if total > _SKILL_MAX_TOTAL_BYTES:
                 return web.json_response(
-                    {"error": "validation", "fields": {"upload": [f"exceeds {_SKILL_MAX_TOTAL_MB}MB total"]}},
+                    {
+                        "error": "validation",
+                        "fields": {"upload": [f"exceeds {_SKILL_MAX_TOTAL_MB}MB total"]},
+                    },
                     status=400,
                 )
             file_tree[rel] = data
@@ -1799,7 +1865,7 @@ class WebUIServer:
         wired (minimal tests), the frozen ``MediaConfig()`` defaults are
         returned so the endpoint always answers with the authoritative numbers.
         """
-        from modex_agent.ioc.configs.pool import MediaConfig
+        from modex_agent.multi_agent.pool_config.media import MediaConfig
 
         config: MediaConfig = (
             self._input_ctx.media_config if self._input_ctx is not None else MediaConfig()
@@ -1829,7 +1895,7 @@ class WebUIServer:
         per-kind cap is the pipeline's. ``?ws=`` resolves the workspace the same
         way every other handler does.
         """
-        from modex_agent.ioc.configs.pool import MediaConfig
+        from modex_agent.multi_agent.pool_config.media import MediaConfig
 
         session_id: str = request.match_info["session_id"]
         ws_raw = request.query.get("ws", "")
@@ -1902,7 +1968,8 @@ class WebUIServer:
             # cascade + artifacts this feature exists to clean).
             logger.warning(
                 "delete_session: no SessionGarbageCollector wired; skipping cascade "
-                "deletion for %s", session_id
+                "deletion for %s",
+                session_id,
             )
             return web.json_response({"deleted": session_id})
         ws_raw = request.query.get("ws", "")
@@ -2441,7 +2508,8 @@ class WebUIServer:
         else:
             logger.warning(
                 "delete_conversation: no SessionGarbageCollector wired; skipping "
-                "cascade deletion for %s", session_id
+                "cascade deletion for %s",
+                session_id,
             )
         await _safe_send_json(
             ws,

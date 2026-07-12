@@ -26,11 +26,9 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import pytest
 
-from bot.service.pool_router import PoolRouter, PoolSessionStore
 from modex_agent.agents.react.agent import ReActAgent
 from modex_agent.approval.types import ApprovalAction
 from modex_agent.approval.ui import IMUserInterface
@@ -46,6 +44,7 @@ from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import AgentDescriptor, AgentFactory, AgentPool
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.descriptor import AgentInstance
+from modex_agent.multi_agent.pool_router import PoolRouter, PoolSessionStore
 from modex_agent.pipeline.pipeline import AgentPipeline
 from modex_agent.runtime.enums import SnapshotReason, TurnPhase
 from modex_agent.runtime.models import StateQueryScope
@@ -183,10 +182,12 @@ class _StaticFactory(AgentFactory):
 
 @dataclass
 class _PoolRef:
-    """PoolRouter's pools value only needs these two fields (_route_to_pool)."""
+    """PoolRouter's pools value: thin holder for the routing fields + the pool
+    itself. ``_route_to_pool`` reads ``.pool.submit_input(...)``."""
 
     main_agent_name: str
     main_address: AgentAddress
+    pool: AgentPool
 
 
 # ---------------------------------------------------------------------------
@@ -268,18 +269,35 @@ async def _build_stack(
 
     broker = InMemoryMessageBroker()
     await broker.start()
+    from modex_agent.multi_agent.bus import LocalAgentMessageBus
+    from modex_agent.multi_agent.inbox.consumer import InboxConsumer
+    from modex_agent.multi_agent.inbox.producer import InboxProducer
+    from modex_agent.multi_agent.inbox.server_memory import InMemoryInboxServer
+    from modex_agent.multi_agent.inbox_poller import InboxPoller
+    from modex_agent.multi_agent.state import AgentState
+
+    inbox_server = InMemoryInboxServer()
+    inbox_producer = InboxProducer(server=inbox_server)
+    inbox_consumer = InboxConsumer(server=inbox_server)
+    agent_bus = LocalAgentMessageBus(producer=inbox_producer, consumer=inbox_consumer, broker=broker)
     pool = AgentPool(
         broker=broker,
         agent_factory=_StaticFactory(instance),
+        agent_bus=agent_bus,
+        inbox_consumer=inbox_consumer,
     )
-    await pool.register_resident(descriptor)
+    await pool.register_resident(descriptor, instance)
+    pool._status["main"] = AgentState.IDLE
+    poller = InboxPoller(pool, interval=0.02)
+    pool.attach_poller(poller)
+    pool.start_poller()
 
     session_store = PoolSessionStore(tmp_path)
     session_store.set("e2e", "main")  # session prefix "e2e" -> pool "main"
     router = PoolRouter(
         input_adapter=None,  # type: ignore[arg-type]
         broker=broker,
-        pools={"main": _PoolRef(main_agent_name="main", main_address=descriptor.address)},
+        pools={"main": _PoolRef(main_agent_name="main", main_address=descriptor.address, pool=pool)},
         session_store=session_store,
         default_pool="main",
     )

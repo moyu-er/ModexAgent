@@ -15,7 +15,6 @@ if TYPE_CHECKING:
     from modex_agent.messaging.broker import MessageBroker
     from modex_agent.multi_agent.address import AgentAddress
     from modex_agent.multi_agent.bus import AgentMessageBus
-    from modex_agent.multi_agent.comm_tracker import CommunicationTracker
     from modex_agent.multi_agent.communication import AgentCommunicationService
     from modex_agent.multi_agent.registry import AgentRegistry
 
@@ -56,11 +55,19 @@ def _current_parent_name() -> str | None:
 
 @dataclass(frozen=True)
 class CommunicationTarget:
-    """A single communicable agent."""
+    """A single communicable agent.
+
+    ``pool_name`` records the owning pool; ``bus_ref`` optionally carries a
+    direct reference to another pool's ``AgentMessageBus`` for cross-pool
+    delivery (None = route locally). Both fields default to preserve every
+    existing constructor site that omits them.
+    """
 
     name: str
     kind: AgentCommKind
     description: str = ""
+    pool_name: str = ""
+    bus_ref: AgentMessageBus | None = None
 
 
 # -- parameter schemas --------------------------------------------------------
@@ -83,9 +90,9 @@ _NORMAL_PARAMS: dict[str, Any] = {
         "invocation_id": {
             "type": ["string", "null"],
             "description": (
-                "Pass null to start a new task. The tool result will include an invocation_id. "
-                "To continue an existing session, pass that exact invocation_id back. "
-                "The target agent's session_id is '{invocation_id}.{target_agent}'."
+                "Task continuation id. Pass null to start a new task; the tool result "
+                "includes an invocation_id to pass back for follow-ups in the same task. "
+                "The target's session_id is '{invocation_id}.{target_agent}'."
             ),
         },
     },
@@ -142,9 +149,16 @@ class CommunicationTargetStore:
         # wiring that doesn't know the mode) stay safe.
         if self._for_subagent:
             return
-        if target.name not in self._targets:
-            self._targets[target.name] = target
-            self._description = None
+        if target.name in self._targets:
+            existing = self._targets[target.name]
+            raise ValueError(
+                f"Duplicate communication target name {target.name!r}: "
+                f"existing pool={existing.pool_name!r}, "
+                f"new pool={target.pool_name!r}. "
+                "Target names MUST be unique across all reachable pools."
+            )
+        self._targets[target.name] = target
+        self._description = None
 
     def pop_by_name(self, name: str) -> None:
         if self._for_subagent:
@@ -165,6 +179,18 @@ class CommunicationTargetStore:
             parent = self._parent_target()
             return parent is not None and parent.name == name
         return name in self._targets
+
+    def get(self, name: str) -> CommunicationTarget | None:
+        """Look up a target by name. Returns None if not found.
+
+        In subagent mode the store is single-target (parent); resolves via
+        the contextvar just like ``has`` / ``list`` so the lookup cannot
+        drift from the dynamic semantics.
+        """
+        if self._for_subagent:
+            parent = self._parent_target()
+            return parent if parent is not None and parent.name == name else None
+        return self._targets.get(name)
 
     def _parent_target(self) -> CommunicationTarget | None:
         parent_name = _current_parent_name()
@@ -203,40 +229,38 @@ class CommunicationTargetStore:
 
     def _build_normal(self) -> str:
         lines = [
-            "Send a message to another agent: coordinate, ask, reply, or hand off work.",
+            "Communicate with another agent — your ONLY channel to them.",
             "",
-            "The target sees nothing you say outside of `content` — put the full message",
-            "there. When it finishes, its result comes back to you AUTOMATICALLY as a",
-            "completion notification (with a summary and a link to its output); the target",
-            "does not need to call anything to reply.",
-            "",
-            "Use this tool to:",
-            "  - exchange information, questions, decisions, or status with another agent;",
-            "  - hand off a self-contained subtask when work is better split off to a specialist.",
-            "",
-            "ASYNCHRONOUS: after sending you may stop and do nothing — end your turn.",
-            "Don't poll or read the output files yet. The result comes back on its own as",
-            "a completion notification, which resumes you; then read the referenced Output file.",
+            "Only `content` reaches the target; your reasoning, tool calls, and",
+            "this reply stay local. Sends are asynchronous — end your turn after;",
+            "the response comes back on its own. Don't send just to acknowledge.",
             "",
         ]
         if not self._targets:
             lines.append("No targets currently available.")
             return "\n".join(lines)
-        lines.append("Available targets (use the exact name as target_agent):")
+        lines.extend(
+            [
+                "Two target kinds, each labeled in parentheses:",
+                "",
+                "  - (subagent): your helper. Delegate a self-contained subtask;",
+                "    you direct it, it runs on your behalf. Put the task in `content`;",
+                "    thread `invocation_id` across follow-ups (null starts a new task,",
+                "    the returned id continues it).",
+                "  - (normal): an independent peer agent (often another team). Ask,",
+                "    share, or coordinate — communicate as equals, not as a director.",
+                "    `content` reads like a message to a colleague, not an order.",
+                "    `invocation_id` is ignored — the sender's session prefix is reused,",
+                "    so each peer conversation keeps a stable thread.",
+                "",
+                "Available targets (use the exact name as target_agent):",
+            ]
+        )
         for t in self._targets.values():
             entry = f"  - {t.name} ({t.kind.value})"
             if t.description:
                 entry += f": {t.description}"
             lines.append(entry)
-        lines.extend(
-            [
-                "",
-                "Parameters:",
-                "  target_agent: Exact name from the list above.",
-                "  content: The full message or task — self-contained, since it's all the target sees.",
-                "  invocation_id: Pass null to start a new exchange. The tool result includes an invocation_id; pass that exact id back to continue the same exchange.",
-            ]
-        )
         return "\n".join(lines)
 
     def _build_subagent(self) -> str:
@@ -292,7 +316,6 @@ class SendToAgentTool(Tool):
         registry: AgentRegistry,
         agent_bus: AgentMessageBus,
         service: AgentCommunicationService,
-        comm_tracker: CommunicationTracker | None = None,
         wakeup_timeout: float = 1.0,
     ) -> None:
         self._store = store
@@ -301,7 +324,6 @@ class SendToAgentTool(Tool):
         self._registry = registry
         self._agent_bus = agent_bus
         self._service = service
-        self._comm_tracker = comm_tracker
         self._wakeup_timeout = wakeup_timeout
         super().__init__(
             name="send_to_agent",
@@ -360,7 +382,8 @@ class SendToAgentTool(Tool):
         else:
             invocation_id: str | None = str(invocation_id_value)
 
-        if not self.has_target(target_agent):
+        target = self._store.get(target_agent)
+        if target is None:
             available = ", ".join(t.name for t in self.list_targets())
             return f"Error: '{target_agent}' is not a valid communication target. Available: {available}"
 
@@ -368,7 +391,7 @@ class SendToAgentTool(Tool):
         if context is None:
             return "Error: no agent context available"
         return await self._service.send_async(
-            target_agent=target_agent,
+            target=target,
             content=content,
             invocation_id=invocation_id,
             context=context,

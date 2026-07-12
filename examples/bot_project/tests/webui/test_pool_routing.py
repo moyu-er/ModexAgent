@@ -16,14 +16,14 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from bot.adapters.fan_in import FanInInputAdapter
 from bot.adapters.web_socket import WebSocketInputAdapter
-from bot.service.pool_router import PoolRouter, PoolSessionStore
+from bot.service.workspace_store import WorkspaceScopedTranscriptStore
+from bot.webui.events import _unwrap_envelope
 from bot.webui.server import (
     WebUIServer,
     _new_uuid_prefix,
 )
-from bot.service.workspace_store import WorkspaceScopedTranscriptStore
-from bot.webui.events import _unwrap_envelope
-from bot.webui.transcript_store import JSONLTranscriptStore
+
+from modex_agent.multi_agent.pool_router import PoolRouter, PoolSessionStore
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.runtime import bind_workspace_root
 
@@ -343,6 +343,7 @@ async def test_fan_in_propagates_to_all_sources() -> None:
 async def test_pool_mapping_survives_server_recreation() -> None:
     """Pool mapping saved to disk must survive server restart."""
     from bot.service.session_store import WorkspacePoolSessionStore
+
     from modex_agent.core.session_id import SessionIdFactory
 
     data_dir = Path(tempfile.mkdtemp())
@@ -740,6 +741,7 @@ async def test_conversations_survive_pool_switching() -> None:
     Regression test for: switching pool → sidebar empty → switching back → still empty.
     """
     from bot.service.session_store import WorkspacePoolSessionStore
+
     from modex_agent.core.session_id import SessionInfo, now_ms
 
     data_dir = Path(tempfile.mkdtemp())
@@ -836,6 +838,7 @@ async def test_conversation_visible_after_first_message() -> None:
     /api/sessions after the first message. Empty (no-message) sessions are
     client-side only and do NOT appear in the server session list."""
     from bot.service.session_store import WorkspacePoolSessionStore
+
     from modex_agent.core.session_id import SessionInfo, now_ms
 
     data_dir = Path(tempfile.mkdtemp())
@@ -932,6 +935,7 @@ async def test_sessions_includes_external_adapter_conversations() -> None:
     """
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.webui.events import UserMessageEvent
+
     from modex_agent.core.session_id import SessionInfo, now_ms
 
     data_dir = Path(tempfile.mkdtemp())

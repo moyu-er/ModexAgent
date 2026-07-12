@@ -6,6 +6,8 @@ import {
   createPool,
   deletePool,
   renamePool,
+  addPeer,
+  removePeer,
   getPrompt,
   savePrompt,
 } from "./poolApi";
@@ -84,6 +86,33 @@ describe("poolApi", () => {
     expect(url).toBe("/api/pools/old");
     expect(init?.method).toBe("PATCH");
     expect(init?.body).toBe(JSON.stringify({ name: "new" }));
+  });
+
+  it("addPeer POSTs {peer} to /api/pools/{pool}/peers", async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(makeResponse(200, { pool_a: { name: "a" }, pool_b: { name: "b" } })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await addPeer("a", "b");
+    const [url, init] = call(fetchMock, 0);
+    expect(url).toBe("/api/pools/a/peers");
+    expect(init?.method).toBe("POST");
+    expect(init?.body).toBe(JSON.stringify({ peer: "b" }));
+    expect(result.pool_a).toEqual({ name: "a" });
+    expect(result.pool_b).toEqual({ name: "b" });
+  });
+
+  it("removePeer DELETEs /api/pools/{pool}/peers/{peer}", async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(makeResponse(200, { pool_a: { name: "a" }, pool_b: { name: "b" } })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await removePeer("a", "b");
+    const [url, init] = call(fetchMock, 0);
+    expect(url).toBe("/api/pools/a/peers/b");
+    expect(init?.method).toBe("DELETE");
+    expect(result.pool_a).toEqual({ name: "a" });
+    expect(result.pool_b).toEqual({ name: "b" });
   });
 
   it("deletePool DELETEs /api/pools/{name}", async () => {

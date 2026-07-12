@@ -14,11 +14,10 @@ import asyncio
 import contextlib
 import logging
 
-from modex_agent.core.experience import ExperienceCurator
-from modex_agent.ioc.configs.pool import PoolConfig
-from modex_agent.memory.consolidation.dream_engine import DreamEngine
-
 from bot.workspace.pool_data import PoolData
+from modex_agent.core.experience import ExperienceCurator
+from modex_agent.memory.consolidation.dream_engine import DreamEngine
+from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 
 logger = logging.getLogger(__name__)
 
@@ -43,11 +42,11 @@ class BackgroundTaskRunner:
         self,
         *,
         pool_data: dict[str, PoolData],
-        pools_config: dict[str, PoolConfig],
+        assembly_deps: dict[str, PoolAssemblyDeps],
         default_pool_name: str | None,
     ) -> None:
         self._pool_data: dict[str, PoolData] = pool_data
-        self._pools_config: dict[str, PoolConfig] = pools_config
+        self._assembly_deps: dict[str, PoolAssemblyDeps] = assembly_deps
         self._default_pool_name: str | None = default_pool_name
 
         # Built eagerly from pool_data (re-home of _maybe_build_dream +
@@ -75,10 +74,10 @@ class BackgroundTaskRunner:
         name = self._default_pool_name
         if name is None:
             return None
-        pool_cfg = self._pools_config.get(name)
-        if pool_cfg is None or pool_cfg.memory is None:
+        deps = self._assembly_deps.get(name)
+        if deps is None or deps.memory is None:
             return None
-        dream_cfg = pool_cfg.memory.dream_engine
+        dream_cfg = deps.memory.dream_engine
         if dream_cfg is None or not dream_cfg.enabled:
             return None
 
@@ -114,36 +113,26 @@ class BackgroundTaskRunner:
         Re-homed verbatim from ``Workspace._build_curators``. Idempotent: pools
         already in :attr:`curators` are skipped.
         """
-        for pool_name, pool_cfg in self._pools_config.items():
+        for pool_name, deps in self._assembly_deps.items():
             if pool_name in self.curators:
                 continue
-            main_cfg = next(
-                (a for a in pool_cfg.agents if a.role == "main"), None
-            )
-            if (
-                main_cfg is None
-                or main_cfg.experience is None
-                or not main_cfg.experience.enabled
-            ):
+            exp_cfg = deps.experience
+            if exp_cfg is None or not exp_cfg.enabled:
                 continue
             pool_data = self._pool_data.get(pool_name)
             if pool_data is None:
-                # curator requires the experience dir / meta from pool_data;
-                # skip pools that have not been built yet.
                 continue
             curator = ExperienceCurator(
                 experience_dir=pool_data.experience_dir,
                 meta_store=pool_data.experience_meta,
-                max_experiences=main_cfg.experience.max_experiences,
+                max_experiences=exp_cfg.max_experiences,
             )
             self.curators[pool_name] = curator
-            self._curator_intervals[pool_name] = (
-                main_cfg.experience.curator_interval
-            )
+            self._curator_intervals[pool_name] = exp_cfg.curator_interval
             logger.info(
                 "Workspace ExperienceCurator initialized, pool=%s, interval=%ds",
                 pool_name,
-                main_cfg.experience.curator_interval,
+                exp_cfg.curator_interval,
             )
 
     # ------------------------------------------------------------------

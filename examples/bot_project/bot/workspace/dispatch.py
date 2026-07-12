@@ -12,7 +12,7 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
-from typing import Generic, TypeVar
+from typing import TypeVar
 
 from modex_agent.workspace.routing import WorkspaceResolver
 from modex_agent.workspace.runtime import bind_workspace_root
@@ -23,7 +23,7 @@ M = TypeVar("M")
 R = TypeVar("R")
 
 
-class WorkspaceMessageDispatcher(Generic[M, R]):
+class WorkspaceMessageDispatcher[M, R]:
     """Per-message workspace router. Generic over message type M and resource type R."""
 
     def __init__(

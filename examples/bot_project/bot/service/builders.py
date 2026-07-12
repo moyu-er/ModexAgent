@@ -11,13 +11,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bot.plugins.integration import PluginIntegration
-
 from modex_agent.core.skills import SkillManager
 from modex_agent.core.tool_manager import Tool
 from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import AgentMessageBus
-from modex_agent.multi_agent.comm_tracker import CommunicationTracker
 from modex_agent.pipeline.adapters import OutputAdapter
 
 if TYPE_CHECKING:
@@ -30,12 +28,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def resolve_system_prompt(agent_cfg: Any, project_dir: Path) -> str:
-    """Resolve system prompt: agents/{name}.md if exists, else YAML value."""
-    md_path = project_dir / "agents" / f"{agent_cfg.name}.md"
+def resolve_system_prompt(agent_name: str, project_dir: Path) -> str:
+    """Resolve system prompt: agents/{name}.md if exists, else empty string."""
+    md_path = project_dir / "agents" / f"{agent_name}.md"
     if md_path.exists():
         return md_path.read_text(encoding="utf-8")
-    return getattr(agent_cfg, "system_prompt", "")
+    return ""
 
 
 # ── Standard tool builders (code objects, no config) ──
@@ -121,10 +119,9 @@ async def _load_agent_mcp_tools(
         return tools, backend
 
     # ── Legacy per-pool branch (flag-off / non-registry world): byte-for-byte ──
+    from bot.config.mcp_registry import resolve_agent_mcp_servers
     from modex_agent.ioc.configs.app import _resolve_env_in
     from modex_agent.tools.mcp import MCPClientManager
-
-    from bot.config.mcp_registry import resolve_agent_mcp_servers
 
     registry_path = project_dir / "config" / "mcp" / "registry.json"
     try:
@@ -174,13 +171,14 @@ class AgentBuilderMixin:
     broker: InMemoryMessageBroker | None
     agent_bus: AgentMessageBus | None
 
-    communication_tracker: CommunicationTracker | None
     plugin_integration: PluginIntegration | None
 
     # Subagent caches
     _subagent_skill_managers: dict[str, SkillManager]
     _subagent_memory_systems: dict[str, Any]
     _additional_subagent_memory_systems: dict[str, Any]
+
+    _transcript_store: Any | None = None
 
     # ── Properties provided by BotService ──
 

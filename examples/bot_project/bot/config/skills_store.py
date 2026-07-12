@@ -59,7 +59,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from bot.config.pool_payloads import SkillEntry, SkillOrigin, SkillSource
+from bot.config import SkillEntry, SkillOrigin, SkillSource
 from modex_agent.core.frontmatter import parse_frontmatter
 
 logger = logging.getLogger(__name__)

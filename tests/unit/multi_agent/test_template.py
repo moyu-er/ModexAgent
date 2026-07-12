@@ -3,53 +3,60 @@
 
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.ioc.configs.skills import SkillsConfig
+from modex_agent.multi_agent.pool_config.specs import SubagentSpec
 from modex_agent.multi_agent.template import AgentTemplate
 from modex_agent.tools.presets import ContextMode, ToolPreset
 
 
 def test_agent_template_defaults():
-    t = AgentTemplate(agent_name="test")
-    assert t.agent_name == "test"
-    assert t.description == ""
-    assert t.max_steps == 80
-    assert t.tool_preset == ToolPreset.READ_WRITE
-    assert t.tool_supplements == []
-    assert t.context_mode == ContextMode.FRESH
+    t = AgentTemplate(spec=SubagentSpec(agent_name="test"))
+    assert t.spec.agent_name == "test"
+    assert t.spec.description == ""
+    assert t.spec.max_steps == 80
+    assert t.spec.tool_preset == ToolPreset.READ_WRITE
+    assert t.spec.tool_supplements == []
+    assert t.spec.context_mode == ContextMode.FRESH
     assert t.memory is None
     assert t.skills is None
-    assert t.mcp == []
+    assert t.spec.mcp == []
 
 
 def test_agent_template_full():
     t = AgentTemplate(
-        agent_name="code-reviewer",
-        description="Reviews code",
-        max_steps=30,
-        tool_preset=ToolPreset.READ_WRITE,
+        spec=SubagentSpec(
+            agent_name="code-reviewer",
+            description="Reviews code",
+            max_steps=30,
+            tool_preset=ToolPreset.READ_WRITE,
+        ),
         memory=MemoryConfig(),
         skills=SkillsConfig(roots=["skills/reviewer"]),
     )
-    assert t.max_steps == 30
-    assert t.tool_preset == ToolPreset.READ_WRITE
+    assert t.spec.max_steps == 30
+    assert t.spec.tool_preset == ToolPreset.READ_WRITE
 
 
 def test_agent_template_system_prompt_mode_default() -> None:
     """Default system_prompt_mode is REPLACE."""
     from modex_agent.tools.presets import SystemPromptMode
-    t = AgentTemplate(agent_name="test")
-    assert t.system_prompt_mode == SystemPromptMode.REPLACE
+
+    t = AgentTemplate(spec=SubagentSpec(agent_name="test"))
+    assert t.spec.system_prompt_mode == SystemPromptMode.REPLACE
 
 
 def test_agent_template_system_prompt_mode_append() -> None:
     """system_prompt_mode can be set to APPEND."""
     from modex_agent.tools.presets import SystemPromptMode
-    t = AgentTemplate(agent_name="delegate", system_prompt_mode=SystemPromptMode.APPEND)
-    assert t.system_prompt_mode == SystemPromptMode.APPEND
+
+    t = AgentTemplate(
+        spec=SubagentSpec(agent_name="delegate", system_prompt_mode=SystemPromptMode.APPEND)
+    )
+    assert t.spec.system_prompt_mode == SystemPromptMode.APPEND
 
 
 def test_agent_template_dead_fields_absent():
     """Removed fields must not exist on the dataclass."""
-    t = AgentTemplate(agent_name="test")
+    t = AgentTemplate(spec=SubagentSpec(agent_name="test"))
     for field in (
         "agent_type",
         "thinking_budget",
@@ -57,5 +64,7 @@ def test_agent_template_dead_fields_absent():
         "use_terminal",
         "terminal_visibility",
         "extra_tools",
+        "approval",
+        "experience",
     ):
         assert not hasattr(t, field), f"dead field {field!r} still present"

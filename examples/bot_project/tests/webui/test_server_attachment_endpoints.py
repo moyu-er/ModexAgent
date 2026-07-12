@@ -16,12 +16,12 @@ from unittest.mock import MagicMock
 import pytest
 from aiohttp import FormData
 from aiohttp.test_utils import TestClient, TestServer
-
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.input_pipeline.context import BotInputContext
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.server import WebUIServer
-from modex_agent.ioc.configs.pool import MediaConfig
+
+from modex_agent.multi_agent.pool_config.media import MediaConfig
 from modex_agent.workspace.paths import WorkspacePaths
 
 

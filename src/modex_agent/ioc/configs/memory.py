@@ -3,7 +3,7 @@
 MemoryConfig is the most complex config in the system. Each sub-config
 has sensible defaults so users only override what they need.
 
-MemoryConfig as a field in AgentConfig is None = disabled.
+MemoryConfig as an optional field = disabled.
 MemoryConfig() = enabled with all defaults.
 """
 
@@ -155,7 +155,7 @@ class SummarizerAgentConfig(BaseModel):
 class MemoryConfig(BaseModel):
     """Memory system configuration.
 
-    None (as a field in AgentConfig) = memory system not created.
+    None (as an optional field) = memory system not created.
     MemoryConfig() = enabled with all defaults:
       - session layer: on (token-budget compression triggers)
       - user retention layer: on (internal, transparent)

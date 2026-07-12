@@ -11,8 +11,8 @@ _BOT_PROJECT = Path(__file__).resolve().parents[3]
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
-from bot.config.pool_payloads import PromptContent
-from bot.config.prompt_store import (
+from bot.config import PromptContent  # noqa: E402
+from bot.config.prompt_store import (  # noqa: E402
     PromptStore,
     PromptValidationError,
     UnknownPromptError,

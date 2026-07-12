@@ -11,12 +11,11 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
-
 _BOT_PROJECT = Path(__file__).resolve().parents[3]
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
+from modex_agent.multi_agent.pool_config.specs import SubagentSpec
 from modex_agent.multi_agent.template import AgentTemplate
 
 
@@ -43,7 +42,10 @@ class TestSubagentAlwaysHasSkillManager:
         )
         from modex_agent.ioc.configs.skills import SkillsConfig
 
-        tmpl = AgentTemplate(agent_name="reviewer", skills=SkillsConfig(roots=["skills/reviewer"]))
+        tmpl = AgentTemplate(
+            spec=SubagentSpec(agent_name="reviewer"),
+            skills=SkillsConfig(roots=["skills/reviewer"]),
+        )
         mgr = tmpl._build_skill_manager(_make_deps(tmp_path), "reviewer")
         assert mgr is not None
 
@@ -51,7 +53,7 @@ class TestSubagentAlwaysHasSkillManager:
         """Subagent with NO skills config still gets a SkillManager (convention root)."""
         # Convention root skills/main/helper does not exist, but a SkillManager
         # is still returned (empty, but present — pipeline stage wired).
-        tmpl = AgentTemplate(agent_name="helper")
+        tmpl = AgentTemplate(spec=SubagentSpec(agent_name="helper"))
         mgr = tmpl._build_skill_manager(_make_deps(tmp_path), "helper")
         assert mgr is not None, "subagent must always get a SkillManager (skill-injection default-on)"
 
@@ -66,6 +68,6 @@ class TestSubagentAlwaysHasSkillManager:
             broker=None,
             project_dir=None,
         )
-        tmpl = AgentTemplate(agent_name="helper")
+        tmpl = AgentTemplate(spec=SubagentSpec(agent_name="helper"))
         mgr = tmpl._build_skill_manager(deps, "helper")
         assert mgr is None

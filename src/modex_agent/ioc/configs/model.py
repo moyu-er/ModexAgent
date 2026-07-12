@@ -11,34 +11,44 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from modex_agent.core.constants import InterfaceFormat
 
 
 class GlobalModelConfig(BaseModel):
     """App-wide model settings shared by every pool.
 
-    Field names mirror :class:`LLMConfig` except ``url``, which maps to
-    ``LLMConfig.base_url``. ``to_llm_dict`` performs that single rename so the
-    result can be fed straight into ``LLMConfig`` (or merged into a pool's
-    ``llm`` section before validation).
+    ``url`` is accepted as a backward-compatible alias for ``base_url``.
+    ``to_llm_dict`` returns the canonical ``LLMConfig`` shape.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
-    url: str = ""
+    base_url: str = ""
     api_key: str = ""
     model: str = ""
     capabilities: list[str] = Field(default_factory=lambda: ["text"])
     temperature: float = 0.7
     max_output_tokens: int = 80000
+    interface_format: InterfaceFormat = InterfaceFormat.OPENAI_COMPATIBLE
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_url(cls, data: dict[str, Any]) -> dict[str, Any]:
+        if isinstance(data, dict) and "url" in data and "base_url" not in data:
+            data = {**data, "base_url": data["url"]}
+            data = {k: v for k, v in data.items() if k != "url"}
+        return data
 
     def to_llm_dict(self) -> dict[str, Any]:
-        """Return an ``LLMConfig``-shaped dict (``url`` renamed to ``base_url``)."""
+        """Return an ``LLMConfig``-shaped dict."""
         return {
             "model": self.model,
             "api_key": self.api_key,
-            "base_url": self.url,
+            "base_url": self.base_url,
             "temperature": self.temperature,
             "max_output_tokens": self.max_output_tokens,
             "capabilities": list(self.capabilities),
+            "interface_format": self.interface_format,
         }

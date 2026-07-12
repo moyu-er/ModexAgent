@@ -13,6 +13,7 @@ single turn task, and locks the session_id-key-consistency contract between
 EnqueueStage's write and the hook's read (the most likely regression: a key
 drift silently breaks model switching because the hook falls back to default).
 """
+
 from __future__ import annotations
 
 import sys
@@ -44,11 +45,12 @@ models:
   providers:
     - key: a
       name: "A"
-      url: u
+      base_url: u
+      interface_format: openai_compatible
       api_key: k
       models:
-        - {name: M1, model: openai/m1, temperature: 0.3, max_output_tokens: 1000}
-        - {name: M2, model: openai/m2, temperature: 0.9, max_output_tokens: 2000}
+        - {name: M1, model: m1, temperature: 0.3, max_output_tokens: 1000}
+        - {name: M2, model: m2, temperature: 0.9, max_output_tokens: 2000}
 """
 
 
@@ -62,9 +64,7 @@ def _ctx(session_id: str) -> SimpleNamespace:
     """Minimal AgentContext shape consumed by ModelChoiceBindHook.before_turn."""
     services = SimpleNamespace(model_capabilities=None)
     runtime = SimpleNamespace(services=services)
-    return SimpleNamespace(
-        session=SimpleNamespace(session_id=session_id), runtime=runtime
-    )
+    return SimpleNamespace(session=SimpleNamespace(session_id=session_id), runtime=runtime)
 
 
 class _FakeReal:
@@ -120,8 +120,8 @@ async def test_chain_registry_to_hook_to_provider_uses_m2(tmp_path: Path) -> Non
     provider = BotModelProvider(cfg)
     fake_m1 = _FakeReal("m1")
     fake_m2 = _FakeReal("m2")
-    provider._cache[("a", "openai/m1")] = fake_m1  # type: ignore[attr-defined]
-    provider._cache[("a", "openai/m2")] = fake_m2  # type: ignore[attr-defined]
+    provider._cache[("a", "m1")] = fake_m1  # type: ignore[attr-defined]
+    provider._cache[("a", "m2")] = fake_m2  # type: ignore[attr-defined]
 
     resp = await provider.chat_stream(messages=[{"role": "user", "content": "hi"}])
 
@@ -157,8 +157,8 @@ async def test_chain_unregistered_session_falls_back_to_default_m1(
     provider = BotModelProvider(cfg)
     fake_m1 = _FakeReal("m1")
     fake_m2 = _FakeReal("m2")
-    provider._cache[("a", "openai/m1")] = fake_m1  # type: ignore[attr-defined]
-    provider._cache[("a", "openai/m2")] = fake_m2  # type: ignore[attr-defined]
+    provider._cache[("a", "m1")] = fake_m1  # type: ignore[attr-defined]
+    provider._cache[("a", "m2")] = fake_m2  # type: ignore[attr-defined]
 
     resp = await provider.chat_stream(messages=[{"role": "user", "content": "hi"}])
 

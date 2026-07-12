@@ -20,12 +20,13 @@ import type {
   ApprovalConfig,
   ContextMode,
   MainAgentNode,
+  PoolSummary,
   PoolTree,
   SubagentNode,
   SystemPromptMode,
   ToolPreset,
 } from "../../types/pool";
-import { getPool, savePool } from "../../lib/poolApi";
+import { getPool, savePool, addPeer, removePeer, listPools } from "../../lib/poolApi";
 import { ApiError } from "../../lib/api";
 import { useToast } from "../ToastContext";
 import { restartToast } from "./restartToast";
@@ -117,6 +118,11 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
   formRef.current = form;
   const [errors, setErrors] = useState<FieldErrors>({});
   const [loadError, setLoadError] = useState<string>("");
+  const [allPools, setAllPools] = useState<PoolSummary[] | null>(null);
+  const [peerError, setPeerError] = useState<string>("");
+  const [peerToRemove, setPeerToRemove] = useState<string | null>(null);
+  const [addingPeer, setAddingPeer] = useState<boolean>(false);
+  const [newPeer, setNewPeer] = useState<string>("");
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
   const [promptTarget, setPromptTarget] = useState<PromptTarget>(null);
   const [confirmDeleteSub, setConfirmDeleteSub] = useState<number | null>(null);
@@ -124,14 +130,19 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
   useEffect(() => {
     let cancelled = false;
     setLoadError("");
+    setPeerError("");
     setErrors({});
     setExpanded(new Set());
     setPromptTarget(null);
-    getPool(pool)
-      .then((tree) => {
+    setPeerToRemove(null);
+    setAddingPeer(false);
+    setNewPeer("");
+    Promise.all([getPool(pool), listPools()])
+      .then(([tree, pools]) => {
         if (cancelled) return;
         setOriginal(tree);
         setForm(clone(tree));
+        setAllPools(pools);
       })
       .catch((e: unknown) => {
         if (!cancelled) setLoadError(String(e));
@@ -203,6 +214,12 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
     onCancel?.(cancel);
   }, [onCancel, cancel]);
 
+  const availablePeers = useMemo<PoolSummary[]>(() => {
+    if (!Array.isArray(allPools)) return [];
+    const current = new Set(form?.peers ?? []);
+    return allPools.filter((p) => p.name !== pool && !current.has(p.name));
+  }, [allPools, form?.peers, pool]);
+
   if (loadError) {
     return <p className="text-sm text-error">Failed to load: {loadError}</p>;
   }
@@ -261,6 +278,69 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
     return msgs && msgs.length > 0 ? msgs[0] : undefined;
   };
 
+  const mainAgentNameOf = (name: string): string => {
+    if (!allPools) return name;
+    const found = allPools.find((p) => p.name === name);
+    return found?.main_agent_name ?? name;
+  };
+
+  const handleAddPeer = async (): Promise<void> => {
+    const peer = newPeer.trim();
+    if (!peer) return;
+    setPeerError("");
+    setAddingPeer(false);
+    setNewPeer("");
+    try {
+      const result = await addPeer(pool, peer);
+      setOriginal(result.pool_a);
+      setForm(clone(result.pool_a));
+    } catch (e) {
+      if (e instanceof ApiError) {
+        try {
+          const body = JSON.parse(e.detail ?? "") as {
+            fields?: FieldErrors;
+          };
+          if (body.fields?.peer?.length) {
+            setPeerError(body.fields.peer[0] ?? String(e));
+          } else {
+            setPeerError(e.detail ?? String(e));
+          }
+        } catch {
+          setPeerError(e.detail ?? String(e));
+        }
+      } else {
+        setPeerError(String(e));
+      }
+    }
+  };
+
+  const handleRemovePeer = async (peer: string): Promise<void> => {
+    setPeerError("");
+    setPeerToRemove(null);
+    try {
+      const result = await removePeer(pool, peer);
+      setOriginal(result.pool_a);
+      setForm(clone(result.pool_a));
+    } catch (e) {
+      if (e instanceof ApiError) {
+        try {
+          const body = JSON.parse(e.detail ?? "") as {
+            fields?: FieldErrors;
+          };
+          if (body.fields?.peer?.length) {
+            setPeerError(body.fields.peer[0] ?? String(e));
+          } else {
+            setPeerError(e.detail ?? String(e));
+          }
+        } catch {
+          setPeerError(e.detail ?? String(e));
+        }
+      } else {
+        setPeerError(String(e));
+      }
+    }
+  };
+
   const editor = (
     <div className="space-y-5">
       <h1 className="text-lg font-semibold text-ink">
@@ -284,6 +364,117 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
           />
         </div>
       </Card>
+
+      {/* PEERS */}
+      <section>
+        <div className="mb-2 flex items-center justify-between">
+          <SectionLabel>Peers</SectionLabel>
+        </div>
+        <div className="space-y-2">
+          {form.peers.map((peer) => {
+            const isConfirming = peerToRemove === peer;
+            return (
+              <Card key={peer}>
+                <div className="flex items-center justify-between gap-3 px-3 py-2.5">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium text-ink">
+                      {peer}
+                    </div>
+                    <div className="truncate text-xs text-body">
+                      main agent: {mainAgentNameOf(peer)}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {isConfirming ? (
+                      <span className="flex items-center gap-2 text-xs">
+                        <Button
+                          variant="link"
+                          size="sm"
+                          className="text-error hover:underline"
+                          onClick={() => void handleRemovePeer(peer)}
+                        >
+                          Remove
+                        </Button>
+                        <Button
+                          variant="link"
+                          size="sm"
+                          className="text-body hover:underline"
+                          onClick={() => setPeerToRemove(null)}
+                        >
+                          Cancel
+                        </Button>
+                      </span>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        aria-label={`Remove peer ${peer}`}
+                        className="text-body hover:text-error"
+                        onClick={() => setPeerToRemove(peer)}
+                      >
+                        <Trash2 size={16} />
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </Card>
+            );
+          })}
+          {form.peers.length === 0 && (
+            <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-sm text-body">
+              No peer pools.
+            </p>
+          )}
+          {addingPeer ? (
+            <div className="flex items-center gap-2">
+              <Select
+                aria-label="New peer pool"
+                options={[
+                  { value: "", label: "Select a pool…" },
+                  ...availablePeers.map((p) => ({
+                    value: p.name,
+                    label: `${p.name} (${p.main_agent_name})`,
+                  })),
+                ]}
+                value={newPeer}
+                onChange={(e) => setNewPeer(e.target.value)}
+                className="flex-1"
+              />
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void handleAddPeer()}
+                disabled={!newPeer}
+              >
+                Add
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setAddingPeer(false);
+                  setNewPeer("");
+                  setPeerError("");
+                }}
+              >
+                Cancel
+              </Button>
+            </div>
+          ) : (
+            <Button
+              variant="ghost"
+              className="w-full justify-center border border-dashed border-hairline text-body hover:border-ink hover:bg-hairline-soft hover:text-ink"
+              onClick={() => setAddingPeer(true)}
+              disabled={availablePeers.length === 0}
+            >
+              <PlusIcon /> Add peer
+            </Button>
+          )}
+          {peerError && (
+            <p className="text-sm text-error">{peerError}</p>
+          )}
+        </div>
+      </section>
 
       {/* SUBAGENTS */}
       <section>
@@ -504,6 +695,13 @@ function MainAgentFields({
           </div>
         </div>
       </div>
+
+      <Input
+        label="Description"
+        error={errFor("main.description")}
+        value={node.description}
+        onChange={(e) => patch({ description: e.target.value })}
+      />
 
       <div>
         <span className="mb-1 block text-xs font-medium text-body">

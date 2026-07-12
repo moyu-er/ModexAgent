@@ -10,11 +10,16 @@ Per-envelope turn execution (session tracking, InputMessage reconstruction,
 so the poller stays thin and session/metadata locality stays on the pool.
 """
 from __future__ import annotations
+
 import asyncio
+import contextlib
 import logging
 from typing import TYPE_CHECKING
 
+from modex_agent.core.session_id import SessionInfo
+
 if TYPE_CHECKING:
+    from modex_agent.core.session_registry import SessionRegistry
     from modex_agent.multi_agent.descriptor import AgentInstance
     from modex_agent.multi_agent.pool import AgentPool
     from modex_agent.multi_agent.template import AgentTemplate
@@ -25,9 +30,16 @@ logger = logging.getLogger(__name__)
 class InboxPoller:
     """One per pool. Owned by AgentPool; started/stopped with the pool."""
 
-    def __init__(self, pool: "AgentPool", *, interval: float = 0.2) -> None:
+    def __init__(
+        self,
+        pool: AgentPool,
+        *,
+        interval: float = 0.2,
+        session_registry: SessionRegistry | None = None,
+    ) -> None:
         self._pool = pool
         self._interval = interval
+        self._session_registry = session_registry or pool.session_registry
         self._inflight: dict[str, asyncio.Task[None]] = {}
         self._task: asyncio.Task[None] | None = None
 
@@ -38,10 +50,8 @@ class InboxPoller:
     async def stop(self) -> None:
         if self._task is not None:
             self._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._task
-            except asyncio.CancelledError:
-                pass
         for t in list(self._inflight.values()):
             t.cancel()
         await asyncio.gather(*self._inflight.values(), return_exceptions=True)
@@ -77,7 +87,6 @@ class InboxPoller:
         existing = self._inflight.get(sid)
         if existing is not None and not existing.done():
             return  # busy → fold-in hook handles mid-turn
-        from modex_agent.core.session_id import SessionInfo
         info = SessionInfo.from_str(sid)
         agent = info.agent_name
         if not agent or agent == "unknown":
@@ -93,7 +102,7 @@ class InboxPoller:
             self._inflight[sid] = asyncio.create_task(self._run_turn(sid, instance))
 
     async def _dispatch_batch(
-        self, sid: str, instance: "AgentInstance"
+        self, sid: str, instance: AgentInstance
     ) -> None:
         """Consume one batch and dispatch each envelope as its own turn.
 
@@ -105,14 +114,31 @@ class InboxPoller:
         for envelope in batch:
             await self._pool.dispatch_envelope(sid, instance, envelope)
 
-    async def _run_turn(self, sid: str, instance: "AgentInstance") -> None:
+    async def _run_turn(self, sid: str, instance: AgentInstance) -> None:
         try:
+            await self._ensure_session_registered(sid)
             await self._dispatch_batch(sid, instance)
         finally:
             self._inflight.pop(sid, None)
 
-    async def _materialize_then_turn(self, sid: str, template: "AgentTemplate") -> None:
+    async def _ensure_session_registered(self, sid: str) -> None:
+        """Register a session that is in the inbox but not yet in the registry.
+
+        Generic helper: when a message arrives for a session id the local
+        registry has never seen, create the session record before dispatching.
+        The agent instance is expected to be already registered (eager main
+        agents); this only ensures the session metadata exists.
+        """
+        if self._session_registry is None:
+            return
+        existing = await self._session_registry.get(sid)
+        if existing is None:
+            info = SessionInfo.from_str(sid)
+            await self._session_registry.register(info)
+
+    async def _materialize_then_turn(self, sid: str, template: AgentTemplate) -> None:
         try:
+            await self._ensure_session_registered(sid)
             # Peek (non-destructive) the first pending envelope to read the
             # authoritative parent link — every envelope in a subagent inbox is
             # from the same parent. The batch is consumed only AFTER a

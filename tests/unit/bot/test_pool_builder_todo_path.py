@@ -13,8 +13,8 @@ from unittest.mock import AsyncMock
 import pytest
 from bot.service.pool_builder import _build_tools
 
-from modex_agent.ioc.configs.agent import AgentConfig
-from modex_agent.ioc.configs.pool import PoolConfig
+from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
+from modex_agent.multi_agent.pool_config.specs import MainAgentSpec
 from modex_agent.runtime.store import JsonFileTodoStore
 from modex_agent.tools.presets import ToolSupplement
 
@@ -23,23 +23,19 @@ from modex_agent.tools.presets import ToolSupplement
 async def test_build_tools_registers_todo_tools_and_pool_todo_store(
     tmp_path: Path,
 ) -> None:
-    """When the main agent enables the todo supplement, the builder creates a
-    pool-aware JsonFileTodoStore and registers both todo_read and todo_write.
-    """
     pool_name = "main"
     data_dir = tmp_path / "data"
     expected_todo_dir = data_dir / "runtime_state" / pool_name / "todos"
 
-    pool_cfg = PoolConfig(name=pool_name, main_agent_name="main")
-    main_cfg = AgentConfig(
-        name="main",
-        role="main",
+    main_spec = MainAgentSpec(
+        agent_name="main",
         tool_supplements=[ToolSupplement.TODO],
     )
+    assembly_deps = PoolAssemblyDeps()
 
     tool_manager, _mcp_manager, todo_store = await _build_tools(
-        pool_cfg=pool_cfg,
-        main_cfg=main_cfg,
+        main_spec=main_spec,
+        assembly_deps=assembly_deps,
         terminal_manager=None,
         project_dir=tmp_path,
         output_adapter=AsyncMock(),
@@ -59,13 +55,12 @@ async def test_build_tools_registers_todo_tools_and_pool_todo_store(
 async def test_build_tools_without_todo_supplement_does_not_register_todo_tools(
     tmp_path: Path,
 ) -> None:
-    """A main agent with no todo supplement should not receive todo tools."""
-    pool_cfg = PoolConfig(name="main", main_agent_name="main")
-    main_cfg = AgentConfig(name="main", role="main", tool_supplements=[])
+    main_spec = MainAgentSpec(agent_name="main", tool_supplements=[])
+    assembly_deps = PoolAssemblyDeps()
 
     tool_manager, _mcp_manager, _todo_store = await _build_tools(
-        pool_cfg=pool_cfg,
-        main_cfg=main_cfg,
+        main_spec=main_spec,
+        assembly_deps=assembly_deps,
         terminal_manager=None,
         project_dir=tmp_path,
         output_adapter=AsyncMock(),

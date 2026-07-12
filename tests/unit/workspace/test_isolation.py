@@ -32,7 +32,7 @@ MODULE_MARKERS: tuple[str, ...] = (
 # Matched as whole identifiers so ``PoolData`` does NOT match ``PoolDataSnapshot``.
 NAME_MARKERS: tuple[str, ...] = (
     "PoolData",
-    "PoolConfig",
+    "PoolSpec",
     "PoolInstance",
     "AgentPool",
     "MemorySystem",

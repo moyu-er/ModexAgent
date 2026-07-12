@@ -38,7 +38,7 @@
 | **自学习系统** | ExperienceReviewAgent 将对话沉淀为 EXPERIENCE.md 知识；Dream Engine 定期整合 Archive 为长期记忆 |
 | **上下文治理** | ToolChainRepair + Microcompact + TokenBudget 自动优化 |
 | **工具审批** | Agent 在改动项目外文件前会先征求同意；WebUI 点按钮或在聊天里 `/approve`。默认关闭，按 Agent 开启 |
-| **多 Agent 协作** | 主 Agent + 多个常驻 Subagent，星型拓扑通信 |
+| **多 Agent 协作** | 池内星型（主 Agent + subagent，经 `send_to_agent`）+ 跨池主 Agent 间对等通信 |
 | **技能系统** | 从 Markdown 文件动态构建系统提示词（`local_skills/` 本地或包内置） |
 | **插件系统** | 动态扩展工具、记忆提供者和技能来源 |
 | **Slash 指令** | `/approve`、`/deny`、`/continue`、`/cd`、`/pool名称`、`/stop` 及技能触发指令 |
@@ -75,7 +75,7 @@
     ┌────┴─────┬─────────┐
     ▼          ▼         ▼
 ┌────────┐ ┌────────┐ ┌────────┐
-│ main   │ │ coding │ │  ...   │  ← AgentPool 实例
+│ main   │ │ coder  │ │  ...   │  ← AgentPool 实例
 │  pool  │ │  pool  │ │  pool  │
 └────┬───┘ └────┬───┘ └────┬───┘
      │          │          │
@@ -408,7 +408,7 @@ approval:
     edit_file:  { allowed_paths: ["./*"] }
 ```
 
-`config/pools/default/pool.yml`、`config/pools/coding/pool.yml` 里有现成示例。聊天里回复 `/approve` 或 `/deny`；WebUI 里点审批卡片上的按钮。（审批不作用于 subagent。）
+`config/pools/default/pool.yml`、`config/pools/coder/pool.yml` 里有现成示例。聊天里回复 `/approve` 或 `/deny`；WebUI 里点审批卡片上的按钮。（审批不作用于 subagent。）
 
 <img src="../../assets/webui-approval.png" alt="工具审批" width="860">
 
@@ -500,7 +500,7 @@ memory:
 
 ### Pool
 
-一个 **pool** 是一套自包含的 Agent 部署：一个**主 Agent** 加零到多个 **subagent**，以星型拓扑协作（subagent 只与主 Agent 对话，彼此不直接通信）。各 pool 互相隔离——各自带自己的 agent、系统提示词、工具、记忆与会话。
+一个 **pool** 是一套自包含的 Agent 部署：一个**主 Agent** 加零到多个 **subagent**，以星型拓扑协作（subagent 只与主 Agent 对话，彼此不直接通信）。各 pool 互相隔离——各自带自己的 agent、系统提示词、工具、记忆与会话。不同 pool 的主 Agent 之间可通过 `send_to_agent` 对等通信（跨池消息），因此一个 pool 里的任务可以请另一个 pool 里的专家帮忙。
 
 在磁盘上，pool 就是 `config/pools/` 下的一个目录——**目录名即 pool 标识**：
 
@@ -510,7 +510,7 @@ config/pools/
 │   ├── pool.yml            # 主 Agent 配置（max_steps、工具、审批 ……）
 │   └── templates/          # subagent 模板——每个一个 .yml
 │       └── office-expert.yml
-└── coding/
+└── coder/
     ├── pool.yml
     └── templates/          # 本 pool 的 subagent
 ```
@@ -519,7 +519,7 @@ config/pools/
 - **Subagent** 是 `templates/*.yml`，自动注册——主 Agent 通过 `send_to_agent` 把活派给它们。
 - 在 WebUI 的 pool 选择器（或 IM 里 `/pool_name`）选哪个 pool 处理当前会话。
 
-内置的 `default` 与 `coding` 两个 pool 是示例——可直接用、可查看、也可替换成你自己的。
+内置的 `default` 与 `coder` 两个 pool 是示例——可直接用、可查看、也可替换成你自己的。
 
 ### Workspace
 

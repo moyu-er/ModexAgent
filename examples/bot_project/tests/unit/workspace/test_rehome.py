@@ -36,7 +36,7 @@ async def test_background_runner_start_creates_tasks_stop_clears() -> None:
     curator = _FakeCurator()
     runner = BackgroundTaskRunner(
         pool_data={},
-        pools_config={},
+        assembly_deps={},
         default_pool_name=None,
     )
     # Inject a curator directly (the real build path needs pool_data; tested at CUTOVER).
@@ -49,7 +49,7 @@ async def test_background_runner_start_creates_tasks_stop_clears() -> None:
 
 
 async def test_background_runner_stop_is_idempotent() -> None:
-    runner = BackgroundTaskRunner(pool_data={}, pools_config={}, default_pool_name=None)
+    runner = BackgroundTaskRunner(pool_data={}, assembly_deps={}, default_pool_name=None)
     await runner.stop()  # never started
     await runner.start()
     await runner.stop()
@@ -68,7 +68,7 @@ async def test_background_runner_dream_loop_starts_and_stops() -> None:
     """
     from types import SimpleNamespace
 
-    runner = BackgroundTaskRunner(pool_data={}, pools_config={}, default_pool_name=None)
+    runner = BackgroundTaskRunner(pool_data={}, assembly_deps={}, default_pool_name=None)
     # No default pool -> _maybe_build_dream left dream_engine None; inject one.
     runner.dream_engine = SimpleNamespace(scan_all=AsyncMock(return_value=[]))
     runner._dream_interval = 3600  # keep the loop sleeping so scan_all never fires

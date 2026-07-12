@@ -15,15 +15,15 @@ from pathlib import Path
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-
 from bot.adapters.web_socket import WebSocketInputAdapter
-from bot.service.pool_router import PoolRouter, PoolSessionStore
 from bot.service.session_store import WorkspacePoolSessionStore
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import _unwrap_envelope
 from bot.webui.server import WebUIServer
-from modex_agent.workspace.paths import WorkspacePaths
+
 from modex_agent.core.session_id import SessionIdFactory
+from modex_agent.multi_agent.pool_router import PoolRouter, PoolSessionStore
+from modex_agent.workspace.paths import WorkspacePaths
 
 _DATA_DIR_NAME = ".modex"
 
@@ -123,9 +123,9 @@ async def test_new_conversation_attach_persists_pool_to_disk() -> None:
                 root / _DATA_DIR_NAME / "pool_sessions" / "4174bee9aee6.json"
             )
             assert pool_file.exists(), (
-                f"BUG: pool_sessions/4174bee9aee6.json was NOT created. "
-                f"The PoolSessionStore did not persist the coding pool mapping. "
-                f"Without it, PoolRouter defaults to 'main'."
+                "BUG: pool_sessions/4174bee9aee6.json was NOT created. "
+                "The PoolSessionStore did not persist the coding pool mapping. "
+                "Without it, PoolRouter defaults to 'main'."
             )
             content = json.loads(pool_file.read_text())
             assert content["pool"] == "coding", (

@@ -31,14 +31,14 @@ pools/
 ├── default/                 # pool name = directory name
 │   ├── pool.yml             # main agent config (max_steps, tools, approval, memory, …)
 │   └── templates/           # subagent templates — one .yml each, auto-registered
-└── coding/
+└── coder/
     ├── pool.yml
     └── templates/
 ```
 
 - The **main agent name** defaults to the directory name (override via `main_agent_name` in `pool.yml`).
 - Subagents are `templates/*.yml` — the main agent delegates to them via `send_to_agent`.
-- The bundled `default` and `coding` pools are examples — use, inspect, or replace them.
+- The bundled `default` and `coder` pools are examples — use, inspect, or replace them.
 
 ## mcp/ Structure
 

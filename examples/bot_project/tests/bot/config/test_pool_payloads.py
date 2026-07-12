@@ -1,4 +1,4 @@
-"""Tests for bot.config.pool_payloads (Task 2.1).
+"""Tests for modex_agent.multi_agent.pool_config.specs (Task 2.1).
 
 Covers: round-trip stability, ``extra="forbid"`` rejection of unknown keys,
 and frozen semantics for the pool-tree payloads.
@@ -20,52 +20,45 @@ _BOT_PROJECT = Path(__file__).resolve().parents[3]
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
-from bot.config.pool_payloads import (  # noqa: E402
-    ApprovalConfig,
-    ApprovalEntry,
-    MainAgentNode,
-    PoolSummary,
-    PoolTree,
-    PromptContent,
-    SkillEntry,
-    SkillSource,
-    SubagentNode,
-)
+from bot.config import PromptContent, SkillEntry, SkillSource  # noqa: E402
 
-from modex_agent.tools.presets import ContextMode, ToolPreset  # noqa: E402
+from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry  # noqa: E402
+from modex_agent.multi_agent.pool_config import MainAgentSpec, PoolSpec, SubagentSpec  # noqa: E402
+from modex_agent.multi_agent.pool_config.store import PoolSummary  # noqa: E402
+from modex_agent.tools.presets import ContextMode, ToolPreset, ToolSupplement  # noqa: E402
 
-# ─── PoolTree round-trip ─────────────────────────────────────────────────────
+# ─── PoolSpec round-trip ─────────────────────────────────────────────────────
 
 
-def _sample_tree() -> PoolTree:
-    return PoolTree(
+def _sample_tree() -> PoolSpec:
+    return PoolSpec(
         name="coding",
         main_agent_name="coding",
-        main=MainAgentNode(
+        main=MainAgentSpec(
             agent_name="coding",
             max_steps=100,
             use_terminal=False,
             terminal_visibility=False,
             tool_preset=ToolPreset.FULL,
-            tool_supplements=["ast_grep"],
+            tool_supplements=[ToolSupplement.AST_GREP],
             approval=ApprovalConfig(
                 enabled=True,
                 tools={
-                    "write": ApprovalEntry(allowed_paths=["./*"]),
-                    "edit": ApprovalEntry(allowed_paths=["./*"]),
+                    "write": ToolApprovalEntry(allowed_paths=["./*"]),
+                    "edit": ToolApprovalEntry(allowed_paths=["./*"]),
                 },
             ),
             mcp=[],
         ),
         subagents=[
-            SubagentNode(
+            SubagentSpec(
                 agent_name="scout",
                 description="recon",
                 max_steps=60,
                 tool_preset=ToolPreset.READ_ONLY,
                 context_mode=ContextMode.FRESH,
             ),
-            SubagentNode(
+            SubagentSpec(
                 agent_name="worker",
                 description="writer",
                 max_steps=150,
@@ -76,11 +69,11 @@ def _sample_tree() -> PoolTree:
     )
 
 
-class TestPoolTreeRoundTrip:
+class TestPoolSpecRoundTrip:
     def test_dump_then_validate_equals_original(self) -> None:
         tree = _sample_tree()
         dumped = tree.model_dump()
-        restored = PoolTree.model_validate(dumped)
+        restored = PoolSpec.model_validate(dumped)
         assert restored == tree
 
     def test_dump_by_alias_keeps_type_key(self) -> None:
@@ -89,19 +82,19 @@ class TestPoolTreeRoundTrip:
 
     def test_unknown_top_level_key_rejected(self) -> None:
         with pytest.raises(ValidationError):
-            PoolTree.model_validate({**_sample_tree().model_dump(), "bogus": 1})
+            PoolSpec.model_validate({**_sample_tree().model_dump(), "bogus": 1})
 
     def test_unknown_main_field_rejected(self) -> None:
         d = _sample_tree().model_dump()
         d["main"]["nope"] = 1
         with pytest.raises(ValidationError):
-            PoolTree.model_validate(d)
+            PoolSpec.model_validate(d)
 
     def test_unknown_subagent_field_rejected(self) -> None:
         d = _sample_tree().model_dump()
         d["subagents"][0]["nope"] = 1
         with pytest.raises(ValidationError):
-            PoolTree.model_validate(d)
+            PoolSpec.model_validate(d)
 
     def test_frozen(self) -> None:
         tree = _sample_tree()
@@ -109,16 +102,16 @@ class TestPoolTreeRoundTrip:
             tree.name = "other"  # type: ignore[misc]
 
     def test_default_subagents_empty(self) -> None:
-        tree = PoolTree(
+        tree = PoolSpec(
             name="solo",
             main_agent_name="solo",
-            main=MainAgentNode(agent_name="solo"),
+            main=MainAgentSpec(agent_name="solo"),
         )
         assert tree.subagents == []
         assert tree.restart_required is False
 
     def test_approval_optional_and_default_off(self) -> None:
-        node = MainAgentNode(agent_name="x")
+        node = MainAgentSpec(agent_name="x")
         assert node.approval is None
 
 
@@ -147,7 +140,7 @@ class TestSmallPayloads:
         assert p.content.endswith("\n")
 
     def test_approval_entry_default_empty(self) -> None:
-        e = ApprovalEntry()
+        e = ToolApprovalEntry()
         assert e.allowed_paths == []
 
     def test_approval_config_default(self) -> None:
@@ -156,9 +149,9 @@ class TestSmallPayloads:
         assert c.tools == {}
 
 
-class TestMainAgentNodeDefaults:
+class TestMainAgentSpecDefaults:
     def test_defaults_match_phase1(self) -> None:
-        n = MainAgentNode(agent_name="x")
+        n = MainAgentSpec(agent_name="x")
         assert n.max_steps == 100
         assert n.use_terminal is False
         assert n.terminal_visibility is False
@@ -167,9 +160,9 @@ class TestMainAgentNodeDefaults:
         assert n.mcp == []
 
 
-class TestSubagentNodeDefaults:
+class TestSubagentSpecDefaults:
     def test_defaults_match_phase1(self) -> None:
-        n = SubagentNode(agent_name="x")
+        n = SubagentSpec(agent_name="x")
         assert n.max_steps == 80
         assert n.tool_preset == "read_write"
         assert n.context_mode == "fresh"

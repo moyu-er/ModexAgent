@@ -16,7 +16,7 @@ MCP tool connection is eager, per-pool, sequential, and workspace-scoped:
 - The manager is instantiated independently by three call sites — the framework
   `connect_mcp` (`ioc/factories/tools.py:35`), the bot main-agent path
   `_load_agent_mcp_tools` (`bot/service/builders.py:96`), and the subagent path
-  `_load_per_agent_mcp` (`multi_agent/communication.py:98`). Each `new
+  `load_per_agent_mcp` (`tools/mcp_loader.py`). Each `new
   MCPClientManager(...) + initialize()` spawns its **own** subprocess per
   server, so two pools referencing the same server run two subprocesses.
 - `mcp_manager` lives inside `PoolInstance` (`bot/service/pool_builder.py:346`),

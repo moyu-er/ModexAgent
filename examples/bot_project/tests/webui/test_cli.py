@@ -318,8 +318,8 @@ def test_restart_launches_worker_child() -> None:
         assert "pid: 12345" in result.output
 
 
-def test_start_aborts_on_placeholder_model_config() -> None:
-    """start offers the wizard and aborts when model.yml is a placeholder."""
+def test_start_proceeds_with_incomplete_model_config() -> None:
+    """start proceeds even when model.yml is incomplete — model check is advisory only."""
     with (
         patch("modexbot.cli._read_pid", return_value=None),
         patch("modexbot.cli._is_port_in_use", return_value=False),
@@ -327,39 +327,42 @@ def test_start_aborts_on_placeholder_model_config() -> None:
         patch("modexbot.cli._launch_subprocess") as mock_launch,
         patch("builtins.input", return_value="n"),
     ):
+        mock_proc = MagicMock()
+        mock_proc.pid = 12345
+        mock_proc.poll.return_value = None
+        mock_launch.return_value = mock_proc
+
         result = runner.invoke(
             app, ["start", "--config", str(_default_config_dir()), "--no-webui"]
         )
-        assert result.exit_code == 1
-        assert "incomplete" in result.output.lower()
-        assert "api_key" in result.output
-        mock_launch.assert_not_called()
+        assert result.exit_code == 0
+        mock_launch.assert_called_once()
 
 
-def test_restart_aborts_on_placeholder_model_config() -> None:
-    """restart offers the wizard and aborts when model.yml is a placeholder."""
+def test_restart_proceeds_with_incomplete_model_config() -> None:
+    """restart proceeds even when model.yml is incomplete — model check is advisory only."""
     with (
         patch("modexbot.cli.check_model_config", return_value=(False, ["api_key"])),
         patch("modexbot.cli._launch_subprocess") as mock_launch,
         patch("builtins.input", return_value="n"),
     ):
+        mock_proc = MagicMock()
+        mock_proc.pid = 12345
+        mock_proc.poll.return_value = None
+        mock_launch.return_value = mock_proc
+
         result = runner.invoke(
             app, ["restart", "--config", str(_default_config_dir()), "--no-webui"]
         )
-        assert result.exit_code == 1
-        assert "incomplete" in result.output.lower()
-        mock_launch.assert_not_called()
+        assert result.exit_code == 0
+        mock_launch.assert_called_once()
 
 
-def test_start_runs_wizard_then_launches_when_fixed() -> None:
-    """start launches after the wizard makes the model config complete."""
-    states = [(False, ["api_key"]), (True, [])]
+def test_start_launches_without_model_check() -> None:
+    """start launches directly — model config check is no longer a gate."""
     with (
         patch("modexbot.cli._read_pid", return_value=None),
         patch("modexbot.cli._is_port_in_use", return_value=False),
-        patch("modexbot.cli.check_model_config", side_effect=states),
-        patch("modexbot.interactive_config.run_config_wizard") as mock_wizard,
-        patch("builtins.input", return_value="y"),
         patch("modexbot.cli._launch_subprocess") as mock_launch,
     ):
         mock_proc = MagicMock()
@@ -371,7 +374,6 @@ def test_start_runs_wizard_then_launches_when_fixed() -> None:
             app, ["start", "--config", str(_default_config_dir()), "--no-webui"]
         )
         assert result.exit_code == 0
-        mock_wizard.assert_called_once()
         mock_launch.assert_called_once()
 
 
@@ -455,51 +457,38 @@ def test_install_with_complete_env_builds_frontend() -> None:
         mock_build.assert_called_once_with(force=False)
 
 
-def test_install_with_incomplete_env_prompts_and_exits() -> None:
-    """install warns and exits when .env LLM config is incomplete."""
+def test_install_with_incomplete_env_proceeds_to_build() -> None:
+    """install proceeds to build even when model.yml is incomplete — model check is advisory only."""
     with (
         patch("modexbot.cli.check_model_config", return_value=(False, ["api_key"])),
         patch("modexbot.cli._build_webui") as mock_build,
-        patch("builtins.input", return_value="n") as mock_input,
-    ):
-        result = runner.invoke(app, ["install"])
-        assert result.exit_code == 1
-        assert "incomplete" in result.output.lower()
-        assert "api_key" in result.output
-        mock_input.assert_called_once()
-        mock_build.assert_not_called()
-
-
-def test_install_with_incomplete_env_runs_config_then_builds() -> None:
-    """install can launch config wizard and then build if env becomes complete."""
-    env_states = [(False, ["api_key"]), (True, [])]
-    with (
-        patch("modexbot.cli.check_model_config", side_effect=env_states) as mock_check,
-        patch("modexbot.cli._build_webui") as mock_build,
-        patch("modexbot.interactive_config.run_config_wizard") as mock_wizard,
-        patch("builtins.input", return_value="y") as mock_input,
+        patch("builtins.input", return_value="n"),
     ):
         result = runner.invoke(app, ["install"])
         assert result.exit_code == 0
-        assert mock_check.call_count == 2
-        mock_wizard.assert_called_once()
-        mock_input.assert_called_once()
         mock_build.assert_called_once_with(force=False)
 
 
-def test_install_with_incomplete_env_still_incomplete_after_config() -> None:
-    """install exits if env is still incomplete after running config wizard."""
+def test_install_proceeds_directly_to_build() -> None:
+    """install proceeds directly to build — model config check is no longer a gate."""
+    with (
+        patch("modexbot.cli._build_webui") as mock_build,
+    ):
+        result = runner.invoke(app, ["install"])
+        assert result.exit_code == 0
+        mock_build.assert_called_once_with(force=False)
+
+
+def test_install_proceeds_with_incomplete_env() -> None:
+    """install proceeds to build even if config is incomplete — no blocking check."""
     with (
         patch("modexbot.cli.check_model_config", return_value=(False, ["api_key"])),
         patch("modexbot.cli._build_webui") as mock_build,
-        patch("modexbot.interactive_config.run_config_wizard") as mock_wizard,
         patch("builtins.input", return_value="y"),
     ):
         result = runner.invoke(app, ["install"])
-        assert result.exit_code == 1
-        assert "still incomplete" in result.output.lower()
-        mock_wizard.assert_called_once()
-        mock_build.assert_not_called()
+        assert result.exit_code == 0
+        mock_build.assert_called_once_with(force=False)
 
 
 def test_install_with_force_passes_force_flag() -> None:

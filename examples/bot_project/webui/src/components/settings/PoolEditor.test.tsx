@@ -16,6 +16,7 @@ function makeResponse(status: number, body: unknown): Response {
 const tree = {
   name: "default",
   main_agent_name: "main",
+  peers: [],
   main: {
     agent_name: "main",
     max_steps: 12,
@@ -42,6 +43,14 @@ const tree = {
   ],
   restart_required: false,
 };
+
+const poolList = [{ name: "default", main_agent_name: "main", subagent_count: 0 }];
+
+function defaultFetch(url: string): Response {
+  if (url === "/api/pools") return makeResponse(200, poolList);
+  if (url.includes("/skills")) return makeResponse(200, []);
+  return makeResponse(200, tree);
+}
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -112,9 +121,7 @@ describe("PoolEditor", () => {
   it("loads the pool and renders main agent name", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn((url: string) =>
-        Promise.resolve(makeResponse(200, url.includes("/skills") ? [] : tree)),
-      ),
+      vi.fn((url: string) => Promise.resolve(defaultFetch(url))),
     );
     await renderEditor({});
     await waitFor(() =>
@@ -127,9 +134,7 @@ describe("PoolEditor", () => {
   it("editing a field marks the editor dirty (onDirtyChange(true))", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn((url: string) =>
-        Promise.resolve(makeResponse(200, url.includes("/skills") ? [] : tree)),
-      ),
+      vi.fn((url: string) => Promise.resolve(defaultFetch(url))),
     );
     const onDirtyChange = vi.fn();
     await renderEditor({ onDirtyChange });
@@ -149,9 +154,7 @@ describe("PoolEditor", () => {
           makeResponse(200, { ...tree, restart_required: true }),
         );
       }
-      return Promise.resolve(
-        makeResponse(200, url.includes("/skills") ? [] : tree),
-      );
+      return Promise.resolve(defaultFetch(url));
     });
     vi.stubGlobal("fetch", fetchMock);
     await renderEditorWithActionBar();
@@ -185,9 +188,7 @@ describe("PoolEditor", () => {
           }),
         );
       }
-      return Promise.resolve(
-        makeResponse(200, url.includes("/skills") ? [] : tree),
-      );
+      return Promise.resolve(defaultFetch(url));
     });
     vi.stubGlobal("fetch", fetchMock);
     await renderEditorWithActionBar();
@@ -205,9 +206,7 @@ describe("PoolEditor", () => {
   it("Cancel restores the original form", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn((url: string) =>
-        Promise.resolve(makeResponse(200, url.includes("/skills") ? [] : tree)),
-      ),
+      vi.fn((url: string) => Promise.resolve(defaultFetch(url))),
     );
     await renderEditorWithActionBar();
     await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
@@ -221,9 +220,7 @@ describe("PoolEditor", () => {
   it("Add subagent appends one and Remove subagent deletes it after inline confirm", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn((url: string) =>
-        Promise.resolve(makeResponse(200, url.includes("/skills") ? [] : tree)),
-      ),
+      vi.fn((url: string) => Promise.resolve(defaultFetch(url))),
     );
     await renderEditor({});
     await waitFor(() =>
@@ -261,9 +258,7 @@ describe("PoolEditor", () => {
   it("disables 'System prompt [Edit]' for an untitled (empty-name) subagent", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn((url: string) =>
-        Promise.resolve(makeResponse(200, url.includes("/skills") ? [] : tree)),
-      ),
+      vi.fn((url: string) => Promise.resolve(defaultFetch(url))),
     );
     await renderEditor({});
     await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
@@ -287,9 +282,7 @@ describe("PoolEditor", () => {
   it("enables 'System prompt [Edit]' once a valid name is typed", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn((url: string) =>
-        Promise.resolve(makeResponse(200, url.includes("/skills") ? [] : tree)),
-      ),
+      vi.fn((url: string) => Promise.resolve(defaultFetch(url))),
     );
     await renderEditor({});
     await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
@@ -299,13 +292,13 @@ describe("PoolEditor", () => {
       expect(screen.queryAllByText("Loading…")).toHaveLength(0),
     );
 
-    // After add-subagent (approval disabled, subagent description also rendered)
-    // the DOM textboxes (role="textbox") are, in order:
-    //   [mainName, subagentName, subagentDescription]
+    // After add-subagent (approval disabled, main + subagent descriptions
+    // rendered) the DOM textboxes (role="textbox") are, in order:
+    //   [mainName, mainDescription, subagentName, subagentDescription]
     // — number inputs are role="spinbutton", textareas don't exist here.
     const textboxes = screen.getAllByRole("textbox") as HTMLInputElement[];
-    expect(textboxes.length).toBe(3);
-    const subagentNameInput = textboxes[1]!;
+    expect(textboxes.length).toBe(4);
+    const subagentNameInput = textboxes[2]!;
     expect(subagentNameInput.value).toBe("");
     fireEvent.change(subagentNameInput, { target: { value: "oracle" } });
 
@@ -324,7 +317,14 @@ describe("PoolEditor", () => {
       "fetch",
       vi.fn((url: string) =>
         Promise.resolve(
-          makeResponse(200, url.includes("/skills") ? [] : treeNoSub),
+          makeResponse(
+            200,
+            url === "/api/pools"
+              ? poolList
+              : url.includes("/skills")
+                ? []
+                : treeNoSub,
+          ),
         ),
       ),
     );
@@ -345,9 +345,7 @@ describe("PoolEditor", () => {
   it("renders the 'Skill assignments save immediately.' caption", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn((url: string) =>
-        Promise.resolve(makeResponse(200, url.includes("/skills") ? [] : tree)),
-      ),
+      vi.fn((url: string) => Promise.resolve(defaultFetch(url))),
     );
     await renderEditor({});
     await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
@@ -361,9 +359,7 @@ describe("PoolEditor", () => {
   it("System prompt [Edit] opens a slide-over (does not unmount PoolEditor)", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn((url: string) =>
-        Promise.resolve(makeResponse(200, url.includes("/skills") ? [] : tree)),
-      ),
+      vi.fn((url: string) => Promise.resolve(defaultFetch(url))),
     );
     await renderEditor({});
     await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
@@ -379,5 +375,113 @@ describe("PoolEditor", () => {
       expect(screen.getByRole("dialog", { name: /prompt editor/i })).toBeTruthy(),
     );
     expect(screen.getByText(/Pool: default/)).toBeTruthy();
+  });
+
+  const multiPoolList = [
+    { name: "default", main_agent_name: "main", subagent_count: 0 },
+    { name: "research", main_agent_name: "research-main", subagent_count: 0 },
+  ];
+
+  it("shows peer pool name with its main agent name", async () => {
+    const treeWithPeer = { ...tree, peers: ["research"] };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        Promise.resolve(
+          makeResponse(
+            200,
+            url === "/api/pools"
+              ? multiPoolList
+              : url.includes("/skills")
+                ? []
+                : treeWithPeer,
+          ),
+        ),
+      ),
+    );
+    await renderEditor({});
+    await waitFor(() => expect(screen.getByText("research")).toBeTruthy());
+    expect(screen.getByText(/main agent: research-main/)).toBeTruthy();
+  });
+
+  it("adds a peer via POST /api/pools/{pool}/peers", async () => {
+    const treeWithPeer = { ...tree, peers: ["research"] };
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (url === "/api/pools" && method === "GET") {
+        return Promise.resolve(makeResponse(200, multiPoolList));
+      }
+      if (url === "/api/pools/default/peers" && method === "POST") {
+        return Promise.resolve(
+          makeResponse(200, { pool_a: treeWithPeer, pool_b: { ...tree, name: "research", peers: ["default"] } }),
+        );
+      }
+      return Promise.resolve(defaultFetch(url));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await renderEditor({});
+    await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: /Add peer/ }));
+    const select = screen.getByLabelText("New peer pool") as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "research" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Add$/ }));
+
+    await waitFor(() => expect(screen.getByText("research")).toBeTruthy());
+    const calls = fetchMock.mock.calls as [string, RequestInit?][];
+    const posts = calls.filter((c) => c[1]?.method === "POST");
+    expect(posts.some((c) => c[0] === "/api/pools/default/peers")).toBe(true);
+  });
+
+  it("removes a peer via DELETE /api/pools/{pool}/peers/{peer}", async () => {
+    const treeWithPeer = { ...tree, peers: ["research"] };
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (url === "/api/pools" && method === "GET") {
+        return Promise.resolve(makeResponse(200, multiPoolList));
+      }
+      if (url === "/api/pools/default/peers/research" && method === "DELETE") {
+        return Promise.resolve(
+          makeResponse(200, { pool_a: { ...tree, peers: [] }, pool_b: { ...tree, name: "research", peers: [] } }),
+        );
+      }
+      return Promise.resolve(makeResponse(200, url.includes("/skills") ? [] : treeWithPeer));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await renderEditor({});
+    await waitFor(() => expect(screen.getByText("research")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove peer research" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+
+    await waitFor(() => expect(screen.queryByText("research")).toBeNull());
+    const calls = fetchMock.mock.calls as [string, RequestInit?][];
+    const deletes = calls.filter((c) => c[1]?.method === "DELETE");
+    expect(deletes.some((c) => c[0] === "/api/pools/default/peers/research")).toBe(true);
+  });
+
+  it("surfaces peer add errors from the backend", async () => {
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (url === "/api/pools" && method === "GET") {
+        return Promise.resolve(makeResponse(200, multiPoolList));
+      }
+      if (url === "/api/pools/default/peers" && method === "POST") {
+        return Promise.resolve(
+          makeResponse(400, { error: "validation", fields: { peer: ["already a peer"] } }),
+        );
+      }
+      return Promise.resolve(defaultFetch(url));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await renderEditor({});
+    await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: /Add peer/ }));
+    const select = screen.getByLabelText("New peer pool") as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "research" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Add$/ }));
+
+    await waitFor(() => expect(screen.getByText("already a peer")).toBeTruthy());
   });
 });
