@@ -85,14 +85,13 @@ class BotModelProvider(StreamingLLMProvider):
         # provider is constructed per resolved model via create_llm_provider
         # (see _real_provider), which bakes in the ROUTING-STRIPPED model (e.g.
         # "openai/step-3.7-flash" -> OpenAIProvider(model="step-3.7-flash")) plus
-        # the model's own temperature/max_output_tokens. Forwarding model= here
-        # would re-inject the routing prefix and the API would reject it ("model
-        # not found"). Let the baked provider own these values.
+        # the model's own temperature/max_output_tokens/reasoning_effort. Forwarding
+        # model= here would re-inject the routing prefix and the API would reject
+        # it ("model not found"). Let the baked provider own these values.
         return await real.chat_stream(
             messages=messages,
             tools=tools,
             on_content_delta=on_content_delta,
             on_reasoning_delta=on_reasoning_delta,
             **kwargs,
-            # TODO: reasoning_effort v1 未透传给真实 provider
         )

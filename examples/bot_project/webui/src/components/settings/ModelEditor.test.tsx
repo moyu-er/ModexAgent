@@ -20,6 +20,7 @@ const values = {
           capabilities: ["text"],
           temperature: 0.7,
           max_output_tokens: 50000,
+          reasoning_effort: "none",
         },
       ],
     },
@@ -98,7 +99,7 @@ describe("ModelEditor", () => {
   it("default dropdown lists provider/model combos and selecting updates default", () => {
     const onChange = vi.fn();
     render(<ModelEditor values={values} onChange={onChange} />);
-    const select = screen.getByRole("combobox") as HTMLSelectElement;
+    const select = screen.getByLabelText(/Default model/) as HTMLSelectElement;
     // the one model combo exists as an option
     const optionText = screen.getByText("DeepSeek / m1");
     expect(optionText).toBeTruthy();
@@ -162,6 +163,18 @@ describe("ModelEditor", () => {
     expect(card).toBeTruthy();
     const chipsRow = within(card!).getByRole("button", { name: "Text" }).parentElement;
     expect(chipsRow?.querySelectorAll("svg").length ?? 0).toBeGreaterThanOrEqual(4);
+  });
+
+  it("reasoning effort dropdown defaults to none and changing updates the model", () => {
+    const onChange = vi.fn();
+    render(<ModelEditor values={values} onChange={onChange} />);
+    const reasoningSelect = screen.getByLabelText("Reasoning effort") as HTMLSelectElement;
+    expect(reasoningSelect.value).toBe("none");
+    fireEvent.change(reasoningSelect, { target: { value: "medium" } });
+    const next = onChange.mock.calls[0]![0]! as {
+      providers: { models: { reasoning_effort: string }[] }[];
+    };
+    expect(next.providers[0]!.models[0]!.reasoning_effort).toBe("medium");
   });
 
   it("marks required fields with a star and leaves defaulted numeric fields unmarked", () => {

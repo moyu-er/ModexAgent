@@ -2,7 +2,11 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
+from modex_agent.core.constants import ReasoningEffort
 from modex_agent.ioc.configs.llm import LLMConfig, Modality, ModelCapabilities
+from modex_agent.ioc.factories.llm import create_llm_provider
+from modex_agent.providers.litellm_provider import LiteLLMProvider
+from modex_agent.providers.openai_provider import OpenAIProvider
 
 
 class TestLLMConfig:
@@ -36,6 +40,43 @@ class TestLLMConfig:
         assert not cfg.capabilities.supports(Modality.IMAGE)
         assert not cfg.capabilities.supports(Modality.VIDEO)
         assert not cfg.capabilities.supports(Modality.AUDIO)
+
+
+    def test_default_reasoning_effort_is_none(self) -> None:
+        cfg = LLMConfig()
+        assert cfg.reasoning_effort == ReasoningEffort.NONE
+
+    def test_reasoning_effort_enum_value(self) -> None:
+        cfg = LLMConfig(reasoning_effort=ReasoningEffort.MEDIUM)
+        assert cfg.reasoning_effort == ReasoningEffort.MEDIUM
+
+    def test_reasoning_effort_rejects_invalid_string(self) -> None:
+        with pytest.raises(ValueError):
+            LLMConfig(reasoning_effort="invalid")  # type: ignore[arg-type]
+
+
+class TestCreateLLMProvider:
+    def test_passes_reasoning_effort_to_openai_provider(self) -> None:
+        cfg = LLMConfig(
+            model="openai/gpt-4o",
+            api_key="sk-test",
+            base_url="https://api.example.com",
+            reasoning_effort=ReasoningEffort.HIGH,
+        )
+        provider = create_llm_provider(cfg)
+        assert isinstance(provider, OpenAIProvider)
+        assert provider._reasoning_effort == ReasoningEffort.HIGH
+
+    def test_passes_reasoning_effort_to_litellm_provider(self) -> None:
+        cfg = LLMConfig(
+            model="gpt-4o",
+            api_key="sk-test",
+            base_url="https://api.example.com",
+            reasoning_effort=ReasoningEffort.MEDIUM,
+        )
+        provider = create_llm_provider(cfg)
+        assert isinstance(provider, LiteLLMProvider)
+        assert provider._reasoning_effort == ReasoningEffort.MEDIUM
 
 
 class TestModelCapabilities:

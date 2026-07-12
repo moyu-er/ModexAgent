@@ -49,6 +49,21 @@ class StopReason(StrEnum):
     LOOP_DETECTED = "loop_detected"
 
 
+class ReasoningEffort(StrEnum):
+    """模型 reasoning effort 参数的可选值。
+
+    OpenAI 兼容 API 用于控制模型内部推理量的参数。``NONE`` 表示不发送该
+    参数，保持与未配置时一致的行为。
+    """
+
+    NONE = "none"
+    MINIMAL = "minimal"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    XHIGH = "xhigh"
+
+
 class ErrorMessages:
     """错误消息常量"""
 

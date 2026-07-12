@@ -17,7 +17,7 @@ from typing import Any, ClassVar
 import httpx
 from openai import AsyncOpenAI
 
-from modex_agent.core.constants import FinishReason
+from modex_agent.core.constants import FinishReason, ReasoningEffort
 from modex_agent.core.llm_struct import (
     RuntimeSafetyPolicy,
     build_timeout_response,
@@ -25,6 +25,7 @@ from modex_agent.core.llm_struct import (
 from modex_agent.core.provider import StreamingLLMProvider
 from modex_agent.core.tool_call_accumulator import ToolCallAccumulator
 from modex_agent.core.types import LLMResponse
+from modex_agent.providers.shared.constants import inject_reasoning_effort
 from modex_agent.providers.shared.delta import StreamDelta
 from modex_agent.providers.shared.errors import classify_openai_error
 from modex_agent.utils.think_tag import ThinkTagExtractor
@@ -56,7 +57,7 @@ class OpenAIProvider(StreamingLLMProvider):
         timeout: float = 45.0,
         stream_idle_timeout: float = 90.0,
         parse_think_tags: bool = True,
-        reasoning_effort: str | None = None,
+        reasoning_effort: ReasoningEffort = ReasoningEffort.NONE,
         extra_headers: dict[str, str] | None = None,
         safety: RuntimeSafetyPolicy | None = None,
     ) -> None:
@@ -349,8 +350,7 @@ class OpenAIProvider(StreamingLLMProvider):
             "stream": stream,
         }
 
-        if self._reasoning_effort is not None:
-            params["reasoning_effort"] = self._reasoning_effort
+        inject_reasoning_effort(params, self._reasoning_effort)
 
         if tools:
             params["tools"] = tools

@@ -10,6 +10,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from bot.config.domain import Secret
+from modex_agent.core.constants import ReasoningEffort
 from modex_agent.ioc.configs.llm import LLMConfig, Modality, ModelCapabilities
 
 _DEFAULTS_CAPS = [Modality.TEXT]
@@ -41,6 +42,7 @@ class ModelCfg(BaseModel):
     capabilities: list[Modality] = Field(default_factory=lambda: list(_DEFAULTS_CAPS))
     temperature: float = 0.7
     max_output_tokens: int = 50000
+    reasoning_effort: ReasoningEffort = ReasoningEffort.NONE
 
     @field_validator("capabilities", mode="before")
     @classmethod
@@ -153,4 +155,5 @@ class BotModelConfig(BaseModel):
             temperature=r.model.temperature,
             max_output_tokens=r.model.max_output_tokens,
             capabilities=r.capabilities,
+            reasoning_effort=r.model.reasoning_effort,
         )

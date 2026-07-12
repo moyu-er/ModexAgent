@@ -148,6 +148,14 @@ _Avoid_: linked pool, federated pool, neighbour pool
 The implicit set of all sessions, across peer pools, that share a session-id prefix as the result of peer communication. When agent A (session `convA.mainA`) sends to peer agent C, C's receiving session is `convA.mainC` — same prefix. C replying routes to `convA.mainA`. Communication context therefore propagates across the session group as a property of the shared prefix: agents see each other's contributions as if multiple people were in one room. This is a **design semantic, not a defect** — peer-pool v1 deliberately adopts the session-group model over pair-isolated sessions (which would lose bidirectional continuity). See ADR-0019 for the trade-off analysis and the deferred "context fork for peer sessions" item that would let an agent isolate per-peer context if needed.
 _Avoid_: conversation cluster, fan-out session (those imply a different topology)
 
+**Reasoning Effort**:
+A per-model enum (`ReasoningEffort`) controlling how much internal reasoning a model performs. Allowed values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`. Persisted in `config/model.yml` per model. Both `ReasoningEffort.NONE` and an absent field mean the provider does **not** send a `reasoning_effort` parameter, preserving existing behavior. Any other value is passed through to the LLM API. The user is responsible for selecting a value compatible with the model. See ADR-0021.
+_Avoid_: reasoning mode, thinking level
+
+**Reasoning Content**:
+The thinking chain produced by a reasoning-capable model, surfaced to the frontend via `reasoning_content` events and rendered as a reasoning block. It is intentionally not persisted to memory: `ChatMessage.to_dict()` strips it before storage. The framework always shows reasoning content when it is present; there is no `show_reasoning` toggle.
+_Avoid_: thinking content, thought chain, reasoning chain (use "reasoning content" when referring to the persisted/streamed artifact)
+
 ## Relationships
 
 - A **Workspace** owns one or more **Pool Instances**; pool instances are not shared across workspaces.

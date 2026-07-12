@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from modex_agent.tools.mcp.registry import McpConnectionRegistry
     from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 
+from modex_agent.core.constants import ReasoningEffort
 from modex_agent.runtime.store import TodoStore
 
 
@@ -36,11 +37,11 @@ from modex_agent.runtime.store import TodoStore
 class AgentMaterializeDeps:
     """Bundled construction deps for AgentTemplate.materialize."""
 
-    agent_factory: "AgentFactory"
-    pool: "AgentPool"
-    session_factory: "SessionIdFactory"
-    broker: "MessageBroker"
-    safety: "RuntimeSafetyPolicy | None" = None
+    agent_factory: AgentFactory
+    pool: AgentPool
+    session_factory: SessionIdFactory
+    broker: MessageBroker
+    safety: RuntimeSafetyPolicy | None = None
     llm_model: str | None = None
     # TODO(model-config-convergence): 模型调用参数 temperature/max_output_tokens 应只由
     # LLMProvider 持有；此处经 descriptor/context 透传属冗余复制。待 ReactLlmClient
@@ -49,15 +50,16 @@ class AgentMaterializeDeps:
     # docs/superpowers/plans/2026-07-03-bot-multi-model.md §框架配置收敛后续。
     llm_temperature: float = 0.7
     llm_max_output_tokens: int | None = None
+    llm_reasoning_effort: ReasoningEffort = ReasoningEffort.NONE
     project_dir: Path | None = None
-    notification_service: "AgentNotificationService | None" = None
-    inbox_consumer: "InboxConsumer | None" = None
-    agent_bus: "AgentMessageBus | None" = None
-    output_adapter_factory: "Callable[[], OutputAdapter] | None" = None
-    root_provider: "WorkspaceRootProvider | None" = None
-    session_registry: "SessionRegistry | None" = None
-    on_subagent_created: "Callable[[str, str], Awaitable[None]] | None" = None
-    context_fork_builder: "ContextForkBuilder | None" = None
-    workspace_path_resolver: "WorkspacePathResolver | None" = None
-    mcp_registry: "McpConnectionRegistry | None" = None
+    notification_service: AgentNotificationService | None = None
+    inbox_consumer: InboxConsumer | None = None
+    agent_bus: AgentMessageBus | None = None
+    output_adapter_factory: Callable[[], OutputAdapter] | None = None
+    root_provider: WorkspaceRootProvider | None = None
+    session_registry: SessionRegistry | None = None
+    on_subagent_created: Callable[[str, str], Awaitable[None]] | None = None
+    context_fork_builder: ContextForkBuilder | None = None
+    workspace_path_resolver: WorkspacePathResolver | None = None
+    mcp_registry: McpConnectionRegistry | None = None
     todo_store: TodoStore | None = None

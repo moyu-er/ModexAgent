@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from modex_agent.core.constants import ReasoningEffort
 from modex_agent.multi_agent.comm_kind import AgentCommKind
 
 if TYPE_CHECKING:
@@ -26,7 +27,7 @@ class AgentLLMConfig:
     temperature: float = 0.7
     max_output_tokens: int | None = None
     top_p: float = 1.0
-    reasoning_effort: str | None = None
+    reasoning_effort: ReasoningEffort = ReasoningEffort.NONE
     extra_params: dict[str, Any] = field(default_factory=dict)
 
 

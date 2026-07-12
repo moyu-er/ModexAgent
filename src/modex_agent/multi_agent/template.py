@@ -231,6 +231,7 @@ class AgentTemplate:
                 model=deps.llm_model or "",
                 temperature=deps.llm_temperature,
                 max_output_tokens=deps.llm_max_output_tokens,
+                reasoning_effort=deps.llm_reasoning_effort,
             ),
             system_prompt_template=system_prompt,
             max_iterations=self.spec.max_steps,

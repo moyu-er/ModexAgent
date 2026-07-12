@@ -40,6 +40,7 @@ interface ModelEntry {
   capabilities: string[];
   temperature: number;
   max_output_tokens: number;
+  reasoning_effort: string;
 }
 
 interface Provider {
@@ -70,6 +71,15 @@ const CAPABILITIES: readonly CapabilityDef[] = [
   { value: "image", label: "Image", Icon: (p) => <ImageIcon {...p} /> },
   { value: "video", label: "Video", Icon: (p) => <VideoIcon {...p} /> },
   { value: "audio", label: "Audio", Icon: (p) => <AudioIcon {...p} /> },
+];
+
+const REASONING_EFFORT_OPTIONS: SelectOption[] = [
+  { value: "none", label: "none" },
+  { value: "minimal", label: "minimal" },
+  { value: "low", label: "low" },
+  { value: "medium", label: "medium" },
+  { value: "high", label: "high" },
+  { value: "xhigh", label: "xhigh" },
 ];
 
 type Confirm =
@@ -212,6 +222,7 @@ export function ModelEditor({ values, onChange }: Props) {
                   capabilities: ["text"],
                   temperature: 0.7,
                   max_output_tokens: 50000,
+                  reasoning_effort: "none",
                 },
               ],
             }
@@ -582,6 +593,20 @@ export function ModelEditor({ values, onChange }: Props) {
                                   onChange={(e) =>
                                     updateModel(pi, mi, {
                                       max_output_tokens: Number(e.target.value),
+                                    })
+                                  }
+                                />
+                              </div>
+
+                              {/* Reasoning effort (closed enum) */}
+                              <div className="mt-3">
+                                <Select
+                                  label="Reasoning effort"
+                                  options={REASONING_EFFORT_OPTIONS}
+                                  value={m.reasoning_effort ?? "none"}
+                                  onChange={(e) =>
+                                    updateModel(pi, mi, {
+                                      reasoning_effort: e.target.value,
                                     })
                                   }
                                 />

@@ -7,11 +7,12 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from modex_agent.core.constants import ReasoningEffort
+from modex_agent.ioc.configs.llm import LLMConfig, Modality
+
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
 from bot.service.model_config import BotModelConfig, ResolvedModel
-
-from modex_agent.ioc.configs.llm import LLMConfig, Modality
 
 _YML = """
 models:
@@ -29,6 +30,7 @@ models:
           capabilities: [text, image]
           temperature: 0.6
           max_output_tokens: 40000
+          reasoning_effort: medium
         - name: "M2"
           model: litellm-m2
 """
@@ -77,6 +79,53 @@ def test_synthesize_llm_config(tmp_path: Path) -> None:
     assert llm.temperature == 0.6
     assert llm.max_output_tokens == 40000
     assert llm.capabilities.supports(Modality.IMAGE)
+    assert llm.reasoning_effort == ReasoningEffort.MEDIUM
+
+
+def test_reasoning_effort_absent_defaults_to_none(tmp_path: Path) -> None:
+    p = tmp_path / "model.yml"
+    p.write_text(
+        "models:\n"
+        '  default_provider: "MiniMax"\n'
+        '  default_model: "M2"\n'
+        "  providers:\n"
+        '    - {key: minimax, name: "MiniMax", url: u, api_key: k, models: [{name: M2, model: m2}]}\n',
+        encoding="utf-8",
+    )
+    cfg = BotModelConfig.from_yaml(p)
+    llm = cfg.synthesize_llm_config()
+    assert llm.reasoning_effort == ReasoningEffort.NONE
+
+
+def test_reasoning_effort_none_defaults_to_none(tmp_path: Path) -> None:
+    p = tmp_path / "model.yml"
+    p.write_text(
+        "models:\n"
+        '  default_provider: "MiniMax"\n'
+        '  default_model: "M2"\n'
+        "  providers:\n"
+        '    - {key: minimax, name: "MiniMax", url: u, api_key: k,\n'
+        '       models: [{name: M2, model: m2, reasoning_effort: none}]}\n',
+        encoding="utf-8",
+    )
+    cfg = BotModelConfig.from_yaml(p)
+    llm = cfg.synthesize_llm_config()
+    assert llm.reasoning_effort == ReasoningEffort.NONE
+
+
+def test_reasoning_effort_invalid_raises(tmp_path: Path) -> None:
+    p = tmp_path / "model.yml"
+    p.write_text(
+        "models:\n"
+        '  default_provider: "MiniMax"\n'
+        '  default_model: "M2"\n'
+        "  providers:\n"
+        '    - {key: minimax, name: "MiniMax", url: u, api_key: k,\n'
+        '       models: [{name: M2, model: m2, reasoning_effort: invalid}]}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValidationError):
+        BotModelConfig.from_yaml(p)
 
 
 def test_missing_default_raises(tmp_path: Path) -> None:

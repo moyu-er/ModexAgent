@@ -61,6 +61,7 @@ def create_llm_provider(
             base_url=config.base_url or None,
             temperature=config.temperature,
             max_output_tokens=config.max_output_tokens,
+            reasoning_effort=config.reasoning_effort,
             safety=safety_policy,
         )
 
@@ -72,5 +73,6 @@ def create_llm_provider(
         base_url=config.base_url or None,
         temperature=config.temperature,
         max_output_tokens=config.max_output_tokens,
+        reasoning_effort=config.reasoning_effort,
         safety=safety_policy,
     )

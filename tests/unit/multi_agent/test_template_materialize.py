@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from modex_agent.core.constants import ReasoningEffort
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.multi_agent.comm_kind import AgentCommKind
@@ -79,6 +80,19 @@ async def test_materialize_parent_none_still_builds_subagent_tool_manager():
     await template.materialize(parent_session=None, invocation_id=None, deps=deps)
     kwargs = factory.create_agent.call_args.kwargs
     assert kwargs["tool_manager"] is not None  # subagent-style, not factory default
+
+
+@pytest.mark.asyncio
+async def test_materialize_subagent_inherits_reasoning_effort() -> None:
+    """AgentLLMConfig on the subagent descriptor receives llm_reasoning_effort from deps."""
+    deps, factory = _make_deps()
+    deps = dataclasses.replace(deps, llm_reasoning_effort=ReasoningEffort.HIGH)
+    template = AgentTemplate(spec=SubagentSpec(agent_name="scout"))
+    parent = SessionIdFactory().create(agent_name="main")
+    await template.materialize(parent_session=parent, invocation_id="inv1", deps=deps)
+    call_kwargs = factory.create_agent.call_args.kwargs
+    descriptor = call_kwargs.get("descriptor") or factory.create_agent.call_args.args[0]
+    assert descriptor.llm_config.reasoning_effort == ReasoningEffort.HIGH
 
 
 @pytest.mark.asyncio
