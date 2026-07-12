@@ -17,7 +17,7 @@ from modex_agent.core.tool_manager import (
 )
 from modex_agent.workspace.runtime import resolve_workspace_root
 from modex_agent.pipeline.adapters import OutputAdapter
-from modex_agent.ioc.configs.pool import MediaConfig
+from modex_agent.multi_agent.pool_config.media import MediaConfig
 from modex_agent.media.mime import classify_kind, sniff_mime
 from modex_agent.media.models import Attachment, AttachmentLocator
 

@@ -3,7 +3,7 @@
 A plain runtime collaborator (rule-12 exception: mutable, holds injected
 stores + a dirty-set) that the webui server calls for the pool/MCP/skills/
 prompt REST API. Every method returns a frozen Pydantic payload (from
-:mod:`bot.config.pool_payloads`) or raises:
+:mod:`modex_agent.multi_agent.pool_config`) or raises:
 
 * :class:`FieldValidationError` (re-used from :mod:`bot.service.config_controller`)
   for validation failures — the route maps this to HTTP 400 with the uniform
@@ -33,23 +33,12 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from bot.config import PromptContent, SkillEntry
 from bot.config.mcp_registry import (
     UnknownMcpServer,
     delete_server,
     read_registry,
     upsert_server,
-)
-from bot.config.pool_payloads import (
-    PoolSummary,
-    PoolTree,
-    PromptContent,
-    SkillEntry,
-)
-from bot.config.pool_store import (
-    _DEFAULT_MAIN_PROMPT,
-    PoolStore,
-    PoolValidationError,
-    RenameReport,
 )
 from bot.config.prompt_store import (
     PromptStore,
@@ -57,15 +46,20 @@ from bot.config.prompt_store import (
 )
 from bot.config.skills_store import SkillsStore
 from bot.service.config_controller import FieldValidationError
-from bot.service.pool_router import PoolSessionStore
 from modex_agent.ioc.configs.mcp import MCPServerEntry
+from modex_agent.multi_agent.pool_config import PoolSpec, PoolStore
+from modex_agent.multi_agent.pool_config.store import (
+    _DEFAULT_MAIN_PROMPT,
+    PoolSummary,
+    PoolValidationError,
+    RenameReport,
+)
+from modex_agent.multi_agent.pool_router import PoolSessionStore
 
 # Artifact classes that, when written, set ``restart_required``. The marker is
 # coarse (a single bool) — once any of these fires, the next restart re-reads
 # everything. Kept as a set so the source of the dirty state is diagnosable.
-_RESTART_DIRTY_CLASSES: frozenset[str] = frozenset(
-    {"pool", "mcp", "prompt", "skill_assign"}
-)
+_RESTART_DIRTY_CLASSES: frozenset[str] = frozenset({"pool", "mcp", "prompt", "skill_assign"})
 
 
 class DefaultPoolProtectedError(Exception):
@@ -151,13 +145,13 @@ class PoolConfigController:
     def list_pools(self) -> list[PoolSummary]:
         return self._pools.list_pools()
 
-    def read_pool(self, name: str) -> PoolTree:
+    def read_pool(self, name: str) -> PoolSpec:
         """Read one pool tree; filter stale MCP references on the way out."""
         tree = self._pools.read_pool(name)  # raises UnknownPoolError (KeyError)
         tree = self._filter_stale_mcp(tree)
         return tree.model_copy(update={"restart_required": self.restart_required})
 
-    def write_pool(self, name: str, tree: PoolTree) -> PoolTree:
+    def write_pool(self, name: str, tree: PoolSpec) -> PoolSpec:
         """Write a pool tree; stale MCP references are dropped before save."""
         tree = self._filter_stale_mcp(tree)
         try:
@@ -168,7 +162,7 @@ class PoolConfigController:
         self._mark("pool")
         return self.read_pool(name)
 
-    def _filter_stale_mcp(self, tree: PoolTree) -> PoolTree:
+    def _filter_stale_mcp(self, tree: PoolSpec) -> PoolSpec:
         """Drop MCP server names that no longer exist in the global registry.
 
         This lazy cleanup keeps the UI honest: deleting a global MCP server
@@ -184,7 +178,7 @@ class PoolConfigController:
         ]
         return tree.model_copy(update={"main": main, "subagents": subagents})
 
-    def create_pool(self, name: str) -> PoolTree:
+    def create_pool(self, name: str) -> PoolSpec:
         try:
             self._pools.create_pool(name)
         except PoolValidationError as exc:
@@ -194,20 +188,16 @@ class PoolConfigController:
 
     def delete_pool(self, name: str) -> None:
         if name == self.default_pool:
-            raise DefaultPoolProtectedError(
-                f"Refusing to delete the default pool {name!r}"
-            )
+            raise DefaultPoolProtectedError(f"Refusing to delete the default pool {name!r}")
         try:
             self._pools.delete_pool(name, default_pool=self.default_pool)
         except PoolValidationError as exc:
             raise FieldValidationError({"pool": [str(exc)]}) from exc
         self._mark("pool")
 
-    def rename_pool(self, old: str, new: str) -> PoolTree:
+    def rename_pool(self, old: str, new: str) -> PoolSpec:
         if old == self.default_pool:
-            raise DefaultPoolProtectedError(
-                f"Refusing to rename the default pool {old!r}"
-            )
+            raise DefaultPoolProtectedError(f"Refusing to rename the default pool {old!r}")
         try:
             self._pools.rename_pool(old, new)
         except PoolValidationError as exc:
@@ -216,7 +206,7 @@ class PoolConfigController:
         self._mark("pool")
         return self.read_pool(new)
 
-    def add_peer(self, name_a: str, name_b: str) -> tuple[PoolTree, PoolTree]:
+    def add_peer(self, name_a: str, name_b: str) -> tuple[PoolSpec, PoolSpec]:
         """Atomically add a bidirectional peer edge and return both updated trees."""
         try:
             self._pools.add_peer_pair(name_a, name_b)
@@ -225,7 +215,7 @@ class PoolConfigController:
         self._mark("pool")
         return self.read_pool(name_a), self.read_pool(name_b)
 
-    def remove_peer(self, name_a: str, name_b: str) -> tuple[PoolTree, PoolTree]:
+    def remove_peer(self, name_a: str, name_b: str) -> tuple[PoolSpec, PoolSpec]:
         """Atomically remove a bidirectional peer edge and return both updated trees."""
         try:
             self._pools.remove_peer_pair(name_a, name_b)
@@ -303,9 +293,7 @@ class PoolConfigController:
     def list_skills(self) -> list[SkillEntry]:
         return self._skills.list_global_skills()
 
-    def upload_skill(
-        self, name: str, file_tree: dict[str, bytes | str]
-    ) -> SkillEntry:
+    def upload_skill(self, name: str, file_tree: dict[str, bytes | str]) -> SkillEntry:
         """Upload a global skill. Hot-reload per spec: does NOT set restart_required.
 
         Global skills are scanned at agent load; adding/removing one is picked

@@ -28,12 +28,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def resolve_system_prompt(agent_cfg: Any, project_dir: Path) -> str:
-    """Resolve system prompt: agents/{name}.md if exists, else YAML value."""
-    md_path = project_dir / "agents" / f"{agent_cfg.name}.md"
+def resolve_system_prompt(agent_name: str, project_dir: Path) -> str:
+    """Resolve system prompt: agents/{name}.md if exists, else empty string."""
+    md_path = project_dir / "agents" / f"{agent_name}.md"
     if md_path.exists():
         return md_path.read_text(encoding="utf-8")
-    return getattr(agent_cfg, "system_prompt", "")
+    return ""
 
 
 # ── Standard tool builders (code objects, no config) ──

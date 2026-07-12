@@ -17,10 +17,10 @@ if TYPE_CHECKING:
     # These live in bot.service, whose package __init__ imports BotService,
     # which imports the bundle via wiring; deferring them to TYPE_CHECKING
     # keeps the import graph acyclic (handle is the low-level bundle module).
-    from bot.service.pool_instance import PoolInstance
-    from bot.service.pool_router import PoolRouter
     from bot.service.session_store import WorkspacePoolSessionStore
     from bot.workspace.background import BackgroundTaskRunner
+    from modex_agent.multi_agent.pool_instance import PoolInstance
+    from modex_agent.multi_agent.pool_router import PoolRouter
 
 
 class WorkspaceHandleRootProvider(WorkspaceRootProvider):

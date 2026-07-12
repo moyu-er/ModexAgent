@@ -31,7 +31,6 @@ from bot.plugins.integration import PluginIntegration
 from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
 from bot.service.model_provider import BotModelProvider
-from bot.service.pool_router import PoolSessionStore
 from bot.utils.config_loader import ConfigLoader
 from bot.workspace.wiring import build_single_workspace_stack, build_workspace_stack
 from modex_agent import (
@@ -49,10 +48,11 @@ from modex_agent.core.session_store import SessionStore
 from modex_agent.hook.abc import Hook
 from modex_agent.hook.runner import HookRunner
 from modex_agent.ioc.configs.app import AppConfig
+from modex_agent.multi_agent.pool_instance import PoolInstance
+from modex_agent.multi_agent.pool_router import PoolSessionStore
 from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
 
 from .builders import AgentBuilderMixin, resolve_system_prompt
-from .pool_instance import PoolInstance
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +70,7 @@ class BotService(AgentBuilderMixin):
     # Whether this service runs the WebUI. Set True by WebUIService; controls
     # workspace-level transcript/session_index store wiring. Read by _is_webui().
     webui: bool = False
+    _default_pool: str = "default"
 
     def __init__(
         self,
@@ -91,6 +92,7 @@ class BotService(AgentBuilderMixin):
         self.output_adapter = output_adapter
         self.emitter_factory = emitter_factory
         self._app_config = app_config
+        self._default_pool: str = "default"  # business-layer default; AppConfig no longer owns this
         # Multi-model config (config/model.yml 的 models: 块) + per-turn choice
         # registry。_load_app_config 解析并缓存；_build_*_provider / wiring 读取。
         self._bot_model_config: BotModelConfig | None = None
@@ -165,10 +167,7 @@ class BotService(AgentBuilderMixin):
 
     @property
     def _default_pool_name(self) -> str:
-        """Default pool name from config."""
-        if self._app_config is not None:
-            return self._app_config.multi_agent.default_pool
-        return "main"
+        return self._default_pool
 
     def _is_webui(self) -> bool:
         """Whether this service runs the WebUI (class attribute ``webui``)."""
@@ -213,24 +212,21 @@ class BotService(AgentBuilderMixin):
 
     def _apply_bot_model_config(self, app_config: AppConfig) -> None:
         """Bot 层后处理（spec B3）：解析 model.yml 的 models: 块，缓存
-        BotModelConfig，并把 max_context_tokens 注入 memory.session.max_context_tokens。
-        无论 AppConfig 由本服务加载还是子类预加载传入，都必须运行——_bot_model_config
-        是后续 provider/wiring 的依赖。
+        BotModelConfig。无论 AppConfig 由本服务加载还是子类预加载传入，都
+        必须运行——_bot_model_config 是后续 provider/wiring 的依赖。
 
-        PoolConfig 不再携带 llm；模型配置由 BotModelConfig / BotModelProvider 独立管理。
+        PoolSpec 不再携带 llm；模型配置由 BotModelConfig / BotModelProvider
+        独立管理。max_context_tokens 由 wiring 层注入 PoolAssemblyDeps.memory。
 
         model.yml 缺失时（如框架单测用 config_dir=Path('.') + 合成 app_config）
-        静默跳过，_bot_model_config 留 None；真正的缺失判定由 _build_default_provider
-        的 assert 兜底。
+        静默跳过，_bot_model_config 留 None；真正的缺失判定由
+        _build_default_provider 的 assert 兜底。
         """
         model_yml = self.config_dir / "model.yml"
         if not model_yml.exists():
             return
         model_cfg = BotModelConfig.from_yaml(model_yml)
         self._bot_model_config = model_cfg
-        for pool_cfg in app_config.pools.values():
-            if pool_cfg.memory is not None:
-                pool_cfg.memory.session.max_context_tokens = model_cfg.max_context_tokens
 
     # ------------------------------------------------------------------ #
     # Path helpers
@@ -278,7 +274,10 @@ class BotService(AgentBuilderMixin):
         if self._app_config is None:
             self._app_config = self._load_app_config()
         assert self._app_config is not None, "AppConfig must be loaded before initialize"
-        print(f"[OK] Config loaded ({len(self._app_config.pools)} pools via IOC)")
+        from modex_agent.multi_agent.pool_config import PoolStore
+
+        pool_store = PoolStore(base_dir=self._project_dir)
+        print(f"[OK] Config loaded ({len(pool_store.list_pools())} pools)")
 
         # Service-level session→pool mapping store. Lives in the project home
         # data dir so every workspace's PoolRouter and the WebUI pipeline share
@@ -385,10 +384,9 @@ class BotService(AgentBuilderMixin):
         """Display pool configuration summary."""
         print(f"\n[INFO] Pools: {list(self._pools.keys())}")
         for name, pi in self._pools.items():
-            subagent_count = sum(1 for a in pi.config.agents if a.role == "subagent")
-            print(f"   {name}: {pi.main_agent_name} + {subagent_count} subagents")
+            print(f"   {name}: {pi.main_agent_name} + {pi.subagent_count} subagents")
         print(f"[INFO] Switch commands: /{' /'.join(self._pools.keys())}")
-        print(f"[INFO] Default pool: {self._app_config.multi_agent.default_pool}")
+        print(f"[INFO] Default pool: {self._default_pool_name}")
 
     # ------------------------------------------------------------------ #
     # ------------------------------------------------------------------ #
@@ -400,13 +398,10 @@ class BotService(AgentBuilderMixin):
         cached = self._system_prompt_cache.get(name)
         if cached is not None:
             return cached
-        assert self._app_config is not None
-        pool_cfg = self._app_config.pools[name]
-        main_cfg = next(
-            (a for a in pool_cfg.agents if a.role == "main"),
-            pool_cfg.agents[0],
-        )
-        prompt = resolve_system_prompt(main_cfg, self._project_dir)
+        from modex_agent.multi_agent.pool_config import PoolStore
+
+        pool_spec = PoolStore(base_dir=self._project_dir).read_pool(name)
+        prompt = resolve_system_prompt(pool_spec.main.agent_name, self._project_dir)
         self._system_prompt_cache[name] = prompt
         return prompt
 

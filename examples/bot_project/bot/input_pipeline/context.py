@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from bot.service.media_store import WorkspaceScopedMediaStore
-from bot.service.pool_router import PoolSessionStore
+from modex_agent.multi_agent.pool_router import PoolSessionStore
 
 if TYPE_CHECKING:
     from bot.service.model_choice import ModelChoiceRegistry
@@ -15,7 +15,7 @@ from bot.webui.transcript_store import TranscriptStore
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.core.types import InputMessage
 from modex_agent.input_pipeline.context import InputContext
-from modex_agent.ioc.configs.pool import MediaConfig
+from modex_agent.multi_agent.pool_config.media import MediaConfig
 from modex_agent.pipeline.adapters import InputAdapter
 
 
@@ -40,7 +40,7 @@ class BotInputContext(InputContext):
     media_config_for_pool: optional resolver ``pool -> MediaConfig`` honoring
         ADR-0013 §7 (per-pool override). When supplied,
         :meth:`media_config_for` delegates to it so each pool's ingest path
-        uses that pool's ``PoolConfig.media``. When None (e.g. tests, legacy
+        uses that pool's ``PoolAssemblyDeps.media``. When None (e.g. tests, legacy
         callers), :meth:`media_config_for` falls back to the default
         ``media_config`` instance — existing behavior is preserved.
     """

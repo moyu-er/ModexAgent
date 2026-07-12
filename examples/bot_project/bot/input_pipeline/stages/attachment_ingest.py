@@ -34,9 +34,9 @@ from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from bot.service.media_store import WorkspaceScopedMediaStore
 from modex_agent.input_pipeline.envelope import AttachmentRef, UserInputEnvelope
 from modex_agent.input_pipeline.stage import Continue, InputStage, StageResult
-from modex_agent.ioc.configs.pool import MediaConfig
 from modex_agent.media.gate import perception_gate
 from modex_agent.media.models import Attachment, AttachmentLocator
+from modex_agent.multi_agent.pool_config.media import MediaConfig
 from modex_agent.workspace.runtime import bind_workspace_root
 
 logger = logging.getLogger(__name__)
@@ -91,7 +91,7 @@ class AttachmentIngestStage(InputStage):
         media_store: WorkspaceScopedMediaStore = ctx.media_store
         pool: str = envelope.metadata[RoutingMeta.RESOLVED_POOL]
         # Per-pool MediaConfig (ADR-0013 §7): the context resolves the owning
-        # pool's PoolConfig.media, falling back to the default instance.
+        # pool's PoolAssemblyDeps.media, falling back to the default instance.
         config = ctx.media_config_for(pool)
         session_id: str = envelope.metadata[RoutingMeta.FULL_SESSION_ID]
         workspace: Path = Path(str(envelope.metadata[RoutingMeta.WORKSPACE]))

@@ -12,7 +12,6 @@ wired in at the CUTOVER task.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -21,9 +20,10 @@ from modex_agent.core.experience import (
     FileExperienceSource,
     PerFileExperienceMetaStore,
 )
-from modex_agent.ioc.configs.memory import MemoryConfig
-from modex_agent.ioc.configs.pool import PoolConfig
 from modex_agent.memory.system import MemorySystemContextManager
+from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
+from modex_agent.multi_agent.pool_config.experience import ExperienceConfig
+from modex_agent.multi_agent.pool_config.specs import PoolSpec
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.trace import JsonFileTraceStore
 from modex_agent.workspace.context import WorkspaceContext
@@ -43,32 +43,18 @@ class PoolData(PoolDataSnapshot):
     experience_meta: PerFileExperienceMetaStore
 
 
-def _main_agent_name(pool_cfg: PoolConfig) -> str:
-    """Name of the pool's main agent; fallback ``"main"``.
-
-    Re-homed verbatim from ``Workspace._main_agent_name``.
-    """
-    for agent in pool_cfg.agents:
-        if agent.role == "main":
-            return agent.name
-    return "main"
+def _main_agent_name(pool_spec: PoolSpec) -> str:
+    """Name of the pool's main agent."""
+    return pool_spec.main.agent_name
 
 
 def _build_experience_manager(
-    pool_cfg: PoolConfig,
+    assembly_deps: PoolAssemblyDeps,
     experience_dir: Path,
 ) -> ExperienceManager | None:
-    """ExperienceManager only when the main agent enables experience.
-
-    Re-homed verbatim from ``Workspace._build_experience_manager``.
-    """
-    main_cfg = next(
-        (a for a in pool_cfg.agents if a.role == "main"),
-        None,
-    )
-    if main_cfg is None or main_cfg.experience is None:
-        return None
-    if not main_cfg.experience.enabled:
+    """ExperienceManager only when the main agent enables experience."""
+    exp_cfg = assembly_deps.experience
+    if exp_cfg is None or not exp_cfg.enabled:
         return None
     return ExperienceManager(
         source=FileExperienceSource(directories=[experience_dir])
@@ -78,19 +64,12 @@ def _build_experience_manager(
 async def build_pool_data(
     ctx: WorkspaceContext,
     pool_name: str,
-    pool_cfg: PoolConfig,
+    pool_spec: PoolSpec,
     provider: object,
-    memory_cfg_factory: Callable[[PoolConfig], MemoryConfig],
+    assembly_deps: PoolAssemblyDeps,
     base_system_prompt: str = "",
 ) -> PoolData:
-    """Build one pool's stores + context_manager bound to ``ctx.paths``.
-
-    Re-homed FAITHFULLY from ``Workspace.build_pool_data`` (the first-call
-    construction path; caching is the caller's concern here). Binds
-    ``self.paths``→``ctx.paths``, ``self._provider``→``provider``,
-    ``self._memory_cfg_factory``→``memory_cfg_factory``,
-    ``self._pools_config[pool_name]``→``pool_cfg``.
-    """
+    """Build one pool's stores + context_manager bound to ``ctx.paths``."""
     # Local imports keep the module import graph thin: the codec / store
     # / experience / memory-factory modules are only needed when a pool
     # is actually built, not when this module is imported.
@@ -103,7 +82,11 @@ async def build_pool_data(
         JsonFileTurnStateStore,
     )
 
-    memory_cfg = memory_cfg_factory(pool_cfg)
+    memory_cfg = assembly_deps.memory
+    if memory_cfg is None:
+        raise ValueError(
+            "PoolAssemblyDeps.memory must be non-None when calling build_pool_data"
+        )
 
     # ── Memory system (memory/<pool>) ────────────────────────────────
     from bot.memory.token_estimator import TiktokenTokenEstimator
@@ -115,7 +98,7 @@ async def build_pool_data(
     )  # type: ignore[arg-type]
     await memory_system.initialize()
 
-    # ── Runtime stores (runtime_state/<pool>/{turns,trace}) ─
+    # ── Runtime stores (runtime_state/<pool>/{turns,trace}) ──
     codec_registry = RuntimeStateCodecRegistry(
         {AgentKind.REACT: ReActRuntimeStateCodec()}
     )
@@ -127,10 +110,10 @@ async def build_pool_data(
     )
 
     # ── Experience layer (experiences/<pool>/<main_agent>) ───────────
-    main_agent = _main_agent_name(pool_cfg)
+    main_agent = _main_agent_name(pool_spec)
     experience_dir = ctx.paths.experience_dir(pool_name, main_agent)
     experience_dir.mkdir(parents=True, exist_ok=True)
-    experience_manager = _build_experience_manager(pool_cfg, experience_dir)
+    experience_manager = _build_experience_manager(assembly_deps, experience_dir)
     experience_meta = PerFileExperienceMetaStore(lambda: experience_dir)
 
     # ── Context manager ──────────────────────────────────────────────
