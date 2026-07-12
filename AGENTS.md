@@ -12,7 +12,7 @@
 - `modex_agent/core/experience/`: experience layer — `ExperienceManager`, `FileExperienceSource`, `ExperiencePromptBuilder`, `ExperienceCurator`, validation, metadata tracking.
 - `modex_agent/memory/`: three-layer memory (session/archive/knowledge) + compression + governance + injection policies.
 - `modex_agent/multi_agent/`: star-topology subagent coordination, `AgentPool`, inbox, `AgentMessageBus`.
-- `modex_agent/ioc/`: typed config (`AppConfig` via Pydantic) + 8 factory modules + `PoolConfig`.
+- `modex_agent/ioc/`: typed config (`AppConfig` via Pydantic) + 7 factory modules. Pool configuration lives in `modex_agent/multi_agent/pool_config/`.
 - `modex_agent/runtime/`: `AgentRuntime`, `AgentRuntimeServices`, `TurnStateStore`, typed enums/models.
 - `modex_agent/pipeline/`: `AgentPipeline` end-to-end orchestration, I/O adapters, approval renderer, slash commands.
 - `modex_agent/hook/` + `modex_agent/interceptor/` + `modex_agent/control/`: three-layer runtime model (observe/AOP/control).
