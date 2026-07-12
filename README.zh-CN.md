@@ -15,7 +15,7 @@
 <p align="center">
   <strong>模块化、可组合、生产级的 Python Agent 框架</strong>
   <br>
-  图驱动 ReAct · 可中断审批 · 跨平台终端 · 多 Agent 星型拓扑 · WebUI
+  图驱动 ReAct · 可中断审批 · 跨平台终端 · 多 Agent（池内星型 + 跨池对等）· WebUI
 </p>
 
 <p align="center">
@@ -34,14 +34,14 @@ ModexAgent 是一个用于构建 AI Agent 应用的 Python 框架。它将模型
 | 浏览器 WebUI | 可中断审批 | 多 Agent 协作 |
 |:---:|:---:|:---:|
 | ![WebUI](assets/webui-settings-pools.png) | ![审批](assets/webui-approval.png) | ![多Agent](assets/webui-multiagent.png) |
-| 实时流式聊天，内置 TodoPanel 任务面板、每轮模型切换、浏览器内配置编辑器、附件与 Mermaid 图 | 敏感工具调用自动挂起，四级分级策略、级联取消 | 星型拓扑子 Agent，支持同步唤醒、异步 Inbox 和隔离调用 |
+| 实时流式聊天，内置 TodoPanel 任务面板、每轮模型切换、浏览器内配置编辑器、附件与 Mermaid 图 | 敏感工具调用自动挂起，四级分级策略、级联取消 | 星型拓扑子 Agent，支持同步唤醒、异步 Inbox 和隔离调用；跨池主 Agent 间对等通信 |
 
 ## 核心特性
 
 - **图驱动的 ReAct 引擎** — 执行循环以 `Graph[R] + Node[R] + Edge` 的泛型图结构建模，支持 `GraphInterrupt` 挂起与状态持久化恢复，天然适合审批和断点续跑场景。内置循环检测：ReAct 陷入死循环时以受控退出收尾，而不是空烧 token（ADR-0016）。
 - **可中断审批** — Agent 在做出有风险的改动前会先征求你的同意。当它试图写或改项目文件夹之外的文件时，会暂停并请求确认——在 WebUI 点一下「批准」，或在聊天里回复 `/approve`，它就从原地继续。默认关闭，可按 Agent 单独开启。
 - **跨平台交互式终端** — 内置完整终端工具链，支持 Windows（WinPTY/ConPTY）、Linux/macOS（pexpect/tmux）三端统一接口；支持可见终端窗口与后台 PTY 两种模式，248+ 单元测试覆盖。
-- **星型拓扑多 Agent 协作** — 主 Agent 作为通信中枢，把任务派给专门的子 Agent 并自动收集它们的回复；子 Agent 之间不直接通信，统一经主 Agent 转交，结构清晰、便于追踪。
+- **多 Agent 协作** — 每个 pool 内部是严格星型：主 Agent 作为通信中枢，子 Agent 只能经 `send_to_agent` 与父 Agent 通信（框架按需走 broker、异步 inbox 或隔离 subagent 会话）。跨 pool 时主 Agent 之间是对等的——一个主 Agent 可 `send_to_agent` 另一个 pool 的主 Agent，对方在自己的 bus 上接收并回复。subagent↔subagent、subagent→非父 NORMAL 的发送会被拓扑关卡拒绝。
 - **Pool 运行时** — 多 Agent 常驻池，通过 `MessageBroker` + `AgentMessageBus` 路由消息，I/O 适配器与 Agent 逻辑完全解耦。
 - **多级记忆 + 自学习系统** — Session、Archive、Knowledge、UserRetentionBuffer、Pruned、Experience 六层记忆，支持 SessionScope / UserScope / GlobalScope 可配置隔离范围。Dream Engine 定期将 Archive 整合为 Knowledge；ExperienceReviewAgent 将对话沉淀为可复用的 EXPERIENCE.md 参考知识。
 - **Hook + Interceptor 扩展体系** — 生命周期 Hook（如 InboxFlush、SubagentAutoSend）与 AOP 拦截器链（ControlDrain、ToolResultLimit）正交组合，框架行为可逐层定制，不侵入核心代码。
@@ -160,7 +160,7 @@ src/modex_agent/        # 框架包（src layout，见 ADR-0003）
   agents/            # Agent 运行时：ReAct（图驱动）、Summarizer、ExperienceReview
   pipeline/          # 端到端流程编排（AgentPipeline）
   memory/            # 多级记忆 + Dream 引擎 + 上下文治理
-  multi_agent/       # 星型协作：Pool、broker、inbox、通信
+  multi_agent/       # 多 Agent：池内星型 + 跨池对等网，Pool、broker、inbox、通信
   tools/             # 工具注册 + 执行；终端、MCP、AST、LSP、web 工具集
   providers/         # LLM 提供者（LiteLLM、OpenAI 兼容接口）
   hook/              # 生命周期 Hook 扩展点（InboxFlush、SubagentAutoSend）

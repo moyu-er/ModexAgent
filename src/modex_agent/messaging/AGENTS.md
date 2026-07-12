@@ -1,22 +1,23 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-06-22 -->
+<!-- Generated: 2026-06-22 | Updated: 2026-07-12 -->
 
 # messaging
 
 ## Purpose
-Message broker and bridge service for agent communication. Supports pub/sub pattern and star-topology inter-agent messaging.
+Message broker and bridge service for agent communication. Supports pub/sub pattern and inter-agent messaging. Owns the `Address` / `AddressKind` addressing types shared across the framework.
 
 ## Key Files
 | File | Description |
 |------|-------------|
-| `broker.py` | `MessageBroker` ABC — pub/sub messaging backbone |
+| `broker.py` | `MessageBroker` ABC + `InMemoryMessageBroker` — pub/sub backbone. Also defines `Address` (frozen dataclass with `kind: AddressKind` + `name: str`) and `AddressKind` StrEnum (`AGENT`, `USER`, `CHANNEL`, `SYSTEM`, `GROUP`). `AddressKind` compares equal to its string value, so existing `kind="agent"` call sites work but new code should use the enum (type-safety rule 1). |
 | `broker_memory.py` | `InMemoryMessageBroker` — lightweight `asyncio.Queue` implementation |
-| `broker_bridge.py` | `BrokerBridgeService` — adapter-to-broker bridge for pool mode |
+| `broker_bridge.py` | `BrokerBridgeService` + `BrokerInputAdapter` / `BrokerOutputAdapter` — adapter-to-broker bridge for pool mode; `OutputRoute` for routing agent output to the right channel |
 
 ## For AI Agents
 - `MessageBroker` ABC defines the pub/sub contract; `InMemoryMessageBroker` is the default implementation
 - `BrokerBridgeService` connects agents via broker in pool mode
-- Runtime control messages should pass through the control plane, not embedded here
+- `Address.kind` is typed `AddressKind` — use `AddressKind.AGENT` / `.CHANNEL` / `.SYSTEM` etc. instead of raw strings
+- Runtime control messages should pass through the control plane (`modex_agent.control`), not embedded here
 
 ## Dependencies
 - `modex_agent.core.types` — `AgentEvent` types used in broker signatures

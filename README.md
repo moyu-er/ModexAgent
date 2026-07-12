@@ -15,7 +15,7 @@
 <p align="center">
   <strong>A modular, composable, production-ready Python Agent framework</strong>
   <br>
-  Graph-driven ReAct · Interruptible Approval · Cross-Platform Terminal · Multi-Agent Star Topology · WebUI
+  Graph-driven ReAct · Interruptible Approval · Cross-Platform Terminal · Multi-Agent (Per-Pool Star + Cross-Pool Peer) · WebUI
 </p>
 
 <p align="center">
@@ -34,14 +34,14 @@ The framework core replaces traditional loops with a **graph-driven execution en
 | Browser WebUI | Interruptible Approval | Multi-Agent Collaboration |
 |:---:|:---:|:---:|
 | ![WebUI](assets/webui-settings-pools.png) | ![Approval](assets/webui-approval.png) | ![Multi-Agent](assets/webui-multiagent.png) |
-| Real-time streaming chat with a built-in TodoPanel, per-turn model selector, in-browser config editor, attachments, and mermaid | Sensitive tool calls suspend for human approval with tiered cascade policies | Star-topology subagents via sync wake, async inbox, and isolated spawn |
+| Real-time streaming chat with a built-in TodoPanel, per-turn model selector, in-browser config editor, attachments, and mermaid | Sensitive tool calls suspend for human approval with tiered cascade policies | Star-topology subagents via sync wake, async inbox, and isolated spawn; cross-pool peer messaging between main agents |
 
 ## Key Features
 
 - **Graph-driven ReAct Engine** — Execution modeled as `Graph[R] + Node[R] + Edge`. Supports `GraphInterrupt` suspension and state-persistent resumption. Naturally suited for approval and breakpoint-resume scenarios. Loop detection exits a runaway ReAct loop as a controlled stop instead of burning tokens (ADR-0016).
 - **Interruptible Approval** — The agent asks before making risky changes. When it tries to write or edit files outside your project folder, it pauses and asks for your go-ahead — approve with one click in the WebUI or reply `/approve` in chat, and it continues exactly where it stopped. Off by default; turn it on per agent.
 - **Cross-platform Interactive Terminal** — Built-in terminal toolchain with unified interfaces for Windows (WinPTY/ConPTY), Linux, and macOS (pexpect/tmux); visible and headless PTY modes, covered by 248+ unit tests.
-- **Star-topology Multi-agent Collaboration** — Main agent as communication hub. Subagents collaborate via the single `send_to_agent` tool; the framework routes calls through the broker, the async inbox, or an isolated subagent session as needed. `CommunicationTracker` prevents silent message loss.
+- **Multi-agent Collaboration** — Each pool is a strict star: a main agent as hub, subagents talk only to their parent via the single `send_to_agent` tool (the framework routes through the broker, the async inbox, or an isolated subagent session as needed). Across pools, main agents communicate as peers — a main agent can `send_to_agent` another pool's main agent, which receives on its own bus and replies in kind. Subagent↔subagent and subagent→non-parent sends are rejected by the topology gate.
 - **Pool Runtime** — Multi-agent persistent pools with `MessageBroker` + `AgentMessageBus` routing. I/O adapters are fully decoupled from agent logic.
 - **Multi-tier Memory + Self-Learning** — Session, Archive, Knowledge, UserRetentionBuffer, Pruned, and Experience layers with configurable scopes (SessionScope / UserScope / GlobalScope). Dream Engine consolidates archives into knowledge; ExperienceReviewAgent turns conversations into reusable EXPERIENCE.md reference knowledge.
 - **Hook + Interceptor Extension System** — Lifecycle hooks (InboxFlush, SubagentAutoSend) and AOP interceptor chains (ControlDrain, ToolResultLimit) compose orthogonally without core intrusion.
@@ -160,7 +160,7 @@ src/modex_agent/        # the framework package (src layout — see ADR-0003)
   agents/            # Agent runtimes: ReAct (graph-driven), Summarizer, ExperienceReview
   pipeline/          # End-to-end orchestration (AgentPipeline)
   memory/            # Multi-tier memory + Dream Engine + context governance
-  multi_agent/       # Star-topology collaboration: Pool, broker, inbox, communication
+  multi_agent/       # Multi-agent: per-pool star + cross-pool peer mesh, Pool, broker, inbox, communication
   tools/             # Tool registry + execution; terminal, MCP, AST, LSP, web toolkits
   providers/         # LLM providers (LiteLLM, OpenAI-compatible)
   hook/              # Lifecycle hook extension points (InboxFlush, SubagentAutoSend)

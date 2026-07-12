@@ -1,6 +1,6 @@
 # Cross-pool peer communication (optional framework capability)
 
-Status: proposed (2026-07-11)
+Status: accepted (2026-07-12) — implemented in commit a5a78407, all tests green
 
 ## Context
 

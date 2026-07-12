@@ -4,7 +4,7 @@
 
 **Goal:** Delete a conversation's full cascade (root + all subagent descendants via `parent_session_id`) and all ten per-session artifact types, crash-recoverably, with a periodic backstop sweep.
 
-**Architecture:** A bot-side `SessionGarbageCollector` deep module. A session is live iff its index record exists. The idempotent unit `clean_session` removes a session's record + transcript + ten artifacts (index first), then enqueues its children found via `parent_session_id`. Two triggers feed one single-worker pool: foreground `delete_session_tree` (sync-removes root record, then enqueues) and `sweep_once` (finds orphans from disk). The sweep is the sole retry authority; an in-memory non-persistent dedup set suppresses concurrent duplicates and is cleared on any task end so the backstop is never blocked. No tombstone, no OS-lock reliance, no framework changes. See ADR-0018 and `.scratch/session-gc/PRD.md`.
+**Architecture:** A bot-side `SessionGarbageCollector` deep module. A session is live iff its index record exists. The idempotent unit `clean_session` removes a session's record + transcript + ten artifacts (index first), then enqueues its children found via `parent_session_id`. Two triggers feed one single-worker pool: foreground `delete_session_tree` (sync-removes root record, then enqueues) and `sweep_once` (finds orphans from disk). The sweep is the sole retry authority; an in-memory non-persistent dedup set suppresses concurrent duplicates and is cleared on any task end so the backstop is never blocked. No tombstone, no OS-lock reliance, no framework changes. See ADR-0018 and `docs/design/session-gc/PRD.md`.
 
 **Tech Stack:** Python 3.12, asyncio, aiohttp (lifecycle only), Pydantic (frozen config), pytest. Framework path primitives: `WorkspacePaths`, `safe_filename`, `sanitize_scope_key`, `safe_segment`, `agent_of`, `session_id_prefix_of`, runtime store `_safe_segment` classmethods.
 
@@ -1256,7 +1256,7 @@ Expected: PASS (no regressions from the `set_session_gc` / handler change).
 
 - [ ] **Step 3: Confirm ADR-0018 + PRD match what shipped**
 
-Re-read `docs/adr/0018-crash-safe-session-garbage-collection.md` and `.scratch/session-gc/PRD.md`. If any decision drifted during implementation (e.g., the memory-dir signal for Rule 2, the test-only `_drain_for_tests`), add a one-line note to ADR-0018's Consequences. Do not rewrite.
+Re-read `docs/adr/0018-crash-safe-session-garbage-collection.md` and `docs/design/session-gc/PRD.md`. If any decision drifted during implementation (e.g., the memory-dir signal for Rule 2, the test-only `_drain_for_tests`), add a one-line note to ADR-0018's Consequences. Do not rewrite.
 
 - [ ] **Step 4: Commit any doc touch**
 
