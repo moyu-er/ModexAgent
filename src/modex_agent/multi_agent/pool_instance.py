@@ -11,8 +11,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from modex_agent.messaging.broker import AddressKind
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import AgentMessageBus
+from modex_agent.multi_agent.pool_config.media import MediaConfig
 from modex_agent.multi_agent.tools import CommunicationTargetStore
 from modex_agent.tools.terminal.managers import TerminalManagerBase
 
@@ -28,7 +30,8 @@ class PoolInstance:
     """
 
     name: str
-    config: Any  # PoolConfig
+    media: MediaConfig
+    subagent_count: int
     pool: Any  # AgentPool
     broker_bridge: Any  # BrokerBridgeService
     tool_manager: Any  # InMemoryToolManager
@@ -44,4 +47,4 @@ class PoolInstance:
 
     @property
     def main_address(self) -> AgentAddress:
-        return AgentAddress(kind="agent", name=self.main_agent_name)
+        return AgentAddress(kind=AddressKind.AGENT, name=self.main_agent_name)

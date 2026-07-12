@@ -12,11 +12,12 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from modex_agent.core.session_id import session_id_prefix_of
 from modex_agent.core.session_store import safe_filename
 from modex_agent.core.types import InputMessage
+from modex_agent.multi_agent.pool_instance import PoolInstance
 from modex_agent.pipeline.adapters import InputAdapter
 
 logger = logging.getLogger(__name__)
@@ -41,7 +42,7 @@ class PoolSessionStore:
             return default
         try:
             data = json.loads(fp.read_text(encoding="utf-8"))
-            return data.get("pool", default)
+            return cast(str, data.get("pool", default))
         except Exception:
             return default
 
@@ -55,7 +56,7 @@ class PoolSessionStore:
     def rename_pool(self, old_pool: str, new_pool: str) -> int:
         """Rewrite every stored session->pool mapping from ``old_pool`` to ``new_pool``.
 
-        Returns the number of records rewritten. Corrupt/empty files are skipped.
+        Returns the number of records rewritten. Corrupt/Empty files are skipped.
         """
         count = 0
         for file in self._dir.glob("*.json"):
@@ -86,7 +87,7 @@ class PoolRouter:
         self,
         input_adapter: InputAdapter,
         broker: Any,
-        pools: dict[str, Any],
+        pools: dict[str, PoolInstance],
         session_store: PoolSessionStore,
         default_pool: str,
     ):
@@ -97,7 +98,7 @@ class PoolRouter:
         self._default_pool = default_pool
 
     async def run(self) -> None:
-        async for msg in self._input_adapter.receive():
+        async for msg in self._input_adapter.receive():  # type: ignore[attr-defined]  # mypy false-positive: abstract receive() is async-generator at runtime
             await self.route_message(msg)
 
     async def route_message(self, msg: InputMessage) -> None:
@@ -127,7 +128,7 @@ class PoolRouter:
         self._session_store.set(session_prefix, pool_name)
         logger.info("Session %s pool set to '%s' (external)", session_id, pool_name)
 
-    async def _route_to_pool(self, msg: InputMessage, pool: Any) -> None:
+    async def _route_to_pool(self, msg: InputMessage, pool: PoolInstance) -> None:
         """Route a message to its pool via submit_input.
 
         Poll-driven cutover (Task 8): DMs are written as ``external_input``
