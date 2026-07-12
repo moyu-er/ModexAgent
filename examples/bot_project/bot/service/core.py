@@ -337,8 +337,8 @@ class BotService(AgentBuilderMixin):
                 missing_llm: list[str] = []
                 if not default_resolved.provider.api_key:
                     missing_llm.append("api_key")
-                if not default_resolved.provider.url:
-                    missing_llm.append("url")
+                if not default_resolved.provider.base_url:
+                    missing_llm.append("base_url")
                 if missing_llm:
                     print(
                         f"[WARNING] LLM config incomplete: {', '.join(missing_llm)}. "

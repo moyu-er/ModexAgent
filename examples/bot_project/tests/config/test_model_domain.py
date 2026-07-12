@@ -20,9 +20,10 @@ def _write_model(path: Path) -> None:
                     {
                         "key": "deepseek",
                         "name": "DeepSeek",
-                        "url": "https://x",
+                        "base_url": "https://x",
                         "api_key": "sk-real",
-                        "models": [{"name": "m1", "model": "openai/m1"}],
+                        "interface_format": "openai_compatible",
+                        "models": [{"name": "m1", "model": "m1"}],
                     },
                 ],
             }
@@ -40,7 +41,7 @@ def test_model_domain_masks_provider_api_keys(tmp_path: Path) -> None:
     values, _schema, _restart = dom.read()
     assert isinstance(values["providers"][0]["api_key"], SecretMask)
     assert values["providers"][0]["api_key"].has_value is True
-    assert values["providers"][0]["url"] == "https://x"  # non-secret stays
+    assert values["providers"][0]["base_url"] == "https://x"  # non-secret stays
 
 
 def test_model_domain_write_overwrites_api_key(tmp_path: Path) -> None:
@@ -55,12 +56,14 @@ def test_model_domain_write_overwrites_api_key(tmp_path: Path) -> None:
                 {
                     "key": "deepseek",
                     "name": "DeepSeek",
-                    "url": "https://x",
+                    "base_url": "https://x",
                     "api_key": {"value": "sk-new"},
-                    "models": [{"name": "m1", "model": "openai/m1"}],
+                    "interface_format": "openai_compatible",
+                    "models": [{"name": "m1", "model": "m1"}],
                 }
             ]
         }
     )
     data = yaml.safe_load(yml.read_text(encoding="utf-8"))
     assert data["providers"][0]["api_key"] == "sk-new"
+    assert data["providers"][0]["base_url"] == "https://x"

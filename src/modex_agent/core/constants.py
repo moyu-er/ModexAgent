@@ -64,6 +64,16 @@ class ReasoningEffort(StrEnum):
     XHIGH = "xhigh"
 
 
+class InterfaceFormat(StrEnum):
+    """LLM 接口格式。
+
+    决定后端使用哪个 provider 以及是否需要在模型名前补充 provider 前缀。
+    """
+
+    OPENAI_COMPATIBLE = "openai_compatible"
+    ANTHROPIC = "anthropic"
+
+
 class ErrorMessages:
     """错误消息常量"""
 

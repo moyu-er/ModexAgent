@@ -25,11 +25,12 @@ models:
   providers:
     - key: a
       name: "A"
-      url: u
+      base_url: u
+      interface_format: openai_compatible
       api_key: k
       models:
-        - {name: M1, model: openai/m1, temperature: 0.3, max_output_tokens: 1000}
-        - {name: M2, model: openai/m2, temperature: 0.9, max_output_tokens: 2000}
+        - {name: M1, model: m1, temperature: 0.3, max_output_tokens: 1000}
+        - {name: M2, model: m2, temperature: 0.9, max_output_tokens: 2000}
 """
 
 
@@ -58,7 +59,7 @@ def _reset_ctxvar() -> Generator[None, None, None]:
 def test_default_model_used_when_ctxvar_unset(tmp_path: Path) -> None:
     prov = BotModelProvider(_cfg(tmp_path))
     fake = _FakeReal()
-    prov._cache[("a", "openai/m1")] = fake  # type: ignore[attr-defined]
+    prov._cache[("a", "m1")] = fake  # type: ignore[attr-defined]
 
     async def go() -> LLMResponse:
         return await prov.chat_stream(messages=[{"role": "user", "content": "hi"}])
@@ -78,8 +79,8 @@ def test_ctxvar_switches_model(tmp_path: Path) -> None:
     prov = BotModelProvider(cfg)
     fake1 = _FakeReal()
     fake2 = _FakeReal()
-    prov._cache[("a", "openai/m1")] = fake1  # type: ignore[attr-defined]
-    prov._cache[("a", "openai/m2")] = fake2  # type: ignore[attr-defined]
+    prov._cache[("a", "m1")] = fake1  # type: ignore[attr-defined]
+    prov._cache[("a", "m2")] = fake2  # type: ignore[attr-defined]
 
     m2 = cfg.resolve("A", "M2")
     assert m2 is not None
@@ -95,9 +96,9 @@ def test_ctxvar_switches_model(tmp_path: Path) -> None:
 
 
 def test_real_provider_baked_per_resolved_model(tmp_path: Path) -> None:
-    """create_llm_provider(synthesize(resolved)) bakes the ROUTING-STRIPPED model
-    plus the resolved model's temperature/max_output_tokens, so BotModelProvider
-    doesn't forward them (and never re-injects the openai/ prefix)."""
+    """create_llm_provider(synthesize(resolved)) bakes the model name plus the
+    resolved model's temperature/max_output_tokens, so BotModelProvider doesn't
+    forward them."""
     from modex_agent.ioc.factories.llm import create_llm_provider
     from modex_agent.providers.openai_provider import OpenAIProvider
 
@@ -106,22 +107,16 @@ def test_real_provider_baked_per_resolved_model(tmp_path: Path) -> None:
     assert resolved is not None
     real = create_llm_provider(cfg.synthesize_llm_config(resolved))
     assert isinstance(real, OpenAIProvider)
-    assert real._model == "m1"  # 'openai/' prefix stripped
+    assert real._model == "m1"
     assert real._temperature == 0.3
     assert real._max_output_tokens == 1000
 
 
 def test_get_default_model(tmp_path: Path) -> None:
     prov = BotModelProvider(_cfg(tmp_path))
-    assert prov.get_default_model() == "openai/m1"
-    assert prov.model == "openai/m1"
+    assert prov.get_default_model() == "m1"
+    assert prov.model == "m1"
 
-
-# ── Routing-prefix handling ──────────────────────────────────────────────
-# The "openai/" prefix is a ROUTING hint that create_llm_provider STRIPS when
-# building OpenAIProvider. BotModelProvider must not re-inject the full prefixed
-# string when forwarding — otherwise the API receives e.g. "openai/step-3.7-flash"
-# and reports "model not found".
 
 _PREFIX_YML = """
 models:
@@ -130,10 +125,11 @@ models:
   providers:
     - key: step
       name: "Step"
-      url: https://api.stepfun.com/v1
+      base_url: https://api.stepfun.com/v1
+      interface_format: openai_compatible
       api_key: sk
       models:
-        - {name: "flash", model: openai/step-3.7-flash, temperature: 0.5, max_output_tokens: 4000}
+        - {name: "flash", model: step-3.7-flash, temperature: 0.5, max_output_tokens: 4000}
 """
 
 
@@ -159,25 +155,18 @@ class _BakedFakeReal:
         return LLMResponse(content="ok", finish_reason=FinishReason.STOP.value)
 
 
-def test_openai_routing_prefix_not_forwarded_to_provider(tmp_path: Path) -> None:
-    """The 'openai/' prefix must be stripped before the model reaches the API.
-
-    create_llm_provider bakes the stripped model into OpenAIProvider; BotModelProvider
-    must NOT override it with the full prefixed string (regression: 'openai/step-3.7-flash'
-    was sent verbatim -> model not found).
-    """
+def test_provider_model_not_overridden_by_routing_prefix(tmp_path: Path) -> None:
+    """The model identifier stored in config is already bare; create_llm_provider
+    bakes it into OpenAIProvider and BotModelProvider must not override it."""
     prov = BotModelProvider(_prefix_cfg(tmp_path))
-    # create_llm_provider(openai/step-3.7-flash) -> OpenAIProvider(model="step-3.7-flash")
     fake = _BakedFakeReal(baked_model="step-3.7-flash")
-    prov._cache[("step", "openai/step-3.7-flash")] = fake  # type: ignore[attr-defined]
+    prov._cache[("step", "step-3.7-flash")] = fake  # type: ignore[attr-defined]
 
     async def go() -> LLMResponse:
         return await prov.chat_stream(messages=[{"role": "user", "content": "hi"}])
 
     asyncio.run(go())
-    # The prefix must never reach the provider's model param...
     assert fake.received_model_kwarg != "openai/step-3.7-flash", (
         f"routing prefix leaked into provider model= ({fake.received_model_kwarg!r})"
     )
-    # ...so the API receives the stripped form.
     assert fake.api_model == "step-3.7-flash"

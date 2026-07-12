@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from modex_agent.core.constants import ReasoningEffort
+from modex_agent.core.constants import InterfaceFormat, ReasoningEffort
 
 
 class Modality(StrEnum):
@@ -48,6 +48,8 @@ class LLMConfig(BaseModel):
     For OpenAI-compatible endpoints (MiniMax, DeepSeek, etc.), set base_url.
     """
 
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
     model: str = "gpt-4"
     api_key: str = ""
     base_url: str = ""
@@ -55,10 +57,13 @@ class LLMConfig(BaseModel):
     max_output_tokens: int = 80000
     capabilities: ModelCapabilities = Field(default_factory=ModelCapabilities)
     reasoning_effort: ReasoningEffort = ReasoningEffort.NONE
+    interface_format: InterfaceFormat = InterfaceFormat.OPENAI_COMPATIBLE
 
     @field_validator("capabilities", mode="before")
     @classmethod
-    def _coerce_capabilities(cls, value: ModelCapabilities | list[str] | tuple[str, ...] | None) -> ModelCapabilities:
+    def _coerce_capabilities(
+        cls, value: ModelCapabilities | list[str] | tuple[str, ...] | None
+    ) -> ModelCapabilities:
         """Coerce a flat ``list[str]`` from YAML into a ``ModelCapabilities``.
 
         The pool YAML loader feeds parsed YAML in, so ``capabilities`` may

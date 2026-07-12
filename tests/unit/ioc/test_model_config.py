@@ -5,14 +5,15 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
+from modex_agent.core.constants import InterfaceFormat
 from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.ioc.configs.model import GlobalModelConfig
 
 
 class TestGlobalModelConfig:
-    def test_to_llm_dict_renames_url_to_base_url(self) -> None:
+    def test_to_llm_dict_exports_base_url(self) -> None:
         cfg = GlobalModelConfig(
-            url="https://api.example.com/v1",
+            base_url="https://api.example.com/v1",
             api_key="sk-xxx",
             model="openai/foo",
             capabilities=["text", "image"],
@@ -23,6 +24,7 @@ class TestGlobalModelConfig:
         assert d["model"] == "openai/foo"
         assert d["api_key"] == "sk-xxx"
         assert d["capabilities"] == ["text", "image"]
+        assert d["interface_format"] == InterfaceFormat.OPENAI_COMPATIBLE
 
     def test_capabilities_default_is_text_only(self) -> None:
         assert GlobalModelConfig().to_llm_dict()["capabilities"] == ["text"]
@@ -59,9 +61,10 @@ class TestGlobalModelInjection:
             cfg = AppConfig.from_yaml(cfg_path)
             assert cfg.model is not None
             assert cfg.model.model == "openai/global-model"
-            assert cfg.model.url == "https://api.example.com/v1"
+            assert cfg.model.base_url == "https://api.example.com/v1"
             assert cfg.model.api_key == "sk-global"
             assert "image" in cfg.model.capabilities
+            assert cfg.model.interface_format == InterfaceFormat.OPENAI_COMPATIBLE
 
     def test_pool_llm_block_is_ignored(self) -> None:
         with tempfile.TemporaryDirectory() as t:

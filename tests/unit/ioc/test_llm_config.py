@@ -2,7 +2,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from modex_agent.core.constants import ReasoningEffort
+from modex_agent.core.constants import InterfaceFormat, ReasoningEffort
 from modex_agent.ioc.configs.llm import LLMConfig, Modality, ModelCapabilities
 from modex_agent.ioc.factories.llm import create_llm_provider
 from modex_agent.providers.litellm_provider import LiteLLMProvider
@@ -41,10 +41,21 @@ class TestLLMConfig:
         assert not cfg.capabilities.supports(Modality.VIDEO)
         assert not cfg.capabilities.supports(Modality.AUDIO)
 
-
     def test_default_reasoning_effort_is_none(self) -> None:
         cfg = LLMConfig()
         assert cfg.reasoning_effort == ReasoningEffort.NONE
+
+    def test_default_interface_format_is_openai_compatible(self) -> None:
+        cfg = LLMConfig()
+        assert cfg.interface_format == InterfaceFormat.OPENAI_COMPATIBLE
+
+    def test_interface_format_accepts_enum(self) -> None:
+        cfg = LLMConfig(interface_format=InterfaceFormat.ANTHROPIC)
+        assert cfg.interface_format == InterfaceFormat.ANTHROPIC
+
+    def test_interface_format_rejects_invalid_string(self) -> None:
+        with pytest.raises(ValueError):
+            LLMConfig(interface_format="invalid")  # type: ignore[arg-type]
 
     def test_reasoning_effort_enum_value(self) -> None:
         cfg = LLMConfig(reasoning_effort=ReasoningEffort.MEDIUM)
@@ -58,25 +69,51 @@ class TestLLMConfig:
 class TestCreateLLMProvider:
     def test_passes_reasoning_effort_to_openai_provider(self) -> None:
         cfg = LLMConfig(
-            model="openai/gpt-4o",
+            model="gpt-4o",
             api_key="sk-test",
             base_url="https://api.example.com",
             reasoning_effort=ReasoningEffort.HIGH,
+            interface_format=InterfaceFormat.OPENAI_COMPATIBLE,
         )
         provider = create_llm_provider(cfg)
         assert isinstance(provider, OpenAIProvider)
         assert provider._reasoning_effort == ReasoningEffort.HIGH
+        assert provider._model == "gpt-4o"
 
     def test_passes_reasoning_effort_to_litellm_provider(self) -> None:
         cfg = LLMConfig(
-            model="gpt-4o",
+            model="claude-3-5-sonnet",
             api_key="sk-test",
             base_url="https://api.example.com",
             reasoning_effort=ReasoningEffort.MEDIUM,
+            interface_format=InterfaceFormat.ANTHROPIC,
         )
         provider = create_llm_provider(cfg)
         assert isinstance(provider, LiteLLMProvider)
         assert provider._reasoning_effort == ReasoningEffort.MEDIUM
+        assert provider._model == "anthropic/claude-3-5-sonnet"
+
+    def test_openai_compatible_strips_openai_prefix(self) -> None:
+        cfg = LLMConfig(
+            model="openai/gpt-4o",
+            api_key="sk-test",
+            base_url="https://api.example.com",
+            interface_format=InterfaceFormat.OPENAI_COMPATIBLE,
+        )
+        provider = create_llm_provider(cfg)
+        assert isinstance(provider, OpenAIProvider)
+        assert provider._model == "gpt-4o"
+
+    def test_anthropic_strips_anthropic_prefix_then_re_adds(self) -> None:
+        cfg = LLMConfig(
+            model="anthropic/claude-3-5-sonnet",
+            api_key="sk-test",
+            base_url="https://api.example.com",
+            interface_format=InterfaceFormat.ANTHROPIC,
+        )
+        provider = create_llm_provider(cfg)
+        assert isinstance(provider, LiteLLMProvider)
+        assert provider._model == "anthropic/claude-3-5-sonnet"
 
 
 class TestModelCapabilities:

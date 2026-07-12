@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).parents[3]))
 from bot.service.core import BotService
 from bot.service.model_config import BotModelConfig
 
+from modex_agent.core.constants import InterfaceFormat
 from modex_agent.ioc.configs.app import AppConfig
 
 
@@ -18,18 +19,16 @@ def _write_config(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     (tmp_path / "bot_config.yml").write_text(
-        'multi_agent: {}\n'
-        'paths: {data_dir_name: .modex}\n'
-        'workspace: {enabled: false}\n',
+        "multi_agent: {}\npaths: {data_dir_name: .modex}\nworkspace: {enabled: false}\n",
         encoding="utf-8",
     )
     pools = tmp_path / "pools" / "main"
     pools.mkdir(parents=True)
     (pools / "pool.yml").write_text(
-        'name: main\n'
-        'main_agent_name: main\n'
-        'memory:\n  session: {max_token_ratio: 0.8}\n'
-        'agents:\n  - {name: main, role: main, max_steps: 5}\n',
+        "name: main\n"
+        "main_agent_name: main\n"
+        "memory:\n  session: {max_token_ratio: 0.8}\n"
+        "agents:\n  - {name: main, role: main, max_steps: 5}\n",
         encoding="utf-8",
     )
     return tmp_path
@@ -48,9 +47,10 @@ def test_load_app_config_injects_bot_model_config(tmp_path: Path) -> None:
     assert svc._bot_model_config is not None
     assert isinstance(svc._bot_model_config, BotModelConfig)
     resolved = svc._bot_model_config.default_resolved()
-    assert resolved.model.model == "openai/m1"
+    assert resolved.model.model == "m1"
     assert resolved.provider.api_key == "KEY"
-    assert resolved.provider.url == "https://u/v"
+    assert resolved.provider.base_url == "https://u/v"
+    assert resolved.provider.interface_format == InterfaceFormat.OPENAI_COMPATIBLE
 
 
 def test_pre_supplied_app_config_still_applies_bot_model_config(tmp_path: Path) -> None:
@@ -64,4 +64,8 @@ def test_pre_supplied_app_config_still_applies_bot_model_config(tmp_path: Path) 
         app_config=pre_loaded,
     )
     assert svc._bot_model_config is not None
-    assert svc._bot_model_config.default_resolved().model.model == "openai/m1"
+    assert svc._bot_model_config.default_resolved().model.model == "m1"
+    assert (
+        svc._bot_model_config.default_resolved().provider.interface_format
+        == InterfaceFormat.OPENAI_COMPATIBLE
+    )

@@ -46,7 +46,8 @@ interface ModelEntry {
 interface Provider {
   key: string;
   name: string;
-  url: string;
+  base_url: string;
+  interface_format: string;
   api_key: SecretMaskValue | SecretWrite;
   models: ModelEntry[];
 }
@@ -80,6 +81,11 @@ const REASONING_EFFORT_OPTIONS: SelectOption[] = [
   { value: "medium", label: "medium" },
   { value: "high", label: "high" },
   { value: "xhigh", label: "xhigh" },
+];
+
+const INTERFACE_FORMAT_OPTIONS: SelectOption[] = [
+  { value: "openai_compatible", label: "OpenAI Compatible" },
+  { value: "anthropic", label: "Anthropic" },
 ];
 
 type Confirm =
@@ -181,7 +187,14 @@ export function ModelEditor({ values, onChange }: Props) {
   const addProvider = (): void => {
     updateProviders([
       ...providers,
-      { key: "", name: "", url: "", api_key: { has_value: false }, models: [] },
+      {
+        key: "",
+        name: "",
+        base_url: "",
+        interface_format: "openai_compatible",
+        api_key: { has_value: false },
+        models: [],
+      },
     ]);
     const newIdx = providers.length;
     setExpanded((prev) => new Set(prev).add(newIdx));
@@ -290,9 +303,16 @@ export function ModelEditor({ values, onChange }: Props) {
     },
     [providers, defaultProvider],
   );
-  const handleUrlChange = useCallback(
+  const handleBaseUrlChange = useCallback(
     (pi: number, v: string) =>
-      updateProviders(providers.map((q, i) => (i === pi ? { ...q, url: v } : q))),
+      updateProviders(providers.map((q, i) => (i === pi ? { ...q, base_url: v } : q))),
+    [providers],
+  );
+  const handleInterfaceFormatChange = useCallback(
+    (pi: number, v: string) =>
+      updateProviders(
+        providers.map((q, i) => (i === pi ? { ...q, interface_format: v } : q)),
+      ),
     [providers],
   );
   const handleApiKeyChange = useCallback(
@@ -450,10 +470,20 @@ export function ModelEditor({ values, onChange }: Props) {
                         />
                         <div className="sm:col-span-2">
                           <Input
-                            label="URL"
+                            label="Base URL"
                             required
-                            value={p.url}
-                            onChange={(e) => handleUrlChange(pi, e.target.value)}
+                            value={p.base_url}
+                            onChange={(e) => handleBaseUrlChange(pi, e.target.value)}
+                          />
+                        </div>
+                        <div className="sm:col-span-2">
+                          <Select
+                            label="Interface format"
+                            options={INTERFACE_FORMAT_OPTIONS}
+                            value={p.interface_format ?? "openai_compatible"}
+                            onChange={(e) =>
+                              handleInterfaceFormatChange(pi, e.target.value)
+                            }
                           />
                         </div>
                         <div className="sm:col-span-2">

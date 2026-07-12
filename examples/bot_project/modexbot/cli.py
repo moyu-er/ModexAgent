@@ -167,11 +167,11 @@ def _find_processes_by_command(pattern: str) -> list[int]:
                     "-NoProfile",
                     "-Command",
                     (
-                        'Get-CimInstance Win32_Process '
+                        "Get-CimInstance Win32_Process "
                         '| Where-Object {$_.CommandLine -like "*'
-                        f'{pattern}'
+                        f"{pattern}"
                         '*"}'
-                        ' | Select-Object -ExpandProperty ProcessId'
+                        " | Select-Object -ExpandProperty ProcessId"
                     ),
                 ],
                 capture_output=True,
@@ -215,7 +215,7 @@ def _get_command_line(pid: int) -> str | None:
                     "powershell",
                     "-NoProfile",
                     "-Command",
-                    f"Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\" | Select-Object -ExpandProperty CommandLine",
+                    f'Get-CimInstance Win32_Process -Filter "ProcessId={pid}" | Select-Object -ExpandProperty CommandLine',
                 ],
                 capture_output=True,
                 text=True,
@@ -353,9 +353,7 @@ def _stop_running(port: int = _DEFAULT_PORT) -> bool:
                 pids_to_kill.add(pid)
                 typer.echo(f"  Found bot from PID file: pid={pid}")
             else:
-                typer.echo(
-                    f"  WARNING: PID file points to non-bot process {pid}, ignoring"
-                )
+                typer.echo(f"  WARNING: PID file points to non-bot process {pid}, ignoring")
                 _remove_pid()
         else:
             _remove_pid()  # stale PID file
@@ -448,12 +446,7 @@ def _parse_ps_etime(etime: str) -> float | None:
             days = int(days_str)
         parts = rest.split(":")
         if len(parts) == 3:
-            return float(
-                days * 86400
-                + int(parts[0]) * 3600
-                + int(parts[1]) * 60
-                + int(parts[2])
-            )
+            return float(days * 86400 + int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2]))
         elif len(parts) == 2:
             return float(days * 86400 + int(parts[0]) * 60 + int(parts[1]))
     except (ValueError, IndexError):
@@ -470,8 +463,7 @@ def _get_process_uptime_seconds(pid: int) -> float | None:
                     "powershell",
                     "-NoProfile",
                     "-Command",
-                    "(Get-CimInstance Win32_Process "
-                    f"-Filter \"ProcessId={pid}\").CreationDate",
+                    f'(Get-CimInstance Win32_Process -Filter "ProcessId={pid}").CreationDate',
                 ],
                 capture_output=True,
                 text=True,
@@ -527,8 +519,7 @@ def _get_process_memory_mb(pid: int) -> float | None:
                     "powershell",
                     "-NoProfile",
                     "-Command",
-                    "(Get-CimInstance Win32_Process "
-                    f"-Filter \"ProcessId={pid}\").WorkingSetSize",
+                    f'(Get-CimInstance Win32_Process -Filter "ProcessId={pid}").WorkingSetSize',
                 ],
                 capture_output=True,
                 text=True,
@@ -642,9 +633,7 @@ def _launch_subprocess(script: str) -> subprocess.Popen[Any]:
         "stderr": subprocess.STDOUT,
     }
     if sys.platform == "win32":
-        kwargs["creationflags"] = (
-            subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
-        )
+        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         kwargs["start_new_session"] = True
 
@@ -661,9 +650,7 @@ def _launch_and_check(script: str, label: str) -> None:
     time.sleep(2)
     if proc.poll() is not None:
         retcode = proc.returncode
-        typer.echo(
-            f"  ERROR: {label} exited immediately with code {retcode}."
-        )
+        typer.echo(f"  ERROR: {label} exited immediately with code {retcode}.")
         recent = _tail_file(_log_file(), 10)
         if recent:
             typer.echo("  Recent log output:")
@@ -676,9 +663,7 @@ def _launch_and_check(script: str, label: str) -> None:
 
 @app.callback(invoke_without_command=True)
 def main(
-    version: bool = typer.Option(
-        False, "--version", "-v", help="Show version", is_eager=True
-    ),
+    version: bool = typer.Option(False, "--version", "-v", help="Show version", is_eager=True),
 ) -> None:
     """ModexAgent bot — multi-channel agent runtime.
 
@@ -693,7 +678,8 @@ def main(
 def start(
     config: Path = typer.Option(  # noqa: B008
         Path("config"),
-        "--config", "-c",
+        "--config",
+        "-c",
         help="Path to config directory (default: config/)",
         file_okay=False,
         dir_okay=True,
@@ -718,25 +704,18 @@ def start(
     existing = _read_pid()
     if existing is not None and _is_running(existing):
         typer.echo(
-            f"modexbot is already running (pid={existing}). "
-            "Use 'modexbot restart' to replace it."
+            f"modexbot is already running (pid={existing}). Use 'modexbot restart' to replace it."
         )
         raise typer.Exit(1)
 
     if _is_port_in_use(port):
         typer.echo(
-            f"Port {port} is already in use. "
-            "Use 'modexbot restart' to stop the old instance first."
+            f"Port {port} is already in use. Use 'modexbot restart' to stop the old instance first."
         )
         raise typer.Exit(1)
 
-    _ensure_model_configured()
-
     typer.echo("Starting modexbot...")
-    script = (
-        "from modexbot.cli import _run_bot; "
-        f"_run_bot(r'{config}', {port}, {no_webui})"
-    )
+    script = f"from modexbot.cli import _run_bot; _run_bot(r'{config}', {port}, {no_webui})"
     _launch_and_check(script, "start worker")
     if not no_webui:
         typer.echo(f"WebUI available at http://localhost:{port}/webui/")
@@ -747,7 +726,8 @@ def start(
 def restart(
     config: Path = typer.Option(  # noqa: B008
         Path("config"),
-        "--config", "-c",
+        "--config",
+        "-c",
         help="Path to config directory (default: config/)",
         file_okay=False,
         dir_okay=True,
@@ -769,13 +749,8 @@ def restart(
         typer.echo(f"ERROR: config directory not found: {config}")
         raise typer.Exit(1)
 
-    _ensure_model_configured()
-
     typer.echo("Restarting modexbot...")
-    script = (
-        "from modexbot.cli import _restart_bot; "
-        f"_restart_bot(r'{config}', {port}, {no_webui})"
-    )
+    script = f"from modexbot.cli import _restart_bot; _restart_bot(r'{config}', {port}, {no_webui})"
     _launch_and_check(script, "restart worker")
     if not no_webui:
         typer.echo(f"WebUI available at http://localhost:{port}/webui/")
@@ -786,7 +761,8 @@ def restart(
 def _run(
     config: Path = typer.Option(  # noqa: B008
         Path("config"),
-        "--config", "-c",
+        "--config",
+        "-c",
         help="Config directory",
         file_okay=False,
         dir_okay=True,
@@ -833,7 +809,7 @@ def _ensure_model_configured() -> None:
         return
 
     typer.echo("WARNING: model configuration in config/model.yml is incomplete.")
-    typer.echo("Required: model, api_key, url")
+    typer.echo("Required: model, api_key, base_url, interface_format")
     typer.echo(f"Missing or placeholder: {', '.join(missing)}")
 
     try:
@@ -858,7 +834,9 @@ def _ensure_model_configured() -> None:
 @app.command("install")
 def install(
     force: bool = typer.Option(  # noqa: B008
-        False, "--force", "-f",
+        False,
+        "--force",
+        "-f",
         help="Force rebuild even if frontend is up-to-date",
     ),
 ) -> None:
@@ -867,7 +845,6 @@ def install(
     Checks that ``config/model.yml`` has a complete model configuration
     (offering the wizard on a placeholder/missing value) before building.
     """
-    _ensure_model_configured()
     _build_webui(force=force)
 
 
@@ -903,8 +880,10 @@ def status(
         if pid is not None and not _is_running(pid):
             typer.echo(f"  PID file (.modex/bot.pid) is stale (pid={pid})")
         elif pid is not None:
-            typer.echo(f"  PID file (.modex/bot.pid) points to pid={pid}, "
-                        "but the process is not a modexbot instance")
+            typer.echo(
+                f"  PID file (.modex/bot.pid) points to pid={pid}, "
+                "but the process is not a modexbot instance"
+            )
         return
 
     for pid, found_via in instances.items():
@@ -1069,8 +1048,12 @@ def _newest_source_mtime(webui_dir: Path) -> float:
             if f.is_file():
                 newest = max(newest, f.stat().st_mtime)
     for cfg in (
-        "package.json", "tsconfig.json", "vite.config.ts",
-        "tailwind.config.js", "postcss.config.js", "index.html",
+        "package.json",
+        "tsconfig.json",
+        "vite.config.ts",
+        "tailwind.config.js",
+        "postcss.config.js",
+        "index.html",
     ):
         cfg_path = webui_dir / cfg
         if cfg_path.is_file():
