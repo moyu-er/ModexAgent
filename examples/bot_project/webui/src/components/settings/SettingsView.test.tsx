@@ -39,6 +39,26 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("SettingsView", () => {
+  it("stacks settings navigation above Pools content on narrow screens", async () => {
+    window.history.replaceState(null, "", "/?tab=pools");
+    vi.stubGlobal("fetch", routeFetch());
+
+    render(
+      <ToastProvider>
+        <SettingsView onExit={() => {}} />
+      </ToastProvider>,
+    );
+
+    const shell = await waitFor(() => screen.getByTestId("settings-shell"));
+    const navigation = screen.getByRole("complementary", {
+      name: "Settings navigation",
+    });
+    expect(shell.className).toContain("flex-col");
+    expect(shell.className).toContain("md:flex-row");
+    expect(navigation.className).toContain("md:w-52");
+    expect(screen.getByLabelText("Add pool")).toBeTruthy();
+  });
+
   it("loads config and renders a field", async () => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(makeResponse(200, JSON.stringify(imPayload)))));
     render(

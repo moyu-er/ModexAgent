@@ -174,8 +174,11 @@ export function SettingsView({ onExit }: Props) {
   };
 
   return (
-    <div className="flex h-full">
-      <aside className="w-52 shrink-0 border-r border-hairline bg-canvas p-3">
+    <div data-testid="settings-shell" className="flex h-full flex-col md:flex-row">
+      <aside
+        aria-label="Settings navigation"
+        className="w-full shrink-0 border-b border-hairline bg-canvas p-3 md:w-52 md:border-b-0 md:border-r"
+      >
         <Button
           variant="ghost"
           size="sm"
@@ -201,7 +204,7 @@ export function SettingsView({ onExit }: Props) {
         </div>
       </aside>
 
-      <section className="flex flex-1 flex-col bg-canvas">
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-canvas">
         <div className="flex h-full flex-col">
           <div className="flex-1 overflow-auto p-6">
             {view === "mcp" ? (

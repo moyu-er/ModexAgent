@@ -33,6 +33,15 @@ const tree = (name: string) => ({
   restart_required: false,
 });
 
+const externalTree = (name: string) => ({
+  ...tree(name),
+  main: {
+    ...tree(name).main,
+    execution_strategy: "external_coding",
+    provider_kind: "opencode",
+  },
+});
+
 afterEach(() => vi.unstubAllGlobals());
 
 async function renderView(): Promise<void> {
@@ -47,6 +56,35 @@ async function renderView(): Promise<void> {
 }
 
 describe("PoolsView", () => {
+  it("stacks the pool list above the external editor on narrow screens", async () => {
+    const fetchMock = vi.fn((url: string) => {
+      if (url === "/api/pools") {
+        return Promise.resolve(makeResponse(200, pools));
+      }
+      return Promise.resolve(
+        makeResponse(
+          200,
+          url.includes("/skills") ? [] : externalTree("default"),
+        ),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await renderView();
+
+    const layout = await waitFor(() => screen.getByTestId("pools-layout"));
+    const poolList = screen.getByRole("complementary", { name: "Pool list" });
+    const editor = screen.getByRole("region", { name: "Selected pool editor" });
+    expect(layout.className).toContain("flex-col");
+    expect(layout.className).toContain("lg:flex-row");
+    expect(poolList.className).toContain("max-h-48");
+    expect(poolList.className).toContain("lg:w-64");
+    expect(editor.className).toContain("min-w-0");
+    expect(screen.getByLabelText("Implementation")).toBeTruthy();
+    expect(screen.getByLabelText("Provider")).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Form actions" })).toBeTruthy();
+  });
+
   it("loads pools and selects the first one", async () => {
     const fetchMock = vi.fn((url: string) => {
       if (url === "/api/pools") {

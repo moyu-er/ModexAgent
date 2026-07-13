@@ -1,10 +1,15 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { useRef, useState } from "react";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { PoolEditor } from "./PoolEditor";
 import { ToastProvider } from "../ToastContext";
 import { ActionBar } from "../ui/ActionBar";
 import { Button } from "../ui/Button";
+import {
+  DEFAULT_EXTERNAL_PROVIDER,
+  DEFAULT_EXTERNAL_PROVIDER_DESCRIPTOR,
+  PROVIDER_OPTIONS,
+} from "../../types/externalProviders";
 
 function makeResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -483,5 +488,312 @@ describe("PoolEditor", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Add$/ }));
 
     await waitFor(() => expect(screen.getByText("already a peer")).toBeTruthy());
+  });
+
+  // ─── External pool mode ───────────────────────────────────────────────
+  //
+  // External (external_coding) pools run their main agent in a provider CLI
+  // (OpenCode). The editor groups Implementation + Provider into one
+  // runtime-first panel, hides native-only config in external mode, preserves
+  // peers, and confirms the native→external switch because it clears draft
+  // subagents. external→native is non-destructive and applies directly.
+
+  const treeExternal = {
+    ...tree,
+    main: {
+      ...tree.main,
+      execution_strategy: "external_coding",
+      provider_kind: "opencode",
+    },
+    subagents: [],
+  };
+
+  function externalFetch(url: string): Response {
+    if (url === "/api/pools") return makeResponse(200, poolList);
+    if (url.includes("/skills")) return makeResponse(200, []);
+    return makeResponse(200, treeExternal);
+  }
+
+  it("renders an Implementation select defaulting to Native for a react pool", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => Promise.resolve(defaultFetch(url))),
+    );
+    await renderEditor({});
+    const impl = screen.getByLabelText("Implementation") as HTMLSelectElement;
+    expect(impl.value).toBe("react");
+    // Native controls are visible in native mode.
+    expect(screen.getByLabelText("Max steps")).toBeTruthy();
+    // No external runtime panel in native mode.
+    expect(screen.queryByTestId("external-runtime-panel")).toBeNull();
+  });
+
+  it("external mode groups Implementation + Provider in one runtime panel; Provider has only OpenCode; hides native-only controls, subagents and system prompt", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => Promise.resolve(externalFetch(url))),
+    );
+    await renderEditor({});
+
+    // Both selects live inside one runtime panel (semantic group, not a
+    // fragile class) — the approved runtime-first layout.
+    const panel = screen.getByTestId("external-runtime-panel");
+    const impl = within(panel).getByLabelText(
+      "Implementation",
+    ) as HTMLSelectElement;
+    const provider = within(panel).getByLabelText(
+      "Provider",
+    ) as HTMLSelectElement;
+    expect(impl.value).toBe("external_coding");
+    expect(provider.value).toBe("opencode");
+    // Provider dropdown carries exactly one option: OpenCode.
+    expect(provider.querySelectorAll("option")).toHaveLength(1);
+    // Provider dropdown options equal the catalog.
+    expect(
+      Array.from(provider.querySelectorAll("option")).map(
+        (o) => (o as HTMLOptionElement).value,
+      ),
+    ).toEqual(PROVIDER_OPTIONS.map((o) => o.value));
+
+    // Identity fields follow the runtime panel.
+    expect(screen.getByLabelText(/Agent name/)).toBeTruthy();
+    expect(screen.getByLabelText("Description")).toBeTruthy();
+
+    // Native-only configuration is hidden.
+    expect(screen.queryByLabelText("Max steps")).toBeNull();
+    expect(screen.queryByLabelText("Tool preset")).toBeNull();
+    expect(screen.queryByText("Terminal")).toBeNull();
+    expect(
+      screen.queryByText("Approval required for write/edit tools"),
+    ).toBeNull();
+    expect(screen.queryByText("Skill assignments save immediately.")).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /System prompt \[Edit\]/ }),
+    ).toBeNull();
+
+    // Subagents section is hidden entirely.
+    expect(screen.queryByText("Subagents")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Add subagent/ })).toBeNull();
+
+    // Managed-capability summary is present and uses the descriptor's CLI name.
+    expect(screen.getByText(/Managed by the provider runtime/)).toBeTruthy();
+    expect(
+      within(panel).getByText(
+        new RegExp(
+          `controlled by the ${DEFAULT_EXTERNAL_PROVIDER_DESCRIPTOR.cliName} CLI`,
+        ),
+      ),
+    ).toBeTruthy();
+  });
+
+  it("external mode preserves the Peers section", async () => {
+    const treeExtPeer = { ...treeExternal, peers: ["research"] };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        Promise.resolve(
+          makeResponse(
+            200,
+            url === "/api/pools"
+              ? multiPoolList
+              : url.includes("/skills")
+                ? []
+                : treeExtPeer,
+          ),
+        ),
+      ),
+    );
+    await renderEditor({});
+    expect(screen.getByText("Peers")).toBeTruthy();
+    expect(screen.getByText("research")).toBeTruthy();
+  });
+
+  it("switching native→external opens a confirm; Cancel leaves draft and disk untouched", async () => {
+    const fetchMock = vi.fn((url: string) =>
+      Promise.resolve(defaultFetch(url)),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await renderEditor({});
+    // Native pool carries one subagent.
+    expect(screen.getByText("researcher")).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Implementation"), {
+      target: { value: "external_coding" },
+    });
+
+    // Confirm dialog opens with the save/cancel persisted-config disclaimer.
+    expect(
+      screen.getByRole("dialog", { name: /Switch to External/ }),
+    ).toBeTruthy();
+    expect(screen.getByText(/applied only when you click Save/)).toBeTruthy();
+    expect(
+      screen.getByText(/Cancel leaves the persisted configuration unchanged/),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: /Switch to External/ }),
+      ).toBeNull(),
+    );
+
+    // Draft untouched: still native, subagent still present.
+    expect(
+      (screen.getByLabelText("Implementation") as HTMLSelectElement).value,
+    ).toBe("react");
+    expect(screen.getByText("researcher")).toBeTruthy();
+
+    // Disk untouched: no PUT issued.
+    const calls = fetchMock.mock.calls as [string, RequestInit?][];
+    expect(calls.filter((c) => c[1]?.method === "PUT")).toHaveLength(0);
+  });
+
+  it("confirming native→external mutates draft (external, opencode, subagents cleared)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => Promise.resolve(defaultFetch(url))),
+    );
+    await renderEditor({});
+    expect(screen.getByText("researcher")).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Implementation"), {
+      target: { value: "external_coding" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Switch to External" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    expect(
+      (screen.getByLabelText("Implementation") as HTMLSelectElement).value,
+    ).toBe("external_coding");
+    expect(screen.queryByText("researcher")).toBeNull();
+    expect(
+      (screen.getByLabelText("Provider") as HTMLSelectElement).value,
+    ).toBe("opencode");
+  });
+
+  it("Save after native→external PUT carries strategy, provider and cleared subagents", async () => {
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (url.includes("/pools/default") && method === "PUT") {
+        return Promise.resolve(
+          makeResponse(200, { ...treeExternal, restart_required: false }),
+        );
+      }
+      return Promise.resolve(defaultFetch(url));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await renderEditorWithActionBar();
+
+    fireEvent.change(screen.getByLabelText("Implementation"), {
+      target: { value: "external_coding" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Switch to External" }),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    fireEvent.click(screen.getByText("Save"));
+
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls as [string, RequestInit?][];
+      expect(calls.filter((c) => c[1]?.method === "PUT").length).toBeGreaterThanOrEqual(1);
+    });
+
+    const calls = fetchMock.mock.calls as [string, RequestInit?][];
+    const puts = calls.filter((c) => c[1]?.method === "PUT");
+    const body = puts[0]?.[1]?.body;
+    if (typeof body !== "string") throw new Error("PUT body missing");
+    const putBody = JSON.parse(body) as {
+      main?: { execution_strategy?: string; provider_kind?: string };
+      subagents?: unknown[];
+    };
+    expect(putBody.main?.execution_strategy).toBe("external_coding");
+    expect(putBody.main?.provider_kind).toBe(DEFAULT_EXTERNAL_PROVIDER);
+    expect(putBody.subagents).toEqual([]);
+  });
+
+  it("existing external pool with unsupported provider normalizes to catalog default on save", async () => {
+    const treePiExternal = {
+      ...tree,
+      main: {
+        ...tree.main,
+        execution_strategy: "external_coding" as const,
+        provider_kind: "pi" as const,
+      },
+      subagents: [],
+    };
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (url.includes("/pools/default") && method === "PUT") {
+        return Promise.resolve(
+          makeResponse(200, { ...treeExternal, restart_required: false }),
+        );
+      }
+      return Promise.resolve(
+        makeResponse(
+          200,
+          url === "/api/pools"
+            ? poolList
+            : url.includes("/skills")
+              ? []
+              : treePiExternal,
+        ),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await renderEditorWithActionBar();
+
+    // Provider shows catalog default for unsupported pi.
+    expect(
+      (screen.getByLabelText("Provider") as HTMLSelectElement).value,
+    ).toBe(DEFAULT_EXTERNAL_PROVIDER);
+
+    // Touch a field to enable Save.
+    fireEvent.change(screen.getByLabelText(/Agent name/), {
+      target: { value: "boss" },
+    });
+    fireEvent.click(screen.getByText("Save"));
+
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls as [string, RequestInit?][];
+      expect(
+        calls.filter((c) => c[1]?.method === "PUT").length,
+      ).toBeGreaterThanOrEqual(1);
+    });
+
+    const calls = fetchMock.mock.calls as [string, RequestInit?][];
+    const puts = calls.filter((c) => c[1]?.method === "PUT");
+    const body = puts[0]?.[1]?.body;
+    if (typeof body !== "string") throw new Error("PUT body missing");
+    const putBody = JSON.parse(body) as {
+      main?: { provider_kind?: string };
+    };
+    // pi must NOT silently persist; catalog default is sent instead.
+    expect(putBody.main?.provider_kind).toBe(DEFAULT_EXTERNAL_PROVIDER);
+  });
+
+  it("switching external→native applies directly without a confirm dialog", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => Promise.resolve(externalFetch(url))),
+    );
+    await renderEditor({});
+    expect(
+      (screen.getByLabelText("Implementation") as HTMLSelectElement).value,
+    ).toBe("external_coding");
+
+    fireEvent.change(screen.getByLabelText("Implementation"), {
+      target: { value: "react" },
+    });
+
+    // No confirm dialog.
+    expect(screen.queryByRole("dialog")).toBeNull();
+    // Now native: Implementation react, native controls visible, provider gone.
+    expect(
+      (screen.getByLabelText("Implementation") as HTMLSelectElement).value,
+    ).toBe("react");
+    expect(screen.getByLabelText("Max steps")).toBeTruthy();
+    expect(screen.queryByLabelText("Provider")).toBeNull();
   });
 });
