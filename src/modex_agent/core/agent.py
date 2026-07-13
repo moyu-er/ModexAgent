@@ -35,6 +35,25 @@ class AgentCommKind(StrEnum):
     SUBAGENT = "subagent"
 
 
+class AgentImplementation(StrEnum):
+    """How an agent is implemented — orthogonal to :class:`AgentCommKind`.
+
+    Topology (NORMAL vs SUBAGENT) decides routing and reply topology.
+    Implementation decides how the agent actually runs and how peers
+    should word the reply contract (``send_to_agent`` tool vs ``modexctl
+    send`` CLI vs future mechanisms).
+
+    Combinations are valid:
+    - NORMAL + NATIVE = modex main agent (default/coder pool main)
+    - NORMAL + EXTERNAL = external coding CLI as pool main (opencode/pi)
+    - SUBAGENT + NATIVE = modex subagent (the only subagent shape today)
+    - SUBAGENT + EXTERNAL = reserved (external CLI as subagent, future)
+    """
+
+    NATIVE = "native"
+    EXTERNAL = "external"
+
+
 @dataclass
 class AgentContext:
     """Agent execution context — typed runtime state via ``runtime`` field."""
@@ -79,6 +98,14 @@ class AgentContext:
     Hooks and agents that need workspace-scoped data (e.g. the experience dir)
     read it from here. None when no workspace manager is wired, in which case
     consumers fall back to their own defaults.
+    """
+
+    current_input: str | None = None
+    """The sanitized user input for the current turn, set by the turn builder.
+
+    External coding agents read this directly instead of mining history.
+    None for ReAct agents (they use history); set by ``build_runtime_and_context``
+    when the turn's ``sanitized_content`` is available.
     """
 
     @property
