@@ -79,8 +79,11 @@ ast = [
 ]
 all = ["ModexAgent[llm,sandbox,gateway,skills,terminal,ast]"]
 
+[project.scripts]
+modexctl = "modexctl.main:main"
+
 [tool.hatch.build.targets.wheel]
-packages = ["src/modex_agent"]
+packages = ["src/modex_agent", "src/modexctl"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "tests_ext"]

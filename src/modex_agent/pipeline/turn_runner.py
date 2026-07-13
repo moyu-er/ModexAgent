@@ -439,6 +439,7 @@ class TurnRunner:
             pool_data=pool_data,
             inline_attachments=input_msg.attachments_resolved,
         )
+        agent_context.current_input = sanitized_content
 
         if approval_state is not None:
             return await self._handle_snapshot_approval(

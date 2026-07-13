@@ -28,6 +28,13 @@ from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.core.emitter import AgentResult, ContentEmitter, EmitterConfig, StreamingAwareEmitter
 from modex_agent.core.session_id import agent_of
 from modex_agent.core.tool_manager import ToolResult
+from modex_agent.core.turn_events import (
+    TurnEvent,
+    TurnReasoningEvent,
+    TurnTextEvent,
+    TurnToolCallEvent,
+    TurnToolResultEvent,
+)
 from modex_agent.core.types import ToolCall
 
 from ..adapters.web_socket import WebSocketOutputAdapter
@@ -72,6 +79,7 @@ def _truncate_tool_args(args: dict[str, object]) -> dict[str, object]:
         else:
             truncated[key] = val
     return truncated
+
 
 # ── Emitter ────────────────────────────────────────────────────────────────
 
@@ -132,6 +140,10 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
         self._turn_active: bool = False
         self._tool_seq: int = 0
         self._turn_started_at: float = time.time()
+        # External TOOL_USE emissions buffered by call_id until the matching
+        # TOOL_RESULT arrives, so call + result persist together (mirrors the
+        # ReAct TOOL_CALL_END co-persistence the materializer pairs by call_id).
+        self._pending_external_tools: dict[str, tuple[str, dict[str, object]]] = {}
 
     # ------------------------------------------------------------------
     # Turn lifecycle helpers
@@ -237,6 +249,7 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
         await self._send_event(ws_turn_end)
 
         self._text_buffer = ""
+        self._pending_external_tools = {}
         self._turn_active = False
         self._turn_started_at = time.time()
         self._turn_counter += 1
@@ -244,6 +257,88 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
     async def emit_error(self, error: str) -> None:
         """Notify that an error occurred, then delegate to parent."""
         await super().emit_error(error)
+
+    async def emit_turn_event(self, event: TurnEvent) -> None:
+        """Project a canonical turn event onto WebUI live and persisted events."""
+        match event:
+            case TurnTextEvent(text=text):
+                await self.emit_delta(text)
+            case TurnReasoningEvent(text=text):
+                self._ensure_turn_started()
+                await self._send_event(
+                    ModelReasoningDelta(
+                        session_id=self._session_id,
+                        agent_name=self._agent_name,
+                        text=text,
+                        turn_id=self._current_turn_id,
+                    )
+                )
+                if self._transcript_store is not None:
+                    self._persist(
+                        AssistantReasoningEvent(
+                            session_id=self._session_id,
+                            agent_name=self._agent_name,
+                            turn_id=self._current_turn_id,
+                            text=text,
+                        )
+                    )
+            case TurnToolCallEvent(
+                tool_name=tool_name, call_id=call_id, arguments=arguments
+            ):
+                self._ensure_turn_started()
+                full_args: dict[str, object] = dict(arguments)
+                self._pending_external_tools[call_id] = (tool_name, full_args)
+                await self._send_event(
+                    ToolCallStartEvent(
+                        session_id=self._session_id,
+                        agent_name=self._agent_name,
+                        tool=tool_name,
+                        args=_truncate_tool_args(full_args),
+                        turn_id=self._current_turn_id,
+                    )
+                )
+            case TurnToolResultEvent(
+                tool_name=tool_name, call_id=call_id, output=output
+            ):
+                self._ensure_turn_started()
+                pending = self._pending_external_tools.pop(call_id, None)
+                full_args = pending[1] if pending is not None else {}
+                if self._transcript_store is not None:
+                    if pending is not None:
+                        self._persist(
+                            TcEvent(
+                                session_id=self._session_id,
+                                agent_name=self._agent_name,
+                                turn_id=self._current_turn_id,
+                                call_id=call_id,
+                                tool_name=tool_name,
+                                args=full_args,
+                            )
+                        )
+                    self._persist(
+                        TrEvent(
+                            session_id=self._session_id,
+                            agent_name=self._agent_name,
+                            turn_id=self._current_turn_id,
+                            call_id=call_id,
+                            tool_name=tool_name,
+                            result=output.strip(),
+                        )
+                    )
+                result_summary = (
+                    output[:_MAX_TOOL_RESULT_LEN] + "..."
+                    if len(output) > _MAX_TOOL_RESULT_LEN
+                    else output
+                )
+                await self._send_event(
+                    ToolCallEndEvent(
+                        session_id=self._session_id,
+                        agent_name=self._agent_name,
+                        tool=tool_name,
+                        result_summary=result_summary,
+                        turn_id=self._current_turn_id,
+                    )
+                )
 
     # ------------------------------------------------------------------
     # Event dispatch (ReActEvent → ServerEvent)
@@ -462,6 +557,13 @@ class CompositeEmitter(ContentEmitter[_E], Generic[_E]):
             return_exceptions=True,
         )
         self._log_exceptions(results, "emit_delta")
+
+    async def emit_turn_event(self, event: TurnEvent) -> None:
+        results = await asyncio.gather(
+            *(e.emit_turn_event(event) for e in self._emitters),
+            return_exceptions=True,
+        )
+        self._log_exceptions(results, "emit_turn_event")
 
     async def emit_content(self, full_content: str) -> None:
         results = await asyncio.gather(

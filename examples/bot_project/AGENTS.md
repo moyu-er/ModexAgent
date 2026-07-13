@@ -128,6 +128,28 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 - `SubagentAutoSendHook` auto-forwards subagent output to parent.
 - Session ID format: `{conversation_id}.{agent_name}[.{invocation_id}]` (via `DefaultSessionIdStrategy`).
 
+### External coding agent pools (Pi, OpenCode)
+
+External CLI coding agents (Pi, OpenCode) can be registered as NORMAL main agents of their own dedicated pools. They are spawned as subprocesses by a framework-side harness (`ExternalCodingAgent`) and communicate back through the `modexbot send` CLI shim (writes directly to the target pool's `pending.jsonl`).
+
+**Pool configuration** (`config/pools/<name>/pool.yml`):
+
+```yaml
+main_agent_name: pi
+execution_strategy: external_coding   # opt-in; default is "react"
+provider_kind: pi                      # "pi" or "opencode"
+peers:
+  - default                            # explicit peer declaration required
+```
+
+**Availability gating:** if the provider CLI (`pi` / `opencode`) is not on `PATH`, the pool is silently skipped at startup (warning logged). Other pools are unaffected.
+
+**Session continuity:** each ModexAgent session maps to a provider-side session file (`<workdir>/.modex/external/pi-session.jsonl` for Pi; provider-minted id for OpenCode). Follow-up turns on the same `modex_session_id` resume the provider's own session, preserving context.
+
+**WebUI:** external_coding sessions appear in the WebUI session list with their `.pi` / `.opencode` suffix, alongside every other session. Streaming output (text, thinking, tool calls, errors) is rendered through the same `ContentEmitter` pipeline.
+
+See ADR-0022 and `docs/design/external-coding-agent-integration/` for the full design.
+
 ## Skills (global library + per-agent assignment)
 
 The global skill **library** has two sources, REPO PRIORITY:

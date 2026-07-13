@@ -66,6 +66,7 @@ Shared vocabulary: module, interface, depth, seam, adapter, leverage, locality (
 - `AgentPool` manages resident agent lifecycle: consumer loop, inbox wakeup polling, per-session locks, TTL + LRU session eviction.
 - `SubagentAutoSendHook` safety net: auto-forwards final output to parent if LLM forgets to use communication tools.
 - Each subagent gets isolated Memory/ToolManager/SkillManager. Subagent memory is `RestrictedInjectionPolicy` (session-only, limited context window).
+- External coding agents (Pi, OpenCode) participate in ADR-0019 peer topology as NORMAL main agents of their own dedicated pools (`pool_pi`, `pool_opencode`). They communicate back through the `modexbot send` CLI (writes directly to target pool's `pending.jsonl`), not through `send_to_agent` (which they do not have). Other agents talk to them via the standard `send_to_agent` tool. See ADR-0022 and `docs/design/external-coding-agent-integration/`.
 
 ## Approval Architecture Rules (CRITICAL)
 

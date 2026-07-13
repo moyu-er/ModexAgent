@@ -46,6 +46,7 @@ from bot.config.prompt_store import (
 )
 from bot.config.skills_store import SkillsStore
 from bot.service.config_controller import FieldValidationError
+from modex_agent.core.constants import ExecutionStrategy
 from modex_agent.ioc.configs.mcp import MCPServerEntry
 from modex_agent.multi_agent.pool_config import PoolSpec, PoolStore
 from modex_agent.multi_agent.pool_config.store import (
@@ -152,13 +153,24 @@ class PoolConfigController:
         return tree.model_copy(update={"restart_required": self.restart_required})
 
     def write_pool(self, name: str, tree: PoolSpec) -> PoolSpec:
-        """Write a pool tree; stale MCP references are dropped before save."""
+        """Write a pool tree; stale MCP references are dropped before save.
+
+        For ``external_coding`` pools, all per-pool skill assignments are
+        removed after PoolStore commits: external pools have no subagents and
+        no per-agent skill roots, so any leftover ``skills/<pool>/`` tree is
+        orphaned. The cleanup runs after agent-rename convergence (so renames
+        land first) and before the dirty marker (so ``restart_required``
+        reflects the full save). React saves skip the cleanup and preserve
+        skill assignments.
+        """
         tree = self._filter_stale_mcp(tree)
         try:
             report = self._pools.write_pool(name, tree)
         except PoolValidationError as exc:
             raise FieldValidationError({"pool": [str(exc)]}) from exc
         self._apply_agent_renames(name, report)
+        if tree.main.execution_strategy == ExecutionStrategy.EXTERNAL_CODING:
+            self._skills.clear_pool_skills(name)
         self._mark("pool")
         return self.read_pool(name)
 

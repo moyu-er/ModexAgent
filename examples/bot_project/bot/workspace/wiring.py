@@ -332,6 +332,7 @@ async def _build_resources(
                 pool_name=peer_pool_name,
                 bus_ref=peer_instance.agent_bus,
                 description=description,
+                execution_strategy=peer_tree.main.execution_strategy,
             )
             instance.target_store.add(target)
 
