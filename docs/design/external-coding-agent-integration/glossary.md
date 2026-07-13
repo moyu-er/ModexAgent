@@ -4,6 +4,10 @@ Domain vocabulary for ADR-0022. Terms are organised by layer (framework →
 integration → provider). Each term carries the one-line definition the design
 uses.
 
+> **Revision note (2026-07-14):** Updated to reflect the canonical
+> `TurnEvent` seam, `modexctl`/`modexbot` CLI split, and XML message
+> wrapping introduced during implementation.
+
 ---
 
 ## Framework layer (existing concepts the integration builds on)
@@ -98,12 +102,19 @@ Provider session files live under `ExternalPaths.provider_session(kind)` =
 `<workdir>/.modex/external/<kind>-session.jsonl` (Pi) or `.json` (OpenCode).
 
 ### modexbot
-The CLI shim exposed to external agents for sending messages. Distributed
-as a `[project.scripts]` entry point of the main wheel. Has exactly one
-command — `send` — that writes one JSON line into the target pool's
-`pending.jsonl`. Stateless beyond its process environment; no routing
-table, no config file, no IPC. Help output is env-gated: without
-`MODEX_SESSION_ID`, `send` is hidden.
+The compatibility CLI facade exposed to external agents for sending
+messages. Lives at `src/modex_agent/cli/modexbot/` and delegates routing
+logic to `modexctl.main`. Has exactly one command — `send` — that writes
+one JSON line into the target pool's `pending.jsonl`. Stateless beyond
+its process environment; no routing table, no config file, no IPC. Help
+output is env-gated: without `MODEX_SESSION_ID`, `send` is hidden.
+
+### modexctl
+The production CLI (`src/modexctl/main.py`) with `send` + `agents`
+subcommands, `--content`/`--content-file`/`--stdin` input modes, and
+XML-wrapped content via `build_peer_agent_message`. `modexbot` is a
+facade over `modexctl`; both share the same routing logic and on-disk
+format.
 
 ### ExternalEnvSpec / ExternalEnvBuilder
 The frozen Pydantic model + builder that constructs the 9-variable env dict
@@ -132,10 +143,22 @@ provider-minted id captured from the first stdout event. Distinct from
 modex_session_id; the two are correlated only through ExternalSessionStore.
 
 ### ExternalCodingEvent
-The `StrEnum` event kind emitted through `ContentEmitter`:
-`TEXT_DELTA`, `THINKING`, `TOOL_USE`, `TOOL_RESULT`, `ERROR`. Five types
-at launch; the parser interface admits more (STATUS, LOG, USAGE) for
-future expansion without breaking emit call sites.
+The `StrEnum` event kind emitted by provider parsers (inherits
+`AgentEvent`): `TEXT_DELTA`, `THINKING`, `TOOL_USE`, `TOOL_RESULT`,
+`ERROR`. Five types at launch; the parser interface admits more
+(STATUS, LOG, USAGE) for future expansion without breaking emit call
+sites.
+
+### TurnEvent
+The provider-neutral canonical event discriminated union
+(`core/turn_events.py`): `TurnTextEvent`, `TurnReasoningEvent`,
+`TurnToolCallEvent`, `TurnToolResultEvent`. Frozen Pydantic models with
+`Field(discriminator="kind")`. `ExternalCodingAgent._handle_emission`
+is the sole adapter from provider `Emission` → canonical `TurnEvent`.
+`ContentEmitter.emit_turn_event()` is a concrete no-op default;
+`WebBotEmitter` projects canonical events into existing `ServerEvent`/
+transcript types. The WebUI has zero imports from `external_coding` —
+it consumes only the canonical seam.
 
 ### ProviderEventParser
 Per-provider parser that consumes one stdout JSONL line and returns zero
@@ -196,12 +219,15 @@ Standard ADR-0015 path. Sender's `send_to_agent` routes through
 `pipeline.process_message` → `ExternalCodingAgent.run(ctx, emitter)`.
 
 ### outbound (external → other agent)
-External agent invokes `modexbot send --to <name> --content ...` from its
-bash tool. modexbot reads `MODEX_*` env, infers target session id via
-ADR-0019 prefix reuse, looks up target pool via `MODEX_AGENT_POOL_MAP`,
-acquires flock on the target session dir, appends one JSON line to the
-target pool's `pending.jsonl`. Target's InboxPoller discovers it on the
-next tick. No Python object invocation, no IPC, no socket.
+External agent invokes `modexctl send --to <name> --content ...` (or
+`modexbot send` for backward compatibility) from its bash tool. The CLI
+wraps content in `build_peer_agent_message` XML (`<agent_message>` with
+`source`, `<content>`, and `<reply_contract>`), reads `MODEX_*` env,
+infers target session id via ADR-0019 prefix reuse, looks up target pool
+via `MODEX_AGENT_POOL_MAP`, acquires flock on the target session dir,
+appends one JSON line to the target pool's `pending.jsonl`. Target's
+InboxPoller discovers it on the next tick. No Python object invocation,
+no IPC, no socket.
 
 ---
 

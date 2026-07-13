@@ -64,7 +64,8 @@ def default_runtime_block() -> str:
             "- Discover routable agents at any time with `modexctl agents`.",
             "- Your stdout is observed but not delivered; use `modexctl send` "
             "for any output that must reach another agent.",
-            "- Session state lives under `.modex/external/`; do not edit it.",
+            "- The `.modex/` directory is framework-managed internal state. "
+            "Do NOT read, modify, or delete anything under `.modex/`.",
         ]
     )
 

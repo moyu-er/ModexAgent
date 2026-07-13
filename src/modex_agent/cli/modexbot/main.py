@@ -36,7 +36,7 @@ from typing import Annotated
 
 import typer
 
-from modexctl.main import _parse_pool_map
+from modexctl.main import _normalize_text, _parse_pool_map
 
 from modex_agent.agents.external_coding import ExternalEnvSpec
 from modex_agent.cli.modexbot.errors import (
@@ -139,6 +139,8 @@ def _send(
             raise typer.Exit(code=EXIT_USAGE) from None
 
     assert content is not None  # narrowed by the checks above
+
+    content = _normalize_text(content)
 
     # ── Env parsing ────────────────────────────────────────────────────
     try:

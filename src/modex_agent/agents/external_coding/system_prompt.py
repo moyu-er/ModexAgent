@@ -50,6 +50,12 @@ def render_system_prompt(targets: list[tuple[str, str]]) -> str:
             "reach another agent, call `modexctl send` explicitly."
         ),
         "Run `modexctl agents` to list routable targets at any time.",
+        "",
+        "## Framework-managed files",
+        (
+            "The `.modex/` directory is framework-managed internal state. "
+            "Do NOT read, modify, or delete anything under `.modex/`."
+        ),
     ]
 
     if targets:

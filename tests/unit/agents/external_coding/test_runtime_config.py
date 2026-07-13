@@ -115,8 +115,10 @@ class TestDefaultRuntimeBlock:
     def test_mentions_modexbot_send(self) -> None:
         assert "modexctl send" in default_runtime_block()
 
-    def test_mentions_session_state_dir(self) -> None:
-        assert ".modex/external" in default_runtime_block()
+    def test_mentions_modex_protection(self) -> None:
+        block = default_runtime_block()
+        assert ".modex" in block
+        assert ".modex/external" not in block
 
     def test_mentions_modexctl_agents(self) -> None:
         assert "modexctl agents" in default_runtime_block()

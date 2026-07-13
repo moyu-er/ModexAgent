@@ -1,6 +1,6 @@
 # External coding agent integration (Pi / OpenCode as pool members)
 
-Status: accepted (2026-07-12)
+Status: accepted (2026-07-12); revised (2026-07-14) — see Disposition section
 
 ## Context
 
@@ -435,3 +435,89 @@ through the existing pool factory dispatch.
   `src/modex_agent/agents/external_coding/`, matching the
   framework-vs-examples separation.
 - **Does not revise** any prior decision; this is a pure addition.
+
+---
+
+## Disposition (2026-07-14): implementation evolution
+
+The implementation evolved beyond several original decisions during
+development. The original decision text above is preserved as the
+historical record; the following documents where the shipped code
+diverged and why.
+
+### D5 revised — CLI split: `modexctl` (production) + `modexbot` (facade)
+
+The ADR specified a single `modexbot` CLI. The implementation split into:
+
+- **`modexctl`** (`src/modexctl/main.py`) — the production CLI with
+  `send` + `agents` subcommands, `--content`/`--content-file`/`--stdin`
+  input modes, `OutboxLine` Pydantic serialization, and XML-wrapped
+  content via `build_peer_agent_message`.
+- **`modexbot`** (`src/modex_agent/cli/modexbot/`) — a compatibility
+  facade that delegates routing logic to `modexctl.main`.
+
+Rationale: the production CLI needed richer subcommands (`agents` list,
+`--stdin` for multi-line content) and typed message wrapping that the
+original thin-writer design did not anticipate. The facade preserves
+backward compatibility for existing `modexbot` invocations.
+
+### D8 revised — Canonical `TurnEvent` seam replaces direct `ContentEmitter` emit
+
+The ADR specified 5 event types emitted directly through
+`ContentEmitter.emit()`. The implementation introduced a
+**provider-neutral canonical `TurnEvent` discriminated union**
+(`core/turn_events.py`) with 4 event kinds: `TurnTextEvent`,
+`TurnReasoningEvent`, `TurnToolCallEvent`, `TurnToolResultEvent`.
+
+- `ContentEmitter.emit_turn_event()` is a concrete no-op default (not
+  abstract); `StreamingAwareEmitter` forwards text to `emit_delta` and
+  no-ops reasoning/tool events; `WebBotEmitter` projects canonical
+  events into existing `ServerEvent`/transcript types.
+- `ExternalCodingAgent._handle_emission` is the sole adapter from
+  provider `Emission` → canonical `TurnEvent`; tool arguments are parsed
+  here (not in WebUI).
+- WebUI has **zero imports** from `external_coding` — it consumes only
+  the canonical seam. Architecture guards enforce this.
+- `ExternalCodingEvent` now inherits `AgentEvent` (eliminating
+  `type: ignore`).
+- Tool call/result share a non-empty `call_id` (provider-minted or
+  parser-minted).
+- OpenCode parser reads from `part.state.input`/`part.state.output`
+  (not `part` top-level), and strips ANSI escape codes from tool output.
+- `--thinking` flag added to OpenCode backend args to enable reasoning.
+
+### Framework footprint revised
+
+The ADR claimed "2 lines + 1 comment." The actual footprint is larger
+but still additive — no existing behaviour changed:
+
+| File | Change |
+|---|---|
+| `core/constants.py` | `ExecutionStrategy` enum (replaces raw strings) |
+| `core/agent.py` | `AgentImplementation` enum, `current_input` field |
+| `core/emitter.py` | `emit_turn_event()` concrete no-op method |
+| `core/turn_events.py` | new: frozen Pydantic `TurnEvent` discriminated union |
+| `core/__init__.py`, `__init__.py` | canonical type exports |
+| `pipeline/pipeline.py` | `ExternalTurnRunner` injection + `update_emitter_factory` |
+| `pipeline/turn_runner.py` | `update_emitter_factory` no-op method |
+| `multi_agent/factory.py` | `ExecutionStrategy` enum dispatch |
+| `multi_agent/message_xml.py` | `implementation` parameter + `--stdin` guidance |
+| `multi_agent/envelope.py` | `to_input_metadata` / `to_input_message` |
+| `multi_agent/pool.py` | `input_message_from_dispatch_envelope` cleanup |
+| `multi_agent/communication/strategies/peer_normal.py` | `AgentImplementation` dispatch |
+| `providers/litellm_provider.py` | deferred `import litellm` (prevents warning pollution) |
+
+### WebUI revised — PoolEditor added
+
+The ADR and spec stated "zero new UI element." The implementation added
+`ExternalMainAgentFields.tsx` + `externalProviders.ts` + PoolEditor
+integration for external coding provider configuration. This is a
+product-driven addition, not a framework requirement.
+
+### CLI message wrapping
+
+`modexctl send` now wraps content in `build_peer_agent_message` XML so
+the receiving agent sees structured `<agent_message>` with `source`,
+`<content>`, and `<reply_contract>` (reply instructions tailored to
+receiver's implementation type). The original ADR's raw-text `content`
+field is no longer used.

@@ -130,23 +130,23 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 
 ### External coding agent pools (Pi, OpenCode)
 
-External CLI coding agents (Pi, OpenCode) can be registered as NORMAL main agents of their own dedicated pools. They are spawned as subprocesses by a framework-side harness (`ExternalCodingAgent`) and communicate back through the `modexbot send` CLI shim (writes directly to the target pool's `pending.jsonl`).
+External CLI coding agents (Pi, OpenCode) can be registered as NORMAL main agents of their own dedicated pools. They are spawned as subprocesses by a framework-side harness (`ExternalCodingAgent`) and communicate back through the `modexctl send` CLI (writes XML-wrapped `<agent_message>` content directly to the target pool's `pending.jsonl`). The `modexbot` CLI is a backward-compatible facade over `modexctl`.
 
 **Pool configuration** (`config/pools/<name>/pool.yml`):
 
 ```yaml
-main_agent_name: pi
+main_agent_name: opencode
 execution_strategy: external_coding   # opt-in; default is "react"
-provider_kind: pi                      # "pi" or "opencode"
+provider_kind: opencode               # "pi" or "opencode"
 peers:
-  - default                            # explicit peer declaration required
+  - default                           # explicit peer declaration required
 ```
 
 **Availability gating:** if the provider CLI (`pi` / `opencode`) is not on `PATH`, the pool is silently skipped at startup (warning logged). Other pools are unaffected.
 
 **Session continuity:** each ModexAgent session maps to a provider-side session file (`<workdir>/.modex/external/pi-session.jsonl` for Pi; provider-minted id for OpenCode). Follow-up turns on the same `modex_session_id` resume the provider's own session, preserving context.
 
-**WebUI:** external_coding sessions appear in the WebUI session list with their `.pi` / `.opencode` suffix, alongside every other session. Streaming output (text, thinking, tool calls, errors) is rendered through the same `ContentEmitter` pipeline.
+**WebUI:** external_coding sessions appear in the WebUI session list with their `.pi` / `.opencode` suffix, alongside every other session. Streaming output (text, reasoning, tool calls/results, errors) is rendered through the canonical `TurnEvent` seam → `WebBotEmitter` projection into existing `ServerEvent`/transcript types. The `PoolEditor` settings view supports configuring external coding provider pools.
 
 See ADR-0022 and `docs/design/external-coding-agent-integration/` for the full design.
 

@@ -1,8 +1,15 @@
 # External coding agent integration — spec
 
-Status: ready-for-agent
+Status: ready-for-agent (revised 2026-07-14)
 Parent ADR: ADR-0022 (`docs/adr/0022-external-coding-agent-integration.md`)
 Domain glossary: `docs/design/external-coding-agent-integration/glossary.md`
+
+> **Revision note (2026-07-14):** This spec was written before
+> implementation. Several decisions evolved during development — the
+> canonical `TurnEvent` seam, the `modexctl`/`modexbot` CLI split, the
+> PoolEditor WebUI addition, and the XML message wrapping. Sections
+> below reflect the actual implementation; divergences from the
+> original ADR are documented in ADR-0022's Disposition section.
 
 ## Problem Statement
 
@@ -216,22 +223,29 @@ value object):
 - `ExternalCodingEvent` — StrEnum: `TEXT_DELTA`, `THINKING`,
   `TOOL_USE`, `TOOL_RESULT`, `ERROR` (extensible).
 
-### Modules modified (framework footprint — strictly minimal)
+### Modules modified (framework footprint — additive)
 
-Two files, both additive:
+The original spec targeted "2 lines + 1 comment." The actual footprint
+is larger but still additive — no existing behaviour changed. See
+ADR-0022's Disposition section for the full table.
 
-- `multi_agent/factory.py` — `_get_builder()` gains one new branch
-  returning `ExternalCodingAgentBuilder` when
-  `execution_strategy == "external_coding"`. Two lines.
-- `multi_agent/descriptor.py` — the comment listing valid
-  `execution_strategy` values gains `"external_coding"`. One comment line.
+Key framework additions:
 
-No other framework file is modified. Specifically **untouched**:
-`subagent_validator.py` (deny-list only excludes `"pipeline"`),
-`pool.py` (does not reference `execution_strategy`), `pool_config/specs.py`
-(Pydantic pool model has no `execution_strategy` field), all of
-`multi_agent/inbox/*`, all of `multi_agent/communication/*`,
-`pipeline/*`, every existing ReAct / pipeline agent.
+- `core/turn_events.py` — canonical `TurnEvent` discriminated union
+- `core/emitter.py` — `emit_turn_event()` concrete no-op method
+- `core/constants.py` — `ExecutionStrategy` enum
+- `core/agent.py` — `AgentImplementation` enum, `current_input` field
+- `pipeline/pipeline.py` — `ExternalTurnRunner` injection +
+  `update_emitter_factory` mirror
+- `multi_agent/factory.py` — `ExecutionStrategy` enum dispatch
+- `multi_agent/message_xml.py` — `implementation` parameter +
+  `--stdin` guidance
+- `multi_agent/envelope.py` — `to_input_metadata` / `to_input_message`
+- `providers/litellm_provider.py` — deferred `import litellm`
+
+Validation surfaces (`subagent_validator.py`, pool_config Pydantic
+models) are untouched — the new `execution_strategy` value passes
+through the existing deny-list validator.
 
 ### Topology
 
@@ -277,16 +291,29 @@ Provider backends call these three and stay OS-agnostic. There is no
 `asyncio.subprocess` is already cross-platform; only the three behaviours
 above are not.
 
-### CLI (`modexbot`)
+### CLI (`modexctl` + `modexbot` facade)
 
-Distributed as a `[project.scripts]` entry point of the main wheel.
+Distributed as `[project.scripts]` entry points of the main wheel.
+`modexctl` is the production CLI; `modexbot` is a compatibility facade
+that delegates routing logic to `modexctl.main`.
 
-Exactly one subcommand: `send --to <name> [--content <text> |
---content-file <path>]`.
+`modexctl` subcommands:
+
+- `send --to <name> [--content <text> | --content-file <path> | --stdin]`
+- `agents` — lists routable peer agents with aligned name and description
+
+`modexbot` preserves the original single-command interface for backward
+compatibility.
 
 Help is env-gated: without `MODEX_SESSION_ID` in the environment, the
-`send` subcommand is not registered and `modexbot --help` shows a plain
-utility surface.
+`send` and `agents` subcommands are not registered.
+
+**Message wrapping.** `modexctl send` wraps content in
+`build_peer_agent_message` XML so the receiving agent sees structured
+`<agent_message>` with `source`, `<content>`, and `<reply_contract>`
+(reply instructions tailored to receiver's implementation type: NATIVE
+receivers are told to use `send_to_agent`; EXTERNAL receivers are told
+to use `modexctl send`, with `--stdin` guidance for multi-line replies).
 
 Routing is fully determined by two inputs:
 
@@ -336,13 +363,35 @@ per-spawn, the static part is workdir-local and identical across pools.
 ### Event parsing
 
 `ProviderEventParser` consumes one stdout JSONL line and emits zero or
-more `ExternalCodingEvent` emissions. Five event kinds are mapped on day
-one (text, thinking, tool_use, tool_result, error); the parser interface
-admits additional kinds later without breaking call sites.
+more `Emission` records. The harness (`ExternalCodingAgent._handle_emission`)
+maps `Emission` → canonical `TurnEvent` (provider-neutral frozen Pydantic
+discriminated union in `core/turn_events.py`) and calls
+`emitter.emit_turn_event()`. Four canonical event kinds:
 
-Pi's `text_delta` events carry tool markup (`call:ToolName{…}`,
-`<|control_token|>`) that must be incrementally stripped across delta
-boundaries — the cleanup is the only provider-specific text transformation.
+| Provider event | Canonical TurnEvent | Persisted as |
+|---|---|---|
+| text | `TurnTextEvent` | `AssistantTextEvent` |
+| thinking | `TurnReasoningEvent` | `AssistantReasoningEvent` |
+| tool call | `TurnToolCallEvent` (non-empty `call_id`, `tool_name`, `arguments`) | `ToolCallEvent` |
+| tool result | `TurnToolResultEvent` (matching `call_id`, `output`) | `ToolResultEvent` |
+| error | `emit_error(message)` | error event |
+
+`ContentEmitter.emit_turn_event()` is a concrete no-op default;
+`StreamingAwareEmitter` forwards text to `emit_delta` and no-ops
+reasoning/tool events (IM emitters inherit this). `WebBotEmitter`
+projects canonical events into existing `ServerEvent`/transcript types.
+The WebUI has zero imports from `external_coding` — it consumes only
+the canonical seam (enforced by architecture guard tests).
+
+Tool call/result share a non-empty `call_id` (provider-minted or
+parser-minted). Tool arguments are parsed in
+`ExternalCodingAgent._handle_emission` (not in WebUI) via
+`TypeAdapter(dict[str, JsonValue])`.
+
+OpenCode parser reads from `part.state.input`/`part.state.output`
+(matching the real OpenCode v2 SDK type definitions), strips ANSI
+escape codes from tool output, and handles `reasoning` events (requires
+`--thinking` flag on the backend).
 
 ### Memory ownership
 
@@ -354,11 +403,17 @@ external agent (it reads its own session file). No independent
 
 ### WebUI
 
-Zero new endpoint. The harness emits through the same `ContentEmitter`
-every other agent uses; the transcript store and session list the WebUI
-already queries pick up the new sessions automatically. The `.pi` /
-`.opencode` suffix on the session id is sufficient to distinguish the
-provider in the UI.
+The harness emits through the canonical `TurnEvent` seam, projected by
+`WebBotEmitter` into the same `ServerEvent`/transcript types every other
+agent uses. The transcript store and session list the WebUI already
+queries pick up the new sessions automatically. The `.pi` /
+`.opencode` suffix on the session id distinguishes the provider in the
+UI.
+
+A `PoolEditor` component (`ExternalMainAgentFields.tsx` +
+`externalProviders.ts`) was added to the WebUI settings view for
+configuring external coding provider pools. This is a product-driven
+addition beyond the original "zero new UI element" constraint.
 
 ## Testing Decisions
 
@@ -483,8 +538,10 @@ Mirror `src/modex_agent/agents/external_coding/` under
 - **Memory system for external pools.** Provider session files are the
   single source of truth. Wiring a ModexAgent `MemorySystem` for
   external pools is explicitly rejected — see ADR-0022 D8.
-- **WebUI changes.** Zero new endpoint, zero new UI element. If user
-  feedback later demands a per-provider icon, that is a separate spec.
+- **WebUI changes.** The original "zero new UI element" constraint was
+  lifted during implementation: `PoolEditor` + `ExternalMainAgentFields`
+  were added for external coding provider configuration. Future
+  per-provider icons or dedicated views are still separate specs.
 
 ## Further Notes
 

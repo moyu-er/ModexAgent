@@ -3,9 +3,10 @@
 Integrate Pi and OpenCode (and future coding agent CLIs) as **NORMAL main
 agents of their own dedicated pools** under ADR-0019's cross-pool peer
 topology. External agents are spawned as subprocesses by a framework-side
-harness; they communicate back through a `modexbot send` CLI that writes
-directly into target pools' `pending.jsonl`, reusing ADR-0015's inbox
-mechanism end-to-end.
+harness; they communicate back through a `modexctl send` CLI (with
+`modexbot` as a backward-compatible facade) that writes XML-wrapped
+`<agent_message>` content directly into target pools' `pending.jsonl`,
+reusing ADR-0015's inbox mechanism end-to-end.
 
 Source spec: `docs/design/external-coding-agent-integration/spec.md`
 Parent ADR: `docs/adr/0022-external-coding-agent-integration.md`
@@ -13,6 +14,14 @@ Glossary: `docs/design/external-coding-agent-integration/glossary.md`
 
 > [!NOTE]
 > Pi integration is paused at the business wiring layer as of 2026-07-13. Framework code (pi_backend.py, pi_parser.py, ProviderKind.PI) is preserved for future re-enablement. To re-enable: re-create examples/bot_project/config/pools/pool_pi/pool.yml and add pool_pi to default pool's peers list.
+
+> [!NOTE]
+> **Revision (2026-07-14):** All tickets T1–T11 are complete. The
+> implementation evolved beyond several original design decisions
+> (canonical `TurnEvent` seam, `modexctl`/`modexbot` CLI split, XML
+> message wrapping, PoolEditor WebUI addition, `--thinking` flag, ANSI
+> stripping, 1MiB StreamReader limit, deferred litellm import). See
+> ADR-0022's Disposition section for details.
 
 Work the **frontier**: any ticket whose blockers are all done. For this
 graph the frontier starts at T1, then opens into a parallel fan of T2 /

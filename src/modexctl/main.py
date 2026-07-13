@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import locale
 import os
 import sys
 from datetime import UTC, datetime
@@ -36,6 +37,33 @@ def _missing_comm_env_key() -> str | None:
 
 
 _SAFE_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._")
+
+
+def _decode_stdin_bytes(raw: bytes) -> str:
+    """Decode stdin bytes to text, tolerating mixed encodings on Windows.
+
+    Tries UTF-8 first (the common case for piped output from coding agents).
+    If that fails, falls back to the system preferred encoding (GBK on
+    Chinese Windows, CP1252 on Western Windows). Finally normalizes any
+    unpaired surrogates that may have been introduced by the OS text layer.
+    """
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        fallback = locale.getpreferredencoding(do_setlocale=False)
+        text = raw.decode(fallback, errors="replace")
+    return text.encode("utf-8", errors="surrogatepass").decode("utf-8")
+
+
+def _normalize_text(text: str) -> str:
+    """Normalize a string to clean UTF-8, removing unpaired surrogates.
+
+    On Windows, argv strings and text-mode stdin can carry unpaired
+    surrogates from code-page mismatches. This round-trip through
+    UTF-8 with surrogatepass replaces them with U+FFFD, producing
+    a string Pydantic can serialize without UnicodeEncodeError.
+    """
+    return text.encode("utf-8", errors="surrogatepass").decode("utf-8")
 
 
 def _safe_dir_name(session_id: str) -> str:
@@ -181,9 +209,11 @@ def _send(
             typer.echo(f"error: cannot read --content-file {content_file!s}: {exc}", err=True)
             raise typer.Exit(code=EXIT_USAGE) from None
     elif use_stdin:
-        content = sys.stdin.read()
+        content = _decode_stdin_bytes(sys.stdin.buffer.read())
 
     assert content is not None
+
+    content = _normalize_text(content)
 
     missing = _missing_comm_env_key()
     if missing is not None:

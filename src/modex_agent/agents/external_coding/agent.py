@@ -61,6 +61,7 @@ from modex_agent.core.turn_events import (
     TurnToolCallEvent,
     TurnToolResultEvent,
 )
+from modex_agent.workspace.runtime import is_workspace_root_bound, resolve_workspace_root
 
 from .contracts import ProviderBackend, ProviderEventParser
 from .env_builder import ExternalEnvBuilder
@@ -248,6 +249,7 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
     ) -> None:
         self._backend = backend
         self._session_store = session_store
+        self._session_store_lock = session_store._lock
         self._parser = parser
         self._provider_kind = provider_kind
         self._spec_template = spec
@@ -291,10 +293,18 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
     ) -> AgentResult:
         modex_sid = self._modex_session_id(ctx)
 
-        spec = self._spec_template.model_copy(update={"session_id": modex_sid})
-        paths = ExternalPaths(spec.workdir)
+        if is_workspace_root_bound():
+            current_workdir = resolve_workspace_root()
+        else:
+            current_workdir = self._spec_template.workdir
 
-        provider_sid, is_resume = self._session_store.resolve(modex_sid)
+        spec = self._spec_template.model_copy(
+            update={"session_id": modex_sid, "workdir": current_workdir}
+        )
+        paths = ExternalPaths(current_workdir)
+        session_store = ExternalSessionStore(paths, lock=self._session_store_lock)
+
+        provider_sid, is_resume = session_store.resolve(modex_sid)
         resume_session_id = provider_sid if is_resume else None
 
         env = ExternalEnvBuilder.build(spec, self._base_env)
@@ -323,7 +333,7 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
         )
 
         if backend_result.session_id:
-            await self._session_store.acommit(
+            await session_store.acommit(
                 modex_sid, backend_result.session_id, self._provider_kind
             )
 
@@ -437,10 +447,18 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
         )
 
     def _ensure_runtime_block(self, paths: ExternalPaths) -> None:
-        existing = read_runtime_block(paths.agents_md)
-        if existing == default_runtime_block():
+        agents_md = paths.agents_md
+        existing = read_runtime_block(agents_md)
+        current = default_runtime_block()
+        if existing == current:
             return
-        write_runtime_block(paths.agents_md)
+        logger.info(
+            "Updating AGENTS.md runtime block at %s (file_exists=%s, existing_block=%s)",
+            agents_md,
+            agents_md.exists(),
+            "present" if existing is not None else "absent",
+        )
+        write_runtime_block(agents_md)
 
     def _build_agent_result(
         self, backend_result: BackendResult, text_buf: list[str]
