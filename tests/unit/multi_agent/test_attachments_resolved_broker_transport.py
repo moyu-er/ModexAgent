@@ -80,7 +80,7 @@ def test_attachments_resolved_survive_full_broker_round_trip() -> None:
     assert envelope is not None
 
     reconstructed = input_message_from_dispatch_envelope(
-        envelope, session=_session(), metadata={}
+        envelope, session=_session()
     )
     assert len(reconstructed.attachments_resolved) == 1
     rec = reconstructed.attachments_resolved[0]
@@ -95,7 +95,7 @@ def test_normal_message_round_trips_without_attachments() -> None:
     assert envelope is not None
 
     reconstructed = input_message_from_dispatch_envelope(
-        envelope, session=_session(), metadata={}
+        envelope, session=_session()
     )
     assert reconstructed.attachments_resolved == []
     assert reconstructed.content == "hi there"

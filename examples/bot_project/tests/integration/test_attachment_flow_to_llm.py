@@ -206,7 +206,7 @@ async def test_attachment_flow_to_llm_injection_and_asymmetry() -> None:
         envelope = AgentMessageEnvelope.from_broker_message(broker_msg)
         assert envelope is not None
         redispatched = input_message_from_dispatch_envelope(
-            envelope, session=msg.session, metadata={}
+            envelope, session=msg.session
         )
         assert len(redispatched.attachments_resolved) == 3
         assert {r.name for r in redispatched.attachments_resolved} == {

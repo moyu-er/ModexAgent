@@ -145,7 +145,6 @@ async def test_decision_survives_full_dispatch_reconstruction(tmp_path: Path) ->
     rebuilt = input_message_from_dispatch_envelope(
         envelope,
         session=SessionInfo(session_id="sess.main", agent_name="main"),
-        metadata={},
     )
     assert rebuilt.approval_decision is not None, (
         "approval_decision dropped across broker dispatch — build_turn_request "

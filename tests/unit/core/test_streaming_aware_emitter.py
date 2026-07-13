@@ -13,6 +13,12 @@ import pytest
 from modex_agent.adapters.platform import StreamingMode
 from modex_agent.agents.react import ReActEvent
 from modex_agent.core.emitter import AgentResult, StreamingAwareEmitter
+from modex_agent.core.turn_events import (
+    TurnReasoningEvent,
+    TurnTextEvent,
+    TurnToolCallEvent,
+    TurnToolResultEvent,
+)
 from modex_agent.core.types import ToolCall
 from modex_agent.core.tool_manager import ToolResult
 
@@ -117,6 +123,23 @@ class TestStreamingAwareEmitter:
         assert len(mock_adapter.send_delta_calls) == 2
         assert mock_adapter.send_delta_calls[0] == ("Hello ", "test_session", None)
         assert mock_adapter.send_delta_calls[1] == ("World", "test_session", None)
+
+    @pytest.mark.asyncio
+    async def test_emit_turn_event_forwards_only_canonical_text(self, mock_adapter, emitter):
+        await emitter.emit_turn_event(TurnTextEvent(text="Hello"))
+        await emitter.emit_turn_event(TurnReasoningEvent(text="thinking"))
+        await emitter.emit_turn_event(
+            TurnToolCallEvent(
+                tool_name="bash", call_id="call-1", arguments={"command": "ls"}
+            )
+        )
+        await emitter.emit_turn_event(
+            TurnToolResultEvent(
+                tool_name="bash", call_id="call-1", output="file.txt"
+            )
+        )
+
+        assert mock_adapter.send_delta_calls == [("Hello", "test_session", None)]
 
     @pytest.mark.asyncio
     async def test_emit_delta_non_streaming(self, mock_adapter_no_streaming, non_streaming_emitter):

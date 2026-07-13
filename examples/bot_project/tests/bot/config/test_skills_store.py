@@ -272,6 +272,52 @@ class TestRename:
         assert (dst / "SKILL.md").read_text(encoding="utf-8") == "alpha"
 
 
+# ─── clear_pool_skills ───────────────────────────────────────────────────────
+
+
+class TestClearPoolSkills:
+    def test_clear_removes_all_agent_assignments(self, store: SkillsStore, tmp_path: Path) -> None:
+        store.upload_skill("alpha", {"SKILL.md": "x"})
+        store.upload_skill("beta", {"SKILL.md": "y"})
+        store.assign_skill_to_agent("coding", "scout", "alpha")
+        store.assign_skill_to_agent("coding", "recon", "beta")
+        assert store.clear_pool_skills("coding") is True
+        assert not (tmp_path / "skills" / "coding").exists()
+
+    def test_clear_noop_when_absent(self, store: SkillsStore, tmp_path: Path) -> None:
+        assert store.clear_pool_skills("coding") is False
+        assert not (tmp_path / "skills" / "coding").exists()
+        assert not (tmp_path / "skills").exists()
+
+    def test_clear_leaves_repo_library_intact(self, store: SkillsStore, tmp_path: Path) -> None:
+        store.upload_skill("alpha", {"SKILL.md": "x"})
+        store.assign_skill_to_agent("coding", "scout", "alpha")
+        store.clear_pool_skills("coding")
+        assert (tmp_path / "local_skills" / "alpha" / "SKILL.md").read_text(encoding="utf-8") == "x"
+        store.assign_skill_to_agent("research", "scout", "alpha")
+        assert (tmp_path / "skills" / "research" / "scout" / "alpha" / "SKILL.md").read_text() == "x"
+
+    def test_clear_never_touches_user_global_dir(self, store: SkillsStore, tmp_path: Path) -> None:
+        user = tmp_path / "user_skills"
+        (user / "extra").mkdir(parents=True)
+        (user / "extra" / "SKILL.md").write_text("u", encoding="utf-8")
+        store.assign_skill_to_agent("coding", "scout", "extra")
+        store.clear_pool_skills("coding")
+        assert (user / "extra" / "SKILL.md").read_text(encoding="utf-8") == "u"
+
+    def test_clear_leaves_other_pools_intact(self, store: SkillsStore, tmp_path: Path) -> None:
+        store.upload_skill("alpha", {"SKILL.md": "x"})
+        store.assign_skill_to_agent("coding", "scout", "alpha")
+        store.assign_skill_to_agent("research", "scout", "alpha")
+        store.clear_pool_skills("coding")
+        assert not (tmp_path / "skills" / "coding").exists()
+        assert (tmp_path / "skills" / "research" / "scout" / "alpha").exists()
+
+    def test_clear_bad_name_rejected(self, store: SkillsStore) -> None:
+        with pytest.raises(SkillValidationError):
+            store.clear_pool_skills("Bad-Pool")
+
+
 # ─── user-home global source (~/.agents/skills) ──────────────────────────────
 
 
