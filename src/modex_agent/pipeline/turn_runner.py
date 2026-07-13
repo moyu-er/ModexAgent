@@ -114,6 +114,18 @@ class TurnRunner:
         self._pool_data_resolver = pool_data_resolver
         self._agent_descriptor = agent_descriptor
 
+    def update_emitter_factory(
+        self, value: Callable[..., ContentEmitter] | None
+    ) -> None:
+        """Accept a post-construction emitter_factory override.
+
+        TurnRunner resolves emitter_factory through TurnContextBuilder, which
+        the pipeline updates directly — so this is a no-op here. The method
+        exists so the pipeline can call it unconditionally on both runner
+        types without ``hasattr`` dispatch.
+        """
+        return
+
     @property
     def _user_interface(self) -> ApprovalUserInterface | None:
         # Delegate so pool injection (pipeline._user_interface = ...) reaches

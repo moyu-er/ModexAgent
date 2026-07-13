@@ -303,8 +303,7 @@ class AgentPipeline:
     def emitter_factory(self, value: Callable[..., ContentEmitter] | None) -> None:
         self._emitter_factory = value
         self._turn_context_builder._emitter_factory = value
-        if hasattr(self._turn_runner, "_emitter_factory"):
-            self._turn_runner._emitter_factory = value
+        self._turn_runner.update_emitter_factory(value)
 
     async def run(self) -> None:
         """运行流水线"""

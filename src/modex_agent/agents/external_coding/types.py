@@ -24,6 +24,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 from .events import ExternalCodingEvent
+from .paths import ProviderKind
 
 # ---------------------------------------------------------------------------
 # Exec options / backend result
@@ -95,8 +96,8 @@ class SessionMapEntry(BaseModel):
 
     modex_session_id: str
     provider_session_id: str
-    provider_kind: str = Field(
-        description="Forward-compatible: stored as raw provider string for now."
+    provider_kind: ProviderKind = Field(
+        description="Provider kind discriminator (PI, OPENCODE, ...)."
     )
     last_committed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     invalidated: bool = False

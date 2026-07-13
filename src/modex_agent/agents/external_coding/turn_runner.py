@@ -96,6 +96,18 @@ class ExternalTurnRunner:
         self._on_session_end = on_session_end
         self._safety = safety
 
+    def update_emitter_factory(
+        self, value: Callable[..., ContentEmitter] | None
+    ) -> None:
+        """Accept a post-construction emitter_factory override.
+
+        ExternalTurnRunner stores emitter_factory directly (not through
+        TurnContextBuilder), so the pipeline's post-construction reassignment
+        must reach this attribute. Called unconditionally by the pipeline
+        alongside the TurnContextBuilder mirror.
+        """
+        self._emitter_factory = value
+
     async def process_locked(
         self,
         input_msg: InputMessage,

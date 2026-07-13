@@ -397,6 +397,11 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
                                 output=emission.output or "",
                             )
                         )
+                    else:
+                        logger.warning(
+                            "TOOL_RESULT with call_id=%s has no preceding TOOL_USE; dropping",
+                            emission.call_id,
+                        )
             case ExternalCodingEvent.ERROR:
                 await emitter.emit_error(emission.message or "")
 
@@ -441,13 +446,15 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
         self, backend_result: BackendResult, text_buf: list[str]
     ) -> AgentResult:
         """Map a :class:`BackendResult` to an :class:`AgentResult`."""
-        stop_reason_map = {
-            BackendStatus.COMPLETED: StopReason.COMPLETED,
-            BackendStatus.FAILED: StopReason.ERROR,
-            BackendStatus.TIMEOUT: StopReason.TIMEOUT,
-            BackendStatus.ABORTED: StopReason.CANCELLED,
-        }
-        stop_reason = stop_reason_map.get(backend_result.status, StopReason.ERROR)
+        match backend_result.status:
+            case BackendStatus.COMPLETED:
+                stop_reason = StopReason.COMPLETED
+            case BackendStatus.FAILED:
+                stop_reason = StopReason.ERROR
+            case BackendStatus.TIMEOUT:
+                stop_reason = StopReason.TIMEOUT
+            case BackendStatus.ABORTED:
+                stop_reason = StopReason.CANCELLED
         content = "".join(text_buf) if text_buf else None
         error = backend_result.error
         if backend_result.status != BackendStatus.COMPLETED and not error:

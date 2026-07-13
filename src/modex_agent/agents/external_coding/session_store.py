@@ -103,7 +103,7 @@ class ExternalSessionStore:
             data[modex_sid] = SessionMapEntry(
                 modex_session_id=modex_sid,
                 provider_session_id=provider_sid,
-                provider_kind=provider_kind.value,
+                provider_kind=provider_kind,
                 last_committed_at=datetime.now(UTC),
                 invalidated=False,
             )

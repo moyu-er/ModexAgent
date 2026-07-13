@@ -36,6 +36,8 @@ from typing import Annotated
 
 import typer
 
+from modexctl.main import _parse_pool_map
+
 from modex_agent.agents.external_coding import ExternalEnvSpec
 from modex_agent.cli.modexbot.errors import (
     MalformedSessionIdError,
@@ -73,28 +75,6 @@ _REQUIRED_ENV_KEYS: tuple[str, ...] = (
 # ---------------------------------------------------------------------------
 # Env parsing
 # ---------------------------------------------------------------------------
-
-
-def _parse_pool_map(raw: str) -> dict[str, str]:
-    """Parse ``MODEX_AGENT_POOL_MAP`` (``name=pool;name=pool``) into a dict.
-
-    Empty pairs (``;;`` or trailing ``;``) are skipped silently — they
-    arise when the harness prepends no pools or when the serialiser
-    emits a trailing separator. Missing ``=`` is also skipped so a
-    half-written config does not crash the CLI; the missing target will
-    surface as ``UnknownTargetError`` on the actual ``--to`` lookup.
-    """
-    out: dict[str, str] = {}
-    for pair in raw.split(";"):
-        pair = pair.strip()
-        if not pair or "=" not in pair:
-            continue
-        name, pool = pair.split("=", 1)
-        name = name.strip()
-        pool = pool.strip()
-        if name and pool:
-            out[name] = pool
-    return out
 
 
 def _build_env_spec() -> ExternalEnvSpec:
