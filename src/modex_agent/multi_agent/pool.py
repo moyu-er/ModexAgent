@@ -19,15 +19,12 @@ if TYPE_CHECKING:
 from modex_agent.core.context import ContextManager
 from modex_agent.core.graph.interrupt import GraphInterrupt
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
+from modex_agent.core.session_id import SessionIdFactory, SessionInfo, session_id_prefix_of
 from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.core.session_store import SessionStore
 from modex_agent.core.types import InputMessage
 from modex_agent.messaging.broker import AddressKind, MessageBroker
-from modex_agent.messaging.broker_bridge import (
-    BrokerInputPayload,
-    approval_decision_from_payload,
-    attachments_resolved_from_payload,
-)
+from modex_agent.messaging.broker_bridge import BrokerInputPayload
 from modex_agent.runtime.dispatch import DispatchDeadline, current_dispatch_deadline
 
 from .address import AgentAddress
@@ -38,7 +35,6 @@ from .factory import AgentFactory
 from .inbox.consumer import InboxConsumer
 from .message_type import AgentMessageType
 from .registry import AgentProfile, AgentRegistry
-from modex_agent.core.session_id import SessionInfo, SessionIdFactory, session_id_prefix_of
 from .state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -74,23 +70,14 @@ def input_message_from_dispatch_envelope(
     envelope: AgentMessageEnvelope,
     *,
     session: Any,
-    metadata: dict[str, Any],
 ) -> InputMessage:
-    """Reconstruct the InputMessage dispatched to a pipeline from a broker envelope.
+    """Backward-compat shim — prefer ``envelope.to_input_message(session=...)``.
 
-    Carries ``approval_decision`` through (serialized in the envelope payload by
-    ``broker_bridge.build_input_broker_message``). Without this, a webui
-    approve/deny decision crossing the broker is lost and treated as an empty
-    user turn — polluting history and leaving a dangling assistant ``tool_calls``.
+    Retained because several integration test fixtures call this module-level
+    function directly. New code should call ``envelope.to_input_message``
+    (the metadata is built inside the envelope).
     """
-    return InputMessage(
-        content=envelope.payload.get("content", ""),
-        session=session,
-        metadata=metadata,
-        # Both drift fields share one reconstruction path in broker_bridge.
-        approval_decision=approval_decision_from_payload(envelope.payload),
-        attachments_resolved=attachments_resolved_from_payload(envelope.payload),
-    )
+    return envelope.to_input_message(session=session)
 
 
 class AgentPool(AgentRegistry):
@@ -195,7 +182,7 @@ class AgentPool(AgentRegistry):
 
     # ── Per-pool InboxPoller ownership (Task 7) ──
 
-    def attach_poller(self, poller: "InboxPoller") -> None:
+    def attach_poller(self, poller: InboxPoller) -> None:
         """Attach this pool's InboxPoller (created by create_pool wiring)."""
         self._poller = poller
 
@@ -334,67 +321,55 @@ class AgentPool(AgentRegistry):
     ) -> None:
         """Run one turn for a drained inbox envelope (external_input or agent msg).
 
-        C4: a single reconstruction path. Because ``submit_input`` writes a
+        Single reconstruction path: because ``submit_input`` writes a
         C2-compatible payload, this method handles BOTH ``external_input`` and
-        inter-agent messages via the same ``input_message_from_dispatch_envelope``.
-        Renamed from ``_run_inbox_turn`` — the InboxPoller calls this directly.
+        inter-agent messages via the same ``envelope.to_input_message``.
         """
-        session_id = sid
-        agent_name = SessionInfo.from_str(sid).agent_name
         if instance.pipeline is None:
             return
-        if session_id not in self._session_agents:
-            self._track_session(
-                session_id, agent_name, is_dynamic=bool(envelope.invocation_id)
-            )
-        else:
-            self._touch_session(session_id)
-        # Authoritative parent link comes from the envelope (set by the
-        # dispatching producer), NOT recovered from a session store. This
-        # single stamp feeds every ctx.session.parent_session_id reader
-        # (SubagentAutoSendHook, consult routing, star-topology) and the
-        # APPEND/FORK prompt providers (via runtime_info).
-        session = SessionInfo.from_str(session_id, default_agent_name=agent_name)
-        if envelope.parent_session_id:
-            session = session.model_copy(
-                update={"parent_session_id": envelope.parent_session_id}
-            )
-        elif envelope.message_type == AgentMessageType.TASK_REQUEST:
-            logger.warning(
-                "dispatch_envelope: TASK_REQUEST for session %s carried no "
-                "parent_session_id; ctx.session.parent_session_id will be None "
-                "— result passback will be degraded.",
-                session_id,
-            )
-        metadata = self._envelope_metadata(envelope)
+        agent_name = SessionInfo.from_str(sid).agent_name
+        self._track_or_touch_session(sid, agent_name, envelope)
+        session = self._stamp_session_from_envelope(sid, agent_name, envelope)
         await self._run_dispatch(
             agent_name,
-            instance.pipeline.process_message(
-                input_message_from_dispatch_envelope(
-                    envelope, session=session, metadata=metadata
-                )
-            ),
+            instance.pipeline.process_message(envelope.to_input_message(session=session)),
         )
         if envelope.invocation_id:
             await self._enforce_session_cap(agent_name)
 
+    def _track_or_touch_session(
+        self, sid: str, agent_name: str, envelope: AgentMessageEnvelope
+    ) -> None:
+        """Register new session metadata on first sight, else refresh activity."""
+        if sid not in self._session_agents:
+            self._track_session(sid, agent_name, is_dynamic=bool(envelope.invocation_id))
+        else:
+            self._touch_session(sid)
+
     @staticmethod
-    def _envelope_metadata(
-        envelope: AgentMessageEnvelope,
-    ) -> dict[str, Any]:
-        source_name = envelope.source.name if envelope.source else None
-        target_name = envelope.target.name if envelope.target else None
-        is_agent_source = bool(envelope.source and envelope.source.kind == "agent")
-        return {
-            "session_id": envelope.agent_session_id,
-            "agent_session_id": envelope.agent_session_id,
-            "message_type": envelope.message_type,
-            "invocation_id": envelope.invocation_id,
-            "source_agent": source_name if is_agent_source else None,
-            "sender_agent": source_name if is_agent_source else None,
-            "receiver_agent": target_name if is_agent_source else None,
-            **envelope.metadata,
-        }
+    def _stamp_session_from_envelope(
+        sid: str, agent_name: str, envelope: AgentMessageEnvelope
+    ) -> SessionInfo:
+        """Rebuild the authoritative SessionInfo from the envelope.
+
+        Parent link comes from the envelope (set by the dispatching producer),
+        NOT recovered from a session store — this keeps subagent messaging
+        independent of the active workspace. A TASK_REQUEST without a parent
+        link is logged: result passback will be degraded.
+        """
+        session = SessionInfo.from_str(sid, default_agent_name=agent_name)
+        if envelope.parent_session_id:
+            return session.model_copy(
+                update={"parent_session_id": envelope.parent_session_id}
+            )
+        if envelope.message_type == AgentMessageType.TASK_REQUEST:
+            logger.warning(
+                "dispatch_envelope: TASK_REQUEST for session %s carried no "
+                "parent_session_id; ctx.session.parent_session_id will be None "
+                "— result passback will be degraded.",
+                sid,
+            )
+        return session
 
     # Watchdog: warn when dispatch exceeds this threshold (P0-a, seconds)
     _DISPATCH_WARN_SECONDS: float = 300.0

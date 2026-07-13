@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+from modex_agent.core.constants import ExecutionStrategy
 from modex_agent.core.context import ContextManager, InMemoryContextManager
 from modex_agent.core.runtime_context import RuntimeContextManager
 from modex_agent.core.session_registry import SessionRegistry
@@ -117,9 +118,12 @@ class DefaultAgentFactory(AgentFactory):
             reasoning_effort=cfg.reasoning_effort,
         )
 
-    def _get_builder(self, execution_strategy: str):
-        """根据 execution_strategy 返回对应的 agent builder 类。"""
-        if execution_strategy in ("react", "pipeline"):
+    def _get_builder(self, execution_strategy: ExecutionStrategy):
+        if execution_strategy == ExecutionStrategy.EXTERNAL_CODING:
+            from modex_agent.agents.external_coding.builder import ExternalCodingAgentBuilder
+
+            return ExternalCodingAgentBuilder
+        if execution_strategy in (ExecutionStrategy.REACT, ExecutionStrategy.PIPELINE):
             from modex_agent.agents.react.builder import ReActAgentBuilder
 
             return ReActAgentBuilder
