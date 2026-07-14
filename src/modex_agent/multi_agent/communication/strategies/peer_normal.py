@@ -49,7 +49,7 @@ class PeerNormalStrategy(SendStrategy):
         xml_content = build_peer_agent_message(
             source=effective_source.name,
             content=req.content,
-            implementation=(
+            receiver_implementation=(
                 AgentImplementation.EXTERNAL
                 if req.target.execution_strategy == ExecutionStrategy.EXTERNAL_CODING
                 else AgentImplementation.NATIVE

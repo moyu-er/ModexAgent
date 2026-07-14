@@ -12,7 +12,6 @@ import typer
 from filelock import FileLock
 
 from modex_agent.agents.external_coding.types import OutboxLine, OutboxMetadata
-from modex_agent.core.agent import AgentImplementation
 from modex_agent.multi_agent.message_type import AgentMessageType
 from modex_agent.multi_agent.message_xml import build_peer_agent_message
 
@@ -141,7 +140,6 @@ def _build_inbox_line(
     xml_content = build_peer_agent_message(
         source=agent_name,
         content=content,
-        implementation=AgentImplementation.NATIVE,
     )
     line = OutboxLine(
         message_id=uuid4().hex,

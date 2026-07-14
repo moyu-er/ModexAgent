@@ -115,21 +115,38 @@ def test_build_peer_agent_message_escapes_source_in_reply_target():
 
 def test_build_peer_agent_message_external_uses_modexctl_cli():
     """External receivers (opencode/pi) reply via modexctl send CLI, NOT
-    send_to_agent tool. Implementation dimension is orthogonal to topology."""
+    send_to_agent tool."""
     result = build_peer_agent_message(
-        source="main", content="hi", implementation=AgentImplementation.EXTERNAL
+        source="main", content="hi", receiver_implementation=AgentImplementation.EXTERNAL
     )
     assert 'modexctl send --to "main"' in result
     assert "--stdin" in result
     assert "send_to_agent tool" not in result
-    assert 'implementation="external"' in result
+    assert 'implementation="' not in result
 
 
 def test_build_peer_agent_message_native_uses_send_to_agent_tool():
     """Modex-native receivers reply via the send_to_agent tool."""
     result = build_peer_agent_message(
-        source="main", content="hi", implementation=AgentImplementation.NATIVE
+        source="main", content="hi", receiver_implementation=AgentImplementation.NATIVE
     )
     assert "send_to_agent tool" in result
     assert "modexctl send" not in result
-    assert 'implementation="external"' not in result
+    assert 'implementation="' not in result
+
+
+def test_build_peer_agent_message_no_implementation_attr():
+    """No implementation attribute on the XML — sender's implementation is
+    invisible to agents."""
+    result = build_peer_agent_message(
+        source="main", content="hi", receiver_implementation=AgentImplementation.EXTERNAL
+    )
+    assert 'implementation=' not in result
+
+
+def test_build_peer_agent_message_warns_not_to_instruct_others():
+    """Receiver should not instruct other agents on how to reply — their
+    mechanism may differ."""
+    result = build_peer_agent_message(source="main", content="hi")
+    assert "Do NOT instruct other agents" in result
+    assert "may differ" in result

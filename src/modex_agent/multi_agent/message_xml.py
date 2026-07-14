@@ -5,15 +5,11 @@ Three builders:
 - build_peer_agent_message: cross-pool peer send — receiver MUST know the reply contract
 - build_agent_result: hook-generated turn result (LLM didn't call comm tool)
 
-Two orthogonal dimensions decide which builder + which reply contract:
-- Topology (AgentCommKind.NORMAL vs SUBAGENT): decides routing and whether
-  a reply_contract is needed (subagent reply is implicit via parent → use
-  build_agent_message; peer NORMAL needs explicit contract → use
-  build_peer_agent_message).
-- Implementation (AgentImplementation: NATIVE vs EXTERNAL): orthogonal to
-  topology. Decides the reply mechanism wording inside reply_contract —
-  NATIVE replies via the send_to_agent tool; EXTERNAL (opencode/pi) replies
-  via the `modexctl send` CLI.
+The reply contract tells the *receiver* how to reply to the *sender*. The
+``receiver_implementation`` parameter selects the concrete reply mechanism
+wording (send_to_agent tool vs modexctl send CLI) based on what the
+**receiver** can use — not the sender. No ``implementation`` attribute is
+emitted on the XML; the sender's implementation is invisible to agents.
 """
 
 from __future__ import annotations
@@ -47,29 +43,31 @@ def build_peer_agent_message(
     *,
     source: str,
     content: str,
-    implementation: AgentImplementation = AgentImplementation.NATIVE,
+    receiver_implementation: AgentImplementation = AgentImplementation.NATIVE,
 ) -> str:
     """Build <agent_message> XML for cross-pool peer sends.
 
-    ``implementation`` is the implementation dimension (orthogonal to topology):
+    ``receiver_implementation`` selects the reply mechanism wording based on
+    what the **receiver** can use:
     - :attr:`AgentImplementation.NATIVE` — reply via the ``send_to_agent`` tool
     - :attr:`AgentImplementation.EXTERNAL` — reply via ``modexctl send`` CLI
+
+    No ``implementation`` attribute is emitted on the XML element — the
+    sender's implementation is invisible to agents.
     """
-    if implementation == AgentImplementation.EXTERNAL:
+    if receiver_implementation == AgentImplementation.EXTERNAL:
         reply_method_lines = [
             "    To reply, you MUST run this CLI command in your bash tool:",
             f'      modexctl send --to "{xml_attr(source)}" --content "<your reply>"',
             "    For multi-line replies, pipe via stdin to avoid shell quoting issues:",
             f'      echo "<your reply>" | modexctl send --to "{xml_attr(source)}" --stdin',
         ]
-        impl_attr = f' implementation="{xml_attr(implementation.value)}"'
     else:
         reply_method_lines = [
             "    To reply, you MUST call the send_to_agent tool with:",
             f'      target_agent = "{xml_attr(source)}"',
             '      content       = "<your full reply>"',
         ]
-        impl_attr = ""
 
     reply_lines = [
         "    WARNING: Your normal output (text, reasoning, tool results) is",
@@ -77,9 +75,11 @@ def build_peer_agent_message(
         *reply_method_lines,
         "    Reply only if the sender actually needs an answer.",
         "    Do NOT acknowledge just to be polite. Do NOT ping-pong.",
+        "    Do NOT instruct other agents on how to reply to you —",
+        "    their reply mechanism may differ from yours.",
     ]
     lines = [
-        f'<agent_message source="{xml_attr(source)}"{impl_attr}>',
+        f'<agent_message source="{xml_attr(source)}">',
         f"  <content>{xml_text(content)}</content>",
         "  <reply_contract>",
         *reply_lines,
