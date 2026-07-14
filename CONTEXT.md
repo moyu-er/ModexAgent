@@ -156,6 +156,46 @@ _Avoid_: reasoning mode, thinking level
 The thinking chain produced by a reasoning-capable model, surfaced to the frontend via `reasoning_content` events and rendered as a reasoning block. It is intentionally not persisted to memory: `ChatMessage.to_dict()` strips it before storage. The framework always shows reasoning content when it is present; there is no `show_reasoning` toggle.
 _Avoid_: thinking content, thought chain, reasoning chain (use "reasoning content" when referring to the persisted/streamed artifact)
 
+**RecordScope**:
+A frozen Pydantic model carrying all dimensional fields (pool, workspace_id, session_id, session_prefix, agent_id, agent_role, user_id, tenant_id, channel, chat_id, invocation_id, parent_session_id). These field names are canonical across Python and SQL generated-column extraction (`agent_id`, never `agent` or `agent_name`). Its canonical JSON is the sole source for a DB store's generated dimensions; ordinary domain keys and payload columns remain explicit. `canonical()` produces a deterministic JSON string (recursive key sorting) for uniqueness and comparison. `to_path_segment(*dimensions)` derives file-path segments for file-backed stores. Replaces `CompositeScope` string-join for DB-backed stores; `CompositeScope` remains for file-backed stores.
+_Avoid_: scope key (that is the string output), scope object (too generic)
+
+**Canonical JSON** (`modex_agent.utils.canonical_json`):
+The recursive deterministic serializer used by `RecordScope.canonical()` and all DB payload columns requiring stable comparison. Dict keys sorted at every nesting level; sets sorted and converted to lists; lists preserve element order with recursive canonicalization; non-finite floats are rejected. Same semantic data always produces the same byte sequence.
+_Avoid_: sorted JSON (imprecise — it is recursive, not just top-level sort)
+
+**State DB** (`<workspace>/.modex/state.db`):
+The per-workspace SQLite database holding transactional structured state: inbox messages, turn snapshots, session index, pool routing, todos, memory session/KV/cursors, archive metadata, external session map, approval audit log. WAL mode, `foreign_keys=ON`, `busy_timeout=5000` on every connection. One writer at a time per workspace; different workspaces write concurrently.
+_Avoid_: workspace database (ambiguous — could mean the registry DB)
+
+**Registry DB** (`<home>/.modex/_registry/state.db`):
+The global SQLite database holding cross-workspace routing only: workspace registry (workspace_id, target_path, display_name, last_active) and session→workspace map. Small (tens to hundreds of rows). Does not participate in high-frequency writes.
+_Avoid_: global database (too generic)
+
+**Generated Scope Column**:
+A `STORED` generated column derived from the `scope` JSON column via `json_extract(scope, '$.dimension')`. Real column — supports true B-tree composite indexes on any dimension combination. Application code writes each dimension only through `scope`; generated columns are derived by the database engine. New dimensions added via `ALTER TABLE ADD COLUMN ... GENERATED ALWAYS AS ...` with no dimension write-path change.
+_Avoid_: functional index (that is a different mechanism — single-dimension, not composite B-tree)
+
+**Session Message State Machine**:
+The three-state lifecycle for session memory messages: `normal` (active, prunable) → `pinned` (active, prune-exempt) → `soft_deleted` (invisible to active queries, retained until TTL). Background TTL job physically deletes expired `soft_deleted` rows. Prune returns pruned message content to the caller (archive/pruned/URB consumers) in the same transaction as the soft-delete.
+_Avoid_: message lifecycle (too generic)
+
+**Approval Audit Log**:
+An append-only table recording every approval decision (approve/deny) with `turn_uuid`, `session_id`, `tool_name`, `tool_call_id`, `decision`, `deny_reason`, `decided_at`, `decided_by`. Immutable — no UPDATE or DELETE (except TTL cleanup). Closes the compliance gap where approval decisions were previously lost when `TurnSnapshot` was overwritten by the next turn.
+_Avoid_: approval history (use "audit log" to emphasize immutability)
+
+**Session Artifact Cleaner** (`SessionArtifactCleaner` ABC):
+The framework ABC coordinating DB + file cascade deletion when a session is deleted. DB operations delete rows from sessions, memory_session_messages, todos, turn_snapshots, inbox_messages, approval_audit_log. File operations delete pruned, media, trace, output directories. Called by the business-layer `SessionGarbageCollector`. Orphan scanning (artifacts without an index record) is also handled through this seam.
+_Avoid_: garbage collector (that is the business-layer orchestrator; the cleaner is the framework executor)
+
+**InboxMQ**:
+The evolved `InboxServer` ABC. Adds `deliver()` (sync) for cross-process CLI use and formalizes topic lifecycle (`pending → active → idle → expired`). `DeliveredIdTracker` is merged into `InboxMQ` internal — delivered ID tracking is part of the inbox transaction, not an independent ABC.
+_Avoid_: inbox server (the older name; InboxMQ emphasizes the MQ semantics)
+
+**MemoryStoreBundle**:
+A frozen Pydantic model returned by `MemoryStoreRegistry.resolve()`, holding `MessageStore`, `KVStore`, `CursorStore`, and optional `ArchiveStore`. Replaces the `MemoryStorage` god interface. File implementation: one `DefaultScopedStorage` instance implements all four interfaces. DB implementation: four independent SQLite adapters.
+_Avoid_: storage bundle (too generic)
+
 ## Relationships
 
 - A **Workspace** owns one or more **Pool Instances**; pool instances are not shared across workspaces.
