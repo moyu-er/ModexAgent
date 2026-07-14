@@ -14,11 +14,13 @@ class _TurnEventBase(BaseModel):
 class TurnTextEvent(_TurnEventBase):
     kind: Literal["text"] = "text"
     text: str
+    part_id: str | None = None
 
 
 class TurnReasoningEvent(_TurnEventBase):
     kind: Literal["reasoning"] = "reasoning"
     text: str
+    part_id: str | None = None
 
 
 class TurnToolCallEvent(_TurnEventBase):
@@ -26,6 +28,7 @@ class TurnToolCallEvent(_TurnEventBase):
     tool_name: Annotated[str, Field(min_length=1)]
     call_id: Annotated[str, Field(min_length=1)]
     arguments: dict[str, JsonValue]
+    part_id: str | None = None
 
 
 class TurnToolResultEvent(_TurnEventBase):
@@ -33,6 +36,7 @@ class TurnToolResultEvent(_TurnEventBase):
     tool_name: Annotated[str, Field(min_length=1)]
     call_id: Annotated[str, Field(min_length=1)]
     output: str
+    part_id: str | None = None
 
 
 TurnEvent = Annotated[

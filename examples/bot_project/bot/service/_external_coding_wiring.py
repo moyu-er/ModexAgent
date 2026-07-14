@@ -2,9 +2,13 @@
 
 T10 wiring: resolves ``provider_kind`` from the pool config (the framework's
 ``MainAgentSpec`` now carries it; raw pool.yml is a fallback), builds the
-streaming backend + parser + session store + env spec, and provides a
+streaming backend + session store + env spec, and provides a
 ``DefaultAgentFactory`` subclass that forwards the required keyword-only
 collaborators to ``ExternalCodingAgentBuilder.build_agent``.
+
+OpenCode backend selection is hardcoded: SSE (``opencode serve``) is the
+default transport; subprocess (``opencode run``) is the runtime fallback
+when the SSE server fails to start. This is NOT configurable via pool.yml.
 """
 
 from __future__ import annotations
@@ -12,6 +16,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -22,11 +27,20 @@ from modex_agent.agents.external_coding.builder import ExternalCodingAgentBuilde
 from modex_agent.agents.external_coding.contracts import ProviderEventParser
 from modex_agent.agents.external_coding.paths import ExternalPaths, ProviderKind
 from modex_agent.agents.external_coding.providers.opencode_backend import OpenCodeBackend
-from modex_agent.agents.external_coding.providers.opencode_parser import OpenCodeEventParser
+from modex_agent.agents.external_coding.providers.opencode_server_backend import (
+    OpenCodeServerBackend,
+    SSEUnavailableError,
+)
+from modex_agent.agents.external_coding.providers.opencode_sse_parser import OpenCodeSSEParser
 from modex_agent.agents.external_coding.providers.pi_backend import PiBackend
 from modex_agent.agents.external_coding.providers.pi_parser import PiEventParser
 from modex_agent.agents.external_coding.session_store import ExternalSessionStore
-from modex_agent.agents.external_coding.types import ExternalEnvSpec
+from modex_agent.agents.external_coding.types import (
+    BackendResult,
+    Emission,
+    ExecOptions,
+    ExternalEnvSpec,
+)
 from modex_agent.core.agent import Agent
 from modex_agent.core.constants import ExecutionStrategy
 from modex_agent.multi_agent.descriptor import AgentDescriptor
@@ -47,18 +61,7 @@ __all__ = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# Provider-kind resolution
-# ---------------------------------------------------------------------------
-
-
 def read_provider_kind(pool_spec: PoolSpec, project_dir: Path) -> ProviderKind:
-    """Read ``provider_kind`` from the main spec or raw pool.yml file.
-
-    ``MainAgentSpec`` now carries ``provider_kind`` (added for T10), so the
-    preferred source is the parsed spec. If it is missing, fall back to the
-    raw YAML for backwards compatibility.
-    """
     if pool_spec.main.provider_kind is not None:
         return pool_spec.main.provider_kind
     pool_yml = project_dir / "config" / "pools" / pool_spec.name / "pool.yml"
@@ -78,37 +81,67 @@ def _provider_kind_from_str(value: str) -> ProviderKind:
 
 
 def provider_executable_for(kind: ProviderKind) -> str:
-    """Return the CLI executable name that ``shutil.which`` should look up."""
     return kind.value
 
 
-# ---------------------------------------------------------------------------
-# Backend / parser factories
-# ---------------------------------------------------------------------------
-
-
 def build_external_coding_backend(kind: ProviderKind) -> StreamingProviderBackend:
-    """Build a streaming backend for the configured provider kind.
-
-    The model is supplied per-turn by ``ExternalCodingAgent`` via
-    ``ExecOptions.model``, so the backend constructor only needs the
-    provider family.
-    """
     if kind == ProviderKind.OPENCODE:
-        return OpenCodeBackend()
+        return _OpenCodeFallbackBackend()
     return PiBackend(provider=None)
 
 
 def build_external_coding_parser(kind: ProviderKind) -> ProviderEventParser:
-    """Build a parser matching the provider's stdout JSONL shape."""
     if kind == ProviderKind.OPENCODE:
-        return OpenCodeEventParser()
+        return OpenCodeSSEParser()
     return PiEventParser()
 
 
-# ---------------------------------------------------------------------------
-# Env spec construction
-# ---------------------------------------------------------------------------
+class _OpenCodeFallbackBackend(StreamingProviderBackend):
+    """SSE-first backend with automatic subprocess fallback.
+
+    OpenCode SSE (``opencode serve``) is the hardcoded default. If the
+    SSE server fails to start, each turn falls back to subprocess
+    (``opencode run``). The fallback is sticky — once SSE fails, all
+    subsequent turns use subprocess to avoid repeated startup failures.
+
+    TODO: OpenCode subagent (task tool) child-session tracking is not
+    yet implemented. The SSE event stream carries child session events
+    (session.created with parentID, child message.part.delta/updated),
+    but the backend currently filters them out at the parser level.
+    Implementing child-session support requires: (1) per-session parser
+    demuxing in the backend, (2) correlating session.created with task
+    tool part subagent_type, (3) registering child sessions in
+    SessionRegistry with correct parent_session_id.
+    """
+
+    def __init__(self) -> None:
+        self._sse_backend = OpenCodeServerBackend()
+        self._subprocess_backend = OpenCodeBackend()
+        self._fallback_active = False
+
+    async def execute_streaming(
+        self,
+        opts: ExecOptions,
+        env: dict[str, str],
+        on_emission: Callable[[Emission], Awaitable[None]],
+    ) -> BackendResult:
+        if not self._fallback_active:
+            try:
+                return await self._sse_backend.execute_streaming(
+                    opts, env, on_emission
+                )
+            except SSEUnavailableError as exc:
+                logger.warning(
+                    "OpenCode SSE backend unavailable, falling back to subprocess: %s",
+                    exc,
+                )
+                self._fallback_active = True
+        return await self._subprocess_backend.execute_streaming(
+            opts, env, on_emission
+        )
+
+    async def close(self) -> None:
+        await self._sse_backend.close()
 
 
 def _modexctl_bin_dir() -> Path:
@@ -122,7 +155,6 @@ def _modexctl_bin_dir() -> Path:
 def _build_agent_pool_map(
     pool_name: str, pool_spec: PoolSpec, project_dir: Path
 ) -> dict[str, str]:
-    """Map every reachable agent name (main/subagents/peers) to its pool."""
     pool_map: dict[str, str] = {pool_spec.main.agent_name: pool_name}
     for sub in pool_spec.subagents:
         pool_map[sub.agent_name] = pool_name
@@ -130,7 +162,7 @@ def _build_agent_pool_map(
     for peer in pool_spec.peers:
         try:
             peer_spec = store.read_pool(peer)
-        except Exception as exc:  # noqa: BLE001 -- best-effort peer lookup
+        except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "Pool '%s': cannot read peer pool %r for agent_pool_map: %s",
                 pool_name, peer, exc,
@@ -143,7 +175,6 @@ def _build_agent_pool_map(
 def _build_targets(
     pool_name: str, pool_spec: PoolSpec, project_dir: Path
 ) -> list[tuple[str, str]]:
-    """Build the (name, description) target list from subagents and peers."""
     targets: list[tuple[str, str]] = []
     for sub in pool_spec.subagents:
         targets.append((sub.agent_name, sub.description or f"{sub.agent_name} subagent"))
@@ -151,7 +182,7 @@ def _build_targets(
     for peer in pool_spec.peers:
         try:
             peer_spec = store.read_pool(peer)
-        except Exception as exc:  # noqa: BLE001 -- best-effort peer lookup
+        except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "Pool '%s': cannot read peer pool %r for targets: %s",
                 pool_name, peer, exc,
@@ -170,13 +201,6 @@ def build_external_coding_env_spec(
     workspace_dir: Path,
     main_agent_name: str,
 ) -> ExternalEnvSpec:
-    """Construct the ``ExternalEnvSpec`` template.
-
-    ``session_id`` is a placeholder here — ``ExternalCodingAgent._run_turn``
-    overwrites it with the real per-turn ``ctx.session.session_id`` before
-    building the spawn env.  Similarly ``provider_session_id`` is resolved
-    per-turn from :class:`ExternalSessionStore`.
-    """
     return ExternalEnvSpec(
         workspace_root=workspace_dir,
         inbox_root=inbox_dir.parent,
@@ -190,11 +214,6 @@ def build_external_coding_env_spec(
     )
 
 
-# ---------------------------------------------------------------------------
-# Collated deps
-# ---------------------------------------------------------------------------
-
-
 def build_external_coding_deps(
     pool_name: str,
     pool_spec: PoolSpec,
@@ -204,10 +223,6 @@ def build_external_coding_deps(
     main_agent_name: str,
     base_env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Build the keyword-only collaborator dict for ``ExternalCodingAgentBuilder``.
-
-    The returned dict is suitable for passing to ``ExternalCodingAwareFactory``.
-    """
     provider_kind = read_provider_kind(pool_spec, project_dir)
     backend = build_external_coding_backend(provider_kind)
     parser = build_external_coding_parser(provider_kind)
@@ -225,20 +240,7 @@ def build_external_coding_deps(
     }
 
 
-# ---------------------------------------------------------------------------
-# Factory subclass
-# ---------------------------------------------------------------------------
-
-
 class ExternalCodingAwareFactory(DefaultAgentFactory):
-    """DefaultAgentFactory that can build external_coding main agents.
-
-    For ``react`` / ``pipeline`` descriptors the behavior is identical to the
-    parent class. For ``external_coding`` descriptors it forwards the
-    pre-built runtime collaborators (backend, parser, session store, env spec,
-    provider kind, base env) to ``ExternalCodingAgentBuilder.build_agent``.
-    """
-
     def __init__(
         self,
         *args: Any,  # noqa: ANN401

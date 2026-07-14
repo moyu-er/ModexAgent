@@ -132,17 +132,18 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
             sessions_dir_provider
         )
 
-        # Incremental turn state — text is buffered and flushed at stream/turn
-        # boundaries so both the streaming and non-streaming agent paths persist
-        # exactly one ``AssistantTextEvent`` per LLM response.
-        self._text_buffer: str = ""
+        # Incremental turn state — multiple segments tracked by part_id.
+        # Each part_id accumulates independently so token-level interleaving
+        # (text part_1 and reasoning part_2 alternating) produces exactly 2
+        # transcript events, not hundreds. WebSocket deltas still fire
+        # per-token (true SSE).
+        self._segments: dict[str, str] = {}
+        self._segment_kinds: dict[str, str] = {}
+        self._segment_order: list[str] = []
         self._current_turn_id: str = ""
         self._turn_active: bool = False
         self._tool_seq: int = 0
         self._turn_started_at: float = time.time()
-        # External TOOL_USE emissions buffered by call_id until the matching
-        # TOOL_RESULT arrives, so call + result persist together (mirrors the
-        # ReAct TOOL_CALL_END co-persistence the materializer pairs by call_id).
         self._pending_external_tools: dict[str, tuple[str, dict[str, object]]] = {}
 
     # ------------------------------------------------------------------
@@ -198,18 +199,16 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
     # ------------------------------------------------------------------
 
     async def emit_content(self, full_content: str) -> None:
-        """Buffer clean LLM content; flushed to TranscriptStore at stream end."""
         self._ensure_turn_started()
         text: str = full_content.strip()
         if text:
-            self._text_buffer += text
+            self._accumulate_segment(text, "text", None)
 
     async def emit_delta(self, delta: str) -> None:
-        """Push a content chunk to the WebSocket client."""
         if not delta:
             return
         self._ensure_turn_started()
-        self._text_buffer += delta
+        self._accumulate_segment(delta, "text", None)
         evt = ModelContentDelta(
             session_id=self._session_id,
             agent_name=self._agent_name,
@@ -219,27 +218,17 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
         await self._send_event(evt)
 
     async def emit_stream_end(self, resuming: bool = False) -> None:
-        """Flush buffered text to the transcript store.
-
-        Called by the agent after each LLM response (both the plain-streaming
-        and the control-interceptor streaming paths).  ``resuming`` only tells
-        the agent whether tool calls follow; the emitter always persists the
-        text accumulated so far.
-        """
-        await self._flush_text_buffer()
+        await self._flush_active_segment()
 
     # ------------------------------------------------------------------
     # Turn complete (flush + notify)
     # ------------------------------------------------------------------
 
     async def emit_complete(self, result: AgentResult) -> None:
-        await self._flush_text_buffer()
+        await self._flush_active_segment()
         await super().emit_complete(result)
         latency_ms: int = int((time.time() - self._turn_started_at) * 1000)
 
-        # ``TurnEndEvent`` is sent to the WebSocket so the frontend can
-        # mark the turn as finished. It is NOT persisted — like
-        # ``TurnStartEvent`` it carries no conversational content.
         ws_turn_end = TurnEndEvent(
             session_id=self._session_id,
             agent_name=self._agent_name,
@@ -248,7 +237,9 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
         )
         await self._send_event(ws_turn_end)
 
-        self._text_buffer = ""
+        self._segments = {}
+        self._segment_kinds = {}
+        self._segment_order = []
         self._pending_external_tools = {}
         self._turn_active = False
         self._turn_started_at = time.time()
@@ -259,12 +250,19 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
         await super().emit_error(error)
 
     async def emit_turn_event(self, event: TurnEvent) -> None:
-        """Project a canonical turn event onto WebUI live and persisted events."""
         match event:
-            case TurnTextEvent(text=text):
-                await self.emit_delta(text)
-            case TurnReasoningEvent(text=text):
+            case TurnTextEvent(text=text, part_id=part_id):
+                self._accumulate_segment(text, "text", part_id)
+                evt = ModelContentDelta(
+                    session_id=self._session_id,
+                    agent_name=self._agent_name,
+                    text=text,
+                    turn_id=self._current_turn_id,
+                )
+                await self._send_event(evt)
+            case TurnReasoningEvent(text=text, part_id=part_id):
                 self._ensure_turn_started()
+                self._accumulate_segment(text, "reasoning", part_id)
                 await self._send_event(
                     ModelReasoningDelta(
                         session_id=self._session_id,
@@ -273,18 +271,10 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
                         turn_id=self._current_turn_id,
                     )
                 )
-                if self._transcript_store is not None:
-                    self._persist(
-                        AssistantReasoningEvent(
-                            session_id=self._session_id,
-                            agent_name=self._agent_name,
-                            turn_id=self._current_turn_id,
-                            text=text,
-                        )
-                    )
             case TurnToolCallEvent(
                 tool_name=tool_name, call_id=call_id, arguments=arguments
             ):
+                await self._flush_active_segment()
                 self._ensure_turn_started()
                 full_args: dict[str, object] = dict(arguments)
                 self._pending_external_tools[call_id] = (tool_name, full_args)
@@ -300,6 +290,7 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
             case TurnToolResultEvent(
                 tool_name=tool_name, call_id=call_id, output=output
             ):
+                await self._flush_active_segment()
                 self._ensure_turn_started()
                 pending = self._pending_external_tools.pop(call_id, None)
                 full_args = pending[1] if pending is not None else {}
@@ -357,16 +348,8 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
                 turn_id=self._current_turn_id,
             )
             await self._send_event(evt)
-
-            if self._transcript_store is not None:
-                self._ensure_turn_started()
-                reasoning_evt = AssistantReasoningEvent(
-                    session_id=self._session_id,
-                    agent_name=self._agent_name,
-                    turn_id=self._current_turn_id,
-                    text=text,
-                )
-                self._persist(reasoning_evt)
+            self._ensure_turn_started()
+            self._accumulate_segment(text, "reasoning", None)
 
         elif event_value == _TOOL_CALL_START:
             tool_name: str = data.tool_name
@@ -452,22 +435,41 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _flush_text_buffer(self) -> None:
-        """Persist accumulated LLM text as a single ``AssistantTextEvent``."""
-        if self._transcript_store is None:
-            self._text_buffer = ""
-            return
-        text: str = self._text_buffer.strip()
+    def _accumulate_segment(self, text: str, kind: str, part_id: str | None) -> None:
         if not text:
             return
-        evt = AssistantTextEvent(
-            session_id=self._session_id,
-            agent_name=self._agent_name,
-            turn_id=self._current_turn_id,
-            text=text,
-        )
-        self._persist(evt)
-        self._text_buffer = ""
+        self._ensure_turn_started()
+        key = part_id if part_id else f"_{kind}"
+        if key not in self._segments:
+            self._segments[key] = ""
+            self._segment_kinds[key] = kind
+            self._segment_order.append(key)
+        self._segments[key] += text
+
+    async def _flush_active_segment(self) -> None:
+        for key in self._segment_order:
+            text = self._segments.get(key, "").strip()
+            if not text:
+                continue
+            kind = self._segment_kinds.get(key, "text")
+            if kind == "reasoning":
+                evt: ServerEvent = AssistantReasoningEvent(
+                    session_id=self._session_id,
+                    agent_name=self._agent_name,
+                    turn_id=self._current_turn_id,
+                    text=text,
+                )
+            else:
+                evt = AssistantTextEvent(
+                    session_id=self._session_id,
+                    agent_name=self._agent_name,
+                    turn_id=self._current_turn_id,
+                    text=text,
+                )
+            self._persist(evt)
+        self._segments = {}
+        self._segment_kinds = {}
+        self._segment_order = []
 
     async def _send_event(self, event: ServerEvent) -> None:
         """Wrap *event* in a structured DeltaEnvelope and enqueue it."""

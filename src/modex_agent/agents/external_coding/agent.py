@@ -128,6 +128,15 @@ class StreamingProviderBackend(ProviderBackend):
 
         return await self.execute_streaming(opts, {}, _noop)
 
+    async def close(self) -> None:
+        """Release backend resources (subprocesses, network connections).
+
+        Default no-op. Backends that hold external resources (e.g.
+        :class:`OpenCodeServerBackend` manages an ``opencode serve``
+        subprocess) override this. Called by
+        :meth:`ExternalCodingAgent.stop` during pool shutdown.
+        """
+
 
 _STALE_SESSION_PATTERNS: tuple[str, ...] = (
     "session not found",
@@ -257,10 +266,18 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
         self._model = model
         self._thinking_level = thinking_level
         self._timeout = timeout
+        self._stopped = False
 
     @property
     def name(self) -> str:
         return "ExternalCodingAgent"
+
+    async def stop(self) -> None:
+        if self._stopped:
+            return
+        self._stopped = True
+        with contextlib.suppress(Exception):
+            await self._backend.close()
 
     async def run(
         self,
@@ -374,11 +391,11 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
             case ExternalCodingEvent.TEXT_DELTA:
                 if emission.text:
                     accumulator.text.append(emission.text)
-                    await emitter.emit_turn_event(TurnTextEvent(text=emission.text))
+                    await emitter.emit_turn_event(TurnTextEvent(text=emission.text, part_id=emission.part_id))
             case ExternalCodingEvent.THINKING:
                 if emission.text:
                     await emitter.emit_turn_event(
-                        TurnReasoningEvent(text=emission.text)
+                        TurnReasoningEvent(text=emission.text, part_id=emission.part_id)
                     )
             case ExternalCodingEvent.TOOL_USE:
                 if emission.tool_name and emission.call_id:
@@ -394,6 +411,7 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
                             tool_name=emission.tool_name,
                             call_id=emission.call_id,
                             arguments=arguments,
+                            part_id=emission.part_id,
                         )
                     )
             case ExternalCodingEvent.TOOL_RESULT:
@@ -405,6 +423,7 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
                                 tool_name=tool_name,
                                 call_id=emission.call_id,
                                 output=emission.output or "",
+                                part_id=emission.part_id,
                             )
                         )
                     else:

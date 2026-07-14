@@ -203,7 +203,8 @@ class TestSendHappyPath:
         assert text.endswith("\n")
 
         record = json.loads(text.splitlines()[0])
-        assert record["content"] == "hello"
+        assert "hello" in record["content"]
+        assert "<agent_message" in record["content"]
         assert record["source"] == "coder"
         assert record["metadata"]["agent_session_id"] == "abc.analyst"
         assert record["metadata"]["session_id"] == "abc.coder"
@@ -257,7 +258,8 @@ class TestSendContentFile:
 
         pending = inbox_root / "pool_analyst" / "abc.analyst" / "pending.jsonl"
         record = json.loads(pending.read_text(encoding="utf-8").splitlines()[0])
-        assert record["content"] == body
+        assert body in record["content"]
+        assert "<agent_message" in record["content"]
 
     def test_content_file_missing_path_errors(
         self,

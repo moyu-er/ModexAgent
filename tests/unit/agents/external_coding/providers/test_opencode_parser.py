@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from pathlib import Path
 
 import pytest
 
@@ -420,3 +421,72 @@ class TestOpenCodeEventParserRealisticStream:
         assert out[4].text == "The file contains localhost."
 
         assert parser.captured_session_id == "oc-sid-real"
+
+
+class TestOpenCodeRealFixture:
+    """Parser tests against real opencode stdout captured from a live session.
+
+    Fixture: ``opencode_stdout_fixture.jsonl`` — captured from
+    ``opencode run --format json --dangerously-skip-permissions --thinking``
+    with a prompt that triggers: reasoning → tool_use → text (two steps).
+    """
+
+    _FIXTURE_PATH = (
+        Path(__file__).parent / "opencode_stdout_fixture.jsonl"
+    )
+
+    def _parse_fixture(self) -> list[Emission]:
+        parser = OpenCodeEventParser()
+        emissions: list[Emission] = []
+        with self._FIXTURE_PATH.open(encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                emissions.extend(parser.parse_line(line))
+        return emissions
+
+    def test_captures_session_id_from_fixture(self) -> None:
+        parser = OpenCodeEventParser()
+        with self._FIXTURE_PATH.open(encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    parser.parse_line(line)
+        assert parser.captured_session_id is not None
+        assert parser.captured_session_id.startswith("ses_")
+
+    def test_fixture_produces_expected_event_sequence(self) -> None:
+        emissions = self._parse_fixture()
+        events = [e.event for e in emissions]
+        assert events == [
+            ExternalCodingEvent.THINKING,
+            ExternalCodingEvent.TOOL_USE,
+            ExternalCodingEvent.TOOL_RESULT,
+            ExternalCodingEvent.TEXT_DELTA,
+        ]
+
+    def test_fixture_reasoning_text_not_empty(self) -> None:
+        emissions = self._parse_fixture()
+        reasoning = [e for e in emissions if e.event is ExternalCodingEvent.THINKING]
+        assert len(reasoning) == 1
+        assert "README" in reasoning[0].text
+
+    def test_fixture_text_delta_not_empty(self) -> None:
+        emissions = self._parse_fixture()
+        texts = [e for e in emissions if e.event is ExternalCodingEvent.TEXT_DELTA]
+        assert len(texts) == 1
+        assert len(texts[0].text) > 10
+
+    def test_fixture_tool_use_has_name_and_call_id(self) -> None:
+        emissions = self._parse_fixture()
+        tool_uses = [e for e in emissions if e.event is ExternalCodingEvent.TOOL_USE]
+        assert len(tool_uses) == 1
+        assert tool_uses[0].tool_name == "read"
+        assert tool_uses[0].call_id is not None
+
+    def test_fixture_tool_result_has_output(self) -> None:
+        emissions = self._parse_fixture()
+        results = [e for e in emissions if e.event is ExternalCodingEvent.TOOL_RESULT]
+        assert len(results) == 1
+        assert "README" in (results[0].output or "")

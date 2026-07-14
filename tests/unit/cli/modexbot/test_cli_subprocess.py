@@ -149,7 +149,8 @@ class TestSendRoundTrip:
         assert text.endswith("\n")
 
         record = json.loads(text.splitlines()[0])
-        assert record["content"] == "hello"
+        assert "hello" in record["content"]
+        assert "<agent_message" in record["content"]
         assert record["source"] == "coder"
         assert record["metadata"]["agent_session_id"] == "abc.analyst"
 
@@ -171,7 +172,8 @@ class TestSendRoundTrip:
 
         pending = inbox_root / "pool_analyst" / "abc.analyst" / "pending.jsonl"
         record = json.loads(pending.read_text(encoding="utf-8").splitlines()[0])
-        assert record["content"] == body
+        assert body in record["content"]
+        assert "<agent_message" in record["content"]
 
     def test_send_unknown_target_nonzero_exit(self, tmp_path: Path) -> None:
         inbox_root = tmp_path / "inbox"

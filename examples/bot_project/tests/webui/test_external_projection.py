@@ -70,7 +70,8 @@ def _make_emitter(
 
 @pytest.mark.asyncio
 async def test_external_reasoning_streams_delta_and_persists_event() -> None:
-    """THINKING -> ModelReasoningDelta (stream) + AssistantReasoningEvent (persist)."""
+    """THINKING -> ModelReasoningDelta (stream immediately) + buffered
+    AssistantReasoningEvent (persisted at flush boundary)."""
     with tempfile.TemporaryDirectory() as tmp:
         emitter, input_adapter, store, sid = _make_emitter(tmp)
         await emitter.emit_turn_event(TurnReasoningEvent(text="reasoning chunk"))
@@ -81,10 +82,81 @@ async def test_external_reasoning_streams_delta_and_persists_event() -> None:
         assert env.event_type == WebUIEventType.MODEL_REASONING_DELTA.value
         assert env.payload["text"] == "reasoning chunk"
 
+        # Reasoning is buffered for persistence — not yet in transcript
+        assert len(list(store.load(sid))) == 0
+
+        await emitter.emit_complete(AgentResult(content=""))
+
         events = list(store.load(sid))
         assert len(events) == 1
         assert isinstance(events[0], AssistantReasoningEvent)
         assert events[0].text == "reasoning chunk"
+
+
+@pytest.mark.asyncio
+async def test_external_reasoning_deltas_coalesced_into_single_event() -> None:
+    """Multiple token-level reasoning deltas must coalesce into ONE
+    AssistantReasoningEvent."""
+    with tempfile.TemporaryDirectory() as tmp:
+        emitter, _input_adapter, store, _sid = _make_emitter(tmp)
+        for fragment in ["Let", " me", " think", " about", " this."]:
+            await emitter.emit_turn_event(TurnReasoningEvent(text=fragment))
+
+        await emitter.emit_complete(AgentResult(content=""))
+
+        events = list(store.load("conv1.opencode"))
+        reasoning_events = [e for e in events if isinstance(e, AssistantReasoningEvent)]
+        assert len(reasoning_events) == 1
+        assert reasoning_events[0].text == "Let me think about this."
+
+
+@pytest.mark.asyncio
+async def test_interleaved_text_and_reasoning_produce_two_events_not_many() -> None:
+    """When text (part_id=p1) and reasoning (part_id=p2) alternate at the
+    token level (as opencode SSE does), the emitter must produce exactly 2
+    transcript events — one AssistantTextEvent and one AssistantReasoningEvent
+    — not one per delta. The part_id state machine tracks each segment
+    independently so interleaving doesn't cause flush thrashing."""
+    with tempfile.TemporaryDirectory() as tmp:
+        emitter, _input_adapter, store, _sid = _make_emitter(tmp)
+        for i in range(5):
+            await emitter.emit_turn_event(TurnTextEvent(text=f"t{i} ", part_id="p1"))
+            await emitter.emit_turn_event(TurnReasoningEvent(text=f"r{i} ", part_id="p2"))
+
+        await emitter.emit_complete(AgentResult(content=""))
+
+        events = list(store.load("conv1.opencode"))
+        text_events = [e for e in events if e.event == "assistant_text"]
+        reasoning_events = [e for e in events if e.event == "assistant_reasoning"]
+        assert len(text_events) == 1
+        assert len(reasoning_events) == 1
+        assert text_events[0].text == "t0 t1 t2 t3 t4"
+        assert reasoning_events[0].text == "r0 r1 r2 r3 r4"
+
+
+@pytest.mark.asyncio
+async def test_same_part_id_text_deltas_coalesce_across_tool_calls() -> None:
+    """Text deltas with the same part_id arriving across tool boundaries
+    are tracked as one segment — but a tool call forces a flush of the
+    active segment first, so two text segments (same part_id, separated
+    by a tool) produce two events."""
+    with tempfile.TemporaryDirectory() as tmp:
+        emitter, _input_adapter, store, _sid = _make_emitter(tmp)
+        await emitter.emit_turn_event(TurnTextEvent(text="before", part_id="p1"))
+        await emitter.emit_turn_event(
+            TurnToolCallEvent(tool_name="read", arguments={"path": "a"}, call_id="c1")
+        )
+        await emitter.emit_turn_event(
+            TurnToolResultEvent(tool_name="read", call_id="c1", output="ok")
+        )
+        await emitter.emit_turn_event(TurnTextEvent(text="after", part_id="p1"))
+        await emitter.emit_complete(AgentResult(content=""))
+
+        events = list(store.load("conv1.opencode"))
+        text_events = [e for e in events if e.event == "assistant_text"]
+        assert len(text_events) == 2
+        assert text_events[0].text == "before"
+        assert text_events[1].text == "after"
 
 
 # ---------------------------------------------------------------------------
@@ -228,7 +300,100 @@ async def test_external_tool_result_without_use_persists_result_only() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Text ordering: text emitted before non-text events must appear before them
+# in the transcript (ExternalCodingAgent does NOT call emit_stream_end between
+# text and tool events — the emitter must flush text in-order itself).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_text_before_tool_call_preserves_order_in_transcript() -> None:
+    """Text emitted via TurnTextEvent (without an intervening emit_stream_end)
+    must appear BEFORE the subsequent tool_call in the persisted transcript.
+
+    This simulates the real ExternalCodingAgent._handle_emission flow: it
+    emits TurnTextEvent then TurnToolCallEvent with no emit_stream_end call
+    between them.  The emitter must flush its text buffer before persisting
+    the tool event so chronological order is preserved.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        emitter, _input_adapter, store, _sid = _make_emitter(tmp)
+        await emitter.emit_turn_event(TurnTextEvent(text="Let me check the file."))
+        await emitter.emit_turn_event(
+            TurnToolCallEvent(
+                tool_name="read", arguments={"path": "a.txt"}, call_id="c1"
+            )
+        )
+        await emitter.emit_turn_event(
+            TurnToolResultEvent(
+                tool_name="read", call_id="c1", output="contents"
+            )
+        )
+        await emitter.emit_complete(AgentResult(content="done"))
+
+        events = list(store.load("conv1.opencode"))
+        event_types = [str(e.event) for e in events]
+
+        assert "assistant_text" in event_types, f"Missing assistant_text; got: {event_types}"
+        assert "tool_call" in event_types, f"Missing tool_call; got: {event_types}"
+
+        text_idx = event_types.index("assistant_text")
+        tool_idx = event_types.index("tool_call")
+        assert text_idx < tool_idx, (
+            f"assistant_text (idx={text_idx}) must appear before tool_call "
+            f"(idx={tool_idx}) in transcript; got order: {event_types}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # ReAct no-regression guard
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_text_between_tool_calls_preserves_position_in_transcript() -> None:
+    """Text emitted between two tool calls must appear between them in the
+    transcript, not aggregated at the end.
+
+    Simulates: text → tool1 → tool1_result → text → tool2 → tool2_result → done.
+    Without the flush fix, both text blocks would be merged and persisted
+    after all tool events.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        emitter, _input_adapter, store, _sid = _make_emitter(tmp)
+        await emitter.emit_turn_event(TurnTextEvent(text="Starting."))
+        await emitter.emit_turn_event(
+            TurnToolCallEvent(tool_name="read", arguments={"path": "a"}, call_id="c1")
+        )
+        await emitter.emit_turn_event(
+            TurnToolResultEvent(tool_name="read", call_id="c1", output="ra")
+        )
+        await emitter.emit_turn_event(TurnTextEvent(text="Now the second file."))
+        await emitter.emit_turn_event(
+            TurnToolCallEvent(tool_name="read", arguments={"path": "b"}, call_id="c2")
+        )
+        await emitter.emit_turn_event(
+            TurnToolResultEvent(tool_name="read", call_id="c2", output="rb")
+        )
+        await emitter.emit_complete(AgentResult(content="done"))
+
+        events = list(store.load("conv1.opencode"))
+        event_types = [str(e.event) for e in events]
+
+        text_indices = [i for i, t in enumerate(event_types) if t == "assistant_text"]
+        assert len(text_indices) == 2, f"Expected 2 assistant_text events, got {len(text_indices)}; order: {event_types}"
+
+        tool1_idx = event_types.index("tool_call")
+        tool2_idx = event_types.index("tool_call", tool1_idx + 1)
+
+        assert text_indices[0] < tool1_idx, f"First text must be before first tool_call; got: {event_types}"
+        assert tool1_idx < text_indices[1] < tool2_idx, (
+            f"Second text must be between the two tool_calls; got: {event_types}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# ReAct no-regression guard (original)
 # ---------------------------------------------------------------------------
 
 

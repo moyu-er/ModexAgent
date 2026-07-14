@@ -224,6 +224,7 @@ class Emission(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     event: ExternalCodingEvent
+    part_id: str | None = None
     # TEXT_DELTA / THINKING
     text: str | None = None
     # TOOL_USE

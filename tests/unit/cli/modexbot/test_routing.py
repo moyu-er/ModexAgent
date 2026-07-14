@@ -200,7 +200,8 @@ class TestBuildInboxLine:
         line = _build_inbox_line(env, "abc.analyst", "hello")
         assert isinstance(line, str)
         data = json.loads(line)
-        assert data["content"] == "hello"
+        assert "<agent_message" in data["content"]
+        assert "hello" in data["content"]
 
     def test_source_is_self_agent_name(self) -> None:
         env = _env(agent_name="coder")
@@ -210,7 +211,7 @@ class TestBuildInboxLine:
     def test_content_passes_through(self) -> None:
         env = _env()
         data = self._parse(env, "abc.analyst", "the quick brown fox")
-        assert data["content"] == "the quick brown fox"
+        assert "the quick brown fox" in data["content"]
 
     def test_message_type_is_agent_message(self) -> None:
         env = _env()
@@ -251,7 +252,8 @@ class TestBuildInboxLine:
             "metadata",
         }
         assert data["source"] == "coder"
-        assert data["content"] == "hello"
+        assert "hello" in data["content"]
+        assert "<agent_message" in data["content"]
         assert data["message_type"] == "agent_message"
         assert data["metadata"]["agent_session_id"] == "abc.analyst"
         assert data["metadata"]["session_id"] == "abc.coder"
