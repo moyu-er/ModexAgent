@@ -14,6 +14,9 @@ class _MinimalAgent:
         from modex_agent.core.emitter import AgentResult
         return AgentResult(content="ok")
 
+    async def stop(self) -> None:
+        pass
+
 
 class _MinimalToolManager:
     async def startup(self):

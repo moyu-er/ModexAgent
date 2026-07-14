@@ -86,5 +86,9 @@ class AgentInstance:
 
     async def stop(self) -> None:
         """优雅停止该实例并释放资源。"""
-        if self.pipeline is not None:
+        if self.pipeline is None:
+            return
+        try:
             await self.pipeline.stop()
+        finally:
+            await self.pipeline.agent.stop()
