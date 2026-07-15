@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 
-from .server import InboxServer
+from .server import InboxMQ
 from .types import InboxMessage
 
 
@@ -18,7 +18,7 @@ class BaseInboxConsumer(ABC):
         *,
         only_types: set[str] | None = None,
     ) -> list[InboxMessage]:
-        """从 InboxServer 消费消息，返回经过去重过滤后的消息列表。"""
+        """从 InboxMQ 消费消息，返回经过去重过滤后的消息列表。"""
         ...
 
     async def count(self, session_id: str) -> int:
@@ -42,7 +42,7 @@ class BaseInboxConsumer(ABC):
 class InboxConsumer(BaseInboxConsumer):
     """Inbox 消息消费端（本地缓存安全网实现）。"""
 
-    def __init__(self, server: InboxServer, cache_size: int = 1000) -> None:
+    def __init__(self, server: InboxMQ, cache_size: int = 1000) -> None:
         self._server = server
         self._cache: OrderedDict[str, bool] = OrderedDict()
         self._cache_size = cache_size
@@ -66,7 +66,7 @@ class InboxConsumer(BaseInboxConsumer):
         *,
         only_types: set[str] | None = None,
     ) -> list[InboxMessage]:
-        """从 InboxServer 消费消息，返回经过本地去重过滤后的消息列表。"""
+        """从 InboxMQ 消费消息，返回经过本地去重过滤后的消息列表。"""
         messages = await self._server.consume(session_id, limit, only_types=only_types)
         result = []
         for msg in messages:

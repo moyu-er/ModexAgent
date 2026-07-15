@@ -29,7 +29,7 @@ class WorkspaceResolver(Generic[R]):
         self._registry: WorkspaceRegistry[R] = registry
 
     async def resolve(self, ws: Path) -> tuple[WorkspaceContext, R]:
-        ctx = self._registry.get_or_open(ws)
+        ctx = await self._registry.get_or_open(ws)
         resources = await self._registry.materialize(ctx)
         return ctx, resources
 

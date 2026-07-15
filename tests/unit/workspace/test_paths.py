@@ -151,6 +151,10 @@ class TestWorkspacePaths:
         wp = WorkspacePaths(root=tmp_path)
         assert wp.inbox_dir.is_relative_to(wp.root)
 
+    def test_state_db_is_workspace_level(self, tmp_path: Path) -> None:
+        wp = WorkspacePaths(root=tmp_path)
+        assert wp.state_db == wp.root / "state.db"
+
     def test_pool_sessions_dir_under_root(self, tmp_path: Path) -> None:
         wp = WorkspacePaths(root=tmp_path)
         assert wp.pool_sessions_dir.is_relative_to(wp.root)

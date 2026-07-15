@@ -7,7 +7,8 @@ from pathlib import Path
 import pytest
 
 from modex_agent.workspace.control import WorkspaceController
-from modex_agent.workspace.registry import InMemoryRegistryStore, WorkspaceRegistry
+from modex_agent.workspace.registry import WorkspaceRegistry
+from modex_agent.workspace.store import GlobalWorkspaceStore
 from modex_agent.workspace.models import CdError
 
 from ._stubs import StubFactory
@@ -19,7 +20,7 @@ def disabled_controller(tmp_path: Path) -> WorkspaceController:
     home.mkdir()
     reg = WorkspaceRegistry(
         home=home, data_dir_name=".modex",
-        factory=StubFactory(), store=InMemoryRegistryStore(),
+        factory=StubFactory(), store=GlobalWorkspaceStore(home=home, data_dir_name=".modex"),
     )
     return WorkspaceController(
         registry=reg, data_dir_name=".modex", enabled=False
@@ -32,7 +33,7 @@ def enabled_controller(tmp_path: Path) -> WorkspaceController:
     home.mkdir()
     reg = WorkspaceRegistry(
         home=home, data_dir_name=".modex",
-        factory=StubFactory(), store=InMemoryRegistryStore(),
+        factory=StubFactory(), store=GlobalWorkspaceStore(home=home, data_dir_name=".modex"),
     )
     return WorkspaceController(
         registry=reg, data_dir_name=".modex", enabled=True

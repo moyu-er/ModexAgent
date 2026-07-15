@@ -1,14 +1,15 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-06-22 | Updated: 2026-07-02 -->
+<!-- Updated: 2026-07-15 -->
 
 # inbox
 
 ## Purpose
 
 The message-queue (MQ) substrate for the poll-driven multi-agent messaging
-model. One inbox per session, **owned by a pool**: each pool's `InboxServer`
-lives under `<workspace_data>/inbox/<pool_name>/` and is consumed by that
-pool's `InboxPoller` (the sole between-turn driver) and its fold-in hook.
+model. One inbox per session, **owned by a pool**: each pool's `InboxMQ`
+lives under `<workspace_data>/inbox/<pool_name>/` (file backend) or in the
+workspace `state.db` (SQLite backend) and is consumed by that pool's
+`InboxPoller` (the sole between-turn driver) and its fold-in hook.
 Messages are persisted and consumed atomically (FIFO, exactly-once); the inbox
 is pure transport — it holds messages, it does not orchestrate turns.
 
@@ -23,14 +24,16 @@ separate turn).
 
 | File | Description |
 |------|-------------|
-| `server.py` | `InboxServer` ABC — the inbox contract: `receive()` (idempotent), `consume(session_id, limit, *, only_types=None)` (atomic FIFO; filtered-out messages stay pending), `peek()`, `count()`, `clear()`, `sessions_with_pending()` (poller enumeration), `list_sessions()` |
-| `server_local.py` | `LocalFileInboxServer` — file-based implementation: `pending.jsonl` per session + `FileDeliveredIdTracker`; one `asyncio.Lock` per session for single-process safety; `sessions_with_pending` reads the original `session_id` back from the first pending record's `agent_session_id` metadata |
-| `server_memory.py` | `InMemoryInboxServer` — in-memory implementation for tests |
+| `server.py` | `InboxMQ` ABC — the inbox contract: `receive()` (idempotent), `consume(session_id, limit, *, only_types=None)` (atomic FIFO; filtered-out messages stay pending), `peek()`, `count()`, `clear()`, `sessions_with_pending()` (poller enumeration), `list_sessions()`, `deliver()` (sync, cross-process CLI), `wakeup()`/`wait_wakeup()`, `reap_expired()`. `InboxServer` is kept as a deprecated alias |
+| `server_local.py` | `LocalFileInboxMQ` — file-based implementation: `pending.jsonl` per session + `FileDeliveredIdTracker` (internal); one `asyncio.Lock` per session for single-process safety; `sessions_with_pending` reads the original `session_id` back from the first pending record's `agent_session_id` metadata. `LocalFileInboxServer` is kept as a deprecated alias |
+| `server_memory.py` | `InMemoryInboxServer` — in-memory implementation for tests (extends `InboxMQ`) |
 | `producer.py` | `InboxProducer` — local-cache dedup (`OrderedDict`, LRU); converts `AgentMessageEnvelope` to `InboxMessage` and persists via `receive()`; stores `source_kind`/`source_name` in metadata so `consume` can rebuild the original `AgentAddress` (preserving the channel/human origin of `external_input`) |
 | `consumer.py` | `InboxConsumer` — local-cache dedup; wraps a server's `consume` |
-| `tracker.py` | `DeliveredIdTracker` ABC + `FileDeliveredIdTracker` — delivered-id tracking with LRU cap of 10,000 ids per session |
+| `tracker.py` | `DeliveredIdTracker` ABC + `FileDeliveredIdTracker` — **deprecated** (T11). Delivered-id tracking is now internal to `InboxMQ`; the ABC is kept only for backwards compatibility. `FileDeliveredIdTracker` remains as a private helper used by `LocalFileInboxMQ` |
 | `types.py` | `InboxMessage` dataclass — `session_id`, `source`, `content`, `message_type`, `message_id`, `timestamp`, `metadata` |
 | `__init__.py` | Re-exports the public surface |
+
+The SQLite backend adapter is `SqliteInboxMQ` in `modex_agent.persistence.adapters.inbox_mq`. It implements the same `InboxMQ` ABC against the workspace `state.db`, closing the cross-process atomicity gap the file backend has (T20).
 
 ## For AI Agents
 
@@ -40,6 +43,10 @@ separate turn).
   fold-in is `InboxFlushHook` (`hook/builtin/`); cross-process wakeup is
   `LocalAgentMessageBus.send`'s broker `_inbox_wakeup`. The inbox only
   persists + consumes.
+- `InboxMQ` is the primary ABC name. `InboxServer` is a deprecated alias kept
+  during the transition (T11). New code should use `InboxMQ`.
+- `deliver()` is a sync method for cross-process CLI use (`modexctl send`
+  opens a short-lived SQLite connection and calls `InboxMQ.deliver()`).
 - Session dirs use a safe-encoded name derived from `session_id`
   (regex-sanitized; base64 for long ids).
 - All servers guarantee exactly-once delivery: a `message_id` seen before is
@@ -49,9 +56,9 @@ separate turn).
   between-turn.
 
 ### Common Patterns
-- Instantiate: `server = LocalFileInboxServer(Path("data/inbox/<pool>"))` then
+- Instantiate: `server = LocalFileInboxMQ(Path("data/inbox/<pool>"))` then
   `producer = InboxProducer(server)` / `consumer = InboxConsumer(server)`.
-- All public methods are async (file I/O or lock-based).
+- All public methods are async except `deliver()` (sync, for CLI use).
 
 ## Dependencies
 

@@ -8,14 +8,17 @@ result/error types.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Generic, TypeVar
 
-from modex_agent.workspace.registry import WorkspaceRegistry
 from modex_agent.workspace.models import CdError, CdResult
 from modex_agent.workspace.parse import parse_user_path
 from modex_agent.workspace.port import WorkspaceControlPort
+from modex_agent.workspace.registry import WorkspaceRegistry
+
+R = TypeVar("R")
 
 
-class WorkspaceController(WorkspaceControlPort):
+class WorkspaceController(WorkspaceControlPort, Generic[R]):
     """Drives /cd /pwd /exit for a conversation via registry.
 
     Implements :class:`framework.workspace.port.WorkspaceControlPort` so the
@@ -26,11 +29,11 @@ class WorkspaceController(WorkspaceControlPort):
     def __init__(
         self,
         *,
-        registry: WorkspaceRegistry,
+        registry: WorkspaceRegistry[R],
         data_dir_name: str,
         enabled: bool = True,
     ) -> None:
-        self._registry: WorkspaceRegistry = registry
+        self._registry: WorkspaceRegistry[R] = registry
         self._data_dir_name: str = data_dir_name
         self._enabled: bool = enabled
 
@@ -91,7 +94,7 @@ class WorkspaceController(WorkspaceControlPort):
                 notice=f"cd: permission denied: '{resolved}'",
                 error=CdError.PERMISSION_DENIED,
             )
-        self._registry.get_or_open(resolved)
+        await self._registry.get_or_open(resolved)
         return CdResult(
             success=True,
             current_path=resolved,

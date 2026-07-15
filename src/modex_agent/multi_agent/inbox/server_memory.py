@@ -1,18 +1,37 @@
-"""基于内存的 Inbox Server 实现，用于测试。"""
+"""In-memory ``InboxMQ`` implementation — for tests (T11).
+
+Implements the full :class:`InboxMQ` contract including the sync
+:meth:`deliver`, :meth:`wakeup`/:meth:`wait_wakeup` (in-process
+``asyncio.Event`` per session), and :meth:`reap_expired` (no-op).
+
+The class name :class:`InMemoryInboxServer` is retained for backwards
+compatibility; it now subclasses :class:`InboxMQ` (which :class:`InboxServer`
+aliases).
+"""
+
+from __future__ import annotations
 
 import asyncio
 
-from .server import InboxServer
+from .server import InboxMQ
 from .types import InboxMessage
 
 
-class InMemoryInboxServer(InboxServer):
-    """基于内存的 Inbox Server 实现，用于测试。"""
+class InMemoryInboxServer(InboxMQ):
+    """In-memory ``InboxMQ`` implementation for tests."""
 
     def __init__(self) -> None:
         self._pending: dict[str, list[InboxMessage]] = {}
         self._delivered_ids: dict[str, set[str]] = {}
         self._lock = asyncio.Lock()
+        self._wakeup_events: dict[str, asyncio.Event] = {}
+
+    def _get_wakeup_event(self, session_id: str) -> asyncio.Event:
+        return self._wakeup_events.setdefault(session_id, asyncio.Event())
+
+    # ------------------------------------------------------------------ #
+    # Async MQ surface
+    # ------------------------------------------------------------------ #
 
     async def receive(self, session_id: str, message: InboxMessage) -> bool:
         async with self._lock:
@@ -75,3 +94,57 @@ class InMemoryInboxServer(InboxServer):
     async def sessions_with_pending(self) -> list[str]:
         async with self._lock:
             return [sid for sid, msgs in self._pending.items() if msgs]
+
+    # ------------------------------------------------------------------ #
+    # Sync delivery surface (CLI cross-process)
+    # ------------------------------------------------------------------ #
+
+    def deliver(self, session_id: str, message: InboxMessage) -> bool:
+        """Sync in-memory delivery — directly appends to the pending list.
+
+        No locking: the in-memory server is single-process; the sync path is
+        used only by tests that exercise the ``deliver`` contract without an
+        event loop.
+        """
+        delivered = self._delivered_ids.setdefault(session_id, set())
+        if message.message_id in delivered:
+            return False
+        pending = self._pending.setdefault(session_id, [])
+        if any(m.message_id == message.message_id for m in pending):
+            return False
+        pending.append(message)
+        return True
+
+    # ------------------------------------------------------------------ #
+    # Wakeup surface (poller latency reduction)
+    # ------------------------------------------------------------------ #
+
+    async def wakeup(self, session_id: str) -> None:
+        """Set the in-process wakeup event for ``session_id``."""
+        self._get_wakeup_event(session_id).set()
+
+    async def wait_wakeup(
+        self,
+        session_id: str,
+        timeout: float | None = None,
+    ) -> bool:
+        """Wait for the in-process wakeup event.
+
+        Returns ``True`` if woken, ``False`` on timeout. The event is cleared
+        after a successful wait.
+        """
+        event = self._get_wakeup_event(session_id)
+        try:
+            await asyncio.wait_for(event.wait(), timeout=timeout)
+            event.clear()
+            return True
+        except TimeoutError:
+            return False
+
+    # ------------------------------------------------------------------ #
+    # Lifecycle maintenance
+    # ------------------------------------------------------------------ #
+
+    async def reap_expired(self) -> int:
+        """No-op for the in-memory backend (no TTL). Returns ``0``."""
+        return 0

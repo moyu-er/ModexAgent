@@ -12,6 +12,7 @@ from modex_agent.memory.token_estimator import TokenEstimator
 
 if TYPE_CHECKING:
     from modex_agent.memory.layers.config import MemoryLayerConfigSet
+    from modex_agent.memory.registry import MemoryStoreRegistry
 
 
 def _build_memory_layer_config(cfg: MemoryConfig) -> MemoryLayerConfigSet:
@@ -39,26 +40,24 @@ def _build_memory_layer_config(cfg: MemoryConfig) -> MemoryLayerConfigSet:
     # Archive config (new field, migrated from long_term if old config used)
     archive_config = None
     if cfg.archive is not None and cfg.archive.enabled:
-        from modex_agent.core.scope import GlobalScope, UserScope
+        from modex_agent.core.scope import build_scope
         from modex_agent.memory.layers.config import ArchiveMemoryConfig
 
-        archive_scope = GlobalScope() if cfg.archive.scope == "global" else UserScope()
         archive_config = ArchiveMemoryConfig(
             max_entries=cfg.archive.max_entries,
             retained_consumed_archive_pairs=cfg.archive.retained_consumed_pairs,
-            scope=archive_scope,
+            scope=build_scope(cfg.archive.scope),
         )
 
     # Knowledge config (new field, migrated from long_term if old config used)
     knowledge_config = None
     if cfg.knowledge is not None and cfg.knowledge.enabled:
-        from modex_agent.core.scope import GlobalScope, UserScope
+        from modex_agent.core.scope import build_scope
         from modex_agent.memory.layers.config import KnowledgeMemoryConfig
 
-        knowledge_scope = GlobalScope() if cfg.knowledge.scope == "global" else UserScope()
         knowledge_config = KnowledgeMemoryConfig(
             default_templates_dir=cfg.knowledge.default_templates_dir,
-            scope=knowledge_scope,
+            scope=build_scope(cfg.knowledge.scope),
         )
 
     return MemoryLayerConfigSet(
@@ -71,9 +70,10 @@ def _build_memory_layer_config(cfg: MemoryConfig) -> MemoryLayerConfigSet:
 
 def create_memory(
     cfg: MemoryConfig,
-    llm_provider: LLMProvider,
+    llm_provider: LLMProvider | None,
     workspace: Path,
     token_estimator: TokenEstimator | None = None,
+    store_registry: MemoryStoreRegistry | None = None,
 ) -> DefaultMemorySystem:
     """Create a MemorySystem from config.
 
@@ -82,6 +82,7 @@ def create_memory(
         llm_provider: LLMProvider for compression/summarization.
         workspace: Root directory for file-based storage.
         token_estimator: Optional token estimator (defaults to char-based).
+        store_registry: Optional storage registry; defaults to file-backed storage.
 
     Returns:
         Initialized DefaultMemorySystem.
@@ -160,4 +161,5 @@ def create_memory(
         archive_storage=archive_storage,
         knowledge_consolidator=knowledge_consolidator,
         token_estimator=token_estimator,
+        store_registry=store_registry,
     )

@@ -22,12 +22,13 @@ from modex_agent.workspace.paths import (
     safe_segment,
 )
 from modex_agent.workspace.port import WorkspaceControlPort
-from modex_agent.workspace.resources import WorkspaceManager
+from modex_agent.workspace.record import WorkspaceRecord
 from modex_agent.workspace.registry import (
-    InMemoryRegistryStore,
     RegistryStore,
     WorkspaceRegistry,
+    WorkspaceRegistryStore,
 )
+from modex_agent.workspace.resources import WorkspaceManager
 from modex_agent.workspace.routing import WorkspaceResolver
 from modex_agent.workspace.store import GlobalWorkspaceStore
 
@@ -35,12 +36,13 @@ __all__ = [
     "RESERVED_GLOBAL_DIR",
     "ResourceFactory",
     "GlobalWorkspaceStore",
-    "InMemoryRegistryStore",
     "RegistryStore",
     "WorkspaceContext",
     "WorkspaceController",
     "WorkspacePaths",
+    "WorkspaceRecord",
     "WorkspaceRegistry",
+    "WorkspaceRegistryStore",
     "WorkspaceResolver",
     "WorkspaceControlPort",
     "WorkspaceManager",

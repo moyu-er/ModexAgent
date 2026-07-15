@@ -1,26 +1,64 @@
-"""Inbox Server 抽象基类。"""
+"""InboxMQ ABC — the agent inbox message-queue contract (T11).
+
+Evolved from the legacy :class:`InboxServer` ABC. The new contract formalizes
+the topic lifecycle (``pending → active → idle → expired``) per PRD story 44
+and adds three new surfaces:
+
+- :meth:`InboxMQ.deliver` — **sync** cross-process delivery for CLI use
+  (SQLite ``deliver()`` owns a DB path and opens its own short-lived stdlib
+  ``sqlite3`` connection; it never reuses the server's async connection).
+  The FILE backend writes directly to the pending file.
+- :meth:`InboxMQ.wakeup` / :meth:`InboxMQ.wait_wakeup` — poller latency
+  reduction (optional; the poller still ticks as a fallback).
+- :meth:`InboxMQ.reap_expired` — TTL cleanup of expired messages and
+  delivered-id records.
+
+Delivered-id tracking is now **internal** to the MQ transaction (PRD story 23):
+the standalone :class:`~modex_agent.multi_agent.inbox.tracker.DeliveredIdTracker`
+ABC is deprecated; concrete MQ implementations own their dedup store.
+
+``InboxServer`` is kept as a deprecated alias for :class:`InboxMQ` during the
+transition (T11 expand phase). New code should depend on ``InboxMQ``.
+"""
+
+from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
 from .types import InboxMessage
 
+__all__ = ["InboxMQ", "InboxServer"]
 
-class InboxServer(ABC):
-    """Agent Inbox 的 MQ Server 抽象。
 
-    职责：
-    1. receive() - 幂等接收：同一 message_id 不会重复进入 pending 队列。
-    2. consume() - 原子消费：从 pending 队列中移除并返回，保证每个消息只被交付一次。
-    3. 维护 delivered_id 集合，用于在 receive() 时识别并丢弃已消费过的重复消息。
+class InboxMQ(ABC):
+    """Agent inbox message-queue abstraction.
+
+    Topic lifecycle (PRD story 44):
+
+    ``pending → active → idle → expired``
+
+    - **pending**: message received via :meth:`receive` or :meth:`deliver`,
+      awaiting :meth:`consume`.
+    - **active**: message consumed by a turn in progress.
+    - **idle**: no pending messages, no active turn for the session.
+    - **expired**: message or delivered-id record past its TTL, removed by
+      :meth:`reap_expired`.
+
+    All async methods are safe to call from a single event loop. The sync
+    :meth:`deliver` is the **only** method safe to call from non-async
+    (CLI) code; it must not share the async server's connection or locks.
     """
+
+    # ------------------------------------------------------------------ #
+    # Async MQ surface (server-side, framework process)
+    # ------------------------------------------------------------------ #
 
     @abstractmethod
     async def receive(self, session_id: str, message: InboxMessage) -> bool:
-        """接收消息。
+        """Idempotent intake: same ``message_id`` never enters pending twice.
 
-        Returns:
-            True: 消息是新的，已被保存到 pending 队列。
-            False: 消息是重复的（message_id 已存在于 pending 或已交付记录中），已被忽略。
+        Returns ``True`` if the message is new and persisted; ``False`` if it
+        was a duplicate (already pending or already delivered).
         """
         ...
 
@@ -32,39 +70,118 @@ class InboxServer(ABC):
         *,
         only_types: set[str] | None = None,
     ) -> list[InboxMessage]:
-        """原子性消费消息：从 pending 队列中移除并返回，严格保证 FIFO 和 Exactly-Once 交付。
+        """Atomic FIFO consume with exactly-once delivery.
 
-        若 ``only_types`` 非空，则仅消费 ``message_type`` 属于该集合的消息；
-        不匹配的消息保持 pending（FIFO 顺序不变）。
+        Removes and returns up to ``limit`` messages from the pending queue.
+        If ``only_types`` is non-empty, only messages whose ``message_type``
+        is in the set are consumed; non-matching messages stay pending (FIFO
+        order preserved). Delivered ids are recorded in the same transaction.
         """
         ...
 
     @abstractmethod
     async def peek(self, session_id: str) -> list[InboxMessage]:
-        """查看 pending 队列，不修改状态。"""
+        """Non-destructive read of the pending queue (no state change)."""
         ...
 
     @abstractmethod
     async def count(self, session_id: str) -> int:
-        """返回 pending 消息数量。"""
+        """Return the number of pending messages for ``session_id``."""
         ...
 
     @abstractmethod
     async def clear(self, session_id: str) -> None:
-        """清空指定 session 的 pending 队列和已交付记录。"""
+        """Clear pending queue and delivered-id records for ``session_id``."""
         ...
 
-    async def list_sessions(self) -> list[str]:
-        """返回当前存在 pending 消息或已注册过的所有 session_id 列表。
-
-        默认实现返回空列表；具体实现应覆盖此方法以支持会话发现。
-        """
-        return []
-
+    @abstractmethod
     async def sessions_with_pending(self) -> list[str]:
-        """Session ids that currently have ≥1 pending message (count > 0).
+        """Return session ids with ≥1 pending message (``count > 0``).
 
-        Default empty; concrete servers override. Distinct from
-        ``list_sessions`` (which includes now-empty sessions).
+        Distinct from :meth:`list_sessions` (which includes now-empty sessions).
+        """
+        ...
+
+    # ------------------------------------------------------------------ #
+    # Sync delivery surface (CLI cross-process)
+    # ------------------------------------------------------------------ #
+
+    @abstractmethod
+    def deliver(self, session_id: str, message: InboxMessage) -> bool:
+        """**Sync** cross-process delivery — for CLI use (``modexctl send``).
+
+        Contract:
+
+        - **SQLite backend**: owns the DB path and opens its own short-lived
+          stdlib ``sqlite3`` connection (``BEGIN IMMEDIATE`` … ``COMMIT`` …
+          ``close``). It **never** reuses the server's long-lived async
+          ``aiosqlite`` connection.
+        - **FILE backend**: writes directly to ``pending.jsonl`` (best-effort;
+          cross-process atomicity is a known gap that the SQLite backend
+          closes).
+
+        Same idempotency semantics as :meth:`receive`: returns ``True`` if the
+        message is new, ``False`` if duplicate.
+        """
+        ...
+
+    # ------------------------------------------------------------------ #
+    # Wakeup surface (poller latency reduction)
+    # ------------------------------------------------------------------ #
+
+    @abstractmethod
+    async def wakeup(self, session_id: str) -> None:
+        """Signal that ``session_id`` has pending work.
+
+        Wakes any coroutine blocked in :meth:`wait_wakeup` for the same
+        session. Implementations that do not support cross-process wakeup
+        (e.g. the FILE backend) may make this a no-op — the poller ticks as a
+        fallback.
+        """
+        ...
+
+    @abstractmethod
+    async def wait_wakeup(
+        self,
+        session_id: str,
+        timeout: float | None = None,
+    ) -> bool:
+        """Wait for a :meth:`wakeup` signal on ``session_id``.
+
+        Returns ``True`` if woken within ``timeout`` seconds, ``False`` on
+        timeout. ``timeout=None`` waits indefinitely. Implementations without
+        a real wakeup mechanism should return ``False`` immediately (or after
+        a short tick) so the poller falls back to its own tick cadence.
+        """
+        ...
+
+    # ------------------------------------------------------------------ #
+    # Lifecycle maintenance
+    # ------------------------------------------------------------------ #
+
+    @abstractmethod
+    async def reap_expired(self) -> int:
+        """Delete expired messages and stale delivered-id records (TTL).
+
+        Returns the number of items removed. Implementations without a TTL
+        policy (FILE, in-memory) return ``0``.
+        """
+        ...
+
+    # ------------------------------------------------------------------ #
+    # Non-abstract convenience (kept for backwards compatibility)
+    # ------------------------------------------------------------------ #
+
+    async def list_sessions(self) -> list[str]:
+        """Return all known session ids (default empty; override for real).
+
+        Distinct from :meth:`sessions_with_pending` (which filters by
+        ``count > 0``). Not part of the formal ``InboxMQ`` contract; kept
+        for implementations that already expose it.
         """
         return []
+
+
+# Deprecated alias — new code should use ``InboxMQ``. Kept during the T11
+# transition so existing imports and type hints continue to work.
+InboxServer = InboxMQ
