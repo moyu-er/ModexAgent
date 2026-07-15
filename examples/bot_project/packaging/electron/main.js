@@ -15,7 +15,7 @@
  *   - Graceful shutdown kills the entire Python process tree
  */
 
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, Tray, Menu, nativeImage } = require("electron");
 const { spawn, execSync } = require("child_process");
 const path = require("path");
 const http = require("http");
@@ -74,6 +74,10 @@ const LOADING_HTML = `data:text/html,${encodeURIComponent(
 let mainWindow = null;
 let pythonProcess = null;
 let isQuitting = false;
+let trayInstance = null;
+let botMonitorTimer = null;
+let botWasReady = false;
+let consecutiveFailures = 0;
 
 // ── Logging ─────────────────────────────────────────────────────────────────
 
@@ -256,12 +260,125 @@ function createWindow() {
     }
   });
 
+  // Close button hides to tray instead of quitting; the only real exit is
+  // the tray Exit menu item or the bot-monitor shutdown path (both set
+  // isQuitting, which lets the default close proceed).
+  mainWindow.on("close", (event) => {
+    if (!isQuitting) {
+      event.preventDefault();
+      mainWindow.hide();
+      log("Window hidden to tray.");
+    }
+  });
+
   mainWindow.on("closed", () => {
     log("Window closed.");
     mainWindow = null;
   });
 
   log("BrowserWindow created.");
+}
+
+// ── Tray ────────────────────────────────────────────────────────────────────
+
+function createTray() {
+  const iconPath = path.join(__dirname, "logo.ico");
+  if (!fs.existsSync(iconPath)) {
+    log(`Tray icon not found at ${iconPath}, skipping tray.`);
+    return;
+  }
+  const icon = nativeImage.createFromPath(iconPath);
+  trayInstance = new Tray(icon);
+  trayInstance.setToolTip("ModexBot");
+
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: "Show",
+      click: () => showMainWindow(),
+    },
+    { type: "separator" },
+    {
+      label: "Exit",
+      click: () => quitApp("Tray Exit"),
+    },
+  ]);
+  trayInstance.setContextMenu(contextMenu);
+
+  trayInstance.on("click", () => {
+    showMainWindow();
+  });
+
+  log("Tray created.");
+}
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+    if (botWasReady) {
+      mainWindow.loadURL(WEBUI_URL);
+    } else {
+      mainWindow.loadURL(LOADING_HTML);
+    }
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+// ── Bot monitor ─────────────────────────────────────────────────────────────
+
+// Polls the bot HTTP port once it has been ready. If the bot disappears
+// (e.g. `modexbot stop` from the CLI), the tray quits so CLI and tray
+// stay in sync: whoever stops the bot tears down the other.
+const BOT_MONITOR_INTERVAL_MS = 5000;
+const BOT_MONITOR_MAX_FAILURES = 3;
+
+function startBotMonitor() {
+  if (botMonitorTimer) return;
+  log("Bot monitor started.");
+  botMonitorTimer = setInterval(async () => {
+    if (isQuitting) return;
+    const up = await isServerUp();
+    if (up) {
+      consecutiveFailures = 0;
+      return;
+    }
+    consecutiveFailures += 1;
+    log(`Bot monitor: probe failed (${consecutiveFailures}/${BOT_MONITOR_MAX_FAILURES})`);
+    if (consecutiveFailures >= BOT_MONITOR_MAX_FAILURES) {
+      log("Bot appears to have been stopped externally — quitting tray.");
+      quitApp("Bot stopped externally");
+    }
+  }, BOT_MONITOR_INTERVAL_MS);
+}
+
+function stopBotMonitor() {
+  if (botMonitorTimer) {
+    clearInterval(botMonitorTimer);
+    botMonitorTimer = null;
+    log("Bot monitor stopped.");
+  }
+}
+
+function quitApp(reason) {
+  if (isQuitting) return;
+  isQuitting = true;
+  log(`Quitting: ${reason}`);
+  stopBotMonitor();
+  killPythonBot();
+  if (trayInstance && !trayInstance.isDestroyed()) {
+    trayInstance.destroy();
+    trayInstance = null;
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.destroy();
+    mainWindow = null;
+  }
+  setTimeout(() => {
+    log("Quitting Electron app.");
+    app.quit();
+  }, 2000);
 }
 
 // ── App lifecycle ───────────────────────────────────────────────────────────
@@ -272,19 +389,19 @@ if (!gotLock) {
   app.quit();
 } else {
   app.on("second-instance", () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
-    }
+    showMainWindow();
   });
 
   app.whenReady().then(async () => {
     log("Electron app ready.");
 
+    createTray();
+
     // 1. Quick check: is the bot already running?
     const alreadyRunning = await isServerUp();
     if (alreadyRunning) {
       log("Server already running — skipping bot start.");
+      botWasReady = true;
     } else {
       startPythonBot();
     }
@@ -297,10 +414,12 @@ if (!gotLock) {
     const ready = await waitForServer(MAX_WAIT_MS, POLL_INTERVAL_MS);
 
     if (ready) {
+      botWasReady = true;
       log("Server is ready! Loading WebUI...");
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.loadURL(WEBUI_URL);
       }
+      startBotMonitor();
     } else {
       log("ERROR: Server did not start within 90s");
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -318,36 +437,26 @@ if (!gotLock) {
     }
   });
 
+  // Tray mode: closing all windows does NOT quit. Only the tray Exit menu,
+  // the bot monitor (external CLI stop), or OS signals tear down the app.
   app.on("window-all-closed", () => {
-    log("All windows closed. Initiating shutdown...");
-    isQuitting = true;
-    killPythonBot();
-    // Give the bot a moment to clean up, then quit
-    setTimeout(() => {
-      log("Quitting Electron app.");
-      app.quit();
-    }, 2000);
+    // intentionally no-op
   });
 
   app.on("before-quit", (event) => {
     if (!isQuitting) {
       event.preventDefault();
-      isQuitting = true;
-      log("before-quit: killing Python bot...");
-      killPythonBot();
-      setTimeout(() => app.quit(), 2000);
+      quitApp("before-quit");
     }
   });
 
   process.on("SIGINT", () => {
     log("SIGINT received.");
-    killPythonBot();
-    app.quit();
+    quitApp("SIGINT");
   });
 
   process.on("SIGTERM", () => {
     log("SIGTERM received.");
-    killPythonBot();
-    app.quit();
+    quitApp("SIGTERM");
   });
 }
