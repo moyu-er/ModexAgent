@@ -19,8 +19,7 @@ from modex_agent.tools.terminal.process_tool import ProcessTool
 from modex_agent.tools.terminal.types import Platform, ShellFamily, ShellInfo, detect_platform_shell
 
 CFG = TerminalRuntimeConfig(default_command_timeout_seconds=8, default_yield_ms=500,
-    command_tool_outer_timeout_seconds=12, input_wait_idle_ms=800,
-    input_wait_early_min_elapsed_ms=500, prompt_stabilize_ms=100)
+    command_tool_outer_timeout_seconds=12, input_wait_idle_ms=800, prompt_stabilize_ms=100)
 
 OK, FAIL = "  OK  ", "  FAIL"
 
@@ -33,8 +32,13 @@ def _mgr(visible: bool) -> TerminalManager:
         from modex_agent.tools.terminal.backends.windows_hidden import WinptyHiddenBackend
         backend = WinptyHiddenBackend
     shell = detect_platform_shell() or ShellInfo(ShellFamily.BASH, "bash", Platform.WINDOWS)
-    return TerminalManager(storage_dir=Path(f"data/test_int_{'v' if visible else 'h'}"),
-                           max_terminals=2, backend_factory=backend, shell_info=shell)
+    visibility = TerminalVisibility.VISIBLE if visible else TerminalVisibility.HIDDEN
+    return TerminalManager(
+        max_terminals=2,
+        backend_factory=backend,
+        shell_info=shell,
+        visibility=visibility,
+    )
 
 
 async def _poll_for(proc: ProcessTool, needle: str, retries: int = 15) -> str:

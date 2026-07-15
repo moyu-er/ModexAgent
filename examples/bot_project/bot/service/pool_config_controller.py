@@ -55,7 +55,7 @@ from modex_agent.multi_agent.pool_config.store import (
     PoolValidationError,
     RenameReport,
 )
-from modex_agent.multi_agent.pool_router import PoolSessionStore
+from modex_agent.multi_agent.pool_router import PoolRoutingStore
 
 # Artifact classes that, when written, set ``restart_required``. The marker is
 # coarse (a single bool) — once any of these fires, the next restart re-reads
@@ -83,7 +83,7 @@ class PoolConfigController:
         mcp_registry_path: Path,
         default_pool: str,
         restarter: Callable[[], None] | None = None,
-        pool_session_store: PoolSessionStore | None = None,
+        pool_session_store: PoolRoutingStore | None = None,
     ) -> None:
         self._pools: PoolStore = pool_store
         self._skills: SkillsStore = skills_store
@@ -91,7 +91,7 @@ class PoolConfigController:
         self._mcp_path: Path = mcp_registry_path
         self.default_pool: str = default_pool
         self._restarter: Callable[[], None] | None = restarter
-        self._pool_session_store: PoolSessionStore | None = pool_session_store
+        self._pool_session_store: PoolRoutingStore | None = pool_session_store
         # Coarse per-process dirty marker. The set tracks which artifact
         # classes triggered the marker (diagnostic); ``__bool__`` below is the
         # single source of truth for the API hint.

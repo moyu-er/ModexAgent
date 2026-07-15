@@ -193,7 +193,7 @@ async def test_attachment_flow_to_llm_injection_and_asymmetry() -> None:
         #    with the records attached separately. NO injection. ──
         full_sid = env.metadata["full_session_id"]
         with bind_workspace_root(root):
-            events = list(transcript_store.load(full_sid))
+            events = await transcript_store.load(full_sid)
         user_events = [e for e in events if isinstance(e, UserMessageEvent)]
         assert len(user_events) == 1
         assert user_events[0].content == user_text

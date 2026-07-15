@@ -1,11 +1,16 @@
 """Crash-safe session garbage collection (ADR-0018).
 
 A bot-side collector that deletes a conversation's full cascade (root + every
-subagent descendant via ``parent_session_id``) and all ten per-session artifact
+subagent descendant via ``parent_session_id``) and all nine per-session artifact
 types. Crash recoverability is the first constraint: deletion progress is fully
 reconstructable from disk (the session-index graph) after a restart, with no
 in-memory closure collected up front. See ADR-0018 and the session-lifecycle
 glossary in CONTEXT.md.
+
+T17: The per-session artifact cleanup is delegated to
+:class:`modex_agent.core.cleanup.SessionArtifactCleaner`.  The artifact list
+dropped from ten to nine (``fork_contexts`` removed, aligning with T18 which
+removes fork XML file writing).
 """
 
 from __future__ import annotations
@@ -14,17 +19,29 @@ import asyncio
 import json
 import logging
 import shutil
-from collections.abc import Callable, Iterable
+from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable, Iterable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from modex_agent.core.session_id import SessionInfo, agent_of, session_id_prefix_of
-from modex_agent.core.session_store import safe_filename
-from modex_agent.memory.stores.utils import sanitize_scope_key
-from modex_agent.runtime.store import JsonFileTodoStore, JsonFileTurnStateStore
-from modex_agent.workspace.paths import WorkspacePaths, safe_segment
+from modex_agent.core.cleanup import (
+    DefaultSessionArtifactCleaner,
+    SessionCleanupResult,
+    session_artifact_paths,
+)
+from modex_agent.core.scope import RecordScope
+from modex_agent.core.session_cleanup import MissingSessionScopeError
+from modex_agent.core.session_id import SessionInfo, session_id_prefix_of
+from modex_agent.core.session_store import LocalFileSessionStore, SessionStore
+from modex_agent.workspace.paths import WorkspacePaths
+
+if TYPE_CHECKING:
+    from bot.service.workspace_store import WorkspaceScopedTranscriptStore
+
+SessionStoreResolver = Callable[[Path], Awaitable[SessionStore]]
+SessionPoolResolver = Callable[[SessionInfo], str]
 
 logger = logging.getLogger(__name__)
 
@@ -48,38 +65,6 @@ def load_session_gc_config(raw: dict[str, Any] | None) -> SessionGcConfig:
     """
     section = (raw or {}).get("session_gc") or {}
     return SessionGcConfig(**section)
-
-
-_UPLOADS_SUBDIR = "uploads"
-
-
-def _session_artifact_paths(session_id: str, pool: str, paths: WorkspacePaths) -> list[Path]:
-    """The ten per-session artifact units for *session_id* under *pool*.
-
-    Each entry is a whole per-session directory or file (never a sub-file inside
-    a dir), derived with the same on-disk transform its store uses. Caller may
-    delete any that exist; all are tolerant of being already absent.
-    """
-    agent = agent_of(session_id)
-    prefix = session_id_prefix_of(session_id)
-    safe = safe_filename(session_id)
-    scope = sanitize_scope_key(session_id)
-    seg = safe_segment(session_id)
-
-    return [
-        paths.sessions_dir / pool / f"{safe}.jsonl",                      # transcript
-        paths.session_index_dir / pool / f"{safe}.json",                  # index record
-        paths.memory_dir(pool) / "session" / scope,                       # memory messages
-        paths.pruned_dir(pool) / scope,                                   # pruned batches
-        paths.fork_contexts_dir(pool) / f"{agent}_{prefix}.xml",          # fork context
-        paths.media_dir(pool) / _UPLOADS_SUBDIR / seg,                    # media uploads
-        paths.runtime_dir(pool, "trace") / session_id,                    # trace (raw)
-        paths.runtime_dir(pool, "output") / session_id,                   # output (raw)
-        paths.runtime_dir(pool, "todos") / f"{JsonFileTodoStore._safe_segment(session_id)}.json",
-        paths.runtime_dir(pool, "turns")
-        / JsonFileTurnStateStore._safe_segment(agent)
-        / JsonFileTurnStateStore._safe_segment(session_id),               # turn state
-    ]
 
 
 class _IndexedSession:
@@ -124,7 +109,8 @@ def _find_orphan_sessions(paths: WorkspacePaths) -> list[_IndexedSession]:
     """Rule 1: non-root sessions whose parent index record is gone."""
     graph = _read_session_index(paths)
     return [
-        s for s in graph.values()
+        s
+        for s in graph.values()
         if s.parent_session_id is not None and s.parent_session_id not in graph
     ]
 
@@ -148,7 +134,7 @@ def _find_orphan_artifact_sids(paths: WorkspacePaths) -> dict[str, str]:
     """Rule 2: session ids that left artifacts but have no index record.
 
     Two signals, either sufficient to flag an orphan sid (clean_session then
-    recomputes all ten paths wholesale): the memory-session dir
+    recomputes all nine paths wholesale): the memory-session dir
     (``memory/<pool>/session/<sid>/``) and the transcript file
     (``sessions/<pool>/<sid>.jsonl``). Both carry the raw session id (dots
     preserved). ``setdefault`` prefers the memory dir's pool when both exist.
@@ -173,42 +159,6 @@ def _find_orphan_artifact_sids(paths: WorkspacePaths) -> dict[str, str]:
     return orphans
 
 
-async def clean_session(session_id: str, pool: str, paths: WorkspacePaths) -> None:
-    """Idempotently remove one session's record + transcript + ten artifacts.
-
-    Order is index-first (Path B): the existence marker goes before the
-    artifacts, so a mid-cleanup session vanishes from the orphan-session rule's
-    view almost immediately. Any OSError aborts this session for this round —
-    the backstop sweep re-discovers and retries it. Missing targets are no-ops.
-    """
-    await asyncio.to_thread(_clean_session_sync, session_id, pool, paths)
-
-
-def _clean_session_sync(session_id: str, pool: str, paths: WorkspacePaths) -> None:
-    units = _session_artifact_paths(session_id, pool, paths)
-    # index record first (existence marker), then transcript, then the rest
-    index_unit = next(u for u in units if "session_index" in u.parts)
-    _remove_unit(index_unit)
-    transcript_unit = next(u for u in units if u.suffix == ".jsonl")
-    _remove_unit(transcript_unit)
-    for unit in units:
-        if unit in (index_unit, transcript_unit):
-            continue
-        _remove_unit(unit)
-
-
-def _remove_unit(unit: Path) -> None:
-    # ignore_errors=False: a locked/active file raises and aborts this session
-    # this round (backstop retries). FileNotFoundError is suppressed.
-    try:
-        if unit.is_dir():
-            shutil.rmtree(unit)
-        elif unit.exists():
-            unit.unlink()
-    except FileNotFoundError:
-        pass
-
-
 def _cleanup_orphan_pool_routes(paths: WorkspacePaths) -> int:
     """Remove ``pool_sessions/<prefix>.json`` entries whose conversation is gone.
 
@@ -216,7 +166,7 @@ def _cleanup_orphan_pool_routes(paths: WorkspacePaths) -> int:
     (the routing lookup ``PoolRouter`` reads on every incoming message). An
     entry is stale once no live session_index record shares that prefix.
 
-    Done in the sweep (a single file, not a ten-artifact session) and ONLY
+    Done in the sweep (a single file, not a nine-artifact session) and ONLY
     here — never in ``clean_session`` — because a prefix can be shared by more
     than one live session (a conversation switched across pools leaves a root
     in each pool). Per-session deletion could remove a routing entry still
@@ -239,12 +189,54 @@ def _cleanup_orphan_pool_routes(paths: WorkspacePaths) -> int:
 
 
 class _Job:
-    __slots__ = ("session_id", "pool", "ws_root")
+    __slots__ = ("scope", "ws_root")
 
-    def __init__(self, session_id: str, pool: str, ws_root: Path) -> None:
-        self.session_id = session_id
-        self.pool = pool
+    def __init__(self, scope: RecordScope, ws_root: Path) -> None:
+        self.scope = scope
         self.ws_root = ws_root
+
+
+class SessionCleanerOperations(ABC):
+    @abstractmethod
+    async def discover_orphan_scopes(
+        self,
+        paths: WorkspacePaths,
+        *,
+        live_session_ids: frozenset[str],
+        workspace_id: str,
+    ) -> list[RecordScope]: ...
+
+    @abstractmethod
+    async def clean_session_artifacts(
+        self,
+        paths: WorkspacePaths,
+        session_id: str,
+        scope: RecordScope,
+    ) -> SessionCleanupResult: ...
+
+
+class _FileSessionCleanerOperations(SessionCleanerOperations):
+    async def discover_orphan_scopes(
+        self,
+        paths: WorkspacePaths,
+        *,
+        live_session_ids: frozenset[str],
+        workspace_id: str,
+    ) -> list[RecordScope]:
+        cleaner = DefaultSessionArtifactCleaner(paths=paths)
+        return await cleaner.discover_orphan_scopes(
+            live_session_ids=live_session_ids,
+            workspace_id=workspace_id,
+        )
+
+    async def clean_session_artifacts(
+        self,
+        paths: WorkspacePaths,
+        session_id: str,
+        scope: RecordScope,
+    ) -> SessionCleanupResult:
+        cleaner = DefaultSessionArtifactCleaner(paths=paths)
+        return await cleaner.clean_session_artifacts(session_id, scope)
 
 
 class SessionGarbageCollector:
@@ -255,6 +247,10 @@ class SessionGarbageCollector:
     ``sweep_once``. An in-memory, non-persistent dedup set suppresses concurrent
     duplicates and is cleared in each task's ``finally`` so the backstop is never
     permanently blocked.
+
+    T17: per-session artifact cleanup is delegated to
+    :class:`modex_agent.core.cleanup.SessionArtifactCleaner` (default:
+    :class:`~modex_agent.core.cleanup.DefaultSessionArtifactCleaner`).
     """
 
     def __init__(
@@ -263,12 +259,20 @@ class SessionGarbageCollector:
         workspace_roots_provider: Callable[[], Iterable[Path]],
         data_dir_name: str,
         config: SessionGcConfig,
+        cleaner_factory: SessionCleanerOperations | None = None,
+        transcript_store: WorkspaceScopedTranscriptStore | None = None,
+        session_store_resolver: SessionStoreResolver | None = None,
+        session_pool_resolver: SessionPoolResolver | None = None,
     ) -> None:
         self._roots_provider = workspace_roots_provider
         self._data_dir_name = data_dir_name
         self._config = config
+        self._cleaner_factory = cleaner_factory or _FileSessionCleanerOperations()
+        self._transcript_store = transcript_store
+        self._session_store_resolver = session_store_resolver
+        self._session_pool_resolver = session_pool_resolver
         self._queue: asyncio.Queue[_Job | None] = asyncio.Queue()
-        self._inflight: set[str] = set()
+        self._inflight: set[tuple[Path, str]] = set()
         self._workers: list[asyncio.Task[None]] = []
         self._sweep_task: asyncio.Task[None] | None = None
         self._stopping = False
@@ -324,17 +328,52 @@ class SessionGarbageCollector:
         """
         if ws_root is not None and pool is not None:
             paths = WorkspacePaths(root=ws_root / self._data_dir_name)
-            await asyncio.to_thread(_clean_record_and_transcript, root_session_id, pool, paths)
-            self._enqueue(root_session_id, pool, ws_root)
+            scope = RecordScope(
+                session_id=root_session_id,
+                pool=pool,
+                workspace_id=str(ws_root.resolve()),
+            )
+            await self._clean_record_and_transcript(
+                root_session_id,
+                scope.to_path_segment("pool"),
+                paths,
+            )
+            await self._enqueue_persisted_scopes(paths, scope, ws_root)
             return
+        if ws_root is not None:
+            paths = WorkspacePaths(root=ws_root / self._data_dir_name)
+            pool = await self._find_session_pool(paths, root_session_id)
+            if pool is not None:
+                await self._clean_record_and_transcript(
+                    root_session_id,
+                    pool,
+                    paths,
+                )
+                await self._enqueue_persisted_scopes(
+                    paths,
+                    RecordScope(
+                        session_id=root_session_id,
+                        pool=pool,
+                        workspace_id=str(ws_root.resolve()),
+                    ),
+                    ws_root,
+                )
+                return
         for ws_root in self._roots_provider():
             paths = WorkspacePaths(root=ws_root / self._data_dir_name)
-            graph = _read_session_index(paths)
-            node = graph.get(root_session_id)
-            if node is None:
+            pool = await self._find_session_pool(paths, root_session_id)
+            if pool is None:
                 continue
-            await asyncio.to_thread(_clean_record_and_transcript, root_session_id, node.pool, paths)
-            self._enqueue(root_session_id, node.pool, ws_root)
+            await self._clean_record_and_transcript(root_session_id, pool, paths)
+            await self._enqueue_persisted_scopes(
+                paths,
+                RecordScope(
+                    session_id=root_session_id,
+                    pool=pool,
+                    workspace_id=str(ws_root.resolve()),
+                ),
+                ws_root,
+            )
             return
 
     async def sweep_once(self) -> None:
@@ -350,27 +389,78 @@ class SessionGarbageCollector:
                 continue
             ws_count += 1
             paths = WorkspacePaths(root=ws_root / self._data_dir_name)
-            for orphan in _find_orphan_sessions(paths):
-                if self._enqueue(orphan.session_id, orphan.pool, ws_root):
+            sessions = await self._list_sessions(paths)
+            graph = {session.session_id: session for session in sessions}
+            orphan_sessions = [
+                session
+                for session in sessions
+                if session.parent_session_id is not None and session.parent_session_id not in graph
+            ]
+            orphan_session_ids = {orphan.session_id for orphan in orphan_sessions}
+            workspace_id = str(ws_root.resolve())
+            orphan_scopes = await self._cleaner_factory.discover_orphan_scopes(
+                paths,
+                live_session_ids=frozenset(graph).difference(orphan_session_ids),
+                workspace_id=workspace_id,
+            )
+            discovered_session_ids = {
+                scope.session_id for scope in orphan_scopes if scope.session_id is not None
+            }
+            for orphan in orphan_sessions:
+                if orphan.session_id in discovered_session_ids:
+                    continue
+                if self._enqueue(
+                    RecordScope(
+                        session_id=orphan.session_id,
+                        pool=self._pool_of(paths, orphan),
+                        workspace_id=workspace_id,
+                    ),
+                    ws_root,
+                ):
                     enqueued_sessions += 1
-            for sid, pool in _find_orphan_artifact_sids(paths).items():
-                if self._enqueue(sid, pool, ws_root):
+            for scope in orphan_scopes:
+                if self._enqueue(scope, ws_root):
                     enqueued_artifacts += 1
             removed_routes += _cleanup_orphan_pool_routes(paths)
         logger.info(
             "session-gc: sweep done across %d workspace(s) — enqueued %d orphan "
             "session(s), %d orphan artifact(s), removed %d pool route(s)",
-            ws_count, enqueued_sessions, enqueued_artifacts, removed_routes,
+            ws_count,
+            enqueued_sessions,
+            enqueued_artifacts,
+            removed_routes,
         )
 
     # -- internals -------------------------------------------------------
 
-    def _enqueue(self, session_id: str, pool: str, ws_root: Path) -> bool:
-        if session_id in self._inflight:
+    def _enqueue(self, scope: RecordScope, ws_root: Path) -> bool:
+        key = (ws_root.resolve(), scope.canonical())
+        if key in self._inflight:
             return False
-        self._inflight.add(session_id)
-        self._queue.put_nowait(_Job(session_id, pool, ws_root))
+        self._inflight.add(key)
+        self._queue.put_nowait(_Job(scope, ws_root))
         return True
+
+    async def _enqueue_persisted_scopes(
+        self,
+        paths: WorkspacePaths,
+        fallback_scope: RecordScope,
+        ws_root: Path,
+    ) -> None:
+        session_id = fallback_scope.session_id
+        if session_id is None:
+            raise MissingSessionScopeError
+        # Use the SQLite-aware _list_sessions instead of the file-only
+        # _read_session_index so live session IDs are correct in SQLite mode.
+        live_sessions = await self._list_sessions(paths)
+        discovered = await self._cleaner_factory.discover_orphan_scopes(
+            paths,
+            live_session_ids=frozenset(s.session_id for s in live_sessions),
+            workspace_id=fallback_scope.workspace_id or str(ws_root.resolve()),
+        )
+        matching = [scope for scope in discovered if scope.session_id == session_id]
+        for scope in matching or [fallback_scope]:
+            self._enqueue(scope, ws_root)
 
     async def _worker_loop(self) -> None:
         while True:
@@ -389,34 +479,145 @@ class SessionGarbageCollector:
             await self._process_job(job)
 
     async def _process_job(self, job: _Job) -> None:
+        key = (job.ws_root.resolve(), job.scope.canonical())
         try:
             paths = WorkspacePaths(root=job.ws_root / self._data_dir_name)
+            session_id = job.scope.session_id
+            if session_id is None:
+                raise MissingSessionScopeError
             try:
-                await clean_session(job.session_id, job.pool, paths)
+                result = await self._cleaner_factory.clean_session_artifacts(
+                    paths,
+                    session_id,
+                    job.scope,
+                )
             except Exception:
-                # Any failure (OSError on a locked file, path error, ...) aborts
-                # this session for this round. The backstop sweep re-discovers
-                # and retries it. Never let an exception kill the sole worker.
                 logger.exception(
-                    "session-gc: clean_session failed for %s; backstop will retry",
-                    job.session_id,
+                    "session-gc: clean_session_artifacts failed for %s (%s); backstop will retry",
+                    session_id,
+                    job.scope.canonical(),
                 )
             else:
+                if result.errors:
+                    logger.warning(
+                        "session-gc: clean_session_artifacts had errors for %s: %s",
+                        session_id,
+                        result.errors,
+                    )
                 logger.info(
-                    "session-gc: cleaned %s (pool=%s, ws=%s)",
-                    job.session_id, job.pool, job.ws_root,
+                    "session-gc: cleaned %s (scope=%s, pool=%s, ws=%s, files=%d, dirs=%d, db_rows=%d)",
+                    session_id,
+                    job.scope.canonical(),
+                    job.scope.pool,
+                    job.ws_root,
+                    result.files_deleted,
+                    result.dirs_deleted,
+                    result.db_rows_deleted,
                 )
-            # BFS propagation: enqueue children (self-propagating unit)
-            for child in _propagate_children(job.session_id, paths):
-                self._enqueue(child.session_id, child.pool, job.ws_root)
+            for child in await self._children(paths, session_id):
+                await self._clean_record_and_transcript(
+                    child.session_id,
+                    self._pool_of(paths, child, fallback=job.scope.pool),
+                    paths,
+                )
+                await self._enqueue_persisted_scopes(
+                    paths,
+                    RecordScope(
+                        session_id=child.session_id,
+                        pool=self._pool_of(paths, child, fallback=job.scope.pool),
+                        workspace_id=job.scope.workspace_id,
+                    ),
+                    job.ws_root,
+                )
         finally:
-            self._inflight.discard(job.session_id)
+            self._inflight.discard(key)
+
+    async def _session_store(self, paths: WorkspacePaths) -> SessionStore:
+        resolver = self._session_store_resolver
+        if resolver is not None:
+            return await resolver(paths.session_index_dir)
+        return LocalFileSessionStore(paths.session_index_dir)
+
+    async def _find_session_pool(
+        self,
+        paths: WorkspacePaths,
+        session_id: str,
+    ) -> str | None:
+        """Find the pool for *session_id* using the backend-aware session store.
+
+        Works in both FILE and SQLite modes: delegates to ``_list_sessions``
+        which calls the injected ``SessionStore`` (or ``LocalFileSessionStore``
+        as fallback). Returns ``None`` if the session is not found.
+        """
+        for session in await self._list_sessions(paths):
+            if session.session_id == session_id:
+                return self._pool_of(paths, session)
+        return None
+
+    async def _list_sessions(self, paths: WorkspacePaths) -> list[SessionInfo]:
+        return await (await self._session_store(paths)).list_sessions()
+
+    async def _children(
+        self,
+        paths: WorkspacePaths,
+        parent_session_id: str,
+    ) -> list[SessionInfo]:
+        return await (await self._session_store(paths)).get_children(parent_session_id)
+
+    def _pool_of(
+        self,
+        paths: WorkspacePaths,
+        session: SessionInfo,
+        *,
+        fallback: str | None = None,
+    ) -> str:
+        if self._session_pool_resolver is not None:
+            return self._session_pool_resolver(session)
+        pool = session.metadata.get("pool")
+        if pool is not None:
+            return str(pool)
+        # Fall back to the file-based index (pool subdirectory naming).
+        # In SQLite mode, the session_pool_resolver should always be wired
+        # by the business layer, so this fallback is FILE-mode only.
+        indexed = _read_session_index(paths).get(session.session_id)
+        if indexed is not None:
+            return indexed.pool
+        return fallback or session.agent_name
+
+    async def _clean_record_and_transcript(
+        self,
+        session_id: str,
+        pool: str,
+        paths: WorkspacePaths,
+    ) -> None:
+        await asyncio.to_thread(_clean_record_and_transcript, session_id, pool, paths)
+        # Synchronously remove the session record from the session store (FILE
+        # or SQLite) so the session leaves the list immediately. The file-based
+        # cleanup above is a no-op in SQLite mode; this call is what actually
+        # removes the row from the ``sessions`` table.
+        store = await self._session_store(paths)
+        await store.delete(session_id)
+        if self._transcript_store is not None:
+            await self._transcript_store.delete_session(
+                session_id,
+                sessions_dir=paths.sessions_dir,
+            )
 
     def _inflight_count(self) -> int:
         return len(self._inflight)
 
 
+def _remove_unit(unit: Path) -> None:
+    try:
+        if unit.is_dir():
+            shutil.rmtree(unit)
+        elif unit.exists():
+            unit.unlink()
+    except FileNotFoundError:
+        pass
+
+
 def _clean_record_and_transcript(session_id: str, pool: str, paths: WorkspacePaths) -> None:
-    units = _session_artifact_paths(session_id, pool, paths)
+    units = session_artifact_paths(session_id, pool, paths)
     _remove_unit(next(u for u in units if "session_index" in u.parts))
     _remove_unit(next(u for u in units if u.suffix == ".jsonl"))

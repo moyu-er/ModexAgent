@@ -19,14 +19,14 @@ from pathlib import Path
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
-
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.session_store import WorkspacePoolSessionStore
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.events import UserMessageEvent, _unwrap_envelope
 from bot.webui.server import WebUIServer
+
+from modex_agent.core.session_id import SessionIdFactory, SessionInfo
 from modex_agent.workspace.paths import WorkspacePaths
-from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.workspace.runtime import bind_workspace_root
 
 _DATA_DIR_NAME = ".modex"
@@ -50,19 +50,24 @@ def _build_server(home: Path):
     server.set_pool_agent_names(["main", "coding"])
     server.set_session_factory(SessionIdFactory())
     agent_pool_map = {"main": "main", "coding": "coding"}
-    server.set_session_store(
-        WorkspacePoolSessionStore(
-            base_dir=home,
-            pool_resolver=lambda s: agent_pool_map.get(s.agent_name, "main"),
+
+    def _pool_resolver(s: SessionInfo) -> str:
+        return agent_pool_map.get(s.agent_name, "main")
+
+    async def session_store_factory(index_dir: Path) -> WorkspacePoolSessionStore:
+        return WorkspacePoolSessionStore(
+            base_dir=index_dir,
+            pool_resolver=_pool_resolver,
         )
-    )
+
+    server.set_session_store_factory(session_store_factory)
     return server, store
 
 
-def _seed(store, ws_root: Path, session_id: str, content: str) -> None:
+async def _seed(store, ws_root: Path, session_id: str, content: str) -> None:
     """Append a user message under *ws_root* (routes via the ctxvar root)."""
     with bind_workspace_root(ws_root):
-        store.append(
+        await store.append(
             session_id,
             UserMessageEvent(session_id=session_id, agent_name="main", content=content),
         )
@@ -80,8 +85,8 @@ async def test_home_does_not_leak_other_ws_sessions() -> None:
 
         sid_home = "convH.main"
         sid_a = "convA.main"
-        _seed(store, home, sid_home, "msg in home")
-        _seed(store, ws_a, sid_a, "msg in ws_a")
+        await _seed(store, home, sid_home, "msg in home")
+        await _seed(store, ws_a, sid_a, "msg in ws_a")
 
         client = TestClient(TestServer(server.app))
         await client.start_server()
@@ -120,7 +125,7 @@ async def test_message_roundtrip_with_ws() -> None:
         server, store = _build_server(home)
 
         sid_a = "convA.main"
-        _seed(store, ws_a, sid_a, "hello from ws_a")
+        await _seed(store, ws_a, sid_a, "hello from ws_a")
 
         client = TestClient(TestServer(server.app))
         await client.start_server()
@@ -149,7 +154,7 @@ async def test_message_lost_without_ws_frontend_behaviour() -> None:
         server, store = _build_server(home)
 
         sid_a = "convA.main"
-        _seed(store, ws_a, sid_a, "hello from ws_a")
+        await _seed(store, ws_a, sid_a, "hello from ws_a")
 
         client = TestClient(TestServer(server.app))
         await client.start_server()
@@ -244,11 +249,11 @@ async def test_send_message_then_attach_under_ws_finds_history() -> None:
             await client.close()
 
 
-def _seed_for_pool(store, ws_root: Path, session_id: str, content: str) -> None:
+async def _seed_for_pool(store, ws_root: Path, session_id: str, content: str) -> None:
     """Append a user message for a specific agent under *ws_root*."""
     agent_name = session_id.split(".")[1] if "." in session_id else "main"
     with bind_workspace_root(ws_root):
-        store.append(
+        await store.append(
             session_id,
             UserMessageEvent(session_id=session_id, agent_name=agent_name, content=content),
         )
@@ -271,8 +276,8 @@ async def test_get_messages_does_not_leak_across_pools() -> None:
         sid_main = f"{conv_prefix}.main"
         sid_coding = f"{conv_prefix}.coding"
 
-        _seed_for_pool(store, home, sid_main, "hello from main pool")
-        _seed_for_pool(store, home, sid_coding, "hello from coding pool")
+        await _seed_for_pool(store, home, sid_main, "hello from main pool")
+        await _seed_for_pool(store, home, sid_coding, "hello from coding pool")
 
         client = TestClient(TestServer(server.app))
         await client.start_server()

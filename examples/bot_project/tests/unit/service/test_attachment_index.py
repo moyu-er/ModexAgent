@@ -164,7 +164,7 @@ class TestPersistStageWiring:
             env.resolved_attachments = [att]
             with bind_workspace_root(root):
                 await PersistUserMessageStage().process(env, _ctx(store))
-                events = list(store.load("u1.main"))
+                events = await store.load("u1.main")
             assert len(events) == 1
             persisted = events[0]
             assert isinstance(persisted, UserMessageEvent)
@@ -185,7 +185,7 @@ class TestPersistStageWiring:
             env.metadata[RoutingMeta.WORKSPACE] = str(root)
             with bind_workspace_root(root):
                 await PersistUserMessageStage().process(env, _ctx(store))
-                events = list(store.load("u1.main"))
+                events = await store.load("u1.main")
             assert len(events) == 1
             persisted = events[0]
             assert isinstance(persisted, UserMessageEvent)
@@ -196,11 +196,12 @@ class TestPersistStageWiring:
 
 
 class TestFindAttachment:
-    def test_hit_on_user_message(self) -> None:
+    @pytest.mark.asyncio
+    async def test_hit_on_user_message(self) -> None:
         att = _inbound_attachment()
         with TemporaryDirectory() as tmp:
             store = JSONLTranscriptStore(Path(tmp))
-            store.append(
+            await store.append(
                 "s1.main",
                 UserMessageEvent(
                     session_id="s1.main",
@@ -209,14 +210,15 @@ class TestFindAttachment:
                     attachments=[att.to_dict()],
                 ),
             )
-            found = find_attachment(store, "s1.main", att.id)
+            found = await find_attachment(store, "s1.main", att.id)
         assert found == att
 
-    def test_miss_returns_none(self) -> None:
+    @pytest.mark.asyncio
+    async def test_miss_returns_none(self) -> None:
         att = _inbound_attachment()
         with TemporaryDirectory() as tmp:
             store = JSONLTranscriptStore(Path(tmp))
-            store.append(
+            await store.append(
                 "s1.main",
                 UserMessageEvent(
                     session_id="s1.main",
@@ -225,15 +227,16 @@ class TestFindAttachment:
                     attachments=[att.to_dict()],
                 ),
             )
-            found = find_attachment(store, "s1.main", "nonexistent-id")
+            found = await find_attachment(store, "s1.main", "nonexistent-id")
         assert found is None
 
-    def test_hit_on_assistant_turn(self) -> None:
+    @pytest.mark.asyncio
+    async def test_hit_on_assistant_turn(self) -> None:
         """Outbound records (populated in G7) are found via assistant_turn."""
         att = _outbound_attachment()
         with TemporaryDirectory() as tmp:
             store = JSONLTranscriptStore(Path(tmp))
-            store.append(
+            await store.append(
                 "s1.main",
                 AssistantTurnEvent(
                     session_id="s1.main",
@@ -242,22 +245,24 @@ class TestFindAttachment:
                     attachments=[att.to_dict()],
                 ),
             )
-            found = find_attachment(store, "s1.main", att.id)
+            found = await find_attachment(store, "s1.main", att.id)
         assert found == att
 
-    def test_empty_session_returns_none(self) -> None:
+    @pytest.mark.asyncio
+    async def test_empty_session_returns_none(self) -> None:
         with TemporaryDirectory() as tmp:
             store = JSONLTranscriptStore(Path(tmp))
-            found = find_attachment(store, "s1.main", "any-id")
+            found = await find_attachment(store, "s1.main", "any-id")
         assert found is None
 
-    def test_skips_non_attachment_events(self) -> None:
+    @pytest.mark.asyncio
+    async def test_skips_non_attachment_events(self) -> None:
         """Events without the attachments field are scanned past."""
         att = _inbound_attachment()
         with TemporaryDirectory() as tmp:
             store = JSONLTranscriptStore(Path(tmp))
             # A user_message WITHOUT the matching id, then one WITH it.
-            store.append(
+            await store.append(
                 "s1.main",
                 UserMessageEvent(
                     session_id="s1.main",
@@ -271,7 +276,7 @@ class TestFindAttachment:
                     ],
                 ),
             )
-            store.append(
+            await store.append(
                 "s1.main",
                 UserMessageEvent(
                     session_id="s1.main",
@@ -280,10 +285,11 @@ class TestFindAttachment:
                     attachments=[att.to_dict()],
                 ),
             )
-            found = find_attachment(store, "s1.main", att.id)
+            found = await find_attachment(store, "s1.main", att.id)
         assert found == att
 
-    def test_workspace_store_load_with_explicit_sessions_dir(self) -> None:
+    @pytest.mark.asyncio
+    async def test_workspace_store_load_with_explicit_sessions_dir(self) -> None:
         """Production branch: WorkspaceScopedTranscriptStore + sessions_dir kwarg.
 
         Mirrors the G6 HTTP-handler path: an out-of-turn caller passes the
@@ -297,7 +303,7 @@ class TestFindAttachment:
             ws_store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
             ws_store.set_agent_pool_map({"main": "main"})
             sessions_dir = WorkspacePaths(root / ".modex").sessions_dir
-            ws_store.append(
+            await ws_store.append(
                 "u1.main",
                 UserMessageEvent(
                     session_id="u1.main",
@@ -307,12 +313,13 @@ class TestFindAttachment:
                 ),
                 sessions_dir=sessions_dir,
             )
-            found = find_attachment(
+            found = await find_attachment(
                 ws_store, "u1.main", att.id, sessions_dir=sessions_dir
             )
         assert found == att
 
-    def test_earliest_match_wins_when_id_repeats(self) -> None:
+    @pytest.mark.asyncio
+    async def test_earliest_match_wins_when_id_repeats(self) -> None:
         """When the same id appears on two records, the chronologically first is returned."""
         shared_id = "dup-id"
         first = Attachment(
@@ -330,7 +337,7 @@ class TestFindAttachment:
             # First a user_message carrying `first`, then an assistant_turn
             # carrying `second` — both under the same id. Append order is the
             # transcript's chronological order.
-            store.append(
+            await store.append(
                 "s1.main",
                 UserMessageEvent(
                     session_id="s1.main",
@@ -339,7 +346,7 @@ class TestFindAttachment:
                     attachments=[first.to_dict()],
                 ),
             )
-            store.append(
+            await store.append(
                 "s1.main",
                 AssistantTurnEvent(
                     session_id="s1.main",
@@ -348,5 +355,5 @@ class TestFindAttachment:
                     attachments=[second.to_dict()],
                 ),
             )
-            found = find_attachment(store, "s1.main", shared_id)
+            found = await find_attachment(store, "s1.main", shared_id)
         assert found == first

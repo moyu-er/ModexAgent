@@ -142,7 +142,7 @@ class SendFileToUserTool(Tool):
         # send below. The record rides on an assistant_turn ServerEvent
         # (ADR-0013 §11), scanned by find_attachment alongside user_message
         # inbound records.
-        self._persist_attachment(session_id, attachment)
+        await self._persist_attachment(session_id, attachment)
 
         try:
             # Deliver on the CURRENT turn's channel adapter, not the adapter
@@ -176,7 +176,9 @@ class SendFileToUserTool(Tool):
         # ``result.attachments`` and the user would receive the file twice.
         return f"File sent successfully: {path.name}"
 
-    def _persist_attachment(self, session_id: str, attachment: Attachment) -> None:
+    async def _persist_attachment(
+        self, session_id: str, attachment: Attachment
+    ) -> None:
         """Record the outbound Attachment on an assistant_turn transcript event.
 
         Best-effort: a transcript write failure must not break the send (the
@@ -201,11 +203,11 @@ class SendFileToUserTool(Tool):
                 else None
             )
             if sessions_dir is not None:
-                self._transcript_store.append(
+                await self._transcript_store.append(
                     session_id, event, sessions_dir=sessions_dir
                 )
             else:
-                self._transcript_store.append(session_id, event)
+                await self._transcript_store.append(session_id, event)
         except Exception:
             logger.exception(
                 "Failed to persist outbound attachment %s for session %s; "

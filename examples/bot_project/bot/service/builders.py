@@ -7,22 +7,31 @@ No tool configuration is read from YAML/config dicts.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bot.plugins.integration import PluginIntegration
+from modex_agent.core.scope import RecordScope
+from modex_agent.core.session_store import SessionStore
 from modex_agent.core.skills import SkillManager
 from modex_agent.core.tool_manager import Tool
 from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import AgentMessageBus
+from modex_agent.multi_agent.pool_router import PoolRoutingStore
+from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.pipeline.adapters import OutputAdapter
+from modex_agent.workspace.registry import WorkspaceRegistryStore
 
 if TYPE_CHECKING:
-    # Annotation-only import: the registry type is referenced solely in the
-    # ``_load_agent_mcp_tools`` signature (a string under ``from __future__
-    # import annotations``); deferred to TYPE_CHECKING to keep the import graph
-    # acyclic (the framework registry pulls in connection/injector modules).
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.memory.registry import MemoryStoreRegistry
+    from modex_agent.persistence.managers import (
+        RegistryPersistenceManager,
+        WorkspacePersistenceManager,
+    )
+    from modex_agent.runtime.codec import RuntimeStateCodecRegistry
     from modex_agent.tools.mcp.registry import McpConnectionRegistry
 
 logger = logging.getLogger(__name__)
@@ -186,3 +195,180 @@ class AgentBuilderMixin:
     def _project_dir(self) -> Path:
         """Project root directory. Implemented by BotService."""
         raise NotImplementedError
+
+
+# ── T26: Persistence backend factory selection ──
+# Each factory returns the SQLite adapter when backend == SQLITE and a
+# WorkspacePersistenceManager is available, otherwise the file-based impl.
+
+
+def build_inbox(
+    app_config: AppConfig | None,
+    persistence: WorkspacePersistenceManager | None,
+    inbox_dir: Path,
+    db_path: Path,
+    pool_name: str,
+) -> Any:
+    if (
+        app_config is not None
+        and persistence is not None
+        and app_config.persistence.backend is PersistenceBackend.SQLITE
+    ):
+        from modex_agent.persistence.adapters.inbox_mq import SqliteInboxMQ
+
+        return SqliteInboxMQ(
+            db_path,
+            RecordScope(pool=pool_name),
+            connection=persistence.connection,
+        )
+    from modex_agent.multi_agent.inbox.server_local import LocalFileInboxMQ
+
+    return LocalFileInboxMQ(workspace=inbox_dir)
+
+
+def _is_sqlite(
+    app_config: AppConfig | None,
+    persistence: object | None,
+) -> bool:
+    """True when the SQLITE backend is selected and a manager is available."""
+    return (
+        app_config is not None
+        and persistence is not None
+        and app_config.persistence.backend is PersistenceBackend.SQLITE
+    )
+
+
+def build_turn_state_store(
+    app_config: AppConfig | None,
+    persistence: WorkspacePersistenceManager | None,
+    turns_dir: Path,
+    codec_registry: RuntimeStateCodecRegistry,
+) -> Any:
+    if _is_sqlite(app_config, persistence):
+        assert persistence is not None
+        from modex_agent.persistence.adapters.turn_state_store import SqliteTurnStateStore
+
+        return SqliteTurnStateStore(persistence.connection, codec_registry)
+    from modex_agent.runtime.store import JsonFileTurnStateStore
+
+    return JsonFileTurnStateStore(turns_dir, codec_registry)
+
+
+def build_session_store(
+    app_config: AppConfig | None,
+    persistence: WorkspacePersistenceManager | None,
+    session_index_dir: Path,
+    pool_resolver: Callable[[SessionInfo], str],
+    data_dir_name: str,
+) -> SessionStore:
+    if _is_sqlite(app_config, persistence):
+        assert persistence is not None
+        from modex_agent.persistence.adapters.session_store import SqliteSessionStore
+
+        return SqliteSessionStore(persistence.connection, pool_resolver=pool_resolver)
+    from bot.service.session_store import WorkspacePoolSessionStore
+
+    return WorkspacePoolSessionStore(
+        base_dir=session_index_dir,
+        pool_resolver=pool_resolver,
+        data_dir_name=data_dir_name,
+    )
+
+
+def build_pool_routing_store(
+    app_config: AppConfig | None,
+    persistence: WorkspacePersistenceManager | None,
+    data_dir: Path,
+    db_path: Path,
+) -> PoolRoutingStore:
+    if _is_sqlite(app_config, persistence):
+        from modex_agent.persistence.adapters.pool_routing_store import SqlitePoolRoutingStore
+
+        return SqlitePoolRoutingStore(db_path)
+    from modex_agent.multi_agent.pool_router import LocalFilePoolRoutingStore
+
+    return LocalFilePoolRoutingStore(data_dir=data_dir)
+
+
+def build_external_session_map_store(
+    app_config: AppConfig | None,
+    persistence: WorkspacePersistenceManager | None,
+    workspace_dir: Path,
+    scope: RecordScope,
+) -> Any:
+    if _is_sqlite(app_config, persistence):
+        assert persistence is not None
+        from modex_agent.persistence.adapters.external_session_map_store import (
+            SqliteExternalSessionMapStore,
+        )
+
+        return SqliteExternalSessionMapStore(persistence.connection, scope)
+    from modex_agent.agents.external_coding.paths import ExternalPaths
+    from modex_agent.agents.external_coding.session_store import (
+        LocalFileExternalSessionMapStore,
+    )
+
+    return LocalFileExternalSessionMapStore(ExternalPaths(workspace_dir))
+
+
+def build_todo_store(
+    app_config: AppConfig | None,
+    persistence: WorkspacePersistenceManager | None,
+    todo_dir: Path,
+    scope: RecordScope,
+) -> Any:
+    if _is_sqlite(app_config, persistence):
+        assert persistence is not None
+        from modex_agent.persistence.adapters.todo_store import SqliteTodoStore
+
+        return SqliteTodoStore(persistence.connection, scope)
+    from modex_agent.runtime.store import JsonFileTodoStore
+
+    return JsonFileTodoStore(todo_dir)
+
+
+def build_memory_registry(
+    app_config: AppConfig | None,
+    persistence: WorkspacePersistenceManager | None,
+    memory_dir: Path,
+    scope: RecordScope,
+) -> MemoryStoreRegistry | None:
+    if _is_sqlite(app_config, persistence):
+        assert persistence is not None
+        from modex_agent.persistence.memory_registry import HybridMemoryStoreRegistry
+
+        return HybridMemoryStoreRegistry(
+            file_root=memory_dir,
+            persistence=persistence,
+            base_scope=scope,
+        )
+    return None
+
+
+def build_workspace_registry_store(
+    app_config: AppConfig | None,
+    registry_persistence: RegistryPersistenceManager | None,
+    home: Path,
+    data_dir_name: str,
+) -> WorkspaceRegistryStore:
+    if _is_sqlite(app_config, registry_persistence):
+        assert registry_persistence is not None
+        return registry_persistence.store
+    from modex_agent.workspace.store import GlobalWorkspaceStore
+
+    return GlobalWorkspaceStore(home=home, data_dir_name=data_dir_name)
+
+
+def build_approval_audit_store(
+    app_config: AppConfig | None,
+    persistence: WorkspacePersistenceManager | None,
+    scope: RecordScope,
+) -> Any | None:
+    if _is_sqlite(app_config, persistence):
+        assert persistence is not None
+        from modex_agent.persistence.adapters.approval_audit_store import (
+            SqliteApprovalAuditStore,
+        )
+
+        return SqliteApprovalAuditStore(persistence.connection, scope)
+    return None

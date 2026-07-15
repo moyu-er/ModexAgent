@@ -257,7 +257,7 @@ async def test_resumed_approval_turn_persists_to_transcript(tmp_path: Path) -> N
     assert transcript_file.exists(), (
         f"resumed turn transcript missing: {transcript_file} (children={list(sessions_dir.rglob('*')) if sessions_dir.exists() else 'no sessions dir'})"
     )
-    events = list(JSONLTranscriptStore(sessions_dir / "main").load("s1.main"))
+    events = await JSONLTranscriptStore(sessions_dir / "main").load("s1.main")
     event_types = [type(e).__name__ for e in events]
     # The tool that executed on resume must appear in the transcript.
     assert "ToolCallEvent" in event_types, (
@@ -290,7 +290,7 @@ async def test_resumed_approval_turn_persists_final_text(tmp_path: Path) -> None
         )
     )
 
-    events = list(JSONLTranscriptStore(sessions_dir / "main").load("s1.main"))
+    events = await JSONLTranscriptStore(sessions_dir / "main").load("s1.main")
     blobs = [str(e.to_dict()) for e in events]
     assert any("done after resume" in b for b in blobs), (
         f"resumed turn final text missing from transcript; events={blobs}"
@@ -363,7 +363,7 @@ async def test_resumed_turn_persists_after_jsonfile_snapshot_roundtrip(
         f"resumed turn transcript missing after round-trip; "
         f"children={list(sessions_dir.rglob('*')) if sessions_dir.exists() else 'no sessions dir'}"
     )
-    events = list(JSONLTranscriptStore(sessions_dir / "main").load("s1.main"))
+    events = await JSONLTranscriptStore(sessions_dir / "main").load("s1.main")
     event_types = [type(e).__name__ for e in events]
     assert "ToolCallEvent" in event_types, (
         f"resumed turn did not persist ToolCallEvent after round-trip; got {event_types}"
@@ -414,7 +414,9 @@ async def test_resumed_turn_materializes_into_complete_tool_block(tmp_path: Path
     assert recorded == [("/etc/secrets", "x")]
 
     # Materialize exactly like GET /messages does.
-    turns = JSONLTranscriptStore(sessions_dir / "main").load_materialized_by_prefix("s1")
+    turns = await JSONLTranscriptStore(
+        sessions_dir / "main"
+    ).load_materialized_by_prefix("s1")
     tool_blocks = [
         b
         for t in turns

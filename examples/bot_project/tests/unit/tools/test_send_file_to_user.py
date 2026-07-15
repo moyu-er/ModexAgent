@@ -91,7 +91,7 @@ class TestOutboundAttachmentRecord:
 
             # The tool generated an opaque id; find it by scanning the only
             # outbound record in the transcript.
-            events = list(store.load("s1.main"))
+            events = await store.load("s1.main")
             from bot.webui.events import AssistantTurnEvent
 
             att_events = [e for e in events if isinstance(e, AssistantTurnEvent)]
@@ -100,7 +100,7 @@ class TestOutboundAttachmentRecord:
             assert len(records) == 1
             att_id = str(records[0]["id"])
 
-            found = find_attachment(store, "s1.main", att_id)
+            found = await find_attachment(store, "s1.main", att_id)
         assert found is not None
         assert found.locator is AttachmentLocator.WORKSPACE
         assert found.path == str(file)
@@ -168,7 +168,9 @@ class TestOutboundAttachmentRecord:
                 # The card carries attachment_records; resolve each through
                 # find_attachment as the download endpoint would.
                 rec = msg.attachment_records[0]
-                seen_at_send["found"] = find_attachment(store, session_id, rec.id)
+                seen_at_send["found"] = await find_attachment(
+                    store, session_id, rec.id
+                )
 
             output_adapter = MagicMock()
             output_adapter.send = AsyncMock(side_effect=_spy_send)
@@ -195,7 +197,7 @@ class TestOutboundAttachmentRecord:
             _bind_agent_context("s1.main")
             await tool.execute(file_path=str(file))
 
-            events = list(store.load("s1.main"))
+            events = await store.load("s1.main")
             from bot.webui.events import AssistantTurnEvent
 
             att = next(
@@ -281,7 +283,7 @@ class TestOutboundCapAndGateBypass:
             assert result == "File sent successfully: program.exe"
             # The record was still persisted and is findable. Read INSIDE the
             # tmpdir block — the JSONL file is deleted when it exits.
-            events = list(store.load("s1.main"))
+            events = await store.load("s1.main")
             att = next(
                 e for e in events if isinstance(e, AssistantTurnEvent)
             ).attachments[0]

@@ -15,10 +15,10 @@ import logging
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from modex_agent.memory.core.layers import SessionMemoryManager
 from modex_agent.core.message import ChatMessage
-from modex_agent.memory.core.models import StorageRevision
 from modex_agent.core.scope import MemoryContext
+from modex_agent.memory.core.layers import SessionMemoryManager
+from modex_agent.memory.core.models import StorageRevision
 
 from .policy import ToolCallCleanupPolicy
 
@@ -62,6 +62,24 @@ class ToolCallAwareSessionManager(SessionMemoryManager):
 
     async def get_all_messages(self, context: MemoryContext) -> list[ChatMessage]:
         return await self._inner.get_all_messages(context)
+
+    async def get_all_messages_raw(self, context: MemoryContext) -> list[ChatMessage]:
+        return await self._inner.get_all_messages_raw(context)
+
+    async def retain_messages(
+        self,
+        context: MemoryContext,
+        keep_messages: Sequence[ChatMessage | dict[str, Any]],
+        expected_revision: StorageRevision,
+    ) -> StorageRevision | None:
+        revision = await self._inner.retain_messages(
+            context,
+            keep_messages,
+            expected_revision,
+        )
+        if revision is not None:
+            await self._cleanup(context)
+        return revision
 
     async def clear(self, context: MemoryContext) -> None:
         await self._inner.clear(context)

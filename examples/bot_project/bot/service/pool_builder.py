@@ -71,7 +71,6 @@ from modex_agent.multi_agent.communication import AgentCommunicationService
 from modex_agent.multi_agent.context_fork import ContextForkBuilder
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
-from modex_agent.multi_agent.inbox.server_local import LocalFileInboxServer
 from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
 from modex_agent.multi_agent.pool_config import PoolAssemblyDeps, PoolStore
 from modex_agent.multi_agent.pool_config.specs import MainAgentSpec, PoolSpec
@@ -108,7 +107,7 @@ from ._external_coding_wiring import (
     provider_executable_for,
     read_provider_kind,
 )
-from .builders import _load_agent_mcp_tools, resolve_system_prompt
+from .builders import _load_agent_mcp_tools, build_inbox, build_todo_store, resolve_system_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +147,8 @@ async def create_pool(
     bot_model_config: BotModelConfig,
     model_choice_registry: ModelChoiceRegistry,
     mcp_registry: McpConnectionRegistry | None = None,
+    persistence: Any | None = None,
+    app_config: Any | None = None,
 ) -> PoolInstance:
     """Build one PoolInstance's DEPLOYMENT resources from PoolSpec + deps.
 
@@ -166,13 +167,15 @@ async def create_pool(
     terminal_manager = _build_terminal_manager(main_spec, pool_name, workspace_handle)
     default_resolved = bot_model_config.default_resolved()
 
-    # Task 7: PER-POOL inbox + bus. Each pool owns its own LocalFileInboxServer
-    # (own storage dir), producer, consumer, and LocalAgentMessageBus — instead
-    # of sharing one workspace-level inbox/bus across all pools. The broker
-    # stays workspace-level (cross-process wakeup); the bus binds to it for
-    # wakeup emission only.
     inbox_dir = data_dir / "inbox" / pool_name
-    inbox_server = LocalFileInboxServer(workspace=inbox_dir)
+    inbox_db_path = data_dir / "state.db"
+    inbox_server = build_inbox(
+        app_config,
+        persistence,
+        inbox_dir,
+        inbox_db_path,
+        pool_name,
+    )
     inbox_producer = InboxProducer(server=inbox_server)
     inbox_consumer = InboxConsumer(server=inbox_server)
     agent_bus = LocalAgentMessageBus(
@@ -213,6 +216,8 @@ async def create_pool(
         transcript_store=transcript_store,
         sessions_dir_provider=sessions_dir_provider,
         mcp_registry=mcp_registry,
+        persistence=persistence,
+        app_config=app_config,
     )
 
     skill_manager = _build_skill_manager(main_agent_name, project_dir, pool_name)
@@ -242,6 +247,8 @@ async def create_pool(
                 workspace_dir=workspace_dir,
                 main_agent_name=main_agent_name,
                 base_env=dict(os.environ),
+                app_config=app_config,
+                persistence=persistence,
             )
 
     factory = _build_agent_factory(
@@ -630,6 +637,8 @@ async def _build_tools(
     transcript_store: TranscriptStore | None = None,
     sessions_dir_provider: Callable[[], Path | None] | None = None,
     mcp_registry: McpConnectionRegistry | None = None,
+    persistence: Any | None = None,
+    app_config: Any | None = None,
 ) -> tuple[InMemoryToolManager, Any | None, JsonFileTodoStore]:
     """Build the main agent's tool manager from config.
 
@@ -650,15 +659,14 @@ async def _build_tools(
 
     tm = InMemoryToolManager(config=ToolManagerConfig())
 
-    # Todo store — created early so it can be supplied to supplement-based
-    # todo tool registration (main agent) and subagent materialization.
-    from modex_agent.runtime.store import JsonFileTodoStore
-
     if pool_data is not None and pool_data.runtime_dir is not None:
         todo_dir: Path = pool_data.runtime_dir / "todos"
     else:
         todo_dir = data_dir / "runtime_state" / pool_name / "todos"
-    todo_store = JsonFileTodoStore(todo_dir)
+    from modex_agent.core.scope import RecordScope
+
+    todo_scope = RecordScope(pool=pool_name)
+    todo_store = build_todo_store(app_config, persistence, todo_dir, todo_scope)
 
     # Preset tools: file/search/bash gated by main_spec.tool_preset. A bash
     # factory is provided so FULL/READ_WRITE/READ_ONLY presets get a

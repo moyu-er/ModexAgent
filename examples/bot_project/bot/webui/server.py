@@ -17,7 +17,7 @@ import json
 import logging
 import shutil
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -138,6 +138,19 @@ class _SkillUploadFallback(Exception):
     """Internal sentinel: multipart upload unavailable, fall back to JSON."""
 
 
+@dataclass(frozen=True)
+class RuntimeStores:
+    """Backend-aware runtime stores resolved for one workspace + pool.
+
+    Carries the ``TodoStore`` and ``TurnStateStore`` the WebUI endpoints
+    should read from, matching the backend the agent writes to. ``None``
+    fields signal the endpoint to fall back to its hardcoded file store.
+    """
+
+    todo_store: Any = None
+    turn_store: Any = None
+
+
 def _skill_relpath(filename: str) -> str | None:
     """Normalize an uploaded skill filename to a path relative to ``<skillName>/``.
 
@@ -222,25 +235,23 @@ class WorkspaceIndex(ABC):
     """
 
     @abstractmethod
-    def store_for(self, sessions_dir: Path, pool: str) -> TranscriptStore:
-        """Return the physical transcript store for *sessions_dir* + *pool*."""
-        ...
-
-    @abstractmethod
-    def pools_in(self, sessions_dir: Path) -> list[str]:
-        """Return pool names that exist under *sessions_dir*."""
-        ...
-
-    @abstractmethod
-    def list_sessions(self, sessions_dir: Path) -> set[str]:
+    async def list_sessions(self, sessions_dir: Path) -> set[str]:
         """Return all session ids under *sessions_dir*."""
         ...
 
     @abstractmethod
-    def sessions_dir_for_session(self, session_id: str) -> Path:
-        """Return the resolved sessions directory for *session_id*."""
+    async def list_sessions_by_prefix(
+        self, session_prefix: str, sessions_dir: Path | None = None
+    ) -> set[str]:
+        """Return matching session ids under *sessions_dir*."""
         ...
 
+    @abstractmethod
+    async def last_updated(
+        self, session_id: str, sessions_dir: Path | None = None
+    ) -> int | None:
+        """Return the latest transcript timestamp for *session_id*."""
+        ...
 
 # ── Server ─────────────────────────────────────────────────────────────────
 
@@ -275,7 +286,10 @@ class WebUIServer:
         self._data_dir_name: str = ""
 
         # Session store (WorkspacePoolSessionStore) -- injected by WebUIService.
+        # Either a single store (tests, single-workspace) or a factory that
+        # builds a fresh store per workspace index_dir (production multi-live).
         self._session_store: SessionStore | None = None
+        self._session_store_factory: Callable[[Path], Awaitable[SessionStore]] | None = None
         # SessionIdFactory -- injected by WebUIService for creating new sessions.
         self._session_factory: SessionIdFactory | None = None
 
@@ -310,6 +324,10 @@ class WebUIServer:
         # SessionGarbageCollector -- injected by WebUIService for cascade
         # session deletion. None until wired (handler delegation is separate).
         self._session_gc = None
+        # Backend-aware runtime store resolver: ``async callback(ws_root, pool)
+        # -> RuntimeStores``. Injected by WebUIService so the todos/approvals
+        # endpoints read from the same backend the agent writes to.
+        self._store_resolver: Callable[[Path, str], Awaitable[RuntimeStores]] | None = None
 
         self.app = web.Application()
         self._setup_routes()
@@ -526,13 +544,56 @@ class WebUIServer:
         """Inject the SessionGarbageCollector for cascade session deletion."""
         self._session_gc = gc
 
+    def set_store_resolver(
+        self,
+        resolver: Callable[[Path, str], Awaitable[RuntimeStores]] | None,
+    ) -> None:
+        """Inject a backend-aware runtime store resolver.
+
+        The resolver returns a :class:`RuntimeStores` for a given workspace
+        root + pool. When set, the todos and approvals endpoints use these
+        stores instead of the hardcoded file-based stores, so they read from
+        the same backend the agent writes to.
+        """
+        self._store_resolver = resolver
+
     def set_workspace_index(self, index: WorkspaceIndex) -> None:
         """Inject the session→workspace membership index."""
         self._workspace_index = index
 
     def set_session_store(self, store: SessionStore) -> None:
-        """Inject the session store for SessionInfo-based operations."""
+        """Inject a single session store for SessionInfo-based operations.
+
+        Used by tests and single-workspace setups. Production multi-live
+        wiring should use :meth:`set_session_store_factory` instead so each
+        workspace gets a fresh store rooted at its own session-index dir.
+        """
         self._session_store = store
+
+    def set_session_store_factory(
+        self, factory: Callable[[Path], Awaitable[SessionStore]]
+    ) -> None:
+        """Inject a factory that builds a per-workspace session store.
+
+        The factory receives the workspace's session-index directory (resolved
+        from the request's ``?ws=``) and returns a :class:`SessionStore`
+        rooted there. This replaces the old per-call ``index_dir`` override
+        on :class:`SessionStore` methods — workspace isolation now lives in
+        store construction, not per-call routing.
+        """
+        self._session_store_factory = factory
+
+    async def _session_store_for(self, index_dir: Path) -> SessionStore | None:
+        """Return a session store scoped to *index_dir*.
+
+        - When a factory is injected (production), build a fresh store rooted
+          at *index_dir* — one store per workspace.
+        - Otherwise fall back to the single injected store (tests,
+          single-workspace) and ignore *index_dir*.
+        """
+        if self._session_store_factory is not None:
+            return await self._session_store_factory(index_dir)
+        return self._session_store
 
     def set_session_factory(self, factory: SessionIdFactory) -> None:
         """Inject the SessionIdFactory for creating new sessions."""
@@ -577,10 +638,16 @@ class WebUIServer:
 
         Prefers the session store; falls back to ``SessionInfo.from_str()``
         when no store is injected (e.g. basic tests). *index_dir* scopes the
-        lookup to a workspace's session index.
+        lookup to a workspace's session index by constructing a fresh store
+        via the injected factory.
         """
-        if self._session_store is not None:
-            session = await self._session_store.get(session_id, index_dir=index_dir)
+        store = (
+            await self._session_store_for(index_dir)
+            if index_dir is not None
+            else self._session_store
+        )
+        if store is not None:
+            session = await store.get(session_id)
             if session is not None:
                 return session
         return SessionInfo.from_str(session_id)
@@ -594,7 +661,7 @@ class WebUIServer:
         session = await self._resolve_session(session_id, index_dir=index_dir)
         return session.agent_name
 
-    def _derive_sessions_from_transcripts(
+    async def _derive_sessions_from_transcripts(
         self, sessions_dir: Path | None = None
     ) -> list[SessionInfo]:
         """Build SessionInfo records from transcript files when the session
@@ -606,7 +673,7 @@ class WebUIServer:
         """
         target_dir = sessions_dir if sessions_dir is not None else self._home_sessions_dir
         derived: list[SessionInfo] = []
-        for session_id in self._store.list_sessions(target_dir):
+        for session_id in await self._store.list_sessions(target_dir):
             session_prefix = session_id_prefix_of(session_id)
             if session_prefix == session_id:
                 # No separator → not a usable display id.
@@ -623,14 +690,16 @@ class WebUIServer:
             if session_id.count(".") == 2:
                 candidates = sorted(
                     sid
-                    for sid in self._store.list_sessions_by_prefix(
+                    for sid in await self._store.list_sessions_by_prefix(
                         session_prefix, sessions_dir=target_dir
                     )
                     if sid != session_id and sid.count(".") == 1
                 )
                 if candidates:
                     parent_session_id = candidates[0]
-            updated_at = self._store.last_updated(session_id, sessions_dir=target_dir)
+            updated_at = await self._store.last_updated(
+                session_id, sessions_dir=target_dir
+            )
             created_at = updated_at
             derived.append(
                 SessionInfo(
@@ -1487,8 +1556,9 @@ class WebUIServer:
             session_prefix = session.session_id_prefix
             created_at = session.created_at
             updated_at = session.updated_at
-            if self._session_store is not None:
-                await self._session_store.save(session, index_dir=index_dir)
+            store = await self._session_store_for(index_dir)
+            if store is not None:
+                await store.save(session)
         else:
             uuid_prefix = _new_uuid_prefix()
             session_id = f"{uuid_prefix}.{agent_name}"
@@ -1532,8 +1602,9 @@ class WebUIServer:
         session_list: list[SessionListEntry] = []
         seen_session_ids: set[str] = set()
 
-        if self._session_store is not None:
-            for session in await self._session_store.list_sessions(index_dir=index_dir):
+        store = await self._session_store_for(index_dir)
+        if store is not None:
+            for session in await store.list_sessions():
                 session_id = session.session_id
                 # The store reads recursively, so a record may exist in both a
                 # legacy flat layout and a pool subdirectory.  De-dup by id so
@@ -1554,7 +1625,7 @@ class WebUIServer:
         # Fallback: derive any sessions that have transcripts but are not yet
         # indexed.  This covers legacy data created before the SessionInfo index
         # existed and lets the user interact with them immediately.
-        for session in self._derive_sessions_from_transcripts(sessions_dir):
+        for session in await self._derive_sessions_from_transcripts(sessions_dir):
             session_id = session.session_id
             if session_id in seen_session_ids:
                 continue
@@ -1590,13 +1661,13 @@ class WebUIServer:
 
         user_events: list[dict[str, object]] = [
             e.to_dict()
-            for e in store.load_sessions_by_prefix(
+            for e in await store.load_sessions_by_prefix(
                 session_prefix, sessions_dir=sessions_dir, pool=pool
             )
             if e.event == "user_message"
         ]
 
-        turns = store.load_materialized_by_prefix(
+        turns = await store.load_materialized_by_prefix(
             session_prefix, sessions_dir=sessions_dir, pool=pool
         )
         assistant_events: list[dict[str, object]] = []
@@ -1638,6 +1709,9 @@ class WebUIServer:
         Reads directly from the per-session TodoStore so the frontend can
         hydrate the todo panel when a session is reopened, even before any
         live ``todo_write``/``todo_read`` tool call arrives.
+
+        Uses the backend-aware store from ``_store_resolver`` when wired
+        (SQLite mode), falling back to ``JsonFileTodoStore`` for FILE mode.
         """
         session_id: str = request.match_info["session_id"]
         ws_raw = request.query.get("ws", "")
@@ -1646,8 +1720,13 @@ class WebUIServer:
         agent_name: str = await self._resolve_agent(session_id, index_dir=index_dir)
         pool: str = self._pool_of_agent(agent_name)
 
-        todo_dir = WorkspacePaths(root=sessions_dir.parent).runtime_dir(pool, "todos")
-        store = JsonFileTodoStore(todo_dir)
+        store = None
+        if self._store_resolver is not None:
+            stores = await self._store_resolver(self._ws_root_of(ws_raw), pool)
+            store = stores.todo_store
+        if store is None:
+            todo_dir = WorkspacePaths(root=sessions_dir.parent).runtime_dir(pool, "todos")
+            store = JsonFileTodoStore(todo_dir)
         items = await store.get(session_id)
         active = [
             {"content": item.content, "status": item.status.value}
@@ -1660,8 +1739,11 @@ class WebUIServer:
         """GET /api/sessions/{session_id}/approvals -- pending approvals (webui-only).
 
         Reads the persisted turn snapshots directly from the pool's turn store
-        (same direct-file-read pattern as :meth:`_handle_get_todos`), so this
+        (same direct-read pattern as :meth:`_handle_get_todos`), so this
         works for restart/refresh recovery without a live pipeline reference.
+
+        Uses the backend-aware store from ``_store_resolver`` when wired
+        (SQLite mode), falling back to ``JsonFileTurnStateStore`` for FILE mode.
         """
         from modex_agent.agents.react.state import (
             ReActRuntimeStateCodec,
@@ -1686,9 +1768,14 @@ class WebUIServer:
         )
         pool: str = self._pool_of_agent(agent_name)
 
-        turns_dir = WorkspacePaths(root=sessions_dir.parent).runtime_dir(pool, "turns")
-        codec_registry = RuntimeStateCodecRegistry({AgentKind.REACT: ReActRuntimeStateCodec()})
-        turn_store = JsonFileTurnStateStore(turns_dir, codec_registry)
+        turn_store = None
+        if self._store_resolver is not None:
+            stores = await self._store_resolver(self._ws_root_of(ws_raw), pool)
+            turn_store = stores.turn_store
+        if turn_store is None:
+            turns_dir = WorkspacePaths(root=sessions_dir.parent).runtime_dir(pool, "turns")
+            codec_registry = RuntimeStateCodecRegistry({AgentKind.REACT: ReActRuntimeStateCodec()})
+            turn_store = JsonFileTurnStateStore(turns_dir, codec_registry)
         # Approval turns are partitioned by workspace (turn_store path) + pool
         # + session_id, so agent_id is NOT a query dimension — matches
         # ApprovalResumer.load_pending. session_id already identifies the
@@ -1792,7 +1879,9 @@ class WebUIServer:
         ws_raw = request.query.get("ws", "")
         sessions_dir = self._sessions_dir_of_ws(ws_raw)
 
-        att = find_attachment(self._store, session_id, attachment_id, sessions_dir=sessions_dir)
+        att = await find_attachment(
+            self._store, session_id, attachment_id, sessions_dir=sessions_dir
+        )
         if att is None:
             return web.Response(status=404, text="attachment not found")
 
@@ -2132,8 +2221,8 @@ class WebUIServer:
             # (reattach of a persisted session that already received a message),
             # routing is already established — attach is idempotent.
             try:
-                if any(
-                    True for _ in self._store.load(session_id, sessions_dir=attach_sessions_dir)
+                if await self._store.load(
+                    session_id, sessions_dir=attach_sessions_dir
                 ):
                     pass  # Session persisted; attach is idempotent, routing intact.
             except Exception as exc:
@@ -2203,7 +2292,9 @@ class WebUIServer:
         # invocation is a distinct session.  ``session_prefix`` is the stable
         # conversation prefix used by the transcript store.
         for sub_sid in sorted(
-            self._store.list_sessions_by_prefix(session_prefix, sessions_dir=attach_sessions_dir)
+            await self._store.list_sessions_by_prefix(
+                session_prefix, sessions_dir=attach_sessions_dir
+            )
         ):
             sub_agent_name = agent_of(sub_sid, default="unknown")
             # Main-agent sessions have exactly two segments ({prefix}.{agent})
@@ -2224,11 +2315,10 @@ class WebUIServer:
 
         # Also register subagent sessions from relation store — these may have
         # been dispatched but not yet written to transcript.
-        if self._session_store is not None:
+        attach_store = await self._session_store_for(attach_index_dir)
+        if attach_store is not None:
             for parent_sid in list(state.attached_sessions):
-                for child_session in await self._session_store.get_children(
-                    parent_sid, index_dir=attach_index_dir
-                ):
+                for child_session in await attach_store.get_children(parent_sid):
                     child_sid = str(child_session)
                     if self._input.get_delta_queue(child_sid) is None:
                         self._input.register_connection(child_sid, ws)
@@ -2267,9 +2357,16 @@ class WebUIServer:
         sessions (reattach, existing conversations) are a no-op. *index_dir*
         scopes the record to the message's workspace session index.
         """
-        if self._session_store is None or self._session_factory is None:
+        if self._session_factory is None:
             return
-        if await self._session_store.get(session_id, index_dir=index_dir) is not None:
+        store = (
+            await self._session_store_for(index_dir)
+            if index_dir is not None
+            else self._session_store
+        )
+        if store is None:
+            return
+        if await store.get(session_id) is not None:
             return  # already persisted
         session_prefix = session_id_prefix_of(session_id)
         agent = agent_of(session_id, default="unknown")
@@ -2281,7 +2378,7 @@ class WebUIServer:
             # Fallback: session_prefix contained a separator or was empty; persist a
             # from_str record so the session list still shows the conversation.
             session = SessionInfo.from_str(session_id)
-        await self._session_store.save(session, index_dir=index_dir)
+        await store.save(session)
 
     async def _ws_send_message(
         self,

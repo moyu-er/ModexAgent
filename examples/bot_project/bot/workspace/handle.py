@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from modex_agent.core.session_store import SessionStore
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
@@ -17,10 +18,12 @@ if TYPE_CHECKING:
     # These live in bot.service, whose package __init__ imports BotService,
     # which imports the bundle via wiring; deferring them to TYPE_CHECKING
     # keeps the import graph acyclic (handle is the low-level bundle module).
-    from bot.service.session_store import WorkspacePoolSessionStore
+    from bot.service.workspace_store import WorkspaceScopedTranscriptStore
+    from bot.webui.transcript_store import TranscriptStore
     from bot.workspace.background import BackgroundTaskRunner
     from modex_agent.multi_agent.pool_instance import PoolInstance
-    from modex_agent.multi_agent.pool_router import PoolRouter
+    from modex_agent.multi_agent.pool_router import PoolRouter, PoolRoutingStore
+    from modex_agent.persistence.managers import WorkspacePersistenceManager
 
 
 class WorkspaceHandleRootProvider(WorkspaceRootProvider):
@@ -106,12 +109,17 @@ class PoolWorkspaceResources(WorkspaceResources):
     target: Path
     ctx: WorkspaceContext
     overflow_store: LocalFileToolOverflowStore
-    session_index_store: WorkspacePoolSessionStore
+    session_index_store: SessionStore
     broker: InMemoryMessageBroker
     pool_data: dict[str, PoolDataSnapshot] = field(default_factory=dict)
     pools: dict[str, PoolInstance] = field(default_factory=dict)
     pool_router: PoolRouter | None = None
     background: BackgroundTaskRunner | None = None
+    persistence: WorkspacePersistenceManager | None = None
+    owns_persistence: bool = False
+    owned_pool_routing_store: PoolRoutingStore | None = None
+    transcript_store: WorkspaceScopedTranscriptStore | None = None
+    workspace_transcript_store: TranscriptStore | None = None
 
     def resolve_workspace(self) -> PoolWorkspaceResources:
         """Resolver entry point the framework pipeline calls.

@@ -83,11 +83,11 @@ async def test_external_reasoning_streams_delta_and_persists_event() -> None:
         assert env.payload["text"] == "reasoning chunk"
 
         # Reasoning is buffered for persistence — not yet in transcript
-        assert len(list(store.load(sid))) == 0
+        assert len(await store.load(sid)) == 0
 
         await emitter.emit_complete(AgentResult(content=""))
 
-        events = list(store.load(sid))
+        events = await store.load(sid)
         assert len(events) == 1
         assert isinstance(events[0], AssistantReasoningEvent)
         assert events[0].text == "reasoning chunk"
@@ -104,7 +104,7 @@ async def test_external_reasoning_deltas_coalesced_into_single_event() -> None:
 
         await emitter.emit_complete(AgentResult(content=""))
 
-        events = list(store.load("conv1.opencode"))
+        events = await store.load("conv1.opencode")
         reasoning_events = [e for e in events if isinstance(e, AssistantReasoningEvent)]
         assert len(reasoning_events) == 1
         assert reasoning_events[0].text == "Let me think about this."
@@ -125,7 +125,7 @@ async def test_interleaved_text_and_reasoning_produce_two_events_not_many() -> N
 
         await emitter.emit_complete(AgentResult(content=""))
 
-        events = list(store.load("conv1.opencode"))
+        events = await store.load("conv1.opencode")
         text_events = [e for e in events if e.event == "assistant_text"]
         reasoning_events = [e for e in events if e.event == "assistant_reasoning"]
         assert len(text_events) == 1
@@ -152,7 +152,7 @@ async def test_same_part_id_text_deltas_coalesce_across_tool_calls() -> None:
         await emitter.emit_turn_event(TurnTextEvent(text="after", part_id="p1"))
         await emitter.emit_complete(AgentResult(content=""))
 
-        events = list(store.load("conv1.opencode"))
+        events = await store.load("conv1.opencode")
         text_events = [e for e in events if e.event == "assistant_text"]
         assert len(text_events) == 2
         assert text_events[0].text == "before"
@@ -190,7 +190,7 @@ async def test_external_tool_start_end_streamed_and_persisted_with_shared_call_i
         assert first.payload["tool"] == "bash"
         assert second.event_type == WebUIEventType.TOOL_CALL_END.value
 
-        events = list(store.load(sid))
+        events = await store.load(sid)
         tc_events = [e for e in events if isinstance(e, ToolCallEvent)]
         tr_events = [e for e in events if isinstance(e, ToolResultEvent)]
         assert len(tc_events) == 1
@@ -222,7 +222,7 @@ async def test_external_tool_replay_materializes_complete_tool_block() -> None:
         )
         await emitter.emit_complete(AgentResult(content="done"))
 
-        turns = store.load_materialized_by_prefix("conv1")
+        turns = await store.load_materialized_by_prefix("conv1")
         assert len(turns) == 1
         blocks = turns[0].blocks
         kinds = [b["kind"] for b in blocks]
@@ -263,7 +263,7 @@ async def test_external_full_turn_history_restores_text_reasoning_tool_and_final
         await emitter.emit_turn_event(TurnTextEvent(text="Inspection complete."))
         await emitter.emit_complete(AgentResult(content="I will inspect.Inspection complete."))
 
-        turns = store.load_materialized_by_prefix("conv1")
+        turns = await store.load_materialized_by_prefix("conv1")
         assert len(turns) == 1
         blocks = turns[0].blocks
         kinds = [b["kind"] for b in blocks]
@@ -295,7 +295,7 @@ async def test_external_tool_result_without_use_persists_result_only() -> None:
         )
         await emitter.emit_complete(AgentResult(content="done"))
 
-        events = list(store.load("conv1.opencode"))
+        events = await store.load("conv1.opencode")
         assert any(isinstance(e, ToolResultEvent) for e in events)
 
 
@@ -331,7 +331,7 @@ async def test_text_before_tool_call_preserves_order_in_transcript() -> None:
         )
         await emitter.emit_complete(AgentResult(content="done"))
 
-        events = list(store.load("conv1.opencode"))
+        events = await store.load("conv1.opencode")
         event_types = [str(e.event) for e in events]
 
         assert "assistant_text" in event_types, f"Missing assistant_text; got: {event_types}"
@@ -377,7 +377,7 @@ async def test_text_between_tool_calls_preserves_position_in_transcript() -> Non
         )
         await emitter.emit_complete(AgentResult(content="done"))
 
-        events = list(store.load("conv1.opencode"))
+        events = await store.load("conv1.opencode")
         event_types = [str(e.event) for e in events]
 
         text_indices = [i for i, t in enumerate(event_types) if t == "assistant_text"]
@@ -412,7 +412,7 @@ async def test_react_reasoning_and_tool_projection_unchanged() -> None:
         )
         await emitter.emit_complete(AgentResult(content="done"))
 
-        events = list(store.load(sid))
+        events = await store.load(sid)
         assert any(isinstance(e, AssistantReasoningEvent) for e in events)
         tc_events = [e for e in events if isinstance(e, ToolCallEvent)]
         tr_events = [e for e in events if isinstance(e, ToolResultEvent)]

@@ -14,17 +14,17 @@ subagent invocation).  ``load_sessions_by_prefix`` merges them by timestamp.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass as _dataclass, field as _dc_field
+from dataclasses import dataclass as _dataclass
+from dataclasses import field as _dc_field
 from pathlib import Path
-from typing import Iterator
-
-from modex_agent.core.session_id import session_id_prefix_of
-from modex_agent.core.session_store import safe_filename
 
 from bot.webui.events import ServerEvent
+from modex_agent.core.session_id import session_id_prefix_of
+from modex_agent.core.session_store import safe_filename
 
 logger = logging.getLogger(__name__)
 
@@ -42,52 +42,72 @@ class TranscriptStore(ABC):
     """Abstract transcript store keyed by the full session id."""
 
     @abstractmethod
-    def append(self, session_id: str, event: ServerEvent) -> None:
+    async def append(
+        self,
+        session_id: str,
+        event: ServerEvent,
+        *,
+        pool: str = "main",
+    ) -> None:
         """Persist a single event for *session_id* (full session identifier)."""
         ...
 
     @abstractmethod
-    def load(self, session_id: str) -> Iterator[ServerEvent]:
+    async def load(self, session_id: str) -> list[ServerEvent]:
         """Yield all events for *session_id* (full session identifier), oldest first."""
         ...
 
     @abstractmethod
-    def load_sessions_by_prefix(self, session_prefix: str) -> Iterator[ServerEvent]:
+    async def load_sessions_by_prefix(
+        self,
+        session_prefix: str,
+        *,
+        pool: str | None = None,
+    ) -> list[ServerEvent]:
         """Yield events from every session sharing *session_prefix*, merged by timestamp."""
         ...
 
     @abstractmethod
-    def list_sessions(self) -> set[str]:
+    async def list_sessions(self) -> set[str]:
         """Return the set of all full session ids that have at least one event."""
         ...
 
     @abstractmethod
-    def list_sessions_by_prefix(self, session_prefix: str) -> set[str]:
+    async def list_sessions_by_prefix(self, session_prefix: str) -> set[str]:
         """Return the set of full session ids whose prefix matches *session_prefix*."""
         ...
 
     @abstractmethod
-    def delete_session(self, session_id: str) -> None:
+    async def delete_session(self, session_id: str) -> None:
         """Remove all records for one full *session_id*."""
         ...
 
     @abstractmethod
-    def delete_sessions_by_prefix(self, session_prefix: str) -> None:
+    async def delete_sessions_by_prefix(self, session_prefix: str) -> None:
         """Remove all records for every session matching *session_prefix*."""
         ...
 
-    def last_updated(self, session_id: str) -> int | None:
+    async def last_updated(self, session_id: str) -> int | None:
         return None
 
-    def load_materialized_by_prefix(self, session_prefix: str) -> list[MaterializedTurn]:
+    async def load_materialized_by_prefix(
+        self,
+        session_prefix: str,
+        *,
+        pool: str | None = None,
+    ) -> list[MaterializedTurn]:
         """Materialize incremental events into merged turn blocks.
 
         Loads all events whose session ids share *session_prefix* and
         materializes them via :func:`_materialize_events`.
         Returns turns sorted by start time.
         """
-        events: list[ServerEvent] = list(self.load_sessions_by_prefix(session_prefix))
+        events = await self.load_sessions_by_prefix(session_prefix, pool=pool)
         return _materialize_events(events)
+
+
+class TranscriptPersistenceError(Exception):
+    """A provider-specific persistence failure at the transcript seam."""
 
 
 class ResilientTranscriptStore(TranscriptStore):
@@ -103,10 +123,16 @@ class ResilientTranscriptStore(TranscriptStore):
     def __init__(self, delegate: TranscriptStore) -> None:
         self._delegate = delegate
 
-    def append(self, session_id: str, event: ServerEvent) -> None:
+    async def append(
+        self,
+        session_id: str,
+        event: ServerEvent,
+        *,
+        pool: str = "main",
+    ) -> None:
         try:
-            self._delegate.append(session_id, event)
-        except OSError:
+            await self._delegate.append(session_id, event, pool=pool)
+        except (OSError, TranscriptPersistenceError):
             logger.exception(
                 "transcript append failed for session %s (event=%s); "
                 "continuing without persisting this event",
@@ -114,26 +140,31 @@ class ResilientTranscriptStore(TranscriptStore):
                 getattr(event, "event", type(event).__name__),
             )
 
-    def load(self, session_id: str) -> Iterator[ServerEvent]:
-        return self._delegate.load(session_id)
+    async def load(self, session_id: str) -> list[ServerEvent]:
+        return await self._delegate.load(session_id)
 
-    def load_sessions_by_prefix(self, session_prefix: str) -> Iterator[ServerEvent]:
-        return self._delegate.load_sessions_by_prefix(session_prefix)
+    async def load_sessions_by_prefix(
+        self,
+        session_prefix: str,
+        *,
+        pool: str | None = None,
+    ) -> list[ServerEvent]:
+        return await self._delegate.load_sessions_by_prefix(session_prefix, pool=pool)
 
-    def list_sessions(self) -> set[str]:
-        return self._delegate.list_sessions()
+    async def list_sessions(self) -> set[str]:
+        return await self._delegate.list_sessions()
 
-    def list_sessions_by_prefix(self, session_prefix: str) -> set[str]:
-        return self._delegate.list_sessions_by_prefix(session_prefix)
+    async def list_sessions_by_prefix(self, session_prefix: str) -> set[str]:
+        return await self._delegate.list_sessions_by_prefix(session_prefix)
 
-    def delete_session(self, session_id: str) -> None:
-        self._delegate.delete_session(session_id)
+    async def delete_session(self, session_id: str) -> None:
+        await self._delegate.delete_session(session_id)
 
-    def delete_sessions_by_prefix(self, session_prefix: str) -> None:
-        self._delegate.delete_sessions_by_prefix(session_prefix)
+    async def delete_sessions_by_prefix(self, session_prefix: str) -> None:
+        await self._delegate.delete_sessions_by_prefix(session_prefix)
 
-    def last_updated(self, session_id: str) -> int | None:
-        return self._delegate.last_updated(session_id)
+    async def last_updated(self, session_id: str) -> int | None:
+        return await self._delegate.last_updated(session_id)
 
 
 # ── Materialization helpers ────────────────────────────────────────────────
@@ -280,12 +311,14 @@ class JSONLTranscriptStore(TranscriptStore):
     def _file_for(self, session_id: str) -> Path:
         return self._base_dir / f"{safe_filename(session_id)}.jsonl"
 
-    def _iter_files(self) -> Iterator[Path]:
+    def _iter_files(self) -> list[Path]:
         if not self._base_dir.is_dir():
-            return
-        for f in self._base_dir.iterdir():
-            if f.is_file() and f.suffix == ".jsonl":
-                yield f
+            return []
+        return [
+            file_path
+            for file_path in self._base_dir.iterdir()
+            if file_path.is_file() and file_path.suffix == ".jsonl"
+        ]
 
     def _session_id_of(self, path: Path) -> str:
         """Reverse the safe-name mapping for a file stem.
@@ -300,61 +333,86 @@ class JSONLTranscriptStore(TranscriptStore):
     # TranscriptStore interface
     # ------------------------------------------------------------------
 
-    def append(self, session_id: str, event: ServerEvent) -> None:
-        self._base_dir.mkdir(parents=True, exist_ok=True)
-        line = json.dumps(event.to_dict(), ensure_ascii=False)
-        with self._file_for(session_id).open("a", encoding="utf-8") as f:
-            f.write(line + "\n")
+    async def append(
+        self,
+        session_id: str,
+        event: ServerEvent,
+        *,
+        pool: str = "main",
+    ) -> None:
+        del pool
 
-    def load(self, session_id: str) -> Iterator[ServerEvent]:
-        file_path = self._file_for(session_id)
-        if not file_path.is_file():
-            return
-        with file_path.open("r", encoding="utf-8") as f:
-            for line in f:
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                try:
-                    data = json.loads(stripped)
-                except json.JSONDecodeError:
-                    continue
-                yield ServerEvent.from_dict(data)
+        def _append() -> None:
+            self._base_dir.mkdir(parents=True, exist_ok=True)
+            line = json.dumps(event.to_dict(), ensure_ascii=False)
+            with self._file_for(session_id).open("a", encoding="utf-8") as file:
+                file.write(line + "\n")
 
-    def load_sessions_by_prefix(self, session_prefix: str) -> Iterator[ServerEvent]:
-        all_events: list[tuple[float, ServerEvent]] = []
-        for session_id in self.list_sessions_by_prefix(session_prefix):
-            for event in self.load(session_id):
-                all_events.append((event.timestamp, event))
-        all_events.sort(key=lambda pair: pair[0])
-        for _, event in all_events:
-            yield event
+        await asyncio.to_thread(_append)
 
-    def list_sessions(self) -> set[str]:
-        seen: set[str] = set()
-        for f in self._iter_files():
-            seen.add(self._session_id_of(f))
-        return seen
+    async def load(self, session_id: str) -> list[ServerEvent]:
+        def _load() -> list[ServerEvent]:
+            file_path = self._file_for(session_id)
+            if not file_path.is_file():
+                return []
+            events: list[ServerEvent] = []
+            with file_path.open("r", encoding="utf-8") as file:
+                for line in file:
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    try:
+                        data = json.loads(stripped)
+                    except json.JSONDecodeError:
+                        continue
+                    events.append(ServerEvent.from_dict(data))
+            return events
 
-    def list_sessions_by_prefix(self, session_prefix: str) -> set[str]:
-        prefix = safe_filename(session_prefix) + "."
-        seen: set[str] = set()
-        for f in self._iter_files():
-            stem = self._session_id_of(f)
-            if _session_id_prefix(stem) == safe_filename(session_prefix) or stem.startswith(prefix):
-                seen.add(stem)
-        return seen
+        return await asyncio.to_thread(_load)
 
-    def delete_session(self, session_id: str) -> None:
-        self._file_for(session_id).unlink(missing_ok=True)
+    async def load_sessions_by_prefix(
+        self,
+        session_prefix: str,
+        *,
+        pool: str | None = None,
+    ) -> list[ServerEvent]:
+        del pool
+        all_events: list[tuple[int, int, ServerEvent]] = []
+        sequence = 0
+        for session_id in sorted(await self.list_sessions_by_prefix(session_prefix)):
+            for event in await self.load(session_id):
+                all_events.append((event.timestamp, sequence, event))
+                sequence += 1
+        all_events.sort(key=lambda entry: (entry[0], entry[1]))
+        return [event for _, _, event in all_events]
 
-    def delete_sessions_by_prefix(self, session_prefix: str) -> None:
-        for session_id in self.list_sessions_by_prefix(session_prefix):
-            self.delete_session(session_id)
+    async def list_sessions(self) -> set[str]:
+        def _list() -> set[str]:
+            return {self._session_id_of(file_path) for file_path in self._iter_files()}
 
-    def last_updated(self, session_id: str) -> int | None:
-        """Return transcript file mtime in milliseconds, or None if no file."""
-        file_path = self._file_for(session_id)
-        if not file_path.is_file():
-            return None
-        return int(file_path.stat().st_mtime * 1000)
+        return await asyncio.to_thread(_list)
+
+    async def list_sessions_by_prefix(self, session_prefix: str) -> set[str]:
+        sessions = await self.list_sessions()
+        safe_prefix = safe_filename(session_prefix)
+        return {
+            session_id
+            for session_id in sessions
+            if _session_id_prefix(session_id) == safe_prefix
+        }
+
+    async def delete_session(self, session_id: str) -> None:
+        await asyncio.to_thread(self._file_for(session_id).unlink, missing_ok=True)
+
+    async def delete_sessions_by_prefix(self, session_prefix: str) -> None:
+        for session_id in await self.list_sessions_by_prefix(session_prefix):
+            await self.delete_session(session_id)
+
+    async def last_updated(self, session_id: str) -> int | None:
+        def _last_updated() -> int | None:
+            file_path = self._file_for(session_id)
+            if not file_path.is_file():
+                return None
+            return int(file_path.stat().st_mtime * 1000)
+
+        return await asyncio.to_thread(_last_updated)

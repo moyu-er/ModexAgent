@@ -1,7 +1,10 @@
 from __future__ import annotations
+
 from pathlib import Path
 from unittest.mock import MagicMock
+
 import pytest
+
 from modex_agent.workspace.control import WorkspaceController
 from modex_agent.workspace.registry import WorkspaceRegistry
 from modex_agent.workspace.store import GlobalWorkspaceStore
@@ -23,4 +26,4 @@ async def test_open_workspace_registers_but_does_not_persist_session_map(tmp_pat
     res = await controller.open_workspace(str(target))
     assert res.success and res.current_path.resolve() == target.resolve()
     # Registry has the workspace registered
-    assert reg.get_or_open(target).target == target.resolve()
+    assert (await reg.get_or_open(target)).target == target.resolve()

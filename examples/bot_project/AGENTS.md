@@ -130,7 +130,7 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 
 ### External coding agent pools (Pi, OpenCode)
 
-External CLI coding agents (Pi, OpenCode) can be registered as NORMAL main agents of their own dedicated pools. They are spawned as subprocesses by a framework-side harness (`ExternalCodingAgent`) and communicate back through the `modexctl send` CLI (writes XML-wrapped `<agent_message>` content directly to the target pool's `pending.jsonl`). The `modexbot` CLI is a backward-compatible facade over `modexctl`.
+External CLI coding agents (Pi, OpenCode) can be registered as NORMAL main agents of their own dedicated pools. A framework-side harness (`ExternalCodingAgent`) executes them through provider backends, and they communicate back through the `modexctl send` CLI. The CLI sends XML-wrapped `<agent_message>` content through the target workspace's `InboxMQ.deliver()` implementation; `modexbot` is a backward-compatible facade over `modexctl`.
 
 **Pool configuration** (`config/pools/<name>/pool.yml`):
 
@@ -145,6 +145,17 @@ peers:
 **Availability gating:** if the provider CLI (`pi` / `opencode`) is not on `PATH`, the pool is silently skipped at startup (warning logged). Other pools are unaffected.
 
 **Session continuity:** each ModexAgent session maps to a provider-side session file (`<workdir>/.modex/external/pi-session.jsonl` for Pi; provider-minted id for OpenCode). Follow-up turns on the same `modex_session_id` resume the provider's own session, preserving context.
+
+**Persistence:** the session-id map follows the configured workspace backend.
+FILE uses `<workdir>/.modex/external/session-map.json`; SQLite stores the same
+mapping in the workspace `state.db`. Provider-native session data remains
+owned by Pi/OpenCode.
+
+**Provider lifetime:** OpenCode prefers one warm `opencode serve` SSE process
+across turns and switches permanently to per-turn `opencode run` if SSE startup
+is unavailable. Pi remains per-turn. Cancellation, failed startup, pool
+shutdown, and workspace eviction terminate and reap complete provider process
+trees; normal OpenCode turns retain the warm server for reuse.
 
 **WebUI:** external_coding sessions appear in the WebUI session list with their `.pi` / `.opencode` suffix, alongside every other session. Streaming output (text, reasoning, tool calls/results, errors) is rendered through the canonical `TurnEvent` seam → `WebBotEmitter` projection into existing `ServerEvent`/transcript types. The `PoolEditor` settings view supports configuring external coding provider pools.
 

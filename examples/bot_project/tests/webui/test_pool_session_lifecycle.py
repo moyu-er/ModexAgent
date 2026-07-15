@@ -85,7 +85,7 @@ async def _simulate_qa_turn(
     """
     session_id = f"{conv_prefix}.{agent_name}"
     with bind_workspace_root(workspace_root):
-        store.append(
+        await store.append(
             session_id,
             UserMessageEvent(
                 session_id=session_id,
@@ -93,7 +93,7 @@ async def _simulate_qa_turn(
                 content=user_content,
             ),
         )
-        store.append(
+        await store.append(
             session_id,
             AssistantTurnEvent(
                 session_id=session_id,

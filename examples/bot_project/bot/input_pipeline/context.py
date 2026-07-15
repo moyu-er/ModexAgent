@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from bot.service.media_store import WorkspaceScopedMediaStore
-from modex_agent.multi_agent.pool_router import PoolSessionStore
+from modex_agent.multi_agent.pool_router import PoolRoutingStore
 
 if TYPE_CHECKING:
     from bot.service.model_choice import ModelChoiceRegistry
@@ -49,7 +49,7 @@ class BotInputContext(InputContext):
         self,
         *,
         default_pool: str,
-        pool_session_store: PoolSessionStore,
+        pool_session_store: PoolRoutingStore,
         agent_pool_map: dict[str, str],
         agent_resolver: Callable[[str], str],
         transcript_store: TranscriptStore,
@@ -91,7 +91,7 @@ class BotInputContext(InputContext):
 
     # accessors used by stages
     @property
-    def pool_session_store(self) -> PoolSessionStore:
+    def pool_session_store(self) -> PoolRoutingStore:
         return self._pool_session_store
 
     @property

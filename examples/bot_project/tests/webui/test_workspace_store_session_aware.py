@@ -28,7 +28,8 @@ def _sessions_dir(root: Path) -> Path:
     return WorkspacePaths(root=root / _DATA_DIR_NAME).sessions_dir
 
 
-def test_append_lands_in_bound_workspace(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_append_lands_in_bound_workspace(tmp_path: Path) -> None:
     home = tmp_path / "home"
     home.mkdir()
     ws_b = tmp_path / "wsB"
@@ -36,7 +37,7 @@ def test_append_lands_in_bound_workspace(tmp_path: Path) -> None:
     store = _store()
     store.set_agent_pool_map({"main": "main"})
     with bind_workspace_root(ws_b):
-        store.append(
+        await store.append(
             "convB.main",
             UserMessageEvent(session_id="convB.main", agent_name="main", content="hi"),
         )
@@ -46,36 +47,41 @@ def test_append_lands_in_bound_workspace(tmp_path: Path) -> None:
     ).exists()
 
 
-def test_no_bind_defaults_to_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.asyncio
+async def test_no_bind_defaults_to_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.chdir(home)
     store = _store()
     store.set_agent_pool_map({"main": "main"})
-    store.append(
+    await store.append(
         "convX.main",
         UserMessageEvent(session_id="convX.main", agent_name="main", content="hi"),
     )
     assert (home / ".modex" / "sessions" / "main" / "convX.main.jsonl").exists()
 
 
-def test_read_with_explicit_sessions_dir(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_read_with_explicit_sessions_dir(tmp_path: Path) -> None:
     ws_b = tmp_path / "wsB"
     ws_b.mkdir()
     store = _store()
     store.set_agent_pool_map({"main": "main"})
     with bind_workspace_root(ws_b):
-        store.append(
+        await store.append(
             "convB.main",
             UserMessageEvent(session_id="convB.main", agent_name="main", content="hi"),
         )
     b_sessions = _sessions_dir(ws_b)
-    assert "convB.main" in store.list_sessions(b_sessions)
+    assert "convB.main" in await store.list_sessions(b_sessions)
     home_sessions = _sessions_dir(tmp_path / "home")
-    assert "convB.main" not in store.list_sessions(home_sessions)
+    assert "convB.main" not in await store.list_sessions(home_sessions)
 
 
-def test_load_reads_explicit_dir_without_binding(
+@pytest.mark.asyncio
+async def test_load_reads_explicit_dir_without_binding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ws_b = tmp_path / "wsB"
@@ -83,11 +89,11 @@ def test_load_reads_explicit_dir_without_binding(
     store = _store()
     store.set_agent_pool_map({"main": "main"})
     with bind_workspace_root(ws_b):
-        store.append(
+        await store.append(
             "convB.main",
             UserMessageEvent(session_id="convB.main", agent_name="main", content="hi"),
         )
     # Read from an unrelated cwd with the explicit sessions_dir.
     monkeypatch.chdir(tmp_path)
-    events = list(store.load("convB.main", sessions_dir=_sessions_dir(ws_b)))
+    events = await store.load("convB.main", sessions_dir=_sessions_dir(ws_b))
     assert len(events) == 1

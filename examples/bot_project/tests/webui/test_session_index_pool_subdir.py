@@ -123,7 +123,7 @@ async def test_list_sessions_finds_session_in_pool_subdir() -> None:
         )
         await store.save(session)
 
-        loaded = await store.list_sessions(index_dir=index_dir)
+        loaded = await store.list_sessions()
         ids = {s.session_id for s in loaded}
         assert "abc123.coding" in ids, (
             f"session not found in list_sessions; ids={ids}"

@@ -54,5 +54,5 @@ class PersistUserMessageStage(InputStage):
         # the right workspace.
         workspace: Path = envelope.metadata[RoutingMeta.WORKSPACE]
         with bind_workspace_root(workspace):
-            ctx.transcript_store.append(full_sid, event)
+            await ctx.transcript_store.append(full_sid, event)
         return Continue(value=envelope)

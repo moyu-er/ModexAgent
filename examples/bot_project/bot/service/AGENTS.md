@@ -13,6 +13,7 @@ Bot service lifecycle, pool orchestration, and workspace management. This is the
 | `core.py` | `BotService` — initialization, workspace stack assembly (multi-live), pool creation, pipeline assembly, lifecycle management. **Owns the shared MCP connection registry** (ADR-0017 Task 5a): built once in `initialize()` gated by `config/mcp/registry.json` `sharedRegistry` (default on), shut down in `stop()` after workspaces evict |
 | `builders.py` | Tool registration, MCP tool loading, subagent memory/skill construction, terminal tool setup. `_load_agent_mcp_tools` has a shared-registry branch: when passed a `McpConnectionRegistry` it acquires a `SharedMcpBackend` facade instead of building a private `MCPClientManager` |
 | `pool_builder.py` | `create_pool()` — assembles an `AgentPool` with main agent + subagent descriptors from config; per-workspace tool wrapping via `WorkspaceRootProvider`. Threads `mcp_registry` through to the main-agent MCP tool loader |
+| `_external_coding_wiring.py` | External pool assembly. OpenCode prefers a warm SSE `opencode serve` backend with sticky `opencode run` fallback; Pi uses its per-turn backend. The composite close attempts every owned adapter and preserves the first failure |
 | `pool_instance.py` | `PoolInstance` dataclass — holds pool config, `AgentPool` reference, main agent name |
 | `pool_router.py` | `PoolRouter` — session→pool dispatch; `PoolSessionStore` persists session→pool mapping. Now delegates message processing to input pipeline (adapter produces seed envelope → pipeline stages → enqueue callback enters broker queue) |
 | `web_ui_service.py` | `WebUIService` — the single IM + WebUI entry point. Assembles and starts the HTTP + WS server; **auto-discovers every `bot/adapters/register_*.py`** (QQ / Telegram / WebSocket) by importing them to fire the `@register` decorators, then builds enabled adapters from `ADAPTERS`; creates `PoolSkillManagerRegistry` and `BotInputContext`; wires pipeline into adapters |
@@ -70,6 +71,23 @@ Defined in `pool_router.py`:
 - **Teardown convergence**: `_stop_resources` calls `mcp_manager.release()`. Both `MCPClientManager` and `SharedMcpBackend` are `McpBackend` with `release()` — on the legacy path it closes connections (== `disconnect_all`), on the shared path it only detaches the facade (real connections close at registry shutdown). One call works for both; no conditional.
 - **Stop ordering**: `stop()` evicts workspaces first (→ `release()` per pool, detach facades), THEN `registry.shutdown()` closes the actual shared subprocesses.
 - **Flag-off path byte-for-byte**: `sharedRegistry: false` (or registry absent) → `self._mcp_registry = None` → `_load_agent_mcp_tools` takes the legacy `MCPClientManager` branch unchanged → `release()` == `disconnect_all()` (today's behavior).
+
+## External Coding Lifecycle (ADR-0022)
+
+- `build_external_coding_backend()` returns one `StreamingProviderBackend`;
+  callers do not branch during shutdown.
+- OpenCode's composite owns both `OpenCodeServerBackend` and
+  `OpenCodeBackend`. SSE startup failure activates a sticky subprocess
+  fallback, but close always attempts both adapters.
+- `build_external_session_map_store()` follows workspace persistence config:
+  FILE uses `LocalFileExternalSessionMapStore`; SQLITE uses
+  `SqliteExternalSessionMapStore` with the workspace connection and scope.
+- Workspace teardown calls `AgentPool.shutdown_all()`, which reaches
+  `ExternalCodingAgent.stop()` and then backend `close()`. Only successful
+  owners are removed; failures remain available for retry.
+- A normal external-agent turn never closes the warm OpenCode server. It is
+  released on backend/agent/pool/workspace shutdown, while Pi and
+  `opencode run` children are reaped per turn.
 
 ## For AI Agents
 

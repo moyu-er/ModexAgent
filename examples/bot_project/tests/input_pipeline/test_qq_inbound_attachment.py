@@ -194,7 +194,7 @@ async def test_qq_attachment_ref_flows_through_im_pipeline_to_persisted_record()
 
         full_sid = env.metadata["full_session_id"]
         with bind_workspace_root(root):
-            events = list(transcript_store.load(full_sid))
+            events = await transcript_store.load(full_sid)
         user_events = [e for e in events if isinstance(e, UserMessageEvent)]
         assert user_events, "user message must be persisted to the transcript"
         assert user_events[0].content == "look at this"

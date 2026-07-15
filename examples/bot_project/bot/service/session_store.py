@@ -1,13 +1,14 @@
-"""SessionInfo index partitioned by pool — ``<index_dir>/<pool>/{safe_id}.json``.
+"""SessionInfo index partitioned by pool — ``<root>/<pool>/{safe_id}.json``.
 
-Workspace isolation is driven by the ``index_dir`` override on every method:
-each workspace owns its own ``session_index`` directory, so sessions created
-under a workspace never leak into another workspace's listing. HTTP/WS handlers
-resolve the per-workspace ``index_dir`` (from the request's ``?ws=``) and pass
-it in; callers that omit it fall back to ``base_dir`` (the configured home
-root). Pool is resolved at write time via a callable so each session lands in
-the correct pool directory, consistent with ``memory/<pool>/`` and
-``sessions/<pool>/``.
+Workspace isolation is driven by store construction: each workspace owns its
+own ``session_index`` directory, so the store is constructed with that
+directory as ``base_dir``. The WebUI server builds a fresh store per
+workspace via a factory; in-turn writers (``InMemorySessionRegistry``) use a
+per-workspace store constructed in ``wiring._build_resources``. A bound
+workspace-root contextvar (inside a dispatch turn) still overrides the root
+so the shared registry routes writes to the active workspace. Pool is
+resolved at write time via a callable so each session lands in the correct
+pool directory, consistent with ``memory/<pool>/`` and ``sessions/<pool>/``.
 
 I/O is dispatched via ``asyncio.to_thread`` so disk operations never block the
 event loop.
@@ -17,23 +18,25 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
-from pathlib import Path
 from collections.abc import Callable
+from pathlib import Path
 
 from modex_agent.core.session_id import SessionInfo, session_id_prefix_of
-
-logger = logging.getLogger(__name__)
-from modex_agent.core.session_store import LocalFileSessionStore, atomic_write_text, safe_filename
+from modex_agent.core.session_store import (
+    LocalFileSessionStore,
+    atomic_write_text,
+    safe_filename,
+)
 
 
 class WorkspacePoolSessionStore(LocalFileSessionStore):
     """Session index with pool subdirectory layering.
 
-    *save* writes to ``<index_dir>/<pool>/<safe_id>.json`` (``base_dir`` when no
-    ``index_dir`` is given). *get* / *delete* find the existing record via
-    ``_path_for`` (glob-based under the resolved root, backward-compatible with
-    a flat root or records moved between pools).
+    *save* writes to ``<root>/<pool>/<safe_id>.json`` where ``root`` is the
+    ``base_dir`` passed at construction (or the bound workspace root's
+    session-index dir when inside a dispatch turn). *get* / *delete* find the
+    existing record via ``_path_for`` (glob-based under the resolved root,
+    backward-compatible with a flat root or records moved between pools).
     """
 
     def __init__(
@@ -50,18 +53,15 @@ class WorkspacePoolSessionStore(LocalFileSessionStore):
     # helpers
     # ------------------------------------------------------------------
 
-    def _root_for(self, index_dir: Path | None) -> Path:
+    def _root_for(self) -> Path:
         """The root to read/write under.
 
-        - *index_dir* when given (explicit ws scope, e.g. HTTP handlers).
         - The bound workspace root's session-index dir when inside a dispatch
           turn (``InMemorySessionRegistry`` calls, e.g. the PoolRouter touching
           or registering a session).
-        - ``base_dir`` (home) otherwise — backward compat for tests and
-          non-dispatch callers.
+        - ``self._root`` (the construction-time ``base_dir``) otherwise — used
+          by HTTP/WS handlers that build a fresh store per workspace.
         """
-        if index_dir is not None:
-            return index_dir
         from modex_agent.workspace.runtime import (
             is_workspace_root_bound,
             resolve_workspace_root,
@@ -74,9 +74,9 @@ class WorkspacePoolSessionStore(LocalFileSessionStore):
             ).session_index_dir
         return self._root
 
-    def _path_for(self, session_id: str, root: Path | None = None) -> Path:
+    def _path_for(self, session_id: str) -> Path:
         """Find existing record in any pool subdirectory; fallback to root."""
-        base = root if root is not None else self._root
+        base = self._root_for()
         safe = safe_filename(session_id)
         filename = f"{safe}.json"
         for json_file in base.glob(f"**/{filename}"):
@@ -92,23 +92,8 @@ class WorkspacePoolSessionStore(LocalFileSessionStore):
     # SessionStore interface
     # ------------------------------------------------------------------
 
-    async def save(self, session: SessionInfo, index_dir: Path | None = None) -> None:
-        # Convergence guard: the owning workspace is resolved from the bound
-        # root ctxvar when no explicit index_dir is given. A save with neither
-        # silently lands in base_dir (home) — almost always a bug (an out-of-turn
-        # registration). Surface it loudly instead of leaking the record into home.
-        if index_dir is None:
-            from modex_agent.workspace.runtime import is_workspace_root_bound
-
-            if not is_workspace_root_bound():
-                logger.warning(
-                    "[ws-partition] session-index save for %s with NO explicit "
-                    "index_dir and NO bound workspace root — writing under base_dir "
-                    "(home). This is expected only outside a turn; a turn-time "
-                    "writer must run inside bind_workspace_root().",
-                    session.session_id,
-                )
-        root = self._root_for(index_dir)
+    async def save(self, session: SessionInfo) -> None:
+        root = self._root_for()
         pool = self._pool_resolver(session)
         path = root / pool / f"{safe_filename(session.session_id)}.json"
         payload = session.model_dump_json()
@@ -118,8 +103,8 @@ class WorkspacePoolSessionStore(LocalFileSessionStore):
 
         await asyncio.to_thread(_write)
 
-    async def get(self, session_id: str, index_dir: Path | None = None) -> SessionInfo | None:
-        path = self._path_for(session_id, self._root_for(index_dir))
+    async def get(self, session_id: str) -> SessionInfo | None:
+        path = self._path_for(session_id)
 
         def _read() -> str | None:
             if not path.exists():
@@ -131,8 +116,8 @@ class WorkspacePoolSessionStore(LocalFileSessionStore):
             return None
         return SessionInfo(**json.loads(text))
 
-    async def delete(self, session_id: str, index_dir: Path | None = None) -> None:
-        path = self._path_for(session_id, self._root_for(index_dir))
+    async def delete(self, session_id: str) -> None:
+        path = self._path_for(session_id)
 
         def _rm() -> None:
             if path.exists():
@@ -141,7 +126,7 @@ class WorkspacePoolSessionStore(LocalFileSessionStore):
         await asyncio.to_thread(_rm)
 
     async def delete_sessions_by_prefix(
-        self, session_prefix: str, index_dir: Path | None = None
+        self, session_prefix: str
     ) -> None:
         """Remove every record whose session id shares *session_prefix*.
 
@@ -150,13 +135,12 @@ class WorkspacePoolSessionStore(LocalFileSessionStore):
         subagent invocation index files don't accumulate as orphans. Mirrors
         :meth:`TranscriptStore.delete_sessions_by_prefix`.
         """
-        root = self._root_for(index_dir)
-        for session in await self.list_sessions(index_dir):
+        for session in await self.list_sessions():
             if session_id_prefix_of(session.session_id) == session_prefix:
-                await self.delete(session.session_id, root)
+                await self.delete(session.session_id)
 
-    async def list_sessions(self, index_dir: Path | None = None) -> list[SessionInfo]:
-        base = self._root_for(index_dir)
+    async def list_sessions(self) -> list[SessionInfo]:
+        base = self._root_for()
 
         def _collect() -> list[str]:
             results: list[str] = []
@@ -173,11 +157,9 @@ class WorkspacePoolSessionStore(LocalFileSessionStore):
                 pass
         return sessions
 
-    async def get_children(
-        self, parent_id: str, index_dir: Path | None = None
-    ) -> list[SessionInfo]:
+    async def get_children(self, parent_id: str) -> list[SessionInfo]:
         results: list[SessionInfo] = []
-        for session in await self.list_sessions(index_dir):
+        for session in await self.list_sessions():
             if session.parent_session_id == parent_id:
                 results.append(session)
         return results

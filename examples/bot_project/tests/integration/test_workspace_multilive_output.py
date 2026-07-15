@@ -24,10 +24,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.service.core import BotService
 from bot.workspace.wiring import build_workspace_stack
+
 from modex_agent.core.emitter import StreamingAwareEmitter
 from modex_agent.core.provider import LLMProvider
 from modex_agent.core.session_id import SessionIdFactory
@@ -211,8 +211,8 @@ async def test_every_materialized_workspace_delivers_output(tmp_path: Path) -> N
 
     # Mock the LLM everywhere it could be reached: per-pool provider (turns) and
     # the service default provider (memory summarizer / background).
-    import bot.service.pool_builder as pool_builder_mod
     import bot.service.core as core_mod
+    import bot.service.pool_builder as pool_builder_mod
 
     original_llm_provider = pool_builder_mod._build_llm_provider
     original_default_provider = core_mod.BotService._build_default_provider
@@ -227,6 +227,9 @@ async def test_every_materialized_workspace_delivers_output(tmp_path: Path) -> N
 
     try:
         await service.initialize()
+        registry_db = tmp_path / app_config.paths.data_dir_name / "_registry" / "state.db"
+        assert registry_db.exists()
+        assert service.workspace_stack.store is service._registry_persistence.store
 
         # HOME is materialized by initialize(); its bridges must be running too.
         home_resources = service._home_resources

@@ -1,5 +1,10 @@
 """Recent workspace tracking — convenience for workspace switching.
 
+.. deprecated:: T14
+    Use :meth:`modex_agent.workspace.registry.WorkspaceRegistryStore.list_workspaces`
+    with ``order_by="last_active"`` instead.  This module is retained for
+    backward compatibility until T23 removes it.
+
 Maintains a JSON file of recently visited workspace paths (max 20),
 used by the WebUI to offer a quick-switch dropdown so users don't need
 to re-browse the filesystem every time.
@@ -14,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import time
+import warnings
 from pathlib import Path
 
 RECENT_FILE: str = "recent_workspaces.json"
@@ -46,10 +52,22 @@ def _write_atomic(path: Path, data: dict) -> None:
 class RecentWorkspaces:
     """Maintains a max-20 list of recently visited workspace paths.
 
+    .. deprecated:: T14
+        Superseded by
+        :class:`modex_agent.workspace.registry.WorkspaceRegistryStore.list_workspaces`.
+        T23 will remove this class.
+
     Paths are deduplicated; the most recently visited path appears first.
     """
 
     def __init__(self, data_dir: Path) -> None:
+        warnings.warn(
+            "RecentWorkspaces is deprecated since T14; use "
+            "WorkspaceRegistryStore.list_workspaces(order_by='last_active') "
+            "instead. T23 will remove this class.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._path = data_dir / RECENT_FILE
         self._recent: list[dict[str, object]] = []
 

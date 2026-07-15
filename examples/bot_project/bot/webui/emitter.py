@@ -150,7 +150,7 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
     # Turn lifecycle helpers
     # ------------------------------------------------------------------
 
-    def _persist(self, event: ServerEvent) -> None:
+    async def _persist(self, event: ServerEvent) -> None:
         """Append *event* to the transcript store under the owning workspace.
 
         The sessions_dir is resolved from the resolver-cell provider when wired
@@ -167,11 +167,11 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
         # (used in tests / standalone paths) does not accept the kwarg, so the
         # non-resolver path keeps the 2-arg call the ABC defines.
         if sessions_dir is not None:
-            self._transcript_store.append(
+            await self._transcript_store.append(
                 self._session_id, event, sessions_dir=sessions_dir
             )
         else:
-            self._transcript_store.append(self._session_id, event)
+            await self._transcript_store.append(self._session_id, event)
 
     def _resolve_call_id(self, raw_call_id: str | None, tool_name: str) -> str:
         """Return a stable call_id, falling back to monotonic counter when None."""
@@ -296,7 +296,7 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
                 full_args = pending[1] if pending is not None else {}
                 if self._transcript_store is not None:
                     if pending is not None:
-                        self._persist(
+                        await self._persist(
                             TcEvent(
                                 session_id=self._session_id,
                                 agent_name=self._agent_name,
@@ -306,7 +306,7 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
                                 args=full_args,
                             )
                         )
-                    self._persist(
+                    await self._persist(
                         TrEvent(
                             session_id=self._session_id,
                             agent_name=self._agent_name,
@@ -402,7 +402,7 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
                     tool_name=tool_name,
                     args=full_args,
                 )
-                self._persist(tc_evt)
+                await self._persist(tc_evt)
                 tr_evt = TrEvent(
                     session_id=self._session_id,
                     agent_name=self._agent_name,
@@ -412,7 +412,7 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
                     result=full_result.strip(),
                     error=raw_error,
                 )
-                self._persist(tr_evt)
+                await self._persist(tr_evt)
 
             result_summary: str = (
                 full_result[:_MAX_TOOL_RESULT_LEN] + "..."
@@ -466,7 +466,7 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
                     turn_id=self._current_turn_id,
                     text=text,
                 )
-            self._persist(evt)
+            await self._persist(evt)
         self._segments = {}
         self._segment_kinds = {}
         self._segment_order = []

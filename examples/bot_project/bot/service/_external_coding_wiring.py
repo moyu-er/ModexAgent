@@ -25,7 +25,7 @@ import yaml
 from modex_agent.agents.external_coding.agent import StreamingProviderBackend
 from modex_agent.agents.external_coding.builder import ExternalCodingAgentBuilder
 from modex_agent.agents.external_coding.contracts import ProviderEventParser
-from modex_agent.agents.external_coding.paths import ExternalPaths, ProviderKind
+from modex_agent.agents.external_coding.paths import ProviderKind
 from modex_agent.agents.external_coding.providers.opencode_backend import OpenCodeBackend
 from modex_agent.agents.external_coding.providers.opencode_server_backend import (
     OpenCodeServerBackend,
@@ -34,7 +34,6 @@ from modex_agent.agents.external_coding.providers.opencode_server_backend import
 from modex_agent.agents.external_coding.providers.opencode_sse_parser import OpenCodeSSEParser
 from modex_agent.agents.external_coding.providers.pi_backend import PiBackend
 from modex_agent.agents.external_coding.providers.pi_parser import PiEventParser
-from modex_agent.agents.external_coding.session_store import ExternalSessionStore
 from modex_agent.agents.external_coding.types import (
     BackendResult,
     Emission,
@@ -141,7 +140,18 @@ class _OpenCodeFallbackBackend(StreamingProviderBackend):
         )
 
     async def close(self) -> None:
-        await self._sse_backend.close()
+        first_error: BaseException | None = None
+        try:
+            await self._sse_backend.close()
+        except BaseException as exc:
+            first_error = exc
+        try:
+            await self._subprocess_backend.close()
+        except BaseException as exc:
+            if first_error is None:
+                first_error = exc
+        if first_error is not None:
+            raise first_error
 
 
 def _modexctl_bin_dir() -> Path:
@@ -222,11 +232,22 @@ def build_external_coding_deps(
     workspace_dir: Path,
     main_agent_name: str,
     base_env: dict[str, str] | None = None,
+    *,
+    app_config: Any | None = None,
+    persistence: Any | None = None,
 ) -> dict[str, Any]:
     provider_kind = read_provider_kind(pool_spec, project_dir)
     backend = build_external_coding_backend(provider_kind)
     parser = build_external_coding_parser(provider_kind)
-    session_store = ExternalSessionStore(ExternalPaths(workspace_dir))
+    from bot.service.builders import build_external_session_map_store
+    from modex_agent.core.scope import RecordScope
+
+    session_store = build_external_session_map_store(
+        app_config,
+        persistence,
+        workspace_dir,
+        RecordScope(pool=pool_name),
+    )
     spec = build_external_coding_env_spec(
         pool_name, pool_spec, project_dir, inbox_dir, workspace_dir, main_agent_name
     )

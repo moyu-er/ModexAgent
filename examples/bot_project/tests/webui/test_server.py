@@ -431,7 +431,7 @@ async def test_api_messages_loads_transcript() -> None:
         # Append to the server's active workspace store, not the legacy one.
         from bot.webui.events import UserMessageEvent
         with bind_workspace_root(workspace_root):
-            server._store.append(
+            await server._store.append(
                 "abc123.main",
                 UserMessageEvent(session_id="abc123.main", agent_name="main", content="hello")
 )
@@ -522,9 +522,9 @@ async def test_sessions_list_includes_pool() -> None:
         # Add transcript data to the server's workspace-scoped store.
         from bot.webui.events import UserMessageEvent
         with bind_workspace_root(data_dir):
-            server._store.append(s1_sid,
+            await server._store.append(s1_sid,
                 UserMessageEvent(session_id=s1_sid, agent_name="coding", content="hi"))
-            server._store.append(s2_sid,
+            await server._store.append(s2_sid,
                 UserMessageEvent(session_id=s2_sid, agent_name="main", content="hi"))
 
         resp = await client.get("/api/sessions")
@@ -579,7 +579,7 @@ async def test_delete_session_cleans_up_metadata() -> None:
 
         # Write a transcript so there is something to delete.
         with bind_workspace_root(data_dir):
-            store.append(
+            await store.append(
                 session_id,
                 UserMessageEvent(session_id=session_id, agent_name="coding", content="test")
             )
@@ -890,7 +890,7 @@ async def test_sessions_persist_across_pool_switch_and_qq_conversation() -> None
         qq_conv_id = "qq:group:12345"
         qq_sid = f"{qq_conv_id}.main"
         with bind_workspace_root(data_dir):
-            server._store.append(
+            await server._store.append(
                 qq_sid,
                 UserMessageEvent(
                     session_id=qq_sid,
@@ -1043,9 +1043,9 @@ async def test_sessions_list_includes_subagent_with_parent_relation() -> None:
 
     # Add transcript data for both parent and child
     with bind_workspace_root(data_dir):
-        store.append(parent_sid,
+        await store.append(parent_sid,
             UserMessageEvent(session_id=parent_sid, agent_name="coding", content="hi"))
-        store.append(child_sid,
+        await store.append(child_sid,
             UserMessageEvent(session_id=child_sid, agent_name="reviewer", content="reviewing"))
 
     client = TestClient(TestServer(server.app))
@@ -1101,9 +1101,9 @@ async def test_api_messages_loads_subagent_transcript() -> None:
 
     # Write transcript data for the subagent session
     with bind_workspace_root(data_dir):
-        store.append(parent_sid,
+        await store.append(parent_sid,
             UserMessageEvent(session_id=parent_sid, agent_name="coding", content="hi"))
-        store.append(child_sid,
+        await store.append(child_sid,
             UserMessageEvent(session_id=child_sid, agent_name="reviewer", content="review result"))
 
     # Save subagent session to the store so _resolve_agent finds "reviewer".
@@ -1440,7 +1440,7 @@ async def test_api_sessions_falls_back_to_transcripts_when_index_empty() -> None
     # Write a legacy transcript directly into the coding pool directory.
     legacy_sid = "legacy123.coding"
     with bind_workspace_root(data_dir):
-        store.append(
+        await store.append(
             legacy_sid,
             UserMessageEvent(
                 session_id=legacy_sid, agent_name="coding", content="hi"
@@ -1505,7 +1505,7 @@ async def test_api_sessions_falls_back_preserves_index_entries() -> None:
         )
     )
     with bind_workspace_root(data_dir):
-        store.append(
+        await store.append(
             indexed_sid,
             UserMessageEvent(
                 session_id=indexed_sid, agent_name="coding", content="hi"
@@ -1581,7 +1581,7 @@ async def test_workspace_cd_switches_current_workspace() -> None:
         sid_a = f"{_new_uuid_prefix()}.main"
 
         with bind_workspace_root(ws_a):
-            store.append(
+            await store.append(
                 sid_a, UserMessageEvent(session_id=sid_a, agent_name="main", content="ws-a")
             )
 
@@ -1604,7 +1604,7 @@ async def test_workspace_cd_switches_current_workspace() -> None:
         sid_b = f"{_new_uuid_prefix()}.main"
 
         with bind_workspace_root(ws_b):
-            store.append(
+            await store.append(
                 sid_b, UserMessageEvent(session_id=sid_b, agent_name="main", content="ws-b")
             )
 
@@ -1675,7 +1675,7 @@ async def test_api_sessions_includes_subagent_sessions() -> None:
         )
     )
     with bind_workspace_root(data_dir):
-        store.append(
+        await store.append(
             child_sid,
             UserMessageEvent(
                 session_id=child_sid, agent_name="reviewer", content="review done"
@@ -1871,11 +1871,11 @@ async def test_subagent_invocation_id_matching_agent_name_still_registered() -> 
         # Main session + a subagent invocation whose invocation_id equals "main"
         # (a pool agent name). The old from_str() parsing would skip it.
         with bind_workspace_root(workspace_root):
-            store.append(
+            await store.append(
                 "conv.main",
                 UserMessageEvent(session_id="conv.main", agent_name="main", content="hi")
             )
-            store.append(
+            await store.append(
                 "conv.reviewer.main",  # prefix.reviewer.<invocation_id=main>
                 UserMessageEvent(session_id="conv.reviewer.main", agent_name="reviewer", content="review")
             )
@@ -1914,7 +1914,7 @@ async def test_api_messages_sorts_with_none_timestamp() -> None:
         server = WebUIServer(input_adapter, store, static_dist=None, home_sessions_dir=home_sessions_dir)
         server.set_workspace_index(store)
         with bind_workspace_root(workspace_root):
-            server._store.append(
+            await server._store.append(
                 "abc123.main",
                 UserMessageEvent(session_id="abc123.main", agent_name="main", content="hello")
             )

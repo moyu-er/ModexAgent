@@ -623,8 +623,11 @@ def _launch_subprocess(script: str) -> subprocess.Popen[Any]:
     python_exe = str(_VENV_PYTHON)
     args = [python_exe, "-c", script]
 
-    # _log_file() ensures parent dir exists internally.
-    log_stream = _log_file().open("a", encoding="utf-8", errors="replace")
+    # Redirect child stdout/stderr to a SEPARATE file from bot.log so the
+    # RotatingFileHandler can rename bot.log during rollover without a
+    # competing OS handle (WinError 32 on Windows).
+    stdout_log = _log_file().parent / "bot.stdout.log"
+    log_stream = stdout_log.open("a", encoding="utf-8", errors="replace")
 
     kwargs: dict[str, Any] = {
         "cwd": str(_PKG_ROOT),
