@@ -40,32 +40,24 @@ _REPO_ROOT: Path = _PKG_ROOT.parent.parent
 
 
 def _resolve_venv_python() -> Path:
-    """Find a usable venv Python that has modexbot installed.
+    """Find a usable Python for launching bot subprocesses.
 
-    Checks both ``bot_project/.venv`` and ``repo_root/.venv``.  The
-    install scripts (install.sh / install.bat) create the environment at
-    the repo root, so that is tried first.  A stale ``bot_project/.venv``
-    with missing dependencies will be skipped.
-
-    On failure the most likely candidate is still returned so error
-    messages show a meaningful path.
+    Checks ``bot_project/.venv`` and ``repo_root/.venv`` first (the
+    install scripts create the environment at repo root).  Falls back to
+    ``sys.executable`` for bundled installs (no venv, deps pre-installed).
     """
     _ = sys.platform
     bins: tuple[str, ...] = ("Scripts",) if _ == "win32" else ("bin",)
     exe_name: str = "python.exe" if _ == "win32" else "python"
-    cli_name: str = "modexbot.exe" if _ == "win32" else "modexbot"
 
-    roots = (_REPO_ROOT, _PKG_ROOT)  # repo root first (install scripts default)
+    roots = (_REPO_ROOT, _PKG_ROOT)
 
     for root in roots:
-        bin_dir = root / ".venv" / bins[0]
-        python = bin_dir / exe_name
-        cli = bin_dir / cli_name
-        if python.is_file() and cli.is_file():
+        python = root / ".venv" / bins[0] / exe_name
+        if python.is_file():
             return python
 
-    # Neither is usable — return the repo root path as the most likely target.
-    return _REPO_ROOT / ".venv" / bins[0] / exe_name
+    return Path(sys.executable)
 
 
 _VENV_PYTHON: Path = _resolve_venv_python()

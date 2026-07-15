@@ -102,3 +102,8 @@ data
 *.pdf
 /workspace/
 
+# Packaging build artifacts
+packaging/staging/
+packaging/logo.ico
+packaging/ModexBot-Setup-*.exe
+
