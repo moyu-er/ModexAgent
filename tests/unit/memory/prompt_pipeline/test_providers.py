@@ -13,7 +13,6 @@ from modex_agent.memory.prompt_pipeline.providers import (
     SkillProvider,
 )
 
-
 # -- BasePromptProvider --
 
 

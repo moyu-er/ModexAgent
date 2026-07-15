@@ -9,14 +9,14 @@ from modex_agent.core.scope import (
     MemoryAgentRole,
     MemoryContext,
     MemoryLayerName,
-    MemoryScope,
+    Scope,
     ScopeRecord,
 )
-from modex_agent.memory.core.storage import MemoryStorage
+from modex_agent.memory.core.split_stores import MemoryStoreBundle
 
 
 class MemoryStoreRegistry(ABC):
-    """Resolve a memory layer and scope into one scoped storage instance."""
+    """Resolve a memory layer and scope into a :class:`MemoryStoreBundle`."""
 
     @abstractmethod
     async def initialize(self) -> None:
@@ -31,9 +31,9 @@ class MemoryStoreRegistry(ABC):
         self,
         *,
         layer: MemoryLayerName,
-        scope: MemoryScope,
+        scope: Scope,
         context: MemoryContext,
-    ) -> MemoryStorage:
+    ) -> MemoryStoreBundle:
         pass
 
     @abstractmethod
@@ -51,6 +51,6 @@ class MemoryStoreRegistry(ABC):
         self,
         *,
         layer: MemoryLayerName | None = None,
-        scope: MemoryScope | None = None,
+        scope: Scope | None = None,
     ) -> None:
         pass

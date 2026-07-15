@@ -10,14 +10,14 @@ import asyncio
 import logging
 
 from modex_agent.agents.summarizer.abc import KnowledgeConsolidatorBase
-from modex_agent.memory.archive_models import ArchiveChannel
-from modex_agent.memory.core.layers import ArchiveMemoryManager, KnowledgeMemoryManager
-from modex_agent.memory.core.models import ArchiveEntry
 from modex_agent.core.scope import (
     MemoryAgentRole,
     MemoryContext,
     MemoryLayerName,
 )
+from modex_agent.memory.archive_models import ArchiveChannel
+from modex_agent.memory.core.layers import ArchiveMemoryManager, KnowledgeMemoryManager
+from modex_agent.memory.core.models import ArchiveEntry
 from modex_agent.memory.registry.base import MemoryStoreRegistry
 
 logger = logging.getLogger(__name__)

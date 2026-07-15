@@ -265,4 +265,4 @@ class TestDirArchiveStorage:
         self, store: DirArchiveStorage
     ) -> None:
         size = await store.write_archive_file(1, "context.md", "hello")
-        assert size == len("hello".encode("utf-8"))
+        assert size == len(b"hello")

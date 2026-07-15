@@ -9,8 +9,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from modex_agent.memory.core.lock import StorageLock
 from modex_agent.memory.core.models import StorageRevision
-from modex_agent.memory.core.storage import MemoryStorage
+from modex_agent.memory.core.split_stores import (
+    ArchiveStore,
+    CursorStore,
+    KVStore,
+    MessageStore,
+)
+from modex_agent.memory.core.store_metadata import StoreMetadata
 from modex_agent.utils.file_io import read_json_robust
 
 if TYPE_CHECKING:
@@ -21,8 +28,14 @@ logger = logging.getLogger(__name__)
 _REQUIRED_ARCHIVE_FILES: frozenset[str] = frozenset({"context.md", "knowledge.md", "index.md"})
 
 
-class DirArchiveStorage(MemoryStorage):
+class DirArchiveStorage(StoreMetadata, MessageStore, KVStore, CursorStore, ArchiveStore):
     """Archive storage backed by a directory tree of markdown files.
+
+    Implements ``KVStore`` + ``ArchiveStore`` + ``CursorStore`` (the three
+    meaningful archive-layer interfaces) plus a no-op ``MessageStore`` so a
+    single instance can fill every field of a ``MemoryStoreBundle`` uniformly
+    — the archive layer holds no conversation messages, so the message-history
+    state machine methods are no-ops.
 
     Layout::
 
@@ -39,7 +52,7 @@ class DirArchiveStorage(MemoryStorage):
     def __init__(self, base_dir: Path) -> None:
         from modex_agent.memory.core.lock import AioRWLock
 
-        super().__init__(AioRWLock())
+        self._lock = AioRWLock()
         self._base = base_dir
 
     async def initialize(self) -> None:
@@ -49,7 +62,7 @@ class DirArchiveStorage(MemoryStorage):
     async def close(self) -> None:
         """No-op close — directory storage is stateless."""
 
-    def get_lock(self):
+    def get_lock(self) -> StorageLock:
         """Return the read-write lock for this storage instance."""
         return self._lock
 
@@ -64,7 +77,7 @@ class DirArchiveStorage(MemoryStorage):
         """Alias for compatibility with callers that expect ``.directory``."""
         return self._base
 
-    # -- MemoryStorage archive extensions (overrides) ------------------------
+    # -- ArchiveStore extensions (overrides) ------------------------
 
     async def read_archive_state(self) -> dict[str, Any] | None:
         """Return the persisted archive state, or ``None`` if absent."""
@@ -152,8 +165,8 @@ class DirArchiveStorage(MemoryStorage):
                 if aid not in kept_ids and aid > 0:
                     shutil.rmtree(child, ignore_errors=True)
 
-    async def prune_to_max(self, max_total: int, min_safe_id: int = 0) -> int:
-        """Delete oldest archive dirs exceeding max_total, but never below min_safe_id.
+    async def prune_to_max(self, max_entries: int, min_safe_id: int = 0) -> int:
+        """Delete oldest archive dirs exceeding max_entries, but never below min_safe_id.
 
         min_safe_id is typically knowledge_consumed_archive_id — archives at or below
         this ID are already consumed and safe to delete. Archives above it are preserved
@@ -161,10 +174,10 @@ class DirArchiveStorage(MemoryStorage):
         """
         ids = await self.list_archives(limit=10_000)
         deletable = [aid for aid in ids if aid <= min_safe_id] if min_safe_id > 0 else []
-        if len(deletable) <= max_total:
+        if len(deletable) <= max_entries:
             return 0
         ascending = sorted(deletable)
-        to_delete = ascending[:-max_total]
+        to_delete = ascending[:-max_entries]
         for aid in to_delete:
             shutil.rmtree(self._base / str(aid), ignore_errors=True)
         return len(to_delete)
@@ -183,7 +196,7 @@ class DirArchiveStorage(MemoryStorage):
                     count += 1
         return count
 
-    # -- MemoryStorage base methods ------------------------------------------
+    # -- KVStore + MessageStore base methods --------------------------
 
     @property
     def base_path(self) -> Path | None:
@@ -220,7 +233,13 @@ class DirArchiveStorage(MemoryStorage):
     async def load_messages(self) -> list[dict[str, Any]]:
         return []
 
+    async def load_all_messages(self) -> list[dict[str, Any]]:
+        return []
+
     async def save_messages(self, messages: list[dict[str, Any]]) -> StorageRevision:
+        return self._revision()
+
+    async def append_message(self, message: dict[str, Any]) -> StorageRevision:
         return self._revision()
 
     async def get_revision(self) -> StorageRevision:
@@ -234,6 +253,29 @@ class DirArchiveStorage(MemoryStorage):
             updated_at=datetime.now(UTC),
             version=0,
         )
+
+    async def prune_messages(self, max_messages: int) -> tuple[int, list[dict[str, Any]]]:
+        return 0, []
+
+    async def pin_message(self, message_id: str) -> None:
+        _ = message_id
+
+    async def unpin_message(self, message_id: str) -> None:
+        _ = message_id
+
+    async def delete_message(self, message_id: str) -> bool:
+        _ = message_id
+        return False
+
+    async def cleanup_expired(self) -> int:
+        return 0
+
+    async def retain_messages(
+        self,
+        keep_messages: list[dict[str, Any]],
+        expected_revision: StorageRevision | None = None,
+    ) -> StorageRevision | None:
+        return self._revision()
 
     async def append_log(self, entry: dict[str, Any]) -> dict[str, Any]:
         self._base.mkdir(parents=True, exist_ok=True)

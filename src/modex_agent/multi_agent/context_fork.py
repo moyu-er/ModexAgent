@@ -1,9 +1,15 @@
-"""ContextForkBuilder — fork-context construction + file-registry ownership.
+"""ContextForkBuilder — pure-computation fork-context construction (T18).
 
 Extracted from AgentCommunicationService._create_dynamic_subagent (ADR-0015 D5).
-Owns the fork-file registry (relocated from communication._FORK_FILE_REGISTRY).
-``build(...)`` returns fork XML content; ``cleanup(session_id)`` removes the
-file + registry entry on session eviction.
+T18 simplified the builder to a pure computation: ``build(...)`` queries the
+parent session's message history (via the MemorySystem, which under T09
+routes through ``MessageStore.load_messages()``), applies lossy compaction,
+and returns the XML string directly. No fork XML files are written to disk;
+there is no file registry and no ``cleanup``.
+
+``register_for_cleanup`` and ``cleanup`` are retained as no-ops for caller
+compatibility (``ForkContextProvider`` and ``AgentPool`` still call them);
+they will be removed once those callers are migrated.
 """
 
 from __future__ import annotations
@@ -42,35 +48,35 @@ def _messages_to_xml(messages: list[ChatMessage], parent_name: str) -> str:
 
 
 class ContextForkBuilder:
-    """Builds fork context XML and owns the fork-file registry."""
+    """Builds fork context XML from parent message history (pure computation).
 
-    def __init__(self) -> None:
-        self._registry: dict[str, Path] = {}
+    ``build`` queries the parent session's messages through the subagent
+    memory system (the application-facing read path that under T09 routes
+    through ``MessageStore.load_messages()``), truncates to the last
+    ``fork_max_messages``, optionally applies lossy compaction from the
+    template's governance config, and returns the XML string. No files are
+    written; the caller passes the string to the subagent's prompt providers.
+    """
 
     async def build(
         self,
         *,
-        parent_session: "SessionInfo | str",
+        parent_session: SessionInfo | str,
         agent_type: str,
         invocation_id: str,
         fork_max_messages: int,
         fork_workspace: Path | None,
-        template_memory: "MemoryConfig | None",
-        subagent_memory_system: "MemorySystem | None",
+        template_memory: MemoryConfig | None,
+        subagent_memory_system: MemorySystem | None,
         parent_name: str,
     ) -> str | None:
-        """Build fork XML. Returns None if fork_workspace is unavailable."""
-        if fork_workspace is None:
-            logger.warning(
-                "Fork context: no workspace for %s, skipping injection", agent_type,
-            )
-            return None
-        fork_file = fork_workspace / "fork_contexts" / f"{agent_type}_{invocation_id}.xml"
-        if fork_file.exists():
-            logger.info("Fork context: loaded persisted file for %s/%s", agent_type, invocation_id)
-            return fork_file.read_text(encoding="utf-8")
+        """Build fork XML from parent message history.
 
-        # Initial creation: empty placeholder, then two-stage truncate + governance.
+        ``fork_workspace`` is accepted for caller compatibility but no longer
+        used (T18 removed file I/O). Returns the placeholder XML when the
+        memory system is absent, returns no messages, or raises.
+        """
+        del fork_workspace  # retained for API compatibility; no file I/O
         fork_xml = (
             f'<forked_context source="{parent_name}">'
             f"  <info>No parent messages available.</info>"
@@ -81,7 +87,7 @@ class ContextForkBuilder:
 
             parent_ctx = MemoryContext(session_id=str(parent_session))
             if subagent_memory_system is not None:
-                parent_messages = await subagent_memory_system.get_history(parent_ctx)
+                parent_messages = await subagent_memory_system.get_full_history(parent_ctx)
                 if parent_messages:
                     truncated = parent_messages[-fork_max_messages:]
                     if (
@@ -107,28 +113,35 @@ class ContextForkBuilder:
                     fork_xml = _messages_to_xml(truncated, parent_name)
             else:
                 logger.warning(
-                    "Fork context: no memory_system for %s, fork will be empty", agent_type,
+                    "Fork context: no memory_system for %s, fork will be empty",
+                    agent_type,
                 )
-            fork_file.parent.mkdir(parents=True, exist_ok=True)
-            fork_file.write_text(fork_xml, encoding="utf-8")
-            logger.info("Fork context: persisted for %s/%s", agent_type, invocation_id)
         except Exception:
-            logger.exception("Fork context: failed to build for %s, continuing with empty", agent_type)
+            logger.exception(
+                "Fork context: failed to build for %s, continuing with empty", agent_type
+            )
 
         return fork_xml
 
-    def register_for_cleanup(self, *, session_id: str, fork_workspace: Path, agent_type: str, invocation_id: str) -> None:
-        """Register a persisted fork file for cleanup on session eviction."""
-        fork_file = fork_workspace / "fork_contexts" / f"{agent_type}_{invocation_id}.xml"
-        if fork_file.exists():
-            self._registry[session_id] = fork_file
+    def register_for_cleanup(
+        self,
+        *,
+        session_id: str,
+        fork_workspace: Path,
+        agent_type: str,
+        invocation_id: str,
+    ) -> None:
+        """No-op (T18). Retained for caller compatibility.
+
+        Previously registered a persisted fork file for cleanup on session
+        eviction. With file I/O removed, there is nothing to register.
+        """
+        del session_id, fork_workspace, agent_type, invocation_id
 
     def cleanup(self, session_id: str) -> None:
-        """Delete the persisted fork context file for a session, if any. No-op if none."""
-        fork_file = self._registry.pop(session_id, None)
-        if fork_file is not None and fork_file.exists():
-            try:
-                fork_file.unlink()
-                logger.debug("Fork context file cleaned: %s", fork_file)
-            except OSError:
-                pass
+        """No-op (T18). Retained for caller compatibility.
+
+        Previously deleted the persisted fork context file for a session.
+        With file I/O removed, there is nothing to clean up.
+        """
+        del session_id

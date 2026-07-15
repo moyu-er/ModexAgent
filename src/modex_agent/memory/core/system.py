@@ -7,10 +7,10 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from modex_agent.memory.archive_models import ArchiveChannel
 from modex_agent.core.message import ChatMessage
-from modex_agent.memory.core.models import LongTermMemory
 from modex_agent.core.scope import MemoryContext
+from modex_agent.memory.archive_models import ArchiveChannel
+from modex_agent.memory.core.models import LongTermMemory
 from modex_agent.memory.history import MessageHistory
 from modex_agent.memory.pruned.manager import PrunedManager
 
@@ -52,6 +52,14 @@ class MemorySystem(ABC):
         self,
         context: MemoryContext,
     ) -> list[ChatMessage]: ...
+
+    @abstractmethod
+    async def get_full_history(
+        self,
+        context: MemoryContext,
+    ) -> list[ChatMessage]:
+        """Return all messages including soft-deleted ones (for context fork)."""
+        ...
 
     @abstractmethod
     async def search(
@@ -150,6 +158,13 @@ class ContextManagedMemorySystem(
         self,
         context: MemoryContext,
     ) -> list[ChatMessage]: ...
+
+    async def get_full_history(
+        self,
+        context: MemoryContext,
+    ) -> list[ChatMessage]:
+        """Default: same as get_history (backends without soft-delete)."""
+        return await self.get_history(context)
 
     @abstractmethod
     async def clear(self, context: MemoryContext) -> None: ...

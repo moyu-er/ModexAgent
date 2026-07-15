@@ -1,53 +1,61 @@
 from __future__ import annotations
 
-import inspect
+from pathlib import Path
 
 import pytest
 
-from modex_agent.core.scope import MemoryContext, MemoryLayerName, SessionScope, UserScope
-from modex_agent.memory.core.storage import MemoryStorage
-from modex_agent.memory.registry import InMemoryStoreRegistry
+from modex_agent.core.scope import (
+    MemoryContext,
+    MemoryLayerName,
+    SessionScope,
+    UserScope,
+    scope_path_key,
+)
+from modex_agent.memory.registry import DefaultMemoryStoreRegistry
 from modex_agent.memory.stores import DefaultScopedStorage, InMemoryScopedStorage
 
 
 @pytest.mark.asyncio
-async def test_in_memory_registry_resolves_one_storage_per_layer_scope() -> None:
-    registry = InMemoryStoreRegistry()
+async def test_file_registry_resolves_one_storage_per_layer_scope(
+    tmp_path: Path,
+) -> None:
+    registry = DefaultMemoryStoreRegistry(tmp_path)
     context = MemoryContext(session_id="s1", user_id="u1")
 
-    session_storage = await registry.resolve(
+    session_bundle = await registry.resolve(
         layer=MemoryLayerName.SESSION,
         scope=SessionScope(),
         context=context,
     )
-    same_session_storage = await registry.resolve(
+    same_session_bundle = await registry.resolve(
         layer=MemoryLayerName.SESSION,
         scope=SessionScope(),
         context=context,
     )
-    archive_storage = await registry.resolve(
+    archive_bundle = await registry.resolve(
         layer=MemoryLayerName.ARCHIVE,
         scope=UserScope(),
         context=context,
     )
 
-    assert session_storage is same_session_storage
-    assert session_storage is not archive_storage
-    assert session_storage.get_lock() is not archive_storage.get_lock()
+    assert session_bundle.messages is same_session_bundle.messages
+    assert session_bundle.messages is not archive_bundle.messages
 
 
 @pytest.mark.asyncio
-async def test_in_memory_registry_lists_records_by_layer_role_and_file() -> None:
-    registry = InMemoryStoreRegistry()
+async def test_file_registry_lists_records_by_layer_role_and_file(
+    tmp_path: Path,
+) -> None:
+    registry = DefaultMemoryStoreRegistry(tmp_path)
     main_context = MemoryContext(session_id="main", agent_id="main")
     subagent_context = MemoryContext(session_id="subagent", agent_id="subagent")
 
-    main_storage = await registry.resolve(
+    main_bundle = await registry.resolve(
         layer=MemoryLayerName.SESSION,
         scope=SessionScope(),
         context=main_context,
     )
-    await main_storage.save_messages([{"role": "user", "content": "hello"}])
+    await main_bundle.messages.save_messages([{"role": "user", "content": "hello"}])
     await registry.resolve(
         layer=MemoryLayerName.SESSION,
         scope=SessionScope(),
@@ -62,34 +70,11 @@ async def test_in_memory_registry_lists_records_by_layer_role_and_file() -> None
         agent_roles=None,
     )
 
-    assert [record.scope_key for record in default_records] == ["main"]
-    assert {record.scope_key for record in all_records} == {"main", "subagent"}
-    assert [record.scope_key for record in message_records] == ["main"]
-
-
-def test_memory_storage_contract_is_scoped() -> None:
-    scoped_methods = [
-        "get",
-        "set",
-        "delete",
-        "list_keys",
-        "load_messages",
-        "save_messages",
-        "append_message",
-        "append_log",
-        "read_logs",
-        "save_logs",
-        "get_last_cursor",
-        "set_last_cursor",
-    ]
-
-    for method_name in scoped_methods:
-        signature = inspect.signature(getattr(MemoryStorage, method_name))
-        assert "scope_key" not in signature.parameters, method_name
-
-    assert "lock_key" not in inspect.signature(MemoryStorage.get_lock).parameters
-    assert not hasattr(MemoryStorage, "list_scope_records")
-    assert not hasattr(MemoryStorage, "ensure_scope_metadata")
+    main_key = scope_path_key(SessionScope(), main_context)
+    subagent_key = scope_path_key(SessionScope(), subagent_context)
+    assert [record.scope_key for record in default_records] == [main_key]
+    assert {record.scope_key for record in all_records} == {main_key, subagent_key}
+    assert [record.scope_key for record in message_records] == [main_key]
 
 
 def test_public_storage_exports_only_scoped_storage() -> None:

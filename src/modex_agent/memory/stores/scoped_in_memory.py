@@ -3,18 +3,30 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from modex_agent.memory.core.lock import AioRWLock, StorageLock
 from modex_agent.memory.core.models import StorageRevision
-from modex_agent.memory.core.storage import MemoryStorage
+from modex_agent.memory.core.split_stores import (
+    ArchiveStore,
+    CursorStore,
+    KVStore,
+    MessageStore,
+)
+from modex_agent.memory.core.store_metadata import StoreMetadata
 
 
-class InMemoryScopedStorage(MemoryStorage):
-    """In-memory storage for one layer/scope target."""
+class InMemoryScopedStorage(StoreMetadata, MessageStore, KVStore, CursorStore, ArchiveStore):
+    """In-memory storage for one layer/scope target.
+
+    Implements all four split store ABCs plus :class:`StoreMetadata`.
+    Data is held in process memory and lost on restart — suitable for unit
+    tests and ephemeral sessions.
+    """
 
     def __init__(self, lock: StorageLock | None = None) -> None:
-        super().__init__(lock or AioRWLock())
+        self._lock = lock or AioRWLock()
         self._kv: dict[str, Any] = {}
         self._messages: list[dict[str, Any]] = []
         self._logs: list[dict[str, Any]] = []
@@ -23,6 +35,14 @@ class InMemoryScopedStorage(MemoryStorage):
         self._updated_at = datetime.now(UTC)
         self._archive_state: dict[str, Any] | None = None
         self._channel_logs: dict[str, list[dict[str, Any]]] = {}
+
+    def get_lock(self) -> StorageLock:
+        """Return the shared read/write lock for this store instance."""
+        return self._lock
+
+    @property
+    def base_path(self) -> Path | None:
+        return None
 
     async def initialize(self) -> None:
         pass
@@ -59,6 +79,10 @@ class InMemoryScopedStorage(MemoryStorage):
         async with self.get_lock().read():
             return list(self._messages)
 
+    async def load_all_messages(self) -> list[dict[str, Any]]:
+        async with self.get_lock().read():
+            return list(self._messages)
+
     async def save_messages(self, messages: list[dict[str, Any]]) -> StorageRevision:
         async with self.get_lock().write():
             self._messages = list(messages)
@@ -81,6 +105,80 @@ class InMemoryScopedStorage(MemoryStorage):
             updated_at=self._updated_at,
             version=self._version,
         )
+
+    async def prune_messages(self, max_messages: int) -> tuple[int, list[dict[str, Any]]]:
+        async with self.get_lock().write():
+            if len(self._messages) <= max_messages:
+                return 0, []
+            keep_idx: set[int] = (
+                set(range(len(self._messages))[-max_messages:]) if max_messages > 0 else set()
+            )
+            for i, message in enumerate(self._messages):
+                if message.get("_pinned"):
+                    keep_idx.add(i)
+            pruned = [self._messages[i] for i in range(len(self._messages)) if i not in keep_idx]
+            if not pruned:
+                return 0, []
+            self._messages = [
+                self._messages[i] for i in range(len(self._messages)) if i in keep_idx
+            ]
+            self._touch()
+            return len(pruned), pruned
+
+    async def pin_message(self, message_id: str) -> None:
+        async with self.get_lock().write():
+            changed = False
+            for message in self._messages:
+                if message.get("id") == message_id or message.get("message_id") == message_id:
+                    message["_pinned"] = True
+                    changed = True
+            if changed:
+                self._touch()
+
+    async def unpin_message(self, message_id: str) -> None:
+        async with self.get_lock().write():
+            changed = False
+            for message in self._messages:
+                if (
+                    message.get("id") == message_id or message.get("message_id") == message_id
+                ) and "_pinned" in message:
+                    message.pop("_pinned", None)
+                    changed = True
+            if changed:
+                self._touch()
+
+    async def delete_message(self, message_id: str) -> bool:
+        async with self.get_lock().write():
+            remaining = [
+                m
+                for m in self._messages
+                if m.get("id") != message_id and m.get("message_id") != message_id
+            ]
+            if len(remaining) == len(self._messages):
+                return False
+            self._messages = remaining
+            self._touch()
+            return True
+
+    async def cleanup_expired(self) -> int:
+        return 0
+
+    async def retain_messages(
+        self,
+        keep_messages: list[dict[str, Any]],
+        expected_revision: StorageRevision | None = None,
+    ) -> StorageRevision | None:
+        async with self.get_lock().write():
+            if expected_revision is not None:
+                current = self._get_revision_unsafe()
+                if (
+                    current.message_count != expected_revision.message_count
+                    or current.version != expected_revision.version
+                ):
+                    return None
+            self._messages = list(keep_messages)
+            self._touch()
+            return self._get_revision_unsafe()
 
     async def append_log(self, entry: dict[str, Any]) -> dict[str, Any]:
         async with self.get_lock().write():
@@ -115,8 +213,6 @@ class InMemoryScopedStorage(MemoryStorage):
         async with self.get_lock().write():
             self._cursors[cursor_name] = cursor
             self._touch()
-
-    # --- Archive channel storage ---
 
     async def read_archive_state(self) -> dict[str, Any] | None:
         async with self.get_lock().read():
@@ -159,3 +255,15 @@ class InMemoryScopedStorage(MemoryStorage):
         async with self.get_lock().write():
             self._channel_logs[channel] = list(entries)
             self._touch()
+
+    async def prune_to_max(self, max_entries: int) -> int:
+        async with self.get_lock().write():
+            if len(self._logs) <= max_entries:
+                return 0
+            pruned_count = len(self._logs) - max_entries
+            self._logs = self._logs[-max_entries:] if max_entries > 0 else []
+            self._touch()
+            return pruned_count
+
+    async def cleanup_empty_dirs(self) -> int:
+        return 0

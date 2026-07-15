@@ -18,12 +18,14 @@ from modex_agent.memory.core.system import (
     MemorySystem,  # noqa: F401 — re-export
 )
 from modex_agent.memory.default_system import DefaultMemorySystem
+from modex_agent.memory.injection.archive import ArchiveInjectionConfig
 from modex_agent.memory.injection.policy import MemoryInjectionPolicy
 from modex_agent.memory.layers.config import MemoryLayerConfigSet
 from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.pruned.manager import PrunedManager
 
 # UserRetentionBuffer injection moved to framework.memory.user_buffer (Task 6 stub)
+from modex_agent.memory.registry.base import MemoryStoreRegistry
 from modex_agent.memory.registry.file import DefaultMemoryStoreRegistry
 from modex_agent.memory.token_estimator import TokenEstimator
 
@@ -62,16 +64,18 @@ def create_memory_system(
     knowledge_consolidator: KnowledgeConsolidatorBase | None = None,
     archive_trigger_callback: Callable[[MemoryContext], Awaitable[None]] | None = None,
     token_estimator: TokenEstimator | None = None,
+    store_registry: MemoryStoreRegistry | None = None,
 ) -> DefaultMemorySystem:
-    """Create a production-ready memory system with default local-file registry.
+    """Create a production-ready memory system.
 
     Args:
         workspace: Root directory for file-based storage.
         config: Optional layer configuration set.
         llm_provider: Optional LLM provider for compression/summarization.
         session_only: If True, create session-only layers (subagent — no archive, no knowledge).
+        store_registry: Optional registry override; defaults to local file storage.
     """
-    registry = DefaultMemoryStoreRegistry(workspace)
+    registry = store_registry or DefaultMemoryStoreRegistry(workspace)
     if session_only:
         session_config = config.session if config else None
         user_retention_config = config.user_retention if config else None
@@ -130,6 +134,7 @@ class MemorySystemContextManager(ContextManager):
         output_base_dir: Path | None = None,
         parent_prompt_lookup: Callable[[str], Awaitable[str | None]] | None = None,
         fork_context_spec: ForkContextSpec | None = None,
+        archive_injection_config: ArchiveInjectionConfig | None = None,
     ) -> None:
         from modex_agent.memory.injection import FullInjectionPolicy
 
@@ -138,7 +143,9 @@ class MemorySystemContextManager(ContextManager):
         self.default_agent_id = default_agent_id
         self.default_agent_role = default_agent_role
         self.base_system_prompt = base_system_prompt
-        self.injection_policy: MemoryInjectionPolicy = injection_policy or FullInjectionPolicy()
+        self.injection_policy: MemoryInjectionPolicy = injection_policy or FullInjectionPolicy(
+            archive_config=archive_injection_config
+        )
         self._last_session_id: str | None = None
         self._context_cache: dict[str, MemoryContext] = {}
         self._max_context_cache_size = 1000
@@ -256,7 +263,10 @@ class MemorySystemContextManager(ContextManager):
         policy = self.injection_policy
         pipeline_policy: MemoryInjectionPolicy
         if policy.injects_pruned() or policy.injects_archive():
-            pipeline_policy = FullInjectionPolicy(pruned_manager=None, archive_inject_count=0)
+            pipeline_policy = FullInjectionPolicy(
+                pruned_manager=None,
+                archive_config=ArchiveInjectionConfig(count=0),
+            )
         else:
             pipeline_policy = policy
         result = await pipeline_policy.assemble(
@@ -319,13 +329,9 @@ class MemorySystemContextManager(ContextManager):
             providers.append(KnowledgeProvider(result.system_prompt))
 
         # 4. Archive summaries (must refresh on cleanup)
-        archive_dir = None
-        try:
-            archive_dir = await self.memory_system.get_storage_path(ctx)
-        except Exception:
-            logger.debug("Failed to resolve archive directory", exc_info=True)
-        if archive_dir is not None:
-            providers.append(ArchiveProvider(archive_dir))
+        archive_config = policy.get_archive_injection_config()
+        if archive_config is not None:
+            providers.append(ArchiveProvider(self.memory_system, ctx, archive_config))
 
         # 5. Pruned catalog (must refresh on cleanup)
         pruned_mgr = self.memory_system.pruned_manager

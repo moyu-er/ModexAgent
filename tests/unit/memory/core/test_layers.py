@@ -41,6 +41,17 @@ class _SessionManager(SessionMemoryManager):
     async def get_all_messages(self, context: Any) -> list[Any]:
         return []
 
+    async def get_all_messages_raw(self, context: Any) -> list[Any]:
+        return []
+
+    async def retain_messages(
+        self,
+        context: Any,
+        keep_messages: Any,
+        expected_revision: Any,
+    ) -> Any:
+        pass
+
     async def save_checkpoint(self, context: Any, messages: Any) -> None:
         pass
 
@@ -120,11 +131,13 @@ class TestChatMessageReasoningContent:
     def test_from_dict_preserves_reasoning_content(self):
         from modex_agent.core.message import ChatMessage
 
-        msg = ChatMessage.from_dict({
-            "role": "assistant",
-            "content": "hello",
-            "reasoning_content": "thinking process",
-        })
+        msg = ChatMessage.from_dict(
+            {
+                "role": "assistant",
+                "content": "hello",
+                "reasoning_content": "thinking process",
+            }
+        )
         # from_dict 保留 reasoning_content（清理在业务层做）
         assert msg.get("reasoning_content") == "thinking process"
         assert msg.content == "hello"
@@ -132,10 +145,12 @@ class TestChatMessageReasoningContent:
     def test_from_dict_preserves_think_tags_in_content(self):
         from modex_agent.core.message import ChatMessage
 
-        msg = ChatMessage.from_dict({
-            "role": "assistant",
-            "content": "<think>reasoning</think>actual content",
-        })
+        msg = ChatMessage.from_dict(
+            {
+                "role": "assistant",
+                "content": "<think>reasoning</think>actual content",
+            }
+        )
         # from_dict 保留 content 中的 think 标签（清理在业务层做）
         assert msg.content == "<think>reasoning</think>actual content"
 
@@ -152,10 +167,12 @@ class TestChatMessageReasoningContent:
     def test_coerce_dict_preserves_raw_content(self):
         from modex_agent.core.message import ChatMessage
 
-        msg = ChatMessage.coerce({
-            "role": "assistant",
-            "content": "<thinking>deep thought</thinking>result",
-        })
+        msg = ChatMessage.coerce(
+            {
+                "role": "assistant",
+                "content": "<thinking>deep thought</thinking>result",
+            }
+        )
         # coerce 保留原始 content（清理在业务层做）
         assert msg.content == "<thinking>deep thought</thinking>result"
 

@@ -1,7 +1,8 @@
 """Tests for ScopedReadFileTool."""
 
-import pytest
 from pathlib import Path
+
+import pytest
 
 from modex_agent.memory.tools.scoped_read import ScopedReadFileTool
 

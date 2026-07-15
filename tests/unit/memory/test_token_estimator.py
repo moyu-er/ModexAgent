@@ -76,12 +76,12 @@ def test_chatmessage_token_count_default_none_omitted() -> None:
 
 @pytest.mark.asyncio
 async def test_scoped_message_history_stamps_token_count(tmp_path) -> None:
+    from modex_agent.core.scope import MemoryContext
     from modex_agent.memory.default_system import ScopedMessageHistory
     from modex_agent.memory.layers.factory import MemoryLayerFactory
-    from modex_agent.memory.registry.in_memory import InMemoryStoreRegistry
-    from modex_agent.core.scope import MemoryContext
+    from modex_agent.memory.registry import DefaultMemoryStoreRegistry
 
-    registry = InMemoryStoreRegistry()
+    registry = DefaultMemoryStoreRegistry(tmp_path)
     layer_set = MemoryLayerFactory.single_user(registry=registry)
     ctx = MemoryContext(session_id="s1", user_id="u1")
     hist = ScopedMessageHistory(manager=layer_set.session, context=ctx)
@@ -95,10 +95,10 @@ async def test_cleanup_uses_injected_estimator_not_default(tmp_path) -> None:
     """ScopedMessageHistory must forward its estimator to cleanup_session so
     trigger/boundary share the same estimator as stamping. Regression for the
     divergence bug where cleanup silently fell back to CharTokenEstimator."""
+    from modex_agent.core.scope import MemoryContext
     from modex_agent.memory.default_system import ScopedMessageHistory
     from modex_agent.memory.layers.factory import MemoryLayerFactory
-    from modex_agent.memory.registry.in_memory import InMemoryStoreRegistry
-    from modex_agent.core.scope import MemoryContext
+    from modex_agent.memory.registry import DefaultMemoryStoreRegistry
 
     class HugeEstimator(TokenEstimator):
         """Every message is enormous -> cleanup always triggers and prunes hard."""
@@ -106,7 +106,7 @@ async def test_cleanup_uses_injected_estimator_not_default(tmp_path) -> None:
         def estimate_text(self, text: str) -> int:
             return 1_000_000
 
-    registry = InMemoryStoreRegistry()
+    registry = DefaultMemoryStoreRegistry(tmp_path)
     layer_set = MemoryLayerFactory.single_user(registry=registry)
     ctx = MemoryContext(session_id="s1", user_id="u1")
     hist = ScopedMessageHistory(

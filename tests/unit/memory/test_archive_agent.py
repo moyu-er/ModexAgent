@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import pytest
 from pathlib import Path
 
-from modex_agent.agents.summarizer.archive_agent import (
-    ArchiveSummarizerConfig,
-    ArchiveSummarizerResult,
-    ArchiveSummarizer,
-)
+import pytest
 
+from modex_agent.agents.summarizer.archive_agent import (
+    ArchiveSummarizer,
+    ArchiveSummarizerConfig,
+)
 
 # ---------------------------------------------------------------------------
 # ArchiveSummarizerConfig
@@ -19,7 +18,7 @@ from modex_agent.agents.summarizer.archive_agent import (
 class TestArchiveSummarizerConfig:
     def test_default_config(self) -> None:
         config = ArchiveSummarizerConfig()
-        assert config.context_max_chars == 2000
+        assert config.context_max_chars == 20_000
         assert config.knowledge_max_chars == 3000
         assert config.index_max_chars == 200
         assert config.max_iterations == 25
@@ -35,37 +34,6 @@ class TestArchiveSummarizerConfig:
         assert config.knowledge_max_chars == 1200
         assert config.index_max_chars == 200
         assert config.max_iterations == 5
-
-
-# ---------------------------------------------------------------------------
-# ArchiveSummarizerResult
-# ---------------------------------------------------------------------------
-
-class TestArchiveSummarizerResult:
-    def test_success_result(self) -> None:
-        result = ArchiveSummarizerResult(
-            success=True,
-            archive_id=1,
-            files_written=("context.md", "knowledge.md", "index.md"),
-        )
-        assert result.success is True
-        assert result.archive_id == 1
-        assert len(result.files_written) == 3
-        assert result.error is None
-
-    def test_failure_result(self) -> None:
-        result = ArchiveSummarizerResult(
-            success=False,
-            error="Agent failed",
-        )
-        assert result.success is False
-        assert result.error == "Agent failed"
-        assert result.files_written == ()
-
-    def test_frozen(self) -> None:
-        result = ArchiveSummarizerResult(success=True)
-        with pytest.raises(AttributeError):
-            result.success = False  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -365,8 +333,8 @@ class TestSummarizerTrajectoryEmitter:
         import asyncio
         import json
 
-        from modex_agent.agents.summarizer.emitter import SummarizerTrajectoryEmitter
         from modex_agent.agents.react.agent import ReActEvent
+        from modex_agent.agents.summarizer.emitter import SummarizerTrajectoryEmitter
 
         trace_path = tmp_path / "trace.jsonl"
         emitter = SummarizerTrajectoryEmitter(
@@ -378,8 +346,8 @@ class TestSummarizerTrajectoryEmitter:
         async def _run() -> None:
             await emitter.emit(ReActEvent.ITERATION_START, {"iteration": 1})
             await emitter.emit(ReActEvent.MODEL_OUTPUT, "hello")
-            from modex_agent.core.types import ToolCall
             from modex_agent.core.tool_manager import ToolResult
+            from modex_agent.core.types import ToolCall
             await emitter.emit(ReActEvent.TOOL_CALL_START, ToolCall(tool_name="write", arguments={"path": "/tmp/f.txt"}))
             await emitter.emit(
                 ReActEvent.TOOL_CALL_END,
@@ -411,6 +379,7 @@ class TestArchiveSummarizerInit:
 
     def test_accepts_config(self) -> None:
         from unittest.mock import MagicMock
+
         from modex_agent.core.provider import LLMProvider
 
         mock_provider = MagicMock(spec=LLMProvider)
@@ -420,8 +389,9 @@ class TestArchiveSummarizerInit:
 
     def test_default_config_when_none(self) -> None:
         from unittest.mock import MagicMock
+
         from modex_agent.core.provider import LLMProvider
 
         mock_provider = MagicMock(spec=LLMProvider)
         agent = ArchiveSummarizer(provider=mock_provider)
-        assert agent._config.context_max_chars == 2000
+        assert agent._config.context_max_chars == 20_000

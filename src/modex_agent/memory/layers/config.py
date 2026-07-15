@@ -22,29 +22,29 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
+from modex_agent.core.scope import MemoryContext, Scope, SessionScope, UserScope
 from modex_agent.memory.archive_models import DEFAULT_RETAINED_CONSUMED_ARCHIVE_PAIRS
-from modex_agent.core.scope import MemoryContext, MemoryScope, SessionScope, UserScope
-from modex_agent.memory.core.storage import MemoryStorage
+from modex_agent.memory.core.split_stores import MemoryStoreBundle
 
-StorageFactory = Callable[[MemoryContext], Awaitable[MemoryStorage]]
+StorageFactory = Callable[[MemoryContext], Awaitable[MemoryStoreBundle]]
 
 
 @dataclass(frozen=True)
 class SessionMemoryConfig:
-    scope: MemoryScope = field(default_factory=SessionScope)
+    scope: Scope = field(default_factory=SessionScope)
 
 
 @dataclass(frozen=True)
 class ArchiveMemoryConfig:
     max_entries: int | None = 1000
     cursor_name: str = "default"
-    scope: MemoryScope = field(default_factory=UserScope)
+    scope: Scope = field(default_factory=UserScope)
     retained_consumed_archive_pairs: int = DEFAULT_RETAINED_CONSUMED_ARCHIVE_PAIRS
 
 
 @dataclass(frozen=True)
 class KnowledgeMemoryConfig:
-    scope: MemoryScope = field(default_factory=UserScope)
+    scope: Scope = field(default_factory=UserScope)
     default_files: dict[str, str] = field(
         default_factory=lambda: {
             "soul": "SOUL.md",
@@ -62,7 +62,7 @@ class UserRetentionBufferConfig:
     max_entries: int = 3
     max_user_chars: int = 4000
     max_assistant_chars: int = 4000
-    scope: MemoryScope = field(default_factory=SessionScope)
+    scope: Scope = field(default_factory=SessionScope)
 
 
 @dataclass(frozen=True)

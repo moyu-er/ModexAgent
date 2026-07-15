@@ -5,10 +5,10 @@ from datetime import UTC, datetime
 from typing import Any
 
 from examples.bot_project.plugins.tool_call_cleanup.manager import ToolCallAwareSessionManager
-from modex_agent.memory.core.layers import SessionMemoryManager
 from modex_agent.core.message import ChatMessage
-from modex_agent.memory.core.models import StorageRevision
 from modex_agent.core.scope import MemoryContext
+from modex_agent.memory.core.layers import SessionMemoryManager
+from modex_agent.memory.core.models import StorageRevision
 
 
 class DummySessionManager(SessionMemoryManager):
@@ -44,6 +44,19 @@ class DummySessionManager(SessionMemoryManager):
 
     async def get_all_messages(self, context: MemoryContext) -> list[ChatMessage]:
         return list(self.messages)
+
+    async def get_all_messages_raw(self, context: MemoryContext) -> list[ChatMessage]:
+        return list(self.messages)
+
+    async def retain_messages(
+        self,
+        context: MemoryContext,
+        keep_messages: list[ChatMessage | dict[str, Any]],
+        expected_revision: StorageRevision,
+    ) -> StorageRevision | None:
+        if expected_revision.version != self.revision.version:
+            return None
+        return await self.replace_messages(context, keep_messages)
 
     async def save_checkpoint(
         self,

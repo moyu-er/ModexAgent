@@ -7,8 +7,8 @@ import json
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from modex_agent.core.types import MessageRole
 from modex_agent.core.message import ChatMessage
+from modex_agent.core.types import MessageRole
 
 
 @dataclass(frozen=True)

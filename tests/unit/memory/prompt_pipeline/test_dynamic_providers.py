@@ -5,27 +5,38 @@ the dynamic providers interact correctly with the storage layer.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
-from modex_agent.memory.pruned.manager import PrunedManager
-from modex_agent.memory.stores.dir_archive import DirArchiveStorage
+from modex_agent.core.scope import MemoryContext
+from modex_agent.memory.core.models import ArchiveEntry
+from modex_agent.memory.default_system import DefaultMemorySystem
+from modex_agent.memory.injection.archive import ArchiveInjectionConfig
 from modex_agent.memory.prompt_pipeline.providers import ArchiveProvider, PrunedProvider
+from modex_agent.memory.pruned.manager import PrunedManager
+from modex_agent.memory.system import create_memory_system
 
 
-# ---------------------------------------------------------------------------
-# ArchiveProvider
-# ---------------------------------------------------------------------------
+async def _archive_system(tmp_path: Path) -> DefaultMemorySystem:
+    system = create_memory_system(tmp_path)
+    await system.initialize()
+    return system
+
+
+async def _append_archive(system: DefaultMemorySystem, summary: str) -> None:
+    context = MemoryContext(session_id="test")
+    archive = system.layers.archive
+    assert archive is not None
+    await archive.append(context, ArchiveEntry(summary=summary))
 
 
 @pytest.mark.asyncio
-async def test_archive_provider_no_archives(tmp_path):
+async def test_archive_provider_no_archives(tmp_path: Path) -> None:
     """No archives → empty content, version "0"."""
-    storage = DirArchiveStorage(tmp_path / "archives")
-    await storage.initialize()
-
-    provider = ArchiveProvider(storage.directory)
+    system = await _archive_system(tmp_path)
+    provider = ArchiveProvider(system, MemoryContext(session_id="test"))
     content = await provider.get_or_refresh()
 
     assert content == ""
@@ -33,109 +44,85 @@ async def test_archive_provider_no_archives(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_archive_provider_with_archives(tmp_path):
+async def test_archive_provider_with_archives(tmp_path: Path) -> None:
     """With archives → content includes summary XML, version = latest archive id."""
-    storage = DirArchiveStorage(tmp_path / "archives")
-    await storage.initialize()
-
-    # Write a context.md into archive 1
-    await storage.write_archive_file(1, "context.md", "First conversation summary.")
-    # Write archive 2 with more content
-    await storage.write_archive_file(2, "context.md", "Second conversation summary.")
-
-    provider = ArchiveProvider(storage.directory)
+    system = await _archive_system(tmp_path)
+    await _append_archive(system, "First conversation summary.")
+    await _append_archive(system, "Second conversation summary.")
+    provider = ArchiveProvider(system, MemoryContext(session_id="test"))
     content = await provider.get_or_refresh()
 
-    # Version should be the latest (highest) archive id
-    assert provider.last_version == "2"
-    # Content should include both summaries in XML container
+    assert provider.last_version not in (None, "0")
     assert "older_topics" in content
     assert "First conversation summary." in content
     assert "Second conversation summary." in content
 
 
 @pytest.mark.asyncio
-async def test_archive_provider_detects_new_archive(tmp_path):
+async def test_archive_provider_detects_new_archive(tmp_path: Path) -> None:
     """Writing a new archive changes version and refreshes content."""
-    storage = DirArchiveStorage(tmp_path / "archives")
-    await storage.initialize()
-
-    await storage.write_archive_file(1, "context.md", "Initial summary.")
-
-    provider = ArchiveProvider(storage.directory)
+    system = await _archive_system(tmp_path)
+    await _append_archive(system, "Initial summary.")
+    provider = ArchiveProvider(system, MemoryContext(session_id="test"))
     content1 = await provider.get_or_refresh()
-    assert provider.last_version == "1"
+    first_version = provider.last_version
+    assert first_version not in (None, "0")
     assert "Initial summary." in content1
 
-    # Add a new archive
-    await storage.write_archive_file(5, "context.md", "Newer conversation.")
+    await _append_archive(system, "Newer conversation.")
 
     content2 = await provider.get_or_refresh()
-    assert provider.last_version == "5"
+    assert provider.last_version != first_version
     assert "Newer conversation." in content2
-    # Old summary should still be present (limit=3, only 2 archives)
     assert "Initial summary." in content2
 
 
 @pytest.mark.asyncio
-async def test_archive_provider_respects_inject_count(tmp_path):
+async def test_archive_provider_respects_inject_count(tmp_path: Path) -> None:
     """Only the last N archives are included (inject_count limit)."""
-    storage = DirArchiveStorage(tmp_path / "archives")
-    await storage.initialize()
-
-    # Write 5 archives
+    system = await _archive_system(tmp_path)
     for i in range(1, 6):
-        await storage.write_archive_file(i, "context.md", f"Archive {i} content.")
-
-    provider = ArchiveProvider(storage.directory, inject_count=2)
+        await _append_archive(system, f"Archive {i} content.")
+    provider = ArchiveProvider(
+        system,
+        MemoryContext(session_id="test"),
+        ArchiveInjectionConfig(count=2),
+    )
     content = await provider.get_or_refresh()
 
-    # Only the 2 most recent (sorted ascending, last 2) should appear
     assert "Archive 5 content." in content
     assert "Archive 4 content." in content
-    # Archive 3 might appear in the iteration (sorted takes first N),
-    # but with inject_count=2, we only get the 2 lowest from sorted list
-    # (sorted(archive_ids)[:inject_count] = [1,2] since list_archives returns descending)
+    assert "Archive 3 content." not in content
 
 
 @pytest.mark.asyncio
-async def test_archive_provider_truncates_long_content(tmp_path):
+async def test_archive_provider_truncates_long_content(tmp_path: Path) -> None:
     """Long context.md content gets truncated at inject_max_chars."""
-    storage = DirArchiveStorage(tmp_path / "archives")
-    await storage.initialize()
-
     long_text = "A" * 2000
-    await storage.write_archive_file(1, "context.md", long_text)
-
-    provider = ArchiveProvider(storage.directory, inject_max_chars=100)
+    system = await _archive_system(tmp_path)
+    await _append_archive(system, long_text)
+    provider = ArchiveProvider(
+        system,
+        MemoryContext(session_id="test"),
+        ArchiveInjectionConfig(max_chars=100),
+    )
     content = await provider.get_or_refresh()
 
-    # Content should contain truncated version with "..."
     assert "..." in content
-    assert "AAAA" in content  # Start of the content is present
-    # The full 2000 chars should NOT all be present
+    assert "AAAA" in content
     assert content.count("A") < 2000
 
 
 @pytest.mark.asyncio
-async def test_archive_provider_skips_empty_context(tmp_path):
+async def test_archive_provider_skips_empty_context(tmp_path: Path) -> None:
     """Archives with empty/missing context.md are skipped."""
-    storage = DirArchiveStorage(tmp_path / "archives")
-    await storage.initialize()
-
-    # Archive 1 has content
-    await storage.write_archive_file(1, "context.md", "Valid content.")
-    # Archive 2 has no context.md at all
-    await storage.write_archive_file(2, "knowledge.md", "Only knowledge, no context.")
-    # Archive 3 has empty context.md
-    await storage.write_archive_file(3, "context.md", "")
-
-    provider = ArchiveProvider(storage.directory)
+    system = await _archive_system(tmp_path)
+    await _append_archive(system, "Valid content.")
+    await _append_archive(system, "")
+    provider = ArchiveProvider(system, MemoryContext(session_id="test"))
     content = await provider.get_or_refresh()
 
-    # Version should still be "3" (highest archive id)
-    assert provider.last_version == "3"
-    # Only archive 1 should contribute content
+    assert provider.last_version not in (None, "0")
     assert "Valid content." in content
 
 
@@ -145,7 +132,7 @@ async def test_archive_provider_skips_empty_context(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_pruned_provider_no_content(tmp_path):
+async def test_pruned_provider_no_content(tmp_path: Path) -> None:
     """No pruned content → version "0", empty content."""
     manager = PrunedManager(tmp_path / "pruned")
 
@@ -157,12 +144,12 @@ async def test_pruned_provider_no_content(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_pruned_provider_with_content(tmp_path):
+async def test_pruned_provider_with_content(tmp_path: Path) -> None:
     """With pruned content → version increments, XML content generated."""
     manager = PrunedManager(tmp_path / "pruned")
     session_id = "test-session"
 
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     messages = [
         {"role": "user", "content": "Hello", "created_at": now},
         {"role": "assistant", "content": "Hi there", "created_at": now},
@@ -179,12 +166,12 @@ async def test_pruned_provider_with_content(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_pruned_provider_version_increments(tmp_path):
+async def test_pruned_provider_version_increments(tmp_path: Path) -> None:
     """Writing more pruned content increments the version."""
     manager = PrunedManager(tmp_path / "pruned")
     session_id = "test-session"
 
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
 
     # First write
     msgs1 = [{"role": "user", "content": "First", "created_at": now}]
@@ -204,11 +191,11 @@ async def test_pruned_provider_version_increments(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_pruned_provider_different_sessions_isolated(tmp_path):
+async def test_pruned_provider_different_sessions_isolated(tmp_path: Path) -> None:
     """Different session_ids get independent pruned content."""
     manager = PrunedManager(tmp_path / "pruned")
 
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     msgs = [{"role": "user", "content": "Hello", "created_at": now}]
 
     await manager.write_pruned(msgs, "Session A topic", now, session_id="session-a")
@@ -231,12 +218,12 @@ async def test_pruned_provider_different_sessions_isolated(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_pruned_provider_detects_new_content(tmp_path):
+async def test_pruned_provider_detects_new_content(tmp_path: Path) -> None:
     """Provider refreshes when new pruned content is written."""
     manager = PrunedManager(tmp_path / "pruned")
     session_id = "test-session"
 
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
 
     provider = PrunedProvider(manager, session_id=session_id)
 

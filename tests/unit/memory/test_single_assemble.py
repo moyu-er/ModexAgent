@@ -5,8 +5,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from modex_agent.core.context import ContextState
-from modex_agent.core.message import ChatMessage
 from modex_agent.memory.system import MemorySystemContextManager
 
 
@@ -26,6 +24,16 @@ def _make_mock_system() -> MagicMock:
     )
     mock_system.get_knowledge_directory = AsyncMock(return_value=None)
     mock_system.get_storage_path = AsyncMock(return_value=None)
+    mock_system.get_history_entries = AsyncMock(
+        return_value=[
+            {
+                "summary": "sqlite archive summary",
+                "archive_id": 1,
+                "cursor": 1,
+                "created_at": "2026-01-01T00:00:00+00:00",
+            }
+        ]
+    )
     mock_system.get_providers = MagicMock(return_value=[])
     mock_system.prefetch_memories = AsyncMock(return_value=None)
     mock_system.get_history = AsyncMock(return_value=[])
@@ -50,6 +58,9 @@ async def test_load_produces_complete_context_state():
     assert state.system_prompt_pipeline is not None
     prompt = await state.system_prompt_pipeline.get_or_refresh()
     assert "You are helpful." in prompt
+    assert prompt.count("sqlite archive summary") == 1
+    assert "file=" not in prompt
+    assert "context.md" not in prompt
 
 
 @pytest.mark.asyncio

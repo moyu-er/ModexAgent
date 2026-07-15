@@ -1,13 +1,13 @@
 """Tests for knowledge directory path injection."""
 from __future__ import annotations
 
-import pytest
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
-from modex_agent.memory.core.models import LongTermMemory
+import pytest
+
 from modex_agent.core.scope import MemoryContext
-from modex_agent.memory.core.system import MemorySystem
+from modex_agent.memory.core.models import LongTermMemory
 from modex_agent.memory.injection.full_injection import FullInjectionPolicy
 
 
@@ -109,8 +109,8 @@ async def test_directory_section_cross_platform_path(tmp_path):
 
 
 def test_scoped_storage_base_path(tmp_path):
-    from modex_agent.memory.stores.scoped_file import DefaultScopedStorage
     from modex_agent.core.scope import MemoryLayerName
+    from modex_agent.memory.stores.scoped_file import DefaultScopedStorage
 
     storage = DefaultScopedStorage(tmp_path, layer=MemoryLayerName.KNOWLEDGE)
     result = storage.base_path

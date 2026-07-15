@@ -8,15 +8,19 @@ from collections.abc import Awaitable, Callable, Iterator, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from modex_agent.memory.archive_models import ArchiveChannel
-from modex_agent.memory.cleanup_events import MemoryCleanupListener
-from modex_agent.memory.core.layers import ArchiveMemoryManager, MemoryLayerSet, SessionMemoryManager
 from modex_agent.core.message import ChatMessage
-from modex_agent.memory.core.models import LongTermMemory
 from modex_agent.core.scope import (
     MemoryContext,
     MemoryLayerName,
 )
+from modex_agent.memory.archive_models import ArchiveChannel
+from modex_agent.memory.cleanup_events import MemoryCleanupListener
+from modex_agent.memory.core.layers import (
+    ArchiveMemoryManager,
+    MemoryLayerSet,
+    SessionMemoryManager,
+)
+from modex_agent.memory.core.models import LongTermMemory
 from modex_agent.memory.core.system import (
     ContextManagedMemorySystem,
     MemorySystem,
@@ -312,6 +316,12 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
     ) -> list[ChatMessage]:
         return await self._layers.session.get_recent_messages(context)
 
+    async def get_full_history(
+        self,
+        context: MemoryContext,
+    ) -> list[ChatMessage]:
+        return await self._layers.session.get_all_messages_raw(context)
+
     async def search(
         self,
         query: str,
@@ -450,9 +460,7 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
         if self._layers.archive is None:
             return None
         try:
-            storage = await self._resolve_archive_storage(context)
-            directory: Path | None = getattr(storage, "directory", None)
-            return directory.resolve() if directory is not None else None
+            return await self._layers.archive.get_storage_path(context)
         except Exception:
             logger.debug("Failed to resolve archive directory", exc_info=True)
             return None

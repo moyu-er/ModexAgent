@@ -21,7 +21,7 @@ System prompt pipeline — an ordered, versioned collection of `SystemPromptProv
 | `SkillProvider` | skill-set hash | Skills assigned | Active skill summaries |
 | `ExperienceProvider` | experience hash | Experience files exist | Relevant experience entries |
 | `KnowledgeProvider` | knowledge hash | Knowledge files exist | SOUL.md / USER.md / MEMORY.md content |
-| `ArchiveProvider` | archive hash | Archive files exist | Historical context summaries |
+| `ArchiveProvider` | retrieved content hash | Archive entries exist | Backend-neutral historical summaries; `context.md` paths only when file storage exposes one |
 | `PrunedProvider` | pruned hash | Pruned catalog exists | XML catalog of cleaned-up messages (priority 85) |
 | `RuntimeProvider` | hourly | Always | Runtime metadata |
 | `ProviderBlocksProvider` | blocks hash | Provider blocks configured | Custom prompt blocks |

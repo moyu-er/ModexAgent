@@ -21,7 +21,7 @@ Concrete implementations of the four memory layer managers — Session, Archive,
 
 ### Working In This Directory
 - Four layer managers map to the four memory layers: Session, Archive, Knowledge, UserRetentionBuffer
-- Each manager is backed by a `StorageFactory` (a callable that receives `MemoryContext` → returns `MemoryStorage`)
+- Each manager is backed by a `StorageFactory` (a callable that receives `MemoryContext` → returns `MemoryStoreBundle`)
 - Configs are frozen dataclasses — immutable by design
 - `MemoryLayerFactory.build()` is the single entry point for constructing a complete layer set
 
@@ -35,8 +35,8 @@ Concrete implementations of the four memory layer managers — Session, Archive,
 
 ### Internal
 - `modex_agent.memory.core.layers` — `ArchiveMemoryManager`, `KnowledgeMemoryManager`, `SessionMemoryManager`, `MemoryLayerSet` ABCs
-- `modex_agent.memory.core.scope` — `MemoryContext`, `MemoryScope`, `MemoryLayerName`, `SessionScope`, `UserScope`
-- `modex_agent.memory.core.storage` — `MemoryStorage`
+- `modex_agent.core.scope` — `MemoryContext`, `Scope`, `MemoryLayerName`, `SessionScope`, `UserScope`
+- `modex_agent.memory.core.split_stores` — `MessageStore`, `KVStore`, `CursorStore`, `ArchiveStore`, `MemoryStoreBundle`
 - `modex_agent.memory.core.models` — `ArchiveEntry`, `LongTermMemory`, `UnprocessedResult`, `StorageRevision`
 - `modex_agent.memory.archive_models` — `ArchiveChannel`, `ArchiveBundleResult`, `ArchiveState`, `ArchiveWrite`
 - `modex_agent.memory.history_search` — `HistorySearchStrategy`, `RecentFirstHistorySearch`

@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
-from modex_agent.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
 from modex_agent.core.scope import MemoryContext, MemoryLayerName, UserScope
+from modex_agent.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
 from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.layers.knowledge import ScopedKnowledgeMemoryManager
-from modex_agent.memory.registry.in_memory import InMemoryStoreRegistry
+from modex_agent.memory.registry import DefaultMemoryStoreRegistry
 
 
-async def test_append_update_is_idempotent():
-    registry = InMemoryStoreRegistry()
+async def test_append_update_is_idempotent(tmp_path: Path):
+    registry = DefaultMemoryStoreRegistry(tmp_path)
     factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.KNOWLEDGE)
     manager = ScopedKnowledgeMemoryManager(factory)
     ctx = MemoryContext(session_id="knowledge", user_id="user")
@@ -27,8 +28,8 @@ async def test_append_update_is_idempotent():
     assert await manager.get_file(ctx, "memory") == "用户喜欢 Python 数据分析"
 
 
-async def test_replace_text_retry_is_idempotent():
-    registry = InMemoryStoreRegistry()
+async def test_replace_text_retry_is_idempotent(tmp_path: Path):
+    registry = DefaultMemoryStoreRegistry(tmp_path)
     factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.KNOWLEDGE)
     manager = ScopedKnowledgeMemoryManager(factory)
     ctx = MemoryContext(session_id="knowledge", user_id="user")
@@ -37,7 +38,7 @@ async def test_replace_text_retry_is_idempotent():
         scope=UserScope(),
         context=ctx,
     )
-    await storage.set("MEMORY.md", "用户喜欢 Java")
+    await storage.kv.set("MEMORY.md", "用户喜欢 Java")
     update = MemoryUpdate(
         file_name="memory",
         mode=MemoryUpdateMode.REPLACE_TEXT,
@@ -52,8 +53,8 @@ async def test_replace_text_retry_is_idempotent():
     assert await manager.get_file(ctx, "memory") == "用户喜欢 Python"
 
 
-async def test_retrieve_defaults_to_get_all():
-    registry = InMemoryStoreRegistry()
+async def test_retrieve_defaults_to_get_all(tmp_path: Path):
+    registry = DefaultMemoryStoreRegistry(tmp_path)
     factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.KNOWLEDGE)
     manager = ScopedKnowledgeMemoryManager(factory)
     ctx = MemoryContext(session_id="knowledge", user_id="user")
@@ -74,8 +75,8 @@ async def test_retrieve_defaults_to_get_all():
     assert retrieved.custom == all_memory.custom
 
 
-async def test_replace_text_fallback_append_logs_warning(caplog):
-    registry = InMemoryStoreRegistry()
+async def test_replace_text_fallback_append_logs_warning(caplog, tmp_path: Path):
+    registry = DefaultMemoryStoreRegistry(tmp_path)
     factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.KNOWLEDGE)
     manager = ScopedKnowledgeMemoryManager(factory)
     ctx = MemoryContext(session_id="knowledge", user_id="user")
@@ -84,7 +85,7 @@ async def test_replace_text_fallback_append_logs_warning(caplog):
         scope=UserScope(),
         context=ctx,
     )
-    await storage.set("MEMORY.md", "existing fact")
+    await storage.kv.set("MEMORY.md", "existing fact")
     update = MemoryUpdate(
         file_name="memory",
         mode=MemoryUpdateMode.REPLACE_TEXT,
@@ -100,8 +101,8 @@ async def test_replace_text_fallback_append_logs_warning(caplog):
     assert "replace_text fallback append" in caplog.text
 
 
-async def test_remove_skipped_logs_warning(caplog):
-    registry = InMemoryStoreRegistry()
+async def test_remove_skipped_logs_warning(caplog, tmp_path: Path):
+    registry = DefaultMemoryStoreRegistry(tmp_path)
     factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.KNOWLEDGE)
     manager = ScopedKnowledgeMemoryManager(factory)
     ctx = MemoryContext(session_id="knowledge", user_id="user")
@@ -110,7 +111,7 @@ async def test_remove_skipped_logs_warning(caplog):
         scope=UserScope(),
         context=ctx,
     )
-    await storage.set("MEMORY.md", "existing fact")
+    await storage.kv.set("MEMORY.md", "existing fact")
     update = MemoryUpdate(
         file_name="memory",
         mode=MemoryUpdateMode.REMOVE,
