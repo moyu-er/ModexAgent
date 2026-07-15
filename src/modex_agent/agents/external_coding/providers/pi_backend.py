@@ -33,7 +33,7 @@ from ..agent import (
     _is_stale_session,
     _safe_terminate,
 )
-from ..os_layer import resolve_executable, spawn_process_group
+from ..os_layer import resolve_executable, spawn_process_group, terminate_process_group
 from ..paths import ExternalPaths, ProviderKind
 from ..types import BackendResult, BackendStatus, Emission, ExecOptions
 from .pi_parser import PiEventParser
@@ -49,6 +49,22 @@ class PiBackend(StreamingProviderBackend):
     def __init__(self, *, provider: str | None = None) -> None:
         super().__init__()
         self._provider = provider
+        self._active_processes: set[asyncio.subprocess.Process] = set()
+        self._lifecycle_lock = asyncio.Lock()
+        self._closed = False
+
+    @override
+    async def close(self) -> None:
+        async with self._lifecycle_lock:
+            self._closed = True
+            active = tuple(proc for proc in self._active_processes if proc.returncode is None)
+            results = await asyncio.gather(
+                *(terminate_process_group(proc) for proc in active),
+                return_exceptions=True,
+            )
+        errors = tuple(result for result in results if result is not None)
+        if errors:
+            raise errors[0]
 
     @override
     async def execute_streaming(
@@ -62,47 +78,73 @@ class PiBackend(StreamingProviderBackend):
         resolved = resolve_executable("pi", logger)
         full_args = [resolved.argv0, *resolved.extra_args, *pi_args]
 
-        proc = await spawn_process_group(
-            full_args,
-            cwd=opts.workdir,
-            env=env,
-            stdin=asyncio.subprocess.DEVNULL,
-        )
-        stdout = proc.stdout
-        stderr = proc.stderr
-        assert stdout is not None  # noqa: S101
-        assert stderr is not None  # noqa: S101
-
-        parser = PiEventParser()
+        async with self._lifecycle_lock:
+            if self._closed:
+                raise RuntimeError("Pi backend is closed")
+            proc = await spawn_process_group(
+                full_args,
+                cwd=opts.workdir,
+                env=env,
+                stdin=asyncio.subprocess.DEVNULL,
+            )
+            self._active_processes.add(proc)
         try:
+            stdout = proc.stdout
+            stderr = proc.stderr
+            assert stdout is not None  # noqa: S101
+            assert stderr is not None  # noqa: S101
+
+            parser = PiEventParser()
             async for raw_line in stdout:
                 line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
                 for emission in parser.parse_line(line):
                     await on_emission(emission)
+
+            await proc.wait()
+
+            stderr_tail = ""
+            if proc.returncode != 0:
+                try:
+                    stderr_data = await stderr.read()
+                    stderr_tail = stderr_data.decode("utf-8", errors="replace")
+                except Exception:  # noqa: BLE001
+                    stderr_tail = ""
+                stderr_tail = stderr_tail[-_STDERR_TAIL_CHARS:]
+
+            if proc.returncode != 0 and _is_stale_session(stderr_tail):
+                raise StaleSessionError(
+                    f"Pi session {session_path} is stale: {stderr_tail.strip()}"
+                )
+
+            status: BackendStatus = (
+                BackendStatus.COMPLETED if proc.returncode == 0 else BackendStatus.FAILED
+            )
+            trimmed = stderr_tail.strip()
+            error = trimmed if (proc.returncode != 0 and trimmed) else None
+            return BackendResult(status=status, session_id=session_path, error=error)
+        except asyncio.CancelledError:
+            if proc.returncode is None:
+                await _safe_terminate(proc)
+            else:
+                await proc.wait()
+            raise
+        except StaleSessionError:
+            if proc.returncode is None:
+                await _safe_terminate(proc)
+            else:
+                await proc.wait()
+            raise
         except Exception as exc:
-            await _safe_terminate(proc)
+            if proc.returncode is None:
+                await _safe_terminate(proc)
+            else:
+                await proc.wait()
             if _is_stale_session(str(exc)):
                 raise StaleSessionError(f"Pi session {session_path} is stale: {exc}") from exc
             raise
-
-        await proc.wait()
-
-        stderr_tail = ""
-        if proc.returncode != 0:
-            try:
-                stderr_data = await stderr.read()
-                stderr_tail = stderr_data.decode("utf-8", errors="replace")
-            except Exception:  # noqa: BLE001
-                stderr_tail = ""
-            stderr_tail = stderr_tail[-_STDERR_TAIL_CHARS:]
-
-        if proc.returncode != 0 and _is_stale_session(stderr_tail):
-            raise StaleSessionError(f"Pi session {session_path} is stale: {stderr_tail.strip()}")
-
-        status: BackendStatus = BackendStatus.COMPLETED if proc.returncode == 0 else BackendStatus.FAILED
-        trimmed = stderr_tail.strip()
-        error = trimmed if (proc.returncode != 0 and trimmed) else None
-        return BackendResult(status=status, session_id=session_path, error=error)
+        finally:
+            if proc.returncode is not None:
+                self._active_processes.discard(proc)
 
     # ------------------------------------------------------------------
     # Internals — testable helpers

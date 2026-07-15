@@ -75,6 +75,8 @@ class OpenCodeServerBackend(StreamingProviderBackend):
         self._server_modex_sid: str | None = None
         self._server_env_fingerprint: str = ""
         self._http_session: aiohttp.ClientSession | None = None
+        self._lifecycle_lock = asyncio.Lock()
+        self._closed = False
 
     _PER_TURN_ENV_KEYS: tuple[str, ...] = (
         "MODEX_SESSION_ID",
@@ -83,6 +85,14 @@ class OpenCodeServerBackend(StreamingProviderBackend):
     )
 
     async def _ensure_server(
+        self, workdir: Path, env: dict[str, str]
+    ) -> str:
+        async with self._lifecycle_lock:
+            if self._closed:
+                raise RuntimeError("OpenCode server backend is closed")
+            return await self._ensure_server_locked(workdir, env)
+
+    async def _ensure_server_locked(
         self, workdir: Path, env: dict[str, str]
     ) -> str:
         env_fingerprint = "|".join(
@@ -125,7 +135,14 @@ class OpenCodeServerBackend(StreamingProviderBackend):
         self._server_workdir = workdir
         self._server_env_fingerprint = env_fingerprint
 
-        await self._wait_ready()
+        try:
+            await self._wait_ready()
+        except BaseException:  # noqa: BLE001 - startup rollback must include cancellation
+            try:  # noqa: SIM105 - a bare raise below preserves the startup exception
+                await self._stop_server()
+            except BaseException:  # noqa: BLE001 - preserve the active startup exception
+                pass
+            raise
         logger.info("opencode server ready at %s", self._server_url)
         return self._server_url
 
@@ -160,16 +177,19 @@ class OpenCodeServerBackend(StreamingProviderBackend):
             await terminate_process_group(self._server_proc)
             try:
                 await asyncio.wait_for(self._server_proc.wait(), timeout=5.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 if self._server_proc.returncode is None:
                     self._server_proc.kill()
+                    await self._server_proc.wait()
         self._server_proc = None
         self._server_url = None
         self._server_workdir = None
         self._server_modex_sid = None
 
     async def close(self) -> None:
-        await self._stop_server()
+        async with self._lifecycle_lock:
+            self._closed = True
+            await self._stop_server()
 
     def _ensure_http_session(self) -> aiohttp.ClientSession:
         if self._http_session is None or self._http_session.closed:

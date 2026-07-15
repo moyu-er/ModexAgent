@@ -19,6 +19,7 @@ Coverage shape:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -84,6 +85,41 @@ class FakeProcess:
         self.returncode = returncode
 
     async def wait(self) -> int:
+        return self.returncode
+
+
+class _BlockedStdout:
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.released = asyncio.Event()
+
+    def __aiter__(self) -> _BlockedStdout:
+        return self
+
+    async def __anext__(self) -> bytes:
+        self.started.set()
+        await self.released.wait()
+        raise StopAsyncIteration
+
+
+class _ActiveFakeProcess(FakeProcess):
+    def __init__(self) -> None:
+        super().__init__()
+        self.stdout = _BlockedStdout()
+        self.returncode: int | None = None
+        self.group_terminated = False
+        self.reaped = False
+
+    async def terminate_group(self) -> None:
+        self.group_terminated = True
+        self.returncode = -15
+        self.stdout.released.set()
+        await self.wait()
+
+    async def wait(self) -> int:
+        await self.stdout.released.wait()
+        self.reaped = True
+        assert self.returncode is not None
         return self.returncode
 
 
@@ -285,6 +321,314 @@ class TestPiBackendSessionPath:
 
 
 class TestPiBackendExecute:
+    @pytest.mark.asyncio
+    async def test_execute_is_rejected_after_close(
+        self,
+        tmp_path: Path,
+        mock_os_layer: dict[str, object],
+    ) -> None:
+        # Given a backend whose lifetime has ended.
+        backend = PiBackend()
+        await backend.close()
+
+        # When execution is requested after close, then no child is spawned.
+        with pytest.raises(RuntimeError, match="closed"):
+            await backend.execute_streaming(
+                ExecOptions(prompt="x", workdir=tmp_path),
+                {},
+                _make_collector()[1],
+            )
+
+    @pytest.mark.asyncio
+    async def test_close_waits_for_blocked_spawn_to_be_owned_and_terminated(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Given an execution whose child spawn has started but cannot return yet.
+        process = _ActiveFakeProcess()
+        spawn_started = asyncio.Event()
+        release_spawn = asyncio.Event()
+        close_started = asyncio.Event()
+        close_finished = asyncio.Event()
+
+        async def blocked_spawn(
+            args: list[str],
+            cwd: Path,
+            env: dict[str, str],
+            stdin: int | None,
+        ) -> FakeProcess:
+            spawn_started.set()
+            await release_spawn.wait()
+            return process
+
+        async def terminate_process(proc: FakeProcess) -> None:
+            assert proc is process
+            await process.terminate_group()
+
+        monkeypatch.setattr(
+            "modex_agent.agents.external_coding.providers.pi_backend.resolve_executable",
+            lambda name, logger=None: ResolvedExecutable(argv0=name),
+        )
+        monkeypatch.setattr(
+            "modex_agent.agents.external_coding.providers.pi_backend.spawn_process_group",
+            blocked_spawn,
+        )
+        monkeypatch.setattr(
+            "modex_agent.agents.external_coding.providers.pi_backend.terminate_process_group",
+            terminate_process,
+        )
+        monkeypatch.setattr(
+            "modex_agent.agents.external_coding.providers.pi_backend._safe_terminate",
+            terminate_process,
+        )
+        backend = PiBackend()
+        opts = ExecOptions(prompt="x", workdir=tmp_path)
+        execution = asyncio.create_task(
+            backend.execute_streaming(opts, {}, _make_collector()[1])
+        )
+        await spawn_started.wait()
+
+        async def close_backend() -> None:
+            close_started.set()
+            await backend.close()
+            close_finished.set()
+
+        # When close starts while spawn is still blocked.
+        closing = asyncio.create_task(close_backend())
+        await close_started.wait()
+
+        try:
+            # Then close cannot report success before the child is owned and terminated.
+            assert not close_finished.is_set()
+        finally:
+            release_spawn.set()
+            await process.stdout.started.wait()
+            await closing
+            if not execution.done():
+                execution.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await execution
+
+    @pytest.mark.asyncio
+    async def test_close_waits_for_all_terminations_and_retries_failed_owner(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Given two active children, one failing termination and one blocked termination.
+        failed_process = _ActiveFakeProcess()
+        settling_process = _ActiveFakeProcess()
+        processes = [failed_process, settling_process]
+        failed_attempts = 0
+        failure_observed = asyncio.Event()
+        sibling_termination_started = asyncio.Event()
+        release_sibling_termination = asyncio.Event()
+        sibling_termination_finished = asyncio.Event()
+        close_finished = asyncio.Event()
+        close_errors: list[RuntimeError] = []
+
+        async def spawn_next(
+            args: list[str],
+            cwd: Path,
+            env: dict[str, str],
+            stdin: int | None,
+        ) -> FakeProcess:
+            return processes.pop(0)
+
+        async def terminate_process(proc: FakeProcess) -> None:
+            nonlocal failed_attempts
+            if proc is failed_process:
+                failed_attempts += 1
+                if failed_attempts == 1:
+                    failure_observed.set()
+                    raise RuntimeError("tree termination failed")
+                await failed_process.terminate_group()
+                return
+            assert proc is settling_process
+            sibling_termination_started.set()
+            await release_sibling_termination.wait()
+            await settling_process.terminate_group()
+            sibling_termination_finished.set()
+
+        monkeypatch.setattr(
+            "modex_agent.agents.external_coding.providers.pi_backend.resolve_executable",
+            lambda name, logger=None: ResolvedExecutable(argv0=name),
+        )
+        monkeypatch.setattr(
+            "modex_agent.agents.external_coding.providers.pi_backend.spawn_process_group",
+            spawn_next,
+        )
+        monkeypatch.setattr(
+            "modex_agent.agents.external_coding.providers.pi_backend.terminate_process_group",
+            terminate_process,
+        )
+        monkeypatch.setattr(
+            "modex_agent.agents.external_coding.providers.pi_backend._safe_terminate",
+            terminate_process,
+        )
+        backend = PiBackend()
+        opts = ExecOptions(prompt="x", workdir=tmp_path)
+        executions = [
+            asyncio.create_task(backend.execute_streaming(opts, {}, _make_collector()[1]))
+            for _ in processes
+        ]
+        await asyncio.gather(
+            failed_process.stdout.started.wait(),
+            settling_process.stdout.started.wait(),
+        )
+
+        async def close_backend() -> None:
+            try:
+                await backend.close()
+            except RuntimeError as exc:
+                close_errors.append(exc)
+            finally:
+                close_finished.set()
+
+        # When close sees one termination fail while the sibling remains unsettled.
+        closing = asyncio.create_task(close_backend())
+        await asyncio.gather(failure_observed.wait(), sibling_termination_started.wait())
+        returned_before_sibling_settled = close_finished.is_set()
+        release_sibling_termination.set()
+        await sibling_termination_finished.wait()
+        await closing
+        await backend.close()
+
+        try:
+            # Then close waits for the sibling and retains the failed owner for retry.
+            assert not returned_before_sibling_settled
+            assert len(close_errors) == 1
+            assert failed_attempts == 2
+            assert failed_process.group_terminated
+            assert settling_process.group_terminated
+        finally:
+            for execution in executions:
+                if not execution.done():
+                    execution.cancel()
+            await asyncio.gather(*executions, return_exceptions=True)
+
+    @pytest.mark.asyncio
+    async def test_cancellation_terminates_and_reaps_active_process_group(
+        self,
+        tmp_path: Path,
+        mock_os_layer: dict[str, object],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Given an execution blocked while reading from an active child.
+        process = _ActiveFakeProcess()
+        mock_os_layer["process"] = process
+
+        async def fake_safe_terminate(proc: FakeProcess) -> None:
+            assert proc is process
+            await process.terminate_group()
+
+        monkeypatch.setattr(
+            "modex_agent.agents.external_coding.providers.pi_backend._safe_terminate",
+            fake_safe_terminate,
+        )
+        backend = PiBackend()
+        opts = ExecOptions(prompt="x", workdir=tmp_path)
+        execution = asyncio.create_task(
+            backend.execute_streaming(opts, {}, _make_collector()[1])
+        )
+        await process.stdout.started.wait()
+
+        # When the active execution is cancelled.
+        execution.cancel()
+
+        # Then cancellation propagates after the process group is terminated and reaped.
+        with pytest.raises(asyncio.CancelledError):
+            await execution
+        assert process.group_terminated
+        assert process.reaped
+
+    @pytest.mark.asyncio
+    async def test_close_terminates_and_reaps_active_execution_child(
+        self,
+        tmp_path: Path,
+        mock_os_layer: dict[str, object],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Given a backend that owns an active per-turn child.
+        process = _ActiveFakeProcess()
+        mock_os_layer["process"] = process
+
+        async def fake_terminate_process_group(proc: FakeProcess) -> None:
+            assert proc is process
+            await process.terminate_group()
+
+        monkeypatch.setattr(
+            "modex_agent.agents.external_coding.providers.pi_backend.terminate_process_group",
+            fake_terminate_process_group,
+        )
+        backend: StreamingProviderBackend = PiBackend()
+        opts = ExecOptions(prompt="x", workdir=tmp_path)
+        execution = asyncio.create_task(
+            backend.execute_streaming(opts, {}, _make_collector()[1])
+        )
+        await process.stdout.started.wait()
+
+        try:
+            # When the shared backend ownership contract is closed.
+            await backend.close()
+
+            # Then its active execution child is terminated and reaped.
+            assert process.group_terminated
+            assert process.reaped
+        finally:
+            if not execution.done():
+                execution.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await execution
+
+    @pytest.mark.asyncio
+    async def test_close_failure_keeps_active_child_owned_for_retry(
+        self,
+        tmp_path: Path,
+        mock_os_layer: dict[str, object],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Given an active child whose first tree-termination attempt fails.
+        process = _ActiveFakeProcess()
+        mock_os_layer["process"] = process
+        attempts = 0
+
+        async def fail_once(proc: FakeProcess) -> None:
+            nonlocal attempts
+            assert proc is process
+            attempts += 1
+            if attempts == 1:
+                raise RuntimeError("tree termination failed")
+            await process.terminate_group()
+
+        monkeypatch.setattr(
+            "modex_agent.agents.external_coding.providers.pi_backend.terminate_process_group",
+            fail_once,
+        )
+        backend = PiBackend()
+        opts = ExecOptions(prompt="x", workdir=tmp_path)
+        execution = asyncio.create_task(
+            backend.execute_streaming(opts, {}, _make_collector()[1])
+        )
+        await process.stdout.started.wait()
+
+        try:
+            # When close cannot terminate the owned process tree.
+            with pytest.raises(RuntimeError, match="tree termination failed"):
+                await backend.close()
+
+            # Then a later close retries the still-owned child.
+            await backend.close()
+            assert attempts == 2
+            assert process.group_terminated
+            assert process.reaped
+        finally:
+            if not execution.done():
+                execution.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await execution
+
     @pytest.mark.asyncio
     async def test_completed_with_emissions(
         self, tmp_path: Path, mock_os_layer: dict[str, object]

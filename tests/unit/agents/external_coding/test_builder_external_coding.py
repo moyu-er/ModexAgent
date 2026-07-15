@@ -1,4 +1,4 @@
-﻿"""ExternalCodingAgentBuilder pool-registration shape tests."""
+"""ExternalCodingAgentBuilder pool-registration shape tests."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from modex_agent.agents.external_coding.scripted_backend import (
     ScriptedProgramme,
     ScriptedProviderBackend,
 )
-from modex_agent.agents.external_coding.session_store import ExternalSessionStore
+from modex_agent.agents.external_coding.session_store import LocalFileExternalSessionMapStore
 from modex_agent.agents.external_coding.types import ExternalEnvSpec
 from modex_agent.core.emitter import StreamingAwareEmitter
 from modex_agent.messaging.broker import AddressKind
@@ -45,7 +45,7 @@ class TestExternalCodingAgentBuilderPoolRegistration:
         scripted = ScriptedProviderBackend(ScriptedProgramme(session_id="prov-1"))
         adapter = ScriptedStreamingAdapter(scripted, PiEventParser())
         spec = _make_spec(tmp_path)
-        store = ExternalSessionStore(ExternalPaths(tmp_path))
+        store = LocalFileExternalSessionMapStore(ExternalPaths(tmp_path))
         descriptor = AgentDescriptor(
             address=AgentAddress(kind=AddressKind.AGENT, name="main"),
         )
@@ -66,7 +66,7 @@ class TestExternalCodingAgentBuilderPoolRegistration:
 
     def test_build_agent_raises_without_backend(self, tmp_path: Path) -> None:
         spec = _make_spec(tmp_path)
-        store = ExternalSessionStore(ExternalPaths(tmp_path))
+        store = LocalFileExternalSessionMapStore(ExternalPaths(tmp_path))
         descriptor = AgentDescriptor(
             address=AgentAddress(kind=AddressKind.AGENT, name="main"),
         )
@@ -105,7 +105,7 @@ class TestExternalCodingAgentBuilderFluentApi:
         scripted = ScriptedProviderBackend(ScriptedProgramme(session_id="prov-1"))
         adapter = ScriptedStreamingAdapter(scripted, PiEventParser())
         spec = _make_spec(tmp_path)
-        store = ExternalSessionStore(ExternalPaths(tmp_path))
+        store = LocalFileExternalSessionMapStore(ExternalPaths(tmp_path))
 
         agent = (
             ExternalCodingAgentBuilder()

@@ -4,12 +4,15 @@ import asyncio
 import os
 import shutil
 from pathlib import Path
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from modex_agent.agents.external_coding import Emission, ExternalCodingEvent
+from modex_agent.agents.external_coding.providers import opencode_server_backend
 from modex_agent.agents.external_coding.providers.opencode_server_backend import (
     OpenCodeServerBackend,
+    SSEUnavailableError,
 )
 from modex_agent.agents.external_coding.types import BackendStatus, ExecOptions
 
@@ -33,6 +36,282 @@ def _make_env(modex_sid: str = "test_sse.opencode") -> dict[str, str]:
         "MODEX_TARGETS": "",
     })
     return env
+
+
+@pytest.mark.asyncio
+class TestOpenCodeServerStartupCleanup:
+    async def test_close_waits_for_blocked_startup_and_terminates_server(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        # Given
+        backend = OpenCodeServerBackend()
+        process = Mock(returncode=None)
+        process.wait = AsyncMock(return_value=0)
+        readiness_started = asyncio.Event()
+        release_readiness = asyncio.Event()
+        terminate_process_tree = AsyncMock()
+
+        async def blocked_readiness() -> None:
+            readiness_started.set()
+            await release_readiness.wait()
+
+        monkeypatch.setattr(opencode_server_backend, "_find_free_port", lambda: 43123)
+        monkeypatch.setattr(
+            opencode_server_backend,
+            "resolve_executable",
+            Mock(return_value=Mock(argv0="opencode", extra_args=())),
+        )
+        monkeypatch.setattr(
+            opencode_server_backend,
+            "spawn_process_group",
+            AsyncMock(return_value=process),
+        )
+        monkeypatch.setattr(
+            opencode_server_backend,
+            "terminate_process_group",
+            terminate_process_tree,
+        )
+        monkeypatch.setattr(backend, "_wait_ready", blocked_readiness)
+        startup = asyncio.create_task(backend._ensure_server(tmp_path, _make_env()))
+        await readiness_started.wait()
+
+        # When
+        closing = asyncio.create_task(backend.close())
+        await asyncio.sleep(0)
+
+        # Then
+        assert not closing.done()
+        release_readiness.set()
+        await startup
+        await closing
+        terminate_process_tree.assert_awaited_once_with(process)
+
+    async def test_startup_is_rejected_after_close(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        # Given
+        backend = OpenCodeServerBackend()
+        await backend.close()
+
+        # When / Then
+        with pytest.raises(RuntimeError, match="closed"):
+            await backend._ensure_server(tmp_path, _make_env())
+
+    async def test_readiness_failure_rolls_back_spawned_server(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        # Given
+        backend = OpenCodeServerBackend()
+        process = Mock(returncode=None)
+        process.wait = AsyncMock(return_value=0)
+        readiness_error = SSEUnavailableError("readiness failed")
+        wait_ready = AsyncMock(side_effect=readiness_error)
+        terminate_process_tree = AsyncMock()
+        monkeypatch.setattr(opencode_server_backend, "_find_free_port", lambda: 43123)
+        monkeypatch.setattr(
+            opencode_server_backend,
+            "resolve_executable",
+            Mock(return_value=Mock(argv0="opencode", extra_args=())),
+        )
+        monkeypatch.setattr(
+            opencode_server_backend,
+            "spawn_process_group",
+            AsyncMock(return_value=process),
+        )
+        monkeypatch.setattr(
+            opencode_server_backend,
+            "terminate_process_group",
+            terminate_process_tree,
+        )
+        monkeypatch.setattr(backend, "_wait_ready", wait_ready)
+
+        # When
+        with pytest.raises(SSEUnavailableError) as raised:
+            await backend._ensure_server(tmp_path, _make_env())
+
+        # Then
+        assert raised.value is readiness_error
+        terminate_process_tree.assert_awaited_once_with(process)
+        assert backend._server_proc is None
+        assert backend._server_url is None
+        assert backend._server_workdir is None
+        assert backend._server_modex_sid is None
+
+    async def test_cancellation_after_spawn_rolls_back_server(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        # Given
+        backend = OpenCodeServerBackend()
+        process = Mock(returncode=None)
+        process.wait = AsyncMock(return_value=0)
+        cancellation = asyncio.CancelledError("startup cancelled")
+        wait_ready = AsyncMock(side_effect=cancellation)
+        terminate_process_tree = AsyncMock()
+        monkeypatch.setattr(opencode_server_backend, "_find_free_port", lambda: 43123)
+        monkeypatch.setattr(
+            opencode_server_backend,
+            "resolve_executable",
+            Mock(return_value=Mock(argv0="opencode", extra_args=())),
+        )
+        monkeypatch.setattr(
+            opencode_server_backend,
+            "spawn_process_group",
+            AsyncMock(return_value=process),
+        )
+        monkeypatch.setattr(
+            opencode_server_backend,
+            "terminate_process_group",
+            terminate_process_tree,
+        )
+        monkeypatch.setattr(backend, "_wait_ready", wait_ready)
+
+        # When
+        with pytest.raises(asyncio.CancelledError) as raised:
+            await backend._ensure_server(tmp_path, _make_env())
+
+        # Then
+        assert raised.value is cancellation
+        terminate_process_tree.assert_awaited_once_with(process)
+        assert backend._server_proc is None
+        assert backend._server_url is None
+        assert backend._server_workdir is None
+        assert backend._server_modex_sid is None
+
+    async def test_readiness_failure_remains_primary_when_termination_fails(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        # Given
+        backend = OpenCodeServerBackend()
+        process = Mock(returncode=None)
+        readiness_error = SSEUnavailableError("readiness failed")
+        termination_error = ProcessLookupError("termination failed")
+        monkeypatch.setattr(opencode_server_backend, "_find_free_port", lambda: 43123)
+        monkeypatch.setattr(
+            opencode_server_backend,
+            "resolve_executable",
+            Mock(return_value=Mock(argv0="opencode", extra_args=())),
+        )
+        monkeypatch.setattr(
+            opencode_server_backend,
+            "spawn_process_group",
+            AsyncMock(return_value=process),
+        )
+        monkeypatch.setattr(
+            opencode_server_backend,
+            "terminate_process_group",
+            AsyncMock(side_effect=termination_error),
+        )
+        monkeypatch.setattr(
+            backend,
+            "_wait_ready",
+            AsyncMock(side_effect=readiness_error),
+        )
+
+        # When
+        with pytest.raises(SSEUnavailableError) as raised:
+            await backend._ensure_server(tmp_path, _make_env())
+
+        # Then
+        assert raised.value is readiness_error
+        assert backend._server_proc is process
+        assert backend._server_url == "http://127.0.0.1:43123"
+        assert backend._server_workdir == tmp_path
+
+    async def test_cancellation_remains_cancellation_when_termination_fails(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        # Given
+        backend = OpenCodeServerBackend()
+        process = Mock(returncode=None)
+        cancellation = asyncio.CancelledError("startup cancelled")
+        monkeypatch.setattr(opencode_server_backend, "_find_free_port", lambda: 43123)
+        monkeypatch.setattr(
+            opencode_server_backend,
+            "resolve_executable",
+            Mock(return_value=Mock(argv0="opencode", extra_args=())),
+        )
+        monkeypatch.setattr(
+            opencode_server_backend,
+            "spawn_process_group",
+            AsyncMock(return_value=process),
+        )
+        monkeypatch.setattr(
+            opencode_server_backend,
+            "terminate_process_group",
+            AsyncMock(side_effect=ProcessLookupError("termination failed")),
+        )
+        monkeypatch.setattr(
+            backend,
+            "_wait_ready",
+            AsyncMock(side_effect=cancellation),
+        )
+
+        # When
+        with pytest.raises(asyncio.CancelledError) as raised:
+            await backend._ensure_server(tmp_path, _make_env())
+
+        # Then
+        assert raised.value is cancellation
+        assert backend._server_proc is process
+        assert backend._server_url == "http://127.0.0.1:43123"
+        assert backend._server_workdir == tmp_path
+
+    async def test_forced_kill_awaits_final_exit_before_clearing_ownership(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        # Given
+        backend = OpenCodeServerBackend()
+        process = Mock(returncode=None)
+        wait_calls = 0
+
+        async def wait_for_exit() -> int:
+            nonlocal wait_calls
+            wait_calls += 1
+            if wait_calls == 1:
+                raise TimeoutError
+            assert backend._server_proc is process
+            assert backend._server_url == "http://127.0.0.1:43123"
+            assert backend._server_workdir == tmp_path
+            process.returncode = -9
+            return -9
+
+        process.wait = AsyncMock(side_effect=wait_for_exit)
+        process.kill = Mock()
+        backend._server_proc = process
+        backend._server_url = "http://127.0.0.1:43123"
+        backend._server_workdir = tmp_path
+        backend._server_modex_sid = "session.opencode"
+        terminate_process_tree = AsyncMock()
+        monkeypatch.setattr(
+            opencode_server_backend,
+            "terminate_process_group",
+            terminate_process_tree,
+        )
+
+        # When
+        await backend._stop_server()
+
+        # Then
+        terminate_process_tree.assert_awaited_once_with(process)
+        process.kill.assert_called_once_with()
+        assert process.wait.await_count == 2
+        assert backend._server_proc is None
+        assert backend._server_url is None
+        assert backend._server_workdir is None
+        assert backend._server_modex_sid is None
 
 
 @pytest.mark.skipif(not _opencode_available(), reason=_SKIP_REASON)

@@ -105,7 +105,7 @@ class ExternalPaths:
         """``<workdir>/.modex/external/session-map.json``.
 
         Persisted map of ``modex_session_id`` ↔ ``provider_session_id``,
-        owned by `ExternalSessionStore`.
+        owned by an `ExternalSessionMapStore` adapter.
         """
         return self.external_root / "session-map.json"
 

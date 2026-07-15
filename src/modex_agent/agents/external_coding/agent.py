@@ -1,11 +1,11 @@
-﻿"""``ExternalCodingAgent`` — the framework-side harness for external coding CLIs.
+"""``ExternalCodingAgent`` — the framework-side harness for external coding CLIs.
 
 This module owns the full per-turn lifecycle that wraps any provider
 backend (Pi, OpenCode, future Claude Code / Codex / Cursor):
 
 1. Set ``current_agent_context`` (mirrors :class:`ReActAgent` — see the
    ``set``/``reset`` pair bracketing ``run``).
-2. Resolve the provider session id via :class:`ExternalSessionStore`
+2. Resolve the provider session id via :class:`ExternalSessionMapStore`
    (resume when one exists, fresh otherwise).
 3. Build the spawn env via :class:`ExternalEnvBuilder` and snapshot the
    ``MODEX_*`` keys to ``env-snapshot.json`` for observability.
@@ -70,7 +70,7 @@ from .os_layer import terminate_process_group
 from .paths import ExternalPaths, ProviderKind
 from .runtime_config import default_runtime_block, read_runtime_block, write_runtime_block
 from .scripted_backend import ScriptedProviderBackend
-from .session_store import ExternalSessionStore
+from .session_store import ExternalSessionMapStore
 from .types import BackendResult, BackendStatus, Emission, ExecOptions, ExternalEnvSpec
 
 logger = logging.getLogger(__name__)
@@ -82,6 +82,7 @@ class _EmissionAccumulator:
     def __init__(self) -> None:
         self.text: list[str] = []
         self.tool_names: dict[str, str] = {}
+
 
 __all__ = [
     "StaleSessionError",
@@ -95,7 +96,7 @@ class StaleSessionError(Exception):
     """Raised by a backend when the provider session id is no longer valid.
 
     The harness catches this, invalidates the stored mapping via
-    :meth:`ExternalSessionStore.ainvalidate`, and retries once with a
+    :meth:`ExternalSessionMapStore.invalidate`, and retries once with a
     fresh session (``resume_session_id=None``). A second failure
     propagates.
     """
@@ -190,15 +191,11 @@ class ScriptedStreamingAdapter(StreamingProviderBackend):
         super().__init__()
         self._scripted = scripted
         self._parser = parser
-        self._send_side_effect: Callable[[ExecOptions], Awaitable[None]] | None = (
-            send_side_effect
-        )
+        self._send_side_effect: Callable[[ExecOptions], Awaitable[None]] | None = send_side_effect
         self.recorded_opts: list[ExecOptions] = []
         self.recorded_envs: list[dict[str, str]] = []
 
-    def register_send_side_effect(
-        self, fn: Callable[[ExecOptions], Awaitable[None]]
-    ) -> None:
+    def register_send_side_effect(self, fn: Callable[[ExecOptions], Awaitable[None]]) -> None:
         """Register the async side-effect callable invoked at marked steps."""
         self._send_side_effect = fn
 
@@ -247,7 +244,7 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
         self,
         *,
         backend: StreamingProviderBackend,
-        session_store: ExternalSessionStore,
+        session_store: ExternalSessionMapStore,
         parser: ProviderEventParser,
         provider_kind: ProviderKind,
         spec: ExternalEnvSpec,
@@ -258,7 +255,6 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
     ) -> None:
         self._backend = backend
         self._session_store = session_store
-        self._session_store_lock = session_store._lock
         self._parser = parser
         self._provider_kind = provider_kind
         self._spec_template = spec
@@ -267,6 +263,7 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
         self._thinking_level = thinking_level
         self._timeout = timeout
         self._stopped = False
+        self._stop_task: asyncio.Task[None] | None = None
 
     @property
     def name(self) -> str:
@@ -275,9 +272,22 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
     async def stop(self) -> None:
         if self._stopped:
             return
-        self._stopped = True
-        with contextlib.suppress(Exception):
-            await self._backend.close()
+        stop_task = self._stop_task
+        if stop_task is None:
+            stop_task = asyncio.create_task(self._backend.close())
+            self._stop_task = stop_task
+        try:
+            await stop_task
+        except asyncio.CancelledError:
+            if self._stop_task is stop_task:
+                self._stop_task = None
+            raise
+        except Exception:
+            if self._stop_task is stop_task:
+                self._stop_task = None
+            raise
+        else:
+            self._stopped = True
 
     async def run(
         self,
@@ -319,9 +329,7 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
             update={"session_id": modex_sid, "workdir": current_workdir}
         )
         paths = ExternalPaths(current_workdir)
-        session_store = ExternalSessionStore(paths, lock=self._session_store_lock)
-
-        provider_sid, is_resume = session_store.resolve(modex_sid)
+        provider_sid, is_resume = self._session_store.resolve(modex_sid)
         resume_session_id = provider_sid if is_resume else None
 
         env = ExternalEnvBuilder.build(spec, self._base_env)
@@ -345,12 +353,10 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
         async def on_emission(emission: Emission) -> None:
             await self._handle_emission(emission, emitter, accumulator)
 
-        backend_result = await self._execute_with_retry(
-            opts, env, on_emission, modex_sid
-        )
+        backend_result = await self._execute_with_retry(opts, env, on_emission, modex_sid)
 
         if backend_result.session_id:
-            await session_store.acommit(
+            await self._session_store.commit(
                 modex_sid, backend_result.session_id, self._provider_kind
             )
 
@@ -371,7 +377,7 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
                 "Stale provider session for %s; invalidating and retrying fresh",
                 modex_sid,
             )
-            await self._session_store.ainvalidate(modex_sid)
+            await self._session_store.invalidate(modex_sid)
             retry_opts = opts.model_copy(update={"resume_session_id": None})
             return await self._backend.execute_streaming(retry_opts, env, on_emission)
 
@@ -391,7 +397,9 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
             case ExternalCodingEvent.TEXT_DELTA:
                 if emission.text:
                     accumulator.text.append(emission.text)
-                    await emitter.emit_turn_event(TurnTextEvent(text=emission.text, part_id=emission.part_id))
+                    await emitter.emit_turn_event(
+                        TurnTextEvent(text=emission.text, part_id=emission.part_id)
+                    )
             case ExternalCodingEvent.THINKING:
                 if emission.text:
                     await emitter.emit_turn_event(
@@ -456,9 +464,7 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
         never written to disk. The 8 ``MODEX_*`` vars plus the recreated
         ``PATH`` form the observable record tests assert against.
         """
-        snapshot = {
-            k: v for k, v in env.items() if k.startswith("MODEX_") or k == "PATH"
-        }
+        snapshot = {k: v for k, v in env.items() if k.startswith("MODEX_") or k == "PATH"}
         paths.external_root.mkdir(parents=True, exist_ok=True)
         paths.env_snapshot.write_text(
             json.dumps(snapshot, indent=2, sort_keys=True, ensure_ascii=False),

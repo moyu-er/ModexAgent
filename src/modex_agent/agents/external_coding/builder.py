@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from ...core.provider import LLMProvider
     from ...multi_agent.descriptor import AgentDescriptor
     from ...pipeline.adapters import OutputAdapter
-    from .session_store import ExternalSessionStore
+    from .session_store import ExternalSessionMapStore
 
 __all__ = ["ExternalCodingAgentBuilder"]
 
@@ -47,7 +47,7 @@ class ExternalCodingAgentBuilder:
 
     def __init__(self) -> None:
         self._backend: StreamingProviderBackend | None = None
-        self._session_store: ExternalSessionStore | None = None
+        self._session_store: ExternalSessionMapStore | None = None
         self._parser: ProviderEventParser | None = None
         self._provider_kind: ProviderKind | None = None
         self._spec: ExternalEnvSpec | None = None
@@ -60,9 +60,7 @@ class ExternalCodingAgentBuilder:
         self._backend = backend
         return self
 
-    def with_session_store(
-        self, store: ExternalSessionStore
-    ) -> ExternalCodingAgentBuilder:
+    def with_session_store(self, store: ExternalSessionMapStore) -> ExternalCodingAgentBuilder:
         self._session_store = store
         return self
 
@@ -70,9 +68,7 @@ class ExternalCodingAgentBuilder:
         self._parser = parser
         return self
 
-    def with_provider_kind(
-        self, kind: ProviderKind
-    ) -> ExternalCodingAgentBuilder:
+    def with_provider_kind(self, kind: ProviderKind) -> ExternalCodingAgentBuilder:
         self._provider_kind = kind
         return self
 
@@ -110,8 +106,7 @@ class ExternalCodingAgentBuilder:
         ]
         if missing:
             raise ValueError(
-                "ExternalCodingAgentBuilder missing required collaborators: "
-                + ", ".join(missing)
+                "ExternalCodingAgentBuilder missing required collaborators: " + ", ".join(missing)
             )
         # mypy narrowing via assert - removes need for type: ignore
         assert self._backend is not None
@@ -137,7 +132,7 @@ class ExternalCodingAgentBuilder:
         provider: LLMProvider | None,
         *,
         backend: StreamingProviderBackend | None = None,
-        session_store: ExternalSessionStore | None = None,
+        session_store: ExternalSessionMapStore | None = None,
         parser: ProviderEventParser | None = None,
         provider_kind: ProviderKind | None = None,
         spec: ExternalEnvSpec | None = None,

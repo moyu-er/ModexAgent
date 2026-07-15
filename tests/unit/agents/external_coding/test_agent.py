@@ -1,4 +1,4 @@
-﻿"""Unit tests for :class:`ExternalCodingAgent` and the streaming contract.
+"""Unit tests for :class:`ExternalCodingAgent` and the streaming contract.
 
 Covers every T5 acceptance criterion:
 
@@ -42,9 +42,10 @@ from modex_agent.agents.external_coding.scripted_backend import (
     ScriptedProviderBackend,
     ScriptedStep,
 )
-from modex_agent.agents.external_coding.session_store import ExternalSessionStore
+from modex_agent.agents.external_coding.session_store import LocalFileExternalSessionMapStore
 from modex_agent.agents.external_coding.types import (
     BackendResult,
+    BackendStatus,
     Emission,
     ExecOptions,
     ExternalEnvSpec,
@@ -134,9 +135,7 @@ def _make_spec(workdir: Path, session_id: str = "pool1.agent1") -> ExternalEnvSp
 
 
 def _make_ctx(session_id: str = "pool1.agent1") -> AgentContext:
-    history = ListMessageHistory(
-        [ChatMessage(role="user", content="Please list the files.")]
-    )
+    history = ListMessageHistory([ChatMessage(role="user", content="Please list the files.")])
     return AgentContext(
         system_prompt="",
         history=history,
@@ -147,9 +146,7 @@ def _make_ctx(session_id: str = "pool1.agent1") -> AgentContext:
 
 
 def _pi_text_step(text: str) -> ScriptedStep:
-    return ScriptedStep(
-        text=json.dumps({"type": "message_update", "update": {"text_delta": text}})
-    )
+    return ScriptedStep(text=json.dumps({"type": "message_update", "update": {"text_delta": text}}))
 
 
 def _pi_tool_use_step() -> ScriptedStep:
@@ -199,9 +196,7 @@ class TestStreamingProviderBackendABC:
         with pytest.raises(TypeError):
             Half()  # type: ignore[abstract]
 
-    def test_inherited_execute_delegates_to_execute_streaming(
-        self, tmp_path: Path
-    ) -> None:
+    def test_inherited_execute_delegates_to_execute_streaming(self, tmp_path: Path) -> None:
         driven: list[ExecOptions] = []
 
         class Concrete(StreamingProviderBackend):
@@ -214,9 +209,7 @@ class TestStreamingProviderBackendABC:
                 driven.append(opts)
                 return BackendResult(status="completed", session_id="s1")
 
-        result = asyncio.run(
-            Concrete().execute(ExecOptions(prompt="x", workdir=tmp_path))
-        )
+        result = asyncio.run(Concrete().execute(ExecOptions(prompt="x", workdir=tmp_path)))
         assert result.status == "completed"
         assert len(driven) == 1
 
@@ -271,9 +264,7 @@ class TestScriptedStreamingAdapter:
             _pi_text_step("third"),
         )
         scripted = ScriptedProviderBackend(ScriptedProgramme(steps=steps))
-        adapter = ScriptedStreamingAdapter(
-            scripted, PiEventParser(), send_side_effect=side_effect
-        )
+        adapter = ScriptedStreamingAdapter(scripted, PiEventParser(), send_side_effect=side_effect)
 
         async def on_emission(_e: Emission) -> None:
             pass
@@ -291,9 +282,7 @@ class TestScriptedStreamingAdapter:
 
 class TestExternalCodingAgentFullTurn:
     @pytest.mark.asyncio
-    async def test_three_event_turn_emits_and_persists(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_three_event_turn_emits_and_persists(self, tmp_path: Path) -> None:
         steps = (
             _pi_text_step("Hello world"),
             _pi_tool_use_step(),
@@ -305,7 +294,7 @@ class TestExternalCodingAgentFullTurn:
         adapter = ScriptedStreamingAdapter(scripted, PiEventParser())
         spec = _make_spec(tmp_path)
         paths = ExternalPaths(tmp_path)
-        store = ExternalSessionStore(paths)
+        store = LocalFileExternalSessionMapStore(paths)
         agent = ExternalCodingAgent(
             backend=adapter,
             session_store=store,
@@ -374,7 +363,7 @@ class TestAgentsMdIdempotency:
         )
         adapter = ScriptedStreamingAdapter(scripted, PiEventParser())
         spec = _make_spec(tmp_path)
-        store = ExternalSessionStore(ExternalPaths(tmp_path))
+        store = LocalFileExternalSessionMapStore(ExternalPaths(tmp_path))
         agent = ExternalCodingAgent(
             backend=adapter,
             session_store=store,
@@ -394,6 +383,204 @@ class TestAgentsMdIdempotency:
         assert mtime2 == mtime1
 
 
+class TestExternalCodingAgentStop:
+    @pytest.mark.asyncio
+    async def test_concurrent_stop_callers_share_successful_close(self, tmp_path: Path) -> None:
+        # Given
+        class _BlockingBackend(StreamingProviderBackend):
+            def __init__(self) -> None:
+                self.close_calls = 0
+                self.close_started = asyncio.Event()
+                self.release_close = asyncio.Event()
+
+            async def execute_streaming(
+                self,
+                opts: ExecOptions,
+                env: dict[str, str],
+                on_emission: Callable[[Emission], Awaitable[None]],
+            ) -> BackendResult:
+                return BackendResult(status=BackendStatus.COMPLETED)
+
+            async def close(self) -> None:
+                self.close_calls += 1
+                self.close_started.set()
+                await self.release_close.wait()
+
+        backend = _BlockingBackend()
+        agent = ExternalCodingAgent(
+            backend=backend,
+            session_store=LocalFileExternalSessionMapStore(ExternalPaths(tmp_path)),
+            parser=PiEventParser(),
+            provider_kind=ProviderKind.PI,
+            spec=_make_spec(tmp_path),
+        )
+        second_caller_started = asyncio.Event()
+
+        async def stop_from_second_caller() -> None:
+            second_caller_started.set()
+            await agent.stop()
+
+        first_stop = asyncio.create_task(agent.stop())
+        await backend.close_started.wait()
+        second_stop = asyncio.create_task(stop_from_second_caller())
+        await second_caller_started.wait()
+
+        # When
+        backend.release_close.set()
+        results = await asyncio.gather(first_stop, second_stop)
+
+        # Then
+        assert results == [None, None]
+        assert backend.close_calls == 1
+        assert agent._stopped is True
+
+    @pytest.mark.asyncio
+    async def test_concurrent_stop_callers_share_failure_then_retry(self, tmp_path: Path) -> None:
+        # Given
+        failure = RuntimeError("close failed")
+
+        class _BlockingFailOnceBackend(StreamingProviderBackend):
+            def __init__(self) -> None:
+                self.close_calls = 0
+                self.close_started = asyncio.Event()
+                self.release_failure = asyncio.Event()
+
+            async def execute_streaming(
+                self,
+                opts: ExecOptions,
+                env: dict[str, str],
+                on_emission: Callable[[Emission], Awaitable[None]],
+            ) -> BackendResult:
+                return BackendResult(status=BackendStatus.COMPLETED)
+
+            async def close(self) -> None:
+                self.close_calls += 1
+                if not self.release_failure.is_set():
+                    self.close_started.set()
+                    await self.release_failure.wait()
+                    raise failure
+
+        backend = _BlockingFailOnceBackend()
+        agent = ExternalCodingAgent(
+            backend=backend,
+            session_store=LocalFileExternalSessionMapStore(ExternalPaths(tmp_path)),
+            parser=PiEventParser(),
+            provider_kind=ProviderKind.PI,
+            spec=_make_spec(tmp_path),
+        )
+        second_caller_started = asyncio.Event()
+
+        async def stop_from_second_caller() -> None:
+            second_caller_started.set()
+            await agent.stop()
+
+        first_stop = asyncio.create_task(agent.stop())
+        await backend.close_started.wait()
+        second_stop = asyncio.create_task(stop_from_second_caller())
+        await second_caller_started.wait()
+
+        # When
+        backend.release_failure.set()
+        with pytest.raises(RuntimeError) as first_error:
+            await first_stop
+        with pytest.raises(RuntimeError) as second_error:
+            await second_stop
+        calls_after_failure = backend.close_calls
+        await agent.stop()
+
+        # Then
+        assert first_error.value is failure
+        assert second_error.value is failure
+        assert calls_after_failure == 1
+        assert backend.close_calls == 2
+        assert agent._stopped is True
+
+    @pytest.mark.asyncio
+    async def test_failed_backend_close_can_be_retried(self, tmp_path: Path) -> None:
+        # Given
+        class _FailOnceBackend(StreamingProviderBackend):
+            def __init__(self) -> None:
+                self.close_calls = 0
+
+            async def execute_streaming(
+                self,
+                opts: ExecOptions,
+                env: dict[str, str],
+                on_emission: Callable[[Emission], Awaitable[None]],
+            ) -> BackendResult:
+                return BackendResult(status=BackendStatus.COMPLETED)
+
+            async def close(self) -> None:
+                self.close_calls += 1
+                if self.close_calls == 1:
+                    raise RuntimeError("close failed")
+
+        backend = _FailOnceBackend()
+        agent = ExternalCodingAgent(
+            backend=backend,
+            session_store=LocalFileExternalSessionMapStore(ExternalPaths(tmp_path)),
+            parser=PiEventParser(),
+            provider_kind=ProviderKind.PI,
+            spec=_make_spec(tmp_path),
+        )
+
+        # When
+        with pytest.raises(RuntimeError, match="close failed"):
+            await agent.stop()
+        stopped_after_failure = agent._stopped
+        await agent.stop()
+
+        # Then
+        assert (stopped_after_failure, backend.close_calls, agent._stopped) == (False, 2, True)
+
+    @pytest.mark.asyncio
+    async def test_cancelled_backend_close_can_be_retried(self, tmp_path: Path) -> None:
+        # Given
+        class _CancelledOnceBackend(StreamingProviderBackend):
+            def __init__(self) -> None:
+                self.close_calls = 0
+                self.close_started = asyncio.Event()
+
+            async def execute_streaming(
+                self,
+                opts: ExecOptions,
+                env: dict[str, str],
+                on_emission: Callable[[Emission], Awaitable[None]],
+            ) -> BackendResult:
+                return BackendResult(status=BackendStatus.COMPLETED)
+
+            async def close(self) -> None:
+                self.close_calls += 1
+                if self.close_calls == 1:
+                    self.close_started.set()
+                    await asyncio.Event().wait()
+
+        backend = _CancelledOnceBackend()
+        agent = ExternalCodingAgent(
+            backend=backend,
+            session_store=LocalFileExternalSessionMapStore(ExternalPaths(tmp_path)),
+            parser=PiEventParser(),
+            provider_kind=ProviderKind.PI,
+            spec=_make_spec(tmp_path),
+        )
+        first_stop = asyncio.create_task(agent.stop())
+        await backend.close_started.wait()
+
+        # When
+        first_stop.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first_stop
+        stopped_after_cancellation = agent._stopped
+        await agent.stop()
+
+        # Then
+        assert (stopped_after_cancellation, backend.close_calls, agent._stopped) == (
+            False,
+            2,
+            True,
+        )
+
+
 # ---------------------------------------------------------------------------
 # current_agent_context set/reset symmetry
 # ---------------------------------------------------------------------------
@@ -411,14 +598,12 @@ class TestCurrentAgentContextLifecycle:
             _pi_text_step("hi"),
             ScriptedStep(text="{}", side_effect=True),
         )
-        scripted = ScriptedProviderBackend(
-            ScriptedProgramme(steps=steps, session_id="prov-1")
-        )
+        scripted = ScriptedProviderBackend(ScriptedProgramme(steps=steps, session_id="prov-1"))
         adapter_with_fx = ScriptedStreamingAdapter(
             scripted, PiEventParser(), send_side_effect=side_effect
         )
         spec = _make_spec(tmp_path)
-        store = ExternalSessionStore(ExternalPaths(tmp_path))
+        store = LocalFileExternalSessionMapStore(ExternalPaths(tmp_path))
         agent = ExternalCodingAgent(
             backend=adapter_with_fx,
             session_store=store,
@@ -452,7 +637,7 @@ class TestCurrentAgentContextLifecycle:
                 raise RuntimeError("boom")
 
         spec = _make_spec(tmp_path)
-        store = ExternalSessionStore(ExternalPaths(tmp_path))
+        store = LocalFileExternalSessionMapStore(ExternalPaths(tmp_path))
         agent = ExternalCodingAgent(
             backend=_AlwaysFailing(),
             session_store=store,
@@ -479,9 +664,7 @@ class TestCurrentAgentContextLifecycle:
 
 class TestStaleSessionRecovery:
     @pytest.mark.asyncio
-    async def test_stale_session_invalidates_and_retries_fresh(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_stale_session_invalidates_and_retries_fresh(self, tmp_path: Path) -> None:
         class _FlakyBackend(StreamingProviderBackend):
             def __init__(self) -> None:
                 self.calls = 0
@@ -501,10 +684,10 @@ class TestStaleSessionRecovery:
 
         spec = _make_spec(tmp_path)
         paths = ExternalPaths(tmp_path)
-        store = ExternalSessionStore(paths)
+        store = LocalFileExternalSessionMapStore(paths)
         modex_sid = "pool1.agent1"
         # Pre-seed a stale mapping.
-        await store.acommit(modex_sid, "prov-old", ProviderKind.PI)
+        await store.commit(modex_sid, "prov-old", ProviderKind.PI)
 
         backend = _FlakyBackend()
         agent = ExternalCodingAgent(
@@ -541,7 +724,7 @@ class TestStaleSessionRecovery:
                 raise StaleSessionError("still stale")
 
         spec = _make_spec(tmp_path)
-        store = ExternalSessionStore(ExternalPaths(tmp_path))
+        store = LocalFileExternalSessionMapStore(ExternalPaths(tmp_path))
         agent = ExternalCodingAgent(
             backend=_AlwaysStale(),
             session_store=store,
@@ -580,13 +763,9 @@ class TestOutboundSendViaRouting:
             _pi_text_step("sending a message"),
             ScriptedStep(text="{}", side_effect=True),
         )
-        scripted = ScriptedProviderBackend(
-            ScriptedProgramme(steps=steps, session_id="prov-1")
-        )
-        adapter = ScriptedStreamingAdapter(
-            scripted, PiEventParser(), send_side_effect=side_effect
-        )
-        store = ExternalSessionStore(ExternalPaths(tmp_path))
+        scripted = ScriptedProviderBackend(ScriptedProgramme(steps=steps, session_id="prov-1"))
+        adapter = ScriptedStreamingAdapter(scripted, PiEventParser(), send_side_effect=side_effect)
+        store = LocalFileExternalSessionMapStore(ExternalPaths(tmp_path))
         agent = ExternalCodingAgent(
             backend=adapter,
             session_store=store,
@@ -632,12 +811,10 @@ class TestExternalCodingAgentBuilder:
             ExternalCodingAgentBuilder,
         )
 
-        scripted = ScriptedProviderBackend(
-            ScriptedProgramme(session_id="prov-1")
-        )
+        scripted = ScriptedProviderBackend(ScriptedProgramme(session_id="prov-1"))
         adapter = ScriptedStreamingAdapter(scripted, PiEventParser())
         spec = _make_spec(tmp_path)
-        store = ExternalSessionStore(ExternalPaths(tmp_path))
+        store = LocalFileExternalSessionMapStore(ExternalPaths(tmp_path))
 
         agent = (
             ExternalCodingAgentBuilder()

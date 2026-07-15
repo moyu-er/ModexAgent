@@ -16,6 +16,7 @@ from .contracts import ProviderBackend, ProviderEventParser
 from .env_builder import ExternalEnvBuilder
 from .events import ExternalCodingEvent
 from .paths import ExternalPaths, ProviderKind
+from .session_store import ExternalSessionMapStore, LocalFileExternalSessionMapStore
 from .types import (
     BackendResult,
     BackendStatus,
@@ -43,6 +44,8 @@ __all__ = [
     "ProviderBackend",
     "ProviderEventParser",
     # Session persistence
+    "ExternalSessionMapStore",
+    "LocalFileExternalSessionMapStore",
     "SessionMapEntry",
     # Outbox (inbox-line shape)
     "OutboxMetadata",

@@ -1,4 +1,4 @@
-"""`ExternalSessionStore` — persistence for the modex ↔ provider session map.
+"""External provider-session map interface and local-file adapter.
 
 Stores a flat JSON map of ``modex_session_id`` → ``SessionMapEntry`` at
 ``<workdir>/.modex/external/session-map.json``. The file is rebuilt
@@ -12,7 +12,7 @@ race the map. Cross-process safety is guaranteed by atomic rename plus
 the single-writer pattern: only the harness writes this file; the
 provider CLI never does.
 
-`resolve` is sync (read-only). `acommit` and `ainvalidate` are async
+`resolve` is sync (read-only). `commit` and `invalidate` are async
 because they serialise against the lock.
 """
 
@@ -22,6 +22,7 @@ import asyncio
 import json
 import os
 import tempfile
+from abc import ABC, abstractmethod
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -29,14 +30,35 @@ from typing import Any
 from .paths import ExternalPaths, ProviderKind
 from .types import SessionMapEntry
 
-__all__ = ["ExternalSessionStore"]
+__all__ = ["ExternalSessionMapStore", "LocalFileExternalSessionMapStore"]
 
 
-class ExternalSessionStore:
+class ExternalSessionMapStore(ABC):
+    """Persistence seam for Modex-to-provider session mappings."""
+
+    @abstractmethod
+    def resolve(self, modex_session_id: str) -> tuple[str | None, bool]:
+        """Resolve a resumable provider session for a Modex session."""
+
+    @abstractmethod
+    async def commit(
+        self,
+        modex_session_id: str,
+        provider_session_id: str,
+        provider_kind: ProviderKind,
+    ) -> None:
+        """Persist or replace a provider session mapping."""
+
+    @abstractmethod
+    async def invalidate(self, modex_session_id: str) -> None:
+        """Prevent a provider session mapping from being resumed."""
+
+
+class LocalFileExternalSessionMapStore(ExternalSessionMapStore):
     """File-backed session map with atomic commits and async serialisation.
 
     The store is process-local state (the in-memory cache is rebuilt from
-    the file on each `resolve` / `acommit` / `ainvalidate`) plus a single
+    the file on each `resolve` / `commit` / `invalidate`) plus a single
     `asyncio.Lock` that guards the read-modify-write cycle. The harness
     is the only writer; the provider CLI never reads or writes this
     file.
@@ -63,7 +85,7 @@ class ExternalSessionStore:
     # Public API
     # ------------------------------------------------------------------
 
-    def resolve(self, modex_sid: str) -> tuple[str | None, bool]:
+    def resolve(self, modex_session_id: str) -> tuple[str | None, bool]:
         """Look up the provider session id for a given modex session.
 
         Sync because it only reads. Two concurrent `resolve` calls on the
@@ -79,13 +101,16 @@ class ExternalSessionStore:
             caller should spawn the provider fresh rather than resume.
         """
         data = self._load()
-        entry = data.get(modex_sid)
+        entry = data.get(modex_session_id)
         if entry is None or entry.invalidated:
             return (None, False)
         return (entry.provider_session_id, True)
 
-    async def acommit(
-        self, modex_sid: str, provider_sid: str, provider_kind: ProviderKind
+    async def commit(
+        self,
+        modex_session_id: str,
+        provider_session_id: str,
+        provider_kind: ProviderKind,
     ) -> None:
         """Persist (or replace) the mapping for one modex session.
 
@@ -100,16 +125,16 @@ class ExternalSessionStore:
         """
         async with self._lock:
             data = self._load()
-            data[modex_sid] = SessionMapEntry(
-                modex_session_id=modex_sid,
-                provider_session_id=provider_sid,
+            data[modex_session_id] = SessionMapEntry(
+                modex_session_id=modex_session_id,
+                provider_session_id=provider_session_id,
                 provider_kind=provider_kind,
                 last_committed_at=datetime.now(UTC),
                 invalidated=False,
             )
             self._save(data)
 
-    async def ainvalidate(self, modex_sid: str) -> None:
+    async def invalidate(self, modex_session_id: str) -> None:
         """Mark the entry as invalidated so the next resolve is fresh.
 
         Serialised by the store's lock.
@@ -120,10 +145,10 @@ class ExternalSessionStore:
         """
         async with self._lock:
             data = self._load()
-            entry = data.get(modex_sid)
+            entry = data.get(modex_session_id)
             if entry is None:
                 return
-            data[modex_sid] = entry.model_copy(update={"invalidated": True})
+            data[modex_session_id] = entry.model_copy(update={"invalidated": True})
             self._save(data)
 
     # ------------------------------------------------------------------
@@ -164,9 +189,7 @@ class ExternalSessionStore:
         # (atomic rename across filesystems is supported on Windows only
         # when both files live on the same volume — same dir guarantees
         # that).
-        fd, tmp_name = tempfile.mkstemp(
-            prefix=path.name + ".", suffix=".tmp", dir=str(path.parent)
-        )
+        fd, tmp_name = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=str(path.parent))
         tmp_path = Path(tmp_name)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:

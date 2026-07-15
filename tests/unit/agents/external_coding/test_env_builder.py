@@ -60,6 +60,19 @@ class TestExternalEnvBuilder:
         assert out["MODEX_INBOX_ROOT"] == str((tmp_path / "inbox").resolve())
         assert out["MODEX_WORKDIR"] == str((tmp_path / "wd").resolve())
 
+    def test_inbox_root_remains_workspace_inbox_directory(
+        self, tmp_path: Path
+    ) -> None:
+        workspace_root = tmp_path / "workspace"
+        inbox_root = workspace_root / ".modex" / "inbox"
+        spec = _spec(tmp_path).model_copy(
+            update={"workspace_root": workspace_root, "inbox_root": inbox_root}
+        )
+
+        out = ExternalEnvBuilder.build(spec, base_env={})
+
+        assert Path(out["MODEX_INBOX_ROOT"]) == inbox_root.resolve()
+
     def test_string_fields_passthrough(self, tmp_path: Path) -> None:
         spec = _spec(tmp_path)
         out = ExternalEnvBuilder.build(spec, base_env={})

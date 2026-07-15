@@ -40,7 +40,9 @@ from modex_agent.agents.external_coding.scripted_backend import (
     ScriptedProviderBackend,
     ScriptedStep,
 )
-from modex_agent.agents.external_coding.session_store import ExternalSessionStore
+from modex_agent.agents.external_coding.session_store import (
+    LocalFileExternalSessionMapStore as ExternalSessionStore,
+)
 from modex_agent.agents.external_coding.types import (
     BackendResult,
     Emission,
