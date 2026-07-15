@@ -1,13 +1,14 @@
 # External coding agent integration — spec
 
-Status: ready-for-agent (revised 2026-07-14)
+Status: implemented (revised 2026-07-14, 2026-07-15)
 Parent ADR: ADR-0022 (`docs/adr/0022-external-coding-agent-integration.md`)
 Domain glossary: `docs/design/external-coding-agent-integration/glossary.md`
 
-> **Revision note (2026-07-14):** This spec was written before
+> **Revision note (2026-07-15):** This spec was written before
 > implementation. Several decisions evolved during development — the
 > canonical `TurnEvent` seam, the `modexctl`/`modexbot` CLI split, the
-> PoolEditor WebUI addition, and the XML message wrapping. Sections
+> PoolEditor WebUI addition, XML message wrapping, hybrid persistence,
+> and converged backend lifecycle ownership. Sections
 > below reflect the actual implementation; divergences from the
 > original ADR are documented in ADR-0022's Disposition section.
 
@@ -40,32 +41,40 @@ dedicated pools**. Each provider (Pi, OpenCode, …) gets its own pool
 CLI is installed.
 
 A framework-side **harness** (`ExternalCodingAgent`, an `Agent[E]`
-subclass) owns the per-turn lifecycle of the external agent:
+subclass) owns turn orchestration and delegates provider resource ownership
+to a `StreamingProviderBackend`:
 
 1. Look up the ModexAgent session id ↔ provider session id mapping in the
-   `ExternalSessionStore` (fresh on first turn, resumed thereafter).
+   `ExternalSessionMapStore` (fresh on first turn, resumed thereafter).
 2. Build the per-turn env (9 `MODEX_*` vars + PATH) and inject it via
    `subprocess.Popen(env=...)`.
 3. Render the dynamic target list + CLI usage into the provider's
    `--append-system-prompt`; render static runtime notes into the workdir's
    `AGENTS.md` marker block.
-4. Spawn the provider CLI through the OS layer (`resolve_executable` +
-   `spawn_process_group`), with the workdir as cwd.
+4. Execute through the provider backend. Pi and the OpenCode subprocess
+   fallback spawn a per-turn process group; the default OpenCode SSE adapter
+   reuses a warm `opencode serve` process owned by the backend.
 5. Parse stdout events through the provider-specific `ProviderEventParser`,
    emit the five core event kinds (text/thinking/tool_use/tool_result/error)
    through `ContentEmitter`, persist to the existing per-session transcript
    store.
-6. On provider exit, return an `AgentResult`; commit the provider-minted
-   session id back to `ExternalSessionStore`.
+6. On provider completion, return an `AgentResult`; commit the provider-minted
+   session id back to `ExternalSessionMapStore`.
+
+Provider cleanup converges through `StreamingProviderBackend.close()`.
+`ExternalCodingAgent.stop()` invokes it, and workspace teardown reaches the
+agent through `AgentPool.shutdown_all()`. A normal turn does not close the
+warm OpenCode server.
 
 The external agent communicates back through a single CLI shim, `modexbot`:
 
 - The provider's LLM learns the shim from the injected system prompt.
-- `modexbot send --to <name> --content <text>` reads the `MODEX_*` env,
+- `modexctl send --to <name> --content <text>` (or the compatible `modexbot`
+  facade) reads the `MODEX_*` env,
   infers the target session id via the ADR-0019 prefix-reuse rule, looks up
-  the target pool from `MODEX_AGENT_POOL_MAP`, and writes one JSON line
-  directly into the target pool's `pending.jsonl` — in the exact format
-  `LocalFileInboxServer.receive()` already uses.
+  the target pool from `MODEX_AGENT_POOL_MAP`, and calls `InboxMQ.deliver()`
+  for the target workspace. The FILE adapter appends `pending.jsonl`; the
+  SQLITE adapter writes the workspace database.
 - The target pool's existing `InboxPoller` (200 ms tick) discovers the line
   through `sessions_with_pending()` and consumes it through the normal
   `consume() → dispatch_envelope → pipeline` path. No new transport, no
@@ -216,10 +225,10 @@ value object):
 - `BackendResult` — frozen BaseModel: status (literal:
   `completed` / `failed` / `timeout` / `aborted`), output, session_id
   (optional), error (optional), usage (mapping).
-- `OutboxLine` / inbox-line builder — frozen BaseModel matching
-  `LocalFileInboxServer.receive()`'s on-disk JSON shape.
-- `SessionMapEntry` — frozen BaseModel persisted as
-  `<workdir>/.modex/external/session-map.json`.
+- `InboxMessage` / CLI message builder — typed model accepted by
+  `InboxMQ.deliver()` for both FILE and SQLite persistence.
+- `SessionMapEntry` — frozen BaseModel persisted through
+  `ExternalSessionMapStore` (JSON for FILE, scoped database rows for SQLite).
 - `ExternalCodingEvent` — StrEnum: `TEXT_DELTA`, `THINKING`,
   `TOOL_USE`, `TOOL_RESULT`, `ERROR` (extensible).
 
@@ -257,12 +266,13 @@ defined `SendStrategy`).
 
 ### Session continuity
 
-`ExternalSessionStore` persists the `modex_session_id` →
-`provider_session_id` mapping as JSON inside the workdir
-(`<workdir>/.modex/external/session-map.json`). All provider session files
-live under the same directory (`<workdir>/.modex/external/<kind>-session.*`),
-accessed only through `ExternalPaths.provider_session(kind)` — no path
-string is constructed outside that accessor.
+`ExternalSessionMapStore` is the mapping contract. The bot selects
+`LocalFileExternalSessionMapStore` for FILE persistence (JSON at
+`<workdir>/.modex/external/session-map.json`) or
+`SqliteExternalSessionMapStore` for SQLITE persistence (scoped rows in the
+workspace `state.db`). Provider session files remain under
+`<workdir>/.modex/external/`, accessed through
+`ExternalPaths.provider_session(kind)`.
 
 - **Pi**: `provider_session_id` is a JSONL transcript path inside the
   workdir. Minted by harness on first turn, reused thereafter.
@@ -270,7 +280,7 @@ string is constructed outside that accessor.
   it from the first stdout event and commits to the map.
 
 Stale-session recovery: backend raises `StaleSessionError` →
-`ExternalSessionStore.invalidate()` → single fresh retry on the same turn.
+`ExternalSessionMapStore.invalidate()` → single fresh retry on the same turn.
 
 The external agent itself is unaware of either id.
 
@@ -290,6 +300,30 @@ Provider backends call these three and stay OS-agnostic. There is no
 `Spawner` ABC and no per-OS strategy class — Python's
 `asyncio.subprocess` is already cross-platform; only the three behaviours
 above are not.
+
+### Backend lifecycle and ownership
+
+`StreamingProviderBackend.close()` is the single upper-layer cleanup
+interface. Provider differences remain inside adapters:
+
+| Backend | Runtime lifetime | Normal turn completion | Cancellation/error/close |
+|---|---|---|---|
+| `OpenCodeServerBackend` | One warm `opencode serve` per backend | Keep server for reuse | Roll back failed startup or terminate and reap the server tree on close |
+| `OpenCodeBackend` | One `opencode run` child per turn | Wait and reap | Terminate and reap every active child tree |
+| `PiBackend` | One `pi` child per turn | Wait and reap | Terminate and reap every active child tree |
+| `_OpenCodeFallbackBackend` | Owns SSE and subprocess adapters | Sticky switch to subprocess after SSE startup failure | Attempt both closes; preserve the first failure |
+
+Each real adapter serializes spawn/register with close and rejects execution
+after successful close. Active subprocesses remain owned until their final
+`wait()` completes. Multi-child close is all-settled: every child receives a
+cleanup attempt before the first failure is propagated.
+
+`ExternalCodingAgent.stop()` shares one in-flight close task across concurrent
+callers. It sets `_stopped` only after close succeeds; failure or cancellation
+leaves the agent retryable. `AgentPool.shutdown_all()` applies the same owner
+rule at pool scope: concurrent callers share one shutdown, all agents use one
+deadline, and only successfully stopped owners are removed. Failed and timed-
+out owners remain `SHUTTING_DOWN` for retry.
 
 ### CLI (`modexctl` + `modexbot` facade)
 
@@ -331,12 +365,12 @@ The send operation:
 - Rejects `target_name == MODEX_AGENT_NAME` (self-send).
 - Computes `target_session_id` via the prefix-reuse rule (error if
   `MODEX_SESSION_ID` has no `.` separator).
-- Acquires a flock-style lock on the target session dir
-  (`<inbox_root>/<pool>/<safe(target_sid)>/.lock`).
-- Appends one JSON line to `pending.jsonl` whose shape matches
-  `LocalFileInboxServer.receive()` exactly, including the metadata
-  `agent_session_id` field `_session_id_from_text` relies on to recover
-  the session id during `sessions_with_pending()` scans.
+- Builds a typed `InboxMessage` with XML-wrapped content and calls the target
+  workspace's synchronous `InboxMQ.deliver()` boundary.
+- FILE delivery writes `pending.jsonl` and performs best-effort dedup against
+  pending/delivered ids. SQLite delivery opens its own short-lived stdlib
+  `sqlite3` connection and transaction; it never shares the server's async
+  `aiosqlite` connection.
 
 ### Env injection
 
@@ -436,7 +470,7 @@ provider in every integration test.
 **One** integration seam covers the end-to-end loop. It extends the
 existing `tests/integration/multi_agent/test_cross_pool_peer.py` pattern:
 
-- Real `LocalFileInboxServer` filesystem workspaces (not the in-memory
+- Real `LocalFileInboxMQ` filesystem workspaces (not the in-memory
   variant) for each pool.
 - Real `InboxPoller` (200 ms tick).
 - Real `LocalAgentMessageBus`, real `AgentCommunicationService`, real
@@ -450,14 +484,13 @@ The scripted backend is the only new test artefact. It:
 
 - Records the spawn `env` and `args` for assertions.
 - Plays back a pre-programmed stdout event sequence.
-- Optionally writes into another pool's `pending.jsonl` at a scripted
-  moment, simulating what `modexbot send` would do — invoking the same
-  `modexbot.send` routing function the real CLI uses (so the routing
-  logic is exercised for real, only the subprocess boundary is faked).
+- Optionally calls another pool's `InboxMQ.deliver()` at a scripted moment,
+  simulating what `modexctl send` would do through the same delivery contract
+  while faking only the provider subprocess boundary.
 
 This single seam verifies: identity injection, routing inference,
-inbox-line format compatibility with `LocalFileInboxServer`, poller
-discovery of externally-written lines, streaming emit through
+`InboxMQ.deliver()` compatibility, poller discovery of externally delivered
+messages, streaming emit through
 `ContentEmitter`, transcript persistence, session resume, stale-session
 recovery, self-send rejection, and unknown-target error.
 
@@ -490,15 +523,27 @@ Mirror `src/modex_agent/agents/external_coding/` under
   `spawn_process_group` returns a process whose group id differs from
   the parent (POSIX); `terminate_process_group` kills the whole tree
   (using a dummy child that itself spawns a grandchild).
-- `test_modexbot_routing.py` — pure-function half of modexbot:
+- Backend lifecycle tests — SSE readiness rollback and final reap;
+  subprocess cancellation and active-child close; spawn/close races;
+  all-settled multi-child cleanup; terminal closed state; cleanup retry.
+- Agent/pool lifecycle tests — shared concurrent stop/shutdown, successful
+  owner removal, and failed/timed-out owner retention.
+- Bot fallback lifecycle tests — both adapters are always attempted and the
+  first close failure is preserved.
+- CLI routing tests — target-session prefix reuse, pool resolution, XML
+  wrapping, self-send/missing-target rejection, and typed inbox-message
+  construction.
+- Inbox MQ conformance tests — FILE and SQLite `deliver()` dedup and consume
+  round trips; SQLite uses a short-lived sync connection for CLI safety.
+- Legacy `test_modexbot_routing.py` coverage includes:
   `_compute_target_session_id` obeys the prefix-reuse rule;
   `_resolve_target_pool` from `MODEX_AGENT_POOL_MAP`; self-send raises;
   missing prefix raises; missing pool-map entry raises;
-  `_build_inbox_line` produces JSON byte-identical to a line
-  `LocalFileInboxServer.receive()` would write.
-- `test_modexbot_e2e.py` — the file-write half of modexbot against a
-  real `LocalFileInboxServer` workspace: writing one line through
-  modexbot and then calling `sessions_with_pending()` discovers it;
+  `_build_inbox_line` produces JSON byte-identical to the FILE adapter's
+  pending record.
+- `test_modexbot_e2e.py` — the FILE adapter path against a real
+  `LocalFileInboxMQ` workspace: delivering through the CLI and then calling
+  `sessions_with_pending()` discovers it;
   `consume()` returns an `InboxMessage` equal to the line written.
 
 ### Prior art in the codebase
@@ -508,7 +553,7 @@ Mirror `src/modex_agent/agents/external_coding/` under
 - `tests/unit/multi_agent/test_communication_service.py` — pattern for
   strategy-dispatch assertions.
 - `tests/unit/multi_agent/inbox/test_inbox_flush_hook.py` (and sibling
-  inbox tests) — pattern for `LocalFileInboxServer` filesystem fixtures.
+  inbox tests) — pattern for `LocalFileInboxMQ` filesystem fixtures.
 - `tests/unit/workspace/test_paths.py` — pattern for path-accessor
   escape-proof assertions.
 
@@ -520,10 +565,10 @@ Mirror `src/modex_agent/agents/external_coding/` under
   until Pi + OpenCode are proven in production. The
   `ProviderBackend` / `ProviderEventParser` interfaces are shaped so
   that adding Claude later is one new `providers/claude.py` file.
-- **Long-running provider process.** Day one re-spawns the provider CLI
-  per turn. A stdin-driven long-lived provider process would eliminate
-  cold-start cost but introduces its own liveness/state problems;
-  revisit when spawn cost becomes measurable.
+- **Persistent Pi transport.** Pi remains a per-turn CLI because no supported
+  persistent transport is wired. OpenCode persistence is no longer out of
+  scope: the shipped default uses `opencode serve` with SSE and retains
+  `opencode run` as a sticky fallback.
 - **Full event parsing.** Status, log, and token-usage events are
   dropped on day one. The parser interface admits them later without
   breaking call sites.
@@ -545,13 +590,11 @@ Mirror `src/modex_agent/agents/external_coding/` under
 
 ## Further Notes
 
-- **Concurrent-writer safety on `pending.jsonl`.** `modexbot send` is a
-  second writer (the first being `LocalFileInboxServer.receive()`) into
-  the same file. The on-disk format is identical, the per-session flock
-  serialises writers, and `receive()`'s own `message_id` dedup covers
-  any race. Future changes to the inbox server's on-disk format must
-  keep `modexbot.send` in sync — the inbox-line builder is shared
-  between them through the `OutboxLine` Pydantic model.
+- **Cross-process delivery.** `modexctl send` uses only the synchronous
+  `InboxMQ.deliver()` surface. FILE delivery remains best-effort because its
+  pending/dedup files do not share a database transaction. SQLite closes that
+  gap with a short-lived `BEGIN IMMEDIATE` transaction and internal delivered-
+  id tracking. CLI code must never reuse the server's async connection.
 
 - **Windows process-group coverage.** The `taskkill /T` path is less
   battle-tested than the POSIX `killpg` path; CI coverage on Windows is
@@ -565,15 +608,14 @@ Mirror `src/modex_agent/agents/external_coding/` under
   system prompt tells the agent not to do. This is documented but not
   enforceable at the framework level.
 
-- **Spawn-cost budget.** Each new message to an external agent re-execs
-  the provider CLI (~1–3 s cold start). This is fundamental to the
-  CLI-driven coding agent model. If it becomes a measurable problem,
-  the long-running-provider-process follow-up (out of scope above) is
-  the response.
+- **Spawn-cost budget.** Pi and OpenCode's subprocess fallback re-exec the
+  provider CLI per message. The default OpenCode SSE adapter amortizes startup
+  by retaining a warm server across turns; that server is released only when
+  backend/agent/pool/workspace ownership closes.
 
 - **Relationship to ADRs.**
-  - Builds on ADR-0015 (unified inbox — `modexbot send` is a second
-    writer into the same `pending.jsonl`).
+  - Builds on ADR-0015 (unified inbox — CLI delivery uses the same `InboxMQ`
+    contract and pending lifecycle as framework sends).
   - Builds on ADR-0019 (cross-pool peer communication — external pools
     are NORMAL peers routed via `PeerNormalStrategy` prefix reuse).
   - Builds on ADR-0003 (src layout — new code under

@@ -41,9 +41,12 @@ set-to-sorted-list conversion, compact separators, and `allow_nan=False` so
 non-finite floats are rejected.
 
 `RecordScope.canonical()` produces the stable string used as both the DB
-`scope` JSON column value and the `scope_key` uniqueness column. `scope` is the
-sole source for generated dimensions, not the sole column an adapter writes;
-ordinary domain keys and payload columns remain explicit.
+`scope` JSON column value and the `scope_key` uniqueness column. Point
+operations match the complete canonical key exactly; they never use partial
+JSON matching. Aggregate operations use an explicit canonical owner key when
+the adapter owns a family of record scopes. `scope` is the sole source for
+generated dimensions, not the sole column an adapter writes; ordinary domain
+keys and payload columns remain explicit.
 
 Generated scope columns use the exact `RecordScope` field names. In particular,
 the agent dimension is `agent_id`, never `agent` or `agent_name`.
@@ -121,10 +124,10 @@ CREATE TABLE sessions (
     metadata_json      TEXT    CHECK (metadata_json IS NULL OR json_valid(metadata_json))
 );
 
-CREATE INDEX idx_sessions_pool_prefix ON sessions (pool, session_prefix);
+CREATE INDEX idx_sessions_pool_prefix ON sessions (pool, session_prefix) WHERE pool IS NOT NULL;
 CREATE INDEX idx_sessions_prefix      ON sessions (session_prefix);
 CREATE INDEX idx_sessions_parent      ON sessions (parent_session_id);
-CREATE INDEX idx_sessions_pool_agent  ON sessions (pool, agent_id);
+CREATE INDEX idx_sessions_pool_agent  ON sessions (pool, agent_id) WHERE pool IS NOT NULL;
 ```
 
 ### Pool Routing
@@ -147,7 +150,9 @@ CREATE INDEX idx_routing_pool ON pool_routing (pool);
 ```sql
 CREATE TABLE inbox_topics (
     topic_id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id      TEXT    NOT NULL UNIQUE,
+    owner_scope_key TEXT    NOT NULL COLLATE BINARY CHECK (json_valid(owner_scope_key)),
+    scope_key       TEXT    NOT NULL COLLATE BINARY,
+    session_id      TEXT    NOT NULL,
     scope           TEXT    NOT NULL CHECK (json_valid(scope)),
     pool            TEXT    GENERATED ALWAYS AS (json_extract(scope, '$.pool')) STORED,
     state           TEXT    NOT NULL DEFAULT 'pending'
@@ -156,12 +161,20 @@ CREATE TABLE inbox_topics (
     last_active     REAL    NOT NULL,
     message_count   INTEGER NOT NULL DEFAULT 0,
     consumer_task   TEXT,
+    UNIQUE (scope_key),
+    UNIQUE (topic_id, owner_scope_key, scope_key),
+    UNIQUE (owner_scope_key, scope_key),
+    UNIQUE (owner_scope_key, scope_key, session_id),
+    CHECK (scope = scope_key),
+    CHECK (COALESCE(json_type(scope, '$.session_id') = 'text', 0)),
     CHECK (json_extract(scope, '$.session_id') = session_id)
 );
 
 CREATE INDEX idx_topics_state       ON inbox_topics (state) WHERE state = 'pending';
 CREATE INDEX idx_topics_last_active ON inbox_topics (last_active) WHERE state = 'idle';
-CREATE INDEX idx_topics_pool        ON inbox_topics (pool);
+CREATE INDEX idx_topics_owner       ON inbox_topics (owner_scope_key);
+CREATE INDEX idx_topics_session     ON inbox_topics (session_id);
+CREATE INDEX idx_topics_pool        ON inbox_topics (pool) WHERE pool IS NOT NULL;
 ```
 
 ### Inbox Messages
@@ -169,7 +182,9 @@ CREATE INDEX idx_topics_pool        ON inbox_topics (pool);
 ```sql
 CREATE TABLE inbox_messages (
     id                          INTEGER PRIMARY KEY AUTOINCREMENT,
-    topic_id                    INTEGER NOT NULL REFERENCES inbox_topics(topic_id) ON DELETE CASCADE,
+    topic_id                    INTEGER NOT NULL,
+    owner_scope_key             TEXT    NOT NULL COLLATE BINARY,
+    scope_key                   TEXT    NOT NULL COLLATE BINARY,
     session_id                  TEXT    NOT NULL,
     scope                       TEXT    NOT NULL CHECK (json_valid(scope)),
     pool                        TEXT    GENERATED ALWAYS AS (json_extract(scope, '$.pool')) STORED,
@@ -194,14 +209,19 @@ CREATE TABLE inbox_messages (
     seq                         INTEGER NOT NULL,
     created_at                  REAL    NOT NULL,
     consumed_at                 REAL,
-    UNIQUE (session_id, message_id)
+    UNIQUE (scope_key, message_id),
+    FOREIGN KEY (topic_id, owner_scope_key, scope_key)
+        REFERENCES inbox_topics(topic_id, owner_scope_key, scope_key) ON DELETE CASCADE,
+    CHECK (scope = scope_key),
+    CHECK (COALESCE(json_type(scope, '$.session_id') = 'text', 0)),
+    CHECK (json_extract(scope, '$.session_id') = session_id)
 );
 
 CREATE INDEX idx_messages_topic_state_seq ON inbox_messages (topic_id, state, seq);
-CREATE INDEX idx_messages_dedup           ON inbox_messages (session_id, message_id);
-CREATE INDEX idx_messages_session         ON inbox_messages (session_id);
-CREATE INDEX idx_messages_pool_session    ON inbox_messages (pool, session_id);
-CREATE INDEX idx_messages_pool_agent      ON inbox_messages (pool, agent_id);
+CREATE INDEX idx_messages_owner_session   ON inbox_messages (owner_scope_key, session_id);
+CREATE INDEX idx_messages_scope_session   ON inbox_messages (scope_key, session_id);
+CREATE INDEX idx_messages_pool_session    ON inbox_messages (pool, session_id) WHERE pool IS NOT NULL;
+CREATE INDEX idx_messages_pool_agent      ON inbox_messages (pool, agent_id) WHERE pool IS NOT NULL;
 CREATE INDEX idx_messages_parent          ON inbox_messages (parent_session_id);
 ```
 
@@ -209,11 +229,14 @@ CREATE INDEX idx_messages_parent          ON inbox_messages (parent_session_id);
 
 ```sql
 CREATE TABLE inbox_delivered_ids (
-    session_id   TEXT    NOT NULL,
-    message_id   TEXT    NOT NULL,
-    delivered_at REAL    NOT NULL,
-    PRIMARY KEY (session_id, message_id),
-    FOREIGN KEY (session_id) REFERENCES inbox_topics(session_id) ON DELETE CASCADE
+    owner_scope_key TEXT    NOT NULL COLLATE BINARY,
+    scope_key       TEXT    NOT NULL COLLATE BINARY,
+    session_id      TEXT    NOT NULL,
+    message_id      TEXT    NOT NULL,
+    delivered_at    REAL    NOT NULL,
+    PRIMARY KEY (scope_key, message_id),
+    FOREIGN KEY (owner_scope_key, scope_key, session_id)
+        REFERENCES inbox_topics(owner_scope_key, scope_key, session_id) ON DELETE CASCADE
 );
 ```
 
@@ -222,6 +245,8 @@ CREATE TABLE inbox_delivered_ids (
 ```sql
 CREATE TABLE inbox_dead_letter (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_scope_key     TEXT    NOT NULL COLLATE BINARY,
+    scope_key           TEXT    NOT NULL COLLATE BINARY,
     session_id          TEXT    NOT NULL,
     scope               TEXT    NOT NULL CHECK (json_valid(scope)),
     pool                TEXT    GENERATED ALWAYS AS (json_extract(scope, '$.pool')) STORED,
@@ -232,11 +257,25 @@ CREATE TABLE inbox_dead_letter (
     payload_json        TEXT,
     expired_reason      TEXT    NOT NULL,
     expired_at          REAL    NOT NULL,
-    original_created_at REAL    NOT NULL
+    original_created_at REAL    NOT NULL,
+    UNIQUE (scope_key, message_id),
+    FOREIGN KEY (owner_scope_key, scope_key)
+        REFERENCES inbox_topics(owner_scope_key, scope_key) ON DELETE CASCADE,
+    CHECK (scope = scope_key),
+    CHECK (COALESCE(json_type(scope, '$.session_id') = 'text', 0)),
+    CHECK (json_extract(scope, '$.session_id') = session_id)
 );
 
-CREATE INDEX idx_dead_letter_session ON inbox_dead_letter (session_id);
+CREATE INDEX idx_dead_letter_owner_session ON inbox_dead_letter (owner_scope_key, session_id);
+CREATE INDEX idx_dead_letter_pool_session ON inbox_dead_letter (pool, session_id) WHERE pool IS NOT NULL;
 ```
+
+`owner_scope_key` is the exact canonical scope supplied when constructing an
+inbox adapter. `scope_key` is that scope merged with the addressed
+`session_id`. Framework queries use `scope_key = ?` for one session and
+`owner_scope_key = ?` for owner-wide listings or retention. `pool` remains an
+optional generated business dimension and is never required for framework
+identity.
 
 ### Turn Snapshots
 
@@ -266,7 +305,7 @@ CREATE UNIQUE INDEX idx_turn_active_unique
     WHERE phase IN ('running', 'suspended');
 
 CREATE INDEX idx_turn_session      ON turn_snapshots (session_id);
-CREATE INDEX idx_turn_pool_session ON turn_snapshots (pool, session_id);
+CREATE INDEX idx_turn_pool_session ON turn_snapshots (pool, session_id) WHERE pool IS NOT NULL;
 CREATE INDEX idx_turn_parent       ON turn_snapshots (parent_session_id);
 CREATE INDEX idx_turn_phase        ON turn_snapshots (phase) WHERE phase IN ('running', 'suspended');
 CREATE INDEX idx_turn_created      ON turn_snapshots (created_at);
@@ -293,7 +332,7 @@ CREATE TABLE approval_audit_log (
 
 CREATE INDEX idx_approval_session ON approval_audit_log (session_id, decided_at);
 CREATE INDEX idx_approval_turn    ON approval_audit_log (turn_uuid);
-CREATE INDEX idx_approval_pool    ON approval_audit_log (pool, decided_at);
+CREATE INDEX idx_approval_pool    ON approval_audit_log (pool, decided_at) WHERE pool IS NOT NULL;
 ```
 
 ### Todos
@@ -307,7 +346,7 @@ CREATE TABLE todos (
     updated_at      REAL    NOT NULL
 );
 
-CREATE INDEX idx_todos_pool ON todos (pool);
+CREATE INDEX idx_todos_pool ON todos (pool) WHERE pool IS NOT NULL;
 ```
 
 ### Transcript Events (optional DB migration)
@@ -365,7 +404,6 @@ CREATE TABLE memory_session_messages (
     agent_id        TEXT    GENERATED ALWAYS AS (json_extract(scope, '$.agent_id')) STORED,
     seq             INTEGER NOT NULL,
     role            TEXT    NOT NULL,
-    content         TEXT    NOT NULL,
     message_json    TEXT    NOT NULL CHECK (json_valid(message_json)),
     created_at      REAL    NOT NULL,
     state           TEXT    NOT NULL DEFAULT 'normal'
@@ -387,8 +425,13 @@ CREATE INDEX idx_memory_session_state
     ON memory_session_messages (scope_key, state);
 
 CREATE INDEX idx_memory_session_pool
-    ON memory_session_messages (pool);
+    ON memory_session_messages (pool) WHERE pool IS NOT NULL;
 ```
+
+The `content` column was removed in migration 002 — it duplicated the
+`content` field inside `message_json`. The adapter reads only
+`message_json` (via `json.loads`), so `content` was write-only dead
+storage that roughly doubled per-row size for text-heavy conversations.
 
 ### Memory — KV Store
 
@@ -403,7 +446,7 @@ CREATE TABLE memory_kv (
     PRIMARY KEY (scope_key, key)
 );
 
-CREATE INDEX idx_memory_kv_pool ON memory_kv (pool);
+CREATE INDEX idx_memory_kv_pool ON memory_kv (pool) WHERE pool IS NOT NULL;
 ```
 
 ### Memory — Cursors
@@ -473,7 +516,7 @@ CREATE TABLE external_session_map (
     invalidated         INTEGER NOT NULL DEFAULT 0
 );
 
-CREATE INDEX idx_external_pool ON external_session_map (pool);
+CREATE INDEX idx_external_pool ON external_session_map (pool) WHERE pool IS NOT NULL;
 ```
 
 ### Workspace Metadata
@@ -572,6 +615,10 @@ CREATE TABLE workspace_meta (
 ---
 
 ## Migration Sequence
+
+This sequence targets newly created registry and workspace databases. The
+release does not import existing file-backed data and does not transform an
+earlier SQLite schema; users opt into the selected backend with a fresh DB.
 
 1. Define typed identity/scope models + `canonical_json` + conformance test contracts
 2. SQLite connection/migration infrastructure (per-workspace + registry)

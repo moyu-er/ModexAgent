@@ -23,10 +23,11 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 
 | Module | Files | Subdirectories | Purpose |
 |--------|-------|----------------|---------|
-| `core/` | 25 py | `graph/`, `skills/`, `experience/` | ABCs — `Agent[E]`, `ContentEmitter[E]`, `Tool`, `ContextManager`, graph engine, types (see `core/AGENTS.md`) |
-| `agents/` | 2 py | `react/`, `experience/`, `summarizer/` | Agent implementations — `ReActAgent` (graph-based 4-node), `SummarizerAgent`, `ExperienceReviewAgent` (see `agents/AGENTS.md`) |
-| `memory/` | 17 py | `consolidation/`, `core/`, `injection/`, `layers/`, `pipeline/`, `prompts/`, `pruned/`, `registry/`, `stores/`, `tools/` | Three-layer memory — session/archive/knowledge, compaction, consolidation, governance, injection (see `memory/AGENTS.md`) |
-| `multi_agent/` | 20 py | `inbox/` | Star-topology orchestration — `AgentPool`, inbox, `AgentMessageBus` (see `multi_agent/AGENTS.md`) |
+| `core/` | 25 py | `graph/`, `skills/`, `experience/` | ABCs — `Agent[E]`, `ContentEmitter[E]`, `Tool`, `ContextManager`, `SessionArtifactCleaner`/`SessionDatabaseCleaner`, graph engine, types (see `core/AGENTS.md`) |
+| `agents/` | 2 py | `react/`, `external_coding/`, `experience/`, `summarizer/` | Agent implementations — `ReActAgent`, `ExternalCodingAgent` (Pi/OpenCode CLI harness), `SummarizerAgent`, `ExperienceReviewAgent` (see `agents/AGENTS.md`) |
+| `memory/` | 17 py | `consolidation/`, `core/`, `injection/`, `layers/`, `pipeline/`, `prompts/`, `pruned/`, `registry/`, `stores/`, `tools/` | Three-layer memory — session/archive/knowledge, compaction, consolidation, governance, injection. Split store ABCs (`MessageStore`/`KVStore`/`CursorStore`/`ArchiveStore`) + `MemoryStoreBundle` (see `memory/AGENTS.md`) |
+| `persistence/` | 24 py | `adapters/`, `managers/`, `migrations/` | Hybrid persistence layer (ADR-0023). `ConnectionManager` + `MigrationRunner` (per-workspace SQLite), `PersistenceBackend`/`PersistenceConfig`, `SqliteSessionDatabaseCleaner`, SQLite adapters for the split store + runtime-state ABCs |
+| `multi_agent/` | 20 py | `inbox/` | Star-topology orchestration — `AgentPool`, inbox (`InboxMQ`), `AgentMessageBus` (see `multi_agent/AGENTS.md`) |
 | `tools/` | 8 py | `ast/`, `lsp/`, `mcp/`, `overflow/`, `standard/`, `terminal/`, `web/` | Tool subsystem — registry, executor, MCP, terminal (pexpect/tmux/winpty), overflow, standard tools (see `tools/AGENTS.md`) |
 | `sandbox/` | 17 py | `adapters/` | Sandboxed execution — Subprocess, Docker, E2B, Landlock, guards, environment builder (see `sandbox/AGENTS.md`) |
 | `pipeline/` | 7 py | — | `AgentPipeline` orchestration, I/O adapters, approval renderer, snapshot handling (see `pipeline/AGENTS.md`) |
@@ -84,8 +85,9 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 
 ### Module Responsibilities
 - `core/` — ABCs and foundational types. All other modules depend on it.
-- `agents/` — Agent reasoning strategies (ReAct, summarizer, experience review).
-- `memory/` — Three-layer persistent memory with scope isolation.
+- `agents/` — Agent strategies (ReAct, external coding CLI harness, summarizer, experience review). External provider resources converge through `StreamingProviderBackend.close()`; adapter-specific lifetime remains local to each backend.
+- `memory/` — Three-layer persistent memory with scope isolation. Split store ABCs + `MemoryStoreBundle` are the storage contract.
+- `persistence/` — Hybrid persistence (ADR-0023). SQLite `ConnectionManager`/`MigrationRunner` + adapters for the split store and runtime-state ABCs. `PersistenceBackend` (`FILE`/`SQLITE`) drives IOC selection.
 - `multi_agent/` — Star-topology subagent orchestration.
 - `tools/` — Tool registry, executor, MCP, terminal backends.
 - `pipeline/` — End-to-end orchestration pipeline.
@@ -99,8 +101,9 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 ### Internal
 - All modules depend on `core/` for ABCs and types.
 - `agents/` depends on `core/` (agent ABC, graph engine, tool manager).
-- `memory/` depends on `core/` (types, context, events).
-- `multi_agent/` depends on `core/` (agent ABC), `memory/` (isolated memory), `messaging/` (bus).
+- `memory/` depends on `core/` (types, context, events, scope).
+- `persistence/` depends on `core/` (scope, cleanup) and `memory/` (split store ABCs); implements the SQLite adapters.
+- `multi_agent/` depends on `core/` (agent ABC), `memory/` (isolated memory), `messaging/` (bus), `persistence/` (InboxMQ, routing stores).
 - `pipeline/` depends on `core/`, `agents/`, `runtime/`, `commands/`.
 - `tools/` depends on `core/` (Tool ABC, ToolManager).
 - `sandbox/` depends on `core/` (types) only; NOT wired into `tools/` — opt-in capability per ADR-0007.
@@ -112,6 +115,7 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 - `pyyaml` — frontmatter parsing
 - `pathvalidate` — filename sanitization
 - `pexpect` / `tmux` / `winpty` — terminal backends
+- `aiosqlite` — async SQLite driver for the persistence layer (ADR-0023); the CLI uses stdlib `sqlite3`
 
 ## Approval & Security Architecture
 

@@ -6,6 +6,7 @@ from modex_agent.ioc.configs.memory import (
     MemoryConfig,
     SessionConfig,
     ShortTermConfig,
+    SummarizerAgentConfig,
 )
 
 
@@ -52,6 +53,12 @@ class TestMemoryConfig:
         assert not hasattr(cfg, "max_messages")
         assert not hasattr(cfg, "keep_ratio_for_messages")
         assert not hasattr(cfg, "keep_ratio_for_token")
+
+    def test_summarizer_context_default_supports_archive_injection(self) -> None:
+        cfg = SummarizerAgentConfig()
+        assert cfg.context_max_chars == 20_000
+        assert cfg.knowledge_max_chars == 3000
+        assert cfg.index_max_chars == 200
 
     def test_session_max_token_ratio_clamp(self) -> None:
         """max_token_ratio clamped into [0.4, 0.9] per ADR-0009."""

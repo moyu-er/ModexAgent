@@ -1,6 +1,6 @@
 # External coding agent integration (Pi / OpenCode as pool members)
 
-Status: accepted (2026-07-12); revised (2026-07-14) — see Disposition section
+Status: accepted (2026-07-12); revised (2026-07-14, 2026-07-15) — see Disposition section
 
 ## Context
 
@@ -521,3 +521,61 @@ the receiving agent sees structured `<agent_message>` with `source`,
 `<content>`, and `<reply_contract>` (reply instructions tailored to
 receiver's implementation type). The original ADR's raw-text `content`
 field is no longer used.
+
+### D3 revised — session maps use the configured persistence backend
+
+`ExternalSessionStore` evolved into the `ExternalSessionMapStore` ABC.
+The bot factory selects one adapter with the same `PersistenceBackend`
+decision used by the rest of the workspace:
+
+- `LocalFileExternalSessionMapStore` stores the map in
+  `<workdir>/.modex/external/session-map.json` for the FILE backend.
+- `SqliteExternalSessionMapStore` stores scoped rows in the workspace
+  `state.db` for the SQLITE backend.
+
+The harness still owns fresh/resume/invalidate semantics and performs one
+fresh retry after a stale provider session. Only the storage adapter changed;
+provider-native session data remains provider-owned.
+
+### D10 added — backend lifetime and process ownership converge on `close()`
+
+The shipped OpenCode wiring now prefers a persistent SSE adapter backed by
+`opencode serve`. A sticky fallback switches to `opencode run` after an SSE
+startup failure. Pi remains a per-turn subprocess adapter.
+
+The lifetime distinction is hidden behind the existing
+`StreamingProviderBackend.close()` interface:
+
+- `OpenCodeServerBackend` keeps one warm server across successful turns. A
+  readiness failure or cancellation rolls back the partially started server;
+  backend close terminates and reaps its full process tree.
+- `OpenCodeBackend` and `PiBackend` own every active per-turn child from spawn
+  until final reap. Normal completion waits for exit; cancellation, execution
+  failure, or backend close terminates the process tree.
+- The OpenCode fallback owns both adapters. Its close path attempts both even
+  if one fails, then re-raises the first failure.
+
+Spawn/register and close are serialized inside each adapter. Successful close
+is terminal and later execution is rejected. Cleanup failures are propagated
+instead of hidden so ownership can be retried; a process is removed from the
+active set only after it has exited.
+
+`ExternalCodingAgent.stop()` shares concurrent stop attempts and marks the
+agent stopped only after backend close succeeds. `AgentPool.shutdown_all()`
+similarly shares concurrent shutdown, applies one deadline, and removes only
+owners that stopped successfully. Timed-out or failed owners remain
+`SHUTTING_DOWN` for a later retry. Workspace teardown therefore reaches all
+provider resources through one path without provider-specific branching.
+
+This revises the original consequence and follow-up that described every
+provider as per-turn and a long-running process as future work. Persistent
+OpenCode transport is shipped; Pi and the subprocess fallback intentionally
+remain per-turn.
+
+### Lifecycle validation
+
+The lifecycle contract is covered at the ownership boundaries: readiness
+rollback, cancellation, final reap after forced kill, spawn/close races,
+all-settled multi-child cleanup, repeated close after failure, concurrent
+agent/pool shutdown, failed-owner retention, fallback first-error preservation,
+and real Windows `taskkill /T` grandchild-tree termination.

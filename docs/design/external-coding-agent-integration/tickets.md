@@ -3,10 +3,10 @@
 Integrate Pi and OpenCode (and future coding agent CLIs) as **NORMAL main
 agents of their own dedicated pools** under ADR-0019's cross-pool peer
 topology. External agents are spawned as subprocesses by a framework-side
-harness; they communicate back through a `modexctl send` CLI (with
-`modexbot` as a backward-compatible facade) that writes XML-wrapped
-`<agent_message>` content directly into target pools' `pending.jsonl`,
-reusing ADR-0015's inbox mechanism end-to-end.
+harness or served by a persistent provider backend; they communicate back
+through a `modexctl send` CLI (with `modexbot` as a backward-compatible
+facade) that delivers XML-wrapped `<agent_message>` content through the target
+workspace's `InboxMQ`, reusing ADR-0015's inbox mechanism end-to-end.
 
 Source spec: `docs/design/external-coding-agent-integration/spec.md`
 Parent ADR: `docs/adr/0022-external-coding-agent-integration.md`
@@ -20,7 +20,8 @@ Glossary: `docs/design/external-coding-agent-integration/glossary.md`
 > implementation evolved beyond several original design decisions
 > (canonical `TurnEvent` seam, `modexctl`/`modexbot` CLI split, XML
 > message wrapping, PoolEditor WebUI addition, `--thinking` flag, ANSI
-> stripping, 1MiB StreamReader limit, deferred litellm import). See
+> stripping, 1MiB StreamReader limit, deferred litellm import, hybrid
+> persistence, and backend lifecycle ownership). See
 > ADR-0022's Disposition section for details.
 
 Work the **frontier**: any ticket whose blockers are all done. For this
@@ -152,6 +153,10 @@ boundary is faked).
 
 ## T4 — Session store + event parsers (Pi + OpenCode)
 
+> Historical implementation record: the shipped `ExternalSessionMapStore` ABC
+> retains these semantics; FILE uses the JSON path below and SQLite uses scoped
+> rows in the workspace database. `ExternalSessionStore` was the original name.
+
 **What to build:** the persistence layer for the modex↔provider session
 mapping, plus the two provider-specific stdout parsers. The
 `ExternalSessionStore` persists a JSON map at
@@ -188,6 +193,11 @@ carries it.
 **Done** (commit `efb60fb1`, 2026-07-13): parsers fixture-driven, all tests pass.
 
 ## T5 — ExternalCodingAgent harness + ProviderBackend ABC
+
+> Historical implementation record: turn orchestration remains in the harness,
+> while provider process/network ownership now lives behind
+> `StreamingProviderBackend.close()` and is described below under
+> Post-implementation additions.
 
 **What to build:** the framework-side agent that wraps any provider
 backend, owning the full per-turn lifecycle. `ProviderBackend` is an
@@ -276,8 +286,8 @@ it but leaving it open can hang under systemd), reads stdout JSONL,
 hands each line to `PiEventParser`, captures stderr tail into the
 `BackendResult.error` on non-zero exit, detects stale-session errors
 and raises the typed error T5 catches. `OpenCodeBackend` constructs
-`opencode run --format json --dangerously-skip-permissions --dir <workdir>
-[--model M] [--prompt <sys>] [--session <id>] <prompt>`, injects
+`opencode run --format json --dangerously-skip-permissions --thinking
+--dir <workdir> [--model M] [--session <id>] <prompt>`, injects
 `PWD=<workdir>` into env (OpenCode prefers PWD over cwd for AGENTS.md
 discovery), captures the provider-minted session id from the parser's
 out-of-band channel, and commits it via T5's harness contract. Tests
@@ -450,3 +460,23 @@ quick-start snippet (configure `pool_pi`, install pi CLI, declare
 - [x] `README.md` quick-start snippet for adding a `pool_pi`.
 
 **Done** (commit `ae06ad58`, 2026-07-13): all documentation delivered (root AGENTS.md, examples/bot_project/AGENTS.md, README.md, ADR-0022, spec, glossary, tickets). Manual WebUI smoke tests deferred (require real provider CLI + running deployment; documented as operator verification steps).
+
+## Post-implementation additions
+
+Later work extended the completed T1-T11 design without adding another ticket
+to the dependency graph:
+
+- Hybrid persistence replaced the file-only session map assumption with the
+  `ExternalSessionMapStore` ABC plus FILE and SQLite adapters, and outbound CLI
+  delivery converged on `InboxMQ.deliver()`.
+- OpenCode business wiring now prefers a warm `opencode serve` SSE backend and
+  switches sticky to `opencode run` when SSE startup is unavailable. Pi and the
+  subprocess fallback remain per-turn processes.
+- Commit `d0833485` converged resource release through
+  `StreamingProviderBackend.close()`: transactional SSE startup rollback,
+  full process-tree termination/reap, active-child ownership, spawn/close
+  serialization, all-settled fallback cleanup, retryable agent stop, and
+  failed-owner retention during pool shutdown.
+- Regression coverage includes cancellation and cleanup failures, concurrent
+  stop/shutdown, close-during-spawn/startup races, fallback first-error
+  preservation, and real Windows grandchild-tree termination.

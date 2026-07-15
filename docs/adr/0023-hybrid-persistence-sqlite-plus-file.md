@@ -1,6 +1,6 @@
 # Hybrid persistence: per-workspace SQLite + file layer
 
-Status: proposed (2026-07-14)
+Status: accepted (2026-07-15) — implemented across T01-T27; bot integration (T26) and conformance tests (T27) complete.
 
 ## Context
 
@@ -255,3 +255,22 @@ See `docs/design/hybrid-persistence/sqlite-deployment-and-lifecycle.md` for full
 - `CompositeScope` remains for file-backed stores; `RecordScope` serves
   DB-backed stores. Two scope systems coexist by design — they serve different
   storage models and should not be unified.
+
+## Implementation outcome
+
+Implemented across tickets T01-T27 (see `docs/design/hybrid-persistence/tickets.md`).
+The design as written was followed; deviations and notes:
+
+- **D1-D3** (per-workspace DB, generated scope columns, canonical JSON): implemented as specified. `ConnectionManager`, `MigrationRunner`, two `DatabaseKind` streams (`WORKSPACE` + `REGISTRY`).
+- **D4** (store ABC convergence): `MemoryStorage` split into `MessageStore`/`KVStore`/`CursorStore`/`ArchiveStore` + `MemoryStoreBundle` (T08/T10). `DeliveredIdTracker` merged into `InboxMQ` internal (T11). `RegistryStore` deepened to `WorkspaceRegistryStore` (T14). `PoolSessionStore` → `PoolRoutingStore` ABC (T12). `ExternalSessionStore` → `ExternalSessionMapStore` ABC (T13). `InboxServer` → `InboxMQ` (T11). `LogStore` cancelled (archive channel logs in `ArchiveStore`). Old names kept as deprecated aliases during transition.
+- **D5** (session message state machine + TTL): implemented in the SQLite `MessageStore` (pin/unpin/soft-delete/TTL). File backend keeps the prior overwrite semantics.
+- **D6** (approval audit log): `ApprovalAuditStore` ABC + SQLite adapter implemented.
+- **D7** (ContextForkBuilder pure computation): `build()` queries the parent session's `MessageStore` and returns fork XML directly. No file I/O. `register_for_cleanup`/`cleanup` retained as no-ops for caller compatibility (T18).
+- **D8** (terminal state store removed): `JsonTerminalStateStore` and the `save_state()`/`load_state()` path deleted (T19).
+- **D9** (CLI uses `InboxMQ.deliver()`): `modexctl send` opens a short-lived SQLite connection and calls `InboxMQ.deliver()` (sync). No dual-write window.
+- **D10** (PostgreSQL replaceability): conformance test suite (T27) covers file + SQLite adapters against the same ABC contracts.
+- **D11** (SQLite lifecycle): one `aiosqlite.Connection` per workspace, `ConnectionManager`-owned lock, WAL mode, `wal_checkpoint(TRUNCATE)` on close. Migrations are plain SQL tracked by `schema_migrations`.
+- **Scope refactor** (T04/T05): `Scope` ABC + `RecordScope` replace `MemoryScope` + `get_scope_key`. `PeerPairScope` removed. Config `scope: str` → `scope: list[str]` with `build_scope(dims)` factory.
+- **No data migration** from files to DB, as decided. Users opt in via `persistence.backend`. SQLite is the bot's default; file remains the framework default.
+
+Conformance tests (T27) exercise both backends against every store ABC. The bot IOC layer (T26) wires SQLite adapters by default.

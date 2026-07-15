@@ -456,3 +456,75 @@ Work the **frontier**: any ticket whose blockers are all done. For a purely line
 - [ ] `CONTEXT.md` verified current (terms added in earlier phase)
 - [ ] `docs/adr/0023` status updated to "accepted" if implementation matches
 - [ ] Stale references to `MemoryStorage`, `InboxServer`, `PoolSessionStore`, `ExternalSessionStore`, `RegistryStore`, `DeliveredIdTracker`, `JsonTerminalStateStore` removed from all docs
+
+---
+
+## T29: Minimal SQLite production-wiring closure
+
+**Status:** Complete (2026-07-15).
+
+**What was closed:** Connect the already-implemented SQLite adapters to the
+`examples/bot_project` production lifecycle without changing the hybrid storage
+boundary. This ticket closes wiring and ownership gaps discovered after T26; it
+does not add schema or migrate existing file data.
+
+**Blocked by:** T16 (approval audit + decision coordinator), T22 (session and
+pool-routing adapters), T23 (registry adapter), T26 (backend selection and
+lifecycle).
+
+- [x] Workspace registry uses the configured `WorkspaceRegistryStore` backend;
+  the shared interface is async, startup explicitly loads persisted contexts,
+  and SQLite upsert preserves immutable `workspace_id` / `created_at` identity.
+- [x] Registry DB uses the canonical
+  `<home>/.modex/_registry/state.db` location and the registry migration stream;
+  no lookup, copy, or rename of the former `registry.db` path is performed.
+- [x] Each workspace session index is selected through `build_session_store()`:
+  SQLite uses that workspace's `state.db`, FILE retains
+  `WorkspacePoolSessionStore`, and the in-memory registry loads persisted
+  sessions before pools accept work.
+- [x] The service owns one home `WorkspacePersistenceManager` and one shared
+  `SqlitePoolRoutingStore` in `<home>/.modex/state.db`; home resources borrow the
+  manager, non-home resources own one manager each, and every workspace router
+  receives the same cross-workspace routing store.
+- [x] Live SQLite approval decisions use `SqliteDecisionCoordinator` so the
+  updated `TurnSnapshot` and append-only `ApprovalAuditEntry` commit in one
+  transaction. `turn_uuid` is part of the persisted ReAct snapshot payload,
+  the coordinator rejects audit identities that differ from the snapshot before
+  opening a transaction, decision scope uses `RecordScope.canonical()`, and
+  FILE keeps its existing turn-store-only behavior.
+- [x] Initialization rollback and normal shutdown close workspace writers first,
+  then the shared routing store and home workspace manager, with registry
+  persistence last. Failed or cancelled agent shutdown retains the agent and
+  materialized workspace for retry, leaves owned SQLite managers open, and
+  surfaces `BotServiceShutdownIncompleteError` instead of reporting successful
+  shutdown. Failed non-home materialization closes only resources it owns.
+- [x] Production WebUI session lookup resolves the materialized workspace's
+  backend-selected `SessionStore`; it does not reconstruct a file session index
+  while SQLite is selected.
+
+**Explicit exclusions:** no existing file-to-SQLite data migration, no dual
+write or shadow read, no database per pool, no new schema, and no conversion of
+intentional file stores (knowledge/archive Markdown, pruned history, media,
+overflow chunks, experience trees, traces, transcripts, configuration, prompts,
+or skills).
+
+**Verification evidence:** registry-focused suite `117 passed`; bot backend
+suite `995 passed, 1 skipped, 13 deselected`; framework persistence/workspace
+slice `907 passed`; approval-focused suites `28 passed`, `71 passed`, and bot
+approval regression `27 passed`. Real SQLite drivers verified registry reopen,
+session + routing persistence, and audit retention after turn-snapshot deletion.
+The supported framework unit/framework/conformance boundary passed
+`4449 passed, 18 skipped`; the final approval, pool ownership, workspace
+retention, service lifecycle, and multi-live regression gate passed `83 passed`
+(`1 deselected`). LSP error diagnostics are clean on the changed production
+files, scoped Ruff and mypy are clean for the final coordinator/type fixes, and
+`git diff --check` reports no whitespace errors. Final independent architecture
+review found no Critical or High findings.
+
+The combined repository + bot-project collection is not a valid final gate in
+the current environment: pytest 9 rejects the existing nested
+`tests/integration/bot_project/conftest.py::pytest_plugins`, and
+`examples/bot_project/tests/test_policy.py` cannot resolve the existing
+`plugins.tool_call_cleanup.policy` import. Repository-wide mypy and broad Ruff
+also retain pre-existing debt outside this ticket (`398` mypy errors across
+`97` files and `23` broad Ruff findings in the inspected wiring surface).

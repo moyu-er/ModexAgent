@@ -115,6 +115,8 @@ class AgentPool(AgentRegistry):
         self._session_store = session_store
         self._retention = retention or SessionRetentionPolicy()
         self._cleanup_task: asyncio.Task[None] | None = None
+        self._shutdown_task: asyncio.Task[bool] | None = None
+        self._agent_shutdown_tasks: dict[str, asyncio.Task[None]] = {}
         self._active_session_counts: dict[str, int] = {}
         self._error_counts: dict[str, int] = {}
         self._max_error_retries: int = 5
@@ -765,16 +767,50 @@ class AgentPool(AgentRegistry):
     async def _shutdown_agent(self, agent_name: str) -> None:
         """Shut down a single agent and release its resources."""
         self._transition(agent_name, AgentState.SHUTTING_DOWN, reason="idle_cleanup")
-        instance = self._agents.pop(agent_name, None)
+        instance = self._agents.get(agent_name)
         if instance is not None:
+            shutdown_task = self._agent_shutdown_tasks.get(agent_name)
+            if shutdown_task is None:
+                shutdown_task = asyncio.create_task(instance.stop())
+                self._agent_shutdown_tasks[agent_name] = shutdown_task
             try:
-                await instance.stop()
+                await asyncio.shield(shutdown_task)
+            except asyncio.CancelledError:
+                if (
+                    shutdown_task.done()
+                    and shutdown_task.cancelled()
+                    and self._agent_shutdown_tasks.get(agent_name) is shutdown_task
+                ):
+                    self._agent_shutdown_tasks.pop(agent_name, None)
+                raise
             except Exception:
-                pass
+                if self._agent_shutdown_tasks.get(agent_name) is shutdown_task:
+                    self._agent_shutdown_tasks.pop(agent_name, None)
+                return
+            if self._agent_shutdown_tasks.get(agent_name) is shutdown_task:
+                self._agent_shutdown_tasks.pop(agent_name, None)
+            if self._agents.get(agent_name) is instance:
+                self._agents.pop(agent_name, None)
+                self._active_session_counts.pop(agent_name, None)
+                self._error_counts.pop(agent_name, None)
+            else:
+                return
         self._transition(agent_name, AgentState.SHUTDOWN, reason="shutdown")
         logger.info("Agent %s shut down", agent_name)
 
-    async def shutdown_all(self, timeout: float = 10.0) -> None:
+    async def shutdown_all(self, timeout: float = 10.0) -> bool:
+        shutdown_task = self._shutdown_task
+        if shutdown_task is None:
+            shutdown_task = asyncio.create_task(self._shutdown_all_once(timeout))
+            self._shutdown_task = shutdown_task
+            shutdown_task.add_done_callback(self._clear_shutdown_task)
+        return await asyncio.shield(shutdown_task)
+
+    def _clear_shutdown_task(self, shutdown_task: asyncio.Task[bool]) -> None:
+        if self._shutdown_task is shutdown_task:
+            self._shutdown_task = None
+
+    async def _shutdown_all_once(self, timeout: float) -> bool:
         if self._cleanup_task is not None:
             self._cleanup_task.cancel()
         # Task 7: stop the per-pool InboxPoller so no new between-turn
@@ -783,14 +819,47 @@ class AgentPool(AgentRegistry):
         for name in list(self._agents.keys()):
             self._transition(name, AgentState.SHUTTING_DOWN, reason="shutdown_all")
         deadline = asyncio.get_running_loop().time() + timeout
-        for name, instance in list(self._agents.items()):
+        shutdown_owners = dict(self._agents)
+        shutdown_tasks: dict[str, asyncio.Task[None]] = {}
+        for name, instance in shutdown_owners.items():
+            shutdown_task = self._agent_shutdown_tasks.get(name)
+            if shutdown_task is None:
+                shutdown_task = asyncio.create_task(instance.stop())
+                self._agent_shutdown_tasks[name] = shutdown_task
+            shutdown_tasks[name] = shutdown_task
+        completed = True
+        cancellation: asyncio.CancelledError | None = None
+        for name, shutdown_task in shutdown_tasks.items():
             remaining = max(0.0, deadline - asyncio.get_running_loop().time())
             try:
-                await asyncio.wait_for(instance.stop(), timeout=remaining)
+                await asyncio.wait_for(asyncio.shield(shutdown_task), timeout=remaining)
             except TimeoutError:
-                logger.warning("Agent %s did not shut down in time, forcing", name)
-        self._agents.clear()
-        self._active_session_counts.clear()
-        self._error_counts.clear()
-        for name in list(self._status.keys()):
-            self._status[name] = AgentState.SHUTDOWN
+                completed = False
+                logger.warning("Agent %s shutdown timed out; retained for retry", name)
+            except asyncio.CancelledError as exc:
+                completed = False
+                if (
+                    shutdown_task.done()
+                    and shutdown_task.cancelled()
+                    and self._agent_shutdown_tasks.get(name) is shutdown_task
+                ):
+                    self._agent_shutdown_tasks.pop(name, None)
+                logger.warning("Agent %s shutdown was cancelled; retained for retry", name)
+                cancellation = exc
+            except Exception:
+                completed = False
+                if self._agent_shutdown_tasks.get(name) is shutdown_task:
+                    self._agent_shutdown_tasks.pop(name, None)
+                logger.exception("Agent %s shutdown failed; retained for retry", name)
+            else:
+                if self._agent_shutdown_tasks.get(name) is shutdown_task:
+                    self._agent_shutdown_tasks.pop(name, None)
+                instance = shutdown_owners[name]
+                if self._agents.get(name) is instance:
+                    self._agents.pop(name, None)
+                    self._active_session_counts.pop(name, None)
+                    self._error_counts.pop(name, None)
+                    self._transition(name, AgentState.SHUTDOWN, reason="shutdown_all_complete")
+        if cancellation is not None:
+            raise cancellation
+        return completed

@@ -4,9 +4,10 @@ Domain vocabulary for ADR-0022. Terms are organised by layer (framework →
 integration → provider). Each term carries the one-line definition the design
 uses.
 
-> **Revision note (2026-07-14):** Updated to reflect the canonical
-> `TurnEvent` seam, `modexctl`/`modexbot` CLI split, and XML message
-> wrapping introduced during implementation.
+> **Revision note (2026-07-15):** Updated to reflect the canonical
+> `TurnEvent` seam, `modexctl`/`modexbot` CLI split, XML message
+> wrapping, hybrid session-map persistence, and backend lifecycle
+> ownership introduced during implementation.
 
 ---
 
@@ -48,17 +49,17 @@ sends to a NORMAL agent in pool B, the target session id is
 `{sender_prefix}.{target_agent_name}`. `modexbot send` relies on this rule
 to compute the target session id without a routing table.
 
-### pending.jsonl
-The on-disk inbox queue (`LocalFileInboxServer`, ADR-0015). Format: one
-JSON object per line, fields `message_id`, `source`, `content`,
-`message_type`, `timestamp`, `metadata`. `modexbot send` writes a second
-copy of this format directly into the target pool's pending.jsonl; the
-target pool's `InboxPoller` discovers it through the periodic
-`sessions_with_pending()` filesystem scan.
+### InboxMQ.deliver
+The synchronous cross-process delivery boundary used by `modexctl send` and
+its `modexbot` facade. The FILE implementation appends the typed message to
+`pending.jsonl`; the SQLite implementation opens an independent short-lived
+stdlib `sqlite3` transaction against the workspace `state.db`. Both enforce
+message-id dedup and feed the same pending → consume lifecycle. CLI delivery
+never reuses the server's long-lived async connection.
 
 ### InboxPoller
 Per-pool loop (200 ms tick) that calls
-`LocalFileInboxServer.sessions_with_pending()`, consumes new messages via
+`InboxMQ.sessions_with_pending()`, consumes new messages via
 `consume()`, and dispatches them through `pool.dispatch_envelope → pipeline`.
 External-agent-written messages are picked up through the same path with no
 code change to the poller.
@@ -69,8 +70,9 @@ code change to the poller.
 
 ### external coding agent
 An industry CLI coding agent (Pi, OpenCode, Claude Code, Codex, Cursor, …)
-admitted as a NORMAL main agent of its own dedicated pool. Spawned as a
-subprocess by harness; communicates back via `modexbot send`. Not an
+admitted as a NORMAL main agent of its own dedicated pool. Executed through a
+provider backend by the harness; communicates back via `modexctl send` (or the
+compatible `modexbot` facade). Not an
 in-process Python `Agent[E]` subclass itself — see harness.
 
 ### provider
@@ -82,10 +84,11 @@ providers add one enum value and one backend file.
 
 ### harness
 The framework-side Python class `ExternalCodingAgent(Agent[E])` that wraps
-a provider. Owns the per-turn lifecycle: resolve session id, construct env,
-inject system prompt, write AGENTS.md statics, spawn the provider via the
-OS layer, parse stdout events, emit through `ContentEmitter`, persist to
-transcript. The harness is what the pool registers as its main agent —
+a provider. Owns turn orchestration: resolve session id, construct env,
+inject system prompt, write AGENTS.md statics, execute the backend, project
+events through `ContentEmitter`, and persist the transcript. It delegates
+process/network ownership to `StreamingProviderBackend` and closes that
+backend from its retryable `stop()`. The harness is what the pool registers as its main agent —
 external to the framework, it *is* the agent; internally, it delegates the
 actual LLM work to the provider subprocess.
 
@@ -98,23 +101,27 @@ AGENTS.md statics file, the provider-native skills directory
 ### ExternalPaths
 Single path accessor for everything under a workdir. Concentrates the
 `.modex/` layout so session-file paths do not scatter across modules.
-Provider session files live under `ExternalPaths.provider_session(kind)` =
-`<workdir>/.modex/external/<kind>-session.jsonl` (Pi) or `.json` (OpenCode).
+Pi's provider session path is
+`ExternalPaths.provider_session(ProviderKind.PI)` =
+`<workdir>/.modex/external/pi-session.jsonl`. OpenCode uses a provider-minted
+session id rather than a harness-owned provider-session file.
 
 ### modexbot
 The compatibility CLI facade exposed to external agents for sending
 messages. Lives at `src/modex_agent/cli/modexbot/` and delegates routing
-logic to `modexctl.main`. Has exactly one command — `send` — that writes
-one JSON line into the target pool's `pending.jsonl`. Stateless beyond
-its process environment; no routing table, no config file, no IPC. Help
-output is env-gated: without `MODEX_SESSION_ID`, `send` is hidden.
+logic to `modexctl.main`. Has exactly one command — `send` — that calls
+`InboxMQ.deliver()` on the target workspace (file backend: appends one
+JSON line to `pending.jsonl`; SQLite backend: writes to `state.db`).
+Stateless beyond its process environment; no routing table, no config
+file, no IPC. Help output is env-gated: without `MODEX_SESSION_ID`,
+`send` is hidden.
 
 ### modexctl
 The production CLI (`src/modexctl/main.py`) with `send` + `agents`
 subcommands, `--content`/`--content-file`/`--stdin` input modes, and
 XML-wrapped content via `build_peer_agent_message`. `modexbot` is a
-facade over `modexctl`; both share the same routing logic and on-disk
-format.
+facade over `modexctl`; both share the same routing logic and
+`InboxMQ.deliver()` delivery path.
 
 ### ExternalEnvSpec / ExternalEnvBuilder
 The frozen Pydantic model + builder that constructs the 9-variable env dict
@@ -130,17 +137,20 @@ The nine environment variables harness injects per spawn:
 with the modexbot directory. These are the *only* signal modexbot reads;
 no sidecar file duplicates them.
 
-### ExternalSessionStore
-Persisted map (`<workdir>/.modex/external/session-map.json`) between
-`modex_session_id` and `provider_session_id`. The only owner of the
-mapping; harness consults it on every turn to decide fresh vs resume.
-Invalidates entries on stale-session errors and retries once as fresh.
+### ExternalSessionMapStore
+Persistence ABC for the map between `modex_session_id` and
+`provider_session_id`. The harness consults it on every turn to decide fresh
+vs resume, invalidates stale entries, and retries once as fresh.
+`LocalFileExternalSessionMapStore` writes
+`<workdir>/.modex/external/session-map.json`; `SqliteExternalSessionMapStore`
+writes scoped rows to the workspace `state.db`. (`ExternalSessionStore` is the
+old name.)
 
 ### provider_session_id
 The external CLI's own session identifier. For Pi this is a JSONL file
 path (daemon-minted, inside the workdir); for OpenCode it is a
 provider-minted id captured from the first stdout event. Distinct from
-modex_session_id; the two are correlated only through ExternalSessionStore.
+modex_session_id; the two are correlated only through ExternalSessionMapStore.
 
 ### ExternalCodingEvent
 The `StrEnum` event kind emitted by provider parsers (inherits
@@ -183,6 +193,14 @@ Stateless beyond its `Config`; session continuity is the caller's
 responsibility (via `opts.resume_session_id` and
 `BackendResult.session_id`).
 
+### StreamingProviderBackend
+Provider backend specialization that emits parsed records while executing and
+adds the common `close()` resource boundary. Upper layers never branch on
+provider kind during teardown. A backend may own a warm server, active
+per-turn subprocesses, network sessions, or no resources; its `close()` must
+release all owned resources or propagate failure so the owner remains
+retryable.
+
 ### Pi backend
 ProviderBackend for the `pi` CLI. Invocation:
 `pi -p --mode json --session <jsonl_path> [--provider X --model Y]
@@ -193,19 +211,40 @@ systemd can hang the event loop). Eight JSONL event types on stdout; the
 stripping (`call:Tool{…}`, `<|token|>` control chars).
 
 ### OpenCode backend
-ProviderBackend for the `opencode` CLI. Invocation:
-`opencode run --format json --dangerously-skip-permissions --dir <workdir>
-   [--model M] [--prompt <sys>] [--session <id>] <prompt>`. Requires
-`PWD=<workdir>` env override (OpenCode prefers PWD over cwd for AGENTS.md
-discovery). Runs in its own process group so cancellation reaches the
-tool subprocesses it spawns. Five JSONL event types on stdout; the
-session id is provider-minted and surfaces in the first event.
+The OpenCode integration has two `StreamingProviderBackend` adapters. The
+preferred `OpenCodeServerBackend` owns one warm `opencode serve` process and
+streams SSE across turns. `OpenCodeBackend` invokes
+`opencode run --format json --dangerously-skip-permissions --thinking --dir
+<workdir> [--model M] [--session <id>] <prompt>` as a per-turn subprocess and
+sets `PWD=<workdir>`. `_OpenCodeFallbackBackend` owns both and switches
+permanently to the subprocess adapter when SSE startup raises
+`SSEUnavailableError`.
+
+### warm server
+The `opencode serve` process owned by one `OpenCodeServerBackend`. It survives
+normal turn completion for session and startup reuse. Failed readiness is
+transactionally rolled back; backend close terminates and reaps the complete
+process tree. Root-session `idle` is a turn signal, not permission to close the
+server, because child/background sessions may still exist.
+
+### active process ownership
+The set of live per-turn children owned by `OpenCodeBackend` or `PiBackend`.
+Spawn and registration are serialized with close. A child leaves the set only
+after exit/reap; cancellation, execution failure, and backend close terminate
+its process tree. Cleanup of multiple children is all-settled before the first
+failure is re-raised.
+
+### retryable shutdown
+The lifecycle rule that ownership is committed as closed/stopped/shutdown only
+after cleanup succeeds. `ExternalCodingAgent` retains a failed backend close;
+`AgentPool` retains failed or timed-out agents as `SHUTTING_DOWN`. Concurrent
+callers share the same close/shutdown task, and a later call may retry failure.
 
 ### stale session
 A provider-side session id that the provider no longer recognises
 (restart, expiry, corruption). Detected when the provider exits with a
 session-not-found error on resume. Harness response:
-`ExternalSessionStore.invalidate(modex_sid)` + single fresh retry.
+`ExternalSessionMapStore.invalidate(modex_sid)` + single fresh retry.
 
 ---
 
@@ -214,7 +253,8 @@ session-not-found error on resume. Harness response:
 ### inbound (other agent → external)
 Standard ADR-0015 path. Sender's `send_to_agent` routes through
 `PeerNormalStrategy` (ADR-0019) → target pool's
-`LocalFileInboxServer.receive()` → pending.jsonl append → target pool's
+`InboxMQ.receive()` (file backend: `LocalFileInboxMQ` appends to pending.jsonl;
+SQLite backend: writes to the workspace `state.db`) → target pool's
 `InboxPoller` 200 ms tick → `consume()` → `pool.dispatch_envelope` →
 `pipeline.process_message` → `ExternalCodingAgent.run(ctx, emitter)`.
 
@@ -224,10 +264,10 @@ External agent invokes `modexctl send --to <name> --content ...` (or
 wraps content in `build_peer_agent_message` XML (`<agent_message>` with
 `source`, `<content>`, and `<reply_contract>`), reads `MODEX_*` env,
 infers target session id via ADR-0019 prefix reuse, looks up target pool
-via `MODEX_AGENT_POOL_MAP`, acquires flock on the target session dir,
-appends one JSON line to the target pool's `pending.jsonl`. Target's
-InboxPoller discovers it on the next tick. No Python object invocation,
-no IPC, no socket.
+via `MODEX_AGENT_POOL_MAP`, and calls `InboxMQ.deliver()` on the target
+workspace (file backend: appends one JSON line to `pending.jsonl`; SQLite
+backend: writes to `state.db`). Target's InboxPoller discovers it on the
+next tick. No Python object invocation, no IPC, no socket.
 
 ---
 
