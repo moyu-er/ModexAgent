@@ -10,14 +10,19 @@ export interface CardProps {
   children: ReactNode;
   className?: string;
   elevated?: boolean;
+  /** Enables hover shadow-deepening + border strengthen. Use only on
+   * interactive top-level cards (clickable/expandable); nested child cards
+   * and pure-display cards should NOT enable this to avoid visual noise. */
+  hoverable?: boolean;
   /** Forwarded to the rendered element so callers can anchor sticky bars etc. */
   id?: string;
 }
 
-export function Card({ children, className, elevated = false, id }: CardProps) {
+export function Card({ children, className, elevated = false, hoverable = false, id }: CardProps) {
   const cls = [
     "rounded-md border border-hairline bg-canvas-elevated p-4",
     elevated ? "shadow-floating" : "",
+    hoverable ? "card-hoverable" : "",
     className,
   ]
     .filter(Boolean)

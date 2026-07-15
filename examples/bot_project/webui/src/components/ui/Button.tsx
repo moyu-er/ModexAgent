@@ -29,7 +29,7 @@ const SIZE_CLS: Record<ButtonSize, string> = {
 
 const VARIANT_CLS: Record<ButtonVariant, string> = {
   primary:
-    "bg-link text-canvas-elevated hover:bg-link-deep border border-transparent",
+    "bg-link text-canvas-elevated hover:bg-link-deep border border-transparent btn-primary-glow",
   secondary:
     "bg-canvas-elevated text-ink border border-hairline hover:bg-hairline-soft",
   ghost:
@@ -61,7 +61,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
 ) {
   const isDisabled = disabled || loading;
   const cls = [
-    "inline-flex items-center justify-center font-medium transition-colors",
+    "inline-flex items-center justify-center font-medium transition-[color,background-color,border-color,transform,box-shadow] duration-app ease-app",
     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-link/30",
     "disabled:cursor-not-allowed disabled:opacity-60",
     VARIANT_CLS[variant],

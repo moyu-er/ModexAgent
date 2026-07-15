@@ -74,6 +74,32 @@ export async function fetchModels(): Promise<{ choices: ModelChoice[] }> {
   return resp.json() as Promise<{ choices: ModelChoice[] }>;
 }
 
+// ── Provider model-list fetch ───────────────────────────────────────────────
+
+export interface FetchedModel {
+  id: string;
+  owned_by?: string | null;
+  display_name?: string | null;
+}
+
+/**
+ * Fetch the available model list from a provider's model-list endpoint
+ * (e.g. /v1/models). The provider must already be saved — all connection
+ * info (base_url, api_key, interface_format, models_url) is read server-side
+ * from model.yml; only the provider key crosses the wire.
+ */
+export async function fetchProviderModels(
+  providerKey: string,
+): Promise<{ models: FetchedModel[] }> {
+  const resp = await fetch(`${API_BASE}/models/fetch`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider_key: providerKey }),
+  });
+  await assertOk(resp);
+  return resp.json() as Promise<{ models: FetchedModel[] }>;
+}
+
 // ── Session / conversation ──────────────────────────────────────────────────
 
 export async function fetchSessions(

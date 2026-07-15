@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from aiohttp import web
+from aiohttp import ClientSession, ClientTimeout, web
 
 from bot.adapters.channels import set_conv_channel
 from bot.adapters.web_socket import WebSocketInputAdapter
@@ -38,6 +38,7 @@ from bot.webui.events import (
     WebSocketAction,
     WebUIEventType,
 )
+from bot.webui.model_fetch import ModelFetchError, fetch_provider_models
 from bot.webui.transcript_store import TranscriptStore
 from modex_agent.core.session_id import (
     SessionIdFactory,
@@ -247,11 +248,10 @@ class WorkspaceIndex(ABC):
         ...
 
     @abstractmethod
-    async def last_updated(
-        self, session_id: str, sessions_dir: Path | None = None
-    ) -> int | None:
+    async def last_updated(self, session_id: str, sessions_dir: Path | None = None) -> int | None:
         """Return the latest transcript timestamp for *session_id*."""
         ...
+
 
 # ── Server ─────────────────────────────────────────────────────────────────
 
@@ -329,8 +329,13 @@ class WebUIServer:
         # endpoints read from the same backend the agent writes to.
         self._store_resolver: Callable[[Path, str], Awaitable[RuntimeStores]] | None = None
 
+        # Lazy-shared aiohttp ClientSession for outbound provider model-list
+        # fetches. Created on first use; closed on app shutdown.
+        self._http_session: ClientSession | None = None
+
         self.app = web.Application()
         self._setup_routes()
+        self.app.on_cleanup.append(self._close_http_session)
 
     # ------------------------------------------------------------------
     # Workspace helpers
@@ -570,9 +575,7 @@ class WebUIServer:
         """
         self._session_store = store
 
-    def set_session_store_factory(
-        self, factory: Callable[[Path], Awaitable[SessionStore]]
-    ) -> None:
+    def set_session_store_factory(self, factory: Callable[[Path], Awaitable[SessionStore]]) -> None:
         """Inject a factory that builds a per-workspace session store.
 
         The factory receives the workspace's session-index directory (resolved
@@ -697,9 +700,7 @@ class WebUIServer:
                 )
                 if candidates:
                     parent_session_id = candidates[0]
-            updated_at = await self._store.last_updated(
-                session_id, sessions_dir=target_dir
-            )
+            updated_at = await self._store.last_updated(session_id, sessions_dir=target_dir)
             created_at = updated_at
             derived.append(
                 SessionInfo(
@@ -749,6 +750,7 @@ class WebUIServer:
         self.app.router.add_get("/api/config/{domain}", self._handle_get_config)
         self.app.router.add_put("/api/config/{domain}", self._handle_put_config)
         self.app.router.add_post("/api/system/restart", self._handle_restart)
+        self.app.router.add_post("/api/models/fetch", self._handle_fetch_provider_models)
         # Pool / MCP / skills / prompt REST API (Phase 2B). Mirror the
         # add_<verb> style used above.
         self.app.router.add_get("/api/pools", self._handle_list_pools)
@@ -870,6 +872,77 @@ class WebUIServer:
                 status=200,
             )
         return web.json_response({"restarting": True})
+
+    # ------------------------------------------------------------------
+    # Provider model-list fetch
+    # ------------------------------------------------------------------
+
+    async def _close_http_session(self, app: web.Application) -> None:
+        if self._http_session is not None and not self._http_session.closed:
+            await self._http_session.close()
+            self._http_session = None
+
+    async def _get_http_session(self) -> ClientSession:
+        if self._http_session is None or self._http_session.closed:
+            self._http_session = ClientSession(timeout=ClientTimeout(total=15))
+        return self._http_session
+
+    async def _handle_fetch_provider_models(self, request: web.Request) -> web.Response:
+        """POST /api/models/fetch -- fetch a provider's model list server-side.
+
+        Body: ``{"provider_key": "<key>"}``. All connection info (base_url,
+        api_key, interface_format, models_url) is read from the persisted
+        model.yml — never from the request. The provider must be saved first.
+        Returns ``{models: [{id, owned_by}]}``.
+        """
+        try:
+            body = await request.json()
+        except Exception as exc:  # noqa: BLE001 - malformed JSON body
+            logger.warning("fetch_provider_models: bad JSON body: %s", exc)
+            return web.json_response({"error": "invalid body"}, status=400)
+
+        provider_key = body.get("provider_key") if isinstance(body, dict) else None
+        if not isinstance(provider_key, str) or not provider_key:
+            return web.json_response(
+                {"error": "validation", "fields": {"provider_key": ["required"]}},
+                status=400,
+            )
+
+        if self._model_config_loader is None:
+            return web.json_response({"error": "model config not loaded"}, status=503)
+
+        cfg = self._model_config_loader()
+        if cfg is None:
+            return web.json_response({"error": "model config not loaded"}, status=503)
+
+        provider = cfg.find_provider_by_key(provider_key)
+        if provider is None:
+            return web.json_response(
+                {"error": f"provider not found: {provider_key} (save the provider first)"},
+                status=404,
+            )
+
+        if not provider.api_key:
+            return web.json_response({"error": "API key is required"}, status=400)
+        if not provider.base_url and not provider.models_url:
+            return web.json_response({"error": "Base URL is required"}, status=400)
+
+        session = await self._get_http_session()
+        try:
+            models = await fetch_provider_models(
+                session=session,
+                base_url=provider.base_url,
+                api_key=provider.api_key,
+                interface_format=provider.interface_format,
+                models_url_override=provider.models_url,
+            )
+        except ModelFetchError as exc:
+            return web.json_response({"error": exc.reason, "status": exc.status}, status=502)
+        except Exception:  # noqa: BLE001 - unexpected network/parse failure
+            logger.exception("fetch_provider_models failed for %s", provider_key)
+            return web.json_response({"error": "fetch failed"}, status=500)
+
+        return web.json_response({"models": [m.model_dump() for m in models]})
 
     # ------------------------------------------------------------------
     # Pool / MCP / skills / prompt handlers (Phase 2B)
@@ -2221,9 +2294,7 @@ class WebUIServer:
             # (reattach of a persisted session that already received a message),
             # routing is already established — attach is idempotent.
             try:
-                if await self._store.load(
-                    session_id, sessions_dir=attach_sessions_dir
-                ):
+                if await self._store.load(session_id, sessions_dir=attach_sessions_dir):
                     pass  # Session persisted; attach is idempotent, routing intact.
             except Exception as exc:
                 logger.warning("Failed to check existing transcript for %s: %s", session_id, exc)

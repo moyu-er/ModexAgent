@@ -25,6 +25,8 @@ export interface UseWebUIStreamResult {
    *  internal per-tool-call submitting flags). Use to disable every approval
    *  button for the duration of a batch-level decision. */
   isApprovingBatch: boolean;
+  /** Live WebSocket connection state — drives the statusline signal dot. */
+  isConnected: boolean;
   connect: () => void;
   disconnect: () => void;
   send: (
@@ -57,6 +59,7 @@ export function useWebUIStream(
   /** Per-tool-call submitting flag so the card's buttons disable while a
    *  decision POST is in flight. Keyed by tool_call_id. */
   const [submittingApprovals, setSubmittingApprovals] = useState<Record<string, boolean>>({});
+  const [isConnected, setIsConnected] = useState(false);
   const clientRef = useRef<WebSocketClient | null>(null);
   /** ID of the most recent optimistically-added user message.  The server
    * echoes it back via ``_request_id`` in the envelope metadata so the
@@ -237,10 +240,12 @@ export function useWebUIStream(
           isStreaming: false,
           sessionStreaming: {},
         }));
+        setIsConnected(false);
       },
       () => {
         // Socket just opened. If the current session is a pending draft,
         // attach it now so the user can send the first message.
+        setIsConnected(true);
         const currentSessionId = sessionIdRef.current;
         const pool = currentSessionId
           ? getPoolForUuidRef.current?.(currentSessionId)
@@ -258,6 +263,7 @@ export function useWebUIStream(
     if (clientRef.current) {
       clientRef.current.disconnect();
       clientRef.current = null;
+      setIsConnected(false);
     }
   }, []);
 
@@ -472,6 +478,7 @@ export function useWebUIStream(
     todos: sessionId ? state.todos[sessionId] ?? [] : [],
     pendingApprovals: sessionId ? state.pendingApprovals[sessionId] ?? [] : [],
     isApprovingBatch: Object.keys(submittingApprovals).length > 0,
+    isConnected,
     connect,
     disconnect,
     send,

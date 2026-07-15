@@ -9,6 +9,7 @@ providers:
     base_url: https://api.deepseek.com
     interface_format: openai_compatible
     api_key: your_api_key
+    # models_url: https://api.deepseek.com/models  # optional override for the model-list endpoint
     models:
       - name: "deepseek-v4-flash"
         model: deepseek-v4-flash

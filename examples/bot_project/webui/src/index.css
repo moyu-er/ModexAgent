@@ -39,10 +39,12 @@
 
   /* Neutral ladder (zinc over warm-white canvas).
      Sidebar is the recessed chrome (darkest in dark / grayest in light), the
-     main canvas is the working surface, elevated cards float on top. */
-  --color-canvas: #fbfbfa;
+     main canvas is the working surface, elevated cards float on top, popover
+     is a third tier for modal/dropdown/toast. Aligned to loom's ladder. */
+  --color-canvas: #fafaf9;
   --color-canvas-sidebar: #ececee;
   --color-canvas-elevated: #ffffff;
+  --color-canvas-popover: #ffffff;
   --color-ink: #18181b;
   --color-bright: #09090b;
   --color-body: #3f3f46;
@@ -118,10 +120,12 @@
 
   /* Neutral ladder over near-black canvas.
      Sidebar is near-black chrome (Vercel/Linear signature), main is the lit
-     working surface, cards float clearly above it. */
-  --color-canvas: #0d0d0f;
-  --color-canvas-sidebar: #050506;
-  --color-canvas-elevated: #18181c;
+     working surface, cards float clearly above it, popover is a third tier
+     for modal/dropdown/toast. Aligned to loom's neutral ladder. */
+  --color-canvas: #0a0a0b;
+  --color-canvas-sidebar: #08080a;
+  --color-canvas-elevated: #131316;
+  --color-canvas-popover: #1a1a1e;
   --color-ink: #fafafa;
   --color-bright: #ffffff;
   --color-body: #e4e4e7;
@@ -148,13 +152,22 @@
 
   /* Shadows */
   --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.3);
-  --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-card-hover: 0 2px 8px rgba(0, 0, 0, 0.4);
   --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.5);
   --shadow-color: rgba(0, 0, 0, 0.3);
 
   /* Scrollbar */
   --color-scrollbar-thumb: rgba(255, 255, 255, 0.15);
   --color-scrollbar-thumb-hover: rgba(255, 255, 255, 0.25);
+}
+
+/* Drift-enabled glow position. @property makes the custom property animatable
+ * (CSS variables are not interpolated by default). Registered at top level so
+ * it applies in both themes. */
+@property --glow-x {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 100%;
 }
 
 @layer base {
@@ -171,37 +184,47 @@
 
   body {
     @apply antialiased;
-    /* Layered background: flat canvas + two very-low-contrast static radial
-       glows using the signal color. Static only (no animation) so it never
-       fights reduced-motion. Fixed attachment keeps the glow stable on scroll. */
+    /* Layered background: flat canvas + two very-low-contrast radial glows
+     * using the signal color. The glows drift on a 40s cycle (imperceptible
+     * but "alive"); fixed attachment keeps them stable on scroll. The drift
+     * is killed under prefers-reduced-motion via the global guard below. */
     background-color: var(--color-canvas);
     background-image:
       radial-gradient(
-        1100px 560px at 100% -8%,
+        1100px 560px at var(--glow-x) -8%,
         color-mix(in oklab, var(--color-signal) 7%, transparent),
         transparent 62%
       ),
       radial-gradient(
-        820px 480px at -8% 108%,
+        820px 480px at calc(100% - var(--glow-x)) 108%,
         color-mix(in oklab, var(--color-signal) 4%, transparent),
         transparent 58%
       );
     background-attachment: fixed;
     color: var(--color-ink);
     font-family: theme("fontFamily.sans");
+    animation: glow-drift 40s ease-in-out infinite alternate;
   }
   .dark body {
     background-image:
       radial-gradient(
-        1100px 560px at 100% -8%,
+        1100px 560px at var(--glow-x) -8%,
         color-mix(in oklab, var(--color-signal) 6%, transparent),
         transparent 62%
       ),
       radial-gradient(
-        820px 480px at -8% 108%,
+        820px 480px at calc(100% - var(--glow-x)) 108%,
         color-mix(in oklab, var(--color-signal) 3%, transparent),
         transparent 58%
       );
+  }
+  @keyframes glow-drift {
+    from {
+      --glow-x: 100%;
+    }
+    to {
+      --glow-x: 90%;
+    }
   }
 }
 
@@ -252,6 +275,10 @@
     font-weight: 600;
     letter-spacing: 0.02em;
   }
+  .statusline .brand-mark {
+    font-size: 12px;
+    line-height: 1;
+  }
   .statusline .v {
     color: var(--color-body);
     font-family: theme("fontFamily.mono");
@@ -285,7 +312,11 @@
     background: var(--color-hairline-soft);
     color: var(--color-ink);
   }
-  /* The per-category icon chip. Color is set inline via --cat token by caller. */
+  .nav-item:hover .category-chip {
+    background: color-mix(in oklab, var(--cat, var(--color-mute)) 12%, transparent);
+  }
+  /* The per-category icon chip. Color is set inline via --cat token by caller.
+   * Tint is kept low (8%) so the icon color is the protagonist, not the fill. */
   .category-chip {
     display: inline-flex;
     align-items: center;
@@ -295,27 +326,33 @@
     flex: 0 0 24px;
     border-radius: var(--radius-sm);
     color: var(--cat, var(--color-mute));
-    background: color-mix(in oklab, var(--cat, var(--color-mute)) 12%, transparent);
+    background: color-mix(in oklab, var(--cat, var(--color-mute)) 8%, transparent);
     transition:
       background var(--dur) var(--ease),
-      color var(--dur) var(--ease);
+      color var(--dur) var(--ease),
+      box-shadow var(--dur) var(--ease);
   }
   .category-chip svg {
-    width: 14px;
-    height: 14px;
+    width: 15px;
+    height: 15px;
   }
   .nav-item.active {
     color: var(--color-ink);
-    border-left-color: var(--color-signal);
+    /* inset left bar doesn't consume layout space (unlike border-left). Color
+     * follows the current tab's --cat token so each config domain has a
+     * distinct active identity, falling back to signal. */
+    box-shadow: inset 2px 0 var(--cat, var(--color-signal));
     background: linear-gradient(
       90deg,
-      color-mix(in oklab, var(--color-signal) 9%, transparent),
+      color-mix(in oklab, var(--cat, var(--color-signal)) 9%, transparent),
       transparent
     );
   }
   .nav-item.active .category-chip {
     color: #fff;
     background: var(--cat, var(--color-signal));
+    /* chip glow reinforces the active domain color */
+    box-shadow: 0 0 8px color-mix(in oklab, var(--cat, var(--color-signal)) 35%, transparent);
   }
 
   /* ── Session list row ─────────────────────────────────────────────────── */
@@ -354,11 +391,13 @@
     height: 34px;
     border-radius: var(--radius-md);
     color: var(--cat, var(--color-signal));
-    background: color-mix(in oklab, var(--cat, var(--color-signal)) 12%, transparent);
+    background: color-mix(in oklab, var(--cat, var(--color-signal)) 8%, transparent);
+    /* domain-color glow makes the page head a visual anchor for the active tab */
+    box-shadow: 0 0 12px color-mix(in oklab, var(--cat, var(--color-signal)) 18%, transparent);
   }
   .page-head-icon svg {
-    width: 18px;
-    height: 18px;
+    width: 19px;
+    height: 19px;
   }
   .page-title {
     font-family: theme("fontFamily.mono");
@@ -372,6 +411,17 @@
     color: var(--color-mute);
     font-size: 12px;
     margin-top: 2px;
+  }
+
+  /* Per-domain top tint — apply to a settings tab's outer container with an
+   * inline --cat token. A 40px fade from a 3% cat-color wash into the canvas
+   * gives each config domain a subtle color identity without a hard band. */
+  .domain-tint {
+    background: linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--cat, var(--color-signal)) 3%, var(--color-canvas)),
+      var(--color-canvas) 40px
+    );
   }
 
   /* Notion-style custom checkbox. The native input is restyled so every
@@ -479,5 +529,129 @@
   }
   .prose-chat pre {
     @apply mb-3 overflow-x-auto rounded-lg border border-hairline bg-canvas p-0;
+  }
+
+  /* ── Micro-feedback pattern library ─────────────────────────────────────
+   * Semantic-driven micro-interactions (loom-style). Each class binds to one
+   * status meaning. All respect prefers-reduced-motion via the global guard
+   * at the end of this file. Consume these instead of ad-hoc transitions. */
+
+  /* Signal dot — "synced / running / connected". Emerald 6px glow. */
+  .dot-signal {
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-full);
+    background: var(--color-signal);
+    box-shadow: 0 0 6px color-mix(in oklab, var(--color-signal) 50%, transparent);
+    flex-shrink: 0;
+  }
+
+  /* Pulse dot — "in progress / update pending". Yellow 2s breath. */
+  .dot-pulse {
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-full);
+    background: var(--color-warning);
+    animation: dot-pulse 2s ease-in-out infinite;
+    flex-shrink: 0;
+  }
+  @keyframes dot-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.4;
+    }
+  }
+
+  /* Dim dot — "inactive / disabled / unconfigured". */
+  .dot-dim {
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-full);
+    background: var(--color-mute);
+    opacity: 0.45;
+    flex-shrink: 0;
+  }
+
+  /* Primary CTA glow — 1px lift + emerald 12px glow on hover, rebound on
+   * active. Apply ONLY to primary buttons (one primary CTA per area). */
+  .btn-primary-glow {
+    transition:
+      background var(--dur) var(--ease),
+      transform var(--dur) var(--ease),
+      box-shadow var(--dur) var(--ease);
+  }
+  .btn-primary-glow:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 0 12px color-mix(in oklab, var(--color-signal) 25%, transparent);
+  }
+  .btn-primary-glow:active {
+    transform: translateY(0);
+    box-shadow: none;
+  }
+
+  /* Card hover — deepen shadow without displacement (stable, no jump). */
+  .card-hoverable {
+    transition:
+      box-shadow var(--dur) var(--ease),
+      border-color var(--dur) var(--ease);
+  }
+  .card-hoverable:hover {
+    box-shadow: var(--shadow-card-hover);
+    border-color: var(--color-hairline-strong);
+  }
+
+  /* Search focus — border/bg/icon all tint primary on focus-within, no JS. */
+  .search-focusable:focus-within {
+    border-color: var(--color-link);
+    background: color-mix(in oklab, var(--color-link) 4%, var(--color-canvas-elevated));
+  }
+  .search-focusable:focus-within svg {
+    color: var(--color-link);
+  }
+
+  /* Collapse grid — height-adaptive expand transition via grid 0fr→1fr.
+   * Requires the collapsible content to be wrapped in a single <div>.
+   * Toggle .open on the .collapse-grid element. */
+  .collapse-grid {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows var(--dur) var(--ease);
+  }
+  .collapse-grid > div {
+    overflow: hidden;
+  }
+  .collapse-grid.open {
+    grid-template-rows: 1fr;
+  }
+}
+
+/* ── Global prefers-reduced-motion guard ──────────────────────────────────
+ * Accessibility baseline: motion-sensitive users get all animations reduced
+ * to near-instant. Per-component overrides below refine the few cases where
+ * 0.01ms would leave a flicker (infinite pulses) or a stuck transform. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .btn-primary-glow:hover {
+    transform: none;
+  }
+  .dot-pulse {
+    animation: none;
+    opacity: 0.7;
+  }
+  .collapse-grid {
+    transition: none;
+  }
+  body {
+    animation: none;
   }
 }

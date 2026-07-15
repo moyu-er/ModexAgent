@@ -25,7 +25,21 @@
     </script>
   </head>
   <body class="bg-canvas text-ink">
-    <div id="root"></div>
+    <div id="root">
+      <!-- Pre-React loading placeholder: visible until main.tsx hydrates #root.
+           Inlined styles (no CSS vars) so it renders before index.css loads. -->
+      <div id="__boot_loader" style="position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;background:#fafaf9;color:#18181b;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;">
+        <div style="width:34px;height:34px;border-radius:50%;border:3px solid rgba(5,150,105,0.18);border-top-color:#059669;animation:__boot_spin 0.9s linear infinite;"></div>
+        <div style="font-size:14px;font-weight:500;letter-spacing:0.01em;">Loading ModexBot…</div>
+        <div id="__boot_status" style="font-size:12px;color:#71717a;min-height:16px;">Connecting to backend…</div>
+      </div>
+      <style>
+        @keyframes __boot_spin { to { transform: rotate(360deg); } }
+        html.dark #__boot_loader { background:#0a0a0b; color:#fafafa; }
+        html.dark #__boot_loader > div:first-child { border-color: rgba(16,185,129,0.22); border-top-color:#10b981; }
+        html.dark #__boot_status { color:#a1a1aa; }
+      </style>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -51,6 +51,24 @@ const WEBUI_URL = "http://localhost:21800/webui/";
 const POLL_INTERVAL_MS = 1000;
 const MAX_WAIT_MS = 90000;
 
+const LOADING_HTML = `data:text/html,${encodeURIComponent(
+  `<!DOCTYPE html><html><head><meta charset="utf-8"><title>ModexBot</title><style>` +
+    `html,body{margin:0;padding:0;height:100%;}` +
+    `body{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;` +
+    `background:#fafaf9;color:#18181b;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;}` +
+    `.spinner{width:34px;height:34px;border-radius:50%;` +
+    `border:3px solid rgba(5,150,105,0.18);border-top-color:#059669;` +
+    `animation:spin 0.9s linear infinite;}` +
+    `.title{font-size:14px;font-weight:500;letter-spacing:0.01em;}` +
+    `.sub{font-size:12px;color:#71717a;}` +
+    `@keyframes spin{to{transform:rotate(360deg);}}` +
+    `</style></head><body>` +
+    `<div class="spinner"></div>` +
+    `<div class="title">Starting ModexBot\u2026</div>` +
+    `<div class="sub">Waiting for backend to start\u2026</div>` +
+    `</body></html>`,
+)}`;
+
 // ── State ───────────────────────────────────────────────────────────────────
 
 let mainWindow = null;
@@ -130,12 +148,18 @@ function startPythonBot() {
   pythonProcess.on("exit", (code, signal) => {
     log(`Python process exited: code=${code}, signal=${signal}`);
     pythonProcess = null;
-    if (mainWindow && !mainWindow.isDestroyed() && !isQuitting) {
+    // `modexbot start` is a daemon launcher: it spawns the real bot in the
+    // background and exits with code 0 almost immediately. A clean exit is
+    // expected — the bot keeps running detached. Only surface an error page
+    // when the launcher itself failed (non-zero exit), since that means the
+    // bot never started.
+    if (code !== 0 && mainWindow && !mainWindow.isDestroyed() && !isQuitting) {
       mainWindow.loadURL(
         `data:text/html,${encodeURIComponent(
           `<html><body style="font-family:system-ui;padding:40px;color:#333">` +
-            `<h2>Bot process stopped</h2>` +
+            `<h2>Bot failed to start</h2>` +
             `<p>Exit code: ${code}</p>` +
+            `<p>Check logs at:<br><code>${LOG_FILE}</code></p>` +
             `<p>Please restart ModexBot.</p>` +
             `</body></html>`,
         )}`,
@@ -151,36 +175,43 @@ function startPythonBot() {
 }
 
 function killPythonBot() {
-  if (!pythonProcess) {
-    log("No Python process to kill.");
-    return;
-  }
-
-  const pid = pythonProcess.pid;
-  log(`Killing Python bot (PID: ${pid})...`);
-
+  // `modexbot start` daemonizes: the spawned launcher exits immediately
+  // (code 0) and the real bot runs detached. So pythonProcess is usually
+  // null by the time we shut down. Use `modexbot stop` — the CLI finds and
+  // stops the background bot regardless of how it was started.
+  log("Stopping bot via modexbot stop...");
   try {
-    // On Windows, spawn() creates a child that may itself spawn children.
-    // Use taskkill /T /F to kill the entire process tree.
-    if (process.platform === "win32") {
-      execSync(`taskkill /pid ${pid} /f /t`, {
-        stdio: "ignore",
-        windowsHide: true,
-      });
-    } else {
-      pythonProcess.kill("SIGTERM");
-    }
+    execSync(`"${BUNDLED_PYTHON}" -m modexbot stop`, {
+      cwd: BOT_PROJECT,
+      stdio: "ignore",
+      windowsHide: true,
+      timeout: 10000,
+    });
+    log("modexbot stop completed.");
   } catch (e) {
-    log(`taskkill failed: ${e.message}`);
-    try {
-      pythonProcess.kill("SIGKILL");
-    } catch (_) {
-      // already dead
+    log(`modexbot stop failed: ${e.message}`);
+    // Fallback: if the launcher process is somehow still alive, kill its
+    // tree directly (only relevant if daemonization never happened).
+    if (pythonProcess) {
+      const pid = pythonProcess.pid;
+      log(`Falling back to taskkill PID ${pid}...`);
+      try {
+        if (process.platform === "win32") {
+          execSync(`taskkill /pid ${pid} /f /t`, {
+            stdio: "ignore",
+            windowsHide: true,
+          });
+        } else {
+          pythonProcess.kill("SIGTERM");
+        }
+      } catch (_) {
+        // already dead
+      }
     }
   }
 
   pythonProcess = null;
-  log("Python bot kill signal sent.");
+  log("Bot stop signal sent.");
 }
 
 // ── Window ──────────────────────────────────────────────────────────────────
@@ -195,7 +226,8 @@ function createWindow() {
     minWidth: 800,
     minHeight: 600,
     title: "ModexBot",
-    show: false,
+    show: true,
+    backgroundColor: "#fafaf9",
     ...iconOpts,
     webPreferences: {
       nodeIntegration: false,
@@ -203,9 +235,10 @@ function createWindow() {
     },
   });
 
+  mainWindow.loadURL(LOADING_HTML);
+
   mainWindow.once("ready-to-show", () => {
-    mainWindow.show();
-    log("Window shown.");
+    log("Window shown (loading screen).");
   });
 
   // Open external https links in system browser, keep localhost in Electron

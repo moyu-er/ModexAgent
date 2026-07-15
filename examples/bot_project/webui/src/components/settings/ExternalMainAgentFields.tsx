@@ -14,6 +14,7 @@ import {
 } from "../../types/externalProviders";
 import { Input } from "../ui/Input";
 import { Select } from "../ui/Select";
+import { PROVIDER_BRAND_ICONS } from "./externalBrands";
 
 interface ErrFn {
   (loc: string): string | undefined;
@@ -54,6 +55,19 @@ export function ExternalMainAgentFields({
         data-testid="external-runtime-panel"
         className="space-y-3 rounded-md border border-hairline bg-hairline-soft p-3"
       >
+        {(() => {
+          const brand = node.provider_kind ? PROVIDER_BRAND_ICONS[node.provider_kind] : undefined;
+          if (!brand) return null;
+          const { Icon } = brand;
+          return (
+            <div className="flex items-center gap-2.5">
+              <Icon className="h-7 w-7 rounded-sm" />
+              <span className="font-mono text-sm font-semibold text-bright">
+                {descriptor.label}
+              </span>
+            </div>
+          );
+        })()}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Select
             label="Implementation"

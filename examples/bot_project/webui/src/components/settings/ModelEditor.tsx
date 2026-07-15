@@ -14,6 +14,8 @@ import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import type { SecretMaskValue, SecretWrite } from "../../types/config";
 import { SecretField } from "./SecretField";
+import { FetchModelsModal } from "./FetchModelsModal";
+import type { FetchedModel } from "../../lib/api";
 import { Card } from "../ui/Card";
 import { Select } from "../ui/Select";
 import { Input } from "../ui/Input";
@@ -30,7 +32,7 @@ import {
   VideoIcon,
   AudioIcon,
 } from "../ui/icons";
-import { Trash2 } from "lucide-react";
+import { Trash2, Download } from "lucide-react";
 import type { SelectOption } from "../ui/Select";
 import { CATEGORY } from "./categoryMeta";
 
@@ -49,12 +51,17 @@ interface Provider {
   base_url: string;
   interface_format: string;
   api_key: SecretMaskValue | SecretWrite;
+  models_url?: string | null;
   models: ModelEntry[];
 }
 
 interface Props {
   values: Record<string, unknown>;
   onChange: (next: Record<string, unknown>) => void;
+  /** Whether the form has unsaved changes (controls fetch-button availability). */
+  dirty: boolean;
+  /** Save the form, then resolve with true on success / false on failure. */
+  onSave: () => Promise<boolean>;
 }
 
 // Closed enum (backend Modality). Multi-select via chips — never free text,
@@ -105,7 +112,7 @@ function pickFirstCombo(
   return null;
 }
 
-export function ModelEditor({ values, onChange }: Props) {
+export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
   const defaultProvider = String(values.default_provider ?? "");
   const defaultModel = String(values.default_model ?? "");
   const maxContext = Number(values.max_context_tokens ?? 0);
@@ -123,6 +130,12 @@ export function ModelEditor({ values, onChange }: Props) {
   const [confirm, setConfirm] = useState<Confirm>(null);
   // Index of the provider card that the user just added (for auto-scroll).
   const [justAddedIdx, setJustAddedIdx] = useState<number | null>(null);
+  // Fetch-modal state: which provider index is fetching, and its cached list.
+  const [fetchTarget, setFetchTarget] = useState<number | null>(null);
+  const [fetchedCache, setFetchedCache] = useState<
+    Record<number, FetchedModel[]>
+  >({});
+  const [inlineOpen, setInlineOpen] = useState<number | null>(null);
 
   const update = (patch: Record<string, unknown>): void => {
     onChange({ ...values, ...patch });
@@ -324,6 +337,59 @@ export function ModelEditor({ values, onChange }: Props) {
       ),
     [providers],
   );
+  const handleModelsUrlChange = useCallback(
+    (pi: number, v: string) =>
+      updateProviders(providers.map((q, i) => (i === pi ? { ...q, models_url: v || null } : q))),
+    [providers],
+  );
+
+  const handleFetchClick = useCallback(
+    async (pi: number): Promise<void> => {
+      const p = providers[pi];
+      if (!p || !p.key) return;
+      // If the form is dirty, save first so the backend has the real api_key.
+      if (dirty) {
+        const ok = await onSave();
+        if (!ok) return;
+      }
+      setFetchTarget(pi);
+    },
+    [providers, dirty, onSave],
+  );
+
+  const handleFetchImport = useCallback(
+    (pi: number, models: FetchedModel[]): void => {
+      const p = providers[pi];
+      if (!p) return;
+      const existingIds = new Set(p.models.map((m) => m.model));
+      const newModels = models
+        .filter((fm) => !existingIds.has(fm.id))
+        .map((fm) => ({
+          name: fm.id,
+          model: fm.id,
+          capabilities: ["text"],
+          temperature: 0.7,
+          max_output_tokens: 50000,
+          reasoning_effort: "none",
+        }));
+      if (newModels.length === 0) return;
+      updateProviders(
+        providers.map((q, i) =>
+          i === pi ? { ...q, models: [...q.models, ...newModels] } : q,
+        ),
+      );
+      setFetchedCache((prev) => ({ ...prev, [pi]: models }));
+    },
+    [providers],
+  );
+
+  const handleInlinePick = useCallback(
+    (pi: number, mi: number, modelId: string): void => {
+      updateModel(pi, mi, { model: modelId });
+      setInlineOpen(null);
+    },
+    [providers],
+  );
 
   const meta = CATEGORY.model;
   const PageHeadIcon = meta.icon;
@@ -493,12 +559,35 @@ export function ModelEditor({ values, onChange }: Props) {
                             onChange={(next) => handleApiKeyChange(pi, next)}
                           />
                         </div>
+                        <div className="sm:col-span-2">
+                          <Input
+                            label="Models URL (optional)"
+                            value={p.models_url ?? ""}
+                            placeholder="留空自动探测 /v1/models"
+                            onChange={(e) => handleModelsUrlChange(pi, e.target.value)}
+                          />
+                        </div>
                       </div>
                     </div>
 
                     {/* Models */}
                     <div>
-                      <SectionLabel>Models</SectionLabel>
+                      <div className="mb-2 flex items-center justify-between">
+                        <SectionLabel>Models</SectionLabel>
+                        {p.key && (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            className="gap-1.5"
+                            onClick={() => handleFetchClick(pi)}
+                            disabled={!p.key}
+                          >
+                            <Download size={14} />
+                            {dirty ? "保存后拉取" : "拉取模型"}
+                          </Button>
+                        )}
+                      </div>
                       <div className="space-y-2.5">
                         {(p.models ?? []).map((m, mi) => {
                           const isModelDefault =
@@ -582,14 +671,44 @@ export function ModelEditor({ values, onChange }: Props) {
                                     updateModel(pi, mi, { name: e.target.value })
                                   }
                                 />
-                                <Input
-                                  label="Model identifier"
-                                  required
-                                  value={m.model}
-                                  onChange={(e) =>
-                                    updateModel(pi, mi, { model: e.target.value })
-                                  }
-                                />
+                                <div className="relative">
+                                  <Input
+                                    label="Model identifier"
+                                    required
+                                    value={m.model}
+                                    onChange={(e) =>
+                                      updateModel(pi, mi, { model: e.target.value })
+                                    }
+                                  />
+                                  {fetchedCache[pi] && fetchedCache[pi]!.length > 0 && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setInlineOpen(inlineOpen === pi ? null : pi)
+                                      }
+                                      className="absolute right-2 top-7 flex h-5 w-5 items-center justify-center rounded text-faint hover:bg-hairline-soft hover:text-ink"
+                                      aria-label="从已拉取列表选择"
+                                    >
+                                      <ChevronRightIcon
+                                        className={`h-3 w-3 transition-transform ${inlineOpen === pi ? "rotate-90" : ""}`}
+                                      />
+                                    </button>
+                                  )}
+                                  {inlineOpen === pi && fetchedCache[pi] && (
+                                    <div className="absolute z-10 mt-1 max-h-48 w-full overflow-y-auto rounded-md border border-hairline bg-canvas-elevated py-1 shadow-lg">
+                                      {fetchedCache[pi]!.map((fm) => (
+                                        <button
+                                          key={fm.id}
+                                          type="button"
+                                          onClick={() => handleInlinePick(pi, mi, fm.id)}
+                                          className="block w-full truncate px-3 py-1 text-left font-mono text-xs text-ink hover:bg-hairline-soft"
+                                        >
+                                          {fm.id}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
                               </div>
 
                               {/* Capabilities (enum multi-select) */}
@@ -682,6 +801,18 @@ export function ModelEditor({ values, onChange }: Props) {
           </button>
         </div>
       </div>
+
+      {fetchTarget !== null && providers[fetchTarget] && (
+        <FetchModelsModal
+          open
+          onClose={() => setFetchTarget(null)}
+          providerKey={providers[fetchTarget]!.key}
+          existingModelIds={
+            new Set(providers[fetchTarget]!.models.map((m) => m.model))
+          }
+          onImport={(models) => handleFetchImport(fetchTarget, models)}
+        />
+      )}
     </div>
   );
 }
