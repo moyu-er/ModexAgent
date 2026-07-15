@@ -20,10 +20,13 @@ from modex_agent.core.experience import (
     FileExperienceSource,
     PerFileExperienceMetaStore,
 )
+from modex_agent.core.provider import LLMProvider
+from modex_agent.core.scope import RecordScope
+from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.memory.system import MemorySystemContextManager
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-from modex_agent.multi_agent.pool_config.experience import ExperienceConfig
 from modex_agent.multi_agent.pool_config.specs import PoolSpec
+from modex_agent.persistence.managers import WorkspacePersistenceManager
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.trace import JsonFileTraceStore
 from modex_agent.workspace.context import WorkspaceContext
@@ -65,22 +68,25 @@ async def build_pool_data(
     ctx: WorkspaceContext,
     pool_name: str,
     pool_spec: PoolSpec,
-    provider: object,
+    provider: LLMProvider | None,
     assembly_deps: PoolAssemblyDeps,
     base_system_prompt: str = "",
+    *,
+    app_config: AppConfig | None = None,
+    persistence: WorkspacePersistenceManager | None = None,
 ) -> PoolData:
     """Build one pool's stores + context_manager bound to ``ctx.paths``."""
     # Local imports keep the module import graph thin: the codec / store
     # / experience / memory-factory modules are only needed when a pool
     # is actually built, not when this module is imported.
+    from bot.service.builders import build_memory_registry, build_turn_state_store
     from modex_agent.agents.react.state import ReActRuntimeStateCodec
     from modex_agent.ioc.factories.memory import create_memory
     from modex_agent.memory.injection import FullInjectionPolicy
+    from modex_agent.memory.injection.archive import ArchiveInjectionConfig
+    from modex_agent.persistence.config import PersistenceBackend
     from modex_agent.runtime.codec import RuntimeStateCodecRegistry
     from modex_agent.runtime.enums import AgentKind
-    from modex_agent.runtime.store import (
-        JsonFileTurnStateStore,
-    )
 
     memory_cfg = assembly_deps.memory
     if memory_cfg is None:
@@ -93,18 +99,43 @@ async def build_pool_data(
 
     memory_dir = ctx.paths.memory_dir(pool_name)
     memory_dir.mkdir(parents=True, exist_ok=True)
+    registry = build_memory_registry(
+        app_config,
+        persistence,
+        memory_dir,
+        RecordScope(pool=pool_name, workspace_id=str(ctx.target)),
+    )
     memory_system = create_memory(
-        memory_cfg, provider, memory_dir, token_estimator=TiktokenTokenEstimator()
-    )  # type: ignore[arg-type]
+        memory_cfg,
+        provider,
+        memory_dir,
+        token_estimator=TiktokenTokenEstimator(),
+        store_registry=registry,
+    )
     await memory_system.initialize()
 
     # ── Runtime stores (runtime_state/<pool>/{turns,trace}) ──
     codec_registry = RuntimeStateCodecRegistry(
         {AgentKind.REACT: ReActRuntimeStateCodec()}
     )
-    turn_store = JsonFileTurnStateStore(
-        ctx.paths.runtime_dir(pool_name, "turns"), codec_registry
+    turn_store = build_turn_state_store(
+        app_config,
+        persistence,
+        ctx.paths.runtime_dir(pool_name, "turns"),
+        codec_registry,
     )
+    decision_coordinator = None
+    if (
+        app_config is not None
+        and persistence is not None
+        and app_config.persistence.backend is PersistenceBackend.SQLITE
+    ):
+        from modex_agent.persistence.coordinator import SqliteDecisionCoordinator
+
+        decision_coordinator = SqliteDecisionCoordinator(
+            persistence.connection,
+            codec_registry,
+        )
     trace_store = JsonFileTraceStore(
         base_dir=ctx.paths.runtime_dir(pool_name, "trace")
     )
@@ -124,7 +155,15 @@ async def build_pool_data(
         default_agent_role="main",
         base_system_prompt=base_system_prompt,
         injection_policy=FullInjectionPolicy(
-            pruned_manager=memory_system.pruned_manager
+            pruned_manager=memory_system.pruned_manager,
+            archive_config=ArchiveInjectionConfig(
+                count=memory_cfg.archive.max_archive_inject,
+                max_chars=memory_cfg.archive.archive_inject_max_chars,
+                step_chars=memory_cfg.archive.archive_inject_step_chars,
+                min_chars=memory_cfg.archive.archive_inject_min_chars,
+            )
+            if memory_cfg.archive is not None and memory_cfg.archive.enabled
+            else ArchiveInjectionConfig(count=0),
         ),
         experience_manager=experience_manager,
     )
@@ -137,5 +176,6 @@ async def build_pool_data(
         runtime_dir=runtime_dir_parent,
         pruned_manager=memory_system.pruned_manager,
         experience_dir=experience_dir,
+        decision_coordinator=decision_coordinator,
         experience_meta=experience_meta,
     )

@@ -1,9 +1,7 @@
 """Tests for ChatMessage content_format, truncatable_paths, created_at extensions."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
-import pytest
+from datetime import UTC, datetime
 
 from modex_agent.core.message import ChatMessage, ContentFormat
 
@@ -43,7 +41,7 @@ def test_created_at_default_now():
 
 
 def test_created_at_set():
-    ts = datetime(2026, 5, 28, 14, 30, 0, tzinfo=timezone.utc)
+    ts = datetime(2026, 5, 28, 14, 30, 0, tzinfo=UTC)
     msg = ChatMessage(role="user", content="hello", created_at=ts)
     assert msg.created_at == ts
 
@@ -63,7 +61,7 @@ def test_coerce_preserves_content_format():
 
 
 def test_to_dict_serializes_new_fields():
-    ts = datetime(2026, 5, 28, 14, 30, 0, tzinfo=timezone.utc)
+    ts = datetime(2026, 5, 28, 14, 30, 0, tzinfo=UTC)
     msg = ChatMessage(
         role="user",
         content="<msg>hi</msg>",

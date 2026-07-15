@@ -43,6 +43,7 @@ dependencies = [
   "markdownify>=0.13.0",
   "typer>=0.9.0",
   "path>=17.1.1",
+  "aiosqlite>=0.20.0,<1",
 ]
 
 [project.optional-dependencies]
@@ -79,8 +80,14 @@ ast = [
 ]
 all = ["ModexAgent[llm,sandbox,gateway,skills,terminal,ast]"]
 
+[project.scripts]
+modexctl = "modexctl.main:main"
+
 [tool.hatch.build.targets.wheel]
-packages = ["src/modex_agent"]
+packages = ["src/modex_agent", "src/modexctl"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/modex_agent/persistence/migrations" = "modex_agent/persistence/migrations"
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "tests_ext"]

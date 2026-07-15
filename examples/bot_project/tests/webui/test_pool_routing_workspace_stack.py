@@ -37,8 +37,9 @@ from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.pool_router import PoolRouter, PoolSessionStore
 from modex_agent.workspace.context import WorkspaceContext
-from modex_agent.workspace.registry import InMemoryRegistryStore, WorkspaceRegistry
+from modex_agent.workspace.registry import WorkspaceRegistry
 from modex_agent.workspace.routing import WorkspaceResolver
+from modex_agent.workspace.store import GlobalWorkspaceStore
 
 
 class _NoSkillRegistry(SkillRegistry):
@@ -160,11 +161,11 @@ async def test_non_home_workspace_routes_to_coding_with_shared_store() -> None:
             home=home,
             data_dir_name=".modex",
             factory=factory,
-            store=InMemoryRegistryStore(),
+            store=GlobalWorkspaceStore(home=home, data_dir_name=".modex"),
         )
         resolver = WorkspaceResolver(registry=registry)
         home_resources = await registry.materialize(registry.home_context)
-        await registry.materialize(registry.get_or_open(ws_a))
+        await registry.materialize(await registry.get_or_open(ws_a))
 
         inp = WebSocketInputAdapter()
         store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
@@ -261,7 +262,7 @@ async def test_home_workspace_coding_conversation_routes_to_coding() -> None:
             home=home,
             data_dir_name=".modex",
             factory=factory,
-            store=InMemoryRegistryStore(),
+            store=GlobalWorkspaceStore(home=home, data_dir_name=".modex"),
         )
         resolver = WorkspaceResolver(registry=registry)
         home_resources = await registry.materialize(registry.home_context)

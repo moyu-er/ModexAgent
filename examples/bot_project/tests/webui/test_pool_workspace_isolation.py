@@ -210,7 +210,7 @@ async def test_im_conversation_stored_in_current_workspace() -> None:
             content="QQ message from user"
 )
         with bind_workspace_root(data_dir):
-            server._store.append(im_sid, event)
+            await server._store.append(im_sid, event)
 
         # Save IM session to the session store.
         await session_store.save(SessionInfo(
@@ -272,7 +272,7 @@ async def test_sessions_from_different_workspaces_are_isolated() -> None:
         # Workspace-A write: bind to data_dir_a so it lands under
         # data_dir_a/.modex/sessions/...
         with bind_workspace_root(data_dir_a):
-            server._store.append(sid_a, event_a)
+            await server._store.append(sid_a, event_a)
 
         # Save session_a to workspace A's session store.
         await session_store_a.save(SessionInfo(
@@ -298,7 +298,7 @@ async def test_sessions_from_different_workspaces_are_isolated() -> None:
         # Workspace-B write: bind to data_dir_b so it lands under
         # data_dir_b/.modex/sessions/...
         with bind_workspace_root(data_dir_b):
-            server._store.append(sid_b, event_b)
+            await server._store.append(sid_b, event_b)
 
         # Save session_b to workspace B's session store.
         await session_store_b.save(SessionInfo(
@@ -330,7 +330,8 @@ async def test_sessions_from_different_workspaces_are_isolated() -> None:
         await client.close()
 
 
-def test_append_follows_current_workspace_after_switch() -> None:
+@pytest.mark.asyncio
+async def test_append_follows_current_workspace_after_switch() -> None:
     """New writes always go to the CURRENT workspace, not a sticky one.
 
     Regression: IM (QQ) sessions were locked to the workspace where the
@@ -347,19 +348,21 @@ def test_append_follows_current_workspace_after_switch() -> None:
 
     # 1. Write in workspace A (default)
     with bind_workspace_root(ws_a):
-        store.append(sid, UserMessageEvent(
+        await store.append(sid, UserMessageEvent(
             session_id=sid, agent_name="main", content="msg-in-home"
         ))
 
     # 2. Switch to workspace B (simulating cd E:\\download\\bot)
     # 3. Write another event for same session — must go to workspace B
     with bind_workspace_root(ws_b):
-        store.append(sid, UserMessageEvent(
+        await store.append(sid, UserMessageEvent(
             session_id=sid, agent_name="main", content="msg-after-cd"
         ))
 
     # 4. Verify the second write went to workspace B (CURRENT), not A (sticky)
-    events_b = list(JSONLTranscriptStore(ws_b / ".modex" / "sessions" / "main").load(sid))
+    events_b = await JSONLTranscriptStore(
+        ws_b / ".modex" / "sessions" / "main"
+    ).load(sid)
     assert len(events_b) >= 1, (
         "Expected events in workspace B, but none found. "
         "append() must use CURRENT workspace, not sticky."
@@ -369,13 +372,16 @@ def test_append_follows_current_workspace_after_switch() -> None:
     )
 
     # 5. Previous message still intact in workspace A
-    events_a = list(JSONLTranscriptStore(ws_a / ".modex" / "sessions" / "main").load(sid))
+    events_a = await JSONLTranscriptStore(
+        ws_a / ".modex" / "sessions" / "main"
+    ).load(sid)
     assert any("msg-in-home" in str(e.to_dict()) for e in events_a), (
         "msg-in-home must still be in workspace A"
     )
 
 
-def test_append_follows_repeated_workspace_switches() -> None:
+@pytest.mark.asyncio
+async def test_append_follows_repeated_workspace_switches() -> None:
     """Repeated cd switches correctly route writes to the current workspace."""
     data_dir = Path(tempfile.mkdtemp())
     ws_a = data_dir
@@ -388,25 +394,25 @@ def test_append_follows_repeated_workspace_switches() -> None:
 
     # W1 → A
     with bind_workspace_root(ws_a):
-        store.append(sid, UserMessageEvent(
+        await store.append(sid, UserMessageEvent(
             session_id=sid, agent_name="main", content="w1-in-A"
         ))
 
     # cd B, W2 → B
     with bind_workspace_root(ws_b):
-        store.append(sid, UserMessageEvent(
+        await store.append(sid, UserMessageEvent(
             session_id=sid, agent_name="main", content="w2-in-B"
         ))
 
     # cd C, W3 → C
     with bind_workspace_root(ws_c):
-        store.append(sid, UserMessageEvent(
+        await store.append(sid, UserMessageEvent(
             session_id=sid, agent_name="main", content="w3-in-C"
         ))
 
     # cd back to A, W4 → A
     with bind_workspace_root(ws_a):
-        store.append(sid, UserMessageEvent(
+        await store.append(sid, UserMessageEvent(
             session_id=sid, agent_name="main", content="w4-back-in-A"
         ))
 
@@ -417,7 +423,9 @@ def test_append_follows_repeated_workspace_switches() -> None:
         (ws_b, "w2-in-B"),
         (ws_c, "w3-in-C"),
     ]:
-        events = list(JSONLTranscriptStore(root / ".modex" / "sessions" / "main").load(sid))
+        events = await JSONLTranscriptStore(
+            root / ".modex" / "sessions" / "main"
+        ).load(sid)
         assert any(expected_content in str(e.to_dict()) for e in events), (
             f"Expected {expected_content!r} under {root}/.modex/sessions/main"
         )
@@ -490,7 +498,8 @@ def test_relation_store_follows_workspace_switch() -> None:
     )
 
 
-def test_transcript_store_resolver_routes_writes_correctly() -> None:
+@pytest.mark.asyncio
+async def test_transcript_store_resolver_routes_writes_correctly() -> None:
     """The resolver callback determines the physical directory per prefix.
 
     With the session-aware store, writes are routed by the resolver rather
@@ -509,29 +518,36 @@ def test_transcript_store_resolver_routes_writes_correctly() -> None:
         # Unmapped prefix -> home
         sid_home = "conv1.main"
         with bind_workspace_root(home_dir):
-            store.append(sid_home, UserMessageEvent(
+            await store.append(sid_home, UserMessageEvent(
                 session_id=sid_home, agent_name="main", content="home"
             ))
-        home_events = list(JSONLTranscriptStore(home_dir / ".modex" / "sessions" / "main").load(sid_home))
+        home_events = await JSONLTranscriptStore(
+            home_dir / ".modex" / "sessions" / "main"
+        ).load(sid_home)
         assert len(home_events) == 1 and "home" in str(home_events[0].to_dict())
 
         # Mapped prefix -> workspace
         sid_ws = "conv2.main"
         with bind_workspace_root(ws_dir):
-            store.append(sid_ws, UserMessageEvent(
+            await store.append(sid_ws, UserMessageEvent(
                 session_id=sid_ws, agent_name="main", content="workspace"
             ))
-        ws_events = list(JSONLTranscriptStore(ws_dir / ".modex" / "sessions" / "main").load(sid_ws))
+        ws_events = await JSONLTranscriptStore(
+            ws_dir / ".modex" / "sessions" / "main"
+        ).load(sid_ws)
         assert len(ws_events) == 1 and "workspace" in str(ws_events[0].to_dict())
 
         # Home should not have the workspace session
-        home_events2 = list(JSONLTranscriptStore(home_dir / ".modex" / "sessions" / "main").load(sid_ws))
+        home_events2 = await JSONLTranscriptStore(
+            home_dir / ".modex" / "sessions" / "main"
+        ).load(sid_ws)
         assert home_events2 == []
 
 
 
 
-def test_transcript_store_prefix_resolver_routes_to_restored_workspace() -> None:
+@pytest.mark.asyncio
+async def test_transcript_store_prefix_resolver_routes_to_restored_workspace() -> None:
     """With the new per-prefix resolver, writes always go to the directory
     returned by sessions_dir_for_prefix — there is no stale base.
 
@@ -551,16 +567,20 @@ def test_transcript_store_prefix_resolver_routes_to_restored_workspace() -> None
 
         # Write goes directly to the restored workspace (bound root)
         with bind_workspace_root(restored_dir):
-            store.append(sid, UserMessageEvent(
+            await store.append(sid, UserMessageEvent(
                 session_id=sid, agent_name="main", content="restored-write"
             ))
-        restored_events = list(JSONLTranscriptStore(restored_dir / ".modex" / "sessions" / "main").load(sid))
+        restored_events = await JSONLTranscriptStore(
+            restored_dir / ".modex" / "sessions" / "main"
+        ).load(sid)
         assert len(restored_events) == 1 and "restored-write" in str(restored_events[0].to_dict()), (
             "write must go to the bound (restored) workspace"
         )
 
         # Home should be empty (write was routed elsewhere)
-        home_events = list(JSONLTranscriptStore(home_dir / ".modex" / "sessions" / "main").load(sid))
+        home_events = await JSONLTranscriptStore(
+            home_dir / ".modex" / "sessions" / "main"
+        ).load(sid)
         assert home_events == [], (
             "home must be empty — write was routed to the restored workspace"
         )

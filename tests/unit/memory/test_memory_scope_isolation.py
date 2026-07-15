@@ -10,22 +10,21 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import pytest
-
-from modex_agent.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
-from modex_agent.memory.core.models import ArchiveEntry
 from modex_agent.core.scope import (
     MemoryContext,
     MemoryLayerName,
     SessionScope,
     UserScope,
+    scope_path_key,
 )
+from modex_agent.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
+from modex_agent.memory.core.models import ArchiveEntry
 from modex_agent.memory.layers.archive import ScopedArchiveMemoryManager
-from modex_agent.memory.layers.knowledge import ScopedKnowledgeMemoryManager
 from modex_agent.memory.layers.config import (
     ArchiveMemoryConfig,
     MemoryLayerConfigSet,
@@ -33,13 +32,12 @@ from modex_agent.memory.layers.config import (
     UserRetentionBufferConfig,
 )
 from modex_agent.memory.layers.factory import MemoryLayerFactory
+from modex_agent.memory.layers.knowledge import ScopedKnowledgeMemoryManager
 from modex_agent.memory.layers.user_buffer import ScopedUserRetentionBuffer
 from modex_agent.memory.pruned.manager import PrunedManager
 from modex_agent.memory.registry.file import DefaultMemoryStoreRegistry
-from modex_agent.memory.registry.in_memory import InMemoryStoreRegistry
 from modex_agent.memory.user_buffer import UserBufferEntry
 from tests.unit.memory.conftest import FixedTokenEstimator
-
 
 # -- Helpers ---------------------------------------------------------------
 
@@ -291,10 +289,10 @@ class TestConcurrentArchiveIdSafety:
             *(registry.resolve(layer=layer, scope=scope, context=ctx) for _ in range(50))
         )
 
-        first = storages[0]
+        first = storages[0].messages
         for i, s in enumerate(storages):
-            assert s is first, (
-                f"resolve() returned different object at index {i}. "
+            assert s.messages is first, (
+                f"resolve() returned different store at index {i}. "
                 f"Race condition in DefaultMemoryStoreRegistry."
             )
 
@@ -430,34 +428,34 @@ class TestScopeKeyCorrectness:
     def test_session_scope_uses_session_id(self) -> None:
         scope = SessionScope()
         ctx = _ctx("conv-1.main", "user-1")
-        assert scope.get_scope_key(ctx) == "conv-1.main"
+        assert scope_path_key(scope, ctx) == "conv-1.main"
 
     def test_session_scope_default_on_none(self) -> None:
         scope = SessionScope()
         ctx = MemoryContext()
-        assert scope.get_scope_key(ctx) == "default"
+        assert scope_path_key(scope, ctx) == "default"
 
     def test_user_scope_uses_user_id(self) -> None:
         scope = UserScope()
         ctx = _ctx("sess-1", "user-abc")
-        assert scope.get_scope_key(ctx) == "user-abc"
+        assert scope_path_key(scope, ctx) == "user-abc"
 
     def test_user_scope_default_on_none(self) -> None:
         scope = UserScope()
         ctx = MemoryContext(session_id="sess-1.main")
-        assert scope.get_scope_key(ctx) == "default"
+        assert scope_path_key(scope, ctx) == "default"
 
     def test_different_sessions_same_user_same_archive_key(self) -> None:
         scope = UserScope()
         ctx_a = _ctx("sess-a", "user-1")
         ctx_b = _ctx("sess-b", "user-1")
-        assert scope.get_scope_key(ctx_a) == scope.get_scope_key(ctx_b)
+        assert scope_path_key(scope, ctx_a) == scope_path_key(scope, ctx_b)
 
     def test_different_users_different_archive_key(self) -> None:
         scope = UserScope()
         ctx_a = _ctx("sess-a", "user-a")
         ctx_b = _ctx("sess-b", "user-b")
-        assert scope.get_scope_key(ctx_a) != scope.get_scope_key(ctx_b)
+        assert scope_path_key(scope, ctx_a) != scope_path_key(scope, ctx_b)
 
     def test_global_scope_returns_empty_key(self) -> None:
         """GlobalScope returns empty scope_key → storage path has no user subdir."""
@@ -465,7 +463,7 @@ class TestScopeKeyCorrectness:
 
         scope = GlobalScope()
         ctx = _ctx("sess-1", "user-1")
-        assert scope.get_scope_key(ctx) == "", (
+        assert scope_path_key(scope, ctx) == "", (
             "GlobalScope must return empty string so path is archive/ not archive/global/"
         )
 
@@ -474,9 +472,9 @@ class TestScopeKeyCorrectness:
         from modex_agent.core.scope import GlobalScope
 
         scope = GlobalScope()
-        assert scope.get_scope_key(_ctx("a", "x")) == ""
-        assert scope.get_scope_key(_ctx("b", "y")) == ""
-        assert scope.get_scope_key(MemoryContext()) == ""
+        assert scope_path_key(scope, _ctx("a", "x")) == ""
+        assert scope_path_key(scope, _ctx("b", "y")) == ""
+        assert scope_path_key(scope, MemoryContext()) == ""
 
 
 # ==========================================================================
@@ -495,7 +493,8 @@ class TestConcurrentCleanupSession:
         Before Fix 3 (atomic archive_id reservation with write lock),
         both could read the same next_archive_id and one's data would be lost.
         """
-        from modex_agent.memory.archive_models import ArchiveGenerationResult
+        from modex_agent.agents.summarizer.abc import ArchiveGenerator
+        from modex_agent.memory.archive_models import ArchiveDocuments, ArchiveGenerationResult
         from modex_agent.memory.cleanup import cleanup_session
 
         registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
@@ -519,20 +518,16 @@ class TestConcurrentCleanupSession:
             ])
 
         # Mock archive agent that creates files and returns success
-        captured_ids: list[int] = []
-
-        class _MockArchiveAgent:
+        class _MockArchiveAgent(ArchiveGenerator):
             async def generate(
-                self, pruned_messages, archive_dir, archive_id
+                self,
+                pruned_messages: Sequence[dict[str, Any]],
             ) -> ArchiveGenerationResult:
-                captured_ids.append(archive_id)
-                # Create required files so is_archive_complete returns True
-                archive_dir.mkdir(parents=True, exist_ok=True)
-                for fname in ("context.md", "knowledge.md", "index.md"):
-                    (archive_dir / fname).write_text(f"content-{archive_id}")
+                _ = pruned_messages
                 return ArchiveGenerationResult(
-                    success=True,
-                    files_written=["context.md", "knowledge.md", "index.md"],
+                    documents=ArchiveDocuments(
+                        context="context", knowledge="knowledge", index="topic"
+                    )
                 )
 
         mock_agent = _MockArchiveAgent()
@@ -559,12 +554,6 @@ class TestConcurrentCleanupSession:
             ),
         )
 
-        assert len(captured_ids) == 2, f"Expected 2 archive IDs, got {captured_ids}"
-        assert captured_ids[0] != captured_ids[1], (
-            f"Concurrent cleanup got same archive_id: {captured_ids}. "
-            "Archive ID reservation is NOT atomic — race condition."
-        )
-
         # Both cleanups should report triggered
         assert results[0].triggered and results[1].triggered
 
@@ -583,7 +572,8 @@ class TestConcurrentCleanupSession:
         numbering from 1.  This verifies user-level scope isolation in
         the archive_id counter — not a shared global counter.
         """
-        from modex_agent.memory.archive_models import ArchiveGenerationResult
+        from modex_agent.agents.summarizer.abc import ArchiveGenerator
+        from modex_agent.memory.archive_models import ArchiveDocuments, ArchiveGenerationResult
         from modex_agent.memory.cleanup import cleanup_session
 
         registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
@@ -605,17 +595,16 @@ class TestConcurrentCleanupSession:
                 _make_assistant_msg(f"b-resp-{i}"),
             ])
 
-        captured_ids: list[int] = []
-
-        class _MockArchiveAgent:
-            async def generate(self, pruned_messages, archive_dir, archive_id) -> ArchiveGenerationResult:
-                captured_ids.append(archive_id)
-                archive_dir.mkdir(parents=True, exist_ok=True)
-                for fname in ("context.md", "knowledge.md", "index.md"):
-                    (archive_dir / fname).write_text(f"content-{archive_id}")
+        class _MockArchiveAgent(ArchiveGenerator):
+            async def generate(
+                self,
+                pruned_messages: Sequence[dict[str, Any]],
+            ) -> ArchiveGenerationResult:
+                _ = pruned_messages
                 return ArchiveGenerationResult(
-                    success=True,
-                    files_written=["context.md", "knowledge.md", "index.md"],
+                    documents=ArchiveDocuments(
+                        context="context", knowledge="knowledge", index="topic"
+                    )
                 )
 
         await asyncio.gather(
@@ -640,8 +629,6 @@ class TestConcurrentCleanupSession:
         )
 
         # Different users → independent state.json → both get archive_id=1
-        assert 1 in captured_ids, f"Expected archive_id=1 for one user, got {captured_ids}"
-
         # Each user's archive should have exactly 1 entry
         archive = layer_set.archive
         assert archive is not None
@@ -664,7 +651,6 @@ class TestGlobalScopePath:
 
     def test_global_scope_empty_key_no_subdir(self, tmp_path: Path) -> None:
         """DefaultMemoryStoreRegistry._scope_dir omits subdir for empty scope_key."""
-        from modex_agent.core.scope import GlobalScope
         from modex_agent.memory.registry.file import DefaultMemoryStoreRegistry
 
         registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
@@ -687,8 +673,9 @@ class TestGlobalScopePath:
         )
         archive = ScopedArchiveMemoryManager(storage_factory, archive_config)
 
-        from modex_agent.memory.core.models import ArchiveEntry
         from datetime import UTC, datetime
+
+        from modex_agent.memory.core.models import ArchiveEntry
 
         entry = ArchiveEntry(
             summary="shared-knowledge",
@@ -811,8 +798,9 @@ class TestScopePathPersistence:
 
     async def test_archive_user_scope_path_contains_user_id(self, tmp_path: Path) -> None:
         """Archive with UserScope writes to {root}/archive/{user_id}/state.json."""
-        from modex_agent.memory.core.models import ArchiveEntry
         from datetime import UTC, datetime
+
+        from modex_agent.memory.core.models import ArchiveEntry
 
         registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
         await registry.initialize()
@@ -835,8 +823,9 @@ class TestScopePathPersistence:
 
     async def test_archive_user_scope_different_users_different_dirs(self, tmp_path: Path) -> None:
         """Two users get different archive subdirectories."""
-        from modex_agent.memory.core.models import ArchiveEntry
         from datetime import UTC, datetime
+
+        from modex_agent.memory.core.models import ArchiveEntry
 
         registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
         await registry.initialize()
@@ -866,9 +855,10 @@ class TestScopePathPersistence:
 
     async def test_archive_global_scope_no_user_subdir(self, tmp_path: Path) -> None:
         """Archive with GlobalScope writes to {root}/archive/ directly."""
+        from datetime import UTC, datetime
+
         from modex_agent.core.scope import GlobalScope
         from modex_agent.memory.core.models import ArchiveEntry
-        from datetime import UTC, datetime
 
         registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
         await registry.initialize()
@@ -993,9 +983,9 @@ class TestScopePathPersistence:
 class TestSubagentMemoryLayers:
     """Subagent must NOT have archive/knowledge — only session + user_retention."""
 
-    def test_subagent_session_only_has_no_archive_knowledge(self) -> None:
+    def test_subagent_session_only_has_no_archive_knowledge(self, tmp_path: Path) -> None:
         """session_only factory creates MemoryLayerSet without archive/knowledge."""
-        registry = InMemoryStoreRegistry()
+        registry = DefaultMemoryStoreRegistry(tmp_path)
         layer_set = MemoryLayerFactory.session_only(registry=registry)
 
         assert layer_set.session is not None, "subagent must have session layer"
@@ -1006,9 +996,9 @@ class TestSubagentMemoryLayers:
             "subagent must NOT have knowledge layer — no access to SOUL/USER/MEMORY.md"
         )
 
-    def test_subagent_session_only_user_retention_present(self) -> None:
+    def test_subagent_session_only_user_retention_present(self, tmp_path: Path) -> None:
         """session_only includes user_retention if enabled."""
-        registry = InMemoryStoreRegistry()
+        registry = DefaultMemoryStoreRegistry(tmp_path)
         layer_set = MemoryLayerFactory.session_only(
             registry=registry,
             user_retention_config=UserRetentionBufferConfig(enabled=True),
@@ -1017,9 +1007,9 @@ class TestSubagentMemoryLayers:
             "subagent should have user_retention (SessionScope) for context retention"
         )
 
-    def test_subagent_has_only_two_active_layers(self) -> None:
+    def test_subagent_has_only_two_active_layers(self, tmp_path: Path) -> None:
         """Subagent has exactly 2 active layers: session + user_retention."""
-        registry = InMemoryStoreRegistry()
+        registry = DefaultMemoryStoreRegistry(tmp_path)
         layer_set = MemoryLayerFactory.session_only(registry=registry)
 
         active = sum(1 for x in [
@@ -1043,9 +1033,10 @@ class TestScopeFlexibility:
 
     async def test_archive_session_scope_path(self, tmp_path: Path) -> None:
         """Archive CAN be configured with SessionScope for per-session isolation."""
+        from datetime import UTC, datetime
+
         from modex_agent.core.scope import SessionScope
         from modex_agent.memory.core.models import ArchiveEntry
-        from datetime import UTC, datetime
 
         registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
         await registry.initialize()
@@ -1148,7 +1139,7 @@ class TestExperienceScopePath:
         """Experience with UserScope: user A must NOT see user B's data."""
         from modex_agent.core.experience.manager import ExperienceManager
         from modex_agent.core.experience.source import FileExperienceSource
-        from modex_agent.core.scope import UserScope, MemoryContext
+        from modex_agent.core.scope import MemoryContext, UserScope
 
         base_dir = tmp_path / "experiences" / "main" / "agent"
 

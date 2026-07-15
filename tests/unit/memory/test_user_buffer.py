@@ -3,18 +3,14 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 import pytest
 
-from modex_agent.memory.layers.factory import MemoryLayerFactory
-from modex_agent.memory.layers.user_buffer import (
-    ScopedUserRetentionBuffer,
-    UserRetentionBufferConfig,
-)
 from modex_agent.core.scope import MemoryContext
-from modex_agent.memory.registry.in_memory import InMemoryStoreRegistry
+from modex_agent.memory.layers.factory import MemoryLayerFactory
+from modex_agent.memory.registry import DefaultMemoryStoreRegistry, MemoryStoreRegistry
 from modex_agent.memory.user_buffer import UserBufferEntry
-
 
 # ── UserBufferEntry tests ──
 
@@ -90,16 +86,16 @@ def test_entry_is_completed():
 
 
 @pytest.fixture
-def registry():
-    return InMemoryStoreRegistry()
+def registry(tmp_path: Path):
+    return DefaultMemoryStoreRegistry(tmp_path)
 
 
-def _make_layer_set(registry: InMemoryStoreRegistry):
+def _make_layer_set(registry: MemoryStoreRegistry):
     return MemoryLayerFactory.single_user(registry=registry)
 
 
 @pytest.mark.asyncio
-async def test_urb_mark_all_completed(registry: InMemoryStoreRegistry):
+async def test_urb_mark_all_completed(registry: MemoryStoreRegistry):
     layer_set = _make_layer_set(registry)
     ctx = MemoryContext(session_id="test-urb")
 
@@ -119,7 +115,7 @@ async def test_urb_mark_all_completed(registry: InMemoryStoreRegistry):
 
 
 @pytest.mark.asyncio
-async def test_urb_fifo_eviction(registry: InMemoryStoreRegistry):
+async def test_urb_fifo_eviction(registry: MemoryStoreRegistry):
     layer_set = _make_layer_set(registry)
     ctx = MemoryContext(session_id="test-fifo")
 
@@ -139,7 +135,7 @@ async def test_urb_fifo_eviction(registry: InMemoryStoreRegistry):
 
 
 @pytest.mark.asyncio
-async def test_urb_dedup_replaces_unfinished(registry: InMemoryStoreRegistry):
+async def test_urb_dedup_replaces_unfinished(registry: MemoryStoreRegistry):
     layer_set = _make_layer_set(registry)
     ctx = MemoryContext(session_id="test-dedup")
 
@@ -159,7 +155,7 @@ async def test_urb_dedup_replaces_unfinished(registry: InMemoryStoreRegistry):
 
 
 @pytest.mark.asyncio
-async def test_urb_dedup_only_replaces_unfinished(registry: InMemoryStoreRegistry):
+async def test_urb_dedup_only_replaces_unfinished(registry: MemoryStoreRegistry):
     layer_set = _make_layer_set(registry)
     ctx = MemoryContext(session_id="test-dedup-completed")
 
@@ -176,7 +172,7 @@ async def test_urb_dedup_only_replaces_unfinished(registry: InMemoryStoreRegistr
 
 
 @pytest.mark.asyncio
-async def test_urb_unfinished_always_at_tail(registry: InMemoryStoreRegistry):
+async def test_urb_unfinished_always_at_tail(registry: MemoryStoreRegistry):
     layer_set = _make_layer_set(registry)
     ctx = MemoryContext(session_id="test-tail")
 
@@ -204,7 +200,7 @@ async def test_urb_unfinished_always_at_tail(registry: InMemoryStoreRegistry):
 
 
 @pytest.mark.asyncio
-async def test_urb_clear(registry: InMemoryStoreRegistry):
+async def test_urb_clear(registry: MemoryStoreRegistry):
     layer_set = _make_layer_set(registry)
     ctx = MemoryContext(session_id="test-clear")
 
@@ -220,7 +216,7 @@ async def test_urb_clear(registry: InMemoryStoreRegistry):
 
 
 @pytest.mark.asyncio
-async def test_urb_replace_entries(registry: InMemoryStoreRegistry):
+async def test_urb_replace_entries(registry: MemoryStoreRegistry):
     layer_set = _make_layer_set(registry)
     ctx = MemoryContext(session_id="test-replace")
 
@@ -236,9 +232,9 @@ async def test_urb_replace_entries(registry: InMemoryStoreRegistry):
 
 
 @pytest.mark.asyncio
-async def test_urb_disabled_returns_none_from_factory():
+async def test_urb_disabled_returns_none_from_factory(tmp_path: Path):
     """When config.enabled=False, factory returns None for user_retention."""
-    registry = InMemoryStoreRegistry()
+    registry = DefaultMemoryStoreRegistry(tmp_path)
     from modex_agent.memory.layers.config import MemoryLayerConfigSet, UserRetentionBufferConfig
 
     config = MemoryLayerConfigSet(
@@ -296,7 +292,7 @@ def test_entry_roundtrip_preserves_xml_format():
 
 
 @pytest.mark.asyncio
-async def test_urb_xml_truncation_preserves_structure(registry: InMemoryStoreRegistry):
+async def test_urb_xml_truncation_preserves_structure(registry: MemoryStoreRegistry):
     """XML entries must be truncated using XML-safe method, not plain slicing."""
     from modex_agent.core.message import ContentFormat
 
@@ -341,7 +337,7 @@ async def test_urb_xml_truncation_preserves_structure(registry: InMemoryStoreReg
 
 @pytest.mark.asyncio
 async def test_urb_mark_all_completed_truncates_assistant_content(
-    registry: InMemoryStoreRegistry,
+    registry: MemoryStoreRegistry,
 ):
     """completing_assistant_content MUST be truncated in mark_all_completed."""
     from modex_agent.memory.layers.config import MemoryLayerConfigSet, UserRetentionBufferConfig
@@ -373,7 +369,7 @@ async def test_urb_mark_all_completed_truncates_assistant_content(
 
 @pytest.mark.asyncio
 async def test_urb_xml_truncation_fallback_when_paths_dont_cover_large_content(
-    registry: InMemoryStoreRegistry,
+    registry: MemoryStoreRegistry,
 ):
     """When truncatable_paths don't include the actual large content area,
     XML-structured truncation may produce output that still exceeds max_chars.
@@ -432,7 +428,7 @@ async def test_urb_xml_truncation_fallback_when_paths_dont_cover_large_content(
 
 @pytest.mark.asyncio
 async def test_urb_xml_truncation_empty_paths_still_bounded(
-    registry: InMemoryStoreRegistry,
+    registry: MemoryStoreRegistry,
 ):
     """When truncatable_paths is empty on an XML entry with leaf elements,
     Phase 2 leaf-element safety net still catches the large leaves."""

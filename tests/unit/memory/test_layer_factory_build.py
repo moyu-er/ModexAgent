@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import pytest
+from pathlib import Path
 
+from modex_agent.core.scope import SessionScope
 from modex_agent.memory.core.layers import MemoryLayerSet
-from modex_agent.core.scope import SessionScope, UserScope
 from modex_agent.memory.layers.config import (
     ArchiveMemoryConfig,
     KnowledgeMemoryConfig,
@@ -14,14 +14,14 @@ from modex_agent.memory.layers.config import (
     UserRetentionBufferConfig,
 )
 from modex_agent.memory.layers.factory import MemoryLayerFactory
-from modex_agent.memory.registry import InMemoryStoreRegistry
+from modex_agent.memory.registry import DefaultMemoryStoreRegistry
 
 
 class TestBuildFullConfig:
     """Build with all layers enabled."""
 
-    def test_build_full_config(self) -> None:
-        registry = InMemoryStoreRegistry()
+    def test_build_full_config(self, tmp_path: Path) -> None:
+        registry = DefaultMemoryStoreRegistry(tmp_path)
         config = MemoryLayerConfigSet(
             session=SessionMemoryConfig(),
             archive=ArchiveMemoryConfig(),
@@ -40,8 +40,8 @@ class TestBuildFullConfig:
 class TestBuildSessionOnly:
     """Build with archive=None, knowledge=None."""
 
-    def test_build_session_only(self) -> None:
-        registry = InMemoryStoreRegistry()
+    def test_build_session_only(self, tmp_path: Path) -> None:
+        registry = DefaultMemoryStoreRegistry(tmp_path)
         config = MemoryLayerConfigSet(
             session=SessionMemoryConfig(),
             archive=None,
@@ -60,8 +60,8 @@ class TestBuildSessionOnly:
 class TestBuildSubagentSessionIsolated:
     """Archive with SessionScope, no knowledge."""
 
-    def test_build_subagent_session_isolated(self) -> None:
-        registry = InMemoryStoreRegistry()
+    def test_build_subagent_session_isolated(self, tmp_path: Path) -> None:
+        registry = DefaultMemoryStoreRegistry(tmp_path)
         config = MemoryLayerConfigSet(
             session=SessionMemoryConfig(),
             archive=ArchiveMemoryConfig(scope=SessionScope()),
@@ -80,8 +80,8 @@ class TestBuildSubagentSessionIsolated:
 class TestBuildDisabledUserRetention:
     """enabled=False → user_retention None."""
 
-    def test_build_disabled_user_retention_is_none(self) -> None:
-        registry = InMemoryStoreRegistry()
+    def test_build_disabled_user_retention_is_none(self, tmp_path: Path) -> None:
+        registry = DefaultMemoryStoreRegistry(tmp_path)
         config = MemoryLayerConfigSet(
             session=SessionMemoryConfig(),
             archive=ArchiveMemoryConfig(),

@@ -1,11 +1,12 @@
 import { useState, useCallback, useEffect, useMemo, useRef, type FC } from "react";
-import { Hexagon } from "lucide-react";
 import { Sidebar } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
 import { SettingsView } from "./components/settings/SettingsView";
 import { ToastProvider } from "./components/ToastContext";
 import { useWebUIStream } from "./hooks/useWebUIStream";
 import { useSessions } from "./hooks/useSessions";
+import { useBackendReady } from "./hooks/useBackendReady";
+import BootScreen from "./components/BootScreen";
 import { buildTree } from "./lib/sessionTree";
 import { storageGetInt, storageSet } from "./lib/storage";
 import type { OutgoingAttachmentRef } from "./types/attachments";
@@ -27,7 +28,7 @@ function saveSidebarWidth(width: number): void {
   storageSet(localStorage, SIDEBAR_WIDTH_KEY, String(width));
 }
 
-const App: FC = () => {
+const AppInner: FC = () => {
   const {
     sessions,
     selectedId,
@@ -62,6 +63,7 @@ const App: FC = () => {
     todos,
     pendingApprovals,
     isApprovingBatch,
+    isConnected,
     submitApproval,
     connect,
     disconnect,
@@ -177,8 +179,9 @@ const App: FC = () => {
       <div className="flex h-screen w-screen flex-col overflow-hidden bg-canvas">
         {/* Top status bar — brand · workspace · pool */}
         <div className="statusline" role="contentinfo" aria-label="Session status">
-          <span className="brand">
-            <Hexagon size={13} aria-hidden="true" />
+          <span className="brand" title={isConnected ? "Connected" : "Disconnected"}>
+            <span className={isConnected ? "dot-signal" : "dot-dim"} aria-hidden="true" />
+            <span className="brand-mark" aria-hidden="true">◆</span>
             ModexBot
           </span>
           <span className="v" title={workspace || "—"}>
@@ -260,6 +263,14 @@ const App: FC = () => {
       </div>
     </ToastProvider>
   );
+};
+
+const App: FC = () => {
+  const { ready, attempts, lastError } = useBackendReady();
+  if (!ready) {
+    return <BootScreen attempts={attempts} lastError={lastError} />;
+  }
+  return <AppInner />;
 };
 
 export default App;

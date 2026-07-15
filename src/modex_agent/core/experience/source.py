@@ -3,11 +3,16 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from pathvalidate import sanitize_filename as _path_sanitize
 
 from modex_agent.core.experience.models import Experience, ExperienceSummary
 from modex_agent.core.frontmatter import parse_frontmatter
+from modex_agent.core.scope import scope_path_key
+
+if TYPE_CHECKING:
+    from modex_agent.core.scope import MemoryContext, Scope
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +56,7 @@ class FileExperienceSource:
     def __init__(
         self,
         directories: list[Path],
-        scope: "MemoryScope | None" = None,
+        scope: Scope | None = None,
     ) -> None:
         self._directories = [d.expanduser().resolve() for d in directories]
         self._scope = scope
@@ -61,16 +66,14 @@ class FileExperienceSource:
         return list(self._directories)
 
     @property
-    def scope(self) -> "MemoryScope | None":
+    def scope(self) -> Scope | None:
         return self._scope
 
-    def _resolve_dirs(
-        self, context: "MemoryContext | None" = None
-    ) -> list[Path]:
+    def _resolve_dirs(self, context: MemoryContext | None = None) -> list[Path]:
         """Return directories, appending scope_key subdir when scope is set."""
         if self._scope is None or context is None:
             return self._directories
-        scope_key = self._scope.get_scope_key(context)
+        scope_key = scope_path_key(self._scope, context)
         if not scope_key:
             return self._directories
         return [d / scope_key for d in self._directories]

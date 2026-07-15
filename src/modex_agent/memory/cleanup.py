@@ -21,14 +21,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.message import ChatMessage
+from modex_agent.core.scope import MemoryContext
 from modex_agent.core.types import MessageRole
+from modex_agent.memory.archive_models import ArchiveGenerationResult
 from modex_agent.memory.core.layers import (
     ArchiveMemoryManager,
     SessionMemoryManager,
     UserRetentionBuffer,
 )
 from modex_agent.memory.core.models import CompressionReason
-from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.pruned.manager import PrunedManager
 from modex_agent.memory.sanitizer import (
     DefaultSessionToolChainSanitizer,
@@ -105,7 +106,7 @@ class _ArchiveOutcome:
     generated: bool
     skipped: bool
     next_archive_id: int
-    resolved_storage: DirArchiveStorage | None = None
+    generation: ArchiveGenerationResult | None = None
 
 
 # ── Phase helpers ──────────────────────────────────────────────────────────────
@@ -199,7 +200,7 @@ async def _generate_archive_phase(
     pruned_messages: list[dict[str, Any]],
     context: MemoryContext,
 ) -> _ArchiveOutcome:
-    """Phase 2: resolve storage, read state, and run archive agent.
+    """Phase 2: generate typed archive content and commit it through the manager.
 
     Returns an :class:`_ArchiveOutcome` describing what happened.
     """
@@ -224,120 +225,56 @@ async def _generate_archive_phase(
         )
         return _ArchiveOutcome(generated=False, skipped=True, next_archive_id=0)
 
-    # Resolve archive_storage dynamically when not injected
-    resolved_storage = archive_storage
-    if resolved_storage is None:
-        try:
-            archive_dir = await archive.get_storage_path(context)
-            if archive_dir is not None:
-                from modex_agent.memory.stores.dir_archive import DirArchiveStorage
-
-                resolved_storage = DirArchiveStorage(archive_dir)
-                logger.info(
-                    "Archive storage resolved dynamically: session=%s path=%s",
-                    context.session_id,
-                    archive_dir,
-                )
-            else:
-                logger.warning(
-                    "Archive storage resolution returned None: session=%s",
-                    context.session_id,
-                )
-        except Exception:
-            logger.warning(
-                "Cannot resolve archive directory dynamically: session=%s",
-                context.session_id,
-                exc_info=True,
-            )
-
-    if resolved_storage is None:
-        logger.warning(
-            "Archive generation skipped: archive_agent present but storage unresolved. session=%s",
-            context.session_id,
-        )
-        return _ArchiveOutcome(
-            generated=False, skipped=True, next_archive_id=0, resolved_storage=None
-        )
-
     session_id = context.session_id
     try:
-        # Atomically reserve the next archive_id under write lock.
-        # This prevents concurrent sessions from getting the same ID.
-        async with resolved_storage.get_lock().write():
-            state_data = await resolved_storage.read_archive_state() or {}
-            next_archive_id = state_data.get("next_archive_id", 1)
-            # Reserve immediately — increment and persist while holding the lock
-            await resolved_storage.write_archive_state(
-                {"next_archive_id": next_archive_id + 1}
+        result = await archive_agent.generate(
+            pruned_messages=list(pruned_messages),
+        )
+        documents = result.documents
+        if not any(
+            content.strip()
+            for content in (
+                documents.context,
+                documents.knowledge,
+                documents.index,
             )
-    except Exception:
-        logger.warning(
-            "Failed to read archive state: session=%s",
-            session_id,
-            exc_info=True,
-        )
-        next_archive_id = 1
-
-    try:
-        is_complete = await resolved_storage.is_archive_complete(next_archive_id)
-    except Exception:
-        logger.warning(
-            "Archive completeness check failed: archive_id=%d session=%s",
-            next_archive_id,
-            session_id,
-            exc_info=True,
-        )
-        is_complete = False
-
-    if is_complete:
+        ):
+            logger.info(
+                "Archive generation skipped: generated documents are empty. session=%s",
+                session_id,
+            )
+            return _ArchiveOutcome(
+                generated=False,
+                skipped=True,
+                next_archive_id=0,
+            )
+        if archive_storage is not None:
+            bundle = await archive.append_bundle(context, result.writes)
+            await archive_storage.write_archive_file(
+                bundle.archive_id, "context.md", result.documents.context
+            )
+            await archive_storage.write_archive_file(
+                bundle.archive_id, "knowledge.md", result.documents.knowledge
+            )
+            await archive_storage.write_archive_file(
+                bundle.archive_id, "index.md", result.documents.index
+            )
+        else:
+            bundle = await archive.append_generation(context, result)
         logger.info(
-            "Archive %d already complete, skipping generation. session=%s",
-            next_archive_id,
+            "Archive generated: archive_id=%d session=%s",
+            bundle.archive_id,
             session_id,
         )
         return _ArchiveOutcome(
             generated=True,
             skipped=False,
-            next_archive_id=next_archive_id,
-            resolved_storage=resolved_storage,
-        )
-
-    archive_dir = resolved_storage.base_dir / str(next_archive_id)
-    logger.info(
-        "Starting archive generation: archive_id=%d session=%s",
-        next_archive_id,
-        session_id,
-    )
-
-    try:
-        result = await archive_agent.generate(
-            pruned_messages=list(pruned_messages),
-            archive_dir=archive_dir,
-            archive_id=next_archive_id,
-        )
-        if result.success:
-            logger.info(
-                "Archive generated: archive_id=%d session=%s files=%s",
-                next_archive_id,
-                session_id,
-                result.files_written,
-            )
-            return _ArchiveOutcome(
-                generated=True,
-                skipped=False,
-                next_archive_id=next_archive_id,
-                resolved_storage=resolved_storage,
-            )
-        logger.warning(
-            "Archive generation failed: archive_id=%d session=%s error=%s",
-            next_archive_id,
-            session_id,
-            result.error,
+            next_archive_id=bundle.archive_id,
+            generation=result,
         )
     except Exception:
         logger.warning(
-            "Archive agent crashed: archive_id=%d session=%s",
-            next_archive_id,
+            "Archive generation failed: session=%s",
             session_id,
             exc_info=True,
         )
@@ -345,8 +282,7 @@ async def _generate_archive_phase(
     return _ArchiveOutcome(
         generated=False,
         skipped=True,
-        next_archive_id=next_archive_id,
-        resolved_storage=resolved_storage,
+        next_archive_id=0,
     )
 
 
@@ -357,13 +293,16 @@ async def _write_pruned_phase(
     archive_generated: bool,
     next_archive_id: int,
     context: MemoryContext,
+    generation: ArchiveGenerationResult | None = None,
 ) -> None:
     """Phase 3: write raw pruned content, enriching with archive topic if available."""
     if pruned_manager is None or not pruned_messages:
         return
 
     pruned_topic: str | None = None
-    if archive_generated and archive_storage is not None and next_archive_id > 0:
+    if archive_generated and generation is not None:
+        pruned_topic = generation.documents.topic
+    elif archive_generated and archive_storage is not None and next_archive_id > 0:
         try:
             index_md = await archive_storage.read_archive_file(
                 next_archive_id,
@@ -449,7 +388,7 @@ async def _commit_session_phase(
     revision conflict prevents the commit.
     """
     revision = await session.get_revision(context)
-    new_revision = await session.replace_messages_if_revision(
+    new_revision = await session.retain_messages(
         context,
         keep_messages,
         revision,
@@ -604,9 +543,7 @@ async def cleanup_session(
         try:
             await on_triggered(context, plan.trigger_reason)
         except Exception:
-            logger.warning(
-                "on_triggered callback failed: session=%s", context.session_id
-            )
+            logger.warning("on_triggered callback failed: session=%s", context.session_id)
 
     # Phase 2: archive generation
     archive_outcome = await _generate_archive_phase(
@@ -617,17 +554,15 @@ async def cleanup_session(
         context,
     )
 
-    # Use resolved_storage from Phase 2 (may have been dynamically created)
-    effective_storage = archive_outcome.resolved_storage or archive_storage
-
     # Phase 3: pruned content write
     await _write_pruned_phase(
         pruned_manager,
-        effective_storage,
+        archive_storage,
         plan.pruned_messages,
         archive_outcome.generated,
         archive_outcome.next_archive_id,
         context,
+        archive_outcome.generation,
     )
 
     # Phase 4: retention extraction
@@ -660,7 +595,7 @@ async def cleanup_session(
     # Phase 6: advance archive state + trigger
     await _advance_archive_phase(
         archive_agent,
-        effective_storage,
+        archive_storage,
         archive_outcome.generated,
         archive_outcome.next_archive_id,
         context,
@@ -699,9 +634,7 @@ def _resolve_message_tokens(
     return estimator.estimate_message(message)
 
 
-def _sum_tokens(
-    messages: Sequence[_MessageLike], estimator: TokenEstimator
-) -> int:
+def _sum_tokens(messages: Sequence[_MessageLike], estimator: TokenEstimator) -> int:
     return sum(_resolve_message_tokens(m, estimator) for m in messages)
 
 
@@ -786,10 +719,7 @@ def _adjust_boundary_for_tool_chains(
         tool_call_id = first.get("tool_call_id")
         owner_pruned = any(
             messages[j].get("role") == MessageRole.ASSISTANT
-            and any(
-                tc.get("id") == tool_call_id
-                for tc in (messages[j].get("tool_calls") or [])
-            )
+            and any(tc.get("id") == tool_call_id for tc in (messages[j].get("tool_calls") or []))
             for j in range(boundary)
         )
         if owner_pruned:
@@ -835,8 +765,9 @@ async def _backup_session(
         if factory is None:
             return
 
-        storage = await factory(context)
-        directory: Path | None = getattr(storage, "directory", None)
+        bundle = await factory(context)
+        store = bundle.messages
+        directory: Path | None = getattr(store, "directory", None)
         if directory is None:
             return  # Non-file backend — nothing to copy
 

@@ -12,19 +12,19 @@ property) is covered by ``tests/integration/multi_agent/test_multi_pool_isolatio
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import AsyncGenerator
 
 import pytest
-
 from bot.workspace.handle import PoolWorkspaceResources
-from modex_agent.workspace.context import WorkspaceContext
-from modex_agent.workspace.factory import ResourceFactory
-from modex_agent.workspace.registry import InMemoryRegistryStore, WorkspaceRegistry
+
 from modex_agent.core.session_store import LocalFileSessionStore
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
-
+from modex_agent.workspace.context import WorkspaceContext
+from modex_agent.workspace.factory import ResourceFactory
+from modex_agent.workspace.registry import WorkspaceRegistry
+from modex_agent.workspace.store import GlobalWorkspaceStore
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -74,7 +74,7 @@ async def isolated_workspaces(
     ws_b.mkdir()
 
     factory = _MinimalResourceFactory()
-    store = InMemoryRegistryStore()
+    store = GlobalWorkspaceStore(home=home, data_dir_name=".modex")
     registry: WorkspaceRegistry[PoolWorkspaceResources] = WorkspaceRegistry(
         home=home,
         data_dir_name=".modex",
@@ -82,8 +82,8 @@ async def isolated_workspaces(
         store=store,
     )
 
-    ctx_a = registry.get_or_open(ws_a)
-    ctx_b = registry.get_or_open(ws_b)
+    ctx_a = await registry.get_or_open(ws_a)
+    ctx_b = await registry.get_or_open(ws_b)
     resources_a = await registry.materialize(ctx_a)
     resources_b = await registry.materialize(ctx_b)
 
@@ -106,8 +106,8 @@ async def test_two_workspaces_have_distinct_resources(
     """Each workspace gets its own broker and its own on-disk skeleton."""
     registry, ws_a, ws_b = isolated_workspaces
 
-    ctx_a = registry.get_or_open(ws_a)
-    ctx_b = registry.get_or_open(ws_b)
+    ctx_a = await registry.get_or_open(ws_a)
+    ctx_b = await registry.get_or_open(ws_b)
     resources_a = await registry.materialize(ctx_a)
     resources_b = await registry.materialize(ctx_b)
 

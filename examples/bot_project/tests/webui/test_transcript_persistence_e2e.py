@@ -61,7 +61,7 @@ class TestTranscriptPersistence:
             # Read back — TurnStartEvent/TurnEndEvent are WebSocket-only,
             # not persisted. AssistantTextEvent is the only persisted event here.
             jstore = JSONLTranscriptStore(base / "main")
-            events = list(jstore.load("conv.main"))
+            events = await jstore.load("conv.main")
             assert len(events) == 1, f"Expected 1 event, got {len(events)}"
             assert "Hello" in str(events[0].to_dict())
 
@@ -119,12 +119,12 @@ class TestTranscriptPersistence:
 
             # Verify A has s1
             assert (ws_a / "main" / "s1.main.jsonl").exists(), "A must still have s1"
-            events_a = list(JSONLTranscriptStore(ws_a / "main").load("s1.main"))
+            events_a = await JSONLTranscriptStore(ws_a / "main").load("s1.main")
             assert any("in-A" in str(e.to_dict()) for e in events_a)
 
             # Verify B has s2
             assert (ws_b / "main" / "s2.main.jsonl").exists(), "B must have s2"
-            events_b = list(JSONLTranscriptStore(ws_b / "main").load("s2.main"))
+            events_b = await JSONLTranscriptStore(ws_b / "main").load("s2.main")
             assert any("in-B" in str(e.to_dict()) for e in events_b)
 
             # Verify A does not have s2
@@ -161,7 +161,7 @@ class TestTranscriptPersistence:
                 result = AgentResult(stop_reason="completed", content="Done!")
                 await emitter.emit_complete(result)
 
-            events = list(JSONLTranscriptStore(base / "main").load("conv.main"))
+            events = await JSONLTranscriptStore(base / "main").load("conv.main")
             event_types = [e.__class__.__name__ for e in events]
 
             # Content events must be present

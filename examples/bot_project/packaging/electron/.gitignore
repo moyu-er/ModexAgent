@@ -1,0 +1,4 @@
+node_modules/
+electron-v*-win32-x64.zip
+.cache/
+rcedit*.exe

@@ -8,6 +8,8 @@ sensible defaults.  No giant if-else chains.
 from __future__ import annotations
 
 import logging
+import os
+import shutil
 from collections.abc import Awaitable, Callable
 from dataclasses import replace as _dc_replace
 from pathlib import Path
@@ -36,6 +38,7 @@ from bot.service.model_choice import ModelChoiceBindHook, ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
 from bot.service.model_provider import BotModelProvider
 from modex_agent.control.channel import InMemoryControlChannel
+from modex_agent.core.constants import ExecutionStrategy
 from modex_agent.core.emitter import ContentEmitter
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.scope import MemoryContext
@@ -68,7 +71,6 @@ from modex_agent.multi_agent.communication import AgentCommunicationService
 from modex_agent.multi_agent.context_fork import ContextForkBuilder
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
-from modex_agent.multi_agent.inbox.server_local import LocalFileInboxServer
 from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
 from modex_agent.multi_agent.pool_config import PoolAssemblyDeps, PoolStore
 from modex_agent.multi_agent.pool_config.specs import MainAgentSpec, PoolSpec
@@ -99,7 +101,13 @@ from modex_agent.tools.workspace_scoped import (
     wrap_standard_tools,
 )
 
-from .builders import _load_agent_mcp_tools, resolve_system_prompt
+from ._external_coding_wiring import (
+    ExternalCodingAwareFactory,
+    build_external_coding_deps,
+    provider_executable_for,
+    read_provider_kind,
+)
+from .builders import _load_agent_mcp_tools, build_inbox, build_todo_store, resolve_system_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +147,8 @@ async def create_pool(
     bot_model_config: BotModelConfig,
     model_choice_registry: ModelChoiceRegistry,
     mcp_registry: McpConnectionRegistry | None = None,
+    persistence: Any | None = None,
+    app_config: Any | None = None,
 ) -> PoolInstance:
     """Build one PoolInstance's DEPLOYMENT resources from PoolSpec + deps.
 
@@ -157,13 +167,15 @@ async def create_pool(
     terminal_manager = _build_terminal_manager(main_spec, pool_name, workspace_handle)
     default_resolved = bot_model_config.default_resolved()
 
-    # Task 7: PER-POOL inbox + bus. Each pool owns its own LocalFileInboxServer
-    # (own storage dir), producer, consumer, and LocalAgentMessageBus — instead
-    # of sharing one workspace-level inbox/bus across all pools. The broker
-    # stays workspace-level (cross-process wakeup); the bus binds to it for
-    # wakeup emission only.
     inbox_dir = data_dir / "inbox" / pool_name
-    inbox_server = LocalFileInboxServer(workspace=inbox_dir)
+    inbox_db_path = data_dir / "state.db"
+    inbox_server = build_inbox(
+        app_config,
+        persistence,
+        inbox_dir,
+        inbox_db_path,
+        pool_name,
+    )
     inbox_producer = InboxProducer(server=inbox_server)
     inbox_consumer = InboxConsumer(server=inbox_server)
     agent_bus = LocalAgentMessageBus(
@@ -204,14 +216,47 @@ async def create_pool(
         transcript_store=transcript_store,
         sessions_dir_provider=sessions_dir_provider,
         mcp_registry=mcp_registry,
+        persistence=persistence,
+        app_config=app_config,
     )
 
     skill_manager = _build_skill_manager(main_agent_name, project_dir, pool_name)
+
+    external_coding_deps: dict[str, Any] | None = None
+    provider_available = True
+    if main_spec.execution_strategy == ExecutionStrategy.EXTERNAL_CODING:
+        provider_kind = read_provider_kind(pool_spec, project_dir)
+        executable = provider_executable_for(provider_kind)
+        if shutil.which(executable) is None:
+            logger.warning(
+                "Pool '%s': external_coding provider %r not found on PATH; "
+                "skipping pool registration",
+                pool_name,
+                executable,
+            )
+            provider_available = False
+        else:
+            workspace_dir = (
+                workspace_handle.current if workspace_handle is not None else project_dir
+            )
+            external_coding_deps = build_external_coding_deps(
+                pool_name=pool_name,
+                pool_spec=pool_spec,
+                project_dir=project_dir,
+                inbox_dir=inbox_dir,
+                workspace_dir=workspace_dir,
+                main_agent_name=main_agent_name,
+                base_env=dict(os.environ),
+                app_config=app_config,
+                persistence=persistence,
+            )
+
     factory = _build_agent_factory(
         provider, tool_manager, skill_manager,
         inbox_server, shared_hooks, shared_hook_runner,
         shared_interceptor_chain, control_channel,
         workspace_resolver, pool_name, emitter_factory,
+        external_coding_deps=external_coding_deps,
     )
     session_factory = SessionIdFactory()
     pool = _build_agent_pool(
@@ -288,11 +333,14 @@ async def create_pool(
     pool.attach_poller(poller)
     pool.start_poller()
 
-    await _register_main_agent(
-        pool, main_spec, assembly_deps, system_prompt, safety, pool_name,
-        factory=factory, broker=broker, context_manager=context_manager,
-        bot_model_config=bot_model_config,
-    )
+    if provider_available:
+        await _register_main_agent(
+            pool, main_spec, assembly_deps, system_prompt, safety, pool_name,
+            factory=factory, broker=broker, context_manager=context_manager,
+            bot_model_config=bot_model_config,
+        )
+    else:
+        logger.warning("Pool '%s': main agent registration skipped", pool_name)
 
     # Register a compaction listener that notifies the user when session memory
     # is being consolidated (the blocking archive LLM call otherwise looks like
@@ -589,6 +637,8 @@ async def _build_tools(
     transcript_store: TranscriptStore | None = None,
     sessions_dir_provider: Callable[[], Path | None] | None = None,
     mcp_registry: McpConnectionRegistry | None = None,
+    persistence: Any | None = None,
+    app_config: Any | None = None,
 ) -> tuple[InMemoryToolManager, Any | None, JsonFileTodoStore]:
     """Build the main agent's tool manager from config.
 
@@ -609,15 +659,14 @@ async def _build_tools(
 
     tm = InMemoryToolManager(config=ToolManagerConfig())
 
-    # Todo store — created early so it can be supplied to supplement-based
-    # todo tool registration (main agent) and subagent materialization.
-    from modex_agent.runtime.store import JsonFileTodoStore
-
     if pool_data is not None and pool_data.runtime_dir is not None:
         todo_dir: Path = pool_data.runtime_dir / "todos"
     else:
         todo_dir = data_dir / "runtime_state" / pool_name / "todos"
-    todo_store = JsonFileTodoStore(todo_dir)
+    from modex_agent.core.scope import RecordScope
+
+    todo_scope = RecordScope(pool=pool_name)
+    todo_store = build_todo_store(app_config, persistence, todo_dir, todo_scope)
 
     # Preset tools: file/search/bash gated by main_spec.tool_preset. A bash
     # factory is provided so FULL/READ_WRITE/READ_ONLY presets get a
@@ -869,19 +918,32 @@ def _build_agent_factory(
     workspace_resolver: WorkspaceResolverCell | None,
     pool_name: str,
     emitter_factory: Callable | None,
+    *,
+    external_coding_deps: dict[str, Any] | None = None,
 ) -> DefaultAgentFactory:
-    # turn_store / trace_store are intentionally NOT passed: the pipeline
-    # resolves them per turn from the active workspace's PoolData snapshot.
-    factory = DefaultAgentFactory(
-        default_llm_provider=provider,
-        default_tool_manager=tool_manager,
-        skill_manager=skill_manager,
-        inbox_server=inbox_server,
-        default_hooks=shared_hooks,
-        default_hook_runner=shared_hook_runner,
-        default_interceptor_chain=shared_interceptor_chain,
-        control_channel=control_channel,
-    )
+    if external_coding_deps is not None:
+        factory: DefaultAgentFactory = ExternalCodingAwareFactory(
+            default_llm_provider=provider,
+            default_tool_manager=tool_manager,
+            skill_manager=skill_manager,
+            inbox_server=inbox_server,
+            default_hooks=shared_hooks,
+            default_hook_runner=shared_hook_runner,
+            default_interceptor_chain=shared_interceptor_chain,
+            control_channel=control_channel,
+            external_coding_deps=external_coding_deps,
+        )
+    else:
+        factory = DefaultAgentFactory(
+            default_llm_provider=provider,
+            default_tool_manager=tool_manager,
+            skill_manager=skill_manager,
+            inbox_server=inbox_server,
+            default_hooks=shared_hooks,
+            default_hook_runner=shared_hook_runner,
+            default_interceptor_chain=shared_interceptor_chain,
+            control_channel=control_channel,
+        )
 
     # Wrap create_agent → inject emitter for ALL agents (resident + subagent)
     # AND wire each pipeline's workspace_manager + pool_name so turns resolve
@@ -989,7 +1051,7 @@ async def _register_main_agent(
         ),
         system_prompt_template=system_prompt,
         max_iterations=main_spec.max_steps,
-        execution_strategy="react",
+        execution_strategy=main_spec.execution_strategy,
         context_strategy="persistent",
         safety_policy=safety,
         comm_kind=AgentCommKind.NORMAL,

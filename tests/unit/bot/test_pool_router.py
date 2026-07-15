@@ -1,4 +1,4 @@
-"""Tests for PoolRouter and PoolSessionStore.
+"""Tests for PoolRouter and pool routing stores.
 
 Pool switching is handled upstream by the input pipeline; PoolRouter only
 persists the chosen pool (``set_pool``) and routes incoming messages to it.
@@ -6,44 +6,57 @@ persists the chosen pool (``set_pool``) and routes incoming messages to it.
 from __future__ import annotations
 
 import sys
-import tempfile
 from collections.abc import AsyncIterator
+from inspect import isabstract
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from modex_agent.multi_agent.pool_router import LocalFilePoolRoutingStore
 
 _BOT_PROJECT = Path(__file__).parent.parent.parent.parent / "examples" / "bot_project"
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
-from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import InputMessage
-from modex_agent.messaging.broker import BrokerMessage
-from modex_agent.messaging.broker_memory import InMemoryMessageBroker
-from modex_agent.multi_agent.address import AgentAddress
-from modex_agent.pipeline.adapters import InputAdapter
+from modex_agent.core.session_id import SessionInfo  # noqa: E402
+from modex_agent.core.types import InputMessage  # noqa: E402
+from modex_agent.messaging.broker import AddressKind, BrokerMessage  # noqa: E402
+from modex_agent.messaging.broker_bridge import BrokerInputAdapter  # noqa: E402
+from modex_agent.messaging.broker_memory import InMemoryMessageBroker  # noqa: E402
+from modex_agent.multi_agent.address import AgentAddress  # noqa: E402
 
 # ── Stubs ──
 
-class _StubInput(InputAdapter):
-    name = "stub"
-
-    def __init__(self, messages: list[InputMessage] | None = None):
+class _StubInput(BrokerInputAdapter):
+    def __init__(self, messages: list[InputMessage] | None = None) -> None:
+        super().__init__(
+            broker=InMemoryMessageBroker(),
+            address=AgentAddress(kind=AddressKind.AGENT, name="stub"),
+        )
         self._messages = messages or []
+
+    @property
+    def name(self) -> str:
+        return "stub"
 
     async def start(self) -> None: pass
     async def stop(self) -> None: pass
 
-    async def receive(self) -> AsyncIterator[InputMessage]:
-        for msg in self._messages:
-            yield msg
+    def receive(self) -> AsyncIterator[InputMessage]:
+        async def _messages() -> AsyncIterator[InputMessage]:
+            for msg in self._messages:
+                yield msg
+
+        return _messages()
 
 
 class _FakePoolInstance:
     """Minimal stub that has main_agent_name, main_address, and a recording
     ``pool.submit_input`` (the poll-driven routing entry point)."""
 
-    def __init__(self, name: str):
+    def __init__(self, name: str) -> None:
         self.name = name
         self.main_agent_name = name
         self.submitted: list = []
@@ -57,42 +70,84 @@ class _FakePoolInstance:
 
     @property
     def main_address(self):
-        return AgentAddress(kind="agent", name=self.main_agent_name)
+        return AgentAddress(kind=AddressKind.AGENT, name=self.main_agent_name)
 
 
-# ── PoolSessionStore Tests ──
+# ── PoolRoutingStore Tests ──
 
-class TestPoolSessionStore:
-    def test_get_returns_default_when_no_file(self):
-        with tempfile.TemporaryDirectory() as d:
-            from modex_agent.multi_agent.pool_router import PoolSessionStore
-            store = PoolSessionStore(Path(d))
-            assert store.get("unknown_session", "default") == "default"
+class TestPoolRoutingStore:
+    def test_abstract_store_cannot_be_instantiated(self) -> None:
+        from modex_agent.multi_agent.pool_router import PoolRoutingStore
 
-    def test_set_and_get_roundtrip(self):
-        with tempfile.TemporaryDirectory() as d:
-            from modex_agent.multi_agent.pool_router import PoolSessionStore
-            store = PoolSessionStore(Path(d))
-            store.set("sess-123", "coding")
-            assert store.get("sess-123", "main") == "coding"
+        assert isabstract(PoolRoutingStore)
 
-    def test_multiple_sessions_independent(self):
-        with tempfile.TemporaryDirectory() as d:
-            from modex_agent.multi_agent.pool_router import PoolSessionStore
-            store = PoolSessionStore(Path(d))
-            store.set("sess-a", "main")
-            store.set("sess-b", "coding")
-            assert store.get("sess-a", "x") == "main"
-            assert store.get("sess-b", "x") == "coding"
 
-    def test_corrupted_file_returns_default(self):
-        with tempfile.TemporaryDirectory() as d:
-            from modex_agent.multi_agent.pool_router import PoolSessionStore
-            store = PoolSessionStore(Path(d))
-            # Write corrupted JSON
-            fp = store._file("corrupt")
-            fp.write_text("{not valid json", encoding="utf-8")
-            assert store.get("corrupt", "fallback") == "fallback"
+class TestLocalFilePoolRoutingStore:
+    @pytest.fixture
+    def store(self, tmp_path: Path) -> LocalFilePoolRoutingStore:
+        from modex_agent.multi_agent.pool_router import LocalFilePoolRoutingStore
+
+        return LocalFilePoolRoutingStore(tmp_path)
+
+    def test_missing_prefix_returns_none(
+        self, store: LocalFilePoolRoutingStore
+    ) -> None:
+        assert store.get_pool("unknown-session") is None
+
+    def test_set_pool_roundtrips(self, store: LocalFilePoolRoutingStore) -> None:
+        store.set_pool("sess-123", "coding")
+
+        assert store.get_pool("sess-123") == "coding"
+
+    def test_delete_pool_removes_route(
+        self, store: LocalFilePoolRoutingStore
+    ) -> None:
+        store.set_pool("sess-123", "coding")
+
+        store.delete_pool("sess-123")
+
+        assert store.get_pool("sess-123") is None
+
+    def test_rename_pool_updates_matching_routes(
+        self, store: LocalFilePoolRoutingStore
+    ) -> None:
+        store.set_pool("sess-a", "coding")
+        store.set_pool("sess-b", "main")
+
+        changed = store.rename_pool("coding", "engineering")
+
+        assert changed == 1
+        assert store.get_pool("sess-a") == "engineering"
+        assert store.get_pool("sess-b") == "main"
+
+    def test_list_prefixes_returns_sorted_stored_prefixes(
+        self, store: LocalFilePoolRoutingStore
+    ) -> None:
+        store.set_pool("sess-b", "coding")
+        store.set_pool("sess-a", "main")
+
+        assert store.list_prefixes() == ["sess-a", "sess-b"]
+
+    def test_corrupted_route_raises_validation_error(
+        self, store: LocalFilePoolRoutingStore
+    ) -> None:
+        from pydantic import ValidationError
+
+        store._file("corrupt").write_text("{not valid json", encoding="utf-8")
+
+        with pytest.raises(ValidationError):
+            store.get_pool("corrupt")
+
+    def test_rename_pool_skips_corrupted_routes(
+        self, store: LocalFilePoolRoutingStore
+    ) -> None:
+        store._file("corrupt").write_text("{not valid json", encoding="utf-8")
+        store.set_pool("valid", "coding")
+
+        changed = store.rename_pool("coding", "engineering")
+
+        assert changed == 1
+        assert store.get_pool("valid") == "engineering"
 
 
 # ── PoolRouter Tests ──
@@ -109,22 +164,25 @@ class TestPoolRouterSetPool:
 
     @pytest.fixture
     def router(self, pools, tmp_path):
-        from modex_agent.multi_agent.pool_router import PoolRouter, PoolSessionStore
+        from modex_agent.multi_agent.pool_router import (
+            LocalFilePoolRoutingStore,
+            PoolRouter,
+        )
         return PoolRouter(
             input_adapter=_StubInput(),
-            broker=object(),
+            broker=InMemoryMessageBroker(),
             pools=pools,
-            session_store=PoolSessionStore(tmp_path),
+            session_store=LocalFilePoolRoutingStore(tmp_path),
             default_pool="main",
         )
 
     def test_set_pool_updates_store(self, router):
         router.set_pool("sess-xyz", "coding")
-        assert router._session_store.get("sess-xyz", "main") == "coding"
+        assert router._session_store.get_pool("sess-xyz") == "coding"
 
     def test_set_pool_uses_snowflake_key(self, router):
         router.set_pool("snowflake.main", "coding")
-        assert router._session_store.get("snowflake", "main") == "coding"
+        assert router._session_store.get_pool("snowflake") == "coding"
 
 
 class TestPoolRouterRouting:
@@ -143,12 +201,15 @@ class TestPoolRouterRouting:
 
     @pytest.fixture
     def router(self, broker, pools, tmp_path):
-        from modex_agent.multi_agent.pool_router import PoolRouter, PoolSessionStore
+        from modex_agent.multi_agent.pool_router import (
+            LocalFilePoolRoutingStore,
+            PoolRouter,
+        )
         return PoolRouter(
             input_adapter=_StubInput(),
             broker=broker,
             pools=pools,
-            session_store=PoolSessionStore(tmp_path),
+            session_store=LocalFilePoolRoutingStore(tmp_path),
             default_pool="main",
         )
 
@@ -156,7 +217,7 @@ class TestPoolRouterRouting:
     async def test_routing_falls_back_to_default_for_unknown_pool(self, router, pools, broker):
         """When session's pool name is unknown, falls back to default pool."""
         await broker.start()
-        router._session_store.set("sess-3", "nonexistent")
+        router._session_store.set_pool("sess-3", "nonexistent")
         msg = InputMessage(
             content="hello",
             session=SessionInfo.from_str("sess-3", default_agent_name="main"),
@@ -168,10 +229,10 @@ class TestPoolRouterRouting:
     @pytest.mark.asyncio
     async def test_run_routes_to_stored_pool(self, router, pools, broker, tmp_path):
         """Messages are routed to the pool stored for their snowflake."""
-        from modex_agent.multi_agent.pool_router import PoolSessionStore
+        from modex_agent.multi_agent.pool_router import LocalFilePoolRoutingStore
 
-        store = PoolSessionStore(tmp_path)
-        store.set("sess-route", "coding")
+        store = LocalFilePoolRoutingStore(tmp_path)
+        store.set_pool("sess-route", "coding")
         router_with_store = type(router)(
             input_adapter=_StubInput([
                 InputMessage(

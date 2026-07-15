@@ -45,7 +45,7 @@ async def test_persist_writes_user_message_with_full_session_id() -> None:
         env.metadata[RoutingMeta.WORKSPACE] = str(root)
         with bind_workspace_root(root):
             await PersistUserMessageStage().process(env, _ctx(store))
-            events = list(store.load("u1.coding"))
+            events = await store.load("u1.coding")
         assert len(events) == 1
         assert isinstance(events[0], UserMessageEvent)
         assert events[0].content == "hello"
@@ -64,7 +64,7 @@ async def test_persist_skips_known_control_commands() -> None:
                 env.metadata["full_session_id"] = "u.main"
                 env.metadata[RoutingMeta.WORKSPACE] = str(root)
                 await PersistUserMessageStage().process(env, _ctx(store))
-            events = list(store.load("u.main"))
+            events = await store.load("u.main")
         assert events == [], "control commands must not be persisted"
 
 
@@ -96,5 +96,5 @@ async def test_persist_skips_approval_decision() -> None:
         )
         with bind_workspace_root(root):
             await PersistUserMessageStage().process(envelope, _ctx(store))
-            events = list(store.load("ext.main"))
+            events = await store.load("ext.main")
         assert events == [], "approval decisions must not be persisted"

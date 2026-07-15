@@ -28,6 +28,7 @@ from modex_agent.commands.models import (
     CommandProcessor,
 )
 from modex_agent.core.agent_runtime_config import BusyInputMode
+from modex_agent.core.constants import ExecutionStrategy
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.skills import SkillManager
 
@@ -201,23 +202,42 @@ class AgentPipeline:
             turn_store=turn_store,
             registry=self._registry,
         )
-        self._turn_runner = TurnRunner(
-            agent=agent,
-            context_manager=context_manager,
-            context_manager_factory=context_manager_factory,
-            on_session_start=on_session_start,
-            on_session_end=on_session_end,
-            safety=self.safety,
-            turn_store=turn_store,
-            registry=self._registry,
-            builder=self._turn_context_builder,
-            resumer=self._approval_resumer,
-            approval=self._approval,
-            workspace_manager=workspace_manager,
-            pool_name=pool_name,
-            pool_data_resolver=pool_data_resolver,
-            agent_descriptor=agent_descriptor,
+        is_external = (
+            agent_descriptor is not None
+            and agent_descriptor.execution_strategy == ExecutionStrategy.EXTERNAL_CODING
         )
+
+        if is_external:
+            # Lazy import: ReAct pools must never load the external_coding package.
+            from modex_agent.agents.external_coding.turn_runner import ExternalTurnRunner
+
+            self._turn_runner = ExternalTurnRunner(
+                agent=agent,
+                emitter_factory=emitter_factory,
+                output_adapter=output_adapter,
+                registry=self._registry,
+                on_session_start=on_session_start,
+                on_session_end=on_session_end,
+                safety=self.safety,
+            )
+        else:
+            self._turn_runner = TurnRunner(
+                agent=agent,
+                context_manager=context_manager,
+                context_manager_factory=context_manager_factory,
+                on_session_start=on_session_start,
+                on_session_end=on_session_end,
+                safety=self.safety,
+                turn_store=turn_store,
+                registry=self._registry,
+                builder=self._turn_context_builder,
+                resumer=self._approval_resumer,
+                approval=self._approval,
+                workspace_manager=workspace_manager,
+                pool_name=pool_name,
+                pool_data_resolver=pool_data_resolver,
+                agent_descriptor=agent_descriptor,
+            )
 
     @property
     def _user_interface(self):  # delegates to renderer so pool injection reaches handle()
@@ -282,10 +302,8 @@ class AgentPipeline:
     @emitter_factory.setter
     def emitter_factory(self, value: Callable[..., ContentEmitter] | None) -> None:
         self._emitter_factory = value
-        # Mirror into TurnContextBuilder so its captured copy stays current when
-        # pool wiring mutates this attribute after pipeline construction
-        # (pool_builder._create_with_emitter reassigns it post-construction).
         self._turn_context_builder._emitter_factory = value
+        self._turn_runner.update_emitter_factory(value)
 
     async def run(self) -> None:
         """运行流水线"""
@@ -545,7 +563,7 @@ class AgentPipeline:
     async def stop(self) -> None:
         """停止流水线"""
         self._running = False
-        # 清理所有 lingering session 资源
         for sid in self._registry.session_ids():
             await self.cleanup_session_resources(sid)
         logger.info("Pipeline stop requested, waiting for current message to complete...")
+        await self.agent.stop()

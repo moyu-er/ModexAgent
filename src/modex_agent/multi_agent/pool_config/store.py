@@ -52,15 +52,15 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from modex_agent.tools.presets import (
-    DEFAULT_FORK_MAX_MESSAGES,
-    SystemPromptMode,
-)
-
+from modex_agent.core.constants import ExecutionStrategy
 from modex_agent.multi_agent.pool_config.specs import (
     MainAgentSpec,
     PoolSpec,
     SubagentSpec,
+)
+from modex_agent.tools.presets import (
+    DEFAULT_FORK_MAX_MESSAGES,
+    SystemPromptMode,
 )
 
 logger = logging.getLogger(__name__)
@@ -261,6 +261,9 @@ class PoolStore:
         _validate_name(name, "pool")
         self._validate_tree(name, tree)
 
+        if tree.main.execution_strategy == ExecutionStrategy.EXTERNAL_CODING:
+            tree = tree.model_copy(update={"subagents": []})
+
         existing = self._read_existing_pool_yml(name)
         prior_main_name = self._prior_main_agent_name(existing) or name  # dir name fallback
         prior_subagent_names = self._prior_subagent_names(name)
@@ -327,6 +330,14 @@ class PoolStore:
             raise PoolValidationError(
                 f"Pool {pool_name!r}: main_agent_name ({tree.main_agent_name!r}) "
                 f"must equal main.agent_name ({tree.main.agent_name!r})"
+            )
+        if (
+            tree.main.execution_strategy == ExecutionStrategy.EXTERNAL_CODING
+            and tree.main.provider_kind is None
+        ):
+            raise PoolValidationError(
+                f"Pool {pool_name!r}: execution_strategy 'external_coding' "
+                f"requires a provider_kind"
             )
         all_names = [tree.main.agent_name]
         for sub in tree.subagents:
@@ -415,12 +426,20 @@ class PoolStore:
         if tree.main.agent_name != pool_name:
             data["main_agent_name"] = tree.main.agent_name
         main_dump = tree.main.model_dump(mode="json")
-        for field in _MAIN_AGENT_EDITABLE_FIELDS:
-            value = main_dump[field]
-            default = _MAIN_AGENT_DEFAULTS.get(field, _MISSING)
-            if value is None or value == default:
-                continue
-            data[field] = value
+        if tree.main.execution_strategy == ExecutionStrategy.EXTERNAL_CODING:
+            if main_dump["description"]:
+                data["description"] = main_dump["description"]
+            data["execution_strategy"] = main_dump["execution_strategy"]
+            data["provider_kind"] = main_dump["provider_kind"]
+        else:
+            for field in _MAIN_AGENT_EDITABLE_FIELDS:
+                value = main_dump[field]
+                default = _MAIN_AGENT_DEFAULTS.get(field, _MISSING)
+                if value is None or value == default:
+                    continue
+                data[field] = value
+            if tree.main.execution_strategy != ExecutionStrategy.REACT:
+                data["execution_strategy"] = main_dump["execution_strategy"]
         if tree.peers:
             data["peers"] = list(tree.peers)
         if "media" in existing:

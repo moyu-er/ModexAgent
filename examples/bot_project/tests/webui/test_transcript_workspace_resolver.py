@@ -58,7 +58,7 @@ async def test_append_with_explicit_sessions_dir_routes_to_that_dir(
 
     # No ctxvar binding at all (simulates consumer task).
     assert not is_workspace_root_bound()
-    store.append("conv.main", _event(), sessions_dir=sessions_a)
+    await store.append("conv.main", _event(), sessions_dir=sessions_a)
 
     # Transcript must land under ws_a.
     expected = sessions_a / "main" / "conv.main.jsonl"
@@ -75,7 +75,7 @@ async def test_append_without_sessions_dir_falls_back_to_ctxvar(
     Unbound ctxvar → cwd + warning."""
     store = _build_store()
     with caplog.at_level(logging.WARNING, logger="bot.service.workspace_store"):
-        store.append("conv.main", _event())
+        await store.append("conv.main", _event())
     assert any("[ws-partition]" in r.message for r in caplog.records)
 
 
@@ -89,7 +89,7 @@ async def test_append_with_explicit_sessions_dir_silences_ctxvar_warning(
     sessions_dir.mkdir(parents=True)
     store = _build_store()
     with caplog.at_level(logging.WARNING, logger="bot.service.workspace_store"):
-        store.append("conv.main", _event(), sessions_dir=sessions_dir)
+        await store.append("conv.main", _event(), sessions_dir=sessions_dir)
     assert not any("[ws-partition]" in r.message for r in caplog.records)
 
 

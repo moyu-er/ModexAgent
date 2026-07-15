@@ -9,28 +9,40 @@ import os
 import time
 from collections.abc import Collection
 from pathlib import Path
+from typing import cast
 
+from modex_agent.core.scope import (
+    MemoryAgentRole,
+    MemoryContext,
+    MemoryLayerName,
+    Scope,
+    ScopeRecord,
+    infer_agent_role,
+    scope_path_key,
+)
 from modex_agent.memory.archive_models import (
     CONTEXT_ARCHIVE_FILE_KEY,
     CONTEXT_ARCHIVE_FILENAME,
     KNOWLEDGE_ARCHIVE_FILE_KEY,
     KNOWLEDGE_ARCHIVE_FILENAME,
 )
-from modex_agent.core.scope import (
-    MemoryAgentRole,
-    MemoryContext,
-    MemoryLayerName,
-    MemoryScope,
-    ScopeRecord,
-    infer_agent_role,
+from modex_agent.memory.core.split_stores import (
+    ArchiveStore,
+    CursorStore,
+    KVStore,
+    MemoryStoreBundle,
+    MessageStore,
 )
-from modex_agent.memory.core.storage import MemoryStorage
+from modex_agent.memory.core.store_metadata import StoreMetadata
 from modex_agent.memory.registry.base import MemoryStoreRegistry
+from modex_agent.memory.stores.dir_archive import DirArchiveStorage
 from modex_agent.memory.stores.scoped_file import DefaultScopedStorage
 from modex_agent.memory.stores.utils import sanitize_scope_key
 from modex_agent.utils.file_io import read_json_robust
 
 _SCOPE_FILE = ".scope.json"
+
+_StoreEntry = DefaultScopedStorage | DirArchiveStorage
 
 
 class DefaultMemoryStoreRegistry(MemoryStoreRegistry):
@@ -38,7 +50,7 @@ class DefaultMemoryStoreRegistry(MemoryStoreRegistry):
 
     def __init__(self, root: Path | str) -> None:
         self.root = Path(root)
-        self._stores: dict[tuple[MemoryLayerName, str], MemoryStorage] = {}
+        self._stores: dict[tuple[MemoryLayerName, str], _StoreEntry] = {}
         self._lock = asyncio.Lock()
 
     async def initialize(self) -> None:
@@ -119,11 +131,11 @@ class DefaultMemoryStoreRegistry(MemoryStoreRegistry):
         self,
         *,
         layer: MemoryLayerName,
-        scope: MemoryScope,
+        scope: Scope,
         context: MemoryContext,
-    ) -> MemoryStorage:
+    ) -> MemoryStoreBundle:
         await self.initialize()
-        scope_key = scope.get_scope_key(context)
+        scope_key = scope_path_key(scope, context)
         cache_key = (layer, scope_key)
         # Fast path: already cached
         storage = self._stores.get(cache_key)
@@ -134,20 +146,20 @@ class DefaultMemoryStoreRegistry(MemoryStoreRegistry):
                 context=context,
                 storage_path=storage.directory,
             )
-            return storage
+            return self._bundle_from_store(storage)
         # Slow path: create under lock to prevent TOCTOU race
         async with self._lock:
             storage = self._stores.get(cache_key)
             if storage is None:
                 scope_dir = self._scope_dir(layer, scope_key)
                 if layer == MemoryLayerName.KNOWLEDGE:
-                    from modex_agent.memory.stores.markdown_knowledge import MarkdownKnowledgeStorage
+                    from modex_agent.memory.stores.markdown_knowledge import (
+                        MarkdownKnowledgeStorage,
+                    )
 
                     storage = MarkdownKnowledgeStorage(scope_dir, layer=layer)
                 elif layer == MemoryLayerName.ARCHIVE:
-                    from modex_agent.memory.stores.dir_archive import DirArchiveStorage
-
-                    storage: MemoryStorage = DirArchiveStorage(scope_dir)
+                    storage = DirArchiveStorage(scope_dir)
                 else:
                     storage = DefaultScopedStorage(scope_dir, layer=layer)
                 await storage.initialize()
@@ -158,7 +170,23 @@ class DefaultMemoryStoreRegistry(MemoryStoreRegistry):
             context=context,
             storage_path=storage.directory,
         )
-        return storage
+        return self._bundle_from_store(storage)
+
+    @staticmethod
+    def _bundle_from_store(storage: StoreMetadata) -> MemoryStoreBundle:
+        """Build a ``MemoryStoreBundle`` from a single concrete store instance.
+
+        Every file-impl storage (``DefaultScopedStorage`` /
+        ``DirArchiveStorage`` / ``MarkdownKnowledgeStorage``) implements all
+        four split ABCs, so the single resolved instance fills every bundle
+        field.
+        """
+        return MemoryStoreBundle(
+            messages=cast(MessageStore, storage),
+            kv=cast(KVStore, storage),
+            cursors=cast(CursorStore, storage),
+            archive=cast(ArchiveStore, storage),
+        )
 
     async def list_records(
         self,
@@ -210,7 +238,7 @@ class DefaultMemoryStoreRegistry(MemoryStoreRegistry):
         self,
         *,
         layer: MemoryLayerName | None = None,
-        scope: MemoryScope | None = None,
+        scope: Scope | None = None,
     ) -> None:
         _ = scope
         keys = [key for key in self._stores if layer is None or key[0] == layer]

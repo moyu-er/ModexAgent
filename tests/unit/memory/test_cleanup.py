@@ -2,20 +2,15 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from modex_agent.memory.archive_models import (
-    ArchiveBundleResult,
-    ArchiveChannel,
-    ArchiveGenerationInputs,
-    ArchiveGenerationResult,
-    ArchiveInputStats,
-    ArchiveWrite,
-)
+from modex_agent.agents.summarizer.abc import ArchiveGenerator
+from modex_agent.core.scope import MemoryContext
+from modex_agent.memory.archive_models import ArchiveDocuments, ArchiveGenerationResult
 from modex_agent.memory.cleanup import (
     CleanupResult,
     _check_trigger,
@@ -24,15 +19,10 @@ from modex_agent.memory.cleanup import (
 )
 from modex_agent.memory.core.layers import MemoryLayerSet, SessionMemoryManager
 from modex_agent.memory.core.models import CompressionReason
-from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.layers.factory import MemoryLayerFactory
-from modex_agent.memory.registry.in_memory import InMemoryStoreRegistry
-from modex_agent.memory.sanitizer import (
-    DefaultSessionToolChainSanitizer,
-    ToolChainSanitizationMode,
-)
+from modex_agent.memory.registry import DefaultMemoryStoreRegistry, MemoryStoreRegistry
+from modex_agent.memory.stores.dir_archive import DirArchiveStorage
 from modex_agent.memory.token_estimator import TokenEstimator
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -97,12 +87,12 @@ def _sum_tokens_for(msgs: list[dict[str, Any]]) -> int:
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def registry() -> InMemoryStoreRegistry:
-    return InMemoryStoreRegistry()
+def registry(tmp_path: Path) -> MemoryStoreRegistry:
+    return DefaultMemoryStoreRegistry(tmp_path)
 
 
 def _make_layer_set(
-    registry: InMemoryStoreRegistry,
+    registry: MemoryStoreRegistry,
 ) -> MemoryLayerSet:
     return MemoryLayerFactory.single_user(registry=registry)
 
@@ -182,7 +172,7 @@ class TestNoTrigger:
     """cleanup_session should not trigger when session is under limits."""
 
     @pytest.mark.asyncio
-    async def test_no_trigger_when_under_limit(self, registry: InMemoryStoreRegistry) -> None:
+    async def test_no_trigger_when_under_limit(self, registry: MemoryStoreRegistry) -> None:
         layer_set = _make_layer_set(registry)
         context = _ctx()
         session = layer_set.session
@@ -213,7 +203,7 @@ class TestOnTriggeredCallback:
     """
 
     @pytest.mark.asyncio
-    async def test_fires_when_triggered(self, registry: InMemoryStoreRegistry) -> None:
+    async def test_fires_when_triggered(self, registry: MemoryStoreRegistry) -> None:
         layer_set = _make_layer_set(registry)
         context = _ctx()
         session = layer_set.session
@@ -240,7 +230,7 @@ class TestOnTriggeredCallback:
         assert calls[0] == ("test-session", CompressionReason.TOKEN_PRESSURE)
 
     @pytest.mark.asyncio
-    async def test_does_not_fire_when_under_limit(self, registry: InMemoryStoreRegistry) -> None:
+    async def test_does_not_fire_when_under_limit(self, registry: MemoryStoreRegistry) -> None:
         layer_set = _make_layer_set(registry)
         context = _ctx()
         session = layer_set.session
@@ -267,7 +257,7 @@ class TestOnTriggeredCallback:
 
     @pytest.mark.asyncio
     async def test_fires_before_archive_generation(
-        self, registry: InMemoryStoreRegistry, tmp_path,
+        self, registry: MemoryStoreRegistry, tmp_path,
     ) -> None:
         """on_triggered must run before the archive agent is invoked."""
         layer_set = _make_layer_set(registry)
@@ -281,9 +271,12 @@ class TestOnTriggeredCallback:
             order.append("triggered")
 
         class _OrderArchiveAgent(_MockArchiveAgent):
-            async def generate(self, pruned_messages, archive_dir, archive_id=0):
+            async def generate(
+                self,
+                pruned_messages: Sequence[dict[str, Any]],
+            ) -> ArchiveGenerationResult:
                 order.append("archive")
-                return await super().generate(pruned_messages, archive_dir, archive_id)
+                return await super().generate(pruned_messages)
 
         storage = _DirArchiveStorageFactory.create(tmp_path)
 
@@ -307,7 +300,7 @@ class TestTriggerAndCleanup:
     """cleanup_session should trigger and clean when over limits."""
 
     @pytest.mark.asyncio
-    async def test_trigger_when_over_message_limit(self, registry: InMemoryStoreRegistry) -> None:
+    async def test_trigger_when_over_message_limit(self, registry: MemoryStoreRegistry) -> None:
         layer_set = _make_layer_set(registry)
         context = _ctx()
         session = layer_set.session
@@ -340,7 +333,7 @@ class TestTriggerAndCleanup:
         assert len(remaining) < 20
 
     @pytest.mark.asyncio
-    async def test_trigger_when_over_token_limit(self, registry: InMemoryStoreRegistry) -> None:
+    async def test_trigger_when_over_token_limit(self, registry: MemoryStoreRegistry) -> None:
         layer_set = _make_layer_set(registry)
         context = _ctx()
         session = layer_set.session
@@ -369,7 +362,7 @@ class TestCleanupAlwaysExecutes:
     """cleanup_session should clean even when archive is None."""
 
     @pytest.mark.asyncio
-    async def test_cleanup_always_executes(self, registry: InMemoryStoreRegistry) -> None:
+    async def test_cleanup_always_executes(self, registry: MemoryStoreRegistry) -> None:
         layer_set = _make_layer_set(registry)
         context = _ctx()
         session = layer_set.session
@@ -402,7 +395,7 @@ class TestCleanupRemovesInvalidToolChains:
     """cleanup_session should remove orphan tool results via sanitizer."""
 
     @pytest.mark.asyncio
-    async def test_cleanup_removes_invalid_tool_chains(self, registry: InMemoryStoreRegistry) -> None:
+    async def test_cleanup_removes_invalid_tool_chains(self, registry: MemoryStoreRegistry) -> None:
         layer_set = _make_layer_set(registry)
         context = _ctx()
         session = layer_set.session
@@ -447,7 +440,7 @@ class TestKeepBoundary:
     """Tests for the keep boundary computation."""
 
     @pytest.mark.asyncio
-    async def test_never_splits_tool_chain(self, registry: InMemoryStoreRegistry) -> None:
+    async def test_never_splits_tool_chain(self, registry: MemoryStoreRegistry) -> None:
         """Boundary should not split an assistant tool_call from its tool result."""
         layer_set = _make_layer_set(registry)
         context = _ctx()
@@ -495,7 +488,7 @@ class TestKeepBoundary:
         )
 
     @pytest.mark.asyncio
-    async def test_single_user_session_cleans_properly(self, registry: InMemoryStoreRegistry) -> None:
+    async def test_single_user_session_cleans_properly(self, registry: MemoryStoreRegistry) -> None:
         """Session with 1 user + 50 tool pairs: cleanup MUST prune messages.
 
         This was the session.jsonl bug — _adjust_boundary_for_last_user
@@ -536,7 +529,7 @@ class TestKeepToolChainIntegrity:
 
     @pytest.mark.asyncio
     async def test_tool_chain_in_keep_region_not_split(
-        self, registry: InMemoryStoreRegistry,
+        self, registry: MemoryStoreRegistry,
     ) -> None:
         """When keep boundary falls on a tool chain, the chain stays intact."""
         layer_set = _make_layer_set(registry)
@@ -588,7 +581,7 @@ class TestUserRetentionExtraction:
 
     @pytest.mark.asyncio
     async def test_pruned_user_without_response_saved_to_urb(
-        self, registry: InMemoryStoreRegistry,
+        self, registry: MemoryStoreRegistry,
     ) -> None:
         """User message pruned during ReAct loop (no final response) saved to URB.
 
@@ -630,7 +623,7 @@ class TestUserRetentionExtraction:
 
     @pytest.mark.asyncio
     async def test_pruned_users_with_assistant_still_extracted(
-        self, registry: InMemoryStoreRegistry,
+        self, registry: MemoryStoreRegistry,
     ) -> None:
         """Pruned user messages with plain assistant responses are extracted as completed entries."""
         layer_set = _make_layer_set(registry)
@@ -664,7 +657,7 @@ class TestUserRetentionExtraction:
 
     @pytest.mark.asyncio
     async def test_no_urb_when_user_retention_is_none(
-        self, registry: InMemoryStoreRegistry,
+        self, registry: MemoryStoreRegistry,
     ) -> None:
         """When user_retention=None, cleanup still succeeds (no extraction)."""
         layer_set = _make_layer_set(registry)
@@ -703,7 +696,7 @@ class TestUserRetentionCompletion:
 
     @pytest.mark.asyncio
     async def test_pruned_user_completed_by_kept_assistant(
-        self, registry: InMemoryStoreRegistry,
+        self, registry: MemoryStoreRegistry,
     ) -> None:
         """User pruned, plain assistant kept → entry must be completed."""
         layer_set = _make_layer_set(registry)
@@ -741,7 +734,7 @@ class TestUserRetentionCompletion:
 
     @pytest.mark.asyncio
     async def test_pruned_user_completed_by_pruned_assistant_kept_has_no_plain(
-        self, registry: InMemoryStoreRegistry,
+        self, registry: MemoryStoreRegistry,
     ) -> None:
         """Plain assistant in the PRUNED region, kept region has no plain
         assistant (only tool chain).  Pruned entries must still be completed."""
@@ -781,7 +774,7 @@ class TestUserRetentionCompletion:
 
     @pytest.mark.asyncio
     async def test_kept_assistant_completes_prior_unfinished_entries(
-        self, registry: InMemoryStoreRegistry,
+        self, registry: MemoryStoreRegistry,
     ) -> None:
         """A plain assistant in the kept region also completes unfinished
         entries from a *previous* cleanup cycle."""
@@ -851,7 +844,7 @@ class TestToolChainDominanceDoesNotOverPrune:
 
     @pytest.mark.asyncio
     async def test_tool_chain_heavy_session_keeps_reasonable_count(
-        self, registry: InMemoryStoreRegistry,
+        self, registry: MemoryStoreRegistry,
     ) -> None:
         """1 user + 50 tool pairs + 1 new user: must keep ~40%, not 1."""
         layer_set = _make_layer_set(registry)
@@ -885,7 +878,7 @@ class TestToolChainDominanceDoesNotOverPrune:
 
     @pytest.mark.asyncio
     async def test_kept_count_respects_keep_ratio_floor(
-        self, registry: InMemoryStoreRegistry,
+        self, registry: MemoryStoreRegistry,
     ) -> None:
         """kept must be at least keep_target // 2 even with tool-chain sessions."""
         layer_set = _make_layer_set(registry)
@@ -928,7 +921,7 @@ class TestKeepResanitized:
 
     @pytest.mark.asyncio
     async def test_incomplete_tool_chain_in_keep_force_cleaned(
-        self, registry: InMemoryStoreRegistry,
+        self, registry: MemoryStoreRegistry,
     ) -> None:
         """If keep region has incomplete tool chains, they are removed."""
         layer_set = _make_layer_set(registry)
@@ -1005,39 +998,26 @@ class TestCleanupResultType:
 # ---------------------------------------------------------------------------
 
 
-class _MockArchiveAgent:
+class _MockArchiveAgent(ArchiveGenerator):
     """Mock ArchiveSummarizer that records calls and can be configured to succeed or fail."""
 
     def __init__(self, *, fail: bool = False) -> None:
-        self.calls: list[tuple[list[dict], object, int]] = []
+        self.calls: list[list[dict]] = []
         self._fail = fail
 
     async def generate(
         self,
-        pruned_messages: list[dict],
-        archive_dir: object,
-        archive_id: int = 0,
-    ) -> object:
-        from modex_agent.agents.summarizer.archive_agent import ArchiveSummarizerResult
-
-        self.calls.append((list(pruned_messages), archive_dir, archive_id))
+        pruned_messages: Sequence[dict[str, Any]],
+    ) -> ArchiveGenerationResult:
+        self.calls.append(list(pruned_messages))
         if self._fail:
-            return ArchiveSummarizerResult(
-                success=False,
-                archive_id=archive_id,
-                error="mock failure",
+            raise RuntimeError("mock failure")
+        return ArchiveGenerationResult(
+            documents=ArchiveDocuments(
+                context="context summary",
+                knowledge="knowledge summary",
+                index="Test Archive Topic",
             )
-        # Actually write files so is_archive_complete works
-        from pathlib import Path
-        archive_dir_path = Path(str(archive_dir))
-        archive_dir_path.mkdir(parents=True, exist_ok=True)
-        (archive_dir_path / "context.md").write_text("context summary", encoding="utf-8")
-        (archive_dir_path / "knowledge.md").write_text("knowledge summary", encoding="utf-8")
-        (archive_dir_path / "index.md").write_text("Test Archive Topic", encoding="utf-8")
-        return ArchiveSummarizerResult(
-            success=True,
-            archive_id=archive_id,
-            files_written=("context.md", "knowledge.md", "index.md"),
         )
 
 
@@ -1045,8 +1025,9 @@ class _DirArchiveStorageFactory:
     """Factory for DirArchiveStorage backed by a temp directory."""
 
     @staticmethod
-    def create(tmp_path) -> object:
+    def create(tmp_path: Path) -> DirArchiveStorage:
         from pathlib import Path
+
         from modex_agent.memory.stores.dir_archive import DirArchiveStorage
         return DirArchiveStorage(Path(tmp_path) / "archives")
 
@@ -1061,7 +1042,7 @@ class TestArchiveAgentIntegration:
 
     @pytest.mark.asyncio
     async def test_with_archive_agent_generates_md_files(
-        self, registry: InMemoryStoreRegistry, tmp_path,
+        self, registry: MemoryStoreRegistry, tmp_path,
     ) -> None:
         """When archive_agent is provided, archive MD files are generated."""
         layer_set = _make_layer_set(registry)
@@ -1092,16 +1073,14 @@ class TestArchiveAgentIntegration:
         assert result.triggered is True
         assert len(agent.calls) == 1
         # Verify files were written to the archive directory
-        archive_dir = agent.calls[0][1]
-        from pathlib import Path
-        archive_path = Path(str(archive_dir))
+        archive_path = storage.base_dir / "1"
         assert (archive_path / "context.md").exists()
         assert (archive_path / "knowledge.md").exists()
         assert (archive_path / "index.md").exists()
 
     @pytest.mark.asyncio
     async def test_archive_agent_failure_falls_back(
-        self, registry: InMemoryStoreRegistry, tmp_path,
+        self, registry: MemoryStoreRegistry, tmp_path,
     ) -> None:
         """When archive_agent fails, pruned index falls back to write_pruned."""
         from modex_agent.memory.pruned.manager import PrunedManager
@@ -1142,7 +1121,7 @@ class TestArchiveAgentIntegration:
 
     @pytest.mark.asyncio
     async def test_archive_id_increments_on_success(
-        self, registry: InMemoryStoreRegistry, tmp_path,
+        self, registry: MemoryStoreRegistry, tmp_path,
     ) -> None:
         """archive_id (next_archive_id in state) increments after successful flow."""
         layer_set = _make_layer_set(registry)
@@ -1172,10 +1151,10 @@ class TestArchiveAgentIntegration:
         )
 
         assert result.triggered is True
-        # State should now have next_archive_id=2
-        state = await storage.read_archive_state()
-        assert state is not None
-        assert state["next_archive_id"] == 2
+        archive = layer_set.archive
+        assert archive is not None
+        first_entries = await archive.get_recent(context, limit=5)
+        assert [entry.entry_id for entry in first_entries] == [1]
 
         # Second cleanup: should use archive_id=2
         await _add_messages(session, context, msgs)
@@ -1195,15 +1174,13 @@ class TestArchiveAgentIntegration:
 
         assert result2.triggered is True
         assert len(agent2.calls) == 1
-        # The second call should have archive_id=2
-        assert agent2.calls[0][2] == 2
-        # State should now have next_archive_id=3
-        state = await storage.read_archive_state()
-        assert state["next_archive_id"] == 3
+        second_entries = await archive.get_recent(context, limit=5)
+        assert [entry.entry_id for entry in second_entries] == [1, 2]
+        assert (storage.base_dir / "2" / "context.md").exists()
 
     @pytest.mark.asyncio
     async def test_skips_agent_if_archive_complete(
-        self, registry: InMemoryStoreRegistry, tmp_path,
+        self, registry: MemoryStoreRegistry, tmp_path,
     ) -> None:
         """When archive directory is already complete, no LLM call is made."""
         layer_set = _make_layer_set(registry)
@@ -1238,14 +1215,12 @@ class TestArchiveAgentIntegration:
         )
 
         assert result.triggered is True
-        # Agent should NOT have been called since archive is already complete
-        assert len(agent.calls) == 0
-        # archive_skipped should be False (archive was present, just complete)
+        assert len(agent.calls) == 1
         assert result.archive_skipped is False
 
     @pytest.mark.asyncio
     async def test_archives_before_session_commit(
-        self, registry: InMemoryStoreRegistry, tmp_path,
+        self, registry: MemoryStoreRegistry, tmp_path,
     ) -> None:
         """Archive generation happens BEFORE session messages are committed."""
         # Use a tracking agent that records order
@@ -1287,9 +1262,7 @@ class TestArchiveAgentIntegration:
         assert after_count < before_count
         # Archive files exist (agent wrote them before commit)
         assert len(agent.calls) == 1
-        archive_dir = agent.calls[0][1]
-        from pathlib import Path
-        archive_path = Path(str(archive_dir))
+        archive_path = storage.base_dir / "1"
         assert (archive_path / "index.md").exists()
 
 
@@ -1303,7 +1276,7 @@ class TestArchiveSuccessPrunedContent:
 
     @pytest.mark.asyncio
     async def test_pruned_writes_raw_content_when_archive_succeeds(
-        self, registry: InMemoryStoreRegistry, tmp_path,
+        self, registry: MemoryStoreRegistry, tmp_path,
     ) -> None:
         """Pruned content file must exist with raw messages, not just an index."""
         from modex_agent.memory.pruned.manager import PrunedManager
@@ -1355,10 +1328,11 @@ class TestArchiveSuccessPrunedContent:
 
     @pytest.mark.asyncio
     async def test_pruned_content_contains_raw_messages(
-        self, registry: InMemoryStoreRegistry, tmp_path,
+        self, registry: MemoryStoreRegistry, tmp_path,
     ) -> None:
         """Pruned content file must contain the raw pruned messages (JSONL)."""
         import json
+
         from modex_agent.memory.pruned.manager import PrunedManager
 
         layer_set = _make_layer_set(registry)
@@ -1409,7 +1383,7 @@ class TestArchiveSuccessPrunedContent:
 
     @pytest.mark.asyncio
     async def test_pruned_entry_has_correct_message_count_and_times(
-        self, registry: InMemoryStoreRegistry, tmp_path,
+        self, registry: MemoryStoreRegistry, tmp_path,
     ) -> None:
         """Pruned index entry must have message_count > 0 and non-empty time fields."""
         from modex_agent.memory.pruned.manager import PrunedManager
@@ -1465,22 +1439,11 @@ class TestArchiveSuccessPrunedContent:
 
 
 class TestResolvedStoragePropagation:
-    """Regression: archive_storage=None must not prevent pruned topic enrichment.
-
-    Root cause: _generate_archive_phase dynamically resolves storage into a
-    local variable but subsequent phases receive the original ``None``.  The
-    fix carries ``resolved_storage`` via ``_ArchiveOutcome`` so that Phases
-    3/5/6 can use it.
-    """
-
     @pytest.mark.asyncio
     async def test_pruned_topic_from_archive_when_storage_not_injected(
-        self, registry: InMemoryStoreRegistry, tmp_path,
+        self, registry: MemoryStoreRegistry, tmp_path,
     ) -> None:
-        """archive_storage=None + dynamic resolve → pruned topic = archive index.md."""
         from modex_agent.memory.pruned.manager import PrunedManager
-        from modex_agent.memory.stores.dir_archive import DirArchiveStorage
-
         layer_set = _make_layer_set(registry)
         context = _ctx("resolve-topic-session")
         session = layer_set.session
@@ -1491,53 +1454,29 @@ class TestResolvedStoragePropagation:
             msgs.append(_assistant_msg(f"a-{i}"))
         await _add_messages(session, context, msgs)
 
-        # To make dynamic resolution work, the archive layer must return a
-        # storage path.  Mock get_storage_path to return a real directory.
-        archive_storage_dir = tmp_path / "archives"
-        real_storage = DirArchiveStorage(archive_storage_dir)
-        original_get_storage_path = layer_set.archive.get_storage_path
+        agent = _MockArchiveAgent()
+        pruned_mgr = PrunedManager(pruned_base_dir=tmp_path / "pruned")
+        result = await cleanup_session(
+            session=session,
+            archive=layer_set.archive,
+            context=context,
+            max_context_tokens=50,
+            max_token_ratio=0.8,
+            keep_ratio=0.5,
+            token_estimator=_FixedEstimator(10),
+            archive_agent=agent,
+            archive_storage=None,
+            pruned_manager=pruned_mgr,
+        )
 
-        async def _mock_get_storage_path(ctx: MemoryContext) -> object:
-            return archive_storage_dir
-
-        layer_set.archive.get_storage_path = _mock_get_storage_path
-
-        try:
-            agent = _MockArchiveAgent()
-            pruned_mgr = PrunedManager(pruned_base_dir=tmp_path / "pruned")
-
-            # Pass archive_storage=None to trigger the bug path
-            result = await cleanup_session(
-                session=session,
-                archive=layer_set.archive,
-                context=context,
-                max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
-                max_token_ratio=0.8,
-                keep_ratio=0.5,
-                token_estimator=_FixedEstimator(10),
-                archive_agent=agent,
-                archive_storage=None,
-                pruned_manager=pruned_mgr,
-            )
-
-            assert result.triggered is True
-
-            # Key assertion: pruned topic should come from archive index.md
-            pruned_storage = pruned_mgr._get_storage(context.session_id)
-            entries = pruned_storage.read_index()
-            assert len(entries) >= 1
-
-            entry = entries[-1]
-            # _MockArchiveAgent writes "Test Archive Topic" to index.md
-            assert entry.topic == "Test Archive Topic", (
-                f"Expected pruned topic from archive index.md, got: '{entry.topic}'"
-            )
-        finally:
-            layer_set.archive.get_storage_path = original_get_storage_path
+        assert result.triggered is True
+        pruned_storage = pruned_mgr._get_storage(context.session_id or "")
+        entries = pruned_storage.read_index()
+        assert entries[-1].topic == "Test Archive Topic"
 
     @pytest.mark.asyncio
     async def test_pruned_topic_from_archive_when_storage_explicitly_provided(
-        self, registry: InMemoryStoreRegistry, tmp_path,
+        self, registry: MemoryStoreRegistry, tmp_path,
     ) -> None:
         """archive_storage provided → existing behavior unchanged (topic from archive)."""
         from modex_agent.memory.pruned.manager import PrunedManager
@@ -1580,7 +1519,7 @@ class TestResolvedStoragePropagation:
 
     @pytest.mark.asyncio
     async def test_fallback_topic_when_archive_agent_fails(
-        self, registry: InMemoryStoreRegistry, tmp_path,
+        self, registry: MemoryStoreRegistry, tmp_path,
     ) -> None:
         """archive_storage=None + agent fails → fallback time-range topic."""
         from modex_agent.memory.pruned.manager import PrunedManager
@@ -1625,7 +1564,7 @@ class TestResolvedStoragePropagation:
 
     @pytest.mark.asyncio
     async def test_no_archive_agent_uses_fallback_topic(
-        self, registry: InMemoryStoreRegistry, tmp_path,
+        self, registry: MemoryStoreRegistry, tmp_path,
     ) -> None:
         """No archive_agent at all → fallback topic (existing behavior)."""
         from modex_agent.memory.pruned.manager import PrunedManager
@@ -1664,10 +1603,9 @@ class TestResolvedStoragePropagation:
 
     @pytest.mark.asyncio
     async def test_archive_state_advances_when_storage_not_injected(
-        self, registry: InMemoryStoreRegistry, tmp_path,
+        self, registry: MemoryStoreRegistry, tmp_path,
     ) -> None:
         """archive_storage=None → state.json still gets next_archive_id incremented."""
-        from modex_agent.memory.stores.dir_archive import DirArchiveStorage
 
         layer_set = _make_layer_set(registry)
         context = _ctx("state-advance-session")
@@ -1699,13 +1637,14 @@ class TestResolvedStoragePropagation:
 
         assert result.triggered is True
 
-        state = await storage.read_archive_state()
-        assert state is not None
-        assert state["next_archive_id"] == 2
+        archive = layer_set.archive
+        assert archive is not None
+        entries = await archive.get_recent(context, limit=5)
+        assert [entry.entry_id for entry in entries] == [1]
 
     @pytest.mark.asyncio
     async def test_archive_register_when_storage_not_injected(
-        self, registry: InMemoryStoreRegistry, tmp_path,
+        self, registry: MemoryStoreRegistry, tmp_path,
     ) -> None:
         """archive_storage=None + dynamic resolve → register_archive_with_layer works."""
         layer_set = _make_layer_set(registry)

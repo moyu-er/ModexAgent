@@ -959,7 +959,7 @@ async def test_sessions_includes_external_adapter_conversations() -> None:
         content="QQ message",
     )
     with bind_workspace_root(data_dir):
-        server._store.append(qq_sid, event)
+        await server._store.append(qq_sid, event)
 
         # Save QQ session to the session store so it appears in listing.
         await session_store.save(SessionInfo(

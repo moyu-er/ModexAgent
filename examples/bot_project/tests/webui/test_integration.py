@@ -6,6 +6,8 @@ import json
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from bot.webui.events import (
     ModelContentDelta,
     ModelReasoningDelta,
@@ -18,7 +20,8 @@ from bot.webui.events import (
 from bot.webui.transcript_store import JSONLTranscriptStore
 
 
-def test_full_conversation_roundtrip() -> None:
+@pytest.mark.asyncio
+async def test_full_conversation_roundtrip() -> None:
     """Write a complete conversation flow and read it back."""
     with tempfile.TemporaryDirectory() as tmp:
         store = JSONLTranscriptStore(Path(tmp))
@@ -37,9 +40,9 @@ def test_full_conversation_roundtrip() -> None:
         ]
 
         for evt in events:
-            store.append(session_id, evt)
+            await store.append(session_id, evt)
 
-        loaded = list(store.load(session_id))
+        loaded = await store.load(session_id)
         assert len(loaded) == 7
 
         # Verify event type order
@@ -67,7 +70,8 @@ def test_event_json_roundtrip() -> None:
     assert restored.content == original.content  # type: ignore[attr-defined]
 
 
-def test_multi_agent_threads() -> None:
+@pytest.mark.asyncio
+async def test_multi_agent_threads() -> None:
     """Verify multiple agents within one conversation are tracked separately."""
     with tempfile.TemporaryDirectory() as tmp:
         store = JSONLTranscriptStore(Path(tmp))
@@ -76,15 +80,15 @@ def test_multi_agent_threads() -> None:
         main_sid = "multiagent.main"
         sub_sid = "multiagent.office-expert"
 
-        store.append(main_sid, UserMessageEvent(session_id=main_sid, agent_name="main", content="hi"))
-        store.append(sub_sid, UserMessageEvent(session_id=sub_sid, agent_name="office-expert", content="analyzing..."))
+        await store.append(main_sid, UserMessageEvent(session_id=main_sid, agent_name="main", content="hi"))
+        await store.append(sub_sid, UserMessageEvent(session_id=sub_sid, agent_name="office-expert", content="analyzing..."))
 
-        sessions = store.list_sessions_by_prefix("multiagent")
+        sessions = await store.list_sessions_by_prefix("multiagent")
         assert sessions == {main_sid, sub_sid}
 
-        main_events = list(store.load(main_sid))
+        main_events = await store.load(main_sid)
         assert len(main_events) == 1
         assert main_events[0].event == WebUIEventType.USER_MESSAGE.value
 
-        sub_events = list(store.load(sub_sid))
+        sub_events = await store.load(sub_sid)
         assert len(sub_events) == 1

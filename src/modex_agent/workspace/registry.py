@@ -4,45 +4,123 @@ Replaces the single-active ``_active`` value: many workspaces live concurrently,
 each lazily materialized on first use and cached by resolved target path.
 Generic over ``R`` so the package stays business-agnostic.
 """
+
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import uuid
 from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Generic, TypeVar
 
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.factory import ResourceFactory
+from modex_agent.workspace.record import WorkspaceRecord
 
 R = TypeVar("R")
 
 
-class RegistryStore(ABC):
-    """Persistence backend for the set of known (non-home) workspace targets."""
+def _now_iso() -> str:
+    """Current UTC timestamp as an ISO-8601 string."""
+    return datetime.now(UTC).isoformat()
+
+
+class WorkspaceRegistryStore(ABC):
+    """Persistence backend for known workspaces (T14 deepening).
+
+    Enriched successor to the legacy ``RegistryStore``: stores structured
+    :class:`WorkspaceRecord` metadata (workspace_id, display_name, timestamps,
+    is_home, metadata_json) instead of a bare ``list[Path]``.
+
+    Abstract methods (adapters MUST implement):
+        list_workspaces(order_by, limit) -> list[WorkspaceRecord]
+        upsert_workspace(record) -> None
+        delete_workspace(target_path) -> None
+        get_workspace(target_path) -> WorkspaceRecord | None
+
+    Concrete legacy-compat methods (derived from the abstract ones, retained
+    until T23 removes the ``RegistryStore`` alias and the ``load_known_targets``
+    / ``save_known_targets`` call sites):
+        load_known_targets() -> list[Path]
+        save_known_targets(targets) -> None
+    """
 
     @abstractmethod
-    def load_known_targets(self) -> list[Path]:
-        """Return previously-registered non-home workspace target paths."""
+    async def list_workspaces(
+        self, order_by: str = "last_active", limit: int = 20
+    ) -> list[WorkspaceRecord]:
+        """Return known workspace records, sorted by ``order_by`` descending.
+
+        Supported ``order_by`` values: ``"last_active"`` (default, most recent
+        first), ``"created_at"`` (newest first).  ``limit`` caps the result
+        count (default 20).
+        """
+        ...
 
     @abstractmethod
-    def save_known_targets(self, targets: list[Path]) -> None:
-        """Persist the current set of non-home workspace target paths."""
+    async def upsert_workspace(self, record: WorkspaceRecord) -> None:
+        """Insert or replace the record for ``record.target_path``."""
+        ...
+
+    @abstractmethod
+    async def delete_workspace(self, target_path: str) -> None:
+        """Remove the record keyed by ``target_path`` (no-op if absent)."""
+        ...
+
+    @abstractmethod
+    async def get_workspace(self, target_path: str) -> WorkspaceRecord | None:
+        """Return the record for ``target_path``, or ``None`` if absent."""
+        ...
+
+    # ------------------------------------------------------------------
+    # Legacy compat — derived from the abstract methods above.
+    # Retained until T23 removes the RegistryStore alias and migrates the
+    # last call sites (WorkspaceRegistry.__init__ / get_or_open).
+    # ------------------------------------------------------------------
+
+    async def load_known_targets(self) -> list[Path]:
+        """Deprecated: use ``list_workspaces``. Non-home target paths only."""
+        records = await self.list_workspaces(order_by="last_active", limit=10_000)
+        return [Path(r.target_path) for r in records if not r.is_home]
+
+    async def save_known_targets(self, targets: list[Path]) -> None:
+        """Deprecated: use ``upsert_workspace``. Full-replace semantics.
+
+        Upserts each target (creating a minimal record for new paths,
+        preserving existing metadata), then deletes non-home records whose
+        target is no longer in ``targets``.
+        """
+        now = _now_iso()
+        desired = {str(Path(t).resolve()) for t in targets}
+        for target in desired:
+            if await self.get_workspace(target) is None:
+                await self.upsert_workspace(
+                    WorkspaceRecord(
+                        workspace_id=str(uuid.uuid4()),
+                        target_path=target,
+                        display_name=None,
+                        created_at=now,
+                        last_active=now,
+                        is_home=False,
+                        metadata_json={},
+                    )
+                )
+        for record in await self.list_workspaces(
+            order_by="last_active", limit=10_000
+        ):
+            if record.is_home:
+                continue
+            resolved = str(Path(record.target_path).resolve())
+            if resolved not in desired:
+                await self.delete_workspace(record.target_path)
 
 
-class InMemoryRegistryStore(RegistryStore):
-    """In-memory RegistryStore for tests."""
-
-    def __init__(self) -> None:
-        self._targets: list[Path] = []
-
-    def load_known_targets(self) -> list[Path]:
-        return list(self._targets)
-
-    def save_known_targets(self, targets: list[Path]) -> None:
-        self._targets = list(targets)
+#: Deprecated alias retained until T23 removes the last import sites.
+RegistryStore = WorkspaceRegistryStore
 
 
 class WorkspaceRegistry(Generic[R]):
@@ -54,13 +132,13 @@ class WorkspaceRegistry(Generic[R]):
         home: Path,
         data_dir_name: str,
         factory: ResourceFactory[R],
-        store: RegistryStore,
+        store: WorkspaceRegistryStore,
         max_materialized: int | None = None,
     ) -> None:
         self._home: Path = Path(home).resolve()
         self._data_dir_name: str = data_dir_name
         self._factory: ResourceFactory[R] = factory
-        self._store: RegistryStore = store
+        self._store: WorkspaceRegistryStore = store
         self._max_materialized: int | None = max_materialized
         self._home_context: WorkspaceContext = WorkspaceContext.from_target(
             home, data_dir_name=data_dir_name, home=home
@@ -70,12 +148,23 @@ class WorkspaceRegistry(Generic[R]):
         self._inflight: dict[Path, asyncio.Task[R]] = {}
         self._in_flight_turns: dict[Path, int] = {}
         self._lru_order: deque[Path] = deque()
-        for target in store.load_known_targets():
-            resolved = Path(target).resolve()
-            if resolved != self._home:
-                self._contexts[resolved] = WorkspaceContext.from_target(
-                    resolved, data_dir_name=data_dir_name, home=self._home
-                )
+        self._registry_lock = asyncio.Lock()
+        self._initialized = False
+
+    async def initialize(self) -> None:
+        """Load persisted workspace contexts once."""
+        async with self._registry_lock:
+            if self._initialized:
+                return
+            for target in await self._store.load_known_targets():
+                resolved = Path(target).resolve()
+                if resolved != self._home:
+                    self._contexts[resolved] = WorkspaceContext.from_target(
+                        resolved,
+                        data_dir_name=self._data_dir_name,
+                        home=self._home,
+                    )
+            self._initialized = True
 
     @property
     def home(self) -> Path:
@@ -89,7 +178,7 @@ class WorkspaceRegistry(Generic[R]):
     def factory(self) -> ResourceFactory[R]:
         return self._factory
 
-    def get_or_open(self, target: Path) -> WorkspaceContext:
+    async def get_or_open(self, target: Path) -> WorkspaceContext:
         """Return the WorkspaceContext for ``target``, creating+registering if new.
 
         The home target always resolves to the implicit home context.
@@ -97,16 +186,31 @@ class WorkspaceRegistry(Generic[R]):
         key = Path(target).resolve()
         if key == self._home:
             return self._home_context
-        ctx = self._contexts.get(key)
-        if ctx is None:
+        async with self._registry_lock:
+            ctx = self._contexts.get(key)
+            if ctx is not None:
+                return ctx
             ctx = WorkspaceContext.from_target(
                 target, data_dir_name=self._data_dir_name, home=self._home
             )
-            self._contexts[key] = ctx
-            self._store.save_known_targets(
-                [t for t in self._contexts if t != self._home]
+            now = _now_iso()
+            await self._store.upsert_workspace(
+                WorkspaceRecord(
+                    workspace_id=str(uuid.uuid4()),
+                    target_path=str(key),
+                    display_name=None,
+                    created_at=now,
+                    last_active=now,
+                    is_home=False,
+                    metadata_json={},
+                )
             )
-        return ctx
+            self._contexts[key] = ctx
+            return ctx
+
+    def known_targets(self) -> list[Path]:
+        """Return the initialized in-memory workspace targets."""
+        return list(self._contexts)
 
     async def materialize(self, ctx: WorkspaceContext) -> R:
         """Lazily build + cache the resource bundle for ``ctx`` (cached on target).
@@ -141,30 +245,32 @@ class WorkspaceRegistry(Generic[R]):
     async def evict_and_release(self, target: Path) -> None:
         """Drop the cached resource bundle for ``target`` and evict it (memory only)."""
         key = Path(target).resolve()
-        resources = self._resources.pop(key, None)
+        resources = self._resources.get(key)
         if resources is not None:
             await self._factory.evict(resources)
-        try:
+            self._resources.pop(key, None)
+        with contextlib.suppress(ValueError):
             self._lru_order.remove(key)
-        except ValueError:
-            pass
 
-    async def evict_all(self) -> None:
+    async def evict_all(self) -> bool:
         """Evict EVERY materialized resource bundle (best-effort, for shutdown).
 
         Used by BotService.stop() so non-home workspaces don't leak their
         broker/background tasks. Per-target errors are suppressed so one failing
-        workspace cannot block teardown of the rest.
+        workspace cannot block teardown of the rest. Returns whether every
+        materialized bundle was definitively evicted.
         """
-        for key in list(self._resources.keys()):
-            resources = self._resources.pop(key, None)
+        completed = True
+        for key, resources in list(self._resources.items()):
             try:
+                await self._factory.evict(resources)
+            except Exception:
+                completed = False
+                continue
+            self._resources.pop(key, None)
+            with contextlib.suppress(ValueError):
                 self._lru_order.remove(key)
-            except ValueError:
-                pass
-            if resources is not None:
-                with contextlib.suppress(BaseException):
-                    await self._factory.evict(resources)
+        return completed
 
     def materialized_count(self) -> int:
         return len(self._resources)
@@ -190,10 +296,8 @@ class WorkspaceRegistry(Generic[R]):
     def _touch_lru(self, target: Path) -> None:
         """Move ``target`` to the most-recently-used position."""
         key = Path(target).resolve()
-        try:
+        with contextlib.suppress(ValueError):
             self._lru_order.remove(key)
-        except ValueError:
-            pass
         self._lru_order.append(key)
 
     def _oldest_evictable(self, *, protected: Path | None) -> Path | None:
@@ -221,10 +325,9 @@ class WorkspaceRegistry(Generic[R]):
             victim = self._oldest_evictable(protected=protected)
             if victim is None:
                 break
-            resources = self._resources.pop(victim, None)
-            try:
-                self._lru_order.remove(victim)
-            except ValueError:
-                pass
+            resources = self._resources.get(victim)
             if resources is not None:
                 await self._factory.evict(resources)
+                self._resources.pop(victim, None)
+            with contextlib.suppress(ValueError):
+                self._lru_order.remove(victim)

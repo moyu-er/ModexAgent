@@ -275,6 +275,110 @@ async def test_pool_resources_experience_dir_from_pool_data(tmp_path: Path) -> N
     assert pool_data.experience_dir == expected
 
 
+async def test_build_pool_data_uses_workspace_sqlite_for_session_memory(
+    tmp_path: Path,
+) -> None:
+    from bot.workspace.pool_data import build_pool_data
+
+    from modex_agent.core.scope import MemoryContext
+    from modex_agent.ioc.configs.app import AppConfig
+    from modex_agent.ioc.configs.memory import MemoryConfig
+    from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
+    from modex_agent.multi_agent.pool_config.specs import MainAgentSpec, PoolSpec
+    from modex_agent.persistence.managers import WorkspacePersistenceManager
+
+    target = tmp_path / "ws"
+    target.mkdir()
+    ctx = WorkspaceContext.from_target(target, data_dir_name=".modex", home=tmp_path)
+    pool_spec = PoolSpec(
+        name="test_pool",
+        main_agent_name="main",
+        main=MainAgentSpec(agent_name="main"),
+    )
+    persistence = WorkspacePersistenceManager(ctx.paths.root / "state.db")
+    await persistence.open()
+    try:
+        pool_data = await build_pool_data(
+            ctx,
+            "test_pool",
+            pool_spec,
+            None,
+            PoolAssemblyDeps(memory=MemoryConfig()),
+            "",
+            app_config=AppConfig(),
+            persistence=persistence,
+        )
+        memory_system = pool_data.context_manager.memory_system
+        assert memory_system is not None
+        from modex_agent.persistence.adapters.turn_state_store import SqliteTurnStateStore
+        from modex_agent.persistence.coordinator import SqliteDecisionCoordinator
+
+        assert isinstance(pool_data.decision_coordinator, SqliteDecisionCoordinator)
+        assert isinstance(pool_data.turn_store, SqliteTurnStateStore)
+        assert pool_data.decision_coordinator._connection is persistence.connection
+        assert (
+            pool_data.decision_coordinator._codec_registry
+            is pool_data.turn_store._codec_registry
+        )
+        await memory_system.add_messages(
+            MemoryContext(session_id="session-1", agent_id="main"),
+            [{"role": "user", "content": "persisted in SQLite"}],
+        )
+
+        row_count = await persistence.connection.query_value(
+            "SELECT COUNT(*) FROM memory_session_messages",
+            int,
+        )
+        assert row_count == 1
+
+        await memory_system.close()
+        table_count = await persistence.connection.query_value(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'",
+            int,
+        )
+        assert table_count > 0
+    finally:
+        await persistence.close()
+
+
+async def test_build_pool_data_file_backend_has_no_decision_coordinator(
+    tmp_path: Path,
+) -> None:
+    from bot.workspace.pool_data import build_pool_data
+
+    from modex_agent.ioc.configs.app import AppConfig
+    from modex_agent.ioc.configs.memory import MemoryConfig
+    from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
+    from modex_agent.multi_agent.pool_config.specs import MainAgentSpec, PoolSpec
+    from modex_agent.persistence.config import PersistenceBackend, PersistenceConfig
+
+    target = tmp_path / "ws"
+    target.mkdir()
+    ctx = WorkspaceContext.from_target(target, data_dir_name=".modex", home=tmp_path)
+    pool_spec = PoolSpec(
+        name="test_pool",
+        main_agent_name="main",
+        main=MainAgentSpec(agent_name="main"),
+    )
+
+    pool_data = await build_pool_data(
+        ctx,
+        "test_pool",
+        pool_spec,
+        None,
+        PoolAssemblyDeps(memory=MemoryConfig()),
+        "",
+        app_config=AppConfig(
+            persistence=PersistenceConfig(backend=PersistenceBackend.FILE),
+        ),
+    )
+
+    assert pool_data.decision_coordinator is None
+    memory_system = pool_data.context_manager.memory_system
+    assert memory_system is not None
+    await memory_system.close()
+
+
 async def test_pool_resources_background_tasks_live_on_r(tmp_path: Path) -> None:
     """Verify that BackgroundTaskRunner is attached to R and cancels on stop."""
     from bot.workspace.background import BackgroundTaskRunner

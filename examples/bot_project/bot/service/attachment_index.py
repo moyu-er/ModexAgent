@@ -43,7 +43,7 @@ def _load_accepts_sessions_dir(store_type: type) -> bool:
     return "sessions_dir" in inspect.signature(store_type.load).parameters
 
 
-def find_attachment(
+async def find_attachment(
     store: TranscriptStore,
     session_id: str,
     attachment_id: str,
@@ -69,9 +69,9 @@ def find_attachment(
     # TypeError raised from inside the iterator is surfaced instead of being
     # silently swallowed and retried as the 1-arg form.
     if _load_accepts_sessions_dir(type(store)):
-        events = list(store.load(session_id, sessions_dir=sessions_dir))  # type: ignore[call-arg]
+        events = await store.load(session_id, sessions_dir=sessions_dir)  # type: ignore[call-arg]
     else:
-        events = list(store.load(session_id))
+        events = await store.load(session_id)
 
     for event in events:
         event_type = getattr(event, "event", "")

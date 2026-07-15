@@ -3,15 +3,15 @@ from __future__ import annotations
 from typing import Any
 
 from modex_agent.core.provider import LLMProvider
-from modex_agent.memory.core.layers import MemoryLayerSet
 from modex_agent.core.scope import (
     MemoryContext,
     MemoryLayerName,
-    MemoryScope,
+    Scope,
     SessionScope,
     UserScope,
 )
-from modex_agent.memory.core.storage import MemoryStorage
+from modex_agent.memory.core.layers import MemoryLayerSet
+from modex_agent.memory.core.split_stores import MemoryStoreBundle
 from modex_agent.memory.layers.archive import ScopedArchiveMemoryManager
 from modex_agent.memory.layers.config import (
     ArchiveMemoryConfig,
@@ -125,13 +125,13 @@ class MemoryLayerFactory:
     def _storage_factory(
         registry: MemoryStoreRegistry,
         layer: MemoryLayerName,
-        scope: MemoryScope | None = None,
+        scope: Scope | None = None,
     ) -> StorageFactory:
         effective_scope = scope or (
             SessionScope() if layer == MemoryLayerName.SESSION else UserScope()
         )
 
-        async def resolve(context: MemoryContext) -> MemoryStorage:
+        async def resolve(context: MemoryContext) -> MemoryStoreBundle:
             return await registry.resolve(layer=layer, scope=effective_scope, context=context)
 
         return resolve

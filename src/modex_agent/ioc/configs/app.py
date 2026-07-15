@@ -18,6 +18,7 @@ from modex_agent.ioc.configs.model import GlobalModelConfig
 from modex_agent.ioc.configs.observability import ObservabilityConfig
 from modex_agent.ioc.configs.plugins import PluginConfig
 from modex_agent.ioc.configs.safety import SafetyConfig
+from modex_agent.persistence.config import PersistenceConfig
 
 _ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 
@@ -92,6 +93,7 @@ class AppConfig(BaseModel):
     paths: PathsConfig = Field(default_factory=PathsConfig)
     multi_agent: MultiAgentConfig = Field(default_factory=MultiAgentConfig)
     workspace: WorkspaceConfig = Field(default_factory=WorkspaceConfig)
+    persistence: PersistenceConfig = Field(default_factory=PersistenceConfig)
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> AppConfig:

@@ -11,25 +11,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from modex_agent.memory.archive_models import ArchiveGenerationResult
     from modex_agent.memory.prompts import PromptRegistry
-
-# ── Shared result types ────────────────────────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class ArchiveSummarizerResult:
-    """Result of archive generation."""
-
-    success: bool
-    archive_id: int = 0
-    files_written: tuple[str, ...] = ()
-    error: str | None = None
-
 
 # ── Shared utilities ───────────────────────────────────────────────────────────
 
@@ -50,11 +37,10 @@ def _get_registry() -> PromptRegistry:
 
 
 class ArchiveGenerator(ABC):
-    """Contract for agents that generate archive files from pruned messages.
+    """Contract for agents that generate typed archive content from pruned messages.
 
     The memory system calls ``generate()`` during ``cleanup_session()``
-    to turn pruned session messages into ``context.md``, ``knowledge.md``,
-    and ``index.md`` in an archive directory.
+    to turn pruned session messages into backend-neutral archive content.
 
     Concrete implementation: :class:`~framework.agents.summarizer.archive_agent.ArchiveSummarizer`.
     """
@@ -63,18 +49,13 @@ class ArchiveGenerator(ABC):
     async def generate(
         self,
         pruned_messages: Sequence[dict[str, Any]],
-        archive_dir: Path,
-        archive_id: int = 0,
-    ) -> ArchiveSummarizerResult:
-        """Generate archive files from pruned messages.
+    ) -> ArchiveGenerationResult:
+        """Generate archive content from pruned messages.
 
         Args:
             pruned_messages: Messages pruned from the session to summarize.
-            archive_dir: Target directory for the generated files.
-            archive_id: Numeric ID for this archive slot.
-
         Returns:
-            Result indicating success/failure and which files were written.
+            Typed context, knowledge, and index content ready for persistence.
         """
         ...
 

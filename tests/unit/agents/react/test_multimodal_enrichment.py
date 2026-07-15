@@ -23,7 +23,7 @@ from modex_agent.ioc.configs.llm import Modality, ModelCapabilities
 from modex_agent.media.models import Attachment, AttachmentLocator, Kind
 from modex_agent.memory.default_system import ScopedMessageHistory
 from modex_agent.memory.layers.factory import MemoryLayerFactory
-from modex_agent.memory.registry.in_memory import InMemoryStoreRegistry
+from modex_agent.memory.registry import DefaultMemoryStoreRegistry
 from modex_agent.core.scope import MemoryContext
 from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
@@ -67,14 +67,14 @@ def _make_runtime(capabilities: ModelCapabilities | None) -> AgentRuntime:
     return AgentRuntime(services=services, state=state)
 
 
-def _scoped_history() -> ScopedMessageHistory:
-    """A real ScopedMessageHistory backed by an in-memory store.
+def _scoped_history(tmp_path: Path) -> ScopedMessageHistory:
+    """A real ScopedMessageHistory backed by a file store.
 
     Using the real history (not a mock) is load-bearing for assertions (a)/(c):
     the test must read back what was *persisted*, proving the enrichment never
     mutated storage — only the transient messages list.
     """
-    registry = InMemoryStoreRegistry()
+    registry = DefaultMemoryStoreRegistry(tmp_path)
     layer_set = MemoryLayerFactory.single_user(registry=registry)
     ctx = MemoryContext(session_id="s1", user_id="u1")
     return ScopedMessageHistory(manager=layer_set.session, context=ctx)
@@ -91,7 +91,7 @@ class TestEnrichmentDivergence:
         runtime = _make_runtime(_CAPABLE)
         runtime.state.custom[TurnCustomKey.INLINE_ATTACHMENTS] = [att]
 
-        history = _scoped_history()
+        history = _scoped_history(tmp_path)
         persisted_user_content = "here is a cat"
         await history.append({"role": "user", "content": persisted_user_content})
 
@@ -140,7 +140,7 @@ class TestEnrichmentDivergence:
         ]
         ctx = AgentContext(
             system_prompt="sys",
-            history=_scoped_history(),
+            history=_scoped_history(tmp_path),
             tool_manager=None,  # type: ignore[arg-type]
             session=SessionInfo.from_str("test.agent"),
             identity=runtime.state.identity,
@@ -178,7 +178,7 @@ class TestEnrichmentDivergence:
         att = _make_attachment(str(img_path))
         runtime_t1.state.custom[TurnCustomKey.INLINE_ATTACHMENTS] = [att]
 
-        history = _scoped_history()
+        history = _scoped_history(tmp_path)
         await history.append({"role": "user", "content": "look at this cat"})
         await history.append({"role": "assistant", "content": "nice cat"})
 
@@ -237,7 +237,7 @@ class TestEnrichmentDivergence:
         runtime = _make_runtime(_CAPABLE)
         runtime.state.custom[TurnCustomKey.INLINE_ATTACHMENTS] = [att]
 
-        history = _scoped_history()
+        history = _scoped_history(tmp_path)
         await history.append({"role": "user", "content": "describe this"})
         await history.append({"role": "assistant", "content": "ok"})
 
@@ -270,7 +270,7 @@ class TestEnrichmentDivergence:
         messages_in: list[dict[str, Any]] = [{"role": "user", "content": "hi"}]
         ctx = AgentContext(
             system_prompt="sys",
-            history=_scoped_history(),
+            history=_scoped_history(tmp_path),
             tool_manager=None,  # type: ignore[arg-type]
             session=SessionInfo.from_str("test.agent"),
             identity=runtime.state.identity,
@@ -311,7 +311,7 @@ class TestApprovalResumeFallback:
         ]
         ctx = AgentContext(
             system_prompt="sys",
-            history=_scoped_history(),
+            history=_scoped_history(tmp_path),
             tool_manager=None,  # type: ignore[arg-type]
             session=SessionInfo.from_str("test.agent"),
             identity=runtime.state.identity,
@@ -341,7 +341,7 @@ class TestEnrichmentGuard:
         runtime = _make_runtime(_CAPABLE)
         runtime.state.custom[TurnCustomKey.INLINE_ATTACHMENTS] = [att]
 
-        history = _scoped_history()
+        history = _scoped_history(tmp_path)
         await history.append({"role": "user", "content": "look"})
 
         seen: list[Any] = []

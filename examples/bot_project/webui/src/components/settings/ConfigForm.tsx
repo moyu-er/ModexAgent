@@ -82,6 +82,7 @@ export function ConfigForm({ fields, values, errors, onChange }: Props) {
               label={field.label}
               required={field.required}
               value={listValue}
+              className="font-mono text-[13px]"
               onChange={(e) =>
                 update(
                   field.name,
@@ -133,6 +134,7 @@ export function ConfigForm({ fields, values, errors, onChange }: Props) {
             label={field.label}
             required={field.required}
             value={(v as string | undefined) ?? ""}
+            className="font-mono text-[13px]"
             onChange={(e) => update(field.name, e.target.value)}
             error={error}
             helper={error ? undefined : field.description}

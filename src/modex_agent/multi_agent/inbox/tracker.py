@@ -1,6 +1,19 @@
-"""Delivered ID Tracker 抽象与实现。"""
+"""Delivered ID Tracker — **deprecated** ABC + file implementation (T11).
+
+PRD story 23 merges delivered-id tracking into :class:`InboxMQ` internal:
+dedup is part of the inbox transaction, not a standalone ABC. The
+:class:`DeliveredIdTracker` ABC is kept here only as a **deprecated** seam
+for backwards compatibility; new code must not depend on it.
+
+:class:`FileDeliveredIdTracker` remains as an internal helper used by
+:class:`~modex_agent.multi_agent.inbox.server_local.LocalFileInboxMQ`. It is
+not part of the public ``InboxMQ`` surface.
+"""
+
+from __future__ import annotations
 
 import json
+import warnings
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -10,33 +23,55 @@ MAX_DELIVERED_IDS = 10000
 
 
 class DeliveredIdTracker(ABC):
-    """抽象已交付消息 ID 追踪器。"""
+    """**Deprecated** — delivered-id tracking is now internal to :class:`InboxMQ`.
+
+    This ABC is preserved solely so existing imports and the file backend's
+    internal helper continue to type-check. New code must not subclass or
+    depend on it; delivered-id dedup is owned by each :class:`InboxMQ`
+    implementation's consume/deliver transaction.
+    """
+
+    def __init__(self) -> None:
+        warnings.warn(
+            "DeliveredIdTracker is deprecated; delivered-id tracking is now "
+            "internal to InboxMQ (T11/PRD story 23).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
     @abstractmethod
     async def load(self, session_id: str) -> set[str]:
-        """加载指定 session 的已交付 ID 集合。"""
+        """Load the delivered-id set for ``session_id``."""
         ...
 
     @abstractmethod
     async def save(self, session_id: str, ids: set[str]) -> None:
-        """保存指定 session 的已交付 ID 集合。"""
+        """Persist the delivered-id set for ``session_id``."""
         ...
 
     @abstractmethod
     async def add(self, session_id: str, message_id: str) -> None:
-        """添加单个已交付 ID 并持久化。"""
+        """Add a single delivered id and persist."""
         ...
 
     @abstractmethod
     async def clear(self, session_id: str) -> None:
-        """清空指定 session 的已交付记录。"""
+        """Clear the delivered-id records for ``session_id``."""
         ...
 
 
 class FileDeliveredIdTracker(DeliveredIdTracker):
-    """基于本地文件的 DeliveredIdTracker 实现。"""
+    """File-based delivered-id tracker — internal helper for ``LocalFileInboxMQ``.
+
+    Not part of the public ``InboxMQ`` contract. Retained as a private
+    implementation detail of the file backend so the file MQ can compose it
+    without re-implementing the JSON load/save/LRU logic.
+    """
 
     def __init__(self, workspace: Path, max_ids: int = MAX_DELIVERED_IDS) -> None:
+        # Skip the deprecated base-class warning: this is the internal helper
+        # that LocalFileInboxMQ legitimately uses, not a public-tracker user.
+        # We intentionally do NOT call super().__init__().
         self._workspace = Path(workspace)
         self._workspace.mkdir(parents=True, exist_ok=True)
         self._max_ids = max_ids
@@ -82,4 +117,6 @@ class FileDeliveredIdTracker(DeliveredIdTracker):
     async def clear(self, session_id: str) -> None:
         delivered_path = self._delivered_path(self._session_dir(session_id))
         if delivered_path.exists():
-            delivered_path.write_text(json.dumps({"ids": []}, ensure_ascii=False), encoding="utf-8")
+            delivered_path.write_text(
+                json.dumps({"ids": []}, ensure_ascii=False), encoding="utf-8"
+            )

@@ -6,6 +6,7 @@ from modex_agent.memory.utils import (
 )
 from modex_agent.utils.helpers import strip_think
 
+
 class TestStripThink:
     def test_removes_think_tags(self):
         assert strip_think("<think>思考内容</think>实际内容") == "实际内容"

@@ -113,7 +113,18 @@ class ArchiveConfig(BaseModel):
     max_archive_count: int = 10  # trigger knowledge update when this many undigested
     max_archive_total: int = 20  # max archive dirs on disk (FIFO eviction)
     max_archive_inject: int = 3  # how many recent archives to inject into system prompt
-    scope: str = "user"  # "user"→UserScope (per-user isolation), "global"→GlobalScope (shared)
+    archive_inject_max_chars: int = 20_000
+    archive_inject_step_chars: int = 5_000
+    archive_inject_min_chars: int = 5_000
+    scope: list[str] = Field(default_factory=lambda: ["user"])  # dimension short-names
+
+    @field_validator("scope", mode="before")
+    @classmethod
+    def _wrap_scope_str(cls, v: object) -> list[str]:
+        """Auto-wrap a single string into a one-element list for backward compat."""
+        if isinstance(v, str):
+            return [v]
+        return v  # type: ignore[return-value]
 
 
 class KnowledgeConfig(BaseModel):
@@ -121,7 +132,15 @@ class KnowledgeConfig(BaseModel):
 
     enabled: bool = False
     default_templates_dir: str | None = None
-    scope: str = "user"  # "user"→UserScope (per-user isolation), "global"→GlobalScope (shared)
+    scope: list[str] = Field(default_factory=lambda: ["user"])  # dimension short-names
+
+    @field_validator("scope", mode="before")
+    @classmethod
+    def _wrap_scope_str(cls, v: object) -> list[str]:
+        """Auto-wrap a single string into a one-element list for backward compat."""
+        if isinstance(v, str):
+            return [v]
+        return v  # type: ignore[return-value]
 
 
 class GovernanceConfig(BaseModel):
@@ -146,7 +165,7 @@ class SummarizerAgentConfig(BaseModel):
     """Configuration for the summarizer-as-agent memory system."""
 
     enabled: bool = True
-    context_max_chars: int = 2000
+    context_max_chars: int = 20_000
     knowledge_max_chars: int = 3000
     index_max_chars: int = 200
     max_iterations: int = 50

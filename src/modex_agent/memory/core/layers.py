@@ -8,20 +8,21 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from modex_agent.core.message import ChatMessage
+from modex_agent.core.scope import MemoryContext, Scope, UserScope
 from modex_agent.memory.archive_models import (
     ArchiveBundleResult,
     ArchiveChannel,
+    ArchiveGenerationResult,
     ArchiveWrite,
 )
 from modex_agent.memory.core.consolidation import MemoryUpdate
-from modex_agent.core.message import ChatMessage
 from modex_agent.memory.core.models import (
     ArchiveEntry,
     LongTermMemory,
     StorageRevision,
     UnprocessedResult,
 )
-from modex_agent.core.scope import MemoryContext, MemoryScope, UserScope
 
 
 class SessionMemoryManager(ABC):
@@ -56,6 +57,29 @@ class SessionMemoryManager(ABC):
 
     @abstractmethod
     async def get_all_messages(self, context: MemoryContext) -> list[ChatMessage]:
+        pass
+
+    @abstractmethod
+    async def get_all_messages_raw(self, context: MemoryContext) -> list[ChatMessage]:
+        """Return all messages including soft-deleted ones.
+
+        Soft-deleted messages carry ``_deleted: True``.  Backends without
+        soft-delete (FILE) return the same set as ``get_all_messages``.
+        """
+        pass
+
+    @abstractmethod
+    async def retain_messages(
+        self,
+        context: MemoryContext,
+        keep_messages: Sequence[ChatMessage | dict[str, Any]],
+        expected_revision: StorageRevision,
+    ) -> StorageRevision | None:
+        """Soft-delete (or hard-delete in FILE) all active messages not in *keep_messages*.
+
+        Returns ``None`` on revision mismatch.  This is the cleanup commit
+        path — it avoids the DELETE-all-then-INSERT-kept pattern.
+        """
         pass
 
     @abstractmethod
@@ -128,6 +152,13 @@ class ArchiveMemoryManager(ABC):
     ) -> ArchiveBundleResult:
         raise NotImplementedError
 
+    async def append_generation(
+        self,
+        context: MemoryContext,
+        generation: ArchiveGenerationResult,
+    ) -> ArchiveBundleResult:
+        return await self.append_bundle(context, generation.writes)
+
     @abstractmethod
     async def get_recent(
         self,
@@ -188,7 +219,7 @@ class ArchiveMemoryManager(ABC):
         _ = context
         return None
 
-    def get_scope(self) -> MemoryScope:
+    def get_scope(self) -> Scope:
         """Return the scope used by this manager for storage resolution.
 
         Default is UserScope. Override when the manager is configured with
@@ -238,7 +269,7 @@ class KnowledgeMemoryManager(ABC):
     async def clear(self, context: MemoryContext) -> None:
         pass
 
-    def get_scope(self) -> MemoryScope:
+    def get_scope(self) -> Scope:
         """Return the scope used by this manager for storage resolution.
 
         Default is UserScope. Override when the manager is configured with

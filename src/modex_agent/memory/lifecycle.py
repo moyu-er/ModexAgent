@@ -8,13 +8,14 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Any
 
-from modex_agent.memory.archive_models import ArchiveChannel
-from modex_agent.memory.core.layers import MemoryLayerSet
 from modex_agent.core.scope import (
     MemoryContext,
     MemoryLayerName,
 )
+from modex_agent.memory.archive_models import ArchiveChannel
+from modex_agent.memory.core.layers import MemoryLayerSet
 from modex_agent.memory.registry.base import MemoryStoreRegistry
 from modex_agent.memory.stores.dir_archive import DirArchiveStorage
 
@@ -69,12 +70,15 @@ class DefaultMemoryMaintenancePolicy:
                 if ctx is None:
                     continue
                 try:
-                    archive_storage = await registry.resolve(
+                    archive_bundle = await registry.resolve(
                         layer=MemoryLayerName.ARCHIVE,
                         scope=layers.archive.get_scope(),
                         context=ctx,
                     )
-                    entries = await archive_storage.read_channel_logs(
+                    archive_store = archive_bundle.archive
+                    if archive_store is None:
+                        continue
+                    entries = await archive_store.read_channel_logs(
                         ArchiveChannel.CONTEXT.value,
                         since_archive_id=0,
                         limit=1_000_000,
@@ -89,9 +93,9 @@ class DefaultMemoryMaintenancePolicy:
                     if max_entries is not None and len(entries) > max_entries:
                         kept = entries[-max_entries:]
                         kept_ids = {int(e.get("archive_id", e.get("cursor", 0)) or 0) for e in kept}
-                        await archive_storage.save_channel_logs(ArchiveChannel.CONTEXT.value, kept)
+                        await archive_store.save_channel_logs(ArchiveChannel.CONTEXT.value, kept)
                         # Also prune KNOWLEDGE channel to match retained CONTEXT entries
-                        knowledge_entries = await archive_storage.read_channel_logs(
+                        knowledge_entries = await archive_store.read_channel_logs(
                             ArchiveChannel.KNOWLEDGE.value,
                             since_archive_id=0,
                             limit=1_000_000,
@@ -101,7 +105,7 @@ class DefaultMemoryMaintenancePolicy:
                             for e in knowledge_entries
                             if int(e.get("archive_id", 0) or 0) in kept_ids
                         ]
-                        await archive_storage.save_channel_logs(
+                        await archive_store.save_channel_logs(
                             ArchiveChannel.KNOWLEDGE.value,
                             knowledge_kept,
                         )
@@ -128,10 +132,10 @@ class DefaultMemoryMaintenancePolicy:
                             kept_ids = {
                                 int(e.get("archive_id", e.get("cursor", 0)) or 0) for e in kept
                             }
-                            await archive_storage.save_channel_logs(
+                            await archive_store.save_channel_logs(
                                 ArchiveChannel.CONTEXT.value, kept
                             )
-                            knowledge_entries = await archive_storage.read_channel_logs(
+                            knowledge_entries = await archive_store.read_channel_logs(
                                 ArchiveChannel.KNOWLEDGE.value,
                                 since_archive_id=0,
                                 limit=1_000_000,
@@ -141,7 +145,7 @@ class DefaultMemoryMaintenancePolicy:
                                 for e in knowledge_entries
                                 if int(e.get("archive_id", 0) or 0) in kept_ids
                             ]
-                            await archive_storage.save_channel_logs(
+                            await archive_store.save_channel_logs(
                                 ArchiveChannel.KNOWLEDGE.value,
                                 knowledge_kept,
                             )
@@ -154,8 +158,8 @@ class DefaultMemoryMaintenancePolicy:
                         # When registry returns a different storage type, look up
                         # the archive directory via the layer manager and wrap it.
                         dir_storage = (
-                            archive_storage
-                            if isinstance(archive_storage, DirArchiveStorage)
+                            archive_store
+                            if isinstance(archive_store, DirArchiveStorage)
                             else None
                         )
                         if dir_storage is None and layers.archive is not None:
@@ -207,18 +211,21 @@ class DefaultMemoryMaintenancePolicy:
                 if ctx is None:
                     continue
                 try:
-                    knowledge_storage = await registry.resolve(
+                    knowledge_bundle = await registry.resolve(
                         layer=MemoryLayerName.KNOWLEDGE,
                         scope=layers.knowledge.get_scope(),
                         context=ctx,
                     )
-                    keys = await knowledge_storage.list_keys()
+                    keys = await knowledge_bundle.kv.list_keys()
                     keys = [k for k in keys if not k.endswith("._meta")]
                     if not keys:
                         continue
 
                     # Build file -> last-update map from changelog
-                    changelog = await knowledge_storage.read_logs(since_cursor=0)
+                    knowledge_archive = knowledge_bundle.archive
+                    changelog: list[dict[str, Any]] = []
+                    if knowledge_archive is not None:
+                        changelog = await knowledge_archive.read_logs(since_cursor=0)
                     file_last_update: dict[str, float] = {}
                     for entry in changelog:
                         file_name = entry.get("file")
@@ -245,7 +252,7 @@ class DefaultMemoryMaintenancePolicy:
                             continue
                         last_update = file_last_update.get(key, record.updated_at or 0.0)
                         if time.time() - last_update > stale_days * 86400:
-                            await knowledge_storage.delete(key)
+                            await knowledge_bundle.kv.delete(key)
                             pruned = True
 
                     if pruned:

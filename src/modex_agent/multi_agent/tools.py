@@ -6,6 +6,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from modex_agent.core.constants import ExecutionStrategy
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import Tool, ToolConfig
 from modex_agent.multi_agent.comm_kind import AgentCommKind
@@ -55,19 +56,12 @@ def _current_parent_name() -> str | None:
 
 @dataclass(frozen=True)
 class CommunicationTarget:
-    """A single communicable agent.
-
-    ``pool_name`` records the owning pool; ``bus_ref`` optionally carries a
-    direct reference to another pool's ``AgentMessageBus`` for cross-pool
-    delivery (None = route locally). Both fields default to preserve every
-    existing constructor site that omits them.
-    """
-
     name: str
     kind: AgentCommKind
     description: str = ""
     pool_name: str = ""
     bus_ref: AgentMessageBus | None = None
+    execution_strategy: ExecutionStrategy = ExecutionStrategy.REACT
 
 
 # -- parameter schemas --------------------------------------------------------

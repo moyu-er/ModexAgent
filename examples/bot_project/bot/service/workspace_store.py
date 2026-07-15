@@ -4,7 +4,7 @@ This module lives in ``bot.service`` (the central wiring hub) because
 workspace/pool partitioning is a cross-cutting **business** concern shared by
 every channel (WebUI and IM) — it belongs to neither.
 
-Design — physical partition, self-documenting::
+The default file adapter uses a self-documenting physical partition::
 
     <sessions_dir>/<pool>/{full_session_id}.jsonl
 
@@ -34,14 +34,15 @@ to the matching physical store.
 
 from __future__ import annotations
 
-import functools
+import asyncio
 import logging
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 import pathvalidate
 
 from bot.webui.events import ServerEvent
+from bot.webui.server import WorkspaceIndex
 from bot.webui.transcript_store import (
     JSONLTranscriptStore,
     ResilientTranscriptStore,
@@ -50,6 +51,8 @@ from bot.webui.transcript_store import (
 from modex_agent.core.session_id import agent_of, session_id_prefix_of
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.runtime import is_workspace_root_bound, resolve_workspace_root
+
+WorkspaceTranscriptStoreResolver = Callable[[Path], Awaitable[TranscriptStore]]
 
 logger = logging.getLogger(__name__)
 
@@ -78,11 +81,95 @@ def _conversation_prefix(session_id: str) -> str:
     return session_id_prefix_of(session_id)
 
 
-class WorkspaceScopedTranscriptStore(TranscriptStore):
-    """Transcript store physically partitioned by pool, routed by ctxvar.
+class _FileWorkspaceTranscriptStore(TranscriptStore):
+    """One workspace's pool-partitioned JSONL transcript adapter."""
 
-    - One :class:`JSONLTranscriptStore` per pool, lazily created under
-      ``<sessions_dir>/<pool>/``.
+    def __init__(
+        self,
+        sessions_dir: Path,
+        pool_for_agent: Callable[[str], str],
+    ) -> None:
+        self._sessions_dir = sessions_dir
+        self._pool_for_agent = pool_for_agent
+
+    def _store_for(self, pool: str) -> TranscriptStore:
+        return ResilientTranscriptStore(
+            JSONLTranscriptStore(self._sessions_dir / _pool_sanitized(pool))
+        )
+
+    def _pools(self) -> list[str]:
+        if not self._sessions_dir.is_dir():
+            return []
+        return sorted(path.name for path in self._sessions_dir.iterdir() if path.is_dir())
+
+    async def _owner(self, session_id: str) -> TranscriptStore:
+        for pool in self._pools():
+            store = self._store_for(pool)
+            if session_id in await store.list_sessions():
+                return store
+        return self._store_for(self._pool_for_agent(_agent_of(session_id)))
+
+    async def append(
+        self,
+        session_id: str,
+        event: ServerEvent,
+        *,
+        pool: str = _DEFAULT_POOL,
+    ) -> None:
+        owner = pool if pool != _DEFAULT_POOL else self._pool_for_agent(_agent_of(session_id))
+        await self._store_for(owner).append(session_id, event, pool=_pool_sanitized(owner))
+
+    async def load(self, session_id: str) -> list[ServerEvent]:
+        return await (await self._owner(session_id)).load(session_id)
+
+    async def load_sessions_by_prefix(
+        self,
+        session_prefix: str,
+        *,
+        pool: str | None = None,
+    ) -> list[ServerEvent]:
+        stores = [self._store_for(pool)] if pool is not None else [
+            self._store_for(name) for name in self._pools()
+        ]
+        events = [
+            event
+            for store in stores
+            for event in await store.load_sessions_by_prefix(session_prefix)
+        ]
+        events.sort(key=lambda event: event.timestamp)
+        return events
+
+    async def list_sessions(self) -> set[str]:
+        sessions: set[str] = set()
+        for pool in self._pools():
+            sessions.update(await self._store_for(pool).list_sessions())
+        return sessions
+
+    async def list_sessions_by_prefix(self, session_prefix: str) -> set[str]:
+        sessions: set[str] = set()
+        for pool in self._pools():
+            sessions.update(
+                await self._store_for(pool).list_sessions_by_prefix(session_prefix)
+            )
+        return sessions
+
+    async def delete_session(self, session_id: str) -> None:
+        await (await self._owner(session_id)).delete_session(session_id)
+
+    async def delete_sessions_by_prefix(self, session_prefix: str) -> None:
+        for pool in self._pools():
+            await self._store_for(pool).delete_sessions_by_prefix(session_prefix)
+
+    async def last_updated(self, session_id: str) -> int | None:
+        return await (await self._owner(session_id)).last_updated(session_id)
+
+
+class WorkspaceScopedTranscriptStore(TranscriptStore, WorkspaceIndex):
+    """Route transcript operations to one backend adapter per workspace.
+
+    The default resolver creates the file adapter. A persistence assembly may
+    inject a resolver for SQLite, PostgreSQL, or another backend without this
+    router learning about connections, migrations, or backend kinds.
     - ``append`` routes to the session's owning pool under the ctxvar-resolved
       workspace root.  Pool is derived from the agent segment of the session id
       via the pool map; subagents absent from the map inherit the main pool.
@@ -94,10 +181,61 @@ class WorkspaceScopedTranscriptStore(TranscriptStore):
     explicit ``sessions_dir`` so HTTP handlers do not depend on the ctxvar.
     """
 
-    def __init__(self, data_dir_name: str) -> None:
+    def __init__(
+        self,
+        data_dir_name: str,
+        store_resolver: WorkspaceTranscriptStoreResolver | None = None,
+    ) -> None:
         self._data_dir_name: str = data_dir_name
         # agent_name -> pool_name (main agents); set by the service after pools built.
         self._agent_pool_map: dict[str, str] = {}
+        self._store_resolver = store_resolver
+        self._workspace_stores: dict[Path, TranscriptStore] = {}
+        self._inflight: dict[Path, asyncio.Task[TranscriptStore]] = {}
+        self._generations: dict[Path, int] = {}
+
+    def set_store_resolver(self, resolver: WorkspaceTranscriptStoreResolver) -> None:
+        """Configure the persistence-owned workspace adapter resolver."""
+        self._store_resolver = resolver
+
+    def release_workspace(self, sessions_dir: Path) -> None:
+        """Forget an evicted workspace before its adapter resources close."""
+        key = sessions_dir.resolve()
+        self._workspace_stores.pop(key, None)
+        task = self._inflight.pop(key, None)
+        if task is not None:
+            task.cancel()
+        self._generations[key] = self._generations.get(key, 0) + 1
+
+    async def _workspace_store(self, sessions_dir: Path) -> TranscriptStore:
+        key = sessions_dir.resolve()
+        store = self._workspace_stores.get(key)
+        if store is not None:
+            return store
+        task = self._inflight.get(key)
+        if task is None:
+            generation = self._generations.get(key, 0)
+            task = asyncio.create_task(self._resolve_workspace_store(key, generation))
+            self._inflight[key] = task
+        return await asyncio.shield(task)
+
+    async def _resolve_workspace_store(
+        self, sessions_dir: Path, generation: int
+    ) -> TranscriptStore:
+        try:
+            resolver = self._store_resolver
+            store = (
+                await resolver(sessions_dir)
+                if resolver is not None
+                else _FileWorkspaceTranscriptStore(sessions_dir, self._pool_for_agent)
+            )
+            if self._generations.get(sessions_dir, 0) == generation:
+                self._workspace_stores[sessions_dir] = store
+            return store
+        finally:
+            current = self._inflight.get(sessions_dir)
+            if current is asyncio.current_task():
+                self._inflight.pop(sessions_dir, None)
 
     # ------------------------------------------------------------------
     # Configuration
@@ -130,36 +268,6 @@ class WorkspaceScopedTranscriptStore(TranscriptStore):
         """
         return self._ctxvar_sessions_dir()
 
-    # ------------------------------------------------------------------
-    # Physical stores
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    @functools.lru_cache(maxsize=64)
-    def _store_for(sessions_dir: Path, pool_key: str) -> TranscriptStore:
-        """Return a wrapped JSONL store for *sessions_dir* + *pool_key*.
-
-        Stores are stateless wrappers, so the LRU cache is safe: evicted entries
-        are recreated on next access with no loss of persisted data.
-        """
-        return ResilientTranscriptStore(
-            JSONLTranscriptStore(sessions_dir / pool_key)
-        )
-
-    def store_for(self, sessions_dir: Path, pool: str) -> TranscriptStore:
-        """Return the physical store for *sessions_dir* + *pool*."""
-        return self._store_for(sessions_dir, _pool_sanitized(pool))
-
-    def pools_in(self, sessions_dir: Path) -> list[str]:
-        """Return pool directory names that exist under *sessions_dir*."""
-        if not sessions_dir.is_dir():
-            return []
-        return sorted(p.name for p in sessions_dir.iterdir() if p.is_dir())
-
-    # ------------------------------------------------------------------
-    # Ownership (sourced from the physical layout, cached in memory)
-    # ------------------------------------------------------------------
-
     def _pool_for_agent(self, agent: str) -> str:
         """Resolve the pool for an agent from the configured map.
 
@@ -178,20 +286,17 @@ class WorkspaceScopedTranscriptStore(TranscriptStore):
                 return pool
         return _DEFAULT_POOL
 
-    def _owner_pool(self, sessions_dir: Path, session_id: str) -> str:
-        """Owning pool_key; defaults to the agent's pool."""
-        for pool_key in self.pools_in(sessions_dir):
-            store = self._store_for(sessions_dir, pool_key)
-            if session_id in store.list_sessions():
-                return pool_key
-        return _pool_sanitized(self._pool_for_agent(_agent_of(session_id)))
-
     # ------------------------------------------------------------------
     # TranscriptStore interface
     # ------------------------------------------------------------------
 
-    def append(
-        self, session_id: str, event: ServerEvent, *, sessions_dir: Path | None = None
+    async def append(
+        self,
+        session_id: str,
+        event: ServerEvent,
+        *,
+        pool: str = _DEFAULT_POOL,
+        sessions_dir: Path | None = None,
     ) -> None:
         # Workspace resolution: prefer an explicit ``sessions_dir`` (resolver-cell
         # driven, the same source memory uses — survives the broker-queue task
@@ -211,79 +316,77 @@ class WorkspaceScopedTranscriptStore(TranscriptStore):
                     resolve_workspace_root(),
                 )
             resolved = self._ctxvar_sessions_dir()
-        pool_key = _pool_sanitized(self._pool_for_agent(_agent_of(session_id)))
-        self._store_for(resolved, pool_key).append(session_id, event)
+        pool_key = pool if pool != _DEFAULT_POOL else self._pool_for_agent(
+            _agent_of(session_id)
+        )
+        await (await self._workspace_store(resolved)).append(
+            session_id,
+            event,
+            pool=_pool_sanitized(pool_key),
+        )
 
-    def load(
+    async def load(
         self, session_id: str, sessions_dir: Path | None = None
-    ) -> Iterator[ServerEvent]:
+    ) -> list[ServerEvent]:
         resolved = self._resolve_dir(sessions_dir)
-        pool_key = self._owner_pool(resolved, session_id)
-        yield from self._store_for(resolved, pool_key).load(session_id)
+        return await (await self._workspace_store(resolved)).load(session_id)
 
-    def load_sessions_by_prefix(
+    async def load_sessions_by_prefix(
         self,
         session_prefix: str,
-        sessions_dir: Path | None = None,
+        *,
         pool: str | None = None,
-    ) -> Iterator[ServerEvent]:
+        sessions_dir: Path | None = None,
+    ) -> list[ServerEvent]:
         resolved = self._resolve_dir(sessions_dir)
-        if pool is not None:
-            yield from self.store_for(resolved, pool).load_sessions_by_prefix(session_prefix)
-        else:
-            for pool_key in self.pools_in(resolved):
-                yield from self._store_for(resolved, pool_key).load_sessions_by_prefix(
-                    session_prefix
-                )
+        return await (await self._workspace_store(resolved)).load_sessions_by_prefix(
+            session_prefix,
+            pool=_pool_sanitized(pool) if pool is not None else None,
+        )
 
-    def list_sessions(self, sessions_dir: Path) -> set[str]:
-        seen: set[str] = set()
-        for pool_key in self.pools_in(sessions_dir):
-            seen |= self._store_for(sessions_dir, pool_key).list_sessions()
-        return seen
+    async def list_sessions(self, sessions_dir: Path | None = None) -> set[str]:
+        resolved = self._resolve_dir(sessions_dir)
+        return await (await self._workspace_store(resolved)).list_sessions()
 
-    def list_sessions_by_prefix(
+    async def list_sessions_by_prefix(
         self, session_prefix: str, sessions_dir: Path | None = None
     ) -> set[str]:
         resolved = self._resolve_dir(sessions_dir)
-        seen: set[str] = set()
-        for pool_key in self.pools_in(resolved):
-            seen |= self._store_for(resolved, pool_key).list_sessions_by_prefix(
-                session_prefix
-            )
-        return seen
+        return await (
+            await self._workspace_store(resolved)
+        ).list_sessions_by_prefix(session_prefix)
 
-    def delete_session(
+    async def delete_session(
         self, session_id: str, sessions_dir: Path | None = None
     ) -> None:
         resolved = self._resolve_dir(sessions_dir)
-        pool_key = self._owner_pool(resolved, session_id)
-        self._store_for(resolved, pool_key).delete_session(session_id)
+        await (await self._workspace_store(resolved)).delete_session(session_id)
 
-    def delete_sessions_by_prefix(
+    async def delete_sessions_by_prefix(
         self, session_prefix: str, sessions_dir: Path | None = None
     ) -> None:
         resolved = self._resolve_dir(sessions_dir)
-        for pool_key in self.pools_in(resolved):
-            self._store_for(resolved, pool_key).delete_sessions_by_prefix(session_prefix)
+        await (await self._workspace_store(resolved)).delete_sessions_by_prefix(
+            session_prefix
+        )
 
-    def last_updated(
+    async def last_updated(
         self, session_id: str, sessions_dir: Path | None = None
     ) -> int | None:
         resolved = self._resolve_dir(sessions_dir)
-        pool_key = self._owner_pool(resolved, session_id)
-        return self._store_for(resolved, pool_key).last_updated(session_id)
+        return await (await self._workspace_store(resolved)).last_updated(session_id)
 
-    def load_materialized_by_prefix(
+    async def load_materialized_by_prefix(
         self,
         session_prefix: str,
-        sessions_dir: Path | None = None,
+        *,
         pool: str | None = None,
+        sessions_dir: Path | None = None,
     ) -> list:
         """Materialize events for *session_prefix* into merged turn blocks."""
         from bot.webui.transcript_store import _materialize_events
 
-        events: list[ServerEvent] = list(
-            self.load_sessions_by_prefix(session_prefix, sessions_dir=sessions_dir, pool=pool)
+        events = await self.load_sessions_by_prefix(
+            session_prefix, sessions_dir=sessions_dir, pool=pool
         )
         return _materialize_events(events)

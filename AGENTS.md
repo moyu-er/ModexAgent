@@ -8,9 +8,11 @@
 
 - `modex_agent/core/`: ABCs — `Agent[E]`, `ContentEmitter[E]`, `Tool`, `ContextManager`, graph engine (`Graph[R]`/`Node[R]`), skills, experience system, types.
 - `modex_agent/agents/react/`: graph-based ReAct runtime (4-node: START→LLM→TOOL→END), approval suspension/resume, `TieredToolApprovalClassifier`.
+- `modex_agent/agents/external_coding/`: `ExternalCodingAgent` harness for Pi/OpenCode, provider-neutral streaming/events, session mapping, env/prompt injection, and cross-platform process-tree ownership.
 - `modex_agent/agents/experience/`: `ExperienceReviewAgent` — ReAct agent that reviews conversations and creates/updates EXPERIENCE.md files.
 - `modex_agent/core/experience/`: experience layer — `ExperienceManager`, `FileExperienceSource`, `ExperiencePromptBuilder`, `ExperienceCurator`, validation, metadata tracking.
-- `modex_agent/memory/`: three-layer memory (session/archive/knowledge) + compression + governance + injection policies.
+- `modex_agent/memory/`: three-layer memory (session/archive/knowledge) + compression + governance + injection policies. Storage is backend-pluggable via split store ABCs (`MessageStore`/`KVStore`/`CursorStore`/`ArchiveStore`) composed by `MemoryStoreBundle`.
+- `modex_agent/persistence/`: hybrid persistence layer (ADR-0023). `ConnectionManager` + `MigrationRunner` own one per-workspace SQLite DB; SQLite adapters implement the split store ABCs and the runtime-state ABCs. `PersistenceBackend` enum (`FILE` / `SQLITE`) and `PersistenceConfig` drive IOC factory selection. SQLite is the bot's default; file remains the framework default.
 - `modex_agent/multi_agent/`: star-topology subagent coordination, `AgentPool`, inbox, `AgentMessageBus`.
 - `modex_agent/ioc/`: typed config (`AppConfig` via Pydantic) + 7 factory modules. Pool configuration lives in `modex_agent/multi_agent/pool_config/`.
 - `modex_agent/runtime/`: `AgentRuntime`, `AgentRuntimeServices`, `TurnStateStore`, typed enums/models.
@@ -54,18 +56,32 @@ Shared vocabulary: module, interface, depth, seam, adapter, leverage, locality (
 - Tool-call chains must stay structurally legal: don't split `assistant.tool_calls` from matching `tool` results.
 - `archive=None` is standard session-only mode for subagent memory.
 - Subagent session memory is temporary; clear after subagent finishes.
-- Memory scopes: Session, User, Tenant, Agent, Channel, Chat, PeerPair, Composite, Global.
+- Memory scopes: Session, User, Tenant, Agent, Channel, Chat, Composite, Global (PeerPair removed in T04).
 - Pruned catalog: cleanup writes pruned messages to `pruned/{session_id}/`, injection policy injects XML catalog at priority 85. Works independently of archive. All agents (main + subagent) get pruned injection.
+
+## Persistence Architecture (ADR-0023)
+
+Hybrid persistence: per-workspace SQLite (`<workspace>/.modex/state.db`) for transactional structured state, plus files for human-editable and binary data (knowledge markdown, archive documents, media bytes, pruned JSONL, overflow chunks, config YAML). No data migration from files to DB; users opt in by setting `persistence.backend`.
+
+- **`PersistenceBackend`** enum (`FILE` / `SQLITE`) + **`PersistenceConfig`** (frozen Pydantic) drive IOC factory selection. `SQLITE` is the bot's default; `FILE` remains the framework default.
+- **`ConnectionManager`** owns one private `aiosqlite.Connection` per workspace DB, serializes adapter operations via a manager-owned lock, and runs migrations on open. `MigrationRunner` applies ordered SQL files tracked by a `schema_migrations` table (one explicit transaction per migration; no transaction-control statements in scripts). Two `DatabaseKind` streams: `WORKSPACE` (per-workspace) and `REGISTRY` (global).
+- **Split store ABCs** (`MessageStore`/`KVStore`/`CursorStore`/`ArchiveStore` + `MemoryStoreBundle`) replace the deleted `MemoryStorage` god-interface. File backend: one `DefaultScopedStorage` implements all four. SQLite backend: four independent `Sqlite*Store` adapters.
+- **New / evolved runtime-state ABCs:** `InboxMQ` (evolved from `InboxServer`; adds sync `deliver()` for CLI cross-process use; `DeliveredIdTracker` merged in as internal), `PoolRoutingStore` (extracted from `PoolSessionStore`), `ExternalSessionMapStore` (extracted from `ExternalSessionStore`), `WorkspaceRegistryStore` (deepened from `RegistryStore`), `ApprovalAuditStore` (new append-only audit log), `SessionArtifactCleaner` (DB + file cascade deletion). Old names are kept as deprecated aliases during transition.
+- **`ContextForkBuilder`** simplified to pure computation (T18): `build()` queries the parent session's `MessageStore` and returns fork XML directly. No fork files written to disk; the cleanup registry is removed. `register_for_cleanup`/`cleanup` are retained as no-ops for caller compatibility.
+- **Terminal state store removed** (T19): `JsonTerminalStateStore` and the `save_state()`/`load_state()` path in `BaseTerminalManager` were dead code and are deleted.
+- **`RecordScope`** (frozen Pydantic) carries all scope dimensions; `canonical()` is the DB scope-key source, `to_path_segment()` drives file paths. `Scope` ABC replaces `MemoryScope`; `build_scope(dims)` is the factory. `PeerPairScope` removed (T04).
 
 ## Multi-Agent Communication Rules
 
 - Star topology: subagents communicate only through main agent. `subagent_validator.py` enforces at registration.
 - Communication is exposed as a single tool: `send_to_agent`. The framework decides internally whether to use broker delivery, inbox delivery, or a new isolated subagent session.
-- `AgentMessageBus` is the primary async channel. `InboxProducer`/`InboxConsumer` wrap `InboxServer` with local-cache dedup.
+- `AgentMessageBus` is the primary async channel. `InboxProducer`/`InboxConsumer` wrap `InboxMQ` (the evolved `InboxServer`; `InboxServer` is a deprecated alias) with local-cache dedup.
 - Session ID format: `{prefix}.{agent_name}` (dot-separated; via `SessionIdFactory` / `DefaultSessionIdStrategy`). Subagent runs carry an `invocation_id` in `AgentContext` metadata, not in the session id.
 - `AgentPool` manages resident agent lifecycle: consumer loop, inbox wakeup polling, per-session locks, TTL + LRU session eviction.
 - `SubagentAutoSendHook` safety net: auto-forwards final output to parent if LLM forgets to use communication tools.
 - Each subagent gets isolated Memory/ToolManager/SkillManager. Subagent memory is `RestrictedInjectionPolicy` (session-only, limited context window).
+- External coding agents (Pi, OpenCode) participate in ADR-0019 peer topology as NORMAL main agents of their own dedicated pools (`pool_pi`, `pool_opencode`). They communicate back through the `modexctl send` CLI (calls the target workspace's synchronous `InboxMQ.deliver()` with XML-wrapped `<agent_message>` content), not through `send_to_agent` (which they do not have). FILE delivery appends the target inbox; SQLite delivery uses a short-lived transaction against `state.db`. Other agents talk to them via the standard `send_to_agent` tool. See ADR-0022 and `docs/design/external-coding-agent-integration/`.
+- External backend lifetime converges on `StreamingProviderBackend.close()`: OpenCode SSE stays warm across normal turns, while Pi/OpenCode subprocess children are per-turn; cancellation and shutdown terminate full process trees. Cleanup failure retains backend/agent/pool ownership for retry. Do not add provider-specific branches above the adapter layer.
 
 ## Approval Architecture Rules (CRITICAL)
 

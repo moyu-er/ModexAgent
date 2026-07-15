@@ -1,0 +1,1 @@
+"""Registry database migrations."""

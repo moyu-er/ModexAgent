@@ -9,9 +9,9 @@ potentially fix it.
 from __future__ import annotations
 
 import os
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from pathlib import Path
-from unittest.mock import AsyncMock
 
 from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.layers.config import KnowledgeMemoryConfig
@@ -41,7 +41,10 @@ async def test_template_path_resolves_relative_to_cwd(tmp_path, monkeypatch):
         storage = AsyncMock()
         storage.get = AsyncMock(return_value=None)
         storage.set = AsyncMock()
-        storage_factory = AsyncMock(return_value=storage)
+        bundle = MagicMock()
+        bundle.kv = storage
+        bundle.archive = None
+        storage_factory = AsyncMock(return_value=bundle)
 
         manager = ScopedKnowledgeMemoryManager(
             storage_factory=storage_factory,
@@ -71,7 +74,10 @@ async def test_template_path_absolute_works_anywhere(tmp_path):
     storage = AsyncMock()
     storage.get = AsyncMock(return_value=None)
     storage.set = AsyncMock()
-    storage_factory = AsyncMock(return_value=storage)
+    bundle = MagicMock()
+    bundle.kv = storage
+    bundle.archive = None
+    storage_factory = AsyncMock(return_value=bundle)
 
     from modex_agent.memory.layers.knowledge import ScopedKnowledgeMemoryManager
 

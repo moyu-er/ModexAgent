@@ -2,20 +2,20 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from pathlib import Path
 
 import pytest
 
+from modex_agent.core.scope import MemoryContext, MemoryLayerName
 from modex_agent.memory.archive_models import ArchiveChannel, ArchiveWrite
 from modex_agent.memory.core.lock import AioRWLock
-from modex_agent.core.scope import MemoryContext, MemoryLayerName
 from modex_agent.memory.layers.archive import ScopedArchiveMemoryManager
 from modex_agent.memory.layers.config import ArchiveMemoryConfig
 from modex_agent.memory.layers.factory import MemoryLayerFactory
-from modex_agent.memory.registry.in_memory import InMemoryStoreRegistry
+from modex_agent.memory.registry import DefaultMemoryStoreRegistry
 
 
-async def test_commit_cursor_race_with_append_bundle():
+async def test_commit_cursor_race_with_append_bundle(tmp_path: Path):
     """commit_cursor() must not lose updates made by concurrent append_bundle().
 
     Bug: commit_cursor() does NOT acquire the storage lock. It reads state,
@@ -25,7 +25,7 @@ async def test_commit_cursor_race_with_append_bundle():
     - get_unprocessed() returning wrong entries
     - DreamEngine entering infinite reprocessing loops
     """
-    registry = InMemoryStoreRegistry()
+    registry = DefaultMemoryStoreRegistry(tmp_path)
     factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.ARCHIVE)
     manager = ScopedArchiveMemoryManager(factory, ArchiveMemoryConfig())
     ctx = MemoryContext(session_id="race", user_id="u1")
@@ -65,9 +65,9 @@ async def test_commit_cursor_race_with_append_bundle():
     assert len(archive_ids) == 25, f"Duplicate archive_ids detected: {len(archive_ids)} unique from {len(recent)} entries"
 
 
-async def test_commit_cursor_advances_monotonically_under_race():
+async def test_commit_cursor_advances_monotonically_under_race(tmp_path: Path):
     """Even with concurrent commit_cursor calls, next_archive_id must never decrease."""
-    registry = InMemoryStoreRegistry()
+    registry = DefaultMemoryStoreRegistry(tmp_path)
     factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.ARCHIVE)
     manager = ScopedArchiveMemoryManager(factory, ArchiveMemoryConfig())
     ctx = MemoryContext(session_id="monotonic", user_id="u1")
@@ -100,7 +100,7 @@ async def test_commit_cursor_advances_monotonically_under_race():
     )
 
 
-async def test_prune_does_not_starve_concurrent_reads():
+async def test_prune_does_not_starve_concurrent_reads(tmp_path: Path):
     """prune_consumed_pairs() must not block readers indefinitely.
 
     Bug: prune_consumed_pairs() acquires the archive storage write lock and
@@ -108,7 +108,7 @@ async def test_prune_does_not_starve_concurrent_reads():
     (AioRWLock is writer-preferring). With a large archive, this causes
     severe latency for message injection and new message processing.
     """
-    registry = InMemoryStoreRegistry()
+    registry = DefaultMemoryStoreRegistry(tmp_path)
     factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.ARCHIVE)
     manager = ScopedArchiveMemoryManager(factory, ArchiveMemoryConfig())
     ctx = MemoryContext(session_id="prune", user_id="u1")
@@ -144,7 +144,7 @@ async def test_prune_does_not_starve_concurrent_reads():
     prune = asyncio.create_task(prune_task())
     try:
         await asyncio.wait_for(reader_task(), timeout=3.0)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pytest.fail("Reader was starved by prune_consumed_pairs() — lock held too long")
     finally:
         await prune_done.wait()

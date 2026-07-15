@@ -10,7 +10,6 @@ from modex_agent.memory.context_governance import (
     TokenBudgetGovernance,
 )
 
-
 XML_AGENT_MSG = """<agent_message source="planner" timestamp="2026-05-28 14:30:00">
   <thinking>query data</thinking>
   <content>""" + ("d" * 3000) + """</content>

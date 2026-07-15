@@ -47,6 +47,7 @@ export default {
         canvas: v("canvas"),
         "canvas-sidebar": v("canvas-sidebar"),
         "canvas-elevated": v("canvas-elevated"),
+        "canvas-popover": v("canvas-popover"),
 
         // 强调色（emerald 体系；link 复用为 primary/signal，使所有 *-link 类自动转翡翠绿）
         link: v("link"),

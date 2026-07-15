@@ -16,7 +16,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.prompt import SystemPromptProvider
+from modex_agent.core.scope import MemoryContext
 from modex_agent.core.session_id import SessionInfo, session_id_prefix_of
+from modex_agent.memory.injection.archive import (
+    ArchiveInjectionConfig,
+    ArchiveInjectionSection,
+    build_archive_injection_section,
+)
 from modex_agent.utils.timezone import get_user_timezone
 
 if TYPE_CHECKING:
@@ -266,78 +272,30 @@ class ProviderPrefetchProvider(SystemPromptProvider):
 
 
 class ArchiveProvider(SystemPromptProvider):
-    """Archive summaries from DirArchiveStorage. Must refresh on cleanup."""
+    """Backend-neutral archive summaries that refresh when retrieved content changes."""
 
     def __init__(
         self,
-        archive_dir: Path,
-        inject_count: int = 3,
-        inject_max_chars: int = 1000,
+        memory_system: MemorySystem,
+        context: MemoryContext,
+        config: ArchiveInjectionConfig | None = None,
     ) -> None:
         super().__init__()
-        from modex_agent.memory.stores.dir_archive import DirArchiveStorage
-
-        self._storage = DirArchiveStorage(archive_dir)
-        self._inject_count = inject_count
-        self._inject_max_chars = inject_max_chars
+        self._memory_system = memory_system
+        self._context = context
+        self._config = config or ArchiveInjectionConfig()
+        self._section = ArchiveInjectionSection(version="0", content="")
 
     async def _fetch_version(self) -> str:
-        try:
-            ids = await self._storage.list_archives(limit=1)
-            return str(ids[0]) if ids else "0"
-        except Exception:
-            return ""
+        self._section = await build_archive_injection_section(
+            self._memory_system,
+            self._context,
+            self._config,
+        )
+        return self._section.version
 
     async def _fetch_content(self) -> str:
-        try:
-            return await self._build_archive_xml()
-        except Exception:
-            return ""
-
-    async def _build_archive_xml(self) -> str:
-        from modex_agent.memory.tags import ArchiveTag
-        from modex_agent.utils.xml import xml_attr, xml_text
-
-        archive_dir = self._storage.directory
-        if archive_dir is None:
-            return ""
-
-        try:
-            archive_ids = await self._storage.list_archives(limit=self._inject_count)
-        except Exception:
-            return ""
-
-        if not archive_ids:
-            return ""
-
-        records: list[str] = []
-        for aid in sorted(archive_ids)[: self._inject_count]:
-            try:
-                content = await self._storage.read_archive_file(aid, "context.md")
-            except Exception:
-                continue
-            if not content or not content.strip():
-                continue
-
-            truncated = len(content) > self._inject_max_chars
-            display = content[: self._inject_max_chars] + "..." if truncated else content
-
-            full_path = str((archive_dir / str(aid) / "context.md").resolve())
-            st = ArchiveTag.SUMMARY.value
-            records.append(
-                f'<{st} number="{aid}" file="{xml_attr(full_path)}">\n{xml_text(display)}\n</{st}>'
-            )
-
-        if not records:
-            return ""
-
-        heading = (
-            "### Earlier Conversation Summaries\n\n"
-            "Short summaries of older conversations. Higher number = more recent. "
-            "Read the `context.md` file at each path for the full details.\n\n"
-        )
-        ct = ArchiveTag.CONTAINER.value
-        return heading + f"<{ct}>\n" + "\n".join(records) + f"\n</{ct}>"
+        return self._section.content
 
 
 class PrunedProvider(SystemPromptProvider):

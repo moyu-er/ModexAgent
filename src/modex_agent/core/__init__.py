@@ -51,6 +51,13 @@ from .types import (
     TodoStatus,
     ToolCall,
 )
+from .turn_events import (
+    TurnEvent,
+    TurnReasoningEvent,
+    TurnTextEvent,
+    TurnToolCallEvent,
+    TurnToolResultEvent,
+)
 from .session_id import (
     SessionInfo,
     SessionIdFactory,
@@ -93,6 +100,11 @@ __all__ = [
     "OutputMessage",
     "ToolCall",
     "ToolResult",
+    "TurnEvent",
+    "TurnReasoningEvent",
+    "TurnTextEvent",
+    "TurnToolCallEvent",
+    "TurnToolResultEvent",
     # V2 新架构 - 事件和配置
     "AgentEvent",
     "EmitterConfig",

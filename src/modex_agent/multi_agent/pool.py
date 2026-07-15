@@ -19,15 +19,12 @@ if TYPE_CHECKING:
 from modex_agent.core.context import ContextManager
 from modex_agent.core.graph.interrupt import GraphInterrupt
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
+from modex_agent.core.session_id import SessionIdFactory, SessionInfo, session_id_prefix_of
 from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.core.session_store import SessionStore
 from modex_agent.core.types import InputMessage
 from modex_agent.messaging.broker import AddressKind, MessageBroker
-from modex_agent.messaging.broker_bridge import (
-    BrokerInputPayload,
-    approval_decision_from_payload,
-    attachments_resolved_from_payload,
-)
+from modex_agent.messaging.broker_bridge import BrokerInputPayload
 from modex_agent.runtime.dispatch import DispatchDeadline, current_dispatch_deadline
 
 from .address import AgentAddress
@@ -38,7 +35,6 @@ from .factory import AgentFactory
 from .inbox.consumer import InboxConsumer
 from .message_type import AgentMessageType
 from .registry import AgentProfile, AgentRegistry
-from modex_agent.core.session_id import SessionInfo, SessionIdFactory, session_id_prefix_of
 from .state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -74,23 +70,14 @@ def input_message_from_dispatch_envelope(
     envelope: AgentMessageEnvelope,
     *,
     session: Any,
-    metadata: dict[str, Any],
 ) -> InputMessage:
-    """Reconstruct the InputMessage dispatched to a pipeline from a broker envelope.
+    """Backward-compat shim — prefer ``envelope.to_input_message(session=...)``.
 
-    Carries ``approval_decision`` through (serialized in the envelope payload by
-    ``broker_bridge.build_input_broker_message``). Without this, a webui
-    approve/deny decision crossing the broker is lost and treated as an empty
-    user turn — polluting history and leaving a dangling assistant ``tool_calls``.
+    Retained because several integration test fixtures call this module-level
+    function directly. New code should call ``envelope.to_input_message``
+    (the metadata is built inside the envelope).
     """
-    return InputMessage(
-        content=envelope.payload.get("content", ""),
-        session=session,
-        metadata=metadata,
-        # Both drift fields share one reconstruction path in broker_bridge.
-        approval_decision=approval_decision_from_payload(envelope.payload),
-        attachments_resolved=attachments_resolved_from_payload(envelope.payload),
-    )
+    return envelope.to_input_message(session=session)
 
 
 class AgentPool(AgentRegistry):
@@ -128,6 +115,8 @@ class AgentPool(AgentRegistry):
         self._session_store = session_store
         self._retention = retention or SessionRetentionPolicy()
         self._cleanup_task: asyncio.Task[None] | None = None
+        self._shutdown_task: asyncio.Task[bool] | None = None
+        self._agent_shutdown_tasks: dict[str, asyncio.Task[None]] = {}
         self._active_session_counts: dict[str, int] = {}
         self._error_counts: dict[str, int] = {}
         self._max_error_retries: int = 5
@@ -195,7 +184,7 @@ class AgentPool(AgentRegistry):
 
     # ── Per-pool InboxPoller ownership (Task 7) ──
 
-    def attach_poller(self, poller: "InboxPoller") -> None:
+    def attach_poller(self, poller: InboxPoller) -> None:
         """Attach this pool's InboxPoller (created by create_pool wiring)."""
         self._poller = poller
 
@@ -334,67 +323,55 @@ class AgentPool(AgentRegistry):
     ) -> None:
         """Run one turn for a drained inbox envelope (external_input or agent msg).
 
-        C4: a single reconstruction path. Because ``submit_input`` writes a
+        Single reconstruction path: because ``submit_input`` writes a
         C2-compatible payload, this method handles BOTH ``external_input`` and
-        inter-agent messages via the same ``input_message_from_dispatch_envelope``.
-        Renamed from ``_run_inbox_turn`` — the InboxPoller calls this directly.
+        inter-agent messages via the same ``envelope.to_input_message``.
         """
-        session_id = sid
-        agent_name = SessionInfo.from_str(sid).agent_name
         if instance.pipeline is None:
             return
-        if session_id not in self._session_agents:
-            self._track_session(
-                session_id, agent_name, is_dynamic=bool(envelope.invocation_id)
-            )
-        else:
-            self._touch_session(session_id)
-        # Authoritative parent link comes from the envelope (set by the
-        # dispatching producer), NOT recovered from a session store. This
-        # single stamp feeds every ctx.session.parent_session_id reader
-        # (SubagentAutoSendHook, consult routing, star-topology) and the
-        # APPEND/FORK prompt providers (via runtime_info).
-        session = SessionInfo.from_str(session_id, default_agent_name=agent_name)
-        if envelope.parent_session_id:
-            session = session.model_copy(
-                update={"parent_session_id": envelope.parent_session_id}
-            )
-        elif envelope.message_type == AgentMessageType.TASK_REQUEST:
-            logger.warning(
-                "dispatch_envelope: TASK_REQUEST for session %s carried no "
-                "parent_session_id; ctx.session.parent_session_id will be None "
-                "— result passback will be degraded.",
-                session_id,
-            )
-        metadata = self._envelope_metadata(envelope)
+        agent_name = SessionInfo.from_str(sid).agent_name
+        self._track_or_touch_session(sid, agent_name, envelope)
+        session = self._stamp_session_from_envelope(sid, agent_name, envelope)
         await self._run_dispatch(
             agent_name,
-            instance.pipeline.process_message(
-                input_message_from_dispatch_envelope(
-                    envelope, session=session, metadata=metadata
-                )
-            ),
+            instance.pipeline.process_message(envelope.to_input_message(session=session)),
         )
         if envelope.invocation_id:
             await self._enforce_session_cap(agent_name)
 
+    def _track_or_touch_session(
+        self, sid: str, agent_name: str, envelope: AgentMessageEnvelope
+    ) -> None:
+        """Register new session metadata on first sight, else refresh activity."""
+        if sid not in self._session_agents:
+            self._track_session(sid, agent_name, is_dynamic=bool(envelope.invocation_id))
+        else:
+            self._touch_session(sid)
+
     @staticmethod
-    def _envelope_metadata(
-        envelope: AgentMessageEnvelope,
-    ) -> dict[str, Any]:
-        source_name = envelope.source.name if envelope.source else None
-        target_name = envelope.target.name if envelope.target else None
-        is_agent_source = bool(envelope.source and envelope.source.kind == "agent")
-        return {
-            "session_id": envelope.agent_session_id,
-            "agent_session_id": envelope.agent_session_id,
-            "message_type": envelope.message_type,
-            "invocation_id": envelope.invocation_id,
-            "source_agent": source_name if is_agent_source else None,
-            "sender_agent": source_name if is_agent_source else None,
-            "receiver_agent": target_name if is_agent_source else None,
-            **envelope.metadata,
-        }
+    def _stamp_session_from_envelope(
+        sid: str, agent_name: str, envelope: AgentMessageEnvelope
+    ) -> SessionInfo:
+        """Rebuild the authoritative SessionInfo from the envelope.
+
+        Parent link comes from the envelope (set by the dispatching producer),
+        NOT recovered from a session store — this keeps subagent messaging
+        independent of the active workspace. A TASK_REQUEST without a parent
+        link is logged: result passback will be degraded.
+        """
+        session = SessionInfo.from_str(sid, default_agent_name=agent_name)
+        if envelope.parent_session_id:
+            return session.model_copy(
+                update={"parent_session_id": envelope.parent_session_id}
+            )
+        if envelope.message_type == AgentMessageType.TASK_REQUEST:
+            logger.warning(
+                "dispatch_envelope: TASK_REQUEST for session %s carried no "
+                "parent_session_id; ctx.session.parent_session_id will be None "
+                "— result passback will be degraded.",
+                sid,
+            )
+        return session
 
     # Watchdog: warn when dispatch exceeds this threshold (P0-a, seconds)
     _DISPATCH_WARN_SECONDS: float = 300.0
@@ -790,16 +767,50 @@ class AgentPool(AgentRegistry):
     async def _shutdown_agent(self, agent_name: str) -> None:
         """Shut down a single agent and release its resources."""
         self._transition(agent_name, AgentState.SHUTTING_DOWN, reason="idle_cleanup")
-        instance = self._agents.pop(agent_name, None)
+        instance = self._agents.get(agent_name)
         if instance is not None:
+            shutdown_task = self._agent_shutdown_tasks.get(agent_name)
+            if shutdown_task is None:
+                shutdown_task = asyncio.create_task(instance.stop())
+                self._agent_shutdown_tasks[agent_name] = shutdown_task
             try:
-                await instance.stop()
+                await asyncio.shield(shutdown_task)
+            except asyncio.CancelledError:
+                if (
+                    shutdown_task.done()
+                    and shutdown_task.cancelled()
+                    and self._agent_shutdown_tasks.get(agent_name) is shutdown_task
+                ):
+                    self._agent_shutdown_tasks.pop(agent_name, None)
+                raise
             except Exception:
-                pass
+                if self._agent_shutdown_tasks.get(agent_name) is shutdown_task:
+                    self._agent_shutdown_tasks.pop(agent_name, None)
+                return
+            if self._agent_shutdown_tasks.get(agent_name) is shutdown_task:
+                self._agent_shutdown_tasks.pop(agent_name, None)
+            if self._agents.get(agent_name) is instance:
+                self._agents.pop(agent_name, None)
+                self._active_session_counts.pop(agent_name, None)
+                self._error_counts.pop(agent_name, None)
+            else:
+                return
         self._transition(agent_name, AgentState.SHUTDOWN, reason="shutdown")
         logger.info("Agent %s shut down", agent_name)
 
-    async def shutdown_all(self, timeout: float = 10.0) -> None:
+    async def shutdown_all(self, timeout: float = 10.0) -> bool:
+        shutdown_task = self._shutdown_task
+        if shutdown_task is None:
+            shutdown_task = asyncio.create_task(self._shutdown_all_once(timeout))
+            self._shutdown_task = shutdown_task
+            shutdown_task.add_done_callback(self._clear_shutdown_task)
+        return await asyncio.shield(shutdown_task)
+
+    def _clear_shutdown_task(self, shutdown_task: asyncio.Task[bool]) -> None:
+        if self._shutdown_task is shutdown_task:
+            self._shutdown_task = None
+
+    async def _shutdown_all_once(self, timeout: float) -> bool:
         if self._cleanup_task is not None:
             self._cleanup_task.cancel()
         # Task 7: stop the per-pool InboxPoller so no new between-turn
@@ -808,14 +819,47 @@ class AgentPool(AgentRegistry):
         for name in list(self._agents.keys()):
             self._transition(name, AgentState.SHUTTING_DOWN, reason="shutdown_all")
         deadline = asyncio.get_running_loop().time() + timeout
-        for name, instance in list(self._agents.items()):
+        shutdown_owners = dict(self._agents)
+        shutdown_tasks: dict[str, asyncio.Task[None]] = {}
+        for name, instance in shutdown_owners.items():
+            shutdown_task = self._agent_shutdown_tasks.get(name)
+            if shutdown_task is None:
+                shutdown_task = asyncio.create_task(instance.stop())
+                self._agent_shutdown_tasks[name] = shutdown_task
+            shutdown_tasks[name] = shutdown_task
+        completed = True
+        cancellation: asyncio.CancelledError | None = None
+        for name, shutdown_task in shutdown_tasks.items():
             remaining = max(0.0, deadline - asyncio.get_running_loop().time())
             try:
-                await asyncio.wait_for(instance.stop(), timeout=remaining)
+                await asyncio.wait_for(asyncio.shield(shutdown_task), timeout=remaining)
             except TimeoutError:
-                logger.warning("Agent %s did not shut down in time, forcing", name)
-        self._agents.clear()
-        self._active_session_counts.clear()
-        self._error_counts.clear()
-        for name in list(self._status.keys()):
-            self._status[name] = AgentState.SHUTDOWN
+                completed = False
+                logger.warning("Agent %s shutdown timed out; retained for retry", name)
+            except asyncio.CancelledError as exc:
+                completed = False
+                if (
+                    shutdown_task.done()
+                    and shutdown_task.cancelled()
+                    and self._agent_shutdown_tasks.get(name) is shutdown_task
+                ):
+                    self._agent_shutdown_tasks.pop(name, None)
+                logger.warning("Agent %s shutdown was cancelled; retained for retry", name)
+                cancellation = exc
+            except Exception:
+                completed = False
+                if self._agent_shutdown_tasks.get(name) is shutdown_task:
+                    self._agent_shutdown_tasks.pop(name, None)
+                logger.exception("Agent %s shutdown failed; retained for retry", name)
+            else:
+                if self._agent_shutdown_tasks.get(name) is shutdown_task:
+                    self._agent_shutdown_tasks.pop(name, None)
+                instance = shutdown_owners[name]
+                if self._agents.get(name) is instance:
+                    self._agents.pop(name, None)
+                    self._active_session_counts.pop(name, None)
+                    self._error_counts.pop(name, None)
+                    self._transition(name, AgentState.SHUTDOWN, reason="shutdown_all_complete")
+        if cancellation is not None:
+            raise cancellation
+        return completed

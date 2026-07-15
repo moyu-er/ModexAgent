@@ -149,13 +149,13 @@ def _build_server(tmp_path: Path) -> WebUIServer:
     return server
 
 
-def _append_user_message_with_attachment(
+async def _append_user_message_with_attachment(
     store: WorkspaceScopedTranscriptStore,
     sessions_dir: Path,
     session_id: str,
     att: Attachment,
 ) -> None:
-    store.append(
+    await store.append(
         session_id,
         UserMessageEvent(
             session_id=session_id,
@@ -167,13 +167,13 @@ def _append_user_message_with_attachment(
     )
 
 
-def _append_assistant_turn_with_attachment(
+async def _append_assistant_turn_with_attachment(
     store: WorkspaceScopedTranscriptStore,
     sessions_dir: Path,
     session_id: str,
     att: Attachment,
 ) -> None:
-    store.append(
+    await store.append(
         session_id,
         AssistantTurnEvent(
             session_id=session_id,
@@ -213,7 +213,9 @@ async def test_media_locator_serves_bytes() -> None:
         # ingest stage writes), then record the Attachment in the transcript.
         ms = ctx.media_store.store_for("main", media_dir=_media_dir(ws_root, "main"))
         ms.save(session_id, att.id, b"png-bytes-here")
-        _append_user_message_with_attachment(store, _sessions_dir(ws_root), session_id, att)
+        await _append_user_message_with_attachment(
+            store, _sessions_dir(ws_root), session_id, att
+        )
 
         client = TestClient(TestServer(server.app))
         await client.start_server()
@@ -248,7 +250,9 @@ async def test_workspace_locator_serves_bytes() -> None:
             path=str(outbound_file),
             locator=AttachmentLocator.WORKSPACE,
         )
-        _append_assistant_turn_with_attachment(store, _sessions_dir(ws_root), session_id, att)
+        await _append_assistant_turn_with_attachment(
+            store, _sessions_dir(ws_root), session_id, att
+        )
 
         client = TestClient(TestServer(server.app))
         await client.start_server()
@@ -297,7 +301,9 @@ async def test_media_locator_missing_file_returns_404() -> None:
             locator=AttachmentLocator.MEDIA,
         )
         # Record exists in transcript; the byte file is NOT written (evicted).
-        _append_user_message_with_attachment(store, _sessions_dir(ws_root), session_id, att)
+        await _append_user_message_with_attachment(
+            store, _sessions_dir(ws_root), session_id, att
+        )
 
         client = TestClient(TestServer(server.app))
         await client.start_server()
@@ -327,7 +333,9 @@ async def test_workspace_locator_deleted_file_returns_404() -> None:
             locator=AttachmentLocator.WORKSPACE,
         )
         # File does not exist; only the transcript record remains.
-        _append_assistant_turn_with_attachment(store, _sessions_dir(ws_root), session_id, att)
+        await _append_assistant_turn_with_attachment(
+            store, _sessions_dir(ws_root), session_id, att
+        )
 
         client = TestClient(TestServer(server.app))
         await client.start_server()
@@ -364,7 +372,9 @@ async def test_image_served_with_real_content_type() -> None:
         )
         ms = ctx.media_store.store_for("main", media_dir=_media_dir(ws_root, "main"))
         ms.save(session_id, att.id, b"png-data")
-        _append_user_message_with_attachment(store, _sessions_dir(ws_root), session_id, att)
+        await _append_user_message_with_attachment(
+            store, _sessions_dir(ws_root), session_id, att
+        )
 
         client = TestClient(TestServer(server.app))
         await client.start_server()
@@ -397,7 +407,9 @@ async def test_video_served_with_real_content_type() -> None:
         )
         ms = ctx.media_store.store_for("main", media_dir=_media_dir(ws_root, "main"))
         ms.save(session_id, att.id, b"mp4-data")
-        _append_user_message_with_attachment(store, _sessions_dir(ws_root), session_id, att)
+        await _append_user_message_with_attachment(
+            store, _sessions_dir(ws_root), session_id, att
+        )
 
         client = TestClient(TestServer(server.app))
         await client.start_server()
@@ -430,7 +442,9 @@ async def test_non_image_served_as_octet_stream() -> None:
             path=str(outbound_file),
             locator=AttachmentLocator.WORKSPACE,
         )
-        _append_assistant_turn_with_attachment(store, _sessions_dir(ws_root), session_id, att)
+        await _append_assistant_turn_with_attachment(
+            store, _sessions_dir(ws_root), session_id, att
+        )
 
         client = TestClient(TestServer(server.app))
         await client.start_server()
@@ -463,7 +477,9 @@ async def test_svg_carries_strict_csp() -> None:
         )
         ms = ctx.media_store.store_for("main", media_dir=_media_dir(ws_root, "main"))
         ms.save(session_id, att.id, b"<svg/>")
-        _append_user_message_with_attachment(store, _sessions_dir(ws_root), session_id, att)
+        await _append_user_message_with_attachment(
+            store, _sessions_dir(ws_root), session_id, att
+        )
 
         client = TestClient(TestServer(server.app))
         await client.start_server()
@@ -502,7 +518,9 @@ async def test_range_request_returns_206() -> None:
         )
         ms = ctx.media_store.store_for("main", media_dir=_media_dir(ws_root, "main"))
         ms.save(session_id, att.id, body)
-        _append_user_message_with_attachment(store, _sessions_dir(ws_root), session_id, att)
+        await _append_user_message_with_attachment(
+            store, _sessions_dir(ws_root), session_id, att
+        )
 
         client = TestClient(TestServer(server.app))
         await client.start_server()
@@ -547,7 +565,9 @@ async def test_ws_query_routes_to_non_home_workspace() -> None:
         )
         ms = ctx.media_store.store_for("main", media_dir=_media_dir(ws_root, "main"))
         ms.save(session_id, att.id, b"hello")
-        _append_user_message_with_attachment(store, _sessions_dir(ws_root), session_id, att)
+        await _append_user_message_with_attachment(
+            store, _sessions_dir(ws_root), session_id, att
+        )
 
         client = TestClient(TestServer(server.app))
         await client.start_server()
@@ -599,7 +619,9 @@ async def test_cross_workspace_isolation_404() -> None:
         # Write BOTH the bytes AND the transcript record under ws-A.
         ms = ctx.media_store.store_for("main", media_dir=_media_dir(ws_a, "main"))
         ms.save(session_id, att.id, b"hello")
-        _append_user_message_with_attachment(store, _sessions_dir(ws_a), session_id, att)
+        await _append_user_message_with_attachment(
+            store, _sessions_dir(ws_a), session_id, att
+        )
 
         client = TestClient(TestServer(server.app))
         await client.start_server()
@@ -857,7 +879,7 @@ async def test_history_replay_returns_outbound_attachment_records() -> None:
         (ws_root / "report.txt").write_bytes(b"report-body")
         # Persist exactly what SendFileToUserTool._persist_attachment writes:
         # an AssistantTurnEvent with blocks=[], no turn_id, and one record.
-        store.append(
+        await store.append(
             session_id,
             AssistantTurnEvent(
                 session_id=session_id,

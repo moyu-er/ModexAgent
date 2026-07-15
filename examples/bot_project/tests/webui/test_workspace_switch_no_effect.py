@@ -14,7 +14,8 @@ from pathlib import Path
 import pytest
 
 from modex_agent.workspace.context import WorkspaceContext
-from modex_agent.workspace.registry import WorkspaceRegistry, RegistryStore
+from modex_agent.workspace.record import WorkspaceRecord
+from modex_agent.workspace.registry import RegistryStore, WorkspaceRegistry
 from modex_agent.workspace.routing import WorkspaceResolver
 
 
@@ -41,11 +42,23 @@ class _InMemoryRegistryStore(RegistryStore):
     def __init__(self) -> None:
         self._targets: list[Path] = []
 
-    def load_known_targets(self) -> list[Path]:
+    async def load_known_targets(self) -> list[Path]:
         return list(self._targets)
 
-    def save_known_targets(self, targets: list[Path]) -> None:
+    async def save_known_targets(self, targets: list[Path]) -> None:
         self._targets = list(targets)
+
+    async def list_workspaces(self, order_by: str = "last_active", limit: int = 20) -> list[WorkspaceRecord]:
+        return []
+
+    async def upsert_workspace(self, record: WorkspaceRecord) -> None:
+        pass
+
+    async def delete_workspace(self, target_path: str) -> None:
+        pass
+
+    async def get_workspace(self, target_path: str) -> WorkspaceRecord | None:
+        return None
 
 
 @pytest.mark.asyncio

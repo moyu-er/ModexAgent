@@ -102,7 +102,7 @@ async def test_im_normal_message_persisted_and_enqueued() -> None:
             )
             env = UserInputEnvelope(external_id="u1", content="hello", channel="qq")
             await pipe.handle(env, ctx)
-            events = list(store.load(_sid("main", "u1")))
+            events = await store.load(_sid("main", "u1"))
             assert len(events) == 1 and events[0].content == "hello"
             assert len(enqueued) == 1 and enqueued[0].content == "hello"
             # Task 1: ws carried on the message (default-home provider => root).
@@ -129,7 +129,7 @@ async def test_webui_explicit_coding_pool_persisted_to_coding() -> None:
                 explicit_pool="coding",
             )
             await pipe.handle(env, ctx)
-            events = list(store.load(_sid("coding", "uuid1")))
+            events = await store.load(_sid("coding", "uuid1"))
             assert len(events) == 1 and events[0].content == "hi"
 
 
@@ -148,7 +148,7 @@ async def test_im_stop_command_not_persisted() -> None:
             pipe = build_im_pipeline(skill_registry=_NoSkill(), known_pools={"main"})
             env = UserInputEnvelope(external_id="u1", content="/stop", channel="qq")
             await pipe.handle(env, ctx)
-            assert list(store.load(_sid("main", "u1"))) == []
+            assert await store.load(_sid("main", "u1")) == []
             assert enqueued == [], "/stop must not be enqueued"
 
 
@@ -166,7 +166,7 @@ async def test_im_continue_command_not_persisted_but_enqueued() -> None:
             env = UserInputEnvelope(external_id="u1", content="/continue", channel="qq")
             result = await pipe.handle(env, ctx)
             assert not result.should_continue(), "/continue must terminate"
-            assert list(store.load(_sid("main", "u1"))) == []
+            assert await store.load(_sid("main", "u1")) == []
             assert len(enqueued) == 1, "/continue must be enqueued as a control signal"
             assert enqueued[0].content == "/continue"
             assert enqueued[0].workspace == root
@@ -246,7 +246,7 @@ async def test_im_cd_command_terminates_in_s2() -> None:
             assert not result.should_continue(), "/cd must terminate"
             response = result.response
             assert response is not None and "workspace ready" in response.get("message", "")
-            assert list(store.load(_sid("main", "u1"))) == []
+            assert await store.load(_sid("main", "u1")) == []
             assert enqueued == [], "/cd must not be enqueued"
             assert cmd_adapter.current_ws == target_dir
 
@@ -269,7 +269,7 @@ async def test_im_pool_command_switches_pool_and_terminates() -> None:
             result = await pipe.handle(env, ctx)
             assert not result.should_continue(), "/coding must terminate"
             ctx.pool_session_store.set.assert_called_once_with(encode_snowflake("u1"), "coding")
-            assert list(store.load(_sid("main", "u1"))) == []
+            assert await store.load(_sid("main", "u1")) == []
             assert enqueued == [], "/coding must not be enqueued"
 
 
@@ -298,7 +298,7 @@ async def test_im_exit_command_terminates_in_s2() -> None:
             assert not result.should_continue(), "/exit must terminate"
             response = result.response
             assert response is not None and "returned to" in response.get("message", "")
-            assert list(store.load(_sid("main", "u1"))) == []
+            assert await store.load(_sid("main", "u1")) == []
             assert enqueued == [], "/exit must not be enqueued"
             assert cmd_adapter.current_ws == project_dir
 
@@ -324,7 +324,7 @@ async def test_im_valid_skill_persisted_raw_llm_gets_xml() -> None:
             )
             await pipe.handle(env, ctx)
             # Transcript must have raw content (for replay/display)
-            events = list(store.load(_sid("main", "u1")))
+            events = await store.load(_sid("main", "u1"))
             assert len(events) == 1
             assert events[0].content == "/office-expert make ppt"
             # LLM must receive XML form, not raw text
@@ -352,7 +352,7 @@ async def test_im_invalid_skill_terminates_not_persisted() -> None:
             assert not result.should_continue(), "invalid skill must terminate"
             response = getattr(result, "response", {})
             assert isinstance(response, dict) and "message" in response
-            assert list(store.load(_sid("main", "u1"))) == []
+            assert await store.load(_sid("main", "u1")) == []
             assert enqueued == [], "invalid skill must not be enqueued"
 
 
@@ -379,7 +379,7 @@ async def test_webui_invalid_skill_terminates_not_persisted() -> None:
             assert not result.should_continue(), "invalid skill must terminate"
             response = getattr(result, "response", {})
             assert isinstance(response, dict) and "message" in response
-            assert list(store.load(_sid("main", "uuid1"))) == []
+            assert await store.load(_sid("main", "uuid1")) == []
             assert enqueued == [], "invalid skill must not be enqueued"
 
 
@@ -451,13 +451,13 @@ async def test_multi_channel_pool_isolation() -> None:
             assert result_ws.should_continue()
 
             # WebUI message is persisted to its own session, not affected by IM pool switch
-            events_ws = list(store.load(_sid("main", "uuid1")))
+            events_ws = await store.load(_sid("main", "uuid1"))
             assert len(events_ws) == 1
             assert events_ws[0].content == "hello from webui"
 
             # IM pool switch did not enqueue or persist any message
             assert enqueued_im == []
-            assert list(store.load(_sid("main", "u1"))) == []
+            assert await store.load(_sid("main", "u1")) == []
 
 
 @pytest.mark.asyncio
@@ -484,7 +484,7 @@ async def test_webui_slash_cd_produces_error_not_enqueued() -> None:
             # Terminate carries response so _ws_send_message can build ERROR envelope
             response = getattr(result, "response", None)
             assert response is not None, "Terminate must carry a response for ERROR envelope"
-            assert list(store.load(_sid("main", "uuid1"))) == []
+            assert await store.load(_sid("main", "uuid1")) == []
             assert enqueued == [], "/cd must not be enqueued in WebUI"
 
 
@@ -516,7 +516,7 @@ async def test_im_pwd_command_terminates_in_s2() -> None:
             response = getattr(result, "response", {})
             assert isinstance(response, dict)
             assert str(workspace_dir) in response.get("message", "")
-            assert list(store.load(_sid("main", "u1"))) == []
+            assert await store.load(_sid("main", "u1")) == []
             assert enqueued == [], "/pwd must not be enqueued"
 
 
@@ -591,7 +591,7 @@ async def test_skill_resolved_from_correct_pool() -> None:
             assert "unknown command" in msg
             assert enqueued == []
             # u2.main must be empty — the unrecognized skill was terminated before S7
-            assert list(store.load(_sid("main", "u2"))) == []
+            assert await store.load(_sid("main", "u2")) == []
 
 
 @pytest.mark.asyncio
@@ -638,4 +638,4 @@ async def test_skill_pool_isolation_webui() -> None:
             assert not result2.should_continue(), (
                 "/brainstorming must NOT be found in coding pool"
             )
-            assert list(store.load(_sid("coding", "uuid2"))) == []
+            assert await store.load(_sid("coding", "uuid2")) == []

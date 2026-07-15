@@ -33,6 +33,7 @@ SUBDIR_TRACE: str = "trace"
 SUBDIR_OUTPUT: str = "output"
 SUBDIR_PRUNED: str = "pruned"
 SUBDIR_FORK_CONTEXTS: str = "fork_contexts"
+WORKSPACE_STATE_DB: str = "state.db"
 # Reserved global-tier directory name (workspace registry + conversation map),
 # NOT a per-workspace subdir. WorkspacePaths accessors must never produce it.
 RESERVED_GLOBAL_DIR: str = "_registry"
@@ -135,6 +136,10 @@ class WorkspacePaths:
     @property
     def inbox_dir(self) -> Path:
         return self._child(SUBDIR_INBOX)
+
+    @property
+    def state_db(self) -> Path:
+        return self.root / WORKSPACE_STATE_DB
 
     @property
     def pool_sessions_dir(self) -> Path:

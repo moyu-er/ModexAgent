@@ -1,9 +1,20 @@
 """Scope abstractions for configurable isolation dimensions.
 
 Moved from framework.memory.core.scope to core to break the core <-> memory
-import cycle. These types (MemoryContext, MemoryScope, concrete scopes) are
-shared identity models used by both core.runtime_context and memory layers.
+import cycle. These types (MemoryContext, Scope, concrete scopes) are shared
+identity models used by both core.runtime_context and memory layers.
+
+``RecordScope`` (frozen Pydantic model) carries every configurable isolation
+dimension and produces a deterministic key (``canonical()``) or a filesystem
+path segment (``to_path_segment(*dims)``).  The ``Scope`` ABC
+(``extract(context) -> RecordScope`` + ``name``) is the single extraction
+contract; the 8 concrete subclasses implement it.  :func:`scope_path_key`
+derives a filesystem path segment from a ``Scope`` (using the dimensions
+encoded in ``scope.name``); :func:`build_scope` constructs a ``Scope`` from
+config dimension short-names.
 """
+
+from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -11,6 +22,8 @@ from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
+
+from modex_agent.utils.canonical_json import canonical_json
 
 
 class MemoryAgentRole(StrEnum):
@@ -50,7 +63,7 @@ class MemoryContext(BaseModel):
     sender_agent: str | None = None
     receiver_agent: str | None = None
 
-    def with_defaults(self, **defaults: Any) -> "MemoryContext":
+    def with_defaults(self, **defaults: Any) -> MemoryContext:
         """Return a new MemoryContext with default values for missing fields."""
         current = {key: getattr(self, key) for key in type(self).model_fields}
         for key, default_value in defaults.items():
@@ -62,7 +75,7 @@ class MemoryContext(BaseModel):
         return self.model_dump()
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> "MemoryContext":
+    def from_dict(cls, data: dict[str, Any] | None) -> MemoryContext:
         """Restore context from persisted scope metadata.
 
         ``session_id`` is persisted as a plain string; no SessionInfo parsing.
@@ -105,125 +118,239 @@ def infer_agent_role(context: MemoryContext) -> MemoryAgentRole:
     return MemoryAgentRole.MAIN
 
 
-class MemoryScope(ABC):
-    """记忆分组维度抽象基类。
+# ---------------------------------------------------------------------------
+# RecordScope — structured scope dimensions (T04)
+# ---------------------------------------------------------------------------
 
-    每个记忆层可以独立配置自己的 Scope，从而决定该层按什么维度隔离。
-    例如：
-    - 短期记忆按 SessionScope 分组
-    - 长期记忆按 CompositeScope(TenantScope(), UserScope()) 分组
-    - 全局人格模板按 GlobalScope 共享
+#: Maps short dimension names (used by config, ``Scope.name``, ``build_scope``)
+#: to the corresponding ``RecordScope`` field name.  Used by
+#: ``RecordScope.to_path_segment``.
+_DIMENSION_FIELDS: dict[str, str] = {
+    "pool": "pool",
+    "workspace": "workspace_id",
+    "session": "session_id",
+    "session_prefix": "session_prefix",
+    "agent": "agent_id",
+    "agent_role": "agent_role",
+    "user": "user_id",
+    "tenant": "tenant_id",
+    "channel": "channel",
+    "chat": "chat_id",
+    "invocation": "invocation_id",
+    "parent_session": "parent_session_id",
+}
+
+
+class RecordScope(BaseModel):
+    """Structured scope dimensions for a memory record.
+
+    Frozen Pydantic model carrying every configurable isolation dimension.
+    A structured object that can produce:
+
+    - ``canonical()`` — deterministic JSON for DB scope_key uniqueness.
+    - ``to_path_segment(*dimensions)`` — file-system path segment for the
+      selected dimensions (``None`` values become ``"default"``).
+    - ``merge(other)`` — combine two records (``other``'s non-``None`` fields
+      override ``self``'s), used by ``CompositeScope.extract``.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    pool: str | None = None
+    workspace_id: str | None = None
+    session_id: str | None = None
+    session_prefix: str | None = None
+    agent_id: str | None = None
+    agent_role: str | None = None
+    user_id: str | None = None
+    tenant_id: str | None = None
+    channel: str | None = None
+    chat_id: str | None = None
+    invocation_id: str | None = None
+    parent_session_id: str | None = None
+
+    def canonical(self) -> str:
+        """Deterministic JSON representation of non-``None`` dimensions.
+
+        Uses :func:`canonical_json` so the output is byte-stable regardless of
+        field construction order — suitable for DB scope_key uniqueness
+        constraints.
+        """
+        return canonical_json(self.model_dump(exclude_none=True))
+
+    def to_path_segment(self, *dimensions: str) -> str:
+        """Build a path segment string from the selected dimensions.
+
+        Each dimension is a short name (e.g. ``"user"``, ``"session"``) mapped
+        to a ``RecordScope`` field via ``_DIMENSION_FIELDS``.  ``None`` values
+        are rendered as ``"default"``.  Dimensions are joined with ``":"``.
+
+        With zero dimensions the result is ``""`` — mirroring
+        :class:`GlobalScope`'s empty-key behavior.
+        """
+        if not dimensions:
+            return ""
+        parts: list[str] = []
+        for dim in dimensions:
+            field_name = _DIMENSION_FIELDS.get(dim)
+            if field_name is None:
+                raise ValueError(f"Unknown scope dimension: {dim!r}")
+            value = getattr(self, field_name)
+            parts.append(value if value is not None else "default")
+        return ":".join(parts)
+
+    def merge(self, other: RecordScope) -> RecordScope:
+        """Return a new ``RecordScope`` merging ``self`` with ``other``.
+
+        For each field: ``other``'s non-``None`` value overrides ``self``'s;
+        when ``other``'s field is ``None`` ``self``'s value is preserved.
+        Used by :class:`CompositeScope.extract` to combine sub-scope records.
+        """
+        merged: dict[str, str | None] = {}
+        for field_name in type(self).model_fields:
+            other_val = getattr(other, field_name)
+            self_val = getattr(self, field_name)
+            merged[field_name] = other_val if other_val is not None else self_val
+        return type(self)(**merged)
+
+
+# ---------------------------------------------------------------------------
+# Scope — extraction ABC
+# ---------------------------------------------------------------------------
+
+
+class Scope(ABC):
+    """Structured scope extraction contract.
+
+    Each concrete subclass extracts a :class:`RecordScope` from a
+    :class:`MemoryContext`.  ``CompositeScope.extract`` merges sub-scope
+    records via :meth:`RecordScope.merge`.
+
+    Consumers derive either a deterministic DB key via
+    ``scope.extract(context).canonical()`` or a filesystem path segment via
+    :func:`scope_path_key` (which calls ``to_path_segment`` with the
+    dimensions encoded in ``scope.name``).
     """
 
     @abstractmethod
-    def get_scope_key(self, context: MemoryContext) -> str:
-        """从上下文中提取分组键。"""
-        pass
+    def extract(self, context: MemoryContext) -> RecordScope:
+        """Extract a :class:`RecordScope` from *context*."""
+        ...
 
     @property
     @abstractmethod
     def name(self) -> str:
-        """Scope 名称，用于调试和元数据。"""
-        pass
+        """Short dimension name, used for debugging and metadata."""
+        ...
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}()"
 
 
-class SessionScope(MemoryScope):
-    """按会话分组。"""
+# ---------------------------------------------------------------------------
+# Concrete Scope subclasses
+# ---------------------------------------------------------------------------
 
-    def get_scope_key(self, context: MemoryContext) -> str:
-        sid = context.session_id
-        return str(sid) if sid else "default"
+
+class SessionScope(Scope):
+    """按会话分组。"""
 
     @property
     def name(self) -> str:
         return "session"
 
+    def extract(self, context: MemoryContext) -> RecordScope:
+        return RecordScope(session_id=context.session_id)
 
-class UserScope(MemoryScope):
+
+class UserScope(Scope):
     """按用户分组。"""
-
-    def get_scope_key(self, context: MemoryContext) -> str:
-        return context.user_id or "default"
 
     @property
     def name(self) -> str:
         return "user"
 
+    def extract(self, context: MemoryContext) -> RecordScope:
+        return RecordScope(user_id=context.user_id)
 
-class TenantScope(MemoryScope):
+
+class TenantScope(Scope):
     """按租户分组。"""
-
-    def get_scope_key(self, context: MemoryContext) -> str:
-        return context.tenant_id or "default"
 
     @property
     def name(self) -> str:
         return "tenant"
 
+    def extract(self, context: MemoryContext) -> RecordScope:
+        return RecordScope(tenant_id=context.tenant_id)
 
-class AgentScope(MemoryScope):
+
+class AgentScope(Scope):
     """按 Agent 类型分组。"""
-
-    def get_scope_key(self, context: MemoryContext) -> str:
-        return context.agent_id or "default"
 
     @property
     def name(self) -> str:
-        return "agent"
+        return "agent:agent_role"
+
+    def extract(self, context: MemoryContext) -> RecordScope:
+        return RecordScope(agent_id=context.agent_id, agent_role=context.agent_role)
 
 
-class ChannelScope(MemoryScope):
+class ChannelScope(Scope):
     """按频道分组（例如 IM 平台中的 channel）。"""
-
-    def get_scope_key(self, context: MemoryContext) -> str:
-        return context.channel or "default"
 
     @property
     def name(self) -> str:
         return "channel"
 
+    def extract(self, context: MemoryContext) -> RecordScope:
+        return RecordScope(channel=context.channel)
 
-class ChatScope(MemoryScope):
+
+class ChatScope(Scope):
     """按聊天群组分组（例如 QQ 群、微信群）。"""
-
-    def get_scope_key(self, context: MemoryContext) -> str:
-        return context.chat_id or "default"
 
     @property
     def name(self) -> str:
         return "chat"
 
+    def extract(self, context: MemoryContext) -> RecordScope:
+        return RecordScope(chat_id=context.chat_id)
 
-class GlobalScope(MemoryScope):
+
+class GlobalScope(Scope):
     """全局共享，无视任何上下文字段。
 
-    Returns empty scope_key so the storage path has no user-level subdirectory
-    in single-user mode: ``archive/`` instead of ``archive/global/``.
+    Returns an empty path segment so the storage path has no user-level
+    subdirectory in single-user mode: ``archive/`` instead of
+    ``archive/global/``.
     """
-
-    def get_scope_key(self, context: MemoryContext) -> str:
-        _ = context
-        return ""
 
     @property
     def name(self) -> str:
         return "global"
 
+    def extract(self, context: MemoryContext) -> RecordScope:
+        _ = context
+        return RecordScope()
 
-class CompositeScope(MemoryScope):
+
+class CompositeScope(Scope):
     """组合多个 Scope，生成复合分组键。
 
     例如 CompositeScope(TenantScope(), UserScope()) 会生成 "tenant_id:user_id"。
+
+    ``extract`` merges sub-scope records via :meth:`RecordScope.merge`.
     """
 
-    def __init__(self, *scopes: MemoryScope) -> None:
+    def __init__(self, *scopes: Scope) -> None:
         self.scopes = scopes
 
-    def get_scope_key(self, context: MemoryContext) -> str:
-        return ":".join(s.get_scope_key(context) for s in self.scopes)
+    def extract(self, context: MemoryContext) -> RecordScope:
+        record = RecordScope()
+        for scope in self.scopes:
+            record = record.merge(scope.extract(context))
+        return record
 
     @property
     def name(self) -> str:
@@ -231,3 +358,72 @@ class CompositeScope(MemoryScope):
 
     def __repr__(self) -> str:
         return f"CompositeScope({', '.join(s.name for s in self.scopes)})"
+
+
+# ---------------------------------------------------------------------------
+# build_scope factory
+# ---------------------------------------------------------------------------
+
+#: Maps short dimension names to concrete ``Scope`` classes for
+#: :func:`build_scope`.  Only the 7 leaf-scope dimensions that have a
+#: corresponding ``Scope`` subclass are listed here; the remaining
+#: ``RecordScope`` fields (pool, workspace_id, session_prefix, invocation_id,
+#: parent_session_id) are populated by future Scope subclasses.
+_DIMENSION_SCOPES: dict[str, type[Scope]] = {
+    "session": SessionScope,
+    "user": UserScope,
+    "tenant": TenantScope,
+    "agent": AgentScope,
+    "channel": ChannelScope,
+    "chat": ChatScope,
+    "global": GlobalScope,
+}
+
+
+def build_scope(dims: list[str] | str) -> Scope:
+    """Build a :class:`Scope` from dimension short-names.
+
+    A single string is auto-wrapped into a one-element list (``build_scope("user")``
+    is equivalent to ``build_scope(["user"])``).
+
+    - Empty list → :class:`GlobalScope`.
+    - Single dimension → the corresponding leaf ``Scope``.
+    - Multiple dimensions → :class:`CompositeScope` preserving order.
+    """
+    if isinstance(dims, str):
+        dims = [dims]
+    if len(dims) == 0:
+        return GlobalScope()
+
+    resolved: list[Scope] = []
+    for dim in dims:
+        cls = _DIMENSION_SCOPES.get(dim)
+        if cls is None:
+            raise ValueError(f"Unknown scope dimension: {dim!r}")
+        resolved.append(cls())
+
+    if len(resolved) == 1:
+        return resolved[0]
+    return CompositeScope(*resolved)
+
+
+# ---------------------------------------------------------------------------
+# scope_path_key — filesystem path segment from a Scope
+# ---------------------------------------------------------------------------
+
+
+def scope_path_key(scope: Scope, context: MemoryContext) -> str:
+    """Filesystem path segment for *scope* applied to *context*.
+
+    Extracts a :class:`RecordScope` and renders the configured dimensions
+    (those encoded in ``scope.name`` that are registered in
+    ``_DIMENSION_FIELDS``) via :meth:`RecordScope.to_path_segment`.
+    Dimensions not registered as fields — notably ``"global"`` — contribute
+    nothing, so :class:`GlobalScope` yields ``""`` (no subdirectory).
+
+    Use ``scope.extract(context).canonical()`` instead when the key is a dict
+    / DB lookup key rather than a filesystem path.
+    """
+    record = scope.extract(context)
+    dims = [d for d in scope.name.split(":") if d in _DIMENSION_FIELDS]
+    return record.to_path_segment(*dims)

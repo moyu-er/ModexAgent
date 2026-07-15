@@ -6,13 +6,11 @@ import logging
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from pathlib import Path
 
 from modex_agent.tools.terminal.backends.base import TerminalBackend
 from modex_agent.tools.terminal.backends.factory import create_pty_backend
 from modex_agent.tools.terminal.config import TerminalRuntimeConfig
 from modex_agent.tools.terminal.session import TerminalInfo, TerminalSession
-from modex_agent.tools.terminal.state_store import JsonTerminalStateStore
 from modex_agent.tools.terminal.types import (
     ShellInfo,
     TerminalVisibility,
@@ -27,8 +25,8 @@ class TerminalManagerBase(ABC):
     Under ADR-0010 there is a single production implementation,
     ``BaseTerminalManager``, parameterised by the two contract axes
     ``shell_info`` (carrying Shell Family + platform) x ``visibility`` plus
-    optional capability flags (``max_terminals`` / ``storage_dir`` /
-    ``enable_memory_pressure``). The legacy OS-named subclasses and the second
+    optional capability flags (``max_terminals`` / ``enable_memory_pressure``).
+    The legacy OS-named subclasses and the second
     ``TerminalManager`` class have been folded inward (ADR-0010 Decision 8,
     closing the ADR-0007 fork); the capability helpers are retained as
     flag-guarded private methods here.
@@ -68,10 +66,10 @@ class BaseTerminalManager(TerminalManagerBase):
     Manages named sessions with a pluggable ``backend_factory`` (real backends
     in production, fakes in tests). Role in the seam (see
     ``TerminalManagerBase``): the single production implementation.
-    Capability behaviours — LRU eviction, JSON persistence, memory-pressure
-    buffer clearing — are flag-guarded (``max_terminals`` /
-    ``storage_dir`` / ``enable_memory_pressure``), all default-off, folded
-    inward from the legacy ``TerminalManager`` per ADR-0010 Decision 8.
+    Capability behaviours — LRU eviction and memory-pressure buffer clearing —
+    are flag-guarded (``max_terminals`` / ``enable_memory_pressure``), both
+    default-off, folded inward from the legacy ``TerminalManager`` per ADR-0010
+    Decision 8.
     """
 
     def __init__(
@@ -83,7 +81,6 @@ class BaseTerminalManager(TerminalManagerBase):
         config: TerminalRuntimeConfig | None = None,
         default_cwd: str | None = None,
         max_terminals: int | None = None,
-        storage_dir: Path | None = None,
         enable_memory_pressure: bool = False,
     ) -> None:
         self.platform = shell_info.platform
@@ -96,12 +93,7 @@ class BaseTerminalManager(TerminalManagerBase):
         self._default_name: str | None = None
         # Capability flags — all default-off → lean form behaviour-equivalent
         self._max_terminals: int | None = max_terminals
-        self._storage_dir: Path | None = storage_dir
         self._enable_memory_pressure: bool = enable_memory_pressure
-        # Lazily-created state store (only when storage_dir set)
-        self._store: JsonTerminalStateStore | None = (
-            JsonTerminalStateStore(storage_dir) if storage_dir is not None else None
-        )
 
     async def get_or_create(self, name: str | None, cwd: str | None = None) -> TerminalSession:
         session_name = name or "default"
@@ -207,48 +199,6 @@ class BaseTerminalManager(TerminalManagerBase):
             )
             total_buffer -= size
 
-    async def save_state(self) -> None:
-        """Persist session metadata and history to JSON.
-
-        No-op when storage_dir is None (lean form, per ADR-0010 Decision 8).
-        """
-        if self._store is None:
-            return
-        sessions_data = [session.get_state() for session in self._sessions.values()]
-        state = {
-            "version": 1,
-            "default_terminal": self._default_name,
-            "sessions": sessions_data,
-        }
-        self._store.save(state)
-
-    async def load_state(self) -> None:
-        """Restore session metadata from JSON. Sessions are lazily restarted on use.
-
-        No-op when storage_dir is None (lean form, per ADR-0010 Decision 8).
-        """
-        if self._store is None:
-            return
-        data = self._store.load()
-        if not data:
-            return
-        for sess_data in data.get("sessions", []):
-            name = sess_data["name"]
-            backend = self._backend_factory()
-            session = TerminalSession(
-                name=name,
-                backend=backend,
-                shell_info=self.shell_info,
-                cwd=sess_data.get("cwd"),
-                env=sess_data.get("env"),
-            )
-            session.restore_state(sess_data)
-            self._sessions[name] = session
-        self._default_name = data.get("default_terminal")
-        if self._default_name not in self._sessions:
-            self._default_name = next(iter(self._sessions), None)
-        logger.info("Loaded %d terminal sessions from state", len(self._sessions))
-
     async def select_default(self, name: str) -> None:
         if name not in self._sessions:
             raise ValueError(f"Terminal '{name}' does not exist")
@@ -278,7 +228,6 @@ def create_terminal_manager(
     config: TerminalRuntimeConfig | None = None,
     default_cwd: str | None = None,
     max_terminals: int | None = None,
-    storage_dir: Path | None = None,
     enable_memory_pressure: bool = False,
 ) -> TerminalManagerBase:
     """Construct a ``BaseTerminalManager`` parameterised by the two ADR-0010 axes.
@@ -298,7 +247,7 @@ def create_terminal_manager(
     Args:
         shell_info: detected platform shell (Shell Family + platform + path).
         visibility: ``VISIBLE`` or ``HIDDEN``.
-        config/default_cwd/max_terminals/storage_dir/enable_memory_pressure:
+        config/default_cwd/max_terminals/enable_memory_pressure:
             forwarded to ``BaseTerminalManager``; capability flags default-off.
 
     Returns:
@@ -319,7 +268,6 @@ def create_terminal_manager(
         config=config,
         default_cwd=default_cwd,
         max_terminals=max_terminals,
-        storage_dir=storage_dir,
         enable_memory_pressure=enable_memory_pressure,
     )
 

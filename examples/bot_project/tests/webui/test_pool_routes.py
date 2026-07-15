@@ -949,3 +949,115 @@ async def test_peer_routes_503_without_controller(tmp_path: Path) -> None:
         assert (await client.delete("/api/pools/alpha/peers/bravo")).status == 503
     finally:
         await client.close()
+
+
+# ─── external_coding save cleanup ──────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_write_pool_external_coding_clears_skills_and_strips_subagents(
+    tmp_path: Path,
+) -> None:
+    """Saving an external_coding pool removes all per-pool skill assignments
+    after PoolStore commits, strips subagents from the returned tree, preserves
+    the external strategy/provider, and sets restart_required.
+
+    The frontend may send stale subagents; PoolStore canonicalizes them away on
+    disk, and the controller clears the now-orphaned per-agent skill roots.
+    """
+    _seed_pool_yml(tmp_path, "main")
+    # Seed a subagent template so the react tree carries a real subagent.
+    templates_dir = tmp_path / "config" / "pools" / "main" / "templates"
+    templates_dir.mkdir(parents=True, exist_ok=True)
+    (templates_dir / "researcher.yml").write_text(
+        yaml.safe_dump({"agent_name": "researcher", "description": "helper"}),
+        encoding="utf-8",
+    )
+    client = _make_client(_make_controller(tmp_path), tmp_path)
+    await client.start_server()
+    try:
+        # Upload + assign a skill to both the main agent and the subagent.
+        files = {"SKILL.md": base64.b64encode(b"# hello\n").decode()}
+        resp = await client.post("/api/skills", json={"name": "hello", "files": files})
+        assert resp.status == 200, await resp.text()
+        resp = await client.post("/api/pools/main/agents/main/skills/hello")
+        assert resp.status == 200, await resp.text()
+        resp = await client.post("/api/pools/main/agents/researcher/skills/hello")
+        assert resp.status == 200, await resp.text()
+        assert (tmp_path / "skills" / "main" / "main" / "hello").exists()
+        assert (tmp_path / "skills" / "main" / "researcher" / "hello").exists()
+
+        # Switch the pool to external_coding (frontend sends stale subagents).
+        got = await (await client.get("/api/pools/main")).json()
+        got["main"]["execution_strategy"] = "external_coding"
+        got["main"]["provider_kind"] = "pi"
+        resp = await client.put("/api/pools/main", json=got)
+        assert resp.status == 200, await resp.text()
+        data = await resp.json()
+
+        # Canonical reread: subagents stripped, external keys preserved.
+        assert data["subagents"] == []
+        assert data["main"]["execution_strategy"] == "external_coding"
+        assert data["main"]["provider_kind"] == "pi"
+        assert data["restart_required"] is True
+
+        # Per-pool skill assignments removed (only skills/<pool>/ is touched;
+        # the global library and main prompt md are untouched).
+        assert not (tmp_path / "skills" / "main").exists()
+        assert (tmp_path / "local_skills" / "hello").exists()
+        assert (tmp_path / "agents" / "main.md").exists()
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_write_pool_react_preserves_skill_assignments(
+    tmp_path: Path,
+) -> None:
+    """A react save must NOT clear per-pool skill assignments."""
+    _seed_pool_yml(tmp_path, "main")
+    client = _make_client(_make_controller(tmp_path), tmp_path)
+    await client.start_server()
+    try:
+        files = {"SKILL.md": base64.b64encode(b"# hello\n").decode()}
+        resp = await client.post("/api/skills", json={"name": "hello", "files": files})
+        assert resp.status == 200, await resp.text()
+        resp = await client.post("/api/pools/main/agents/main/skills/hello")
+        assert resp.status == 200, await resp.text()
+        skill_dir = tmp_path / "skills" / "main" / "main" / "hello"
+        assert skill_dir.exists()
+
+        # Save the react pool back unchanged.
+        got = await (await client.get("/api/pools/main")).json()
+        resp = await client.put("/api/pools/main", json=got)
+        assert resp.status == 200, await resp.text()
+
+        # Skill assignment preserved.
+        assert skill_dir.exists()
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_write_pool_external_missing_provider_kind_400(
+    tmp_path: Path,
+) -> None:
+    """An external_coding save without provider_kind is rejected as a
+    FieldValidationError (400), mapped from PoolStore's PoolValidationError.
+
+    No skills are cleared because the write never commits.
+    """
+    _seed_pool_yml(tmp_path, "main")
+    client = _make_client(_make_controller(tmp_path), tmp_path)
+    await client.start_server()
+    try:
+        got = await (await client.get("/api/pools/main")).json()
+        got["main"]["execution_strategy"] = "external_coding"
+        got["main"]["provider_kind"] = None
+        resp = await client.put("/api/pools/main", json=got)
+        assert resp.status == 400
+        data = await resp.json()
+        assert data["error"] == "validation"
+        assert "pool" in data["fields"]
+    finally:
+        await client.close()

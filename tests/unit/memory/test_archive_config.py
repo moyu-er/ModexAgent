@@ -12,6 +12,9 @@ def test_archive_config_defaults():
     assert cfg.max_archive_count == 10
     assert cfg.max_archive_total == 20
     assert cfg.max_archive_inject == 3
+    assert cfg.archive_inject_max_chars == 20_000
+    assert cfg.archive_inject_step_chars == 5_000
+    assert cfg.archive_inject_min_chars == 5_000
 
 
 def test_dream_engine_config_defaults():
@@ -27,10 +30,16 @@ def test_archive_config_custom_values():
         max_archive_count=5,
         max_archive_total=15,
         max_archive_inject=2,
+        archive_inject_max_chars=18_000,
+        archive_inject_step_chars=4_000,
+        archive_inject_min_chars=6_000,
     )
     assert cfg.max_archive_count == 5
     assert cfg.max_archive_total == 15
     assert cfg.max_archive_inject == 2
+    assert cfg.archive_inject_max_chars == 18_000
+    assert cfg.archive_inject_step_chars == 4_000
+    assert cfg.archive_inject_min_chars == 6_000
 
 
 def test_dream_engine_config_custom_values():

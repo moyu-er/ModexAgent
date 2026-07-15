@@ -33,6 +33,17 @@ import { restartToast } from "./restartToast";
 import { AgentMcpSelector } from "./AgentMcpSelector";
 import { AgentSkillSelector } from "./AgentSkillSelector";
 import { PromptEditor } from "./PromptEditor";
+import { ConfirmDialog } from "./ConfirmDialog";
+import {
+  ExternalMainAgentFields,
+  IMPLEMENTATION_OPTIONS,
+  type ImplementationChoice,
+} from "./ExternalMainAgentFields";
+import {
+  DEFAULT_EXTERNAL_PROVIDER,
+  descriptorFor,
+  selectProvider,
+} from "../../types/externalProviders";
 import { Card } from "../ui/Card";
 import { SectionLabel } from "../ui/SectionLabel";
 import { Button } from "../ui/Button";
@@ -59,6 +70,20 @@ interface Props {
 }
 
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
+
+// Normalizes an external pool's provider_kind to a catalog-enabled value so
+// unsupported providers (e.g. a legacy pool whose provider isn't enabled in
+// the catalog yet) do not silently persist through a Save. Native pools are
+// passed through.
+const normalizeTree = (tree: PoolTree): PoolTree => {
+  if (tree.main.execution_strategy !== "external_coding") return tree;
+  const normalized = selectProvider(tree.main.provider_kind);
+  if (normalized === tree.main.provider_kind) return tree;
+  return {
+    ...tree,
+    main: { ...tree.main, provider_kind: normalized },
+  };
+};
 
 // Mirrors the backend regex in `bot/config/prompt_store.py` so the "Edit system
 // prompt" button only opens the editor when the name we'd actually save under
@@ -126,6 +151,7 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
   const [promptTarget, setPromptTarget] = useState<PromptTarget>(null);
   const [confirmDeleteSub, setConfirmDeleteSub] = useState<number | null>(null);
+  const [confirmSwitch, setConfirmSwitch] = useState<boolean>(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -140,8 +166,13 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
     Promise.all([getPool(pool), listPools()])
       .then(([tree, pools]) => {
         if (cancelled) return;
+        // original preserves the server value verbatim so an unsupported
+        // provider_kind (e.g. "pi") is not silently lost on a read+save
+        // cycle. form is normalized to a catalog-enabled provider so the
+        // UI never shows an unselectable value; the dirty flag then fires,
+        // making the provider rewrite an explicit user action on Save.
         setOriginal(tree);
-        setForm(clone(tree));
+        setForm(clone(normalizeTree(tree)));
         setAllPools(pools);
       })
       .catch((e: unknown) => {
@@ -284,6 +315,55 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
     return found?.main_agent_name ?? name;
   };
 
+  const isExternal = form.main.execution_strategy === "external_coding";
+  const effectiveStrategy: ImplementationChoice = isExternal
+    ? "external_coding"
+    : "react";
+
+  // native→external is destructive to draft subagents, so it is gated behind a
+  // confirm. external→native only re-points the runtime and is applied directly.
+  const applyExternal = (): void => {
+    setConfirmSwitch(false);
+    setForm((prev) =>
+      prev
+        ? {
+            ...prev,
+            main: {
+              ...prev.main,
+              execution_strategy: "external_coding",
+              provider_kind: DEFAULT_EXTERNAL_PROVIDER,
+            },
+            subagents: [],
+          }
+        : prev,
+    );
+  };
+
+  const applyNative = (): void => {
+    setForm((prev) =>
+      prev
+        ? {
+            ...prev,
+            main: {
+              ...prev.main,
+              execution_strategy: "react",
+              provider_kind: null,
+            },
+          }
+        : prev,
+    );
+  };
+
+  const onImplementationChange = (next: ImplementationChoice): void => {
+    if (next === "external_coding") {
+      if (isExternal) return;
+      setConfirmSwitch(true);
+      return;
+    }
+    if (!isExternal) return;
+    applyNative();
+  };
+
   const handleAddPeer = async (): Promise<void> => {
     const peer = newPeer.trim();
     if (!peer) return;
@@ -293,7 +373,7 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
     try {
       const result = await addPeer(pool, peer);
       setOriginal(result.pool_a);
-      setForm(clone(result.pool_a));
+      setForm(clone(normalizeTree(result.pool_a)));
     } catch (e) {
       if (e instanceof ApiError) {
         try {
@@ -320,7 +400,7 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
     try {
       const result = await removePeer(pool, peer);
       setOriginal(result.pool_a);
-      setForm(clone(result.pool_a));
+      setForm(clone(normalizeTree(result.pool_a)));
     } catch (e) {
       if (e instanceof ApiError) {
         try {
@@ -353,15 +433,35 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
           <SectionLabel>Main agent</SectionLabel>
         </div>
         <div className="space-y-5 px-4 py-4">
-          <MainAgentFields
-            node={form.main}
-            savedAgentName={original.main.agent_name}
-            promptDisabled={!isValidAgentName(form.main.agent_name)}
-            errFor={errFor}
-            patch={patchMain}
-            pool={pool}
-            onEditPrompt={() => setPromptTarget({ kind: "main" })}
-          />
+          {isExternal ? (
+            <ExternalMainAgentFields
+              node={form.main}
+              errFor={errFor}
+              patch={patchMain}
+              implementationValue={effectiveStrategy}
+              onImplementationChange={onImplementationChange}
+            />
+          ) : (
+            <>
+              <Select
+                label="Implementation"
+                options={IMPLEMENTATION_OPTIONS}
+                value={effectiveStrategy}
+                onChange={(e) =>
+                  onImplementationChange(e.target.value as ImplementationChoice)
+                }
+              />
+              <MainAgentFields
+                node={form.main}
+                savedAgentName={original.main.agent_name}
+                promptDisabled={!isValidAgentName(form.main.agent_name)}
+                errFor={errFor}
+                patch={patchMain}
+                pool={pool}
+                onEditPrompt={() => setPromptTarget({ kind: "main" })}
+              />
+            </>
+          )}
         </div>
       </Card>
 
@@ -476,7 +576,8 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
         </div>
       </section>
 
-      {/* SUBAGENTS */}
+      {/* SUBAGENTS — hidden in external runtime. */}
+      {!isExternal ? (
       <section>
         <div className="mb-2 flex items-center justify-between">
           <SectionLabel>Subagents</SectionLabel>
@@ -517,6 +618,7 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
           </Button>
         </div>
       </section>
+      ) : null}
     </div>
   );
 
@@ -565,6 +667,17 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
             }
           />
         </aside>
+      ) : null}
+
+      {confirmSwitch ? (
+        <ConfirmDialog
+          title="Switch to External runtime?"
+          message={`Switching to External runtime clears this pool's subagents from your draft and hides native-only settings (max steps, terminal, tools, approval, MCP, skills, system prompt). The provider is set to ${descriptorFor(null).label} when none is present. Changes are applied only when you click Save — Cancel leaves the persisted configuration unchanged.`}
+          confirmLabel="Switch to External"
+          tone="danger"
+          onConfirm={applyExternal}
+          onCancel={() => setConfirmSwitch(false)}
+        />
       ) : null}
     </>
   );
@@ -699,6 +812,7 @@ function MainAgentFields({
       <Input
         label="Description"
         error={errFor("main.description")}
+        helper="Used for agent discovery and inter-agent communication via send_to_agent."
         value={node.description}
         onChange={(e) => patch({ description: e.target.value })}
       />

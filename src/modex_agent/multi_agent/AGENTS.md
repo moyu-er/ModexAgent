@@ -87,7 +87,7 @@ per invocation by pipeline providers, so reuse is safe.)
 | `template.py` | `AgentTemplate` — subagent preset + the **only** construction path (`materialize`). Builds the tool manager, session-only memory, subagent hooks; wires per-invocation APPEND/FORK prompt providers. |
 | `template_registry.py` | `AgentTemplateRegistry` — scans/loads per-pool subagent templates (`config/pools/<pool>/templates/*.yml`). |
 | `materialize_deps.py` | `AgentMaterializeDeps` — frozen value object of construction deps (factory, broker, pool, path resolver, fork builder, …); replaces ~30 scattered ctor params. |
-| `context_fork.py` | `ContextForkBuilder` — deep module that builds the FORK context XML from parent history + owns the fork-file registry (build is idempotent per `(agent_type, invocation_id)`; cleanup on session eviction). |
+| `context_fork.py` | `ContextForkBuilder` — builds the FORK context XML from parent message history (pure computation, T18). `build()` queries the parent session's `MessageStore`, applies lossy compaction, returns the XML string. No fork files written to disk; `register_for_cleanup`/`cleanup` are retained as no-ops for caller compatibility. |
 | `workspace_paths.py` | `WorkspacePathResolver` — resolves `runtime_dir` / `memory_dir` / `output_path(session_id)` / `trace_dir(session_id)` / `pruned_manager` from the active workspace's pool_data. |
 | `router.py` | `DefaultMeshRouter` — session identity resolved via `InputMessage.session` (no string parsing). |
 | `envelope.py` | `AgentMessageEnvelope` — source, target, session id, agent_session_id, invocation id, message_type, payload. |
@@ -100,7 +100,7 @@ per invocation by pipeline providers, so reuse is safe.)
 
 | Directory | Purpose |
 |-----------|---------|
-| `inbox/` | Inbox subsystem — `InboxServer` ABC + `LocalFileInboxServer` / `InMemoryInboxServer`, `InboxProducer` / `InboxConsumer` (local-cache dedup), `DeliveredIdTracker`. Pure MQ: persist + atomic FIFO consume (with `only_types` filter and `sessions_with_pending`); no orchestration. |
+| `inbox/` | Inbox subsystem — `InboxMQ` ABC (`InboxServer` is a deprecated alias) + `LocalFileInboxMQ` / `InMemoryInboxServer`, `InboxProducer` / `InboxConsumer` (local-cache dedup). `DeliveredIdTracker` is deprecated (merged into `InboxMQ` internal in T11). Pure MQ: persist + atomic FIFO consume (with `only_types` filter and `sessions_with_pending`); no orchestration. SQLite adapter: `SqliteInboxMQ` (`modex_agent.persistence.adapters`). |
 | `communication/` | Strategy-dispatched inter-agent messaging package (ADR-0019). `service.py` (thin orchestrator) → `TopologyPolicy.check` → `SendStrategy.execute` template method. Three concrete strategies: `SubagentDispatchStrategy` (NORMAL→SUBAGENT), `ParentReplyStrategy` (SUBAGENT→parent), `PeerNormalStrategy` (NORMAL→peer-NORMAL cross-pool via `target.bus_ref`). `result.py` holds `AgentSendResult` + `format_send_ack`. |
 
 ## Communication Contract
@@ -149,7 +149,7 @@ removed. Do not add compatibility wrappers.
 
 ## Per-pool isolation
 
-Each pool owns its own `InboxServer` (own storage dir
+Each pool owns its own `InboxMQ` (own storage dir
 `<workspace_data>/inbox/<pool_name>/`), `LocalAgentMessageBus`, and
 `InboxPoller`. The `MessageBroker` stays workspace/bot-level as the
 cross-process `_inbox_wakeup` fallback (single-process deployments are

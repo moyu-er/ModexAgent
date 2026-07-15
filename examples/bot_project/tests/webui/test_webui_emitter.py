@@ -70,7 +70,7 @@ async def test_streaming_does_not_save_deltas() -> None:
         await emitter.emit_delta("hello")
         await emitter.emit_delta(" world")
 
-        events = list(store.load("conv1.main"))
+        events = await store.load("conv1.main")
         assert all(e.event != WebUIEventType.MODEL_CONTENT_DELTA.value for e in events)
         assert all(e.event != WebUIEventType.ASSISTANT_TEXT.value for e in events)
 
@@ -111,8 +111,8 @@ async def test_subagent_emitter_preserves_full_session_id() -> None:
         assert envelope.agent_name == "reviewer"
 
         # Transcript persisted under the FULL session id (not truncated).
-        assert list(store.load(full_sid))
-        assert not list(store.load("conv1.reviewer"))
+        assert await store.load(full_sid)
+        assert not await store.load("conv1.reviewer")
 
 
 @pytest.mark.asyncio
@@ -132,9 +132,12 @@ async def test_two_subagent_emitters_persist_to_separate_transcripts() -> None:
             await em.emit_content(sid)
             await em.emit_complete(AgentResult(content=sid))
 
-        assert len(list(store.load("conv1.reviewer.aa11"))) >= 1
-        assert len(list(store.load("conv1.reviewer.bb22"))) >= 1
-        assert store.list_sessions() == {"conv1.reviewer.aa11", "conv1.reviewer.bb22"}
+        assert len(await store.load("conv1.reviewer.aa11")) >= 1
+        assert len(await store.load("conv1.reviewer.bb22")) >= 1
+        assert await store.list_sessions() == {
+            "conv1.reviewer.aa11",
+            "conv1.reviewer.bb22",
+        }
 
 
 # ── Incremental persistence tests ─────────────────────────────────────────
@@ -151,7 +154,7 @@ async def test_emit_content_saves_assistant_text_to_transcript() -> None:
         input_adapter.register_connection("conv1.main", None)
         await emitter.emit_content("Hello World")
         await emitter.emit_stream_end(resuming=False)
-        events = list(store.load("conv1.main"))
+        events = await store.load("conv1.main")
         # TurnStartEvent is WebSocket-only (not persisted). Only AssistantTextEvent.
         assert len(events) == 1
         assert events[0].event == WebUIEventType.ASSISTANT_TEXT.value
@@ -168,7 +171,7 @@ async def test_emit_complete_flushes_remaining_text_buffer() -> None:
         input_adapter.register_connection("conv1.main", None)
         await emitter.emit_content("Hello World")
         await emitter.emit_complete(AgentResult(content="done"))
-        events = list(store.load("conv1.main"))
+        events = await store.load("conv1.main")
         assert any(e.event == WebUIEventType.ASSISTANT_TEXT.value for e in events)
         assert not any(e.event == WebUIEventType.TURN_END.value for e in events)
 
@@ -185,7 +188,7 @@ async def test_tool_call_events_persisted_incrementally() -> None:
         result = ToolResult(tool_name="read_file", result="content", error=None)
         await emitter.emit(ReActEvent.TOOL_CALL_START, tc)
         await emitter.emit(ReActEvent.TOOL_CALL_END, (tc, result))
-        events = list(store.load("conv1.main"))
+        events = await store.load("conv1.main")
         assert any(e.event == WebUIEventType.TOOL_CALL.value for e in events)
         assert any(e.event == WebUIEventType.TOOL_RESULT.value for e in events)
 
@@ -200,7 +203,7 @@ async def test_reasoning_not_persisted_to_transcript() -> None:
         input_adapter.register_connection("conv1.main", None)
         await emitter.emit(ReActEvent.MODEL_REASONING, "thinking...")
         await emitter.emit_complete(AgentResult(content="done"))
-        events = list(store.load("conv1.main"))
+        events = await store.load("conv1.main")
         assert not any(e.event == WebUIEventType.MODEL_REASONING_DELTA.value for e in events)
 
 
@@ -213,7 +216,7 @@ async def test_emit_content_empty_skips_persist() -> None:
         emitter = WebBotEmitter(output_adapter, "conv1.main", config=EmitterConfig(), transcript_store=store)
         input_adapter.register_connection("conv1.main", None)
         await emitter.emit_content("   ")
-        events = list(store.load("conv1.main"))
+        events = await store.load("conv1.main")
         assert all(e.event != WebUIEventType.ASSISTANT_TEXT.value for e in events)
 
 
@@ -234,7 +237,7 @@ async def test_streaming_delta_flush_persists_content() -> None:
         await emitter.emit_delta("Hello ")
         await emitter.emit_delta("world")
         await emitter.emit_stream_end(resuming=False)
-        events = list(store.load("conv1.main"))
+        events = await store.load("conv1.main")
         assert any(e.event == WebUIEventType.ASSISTANT_TEXT.value for e in events), (
             f"Expected assistant text in transcript, got: {[e.event for e in events]}"
         )

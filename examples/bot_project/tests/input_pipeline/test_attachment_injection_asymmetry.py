@@ -141,7 +141,7 @@ async def test_injection_is_transient_transcript_excludes_it() -> None:
         #     with the Attachment record attached separately. NO injection. ---
         full_sid = env.metadata["full_session_id"]
         with bind_workspace_root(root):
-            events = list(transcript_store.load(full_sid))
+            events = await transcript_store.load(full_sid)
         user_events = [e for e in events if isinstance(e, UserMessageEvent)]
         assert len(user_events) == 1
         persisted = user_events[0]

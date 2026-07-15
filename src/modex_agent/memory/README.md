@@ -20,8 +20,8 @@ Short-term Memory ──► History Archive ──► Long-term Memory
 ### Key Abstractions
 
 - **`MemoryContext`** — groups `session_id`, `user_id`, `tenant_id`, `agent_id`
-- **`MemoryScope`** — extracts a scope key from a context (Session, User, Tenant, Agent, Global, Composite)
-- **`MemoryStorage`** — unified async interface for messages, logs, KV, and cursors
+- **`Scope`** — extracts a `RecordScope` from a context (Session, User, Tenant, Agent, Channel, Chat, Global, Composite). Lives in `modex_agent.core.scope`; `build_scope(dims)` is the factory
+- **`MemoryStoreBundle`** — frozen Pydantic model composing `MessageStore`, `KVStore`, `CursorStore`, and optional `ArchiveStore`. Returned by `MemoryStoreRegistry.resolve()`. Replaces the deleted `MemoryStorage` god-interface
 - **`CompressionStrategy`** — pluggable short-term memory compression
 - **`KnowledgeConsolidatorBase`** / **`DreamEngine`** — offline long-term memory consolidation via ReAct-based agent
 
@@ -80,17 +80,17 @@ config = MemoryLayerConfigSet(
 
 ### Implementing `RetrievalStrategy` for Vector-Backed Long-Term Memory
 
-For applications that need semantic search over long-term memories, implement a `RetrievalStrategy` on top of a vector-capable `MemoryStorage` backend.
+For applications that need semantic search over long-term memories, implement a `RetrievalStrategy` on top of a vector-capable `MessageStore` backend.
 
 #### 1. Implement a Vector Storage Backend
 
-Subclass `MemoryStorage` (or wrap an existing store) to support embeddings. The example below uses **ChromaDB** as the backing vector store:
+Subclass `MessageStore` (or wrap an existing store) to support embeddings. The example below uses **ChromaDB** as the backing vector store:
 
 ```python
-from modex_agent.memory.core.storage import MemoryStorage
+from modex_agent.memory.core.split_stores import MessageStore
 
 
-class ChromaStorage(MemoryStorage):
+class ChromaStorage(MessageStore):
     def __init__(self, collection_name: str, embedding_fn):
         self.collection = chromadb.Client().get_or_create_collection(collection_name)
         self.embedding_fn = embedding_fn

@@ -2,18 +2,20 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
 
+from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.core.models import (
     InjectionResult,
     MemoryBudget,
 )
-from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.core.system import MemorySystem
+from modex_agent.memory.injection.archive import (
+    ArchiveInjectionConfig,
+    build_archive_injection_section,
+)
 from modex_agent.memory.injection.policy import MemoryInjectionPolicy
 from modex_agent.memory.pruned.manager import PrunedManager
-from modex_agent.memory.tags import ArchiveTag, KnowledgeTag
+from modex_agent.memory.tags import KnowledgeTag
 from modex_agent.memory.utils import estimate_text_tokens
 from modex_agent.utils.xml import xml_attr, xml_text
 
@@ -47,16 +49,30 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         max_history_entries: int = 3,
         pruned_manager: PrunedManager | None = None,
         archive_inject_count: int = 3,
-        archive_inject_max_chars: int = 1000,
+        archive_inject_max_chars: int = 20_000,
+        archive_inject_step_chars: int = 5_000,
+        archive_inject_min_chars: int = 5_000,
+        archive_config: ArchiveInjectionConfig | None = None,
     ) -> None:
         self._budget = budget or MemoryBudget()
         self._max_history = max_history_entries
         self._pruned_manager = pruned_manager
-        self._archive_inject_count = archive_inject_count
-        self._archive_inject_max_chars = archive_inject_max_chars
+        self._archive_config = archive_config or ArchiveInjectionConfig(
+            count=archive_inject_count,
+            max_chars=archive_inject_max_chars,
+            step_chars=archive_inject_step_chars,
+            min_chars=archive_inject_min_chars,
+        )
 
     def injects_archive(self) -> bool:
-        return self._archive_inject_count > 0
+        return self._archive_config.count > 0
+
+    @property
+    def archive_config(self) -> ArchiveInjectionConfig:
+        return self._archive_config
+
+    def get_archive_injection_config(self) -> ArchiveInjectionConfig | None:
+        return self._archive_config if self.injects_archive() else None
 
     def injects_pruned(self) -> bool:
         return self._pruned_manager is not None
@@ -220,65 +236,16 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
     async def _inject_md_archives(
         self,
         sections: list[_PromptSection],
-        memory_system: Any,
+        memory_system: MemorySystem,
         context: MemoryContext,
     ) -> None:
-        """Inject archive summaries from DirArchiveStorage (MD files on disk)."""
-        try:
-            archive_dir = await memory_system.get_storage_path(context)
-        except Exception:
-            return
-
-        if archive_dir is None:
-            return
-
-        from modex_agent.memory.stores.dir_archive import DirArchiveStorage
-
-        storage = DirArchiveStorage(archive_dir)
-
-        try:
-            archive_ids = await storage.list_archives(limit=self._archive_inject_count)
-        except Exception:
-            return
-
-        if not archive_ids:
-            return
-
-        # Read context.md from each archive (ascending by archive_id: oldest first)
-        records: list[str] = []
-        for aid in sorted(archive_ids)[: self._archive_inject_count]:
-            try:
-                content = await storage.read_archive_file(aid, "context.md")
-            except Exception:
-                continue
-
-            if not content or not content.strip():
-                continue
-
-            truncated = len(content) > self._archive_inject_max_chars
-            display = content[: self._archive_inject_max_chars] + "..." if truncated else content
-
-            full_path = self._archive_file_path(archive_dir, aid)
-            st = ArchiveTag.SUMMARY.value
-            records.append(
-                f'<{st} number="{aid}" file="{xml_attr(full_path)}">\n{xml_text(display)}\n</{st}>'
-            )
-
-        if not records:
-            return
-
-        heading = (
-            "### Earlier Conversation Summaries\n\n"
-            "Short summaries of older conversations. Higher number = more recent. "
-            "Read the `context.md` file at each path for the full details.\n\n"
+        section = await build_archive_injection_section(
+            memory_system,
+            context,
+            self._archive_config,
         )
-        ct = ArchiveTag.CONTAINER.value
-        xml = f"<{ct}>\n" + "\n".join(records) + f"\n</{ct}>"
-        sections.append(_PromptSection(content=heading + xml, priority=70))
-
-    def _archive_file_path(self, archive_dir: Path, archive_id: int) -> str:
-        """Return absolute path to archive context.md for injection XML."""
-        return str((archive_dir / str(archive_id) / "context.md").resolve())
+        if section.content:
+            sections.append(_PromptSection(content=section.content, priority=70))
 
     def _inject_pruned_catalog(
         self,

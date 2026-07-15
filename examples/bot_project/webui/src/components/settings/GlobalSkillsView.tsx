@@ -304,12 +304,12 @@ export function GlobalSkillsView() {
                       }
                     }}
                   >
-                    <span className="flex-1 truncate text-sm font-medium text-ink">
+                    <span className="flex-1 truncate font-mono text-sm font-medium text-ink">
                       {s.name}
                     </span>
                     {s.origin && (
                       <span
-                        className="rounded-full border border-hairline px-1.5 py-0.5 text-[10px] text-mute"
+                        className="rounded-full border border-hairline px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-mute"
                         title={
                           s.origin === "repo"
                             ? "Repo-managed skill — can be deleted"

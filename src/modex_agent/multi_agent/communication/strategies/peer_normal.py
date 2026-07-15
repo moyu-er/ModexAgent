@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from modex_agent.core.agent import AgentImplementation
+from modex_agent.core.constants import ExecutionStrategy
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.communication.result import AgentSendResult
@@ -47,6 +49,11 @@ class PeerNormalStrategy(SendStrategy):
         xml_content = build_peer_agent_message(
             source=effective_source.name,
             content=req.content,
+            receiver_implementation=(
+                AgentImplementation.EXTERNAL
+                if req.target.execution_strategy == ExecutionStrategy.EXTERNAL_CODING
+                else AgentImplementation.NATIVE
+            ),
         )
         return AgentMessageEnvelope(
             payload={"content": xml_content, "message_type": AgentMessageType.AGENT_MESSAGE},

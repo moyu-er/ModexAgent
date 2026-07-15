@@ -160,7 +160,9 @@ async def test_transcript_append_warns_when_ws_root_unbound(
     sid = "convZ.main"
     with caplog.at_level(logging.WARNING, logger="bot.service.workspace_store"):
         # No bind_workspace_root → unbound.
-        store.append(sid, UserMessageEvent(session_id=sid, agent_name="main", content="x"))
+        await store.append(
+            sid, UserMessageEvent(session_id=sid, agent_name="main", content="x")
+        )
     assert any("[ws-partition]" in r.message for r in caplog.records), (
         "unbound append must log a [ws-partition] warning"
     )
@@ -175,7 +177,7 @@ async def test_transcript_append_silent_when_ws_root_bound(
     sid = "convZ.main"
     with caplog.at_level(logging.WARNING, logger="bot.service.workspace_store"):
         with bind_workspace_root(tmp_path):
-            store.append(
+            await store.append(
                 sid, UserMessageEvent(session_id=sid, agent_name="main", content="x")
             )
     assert not any("[ws-partition]" in r.message for r in caplog.records), (
@@ -184,13 +186,19 @@ async def test_transcript_append_silent_when_ws_root_bound(
 
 
 @pytest.mark.asyncio
-async def test_session_index_save_warns_when_ws_root_unbound(
-    caplog: pytest.LogCaptureFixture, tmp_path: Path
+async def test_session_index_save_writes_to_constructed_root(
+    tmp_path: Path
 ) -> None:
+    """A store constructed with an explicit root saves there.
+
+    The old per-call ``index_dir`` override and convergence guard were
+    removed: workspace isolation now lives in store construction (the WebUI
+    server builds a fresh store per workspace via a factory).
+    """
     from modex_agent.core.session_id import SessionInfo, now_ms
 
     index = WorkspacePoolSessionStore(
-        base_dir=tmp_path, pool_resolver=lambda s: "main"
+        base_dir=tmp_path / "idx", pool_resolver=lambda s: "main"
     )
     session = SessionInfo(
         session_id="convZ.main",
@@ -198,30 +206,6 @@ async def test_session_index_save_warns_when_ws_root_unbound(
         created_at=now_ms(),
         updated_at=now_ms(),
     )
-    with caplog.at_level(logging.WARNING, logger="bot.service.session_store"):
-        await index.save(session)  # no index_dir, no bound root
-    assert any("[ws-partition]" in r.message for r in caplog.records), (
-        "unbound session-index save must log a [ws-partition] warning"
-    )
-
-
-@pytest.mark.asyncio
-async def test_session_index_save_silent_when_index_dir_given(
-    caplog: pytest.LogCaptureFixture, tmp_path: Path
-) -> None:
-    from modex_agent.core.session_id import SessionInfo, now_ms
-
-    index = WorkspacePoolSessionStore(
-        base_dir=tmp_path, pool_resolver=lambda s: "main"
-    )
-    session = SessionInfo(
-        session_id="convZ.main",
-        agent_name="main",
-        created_at=now_ms(),
-        updated_at=now_ms(),
-    )
-    with caplog.at_level(logging.WARNING, logger="bot.service.session_store"):
-        await index.save(session, index_dir=tmp_path / "idx")  # explicit → no warn
-    assert not any("[ws-partition]" in r.message for r in caplog.records), (
-        "save with explicit index_dir must NOT warn"
-    )
+    await index.save(session)
+    record = tmp_path / "idx" / "main" / "convZ.main.json"
+    assert record.exists(), f"session must be saved under the constructed root; missing {record}"

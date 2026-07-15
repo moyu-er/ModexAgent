@@ -14,6 +14,7 @@ import { Button } from "../ui/Button";
 import { ActionBar } from "../ui/ActionBar";
 import { ChevronLeft } from "lucide-react";
 import { CATEGORY, type ViewKey } from "./categoryMeta";
+import { IM_BRAND_ICONS } from "./imBrands";
 
 // Re-export so any existing `import { ViewKey } from "./SettingsView"` keeps
 // resolving; categoryMeta.ts is now the canonical declaration.
@@ -152,8 +153,8 @@ export function SettingsView({ onExit }: Props) {
     return form.values ?? {};
   };
 
-  const onSave = async (): Promise<void> => {
-    if (!view || !isPersisted) return;
+  const onSave = async (): Promise<boolean> => {
+    if (!view || !isPersisted) return false;
     setSaving(true);
     setError("");
     try {
@@ -161,8 +162,10 @@ export function SettingsView({ onExit }: Props) {
       setOriginal(updated);
       setForm(clone(updated));
       if (updated.restart_required) restartToast(toast);
+      return true;
     } catch (e) {
       setError(`Save failed: ${String(e)}`);
+      return false;
     } finally {
       setSaving(false);
     }
@@ -174,8 +177,11 @@ export function SettingsView({ onExit }: Props) {
   };
 
   return (
-    <div className="flex h-full">
-      <aside className="w-52 shrink-0 border-r border-hairline bg-canvas p-3">
+    <div data-testid="settings-shell" className="flex h-full flex-col md:flex-row">
+      <aside
+        aria-label="Settings navigation"
+        className="w-full shrink-0 border-b border-hairline bg-canvas p-3 md:w-52 md:border-b-0 md:border-r"
+      >
         <Button
           variant="ghost"
           size="sm"
@@ -201,7 +207,7 @@ export function SettingsView({ onExit }: Props) {
         </div>
       </aside>
 
-      <section className="flex flex-1 flex-col bg-canvas">
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-canvas">
         <div className="flex h-full flex-col">
           <div className="flex-1 overflow-auto p-6">
             {view === "mcp" ? (
@@ -211,7 +217,13 @@ export function SettingsView({ onExit }: Props) {
             ) : view === "pools" ? (
               <PoolsView />
             ) : form && isPersisted ? (
-              <PersistedDomain form={form} error={error} onChange={setForm} />
+              <PersistedDomain
+                form={form}
+                error={error}
+                onChange={setForm}
+                dirty={dirty}
+                onSave={onSave}
+              />
             ) : null}
           </div>
           {isPersisted && form && (
@@ -302,10 +314,14 @@ function PersistedDomain({
   form,
   error,
   onChange,
+  dirty,
+  onSave,
 }: {
   form: ConfigPayload;
   error: string;
   onChange: (next: ConfigPayload) => void;
+  dirty: boolean;
+  onSave: () => Promise<boolean>;
 }) {
   return (
     <>
@@ -315,7 +331,24 @@ function PersistedDomain({
             const section = sec as RegistrySection;
             return (
               <div key={key} className="rounded-lg border border-hairline bg-canvas-elevated p-5">
-                <SectionLabel>{section.label}</SectionLabel>
+                {(() => {
+                  const brand = IM_BRAND_ICONS[key];
+                  if (!brand) return <SectionLabel>{section.label}</SectionLabel>;
+                  const { Icon, color } = brand;
+                  return (
+                    <div className="mb-4 flex items-center gap-2.5">
+                      <span
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md"
+                        style={{ color }}
+                      >
+                        <Icon className="h-5 w-5" />
+                      </span>
+                      <span className="font-mono text-sm font-semibold text-bright">
+                        {section.label}
+                      </span>
+                    </div>
+                  );
+                })()}
                 <ConfigForm
                   fields={section.fields}
                   values={section.values}
@@ -337,6 +370,8 @@ function PersistedDomain({
         <ModelEditor
           values={form.values ?? {}}
           onChange={(next) => onChange({ ...form, values: next })}
+          dirty={dirty}
+          onSave={onSave}
         />
       ) : (
         <ConfigForm

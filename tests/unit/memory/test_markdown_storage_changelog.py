@@ -6,8 +6,9 @@ MarkdownKnowledgeStorage must NOT interfere with non-.md key operations.
 """
 from __future__ import annotations
 
-import pytest
 from pathlib import Path
+
+import pytest
 
 from modex_agent.core.scope import MemoryLayerName
 

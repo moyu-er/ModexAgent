@@ -1,6 +1,7 @@
 # tests/unit/multi_agent/test_message_xml.py
 """Tests for message_xml builders."""
 
+from modex_agent.core.agent import AgentImplementation
 from modex_agent.multi_agent.message_xml import (
     build_agent_message,
     build_agent_result,
@@ -88,13 +89,13 @@ def test_build_peer_agent_message_names_source_as_reply_target():
     """The reply_contract MUST tell the receiver to send back to the source
     by exact name — otherwise the receiver cannot reply."""
     result = build_peer_agent_message(source="coding", content="hi")
-    assert 'target_agent="coding"' in result
+    assert 'target_agent = "coding"' in result
 
 
 def test_build_peer_agent_message_marks_reply_optional():
-    """Reply must be marked OPTIONAL — forcing it would ping-pong forever."""
+    """Reply must be marked conditional — forcing it would ping-pong forever."""
     result = build_peer_agent_message(source="coding", content="hi")
-    assert "optional" in result.lower()
+    assert "only if the sender actually needs an answer" in result
     assert "ping-pong" in result
 
 
@@ -107,6 +108,45 @@ def test_build_peer_agent_message_has_no_invocation_id_attr():
 
 
 def test_build_peer_agent_message_escapes_source_in_reply_target():
-    """Source name is echoed into target_agent= attribute — must be escaped."""
+    """Source name is echoed into target_agent= line — must be escaped."""
     result = build_peer_agent_message(source='naughty"&me', content="hi")
-    assert 'target_agent="naughty&quot;&amp;me"' in result
+    assert 'target_agent = "naughty&quot;&amp;me"' in result
+
+
+def test_build_peer_agent_message_external_uses_modexctl_cli():
+    """External receivers (opencode/pi) reply via modexctl send CLI, NOT
+    send_to_agent tool."""
+    result = build_peer_agent_message(
+        source="main", content="hi", receiver_implementation=AgentImplementation.EXTERNAL
+    )
+    assert 'modexctl send --to "main"' in result
+    assert "--stdin" in result
+    assert "send_to_agent tool" not in result
+    assert 'implementation="' not in result
+
+
+def test_build_peer_agent_message_native_uses_send_to_agent_tool():
+    """Modex-native receivers reply via the send_to_agent tool."""
+    result = build_peer_agent_message(
+        source="main", content="hi", receiver_implementation=AgentImplementation.NATIVE
+    )
+    assert "send_to_agent tool" in result
+    assert "modexctl send" not in result
+    assert 'implementation="' not in result
+
+
+def test_build_peer_agent_message_no_implementation_attr():
+    """No implementation attribute on the XML — sender's implementation is
+    invisible to agents."""
+    result = build_peer_agent_message(
+        source="main", content="hi", receiver_implementation=AgentImplementation.EXTERNAL
+    )
+    assert 'implementation=' not in result
+
+
+def test_build_peer_agent_message_warns_not_to_instruct_others():
+    """Receiver should not instruct other agents on how to reply — their
+    mechanism may differ."""
+    result = build_peer_agent_message(source="main", content="hi")
+    assert "Do NOT instruct other agents" in result
+    assert "may differ" in result

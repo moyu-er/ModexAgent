@@ -46,6 +46,7 @@ from bot.config.prompt_store import (
 )
 from bot.config.skills_store import SkillsStore
 from bot.service.config_controller import FieldValidationError
+from modex_agent.core.constants import ExecutionStrategy
 from modex_agent.ioc.configs.mcp import MCPServerEntry
 from modex_agent.multi_agent.pool_config import PoolSpec, PoolStore
 from modex_agent.multi_agent.pool_config.store import (
@@ -54,7 +55,7 @@ from modex_agent.multi_agent.pool_config.store import (
     PoolValidationError,
     RenameReport,
 )
-from modex_agent.multi_agent.pool_router import PoolSessionStore
+from modex_agent.multi_agent.pool_router import PoolRoutingStore
 
 # Artifact classes that, when written, set ``restart_required``. The marker is
 # coarse (a single bool) — once any of these fires, the next restart re-reads
@@ -82,7 +83,7 @@ class PoolConfigController:
         mcp_registry_path: Path,
         default_pool: str,
         restarter: Callable[[], None] | None = None,
-        pool_session_store: PoolSessionStore | None = None,
+        pool_session_store: PoolRoutingStore | None = None,
     ) -> None:
         self._pools: PoolStore = pool_store
         self._skills: SkillsStore = skills_store
@@ -90,7 +91,7 @@ class PoolConfigController:
         self._mcp_path: Path = mcp_registry_path
         self.default_pool: str = default_pool
         self._restarter: Callable[[], None] | None = restarter
-        self._pool_session_store: PoolSessionStore | None = pool_session_store
+        self._pool_session_store: PoolRoutingStore | None = pool_session_store
         # Coarse per-process dirty marker. The set tracks which artifact
         # classes triggered the marker (diagnostic); ``__bool__`` below is the
         # single source of truth for the API hint.
@@ -152,13 +153,24 @@ class PoolConfigController:
         return tree.model_copy(update={"restart_required": self.restart_required})
 
     def write_pool(self, name: str, tree: PoolSpec) -> PoolSpec:
-        """Write a pool tree; stale MCP references are dropped before save."""
+        """Write a pool tree; stale MCP references are dropped before save.
+
+        For ``external_coding`` pools, all per-pool skill assignments are
+        removed after PoolStore commits: external pools have no subagents and
+        no per-agent skill roots, so any leftover ``skills/<pool>/`` tree is
+        orphaned. The cleanup runs after agent-rename convergence (so renames
+        land first) and before the dirty marker (so ``restart_required``
+        reflects the full save). React saves skip the cleanup and preserve
+        skill assignments.
+        """
         tree = self._filter_stale_mcp(tree)
         try:
             report = self._pools.write_pool(name, tree)
         except PoolValidationError as exc:
             raise FieldValidationError({"pool": [str(exc)]}) from exc
         self._apply_agent_renames(name, report)
+        if tree.main.execution_strategy == ExecutionStrategy.EXTERNAL_CODING:
+            self._skills.clear_pool_skills(name)
         self._mark("pool")
         return self.read_pool(name)
 

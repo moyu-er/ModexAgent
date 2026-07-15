@@ -208,13 +208,34 @@ uv pip install -e ".[llm]"
 uv pip install -e ".[all,dev]"
 ```
 
+### External coding agents (Pi / OpenCode)
+
+Industry coding agent CLIs can be registered as pool main agents, addressable by other agents through `send_to_agent`. The external agent replies via the `modexbot send` CLI shim (bundled with this wheel).
+
+**Prerequisites:** install the provider CLI (`pi` or `opencode`) on `PATH`. If missing, the pool is silently skipped at startup.
+
+**Configure** `examples/bot_project/config/pools/pool_pi/pool.yml`:
+
+```yaml
+main_agent_name: pi
+execution_strategy: external_coding
+provider_kind: pi
+peers:
+  - default
+```
+
+Add a reciprocal peer entry on the `default` pool. Boot the bot — the default pool's main agent can now dispatch work to Pi via `send_to_agent(pi, "...")`, and Pi can reply via `modexbot send --to <name> --content <text>` (learnt from the injected system prompt).
+
+See [ADR-0022](docs/adr/0022-external-coding-agent-integration.md) for the full design.
+
 ## Documentation
 
 | Document | Description |
 | --- | --- |
-| [ADR index](docs/adr/) | Architecture Decision Records — pool-only assembly, src-layout rename, dependency tree, facade-only modules, retaining real seams, interruptible approval + batch atomicity, token-based compression, two-axis terminal, claim/pass-through input pipeline, attachment system, native multimodal, unified-inbox agent messaging, ReAct loop detection (ADR-0001 ~ 0016) |
+| [ADR index](docs/adr/) | Architecture Decision Records — pool-only assembly, src-layout rename, dependency tree, facade-only modules, retaining real seams, interruptible approval + batch atomicity, token-based compression, two-axis terminal, claim/pass-through input pipeline, attachment system, native multimodal, unified-inbox agent messaging, ReAct loop detection, cross-pool peer communication, external coding agent integration (ADR-0001 ~ 0022) |
 | [CONTEXT.md](CONTEXT.md) | Domain glossary — Pool, Workspace, ReAct Agent, Graph, GraphInterrupt, Assembly, etc. |
 | [Bot example](examples/bot_project/README.md) | bot_project walkthrough (multi-channel IM + WebUI, multi-agent setup, configuration) |
+| [External coding agents](docs/design/external-coding-agent-integration/spec.md) | Integrate Pi / OpenCode / future coding agent CLIs as pool main agents (ADR-0022) |
 | Per-module `AGENTS.md` | Every package under `src/modex_agent/` ships an `AGENTS.md` describing its responsibility and key files |
 
 ## Development

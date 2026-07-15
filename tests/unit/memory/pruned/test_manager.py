@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
@@ -8,7 +8,7 @@ from modex_agent.utils.timezone import get_user_timezone
 
 SID = "test-session"
 TZ = get_user_timezone()
-UTC = timezone.utc
+UTC = UTC
 
 
 @pytest.fixture()

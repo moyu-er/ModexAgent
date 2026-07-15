@@ -1,22 +1,24 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
+from modex_agent.core.scope import MemoryContext, SessionScope, UserScope, scope_path_key
 from modex_agent.memory.core.consolidation import MemoryUpdate
 from modex_agent.memory.core.layers import MemoryLayerSet
 from modex_agent.memory.core.models import ArchiveEntry
-from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.layers import (
     MemoryLayerConfigSet,
     MemoryLayerFactory,
     SessionMemoryConfig,
 )
-from modex_agent.memory.registry import InMemoryStoreRegistry
+from modex_agent.memory.registry import DefaultMemoryStoreRegistry
 
 
 @pytest.mark.asyncio
-async def test_single_user_factory_builds_fieldized_layers_with_scoped_storage() -> None:
-    registry = InMemoryStoreRegistry()
+async def test_single_user_factory_builds_fieldized_layers_with_scoped_storage(tmp_path: Path) -> None:
+    registry = DefaultMemoryStoreRegistry(tmp_path)
     layers = MemoryLayerFactory.single_user(
         registry=registry,
         config=MemoryLayerConfigSet(),
@@ -40,16 +42,18 @@ async def test_single_user_factory_builds_fieldized_layers_with_scoped_storage()
     assert (await layers.knowledge.get_file(context, "memory")) == "seed"
 
     records = await registry.list_records(agent_roles=None)
+    session_key = scope_path_key(SessionScope(), context)
+    user_key = scope_path_key(UserScope(), context)
     assert {(str(record.layer), record.scope_key) for record in records} == {
-        ("session", "s1"),
-        ("archive", "u1"),
-        ("knowledge", "u1"),
+        ("session", session_key),
+        ("archive", user_key),
+        ("knowledge", user_key),
     }
 
 
 @pytest.mark.asyncio
-async def test_session_only_factory_excludes_archive_and_knowledge() -> None:
-    registry = InMemoryStoreRegistry()
+async def test_session_only_factory_excludes_archive_and_knowledge(tmp_path: Path) -> None:
+    registry = DefaultMemoryStoreRegistry(tmp_path)
     layers = MemoryLayerFactory.session_only(
         registry=registry,
         config=SessionMemoryConfig(),
@@ -75,8 +79,8 @@ async def test_session_only_factory_excludes_archive_and_knowledge() -> None:
 
 
 @pytest.mark.asyncio
-async def test_factory_knowledge_layer_applies_memory_update() -> None:
-    registry = InMemoryStoreRegistry()
+async def test_factory_knowledge_layer_applies_memory_update(tmp_path: Path) -> None:
+    registry = DefaultMemoryStoreRegistry(tmp_path)
     layers = MemoryLayerFactory.single_user(
         registry=registry,
         config=MemoryLayerConfigSet(),
@@ -94,13 +98,13 @@ async def test_factory_knowledge_layer_applies_memory_update() -> None:
 
 
 @pytest.mark.asyncio
-async def test_session_get_recent_returns_all_when_no_limit() -> None:
+async def test_session_get_recent_returns_all_when_no_limit(tmp_path: Path) -> None:
     """get_recent_messages returns ALL messages when no limit is passed.
 
     Token compression is the sole size governor; the legacy message-count
     retrieval cap (SessionMemoryConfig.max_messages) has been removed.
     """
-    registry = InMemoryStoreRegistry()
+    registry = DefaultMemoryStoreRegistry(tmp_path)
     layers = MemoryLayerFactory.session_only(
         registry=registry,
         config=SessionMemoryConfig(),

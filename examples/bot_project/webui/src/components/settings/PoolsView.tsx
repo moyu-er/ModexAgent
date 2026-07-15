@@ -192,9 +192,15 @@ export function PoolsView() {
         </div>
       </div>
 
-      <div className="flex min-h-0 flex-1">
+      <div
+        data-testid="pools-layout"
+        className="flex min-h-0 flex-1 flex-col lg:flex-row"
+      >
       {/* Left: pool list */}
-      <div className="flex w-64 shrink-0 flex-col gap-3 border-r border-hairline bg-canvas-elevated pr-3">
+      <aside
+        aria-label="Pool list"
+        className="flex max-h-48 w-full shrink-0 flex-col gap-3 border-b border-hairline bg-canvas-elevated pb-3 lg:max-h-none lg:w-64 lg:border-b-0 lg:border-r lg:pb-0 lg:pr-3"
+      >
         <div className="flex items-center justify-between">
           <SectionLabel>Pools</SectionLabel>
           <IconButton
@@ -321,10 +327,13 @@ export function PoolsView() {
             </p>
           )}
         </div>
-      </div>
+      </aside>
 
       {/* Right: editor */}
-      <div className="flex flex-1 flex-col rounded-lg border border-hairline bg-canvas-elevated p-4">
+      <section
+        aria-label="Selected pool editor"
+        className="flex min-w-0 flex-1 flex-col rounded-lg border border-hairline bg-canvas-elevated p-4"
+      >
         {selected ? (
           <>
             <div className="flex-1 overflow-auto">
@@ -365,7 +374,7 @@ export function PoolsView() {
             Select a pool, or click + to create one.
           </p>
         )}
-      </div>
+      </section>
       </div>
 
       {confirm?.kind === "delete" ? (

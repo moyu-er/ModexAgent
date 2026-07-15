@@ -1,7 +1,8 @@
 """Tests for ScopedEditFileTool."""
 
-import pytest
 from pathlib import Path
+
+import pytest
 
 from modex_agent.memory.tools.scoped_edit import ScopedEditFileTool
 

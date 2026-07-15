@@ -49,6 +49,19 @@ class StopReason(StrEnum):
     LOOP_DETECTED = "loop_detected"
 
 
+class ExecutionStrategy(StrEnum):
+    """Agent 执行策略。
+
+    与 ``AgentDescriptor.execution_strategy`` 对应，集中管理所有合法的
+    执行策略值，避免分散在 descriptor / pool config / 业务层中的硬编码字符串。
+    """
+
+    REACT = "react"
+    SINGLE_TURN = "single_turn"
+    PIPELINE = "pipeline"
+    EXTERNAL_CODING = "external_coding"
+
+
 class ReasoningEffort(StrEnum):
     """模型 reasoning effort 参数的可选值。
 

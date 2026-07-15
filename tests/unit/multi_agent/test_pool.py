@@ -111,6 +111,7 @@ class TestRegisterResidentTakesInstance:
         assert pool.get_status("main") == AgentState.IDLE
         # Verify instance was stored (no consumer task — _consumers dict is deleted)
 
+
     async def test_track_session_registers_correct_session_id(self):
         """Regression: _track_session called factory.create with
         external_id=session_id (a full '{prefix}.{agent}' string), causing
@@ -150,6 +151,238 @@ class TestRegisterResidentTakesInstance:
         assert str(registered_session) == session_id, (
             f"Expected {session_id!r}, got {str(registered_session)!r}"
         )
+
+
+class TestShutdownOwnership:
+    @staticmethod
+    async def _register(pool: AgentPool, name: str, stop: AsyncMock) -> None:
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.descriptor import AgentDescriptor
+
+        instance = MagicMock()
+        instance.stop = stop
+        await pool.register_resident(
+            AgentDescriptor(address=AgentAddress(name=name)),
+            instance,
+        )
+
+    @pytest.mark.asyncio
+    async def test_timeout_owner_remains_registered_for_retry(self) -> None:
+        # Given
+        pool = AgentPool(broker=_FakeBroker(), agent_factory=MagicMock())
+        timed_out = asyncio.Event()
+        later_stopped = asyncio.Event()
+
+        async def timeout_stop() -> None:
+            timed_out.set()
+            await asyncio.Event().wait()
+
+        async def successful_stop() -> None:
+            later_stopped.set()
+
+        await self._register(pool, "timed-out", AsyncMock(side_effect=timeout_stop))
+        await self._register(pool, "successful", AsyncMock(side_effect=successful_stop))
+
+        # When
+        completed = await pool.shutdown_all(timeout=0.01)
+
+        # Then
+        assert (
+            completed,
+            timed_out.is_set(),
+            later_stopped.is_set(),
+            pool.get("timed-out") is not None,
+            pool.get_status("timed-out"),
+            pool.get("successful") is None,
+            pool.get_status("successful"),
+        ) == (
+            False,
+            True,
+            True,
+            True,
+            AgentState.SHUTTING_DOWN,
+            True,
+            AgentState.SHUTDOWN,
+        )
+
+    @pytest.mark.asyncio
+    async def test_error_owner_remains_registered_and_does_not_block_later_stop(self) -> None:
+        # Given
+        pool = AgentPool(broker=_FakeBroker(), agent_factory=MagicMock())
+        failed = asyncio.Event()
+        later_stopped = asyncio.Event()
+
+        async def error_stop() -> None:
+            failed.set()
+            raise RuntimeError("stop failed")
+
+        async def successful_stop() -> None:
+            later_stopped.set()
+
+        await self._register(pool, "failed", AsyncMock(side_effect=error_stop))
+        await self._register(pool, "successful", AsyncMock(side_effect=successful_stop))
+
+        # When
+        shutdown_error: RuntimeError | None = None
+        completed = False
+        try:
+            completed = await pool.shutdown_all(timeout=0.1)
+        except RuntimeError as exc:
+            shutdown_error = exc
+
+        # Then
+        assert (
+            completed,
+            shutdown_error,
+            failed.is_set(),
+            later_stopped.is_set(),
+            pool.get("failed") is not None,
+            pool.get_status("failed"),
+            pool.get("successful") is None,
+            pool.get_status("successful"),
+        ) == (
+            False,
+            None,
+            True,
+            True,
+            True,
+            AgentState.SHUTTING_DOWN,
+            True,
+            AgentState.SHUTDOWN,
+        )
+
+    @pytest.mark.asyncio
+    async def test_cancellation_propagates_and_owner_remains_registered(self) -> None:
+        # Given
+        pool = AgentPool(broker=_FakeBroker(), agent_factory=MagicMock())
+        stop_started = asyncio.Event()
+        release_stop = asyncio.Event()
+        stop_calls = 0
+
+        async def cancelled_stop() -> None:
+            nonlocal stop_calls
+            stop_calls += 1
+            stop_started.set()
+            await release_stop.wait()
+
+        await self._register(pool, "cancelled", AsyncMock(side_effect=cancelled_stop))
+
+        # When
+        shutdown = asyncio.create_task(pool.shutdown_all(timeout=1.0))
+        await stop_started.wait()
+        shutdown.cancel()
+
+        # Then
+        with pytest.raises(asyncio.CancelledError):
+            await shutdown
+        assert pool.get("cancelled") is not None
+        assert pool.get_status("cancelled") == AgentState.SHUTTING_DOWN
+
+        release_stop.set()
+        assert await pool.shutdown_all(timeout=1.0) is True
+        assert stop_calls == 1
+        assert pool.get("cancelled") is None
+
+    @pytest.mark.asyncio
+    async def test_incomplete_shutdown_can_be_retried_to_completion(self) -> None:
+        # Given
+        pool = AgentPool(broker=_FakeBroker(), agent_factory=MagicMock())
+        stop = AsyncMock(side_effect=[RuntimeError("stop failed"), None])
+        await self._register(pool, "retryable", stop)
+
+        # When
+        first_completed = await pool.shutdown_all(timeout=0.1)
+        second_completed = await pool.shutdown_all(timeout=0.1)
+
+        # Then
+        assert first_completed is False
+        assert second_completed is True
+        assert stop.await_count == 2
+        assert pool.get("retryable") is None
+
+    @pytest.mark.asyncio
+    async def test_cancelled_owner_shutdown_all_can_be_retried(self) -> None:
+        # Given
+        pool = AgentPool(broker=_FakeBroker(), agent_factory=MagicMock())
+        stop = AsyncMock(side_effect=[asyncio.CancelledError(), None])
+        await self._register(pool, "retryable", stop)
+
+        # When
+        with pytest.raises(asyncio.CancelledError):
+            await pool.shutdown_all(timeout=0.1)
+        completed = await pool.shutdown_all(timeout=0.1)
+
+        # Then
+        assert completed is True
+        assert stop.await_count == 2
+        assert pool.get("retryable") is None
+
+    @pytest.mark.asyncio
+    async def test_cancelled_idle_shutdown_can_be_retried(self) -> None:
+        # Given
+        pool = AgentPool(broker=_FakeBroker(), agent_factory=MagicMock())
+        stop = AsyncMock(side_effect=[asyncio.CancelledError(), None])
+        await self._register(pool, "retryable", stop)
+
+        # When
+        with pytest.raises(asyncio.CancelledError):
+            await pool._shutdown_agent("retryable")
+        await pool._shutdown_agent("retryable")
+
+        # Then
+        assert stop.await_count == 2
+        assert pool.get("retryable") is None
+
+    @pytest.mark.asyncio
+    async def test_concurrent_shutdown_callers_share_owner_stop(self) -> None:
+        # Given
+        pool = AgentPool(broker=_FakeBroker(), agent_factory=MagicMock())
+        stop_started = asyncio.Event()
+        release_stop = asyncio.Event()
+        second_caller_started = asyncio.Event()
+        stop_calls = 0
+
+        async def blocking_stop() -> None:
+            nonlocal stop_calls
+            stop_calls += 1
+            stop_started.set()
+            await release_stop.wait()
+
+        await self._register(pool, "owner", AsyncMock(side_effect=blocking_stop))
+
+        async def shutdown_from_second_caller() -> bool:
+            second_caller_started.set()
+            return await pool.shutdown_all(timeout=1.0)
+
+        first_shutdown = asyncio.create_task(pool.shutdown_all(timeout=1.0))
+        await stop_started.wait()
+        second_shutdown = asyncio.create_task(shutdown_from_second_caller())
+        await second_caller_started.wait()
+
+        # When
+        release_stop.set()
+        results = await asyncio.gather(first_shutdown, second_shutdown)
+
+        # Then
+        assert results == [True, True]
+        assert stop_calls == 1
+        assert pool.get("owner") is None
+
+    @pytest.mark.asyncio
+    async def test_idle_shutdown_retains_owner_when_stop_fails(self) -> None:
+        # Given
+        pool = AgentPool(broker=_FakeBroker(), agent_factory=MagicMock())
+        stop = AsyncMock(side_effect=RuntimeError("stop failed"))
+        await self._register(pool, "owner", stop)
+        owner = pool.get("owner")
+
+        # When
+        await pool._shutdown_agent("owner")
+
+        # Then
+        assert stop.await_count == 1
+        assert pool.get("owner") is owner
+        assert pool.get_status("owner") == AgentState.SHUTTING_DOWN
 
 
 class TestSubmitInputAndPollerHelpers:

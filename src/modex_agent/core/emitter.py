@@ -16,6 +16,7 @@ from ..adapters.platform import StreamingMode
 from modex_agent.core.message import ChatMessage
 from .constants import StopReason
 from .events import AgentEvent, EmitterConfig
+from .turn_events import TurnEvent, TurnTextEvent
 
 if TYPE_CHECKING:
     from ..pipeline.adapters import OutputAdapter
@@ -98,6 +99,9 @@ class ContentEmitter(ABC, Generic[E]):
         默认实现不做任何事。
         """
         pass
+
+    async def emit_turn_event(self, event: TurnEvent) -> None:
+        """Emit a provider-neutral semantic turn event when supported."""
 
     @abstractmethod
     async def emit_delta(self, delta: str) -> None:
@@ -254,6 +258,14 @@ class StreamingAwareEmitter(ContentEmitter[E]):
         else:
             # 伪流式/非流式：缓存
             self._content_buffer += delta
+
+    async def emit_turn_event(self, event: TurnEvent) -> None:
+        """Forward canonical text while rich structured events remain opt-in."""
+        match event:
+            case TurnTextEvent(text=text):
+                await self.emit_delta(text)
+            case _:
+                return
 
     async def emit_content(self, full_content: str) -> None:
         """处理完整内容

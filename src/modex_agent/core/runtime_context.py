@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.scope import MemoryContext, MemoryScope, SessionScope
+from modex_agent.core.scope import MemoryContext, Scope, SessionScope
 
 if TYPE_CHECKING:
     from modex_agent.runtime.models import JsonValue
@@ -182,7 +182,7 @@ class RuntimeContextManager:
     """Central manager that owns a store + scope and hands out isolated
     :class:`RuntimeContext` instances per session.
 
-    The *scope* (a :class:`MemoryScope`) determines how sessions are grouped.
+    The *scope* (a :class:`Scope`) determines how sessions are grouped.
     By default :class:`SessionScope` is used, so each ``session_id`` gets its
     own isolated context.
     """
@@ -190,7 +190,7 @@ class RuntimeContextManager:
     def __init__(
         self,
         store: RuntimeContextStore | None = None,
-        scope: MemoryScope | None = None,
+        scope: Scope | None = None,
     ) -> None:
         self._store = store or InMemoryRuntimeContextStore()
         self._scope = scope or SessionScope()
@@ -225,4 +225,4 @@ class RuntimeContextManager:
             sender_agent=meta.get("sender_agent"),
             receiver_agent=meta.get("receiver_agent"),
         )
-        return self._scope.get_scope_key(mem_ctx)
+        return self._scope.extract(mem_ctx).canonical()

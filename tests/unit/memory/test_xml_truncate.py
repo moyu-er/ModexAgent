@@ -1,10 +1,7 @@
 """Tests for XML-safe truncation."""
 from __future__ import annotations
 
-import pytest
-
 from modex_agent.memory.xml_truncate import truncate_xml_safe
-
 
 XML_SHORT = "<msg><content>hello</content></msg>"
 
@@ -158,7 +155,7 @@ def test_truncatable_paths_missing_large_content_still_leaf_truncated():
 
     # <skill> was a leaf with 30KB text — must have been truncated
     assert len(result) < len(xml), (
-        f"Leaf-element safety net should have truncated <skill> text"
+        "Leaf-element safety net should have truncated <skill> text"
     )
     # No single leaf element should exceed max_chars
     assert "x" * 4000 not in result, (

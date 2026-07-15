@@ -49,37 +49,36 @@ def atomic_write_text(path: Path, text: str, *, encoding: str = "utf-8") -> None
 class SessionStore(ABC):
     """Persistent storage for SessionInfo records.
 
-    Every method takes an optional ``index_dir`` override. Workspace-aware
-    implementations (e.g. :class:`bot.service.session_store.WorkspacePoolSessionStore`)
-    route the I/O to *index_dir* when given, so HTTP/WS handlers can read/write
-    a specific workspace's session index. The default (``None``) is
-    implementation-defined (typically the configured home root).
+    The store is constructed with a root path (see :class:`LocalFileSessionStore`
+    and subclasses). Workspace-aware callers construct a fresh store per
+    workspace — the root IS the workspace's session index directory — rather
+    than passing a per-call override. In-turn writers (e.g.
+    :class:`~modex_agent.core.session_registry.InMemorySessionRegistry`) may
+    still honour a bound workspace-root contextvar inside a dispatch turn.
     """
 
     @abstractmethod
-    async def save(self, session: SessionInfo, index_dir: Path | None = None) -> None:
+    async def save(self, session: SessionInfo) -> None:
         """Persist a session record (create or update)."""
         ...
 
     @abstractmethod
-    async def get(self, session_id: str, index_dir: Path | None = None) -> SessionInfo | None:
+    async def get(self, session_id: str) -> SessionInfo | None:
         """Retrieve a session by id, or None if not found."""
         ...
 
     @abstractmethod
-    async def delete(self, session_id: str, index_dir: Path | None = None) -> None:
+    async def delete(self, session_id: str) -> None:
         """Remove a session record."""
         ...
 
     @abstractmethod
-    async def list_sessions(self, index_dir: Path | None = None) -> list[SessionInfo]:
+    async def list_sessions(self) -> list[SessionInfo]:
         """Return all stored sessions."""
         ...
 
     @abstractmethod
-    async def get_children(
-        self, parent_id: str, index_dir: Path | None = None
-    ) -> list[SessionInfo]:
+    async def get_children(self, parent_id: str) -> list[SessionInfo]:
         """Return sessions whose ``parent_session_id`` matches *parent_id*."""
         ...
 
@@ -96,22 +95,22 @@ class LocalFileSessionStore(SessionStore):
         self._root = Path(new_root)
         self._root.mkdir(parents=True, exist_ok=True)
 
-    def _path_for(self, session_id: str, root: Path | None = None) -> Path:
+    def _path_for(self, session_id: str) -> Path:
         """Return the path for *session_id*, finding existing records recursively.
 
         Session records may live in pool subdirectories (e.g.
         ``<root>/<pool>/<id>.json``).  When no existing record is found, fall
         back to the flat ``<root>/<id>.json`` path for new writes.
         """
-        base = root if root is not None else self._root
+        base = self._root
         safe = safe_filename(session_id)
         filename = f"{safe}.json"
         for f in base.glob(f"**/{filename}"):
             return f
         return base / filename
 
-    async def save(self, session: SessionInfo, index_dir: Path | None = None) -> None:
-        path = self._path_for(session.session_id, index_dir)
+    async def save(self, session: SessionInfo) -> None:
+        path = self._path_for(session.session_id)
         payload = session.model_dump_json()
 
         def _write() -> None:
@@ -119,8 +118,8 @@ class LocalFileSessionStore(SessionStore):
 
         await asyncio.to_thread(_write)
 
-    async def get(self, session_id: str, index_dir: Path | None = None) -> SessionInfo | None:
-        path = self._path_for(session_id, index_dir)
+    async def get(self, session_id: str) -> SessionInfo | None:
+        path = self._path_for(session_id)
 
         def _read() -> str | None:
             if not path.exists():
@@ -132,8 +131,8 @@ class LocalFileSessionStore(SessionStore):
             return None
         return SessionInfo(**json.loads(text))
 
-    async def delete(self, session_id: str, index_dir: Path | None = None) -> None:
-        path = self._path_for(session_id, index_dir)
+    async def delete(self, session_id: str) -> None:
+        path = self._path_for(session_id)
 
         def _rm() -> None:
             if path.exists():
@@ -141,8 +140,8 @@ class LocalFileSessionStore(SessionStore):
 
         await asyncio.to_thread(_rm)
 
-    async def list_sessions(self, index_dir: Path | None = None) -> list[SessionInfo]:
-        base = index_dir if index_dir is not None else self._root
+    async def list_sessions(self) -> list[SessionInfo]:
+        base = self._root
 
         def _collect() -> list[str]:
             results: list[str] = []
@@ -153,11 +152,9 @@ class LocalFileSessionStore(SessionStore):
         texts = await asyncio.to_thread(_collect)
         return [SessionInfo(**json.loads(t)) for t in texts]
 
-    async def get_children(
-        self, parent_id: str, index_dir: Path | None = None
-    ) -> list[SessionInfo]:
+    async def get_children(self, parent_id: str) -> list[SessionInfo]:
         results: list[SessionInfo] = []
-        for session in await self.list_sessions(index_dir):
+        for session in await self.list_sessions():
             if session.parent_session_id == parent_id:
                 results.append(session)
         return results

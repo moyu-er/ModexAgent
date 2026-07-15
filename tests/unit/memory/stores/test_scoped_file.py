@@ -24,9 +24,10 @@ async def test_default_registry_uses_layer_first_file_layout(tmp_path: Path) -> 
         context=context,
     )
 
-    await session_storage.append_message({"role": "user", "content": "hello"})
+    await session_storage.messages.append_message({"role": "user", "content": "hello"})
     # ARCHIVE layer uses DirArchiveStorage — append via channel method
-    stored_entry = await archive_storage.append_channel_log(
+    assert archive_storage.archive is not None
+    stored_entry = await archive_storage.archive.append_channel_log(
         "context", {"summary": "compressed"},
     )
 

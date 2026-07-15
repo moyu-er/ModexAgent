@@ -6,6 +6,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from pydantic import BaseModel, ConfigDict
+
 from modex_agent.runtime.models import JsonValue
 
 ARCHIVE_SCHEMA = "archive"
@@ -65,10 +67,37 @@ class ArchiveGenerationInputs:
     stats: ArchiveInputStats
 
 
-@dataclass(frozen=True)
-class ArchiveGenerationResult:
-    writes: tuple[ArchiveWrite, ...]
-    inputs: ArchiveGenerationInputs
+class ArchiveDocuments(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    context: str
+    knowledge: str
+    index: str
+
+    @property
+    def topic(self) -> str | None:
+        return next((line.strip() for line in self.index.splitlines() if line.strip()), None)
+
+
+class ArchiveGenerationResult(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    documents: ArchiveDocuments
+    inputs: ArchiveGenerationInputs | None = None
+
+    @property
+    def writes(self) -> tuple[ArchiveWrite, ...]:
+        return (
+            ArchiveWrite(
+                channel=ArchiveChannel.CONTEXT,
+                summary=self.documents.context,
+                metadata={"topic": self.documents.topic or ""},
+            ),
+            ArchiveWrite(
+                channel=ArchiveChannel.KNOWLEDGE,
+                summary=self.documents.knowledge,
+            ),
+        )
 
 
 __all__ = [
@@ -80,6 +109,7 @@ __all__ = [
     "KNOWLEDGE_ARCHIVE_FILENAME",
     "ArchiveBundleResult",
     "ArchiveChannel",
+    "ArchiveDocuments",
     "ArchiveGenerationInputs",
     "ArchiveGenerationResult",
     "ArchiveInputStats",

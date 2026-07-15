@@ -5,10 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from modex_agent.ioc.configs.memory import (
-    MemoryConfig,
-    SessionConfig,
-)
+from modex_agent.ioc.configs.memory import MemoryConfig, SessionConfig
 from modex_agent.ioc.factories.memory import create_memory, _build_memory_layer_config
 
 

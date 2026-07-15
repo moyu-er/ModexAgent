@@ -202,7 +202,7 @@ async def test_im_pipeline_persists_qq_message() -> None:
     await pipe.handle(env, ctx)
 
     # Persisted
-    events = list(store.load(_sid("main", "qq_user_123")))
+    events = await store.load(_sid("main", "qq_user_123"))
     assert len(events) == 1
     assert events[0].event == "user_message"
     assert events[0].content == "help me write a Python script"
@@ -232,7 +232,7 @@ async def test_im_pipeline_persists_discord_message() -> None:
     )
     await pipe.handle(env, ctx)
 
-    events = list(store.load(_sid("main", "discord_session_1")))
+    events = await store.load(_sid("main", "discord_session_1"))
     assert len(events) == 1
     assert events[0].content == "deploy to production"
 
@@ -259,7 +259,7 @@ async def test_im_pipeline_persists_message_with_attachments() -> None:
     )
     await pipe.handle(env, ctx)
 
-    events = list(store.load(_sid("main", "tg_chat_456")))
+    events = await store.load(_sid("main", "tg_chat_456"))
     assert len(events) == 1
     assert events[0].content == "analyze this image"
 
@@ -279,7 +279,7 @@ async def test_im_pipeline_persists_multiple_sequential() -> None:
         env = UserInputEnvelope(external_id="user_1", content=text, channel="qq")
         await pipe.handle(env, ctx)
 
-    events = list(store.load(_sid("main", "user_1")))
+    events = await store.load(_sid("main", "user_1"))
     assert len(events) == 3
     assert events[0].content == "first question"
     assert events[1].content == "second question"
@@ -315,5 +315,5 @@ async def test_im_pipeline_skips_control_commands() -> None:
     await pipe.handle(env, ctx)
 
     # Not persisted and not enqueued
-    assert list(store.load(_sid("main", "u1"))) == []
+    assert await store.load(_sid("main", "u1")) == []
     assert enqueued == []

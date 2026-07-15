@@ -56,6 +56,9 @@ export interface McpServerEntry {
 
 // ─── Pool tree ───────────────────────────────────────────────────────────────
 
+export type ExecutionStrategy = "react" | "single_turn" | "pipeline" | "external_coding";
+export type ProviderKind = "pi" | "opencode";
+
 export interface MainAgentNode {
   agent_name: string;
   description: string;
@@ -66,6 +69,10 @@ export interface MainAgentNode {
   tool_supplements: string[];
   approval?: ApprovalConfig | null;
   mcp: string[];
+  /** Execution strategy; backend default is "react". Present on read; omit on write to use the default. */
+  execution_strategy?: ExecutionStrategy;
+  /** External coding provider; null when the agent is native (execution_strategy !== "external_coding"). */
+  provider_kind?: ProviderKind | null;
 }
 
 export interface SubagentNode {

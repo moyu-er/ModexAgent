@@ -10,10 +10,10 @@
 
 import type { ComponentType } from "react";
 import {
-  MessageSquare,
+  MessagesSquare,
   Cpu,
   Boxes,
-  Terminal,
+  Command,
   Sparkles,
   type LucideProps,
 } from "lucide-react";
@@ -30,7 +30,7 @@ export interface CategoryMeta {
 
 export const CATEGORY: Record<ViewKey, CategoryMeta> = {
   im: {
-    icon: MessageSquare,
+    icon: MessagesSquare,
     catVar: "var(--color-cat-im)",
     title: "IM Adapters",
     sub: "Messaging platform connections",
@@ -48,7 +48,7 @@ export const CATEGORY: Record<ViewKey, CategoryMeta> = {
     sub: "Agent pools & routing",
   },
   mcp: {
-    icon: Terminal,
+    icon: Command,
     catVar: "var(--color-cat-mcp)",
     title: "MCP",
     sub: "Model Context Protocol servers",

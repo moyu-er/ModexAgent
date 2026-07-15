@@ -498,6 +498,20 @@ class SkillsStore:
             shutil.rmtree(dst)
         src.rename(dst)
 
+    def clear_pool_skills(self, pool: str) -> bool:
+        """Remove every per-agent skill assignment under ``skills/<pool>/``.
+
+        No-ops (returns ``False``) when the pool has no skill directory. Only
+        the per-pool ``skills/`` subtree is touched — the global libraries
+        (``local_skills/`` and ``~/.agents/skills/``) are never modified.
+        """
+        _validate_name(pool, "pool")
+        src = self.skills_dir / pool
+        if not src.exists():
+            return False
+        shutil.rmtree(src)
+        return True
+
     # ─── helpers ────────────────────────────────────────────────────────────
 
     def _write_under(self, root: Path, rel: str, content: bytes | str) -> None:

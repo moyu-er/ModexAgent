@@ -1,8 +1,9 @@
 """Tests for MarkdownKnowledgeStorage — stores knowledge as actual .md files."""
 from __future__ import annotations
 
-import pytest
 from pathlib import Path
+
+import pytest
 
 from modex_agent.core.scope import MemoryLayerName
 

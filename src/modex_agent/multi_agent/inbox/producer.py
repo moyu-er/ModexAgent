@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from collections import OrderedDict
 from typing import TYPE_CHECKING
 
-from .server import InboxServer
+from .server import InboxMQ
 from .types import InboxMessage
 
 if TYPE_CHECKING:
@@ -23,7 +23,7 @@ class BaseInboxProducer(ABC):
         session_id: str,
         envelope: "AgentMessageEnvelope",
     ) -> bool:
-        """发送消息到 InboxServer。
+        """发送消息到 InboxMQ。
 
         Returns:
             True: 消息被成功接收并持久化。
@@ -35,13 +35,13 @@ class BaseInboxProducer(ABC):
 class InboxProducer(BaseInboxProducer):
     """Inbox 消息生产端（本地缓存去重实现）。
 
-    职责仅限于持久化消息到 InboxServer，不处理唤醒信号或 Broker 交互。
+    职责仅限于持久化消息到 InboxMQ，不处理唤醒信号或 Broker 交互。
     唤醒/通知逻辑由上层组件（如 AgentMessageBus）负责。
     """
 
     def __init__(
         self,
-        server: InboxServer,
+        server: InboxMQ,
         cache_size: int = 1000,
     ) -> None:
         self._server = server

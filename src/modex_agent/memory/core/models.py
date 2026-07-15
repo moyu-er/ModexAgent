@@ -8,6 +8,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
+from modex_agent.core.message import ChatMessage
 from modex_agent.memory.archive_models import (
     ARCHIVE_SCHEMA,
     DEFAULT_RETAINED_CONSUMED_ARCHIVE_PAIRS,
@@ -19,7 +20,6 @@ from modex_agent.memory.archive_models import (
     ArchiveState,
     ArchiveWrite,
 )
-from modex_agent.core.message import ChatMessage
 from modex_agent.memory.sanitizer import ToolChainSanitizationIssue
 
 

@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+
 import pytest
 
-from modex_agent.workspace.registry import InMemoryRegistryStore, WorkspaceRegistry
+from modex_agent.workspace.context import WorkspaceContext
+from modex_agent.workspace.registry import WorkspaceRegistry
+from modex_agent.workspace.store import GlobalWorkspaceStore
+
 from ._stubs import StubFactory, StubResources
 
 
@@ -18,8 +22,27 @@ def registry(tmp_path: Path) -> WorkspaceRegistry[StubResources]:
         home=home,
         data_dir_name=".modex",
         factory=StubFactory(),
-        store=InMemoryRegistryStore(),
+        store=GlobalWorkspaceStore(home=home, data_dir_name=".modex"),
     )
+
+
+async def test_initialize_loads_persisted_contexts(tmp_path: Path) -> None:
+    home = tmp_path / "proj"
+    target = tmp_path / "persisted"
+    home.mkdir()
+    target.mkdir()
+    store = GlobalWorkspaceStore(home=home, data_dir_name=".modex")
+    await store.save_known_targets([target])
+    registry = WorkspaceRegistry(
+        home=home,
+        data_dir_name=".modex",
+        factory=StubFactory(),
+        store=store,
+    )
+
+    await registry.initialize()
+
+    assert (await registry.get_or_open(target)).target == target.resolve()
 
 
 async def test_home_context_always_present(
@@ -33,22 +56,31 @@ async def test_get_or_open_registers_non_home(
 ) -> None:
     target = tmp_path / "wsB"
     target.mkdir()
-    ctx = registry.get_or_open(target)
+    ctx = await registry.get_or_open(target)
     assert ctx.is_home is False
-    assert registry.get_or_open(target) is ctx  # same context on repeat
+    assert await registry.get_or_open(target) is ctx  # same context on repeat
 
 
 async def test_materialize_is_lazy_and_cached(
-    registry: WorkspaceRegistry[StubResources], tmp_path: Path
+    tmp_path: Path,
 ) -> None:
+    home = tmp_path / "proj"
+    home.mkdir()
+    factory = StubFactory()
+    registry = WorkspaceRegistry(
+        home=home,
+        data_dir_name=".modex",
+        factory=factory,
+        store=GlobalWorkspaceStore(home=home, data_dir_name=".modex"),
+    )
     target = tmp_path / "wsB"
     target.mkdir()
-    ctx = registry.get_or_open(target)
-    assert registry.factory.calls == []  # not materialized at registration
+    ctx = await registry.get_or_open(target)
+    assert factory.calls == []  # not materialized at registration
     r1 = await registry.materialize(ctx)
     r2 = await registry.materialize(ctx)
     assert r1 is r2  # cached
-    assert registry.factory.calls == [ctx.target]  # built exactly once
+    assert factory.calls == [ctx.target]  # built exactly once
 
 
 async def test_concurrent_materialize_same_target_dedups(tmp_path: Path) -> None:
@@ -59,7 +91,7 @@ async def test_concurrent_materialize_same_target_dedups(tmp_path: Path) -> None
     """
 
     class _SlowFactory(StubFactory):
-        async def materialize(self, ctx):  # type: ignore[override]
+        async def materialize(self, ctx: WorkspaceContext) -> StubResources:
             await asyncio.sleep(0)  # yield so the second caller overlaps
             return await super().materialize(ctx)
 
@@ -70,11 +102,11 @@ async def test_concurrent_materialize_same_target_dedups(tmp_path: Path) -> None
         home=home,
         data_dir_name=".modex",
         factory=factory,
-        store=InMemoryRegistryStore(),
+        store=GlobalWorkspaceStore(home=home, data_dir_name=".modex"),
     )
     target = tmp_path / "wsB"
     target.mkdir()
-    ctx = registry.get_or_open(target)
+    ctx = await registry.get_or_open(target)
     r1, r2 = await asyncio.gather(
         registry.materialize(ctx), registry.materialize(ctx)
     )
@@ -87,7 +119,7 @@ async def test_evict_releases_cache_and_rematerializes_fresh(
 ) -> None:
     target = tmp_path / "wsB"
     target.mkdir()
-    ctx = registry.get_or_open(target)
+    ctx = await registry.get_or_open(target)
     built = await registry.materialize(ctx)
     await registry.evict_and_release(ctx.target)
     assert registry.materialized_count() == 0
@@ -100,23 +132,24 @@ async def test_evict_releases_cache_and_rematerializes_fresh(
 async def test_no_eviction_when_under_cap(tmp_path: Path) -> None:
     home = tmp_path / "proj"
     home.mkdir()
+    factory = StubFactory()
     registry = WorkspaceRegistry(
         home=home,
         data_dir_name=".modex",
-        factory=StubFactory(),
-        store=InMemoryRegistryStore(),
+        factory=factory,
+        store=GlobalWorkspaceStore(home=home, data_dir_name=".modex"),
         max_materialized=3,
     )
     ws1 = tmp_path / "ws1"
     ws1.mkdir()
     ws2 = tmp_path / "ws2"
     ws2.mkdir()
-    ctx1 = registry.get_or_open(ws1)
-    ctx2 = registry.get_or_open(ws2)
+    ctx1 = await registry.get_or_open(ws1)
+    ctx2 = await registry.get_or_open(ws2)
     await registry.materialize(ctx1)
     await registry.materialize(ctx2)
     assert registry.materialized_count() == 2
-    assert registry.factory.calls == [ctx1.target, ctx2.target]
+    assert factory.calls == [ctx1.target, ctx2.target]
 
 
 async def test_eviction_of_oldest_when_over_cap(tmp_path: Path) -> None:
@@ -127,7 +160,7 @@ async def test_eviction_of_oldest_when_over_cap(tmp_path: Path) -> None:
         home=home,
         data_dir_name=".modex",
         factory=factory,
-        store=InMemoryRegistryStore(),
+        store=GlobalWorkspaceStore(home=home, data_dir_name=".modex"),
         max_materialized=2,
     )
     ws1 = tmp_path / "ws1"
@@ -136,9 +169,9 @@ async def test_eviction_of_oldest_when_over_cap(tmp_path: Path) -> None:
     ws2.mkdir()
     ws3 = tmp_path / "ws3"
     ws3.mkdir()
-    ctx1 = registry.get_or_open(ws1)
-    ctx2 = registry.get_or_open(ws2)
-    ctx3 = registry.get_or_open(ws3)
+    ctx1 = await registry.get_or_open(ws1)
+    ctx2 = await registry.get_or_open(ws2)
+    ctx3 = await registry.get_or_open(ws3)
     r1 = await registry.materialize(ctx1)
     r2 = await registry.materialize(ctx2)
     r3 = await registry.materialize(ctx3)
@@ -157,15 +190,15 @@ async def test_rematerialization_after_eviction(tmp_path: Path) -> None:
         home=home,
         data_dir_name=".modex",
         factory=factory,
-        store=InMemoryRegistryStore(),
+        store=GlobalWorkspaceStore(home=home, data_dir_name=".modex"),
         max_materialized=1,
     )
     ws1 = tmp_path / "ws1"
     ws1.mkdir()
     ws2 = tmp_path / "ws2"
     ws2.mkdir()
-    ctx1 = registry.get_or_open(ws1)
-    ctx2 = registry.get_or_open(ws2)
+    ctx1 = await registry.get_or_open(ws1)
+    ctx2 = await registry.get_or_open(ws2)
     r1_first = await registry.materialize(ctx1)
     await registry.materialize(ctx2)  # evicts r1
     assert r1_first.evicted is True
@@ -183,7 +216,7 @@ async def test_lru_order_updates_on_access(tmp_path: Path) -> None:
         home=home,
         data_dir_name=".modex",
         factory=factory,
-        store=InMemoryRegistryStore(),
+        store=GlobalWorkspaceStore(home=home, data_dir_name=".modex"),
         max_materialized=2,
     )
     ws1 = tmp_path / "ws1"
@@ -192,9 +225,9 @@ async def test_lru_order_updates_on_access(tmp_path: Path) -> None:
     ws2.mkdir()
     ws3 = tmp_path / "ws3"
     ws3.mkdir()
-    ctx1 = registry.get_or_open(ws1)
-    ctx2 = registry.get_or_open(ws2)
-    ctx3 = registry.get_or_open(ws3)
+    ctx1 = await registry.get_or_open(ws1)
+    ctx2 = await registry.get_or_open(ws2)
+    ctx3 = await registry.get_or_open(ws3)
     r1 = await registry.materialize(ctx1)
     r2 = await registry.materialize(ctx2)
     # Access r1 to bump it to most-recently-used
@@ -219,12 +252,145 @@ async def test_evict_all_evicts_every_materialized(
     ws2 = tmp_path / "ws2"
     ws1.mkdir()
     ws2.mkdir()
-    r1 = await registry.materialize(registry.get_or_open(ws1))
-    r2 = await registry.materialize(registry.get_or_open(ws2))
-    await registry.evict_all()
+    r1 = await registry.materialize(await registry.get_or_open(ws1))
+    r2 = await registry.materialize(await registry.get_or_open(ws2))
+    completed = await registry.evict_all()
+    assert completed is True
     assert r1.evicted is True
     assert r2.evicted is True
     assert registry.materialized_count() == 0
+
+
+async def test_failed_evict_remains_materialized_and_retryable(tmp_path: Path) -> None:
+    # Given
+    class _RetryFactory(StubFactory):
+        def __init__(self) -> None:
+            super().__init__()
+            self.failed_once = False
+            self.attempts: list[Path] = []
+
+        async def evict(self, resources: StubResources) -> None:
+            self.attempts.append(resources.target)
+            if not self.failed_once:
+                self.failed_once = True
+                raise RuntimeError("eviction failed")
+            await super().evict(resources)
+
+    home = tmp_path / "proj"
+    target = tmp_path / "ws"
+    home.mkdir()
+    target.mkdir()
+    factory = _RetryFactory()
+    registry = WorkspaceRegistry(
+        home=home,
+        data_dir_name=".modex",
+        factory=factory,
+        store=GlobalWorkspaceStore(home=home, data_dir_name=".modex"),
+    )
+    resources = await registry.materialize(await registry.get_or_open(target))
+
+    # When
+    first_completed = await registry.evict_all()
+    retained = list(registry.iter_materialized_resources())
+    second_completed = await registry.evict_all()
+
+    # Then
+    assert first_completed is False
+    assert retained == [resources]
+    assert second_completed is True
+    assert factory.attempts == [target.resolve(), target.resolve()]
+    assert registry.materialized_count() == 0
+
+
+async def test_evict_and_release_failure_retains_resource(tmp_path: Path) -> None:
+    # Given
+    class _FailingFactory(StubFactory):
+        async def evict(self, resources: StubResources) -> None:
+            raise RuntimeError("eviction failed")
+
+    home = tmp_path / "proj"
+    target = tmp_path / "ws"
+    home.mkdir()
+    target.mkdir()
+    registry = WorkspaceRegistry(
+        home=home,
+        data_dir_name=".modex",
+        factory=_FailingFactory(),
+        store=GlobalWorkspaceStore(home=home, data_dir_name=".modex"),
+    )
+    resources = await registry.materialize(await registry.get_or_open(target))
+
+    # When / Then
+    with pytest.raises(RuntimeError, match="eviction failed"):
+        await registry.evict_and_release(target)
+    assert list(registry.iter_materialized_resources()) == [resources]
+
+
+async def test_cap_eviction_failure_retains_oldest_resource(tmp_path: Path) -> None:
+    # Given
+    class _FailingFactory(StubFactory):
+        async def evict(self, resources: StubResources) -> None:
+            raise RuntimeError("eviction failed")
+
+    home = tmp_path / "proj"
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    home.mkdir()
+    first.mkdir()
+    second.mkdir()
+    registry = WorkspaceRegistry(
+        home=home,
+        data_dir_name=".modex",
+        factory=_FailingFactory(),
+        store=GlobalWorkspaceStore(home=home, data_dir_name=".modex"),
+        max_materialized=1,
+    )
+    first_resources = await registry.materialize(await registry.get_or_open(first))
+
+    # When / Then
+    with pytest.raises(RuntimeError, match="eviction failed"):
+        await registry.materialize(await registry.get_or_open(second))
+    assert first_resources in list(registry.iter_materialized_resources())
+
+
+async def test_evict_all_tries_later_resources_after_failure(tmp_path: Path) -> None:
+    # Given
+    class _SelectiveFactory(StubFactory):
+        def __init__(self, failing_target: Path) -> None:
+            super().__init__()
+            self.failing_target = failing_target
+            self.attempts: list[Path] = []
+
+        async def evict(self, resources: StubResources) -> None:
+            self.attempts.append(resources.target)
+            if resources.target == self.failing_target:
+                raise RuntimeError("eviction failed")
+            await super().evict(resources)
+
+    home = tmp_path / "proj"
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    home.mkdir()
+    first.mkdir()
+    second.mkdir()
+    factory = _SelectiveFactory(first.resolve())
+    registry = WorkspaceRegistry(
+        home=home,
+        data_dir_name=".modex",
+        factory=factory,
+        store=GlobalWorkspaceStore(home=home, data_dir_name=".modex"),
+    )
+    first_resources = await registry.materialize(await registry.get_or_open(first))
+    second_resources = await registry.materialize(await registry.get_or_open(second))
+
+    # When
+    completed = await registry.evict_all()
+
+    # Then
+    assert completed is False
+    assert factory.attempts == [first.resolve(), second.resolve()]
+    assert list(registry.iter_materialized_resources()) == [first_resources]
+    assert second_resources.evicted is True
 
 
 async def test_in_flight_workspace_protected_from_eviction(tmp_path: Path) -> None:
@@ -241,16 +407,16 @@ async def test_in_flight_workspace_protected_from_eviction(tmp_path: Path) -> No
         home=home,
         data_dir_name=".modex",
         factory=factory,
-        store=InMemoryRegistryStore(),
+        store=GlobalWorkspaceStore(home=home, data_dir_name=".modex"),
         max_materialized=2,
     )
     ws1, ws2, ws3, ws4 = (tmp_path / n for n in ("ws1", "ws2", "ws3", "ws4"))
     for ws in (ws1, ws2, ws3, ws4):
         ws.mkdir()
-    ctx1 = registry.get_or_open(ws1)
-    ctx2 = registry.get_or_open(ws2)
-    ctx3 = registry.get_or_open(ws3)
-    ctx4 = registry.get_or_open(ws4)
+    ctx1 = await registry.get_or_open(ws1)
+    ctx2 = await registry.get_or_open(ws2)
+    ctx3 = await registry.get_or_open(ws3)
+    ctx4 = await registry.get_or_open(ws4)
     r1 = await registry.materialize(ctx1)
     registry.begin_turn(ctx1.target)  # active turn on ws1
     r2 = await registry.materialize(ctx2)
@@ -271,17 +437,17 @@ async def test_contexts_retained_after_eviction(tmp_path: Path) -> None:
         home=home,
         data_dir_name=".modex",
         factory=StubFactory(),
-        store=InMemoryRegistryStore(),
+        store=GlobalWorkspaceStore(home=home, data_dir_name=".modex"),
         max_materialized=1,
     )
     ws1 = tmp_path / "ws1"
     ws1.mkdir()
-    ctx1 = registry.get_or_open(ws1)
+    ctx1 = await registry.get_or_open(ws1)
     await registry.materialize(ctx1)
     ws2 = tmp_path / "ws2"
     ws2.mkdir()
-    ctx2 = registry.get_or_open(ws2)
+    ctx2 = await registry.get_or_open(ws2)
     await registry.materialize(ctx2)  # evicts ws1 resource
     # Contexts should still be retrievable
-    assert registry.get_or_open(ws1) is ctx1
-    assert registry.get_or_open(ws2) is ctx2
+    assert await registry.get_or_open(ws1) is ctx1
+    assert await registry.get_or_open(ws2) is ctx2

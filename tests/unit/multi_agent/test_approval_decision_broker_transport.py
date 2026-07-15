@@ -69,7 +69,7 @@ def test_approval_decision_survives_full_broker_round_trip() -> None:
     assert envelope is not None
 
     reconstructed = input_message_from_dispatch_envelope(
-        envelope, session=_session(), metadata={}
+        envelope, session=_session()
     )
     assert reconstructed.approval_decision == ApprovalDecisionInput(
         "call_xyz", ApprovalAction.ALLOW
@@ -83,7 +83,7 @@ def test_normal_message_round_trips_without_approval_decision() -> None:
     assert envelope is not None
 
     reconstructed = input_message_from_dispatch_envelope(
-        envelope, session=_session(), metadata={}
+        envelope, session=_session()
     )
     assert reconstructed.approval_decision is None
     assert reconstructed.content == "hi there"

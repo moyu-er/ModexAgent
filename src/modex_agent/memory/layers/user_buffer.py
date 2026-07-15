@@ -7,12 +7,23 @@ from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
 
-logger = logging.getLogger(__name__)
-
-from modex_agent.memory.core.layers import UserRetentionBuffer as _CoreURB
 from modex_agent.core.scope import MemoryContext
+from modex_agent.memory.core.layers import UserRetentionBuffer as _CoreURB
+from modex_agent.memory.core.lock import StorageLock
+from modex_agent.memory.core.split_stores import MemoryStoreBundle
+from modex_agent.memory.core.store_metadata import StoreMetadata
 from modex_agent.memory.layers.config import StorageFactory, UserRetentionBufferConfig
 from modex_agent.memory.user_buffer import UserBufferEntry
+
+logger = logging.getLogger(__name__)
+
+
+def _get_bundle_lock(bundle: MemoryStoreBundle) -> StorageLock | None:
+    """Return the storage lock from the bundle's concrete store, or None."""
+    store = bundle.messages
+    if isinstance(store, StoreMetadata):
+        return store.get_lock()
+    return None
 
 
 class UserRetentionBuffer(_CoreURB):
@@ -78,9 +89,13 @@ class ScopedUserRetentionBuffer(UserRetentionBuffer):
 
     async def clear(self, context: MemoryContext) -> None:
         """Remove all entries from storage for *context*."""
-        storage = await self._storage_factory(context)
-        async with storage.get_lock().write():
-            await storage.set(self._STORAGE_KEY, [])
+        bundle = await self._storage_factory(context)
+        lock = _get_bundle_lock(bundle)
+        if lock is not None:
+            async with lock.write():
+                await bundle.kv.set(self._STORAGE_KEY, [])
+        else:
+            await bundle.kv.set(self._STORAGE_KEY, [])
 
     async def mark_all_completed(
         self,
@@ -134,8 +149,8 @@ class ScopedUserRetentionBuffer(UserRetentionBuffer):
         injection is safely skipped on corruption.
         """
         try:
-            storage = await self._storage_factory(context)
-            raw = await storage.get(self._STORAGE_KEY)
+            bundle = await self._storage_factory(context)
+            raw = await bundle.kv.get(self._STORAGE_KEY)
             if raw is None:
                 return []
             if not isinstance(raw, list):
@@ -161,9 +176,16 @@ class ScopedUserRetentionBuffer(UserRetentionBuffer):
         entries: list[UserBufferEntry],
     ) -> None:
         """Persist entries to scoped storage."""
-        storage = await self._storage_factory(context)
-        async with storage.get_lock().write():
-            await storage.set(
+        bundle = await self._storage_factory(context)
+        lock = _get_bundle_lock(bundle)
+        if lock is not None:
+            async with lock.write():
+                await bundle.kv.set(
+                    self._STORAGE_KEY,
+                    [entry.to_dict() for entry in entries],
+                )
+        else:
+            await bundle.kv.set(
                 self._STORAGE_KEY,
                 [entry.to_dict() for entry in entries],
             )

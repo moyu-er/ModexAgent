@@ -24,10 +24,15 @@ from pydantic import ValidationError
 
 if TYPE_CHECKING:
     from modex_agent.commands.processor import SlashCommandProcessor
+    from modex_agent.persistence.managers import (
+        RegistryPersistenceManager,
+        WorkspacePersistenceManager,
+    )
     from modex_agent.runtime.codec import RuntimeStateCodecRegistry
     from modex_agent.tools.mcp.registry import McpConnectionRegistry
 
 from bot.plugins.integration import PluginIntegration
+from bot.service.errors import BotServiceShutdownIncompleteError
 from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
 from bot.service.model_provider import BotModelProvider
@@ -49,8 +54,10 @@ from modex_agent.hook.abc import Hook
 from modex_agent.hook.runner import HookRunner
 from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.multi_agent.pool_instance import PoolInstance
-from modex_agent.multi_agent.pool_router import PoolSessionStore
+from modex_agent.multi_agent.pool_router import PoolRoutingStore
+from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
+from modex_agent.workspace.paths import RESERVED_GLOBAL_DIR, WORKSPACE_STATE_DB
 
 from .builders import AgentBuilderMixin, resolve_system_prompt
 
@@ -130,7 +137,7 @@ class BotService(AgentBuilderMixin):
         # Service-level session→pool mapping store. Shared across workspaces so
         # a mapping written by the WebUI (or ResolvePoolStage) is visible to the
         # pool_router of whatever workspace ultimately dispatches the message.
-        self._pool_session_store: PoolSessionStore | None = None
+        self._pool_session_store: PoolRoutingStore | None = None
         self.plugin_integration: PluginIntegration | None = None
 
         # Shared MCP connection registry (ADR-0017 Task 5a). Service-scoped,
@@ -139,6 +146,13 @@ class BotService(AgentBuilderMixin):
         # pools then acquire SharedMcpBackend facades via registry.acquire.
         # None when the flag is off (or registry absent) → legacy per-pool path.
         self._mcp_registry: McpConnectionRegistry | None = None
+
+        # T26: Registry-level SQLite persistence manager. Opened at initialize()
+        # (before workspace materialize), closed at stop() AFTER evict_all (the
+        # registry DB is the last-to-close persistence layer). None when
+        # backend is FILE or initialize() hasn't run yet.
+        self._registry_persistence: RegistryPersistenceManager | None = None
+        self._home_persistence: WorkspacePersistenceManager | None = None
 
 
         # Maintenance
@@ -279,14 +293,6 @@ class BotService(AgentBuilderMixin):
         pool_store = PoolStore(base_dir=self._project_dir)
         print(f"[OK] Config loaded ({len(pool_store.list_pools())} pools)")
 
-        # Service-level session→pool mapping store. Lives in the project home
-        # data dir so every workspace's PoolRouter and the WebUI pipeline share
-        # one durable mapping. Without this, a mapping written by the WebUI in
-        # the home workspace is invisible to a non-home workspace's PoolRouter.
-        self._pool_session_store = PoolSessionStore(
-            data_dir=self.config_dir.parent / self._app_config.paths.data_dir_name
-        )
-
         # Shared MCP connection registry (ADR-0017 Task 5a). Service-scoped,
         # concurrent, dedup-by-config-hash. When the sharedRegistry flag is on
         # (default), all pools/agents/workspaces share one subprocess per
@@ -353,6 +359,43 @@ class BotService(AgentBuilderMixin):
             self.control_channel = self._build_control_channel()
             self.command_processor = self._build_main_command_processor()
             self.plugin_integration = PluginIntegration(config={"enabled": False})
+
+            # T26: open the registry DB BEFORE workspace materialization so the
+            # registry store is ready when workspaces start using it. The
+            # registry DB closes LAST at stop() (after all workspaces evicted).
+            if self._app_config.persistence.backend is PersistenceBackend.SQLITE:
+                from modex_agent.persistence.managers import (
+                    RegistryPersistenceManager,
+                    WorkspacePersistenceManager,
+                )
+
+                registry_db_path = (
+                    self._project_dir
+                    / self._app_config.paths.data_dir_name
+                    / RESERVED_GLOBAL_DIR
+                    / WORKSPACE_STATE_DB
+                )
+                self._registry_persistence = RegistryPersistenceManager(registry_db_path)
+                await self._registry_persistence.open()
+
+                home_db_path = (
+                    self._project_dir
+                    / self._app_config.paths.data_dir_name
+                    / WORKSPACE_STATE_DB
+                )
+                self._home_persistence = WorkspacePersistenceManager(home_db_path)
+                await self._home_persistence.open()
+
+            from bot.service.builders import build_pool_routing_store
+
+            home_data_dir = self._project_dir / self._app_config.paths.data_dir_name
+            self._pool_session_store = build_pool_routing_store(
+                self._app_config,
+                self._home_persistence,
+                data_dir=home_data_dir,
+                db_path=home_data_dir / WORKSPACE_STATE_DB,
+            )
+
             if self._app_config.workspace.enabled:
                 self.workspace_stack = build_workspace_stack(
                     self, data_dir_name=self._app_config.paths.data_dir_name
@@ -362,6 +405,7 @@ class BotService(AgentBuilderMixin):
                     self, data_dir_name=self._app_config.paths.data_dir_name
                 )
             self.workspace_context = self.workspace_stack.controller
+            await self.workspace_stack.registry.initialize()
 
             # Eagerly materialize the HOME workspace so its pools/router are live
             # for BotService.start/stop (v1 = home-only materialization). The
@@ -374,10 +418,37 @@ class BotService(AgentBuilderMixin):
             self._print_pool_info()
 
             print("=" * 60)
-        except BaseException:
+        except BaseException as initialization_error:
+            resources_evicted = True
+            if self.workspace_stack is not None:
+                try:
+                    resources_evicted = await self.workspace_stack.registry.evict_all()
+                except BaseException as cleanup_error:
+                    resources_evicted = False
+                    initialization_error.add_note(
+                        "workspace eviction failed during initialization cleanup: "
+                        f"{type(cleanup_error).__name__}: {cleanup_error}"
+                    )
+                if not resources_evicted:
+                    initialization_error.add_note(
+                        "workspace eviction incomplete during initialization cleanup; "
+                        "shared persistence retained for retry"
+                    )
             if self._mcp_registry is not None:
                 with contextlib.suppress(BaseException):
                     await self._mcp_registry.shutdown()
+            if resources_evicted and self._pool_session_store is not None:
+                with contextlib.suppress(BaseException):
+                    self._pool_session_store.close()
+                self._pool_session_store = None
+            if resources_evicted and self._home_persistence is not None:
+                with contextlib.suppress(BaseException):
+                    await self._home_persistence.close()
+                self._home_persistence = None
+            if resources_evicted and self._registry_persistence is not None:
+                with contextlib.suppress(BaseException):
+                    await self._registry_persistence.close()
+                self._registry_persistence = None
             raise
 
     def _print_pool_info(self) -> None:
@@ -609,9 +680,13 @@ class BotService(AgentBuilderMixin):
         # Stop EVERY materialized workspace's resources (background + pools +
         # broker + terminals) — not just home, so multi-live workspaces don't
         # leak background tasks/brokers on shutdown.
-        if self.workspace_stack is not None:
-            with contextlib.suppress(BaseException):
-                await self.workspace_stack.registry.evict_all()
+        if (
+            self.workspace_stack is not None
+            and not await self.workspace_stack.registry.evict_all()
+        ):
+            raise BotServiceShutdownIncompleteError(
+                "workspace shutdown incomplete; shared resources retained for retry"
+            )
         # Shut down the shared MCP registry AFTER evicting workspaces: evict_all
         # calls _stop_resources → McpBackend.release() per pool, which on the
         # shared path only DETACHES the facade (real connections are shared and
@@ -622,3 +697,19 @@ class BotService(AgentBuilderMixin):
                 await self._mcp_registry.shutdown()
         with contextlib.suppress(BaseException):
             await self.input_adapter.stop()
+        if self._pool_session_store is not None:
+            with contextlib.suppress(BaseException):
+                self._pool_session_store.close()
+            self._pool_session_store = None
+        if self._home_persistence is not None:
+            with contextlib.suppress(BaseException):
+                await self._home_persistence.close()
+            self._home_persistence = None
+        # T26: registry DB closes LAST — after all workspaces are evicted (their
+        # workspace DBs close inside _stop_resources) and after the MCP registry
+        # and input adapter stop. The registry DB is the global, last-to-close
+        # persistence layer.
+        if self._registry_persistence is not None:
+            with contextlib.suppress(BaseException):
+                await self._registry_persistence.close()
+            self._registry_persistence = None

@@ -991,10 +991,10 @@ async def test_resume_with_production_memory_cm_feeds_llm_well_formed_history(
     """
     from modex_agent.memory.default_system import DefaultMemorySystem
     from modex_agent.memory.layers.factory import MemoryLayerFactory
-    from modex_agent.memory.registry.in_memory import InMemoryStoreRegistry
+    from modex_agent.memory.registry import DefaultMemoryStoreRegistry
     from modex_agent.memory.system import MemorySystemContextManager
 
-    registry = InMemoryStoreRegistry()
+    registry = DefaultMemoryStoreRegistry(tmp_path)
     memory_system = DefaultMemorySystem(
         layer_set=MemoryLayerFactory.single_user(registry=registry),
         store_registry=registry,

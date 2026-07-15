@@ -10,20 +10,20 @@ and a turn's resources are snapshotted at resolution time.
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import AsyncGenerator
 
 import pytest
-
 from bot.workspace.handle import PoolWorkspaceResources
-from modex_agent.workspace.context import WorkspaceContext
-from modex_agent.workspace.factory import ResourceFactory
-from modex_agent.workspace.registry import InMemoryRegistryStore, WorkspaceRegistry
-from modex_agent.workspace.routing import WorkspaceResolver
+
 from modex_agent.core.session_store import LocalFileSessionStore
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
-
+from modex_agent.workspace.context import WorkspaceContext
+from modex_agent.workspace.factory import ResourceFactory
+from modex_agent.workspace.registry import WorkspaceRegistry
+from modex_agent.workspace.routing import WorkspaceResolver
+from modex_agent.workspace.store import GlobalWorkspaceStore
 
 # ── Module-level constants ───────────────────────────────────────────────────
 
@@ -82,7 +82,7 @@ async def inflight_setup(
     ws_b.mkdir()
 
     factory = _MinimalResourceFactory()
-    store = InMemoryRegistryStore()
+    store = GlobalWorkspaceStore(home=home, data_dir_name=".modex")
     registry: WorkspaceRegistry[PoolWorkspaceResources] = WorkspaceRegistry(
         home=home,
         data_dir_name=".modex",
@@ -121,7 +121,7 @@ async def test_inflight_turn_holds_original_resources(
 
     # Phase 2: Mid-turn, the next message carries ws_b (simulates /cd having
     # moved the conversation). Register ws_b in the registry.
-    registry.get_or_open(ws_b)
+    await registry.get_or_open(ws_b)
 
     # Phase 3: Assert the in-flight turn's resources still point to workspace A
     # The key property: R_A is unchanged, still rooted in A
@@ -164,7 +164,7 @@ async def test_inflight_resources_object_identity_preserved(
     original_data_root = resources_a.ctx.paths.root
 
     # Next message carries ws_b (switch happened)
-    registry.get_or_open(ws_b)
+    await registry.get_or_open(ws_b)
 
     # Original reference unchanged
     assert resources_a is original_ref
@@ -196,7 +196,7 @@ async def test_switch_does_not_raise_or_block(
 
     # Switch should not raise
     try:
-        registry.get_or_open(ws_b)
+        await registry.get_or_open(ws_b)
     except Exception as exc:
         pytest.fail(f"Switch raised an unexpected exception: {exc}")
 

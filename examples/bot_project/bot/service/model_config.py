@@ -74,6 +74,10 @@ class ProviderCfg(BaseModel):
     base_url: str = ""
     interface_format: InterfaceFormat = InterfaceFormat.OPENAI_COMPATIBLE
     api_key: Annotated[str, Secret()]
+    # Optional override for the model-list endpoint. When set, the model-fetch
+    # service uses this URL verbatim instead of auto-constructing candidates
+    # from base_url. Leave empty for standard OpenAI-compatible /v1/models.
+    models_url: str | None = None
     models: list[ModelCfg] = Field(default_factory=list)
 
     @model_validator(mode="before")
@@ -180,6 +184,9 @@ class BotModelConfig(BaseModel):
 
     def find_provider(self, name: str) -> ProviderCfg | None:
         return next((p for p in self.providers if p.name == name), None)
+
+    def find_provider_by_key(self, key: str) -> ProviderCfg | None:
+        return next((p for p in self.providers if p.key == key), None)
 
     def resolve(self, provider_name: str | None, model_name: str | None) -> ResolvedModel | None:
         if not provider_name or not model_name:

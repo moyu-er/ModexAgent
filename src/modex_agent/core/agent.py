@@ -35,6 +35,25 @@ class AgentCommKind(StrEnum):
     SUBAGENT = "subagent"
 
 
+class AgentImplementation(StrEnum):
+    """How an agent is implemented — orthogonal to :class:`AgentCommKind`.
+
+    Topology (NORMAL vs SUBAGENT) decides routing and reply topology.
+    Implementation decides how the agent actually runs and how peers
+    should word the reply contract (``send_to_agent`` tool vs ``modexctl
+    send`` CLI vs future mechanisms).
+
+    Combinations are valid:
+    - NORMAL + NATIVE = modex main agent (default/coder pool main)
+    - NORMAL + EXTERNAL = external coding CLI as pool main (opencode/pi)
+    - SUBAGENT + NATIVE = modex subagent (the only subagent shape today)
+    - SUBAGENT + EXTERNAL = reserved (external CLI as subagent, future)
+    """
+
+    NATIVE = "native"
+    EXTERNAL = "external"
+
+
 @dataclass
 class AgentContext:
     """Agent execution context — typed runtime state via ``runtime`` field."""
@@ -79,6 +98,14 @@ class AgentContext:
     Hooks and agents that need workspace-scoped data (e.g. the experience dir)
     read it from here. None when no workspace manager is wired, in which case
     consumers fall back to their own defaults.
+    """
+
+    current_input: str | None = None
+    """The sanitized user input for the current turn, set by the turn builder.
+
+    External coding agents read this directly instead of mining history.
+    None for ReAct agents (they use history); set by ``build_runtime_and_context``
+    when the turn's ``sanitized_content`` is available.
     """
 
     @property
@@ -162,3 +189,12 @@ class Agent(ABC, Generic[E]):
             该 Agent 的事件枚举类（如 ReActEvent）
         """
         return cls.event_enum
+
+    async def stop(self) -> None:
+        """释放 Agent 持有的资源（子进程、网络连接等）。
+
+        默认实现是空操作。持有外部资源的子类（如
+        :class:`ExternalCodingAgent` 管理 ``opencode serve`` 子进程）
+        应覆盖此方法。Pool shutdown 时通过
+        :meth:`AgentInstance.stop` → ``pipeline.agent.stop()`` 调用。
+        """

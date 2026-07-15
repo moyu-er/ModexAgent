@@ -7,7 +7,7 @@ Agent reasoning pattern implementations. Each sub-package implements a specific 
 
 ## Purpose
 
-The `agents/` module provides concrete agent implementations: the `ReActAgent` (Thought→Action→Observation loop with approval suspension/resume), `SummarizerAgent` (single-turn tool-free summarization), and `ExperienceReviewAgent` (ReAct-based conversation review for experience creation/update). New agent strategies go in new subdirectories.
+The `agents/` module provides concrete agent implementations: the `ReActAgent` (Thought→Action→Observation loop with approval suspension/resume), `ExternalCodingAgent` (Pi/OpenCode CLI harness), `SummarizerAgent` (single-turn tool-free summarization), and `ExperienceReviewAgent` (ReAct-based conversation review for experience creation/update). New agent strategies go in new subdirectories.
 
 ## Key Files
 
@@ -20,6 +20,7 @@ The `agents/` module provides concrete agent implementations: the `ReActAgent` (
 | Directory | Files | Purpose |
 |-----------|-------|---------|
 | `react/` | 11 py (incl. `nodes/`) | `ReActAgent` — 4-node graph (START→LLM→TOOL→END), `TieredToolApprovalClassifier`, `ReActTurnState`, approval suspend/resume (see `react/AGENTS.md`) |
+| `external_coding/` | 21 py (incl. `providers/`) | `ExternalCodingAgent` — provider-neutral streaming harness, Pi/OpenCode adapters, session-map ABC, env/prompt/path/OS process seams (see `external_coding/AGENTS.md`, ADR-0022) |
 | `summarizer/` | 8 py | `SummarizerAgent` (single-turn, no tools), `ArchiveSummarizer` (MD archive generation), `KnowledgeConsolidator` (ReAct-based knowledge consolidation), `ScopedFileAgent` base class (see `summarizer/AGENTS.md`) |
 | `experience/` | 2 py | `ExperienceReviewAgent` — ReAct agent that reviews conversations and creates/updates EXPERIENCE.md files using experience tools (see `experience/AGENTS.md`) |
 
@@ -58,6 +59,24 @@ The ReAct module is the primary agent runtime. Key components:
 |------|-------------|
 | `review_agent.py` | `ExperienceReviewAgent(ScopedFileAgent)` — ReAct agent with 6 experience tools, 2-attempt retry, JSONL trace observability |
 
+### external_coding/ Submodule Details
+
+| File | Description |
+|------|-------------|
+| `agent.py` | `ExternalCodingAgent`, `StreamingProviderBackend`, stale-session retry, canonical `TurnEvent` projection, retryable `stop()` |
+| `builder.py` | `ExternalCodingAgentBuilder` — explicit backend/parser/session-store/env collaborator assembly |
+| `session_store.py` | `ExternalSessionMapStore` ABC + local-file adapter; SQLite adapter lives under `persistence/adapters/` |
+| `env_builder.py` / `runtime_config.py` | Per-turn `MODEX_*` environment and provider-visible AGENTS.md runtime block |
+| `os_layer.py` | Cross-platform executable resolution, process-group spawn, and complete process-tree termination |
+| `providers/opencode_server_backend.py` | Warm `opencode serve` SSE backend; transactional readiness and close-time reap |
+| `providers/opencode_backend.py` | Per-turn `opencode run` fallback with active-child ownership |
+| `providers/pi_backend.py` | Per-turn Pi backend with active-child ownership |
+
+Lifecycle rule: upper layers call only `StreamingProviderBackend.close()`.
+Persistent and per-turn differences stay inside adapters. Cleanup failure must
+propagate so `ExternalCodingAgent` and `AgentPool` retain the owner for retry;
+never mark an agent stopped or remove it from a pool before close succeeds.
+
 The `ExperienceReviewAgent`:
 1. Receives a conversation snapshot + existing experiences XML
 2. Builds system prompt from `experience/review` prompt template
@@ -71,6 +90,7 @@ The `ExperienceReviewAgent`:
 ```
 Agent[E]
 ├── ReActAgent               (graph-based, 4-node, with approval)
+├── ExternalCodingAgent      (external CLI harness, provider backend lifecycle)
 ├── SummarizerAgent          (single-turn, no tools)
 └── ScopedFileAgent          (ReAct with scoped file tools)
     ├── ArchiveSummarizer    (pruned → archive files)
@@ -83,6 +103,7 @@ Agent[E]
 ### Working In This Directory
 - New agent strategies go in new subdirectories
 - Each agent must inherit `Agent[E]` and define `event_enum`
+- External coding teardown converges through `StreamingProviderBackend.close()`; do not add provider-kind branches to agent, pool, or workspace shutdown.
 - `SummarizerAgent` uses predefined prompt types: PROMPT_COMPRESSION, PROMPT_FACT_EXTRACTION, PROMPT_MEMORY_UPDATE, PROMPT_KNOWLEDGE_CONSOLIDATION
 - `ScopedFileAgent._run_agent()` is the shared entry point for all ReAct-based summarizers
 - Prompt templates come from `SummarizerPromptRegistry` loaded via `_get_registry()`

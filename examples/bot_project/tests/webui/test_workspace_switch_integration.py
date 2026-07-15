@@ -98,7 +98,7 @@ async def _simulate_qa_turn(
 ) -> None:
     """Materialise one Q/A turn by writing user + assistant events."""
     session_id = f"{conv_prefix}.{agent_name}"
-    store.append(
+    await store.append(
         session_id,
         UserMessageEvent(
             session_id=session_id,
@@ -106,7 +106,7 @@ async def _simulate_qa_turn(
             content=user_content,
         ),
     )
-    store.append(
+    await store.append(
         session_id,
         AssistantTurnEvent(
             session_id=session_id,
@@ -206,7 +206,9 @@ async def test_e2e_switch_workspace_attach_send_transcript_lands_in_ws_dir() -> 
 
             # Step 5: Verify the session's transcript is accessible via the store
             ws_a_sessions = WorkspacePaths(root=ws_a / ".modex").sessions_dir
-            events = list(server._store.load(session_id, sessions_dir=ws_a_sessions))
+            events = await server._store.load(
+                session_id, sessions_dir=ws_a_sessions
+            )
             assert len(events) >= 1
             contents = [str(e.to_dict()) for e in events]
             assert any("hi A" in c for c in contents)
@@ -258,14 +260,16 @@ async def test_im_message_carries_ws_routes_transcript_to_workspace() -> None:
 
         sid = f"{im_prefix}.main"
         with bind_workspace_root(ws_a):
-            store.append(
+            await store.append(
                 sid,
                 UserMessageEvent(session_id=sid, agent_name="main", content="IM msg"),
             )
 
         # Verify transcript lands in ws_a
         ws_a_sessions = ws_a / ".modex" / "sessions" / "main"
-        events = list(store.load(sid, sessions_dir=WorkspacePaths(root=ws_a / ".modex").sessions_dir))
+        events = await store.load(
+            sid, sessions_dir=WorkspacePaths(root=ws_a / ".modex").sessions_dir
+        )
         assert len(events) == 1
         assert "IM msg" in str(events[0].to_dict())
 
@@ -303,14 +307,14 @@ async def test_multi_workspace_isolation_concurrent_appends() -> None:
         # Concurrent appends; each binds its own workspace root.
         async def _append_a() -> None:
             with bind_workspace_root(ws_a):
-                store.append(
+                await store.append(
                     sid_a,
                     UserMessageEvent(session_id=sid_a, agent_name="main", content="msg for A"),
                 )
 
         async def _append_b() -> None:
             with bind_workspace_root(ws_b):
-                store.append(
+                await store.append(
                     sid_b,
                     UserMessageEvent(session_id=sid_b, agent_name="main", content="msg for B"),
                 )
@@ -318,12 +322,16 @@ async def test_multi_workspace_isolation_concurrent_appends() -> None:
         await asyncio.gather(_append_a(), _append_b())
 
         # Verify A's message is in ws_a
-        events_a = list(store.load(sid_a, sessions_dir=WorkspacePaths(root=ws_a / ".modex").sessions_dir))
+        events_a = await store.load(
+            sid_a, sessions_dir=WorkspacePaths(root=ws_a / ".modex").sessions_dir
+        )
         assert len(events_a) == 1
         assert "msg for A" in str(events_a[0].to_dict())
 
         # Verify B's message is in ws_b
-        events_b = list(store.load(sid_b, sessions_dir=WorkspacePaths(root=ws_b / ".modex").sessions_dir))
+        events_b = await store.load(
+            sid_b, sessions_dir=WorkspacePaths(root=ws_b / ".modex").sessions_dir
+        )
         assert len(events_b) == 1
         assert "msg for B" in str(events_b[0].to_dict())
 
@@ -359,32 +367,36 @@ async def test_multi_workspace_isolation_sequential_appends() -> None:
 
         # Append to A first
         with bind_workspace_root(ws_a):
-            store.append(
+            await store.append(
                 sid_a,
                 UserMessageEvent(session_id=sid_a, agent_name="main", content="first A"),
             )
         # Then append to B
         with bind_workspace_root(ws_b):
-            store.append(
+            await store.append(
                 sid_b,
                 UserMessageEvent(session_id=sid_b, agent_name="main", content="first B"),
             )
         # Append to A again
         with bind_workspace_root(ws_a):
-            store.append(
+            await store.append(
                 sid_a,
                 UserMessageEvent(session_id=sid_a, agent_name="main", content="second A"),
             )
 
         # Verify A has both messages
-        events_a = list(store.load(sid_a, sessions_dir=WorkspacePaths(root=ws_a / ".modex").sessions_dir))
+        events_a = await store.load(
+            sid_a, sessions_dir=WorkspacePaths(root=ws_a / ".modex").sessions_dir
+        )
         assert len(events_a) == 2
         contents_a = [str(e.to_dict()) for e in events_a]
         assert any("first A" in c for c in contents_a)
         assert any("second A" in c for c in contents_a)
 
         # Verify B has one message
-        events_b = list(store.load(sid_b, sessions_dir=WorkspacePaths(root=ws_b / ".modex").sessions_dir))
+        events_b = await store.load(
+            sid_b, sessions_dir=WorkspacePaths(root=ws_b / ".modex").sessions_dir
+        )
         assert len(events_b) == 1
         assert "first B" in str(events_b[0].to_dict())
 
@@ -433,11 +445,11 @@ async def test_im_zero_change_routing() -> None:
 
         sid = f"{im_prefix}.main"
         with bind_workspace_root(ws_target):
-            store.append(
+            await store.append(
                 sid,
                 UserMessageEvent(session_id=sid, agent_name="main", content="QQ message"),
             )
-            store.append(
+            await store.append(
                 sid,
                 AssistantTurnEvent(
                     session_id=sid,
@@ -449,8 +461,9 @@ async def test_im_zero_change_routing() -> None:
             )
 
         # Verify transcript is in target workspace
-        events = list(
-            store.load(sid, sessions_dir=WorkspacePaths(root=ws_target / ".modex").sessions_dir)
+        events = await store.load(
+            sid,
+            sessions_dir=WorkspacePaths(root=ws_target / ".modex").sessions_dir,
         )
         assert len(events) == 2
         contents = [str(e.to_dict()) for e in events]

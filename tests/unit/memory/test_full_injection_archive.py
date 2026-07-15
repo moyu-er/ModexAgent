@@ -1,151 +1,138 @@
-"""Tests for FullInjectionPolicy archive injection."""
 from __future__ import annotations
+
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from modex_agent.core.scope import MemoryContext
+from modex_agent.memory.archive_models import ArchiveChannel
+from modex_agent.memory.core.models import LongTermMemory
 from modex_agent.memory.core.system import MemorySystem
 from modex_agent.memory.injection.full_injection import FullInjectionPolicy
-from modex_agent.memory.stores.dir_archive import DirArchiveStorage
-from modex_agent.memory.tags import ArchiveTag
 
 
-class _FakeInjectableMemorySystem(MemorySystem):
-    """Minimal injectable memory system for testing archive injection."""
+def _archive_memory(
+    entries: list[dict[str, str | int | None]],
+    storage_path: Path | None = None,
+) -> MemorySystem:
+    async def get_history_entries(
+        context: MemoryContext,
+        limit: int = 5,
+        query: str = "",
+        *,
+        channel: ArchiveChannel = ArchiveChannel.CONTEXT,
+    ) -> list[dict[str, str | int | None]]:
+        _ = context, query, channel
+        return entries[-limit:]
 
-    def __init__(self, archive_dir):
-        self._archive_dir = archive_dir
-    async def initialize(self): pass
-    async def close(self): pass
-    def create_message_history(self, context, initial_messages=None):
-        from modex_agent.memory.history import MessageHistory
-        return MessageHistory()
-    async def add_messages(self, context, messages): pass
-    async def search(self, query, context, limit=5): return []
-    async def clear(self, context): pass
+    memory = MagicMock(spec=MemorySystem)
+    memory.get_history_entries = AsyncMock(side_effect=get_history_entries)
+    memory.get_storage_path = AsyncMock(return_value=storage_path)
+    memory.retrieve_knowledge = AsyncMock(return_value=LongTermMemory())
+    memory.get_knowledge_directory = AsyncMock(return_value=None)
+    memory.get_providers.return_value = []
+    memory.prefetch_memories = AsyncMock(return_value=None)
+    memory.get_history = AsyncMock(return_value=[])
+    return memory
 
 
-    async def get_storage_path(self, context):
-        return self._archive_dir
-
-    async def get_history(self, context):
-        return []
-
-    async def get_knowledge(self, context):
-        from modex_agent.memory.core.models import LongTermMemory
-        return LongTermMemory()
-
-    async def retrieve_knowledge(self, context, query=""):
-        from modex_agent.memory.core.models import LongTermMemory
-        return LongTermMemory()
-
-    async def get_history_entries(self, context, limit=3, query="", channel=None):
-        return []
-
-    async def get_knowledge_directory(self, context):
-        return None
-
-    def get_providers(self):
-        return []
-
-    async def prefetch_memories(self, query, context):
-        return None
+def _entry(archive_id: int, content: str) -> dict[str, str | int | None]:
+    return {
+        "summary": content,
+        "archive_id": archive_id,
+        "cursor": archive_id,
+        "created_at": f"2026-01-0{archive_id}T00:00:00+00:00",
+    }
 
 
 @pytest.mark.asyncio
-async def test_inject_md_archives_truncates_at_configured_chars(tmp_path):
-    archive_dir = tmp_path / "archives"
-    storage = DirArchiveStorage(archive_dir)
-
-    long_content = "A" * 1200
-    await storage.write_archive_file(1, "context.md", long_content)
-
-    fake = _FakeInjectableMemorySystem(archive_dir)
-    policy = FullInjectionPolicy(
-        archive_inject_count=3,
-        archive_inject_max_chars=1000,
+async def test_archive_injection_assigns_budgets_by_recency() -> None:
+    memory = _archive_memory(
+        [
+            _entry(1, "A" * 12_000),
+            _entry(2, "B" * 17_000),
+            _entry(3, "C" * 22_000),
+        ]
     )
 
-    result = await policy.assemble(
+    result = await FullInjectionPolicy().assemble(
         context=MemoryContext(session_id="s1"),
-        memory_system=fake,
+        memory_system=memory,
     )
 
-    assert ArchiveTag.CONTAINER.value in result.system_prompt
-    assert "A" * 1000 in result.system_prompt
-    assert "..." in result.system_prompt
-    assert "A" * 1100 not in result.system_prompt
+    assert "A" * 10_000 in result.system_prompt
+    assert "A" * 10_001 not in result.system_prompt
+    assert "B" * 15_000 in result.system_prompt
+    assert "B" * 15_001 not in result.system_prompt
+    assert "C" * 20_000 in result.system_prompt
+    assert "C" * 20_001 not in result.system_prompt
 
 
 @pytest.mark.asyncio
-async def test_inject_md_archives_ascending_order(tmp_path):
-    archive_dir = tmp_path / "archives"
-    storage = DirArchiveStorage(archive_dir)
+async def test_single_archive_receives_full_newest_budget() -> None:
+    memory = _archive_memory([_entry(1, "A" * 22_000)])
 
-    await storage.write_archive_file(1, "context.md", "first archive")
-    await storage.write_archive_file(2, "context.md", "second archive")
-    await storage.write_archive_file(3, "context.md", "third archive")
-
-    fake = _FakeInjectableMemorySystem(archive_dir)
-    policy = FullInjectionPolicy(
-        archive_inject_count=3,
-        archive_inject_max_chars=1000,
-    )
-
-    result = await policy.assemble(
+    result = await FullInjectionPolicy().assemble(
         context=MemoryContext(session_id="s1"),
-        memory_system=fake,
+        memory_system=memory,
     )
 
-    first_pos = result.system_prompt.find('number="1"')
-    second_pos = result.system_prompt.find('number="2"')
-    third_pos = result.system_prompt.find('number="3"')
-    assert first_pos < second_pos < third_pos
+    assert "A" * 20_000 in result.system_prompt
+    assert "A" * 20_001 not in result.system_prompt
 
 
 @pytest.mark.asyncio
-async def test_inject_md_archives_respects_count_limit(tmp_path):
-    archive_dir = tmp_path / "archives"
-    storage = DirArchiveStorage(archive_dir)
+async def test_archive_injection_preserves_oldest_to_newest_order() -> None:
+    memory = _archive_memory([_entry(1, "first"), _entry(2, "second"), _entry(3, "third")])
 
-    for aid in [1, 2, 3, 4, 5]:
-        await storage.write_archive_file(aid, "context.md", f"archive {aid}")
-
-    fake = _FakeInjectableMemorySystem(archive_dir)
-    policy = FullInjectionPolicy(
-        archive_inject_count=2,
-        archive_inject_max_chars=1000,
+    result = await FullInjectionPolicy().assemble(
+        context=MemoryContext(session_id="s1"),
+        memory_system=memory,
     )
 
-    result = await policy.assemble(
+    assert result.system_prompt.index('number="1"') < result.system_prompt.index('number="2"')
+    assert result.system_prompt.index('number="2"') < result.system_prompt.index('number="3"')
+
+
+@pytest.mark.asyncio
+async def test_backend_without_file_capability_omits_path_metadata() -> None:
+    memory = _archive_memory([_entry(1, "database archive")])
+
+    result = await FullInjectionPolicy().assemble(
         context=MemoryContext(session_id="s1"),
-        memory_system=fake,
+        memory_system=memory,
+    )
+
+    assert "database archive" in result.system_prompt
+    assert "file=" not in result.system_prompt
+    assert "context.md" not in result.system_prompt
+
+
+@pytest.mark.asyncio
+async def test_file_capability_adds_real_context_path(tmp_path: Path) -> None:
+    archive_dir = tmp_path / "archive"
+    memory = _archive_memory([_entry(7, "file archive")], archive_dir)
+
+    result = await FullInjectionPolicy().assemble(
+        context=MemoryContext(session_id="s1"),
+        memory_system=memory,
+    )
+
+    expected = str((archive_dir / "7" / "context.md").resolve())
+    assert f'file="{expected}"' in result.system_prompt
+    assert "Read the `context.md` file at each path" in result.system_prompt
+
+
+@pytest.mark.asyncio
+async def test_archive_injection_respects_count_limit() -> None:
+    memory = _archive_memory([_entry(index, f"archive {index}") for index in range(1, 6)])
+
+    result = await FullInjectionPolicy(archive_inject_count=2).assemble(
+        context=MemoryContext(session_id="s1"),
+        memory_system=memory,
     )
 
     assert 'number="4"' in result.system_prompt
     assert 'number="5"' in result.system_prompt
     assert 'number="3"' not in result.system_prompt
-    assert 'number="1"' not in result.system_prompt
-
-
-@pytest.mark.asyncio
-async def test_inject_md_archives_skips_empty_context(tmp_path):
-    archive_dir = tmp_path / "archives"
-    storage = DirArchiveStorage(archive_dir)
-
-    await storage.write_archive_file(1, "context.md", "valid content")
-    await storage.write_archive_file(2, "context.md", "")
-
-    fake = _FakeInjectableMemorySystem(archive_dir)
-    policy = FullInjectionPolicy(
-        archive_inject_count=3,
-        archive_inject_max_chars=1000,
-    )
-
-    result = await policy.assemble(
-        context=MemoryContext(session_id="s1"),
-        memory_system=fake,
-    )
-
-    assert 'number="1"' in result.system_prompt
-    assert 'number="2"' not in result.system_prompt

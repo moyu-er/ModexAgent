@@ -1,4 +1,26 @@
-"""基于本地文件的 Inbox Server 实现。"""
+"""File-based ``InboxMQ`` implementation (T11).
+
+Renamed from :class:`LocalFileInboxServer` to :class:`LocalFileInboxMQ`.
+``LocalFileInboxServer`` is kept as a deprecated alias during the T11
+transition.
+
+The file backend is **deprecated but functional** for framework file-backend
+users. It implements the full :class:`InboxMQ` contract:
+
+- Async surface (``receive``/``consume``/``peek``/``count``/``clear``/
+  ``sessions_with_pending``): unchanged from the legacy implementation; one
+  ``asyncio.Lock`` per session for single-process safety.
+- Sync :meth:`deliver`: writes directly to ``pending.jsonl`` (best-effort;
+  cross-process atomicity is a known gap the SQLite backend closes).
+- :meth:`wakeup` / :meth:`wait_wakeup`: in-process ``asyncio.Event`` per
+  session (no cross-process wakeup — the poller ticks as fallback).
+- :meth:`reap_expired`: no-op (the file backend has no TTL; returns ``0``).
+
+Delivered-id tracking is internal: the optional ``tracker`` parameter is
+kept for backwards compatibility but new code should let the MQ create its
+own :class:`FileDeliveredIdTracker`.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -8,7 +30,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from .server import InboxServer
+from .server import InboxMQ
 from .tracker import DeliveredIdTracker, FileDeliveredIdTracker
 from .types import InboxMessage
 
@@ -24,16 +46,17 @@ def _safe_dir_name(session_id: str) -> str:
     return safe
 
 
-class LocalFileInboxServer(InboxServer):
-    """基于本地文件的 Inbox MQ Server 实现。
+class LocalFileInboxMQ(InboxMQ):
+    """File-based ``InboxMQ`` implementation.
 
-    存储路径:
+    Storage layout::
+
         {workspace}/{safe_session_id}/
             ├── pending.jsonl
             └── delivered_ids.json
 
-    并发安全:
-        每个 session_id 一个 asyncio.Lock（单进程安全）。
+    Concurrency: one ``asyncio.Lock`` per session (single-process safety).
+    Cross-process writes via :meth:`deliver` are best-effort.
     """
 
     def __init__(
@@ -44,10 +67,14 @@ class LocalFileInboxServer(InboxServer):
         self._workspace = Path(workspace)
         self._workspace.mkdir(parents=True, exist_ok=True)
         self._locks: dict[str, asyncio.Lock] = {}
+        self._wakeup_events: dict[str, asyncio.Event] = {}
         self._tracker = tracker or FileDeliveredIdTracker(workspace)
 
     def _get_lock(self, session_id: str) -> asyncio.Lock:
         return self._locks.setdefault(session_id, asyncio.Lock())
+
+    def _get_wakeup_event(self, session_id: str) -> asyncio.Event:
+        return self._wakeup_events.setdefault(session_id, asyncio.Event())
 
     def _session_dir(self, session_id: str) -> Path:
         return self._workspace / _safe_dir_name(session_id)
@@ -55,18 +82,20 @@ class LocalFileInboxServer(InboxServer):
     def _pending_path(self, session_dir: Path) -> Path:
         return session_dir / "pending.jsonl"
 
+    # ------------------------------------------------------------------ #
+    # Async MQ surface
+    # ------------------------------------------------------------------ #
+
     async def receive(self, session_id: str, message: InboxMessage) -> bool:
-        """幂等接收：检查 pending 队列和 delivered_ids，重复则忽略。"""
+        """Idempotent intake: check pending + delivered_ids, append if new."""
         session_dir = self._session_dir(session_id)
         pending_path = self._pending_path(session_dir)
 
         async with self._get_lock(session_id):
-            # 检查 delivered_ids
             delivered_ids = await self._tracker.load(session_id)
             if message.message_id in delivered_ids:
                 return False
 
-            # 检查 pending 队列中是否已存在
             if pending_path.exists():
                 text = pending_path.read_text(encoding="utf-8")
                 for line in text.strip().split("\n"):
@@ -76,7 +105,6 @@ class LocalFileInboxServer(InboxServer):
                     if data.get("message_id") == message.message_id:
                         return False
 
-            # 新消息，追加到 pending
             session_dir.mkdir(parents=True, exist_ok=True)
             line = json.dumps(
                 {
@@ -100,7 +128,7 @@ class LocalFileInboxServer(InboxServer):
         *,
         only_types: set[str] | None = None,
     ) -> list[InboxMessage]:
-        """原子性消费：读取 pending，将 message_id 写入 delivered_ids，未消费的消息保留。"""
+        """Atomic consume: read pending, write delivered_ids, keep remainder."""
         session_dir = self._session_dir(session_id)
         pending_path = self._pending_path(session_dir)
 
@@ -115,7 +143,6 @@ class LocalFileInboxServer(InboxServer):
                 consume_lines = lines[:limit]
                 remain_lines = lines[limit:]
             else:
-                # 按 message_type 过滤；保留非匹配行的原始字符串以保持字节级一致。
                 consume_lines: list[str] = []
                 remain_lines: list[str] = []
                 for line in lines:
@@ -196,7 +223,7 @@ class LocalFileInboxServer(InboxServer):
             await self._tracker.clear(session_id)
 
     async def list_sessions(self) -> list[str]:
-        """扫描工作目录，返回所有存在 pending.jsonl 文件的会话 ID。"""
+        """Scan workspace, return all sessions with a ``pending.jsonl``."""
         sessions = []
         for item in self._workspace.iterdir():
             if not item.is_dir():
@@ -214,11 +241,7 @@ class LocalFileInboxServer(InboxServer):
         return sessions
 
     async def sessions_with_pending(self) -> list[str]:
-        """扫描工作目录，返回 pending.jsonl 非空（≥1 非空行）的会话 ID。
-
-        与 ``list_sessions`` 不同：后者仅判断 pending.jsonl 是否存在，
-        会包含已被消费干净（drained）的会话；本方法严格按 count > 0 过滤。
-        """
+        """Scan workspace, return sessions with non-empty ``pending.jsonl``."""
         sessions = []
         for item in self._workspace.iterdir():
             if not item.is_dir():
@@ -226,9 +249,6 @@ class LocalFileInboxServer(InboxServer):
             pending_path = item / "pending.jsonl"
             if not pending_path.exists():
                 continue
-            # 与 count() 一致：统计非空行，>0 才视为有 pending。Read once and
-            # reuse the text for the non-empty check AND session-id recovery
-            # (avoids a second read via _session_id_from_pending).
             text = pending_path.read_text(encoding="utf-8")
             if not any(line.strip() for line in text.split("\n")):
                 continue
@@ -236,6 +256,105 @@ class LocalFileInboxServer(InboxServer):
                 self._session_id_from_text(text) or self._unsafe_dir_name(item.name)
             )
         return sessions
+
+    # ------------------------------------------------------------------ #
+    # Sync delivery surface (CLI cross-process)
+    # ------------------------------------------------------------------ #
+
+    def deliver(self, session_id: str, message: InboxMessage) -> bool:
+        """Sync cross-process delivery — writes directly to ``pending.jsonl``.
+
+        Best-effort: the file backend does not own a DB transaction; cross-
+        process atomicity is a known gap the SQLite backend closes (T20).
+        Idempotency is checked against the pending file and the delivered-id
+        store (both read synchronously).
+        """
+        session_dir = self._session_dir(session_id)
+        pending_path = self._pending_path(session_dir)
+
+        # Sync read of delivered_ids.json
+        delivered_path = session_dir / "delivered_ids.json"
+        delivered_ids: set[str] = set()
+        if delivered_path.exists():
+            try:
+                data = json.loads(delivered_path.read_text(encoding="utf-8"))
+                delivered_ids = set(data.get("ids", []))
+            except (json.JSONDecodeError, OSError):
+                delivered_ids = set()
+
+        if message.message_id in delivered_ids:
+            return False
+
+        # Sync read of pending.jsonl for duplicate check
+        if pending_path.exists():
+            text = pending_path.read_text(encoding="utf-8")
+            for line in text.strip().split("\n"):
+                if not line.strip():
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if data.get("message_id") == message.message_id:
+                    return False
+
+        # Append
+        session_dir.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(
+            {
+                "message_id": message.message_id,
+                "source": message.source,
+                "content": message.content,
+                "message_type": message.message_type,
+                "timestamp": message.timestamp.isoformat(),
+                "metadata": message.metadata,
+            },
+            ensure_ascii=False,
+        )
+        with open(pending_path, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+        return True
+
+    # ------------------------------------------------------------------ #
+    # Wakeup surface (poller latency reduction)
+    # ------------------------------------------------------------------ #
+
+    async def wakeup(self, session_id: str) -> None:
+        """Set the in-process wakeup event for ``session_id``.
+
+        No cross-process wakeup — the poller ticks as a fallback.
+        """
+        self._get_wakeup_event(session_id).set()
+
+    async def wait_wakeup(
+        self,
+        session_id: str,
+        timeout: float | None = None,
+    ) -> bool:
+        """Wait for the in-process wakeup event.
+
+        Returns ``True`` if woken, ``False`` on timeout. The event is cleared
+        after a successful wait so subsequent calls block again.
+        """
+        event = self._get_wakeup_event(session_id)
+        try:
+            await asyncio.wait_for(event.wait(), timeout=timeout)
+            event.clear()
+            return True
+        except TimeoutError:
+            return False
+
+    # ------------------------------------------------------------------ #
+    # Lifecycle maintenance
+    # ------------------------------------------------------------------ #
+
+    async def reap_expired(self) -> int:
+        """No-op for the file backend (no TTL policy). Returns ``0``."""
+        return 0
+
+    # ------------------------------------------------------------------ #
+    # Internal helpers
+    # ------------------------------------------------------------------ #
 
     def _session_id_from_text(self, text: str) -> str | None:
         """Recover the original session_id from the first pending record."""
@@ -254,8 +373,7 @@ class LocalFileInboxServer(InboxServer):
         return None
 
     def _unsafe_dir_name(self, safe_name: str) -> str:
-        """尝试将安全目录名还原为原始 session_id。"""
-        # 如果长度达到 200，可能是 base64 编码
+        """Best-effort reverse of ``_safe_dir_name``."""
         if len(safe_name) >= 200:
             try:
                 import base64
@@ -264,3 +382,8 @@ class LocalFileInboxServer(InboxServer):
             except Exception:
                 pass
         return safe_name
+
+
+# Deprecated alias — new code should use ``LocalFileInboxMQ``. Kept during
+# the T11 transition so existing imports continue to work.
+LocalFileInboxServer = LocalFileInboxMQ

@@ -5,13 +5,13 @@ and save it as a full file replacement.
 """
 from __future__ import annotations
 
-import pytest
-from pathlib import Path
 from unittest.mock import AsyncMock
 
-from modex_agent.core.scope import MemoryContext
+import pytest
+
+from modex_agent.core.scope import MemoryContext, MemoryLayerName
+from modex_agent.memory.core.split_stores import MemoryStoreBundle
 from modex_agent.memory.stores.markdown_knowledge import MarkdownKnowledgeStorage
-from modex_agent.core.scope import MemoryLayerName
 
 
 class TestOverwriteKnowledgeUpdate:
@@ -39,12 +39,14 @@ class TestOverwriteKnowledgeUpdate:
             reason="learned user name and timezone",
         )
 
-        from modex_agent.memory.layers.knowledge import ScopedKnowledgeMemoryManager
         from modex_agent.memory.layers.config import KnowledgeMemoryConfig
+        from modex_agent.memory.layers.knowledge import ScopedKnowledgeMemoryManager
 
         config = KnowledgeMemoryConfig()
         manager = ScopedKnowledgeMemoryManager(
-            storage_factory=AsyncMock(return_value=storage),
+            storage_factory=AsyncMock(return_value=MemoryStoreBundle(
+                messages=storage, kv=storage, cursors=storage, archive=storage,
+            )),
             config=config,
         )
 
@@ -86,12 +88,14 @@ class TestOverwriteKnowledgeUpdate:
         # Template dir doesn't exist
         templates_dir = tmp_path / "nonexistent_templates"
 
-        from modex_agent.memory.layers.knowledge import ScopedKnowledgeMemoryManager
         from modex_agent.memory.layers.config import KnowledgeMemoryConfig
+        from modex_agent.memory.layers.knowledge import ScopedKnowledgeMemoryManager
 
         config = KnowledgeMemoryConfig(default_templates_dir=str(templates_dir))
         manager = ScopedKnowledgeMemoryManager(
-            storage_factory=AsyncMock(return_value=storage),
+            storage_factory=AsyncMock(return_value=MemoryStoreBundle(
+                messages=storage, kv=storage, cursors=storage, archive=storage,
+            )),
             config=config,
         )
 

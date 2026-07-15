@@ -6,10 +6,11 @@ import logging
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 
+from modex_agent.core.scope import MemoryContext, Scope
 from modex_agent.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
 from modex_agent.memory.core.layers import KnowledgeMemoryManager
 from modex_agent.memory.core.models import LongTermMemory
-from modex_agent.core.scope import MemoryContext, MemoryScope
+from modex_agent.memory.core.store_metadata import StoreMetadata
 from modex_agent.memory.knowledge_search import (
     FullDumpKnowledgeStrategy,
     KnowledgeSearchStrategy,
@@ -41,23 +42,26 @@ class ScopedKnowledgeMemoryManager(KnowledgeMemoryManager):
         self._consolidation_fn = consolidation_fn
         self._consolidation_threshold = consolidation_threshold_tokens
 
-    def get_scope(self) -> MemoryScope:
+    def get_scope(self) -> Scope:
         return self._config.scope
 
     async def get_storage_path(self, context: MemoryContext) -> Path | None:
         """Return the absolute path to knowledge storage, if file-backed."""
-        storage = await self._storage_factory(context)
-        return storage.base_path
+        bundle = await self._storage_factory(context)
+        store = bundle.messages
+        if isinstance(store, StoreMetadata):
+            return store.base_path
+        return None
 
     async def ensure_defaults(
         self,
         context: MemoryContext,
         defaults: Mapping[str, str] | None = None,
     ) -> None:
-        storage = await self._storage_factory(context)
+        bundle = await self._storage_factory(context)
         defaults = defaults or {}
         for key, file_name in self._config.default_files.items():
-            existing = await storage.get(file_name)
+            existing = await bundle.kv.get(file_name)
             if existing is not None and (isinstance(existing, str) and existing.strip()):
                 continue  # Don't overwrite existing non-empty content
 
@@ -89,7 +93,7 @@ class ScopedKnowledgeMemoryManager(KnowledgeMemoryManager):
                 )
                 continue
 
-            await storage.set(file_name, content)
+            await bundle.kv.set(file_name, content)
 
     async def retrieve(self, context: MemoryContext, query: str = "") -> LongTermMemory:
         """Retrieve knowledge using the configured search strategy."""
@@ -98,14 +102,14 @@ class ScopedKnowledgeMemoryManager(KnowledgeMemoryManager):
 
     async def get_all(self, context: MemoryContext) -> LongTermMemory:
         await self.ensure_defaults(context)
-        storage = await self._storage_factory(context)
+        bundle = await self._storage_factory(context)
         files = self._config.default_files
         custom: dict[str, str] = {}
         default_names = set(files.values())
-        for key in await storage.list_keys():
+        for key in await bundle.kv.list_keys():
             if key in default_names or key.endswith("._meta"):
                 continue
-            value = await storage.get(key)
+            value = await bundle.kv.get(key)
             if isinstance(value, str):
                 custom[key] = value
             elif isinstance(value, dict) and "value" in value:
@@ -118,9 +122,9 @@ class ScopedKnowledgeMemoryManager(KnowledgeMemoryManager):
         )
 
     async def get_file(self, context: MemoryContext, file_key: str) -> str | None:
-        storage = await self._storage_factory(context)
+        bundle = await self._storage_factory(context)
         file_name = self._config.default_files.get(file_key, file_key)
-        value = await storage.get(file_name)
+        value = await bundle.kv.get(file_name)
         if isinstance(value, dict) and "value" in value:
             return str(value.get("value") or "")
         if isinstance(value, str):
@@ -128,7 +132,7 @@ class ScopedKnowledgeMemoryManager(KnowledgeMemoryManager):
         return None
 
     async def apply_update(self, context: MemoryContext, update: MemoryUpdate) -> str:
-        storage = await self._storage_factory(context)
+        bundle = await self._storage_factory(context)
         file_name = self._config.default_files.get(update.file_name, update.file_name)
         existing = await self.get_file(context, file_name) or ""
         mode = update.mode.lower()
@@ -162,14 +166,15 @@ class ScopedKnowledgeMemoryManager(KnowledgeMemoryManager):
                 result = existing
         else:
             result = self._append(existing, update.content)
-        await storage.set(file_name, result)
-        await storage.append_log(
-            {
-                "file": file_name,
-                "mode": update.mode,
-                "reason": update.reason,
-            }
-        )
+        await bundle.kv.set(file_name, result)
+        if bundle.archive is not None:
+            await bundle.archive.append_log(
+                {
+                    "file": file_name,
+                    "mode": update.mode,
+                    "reason": update.reason,
+                }
+            )
         await self._maybe_prune_changelog(context)
 
         # Auto-consolidate if file exceeds threshold
@@ -216,15 +221,16 @@ class ScopedKnowledgeMemoryManager(KnowledgeMemoryManager):
             if not consolidated or not consolidated.strip():
                 logger.warning("Consolidation returned empty for %s, skipping", file_name)
                 return None
-            storage = await self._storage_factory(context)
-            await storage.set(file_name, consolidated)
-            await storage.append_log(
-                {
-                    "file": file_name,
-                    "mode": "consolidation",
-                    "reason": f"auto-consolidated ({estimate_text_tokens(content)} -> {estimate_text_tokens(consolidated)} tokens)",
-                }
-            )
+            bundle = await self._storage_factory(context)
+            await bundle.kv.set(file_name, consolidated)
+            if bundle.archive is not None:
+                await bundle.archive.append_log(
+                    {
+                        "file": file_name,
+                        "mode": "consolidation",
+                        "reason": f"auto-consolidated ({estimate_text_tokens(content)} -> {estimate_text_tokens(consolidated)} tokens)",
+                    }
+                )
             logger.info(
                 "Consolidated %s: %d -> %d tokens",
                 file_name,
@@ -239,16 +245,18 @@ class ScopedKnowledgeMemoryManager(KnowledgeMemoryManager):
     async def _maybe_prune_changelog(self, context: MemoryContext) -> None:
         if self._config.max_changelog_entries is None:
             return
-        storage = await self._storage_factory(context)
-        entries = await storage.read_logs(since_cursor=0)
+        bundle = await self._storage_factory(context)
+        if bundle.archive is None:
+            return
+        entries = await bundle.archive.read_logs(since_cursor=0)
         if len(entries) <= self._config.max_changelog_entries:
             return
-        await storage.save_logs(entries[-self._config.max_changelog_entries :])
+        await bundle.archive.save_logs(entries[-self._config.max_changelog_entries :])
 
     async def clear(self, context: MemoryContext) -> None:
-        storage = await self._storage_factory(context)
-        for key in await storage.list_keys():
-            await storage.delete(key)
+        bundle = await self._storage_factory(context)
+        for key in await bundle.kv.list_keys():
+            await bundle.kv.delete(key)
 
     def _append(self, existing: str, content: str) -> str:
         if not content:

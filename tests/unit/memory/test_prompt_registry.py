@@ -1,8 +1,8 @@
 """Tests for PromptRegistry — completeness, XML escaping, code-path mapping."""
 from __future__ import annotations
 
-from pathlib import Path
 import tempfile
+from pathlib import Path
 
 from modex_agent.memory.prompts import PromptRegistry, create_default_registry
 

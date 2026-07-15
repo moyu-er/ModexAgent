@@ -19,9 +19,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from bot.service.core import BotService
     from modex_agent.multi_agent.pool_instance import PoolInstance
+    from modex_agent.persistence.managers import WorkspacePersistenceManager
 
-from bot.service.pool_builder import create_pool
-from bot.service.session_store import WorkspacePoolSessionStore
 from bot.workspace.background import BackgroundTaskRunner
 from bot.workspace.dispatch import WorkspaceMessageDispatcher
 from bot.workspace.factory import PoolResourceFactory
@@ -43,19 +42,23 @@ from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.pool_config import PoolStore
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 from modex_agent.multi_agent.pool_config.specs import PoolSpec
-from modex_agent.multi_agent.pool_router import PoolRouter, PoolSessionStore
+from modex_agent.multi_agent.pool_router import PoolRouter
 from modex_agent.multi_agent.tools import CommunicationTarget
+from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.tools.overflow.cleaner import OverflowCleaner
 from modex_agent.tools.overflow.handler import ToolResultOverflowHandler
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
 from modex_agent.tools.terminal.managers import TerminalManagerBase
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.control import WorkspaceController
-from modex_agent.workspace.registry import WorkspaceRegistry
+from modex_agent.workspace.registry import WorkspaceRegistry, WorkspaceRegistryStore
 from modex_agent.workspace.routing import WorkspaceResolver
-from modex_agent.workspace.store import GlobalWorkspaceStore
 
 logger = logging.getLogger(__name__)
+
+
+class _PoolShutdownIncompleteError(RuntimeError):
+    pass
 
 
 @dataclass(frozen=True)
@@ -71,7 +74,7 @@ class WorkspaceStack:
     controller: WorkspaceController
     dispatcher: WorkspaceMessageDispatcher
     factory: PoolResourceFactory
-    store: GlobalWorkspaceStore
+    store: WorkspaceRegistryStore
 
 
 def build_single_workspace_stack(service: BotService, *, data_dir_name: str) -> WorkspaceStack:
@@ -85,6 +88,8 @@ def build_single_workspace_stack(service: BotService, *, data_dir_name: str) -> 
 def build_workspace_stack(
     service: BotService, *, data_dir_name: str, enabled: bool = True
 ) -> WorkspaceStack:
+    from bot.service.builders import build_workspace_registry_store
+
     """Wire the full multi-live stack against ``service``.
 
     ``service`` is the BotService: read for app config, default provider/pool,
@@ -105,8 +110,11 @@ def build_workspace_stack(
     factory = PoolResourceFactory(
         build_resources=build_resources, stop_resources=stop_resources
     )
-    store = GlobalWorkspaceStore(
-        home=service._project_dir, data_dir_name=data_dir_name
+    store = build_workspace_registry_store(
+        service._app_config,
+        service._registry_persistence,
+        service._project_dir,
+        data_dir_name,
     )
     registry: WorkspaceRegistry[PoolWorkspaceResources] = WorkspaceRegistry(
         home=service._project_dir,
@@ -141,7 +149,10 @@ def _command_session_id_of(context: CommandContext) -> str:
     return session_id_prefix_of(context.session_id)
 
 
-def _build_dispatcher(service: BotService, resolver: WorkspaceResolver) -> WorkspaceMessageDispatcher:
+def _build_dispatcher(
+    service: BotService,
+    resolver: WorkspaceResolver,
+) -> WorkspaceMessageDispatcher:
     from bot.workspace.dispatch import WorkspaceMessageDispatcher
 
     async def _route_one(resources: PoolWorkspaceResources, message: InputMessage) -> None:
@@ -163,8 +174,34 @@ def _build_dispatcher(service: BotService, resolver: WorkspaceResolver) -> Works
 # ──────────────────────────────────────────────────────────────────────────
 
 
+class _WorkspaceBuildState:
+    def __init__(self) -> None:
+        self.persistence: WorkspacePersistenceManager | None = None
+        self.resources: PoolWorkspaceResources | None = None
+
+    async def rollback(self) -> None:
+        if self.resources is not None:
+            await _stop_resources(self.resources)
+        elif self.persistence is not None:
+            with contextlib.suppress(BaseException):
+                await self.persistence.close()
+
+
 async def _build_resources(
     service: BotService, ctx: WorkspaceContext
+) -> PoolWorkspaceResources:
+    state = _WorkspaceBuildState()
+    try:
+        return await _assemble_resources(service, ctx, state)
+    except BaseException:
+        await state.rollback()
+        raise
+
+
+async def _assemble_resources(
+    service: BotService,
+    ctx: WorkspaceContext,
+    state: _WorkspaceBuildState,
 ) -> PoolWorkspaceResources:
     """Build one workspace's full resource bundle (the business ``R``).
 
@@ -172,6 +209,9 @@ async def _build_resources(
     ``_on_workspace_activate`` + ``_initialize_pool`` did. Uses
     PER-WORKSPACE broker/inbox/bus/interceptor rooted at ``ctx.paths``.
     """
+    from bot.service.builders import build_pool_routing_store, build_session_store
+    from bot.service.pool_builder import create_pool
+
     app_config = service._app_config
     pool_store = PoolStore(base_dir=service._project_dir)
     pool_names = [s.name for s in pool_store.list_pools()]
@@ -185,6 +225,26 @@ async def _build_resources(
         "set" if service._mcp_registry is not None else "None",
         list(pool_specs),
     )
+
+    # T26: open the workspace SQLite DB when backend is SQLITE. The
+    # ConnectionManager is shared by all SQLite adapters in this workspace;
+    # it closes at evict time (after producers/pools/broker stop) in
+    # _stop_resources. FILE backend leaves persistence=None.
+    persistence: WorkspacePersistenceManager | None = None
+    owns_persistence = False
+    if app_config is not None and app_config.persistence.backend is PersistenceBackend.SQLITE:
+        from modex_agent.persistence.managers import WorkspacePersistenceManager
+
+        if ctx.target == service._project_dir.resolve():
+            persistence = service._home_persistence
+            assert persistence is not None, "Home persistence must open before materialization"
+        else:
+            db_path = ctx.paths.root / "state.db"
+            persistence = WorkspacePersistenceManager(db_path)
+            await persistence.open()
+            state.persistence = persistence
+            owns_persistence = True
+            logger.info("[workspace-build] SQLite workspace DB opened at %s", db_path)
 
     from bot.config.memory_defaults import main_agent_memory
     from modex_agent.ioc.configs.memory import MemoryConfig
@@ -217,20 +277,48 @@ async def _build_resources(
     overflow_store = LocalFileToolOverflowStore(
         workspace=ctx.paths.overflow_dir, max_chunk_size=10_000
     )
-    session_index_store = WorkspacePoolSessionStore(
-        base_dir=ctx.paths.session_index_dir,
+    session_index_store = build_session_store(
+        app_config,
+        persistence,
+        session_index_dir=ctx.paths.session_index_dir,
         pool_resolver=lambda session: service._pool_for_agent(session.agent_name),
         data_dir_name=app_config.paths.data_dir_name,
     )
     from modex_agent.core.session_registry import InMemorySessionRegistry
 
     session_registry = InMemorySessionRegistry(store=session_index_store)
+    await session_registry.load_all()
 
     # 2. Per-workspace broker (cross-process wakeup). The inbox/bus are now
     #    per-pool (Task 7) — built inside create_pool, one set per pool.
     broker = InMemoryMessageBroker()
     await broker.start()
 
+    pool_data: dict[str, Any] = {}
+    pools: dict[str, Any] = {}
+    workspace_transcript_store = None
+    if persistence is not None:
+        from bot.persistence.transcript import build_database_transcript_store
+
+        workspace_transcript_store = await build_database_transcript_store(
+            persistence.connection
+        )
+    resources = PoolWorkspaceResources(
+        target=ctx.target,
+        ctx=ctx,
+        overflow_store=overflow_store,
+        session_index_store=session_index_store,
+        broker=broker,
+        pool_data=pool_data,
+        pools=pools,
+        pool_router=None,
+        background=None,
+        persistence=persistence,
+        owns_persistence=owns_persistence,
+        transcript_store=service._transcript_store,
+        workspace_transcript_store=workspace_transcript_store,
+    )
+    state.resources = resources
     # 3. Per-workspace interceptor chain, rooted at THIS workspace's overflow dir.
     shared_interceptor_chain = _build_workspace_interceptor_chain(
         service, overflow_store
@@ -252,7 +340,6 @@ async def _build_resources(
     command_processor = service.command_processor or service._build_main_command_processor()
 
     # 4. Per-pool data snapshots.
-    pool_data: dict[str, Any] = {}
     for name in pool_names:
         pool_data[name] = await build_pool_data(
             ctx,
@@ -261,13 +348,14 @@ async def _build_resources(
             service._default_provider,
             assembly_deps[name],
             service._system_prompt_for(name),
+            app_config=app_config,
+            persistence=persistence,
         )
 
     # 5. Pools — reproduce the OLD create_pool kwargs verbatim EXCEPT
     #    drop workspace_manager; add pool_data + workspace_handle; broker/
     #    inbox/bus come from THIS workspace. The resolver cell is filled with
     #    R after assembly so per-turn pool_data resolution lands back here.
-    pools: dict[str, Any] = {}
     resolver_cell = WorkspaceResolverCell()
     for name in pool_names:
         pools[name] = await create_pool(
@@ -300,19 +388,9 @@ async def _build_resources(
             bot_model_config=service._bot_model_config,
             model_choice_registry=service._model_choice_registry,
             mcp_registry=service._mcp_registry,
+            persistence=persistence,
+            app_config=app_config,
         )
-
-    resources = PoolWorkspaceResources(
-        target=ctx.target,
-        ctx=ctx,
-        overflow_store=overflow_store,
-        session_index_store=session_index_store,
-        broker=broker,
-        pool_data=pool_data,
-        pools=pools,
-        pool_router=None,
-        background=None,
-    )
 
     # Phase 2: cross-pool peer wiring. Must run after all Phase 1 pools are built
     # so subagent targets precede peer targets in each store's insertion order.
@@ -332,6 +410,7 @@ async def _build_resources(
                 pool_name=peer_pool_name,
                 bus_ref=peer_instance.agent_bus,
                 description=description,
+                execution_strategy=peer_tree.main.execution_strategy,
             )
             instance.target_store.add(target)
 
@@ -396,7 +475,13 @@ async def _build_resources(
             ctx.paths.root / "pool_sessions",
             service._default_pool_name,
         )
-        session_store = PoolSessionStore(data_dir=ctx.paths.root)
+        session_store = build_pool_routing_store(
+            app_config,
+            persistence,
+            data_dir=ctx.paths.root,
+            db_path=ctx.paths.root / "state.db",
+        )
+        resources.owned_pool_routing_store = session_store
     resources.pool_router = PoolRouter(
         input_adapter=service.input_adapter,
         broker=broker,
@@ -481,11 +566,16 @@ def _wire_pool_to_resources(
 
 
 async def _stop_resources(resources: PoolWorkspaceResources) -> None:
-    """Tear down one workspace's resources (re-home of _on_workspace_deactivate)."""
+    """Tear down one workspace's resources (re-home of _on_workspace_deactivate).
+
+    Stop order: background tasks → terminals → pools (MCP release + shutdown +
+    broker bridges) → broker. The workspace DB closes LAST (after all
+    DB-writing producers have stopped and final flushes complete) so no write
+    races a closing connection.
+    """
     if resources.background is not None:
         with contextlib.suppress(BaseException):
             await resources.background.stop()
-    # Close terminals across this workspace's pools.
     tasks: list[asyncio.Task[None]] = []
     for pi in resources.pools.values():
         mgr = pi.terminal_manager
@@ -497,22 +587,36 @@ async def _stop_resources(resources: PoolWorkspaceResources) -> None:
             )
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
-    # Shut down pools + broker bridges + broker.
+    pools_stopped = True
+    cancellation: asyncio.CancelledError | None = None
     for pi in resources.pools.values():
-        # Teardown convergence (ADR-0017): both MCPClientManager and the shared
-        # facade are McpBackend with ``release()``. On the legacy path
-        # ``release()`` closes connections (== disconnect_all); on the shared
-        # path it only detaches the facade (real connections close at registry
-        # shutdown, owned by BotService). One call works for both.
         if pi.mcp_manager is not None:
             with contextlib.suppress(BaseException):
                 await pi.mcp_manager.release()
-        with contextlib.suppress(BaseException):
-            await pi.pool.shutdown_all()
+        try:
+            pools_stopped = await pi.pool.shutdown_all() and pools_stopped
+        except asyncio.CancelledError as exc:
+            pools_stopped = False
+            cancellation = exc
+        except Exception:
+            pools_stopped = False
+            logger.exception("pool shutdown failed; workspace retained for retry")
         with contextlib.suppress(BaseException):
             await pi.broker_bridge.stop()
     with contextlib.suppress(BaseException):
         await resources.broker.stop()
+    if cancellation is not None:
+        raise cancellation
+    if not pools_stopped:
+        raise _PoolShutdownIncompleteError("pool shutdown incomplete")
+    if resources.transcript_store is not None:
+        resources.transcript_store.release_workspace(resources.ctx.paths.sessions_dir)
+    if resources.owned_pool_routing_store is not None:
+        with contextlib.suppress(BaseException):
+            resources.owned_pool_routing_store.close()
+    if resources.persistence is not None and resources.owns_persistence:
+        with contextlib.suppress(BaseException):
+            await resources.persistence.close()
 
 
 async def _close_terminal(mgr: TerminalManagerBase, name: str) -> None:

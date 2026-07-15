@@ -27,17 +27,9 @@ from modex_agent.core.types import LLMResponse, ToolCall
 from modex_agent.providers.shared.constants import inject_reasoning_effort
 from modex_agent.utils.think_tag import ThinkTagExtractor
 
-try:
-    import litellm
-    from litellm import acompletion
+import importlib.util
 
-    litellm.suppress_debug_info = True
-    litellm.set_verbose = False
-
-except ImportError as err:
-    raise ImportError(
-        "litellm is required for LiteLLMProvider. Install with: pip install litellm"
-    ) from err
+_LITELLM_AVAILABLE = importlib.util.find_spec("litellm") is not None
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +85,17 @@ class LiteLLMProvider(StreamingLLMProvider):
         self._temperature = temperature
         self._max_output_tokens = max_output_tokens
         self._extra_kwargs = kwargs
-        self._acompletion = acompletion
+
+        if not _LITELLM_AVAILABLE:
+            raise ImportError(
+                "litellm is required for LiteLLMProvider. "
+                "Install with: pip install litellm"
+            )
+
+        import litellm
+
+        litellm.suppress_debug_info = True
+        self._acompletion = litellm.acompletion
         self._parse_think_tags = parse_think_tags
         self._reasoning_effort = reasoning_effort
 

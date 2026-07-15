@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 from aiohttp import web
@@ -20,19 +20,26 @@ import bot.config.domains.im  # noqa: F401 - registers the 'im' ConfigDomain on 
 import bot.config.domains.model  # noqa: F401 - registers the 'model' ConfigDomain on import
 from bot.adapters.fan_in import FanInInputAdapter
 from bot.adapters.register_websocket import get_ws_input  # noqa: F401 — ensure import
+from bot.persistence.transcript import build_transcript_store_resolver
 from bot.service.core import BotService
 from bot.service.media_store import WorkspaceScopedMediaStore
 from bot.service.recent_workspaces import RecentWorkspaces
 from bot.service.session_store import WorkspacePoolSessionStore
 from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.emitter import CompositeEmitter
-from bot.webui.server import WebUIServer
+from bot.webui.server import RuntimeStores, WebUIServer
 from modex_agent.agents.react.agent import ReActEvent
 from modex_agent.core.emitter import ContentEmitter
-from modex_agent.core.session_store import LocalFileSessionStore
+from modex_agent.core.session_store import SessionStore
 from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.multi_agent.pool_config.media import MediaConfig
+from modex_agent.persistence.config import PersistenceBackend
 from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
+
+if TYPE_CHECKING:
+    from bot.input_pipeline.context import BotInputContext
+    from bot.webui.transcript_store import TranscriptStore
+    from modex_agent.persistence.managers import WorkspacePersistenceManager
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +174,7 @@ class WebUIService(BotService):
         # builds; after workspace activation the _transcript_store /
         # _session_store properties delegate to the active Workspace.
         _data_dir_name: str = app_cfg.paths.data_dir_name
+        self._data_dir_name: str = _data_dir_name
         home_data_dir: Path = project_dir / _data_dir_name
         home_sessions: Path = home_data_dir / "sessions"
         home_session_index: Path = home_data_dir / "session_index"
@@ -174,6 +182,10 @@ class WebUIService(BotService):
 
         transcript_store: WorkspaceScopedTranscriptStore = WorkspaceScopedTranscriptStore(
             data_dir_name=_data_dir_name,
+            store_resolver=build_transcript_store_resolver(
+                app_cfg.persistence.backend,
+                self._workspace_transcript_store_for_sessions,
+            ),
         )
         self._transcript_store = transcript_store
         # Media store mirrors the transcript store: a service-singleton built
@@ -344,6 +356,7 @@ class WebUIService(BotService):
         self._port = port
         self._static_dist = static_dist
         self._session_gc = None
+        self._web_runner: web.AppRunner | None = None
         self._server = WebUIServer(
             _ws_in(),
             transcript_store,
@@ -399,25 +412,6 @@ class WebUIService(BotService):
         if value is not None:
             self._emitter_transcript_store = value
 
-    @property
-    def _session_store(self) -> WorkspacePoolSessionStore | LocalFileSessionStore | None:
-        """Return the home workspace's session index store, falling back to
-        the initial store set during ``__init__``.
-
-        After ``initialize`` materializes home this delegates to
-        ``self._home_resources.session_index_store``.
-        """
-        home = self._home_resources
-        if home is not None:
-            return home.session_index_store
-        return self.__dict__.get("_session_store")
-
-    @_session_store.setter
-    def _session_store(
-        self, value: WorkspacePoolSessionStore | LocalFileSessionStore | None
-    ) -> None:
-        self.__dict__["_session_store"] = value
-
     def _build_recent_workspaces(self) -> RecentWorkspaces:
         """Build the project-level recent-workspaces store.
 
@@ -427,13 +421,101 @@ class WebUIService(BotService):
         """
         return RecentWorkspaces(self._project_dir / self._app_config.paths.data_dir_name)
 
-    def _workspace_roots_provider(self):
+    def _workspace_roots_provider(self) -> list[Path]:
         """Home + every known non-home workspace (authoritative full set)."""
         home = self._project_dir
-        targets: list = []
+        targets: list[Path] = []
         if self.workspace_stack is not None:
-            targets = list(self.workspace_stack.store.load_known_targets())
+            targets = self.workspace_stack.registry.known_targets()
         return [home, *targets]
+
+    def _workspace_persistence_for_data_root(
+        self, data_root: Path
+    ) -> WorkspacePersistenceManager | None:
+        """Return the live persistence owner for one workspace data root."""
+        resources_by_workspace = []
+        if self._home_resources is not None:
+            resources_by_workspace.append(self._home_resources)
+        if self.workspace_stack is not None:
+            resources_by_workspace.extend(
+                self.workspace_stack.registry.iter_materialized_resources()
+            )
+        for resources in resources_by_workspace:
+            if resources.ctx.paths.root == data_root.resolve():
+                return resources.persistence
+        return None
+
+    async def _materialize_workspace(self, ws_root: Path) -> Any:
+        """Get-or-open + materialize a workspace, returning its resources.
+
+        Shared helper for all WebUI endpoints that need to resolve
+        per-workspace stores (session store, transcript store, runtime
+        stores). The registry caches materialized resources, so repeated
+        calls for the same workspace are cheap.
+        """
+        workspace_context = await self.workspace_stack.registry.get_or_open(
+            ws_root
+        )
+        return await self.workspace_stack.registry.materialize(workspace_context)
+
+    async def _session_store_for_index(self, index_dir: Path) -> SessionStore:
+        app_config = self._app_config
+        assert app_config is not None
+        if app_config.persistence.backend is PersistenceBackend.FILE:
+            return WorkspacePoolSessionStore(
+                base_dir=index_dir,
+                pool_resolver=lambda session: self._pool_for_agent(session.agent_name),
+                data_dir_name=self._data_dir_name,
+            )
+        resources = await self._materialize_workspace(index_dir.parent.parent)
+        return resources.session_index_store
+
+    async def _resolve_runtime_stores(
+        self, ws_root: Path, pool: str
+    ) -> RuntimeStores:
+        """Resolve backend-aware runtime stores for the WebUI endpoints.
+
+        Returns a :class:`RuntimeStores` from the materialized workspace
+        resources when in SQLite mode, or an empty ``RuntimeStores()`` in
+        FILE mode (endpoints fall back to their hardcoded file-based stores).
+        """
+        if (
+            self._app_config is None
+            or self._app_config.persistence.backend is PersistenceBackend.FILE
+        ):
+            return RuntimeStores()
+        # Materialize the workspace on demand (same pattern as
+        # _session_store_for_index) so the resolver works even before the
+        # first agent turn materializes the workspace.
+        resources = await self._materialize_workspace(ws_root)
+        # turn_store comes from PoolDataSnapshot (per-pool).
+        pool_data = resources.pool_data.get(pool)
+        turn_store = pool_data.turn_store if pool_data is not None else None
+        # todo_store is built from the workspace persistence manager
+        # (it is not on PoolDataSnapshot — it lives only in the tool).
+        todo_store = None
+        persistence = resources.persistence
+        if persistence is not None:
+            from modex_agent.core.scope import RecordScope
+            from modex_agent.persistence.adapters.todo_store import SqliteTodoStore
+
+            todo_store = SqliteTodoStore(
+                persistence.connection, RecordScope(pool=pool)
+            )
+        return RuntimeStores(todo_store=todo_store, turn_store=turn_store)
+
+    async def _workspace_transcript_store_for_sessions(
+        self,
+        sessions_dir: Path,
+    ) -> TranscriptStore:
+        """Materialize a workspace and return its configured transcript adapter."""
+        resources = await self._materialize_workspace(sessions_dir.parent.parent)
+        transcript_store = resources.workspace_transcript_store
+        if transcript_store is None:
+            raise RuntimeError(
+                f"Database transcript persistence is unavailable for {sessions_dir.parent.parent}"
+            )
+        return transcript_store
 
     def _pool_for_agent(self, agent_name: str) -> str:
         """Return the pool name for *agent_name*, defaulting to ``main``."""
@@ -446,6 +528,9 @@ class WebUIService(BotService):
         connections so attach/send_message requests see a fully configured
         callback list from the first request.
         """
+        app_config = self._app_config
+        assert app_config is not None, "AppConfig must be loaded before start"
+
         # ── Inject server callbacks BEFORE aiohttp starts ───────────
         # Use main_agent_name from each pool's config — NOT the pool key.
         # This ensures the frontend only sees main agent events, never
@@ -457,20 +542,32 @@ class WebUIService(BotService):
         if self.workspace_stack is not None:
             self._server.set_workspace_control(self.workspace_stack.controller)
 
+        from bot.service.session_cleaner_factory import SessionCleanerFactory
         from bot.service.session_gc import SessionGarbageCollector, load_session_gc_config
 
         gc_cfg = load_session_gc_config(self._raw_config)
         self._session_gc = SessionGarbageCollector(
             workspace_roots_provider=self._workspace_roots_provider,
-            data_dir_name=self._app_config.paths.data_dir_name,
+            data_dir_name=app_config.paths.data_dir_name,
             config=gc_cfg,
+            cleaner_factory=SessionCleanerFactory(
+                backend=app_config.persistence.backend,
+                persistence_resolver=self._workspace_persistence_for_data_root,
+            ),
+            transcript_store=self._transcript_store,
+            session_store_resolver=self._session_store_for_index,
+            session_pool_resolver=lambda session: self._pool_for_agent(
+                session.agent_name
+            ),
         )
         self._server.set_session_gc(self._session_gc)
         await self._session_gc.start()
 
         # The shared transcript store physically partitions sessions by
         # (workspace, pool) and serves as the WebUI's partition index.
-        self._server.set_workspace_index(self._transcript_store)
+        transcript_index = self._transcript_store
+        assert transcript_index is not None
+        self._server.set_workspace_index(transcript_index)
 
         # Pool routing callback — must be set before server accepts
         # connections so _ws_attach and _ws_send_message can route.
@@ -479,7 +576,9 @@ class WebUIService(BotService):
         # correctly when loading subagent transcripts and routing WS messages.
         agent_pool_map = self._build_agent_pool_map()
         self._agent_pool_map = agent_pool_map
-        self._transcript_store.set_agent_pool_map(agent_pool_map)
+        transcript_store = self._transcript_store
+        assert transcript_store is not None
+        transcript_store.set_agent_pool_map(agent_pool_map)
 
         # Map pool_name -> main_agent_name from pool configs.
         # pool_name and main_agent_name may differ; the mapping is explicit.
@@ -523,8 +622,14 @@ class WebUIService(BotService):
 
         set_session_meta_resolver(_resolve_session_meta)
 
-        # Pass session store to server for session list API enrichment
-        self._server.set_session_store(self._session_store)
+        self._server.set_session_store_factory(self._session_store_for_index)
+
+        # Inject a backend-aware runtime store resolver so the todos and
+        # approvals endpoints read from the same backend the agent writes to
+        # (SqliteTodoStore / SqliteTurnStateStore in SQLite mode). In FILE
+        # mode the resolver returns None stores, and the endpoints fall back
+        # to their hardcoded file-based stores.
+        self._server.set_store_resolver(self._resolve_runtime_stores)
 
         # Inject recent workspaces store for the recent-workspaces API.
         # RecentWorkspaces lives in the project home data dir (not per-workspace)
@@ -594,9 +699,9 @@ class WebUIService(BotService):
         self._server.sweep_media_tmp_orphans()
 
         # ── Start aiohttp server ────────────────────────────────────
-        runner = web.AppRunner(self._server.app)
-        await runner.setup()
-        site = web.TCPSite(runner, _DEFAULT_HOST, self._port)
+        self._web_runner = web.AppRunner(self._server.app)
+        await self._web_runner.setup()
+        site = web.TCPSite(self._web_runner, _DEFAULT_HOST, self._port)
         await site.start()
         logger.info("WebUI server started on http://%s:%d/webui/", _DEFAULT_HOST, self._port)
 
@@ -677,4 +782,7 @@ class WebUIService(BotService):
     async def stop(self) -> None:
         if self._session_gc is not None:
             await self._session_gc.stop()
+        if self._web_runner is not None:
+            await self._web_runner.cleanup()
+            self._web_runner = None
         await super().stop()

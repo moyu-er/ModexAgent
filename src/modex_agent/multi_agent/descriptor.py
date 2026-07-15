@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from modex_agent.core.constants import ReasoningEffort
+from modex_agent.core.constants import ExecutionStrategy, ReasoningEffort
 from modex_agent.multi_agent.comm_kind import AgentCommKind
 
 if TYPE_CHECKING:
@@ -59,7 +59,7 @@ class AgentDescriptor:
     denied_tools: list[str] | None = None
     allowed_skills: list[str] | None = None
     max_iterations: int = 15
-    execution_strategy: str = "react"  # "react" | "single_turn" | "pipeline"
+    execution_strategy: ExecutionStrategy = ExecutionStrategy.REACT  # ExecutionStrategy member
     context_manager: ContextManager | None = None
     context_strategy: str = "persistent"  # "persistent" | "ephemeral" | "shared"
     inbox_strategy: str = "drain_all"  # "drain_all" | "drain_limit" | "peek_latest"
@@ -86,5 +86,9 @@ class AgentInstance:
 
     async def stop(self) -> None:
         """优雅停止该实例并释放资源。"""
-        if self.pipeline is not None:
+        if self.pipeline is None:
+            return
+        try:
             await self.pipeline.stop()
+        finally:
+            await self.pipeline.agent.stop()

@@ -9,6 +9,8 @@ from modex_agent.messaging.broker import Address, AddressKind, BrokerMessage
 from modex_agent.multi_agent.message_type import AgentMessageType
 
 if TYPE_CHECKING:
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.core.types import InputMessage
     from modex_agent.multi_agent.address import AgentAddress
 
 
@@ -122,4 +124,48 @@ class AgentMessageEnvelope:
             metadata={
                 k: v for k, v in headers.items() if k not in _ROUTING_HEADERS
             },
+        )
+
+    def to_input_metadata(self) -> dict[str, Any]:
+        """Routing metadata for ``InputMessage.metadata`` when dispatching this envelope.
+
+        ``source_agent`` / ``receiver_agent`` are present only when the source
+        is an agent (not channel/user). ``sender_agent`` is intentionally
+        omitted — it duplicated ``source_agent`` in the legacy pool-side helper.
+        """
+        source_name = self.source.name if self.source else None
+        target_name = self.target.name if self.target else None
+        is_agent_source = bool(self.source and self.source.kind == AddressKind.AGENT)
+        return {
+            "session_id": self.agent_session_id,
+            "agent_session_id": self.agent_session_id,
+            "message_type": self.message_type,
+            "invocation_id": self.invocation_id,
+            "source_agent": source_name if is_agent_source else None,
+            "receiver_agent": target_name if is_agent_source else None,
+            **self.metadata,
+        }
+
+    def to_input_message(
+        self,
+        *,
+        session: SessionInfo,
+    ) -> InputMessage:
+        """Reconstruct the :class:`InputMessage` dispatched to a pipeline.
+
+        ``session`` must already carry ``parent_session_id`` (stamped by
+        ``dispatch_envelope`` before this call).
+        """
+        from modex_agent.core.types import InputMessage
+        from modex_agent.messaging.broker_bridge import (
+            approval_decision_from_payload,
+            attachments_resolved_from_payload,
+        )
+
+        return InputMessage(
+            content=self.payload.get("content", ""),
+            session=session,
+            metadata=self.to_input_metadata(),
+            approval_decision=approval_decision_from_payload(self.payload),
+            attachments_resolved=attachments_resolved_from_payload(self.payload),
         )
