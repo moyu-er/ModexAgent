@@ -18,6 +18,7 @@ Runtime state governance — typed state models, enums, persistence, codecs, and
 | `enums.py` | Enumerations — `StateScope`, `AgentKind`, `TurnPhase`, `OperationKind`, `ToolBatchStatus`, `ToolCallStatus`, `ApprovalDenyPolicy`, `ApprovalSubjectType`, `OperationStatus`, `CancellationSource`, `SnapshotReason`, `MessageDeltaSource`, `TurnCustomKey` |
 | `policy.py` | `SnapshotPolicy` ABC — defines when/how snapshots are taken during agent execution |
 | `codec.py` | `RuntimeStateCodec` ABC + `RuntimeStateCodecRegistry` — serialization extensibility for runtime state |
+| `approval_decision.py` | `ApprovalDecisionCoordinator` ABC + typed approval audit entry/decision models for atomic snapshot-and-audit persistence |
 | `dream_locks.py` | Dream lock primitives — coordination locks for the dream engine's concurrent scan phases |
 
 ## Design Rules

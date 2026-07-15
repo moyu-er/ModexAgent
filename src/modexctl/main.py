@@ -12,8 +12,11 @@ import typer
 from filelock import FileLock
 
 from modex_agent.agents.external_coding.types import OutboxLine, OutboxMetadata
+from modex_agent.core.scope import RecordScope
+from modex_agent.multi_agent.inbox.types import InboxMessage
 from modex_agent.multi_agent.message_type import AgentMessageType
 from modex_agent.multi_agent.message_xml import build_peer_agent_message
+from modex_agent.persistence.adapters import SqliteInboxMQ
 
 EXIT_OK: int = 0
 EXIT_USAGE: int = 1
@@ -168,6 +171,39 @@ def _write_line(target_pool_dir: Path, target_sid: str, line: str) -> None:
         f.write(line + "\n")
 
 
+def _ensure_inbox_db(db_path: Path) -> None:
+    """Ensure the workspace schema (including inbox tables) exists at *db_path*.
+
+    The CLI derives the DB path from ``MODEX_INBOX_ROOT``. On a fresh install
+    the schema may not exist yet; this helper runs the workspace migration
+    (via :class:`ConnectionManager`) so that ``SqliteInboxMQ.deliver()`` can
+    insert into ``inbox_messages``. On subsequent calls the fast-path
+    ``sqlite3`` probe skips the migration.
+    """
+    import sqlite3
+
+    if db_path.exists():
+        conn = sqlite3.connect(str(db_path))
+        try:
+            row = conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type = 'table' AND name = 'inbox_messages'"
+            ).fetchone()
+            if row is not None:
+                return
+        finally:
+            conn.close()
+
+    import asyncio
+
+    from modex_agent.persistence import ConnectionManager, DatabaseKind
+
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    manager = ConnectionManager(db_path, DatabaseKind.WORKSPACE)
+    asyncio.run(manager.open())
+    asyncio.run(manager.close())
+
+
 def _send(
     to: Annotated[
         str, typer.Option("--to", help="Target agent name (must be in MODEX_AGENT_POOL_MAP).")
@@ -235,9 +271,25 @@ def _send(
         raise typer.Exit(code=EXIT_ROUTING) from None
 
     target_sid = f"{prefix}.{to}"
-    line = _build_inbox_line(session_id, agent_name, target_sid, content)
-    target_pool_dir = inbox_root / target_pool
-    _write_line(target_pool_dir, target_sid, line)
+    xml_content = build_peer_agent_message(source=agent_name, content=content)
+    message = InboxMessage(
+        session_id=target_sid,
+        source=agent_name,
+        content=xml_content,
+        message_type=AgentMessageType.AGENT_MESSAGE.value,
+        message_id=uuid4().hex,
+        timestamp=datetime.now(UTC),
+        metadata={
+            "agent_session_id": target_sid,
+            "session_id": session_id,
+            "invocation_id": prefix,
+            "parent_session_id": None,
+        },
+    )
+    db_path = inbox_root.parent / "state.db"
+    _ensure_inbox_db(db_path)
+    mq = SqliteInboxMQ(db_path=db_path, scope=RecordScope(pool=target_pool))
+    mq.deliver(target_sid, message)
     typer.echo(
         f"Message delivered to '{to}' (session: {target_sid}).\n"
         "\n"

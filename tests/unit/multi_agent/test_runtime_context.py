@@ -16,7 +16,7 @@ from modex_agent.core.runtime_context import (
     RuntimeContextManager,
     ToolCallRecord,
 )
-from modex_agent.core.scope import SessionScope, UserScope
+from modex_agent.core.scope import MemoryContext, SessionScope, UserScope
 from modex_agent.core.session_id import SessionInfo
 
 
@@ -149,7 +149,9 @@ class TestRuntimeContextManager:
         store = InMemoryRuntimeContextStore()
         mgr = RuntimeContextManager(store=store)
         ctx = await mgr.get_context(_session("s1"))
-        # Same store + SessionScope → scope_key is the session_id, so a direct
-        # store lookup by that id returns the same instance.
-        ctx2 = await store.get_or_create("s1")
+        # Same store + SessionScope → scope_key is the canonical form of the
+        # session RecordScope, so a direct store lookup by that key returns
+        # the same instance.
+        scope_key = SessionScope().extract(MemoryContext(session_id="s1")).canonical()
+        ctx2 = await store.get_or_create(scope_key)
         assert ctx is ctx2

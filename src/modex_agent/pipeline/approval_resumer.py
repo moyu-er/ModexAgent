@@ -10,6 +10,7 @@ Extracted from the pipeline's approval-resume methods. Behaviour identical.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from modex_agent.agents.react.state import ReActSnapshotPolicy
@@ -18,15 +19,24 @@ from modex_agent.approval.types import ApprovalAction
 from modex_agent.approval.views import view_from_request
 from modex_agent.core.agent import AgentContext
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
-from modex_agent.runtime.enums import SnapshotReason, TurnPhase
+from modex_agent.runtime.approval_decision import (
+    ApprovalAuditDecision,
+    ApprovalAuditEntry,
+)
+from modex_agent.runtime.enums import SnapshotReason, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import StateQueryScope, TurnSnapshot
 
 if TYPE_CHECKING:
     from modex_agent.approval.ui import ApprovalUserInterface
     from modex_agent.core.agent import Agent
+    from modex_agent.core.events import AgentEvent
     from modex_agent.runtime.store import TurnStateStore
 
 logger = logging.getLogger(__name__)
+
+
+class MissingApprovalTurnUuidError(ValueError):
+    pass
 
 
 class ApprovalResumer:
@@ -35,7 +45,7 @@ class ApprovalResumer:
     def __init__(
         self,
         *,
-        agent: Agent,
+        agent: Agent[AgentEvent],
         turn_store: TurnStateStore | None,
         user_interface: ApprovalUserInterface | None,
     ) -> None:
@@ -106,6 +116,7 @@ class ApprovalResumer:
         if approval is None:
             return None
 
+        decided_request = None
         if action is not None:
             decision = (
                 ApprovalDecision.ALLOWED
@@ -119,6 +130,7 @@ class ApprovalResumer:
                 if tool_call_id is not None and req.tool_call_id != tool_call_id:
                     continue  # leave non-target requests pending
                 approval.apply_decision(req.tool_call_id, decision)
+                decided_request = req
                 break
 
         snapshot = ReActSnapshotPolicy.replace_approval(snapshot, approval)
@@ -127,8 +139,41 @@ class ApprovalResumer:
             logger.error("Approval resume requested but no TurnStateStore is configured")
             return None
 
+        coordinator = (
+            pool_data.decision_coordinator if pool_data is not None else None
+        )
+        if decided_request is not None and coordinator is not None:
+            turn_uuid = snapshot.state_payload.get(TurnCustomKey.TURN_UUID.value)
+            if not isinstance(turn_uuid, str):
+                raise MissingApprovalTurnUuidError(
+                    "Persisted approval snapshot has no turn UUID"
+                )
+            audit_decision = (
+                ApprovalAuditDecision.APPROVED
+                if action is ApprovalAction.ALLOW
+                else ApprovalAuditDecision.DENIED
+            )
+            await coordinator.apply_decision(
+                snapshot,
+                ApprovalAuditEntry(
+                    turn_uuid=turn_uuid,
+                    session_id=str(snapshot.identity.session),
+                    agent_id=snapshot.identity.agent_id,
+                    turn_id=snapshot.identity.turn_id,
+                    tool_name=decided_request.tool_name,
+                    tool_call_id=decided_request.tool_call_id,
+                    decision=audit_decision,
+                    deny_reason=approval.deny_reason
+                    if audit_decision is ApprovalAuditDecision.DENIED
+                    else None,
+                    decided_at=datetime.now(UTC).isoformat(),
+                    decided_by="user",
+                ),
+            )
+
         if not approval.every_tool_decided:
-            await turn_store.save_turn(snapshot)
+            if decided_request is None or coordinator is None:
+                await turn_store.save_turn(snapshot)
             if self._user_interface is not None:
                 for req in approval.requests:
                     current = approval.decisions.get(req.tool_call_id, ApprovalDecision.PENDING)

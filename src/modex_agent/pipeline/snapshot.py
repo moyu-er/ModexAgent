@@ -12,13 +12,14 @@ wiring time.
 from __future__ import annotations
 
 from abc import ABC
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from modex_agent.core.context import ContextManager
     from modex_agent.memory.pruned.manager import PrunedManager
+    from modex_agent.runtime.approval_decision import ApprovalDecisionCoordinator
     from modex_agent.runtime.store import TurnStateStore
     from modex_agent.trace.store import TraceStore
 
@@ -41,3 +42,7 @@ class PoolDataSnapshot(ABC):
     runtime_dir: Path | None
     pruned_manager: PrunedManager | None
     experience_dir: Path | None
+    decision_coordinator: ApprovalDecisionCoordinator | None = field(
+        default=None,
+        kw_only=True,
+    )

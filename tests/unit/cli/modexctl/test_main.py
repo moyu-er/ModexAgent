@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 from pathlib import Path
 
 import pytest
 import typer
 from typer.testing import CliRunner
 
+from modex_agent.core.scope import RecordScope
+from modex_agent.workspace.paths import WorkspacePaths
 from modexctl.main import (
     EXIT_USAGE,
     _build_inbox_line,
@@ -53,9 +56,10 @@ _COMM_ENV_KEYS: tuple[str, ...] = (
 def comm_env(
     monkeypatch: pytest.MonkeyPatch, no_modex_env: None, tmp_path: Path
 ) -> None:
+    inbox_root = tmp_path / "workspace" / ".modex" / "inbox"
     monkeypatch.setenv("MODEX_SESSION_ID", "abc.coder")
     monkeypatch.setenv("MODEX_AGENT_NAME", "coder")
-    monkeypatch.setenv("MODEX_INBOX_ROOT", str(tmp_path / "inbox"))
+    monkeypatch.setenv("MODEX_INBOX_ROOT", str(inbox_root))
     monkeypatch.setenv("MODEX_AGENT_POOL_MAP", "analyst=pool_analyst")
     monkeypatch.setenv("MODEX_TARGETS", "analyst=Reviews code;reviewer=Approves PRs")
 
@@ -248,12 +252,22 @@ class TestSendCommand:
         )
 
         assert result.exit_code == 0
-        pending = tmp_path / "inbox" / "pool_analyst" / "abc.analyst" / "pending.jsonl"
-        line = json.loads(pending.read_text(encoding="utf-8"))
-        assert line["source"] == "coder"
-        assert "<agent_message" in line["content"]
-        assert "hello" in line["content"]
-        assert line["metadata"]["agent_session_id"] == "abc.analyst"
+        db_path = tmp_path / "workspace" / ".modex" / "state.db"
+        conn = sqlite3.connect(str(db_path))
+        try:
+            row = conn.execute(
+                "SELECT source_name, content, payload_json FROM inbox_messages "
+                "WHERE session_id = ?",
+                ("abc.analyst",),
+            ).fetchone()
+        finally:
+            conn.close()
+        assert row is not None
+        assert row[0] == "coder"
+        assert "<agent_message" in row[1]
+        assert "hello" in row[1]
+        metadata = json.loads(row[2])
+        assert metadata["agent_session_id"] == "abc.analyst"
 
     def test_stdin_writes_multiline_content(
         self, runner: CliRunner, comm_env: None, tmp_path: Path
@@ -266,11 +280,19 @@ class TestSendCommand:
         )
 
         assert result.exit_code == 0
-        pending = tmp_path / "inbox" / "pool_analyst" / "abc.analyst" / "pending.jsonl"
-        line = json.loads(pending.read_text(encoding="utf-8"))
-        assert "line one" in line["content"]
-        assert "line two" in line["content"]
-        assert "line three" in line["content"]
+        db_path = tmp_path / "workspace" / ".modex" / "state.db"
+        conn = sqlite3.connect(str(db_path))
+        try:
+            row = conn.execute(
+                "SELECT content FROM inbox_messages WHERE session_id = ?",
+                ("abc.analyst",),
+            ).fetchone()
+        finally:
+            conn.close()
+        assert row is not None
+        assert "line one" in row[0]
+        assert "line two" in row[0]
+        assert "line three" in row[0]
 
     def test_content_and_stdin_mutually_exclusive(
         self, runner: CliRunner, comm_env: None
@@ -281,6 +303,32 @@ class TestSendCommand:
             input="",
         )
         assert result.exit_code == EXIT_USAGE
+
+    def test_send_targets_runtime_workspace_database(
+        self, runner: CliRunner, comm_env: None, tmp_path: Path
+    ) -> None:
+        paths = WorkspacePaths(tmp_path / "workspace" / ".modex")
+
+        result = runner.invoke(
+            build_app(),
+            ["send", "--to", "analyst", "--content", "same database"],
+        )
+        with sqlite3.connect(paths.state_db) as connection:
+            row = connection.execute(
+                "SELECT owner_scope_key, scope_key, content "
+                "FROM inbox_messages WHERE session_id = ?",
+                ("abc.analyst",),
+            ).fetchone()
+
+        assert result.exit_code == 0
+        assert row is not None
+        assert row[0] == RecordScope(pool="pool_analyst").canonical()
+        assert row[1] == RecordScope(
+            pool="pool_analyst",
+            session_id="abc.analyst",
+        ).canonical()
+        assert "same database" in row[2]
+        assert not (paths.inbox_dir / "state.db").exists()
 
     def test_no_content_source_errors(
         self, runner: CliRunner, comm_env: None

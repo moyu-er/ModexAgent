@@ -7,6 +7,7 @@ Extends :class:`ScopedFileAgent` for common ReAct wiring.
 from __future__ import annotations
 
 import logging
+import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,11 +15,14 @@ from typing import Any
 
 from modex_agent.agents.summarizer.abc import (
     ArchiveGenerator,
-    ArchiveSummarizerResult,
     _get_registry,
 )
 from modex_agent.agents.summarizer.scoped_file_agent import ScopedFileAgent
 from modex_agent.core.types import MessageRole
+from modex_agent.memory.archive_models import (
+    ArchiveDocuments,
+    ArchiveGenerationResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +42,7 @@ _CONTENT_LIMITS: dict[str, int] = {
 class ArchiveSummarizerConfig:
     """Configuration for ArchiveSummarizer."""
 
-    context_max_chars: int = 2000
+    context_max_chars: int = 20_000
     knowledge_max_chars: int = 3000
     index_max_chars: int = 200
     max_iterations: int = 25
@@ -65,7 +69,7 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
     @staticmethod
     def build_system_prompt(
         archive_dir: Path,
-        context_max_chars: int = 2000,
+        context_max_chars: int = 20_000,
         knowledge_max_chars: int = 3000,
         index_max_chars: int = 200,
     ) -> str:
@@ -196,7 +200,7 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
         transcript: str,
         archive_id: int,
         archive_dir: Path,
-        context_max_chars: int = 2000,
+        context_max_chars: int = 20_000,
         knowledge_max_chars: int = 3000,
         index_max_chars: int = 200,
     ) -> str:
@@ -221,70 +225,59 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
     async def generate(
         self,
         pruned_messages: Sequence[dict[str, Any]],
-        archive_dir: Path,
-        archive_id: int = 0,
-    ) -> ArchiveSummarizerResult:
-        """Generate archive files from pruned messages."""
-        archive_dir.mkdir(parents=True, exist_ok=True)
-
+    ) -> ArchiveGenerationResult:
+        """Generate typed archive content from pruned messages."""
         filtered_messages = self.filter_messages(pruned_messages)
         transcript = self.format_transcript(filtered_messages)
-
         if not transcript.strip():
-            for fname in _ARCHIVE_FILES:
-                (archive_dir / fname).write_text("", encoding="utf-8")
-            return ArchiveSummarizerResult(
-                success=True,
-                archive_id=archive_id,
-                files_written=_ARCHIVE_FILES,
-            )
+            documents = ArchiveDocuments(context="", knowledge="", index="")
+            return ArchiveGenerationResult(documents=documents)
 
-        user_msg = self.build_user_message(
-            transcript,
-            archive_id,
-            archive_dir,
-            context_max_chars=self._config.context_max_chars,
-            knowledge_max_chars=self._config.knowledge_max_chars,
-            index_max_chars=self._config.index_max_chars,
-        )
-        system_prompt = self.build_system_prompt(
-            archive_dir,
-            context_max_chars=self._config.context_max_chars,
-            knowledge_max_chars=self._config.knowledge_max_chars,
-            index_max_chars=self._config.index_max_chars,
-        )
-        trace_path = archive_dir.parent / "traces" / f"archive-{archive_id}.jsonl"
-
-        for attempt in range(2):
-            ok = await self._run_agent(
-                system_prompt=system_prompt,
-                user_msg=user_msg,
-                allowed_dirs=[archive_dir],
-                session_id=f"archive-summarizer-{archive_id}",
-                agent_name="ArchiveSummarizer",
-                trace_path=trace_path,
-                max_iterations=self._config.max_iterations,
+        with tempfile.TemporaryDirectory(prefix="modex-archive-") as temp_dir:
+            archive_dir = Path(temp_dir)
+            user_msg = self.build_user_message(
+                transcript,
+                0,
+                archive_dir,
+                context_max_chars=self._config.context_max_chars,
+                knowledge_max_chars=self._config.knowledge_max_chars,
+                index_max_chars=self._config.index_max_chars,
             )
-            if ok:
-                files_written: list[str] = []
-                for fname in _ARCHIVE_FILES:
-                    fpath = archive_dir / fname
-                    if fpath.exists() and fpath.stat().st_size > 0:
-                        files_written.append(fname)
-                if files_written:
-                    return ArchiveSummarizerResult(
-                        success=True,
-                        archive_id=archive_id,
-                        files_written=tuple(files_written),
+            system_prompt = self.build_system_prompt(
+                archive_dir,
+                context_max_chars=self._config.context_max_chars,
+                knowledge_max_chars=self._config.knowledge_max_chars,
+                index_max_chars=self._config.index_max_chars,
+            )
+            trace_path = archive_dir / "trace.jsonl"
+
+            for attempt in range(2):
+                ok = await self._run_agent(
+                    system_prompt=system_prompt,
+                    user_msg=user_msg,
+                    allowed_dirs=[archive_dir],
+                    session_id="archive-summarizer",
+                    agent_name="ArchiveSummarizer",
+                    trace_path=trace_path,
+                    max_iterations=self._config.max_iterations,
+                )
+                if ok and all(
+                    (archive_dir / filename).exists()
+                    and (archive_dir / filename).stat().st_size > 0
+                    for filename in _ARCHIVE_FILES
+                ):
+                    documents = ArchiveDocuments(
+                        context=(archive_dir / "context.md").read_text(encoding="utf-8"),
+                        knowledge=(archive_dir / "knowledge.md").read_text(encoding="utf-8"),
+                        index=(archive_dir / "index.md").read_text(encoding="utf-8"),
                     )
-            logger.warning(
-                "ArchiveSummarizer attempt %d failed for archive_id=%d",
-                attempt + 1,
-                archive_id,
-            )
+                    return ArchiveGenerationResult(
+                        documents=documents,
+                    )
+                logger.warning(
+                    "ArchiveSummarizer attempt %d failed",
+                    attempt + 1,
+                )
 
-        return ArchiveSummarizerResult(
-            success=False,
-            archive_id=archive_id,
-            error="Agent failed to write archive files after 2 attempts",
-        )
+        msg = "Archive agent failed to produce all required documents after 2 attempts"
+        raise RuntimeError(msg)

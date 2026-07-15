@@ -10,8 +10,9 @@ from uuid import uuid4
 
 from modex_agent.approval.constants import ApprovalDecision, ApprovalStatus, ApprovalTier
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.types import LLMResponse
 from modex_agent.core.message import ChatMessage
+from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.types import LLMResponse
 from modex_agent.runtime.codec import RuntimeStateCodec, RuntimeStateCodecConfig
 from modex_agent.runtime.enums import (
     AgentKind,
@@ -22,6 +23,7 @@ from modex_agent.runtime.enums import (
     SnapshotReason,
     ToolBatchStatus,
     ToolCallStatus,
+    TurnCustomKey,
     TurnPhase,
 )
 from modex_agent.runtime.models import (
@@ -39,7 +41,6 @@ from modex_agent.runtime.models import (
     TurnStateBase,
 )
 from modex_agent.runtime.policy import SnapshotPolicy
-from modex_agent.core.session_id import SessionInfo
 
 from .constants import ReActNode
 
@@ -53,6 +54,7 @@ class ReActSnapshotPayloadKey(StrEnum):
     ITERATION = "iteration"
     TOOL_BATCHES = "tool_batches"
     APPROVAL = "approval"
+    TURN_UUID = TurnCustomKey.TURN_UUID.value
 
 
 class ToolBatchSnapshotKey(StrEnum):
@@ -223,6 +225,9 @@ class ReActSnapshotPolicy(SnapshotPolicy):
                 for b in state.tool_batches
             ],
         }
+        turn_uuid = state.custom.get(TurnCustomKey.TURN_UUID)
+        if turn_uuid is not None:
+            payload[ReActSnapshotPayloadKey.TURN_UUID.value] = turn_uuid
         if state.approval is not None:
             payload[ReActSnapshotPayloadKey.APPROVAL.value] = self.serialize_approval(
                 state.approval
@@ -338,6 +343,9 @@ class ReActSnapshotPolicy(SnapshotPolicy):
             message_delta=list(snapshot.message_delta),
             approval=ReActSnapshotPolicy.approval_from_snapshot(snapshot),
         )
+        turn_uuid = payload.get(ReActSnapshotPayloadKey.TURN_UUID.value)
+        if turn_uuid is not None:
+            state.custom[TurnCustomKey.TURN_UUID] = str(turn_uuid)
 
         raw_batches = payload.get(ReActSnapshotPayloadKey.TOOL_BATCHES.value, [])
         if isinstance(raw_batches, list):

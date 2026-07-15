@@ -37,11 +37,13 @@ from modex_agent.core.agent import AgentContext
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.memory.history import ListMessageHistory
+from modex_agent.persistence.adapters.approval_audit_store import ApprovalAuditEntry
 from modex_agent.pipeline.approval_resumer import ApprovalResumer
 from modex_agent.runtime.enums import (
     AgentKind,
     ApprovalSubjectType,
     SnapshotReason,
+    TurnCustomKey,
     TurnPhase,
 )
 from modex_agent.runtime.models import (
@@ -53,7 +55,6 @@ from modex_agent.runtime.models import (
 )
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.runtime.store import InMemoryTurnStateStore, TurnStateStore
-
 
 # ---------------------------------------------------------------------------
 # Fakes
@@ -106,6 +107,18 @@ class _FakeAgent:
         self.name = name
 
 
+class _RecordingDecisionCoordinator:
+    def __init__(self) -> None:
+        self.applied: list[tuple[TurnSnapshot, ApprovalAuditEntry]] = []
+
+    async def apply_decision(
+        self,
+        snapshot: TurnSnapshot,
+        entry: ApprovalAuditEntry,
+    ) -> None:
+        self.applied.append((snapshot, entry))
+
+
 # ---------------------------------------------------------------------------
 # Snapshot / context builders
 # ---------------------------------------------------------------------------
@@ -129,6 +142,8 @@ def _snapshot(
     approval_requests: list[ApprovalRequestState] | None = None,
     session_id: str = "s1",
     include_approval: bool = True,
+    turn_uuid: str | None = "turn-uuid-1",
+    deny_reason: str | None = None,
 ) -> TurnSnapshot:
     identity = TurnIdentity(
         agent_id="agent",
@@ -146,6 +161,7 @@ def _snapshot(
         subject_ids=["batch1"],
         requests=requests,
         decisions=decisions or {},
+        deny_reason=deny_reason,
     )
     state = ReActTurnState(
         identity=identity,
@@ -154,6 +170,8 @@ def _snapshot(
         current_node=ReActNode.TOOL,
         approval=approval if include_approval else None,
     )
+    if turn_uuid is not None:
+        state.custom[TurnCustomKey.TURN_UUID] = turn_uuid
     snapshot = ReActSnapshotPolicy().capture(
         state, SnapshotReason.TOOL_APPROVAL_REQUIRED,
     )
@@ -402,6 +420,127 @@ async def test_apply_resume_targets_specific_call_id(
     assert approval.decisions.get("c1", ApprovalDecision.PENDING) == ApprovalDecision.PENDING
 
 
+async def test_explicit_sqlite_partial_decision_uses_coordinator_without_turn_store_save(
+    resumer, partial_snapshot, turn_store, user_interface,
+):
+    coordinator = _RecordingDecisionCoordinator()
+    pool_data = _PoolDataSnapshotStub(turn_store, coordinator)
+
+    result = await resumer.apply_resume(
+        partial_snapshot,
+        action=ApprovalAction.ALLOW,
+        session_id="s1",
+        pool_data=pool_data,
+        agent_context=fake_agent_context_for(partial_snapshot),
+        tool_call_id="c2",
+    )
+
+    assert result is None
+    assert turn_store.saved == []
+    assert len(coordinator.applied) == 1
+    persisted_snapshot, entry = coordinator.applied[0]
+    approval = ReActSnapshotPolicy.approval_from_snapshot(persisted_snapshot)
+    assert approval is not None
+    assert approval.decisions["c2"] is ApprovalDecision.ALLOWED
+    assert entry.turn_uuid == "turn-uuid-1"
+    assert entry.session_id == str(partial_snapshot.identity.session)
+    assert entry.agent_id == partial_snapshot.identity.agent_id
+    assert entry.turn_id == partial_snapshot.identity.turn_id
+    assert entry.tool_name == "write_file"
+    assert entry.tool_call_id == "c2"
+    assert entry.decision == "approved"
+    assert entry.deny_reason is None
+    assert entry.decided_by == "user"
+    assert entry.decided_at.endswith("+00:00")
+    assert user_interface.rendered == [("s1", "write_file")]
+
+
+async def test_explicit_sqlite_final_denial_audits_selected_request_and_reason(
+    resumer, turn_store, fake_agent_context,
+):
+    coordinator = _RecordingDecisionCoordinator()
+    snapshot = _snapshot(deny_reason="unsafe destination")
+    pool_data = _PoolDataSnapshotStub(turn_store, coordinator)
+
+    result = await resumer.apply_resume(
+        snapshot,
+        action=ApprovalAction.DENY,
+        session_id="s1",
+        pool_data=pool_data,
+        agent_context=fake_agent_context,
+        tool_call_id="c2",
+    )
+
+    assert result is turn_store
+    assert turn_store.saved == []
+    assert len(coordinator.applied) == 1
+    entry = coordinator.applied[0][1]
+    assert entry.tool_call_id == "c2"
+    assert entry.decision == "denied"
+    assert entry.deny_reason == "unsafe destination"
+
+
+async def test_passive_sqlite_redisplay_does_not_write_audit(
+    resumer, partial_snapshot, turn_store,
+):
+    coordinator = _RecordingDecisionCoordinator()
+    pool_data = _PoolDataSnapshotStub(turn_store, coordinator)
+
+    result = await resumer.apply_resume(
+        partial_snapshot,
+        action=None,
+        session_id="s1",
+        pool_data=pool_data,
+        agent_context=fake_agent_context_for(partial_snapshot),
+    )
+
+    assert result is None
+    assert coordinator.applied == []
+    assert turn_store.saved == [partial_snapshot]
+
+
+async def test_explicit_sqlite_decision_requires_persisted_turn_uuid(
+    resumer, turn_store,
+):
+    coordinator = _RecordingDecisionCoordinator()
+    snapshot = _snapshot(turn_uuid=None)
+    pool_data = _PoolDataSnapshotStub(turn_store, coordinator)
+
+    with pytest.raises(ValueError, match="turn UUID"):
+        await resumer.apply_resume(
+            snapshot,
+            action=ApprovalAction.ALLOW,
+            session_id="s1",
+            pool_data=pool_data,
+            agent_context=fake_agent_context_for(snapshot),
+            tool_call_id="c1",
+        )
+
+    assert coordinator.applied == []
+    assert turn_store.saved == []
+
+
+async def test_stale_target_does_not_write_audit(
+    resumer, turn_store,
+):
+    coordinator = _RecordingDecisionCoordinator()
+    snapshot = _snapshot(decisions={"c1": ApprovalDecision.ALLOWED})
+    pool_data = _PoolDataSnapshotStub(turn_store, coordinator)
+
+    result = await resumer.apply_resume(
+        snapshot,
+        action=ApprovalAction.ALLOW,
+        session_id="s1",
+        pool_data=pool_data,
+        agent_context=fake_agent_context_for(snapshot),
+        tool_call_id="c1",
+    )
+
+    assert result is None
+    assert coordinator.applied == []
+    assert turn_store.saved == [snapshot]
+
+
 async def test_apply_resume_targeted_call_id_completes_when_last_pending(
     resumer, fake_agent_context, turn_store,
 ):
@@ -608,7 +747,12 @@ def fake_agent_context_for(snapshot: TurnSnapshot) -> AgentContext:
 
 
 class _PoolDataSnapshotStub:
-    """Minimal stand-in exposing only the .turn_store field the resumer reads."""
+    """Minimal stand-in exposing persistence fields the resumer reads."""
 
-    def __init__(self, turn_store: TurnStateStore) -> None:
+    def __init__(
+        self,
+        turn_store: TurnStateStore,
+        decision_coordinator: _RecordingDecisionCoordinator | None = None,
+    ) -> None:
         self.turn_store = turn_store
+        self.decision_coordinator = decision_coordinator
