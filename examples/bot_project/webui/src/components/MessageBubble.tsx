@@ -119,7 +119,10 @@ export const MessageBubble: FC<MessageBubbleProps> = ({ message, sessionId, work
   );
 
   return (
-    <div className={`mb-6 flex w-full items-start gap-2 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
+    <div
+      id={`msg-${message.id}`}
+      className={`mb-6 flex w-full items-start gap-2 ${isUser ? "flex-row-reverse" : "flex-row"}`}
+    >
       {isUser ? <UserAvatar /> : <AssistantAvatar />}
 
       <div className={`flex min-w-0 flex-1 flex-col ${isUser ? "items-end" : "items-start"}`}>

@@ -1,8 +1,9 @@
-import { useState, useRef, useEffect, type FC, type FormEvent, type KeyboardEvent } from "react";
+import { useState, useRef, useEffect, useMemo, type FC, type FormEvent, type KeyboardEvent } from "react";
 import { Bot, File, Menu, Paperclip, Pause, SendHorizonal, X } from "lucide-react";
 import type { ApprovalRequestView, TodoItemDTO, UIMessage } from "../types/events";
 import type { MediaConfigResponse, OutgoingAttachmentRef, UploadAttachmentResponse } from "../types/attachments";
 import { ApprovalCard } from "./ApprovalCard";
+import { ConversationSpine, type SpineAnchor } from "./ConversationSpine";
 import { MessageBubble } from "./MessageBubble";
 import { ModelSelector } from "./ModelSelector";
 import { TodoPanel } from "./TodoPanel";
@@ -71,6 +72,7 @@ export const ChatView: FC<ChatViewProps> = ({
 }) => {
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -143,6 +145,22 @@ export const ChatView: FC<ChatViewProps> = ({
   useEffect(() => {
     autosize();
   }, [input]);
+
+  // Right-margin navigation spine: one dot per user question, positioned
+  // proportionally to the question's place in the scrollable content.
+  const userAnchors = useMemo<SpineAnchor[]>(() => {
+    const out: SpineAnchor[] = [];
+    for (const m of messages) {
+      if (m.role !== "user") continue;
+      const text = (m.blocks ?? [])
+        .map((b) => (b.kind === "text" ? b.text : ""))
+        .join("")
+        .replace(/\s+/g, " ")
+        .trim();
+      out.push({ id: m.id, preview: text ? text.slice(0, 60) : "(message)" });
+    }
+    return out;
+  }, [messages]);
 
   const isBusy = isStreaming || isPending;
   const canSend =
@@ -274,49 +292,57 @@ export const ChatView: FC<ChatViewProps> = ({
         <div />
       </header>
 
-      {/* Message area */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
-        <div className={`${CONTENT_WIDTH} px-3 py-6 md:px-5`}>
-          {messages.length === 0 && (
-            <div className="flex h-[55vh] items-center justify-center">
-              <p className="text-sm text-body">
-                Select a conversation to start chatting
-              </p>
-            </div>
-          )}
-          {messages.map((msg) => (
-            <MessageBubble
-              key={msg.id}
-              message={msg}
-              sessionId={sessionId}
-              workspace={workspace}
-            />
-          ))}
-          {pendingApprovals.length > 0 && (
-            <div className="my-2 flex items-center justify-between gap-2 rounded-md border border-hairline bg-canvas-elevated px-3 py-2">
-              <span className="text-xs text-body">
-                Denying any one cancels the whole batch
-              </span>
-              <Button
-                variant="secondary"
-                size="sm"
+      {/* Message area — wrapped so the ConversationSpine can overlay the right
+          margin without scrolling with the content. */}
+      <div className="relative flex-1 min-h-0">
+        <div ref={scrollRef} className="absolute inset-0 overflow-y-auto">
+          <div ref={contentRef} className={`${CONTENT_WIDTH} px-3 py-6 md:px-5`}>
+            {messages.length === 0 && (
+              <div className="flex h-[55vh] items-center justify-center">
+                <p className="text-sm text-body">
+                  Select a conversation to start chatting
+                </p>
+              </div>
+            )}
+            {messages.map((msg) => (
+              <MessageBubble
+                key={msg.id}
+                message={msg}
+                sessionId={sessionId}
+                workspace={workspace}
+              />
+            ))}
+            {pendingApprovals.length > 0 && (
+              <div className="my-2 flex items-center justify-between gap-2 rounded-md border border-hairline bg-canvas-elevated px-3 py-2">
+                <span className="text-xs text-body">
+                  Denying any one cancels the whole batch
+                </span>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={isApprovingBatch}
+                  onClick={onApproveAll}
+                >
+                  Approve All
+                </Button>
+              </div>
+            )}
+            {pendingApprovals.map((view) => (
+              <ApprovalCard
+                key={view.tool_call_id}
+                view={view}
                 disabled={isApprovingBatch}
-                onClick={onApproveAll}
-              >
-                Approve All
-              </Button>
-            </div>
-          )}
-          {pendingApprovals.map((view) => (
-            <ApprovalCard
-              key={view.tool_call_id}
-              view={view}
-              disabled={isApprovingBatch}
-              onApprove={(id) => submitApproval(id, "allow")}
-              onDeny={(id) => submitApproval(id, "deny")}
-            />
-          ))}
+                onApprove={(id) => submitApproval(id, "allow")}
+                onDeny={(id) => submitApproval(id, "deny")}
+              />
+            ))}
+          </div>
         </div>
+        <ConversationSpine
+          scrollRef={scrollRef}
+          contentRef={contentRef}
+          anchors={userAnchors}
+        />
       </div>
 
       {/* Floating todo widget — outside the scroll area so it stays visible */}
