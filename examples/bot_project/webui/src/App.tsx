@@ -181,7 +181,6 @@ const AppInner: FC = () => {
         <div className="statusline" role="contentinfo" aria-label="Session status">
           <span className="brand" title={isConnected ? "Connected" : "Disconnected"}>
             <span className={isConnected ? "dot-signal" : "dot-dim"} aria-hidden="true" />
-            <span className="brand-mark" aria-hidden="true">◆</span>
             ModexBot
           </span>
           <span className="v" title={workspace || "—"}>

@@ -275,10 +275,6 @@
     font-weight: 600;
     letter-spacing: 0.02em;
   }
-  .statusline .brand-mark {
-    font-size: 12px;
-    line-height: 1;
-  }
   .statusline .v {
     color: var(--color-body);
     font-family: theme("fontFamily.mono");
@@ -371,8 +367,8 @@
     border-left-color: var(--color-signal);
     background: linear-gradient(
       90deg,
-      color-mix(in oklab, var(--color-signal) 10%, transparent),
-      transparent
+      color-mix(in oklab, var(--color-signal) 32%, transparent),
+      color-mix(in oklab, var(--color-signal) 8%, transparent)
     );
   }
 
