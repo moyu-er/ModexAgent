@@ -363,15 +363,14 @@ echo.
 :: ==========================================================================
 :: 5b. Global model config
 :: ==========================================================================
+:: No example template is shipped — model.yml is bootstrapped entirely by the
+:: `modexbot config` wizard (run by `modexbot install` below). The wizard
+:: creates config/model.yml from scratch with the provider/key you enter.
 if exist "config\model.yml" goto :model_done
-if not exist "config\model.example.yml" goto :model_done
 
 echo.
-echo [INFO] Creating config\model.yml from config\model.example.yml...
-copy config\model.example.yml config\model.yml >nul
-echo.
 echo   ^>^>^> ACTION REQUIRED: Set your model via 'modexbot config' ^<^<^<
-echo   File: %~dp0config\model.yml
+echo   The wizard creates config/model.yml from scratch.
 echo   Minimum required: model, api_key, url
 echo.
 

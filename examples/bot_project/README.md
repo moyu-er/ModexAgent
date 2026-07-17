@@ -236,10 +236,6 @@ Key fields in `.env`:
 ```env
 # Timezone for timestamps
 TIMEZONE=Asia/Shanghai
-
-# MCP server credentials
-MCP_BEARER_TOKEN=your_modelscope_bearer_token
-MINIMAX_MCP_API_KEY=your_minimax_api_key
 ```
 
 > [!NOTE]
@@ -250,11 +246,12 @@ MINIMAX_MCP_API_KEY=your_minimax_api_key
 
 #### 3. Configure the Model
 
-The model is configured in `config/model.yml` (the single source of truth —
-copy it from `config/model.example.yml`). Run the interactive wizard with
-`modexbot model`, or edit it by hand. It holds multiple providers, each with
-their own models; `default_provider` + `default_model` is what a pool uses
-unless you switch per turn in the WebUI:
+The model is configured in `config/model.yml` (the single source of truth).
+Run the interactive wizard with `modexbot model` (or `modexbot config`), which
+creates `config/model.yml` from scratch with the provider/key you enter — no
+template file is shipped. It holds multiple providers, each with their own
+models; `default_provider` + `default_model` is what a pool uses unless you
+switch per turn in the WebUI:
 
 ```yaml
 default_provider: "DeepSeek"
@@ -637,7 +634,7 @@ class DiscordOutputAdapter(OutputAdapter):
 
 ### IM Adapters
 
-IM credentials live in `config/im.yml` (gitignored — it holds secrets). Copy `config/im.example.yml` to get started. Each platform is one top-level section; an adapter reads only its own section and is skipped entirely when `enabled: false`.
+IM credentials live in `config/im.yml` (gitignored — it holds secrets). Configure them via the WebUI **Settings → IM** tab — no template file is shipped. Each platform is one top-level section; an adapter reads only its own section and is skipped entirely when `enabled: false`. The YAML structure (for reference) is:
 
 ```yaml
 # QQ — get App ID and Secret from https://q.qq.com/
@@ -689,16 +686,19 @@ memory:
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "./data"]
     },
-    "fetch": {
-      "type": "sse",
-      "url": "https://mcp.api-inference.modelscope.net/.../sse",
-      "headers": {
-        "Authorization": "Bearer ${MCP_BEARER_TOKEN}"
-      }
+    "playwright": {
+      "command": "npx",
+      "args": ["@playwright/mcp"]
     }
   }
 }
 ```
+
+> [!NOTE]
+> The bundled `config/mcp/registry.example.json` ships only no-auth stdio
+> servers (e.g. `playwright`). Add auth-requiring servers (SSE/streamable_http
+> with bearer tokens, or servers needing API keys) yourself via the WebUI **MCP**
+> tab — the bot does not bundle any credentials.
 
 ### Subagent Tools
 
@@ -715,7 +715,7 @@ tools:
   mcp_tools:
     enabled: true
     server_filter:
-      - "12306-mcp"
+      - "playwright"
 ```
 
 ## Plugin System

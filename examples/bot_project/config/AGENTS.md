@@ -10,10 +10,8 @@ Runtime configuration files for the bot: main config, IM adapter credentials, mo
 | File | Description |
 |------|-------------|
 | `bot_config.yml` | Main config — runtime safety, observability, workspace toggle. (Pool/agent config no longer lives here; see `pools/`) |
-| `im.yml` | IM adapter credentials — one top-level section per platform (`qq`, `telegram`). Gitignored (contains secrets). Each adapter reads only its own section |
-| `im.example.yml` | Template for `im.yml` — copy and fill in real values |
-| `model.yml` | Model definitions — the single source of truth: `default_provider` / `default_model` + a per-provider model list. Shared across all pools |
-| `model.example.yml` | Template for `model.yml` |
+| `im.yml` | IM adapter credentials — one top-level section per platform (`qq`, `telegram`). Gitignored (contains secrets). Each adapter reads only its own section. Configured via the WebUI Settings → IM tab (no template shipped) |
+| `model.yml` | Model definitions — the single source of truth: `default_provider` / `default_model` + a per-provider model list. Shared across all pools. Bootstrapped by the `modexbot config` wizard (no template shipped) |
 
 ## Subdirectories
 

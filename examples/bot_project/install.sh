@@ -396,13 +396,13 @@ fi
 # ==========================================================================
 # 5b. Global model config
 # ==========================================================================
-if [ ! -f "config/model.yml" ] && [ -f "config/model.example.yml" ]; then
-    echo ""
-    echo "[INFO] Creating config/model.yml from config/model.example.yml..."
-    cp config/model.example.yml config/model.yml
+# No example template is shipped — model.yml is bootstrapped entirely by the
+# `modexbot config` wizard (run by `modexbot install` below). The wizard
+# creates config/model.yml from scratch with the provider/key you enter.
+if [ ! -f "config/model.yml" ]; then
     echo ""
     echo "  >>> ACTION REQUIRED: Set your model via 'modexbot config' <<<"
-    echo "  File: $SCRIPT_DIR/config/model.yml"
+    echo "  The wizard creates config/model.yml from scratch."
     echo "  Minimum required: model, api_key, url"
     echo ""
 fi

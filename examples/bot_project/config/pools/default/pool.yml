@@ -1,6 +1,6 @@
 description: >-
   General-purpose conversational assistant. Handles everyday chat, web search
-  and content retrieval (playwright, fetch), office documents. Coordinates a
+  and content retrieval (playwright), office documents. Coordinates a
   small team of specialist subagents (office-expert) when a task benefits
   from delegation; otherwise answers directly. Use as the default for
   ambiguous or cross-domain requests.
@@ -19,7 +19,6 @@ approval:
       - ./*
 mcp:
 - playwright
-- fetch
 peers:
 - coder
 - opencode

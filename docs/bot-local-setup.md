@@ -108,7 +108,7 @@ MINIMAX_MCP_API_KEY=your_minimax_api_key
 
 ### 3. Configure the Model
 
-The model is configured in `config/model.yml` (the single source of truth — copy it from `config/model.example.yml`). Run the interactive wizard with `modexbot model`, or edit it by hand. It holds multiple providers, each with their own models; `default_provider` + `default_model` is what a pool uses unless you switch per turn in the WebUI:
+The model is configured in `config/model.yml` (the single source of truth). Run the interactive wizard with `modexbot model` (or `modexbot config`), which creates `config/model.yml` from scratch with the provider/key you enter — no template file is shipped. It holds multiple providers, each with their own models; `default_provider` + `default_model` is what a pool uses unless you switch per turn in the WebUI:
 
 ```yaml
 default_provider: "DeepSeek"

@@ -235,10 +235,6 @@ cp .env.example .env
 ```env
 # 时间戳时区
 TIMEZONE=Asia/Shanghai
-
-# MCP 服务凭证
-MCP_BEARER_TOKEN=your_modelscope_bearer_token
-MINIMAX_MCP_API_KEY=your_minimax_api_key
 ```
 
 > [!NOTE]
@@ -248,10 +244,10 @@ MINIMAX_MCP_API_KEY=your_minimax_api_key
 
 #### 3. 配置模型
 
-模型在 `config/model.yml` 中配置（唯一真相源，从 `config/model.example.yml`
-复制）。用 `modexbot model` 交互向导，或手动编辑。它存放多个 provider，每个
-provider 各自的模型；`default_provider` + `default_model` 是 pool 默认用的，
-你也可在 WebUI 里逐轮切换：
+模型在 `config/model.yml` 中配置（唯一真相源）。用 `modexbot model`（或
+`modexbot config`）交互向导，它会用你输入的 provider / key 从零创建
+`config/model.yml` —— 不附带模板文件。它存放多个 provider，每个 provider 各自的
+模型；`default_provider` + `default_model` 是 pool 默认用的，你也可在 WebUI 里逐轮切换：
 
 ```yaml
 default_provider: "DeepSeek"
@@ -633,7 +629,7 @@ class DiscordOutputAdapter(OutputAdapter):
 
 ### IM 适配器
 
-IM 凭证在 `config/im.yml`（已 gitignore——含密钥）。从 `config/im.example.yml` 复制起步。每个平台是顶层一节；适配器只读自己那一节，`enabled: false` 时整体跳过。
+IM 凭证在 `config/im.yml`（已 gitignore——含密钥）。通过 WebUI **设置 → IM** 标签页配置——不附带模板文件。每个平台是顶层一节；适配器只读自己那一节，`enabled: false` 时整体跳过。YAML 结构（仅供参考）：
 
 ```yaml
 # QQ —— 从 https://q.qq.com/ 获取 App ID 和 Secret
@@ -685,16 +681,18 @@ memory:
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "./data"]
     },
-    "fetch": {
-      "type": "sse",
-      "url": "https://mcp.api-inference.modelscope.net/.../sse",
-      "headers": {
-        "Authorization": "Bearer ${MCP_BEARER_TOKEN}"
-      }
+    "playwright": {
+      "command": "npx",
+      "args": ["@playwright/mcp"]
     }
   }
 }
 ```
+
+> [!NOTE]
+> 自带的 `config/mcp/registry.example.json` 只附带无需鉴权的 stdio 服务（如
+> `playwright`）。需要鉴权的服务（带 Bearer token 的 SSE/streamable_http，或需要
+> API key 的服务）请通过 WebUI 的 **MCP** 标签页自行添加 —— bot 不附带任何凭证。
 
 ### Subagent 工具
 
@@ -711,7 +709,7 @@ tools:
   mcp_tools:
     enabled: true
     server_filter:
-      - "12306-mcp"
+      - "playwright"
 ```
 
 ## 插件系统

@@ -1,31 +1,9 @@
 {
-  "_comment": "MCP server registry template. Copy to registry.json and fill in real values, OR bootstrap entirely from the WebUI (Global MCP editor). registry.json is gitignored (contains tokens). `${ENV_VAR}` placeholders are supported and expanded from .env / process environment at load time.",
+  "_comment": "MCP server registry template. Copy to registry.json and fill in real values, OR bootstrap entirely from the WebUI (Global MCP editor). registry.json is gitignored (contains tokens). `${ENV_VAR}` placeholders are supported and expanded from .env / process environment at load time. Only no-auth stdio servers are shipped as examples; add auth-requiring servers (SSE/streamable_http with bearer tokens, or servers needing API keys) yourself via the WebUI.",
   "mcpServers": {
     "playwright": {
       "command": "npx",
       "args": ["@playwright/mcp"]
-    },
-    "fetch": {
-      "type": "streamable_http",
-      "url": "https://mcp.api-inference.modelscope.net/<your-endpoint-path>/mcp",
-      "headers": {
-        "Authorization": "Bearer ${MCP_BEARER_TOKEN}"
-      }
-    },
-    "MiniMax": {
-      "command": "uvx",
-      "args": ["minimax-coding-plan-mcp", "-y"],
-      "env": {
-        "MINIMAX_API_KEY": "${MINIMAX_MCP_API_KEY}",
-        "MINIMAX_API_HOST": "https://api.minimaxi.com"
-      }
-    },
-    "12306-mcp": {
-      "type": "streamable_http",
-      "url": "https://mcp.api-inference.modelscope.net/<your-endpoint-path>/mcp",
-      "headers": {
-        "Authorization": "Bearer ${MCP_BEARER_TOKEN}"
-      }
     }
   }
 }
