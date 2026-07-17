@@ -54,6 +54,43 @@ _STRIP_PATTERNS = [
     "__editable___modex_bot_project_*.py",
 ]
 
+# Development / packaging tooling that ships in .venv site-packages but is never
+# needed at runtime. Removing it shrinks the installer and the install footprint.
+_STRIP_DEV_DEPS = [
+    # type-checking
+    "mypy",
+    "mypyc",
+    "mypy_extensions",
+    # testing
+    "pytest",
+    "pytest_asyncio",
+    "pytest_cov",
+    "_pytest",
+    "pluggy",  # pytest + mypy dependency; not needed without them
+    "iniconfig",  # pytest dependency
+    "coverage",
+    # linting (ruff is a single-binary, but its dist-info + cache remain)
+    "ruff",
+    # packaging toolchain (the bundled runtime uses uv/pip on demand; the
+    # site-packages copy of pip/setuptools/wheel is dead weight at runtime)
+    "pip",
+    "setuptools",
+    "wheel",
+    "distutils",
+    "editables",  # editable-install machinery, unused in bundled layout
+    "trove_classifiers",  # hatchling/setuptools metadata helper
+    "pathspec",  # hatchling dependency
+    "hatchling",
+    "hatch",
+]
+
+# litellm ships a full proxy server (admin UI + router) under litellm/proxy/.
+# The bot only uses litellm as an LLM client, but litellm's __init__ chain
+# transitively imports from litellm.proxy._types (via integrations like
+# gcs_bucket, custom_logger, prometheus — 50+ import sites), so the proxy
+# subtree CANNOT be removed without breaking `import litellm`. Left intact.
+
+
 
 def _find_uv() -> str:
     uv = shutil.which("uv")
@@ -164,6 +201,53 @@ def _strip_project_code(python_dir: Path) -> None:
             print(f"    Removed script: {exe.name}")
 
 
+def _strip_dev_deps(site_packages: Path) -> None:
+    """Remove development-only third-party packages.
+
+    These ship in the build machine's .venv (pulled in by the [dev] extra) but
+    serve no purpose at runtime. Removing them is safe — they are not imported
+    by any runtime path (verified: no `import mypy/pytest/ruff/...` outside tests).
+    """
+    print("  [prepare_python] Stripping dev-only dependencies...")
+    removed_bytes = 0
+    for name in _STRIP_DEV_DEPS:
+        # Match both the package dir and its *.dist-info (metadata) companion.
+        candidates = [site_packages / name, *site_packages.glob(f"{name}-*.dist-info")]
+        for p in candidates:
+            if not p.exists():
+                continue
+            size = sum(f.stat().st_size for f in p.rglob("*") if f.is_file()) if p.is_dir() else p.stat().st_size
+            removed_bytes += size
+            if p.is_dir():
+                shutil.rmtree(p)
+            else:
+                p.unlink()
+            print(f"    Removed: {p.name} ({size / 1e6:.1f} MB)")
+    print(f"    Dev deps stripped: {removed_bytes / 1e6:.1f} MB total")
+
+
+def _strip_pycache(python_dir: Path) -> None:
+    """Delete every __pycache__ directory under the bundled Python tree.
+
+    .pyc files are a compile cache: Python regenerates them on first import when
+    the source .py is newer or the cache is absent. Shipping 44 MB of stale .pyc
+    is pure waste — and on the install target the interpreter version/path may
+    differ, invalidating the cached magic number anyway, forcing a rebuild.
+    Keeping the sources and dropping the cache is strictly better.
+    """
+    print("  [prepare_python] Stripping __pycache__ directories...")
+    count = 0
+    removed_bytes = 0
+    for cache in python_dir.rglob("__pycache__"):
+        if not cache.is_dir():
+            continue
+        size = sum(f.stat().st_size for f in cache.iterdir() if f.is_file())
+        removed_bytes += size
+        shutil.rmtree(cache)
+        count += 1
+    print(f"    Removed {count} __pycache__ dirs ({removed_bytes / 1e6:.1f} MB)")
+
+
 def _verify(python_dir: Path) -> None:
     python_exe = python_dir / "python.exe"
 
@@ -217,6 +301,8 @@ def main() -> None:
     python_dir = _copy_to_staging(src_python, args.staging_dir)
     _copy_site_packages(args.venv_dir, python_dir)
     _strip_project_code(python_dir)
+    _strip_dev_deps(python_dir / "Lib" / "site-packages")
+    _strip_pycache(python_dir)
     _verify(python_dir)
 
     total = sum(f.stat().st_size for f in python_dir.rglob("*") if f.is_file())

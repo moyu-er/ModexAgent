@@ -65,6 +65,40 @@ def _build_frontend(repo_root: Path, force: bool = False) -> None:
     print(f"  [build_archive] Frontend built → {dist_dir}")
 
 
+# Paths under the repo root that are excluded from the installer source archive.
+# They are not needed at runtime and only bloat the install footprint:
+#   - tests/         : unit/integration/architecture tests (build-machine only)
+#   - assets/        : README screenshots + demo GIFs (docs, not runtime)
+#   - docs/          : ADRs, design docs (reference material)
+#   - .github/       : CI workflow definitions
+#   - rules/         : lint/type-safety rule docs
+#   - scripts/       : repo maintenance scripts
+# Kept explicit (not globbed) so each exclusion is auditable.
+_ARCHIVE_EXCLUDES = {
+    "tests",
+    "assets",
+    "docs",
+    ".github",
+    "rules",
+    "scripts",
+}
+
+
+def _prune_excluded(app_dir: Path) -> None:
+    """Delete excluded top-level directories from the extracted archive."""
+    print("  [build_archive] Pruning non-runtime directories from archive...")
+    removed_bytes = 0
+    for name in _ARCHIVE_EXCLUDES:
+        p = app_dir / name
+        if not p.exists():
+            continue
+        size = sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+        removed_bytes += size
+        shutil.rmtree(p)
+        print(f"    Removed: {name}/ ({size / 1e6:.1f} MB)")
+    print(f"    Pruned: {removed_bytes / 1e6:.1f} MB total")
+
+
 # --- Public API -------------------------------------------------------------
 
 
@@ -101,7 +135,11 @@ def build_archive(staging_dir: Path, force_frontend: bool = False) -> Path:
 
     print(f"  [build_archive] Source exported → {app_dir}")
 
-    # 3. Copy pre-built frontend dist/ (gitignored, not in archive)
+    # 3. Prune non-runtime directories (tests/assets/docs/.github/...) that
+    #    git archive included but the installer doesn't need.
+    _prune_excluded(app_dir)
+
+    # 4. Copy pre-built frontend dist/ (gitignored, not in archive)
     src_dist = repo_root / "examples" / "bot_project" / "bot" / "web" / "dist"
     dst_dist = app_dir / "examples" / "bot_project" / "bot" / "web" / "dist"
     if src_dist.exists():

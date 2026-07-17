@@ -112,9 +112,10 @@ if errorlevel 1 goto :error
 echo.
 
 :: --- 4. Fetch uv ---
-echo  --- Step 2/7: Fetching uv.exe ---
-"%PYTHON_EXE%" "%~dp0fetch_runtime.py" --staging-dir "%STAGING%"
-if errorlevel 1 goto :error
+:: (Skipped — uv.exe is no longer bundled. The installer is self-contained
+::  without it; users who need to add Python deps post-install can install
+::  uv/pip themselves. This saves ~58 MB of install footprint.)
+echo  --- Step 2/7: Skipping uv.exe fetch (no longer bundled) ---
 echo.
 
 :: --- 5. Build source archive ---
