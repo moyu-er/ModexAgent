@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useT } from "../../i18n";
 
 export interface ActionBarProps {
   children: ReactNode;
@@ -6,10 +7,11 @@ export interface ActionBarProps {
 }
 
 export function ActionBar({ children, className = "" }: ActionBarProps) {
+  const t = useT();
   return (
     <div
       role="group"
-      aria-label="Form actions"
+      aria-label={t("ui.formActions")}
       className={[
         "sticky bottom-0 z-20 flex items-center justify-end gap-2",
         "border-t border-hairline bg-canvas px-6 py-3",

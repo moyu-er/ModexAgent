@@ -73,13 +73,14 @@ class ScopedSessionMemoryManager(SessionMemoryManager):
         messages: Sequence[ChatMessage | dict[str, object]],
         write_ids: set[Any],
     ) -> StorageRevision:
-        existing = await bundle.messages.load_messages()
         dicts = self._to_dicts(chat_messages)
-        existing.extend(dicts)
+        revision = await bundle.messages.get_revision()
+        for d in dicts:
+            revision = await bundle.messages.append_message(d)
         await bundle.kv.set(".last_activity", time.time())
         if write_ids:
             await bundle.kv.set(".last_write_id", next(iter(write_ids)))
-        return await bundle.messages.save_messages(existing)
+        return revision
 
     async def get_recent_messages(
         self,
@@ -138,9 +139,15 @@ class ScopedSessionMemoryManager(SessionMemoryManager):
         if lock is not None:
             async with lock.write():
                 await bundle.kv.set(".last_activity", time.time())
-                return await bundle.messages.save_messages(self._to_dicts(chat_messages))
+                result = await bundle.messages.replace_active_messages(
+                    self._to_dicts(chat_messages)
+                )
+                return result or await bundle.messages.get_revision()
         await bundle.kv.set(".last_activity", time.time())
-        return await bundle.messages.save_messages(self._to_dicts(chat_messages))
+        result = await bundle.messages.replace_active_messages(
+            self._to_dicts(chat_messages)
+        )
+        return result or await bundle.messages.get_revision()
 
     async def replace_messages_if_revision(
         self,
@@ -167,7 +174,9 @@ class ScopedSessionMemoryManager(SessionMemoryManager):
             for key, value in (state_updates or {}).items():
                 await bundle.kv.set(key, value)
             await bundle.kv.set(".last_activity", time.time())
-            return await bundle.messages.save_messages(self._to_dicts(chat_messages))
+            return await bundle.messages.replace_active_messages(
+                self._to_dicts(chat_messages), expected_revision
+            )
 
         if lock is not None:
             async with lock.write():

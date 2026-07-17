@@ -10,6 +10,7 @@ import { TypewriterText } from "../hooks/useTypewriter";
 import { formatClock } from "../lib/timezone";
 import { attachmentDownloadUrl } from "../lib/api";
 import { appendWsParam } from "../lib/url";
+import { useT } from "../i18n";
 
 // ── Agent-specific label tones ────────────────────────────────────────────
 
@@ -112,6 +113,7 @@ const AssistantAvatar: FC = () => (
 );
 
 export const MessageBubble: FC<MessageBubbleProps> = ({ message, sessionId, workspace }) => {
+  const t = useT();
   const isUser = message.role === "user";
   const timeStr = formatTime(message.timestamp);
   const inboundViews = (message.attachments ?? []).map((r) =>
@@ -119,7 +121,10 @@ export const MessageBubble: FC<MessageBubbleProps> = ({ message, sessionId, work
   );
 
   return (
-    <div className={`mb-6 flex w-full items-start gap-2 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
+    <div
+      id={`msg-${message.id}`}
+      className={`mb-6 flex w-full items-start gap-2 ${isUser ? "flex-row-reverse" : "flex-row"}`}
+    >
       {isUser ? <UserAvatar /> : <AssistantAvatar />}
 
       <div className={`flex min-w-0 flex-1 flex-col ${isUser ? "items-end" : "items-start"}`}>
@@ -154,7 +159,7 @@ export const MessageBubble: FC<MessageBubbleProps> = ({ message, sessionId, work
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-link opacity-40" />
                   <span className="relative inline-flex h-2 w-2 rounded-full bg-link" />
                 </span>
-                <span className="text-xs text-mute">thinking</span>
+                <span className="text-xs text-mute">{t("message.thinking")}</span>
               </div>
             )}
         </div>

@@ -66,7 +66,6 @@ async def test_build_returns_xml_from_parent_messages(tmp_path: Path) -> None:
         agent_type="scout",
         invocation_id="inv1",
         fork_max_messages=80,
-        fork_workspace=tmp_path,
         template_memory=None,
         subagent_memory_system=mem,  # type: ignore[arg-type]
         parent_name="main",
@@ -95,7 +94,6 @@ async def test_build_returns_placeholder_when_no_memory_system(tmp_path: Path) -
         agent_type="scout",
         invocation_id="inv1",
         fork_max_messages=80,
-        fork_workspace=tmp_path,
         template_memory=None,
         subagent_memory_system=None,
         parent_name="main",
@@ -118,7 +116,6 @@ async def test_build_returns_placeholder_when_history_empty(tmp_path: Path) -> N
         agent_type="scout",
         invocation_id="inv1",
         fork_max_messages=80,
-        fork_workspace=tmp_path,
         template_memory=None,
         subagent_memory_system=mem,  # type: ignore[arg-type]
         parent_name="main",
@@ -140,7 +137,6 @@ async def test_build_truncates_to_fork_max_messages(tmp_path: Path) -> None:
         agent_type="scout",
         invocation_id="inv1",
         fork_max_messages=3,
-        fork_workspace=tmp_path,
         template_memory=None,
         subagent_memory_system=mem,  # type: ignore[arg-type]
         parent_name="main",
@@ -179,7 +175,6 @@ async def test_build_applies_lossy_compaction(tmp_path: Path) -> None:
         agent_type="scout",
         invocation_id="inv1",
         fork_max_messages=80,
-        fork_workspace=tmp_path,
         template_memory=template_memory,
         subagent_memory_system=mem,  # type: ignore[arg-type]
         parent_name="main",
@@ -208,7 +203,6 @@ async def test_build_does_not_compact_when_lossy_disabled(tmp_path: Path) -> Non
         agent_type="scout",
         invocation_id="inv1",
         fork_max_messages=80,
-        fork_workspace=tmp_path,
         template_memory=None,
         subagent_memory_system=mem,  # type: ignore[arg-type]
         parent_name="main",
@@ -230,7 +224,6 @@ async def test_build_creates_no_files(tmp_path: Path) -> None:
         agent_type="scout",
         invocation_id="inv1",
         fork_max_messages=80,
-        fork_workspace=tmp_path,
         template_memory=None,
         subagent_memory_system=mem,  # type: ignore[arg-type]
         parent_name="main",
@@ -257,7 +250,6 @@ async def test_build_swallows_memory_system_exception(tmp_path: Path) -> None:
         agent_type="scout",
         invocation_id="inv1",
         fork_max_messages=80,
-        fork_workspace=tmp_path,
         template_memory=None,
         subagent_memory_system=mem,  # type: ignore[arg-type]
         parent_name="main",
@@ -265,29 +257,6 @@ async def test_build_swallows_memory_system_exception(tmp_path: Path) -> None:
 
     assert xml is not None
     assert "No parent messages available." in xml
-
-
-def test_register_for_cleanup_is_noop(tmp_path: Path) -> None:
-    """register_for_cleanup() is a no-op (retained for caller compatibility).
-    It must not create files or raise."""
-    builder = ContextForkBuilder()
-    # Must not raise.
-    builder.register_for_cleanup(
-        session_id="abc.main",
-        fork_workspace=tmp_path,
-        agent_type="scout",
-        invocation_id="abc",
-    )
-    # No file created.
-    assert not (tmp_path / "fork_contexts").exists()
-
-
-def test_cleanup_is_noop() -> None:
-    """cleanup() is a no-op (retained for caller compatibility). It must not
-    raise even for an unknown session."""
-    builder = ContextForkBuilder()
-    # Must not raise, even for an unknown session.
-    builder.cleanup("never-registered.main")
 
 
 def test_no_registry_attribute() -> None:

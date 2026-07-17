@@ -187,13 +187,21 @@ class BotService(AgentBuilderMixin):
         """Whether this service runs the WebUI (class attribute ``webui``)."""
         return self.webui
 
-    def _build_default_provider(self) -> LLMProvider:
+    def _build_default_provider(self) -> LLMProvider | None:
         """Build the default pool's LLM provider (memory/summarizer layer).
 
         统一用 BotModelProvider：未设置 ContextVar 时（memory summarizer、后台任务）
         自动落到默认模型。
+
+        Returns ``None`` when ``model.yml`` is absent or unconfigured — the bot
+        boots without a model so the user can configure one via the WebUI
+        (Settings → Models) or ``modexbot config`` after first start. Chat
+        turns will fail until a provider is configured, but the WebUI itself
+        is fully usable. Downstream consumers (``build_pool_data``,
+        ``create_memory``) already accept ``provider=None``.
         """
-        assert self._bot_model_config is not None, "BotModelConfig not loaded"
+        if self._bot_model_config is None:
+            return None
         return BotModelProvider(self._bot_model_config)
 
     def _load_app_config(self) -> AppConfig:
@@ -232,9 +240,10 @@ class BotService(AgentBuilderMixin):
         PoolSpec 不再携带 llm；模型配置由 BotModelConfig / BotModelProvider
         独立管理。max_context_tokens 由 wiring 层注入 PoolAssemblyDeps.memory。
 
-        model.yml 缺失时（如框架单测用 config_dir=Path('.') + 合成 app_config）
-        静默跳过，_bot_model_config 留 None；真正的缺失判定由
-        _build_default_provider 的 assert 兜底。
+        model.yml 缺失时（如框架单测用 config_dir=Path('.') + 合成 app_config，
+        或首次部署尚未运行 ``modexbot config``）静默跳过，_bot_model_config
+        留 None；``_build_default_provider`` 随之返回 None，bot 以无模型状态启动，
+        供用户在 WebUI 里完成首次配置。
         """
         model_yml = self.config_dir / "model.yml"
         if not model_yml.exists():
@@ -334,11 +343,17 @@ class BotService(AgentBuilderMixin):
         # Guard the post-start_connecting tail so the registry is shut down
         # (subprocesses closed in-task) before the exception propagates.
         try:
-            # 1.1 Warn if LLM credentials are missing — the service can still
-            # start, but chat will fail until the user runs ``modexbot config``.
-            # Delegates to the backend model config so the check lives with the
-            # real source of truth (BotModelConfig), not the pool config.
-            if self._bot_model_config is not None:
+            # 1.1 Warn if the model is not configured — the service still
+            # starts (WebUI usable, config editable via Settings → Models),
+            # but chat turns will fail until the user runs ``modexbot config``
+            # or sets a provider in the WebUI.
+            if self._bot_model_config is None:
+                logger.warning(
+                    "No model configured (config/model.yml missing). "
+                    "The bot is running but chat will fail until you configure a model. "
+                    "Open the WebUI → Settings → Models, or run 'modexbot config'."
+                )
+            else:
                 default_resolved = self._bot_model_config.default_resolved()
                 missing_llm: list[str] = []
                 if not default_resolved.provider.api_key:
@@ -346,9 +361,10 @@ class BotService(AgentBuilderMixin):
                 if not default_resolved.provider.base_url:
                     missing_llm.append("base_url")
                 if missing_llm:
-                    print(
-                        f"[WARNING] LLM config incomplete: {', '.join(missing_llm)}. "
-                        "Run 'modexbot config' to set them. Chat will fail until configured."
+                    logger.warning(
+                        "LLM config incomplete: %s. Run 'modexbot config' to set them. "
+                        "Chat will fail until configured.",
+                        ", ".join(missing_llm),
                     )
 
             # 1.5 Build the default LLM provider + the workspace stack.

@@ -14,6 +14,7 @@ import markdown from "react-syntax-highlighter/dist/esm/languages/prism/markdown
 import { oneDark, oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { useTheme } from "../hooks/useTheme";
 import { MermaidBlock } from "./MermaidBlock";
+import { useT } from "../i18n";
 
 SyntaxHighlighter.registerLanguage("tsx", tsx);
 SyntaxHighlighter.registerLanguage("typescript", typescript);
@@ -45,6 +46,7 @@ interface CodeBlockProps {
 }
 
 const CodeBlock: FC<CodeBlockProps> = ({ language, value, isDark }) => {
+  const t = useT();
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async (): Promise<void> => {
@@ -68,7 +70,7 @@ const CodeBlock: FC<CodeBlockProps> = ({ language, value, isDark }) => {
           onClick={handleCopy}
           className="text-xs text-mute transition-colors hover:text-ink"
         >
-          {copied ? "Copied" : "Copy"}
+          {copied ? t("markdown.copied") : t("markdown.copy")}
         </button>
       </div>
       <SyntaxHighlighter

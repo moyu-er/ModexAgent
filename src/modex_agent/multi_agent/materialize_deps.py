@@ -63,3 +63,4 @@ class AgentMaterializeDeps:
     workspace_path_resolver: WorkspacePathResolver | None = None
     mcp_registry: McpConnectionRegistry | None = None
     todo_store: TodoStore | None = None
+    trace_enabled: bool = True

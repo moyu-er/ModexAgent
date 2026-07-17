@@ -1,8 +1,9 @@
-import { useState, useRef, useEffect, type FC, type FormEvent, type KeyboardEvent } from "react";
+import { useState, useRef, useEffect, useMemo, type FC, type FormEvent, type KeyboardEvent } from "react";
 import { Bot, File, Menu, Paperclip, Pause, SendHorizonal, X } from "lucide-react";
 import type { ApprovalRequestView, TodoItemDTO, UIMessage } from "../types/events";
 import type { MediaConfigResponse, OutgoingAttachmentRef, UploadAttachmentResponse } from "../types/attachments";
 import { ApprovalCard } from "./ApprovalCard";
+import { ConversationSpine, type SpineAnchor } from "./ConversationSpine";
 import { MessageBubble } from "./MessageBubble";
 import { ModelSelector } from "./ModelSelector";
 import { TodoPanel } from "./TodoPanel";
@@ -10,6 +11,7 @@ import { Button } from "./ui/Button";
 import { IconButton } from "./ui/IconButton";
 import { fetchMediaConfig, fetchModels, uploadAttachment, type ModelChoice } from "../lib/api";
 import { formatBytes } from "../lib/format";
+import { useT } from "../i18n";
 
 export interface ChatViewProps {
   messages: UIMessage[];
@@ -69,8 +71,10 @@ export const ChatView: FC<ChatViewProps> = ({
   onOpenSidebar,
   agentName,
 }) => {
+  const t = useT();
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -144,6 +148,22 @@ export const ChatView: FC<ChatViewProps> = ({
     autosize();
   }, [input]);
 
+  // Right-margin navigation spine: one dot per user question, positioned
+  // proportionally to the question's place in the scrollable content.
+  const userAnchors = useMemo<SpineAnchor[]>(() => {
+    const out: SpineAnchor[] = [];
+    for (const m of messages) {
+      if (m.role !== "user") continue;
+      const text = (m.blocks ?? [])
+        .map((b) => (b.kind === "text" ? b.text : ""))
+        .join("")
+        .replace(/\s+/g, " ")
+        .trim();
+      out.push({ id: m.id, preview: text ? text.slice(0, 60) : "(message)" });
+    }
+    return out;
+  }, [messages]);
+
   const isBusy = isStreaming || isPending;
   const canSend =
     !isBusy && !readOnly && !isUploading &&
@@ -197,7 +217,7 @@ export const ChatView: FC<ChatViewProps> = ({
   // scopes the temp file to the active workspace; home (empty) omits it.
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
     if (!sessionId) {
-      setUploadError("Select a conversation before attaching a file.");
+      setUploadError(t("chat.selectConversationFirst"));
       return;
     }
     const files = e.target.files;
@@ -211,8 +231,7 @@ export const ChatView: FC<ChatViewProps> = ({
       for (const file of Array.from(files)) {
         if (file.size > earlyCap) {
           setUploadError(
-            `"${file.name}" is too large (${formatBytes(file.size)}). ` +
-            `Limit is ${formatBytes(earlyCap)}.`,
+            t("chat.fileTooLarge", { name: file.name, size: formatBytes(file.size), limit: formatBytes(earlyCap) }),
           );
           continue;
         }
@@ -235,7 +254,7 @@ export const ChatView: FC<ChatViewProps> = ({
         setPendingUploads((prev) => [...prev, ...accepted]);
       }
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : "Upload failed.");
+      setUploadError(err instanceof Error ? err.message : t("chat.uploadFailed"));
     } finally {
       setIsUploading(false);
       // Reset so selecting the same file again fires another change event.
@@ -255,7 +274,7 @@ export const ChatView: FC<ChatViewProps> = ({
           {onOpenSidebar && (
             <IconButton
               icon={<Menu size={18} />}
-              label="Open sidebar"
+              label={t("chat.openSidebar")}
               variant="ghost"
               size="md"
               onClick={onOpenSidebar}
@@ -274,49 +293,57 @@ export const ChatView: FC<ChatViewProps> = ({
         <div />
       </header>
 
-      {/* Message area */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
-        <div className={`${CONTENT_WIDTH} px-3 py-6 md:px-5`}>
-          {messages.length === 0 && (
-            <div className="flex h-[55vh] items-center justify-center">
-              <p className="text-sm text-body">
-                Select a conversation to start chatting
-              </p>
-            </div>
-          )}
-          {messages.map((msg) => (
-            <MessageBubble
-              key={msg.id}
-              message={msg}
-              sessionId={sessionId}
-              workspace={workspace}
-            />
-          ))}
-          {pendingApprovals.length > 0 && (
-            <div className="my-2 flex items-center justify-between gap-2 rounded-md border border-hairline bg-canvas-elevated px-3 py-2">
-              <span className="text-xs text-body">
-                Denying any one cancels the whole batch
-              </span>
-              <Button
-                variant="secondary"
-                size="sm"
+      {/* Message area — wrapped so the ConversationSpine can overlay the right
+          margin without scrolling with the content. */}
+      <div className="relative flex-1 min-h-0">
+        <div ref={scrollRef} className="absolute inset-0 overflow-y-auto">
+          <div ref={contentRef} className={`${CONTENT_WIDTH} px-3 py-6 md:px-5`}>
+            {messages.length === 0 && (
+              <div className="flex h-[55vh] items-center justify-center">
+                <p className="text-sm text-body">
+                  {t("chat.selectConversation")}
+                </p>
+              </div>
+            )}
+            {messages.map((msg) => (
+              <MessageBubble
+                key={msg.id}
+                message={msg}
+                sessionId={sessionId}
+                workspace={workspace}
+              />
+            ))}
+            {pendingApprovals.length > 0 && (
+              <div className="my-2 flex items-center justify-between gap-2 rounded-md border border-hairline bg-canvas-elevated px-3 py-2">
+                <span className="text-xs text-body">
+                  {t("chat.denyBatchNotice")}
+                </span>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={isApprovingBatch}
+                  onClick={onApproveAll}
+                >
+                  {t("chat.approveAll")}
+                </Button>
+              </div>
+            )}
+            {pendingApprovals.map((view) => (
+              <ApprovalCard
+                key={view.tool_call_id}
+                view={view}
                 disabled={isApprovingBatch}
-                onClick={onApproveAll}
-              >
-                Approve All
-              </Button>
-            </div>
-          )}
-          {pendingApprovals.map((view) => (
-            <ApprovalCard
-              key={view.tool_call_id}
-              view={view}
-              disabled={isApprovingBatch}
-              onApprove={(id) => submitApproval(id, "allow")}
-              onDeny={(id) => submitApproval(id, "deny")}
-            />
-          ))}
+                onApprove={(id) => submitApproval(id, "allow")}
+                onDeny={(id) => submitApproval(id, "deny")}
+              />
+            ))}
+          </div>
         </div>
+        <ConversationSpine
+          scrollRef={scrollRef}
+          contentRef={contentRef}
+          anchors={userAnchors}
+        />
       </div>
 
       {/* Floating todo widget — outside the scroll area so it stays visible */}
@@ -330,16 +357,16 @@ export const ChatView: FC<ChatViewProps> = ({
               <input
                 type="text"
                 disabled
-                placeholder="Subagent session — read only"
+                placeholder={t("chat.readOnlyPlaceholder")}
                 className="flex-1 cursor-not-allowed bg-transparent py-1 text-sm text-faint placeholder:text-faint outline-none"
               />
               <IconButton
                 icon={<SendHorizonal size={18} />}
-                label="Read only"
+                label={t("chat.readOnly")}
                 variant="ghost"
                 size="md"
                 disabled
-                title="Read only"
+                title={t("chat.readOnly")}
               />
             </div>
           ) : (
@@ -365,7 +392,7 @@ export const ChatView: FC<ChatViewProps> = ({
                       </span>
                       <IconButton
                         icon={<X size={14} />}
-                        label={`Remove ${p.name}`}
+                        label={t("chat.removeName", { name: p.name })}
                         variant="ghost"
                         size="sm"
                         onClick={(): void => removePendingUpload(p.ref.local_path)}
@@ -386,7 +413,7 @@ export const ChatView: FC<ChatViewProps> = ({
                 />
                 <IconButton
                   icon={<Paperclip size={18} />}
-                  label="Attach file"
+                  label={t("chat.attachFile")}
                   variant="ghost"
                   size="md"
                   disabled={isBusy || isUploading || !sessionId}
@@ -400,10 +427,10 @@ export const ChatView: FC<ChatViewProps> = ({
                   onKeyDown={handleKeyDown}
                   placeholder={
                     isPending
-                      ? "Initializing session…"
+                      ? t("chat.initializingSession")
                       : isStreaming
-                        ? "Assistant is responding…"
-                        : "Message…"
+                        ? t("chat.assistantResponding")
+                        : t("chat.messagePlaceholder")
                   }
                   rows={1}
                   className="max-h-[320px] min-h-[56px] flex-1 resize-none overflow-y-auto bg-transparent py-3.5 text-[15px] leading-relaxed text-ink outline-none placeholder:text-faint"
@@ -418,7 +445,7 @@ export const ChatView: FC<ChatViewProps> = ({
                 {isBusy ? (
                   <IconButton
                     icon={<Pause size={16} />}
-                    label="Pause"
+                    label={t("chat.pause")}
                     variant="secondary"
                     size="md"
                     onClick={handleButton}
@@ -426,7 +453,7 @@ export const ChatView: FC<ChatViewProps> = ({
                 ) : canSend ? (
                   <IconButton
                     icon={<SendHorizonal size={18} />}
-                    label="Send"
+                    label={t("chat.send")}
                     variant="primary"
                     size="md"
                     onClick={handleButton}
@@ -434,7 +461,7 @@ export const ChatView: FC<ChatViewProps> = ({
                 ) : (
                   <IconButton
                     icon={<SendHorizonal size={18} />}
-                    label="Send"
+                    label={t("chat.send")}
                     variant="ghost"
                     size="md"
                     disabled

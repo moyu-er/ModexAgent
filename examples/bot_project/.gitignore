@@ -55,13 +55,11 @@ config/*.local.json
 !.env.example
 !.gitattributes
 
-# Global model config (contains API key; copy config/model.example.yml)
+# Global model config (contains API key; bootstrapped by `modexbot config` wizard)
 config/model.yml
-!config/model.example.yml
 
-# IM adapter config (contains secrets; copy config/im.example.yml)
+# IM adapter config (contains secrets; configured via WebUI Settings → IM)
 config/im.yml
-!config/im.example.yml
 
 # MCP server registry (contains tokens/keys; copy config/mcp/registry.example.json)
 # Bootstrappable from the WebUI — absent registry == no MCP servers until you

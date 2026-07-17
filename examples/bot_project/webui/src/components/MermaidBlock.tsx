@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type FC } from "react";
 import { XIcon } from "./ui/icons";
+import { useT } from "../i18n";
 
 export interface MermaidBlockProps {
   chart: string;
@@ -48,6 +49,7 @@ type View = "diagram" | "source";
  *     the user never loses the content.
  */
 export const MermaidBlock: FC<MermaidBlockProps> = ({ chart, isDark }) => {
+  const t = useT();
   const rawId = useId();
   // mermaid requires a DOM-id-safe, unique render target; strip the React ":r0:" prefix.
   const renderId = `mermaid-${rawId.replace(/[^a-zA-Z0-9]/g, "")}`;
@@ -136,8 +138,8 @@ export const MermaidBlock: FC<MermaidBlockProps> = ({ chart, isDark }) => {
     <div className="mb-3 overflow-hidden rounded-lg border border-hairline">
       <div className="flex items-center justify-between gap-2 border-b border-hairline bg-canvas px-4 py-2">
         <span className="text-xs font-medium text-mute">
-          mermaid
-          {state.status === "error" ? ` · Render failed (${state.message})` : ""}
+          {t("mermaid.label")}
+          {state.status === "error" ? ` · ${t("mermaid.renderFailed", { message: state.message })}` : ""}
         </span>
         <div className="flex items-center gap-3">
           {svg && (
@@ -146,7 +148,7 @@ export const MermaidBlock: FC<MermaidBlockProps> = ({ chart, isDark }) => {
               onClick={() => setView((v) => (v === "diagram" ? "source" : "diagram"))}
               className="text-xs text-mute transition-colors hover:text-ink"
             >
-              {view === "diagram" ? "Source" : "Diagram"}
+              {view === "diagram" ? t("mermaid.source") : t("mermaid.diagram")}
             </button>
           )}
           {svg && (
@@ -155,7 +157,7 @@ export const MermaidBlock: FC<MermaidBlockProps> = ({ chart, isDark }) => {
               onClick={() => setZoomed(true)}
               className="text-xs text-mute transition-colors hover:text-ink"
             >
-              Zoom
+              {t("mermaid.zoom")}
             </button>
           )}
           <button
@@ -163,7 +165,7 @@ export const MermaidBlock: FC<MermaidBlockProps> = ({ chart, isDark }) => {
             onClick={handleCopy}
             className="text-xs text-mute transition-colors hover:text-ink"
           >
-            {copied ? "Copied" : "Copy"}
+            {copied ? t("mermaid.copied") : t("mermaid.copy")}
           </button>
         </div>
       </div>
@@ -179,7 +181,7 @@ export const MermaidBlock: FC<MermaidBlockProps> = ({ chart, isDark }) => {
         />
       ) : (
         <div className="flex items-center justify-center bg-canvas p-4 text-xs text-mute">
-          Rendering diagram…
+          {t("mermaid.rendering")}
         </div>
       )}
 
@@ -188,7 +190,7 @@ export const MermaidBlock: FC<MermaidBlockProps> = ({ chart, isDark }) => {
           className="fixed inset-0 z-50 flex flex-col bg-black/80"
           role="dialog"
           aria-modal="true"
-          aria-label="mermaid diagram"
+          aria-label={t("mermaid.diagramLabel")}
           onClick={() => setZoomed(false)}
         >
           <div className="flex items-center justify-between px-4 py-2 text-white/90">
@@ -223,7 +225,7 @@ export const MermaidBlock: FC<MermaidBlockProps> = ({ chart, isDark }) => {
               >
                 +
               </button>
-              <span className="ml-2 text-white/40">Scroll to zoom · drag scrollbar to pan</span>
+              <span className="ml-2 text-white/40">{t("mermaid.scrollZoomPan")}</span>
             </div>
             <button
               type="button"
@@ -231,7 +233,7 @@ export const MermaidBlock: FC<MermaidBlockProps> = ({ chart, isDark }) => {
               className="flex items-center gap-1 text-sm text-white/80 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
             >
               <XIcon />
-              Close
+              {t("mermaid.close")}
             </button>
           </div>
           <div

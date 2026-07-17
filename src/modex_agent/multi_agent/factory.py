@@ -15,6 +15,7 @@ from modex_agent.core.context import ContextManager, InMemoryContextManager
 from modex_agent.core.runtime_context import RuntimeContextManager
 from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.core.tool_manager import InMemoryToolManager
+from modex_agent.ioc.configs.observability import ObservabilityConfig
 
 try:
     from modex_agent.providers import LiteLLMProvider
@@ -23,7 +24,7 @@ except ImportError:
 
 from modex_agent.core.skills.filter import AllowListFilter
 from modex_agent.core.skills.manager import SkillManager
-from modex_agent.hook import HookRunner
+from modex_agent.hook import Hook, HookRunner
 from modex_agent.hook.builtin import InboxFlushHook
 from modex_agent.tools.filter import FilteredToolManager
 
@@ -82,6 +83,7 @@ class DefaultAgentFactory(AgentFactory):
         control_channel: InMemoryControlChannel | None = None,
         trace_store: Any | None = None,
         session_registry: SessionRegistry | None = None,
+        observability_config: ObservabilityConfig | None = None,
     ) -> None:
         self._default_llm_provider = default_llm_provider
         self._default_tool_manager = default_tool_manager
@@ -97,6 +99,7 @@ class DefaultAgentFactory(AgentFactory):
         self._control_channel = control_channel
         self._trace_store = trace_store
         self._session_registry = session_registry
+        self._observability_config = observability_config
         self._inbox_producer = InboxProducer(inbox_server) if inbox_server else None
         self._inbox_consumer = InboxConsumer(inbox_server) if inbox_server else None
         # Shared runtime-context manager across all agents created by this factory.
@@ -309,18 +312,37 @@ class DefaultAgentFactory(AgentFactory):
         # uniformly — no special-casing, no distinction.
         from modex_agent.hook import HookErrorPolicy, HookSpec
         from modex_agent.hook.builtin import LoopDetectionHook
+        from modex_agent.hook.builtin.checkpoint import CheckpointHook
+        from modex_agent.hook.builtin.training_data import TrainingDataHook
         from modex_agent.trace import TraceCollectorHook
 
         # Hooks that must be DISPATCHED (the turn loop only runs hook_runner,
         # never the pipeline.hooks list) are added here as HookSpecs. We always
         # have a hook_runner at this point, so no dead-list fallback is needed.
-        live_hooks = [TraceCollectorHook(), LoopDetectionHook()]
+        # Read observability config (None = all defaults, same as today's behavior)
+        obs = self._observability_config
+        checkpoint_per_iteration = obs.checkpoint_per_iteration if obs is not None else True
+        training_relevant = obs.training_relevant if obs is not None else False
+        training_max_iterations = obs.training_max_iterations if obs is not None else 20
+        training_max_tokens = obs.training_max_tokens if obs is not None else 100_000
+
+        live_hooks: list[Hook] = [
+            TraceCollectorHook(),
+            LoopDetectionHook(),
+        ]
+        if checkpoint_per_iteration:
+            live_hooks.append(CheckpointHook())
+        if training_relevant:
+            live_hooks.append(
+                TrainingDataHook(
+                    max_iterations=training_max_iterations,
+                    max_tokens=training_max_tokens,
+                )
+            )
         if auto_inbox_flush is not None:
             live_hooks.append(auto_inbox_flush)
         for hook in live_hooks:
-            pipeline.hook_runner.add(
-                HookSpec(hook=hook, on_error=HookErrorPolicy.LOG)
-            )
+            pipeline.hook_runner.add(HookSpec(hook=hook, on_error=HookErrorPolicy.LOG))
 
         return AgentInstance(
             descriptor=descriptor,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -13,6 +14,8 @@ from modex_agent.memory.token_estimator import TokenEstimator
 if TYPE_CHECKING:
     from modex_agent.memory.layers.config import MemoryLayerConfigSet
     from modex_agent.memory.registry import MemoryStoreRegistry
+
+logger = logging.getLogger(__name__)
 
 
 def _build_memory_layer_config(cfg: MemoryConfig) -> MemoryLayerConfigSet:
@@ -138,15 +141,27 @@ def create_memory(
             archive_config = ArchiveSummarizerConfig()
             max_iterations = ArchiveSummarizerConfig().max_iterations
 
-        archive_agent = ArchiveSummarizer(llm_provider, config=archive_config)
-
-        # Knowledge consolidator is created when knowledge layer is enabled
-        knowledge_enabled = cfg.knowledge is not None and cfg.knowledge.enabled
-        if knowledge_enabled:
-            knowledge_consolidator = KnowledgeConsolidator(
-                provider=llm_provider,
-                max_iterations=max_iterations,
+        # Archive summarizer / knowledge consolidator both require an LLM
+        # provider. When the bot starts without a model configured (first-run
+        # state, user configures via WebUI afterward), skip building these
+        # agents — they cannot run without a provider, and the memory system
+        # operates in a degraded (no compression) mode until a provider is
+        # configured and the service restarts.
+        if llm_provider is None:
+            logger.warning(
+                "llm_provider is None — skipping archive summarizer and "
+                "knowledge consolidator (no model configured). Memory runs "
+                "in degraded mode until a model is configured."
             )
+        else:
+            archive_agent = ArchiveSummarizer(llm_provider, config=archive_config)
+
+            knowledge_enabled = cfg.knowledge is not None and cfg.knowledge.enabled
+            if knowledge_enabled:
+                knowledge_consolidator = KnowledgeConsolidator(
+                    provider=llm_provider,
+                    max_iterations=max_iterations,
+                )
 
         # archive_storage is created dynamically in cleanup_session
         # via archive.get_storage_path(context) — not hardcoded here

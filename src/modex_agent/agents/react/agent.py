@@ -254,6 +254,13 @@ class ReActAgent(Agent[ReActEvent]):
                 )
 
             result = await self.engine.run(context)
+            react_state = get_react_state(context)
+            if (
+                runtime.hooks
+                and react_state is not None
+                and react_state.iteration > 0
+            ):
+                await runtime.hooks.dispatch(HookPoint.AFTER_ITERATION, context)
             if runtime.hooks:
                 await runtime.hooks.dispatch(
                     HookPoint.AFTER_TURN,

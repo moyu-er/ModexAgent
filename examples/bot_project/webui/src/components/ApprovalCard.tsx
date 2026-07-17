@@ -2,6 +2,7 @@ import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ApprovalRequestView } from "../types/events";
 import { Button } from "./ui/Button";
 import { ChevronDownIcon } from "./ui/icons";
+import { useT } from "../i18n";
 
 interface Props {
   view: ApprovalRequestView;
@@ -37,6 +38,7 @@ const TIER_BADGE: Record<string, string> = {
  *  rest). Cards only ever render pending requests — decided ones are dropped
  *  from the list by the hook. */
 export function ApprovalCard({ view, onApprove, onDeny, disabled }: Props) {
+  const t = useT();
   const [expanded, setExpanded] = useState(false);
   const preRef = useRef<HTMLPreElement>(null);
   // Whether the clamped preview hides content. Drives the chevron's presence.
@@ -85,7 +87,7 @@ export function ApprovalCard({ view, onApprove, onDeny, disabled }: Props) {
             {view.tool_name}
           </span>
           <span className="text-xs text-mute">
-            awaiting approval
+            {t("approval.awaitingApproval")}
           </span>
         </div>
 
@@ -96,7 +98,7 @@ export function ApprovalCard({ view, onApprove, onDeny, disabled }: Props) {
             disabled={disabled}
             onClick={() => onApprove(view.tool_call_id)}
           >
-            Approve
+            {t("approval.approve")}
           </Button>
           <Button
             variant="danger"
@@ -104,7 +106,7 @@ export function ApprovalCard({ view, onApprove, onDeny, disabled }: Props) {
             disabled={disabled}
             onClick={() => onDeny(view.tool_call_id)}
           >
-            Deny All
+            {t("approval.denyAll")}
           </Button>
         </div>
       </div>
@@ -130,10 +132,10 @@ export function ApprovalCard({ view, onApprove, onDeny, disabled }: Props) {
           type="button"
           onClick={toggle}
           aria-expanded={expanded}
-          aria-label={expanded ? "Collapse arguments" : "Expand arguments"}
+          aria-label={expanded ? t("approval.collapseArgs") : t("approval.expandArgs")}
             className="flex w-full items-center justify-center gap-1 border-t border-hairline py-1 text-[11px] text-mute transition-colors hover:bg-hairline-soft"
           >
-            <span>{expanded ? "Show less" : "Show more"}</span>
+            <span>{expanded ? t("approval.showLess") : t("approval.showMore")}</span>
             <ChevronDownIcon
               open={expanded}
               className="transition-transform duration-200"

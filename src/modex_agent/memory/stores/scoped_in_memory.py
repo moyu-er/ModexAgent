@@ -180,6 +180,24 @@ class InMemoryScopedStorage(StoreMetadata, MessageStore, KVStore, CursorStore, A
             self._touch()
             return self._get_revision_unsafe()
 
+    async def replace_active_messages(
+        self,
+        messages: list[dict[str, Any]],
+        expected_revision: StorageRevision | None = None,
+    ) -> StorageRevision | None:
+        async with self.get_lock().write():
+            if expected_revision is not None:
+                current = self._get_revision_unsafe()
+                if (
+                    current.message_count != expected_revision.message_count
+                    or current.version != expected_revision.version
+                ):
+                    return None
+            tombstones = [m for m in self._messages if m.get("_deleted")]
+            self._messages = tombstones + list(messages)
+            self._touch()
+            return self._get_revision_unsafe()
+
     async def append_log(self, entry: dict[str, Any]) -> dict[str, Any]:
         async with self.get_lock().write():
             cursor = self._cursors.get("default", 0) + 1

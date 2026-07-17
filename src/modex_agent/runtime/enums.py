@@ -93,6 +93,7 @@ class SnapshotReason(StrEnum):
     TOOL_BATCH_PROGRESS = "tool_batch_progress"
     TURN_INTERRUPTED = "turn_interrupted"
     ERROR_RECOVERY = "error_recovery"
+    ITERATION = "iteration"
 
 
 class ApprovalSubjectType(StrEnum):

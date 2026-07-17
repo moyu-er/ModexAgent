@@ -2,12 +2,14 @@ import { useState, type FC } from "react";
 import { Wrench } from "lucide-react";
 import type { ToolTrace } from "../types/events";
 import { ChevronToggleIcon } from "./ui/icons";
+import { useT } from "../i18n";
 
 export interface ToolTraceCardProps {
   tool: ToolTrace;
 }
 
 export const ToolTraceCard: FC<ToolTraceCardProps> = ({ tool }) => {
+  const t = useT();
   const [expanded, setExpanded] = useState(false);
 
   const toggle = (): void => {
@@ -27,14 +29,14 @@ export const ToolTraceCard: FC<ToolTraceCardProps> = ({ tool }) => {
         <Wrench size={13} strokeWidth={1.75} className="mr-1" aria-hidden="true" />
         <span className="font-mono">{tool.tool}</span>
         {tool.result !== undefined && (
-          <span className="ml-auto text-[10px] text-success">done</span>
+          <span className="ml-auto text-[10px] text-success">{t("toolTrace.done")}</span>
         )}
       </button>
       {expanded && (
         <div className="mt-1.5 ml-5 rounded border border-hairline bg-canvas p-3">
           <div className="mb-2">
             <span className="text-[10px] font-semibold uppercase text-mute">
-              Args
+              {t("toolTrace.args")}
             </span>
             <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-xs text-body">
               {argsStr}
@@ -43,7 +45,7 @@ export const ToolTraceCard: FC<ToolTraceCardProps> = ({ tool }) => {
           {tool.result !== undefined && (
             <div>
               <span className="text-[10px] font-semibold uppercase text-mute">
-                Result
+                {t("toolTrace.result")}
               </span>
               <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-xs text-ink">
                 {tool.result}

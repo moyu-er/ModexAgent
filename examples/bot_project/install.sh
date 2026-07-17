@@ -396,36 +396,33 @@ fi
 # ==========================================================================
 # 5b. Global model config
 # ==========================================================================
-if [ ! -f "config/model.yml" ] && [ -f "config/model.example.yml" ]; then
-    echo ""
-    echo "[INFO] Creating config/model.yml from config/model.example.yml..."
-    cp config/model.example.yml config/model.yml
+# No example template is shipped — model.yml is bootstrapped entirely by the
+# `modexbot config` wizard (run by `modexbot install` below). The wizard
+# creates config/model.yml from scratch with the provider/key you enter.
+if [ ! -f "config/model.yml" ]; then
     echo ""
     echo "  >>> ACTION REQUIRED: Set your model via 'modexbot config' <<<"
-    echo "  File: $SCRIPT_DIR/config/model.yml"
+    echo "  The wizard creates config/model.yml from scratch."
     echo "  Minimum required: model, api_key, url"
     echo ""
 fi
 
 # ==========================================================================
-# 6. modexbot install (config wizard + frontend build)
+# 6. modexbot install (frontend build only — no model gate)
 # ==========================================================================
 if [ "$HAS_NODE" -eq 1 ]; then
     echo ""
-    echo "Running modexbot install (config check + frontend build)..."
+    echo "Running modexbot install (frontend build)..."
     "$VENV_PYTHON" -m modexbot install || {
         echo ""
         echo "[WARNING] modexbot install encountered errors."
         echo "  You can retry after fixing the issues above:"
-        echo "    $VENV_PYTHON -m modexbot install"
+        echo "    $VENV_PYTHON" -m modexbot install"
     }
 else
     echo ""
-    echo "[INFO] Node.js not available - running config wizard only."
-    echo "  Frontend build will be skipped (WebUI will NOT be available)."
-    echo ""
-    "$VENV_PYTHON" -m modexbot config
-    echo ""
+    echo "[INFO] Node.js not available — skipping frontend build (WebUI will NOT be available)."
+    echo "  The bot still starts; configure a model via WebUI Settings or 'modexbot config'."
     echo "  After installing Node.js, rebuild the frontend with:"
     echo "    $VENV_PYTHON -m modexbot install -f"
 fi

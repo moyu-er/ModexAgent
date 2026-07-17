@@ -383,7 +383,6 @@ class ForkContextSpec:
     builder: Any
     agent_type: str
     fork_max_messages: int
-    fork_workspace: Path | None
     template_memory: Any
 
 
@@ -427,10 +426,8 @@ class ForkContextProvider(SystemPromptProvider):
 
     ``parent_session_id`` is the authoritative parent for this turn (threaded
     from the dispatch envelope via runtime_info). ``ContextForkBuilder.build``
-    is idempotent per ``(agent_type, invocation_id)`` (first turn of a session
-    writes the fork file, later turns read it), so the per-turn cost is
-    bounded. The provider registers the fork file for eviction-driven cleanup
-    on first build.
+    queries the parent session's message history and returns the fork XML;
+    the provider wraps it in a READ-ONLY reference header.
     """
 
     def __init__(
@@ -459,20 +456,12 @@ class ForkContextProvider(SystemPromptProvider):
                 agent_type=self._spec.agent_type,
                 invocation_id=invocation_id,
                 fork_max_messages=self._spec.fork_max_messages,
-                fork_workspace=self._spec.fork_workspace,
                 template_memory=self._spec.template_memory,
                 subagent_memory_system=self._memory_system,
                 parent_name=parent_name,
             )
             if not fork_xml:
                 return ""
-            if self._spec.fork_workspace is not None:
-                self._spec.builder.register_for_cleanup(
-                    session_id=self._session_id,
-                    fork_workspace=self._spec.fork_workspace,
-                    agent_type=self._spec.agent_type,
-                    invocation_id=invocation_id,
-                )
             return (
                 "## Fork Context\n\n"
                 f"You are a subagent running from a fork of agent '{parent_name}'.\n"

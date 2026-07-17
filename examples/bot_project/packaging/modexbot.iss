@@ -6,8 +6,7 @@
 ;
 ;  Install layout:
 ;    {app}\
-;      python\                    ← bundled CPython 3.12 + ALL third-party deps
-;      runtime\uv.exe             ← bundled uv (for users who add deps later)
+;    python\                    ← bundled CPython 3.12 + ALL third-party deps
 ;      postinstall.py             ← .pth creation + config init (NO NETWORK)
 ;      launcher.pyw               ← fallback launcher (starts bot + opens browser)
 ;      electron\                  ← Electron desktop shell (if packaged)
@@ -37,7 +36,7 @@
 #define MyAppURL "https://github.com/moyu-er/ModexAgent"
 
 #ifndef MyAppVersion
-  #define MyAppVersion "0.1.0"
+  #define MyAppVersion "1.0.0"
 #endif
 
 ; Detect whether Electron was packaged into staging (build.bat --skip-electron
@@ -59,8 +58,8 @@ DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 UsePreviousPrivileges=no
-Compression=lzma2/fast
-SolidCompression=yes
+Compression=lzma2/max
+SolidCompression=no
 LZMANumBlockThreads=4
 WizardStyle=modern
 OutputDir=.
@@ -80,9 +79,6 @@ UninstallDisplayName={#MyAppName}
 
 ; Bundled Python runtime (python-build-standalone + all third-party deps)
 Source: "staging\python\*"; DestDir: "{app}\python"; Flags: ignoreversion recursesubdirs createallsubdirs
-
-; uv.exe (for advanced users who want to add deps later)
-Source: "staging\runtime\uv.exe"; DestDir: "{app}\runtime"; Flags: ignoreversion
 
 ; Full app source (git archive — only tracked files, no secrets)
 Source: "staging\app\*"; DestDir: "{app}\app"; Flags: ignoreversion recursesubdirs createallsubdirs

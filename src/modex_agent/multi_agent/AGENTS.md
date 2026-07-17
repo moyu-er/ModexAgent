@@ -15,7 +15,9 @@ construction path (`AgentTemplate.materialize`), and framework-layer message
 routing.
 
 The messaging model is decided in **ADR-0015** (unified inbox) as revised by
-the **poll-driven redesign** (`docs/superpowers/specs/2026-07-02-poll-driven-unified-inbox-design.md`).
+the **poll-driven redesign** (InboxPoller replaced the per-session Drainer /
+`SessionInputQueue` / `_session_gates` layers — see the `InboxPoller`,
+`Fold-in`, and `Materialize` entries in `CONTEXT.md` for the current design).
 The revised model collapses ADR-0015's Drainer / `SessionInputQueue` /
 `_session_gates` layers to one poller + one inflight dict; ADR-0015's D4/D5/D7/D8
 decisions (pure-router service, `WorkspacePathResolver`, `ContextForkBuilder`,

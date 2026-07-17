@@ -122,7 +122,7 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 
 ## Multi-Agent Setup
 
-- `main` pool: Main agent with all MCP tools, file/shell tools, communication tools + subagents (office-expert, query-12306).
+- `default` pool: General-purpose assistant with file/shell tools, MCP tools (playwright), communication tools + subagents (office-expert).
 - `coder` pool: Main agent + subagents (planner, worker, reviewer, scout, oracle, delegate, context-builder).
 - Communication: `send_to_agent` (async inbox-based).
 - `SubagentAutoSendHook` auto-forwards subagent output to parent.
@@ -214,6 +214,9 @@ are the converged seams; no platform preconditions on any OS.
 | `templates/` | Template files for knowledge, soul, user memory (see `templates/AGENTS.md`) |
 | `tests/` | Test suites including `input_pipeline/` (see `tests/AGENTS.md`) |
 | `plugins/` | Bot plugins (see `plugins/AGENTS.md`) |
+| `experiences/` | Self-learned EXPERIENCE.md storage — runtime-populated by `ExperienceReviewAgent` (not committed; created on first use) |
+| `packaging/` | Windows installer build — Inno Setup + Electron + python-build-standalone (see `packaging/README.md`) |
+| `subworkspace/` | Workspace isolation/runtime target — runtime-populated (`.modex/` state only; not committed) |
 
 ## Testing
 
@@ -225,3 +228,14 @@ cd examples/bot_project/webui && npm test -- --run
 Backend tests cover WebUI endpoints, streaming isolation, pool routing, input pipeline stages, and transcript store. Frontend tests cover the `useWebUIStream` reducer for per-conversation event filtering and `request_id`-based message dedup.
 
 <!-- MANUAL -->
+
+<!-- BEGIN MODEX-RUNTIME (auto-managed; do not edit) -->
+## ModexAgent runtime
+
+You are running inside ModexAgent as an external coding agent.
+
+- Send messages to other agents with `modexctl send --to <name> --content <text>`.
+- Discover routable agents at any time with `modexctl agents`.
+- Your stdout is observed but not delivered; use `modexctl send` for any output that must reach another agent.
+- The `.modex/` directory is framework-managed internal state. Do NOT read, modify, or delete anything under `.modex/`.
+<!-- END MODEX-RUNTIME -->

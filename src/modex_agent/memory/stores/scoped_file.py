@@ -286,6 +286,24 @@ class DefaultScopedStorage(StoreMetadata, MessageStore, KVStore, CursorStore, Ar
             self._write_messages_unsafe(keep_messages)
             return self._get_revision_unsafe()
 
+    async def replace_active_messages(
+        self,
+        messages: list[dict[str, Any]],
+        expected_revision: StorageRevision | None = None,
+    ) -> StorageRevision | None:
+        async with self.get_lock().write():
+            if expected_revision is not None:
+                current = self._get_revision_unsafe()
+                if (
+                    current.message_count != expected_revision.message_count
+                    or current.version != expected_revision.version
+                ):
+                    return None
+            existing = read_jsonl_robust(self._messages_path)
+            tombstones = [m for m in existing if m.get("_deleted")]
+            self._write_messages_unsafe(tombstones + list(messages))
+            return self._get_revision_unsafe()
+
     async def append_log(self, entry: dict[str, Any]) -> dict[str, Any]:
         async with self.get_lock().write():
             cursor = self._get_last_cursor_unsafe("default") + 1

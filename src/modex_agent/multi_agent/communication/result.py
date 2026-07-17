@@ -70,7 +70,7 @@ def format_send_ack(result: AgentSendResult) -> str:
     if result.trace_dir is not None:
         lines.append(
             "Trace (live execution log, append-only, safe to read while it "
-            f"runs): {result.trace_dir}/operations.jsonl"
+            f"runs): {result.trace_dir}/spans.jsonl (OTel)"
         )
     if result.output_path is not None:
         lines.append(

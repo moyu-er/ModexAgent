@@ -190,6 +190,7 @@ class BrokerInputPayload(BaseModel):
     content: str = ""
     session_id: str = ""
     agent_session_id: str = ""
+    message_type: str = ""
     metadata: dict[str, Any] = Field(default_factory=dict)
     sender_id: str = ""
     chat_id: str = ""

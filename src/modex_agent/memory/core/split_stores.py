@@ -150,6 +150,22 @@ class MessageStore(ABC):
         """
         ...
 
+    @abstractmethod
+    async def replace_active_messages(
+        self,
+        messages: list[dict[str, Any]],
+        expected_revision: StorageRevision | None = None,
+    ) -> StorageRevision | None:
+        """Replace the active message list; preserve soft-deleted tombstones.
+
+        All currently-active rows are removed and *messages* become the new
+        active list.  Soft-deleted rows are NOT touched — they survive until
+        :meth:`cleanup_expired` (TTL) or session deletion.  When
+        *expected_revision* is provided and does not match, returns ``None``
+        without modifying anything.
+        """
+        ...
+
 
 class KVStore(ABC):
     """Scoped key/value record store.

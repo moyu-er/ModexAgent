@@ -15,6 +15,7 @@ import type {
   UIMessage,
 } from "../types/events";
 import { envelopeMetadata, envelopeRequestId } from "../types/events";
+import { defaultT, type TFn } from "../i18n";
 
 let _nextId = 0;
 
@@ -83,6 +84,7 @@ function _applyEventToMessages(
   messages: UIMessage[],
   event: ServerEventUnion,
   pendingRequestRef: PendingRequestRef,
+  t: TFn,
 ): { messages: UIMessage[]; isStreaming: boolean } {
   switch (event.event) {
     case "user_message": {
@@ -205,13 +207,13 @@ function _applyEventToMessages(
       // Surface backend errors (e.g. unsupported command, pool switch denied)
       // as a system notice in the chat — not persisted, visible to the user.
       const err = event as ErrorEvent;
-      const text = err.message || "An error occurred";
+      const text = err.message || t("chat.errorFallback");
       return {
         messages: [...messages, {
           id: nextId(),
           role: "system" as const,
           agent_name: err.agent_name || "",
-          blocks: [{ kind: "text" as const, text: `⚠ ${text}` }],
+          blocks: [{ kind: "text" as const, text: `${t("chat.errorPrefix")}${text}` }],
           isStreaming: false,
           timestamp: Date.now(),
         }],
@@ -257,6 +259,7 @@ export function applyServerEvent(
   event: ServerEventUnion,
   currentSessionId: string | null,
   pendingRequestRef: PendingRequestRef,
+  t: TFn = defaultT,
 ): StreamState {
   if (event.event === "approval_request") {
     const areq = event as ApprovalRequestEvent;
@@ -288,7 +291,7 @@ export function applyServerEvent(
   if (sid && sid !== currentSessionId) {
     // Buffer event for a non-selected session (subagent, etc.)
     const prevMessages = state.sessionMessages[sid] || [];
-    const result = _applyEventToMessages(prevMessages, event, pendingRequestRef);
+    const result = _applyEventToMessages(prevMessages, event, pendingRequestRef, t);
     return {
       ...state,
       sessionMessages: { ...state.sessionMessages, [sid]: result.messages },
@@ -299,7 +302,7 @@ export function applyServerEvent(
   // Event for the currently selected session — apply directly.
   // Mirror the streaming flag into the per-session map so the send/pause
   // toggle reflects the true state of whichever session the user switches to.
-  const result = _applyEventToMessages(state.messages, event, pendingRequestRef);
+  const result = _applyEventToMessages(state.messages, event, pendingRequestRef, t);
   return {
     ...state,
     messages: result.messages,

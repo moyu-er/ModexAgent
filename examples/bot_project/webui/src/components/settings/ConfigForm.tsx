@@ -19,16 +19,17 @@ import { Label } from "../ui/Label";
 import { HelperText } from "../ui/HelperText";
 import { FieldError } from "../ui/FieldError";
 import { SecretField } from "./SecretField";
+import { useT } from "../../i18n";
 
 interface Props {
   fields: FieldDescriptor[];
   values: Record<string, unknown>;
-  /** Optional field-level error map keyed by field name. */
   errors?: Record<string, string>;
   onChange: (next: Record<string, unknown>) => void;
 }
 
 export function ConfigForm({ fields, values, errors, onChange }: Props) {
+  const t = useT();
   const update = (name: string, next: unknown) => {
     onChange({ ...values, [name]: next });
   };
@@ -96,7 +97,7 @@ export function ConfigForm({ fields, values, errors, onChange }: Props) {
               helper={
                 error
                   ? undefined
-                  : (field.description ?? "One value per line, or comma-separated.")
+                  : (field.description ?? t("settings.configForm.listHelper"))
               }
             />
           );
@@ -120,7 +121,7 @@ export function ConfigForm({ fields, values, errors, onChange }: Props) {
               helper={
                 error
                   ? undefined
-                  : (field.description ?? "JSON or free-form value, stored as a string.")
+                  : (field.description ?? t("settings.configForm.objectHelper"))
               }
               rows={4}
             />

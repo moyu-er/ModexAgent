@@ -38,14 +38,16 @@ class MessageRowState(StrEnum):
     SOFT_DELETED = "soft_deleted"
 
     @classmethod
-    def active(cls) -> str:
-        """SQL fragment matching active (non-deleted) rows."""
-        return f"'{cls.NORMAL.value}', '{cls.PINNED.value}'"
+    def active(cls) -> tuple[str, ...]:
+        return (cls.NORMAL.value, cls.PINNED.value)
 
     @classmethod
-    def all_visible(cls) -> str:
-        """SQL fragment matching all rows including soft-deleted."""
-        return f"'{cls.NORMAL.value}', '{cls.PINNED.value}', '{cls.SOFT_DELETED.value}'"
+    def all_visible(cls) -> tuple[str, ...]:
+        return (cls.NORMAL.value, cls.PINNED.value, cls.SOFT_DELETED.value)
+
+
+def _placeholders(count: int) -> str:
+    return ", ".join("?" * count)
 
 
 class SqliteMessageStore(MessageStore):
@@ -65,11 +67,12 @@ class SqliteMessageStore(MessageStore):
     # -- reads --------------------------------------------------------------
 
     async def load_messages(self) -> list[dict[str, Any]]:
+        states = MessageRowState.active()
         rows = await self._connection.query_all(
             f"SELECT message_json, state FROM memory_session_messages "
-            f"WHERE scope_key = ? AND state IN ({MessageRowState.active()}) "
+            f"WHERE scope_key = ? AND state IN ({_placeholders(len(states))}) "
             f"ORDER BY seq",
-            (self._scope_json,),
+            (self._scope_json, *states),
         )
         messages: list[dict[str, Any]] = []
         for row in rows:
@@ -80,12 +83,13 @@ class SqliteMessageStore(MessageStore):
         return messages
 
     async def load_all_messages(self) -> list[dict[str, Any]]:
+        states = MessageRowState.all_visible()
         rows = await self._connection.query_all(
             f"SELECT message_json, state FROM memory_session_messages "
             f"WHERE scope_key = ? "
-            f"AND state IN ({MessageRowState.all_visible()}) "
+            f"AND state IN ({_placeholders(len(states))}) "
             f"ORDER BY seq",
-            (self._scope_json,),
+            (self._scope_json, *states),
         )
         messages: list[dict[str, Any]] = []
         for row in rows:
@@ -172,11 +176,12 @@ class SqliteMessageStore(MessageStore):
         as the soft-delete UPDATE.
         """
         async with self._connection.transaction(immediate=True) as tx:
+            active = MessageRowState.active()
             rows = await tx.query_all(
                 f"SELECT seq, message_json, state FROM memory_session_messages "
-                f"WHERE scope_key = ? AND state IN ({MessageRowState.active()}) "
+                f"WHERE scope_key = ? AND state IN ({_placeholders(len(active))}) "
                 f"ORDER BY seq",
-                (self._scope_json,),
+                (self._scope_json, *active),
             )
             total = len(rows)
             if total <= max_messages:
@@ -196,30 +201,47 @@ class SqliteMessageStore(MessageStore):
                 if seq not in keep_seqs:
                     pruned.append(json.loads(row[1]))
                     await tx.execute(
-                        f"UPDATE memory_session_messages "
-                        f"SET state = '{MessageRowState.SOFT_DELETED}', deleted_at = ? "
-                        f"WHERE scope_key = ? AND seq = ?",
-                        (now, self._scope_json, seq),
+                        "UPDATE memory_session_messages "
+                        "SET state = ?, deleted_at = ? "
+                        "WHERE scope_key = ? AND seq = ?",
+                        (
+                            MessageRowState.SOFT_DELETED.value,
+                            now,
+                            self._scope_json,
+                            seq,
+                        ),
                     )
             await self._bump_revision_tx(tx, count_override=None)
             return len(pruned), pruned
 
     async def pin_message(self, message_id: str) -> None:
         await self._connection.execute(
-            f"UPDATE memory_session_messages SET state = '{MessageRowState.PINNED}' "
-            f"WHERE scope_key = ? AND state = '{MessageRowState.NORMAL}' "
-            f"AND (json_extract(message_json, '$.id') = ? "
-            f"     OR json_extract(message_json, '$.message_id') = ?)",
-            (self._scope_json, message_id, message_id),
+            "UPDATE memory_session_messages SET state = ? "
+            "WHERE scope_key = ? AND state = ? "
+            "AND (json_extract(message_json, '$.id') = ? "
+            "     OR json_extract(message_json, '$.message_id') = ?)",
+            (
+                MessageRowState.PINNED.value,
+                self._scope_json,
+                MessageRowState.NORMAL.value,
+                message_id,
+                message_id,
+            ),
         )
 
     async def unpin_message(self, message_id: str) -> None:
         await self._connection.execute(
-            f"UPDATE memory_session_messages SET state = '{MessageRowState.NORMAL}' "
-            f"WHERE scope_key = ? AND state = '{MessageRowState.PINNED}' "
-            f"AND (json_extract(message_json, '$.id') = ? "
-            f"     OR json_extract(message_json, '$.message_id') = ?)",
-            (self._scope_json, message_id, message_id),
+            "UPDATE memory_session_messages SET state = ? "
+            "WHERE scope_key = ? AND state = ? "
+            "AND (json_extract(message_json, '$.id') = ? "
+            "     OR json_extract(message_json, '$.message_id') = ?)",
+            (
+                MessageRowState.NORMAL.value,
+                self._scope_json,
+                MessageRowState.PINNED.value,
+                message_id,
+                message_id,
+            ),
         )
 
     async def delete_message(self, message_id: str) -> bool:
@@ -241,22 +263,72 @@ class SqliteMessageStore(MessageStore):
 
     async def cleanup_expired(self) -> int:
         cutoff = time.time() - self._ttl_seconds
+        sd = MessageRowState.SOFT_DELETED.value
         async with self._connection.transaction(immediate=True) as tx:
             rows = await tx.query_all(
-                f"SELECT COUNT(*) FROM memory_session_messages "
-                f"WHERE scope_key = ? AND state = '{MessageRowState.SOFT_DELETED}' "
-                f"AND deleted_at < ?",
-                (self._scope_json, cutoff),
+                "SELECT COUNT(*) FROM memory_session_messages "
+                "WHERE scope_key = ? AND state = ? "
+                "AND deleted_at < ?",
+                (self._scope_json, sd, cutoff),
             )
             count = int(rows[0][0]) if rows else 0
             if count:
                 await tx.execute(
-                    f"DELETE FROM memory_session_messages "
-                    f"WHERE scope_key = ? AND state = '{MessageRowState.SOFT_DELETED}' "
-                    f"AND deleted_at < ?",
-                    (self._scope_json, cutoff),
+                    "DELETE FROM memory_session_messages "
+                    "WHERE scope_key = ? AND state = ? "
+                    "AND deleted_at < ?",
+                    (self._scope_json, sd, cutoff),
                 )
         return count
+
+    async def replace_active_messages(
+        self,
+        messages: list[dict[str, Any]],
+        expected_revision: StorageRevision | None = None,
+    ) -> StorageRevision | None:
+        active = MessageRowState.active()
+        async with self._connection.transaction(immediate=True) as tx:
+            if expected_revision is not None:
+                row = await tx.query_one(
+                    "SELECT message_count, version FROM memory_revisions WHERE scope_key = ?",
+                    (self._scope_json,),
+                )
+                if row is None:
+                    if expected_revision.message_count != 0 or expected_revision.version != 0:
+                        return None
+                else:
+                    if int(row[0]) != expected_revision.message_count:
+                        return None
+                    if int(row[1]) != expected_revision.version:
+                        return None
+            await tx.execute(
+                f"DELETE FROM memory_session_messages "
+                f"WHERE scope_key = ? AND state IN ({_placeholders(len(active))})",
+                (self._scope_json, *active),
+            )
+            max_seq_row = await tx.query_one(
+                "SELECT COALESCE(MAX(seq), 0) FROM memory_session_messages WHERE scope_key = ?",
+                (self._scope_json,),
+            )
+            next_seq = int(max_seq_row[0]) if max_seq_row is not None else 0
+            now = time.time()
+            for message in messages:
+                next_seq += 1
+                await tx.execute(
+                    "INSERT INTO memory_session_messages "
+                    "(scope_key, scope, seq, role, message_json, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        self._scope_json,
+                        self._scope_json,
+                        next_seq,
+                        str(message.get("role", "user")),
+                        json.dumps(message, ensure_ascii=False),
+                        now,
+                    ),
+                )
+            await self._bump_revision_tx(tx, len(messages))
+        return await self.get_revision()
 
     async def retain_messages(
         self,
@@ -278,11 +350,12 @@ class SqliteMessageStore(MessageStore):
                     if int(row[1]) != expected_revision.version:
                         return None
 
+            active = MessageRowState.active()
             rows = await tx.query_all(
                 f"SELECT seq, message_json FROM memory_session_messages "
-                f"WHERE scope_key = ? AND state IN ({MessageRowState.active()}) "
+                f"WHERE scope_key = ? AND state IN ({_placeholders(len(active))}) "
                 f"ORDER BY seq",
-                (self._scope_json,),
+                (self._scope_json, *active),
             )
 
             keep_sigs = {message_signature(m) for m in keep_messages}
@@ -293,10 +366,15 @@ class SqliteMessageStore(MessageStore):
                 stored_msg = json.loads(row[1])
                 if message_signature(stored_msg) not in keep_sigs:
                     await tx.execute(
-                        f"UPDATE memory_session_messages "
-                        f"SET state = '{MessageRowState.SOFT_DELETED}', deleted_at = ? "
-                        f"WHERE scope_key = ? AND seq = ?",
-                        (now, self._scope_json, seq),
+                        "UPDATE memory_session_messages "
+                        "SET state = ?, deleted_at = ? "
+                        "WHERE scope_key = ? AND seq = ?",
+                        (
+                            MessageRowState.SOFT_DELETED.value,
+                            now,
+                            self._scope_json,
+                            seq,
+                        ),
                     )
                     soft_deleted += 1
 
@@ -315,10 +393,11 @@ class SqliteMessageStore(MessageStore):
         if count_override is not None:
             count = count_override
         else:
+            active = MessageRowState.active()
             row = await tx.query_one(
                 f"SELECT COUNT(*) FROM memory_session_messages "
-                f"WHERE scope_key = ? AND state IN ({MessageRowState.active()})",
-                (self._scope_json,),
+                f"WHERE scope_key = ? AND state IN ({_placeholders(len(active))})",
+                (self._scope_json, *active),
             )
             count = int(row[0]) if row is not None else 0
         await tx.execute(

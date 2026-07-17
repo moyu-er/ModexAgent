@@ -9,10 +9,18 @@ Written test-first: these fail until the providers exist.
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
+
+from modex_agent.core.history import ListMessageHistory
+from modex_agent.core.message import ChatMessage
+from modex_agent.core.scope import MemoryContext
+from modex_agent.memory.archive_models import ArchiveChannel
+from modex_agent.memory.core.models import LongTermMemory
+from modex_agent.memory.core.system import MemorySystem
 from modex_agent.memory.prompt_pipeline.providers import (
     AppendParentPromptProvider,
     ForkContextProvider,
@@ -82,8 +90,72 @@ async def test_append_parent_caches_within_same_session():
 # ── ForkContextProvider ──────────────────────────────────────────────────
 
 
-class _MockMemory:
-    """Stand-in for the subagent memory_system (injected by load(), not in spec)."""
+class _MockMemory(MemorySystem):
+    """Stand-in for the subagent memory_system (injected by load(), not in spec).
+
+    Stub all abstract methods — ForkContextProvider only forwards the instance
+    to ``builder.build(subagent_memory_system=...)``; RecordingBuilder ignores it.
+    """
+
+    async def initialize(self) -> None: ...
+    async def close(self) -> None: ...
+
+    def create_message_history(
+        self,
+        context: MemoryContext,
+        initial_messages: Sequence[ChatMessage | dict[str, Any]] | None = None,
+    ) -> ListMessageHistory:
+        return ListMessageHistory([])
+
+    async def add_messages(
+        self, context: MemoryContext, messages: Sequence[ChatMessage | dict[str, Any]]
+    ) -> None: ...
+
+    async def get_history(self, context: MemoryContext) -> list[ChatMessage]:
+        return []
+
+    async def get_full_history(self, context: MemoryContext) -> list[ChatMessage]:
+        return []
+
+    async def search(
+        self, query: str, context: MemoryContext, limit: int = 5
+    ) -> list[dict[str, Any]]:
+        return []
+
+    async def clear(self, context: MemoryContext) -> None: ...
+    async def get_knowledge(self, context: MemoryContext) -> LongTermMemory:
+        return LongTermMemory()
+
+    async def retrieve_knowledge(
+        self, context: MemoryContext, query: str = ""
+    ) -> LongTermMemory:
+        return LongTermMemory()
+
+    async def get_history_entries(
+        self,
+        context: MemoryContext,
+        limit: int = 5,
+        query: str = "",
+        *,
+        channel: ArchiveChannel = ArchiveChannel.CONTEXT,
+    ) -> list[dict[str, Any]]:
+        return []
+
+    def get_providers(self) -> list[Any]:
+        return []
+
+    async def prefetch_memories(
+        self, query: str, context: MemoryContext
+    ) -> str | None:
+        return None
+
+    async def get_knowledge_directory(
+        self, context: MemoryContext
+    ) -> Path | None:
+        return None
+
+    async def get_storage_path(self, context: MemoryContext) -> Path | None:
+        return None
 
 
 class RecordingBuilder:
@@ -92,17 +164,10 @@ class RecordingBuilder:
     def __init__(self, xml: str = "<fork>CTX</fork>") -> None:
         self._xml = xml
         self.build_calls: list[dict] = []
-        self.cleanup_calls: list[str] = []
 
     async def build(self, **kw) -> str:
         self.build_calls.append(kw)
         return self._xml
-
-    def register_for_cleanup(self, *, session_id, **_kw) -> None:
-        self.cleanup_calls.append(session_id)
-
-    def cleanup(self, session_id: str) -> None:
-        self.cleanup_calls.append(session_id)
 
 
 def _spec(builder) -> ForkContextSpec:
@@ -110,7 +175,6 @@ def _spec(builder) -> ForkContextSpec:
         builder=builder,
         agent_type="planner",
         fork_max_messages=10,
-        fork_workspace=Path("/tmp/fork"),
         template_memory=None,
     )
 
@@ -133,15 +197,6 @@ async def test_fork_provider_wraps_builder_xml():
     assert call["agent_type"] == "planner"
     assert call["invocation_id"] == "inv1"  # derived via session_id_prefix_of
     assert call["parent_name"] == "main"  # derived from the parent session id
-
-
-@pytest.mark.asyncio
-async def test_fork_provider_registers_cleanup_for_session():
-    builder = RecordingBuilder()
-    await ForkContextProvider(
-        _spec(builder), "inv1.planner", _MockMemory(), _PARENT_SID
-    ).get_or_refresh()
-    assert "inv1.planner" in builder.cleanup_calls
 
 
 @pytest.mark.asyncio

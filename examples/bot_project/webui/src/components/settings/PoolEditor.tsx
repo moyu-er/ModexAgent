@@ -36,7 +36,7 @@ import { PromptEditor } from "./PromptEditor";
 import { ConfirmDialog } from "./ConfirmDialog";
 import {
   ExternalMainAgentFields,
-  IMPLEMENTATION_OPTIONS,
+  IMPLEMENTATION_DEFS,
   type ImplementationChoice,
 } from "./ExternalMainAgentFields";
 import {
@@ -58,6 +58,7 @@ import {
   XIcon,
 } from "../ui/icons";
 import { Trash2 } from "lucide-react";
+import { useT, type MessageKey } from "../../i18n";
 
 interface Props {
   pool: string;
@@ -96,14 +97,14 @@ const isValidAgentName = (name: string): boolean =>
 
 const PRESETS: ToolPreset[] = ["full", "read_write", "read_only", "minimal", "none"];
 const CONTEXT_MODES: ContextMode[] = ["fresh", "fork"];
-const CONTEXT_MODE_HINT: Record<ContextMode, string> = {
-  fresh: "Start each turn from an empty context window.",
-  fork: "Fork the parent's recent message history as the starting context.",
+const CONTEXT_MODE_HINT_KEY: Record<ContextMode, MessageKey> = {
+  fresh: "settings.pools.contextModeFresh",
+  fork: "settings.pools.contextModeFork",
 };
 const SYSTEM_PROMPT_MODES: SystemPromptMode[] = ["replace", "append"];
-const SYSTEM_PROMPT_MODE_HINT: Record<SystemPromptMode, string> = {
-  replace: "Use the subagent's own system prompt only.",
-  append: "Append the subagent's prompt after the parent's system prompt.",
+const SYSTEM_PROMPT_MODE_HINT_KEY: Record<SystemPromptMode, MessageKey> = {
+  replace: "settings.pools.promptModeReplace",
+  append: "settings.pools.promptModeAppend",
 };
 const FORK_MAX_DEFAULT = 80;
 const FORK_MAX_MAX = 100;
@@ -135,6 +136,7 @@ type FieldErrors = Record<string, string[]>;
 
 export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
   const toast = useToast();
+  const t = useT();
   const [original, setOriginal] = useState<PoolTree | null>(null);
   const originalRef = useRef<PoolTree | null>(original);
   originalRef.current = original;
@@ -204,7 +206,7 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
       const saved = await savePool(pool, currentForm);
       setOriginal(saved);
       setForm(clone(saved));
-      if (saved.restart_required) restartToast(toast);
+      if (saved.restart_required) restartToast(toast, t);
     } catch (e) {
       if (e instanceof ApiError && e.status === 400) {
         try {
@@ -214,23 +216,23 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
           if (body.fields) setErrors(body.fields);
           else
             toast.show({
-              message: `Save failed: ${e.detail}`,
+              message: t("settings.pools.saveFailed", { detail: e.detail }),
               tone: "warning",
             });
         } catch {
           toast.show({
-            message: `Save failed: ${e.detail}`,
+            message: t("settings.pools.saveFailed", { detail: e.detail }),
             tone: "warning",
           });
         }
       } else {
         toast.show({
-          message: `Save failed: ${e instanceof ApiError ? `${e.status} ${e.detail}` : String(e)}`,
+          message: t("settings.pools.saveFailedStatus", { status: e instanceof ApiError ? e.status : "", detail: e instanceof ApiError ? e.detail : String(e) }),
           tone: "warning",
         });
       }
     }
-  }, [pool, toast]);
+  }, [pool, toast, t]);
 
   const cancel = useCallback((): void => {
     setForm(clone(originalRef.current));
@@ -252,10 +254,10 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
   }, [allPools, form?.peers, pool]);
 
   if (loadError) {
-    return <p className="text-sm text-error">Failed to load: {loadError}</p>;
+    return <p className="text-sm text-error">{t("common.failedToLoad", { error: loadError })}</p>;
   }
   if (!form || !original) {
-    return <p className="text-sm text-body">Loading…</p>;
+    return <p className="text-sm text-body">{t("common.loading")}</p>;
   }
 
   // ── form mutation helpers ──────────────────────────────────────────────────
@@ -319,6 +321,10 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
   const effectiveStrategy: ImplementationChoice = isExternal
     ? "external_coding"
     : "react";
+  const IMPLEMENTATION_OPTIONS = IMPLEMENTATION_DEFS.map((d) => ({
+    value: d.value,
+    label: t(d.labelKey),
+  }));
 
   // native→external is destructive to draft subagents, so it is gated behind a
   // confirm. external→native only re-points the runtime and is applied directly.
@@ -424,13 +430,12 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
   const editor = (
     <div className="space-y-5">
       <h1 className="text-lg font-semibold text-ink">
-        Pool: {pool}
+        {t("settings.pools.poolTitle", { name: pool })}
       </h1>
 
-      {/* MAIN AGENT (fixed-expanded, not collapsible) */}
       <Card id="main-agent-section">
         <div className="border-b border-hairline px-4 py-2">
-          <SectionLabel>Main agent</SectionLabel>
+          <SectionLabel>{t("settings.pools.mainAgent")}</SectionLabel>
         </div>
         <div className="space-y-5 px-4 py-4">
           {isExternal ? (
@@ -444,7 +449,7 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
           ) : (
             <>
               <Select
-                label="Implementation"
+                label={t("settings.pools.implementation")}
                 options={IMPLEMENTATION_OPTIONS}
                 value={effectiveStrategy}
                 onChange={(e) =>
@@ -468,7 +473,7 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
       {/* PEERS */}
       <section>
         <div className="mb-2 flex items-center justify-between">
-          <SectionLabel>Peers</SectionLabel>
+          <SectionLabel>{t("settings.pools.peers")}</SectionLabel>
         </div>
         <div className="space-y-2">
           {form.peers.map((peer) => {
@@ -481,7 +486,7 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
                       {peer}
                     </div>
                     <div className="truncate text-xs text-body">
-                      main agent: {mainAgentNameOf(peer)}
+                      {t("settings.pools.mainAgentName", { name: mainAgentNameOf(peer) })}
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
@@ -493,7 +498,7 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
                           className="text-error hover:underline"
                           onClick={() => void handleRemovePeer(peer)}
                         >
-                          Remove
+                          {t("settings.pools.remove")}
                         </Button>
                         <Button
                           variant="link"
@@ -501,14 +506,14 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
                           className="text-body hover:underline"
                           onClick={() => setPeerToRemove(null)}
                         >
-                          Cancel
+                          {t("common.cancel")}
                         </Button>
                       </span>
                     ) : (
                       <Button
                         variant="ghost"
                         size="sm"
-                        aria-label={`Remove peer ${peer}`}
+                        aria-label={t("settings.pools.removePeer", { name: peer })}
                         className="text-body hover:text-error"
                         onClick={() => setPeerToRemove(peer)}
                       >
@@ -522,15 +527,15 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
           })}
           {form.peers.length === 0 && (
             <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-sm text-body">
-              No peer pools.
+              {t("settings.pools.noPeers")}
             </p>
           )}
           {addingPeer ? (
             <div className="flex items-center gap-2">
               <Select
-                aria-label="New peer pool"
+                aria-label={t("settings.pools.newPeerPool")}
                 options={[
-                  { value: "", label: "Select a pool…" },
+                  { value: "", label: t("settings.pools.selectPool") },
                   ...availablePeers.map((p) => ({
                     value: p.name,
                     label: `${p.name} (${p.main_agent_name})`,
@@ -546,7 +551,7 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
                 onClick={() => void handleAddPeer()}
                 disabled={!newPeer}
               >
-                Add
+                {t("common.add")}
               </Button>
               <Button
                 variant="ghost"
@@ -557,7 +562,7 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
                   setPeerError("");
                 }}
               >
-                Cancel
+                {t("common.cancel")}
               </Button>
             </div>
           ) : (
@@ -567,7 +572,7 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
               onClick={() => setAddingPeer(true)}
               disabled={availablePeers.length === 0}
             >
-              <PlusIcon /> Add peer
+              <PlusIcon /> {t("settings.pools.addPeer")}
             </Button>
           )}
           {peerError && (
@@ -580,7 +585,7 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
       {!isExternal ? (
       <section>
         <div className="mb-2 flex items-center justify-between">
-          <SectionLabel>Subagents</SectionLabel>
+          <SectionLabel>{t("settings.pools.subagents")}</SectionLabel>
         </div>
         <div className="space-y-2">
           {form.subagents.map((sub, i) => (
@@ -606,7 +611,7 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
           ))}
           {form.subagents.length === 0 && (
             <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-sm text-body">
-              No subagents in this pool.
+              {t("settings.pools.noSubagents")}
             </p>
           )}
           <Button
@@ -614,7 +619,7 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
             className="w-full justify-center border border-dashed border-hairline text-body hover:border-ink hover:bg-hairline-soft hover:text-ink"
             onClick={addSubagent}
           >
-            <PlusIcon /> Add subagent
+            <PlusIcon /> {t("settings.pools.addSubagent")}
           </Button>
         </div>
       </section>
@@ -632,7 +637,7 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
         <aside
           className="fixed inset-y-0 right-0 z-50 w-full max-w-2xl overflow-y-auto border-l border-hairline bg-canvas-elevated shadow-floating"
           role="dialog"
-          aria-label="System prompt editor"
+          aria-label={t("settings.pools.systemPromptEditor")}
         >
           <PromptEditor
             pool={pool}
@@ -647,21 +652,21 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
               <div className="flex items-center justify-between border-b border-hairline px-4 py-3">
                 <div>
                   <h2 className="text-sm font-semibold text-ink">
-                    System prompt
+                    {t("settings.pools.systemPrompt")}
                   </h2>
                   <HelperText>
                     {promptTarget.kind === "main"
-                      ? "Main agent"
-                      : `Subagent #${promptTarget.index + 1}`}
+                      ? t("settings.pools.mainAgentLabel")
+                      : t("settings.pools.subagentLabel", { index: promptTarget.index + 1 })}
                   </HelperText>
                 </div>
                 <Button
                   variant="ghost"
                   size="sm"
-                  aria-label="Close prompt editor"
+                  aria-label={t("settings.pools.closePromptEditor")}
                   onClick={() => setPromptTarget(null)}
                 >
-                  <XIcon /> Close
+                  <XIcon /> {t("settings.pools.close")}
                 </Button>
               </div>
             }
@@ -671,9 +676,9 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel }: Props) {
 
       {confirmSwitch ? (
         <ConfirmDialog
-          title="Switch to External runtime?"
-          message={`Switching to External runtime clears this pool's subagents from your draft and hides native-only settings (max steps, terminal, tools, approval, MCP, skills, system prompt). The provider is set to ${descriptorFor(null).label} when none is present. Changes are applied only when you click Save — Cancel leaves the persisted configuration unchanged.`}
-          confirmLabel="Switch to External"
+          title={t("settings.pools.switchExternalTitle")}
+          message={t("settings.pools.switchExternalMessage", { provider: descriptorFor(null).label })}
+          confirmLabel={t("settings.pools.switchExternal")}
           tone="danger"
           onConfirm={applyExternal}
           onCancel={() => setConfirmSwitch(false)}
@@ -743,6 +748,7 @@ function MainAgentFields({
   pool: string;
   onEditPrompt: () => void;
 }) {
+  const t = useT();
   const approval: ApprovalConfig = node.approval ?? {
     enabled: false,
     tools: { write: { allowed_paths: [] }, edit: { allowed_paths: [] } },
@@ -766,21 +772,21 @@ function MainAgentFields({
     <>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Input
-          label="Agent name"
+          label={t("settings.pools.agentName")}
           required
           error={errFor("main.agent_name")}
           value={node.agent_name}
           onChange={(e) => patch({ agent_name: e.target.value })}
         />
         <Input
-          label="Max steps"
+          label={t("settings.pools.maxSteps")}
           type="number"
           error={errFor("main.max_steps")}
           value={node.max_steps}
           onChange={(e) => patch({ max_steps: Number(e.target.value) })}
         />
         <Select
-          label="Tool preset"
+          label={t("settings.pools.toolPreset")}
           error={errFor("main.tool_preset")}
           options={PRESET_OPTIONS}
           value={node.tool_preset}
@@ -790,16 +796,16 @@ function MainAgentFields({
         />
         <div>
           <span className="mb-1 block text-xs font-medium text-body">
-            Terminal
+            {t("settings.pools.terminal")}
           </span>
           <div className="flex flex-col gap-1.5">
             <Checkbox
-              label="Enable terminal"
+              label={t("settings.pools.enableTerminal")}
               checked={node.use_terminal}
               onChange={(e) => patch({ use_terminal: e.target.checked })}
             />
             <Checkbox
-              label="Visible window"
+              label={t("settings.pools.visibleWindow")}
               checked={node.terminal_visibility}
               onChange={(e) =>
                 patch({ terminal_visibility: e.target.checked })
@@ -810,16 +816,16 @@ function MainAgentFields({
       </div>
 
       <Input
-        label="Description"
+        label={t("settings.pools.description")}
         error={errFor("main.description")}
-        helper="Used for agent discovery and inter-agent communication via send_to_agent."
+        helper={t("settings.pools.descriptionHelper")}
         value={node.description}
         onChange={(e) => patch({ description: e.target.value })}
       />
 
       <div>
         <span className="mb-1 block text-xs font-medium text-body">
-          Tool supplements
+          {t("settings.pools.toolSupplements")}
         </span>
         <SupplementsChips
           value={node.tool_supplements}
@@ -830,24 +836,24 @@ function MainAgentFields({
       {/* Approval sub-section */}
       <div className="rounded-md border border-hairline bg-hairline-soft p-3">
         <Checkbox
-          label="Approval required for write/edit tools"
+          label={t("settings.pools.approvalRequired")}
           checked={approval.enabled}
           onChange={(e) => setApproval({ enabled: e.target.checked })}
         />
         {approval.enabled && (
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Textarea
-              label="Write allowed paths (one per line)"
+              label={t("settings.pools.writeAllowedPaths")}
               mono
-              helper="One path per line."
+              helper={t("settings.pools.onePathPerLine")}
               value={writePaths}
               onChange={(e) => setToolPaths("write", e.target.value)}
               style={{ minHeight: "60px" }}
             />
             <Textarea
-              label="Edit allowed paths (one per line)"
+              label={t("settings.pools.editAllowedPaths")}
               mono
-              helper="One path per line."
+              helper={t("settings.pools.onePathPerLine")}
               value={editPaths}
               onChange={(e) => setToolPaths("edit", e.target.value)}
               style={{ minHeight: "60px" }}
@@ -864,7 +870,7 @@ function MainAgentFields({
         <div>
           <AgentSkillSelector pool={pool} agent={savedAgentName} />
           <p className="mt-1 text-xs italic text-body">
-            Skill assignments save immediately.
+            {t("settings.pools.skillAssignmentsImmediate")}
           </p>
         </div>
       </div>
@@ -875,15 +881,14 @@ function MainAgentFields({
           onClick={onEditPrompt}
           disabled={promptDisabled}
           title={
-            promptDisabled ? "Provide an agent name first" : undefined
+            promptDisabled ? t("settings.pools.provideAgentNameFirst") : undefined
           }
         >
-          System prompt [Edit]
+          {t("settings.pools.systemPromptEdit")}
         </Button>
         {promptDisabled && (
           <HelperText>
-            Provide an agent name (lowercase, letters/digits/_/-) to edit its
-            system prompt.
+            {t("settings.pools.provideAgentNameHelper")}
           </HelperText>
         )}
       </div>
@@ -924,6 +929,7 @@ function SubagentCard({
   pool: string;
   onEditPrompt: () => void;
 }) {
+  const t = useT();
   const summary = `${node.tool_preset} · mcp·${node.mcp.length} · ${
     node.context_mode
   }`;
@@ -940,7 +946,7 @@ function SubagentCard({
           <span className="truncate text-sm font-medium text-ink">
             {node.agent_name || (
               <span className="italic text-body">
-                Untitled subagent
+                {t("settings.pools.untitledSubagent")}
               </span>
             )}
           </span>
@@ -957,7 +963,7 @@ function SubagentCard({
                 className="text-error hover:underline"
                 onClick={onConfirmDelete}
               >
-                Delete
+                {t("common.delete")}
               </Button>
               <Button
                 variant="link"
@@ -965,14 +971,14 @@ function SubagentCard({
                 className="text-body hover:underline"
                 onClick={onCancelDelete}
               >
-                Cancel
+                {t("common.cancel")}
               </Button>
             </span>
           ) : (
             <Button
               variant="ghost"
               size="sm"
-              aria-label={`Remove subagent ${node.agent_name || index}`}
+              aria-label={t("settings.pools.removeSubagent", { name: node.agent_name || String(index) })}
               className="text-body hover:text-error"
               onClick={onRequestDelete}
             >
@@ -985,14 +991,14 @@ function SubagentCard({
         <div className="space-y-4 border-t border-hairline px-4 py-4">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Input
-              label="Agent name"
+              label={t("settings.pools.agentName")}
               required
               error={errFor(`subagents.${index}.agent_name`)}
               value={node.agent_name}
               onChange={(e) => onPatch({ agent_name: e.target.value })}
             />
             <Input
-              label="Max steps"
+              label={t("settings.pools.maxSteps")}
               type="number"
               error={errFor(`subagents.${index}.max_steps`)}
               value={node.max_steps}
@@ -1003,7 +1009,7 @@ function SubagentCard({
           </div>
 
           <Input
-            label="Description"
+            label={t("settings.pools.description")}
             required
             error={errFor(`subagents.${index}.description`)}
             value={node.description}
@@ -1012,7 +1018,7 @@ function SubagentCard({
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Select
-              label="Tool preset"
+              label={t("settings.pools.toolPreset")}
               error={errFor(`subagents.${index}.tool_preset`)}
               options={PRESET_OPTIONS}
               value={node.tool_preset}
@@ -1022,7 +1028,7 @@ function SubagentCard({
             />
             <div>
               <Select
-                label="Context mode"
+                label={t("settings.pools.contextMode")}
                 error={errFor(`subagents.${index}.context_mode`)}
                 options={CONTEXT_MODE_OPTIONS}
                 value={node.context_mode}
@@ -1033,12 +1039,12 @@ function SubagentCard({
                 }
               />
               <HelperText>
-                {CONTEXT_MODE_HINT[node.context_mode]}
+                {t(CONTEXT_MODE_HINT_KEY[node.context_mode])}
               </HelperText>
             </div>
             <div>
               <Select
-                label="System prompt mode"
+                label={t("settings.pools.systemPromptMode")}
                 error={errFor(`subagents.${index}.system_prompt_mode`)}
                 options={SYSTEM_PROMPT_MODE_OPTIONS}
                 value={node.system_prompt_mode ?? "replace"}
@@ -1049,17 +1055,13 @@ function SubagentCard({
                 }
               />
               <HelperText>
-                {
-                  SYSTEM_PROMPT_MODE_HINT[
-                    node.system_prompt_mode ?? "replace"
-                  ]
-                }
+                {t(SYSTEM_PROMPT_MODE_HINT_KEY[node.system_prompt_mode ?? "replace"])}
               </HelperText>
             </div>
             {node.context_mode === "fork" && (
               <div>
                 <Input
-                  label="Fork max messages"
+                  label={t("settings.pools.forkMaxMessages")}
                   type="number"
                   min={1}
                   max={FORK_MAX_MAX}
@@ -1075,8 +1077,7 @@ function SubagentCard({
                   }}
                 />
                 <HelperText>
-                  Parent-message cap (1–{FORK_MAX_MAX}). Default{" "}
-                  {FORK_MAX_DEFAULT}.
+                  {t("settings.pools.forkMaxHelper", { max: FORK_MAX_MAX, default: FORK_MAX_DEFAULT })}
                 </HelperText>
               </div>
             )}
@@ -1084,7 +1085,7 @@ function SubagentCard({
 
           <div>
             <span className="mb-1 block text-xs font-medium text-body">
-              Tool supplements
+              {t("settings.pools.toolSupplements")}
             </span>
             <SupplementsChips
               value={node.tool_supplements}
@@ -1100,7 +1101,7 @@ function SubagentCard({
             <div>
               <AgentSkillSelector pool={pool} agent={savedAgentName} />
               <p className="mt-1 text-xs italic text-body">
-                Skill assignments save immediately.
+                {t("settings.pools.skillAssignmentsImmediate")}
               </p>
             </div>
           </div>
@@ -1112,16 +1113,15 @@ function SubagentCard({
               disabled={promptDisabled}
               title={
                 promptDisabled
-                  ? "Provide an agent name first"
+                  ? t("settings.pools.provideAgentNameFirst")
                   : undefined
               }
             >
-              System prompt [Edit]
+              {t("settings.pools.systemPromptEdit")}
             </Button>
             {promptDisabled && (
               <HelperText>
-                Provide an agent name (lowercase, letters/digits/_/-) to edit
-                its system prompt.
+                {t("settings.pools.provideAgentNameHelper")}
               </HelperText>
             )}
           </div>

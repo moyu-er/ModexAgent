@@ -70,6 +70,13 @@ class _MessageStoreImpl(MessageStore):
     ) -> StorageRevision | None:
         return StorageRevision(message_count=len(keep_messages), updated_at=None)  # type: ignore[arg-type]
 
+    async def replace_active_messages(
+        self,
+        messages: list[dict[str, Any]],
+        expected_revision: StorageRevision | None = None,
+    ) -> StorageRevision | None:
+        return StorageRevision(message_count=len(messages), updated_at=None)  # type: ignore[arg-type]
+
 
 class _KVStoreImpl(KVStore):
     async def get(self, key: str) -> Any | None:  # noqa: ANN401 - KV API holds arbitrary values
@@ -140,7 +147,7 @@ class TestMessageStoreABC:
         with pytest.raises(TypeError):
             MessageStore()  # type: ignore[abstract]
 
-    def test_has_eleven_abstract_methods(self) -> None:
+    def test_has_twelve_abstract_methods(self) -> None:
         assert MessageStore.__abstractmethods__ == frozenset(
             {
                 "load_messages",
@@ -154,6 +161,7 @@ class TestMessageStoreABC:
                 "delete_message",
                 "cleanup_expired",
                 "retain_messages",
+                "replace_active_messages",
             }
         )
 
@@ -171,6 +179,7 @@ class TestMessageStoreABC:
             "delete_message",
             "cleanup_expired",
             "retain_messages",
+            "replace_active_messages",
         ],
     )
     def test_method_is_async(self, method: str) -> None:

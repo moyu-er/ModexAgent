@@ -15,6 +15,7 @@ import {
 import { Input } from "../ui/Input";
 import { Select } from "../ui/Select";
 import { PROVIDER_BRAND_ICONS } from "./externalBrands";
+import { useT, type MessageKey } from "../../i18n";
 
 interface ErrFn {
   (loc: string): string | undefined;
@@ -22,13 +23,12 @@ interface ErrFn {
 
 export type ImplementationChoice = "react" | "external_coding";
 
-export const IMPLEMENTATION_OPTIONS: {
-  value: ImplementationChoice;
-  label: string;
-}[] = [
-  { value: "react", label: "Native" },
-  { value: "external_coding", label: "External" },
+const IMPLEMENTATION_DEFS: { value: ImplementationChoice; labelKey: MessageKey }[] = [
+  { value: "react", labelKey: "settings.external.native" },
+  { value: "external_coding", labelKey: "settings.external.external" },
 ];
+
+export { IMPLEMENTATION_DEFS };
 
 export interface ExternalMainAgentFieldsProps {
   node: MainAgentNode;
@@ -45,13 +45,18 @@ export function ExternalMainAgentFields({
   implementationValue,
   onImplementationChange,
 }: ExternalMainAgentFieldsProps) {
+  const t = useT();
   const descriptor = descriptorFor(node.provider_kind);
+  const IMPLEMENTATION_OPTIONS = IMPLEMENTATION_DEFS.map((d) => ({
+    value: d.value,
+    label: t(d.labelKey),
+  }));
 
   return (
     <>
       <div
         role="group"
-        aria-label="External runtime"
+        aria-label={t("settings.external.externalRuntime")}
         data-testid="external-runtime-panel"
         className="space-y-3 rounded-md border border-hairline bg-hairline-soft p-3"
       >
@@ -70,7 +75,7 @@ export function ExternalMainAgentFields({
         })()}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Select
-            label="Implementation"
+            label={t("settings.external.implementation")}
             options={IMPLEMENTATION_OPTIONS}
             value={implementationValue}
             onChange={(e) =>
@@ -78,7 +83,7 @@ export function ExternalMainAgentFields({
             }
           />
           <Select
-            label="Provider"
+            label={t("settings.external.provider")}
             options={PROVIDER_OPTIONS}
             value={selectProvider(node.provider_kind)}
             onChange={(e) =>
@@ -88,19 +93,16 @@ export function ExternalMainAgentFields({
         </div>
         <div>
           <p className="text-xs font-medium text-ink">
-            Managed by the provider runtime
+            {t("settings.external.managedByProvider")}
           </p>
           <p className="mt-1 text-xs text-body">
-            Max steps, terminal, tool preset, approval, MCP, skills and the
-            system prompt are controlled by the {descriptor.cliName} CLI. This
-            agent receives work and replies through{" "}
-            <code className="font-mono">send_to_agent</code>.
+            {t("settings.external.providerRunHelper", { cli: descriptor.cliName })}
           </p>
         </div>
       </div>
 
       <Input
-        label="Agent name"
+        label={t("settings.external.agentName")}
         required
         error={errFor("main.agent_name")}
         value={node.agent_name}
@@ -108,9 +110,9 @@ export function ExternalMainAgentFields({
       />
 
       <Input
-        label="Description"
+        label={t("settings.external.description")}
         error={errFor("main.description")}
-        helper="Used for agent discovery and inter-agent communication via send_to_agent."
+        helper={t("settings.external.descriptionHelper")}
         value={node.description}
         onChange={(e) => patch({ description: e.target.value })}
       />

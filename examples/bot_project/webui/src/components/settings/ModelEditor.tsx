@@ -35,6 +35,7 @@ import {
 import { Trash2, Download } from "lucide-react";
 import type { SelectOption } from "../ui/Select";
 import { CATEGORY } from "./categoryMeta";
+import { useT, type MessageKey } from "../../i18n";
 
 interface ModelEntry {
   name: string;
@@ -70,29 +71,22 @@ type CapabilityValue = "text" | "image" | "video" | "audio";
 
 interface CapabilityDef {
   value: CapabilityValue;
-  label: string;
+  labelKey: MessageKey;
   Icon: (props: { className?: string }) => ReactNode;
 }
 
 const CAPABILITIES: readonly CapabilityDef[] = [
-  { value: "text", label: "Text", Icon: (p) => <TextIcon {...p} /> },
-  { value: "image", label: "Image", Icon: (p) => <ImageIcon {...p} /> },
-  { value: "video", label: "Video", Icon: (p) => <VideoIcon {...p} /> },
-  { value: "audio", label: "Audio", Icon: (p) => <AudioIcon {...p} /> },
+  { value: "text", labelKey: "settings.models.capText", Icon: (p) => <TextIcon {...p} /> },
+  { value: "image", labelKey: "settings.models.capImage", Icon: (p) => <ImageIcon {...p} /> },
+  { value: "video", labelKey: "settings.models.capVideo", Icon: (p) => <VideoIcon {...p} /> },
+  { value: "audio", labelKey: "settings.models.capAudio", Icon: (p) => <AudioIcon {...p} /> },
 ];
 
-const REASONING_EFFORT_OPTIONS: SelectOption[] = [
-  { value: "none", label: "none" },
-  { value: "minimal", label: "minimal" },
-  { value: "low", label: "low" },
-  { value: "medium", label: "medium" },
-  { value: "high", label: "high" },
-  { value: "xhigh", label: "xhigh" },
-];
+const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh"] as const;
 
-const INTERFACE_FORMAT_OPTIONS: SelectOption[] = [
-  { value: "openai_compatible", label: "OpenAI Compatible" },
-  { value: "anthropic", label: "Anthropic" },
+const INTERFACE_FORMAT_DEFS: { value: string; labelKey: MessageKey }[] = [
+  { value: "openai_compatible", labelKey: "settings.models.ifOpenai" },
+  { value: "anthropic", labelKey: "settings.models.ifAnthropic" },
 ];
 
 type Confirm =
@@ -113,10 +107,20 @@ function pickFirstCombo(
 }
 
 export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
+  const t = useT();
   const defaultProvider = String(values.default_provider ?? "");
   const defaultModel = String(values.default_model ?? "");
   const maxContext = Number(values.max_context_tokens ?? 0);
   const providers = (values.providers as Provider[] | undefined) ?? [];
+
+  const REASONING_EFFORT_OPTIONS: SelectOption[] = REASONING_EFFORTS.map((e) => ({
+    value: e,
+    label: e,
+  }));
+  const INTERFACE_FORMAT_OPTIONS: SelectOption[] = INTERFACE_FORMAT_DEFS.map((d) => ({
+    value: d.value,
+    label: t(d.labelKey),
+  }));
 
   const [expanded, setExpanded] = useState<Set<number>>(() => {
     const s = new Set<number>();
@@ -193,7 +197,7 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
   // When no valid combo exists, lead with a disabled placeholder option.
   const placeholderValue = "__placeholder__";
   if (!comboExists) {
-    defaultSelectOptions.unshift({ value: placeholderValue, label: "Select a model" });
+    defaultSelectOptions.unshift({ value: placeholderValue, label: t("settings.models.selectModel") });
   }
   const defaultSelectValue = comboExists ? String(currentComboIdx) : placeholderValue;
 
@@ -404,15 +408,15 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
           <PageHeadIcon size={18} />
         </span>
         <div>
-          <div className="page-title">{meta.title}</div>
-          <div className="page-sub">{meta.sub}</div>
+          <div className="page-title">{meta.titleTerm ?? t(meta.titleKey!)}</div>
+          <div className="page-sub">{t(meta.subKey)}</div>
         </div>
       </div>
 
       {/* Top: default model + max context tokens */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_220px]">
         <Select
-          label="Default model"
+          label={t("settings.models.defaultModel")}
           required
           options={defaultSelectOptions}
           value={defaultSelectValue}
@@ -427,7 +431,7 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
           }}
         />
         <Input
-          label="Max context tokens"
+          label={t("settings.models.maxContextTokens")}
           type="number"
           value={Number.isFinite(maxContext) ? maxContext : 0}
           onChange={(e) => update({ max_context_tokens: Number(e.target.value) })}
@@ -437,7 +441,7 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
       {/* Providers */}
       <div>
         <div className="mb-2 flex items-center justify-between">
-          <SectionLabel>Providers</SectionLabel>
+          <SectionLabel>{t("settings.models.providers")}</SectionLabel>
         </div>
 
         <div className="space-y-2">
@@ -470,12 +474,11 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
                     <StatusDot on={keySet} />
                     <span className="truncate text-sm font-medium text-ink">
                       {p.name || (
-                        <span className="italic text-body">Untitled provider</span>
+                        <span className="italic text-body">{t("settings.models.untitledProvider")}</span>
                       )}
                     </span>
                     <span className="truncate text-xs text-body">
-                      key: {p.key || "none"} · {p.models.length} model
-                      {p.models.length === 1 ? "" : "s"}
+                      {t("settings.models.providerSummary", { key: p.key || "none", count: p.models.length })}
                     </span>
                   </button>
                   <div className="flex shrink-0 items-center gap-2">
@@ -483,8 +486,7 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
                     {confirmingThis ? (
                       <span className="flex items-center gap-2 text-xs">
                         <span className="text-body">
-                          Delete provider and {p.models.length} model
-                          {p.models.length === 1 ? "" : "s"}?
+                          {t("settings.models.deleteProviderConfirm", { count: p.models.length })}
                         </span>
                         <Button
                           variant="link"
@@ -492,7 +494,7 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
                           className="font-medium text-error hover:underline"
                           onClick={() => removeProvider(pi)}
                         >
-                          Delete
+                          {t("common.delete")}
                         </Button>
                         <Button
                           variant="link"
@@ -500,13 +502,13 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
                           className="text-body hover:underline"
                           onClick={() => setConfirm(null)}
                         >
-                          Cancel
+                          {t("common.cancel")}
                         </Button>
                       </span>
                     ) : (
                       <IconButton
                         icon={<Trash2 size={16} />}
-                        label="Remove provider"
+                        label={t("settings.models.removeProvider")}
                         variant="ghost"
                         size="sm"
                         onClick={() => setConfirm({ kind: "provider", pi })}
@@ -520,23 +522,23 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
                   <div className="space-y-5 border-t border-hairline px-4 py-4">
                     {/* Provider fields */}
                     <div>
-                      <SectionLabel>Provider</SectionLabel>
+                      <SectionLabel>{t("settings.models.provider")}</SectionLabel>
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                         <Input
-                          label="Provider key"
+                          label={t("settings.models.providerKey")}
                           required
                           value={p.key}
                           onChange={(e) => handleKeyChange(pi, e.target.value)}
                         />
                         <Input
-                          label="Display name"
+                          label={t("settings.models.displayName")}
                           required
                           value={p.name}
                           onChange={(e) => handleNameChange(pi, e.target.value)}
                         />
                         <div className="sm:col-span-2">
                           <Input
-                            label="Base URL"
+                            label={t("settings.models.baseUrl")}
                             required
                             value={p.base_url}
                             onChange={(e) => handleBaseUrlChange(pi, e.target.value)}
@@ -544,7 +546,7 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
                         </div>
                         <div className="sm:col-span-2">
                           <Select
-                            label="Interface format"
+                            label={t("settings.models.interfaceFormat")}
                             options={INTERFACE_FORMAT_OPTIONS}
                             value={p.interface_format ?? "openai_compatible"}
                             onChange={(e) =>
@@ -553,7 +555,7 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
                           />
                         </div>
                         <div className="sm:col-span-2">
-                          <Label required>API key</Label>
+                          <Label required>{t("settings.models.apiKey")}</Label>
                           <SecretField
                             value={(p.api_key as SecretMaskValue) ?? { has_value: false }}
                             onChange={(next) => handleApiKeyChange(pi, next)}
@@ -561,9 +563,9 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
                         </div>
                         <div className="sm:col-span-2">
                           <Input
-                            label="Models URL (optional)"
+                            label={t("settings.models.modelsUrl")}
                             value={p.models_url ?? ""}
-                            placeholder="留空自动探测 /v1/models"
+                            placeholder={t("settings.models.modelsUrlPlaceholder")}
                             onChange={(e) => handleModelsUrlChange(pi, e.target.value)}
                           />
                         </div>
@@ -573,7 +575,7 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
                     {/* Models */}
                     <div>
                       <div className="mb-2 flex items-center justify-between">
-                        <SectionLabel>Models</SectionLabel>
+                        <SectionLabel>{t("settings.models.models")}</SectionLabel>
                         {p.key && (
                           <Button
                             type="button"
@@ -584,7 +586,7 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
                             disabled={!p.key}
                           >
                             <Download size={14} />
-                            {dirty ? "保存后拉取" : "拉取模型"}
+                            {dirty ? t("settings.models.saveAndFetch") : t("settings.models.fetchModels")}
                           </Button>
                         )}
                       </div>
@@ -607,8 +609,8 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
                               {/* Title / actions row */}
                               <div className="mb-3 flex items-center gap-2">
                                 <span className="truncate font-mono text-xs text-body">
-                                  {m.model || "new model"}
-                                </span>
+                                   {m.model || t("settings.models.newModel")}
+                                 </span>
                                 <div className="ml-auto flex items-center gap-2">
                                   {isModelDefault ? (
                                     <DefaultBadge />
@@ -625,7 +627,7 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
                                           })
                                         }
                                       >
-                                        Set as default
+                                        {t("settings.models.setAsDefault")}
                                       </Button>
                                     )
                                   )}
@@ -637,7 +639,7 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
                                         className="font-medium text-error hover:underline"
                                         onClick={() => removeModel(pi, mi)}
                                       >
-                                        Delete
+                                        {t("common.delete")}
                                       </Button>
                                       <Button
                                         variant="link"
@@ -645,13 +647,13 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
                                         className="text-body hover:underline"
                                         onClick={() => setConfirm(null)}
                                       >
-                                        Cancel
+                                        {t("common.cancel")}
                                       </Button>
                                     </span>
                                   ) : (
                                     <IconButton
                                       icon={<Trash2 size={16} />}
-                                      label="Remove model"
+                                      label={t("settings.models.removeModel")}
                                       variant="ghost"
                                       size="sm"
                                       onClick={() =>
@@ -664,7 +666,7 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
 
                               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                                 <Input
-                                  label="Model key"
+                                  label={t("settings.models.modelKey")}
                                   required
                                   value={m.name}
                                   onChange={(e) =>
@@ -673,7 +675,7 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
                                 />
                                 <div className="relative">
                                   <Input
-                                    label="Model identifier"
+                                    label={t("settings.models.modelIdentifier")}
                                     required
                                     value={m.model}
                                     onChange={(e) =>
@@ -687,7 +689,7 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
                                         setInlineOpen(inlineOpen === pi ? null : pi)
                                       }
                                       className="absolute right-2 top-7 flex h-5 w-5 items-center justify-center rounded text-faint hover:bg-hairline-soft hover:text-ink"
-                                      aria-label="从已拉取列表选择"
+                                      aria-label={t("settings.models.pickFromFetched")}
                                     >
                                       <ChevronRightIcon
                                         className={`h-3 w-3 transition-transform ${inlineOpen === pi ? "rotate-90" : ""}`}
@@ -713,7 +715,7 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
 
                               {/* Capabilities (enum multi-select) */}
                               <div className="mt-3">
-                                <Label>Capabilities</Label>
+                                <Label>{t("settings.models.capabilities")}</Label>
                                 <CapabilityChips
                                   value={m.capabilities}
                                   onChange={(caps) =>
@@ -725,7 +727,7 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
                               {/* Optional numeric fields (no *) */}
                               <div className="mt-3 grid grid-cols-2 gap-3">
                                 <Input
-                                  label="Temperature"
+                                  label={t("settings.models.temperature")}
                                   type="number"
                                   step="0.1"
                                   value={m.temperature}
@@ -736,7 +738,7 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
                                   }
                                 />
                                 <Input
-                                  label="Max output tokens"
+                                  label={t("settings.models.maxOutputTokens")}
                                   type="number"
                                   value={m.max_output_tokens}
                                   onChange={(e) =>
@@ -750,7 +752,7 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
                               {/* Reasoning effort (closed enum) */}
                               <div className="mt-3">
                                 <Select
-                                  label="Reasoning effort"
+                                  label={t("settings.models.reasoningEffort")}
                                   options={REASONING_EFFORT_OPTIONS}
                                   value={m.reasoning_effort ?? "none"}
                                   onChange={(e) =>
@@ -766,7 +768,7 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
 
                         {p.models.length === 0 && (
                           <p className="rounded-md border border-dashed border-hairline px-3 py-2 text-xs text-body">
-                            No models in this provider yet.
+                            {t("settings.models.noModels")}
                           </p>
                         )}
 
@@ -775,7 +777,7 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
                           className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-hairline py-1.5 text-xs text-body hover:border-ink hover:bg-hairline-soft hover:text-ink"
                           onClick={() => addModel(pi)}
                         >
-                          <PlusIcon /> Add model
+                          <PlusIcon /> {t("settings.models.addModel")}
                         </button>
                       </div>
                     </div>
@@ -788,7 +790,7 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
 
           {providers.length === 0 && (
             <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-sm text-body">
-              No providers yet.
+              {t("settings.models.noProviders")}
             </p>
           )}
 
@@ -797,7 +799,7 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
             className="mt-1 flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-hairline py-2.5 text-sm text-body hover:border-ink hover:bg-hairline-soft hover:text-ink"
             onClick={addProvider}
           >
-            <PlusIcon /> Add provider
+            <PlusIcon /> {t("settings.models.addProvider")}
           </button>
         </div>
       </div>
@@ -820,9 +822,10 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
 /* --- small presentational helpers (locality: only this editor uses them) --- */
 
 function DefaultBadge() {
+  const t = useT();
   return (
     <span className="inline-flex items-center gap-1 rounded-full border border-link px-2 py-0.5 text-[11px] font-medium text-link">
-      <DefaultStarIcon className="h-3 w-3" /> Default
+      <DefaultStarIcon className="h-3 w-3" /> {t("settings.models.defaultBadge")}
     </span>
   );
 }
@@ -847,6 +850,7 @@ function CapabilityChips({
   value: string[];
   onChange: (next: string[]) => void;
 }) {
+  const t = useT();
   return (
     <div className="flex flex-wrap gap-1.5">
       {CAPABILITIES.map((c) => {
@@ -857,7 +861,7 @@ function CapabilityChips({
             key={c.value}
             type="button"
             aria-pressed={selected}
-            aria-label={c.label}
+            aria-label={t(c.labelKey)}
             onClick={() =>
               onChange(
                 selected
@@ -872,7 +876,7 @@ function CapabilityChips({
             }
           >
             <Icon />
-            <span>{c.label}</span>
+            <span>{t(c.labelKey)}</span>
           </button>
         );
       })}

@@ -10,8 +10,7 @@ Agent Framework Core - 多Agent服务框架核心
 - Adapter直接接入（无需Gateway）
 """
 
-__version__ = "0.2.0"
-
+from ._version import __version__
 from .agents import ReActAgent, ReActEvent
 from .core.agent import Agent, AgentContext
 from .core.context import ContextManager, ContextState

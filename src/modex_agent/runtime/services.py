@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from modex_agent.memory.context_governance import ContextGovernance
 
     from .store import TurnStateStore
-    from modex_agent.trace.store import TraceStore
+    from modex_agent.trace.otel_store import OtelSpanTraceStore
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ class AgentRuntimeServices:
     approval: ApprovalRuntime | None = None
     governance: ContextGovernance | None = None
     turn_store: TurnStateStore | None = None
-    trace_store: TraceStore | None = None
+    trace_store: OtelSpanTraceStore | None = None
     pending_input_queue: asyncio.Queue[str] | None = None
     safety: RuntimeSafetyPolicy = field(default_factory=RuntimeSafetyPolicy)
     runtime_context_manager: RuntimeContextManager | None = None
@@ -95,7 +95,7 @@ class AgentRuntime:
         return self.services.turn_store
 
     @property
-    def trace_store(self) -> TraceStore | None:
+    def trace_store(self) -> OtelSpanTraceStore | None:
         return self.services.trace_store
 
     @property

@@ -33,11 +33,13 @@ from modex_agent.core.experience import (
     validate_experience_md,
 )
 from modex_agent.hook.abc import AfterTurnHook
+from modex_agent.memory.snapshot import (
+    DEFAULT_SNAPSHOT_MAX_CONTENT_LEN,
+    DEFAULT_SNAPSHOT_MAX_MESSAGES,
+    format_snapshot_text,
+)
 
 logger = logging.getLogger(__name__)
-
-_SNAPSHOT_MAX_MESSAGES = 100
-_SNAPSHOT_MAX_CONTENT_LEN = 2000
 
 
 class ExperienceReviewHook(AfterTurnHook):
@@ -64,13 +66,19 @@ class ExperienceReviewHook(AfterTurnHook):
         meta_store: ExperienceMetaStore,
         min_messages: int = 10,
         exp_cooldown_turns: int = 3,
+        snapshot_max_messages: int = DEFAULT_SNAPSHOT_MAX_MESSAGES,
+        snapshot_max_content_len: int = DEFAULT_SNAPSHOT_MAX_CONTENT_LEN,
     ) -> None:
         self._agent = review_agent
-        self._get_dir = experience_dir if callable(experience_dir) else lambda: experience_dir
+        self._get_dir: Callable[[], Path] = (
+            experience_dir if callable(experience_dir) else lambda: experience_dir
+        )
         self._meta_store = meta_store
         self._min_messages = min_messages
         self._exp_cooldown_turns = exp_cooldown_turns
-        self._pending: set[asyncio.Task] = set()
+        self._snapshot_max_messages = snapshot_max_messages
+        self._snapshot_max_content_len = snapshot_max_content_len
+        self._pending: set[asyncio.Task[None]] = set()
         # Internal turn counter (AgentContext has no turn_count field)
         self._turn_counter: int = 0
         # Turn number when experience tool was last used (0 = never)
@@ -83,14 +91,8 @@ class ExperienceReviewHook(AfterTurnHook):
     # -- dir resolution --------------------------------------------------
 
     def _resolve_dir(self, ctx: AgentContext) -> Path:
-        """Resolve the experience dir for this turn.
-
-        Prefers the per-turn workspace snapshot on ``ctx`` (wired by the
-        workspace manager); falls back to this hook's configured dir when
-        no snapshot is present (legacy / non-workspace wiring).
-        """
         snap = ctx.workspace_snapshot
-        if snap is not None:
+        if snap is not None and snap.experience_dir is not None:
             return snap.experience_dir
         return self._get_dir()
 
@@ -440,26 +442,8 @@ class ExperienceReviewHook(AfterTurnHook):
 
     def _capture_snapshot(self, messages: Sequence[Any]) -> str:
         """Extract recent user/assistant messages as a text snapshot."""
-        if not messages:
-            return ""
-
-        recent = (
-            messages[-_SNAPSHOT_MAX_MESSAGES:]
-            if len(messages) > _SNAPSHOT_MAX_MESSAGES
-            else messages
+        return format_snapshot_text(
+            messages,
+            max_messages=self._snapshot_max_messages,
+            max_content_len=self._snapshot_max_content_len,
         )
-        lines: list[str] = []
-        for m in recent:
-            if isinstance(m, dict):
-                role = m.get("role", "unknown")
-                content = m.get("content", "")
-            else:
-                role = getattr(m, "role", "unknown")
-                content = getattr(m, "content", "")
-            if isinstance(content, str) and content.strip():
-                if len(content) <= _SNAPSHOT_MAX_CONTENT_LEN:
-                    preview = content
-                else:
-                    preview = content[:_SNAPSHOT_MAX_CONTENT_LEN] + " [truncated]"
-                lines.append(f"[{role}]: {preview}")
-        return "\n".join(lines)

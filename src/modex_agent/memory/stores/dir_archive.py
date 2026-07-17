@@ -277,6 +277,13 @@ class DirArchiveStorage(StoreMetadata, MessageStore, KVStore, CursorStore, Archi
     ) -> StorageRevision | None:
         return self._revision()
 
+    async def replace_active_messages(
+        self,
+        messages: list[dict[str, Any]],
+        expected_revision: StorageRevision | None = None,
+    ) -> StorageRevision | None:
+        return self._revision()
+
     async def append_log(self, entry: dict[str, Any]) -> dict[str, Any]:
         self._base.mkdir(parents=True, exist_ok=True)
         log_path = self._base / "archive.jsonl"

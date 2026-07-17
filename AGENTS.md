@@ -1,4 +1,4 @@
-<!-- Updated: 2026-06-22 | Branch: develop_gyt -->
+<!-- Updated: 2026-07-17 | Branch: develop_gyt -->
 
 # Repository Guidelines
 
@@ -21,6 +21,9 @@
 - `modex_agent/tools/`: tool registry, executor, MCP integration, terminal system (pexpect/tmux/winpty backends, input guard, poll loop), overflow management.
 - `modex_agent/commands/`: slash command processor with two-stage dispatch (pre-lock routing + in-lock execution).
 - `modex_agent/sandbox/`: sandboxed execution adapters (Subprocess/Docker/E2B/Landlock).
+- `modex_agent/media/`: attachment/media handling (ADR-0013) — `MediaStore` ABC, MIME classification, security gate, storage routing.
+- `modex_agent/cli/`: framework-side CLI shim — `modexbot`/`modexctl` facade for external coding agent peer messaging (see `src/modexctl/` for the registered `modexctl` console script).
+- Additional modules: `approval/`, `adapters/`, `messaging/`, `workspace/`, `providers/`, `plugins/`, `input_pipeline/`, `trace/`, `registry/`, `utils/` — see `src/modex_agent/AGENTS.md` for the exhaustive module table (26 modules total).
 
 `examples/bot_project/` is the primary end-to-end reference (Pool mode, WebUI React frontend, multi-channel IM adapters: QQ + Telegram). Framework-generic behavior in `src/modex_agent/`; business wiring in `examples/`.
 
@@ -66,7 +69,7 @@ Hybrid persistence: per-workspace SQLite (`<workspace>/.modex/state.db`) for tra
 - **`PersistenceBackend`** enum (`FILE` / `SQLITE`) + **`PersistenceConfig`** (frozen Pydantic) drive IOC factory selection. `SQLITE` is the bot's default; `FILE` remains the framework default.
 - **`ConnectionManager`** owns one private `aiosqlite.Connection` per workspace DB, serializes adapter operations via a manager-owned lock, and runs migrations on open. `MigrationRunner` applies ordered SQL files tracked by a `schema_migrations` table (one explicit transaction per migration; no transaction-control statements in scripts). Two `DatabaseKind` streams: `WORKSPACE` (per-workspace) and `REGISTRY` (global).
 - **Split store ABCs** (`MessageStore`/`KVStore`/`CursorStore`/`ArchiveStore` + `MemoryStoreBundle`) replace the deleted `MemoryStorage` god-interface. File backend: one `DefaultScopedStorage` implements all four. SQLite backend: four independent `Sqlite*Store` adapters.
-- **New / evolved runtime-state ABCs:** `InboxMQ` (evolved from `InboxServer`; adds sync `deliver()` for CLI cross-process use; `DeliveredIdTracker` merged in as internal), `PoolRoutingStore` (extracted from `PoolSessionStore`), `ExternalSessionMapStore` (extracted from `ExternalSessionStore`), `WorkspaceRegistryStore` (deepened from `RegistryStore`), `ApprovalAuditStore` (new append-only audit log), `SessionArtifactCleaner` (DB + file cascade deletion). Old names are kept as deprecated aliases during transition.
+- **New / evolved runtime-state ABCs:** `InboxMQ` (evolved from `InboxServer`; adds sync `deliver()` for CLI cross-process use; `DeliveredIdTracker` merged in as internal), `PoolRoutingStore` (extracted from `PoolSessionStore`), `ExternalSessionMapStore` (extracted from the former `ExternalSessionStore`, now removed), `WorkspaceRegistryStore` (deepened from `RegistryStore`), `ApprovalAuditStore` (new append-only audit log), `SessionArtifactCleaner` (DB + file cascade deletion). Old names are kept as deprecated aliases during transition.
 - **`ContextForkBuilder`** simplified to pure computation (T18): `build()` queries the parent session's `MessageStore` and returns fork XML directly. No fork files written to disk; the cleanup registry is removed. `register_for_cleanup`/`cleanup` are retained as no-ops for caller compatibility.
 - **Terminal state store removed** (T19): `JsonTerminalStateStore` and the `save_state()`/`load_state()` path in `BaseTerminalManager` were dead code and are deleted.
 - **`RecordScope`** (frozen Pydantic) carries all scope dimensions; `canonical()` is the DB scope-key source, `to_path_segment()` drives file paths. `Scope` ABC replaces `MemoryScope`; `build_scope(dims)` is the factory. `PeerPairScope` removed (T04).
@@ -97,7 +100,7 @@ Unit tests under `tests/unit/` (mirrors `src/modex_agent/` structure), architect
 
 ## Documentation
 
-Architecture Decision Records (ADRs) in `docs/adr/` and superpowers documentation in `docs/superpowers/`. Read relevant ADRs before making significant architectural changes.
+Architecture Decision Records (ADRs) in `docs/adr/` (ADR-0001 ~ 0024) and design docs in `docs/design/`. See `docs/AGENTS.md` for the docs index. Read relevant ADRs before making significant architectural changes.
 
 ## Key Files
 
@@ -106,7 +109,7 @@ Architecture Decision Records (ADRs) in `docs/adr/` and superpowers documentatio
 | Root Guidelines | `AGENTS.md` | This file — project overview and conventions |
 | Framework Overview | `src/modex_agent/AGENTS.md` | All framework modules with file counts and responsibilities |
 | Tests Overview | `tests/AGENTS.md` | Unit, framework, and integration test suites |
-| Docs Overview | `docs/AGENTS.md` | ADRs and superpowers documentation |
+| Docs Overview | `docs/AGENTS.md` | Index of `docs/` — ADRs, design docs, agent docs |
 | Bot Reference | `examples/bot_project/AGENTS.md` | End-to-end reference implementation |
 
 ## Agent skills

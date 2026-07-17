@@ -12,11 +12,11 @@ the user's machine.**
 build.bat (7 steps)
   │
   ├─ Step 1/7: prepare_icon.py  → logo.ico                   (from webui/public/logo.jpg)
-  ├─ Step 2/7: fetch_runtime.py → staging/runtime/uv.exe     (for advanced users)
-  ├─ Step 3/7: build_archive.py → staging/app/               (git archive + frontend dist)
-  ├─ Step 4/7: prepare_python.py → staging/python/           (python-build-standalone + site-packages)
+  ├─ Step 2/7: (skipped — uv.exe no longer bundled)
+  ├─ Step 3/7: build_archive.py → staging/app/               (git archive + frontend dist + prune tests/docs/assets)
+  ├─ Step 4/7: prepare_python.py → staging/python/           (python-build-standalone + site-packages, strip dev deps + __pycache__)
   ├─ Step 5/7: electron/pack.js → staging/electron/          (Electron shell + icon embedding)
-  ├─ Step 6/7: ISCC modexbot.iss → ModexBot-Setup-x.x.x.exe
+  ├─ Step 6/7: ISCC modexbot.iss → ModexBot-Setup-x.x.x.exe  (lzma2/max, non-solid)
   └─ Step 7/7: Done
 ```
 
@@ -39,11 +39,13 @@ via `git archive HEAD`.
 | Included (git-tracked) | Excluded (gitignored) |
 |---|---|
 | All `.py` source (`src/modex_agent/`, `bot/`, `modexbot/`) | `.env` (secrets) |
-| `config/*.example.yml` (templates) | `config/model.yml` (API keys) |
+| `config/mcp/registry.example.json` (no-auth template) | `config/model.yml`, `config/im.yml` (secrets) |
 | `config/pools/default/`, `config/pools/coder/` | `config/pools/main/` (personal) |
 | SQLite migration files (`persistence/migrations/*.sql`) | `logs/`, `data/`, `.modex/` |
 | `bot/web/dist/` (pre-built, copied separately) | `node_modules/`, `webui/dist/` |
 | `pyproject.toml`, `README.md`, etc. | `.venv/`, `__pycache__/` |
+
+> Build-time pruning also strips `tests/`, `assets/`, `docs/`, `.github/`, `rules/`, `scripts/` from the staged source, and dev-only site-packages (`mypy`, `pytest`, `pip`, …) + all `__pycache__` from the bundled Python — none are needed at runtime.
 
 ## Icon
 
@@ -115,8 +117,7 @@ Output: `ModexBot-Setup-<version>.exe` (version from `pyproject.toml`).
 │   └── Scripts\
 │       ├── modexbot.bat
 │       └── modexctl.bat
-├── runtime\uv.exe
-└── app\                         ← git archive source
+└── app\                         ← git archive source (tests/assets/docs pruned at build)
     ├── pyproject.toml
     ├── src\modex_agent\
     └── examples\bot_project\
@@ -148,7 +149,7 @@ no venv/pip needed):
 | Want to... | How |
 |---|---|
 | Modify code | Edit `.py` files in `app\`, restart with `modexbot restart` |
-| Add a dependency | `python\python.exe -m pip install <package>` or use `runtime\uv.exe` |
+| Add a dependency | Install Python 3.12 yourself, then `pip install <package>` into `app\` (the bundled runtime ships neither `pip` nor `uv` — by design, to keep the install small) |
 | Rebuild WebUI | Install Node.js → `modexbot install -f` |
 | Change config | Edit `config\*.yml` or use `modexbot config` / WebUI Settings |
 
@@ -166,9 +167,9 @@ Config files with secrets (`.env`, `model.yml`, `im.yml`) are **preserved**.
 |------|---------|
 | `build.bat` | One-click build orchestrator (7 steps, `--skip-fe` / `--skip-electron`) |
 | `prepare_icon.py` | Convert `logo.jpg` → `logo.ico` (Pillow, multi-size) |
-| `fetch_runtime.py` | Download `uv.exe` into staging |
-| `build_archive.py` | `git archive HEAD` + frontend build → `staging/app/` |
-| `prepare_python.py` | Copy python-build-standalone + site-packages from `.venv`, strip project code |
+| `fetch_runtime.py` | Download `uv.exe` into staging (unused — uv no longer bundled; kept as a standalone utility) |
+| `build_archive.py` | `git archive HEAD` + frontend build + prune non-runtime dirs → `staging/app/` |
+| `prepare_python.py` | Copy python-build-standalone + site-packages from `.venv`; strip project code, dev deps, `__pycache__` |
 | `postinstall.py` | Install-time: `.pth` files, CLI shims, config init, import verification |
 | `launcher.pyw` | Browser fallback: starts bot + opens system browser |
 | `modexbot.iss` | Inno Setup script (`#ifexist` conditional for Electron/browser modes) |

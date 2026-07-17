@@ -11,6 +11,7 @@ import { useState } from "react";
 import type { SecretMaskValue, SecretWrite } from "../../types/config";
 import { IconButton } from "../ui/IconButton";
 import { EyeIcon, EyeOffIcon, CopyIcon, CheckIcon, EditIcon } from "../ui/icons";
+import { useT } from "../../i18n";
 
 interface Props {
   value: SecretMaskValue;
@@ -18,6 +19,7 @@ interface Props {
 }
 
 export function SecretField({ value, onChange }: Props) {
+  const t = useT();
   const [editing, setEditing] = useState<boolean>(!value.has_value);
   const [draft, setDraft] = useState<string>("");
   const [cleared, setCleared] = useState<boolean>(false);
@@ -40,7 +42,7 @@ export function SecretField({ value, onChange }: Props) {
   if (cleared) {
     return (
       <div className="flex items-center gap-2">
-        <span className="text-xs italic text-mute">cleared (on save)</span>
+        <span className="text-xs italic text-mute">{t("settings.secretField.cleared")}</span>
         <button
           type="button"
           className="text-xs text-link hover:underline"
@@ -51,7 +53,7 @@ export function SecretField({ value, onChange }: Props) {
             onChange(undefined);
           }}
         >
-          Undo
+          {t("settings.secretField.undo")}
         </button>
       </div>
     );
@@ -65,14 +67,14 @@ export function SecretField({ value, onChange }: Props) {
         </span>
         <IconButton
           icon={<EditIcon />}
-          label="Edit"
+          label={t("settings.secretField.edit")}
           size="sm"
           variant="secondary"
           onClick={() => setEditing(true)}
         />
         <IconButton
           icon={copied ? <CheckIcon /> : <CopyIcon />}
-          label={copied ? "Copied" : "Copy hint"}
+          label={copied ? t("settings.secretField.copied") : t("settings.secretField.copyHint")}
           size="sm"
           variant="ghost"
           onClick={handleCopy}
@@ -85,7 +87,7 @@ export function SecretField({ value, onChange }: Props) {
             onChange({ set: false });
           }}
         >
-          Clear
+          {t("settings.secretField.clear")}
         </button>
       </div>
     );
@@ -97,8 +99,8 @@ export function SecretField({ value, onChange }: Props) {
         className="w-full rounded-xs border border-hairline bg-canvas-elevated px-2.5 py-1.5 font-mono text-sm text-ink placeholder:text-faint focus:border-link focus:outline-none focus:ring-1 focus:ring-link"
         type={revealed ? "text" : "password"}
         role="textbox"
-        aria-label="secret value"
-        placeholder={value.has_value ? "leave empty to keep current" : "enter value"}
+        aria-label={t("settings.secretField.secretValue")}
+        placeholder={value.has_value ? t("settings.secretField.keepCurrent") : t("settings.secretField.enterValue")}
         value={draft}
         onChange={(e) => {
           const v = e.target.value;
@@ -108,7 +110,7 @@ export function SecretField({ value, onChange }: Props) {
       />
       <IconButton
         icon={revealed ? <EyeOffIcon /> : <EyeIcon />}
-        label={revealed ? "Hide value" : "Show value"}
+        label={revealed ? t("settings.secretField.hideValue") : t("settings.secretField.showValue")}
         size="sm"
         variant="ghost"
         onClick={() => setRevealed((r) => !r)}
@@ -116,7 +118,7 @@ export function SecretField({ value, onChange }: Props) {
       {value.has_value ? (
         <IconButton
           icon={copied ? <CheckIcon /> : <CopyIcon />}
-          label={copied ? "Copied" : "Copy hint"}
+          label={copied ? t("settings.secretField.copied") : t("settings.secretField.copyHint")}
           size="sm"
           variant="ghost"
           onClick={handleCopy}

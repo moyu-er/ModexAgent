@@ -78,9 +78,6 @@ class _FakeForkBuilder:
         key = str(parent_session).split(".")[-1]
         return self._map.get(key, f"<fork>empty-{key}</fork>")
 
-    def register_for_cleanup(self, **_kw) -> None: ...
-    def cleanup(self, _sid) -> None: ...
-
 
 def _descriptor_of(call) -> AgentDescriptor:
     kwargs = call.kwargs

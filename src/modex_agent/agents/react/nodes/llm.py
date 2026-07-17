@@ -127,6 +127,10 @@ class LLMNode(Node):
                     {"iteration": state.iteration},
                 )
 
+            # Signal completion of the previous iteration (skip on first iter).
+            if runtime and runtime.hooks and state.iteration > 1:
+                await runtime.hooks.dispatch(HookPoint.AFTER_ITERATION, ctx)
+
             if runtime and runtime.hooks:
                 await runtime.hooks.dispatch(HookPoint.BEFORE_ITERATION, ctx)
 

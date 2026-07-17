@@ -26,6 +26,7 @@ import { Card } from "../ui/Card";
 import { Checkbox } from "../ui/Checkbox";
 import { IconButton } from "../ui/IconButton";
 import { ChevronDownIcon } from "../ui/icons";
+import { useT } from "../../i18n";
 
 interface Props {
   pool: string;
@@ -34,6 +35,7 @@ interface Props {
 
 export function AgentSkillSelector({ pool, agent }: Props) {
   const toast = useToast();
+  const t = useT();
   const [open, setOpen] = useState<boolean>(false);
   const [globalSkills, setGlobalSkills] = useState<SkillEntry[] | null>(null);
   const [agentSkills, setAgentSkills] = useState<SkillEntry[] | null>(null);
@@ -106,12 +108,10 @@ export function AgentSkillSelector({ pool, agent }: Props) {
       // Skill assign/unassign unconditionally mark the pool dirty (the skill
       // manager loads roots at pool boot, not hot-reloaded), so the restart
       // toast fires unconditionally.
-      restartToast(toast);
+      restartToast(toast, t);
     } catch (e) {
       toast.show({
-        message: `Skill ${assigned ? "unassign" : "assign"} failed: ${
-          e instanceof ApiError ? `${e.status} ${e.detail}` : String(e)
-        }`,
+        message: t(assigned ? "settings.agentSkill.unassignFailed" : "settings.agentSkill.assignFailed", { detail: e instanceof ApiError ? `${e.status} ${e.detail}` : String(e) }),
         tone: "warning",
       });
     } finally {
@@ -119,7 +119,7 @@ export function AgentSkillSelector({ pool, agent }: Props) {
     }
   };
 
-  const header = `Skills (${assignedNames.size} selected)`;
+  const header = t("settings.agentSkill.skillsSelected", { count: assignedNames.size });
 
   return (
     <div ref={containerRef} className="relative">
@@ -138,7 +138,7 @@ export function AgentSkillSelector({ pool, agent }: Props) {
           aria-expanded={open}
         >
           <IconButton
-            label={open ? "Collapse" : "Expand"}
+            label={open ? t("settings.agentSkill.collapse") : t("settings.agentSkill.expand")}
             icon={<ChevronDownIcon open={open} />}
             variant="ghost"
             size="sm"
@@ -151,14 +151,14 @@ export function AgentSkillSelector({ pool, agent }: Props) {
         <div className="absolute left-0 right-0 top-full z-10 mt-1 max-h-64 overflow-y-auto rounded-md border border-hairline bg-canvas-elevated shadow-floating">
           <div className="px-3 py-2">
             <p className="mb-2 text-[11px] text-mute">
-              Skill changes apply immediately.
+              {t("settings.agentSkill.changesImmediate")}
             </p>
             {loadError ? (
-              <p className="text-xs text-error">Failed to load: {loadError}</p>
+              <p className="text-xs text-error">{t("settings.agentSkill.failedToLoad", { error: loadError })}</p>
             ) : !globalSkills || !agentSkills ? (
-              <p className="text-xs text-mute">Loading…</p>
+              <p className="text-xs text-mute">{t("settings.agentSkill.loading")}</p>
             ) : globalSkills.length === 0 && localSkills.length === 0 ? (
-              <p className="text-xs text-mute">No skills available.</p>
+              <p className="text-xs text-mute">{t("settings.agentSkill.noSkills")}</p>
             ) : (
               <ul className="space-y-1">
                 {globalSkills.map((s) => {
@@ -180,11 +180,11 @@ export function AgentSkillSelector({ pool, agent }: Props) {
                     <span
                       aria-hidden="true"
                       className="inline-block h-4 w-4 shrink-0 rounded-xs border border-hairline bg-canvas-elevated"
-                      title="Local skill — edit the agent root on disk to remove"
+                      title={t("settings.agentSkill.localSkillTitle")}
                     />
                     <span className="truncate">{s.name}</span>
                     <span className="rounded-full border border-hairline px-1.5 py-0.5 text-[10px] text-mute">
-                      local
+                      {t("settings.agentSkill.local")}
                     </span>
                   </li>
                 ))}

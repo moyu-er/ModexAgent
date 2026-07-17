@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 
 from bot.config.memory_defaults import subagent_memory
 from bot.service.model_choice import ModelChoiceBindHook, ModelChoiceRegistry
-from bot.service.model_config import BotModelConfig
+from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
 from bot.service.model_provider import BotModelProvider
 from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.core.constants import ExecutionStrategy
@@ -45,14 +45,21 @@ from modex_agent.core.scope import MemoryContext
 from modex_agent.core.session_id import SessionIdFactory
 from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.core.session_store import SessionStore
-from modex_agent.core.tool_manager import InMemoryToolManager, Tool, ToolManagerConfig
+from modex_agent.core.tool_manager import (
+    InMemoryToolManager,
+    Tool,
+    ToolManager,
+    ToolManagerConfig,
+)
 from modex_agent.hook import HookErrorPolicy, HookRunner, HookSpec
 from modex_agent.hook.notification import (
     AgentNotificationService,
     MaxIterationNotifyHook,
     TurnOutcomeNotifyHook,
 )
+from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.ioc.configs.memory import MemoryConfig
+from modex_agent.ioc.configs.observability import CassetteScope, ObservabilityConfig, TraceBackend
 from modex_agent.ioc.factories.governance import create_governance
 from modex_agent.memory.cleanup_events import MemoryCleanupListener
 from modex_agent.memory.default_system import DefaultMemorySystem
@@ -100,6 +107,11 @@ from modex_agent.tools.workspace_scoped import (
     WorkspaceRootProvider,
     wrap_standard_tools,
 )
+from modex_agent.trace.cassette import (
+    CassetteFlushHook,
+    CassetteRecorder,
+    apply_cassette_wrapping,
+)
 
 from ._external_coding_wiring import (
     ExternalCodingAwareFactory,
@@ -144,7 +156,7 @@ async def create_pool(
     session_registry: SessionRegistry | None = None,
     session_store: SessionStore | None = None,
     transcript_store: TranscriptStore | None = None,
-    bot_model_config: BotModelConfig,
+    bot_model_config: BotModelConfig | None,
     model_choice_registry: ModelChoiceRegistry,
     mcp_registry: McpConnectionRegistry | None = None,
     persistence: Any | None = None,
@@ -165,7 +177,7 @@ async def create_pool(
 
     provider = _build_llm_provider(pool_name, bot_model_config)
     terminal_manager = _build_terminal_manager(main_spec, pool_name, workspace_handle)
-    default_resolved = bot_model_config.default_resolved()
+    default_resolved = _resolved_or_placeholder(bot_model_config).default_resolved()
 
     inbox_dir = data_dir / "inbox" / pool_name
     inbox_db_path = data_dir / "state.db"
@@ -220,6 +232,17 @@ async def create_pool(
         app_config=app_config,
     )
 
+    cassette_enabled, cassette_scope, cassette_base_dir = _resolve_cassette_config(
+        app_config, data_dir
+    )
+    provider, tool_manager, cassette_recorder = apply_cassette_wrapping(
+        provider,
+        tool_manager,
+        cassette_enabled=cassette_enabled,
+        cassette_scope=cassette_scope,
+        base_dir=cassette_base_dir,
+    )
+
     skill_manager = _build_skill_manager(main_agent_name, project_dir, pool_name)
 
     external_coding_deps: dict[str, Any] | None = None
@@ -257,6 +280,7 @@ async def create_pool(
         shared_interceptor_chain, control_channel,
         workspace_resolver, pool_name, emitter_factory,
         external_coding_deps=external_coding_deps,
+        observability_config=app_config.observability if app_config is not None else None,
     )
     session_factory = SessionIdFactory()
     pool = _build_agent_pool(
@@ -318,6 +342,7 @@ async def create_pool(
         workspace_path_resolver=path_resolver,
         mcp_registry=mcp_registry,
         todo_store=todo_store,
+        trace_enabled=_resolve_trace_enabled(app_config),
     )
     pool._materialize_deps = deps
     pool._template_registry = template_registry
@@ -356,6 +381,7 @@ async def create_pool(
         project_dir, pool_name, templates, template_registry,
         session_registry=session_registry,
         workspace_path_resolver=path_resolver,
+        trace_enabled=_resolve_trace_enabled(app_config),
     )
     tool_manager.register(
         SendToAgentTool(
@@ -380,6 +406,7 @@ async def create_pool(
         root_provider=root_provider,
         bot_model_config=bot_model_config,
         model_choice_registry=model_choice_registry,
+        cassette_recorder=cassette_recorder,
     )
 
     bridge = BrokerBridgeService(
@@ -435,10 +462,42 @@ def _fallback_context_manager(main_spec: MainAgentSpec, system_prompt: str) -> A
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+def _placeholder_model_config() -> BotModelConfig:
+    """A minimal valid BotModelConfig used when no model.yml is configured.
+
+    Lets the bot boot so the user can configure a real model via the WebUI
+    (Settings → Models) or ``modexbot config``. The placeholder provider has
+    empty api_key/base_url, so every real LLM call fails — but
+    ``BotModelProvider.chat_stream`` catches the provider-build failure and
+    returns an ``LLMResponse(finish_reason=ERROR)``, and the ReAct LLM/end
+    nodes surface that as a turn error instead of crashing the process.
+    """
+    return BotModelConfig(
+        default_provider="_unconfigured",
+        default_model="_placeholder",
+        providers=[
+            ProviderCfg(
+                key="_unconfigured",
+                name="_unconfigured",
+                api_key="",
+                base_url="",
+                models=[
+                    ModelCfg(name="_placeholder", model="_placeholder"),
+                ],
+            )
+        ],
+    )
+
+
+def _resolved_or_placeholder(cfg: BotModelConfig | None) -> BotModelConfig:
+    """Return ``cfg`` when a real model is configured, else the placeholder."""
+    return cfg or _placeholder_model_config()
+
+
 def _build_llm_provider(
-    pool_name: str, bot_model_config: BotModelConfig
+    pool_name: str, bot_model_config: BotModelConfig | None
 ) -> BotModelProvider:
-    provider = BotModelProvider(bot_model_config)
+    provider = BotModelProvider(_resolved_or_placeholder(bot_model_config))
     logger.info("Pool '%s': BotModelProvider (default=%s)", pool_name, provider.model)
     return provider
 
@@ -906,6 +965,21 @@ class _WorkspaceEmitterFactory:
         return emitter
 
 
+def _resolve_trace_enabled(app_config: AppConfig | None) -> bool:
+    if app_config is None or app_config.observability is None:
+        return True
+    return app_config.observability.trace_backend != TraceBackend.OFF
+
+
+def _resolve_cassette_config(
+    app_config: AppConfig | None, data_dir: Path
+) -> tuple[bool, CassetteScope, Path]:
+    base_dir = data_dir / "cassette"
+    if app_config is None or app_config.observability is None:
+        return False, CassetteScope.DEFAULT, base_dir
+    return app_config.observability.cassette_enabled, app_config.observability.cassette_scope, base_dir
+
+
 def _build_agent_factory(
     provider,
     tool_manager,
@@ -920,6 +994,7 @@ def _build_agent_factory(
     emitter_factory: Callable | None,
     *,
     external_coding_deps: dict[str, Any] | None = None,
+    observability_config: ObservabilityConfig | None = None,
 ) -> DefaultAgentFactory:
     if external_coding_deps is not None:
         factory: DefaultAgentFactory = ExternalCodingAwareFactory(
@@ -932,6 +1007,7 @@ def _build_agent_factory(
             default_interceptor_chain=shared_interceptor_chain,
             control_channel=control_channel,
             external_coding_deps=external_coding_deps,
+            observability_config=observability_config,
         )
     else:
         factory = DefaultAgentFactory(
@@ -943,6 +1019,7 @@ def _build_agent_factory(
             default_hook_runner=shared_hook_runner,
             default_interceptor_chain=shared_interceptor_chain,
             control_channel=control_channel,
+            observability_config=observability_config,
         )
 
     # Wrap create_agent → inject emitter for ALL agents (resident + subagent)
@@ -1027,7 +1104,7 @@ async def _register_main_agent(
     factory: DefaultAgentFactory,
     broker: MessageBroker,
     context_manager: Any,
-    bot_model_config: BotModelConfig,
+    bot_model_config: BotModelConfig | None,
 ) -> None:
     """Register the main (NORMAL) agent with factory defaults (Design B).
 
@@ -1040,7 +1117,8 @@ async def _register_main_agent(
         AgentLLMConfig,
     )
 
-    default_resolved = bot_model_config.default_resolved()
+    resolved_cfg = _resolved_or_placeholder(bot_model_config)
+    default_resolved = resolved_cfg.default_resolved()
     descriptor = AgentDescriptor(
         address=AgentAddress(kind="agent", name=main_spec.agent_name),
         llm_config=AgentLLMConfig(
@@ -1087,6 +1165,7 @@ def _build_communication(
     *,
     session_registry: SessionRegistry | None = None,
     workspace_path_resolver: WorkspacePathResolver | None = None,
+    trace_enabled: bool = True,
 ) -> tuple[AgentCommunicationService, CommunicationTargetStore]:
     """Build the slimmed AgentCommunicationService + target store.
 
@@ -1108,6 +1187,7 @@ def _build_communication(
         project_dir=project_dir,
         session_registry=session_registry,
         workspace_path_resolver=workspace_path_resolver,
+        trace_enabled=trace_enabled,
     )
 
     # Communication target store — populate from registered agents + templates
@@ -1191,11 +1271,12 @@ def _wire_main_pipeline(
     project_dir: Path,
     command_processor,
     pool_name: str,
-    tool_manager: InMemoryToolManager,
+    tool_manager: ToolManager,
     *,
     root_provider: WorkspaceRootProvider | None = None,
-    bot_model_config: BotModelConfig,
+    bot_model_config: BotModelConfig | None,
     model_choice_registry: ModelChoiceRegistry,
+    cassette_recorder: CassetteRecorder | None = None,
 ) -> None:
     """Wire hooks, interceptors, governance, and command processor on main pipeline.
 
@@ -1232,7 +1313,15 @@ def _wire_main_pipeline(
     # deprecated: the correct approach is to rely on the system prompt layer
     # (TodoAwareSystemPromptProvider) and clear tool descriptions instead of
     # injecting synthetic tool calls into the conversation history.
-    _add_hook(pipeline, ModelChoiceBindHook(bot_model_config, model_choice_registry))
+    _add_hook(
+        pipeline,
+        ModelChoiceBindHook(
+            _resolved_or_placeholder(bot_model_config),
+            model_choice_registry,
+        ),
+    )
+    if cassette_recorder is not None:
+        _add_hook(pipeline, CassetteFlushHook(cassette_recorder))
 
     # Runtime wiring
     pipeline.interceptor_chain = shared_interceptor_chain
@@ -1255,7 +1344,8 @@ def _wire_main_pipeline(
     # otherwise clobber the pipeline's configured policy.
     # model_capabilities threads the per-pool modality declaration so
     # the inline renderer can bind to it per turn (ADR-0014 §1/§3).
-    default_resolved = bot_model_config.default_resolved()
+    resolved_cfg = _resolved_or_placeholder(bot_model_config)
+    default_resolved = resolved_cfg.default_resolved()
     services_kwargs: dict[str, Any] = dict(
         safety=pipeline.safety,
         model_capabilities=default_resolved.capabilities,

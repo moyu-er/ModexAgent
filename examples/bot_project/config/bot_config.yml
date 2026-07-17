@@ -41,3 +41,18 @@ plugins:
 observability:
   run_logging: true
   level: "INFO"
+  # Trace Path (A) — OTel span format (default: file).
+  # "file" writes spans.jsonl (OTel-compatible spans).
+  # "off" disables all trace emission. "otel_http" requires [observability] extra.
+  trace_backend: "file"
+  # otel_endpoint: null             # OTLP HTTP endpoint, e.g. http://localhost:4318/v1/traces
+  # otel_service_name: "modex_agent"
+  retain_reasoning_content: true
+  # Repro Path (B1/B2):
+  # checkpoint_per_iteration: true
+  # cassette_enabled: false
+  # cassette_scope: "default"       # default / full
+  # Training Data Derivation:
+  # training_relevant: false
+  # training_max_iterations: 20
+  # training_max_tokens: 100000

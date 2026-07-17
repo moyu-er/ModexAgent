@@ -24,6 +24,7 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { Button } from "../ui/Button";
 import { Textarea } from "../ui/Textarea";
 import { HelperText } from "../ui/HelperText";
+import { useT } from "../../i18n";
 
 interface Props {
   pool: string;
@@ -35,6 +36,7 @@ interface Props {
 
 export function PromptEditor({ pool, agent, onClose, slideOverHeader }: Props) {
   const toast = useToast();
+  const t = useT();
   const [original, setOriginal] = useState<string | null>(null);
   const [draft, setDraft] = useState<string>("");
   const [loadError, setLoadError] = useState<string>("");
@@ -60,16 +62,16 @@ export function PromptEditor({ pool, agent, onClose, slideOverHeader }: Props) {
   if (loadError) {
     return (
       <div className="space-y-3 p-4">
-        <p className="text-sm text-error">Failed to load: {loadError}</p>
+        <p className="text-sm text-error">{t("settings.promptEditor.failedToLoad", { error: loadError })}</p>
         <Button variant="link" onClick={onClose}>
-          Back
+          {t("settings.promptEditor.back")}
         </Button>
       </div>
     );
   }
 
   if (original === null) {
-    return <p className="p-4 text-sm text-mute">Loading…</p>;
+    return <p className="p-4 text-sm text-mute">{t("settings.promptEditor.loading")}</p>;
   }
 
   const dirty = draft !== original;
@@ -86,10 +88,10 @@ export function PromptEditor({ pool, agent, onClose, slideOverHeader }: Props) {
       setDraft(saved.content);
       // Prompt writes unconditionally mark the pool dirty (no hot-reload path
       // yet), so the restart toast fires unconditionally.
-      restartToast(toast);
+      restartToast(toast, t);
     } catch (e) {
       toast.show({
-        message: `Save failed: ${e instanceof ApiError ? `${e.status} ${e.detail}` : String(e)}`,
+        message: t("settings.promptEditor.saveFailed", { detail: e instanceof ApiError ? `${e.status} ${e.detail}` : String(e) }),
         tone: "warning",
       });
     } finally {
@@ -106,31 +108,29 @@ export function PromptEditor({ pool, agent, onClose, slideOverHeader }: Props) {
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-sm font-semibold text-ink">
-                System prompt — <span className="font-mono">{agent}</span>
+                {t("settings.promptEditor.systemPromptAgent", { agent })}
               </h2>
               <HelperText>
-                This is the base prompt; the runtime pipeline injects
-                skills/memory on top.
+                {t("settings.promptEditor.basePromptHelper")}
               </HelperText>
             </div>
             <Button variant="link" onClick={requestClose}>
-              Back
+              {t("settings.promptEditor.back")}
             </Button>
           </div>
         ) : (
           <div>
             <h3 className="text-sm font-medium text-ink">
-              Agent: <span className="font-mono">{agent}</span>
+              {t("settings.promptEditor.agentLabel", { agent })}
             </h3>
             <HelperText>
-              This is the base prompt; the runtime pipeline injects
-              skills/memory on top.
+              {t("settings.promptEditor.basePromptHelper")}
             </HelperText>
           </div>
         )}
 
         <Textarea
-          aria-label="Prompt body"
+          aria-label={t("settings.promptEditor.promptBody")}
           mono
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
@@ -145,7 +145,7 @@ export function PromptEditor({ pool, agent, onClose, slideOverHeader }: Props) {
           variant="secondary"
           onClick={requestClose}
         >
-          Cancel
+          {t("settings.promptEditor.cancel")}
         </Button>
         <Button
           variant="primary"
@@ -153,15 +153,15 @@ export function PromptEditor({ pool, agent, onClose, slideOverHeader }: Props) {
           disabled={!dirty || saving}
           loading={saving}
         >
-          {saving ? "Saving…" : "Save"}
+          {saving ? t("settings.promptEditor.saving") : t("settings.promptEditor.save")}
         </Button>
       </div>
 
       {confirmDiscard ? (
         <ConfirmDialog
-          title="Discard unsaved changes?"
-          message="Your edits to this system prompt will be lost."
-          confirmLabel="Discard"
+          title={t("settings.promptEditor.discardTitle")}
+          message={t("settings.promptEditor.discardMessage")}
+          confirmLabel={t("settings.promptEditor.discard")}
           tone="danger"
           onConfirm={() => {
             setConfirmDiscard(false);
