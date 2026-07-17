@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from modex_agent.memory.pruned.manager import PrunedManager
     from modex_agent.runtime.approval_decision import ApprovalDecisionCoordinator
     from modex_agent.runtime.store import TurnStateStore
-    from modex_agent.trace.store import TraceStore
+    from modex_agent.trace.otel_store import OtelSpanTraceStore
 
 
 @dataclass(frozen=True)
@@ -37,7 +37,7 @@ class PoolDataSnapshot(ABC):
 
     context_manager: ContextManager
     turn_store: TurnStateStore
-    trace_store: TraceStore | None
+    trace_store: OtelSpanTraceStore | None
     memory_dir: Path | None
     runtime_dir: Path | None
     pruned_manager: PrunedManager | None

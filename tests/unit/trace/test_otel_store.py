@@ -1,0 +1,512 @@
+"""Unit tests for OtelSpanTraceStore and build_trace_stores."""
+
+from __future__ import annotations
+
+import sys
+import types
+from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
+
+from modex_agent.ioc.configs.observability import ObservabilityConfig, TraceBackend
+from modex_agent.trace.otel_store import (
+    OtelSpanTraceStore,
+    build_trace_stores,
+)
+from modex_agent.trace.semconv import GenAiAttr, SpanName, SpanStatusCode
+from modex_agent.trace.store import SpanModel, SpanStatus
+from modex_agent.utils.file_io import read_jsonl_robust
+
+
+def _make_span(
+    trace_id: str = "trace-001",
+    session_id: str = "sess-001",
+    agent_name: str = "react_main",
+    name: str = SpanName.INVOKE_AGENT.value,
+    span_id: str = "span-001",
+    **overrides: object,
+) -> SpanModel:
+    defaults: dict[str, object] = {
+        "trace_id": trace_id,
+        "span_id": span_id,
+        "name": name,
+        "start_time": 1000.0,
+        "attributes": {
+            GenAiAttr.AGENT_NAME: agent_name,
+            GenAiAttr.SESSION_ID: session_id,
+        },
+    }
+    defaults.update(overrides)
+    return SpanModel(**defaults)  # type: ignore[arg-type]
+
+
+# ── OtelSpanTraceStore.save_span ──────────────────────────────────────
+
+
+class TestOtelSpanTraceStoreSaveSpan:
+    async def test_save_span_writes_jsonl(self, tmp_path: Path) -> None:
+        store = OtelSpanTraceStore(base_dir=tmp_path)
+        span = _make_span(name=SpanName.INVOKE_AGENT.value)
+        await store.save_span(span)
+
+        spans_path = tmp_path / "sess-001" / "spans.jsonl"
+        assert spans_path.exists()
+        spans = read_jsonl_robust(spans_path)
+        assert len(spans) == 1
+        assert spans[0]["name"] == SpanName.INVOKE_AGENT.value
+        assert spans[0]["attributes"][GenAiAttr.SESSION_ID] == "sess-001"
+
+    async def test_save_span_appends_to_existing_file(self, tmp_path: Path) -> None:
+        store = OtelSpanTraceStore(base_dir=tmp_path)
+        await store.save_span(_make_span(name=SpanName.INVOKE_AGENT.value, span_id="s1"))
+        await store.save_span(
+            _make_span(name=SpanName.CHAT.value, span_id="s2", parent_span_id="s1")
+        )
+
+        spans = read_jsonl_robust(tmp_path / "sess-001" / "spans.jsonl")
+        assert len(spans) == 2
+        assert spans[0]["name"] == SpanName.INVOKE_AGENT.value
+        assert spans[1]["name"] == SpanName.CHAT.value
+        assert spans[1]["parent_span_id"] == "s1"
+
+    async def test_save_span_creates_parent_dir(self, tmp_path: Path) -> None:
+        nested = tmp_path / "deep" / "nested"
+        store = OtelSpanTraceStore(base_dir=nested)
+        await store.save_span(_make_span(session_id="s1"))
+        assert (nested / "s1" / "spans.jsonl").exists()
+
+    async def test_spans_file_created_at_expected_path(self, tmp_path: Path) -> None:
+        store = OtelSpanTraceStore(base_dir=tmp_path)
+        await store.save_span(_make_span())
+        expected = tmp_path / "sess-001" / "spans.jsonl"
+        assert expected.exists()
+
+    async def test_spans_readable_with_read_jsonl_robust(self, tmp_path: Path) -> None:
+        store = OtelSpanTraceStore(base_dir=tmp_path)
+        await store.save_span(_make_span(name=SpanName.INVOKE_AGENT.value))
+        await store.save_span(
+            _make_span(
+                name=SpanName.CHAT.value,
+                span_id="s2",
+                end_time=1001.1,
+            )
+        )
+
+        path = tmp_path / "sess-001" / "spans.jsonl"
+        spans = read_jsonl_robust(path)
+        assert len(spans) == 2
+        for span in spans:
+            assert "trace_id" in span
+            assert "span_id" in span
+            assert "name" in span
+            assert "attributes" in span
+
+    async def test_otel_emission_failure_preserves_jsonl(
+        self, tmp_path: Path
+    ) -> None:
+        failing_tracer = MagicMock()
+        failing_tracer.start_span.side_effect = RuntimeError("OTLP unreachable")
+
+        store = OtelSpanTraceStore(base_dir=tmp_path, tracer=failing_tracer)
+        span = _make_span(name=SpanName.INVOKE_AGENT.value)
+        await store.save_span(span)
+
+        spans = read_jsonl_robust(tmp_path / "sess-001" / "spans.jsonl")
+        assert len(spans) == 1
+
+
+# ── OtelSpanTraceStore queries ────────────────────────────────────────
+
+
+class TestOtelSpanTraceStoreQueries:
+    async def test_list_by_session_returns_spans(self, tmp_path: Path) -> None:
+        store = OtelSpanTraceStore(base_dir=tmp_path)
+        await store.save_span(_make_span(name=SpanName.INVOKE_AGENT.value, span_id="s1"))
+        await store.save_span(
+            _make_span(name=SpanName.CHAT.value, span_id="s2", parent_span_id="s1")
+        )
+
+        results = await store.list_by_session("sess-001")
+        assert len(results) == 2
+        assert results[0].name == SpanName.INVOKE_AGENT.value
+        assert results[1].name == SpanName.CHAT.value
+
+    async def test_list_by_session_empty_when_no_file(self, tmp_path: Path) -> None:
+        store = OtelSpanTraceStore(base_dir=tmp_path)
+        results = await store.list_by_session("nonexistent")
+        assert results == []
+
+    async def test_list_by_trace_id(self, tmp_path: Path) -> None:
+        store = OtelSpanTraceStore(base_dir=tmp_path)
+        await store.save_span(_make_span(trace_id="t1", session_id="s1", span_id="sp1"))
+        await store.save_span(_make_span(trace_id="t2", session_id="s1", span_id="sp2"))
+
+        results = await store.list_by_trace_id("t1")
+        assert len(results) == 1
+        assert results[0].trace_id == "t1"
+
+    async def test_list_by_trace_id_across_sessions(self, tmp_path: Path) -> None:
+        store = OtelSpanTraceStore(base_dir=tmp_path)
+        await store.save_span(
+            _make_span(trace_id="shared", session_id="s1", span_id="sp1")
+        )
+        await store.save_span(
+            _make_span(trace_id="shared", session_id="s2", span_id="sp2")
+        )
+
+        results = await store.list_by_trace_id("shared")
+        assert len(results) == 2
+
+    async def test_list_by_trace_id_empty_when_no_base_dir(self, tmp_path: Path) -> None:
+        store = OtelSpanTraceStore(base_dir=tmp_path / "does_not_exist")
+        results = await store.list_by_trace_id("any")
+        assert results == []
+
+
+# ── build_trace_stores ────────────────────────────────────────────────
+
+
+class TestBuildTraceStores:
+    def test_off_returns_none(self) -> None:
+        config = ObservabilityConfig(trace_backend=TraceBackend.OFF)
+        result = build_trace_stores(config, Path("/tmp/unused"))
+        assert result is None
+
+    def test_file_returns_otel_store(self, tmp_path: Path) -> None:
+        config = ObservabilityConfig(trace_backend=TraceBackend.FILE)
+        result = build_trace_stores(config, tmp_path)
+        assert result is not None
+        assert isinstance(result, OtelSpanTraceStore)
+
+    async def test_file_writes_spans_jsonl(self, tmp_path: Path) -> None:
+        config = ObservabilityConfig(trace_backend=TraceBackend.FILE)
+        store = build_trace_stores(config, tmp_path)
+        assert store is not None
+
+        span = _make_span(name=SpanName.INVOKE_AGENT.value)
+        await store.save_span(span)
+
+        assert (tmp_path / "sess-001" / "spans.jsonl").exists()
+
+    async def test_off_mode_produces_no_spans_file(self, tmp_path: Path) -> None:
+        config = ObservabilityConfig(trace_backend=TraceBackend.OFF)
+        store = build_trace_stores(config, tmp_path)
+        assert store is None
+        assert not (tmp_path / "sess-001" / "spans.jsonl").exists()
+
+    def test_otel_http_without_extra_raises_import_error(self, tmp_path: Path) -> None:
+        config = ObservabilityConfig(trace_backend=TraceBackend.OTEL_HTTP)
+        try:
+            result = build_trace_stores(config, tmp_path)
+            assert isinstance(result, OtelSpanTraceStore)
+        except ImportError as exc:
+            assert "[observability]" in str(exc)
+            assert "pip install" in str(exc)
+
+    async def test_retain_false_propagated_through_factory(self, tmp_path: Path) -> None:
+        config = ObservabilityConfig(
+            trace_backend=TraceBackend.FILE,
+            retain_reasoning_content=False,
+        )
+        store = build_trace_stores(config, tmp_path)
+        assert store is not None
+        assert store.retain_reasoning_content is False
+
+
+# ── OTLP export (T3) ──────────────────────────────────────────────────
+
+
+@pytest.fixture
+def fake_otel(monkeypatch: pytest.MonkeyPatch) -> types.SimpleNamespace:
+    """Inject fake opentelemetry modules into ``sys.modules`` for testing."""
+
+    created_spans: list[object] = []
+    created_providers: list[object] = []
+    created_exporters: list[object] = []
+    created_processors: list[object] = []
+
+    class FakeSpan:
+        def __init__(
+            self,
+            name: str,
+            kind: str,
+            attributes: dict[str, object] | None,
+            start_time: int | None,
+        ) -> None:
+            self.name = name
+            self.kind = kind
+            self.attributes = dict(attributes) if attributes else {}
+            self.start_time = start_time
+            self.status: object | None = None
+            self.end_time: int | None = None
+            created_spans.append(self)
+
+        def set_status(self, status: object) -> None:
+            self.status = status
+
+        def end(self, end_time: int | None = None) -> None:
+            self.end_time = end_time
+
+    class FakeStatus:
+        def __init__(self, code: str, description: str | None = None) -> None:
+            self.code = code
+            self.description = description
+
+    class FakeStatusCode:
+        OK = "OK"
+        ERROR = "ERROR"
+        UNSET = "UNSET"
+
+    class FakeSpanKind:
+        INTERNAL = "INTERNAL"
+        CLIENT = "CLIENT"
+        SERVER = "SERVER"
+        PRODUCER = "PRODUCER"
+        CONSUMER = "CONSUMER"
+
+    class FakeTracer:
+        def start_span(
+            self,
+            name: str,
+            kind: str = FakeSpanKind.INTERNAL,
+            attributes: dict[str, object] | None = None,
+            start_time: int | None = None,
+        ) -> FakeSpan:
+            return FakeSpan(name, kind, attributes, start_time)
+
+    class FakeTracerProvider:
+        def __init__(self, resource: object | None = None) -> None:
+            self.resource = resource
+            self.processors: list[object] = []
+            created_providers.append(self)
+
+        def add_span_processor(self, processor: object) -> None:
+            self.processors.append(processor)
+
+        def get_tracer(self, name: str) -> FakeTracer:
+            return FakeTracer()
+
+    class FakeResourceInstance:
+        def __init__(self, attrs: dict[str, str]) -> None:
+            self.attrs = attrs
+
+    class FakeResource:
+        @staticmethod
+        def create(attrs: dict[str, str]) -> FakeResourceInstance:
+            return FakeResourceInstance(attrs)
+
+    class FakeBatchSpanProcessor:
+        def __init__(self, exporter: object) -> None:
+            self.exporter = exporter
+            created_processors.append(self)
+
+    class FakeOTLPSpanExporter:
+        def __init__(self, endpoint: str | None = None) -> None:
+            self.endpoint = endpoint
+            created_exporters.append(self)
+
+    modules: dict[str, types.ModuleType] = {
+        "opentelemetry": types.ModuleType("opentelemetry"),
+        "opentelemetry.trace": types.ModuleType("opentelemetry.trace"),
+        "opentelemetry.sdk": types.ModuleType("opentelemetry.sdk"),
+        "opentelemetry.sdk.trace": types.ModuleType("opentelemetry.sdk.trace"),
+        "opentelemetry.sdk.resources": types.ModuleType("opentelemetry.sdk.resources"),
+        "opentelemetry.sdk.trace.export": types.ModuleType("opentelemetry.sdk.trace.export"),
+        "opentelemetry.exporter": types.ModuleType("opentelemetry.exporter"),
+        "opentelemetry.exporter.otlp": types.ModuleType("opentelemetry.exporter.otlp"),
+        "opentelemetry.exporter.otlp.proto": types.ModuleType("opentelemetry.exporter.otlp.proto"),
+        "opentelemetry.exporter.otlp.proto.http": types.ModuleType(
+            "opentelemetry.exporter.otlp.proto.http"
+        ),
+        "opentelemetry.exporter.otlp.proto.http.trace_exporter": types.ModuleType(
+            "opentelemetry.exporter.otlp.proto.http.trace_exporter"
+        ),
+    }
+
+    modules["opentelemetry.trace"].SpanKind = FakeSpanKind  # type: ignore[attr-defined]
+    modules["opentelemetry.trace"].Status = FakeStatus  # type: ignore[attr-defined]
+    modules["opentelemetry.trace"].StatusCode = FakeStatusCode  # type: ignore[attr-defined]
+    modules["opentelemetry.sdk.trace"].TracerProvider = FakeTracerProvider  # type: ignore[attr-defined]
+    modules["opentelemetry.sdk.resources"].Resource = FakeResource  # type: ignore[attr-defined]
+    modules["opentelemetry.sdk.trace.export"].BatchSpanProcessor = (  # type: ignore[attr-defined]
+        FakeBatchSpanProcessor
+    )
+    modules["opentelemetry.exporter.otlp.proto.http.trace_exporter"].OTLPSpanExporter = (  # type: ignore[attr-defined]
+        FakeOTLPSpanExporter
+    )
+
+    for name, mod in modules.items():
+        monkeypatch.setitem(sys.modules, name, mod)
+
+    return types.SimpleNamespace(
+        spans=created_spans,
+        providers=created_providers,
+        exporters=created_exporters,
+        processors=created_processors,
+        FakeTracer=FakeTracer,
+        FakeSpan=FakeSpan,
+        FakeTracerProvider=FakeTracerProvider,
+        FakeResource=FakeResource,
+        FakeBatchSpanProcessor=FakeBatchSpanProcessor,
+        FakeOTLPSpanExporter=FakeOTLPSpanExporter,
+    )
+
+
+class TestOtlpExport:
+    def test_otel_endpoint_set_without_extra_raises_import_error(self, tmp_path: Path) -> None:
+        config = ObservabilityConfig(
+            trace_backend=TraceBackend.FILE,
+            otel_endpoint="http://localhost:4318/v1/traces",
+        )
+        with pytest.raises(ImportError, match=r"\[observability\]"):
+            build_trace_stores(config, tmp_path)
+
+    def test_otel_http_without_extra_raises_import_error(self, tmp_path: Path) -> None:
+        config = ObservabilityConfig(trace_backend=TraceBackend.OTEL_HTTP)
+        with pytest.raises(ImportError, match=r"\[observability\]"):
+            build_trace_stores(config, tmp_path)
+
+    def test_otel_endpoint_not_set_file_only_no_tracer(self, tmp_path: Path) -> None:
+        config = ObservabilityConfig(trace_backend=TraceBackend.FILE)
+        store = build_trace_stores(config, tmp_path)
+        assert store is not None
+        assert isinstance(store, OtelSpanTraceStore)
+        assert store._tracer is None
+
+    def test_otel_endpoint_set_with_extra_builds_otlp_tracer(
+        self, tmp_path: Path, fake_otel: types.SimpleNamespace
+    ) -> None:
+        endpoint = "http://collector:4318/v1/traces"
+        config = ObservabilityConfig(
+            trace_backend=TraceBackend.FILE,
+            otel_endpoint=endpoint,
+            otel_service_name="test-service",
+        )
+        store = build_trace_stores(config, tmp_path)
+        assert store is not None
+        assert isinstance(store, OtelSpanTraceStore)
+
+        assert len(fake_otel.providers) == 1
+        assert len(fake_otel.exporters) == 1
+        assert len(fake_otel.processors) == 1
+
+        assert fake_otel.exporters[0].endpoint == endpoint
+        assert fake_otel.processors[0].exporter is fake_otel.exporters[0]
+        assert fake_otel.processors[0] in fake_otel.providers[0].processors
+
+        assert store._tracer is not None
+
+    def test_otel_http_with_endpoint_and_extra_builds_otlp_tracer(
+        self, tmp_path: Path, fake_otel: types.SimpleNamespace
+    ) -> None:
+        endpoint = "http://otel:4318/v1/traces"
+        config = ObservabilityConfig(
+            trace_backend=TraceBackend.OTEL_HTTP,
+            otel_endpoint=endpoint,
+        )
+        store = build_trace_stores(config, tmp_path)
+        assert store is not None
+        assert isinstance(store, OtelSpanTraceStore)
+        assert len(fake_otel.exporters) == 1
+        assert fake_otel.exporters[0].endpoint == endpoint
+
+    def test_otel_http_without_endpoint_no_tracer_but_extra_required(
+        self, tmp_path: Path, fake_otel: types.SimpleNamespace
+    ) -> None:
+        config = ObservabilityConfig(trace_backend=TraceBackend.OTEL_HTTP)
+        store = build_trace_stores(config, tmp_path)
+        assert store is not None
+        assert isinstance(store, OtelSpanTraceStore)
+        assert store._tracer is None
+        assert len(fake_otel.exporters) == 0
+
+    async def test_save_span_emits_span_via_otel_sdk(
+        self, tmp_path: Path, fake_otel: types.SimpleNamespace
+    ) -> None:
+        config = ObservabilityConfig(
+            trace_backend=TraceBackend.FILE,
+            otel_endpoint="http://collector:4318/v1/traces",
+        )
+        store = build_trace_stores(config, tmp_path)
+        assert store is not None
+
+        span = _make_span(name=SpanName.INVOKE_AGENT.value)
+        await store.save_span(span)
+
+        spans = read_jsonl_robust(tmp_path / "sess-001" / "spans.jsonl")
+        assert len(spans) == 1
+
+        assert len(fake_otel.spans) == 1
+        otel_span = fake_otel.spans[0]
+        assert otel_span.name == SpanName.INVOKE_AGENT.value  # type: ignore[attr-defined]
+        assert otel_span.attributes[GenAiAttr.AGENT_NAME] == "react_main"  # type: ignore[attr-defined]
+        assert otel_span.attributes[GenAiAttr.SESSION_ID] == "sess-001"  # type: ignore[attr-defined]
+
+    async def test_save_span_emits_error_span_status_via_otel_sdk(
+        self, tmp_path: Path, fake_otel: types.SimpleNamespace
+    ) -> None:
+        config = ObservabilityConfig(
+            trace_backend=TraceBackend.FILE,
+            otel_endpoint="http://collector:4318/v1/traces",
+        )
+        store = build_trace_stores(config, tmp_path)
+        assert store is not None
+
+        await store.save_span(_make_span(name=SpanName.INVOKE_AGENT.value, span_id="s1"))
+        error_span = _make_span(
+            name=SpanName.ERROR.value,
+            span_id="s2",
+            status=SpanStatus(code=SpanStatusCode.ERROR, message="boom"),
+        )
+        await store.save_span(error_span)
+
+        assert len(fake_otel.spans) == 2
+        otel_error_span = fake_otel.spans[1]
+        assert otel_error_span.status.code == "ERROR"  # type: ignore[attr-defined]
+        assert otel_error_span.status.description == "boom"  # type: ignore[attr-defined]
+
+
+# ── format_send_ack single-path ──────────────────────────────────────
+
+
+class TestFormatSendAckSinglePath:
+    def test_ack_contains_only_spans_jsonl(self, tmp_path: Path) -> None:
+        from modex_agent.multi_agent.comm_kind import AgentCommKind
+        from modex_agent.multi_agent.communication.result import (
+            AgentSendResult,
+            format_send_ack,
+        )
+
+        trace_dir = tmp_path / "trace" / "sess-001"
+        result = AgentSendResult(
+            target_agent="worker",
+            target_kind=AgentCommKind.SUBAGENT,
+            session_id="sess-001",
+            invocation_id="inv-1",
+            created_new_task=True,
+            trace_dir=trace_dir,
+        )
+        ack = format_send_ack(result)
+        assert "spans.jsonl" in ack
+        assert "operations.jsonl" not in ack
+        assert "OTel" in ack
+
+    def test_ack_no_trace_dir_omits_paths(self) -> None:
+        from modex_agent.multi_agent.comm_kind import AgentCommKind
+        from modex_agent.multi_agent.communication.result import (
+            AgentSendResult,
+            format_send_ack,
+        )
+
+        result = AgentSendResult(
+            target_agent="worker",
+            target_kind=AgentCommKind.SUBAGENT,
+            session_id="sess-001",
+            invocation_id="inv-1",
+            created_new_task=True,
+            trace_dir=None,
+        )
+        ack = format_send_ack(result)
+        assert "spans.jsonl" not in ack
+        assert "operations.jsonl" not in ack

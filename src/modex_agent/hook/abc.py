@@ -21,7 +21,8 @@ if TYPE_CHECKING:
 class HookPoint(str, Enum):
     """Hook 调度点枚举。
 
-    枚举值必须等于 Hook 对象上的方法名，HookRunner 通过 getattr(hook, hook_point.value) 调度。
+    HookRunner.dispatch 通过 _HOOK_DISPATCH 字典将每个 HookPoint 映射到对应的
+    ABC 类与调用函数，再用 isinstance(hook, dispatch_cls) 检查决定是否调用该 hook。
     """
 
     BEFORE_TURN = "before_turn"

@@ -5,19 +5,25 @@
 
 ## Purpose
 
-Unified operation-level trace system for all agents. Records per-operation traces (TURN_START, LLM_CALL, TOOL_BATCH, TOOL_CALL, TURN_END) into append-only JSON-lines files. Each trace is grouped by `trace_id` (per turn) and `session_id` (per agent session), enabling debugging, replay, and observability across ReAct loops.
+OTel-native observability layer for all agents. Emits OpenTelemetry-compatible
+spans (`gen_ai.*` semantic conventions) to local JSONL files (`spans.jsonl`)
+and optionally to remote OTLP backends (Langfuse/Phoenix/Datadog). Also
+provides cassette-based deterministic replay and training-data derivation.
 
 ## Key Files
 
 | File | Description |
 |------|-------------|
-| `store.py` | `TraceStore` ABC — abstract persistence interface; `JsonFileTraceStore` — append-only JSON-lines implementation (`{base_dir}/{session_id}/operations.jsonl`) |
-| `hooks.py` | `TraceCollectorHook` — lifecycle hook implementing `BeforeTurnHook`, `AfterLLMResponseHook`, `BeforeToolExecutionHook`, `AfterToolExecutionHook`, `FinallyTurnHook`. Records all operation types with truncated content for local storage |
-| `types.py` | `OperationRecord` dataclass — `trace_id`, `session_id`, `agent_name`, `invocation_id`, `kind` (`OperationKind`), `status` (`OperationStatus`), `timestamp`, `duration_ms`, `metadata`, `error`. `to_json_dict()` serialiser |
+| `store.py` | `SpanModel`/`SpanStatus` (frozen Pydantic), `TraceQuery` ABC (read-only: `list_by_session`/`list_by_trace_id`), `JsonlSpanQuery` (pure-read impl) |
+| `otel_store.py` | `OtelSpanTraceStore(TraceQuery)` — writes `spans.jsonl` + optional OTLP export via OTel SDK `Tracer`. `build_trace_stores()` factory with config-driven selection + `ImportError` guard for `[observability]` extra |
+| `semconv.py` | `GenAiAttr`/`SpanName`/`SpanKind`/`SpanStatusCode` StrEnums centralizing all `gen_ai.*` attribute names and span name mappings |
+| `hooks.py` | `TraceCollectorHook` — implements 5 hook ABCs, constructs `SpanModel` directly, maintains `_root_span_info` for parent linking |
+| `cassette.py` | `CassetteRecorder` (wraps LLM provider + tool dispatcher for bit-identical replay), `CassetteReplayEngine`, `CassetteFlushHook(FinallyTurnHook)`, content-addressed storage |
+| `training_exporter.py` | `TrainingDataExporter` — derives SFT OpenAI messages JSONL + DPO preference-pair JSONL from traced spans. L2 scoring, 3-tier dedup, scope-aware filtering |
 
 ## Subdirectories
 
-None — flat module (3 source files + `__init__.py`).
+None — flat module (6 source files + `__init__.py`).
 
 ## For AI Agents
 
@@ -25,49 +31,67 @@ None — flat module (3 source files + `__init__.py`).
 
 ```
 TraceCollectorHook (lifecycle events)
-    ↓ _save() → TraceStore.save(OperationRecord)
-    ├─ constructor stores (direct/test injection)
-    └─ ctx.runtime.services.trace_store (workspace-rooted, wired by pipeline)
+    ↓ save_span(SpanModel) → OtelSpanTraceStore
     ↓
-JsonFileTraceStore (append JSON line)
-    → {base_dir}/{session_id}/operations.jsonl
+OtelSpanTraceStore
+    ├─ Primary: write spans.jsonl (local, agent self-read)
+    │   → {base_dir}/{session_id}/spans.jsonl
+    └─ Secondary: emit via OTel SDK (optional, when otel_endpoint set)
+        → OTLP HTTP → Langfuse/Phoenix/Datadog
 ```
 
-### Recorded Events
+### Span Tree Construction
 
-| Hook Point | OperationKind | Content |
-|------------|---------------|---------|
-| `before_turn` | `TURN_START` | turn_id, recent_messages (last 3 user/assistant) |
-| `after_llm_response` | `LLM_CALL` | finish_reason, content, reasoning, usage, tool_calls |
-| `before_tool_execution` | `TOOL_BATCH` | tool_count, tool_names, tool_arguments |
-| `after_tool_execution` | `TOOL_CALL` | tool_name, duration_ms, result (per tool) |
-| `finally_turn` | `TURN_END` | stop_reason, content, error |
+```
+invoke_agent (INTERNAL, parent_span_id=null)
+    ← written at finally_turn with full duration + stop_reason + error
+    │
+    ├─ chat (CLIENT) — each LLM call
+    ├─ execute_tool_batch (INTERNAL) — tool batch start
+    ├─ execute_tool (INTERNAL) — per-tool result
+    ├─ human.review (INTERNAL) — approval decisions
+    └─ training_tag (INTERNAL) — gen_ai.training.relevant flag
+```
+
+`_root_span_info: dict[trace_id, (span_id, start_time)]` is set at
+`before_turn` (pre-registration) and consumed at `finally_turn` (root span
+write + cleanup). Child spans reference the root via `parent_span_id`.
 
 ### Design Rules
 
-- Content is truncated at 4000 chars (`_CONTENT_MAX_CHARS`) for local file friendliness; `_ARG_MAX_CHARS` set at 2000 for tool arguments.
-- `trace_id` is auto-generated per turn via `uuid.uuid4().hex` and stored in `TurnCustomKey.TRACE_ID` for idempotent reuse.
-- `TraceCollectorHook` unions constructor stores with the runtime `trace_store` (deduplicated by identity).
-- Malformed JSON lines are skipped with a warning (resilient to partial writes).
-- All hook methods are no-ops when `enabled=False`.
+- `reasoning_content` retained in trace when `retain_reasoning_content=True`;
+  stripped in `OtelSpanTraceStore.save_span()` when `False`.
+- `trace_backend=OFF` disables all span emission (zero overhead).
+- `trace_backend=FILE` (default) writes local JSONL only.
+- `otel_endpoint` set → concurrent local + remote OTLP export.
+- OTel SDK import is lazy (inside `build_trace_stores`), not at module level.
+- `_root_span_info` is cleaned up in `finally_turn` (no memory leak).
 
 ### Query Interface
 
-- `JsonFileTraceStore.list_by_session(session_id)` — all records for one session, ordered by file order (≈chronological).
-- `JsonFileTraceStore.list_by_trace_id(trace_id)` — cross-session search for a specific trace.
+- `OtelSpanTraceStore.list_by_session(session_id)` — spans from `spans.jsonl`.
+- `OtelSpanTraceStore.list_by_trace_id(trace_id)` — cross-session search.
+- `JsonlSpanQuery` — pure-read implementation (no write capability).
+
+### Configuration
+
+See `ObservabilityConfig` in `ioc/configs/observability.py`:
+`trace_backend`, `otel_endpoint`, `otel_service_name`,
+`retain_reasoning_content`, `checkpoint_per_iteration`,
+`cassette_enabled`, `cassette_scope`, `training_relevant`,
+`training_max_iterations`, `training_max_tokens`.
 
 ## Dependencies
 
 ### Internal
-- `modex_agent.hook.abc` — `BeforeTurnHook`, `AfterLLMResponseHook`, `BeforeToolExecutionHook`, `AfterToolExecutionHook`, `FinallyTurnHook`
-- `modex_agent.runtime.enums` — `OperationKind`, `OperationStatus`, `TurnCustomKey`
-- `modex_agent.core.agent` — `AgentContext`
-- `modex_agent.core.emitter` — `AgentResult`
-- `modex_agent.core.tool_manager` — `ToolResult`
-- `modex_agent.core.types` — `LLMResponse`, `ToolCall`
+- `modex_agent.hook.abc` — hook ABCs
+- `modex_agent.runtime.enums` — `OperationKind`, `TurnCustomKey`
+- `modex_agent.ioc.configs.observability` — `ObservabilityConfig`, `TraceBackend`
+- `modex_agent.utils.file_io` — `read_jsonl_robust`
 
 ### External
-- `json`, `uuid`, `time`, `logging`, `pathlib` — standard library
+- `opentelemetry-sdk`, `opentelemetry-exporter-otlp-proto-http` — optional
+  (`[observability]` extra), required only for OTLP remote export
 
 <!-- MANUAL: -->
 

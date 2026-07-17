@@ -78,6 +78,10 @@ ast = [
   "tree-sitter-python>=0.23",
   "tree-sitter-java>=0.23",
 ]
+observability = [
+  "opentelemetry-sdk>=1.28",
+  "opentelemetry-exporter-otlp-proto-http>=1.28",
+]
 all = ["ModexAgent[llm,sandbox,gateway,skills,terminal,ast]"]
 
 [project.scripts]

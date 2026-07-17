@@ -1,106 +1,127 @@
-"""Trace store — ABC and JSON-lines file implementation."""
+"""Trace query — read-only ABC, span models, and JSON-lines span reader.
+
+The write side lives on :class:`~modex_agent.trace.otel_store.OtelSpanTraceStore`
+(``save_span``); this module owns the data models (:class:`SpanModel`,
+:class:`SpanStatus`), the read-only :class:`TraceQuery` ABC, and a pure-read
+:class:`JsonlSpanQuery` implementation that parses ``spans.jsonl`` via
+:func:`modex_agent.utils.file_io.read_jsonl_robust`.
+"""
 
 from __future__ import annotations
 
-import json
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Any
 
-from modex_agent.trace.types import OperationKind, OperationRecord, OperationStatus
+from pydantic import BaseModel, ConfigDict, Field
+
+from modex_agent.trace.semconv import SpanKind, SpanStatusCode
+from modex_agent.utils.file_io import read_jsonl_robust
 
 logger = logging.getLogger(__name__)
 
 
-class TraceStore(ABC):
-    """Abstract interface for persisting and querying operation traces."""
+# ── Span models (frozen Pydantic BaseModel) ────────────────────────────
+
+
+class SpanStatus(BaseModel):
+    """OTel span status."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    code: SpanStatusCode = SpanStatusCode.OK
+    message: str | None = None
+
+
+class SpanModel(BaseModel):
+    """One OTel-compatible span, serialized as a single JSON line.
+
+    The shape mirrors what an OTel SDK ``Span`` would export:
+    ``trace_id``, ``span_id``, ``parent_span_id``, ``name``, ``kind``,
+    ``start_time``, ``end_time``, ``attributes``, ``status``.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    trace_id: str
+    span_id: str
+    parent_span_id: str | None = None
+    name: str
+    kind: str = SpanKind.INTERNAL
+    start_time: float
+    end_time: float | None = None
+    attributes: dict[str, Any] = Field(default_factory=dict)
+    status: SpanStatus = Field(default_factory=SpanStatus)
+
+
+# ── TraceQuery ABC ─────────────────────────────────────────────────────
+
+
+class TraceQuery(ABC):
+    """Read-only query interface for OTel span traces."""
 
     @abstractmethod
-    async def save(self, record: OperationRecord) -> None:
-        """Persist a single operation record."""
+    async def list_by_session(self, session_id: str) -> list[SpanModel]:
+        """Return all spans for a given session, ordered by file order."""
 
     @abstractmethod
-    async def list_by_session(self, session_id: str) -> list[OperationRecord]:
-        """Return all records for a given session, ordered by timestamp."""
-
-    @abstractmethod
-    async def list_by_trace_id(self, trace_id: str) -> list[OperationRecord]:
-        """Return all records for a given trace_id across all sessions."""
+    async def list_by_trace_id(self, trace_id: str) -> list[SpanModel]:
+        """Return all spans for a given trace_id across all sessions."""
 
 
-def _record_from_json(data: dict[str, object]) -> OperationRecord:
-    """Deserialise a JSON dict into an OperationRecord."""
-    return OperationRecord(
-        trace_id=str(data["trace_id"]),
-        session_id=str(data["session_id"]),
-        agent_name=str(data["agent_name"]),
-        invocation_id=data.get("invocation_id") if data.get("invocation_id") is not None else None,
-        kind=OperationKind(str(data["kind"])),
-        status=OperationStatus(str(data["status"])),
-        timestamp=float(data.get("timestamp", 0.0)),
-        duration_ms=int(data["duration_ms"]) if data.get("duration_ms") is not None else None,
-        metadata=data.get("metadata", {}),
-        error=str(data["error"]) if data.get("error") is not None else None,
-    )
-
-
-class JsonFileTraceStore(TraceStore):
-    """Append-only JSON-lines store.
+class JsonlSpanQuery(TraceQuery):
+    """Read-only ``spans.jsonl`` reader.
 
     File layout::
 
-        {base_dir}/{session_id}/operations.jsonl
+        {base_dir}/{session_id}/spans.jsonl
 
-    Each line is a JSON-encoded ``OperationRecord``.
+    Each line is a JSON-encoded :class:`SpanModel`.  Malformed lines are
+    skipped by :func:`read_jsonl_robust`.
     """
 
     def __init__(self, base_dir: Path) -> None:
         self._base_dir = base_dir
 
     def _session_path(self, session_id: str) -> Path:
-        return self._base_dir / session_id / "operations.jsonl"
+        return self._base_dir / session_id / "spans.jsonl"
 
-    async def save(self, record: OperationRecord) -> None:
-        path = self._session_path(record.session_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        line = json.dumps(record.to_json_dict(), ensure_ascii=False)
-        with path.open("a", encoding="utf-8") as f:
-            f.write(line + "\n")
-
-    async def list_by_session(self, session_id: str) -> list[OperationRecord]:
+    async def list_by_session(self, session_id: str) -> list[SpanModel]:
         path = self._session_path(session_id)
-        if not path.exists():
-            return []
-        records: list[OperationRecord] = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                data = json.loads(line)
-                records.append(_record_from_json(data))
-            except (json.JSONDecodeError, KeyError, ValueError):
-                logger.warning("Skipping malformed trace line: %s", line[:120])
-        return records
+        data = read_jsonl_robust(path)
+        out: list[SpanModel] = []
+        for d in data:
+            span = _parse_span(d)
+            if span is not None:
+                out.append(span)
+        return out
 
-    async def list_by_trace_id(self, trace_id: str) -> list[OperationRecord]:
-        records: list[OperationRecord] = []
+    async def list_by_trace_id(self, trace_id: str) -> list[SpanModel]:
         if not self._base_dir.exists():
-            return records
+            return []
+        out: list[SpanModel] = []
         for session_dir in self._base_dir.iterdir():
             if not session_dir.is_dir():
                 continue
-            path = session_dir / "operations.jsonl"
-            if not path.exists():
-                continue
-            for line in path.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    data = json.loads(line)
-                    if data.get("trace_id") == trace_id:
-                        records.append(_record_from_json(data))
-                except (json.JSONDecodeError, KeyError, ValueError):
-                    logger.warning("Skipping malformed trace line: %s", line[:120])
-        return records
+            path = session_dir / "spans.jsonl"
+            data = read_jsonl_robust(path)
+            for d in data:
+                if d.get("trace_id") == trace_id:
+                    span = _parse_span(d)
+                    if span is not None:
+                        out.append(span)
+        return out
+
+
+def _parse_span(data: dict[str, object]) -> SpanModel | None:
+    """Best-effort parse of a JSON dict into a :class:`SpanModel`.
+
+    Returns ``None`` (with a warning) for malformed lines so a single bad
+    entry does not poison the whole query result.
+    """
+    try:
+        return SpanModel.model_validate(data)
+    except Exception:
+        logger.warning("Skipping malformed span line: %s", str(data)[:120])
+        return None
