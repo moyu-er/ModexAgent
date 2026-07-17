@@ -4,21 +4,16 @@ Extracted from AgentCommunicationService._create_dynamic_subagent (ADR-0015 D5).
 T18 simplified the builder to a pure computation: ``build(...)`` queries the
 parent session's message history (via the MemorySystem, which under T09
 routes through ``MessageStore.load_messages()``), applies lossy compaction,
-and returns the XML string directly. No fork XML files are written to disk;
-there is no file registry and no ``cleanup``.
-
-``register_for_cleanup`` and ``cleanup`` are retained as no-ops for caller
-compatibility (``ForkContextProvider`` and ``AgentPool`` still call them);
-they will be removed once those callers are migrated.
+and returns the XML string directly. No fork XML files are written to disk.
 """
 
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.message import ChatMessage
+from modex_agent.memory.snapshot import format_snapshot_xml
 
 if TYPE_CHECKING:
     from modex_agent.core.session_id import SessionInfo
@@ -26,25 +21,6 @@ if TYPE_CHECKING:
     from modex_agent.memory.core.system import MemorySystem
 
 logger = logging.getLogger(__name__)
-
-
-def _messages_to_xml(messages: list[ChatMessage], parent_name: str) -> str:
-    """Convert ChatMessage list to XML for system-prompt injection."""
-    lines = [
-        f'<forked_context source="{parent_name}">',
-        f"  <info>Inherited {len(messages)} messages from parent session.</info>",
-    ]
-    for i, msg in enumerate(messages):
-        role = msg.role
-        content = str(msg.content or "")[:2000]
-        name_attr = ""
-        if role == "tool" and msg.name:
-            name_attr = f' name="{msg.name}"'
-        lines.append(f'  <message index="{i}" role="{role}"{name_attr}>')
-        lines.append(f"    <![CDATA[{content}]]>")
-        lines.append("  </message>")
-    lines.append("</forked_context>")
-    return "\n".join(lines)
 
 
 class ContextForkBuilder:
@@ -65,18 +41,15 @@ class ContextForkBuilder:
         agent_type: str,
         invocation_id: str,
         fork_max_messages: int,
-        fork_workspace: Path | None,
         template_memory: MemoryConfig | None,
         subagent_memory_system: MemorySystem | None,
         parent_name: str,
     ) -> str | None:
         """Build fork XML from parent message history.
 
-        ``fork_workspace`` is accepted for caller compatibility but no longer
-        used (T18 removed file I/O). Returns the placeholder XML when the
-        memory system is absent, returns no messages, or raises.
+        Returns the placeholder XML when the memory system is absent, returns
+        no messages, or raises.
         """
-        del fork_workspace  # retained for API compatibility; no file I/O
         fork_xml = (
             f'<forked_context source="{parent_name}">'
             f"  <info>No parent messages available.</info>"
@@ -110,7 +83,7 @@ class ContextForkBuilder:
                         msg_dicts: list[dict[str, Any]] = [m.model_dump() for m in truncated]
                         compacted = await governor.apply(msg_dicts)
                         truncated = [ChatMessage(**m) for m in compacted]
-                    fork_xml = _messages_to_xml(truncated, parent_name)
+                    fork_xml = format_snapshot_xml(truncated, parent_name)
             else:
                 logger.warning(
                     "Fork context: no memory_system for %s, fork will be empty",
@@ -122,26 +95,3 @@ class ContextForkBuilder:
             )
 
         return fork_xml
-
-    def register_for_cleanup(
-        self,
-        *,
-        session_id: str,
-        fork_workspace: Path,
-        agent_type: str,
-        invocation_id: str,
-    ) -> None:
-        """No-op (T18). Retained for caller compatibility.
-
-        Previously registered a persisted fork file for cleanup on session
-        eviction. With file I/O removed, there is nothing to register.
-        """
-        del session_id, fork_workspace, agent_type, invocation_id
-
-    def cleanup(self, session_id: str) -> None:
-        """No-op (T18). Retained for caller compatibility.
-
-        Previously deleted the persisted fork context file for a session.
-        With file I/O removed, there is nothing to clean up.
-        """
-        del session_id

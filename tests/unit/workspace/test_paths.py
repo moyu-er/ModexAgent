@@ -13,7 +13,6 @@ import pytest
 from modex_agent.workspace.paths import (
     SUBDIR_COMMANDS,
     SUBDIR_EXPERIENCES,
-    SUBDIR_FORK_CONTEXTS,
     SUBDIR_INBOX,
     SUBDIR_MEDIA,
     SUBDIR_MEMORY,
@@ -110,11 +109,6 @@ class TestWorkspacePaths:
     def test_pruned_dir_under_root(self, tmp_path: Path) -> None:
         wp = WorkspacePaths(root=tmp_path)
         result = wp.pruned_dir("pool_a")
-        assert result.is_relative_to(wp.root)
-
-    def test_fork_contexts_dir_under_root(self, tmp_path: Path) -> None:
-        wp = WorkspacePaths(root=tmp_path)
-        result = wp.fork_contexts_dir("pool_a")
         assert result.is_relative_to(wp.root)
 
     def test_runtime_dir_turns_under_root(self, tmp_path: Path) -> None:
@@ -221,4 +215,3 @@ class TestLayoutConstants:
         assert SUBDIR_TRACE == "trace"
         assert SUBDIR_OUTPUT == "output"
         assert SUBDIR_PRUNED == "pruned"
-        assert SUBDIR_FORK_CONTEXTS == "fork_contexts"

@@ -32,7 +32,6 @@ SUBDIR_COMMANDS: str = "commands"
 SUBDIR_TRACE: str = "trace"
 SUBDIR_OUTPUT: str = "output"
 SUBDIR_PRUNED: str = "pruned"
-SUBDIR_FORK_CONTEXTS: str = "fork_contexts"
 WORKSPACE_STATE_DB: str = "state.db"
 # Reserved global-tier directory name (workspace registry + conversation map),
 # NOT a per-workspace subdir. WorkspacePaths accessors must never produce it.
@@ -114,9 +113,6 @@ class WorkspacePaths:
 
     def pruned_dir(self, pool: str) -> Path:
         return self._child(SUBDIR_MEMORY, pool, SUBDIR_PRUNED)
-
-    def fork_contexts_dir(self, pool: str) -> Path:
-        return self._child(SUBDIR_MEMORY, pool, SUBDIR_FORK_CONTEXTS)
 
     def runtime_dir(self, pool: str, leaf: str) -> Path:
         if leaf not in _RUNTIME_LEAVES:

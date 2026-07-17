@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from modex_agent.core.constants import ExecutionStrategy
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.ioc.configs.skills import SkillsConfig
 from modex_agent.multi_agent.pool_config.specs import SubagentSpec
@@ -175,7 +176,6 @@ class AgentTemplate:
                     builder=deps.context_fork_builder,
                     agent_type=name,
                     fork_max_messages=self.spec.fork_max_messages,
-                    fork_workspace=(resolver.memory_dir() if resolver else None),
                     template_memory=self.memory,
                 )
 
@@ -236,7 +236,7 @@ class AgentTemplate:
             ),
             system_prompt_template=system_prompt,
             max_iterations=self.spec.max_steps,
-            execution_strategy="react",
+            execution_strategy=ExecutionStrategy.REACT,
             context_strategy="persistent",
             safety_policy=deps.safety,
             comm_kind=comm_kind,
@@ -266,7 +266,11 @@ class AgentTemplate:
                 for hook in hooks:
                     pipeline_hook_runner.add(HookSpec(hook=hook, on_error=HookErrorPolicy.LOG))
             else:
-                instance.pipeline.hooks.extend(hooks)
+                from modex_agent.hook import HookErrorPolicy, HookSpec
+
+                instance.pipeline.hooks.extend(
+                    HookSpec(hook=hook, on_error=HookErrorPolicy.LOG) for hook in hooks
+                )
 
         # ── Register resident (new two-arg signature: descriptor + instance) ──
         await deps.pool.register_resident(descriptor, instance)

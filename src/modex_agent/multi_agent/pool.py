@@ -403,7 +403,7 @@ class AgentPool(AgentRegistry):
             )
             await asyncio.sleep(sleep_seconds)
 
-    async def _run_dispatch(self, agent_name: str, coro: Coroutine[Any, Any, None]) -> None:
+    async def _run_dispatch(self, agent_name: str, coro: Coroutine[Any, Any, Any]) -> None:
         """Execute a turn coroutine with deadline watchdog + error recovery.
 
         ADR-0015 D6: the per-agent dispatch lock is removed — the Drainer is
@@ -430,6 +430,7 @@ class AgentPool(AgentRegistry):
         deadline: DispatchDeadline | None = None
         watchdog_task: asyncio.Task[None] | None = None
         dispatch_task: asyncio.Task[None] | None = None
+        token: Any = None
         try:
             if dispatch_timeout > 0:
                 deadline = DispatchDeadline(
@@ -483,7 +484,7 @@ class AgentPool(AgentRegistry):
                     await watchdog_task
                 except asyncio.CancelledError:
                     pass
-            if deadline is not None:
+            if deadline is not None and token is not None:
                 current_dispatch_deadline.reset(token)
             remaining = max(
                 0, self._active_session_counts.get(agent_name, 1) - 1
@@ -695,9 +696,6 @@ class AgentPool(AgentRegistry):
             if instance and instance.context_manager:
                 with contextlib.suppress(Exception):
                     await instance.context_manager.clear(session_id)
-        # ── Fork context cleanup ──
-        if self._context_fork_builder is not None:
-            self._context_fork_builder.cleanup(session_id)
         self._evict_session_tracking(session_id)
 
     def list_agents(self) -> list[AgentDescriptor]:
