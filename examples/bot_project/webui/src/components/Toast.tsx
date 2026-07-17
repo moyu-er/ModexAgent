@@ -2,6 +2,7 @@
 // stacking, and dismissal logic lives in ToastContext.
 
 import type { ReactNode } from "react";
+import { useT } from "../i18n";
 
 export type ToastTone = "info" | "success" | "warning";
 
@@ -30,6 +31,7 @@ const TONE_DOT: Record<ToastTone, string> = {
 };
 
 export function Toast({ message, tone = "info", action, onDismiss }: ToastProps) {
+  const t = useT();
   return (
     <div
       role="status"
@@ -52,7 +54,7 @@ export function Toast({ message, tone = "info", action, onDismiss }: ToastProps)
       ) : null}
       <button
         type="button"
-        aria-label="Dismiss"
+        aria-label={t("toast.dismiss")}
         className="shrink-0 text-mute hover:text-ink"
         onClick={onDismiss}
       >

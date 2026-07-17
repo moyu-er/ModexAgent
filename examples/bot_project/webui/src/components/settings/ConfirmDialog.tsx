@@ -8,17 +8,13 @@ import { useEffect } from "react";
 import type { ReactNode } from "react";
 import { Button } from "../ui/Button";
 import { Card } from "../ui/Card";
+import { useT } from "../../i18n";
 
 export interface ConfirmDialogProps {
-  /** Dialog title / heading. */
   title: string;
-  /** Body text shown under the title. */
   message?: ReactNode;
-  /** Confirm button label (e.g. "Delete", "Discard"). */
   confirmLabel?: string;
-  /** Cancel button label. */
   cancelLabel?: string;
-  /** Tone of the confirm button. "danger" renders red text/border. */
   tone?: "default" | "danger";
   onConfirm: () => void;
   onCancel: () => void;
@@ -27,13 +23,17 @@ export interface ConfirmDialogProps {
 export function ConfirmDialog({
   title,
   message,
-  confirmLabel = "Confirm",
-  cancelLabel = "Cancel",
+  confirmLabel,
+  cancelLabel,
   tone = "default",
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
-  // Escape cancels — standard dialog keyboard contract.
+  const t = useT();
+  const confirm = confirmLabel ?? t("settings.confirmDialog.confirm");
+  const cancel = cancelLabel ?? t("settings.confirmDialog.cancel");
+  const confirmVariant = tone === "danger" ? "danger" : "primary";
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === "Escape") {
@@ -44,8 +44,6 @@ export function ConfirmDialog({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onCancel]);
-
-  const confirmVariant = tone === "danger" ? "danger" : "primary";
 
   return (
     <div
@@ -65,10 +63,10 @@ export function ConfirmDialog({
         ) : null}
         <div className="mt-4 flex justify-end gap-2">
           <Button variant="secondary" size="sm" onClick={onCancel} autoFocus>
-            {cancelLabel}
+            {cancel}
           </Button>
           <Button variant={confirmVariant} size="sm" onClick={onConfirm}>
-            {confirmLabel}
+            {confirm}
           </Button>
         </div>
       </Card>

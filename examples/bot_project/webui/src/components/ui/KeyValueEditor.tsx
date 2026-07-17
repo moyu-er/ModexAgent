@@ -14,6 +14,7 @@ import { Input } from "./Input";
 import { IconButton } from "./IconButton";
 import { Trash2 } from "lucide-react";
 import { PlusIcon } from "./icons";
+import { useT } from "../../i18n";
 
 interface Row {
   key: string;
@@ -51,6 +52,7 @@ const sameRecord = (
 };
 
 export const KeyValueEditor: FC<Props> = ({ label, helper, entries, onChange }) => {
+  const t = useT();
   const idCounter = useRef<number>(0);
   const nextId = (): number => {
     idCounter.current += 1;
@@ -102,7 +104,7 @@ export const KeyValueEditor: FC<Props> = ({ label, helper, entries, onChange }) 
     commit(next);
   };
 
-  const entryLabel = label || "Entry";
+  const entryLabel = label || t("ui.keyValue.entry");
 
   return (
     <div className="space-y-2">
@@ -115,22 +117,22 @@ export const KeyValueEditor: FC<Props> = ({ label, helper, entries, onChange }) 
         {rows.map((r) => (
           <div key={r.id} className="flex items-center gap-2">
             <Input
-              aria-label={`${entryLabel} key`}
-              placeholder="KEY"
+              aria-label={t("ui.keyValue.entryKey", { label: entryLabel })}
+              placeholder={t("ui.keyValue.keyPlaceholder")}
               value={r.key}
               onChange={(e) => setRow(r.id, { key: e.target.value })}
               className="flex-1"
             />
             <Input
-              aria-label={`${entryLabel} value`}
-              placeholder="value"
+              aria-label={t("ui.keyValue.entryValue", { label: entryLabel })}
+              placeholder={t("ui.keyValue.valuePlaceholder")}
               value={r.value}
               onChange={(e) => setRow(r.id, { value: e.target.value })}
               className="flex-1"
             />
             <IconButton
               icon={<Trash2 size={16} />}
-              label={`Remove ${entryLabel.toLowerCase()}`}
+              label={t("ui.keyValue.removeEntry", { label: entryLabel.toLowerCase() })}
               variant="ghost"
               size="sm"
               onClick={() => removeRow(r.id)}
@@ -142,7 +144,7 @@ export const KeyValueEditor: FC<Props> = ({ label, helper, entries, onChange }) 
           onClick={addRow}
           className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-hairline py-1.5 text-xs text-body hover:border-ink hover:bg-hairline-soft hover:text-ink"
         >
-          <PlusIcon /> Add {label || "entry"}
+          <PlusIcon /> {t("ui.keyValue.addEntry", { label: label || t("ui.keyValue.entry").toLowerCase() })}
         </button>
       </div>
       {helper ? <p className="text-xs text-mute">{helper}</p> : null}

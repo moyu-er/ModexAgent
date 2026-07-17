@@ -1,4 +1,5 @@
 import type { FC } from "react";
+import { useT } from "../i18n";
 
 interface BootScreenProps {
   attempts: number;
@@ -6,24 +7,25 @@ interface BootScreenProps {
 }
 
 const BootScreen: FC<BootScreenProps> = ({ attempts, lastError }) => {
+  const t = useT();
   const hint =
     attempts <= 1
-      ? "Starting backend…"
+      ? t("boot.starting")
       : attempts <= 10
-        ? "Connecting to backend…"
+        ? t("boot.connecting")
         : attempts <= 30
-          ? "Still starting — this can take a few seconds on first launch."
-          : "Taking longer than usual. Check logs if this persists.";
+          ? t("boot.stillStarting")
+          : t("boot.takingLong");
 
   return (
     <div className="flex h-screen w-screen flex-col items-center justify-center gap-5 bg-canvas text-ink">
       <div
         className="h-9 w-9 animate-spin rounded-full border-[3px] border-link/20 border-t-link"
         role="status"
-        aria-label="Loading"
+        aria-label={t("boot.loading")}
       />
       <div className="flex flex-col items-center gap-1.5">
-        <div className="text-sm font-medium tracking-wide">Loading ModexBot…</div>
+        <div className="text-sm font-medium tracking-wide">{t("boot.loadingModexBot")}</div>
         <div className="min-h-[16px] text-xs text-ink/50">{hint}</div>
       </div>
       {lastError && attempts > 3 && (

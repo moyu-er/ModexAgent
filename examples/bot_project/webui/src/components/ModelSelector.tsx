@@ -9,6 +9,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import type { ModelChoice } from "../lib/api";
+import { useT } from "../i18n";
 
 export interface ModelSelectorValue {
   provider: string;
@@ -28,8 +29,10 @@ export const ModelSelector: FC<ModelSelectorProps> = ({
   models,
   value,
   onChange,
-  "aria-label": ariaLabel = "Model",
+  "aria-label": ariaLabel,
 }) => {
+  const t = useT();
+  const resolvedAriaLabel = ariaLabel ?? t("composer.model");
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -210,7 +213,7 @@ export const ModelSelector: FC<ModelSelectorProps> = ({
   const listboxId = `${baseId}-listbox`;
   const triggerLabel = current
     ? `${current.provider_name} - ${current.model_name}`
-    : ariaLabel;
+    : resolvedAriaLabel;
 
   return (
     <div
@@ -224,7 +227,7 @@ export const ModelSelector: FC<ModelSelectorProps> = ({
         id={`${baseId}-trigger`}
         onClick={handleTriggerClick}
         onKeyDown={handleTriggerKeyDown}
-        aria-label={current ? `${ariaLabel}: ${triggerLabel}` : ariaLabel}
+        aria-label={current ? `${resolvedAriaLabel}: ${triggerLabel}` : resolvedAriaLabel}
         aria-expanded={open}
         aria-haspopup="listbox"
         aria-controls={open ? listboxId : undefined}
@@ -239,7 +242,7 @@ export const ModelSelector: FC<ModelSelectorProps> = ({
           ref={listboxRef}
           id={listboxId}
           role="listbox"
-          aria-label={ariaLabel}
+          aria-label={resolvedAriaLabel}
           tabIndex={-1}
           className="absolute bottom-full right-0 z-50 mb-2 min-w-[240px] max-h-[min(60vh,320px)] overflow-y-auto rounded-xl border border-hairline bg-canvas-elevated py-1 shadow-[0_8px_24px_var(--shadow-color)] focus:outline-none"
         >
@@ -295,7 +298,7 @@ export const ModelSelector: FC<ModelSelectorProps> = ({
                     <span className="truncate">{m.model_name}</span>
                     {m.default && (
                       <span className="ml-2 shrink-0 text-[10px] font-medium text-link">
-                        Default
+                        {t("composer.default")}
                       </span>
                     )}
                   </div>

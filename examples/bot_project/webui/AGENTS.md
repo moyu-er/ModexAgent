@@ -90,6 +90,14 @@ React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connect
 - **SectionLabel**: All settings tabs share `<SectionLabel>` for consistent Geist Mono 10px uppercase section eyebrows. Never hard-code `text-[11px] font-semibold uppercase` in settings views.
 - **Card hierarchy**: Settings items use a two-level pattern: outer `<Card>` per item (provider/pool/MCP server), inner nested card for sub-items (models/subagents). Search inputs above lists with >5 items. Dashed-border "Add" buttons at list bottoms.
 
+### Internationalization (i18n)
+
+- All display strings (JSX text, `placeholder`, `aria-label`, `title`, `alt`, toast/error messages) resolve via `useT()` + a typed `MessageKey` — never hardcode display strings in components. The catalog lives at `src/i18n/en.ts`; keys are dotted paths (`"settings.models.defaultModel"`), and typos are compile errors.
+- `useT()` returns a `t(key, params?)` function with `{name}` interpolation. The default context value is a working English translator, so tests render components without wrapping `<I18nProvider>`.
+- To add a locale: create a catalog (same shape as `en`), register it in `catalogs` (`src/i18n/index.ts`), and pass `locale` to `<I18nProvider>`. No locale-switcher UI exists yet — the infrastructure is ready.
+- Universal proper nouns (`MCP`, `Skill`, `Skills`) live in `src/i18n/terms.ts` as `TERMS`, are used directly at render sites (not via `t()`), and are never translated. Sentences that embed these terms (e.g. `"No MCP servers configured."`) stay in the catalog — only the surrounding words translate.
+- Section-local protocol/product labels (`stdio`, `SSE`, `OpenAI Compatible`, `Anthropic`) stay in the catalog and are never translated in any locale.
+
 ## Design System
 
 - **Palette source of truth**: `src/index.css` — Notion palette (warm paper `#f6f5f4` canvas, near-black `#000000` ink, single `#0075de` blue accent). Dark mode keeps warm stone backgrounds and shifts text/symbol colors to a sky-blue accent (`#62aef0`).

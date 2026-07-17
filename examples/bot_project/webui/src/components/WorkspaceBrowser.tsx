@@ -4,6 +4,7 @@ import { browseWorkspace, changeWorkspace, type BrowseEntry, type BrowseResult }
 import { FileIcon, FolderIcon, XIcon } from "./ui/icons";
 import { Button } from "./ui/Button";
 import { IconButton } from "./ui/IconButton";
+import { useT } from "../i18n";
 
 export interface WorkspaceBrowserProps {
   open: boolean;
@@ -43,6 +44,7 @@ export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
   onChanged,
   onGoHome,
 }) => {
+  const t = useT();
   const [current, setCurrent] = useState("");
   const [entries, setEntries] = useState<BrowseEntry[]>([]);
   const [drives, setDrives] = useState<BrowseEntry[]>([]);
@@ -59,7 +61,7 @@ export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
       setEntries(result.entries);
       setDrives(result.drives);
     } catch {
-      setError("Failed to read directory");
+      setError(t("workspace.failedReadDir"));
     } finally {
       setLoading(false);
     }
@@ -87,10 +89,10 @@ export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
         onChanged(result.cwd);
         onClose();
       } else {
-        setError(result.notice || "Failed to switch workspace");
+        setError(result.notice || t("workspace.failedSwitch"));
       }
     } catch {
-      setError("Network error");
+      setError(t("workspace.networkError"));
     } finally {
       setSwitching(false);
     }
@@ -119,11 +121,11 @@ export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
         {/* Header */}
         <div className="flex shrink-0 items-center justify-between border-b border-hairline px-4 py-3">
           <h3 className="text-sm font-semibold text-ink">
-            Choose Workspace
+            {t("workspace.chooseWorkspace")}
           </h3>
           <IconButton
             icon={<XIcon />}
-            label="Close"
+            label={t("workspace.close")}
             onClick={onClose}
             variant="ghost"
             size="sm"
@@ -167,7 +169,7 @@ export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
         {/* Directory listing */}
         <div className="min-h-[240px] flex-1 overflow-y-auto px-2 py-2">
           {loading && (
-            <p className="px-2 py-4 text-xs text-mute">Loading...</p>
+            <p className="px-2 py-4 text-xs text-mute">{t("workspace.loading")}</p>
           )}
           {error && (
             <p className="px-2 py-4 text-xs text-error">{error}</p>
@@ -176,7 +178,7 @@ export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
             !error &&
             entries.length === 0 && (
               <p className="px-2 py-4 text-xs text-faint">
-                Empty directory
+                {t("workspace.emptyDirectory")}
               </p>
             )}
           {entries.map((entry) => (
@@ -208,7 +210,7 @@ export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
               size="sm"
               className="text-mute hover:text-ink"
             >
-              Cancel
+              {t("workspace.cancel")}
             </Button>
             <Button
               type="button"
@@ -218,7 +220,7 @@ export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
               size="sm"
               className="text-mute hover:text-ink"
             >
-              Home
+              {t("workspace.home")}
             </Button>
             <Button
               type="button"
@@ -227,7 +229,7 @@ export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
               variant="primary"
               size="sm"
             >
-              {switching ? "Switching..." : "Select"}
+              {switching ? t("workspace.switching") : t("workspace.select")}
             </Button>
           </div>
         </div>

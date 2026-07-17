@@ -1,5 +1,6 @@
 import { useState, type FC, type MouseEvent } from "react";
 import { formatBytes } from "../lib/format";
+import { useT } from "../i18n";
 
 /**
  * Normalized, direction-agnostic view of one attachment for rendering.
@@ -38,10 +39,8 @@ export interface AttachmentRendererProps {
  * The caller sources the active ``ws`` and bakes it into ``downloadUrl``.
  */
 export const AttachmentRenderer: FC<AttachmentRendererProps> = ({ view }) => {
-  // Image load failure (404 / broken) flips the image to a fallback file card.
+  const t = useT();
   const [imageFailed, setImageFailed] = useState(false);
-  // File-card click probe: a 4xx means the underlying file is gone (inbound
-  // evicted / outbound deleted) → degrade to an unavailable card.
   const [fileUnavailable, setFileUnavailable] = useState(false);
 
   if (view.kind === "image" && !imageFailed) {
@@ -79,7 +78,7 @@ export const AttachmentRenderer: FC<AttachmentRendererProps> = ({ view }) => {
             {view.name}
           </span>
           <span className="text-[11px] italic text-mute">
-            File no longer available
+            {t("attachments.fileUnavailable")}
           </span>
         </span>
       </div>

@@ -4,6 +4,7 @@ import { fetchProviderModels, ApiError, type FetchedModel } from "../../lib/api"
 import { XIcon } from "../ui/icons";
 import { IconButton } from "../ui/IconButton";
 import { Button } from "../ui/Button";
+import { useT, type TFn } from "../../i18n";
 
 export interface FetchModelsModalProps {
   open: boolean;
@@ -18,20 +19,20 @@ type LoadState =
   | { kind: "error"; message: string }
   | { kind: "success"; models: FetchedModel[] };
 
-function describeError(err: unknown): string {
+function describeError(err: unknown, t: TFn): string {
   if (err instanceof ApiError) {
-    if (err.status === 401 || err.status === 403) return "认证失败，请检查 API Key";
-    if (err.status === 404) return "Provider 未保存或不存在，请先保存";
+    if (err.status === 401 || err.status === 403) return t("settings.modelsFetch.errAuth");
+    if (err.status === 404) return t("settings.modelsFetch.errNotFound");
     if (err.status === 502) {
       if (err.detail.includes("All candidates failed"))
-        return "未找到模型列表端点，请检查 Base URL 或手动填写模型列表 URL";
-      if (err.detail.includes("timed out")) return "请求超时，请重试";
-      if (err.detail.includes("0 models")) return "Provider 返回了 0 个模型";
+        return t("settings.modelsFetch.errNoEndpoint");
+      if (err.detail.includes("timed out")) return t("settings.modelsFetch.errTimeout");
+      if (err.detail.includes("0 models")) return t("settings.modelsFetch.errZeroModels");
       return err.detail;
     }
-    return `拉取失败 (${err.status})`;
+    return t("settings.modelsFetch.errFailed", { status: err.status });
   }
-  return "网络错误，请检查连接";
+  return t("settings.modelsFetch.errNetwork");
 }
 
 export const FetchModelsModal: FC<FetchModelsModalProps> = ({
@@ -41,6 +42,7 @@ export const FetchModelsModal: FC<FetchModelsModalProps> = ({
   existingModelIds,
   onImport,
 }) => {
+  const t = useT();
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
@@ -56,9 +58,9 @@ export const FetchModelsModal: FC<FetchModelsModalProps> = ({
       setState({ kind: "success", models: result.models });
     } catch (err) {
       if (seq !== fetchSeq.current) return;
-      setState({ kind: "error", message: describeError(err) });
+      setState({ kind: "error", message: describeError(err, t) });
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     if (open && providerKey) {
@@ -121,27 +123,25 @@ export const FetchModelsModal: FC<FetchModelsModalProps> = ({
         className="flex w-[560px] max-w-[90vw] max-h-[75vh] flex-col rounded-lg border border-hairline bg-canvas-elevated shadow-lg"
         onClick={(e): void => e.stopPropagation()}
       >
-        {/* Header */}
         <div className="flex shrink-0 items-center justify-between border-b border-hairline px-4 py-3">
           <h3 className="text-sm font-semibold text-ink">
-            从 Provider 拉取模型
+            {t("settings.modelsFetch.title")}
             <span className="ml-2 font-mono text-xs text-body">{providerKey}</span>
           </h3>
           <IconButton
             icon={<XIcon />}
-            label="Close"
+            label={t("settings.modelsFetch.close")}
             onClick={onClose}
             variant="ghost"
             size="sm"
           />
         </div>
 
-        {/* Search */}
         {state.kind === "success" && (
           <div className="shrink-0 border-b border-hairline px-4 py-2">
             <input
               type="text"
-              placeholder="搜索模型..."
+              placeholder={t("settings.modelsFetch.searchPlaceholder")}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               className="w-full rounded-md border border-hairline bg-canvas px-3 py-1.5 text-sm text-ink placeholder:text-faint focus:border-link focus:outline-none"
@@ -149,11 +149,10 @@ export const FetchModelsModal: FC<FetchModelsModalProps> = ({
           </div>
         )}
 
-        {/* Body */}
         <div className="min-h-[240px] flex-1 overflow-y-auto px-2 py-2">
           {isLoading && (
             <div className="flex items-center justify-center py-8">
-              <span className="text-sm text-body">正在拉取模型列表...</span>
+              <span className="text-sm text-body">{t("settings.modelsFetch.fetching")}</span>
             </div>
           )}
 
@@ -166,20 +165,20 @@ export const FetchModelsModal: FC<FetchModelsModalProps> = ({
                 size="sm"
                 onClick={() => load(providerKey)}
               >
-                重试
+                {t("settings.modelsFetch.retry")}
               </Button>
             </div>
           )}
 
           {state.kind === "success" && models.length === 0 && (
             <p className="px-2 py-8 text-center text-xs text-faint">
-              Provider 返回了 0 个模型
+              {t("settings.modelsFetch.empty")}
             </p>
           )}
 
           {state.kind === "success" && filteredModels.length === 0 && models.length > 0 && (
             <p className="px-2 py-4 text-center text-xs text-faint">
-              没有匹配的模型
+              {t("settings.modelsFetch.noMatch")}
             </p>
           )}
 
@@ -209,7 +208,7 @@ export const FetchModelsModal: FC<FetchModelsModalProps> = ({
                     />
                     <span className="truncate font-mono text-xs text-ink">{m.id}</span>
                     {exists && (
-                      <span className="ml-auto shrink-0 text-[10px] text-mute">已添加</span>
+                      <span className="ml-auto shrink-0 text-[10px] text-mute">{t("settings.modelsFetch.alreadyAdded")}</span>
                     )}
                   </label>
                 );
@@ -218,11 +217,10 @@ export const FetchModelsModal: FC<FetchModelsModalProps> = ({
           ))}
         </div>
 
-        {/* Footer */}
         {state.kind === "success" && (
           <div className="flex shrink-0 items-center justify-between border-t border-hairline px-4 py-3">
             <span className="text-xs text-body">
-              已选 {selected.size} 个 · 共 {models.length} 个模型
+              {t("settings.modelsFetch.selectedCount", { selected: selected.size, total: models.length })}
             </span>
             <div className="flex shrink-0 gap-2">
               <Button
@@ -232,7 +230,7 @@ export const FetchModelsModal: FC<FetchModelsModalProps> = ({
                 size="sm"
                 className="text-mute hover:text-ink"
               >
-                取消
+                {t("settings.modelsFetch.cancel")}
               </Button>
               <Button
                 type="button"
@@ -241,7 +239,7 @@ export const FetchModelsModal: FC<FetchModelsModalProps> = ({
                 variant="primary"
                 size="sm"
               >
-                导入选中 ({selected.size})
+                {t("settings.modelsFetch.importSelected", { count: selected.size })}
               </Button>
             </div>
           </div>

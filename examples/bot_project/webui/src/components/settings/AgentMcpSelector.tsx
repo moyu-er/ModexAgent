@@ -11,6 +11,7 @@ import { Card } from "../ui/Card";
 import { Checkbox } from "../ui/Checkbox";
 import { IconButton } from "../ui/IconButton";
 import { ChevronDownIcon } from "../ui/icons";
+import { useT } from "../../i18n";
 
 interface Props {
   /** Currently selected server names (the agent's `mcp` array). */
@@ -19,6 +20,7 @@ interface Props {
 }
 
 export function AgentMcpSelector({ value, onChange }: Props) {
+  const t = useT();
   const [open, setOpen] = useState<boolean>(false);
   const [servers, setServers] = useState<Record<string, McpServerEntry> | null>(
     null,
@@ -63,7 +65,7 @@ export function AgentMcpSelector({ value, onChange }: Props) {
   const selectedStale = servers
     ? value.filter((n) => !(n in servers))
     : [];
-  const header = `MCP servers (${selectedKnown.length} selected)`;
+  const header = t("settings.agentMcp.mcpServersSelected", { count: selectedKnown.length });
 
   return (
     <div ref={containerRef} className="relative">
@@ -82,7 +84,7 @@ export function AgentMcpSelector({ value, onChange }: Props) {
           aria-expanded={open}
         >
           <IconButton
-            label={open ? "Collapse" : "Expand"}
+            label={open ? t("settings.agentMcp.collapse") : t("settings.agentMcp.expand")}
             icon={<ChevronDownIcon open={open} />}
             variant="ghost"
             size="sm"
@@ -95,11 +97,11 @@ export function AgentMcpSelector({ value, onChange }: Props) {
         <div className="absolute left-0 right-0 top-full z-10 mt-1 max-h-64 overflow-y-auto rounded-md border border-hairline bg-canvas-elevated shadow-floating">
           <div className="px-3 py-2">
             {loadError ? (
-              <p className="text-xs text-error">Failed to load: {loadError}</p>
+              <p className="text-xs text-error">{t("settings.agentMcp.failedToLoad", { error: loadError })}</p>
             ) : !servers ? (
-              <p className="text-xs text-mute">Loading…</p>
+              <p className="text-xs text-mute">{t("settings.agentMcp.loading")}</p>
             ) : Object.keys(servers).length === 0 ? (
-              <p className="text-xs text-mute">No MCP servers configured.</p>
+              <p className="text-xs text-mute">{t("settings.agentMcp.noServers")}</p>
             ) : (
               <ul className="space-y-1">
                 {Object.keys(servers).map((name) => (
@@ -117,7 +119,7 @@ export function AgentMcpSelector({ value, onChange }: Props) {
             {selectedStale.length > 0 && (
               <div className="mt-2 border-t border-hairline pt-2">
                 <p className="mb-1 text-xs text-warning">
-                  Missing ({selectedStale.length}):
+                  {t("settings.agentMcp.missing", { count: selectedStale.length })}
                 </p>
                 <ul className="space-y-1">
                   {selectedStale.map((name) => (
@@ -128,7 +130,7 @@ export function AgentMcpSelector({ value, onChange }: Props) {
                         className="text-xs text-link hover:underline"
                         onClick={() => onChange(selectedKnown)}
                       >
-                        Clear all missing
+                        {t("settings.agentMcp.clearMissing")}
                       </button>
                     </li>
                   ))}

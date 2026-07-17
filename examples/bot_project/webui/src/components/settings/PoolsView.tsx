@@ -32,6 +32,7 @@ import {
 } from "../ui/icons";
 import { Trash2 } from "lucide-react";
 import { CATEGORY } from "./categoryMeta";
+import { useT } from "../../i18n";
 
 type Confirm =
   | { kind: "delete"; name: string }
@@ -45,6 +46,7 @@ interface RenameState {
 
 export function PoolsView() {
   const toast = useToast();
+  const t = useT();
   const [pools, setPools] = useState<PoolSummary[] | null>(null);
   const [loadError, setLoadError] = useState<string>("");
   const [selected, setSelected] = useState<string | null>(null);
@@ -84,10 +86,10 @@ export function PoolsView() {
   }, [pools, filter]);
 
   if (loadError) {
-    return <p className="text-sm text-error">Failed to load: {loadError}</p>;
+    return <p className="text-sm text-error">{t("common.failedToLoad", { error: loadError })}</p>;
   }
   if (!pools) {
-    return <p className="text-sm text-mute">Loading…</p>;
+    return <p className="text-sm text-mute">{t("common.loading")}</p>;
   }
 
   const onSelect = (name: string): void => {
@@ -107,7 +109,7 @@ export function PoolsView() {
       setSelected(name);
     } catch (e) {
       toast.show({
-        message: `Create failed: ${e instanceof ApiError ? `${e.status} ${e.detail}` : String(e)}`,
+        message: t("settings.pools.createFailed", { detail: e instanceof ApiError ? `${e.status} ${e.detail}` : String(e) }),
         tone: "warning",
       });
     }
@@ -128,7 +130,7 @@ export function PoolsView() {
       if (selected === oldName) setSelected(next);
     } catch (e) {
       toast.show({
-        message: `Rename failed: ${e instanceof ApiError ? `${e.status} ${e.detail}` : String(e)}`,
+        message: t("settings.pools.renameFailed", { detail: e instanceof ApiError ? `${e.status} ${e.detail}` : String(e) }),
         tone: "warning",
       });
       setRename(null);
@@ -162,12 +164,12 @@ export function PoolsView() {
       setConfirm(null);
       if (e instanceof ApiError && e.status === 409) {
         toast.show({
-          message: `Cannot delete "${name}" (default pool or in use).`,
+          message: t("settings.pools.cannotDeleteDefault", { name }),
           tone: "warning",
         });
       } else {
         toast.show({
-          message: `Delete failed: ${e instanceof ApiError ? `${e.status} ${e.detail}` : String(e)}`,
+          message: t("settings.pools.deleteFailed", { detail: e instanceof ApiError ? `${e.status} ${e.detail}` : String(e) }),
           tone: "warning",
         });
       }
@@ -187,8 +189,8 @@ export function PoolsView() {
           <PageHeadIcon size={18} />
         </span>
         <div>
-          <div className="page-title">{meta.title}</div>
-          <div className="page-sub">{meta.sub}</div>
+          <div className="page-title">{meta.titleTerm ?? t(meta.titleKey!)}</div>
+          <div className="page-sub">{t(meta.subKey)}</div>
         </div>
       </div>
 
@@ -198,14 +200,14 @@ export function PoolsView() {
       >
       {/* Left: pool list */}
       <aside
-        aria-label="Pool list"
+        aria-label={t("settings.pools.poolList")}
         className="flex max-h-48 w-full shrink-0 flex-col gap-3 border-b border-hairline bg-canvas-elevated pb-3 lg:max-h-none lg:w-64 lg:border-b-0 lg:border-r lg:pb-0 lg:pr-3"
       >
         <div className="flex items-center justify-between">
-          <SectionLabel>Pools</SectionLabel>
+          <SectionLabel>{t("settings.pools.title")}</SectionLabel>
           <IconButton
             icon={<PlusIcon />}
-            label="Add pool"
+            label={t("settings.pools.addPool")}
             variant="ghost"
             size="sm"
             className="text-mute hover:text-link"
@@ -214,8 +216,8 @@ export function PoolsView() {
         </div>
 
         <Input
-          aria-label="Filter pools"
-          placeholder="Filter pools…"
+          aria-label={t("settings.pools.filterPools")}
+          placeholder={t("settings.pools.filterPoolsPlaceholder")}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           onKeyDown={(e) => {
@@ -231,7 +233,7 @@ export function PoolsView() {
           {adding && (
             <input
               autoFocus
-              placeholder="new-pool-name"
+              placeholder={t("settings.pools.newPoolName")}
               className="mb-1 w-full rounded-sm border border-hairline bg-canvas-elevated px-2 py-1 text-sm text-ink focus:border-link focus:outline-none focus:ring-1 focus:ring-link"
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
@@ -281,16 +283,16 @@ export function PoolsView() {
                         type="button"
                         className="min-w-0 flex-1 truncate text-left text-sm"
                         onClick={() => onSelect(p.name)}
-                        onDoubleClick={() =>
-                          setRename({ name: p.name, draft: p.name })
-                        }
-                        title={`${p.subagent_count} subagent(s)`}
-                      >
+                      onDoubleClick={() =>
+                        setRename({ name: p.name, draft: p.name })
+                      }
+                      title={t("settings.pools.subagentCount", { count: p.subagent_count })}
+                    >
                         {p.name}
                       </button>
                       <IconButton
                         icon={<EditIcon />}
-                        label={`Rename ${p.name}`}
+                        label={t("settings.pools.renameName", { name: p.name })}
                         variant="ghost"
                         size="sm"
                         className="text-mute hover:text-link"
@@ -300,7 +302,7 @@ export function PoolsView() {
                       />
                       <IconButton
                         icon={<Trash2 size={16} />}
-                        label={`Delete ${p.name}`}
+                        label={t("settings.pools.deleteName", { name: p.name })}
                         variant="ghost"
                         size="sm"
                         className="text-mute hover:text-error"
@@ -317,13 +319,13 @@ export function PoolsView() {
 
           {pools.length > 0 && visiblePools.length === 0 && (
             <p className="rounded-md border border-dashed border-hairline px-3 py-4 text-center text-xs text-mute">
-              No pools match "{filter}".
+              {t("settings.pools.noMatch", { filter })}
             </p>
           )}
 
           {pools.length === 0 && !adding && (
             <p className="rounded-md border border-dashed border-hairline px-3 py-4 text-center text-xs text-mute">
-              No pools. Click + to create one.
+              {t("settings.pools.noPools")}
             </p>
           )}
         </div>
@@ -331,7 +333,7 @@ export function PoolsView() {
 
       {/* Right: editor */}
       <section
-        aria-label="Selected pool editor"
+        aria-label={t("settings.pools.selectedPoolEditor")}
         className="flex min-w-0 flex-1 flex-col rounded-lg border border-hairline bg-canvas-elevated p-4"
       >
         {selected ? (
@@ -356,7 +358,7 @@ export function PoolsView() {
                 onClick={handleCancel}
                 disabled={!dirty || saving}
               >
-                Cancel
+                {t("settings.pools.cancel")}
               </Button>
               <Button
                 variant="primary"
@@ -365,13 +367,13 @@ export function PoolsView() {
                 disabled={!dirty || saving}
                 loading={saving}
               >
-                Save
+                {t("settings.pools.save")}
               </Button>
             </ActionBar>
           </>
         ) : (
           <p className="text-sm text-mute">
-            Select a pool, or click + to create one.
+            {t("settings.pools.selectOrCreate")}
           </p>
         )}
       </section>
@@ -379,9 +381,9 @@ export function PoolsView() {
 
       {confirm?.kind === "delete" ? (
         <ConfirmDialog
-          title={`Delete pool "${confirm.name}"?`}
-          message="All agent configs, subagents and prompts in this pool will be removed."
-          confirmLabel="Delete"
+          title={t("settings.pools.deletePoolTitle", { name: confirm.name })}
+          message={t("settings.pools.deletePoolMessage")}
+          confirmLabel={t("settings.pools.delete")}
           tone="danger"
           onConfirm={() => void onDelete(confirm.name)}
           onCancel={() => setConfirm(null)}
@@ -389,9 +391,9 @@ export function PoolsView() {
       ) : null}
       {confirm?.kind === "switch" ? (
         <ConfirmDialog
-          title="Discard unsaved changes?"
-          message="Switching pools now will lose your edits to the current pool."
-          confirmLabel="Discard"
+          title={t("settings.pools.discardSwitchTitle")}
+          message={t("settings.pools.discardSwitchMessage")}
+          confirmLabel={t("settings.pools.discard")}
           tone="danger"
           onConfirm={() => {
             setSelected(confirm.name);

@@ -4,6 +4,7 @@ import { formatShort } from "../lib/timezone";
 import type { TreeNode } from "../lib/sessionTree";
 import { ChevronToggleIcon, XIcon } from "./ui/icons";
 import { IconButton } from "./ui/IconButton";
+import { useT } from "../i18n";
 
 // Re-export so existing `import { TreeNode } from "./SessionTree"` callers
 // (e.g. Sidebar) keep working without reaching into the lib directly.
@@ -58,6 +59,7 @@ const SessionNode: FC<{
   onToggleExpand: (sessionId: string) => void;
   onDelete: (sessionId: string) => void;
 }> = ({ node, depth, expanded, selected, onSelect, onToggleExpand, onDelete }) => {
+  const t = useT();
   const hasChildren = node.children.length > 0;
   const isSelected = node.session_id === selected;
   const isRoot = node.parent_session_id === null;
@@ -93,7 +95,7 @@ const SessionNode: FC<{
           <div className="mr-2 flex h-7 w-4 shrink-0 items-center justify-center">
             {hasChildren && (
               <IconButton
-                label={expanded ? "Collapse" : "Expand"}
+                label={expanded ? t("sessionTree.collapse") : t("sessionTree.expand")}
                 size="sm"
                 variant="ghost"
                 data-testid="expand-arrow"
@@ -134,7 +136,7 @@ const SessionNode: FC<{
           {/* Delete — only for root sessions */}
           {isRoot && (
             <IconButton
-              label="Delete conversation"
+              label={t("sessionTree.deleteConversation")}
               size="sm"
               variant="ghost"
               onClick={(e): void => {

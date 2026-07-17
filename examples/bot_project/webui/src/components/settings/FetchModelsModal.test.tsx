@@ -35,7 +35,7 @@ describe("FetchModelsModal", () => {
       />,
     );
 
-    expect(screen.getByText("正在拉取模型列表...")).toBeTruthy();
+    expect(screen.getByText("Fetching model list…")).toBeTruthy();
 
     await waitFor(() => {
       expect(screen.getByText("claude-sonnet-4")).toBeTruthy();
@@ -66,7 +66,7 @@ describe("FetchModelsModal", () => {
     expect(screen.getByText(/openai/)).toBeTruthy();
   });
 
-  it("marks existing models as disabled with '已添加'", async () => {
+  it("marks existing models as disabled with 'Already added'", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(makeResponse(200, { models: mockModels })),
@@ -88,7 +88,7 @@ describe("FetchModelsModal", () => {
 
     const existingLabel = screen.getByText("claude-sonnet-4").closest("label");
     expect(existingLabel?.classList.contains("opacity-50")).toBe(true);
-    expect(screen.getByText("已添加")).toBeTruthy();
+    expect(screen.getByText("Already added")).toBeTruthy();
   });
 
   it("filters models by search query", async () => {
@@ -111,7 +111,7 @@ describe("FetchModelsModal", () => {
       expect(screen.getByText("claude-sonnet-4")).toBeTruthy();
     });
 
-    const searchInput = screen.getByPlaceholderText("搜索模型...");
+    const searchInput = screen.getByPlaceholderText("Search models…");
     fireEvent.change(searchInput, { target: { value: "gpt" } });
 
     expect(screen.getByText("gpt-4o")).toBeTruthy();
@@ -144,7 +144,7 @@ describe("FetchModelsModal", () => {
       .querySelector('input[type="checkbox"]')!;
     fireEvent.click(checkbox);
 
-    const importBtn = screen.getByText(/导入选中/);
+    const importBtn = screen.getByText(/Import selected/);
     fireEvent.click(importBtn);
 
     expect(onImport).toHaveBeenCalledWith([
@@ -170,9 +170,9 @@ describe("FetchModelsModal", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText(/认证失败/)).toBeTruthy();
+      expect(screen.getByText(/Authentication failed/)).toBeTruthy();
     });
-    expect(screen.getByText("重试")).toBeTruthy();
+    expect(screen.getByText("Retry")).toBeTruthy();
   });
 
   it("shows error when provider returns 0 models", async () => {
@@ -192,7 +192,7 @@ describe("FetchModelsModal", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Provider 返回了 0 个模型")).toBeTruthy();
+      expect(screen.getByText("Provider returned 0 models")).toBeTruthy();
     });
   });
 
@@ -216,7 +216,7 @@ describe("FetchModelsModal", () => {
       expect(screen.getByText("claude-sonnet-4")).toBeTruthy();
     });
 
-    const importBtn = screen.getByText(/导入选中/).closest("button")!;
+    const importBtn = screen.getByText(/Import selected/).closest("button")!;
     expect(importBtn.disabled).toBe(true);
   });
 });

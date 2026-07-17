@@ -30,12 +30,13 @@ import { SectionLabel } from "../ui/SectionLabel";
 import { Trash2 } from "lucide-react";
 import { ChevronRightIcon, PlusIcon } from "../ui/icons";
 import { CATEGORY } from "./categoryMeta";
+import { useT } from "../../i18n";
 
 // Protocol choice shown only under the Remote HTTP category. The two share
 // fields, so this is metadata only — no data reset on change.
-const PROTOCOL_OPTIONS = [
-  { value: "sse", label: "SSE" },
-  { value: "streamableHttp", label: "Streamable HTTP" },
+const PROTOCOL_DEFS: { value: string; labelKey: "settings.mcp.protocolSse" | "settings.mcp.protocolStreamable" }[] = [
+  { value: "sse", labelKey: "settings.mcp.protocolSse" },
+  { value: "streamableHttp", labelKey: "settings.mcp.protocolStreamable" },
 ];
 
 interface CardState {
@@ -61,6 +62,7 @@ const emptyEntry = (): McpServerEntry => ({
 
 export function GlobalMcpView() {
   const toast = useToast();
+  const t = useT();
   const [cards, setCards] = useState<CardState[] | null>(null);
   const [loadError, setLoadError] = useState<string>("");
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
@@ -91,10 +93,10 @@ export function GlobalMcpView() {
   }, []);
 
   if (loadError) {
-    return <p className="text-sm text-error">Failed to load: {loadError}</p>;
+    return <p className="text-sm text-error">{t("common.failedToLoad", { error: loadError })}</p>;
   }
   if (!cards) {
-    return <p className="text-sm text-mute">Loading…</p>;
+    return <p className="text-sm text-mute">{t("common.loading")}</p>;
   }
 
   const update = (i: number, patch: Partial<CardState>): void => {
@@ -143,7 +145,7 @@ export function GlobalMcpView() {
     const card = cards[i]!;
     const name = card.name.trim();
     if (!name) {
-      toast.show({ message: "Server name is required.", tone: "warning" });
+      toast.show({ message: t("settings.mcp.serverNameRequired"), tone: "warning" });
       return;
     }
 
@@ -156,15 +158,12 @@ export function GlobalMcpView() {
       }
       await upsertMcp(name, card.entry);
       update(i, { originalName: name, name });
-      restartToast(toast);
+      restartToast(toast, t);
     } catch (e) {
-      // If the delete succeeded but the upsert failed, the old config is gone.
-      // Restore the original name locally so the user can retry without losing
-      // the previous identity.
       if (renamed) {
         update(i, { name: card.originalName! });
       }
-      toast.show({ message: `Save failed: ${errDetail(e)}`, tone: "warning" });
+      toast.show({ message: t("settings.mcp.saveFailed", { detail: errDetail(e) }), tone: "warning" });
     }
   };
 
@@ -180,13 +179,10 @@ export function GlobalMcpView() {
     try {
       await deleteMcp(name);
       removeAndCollapse(i);
-      // Deletion also implies a restart; reuse the uniform toast (the message
-      // already says "Saved", which is close enough for a delete→restart hint
-      // and keeps every restart surface identical).
-      restartToast(toast);
+      restartToast(toast, t);
     } catch (e) {
       toast.show({
-        message: `Delete failed: ${errDetail(e)}`,
+        message: t("settings.mcp.deleteFailed", { detail: errDetail(e) }),
         tone: "warning",
       });
     } finally {
@@ -207,13 +203,13 @@ export function GlobalMcpView() {
           <PageHeadIcon size={18} />
         </span>
         <div>
-          <div className="page-title">{meta.title}</div>
-          <div className="page-sub">{meta.sub}</div>
+          <div className="page-title">{meta.titleTerm ?? t(meta.titleKey!)}</div>
+          <div className="page-sub">{t(meta.subKey)}</div>
         </div>
       </div>
 
       <p className="text-xs text-mute">
-        MCP servers available to every pool's agents.
+        {t("settings.mcp.availableToAll")}
       </p>
 
       <div className="space-y-2">
@@ -234,7 +230,7 @@ export function GlobalMcpView() {
 
         {cards.length === 0 && (
           <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-sm text-mute">
-            No MCP servers configured.
+            {t("settings.mcp.noServers")}
           </p>
         )}
 
@@ -243,7 +239,7 @@ export function GlobalMcpView() {
           className="mt-1 flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-hairline py-2.5 text-sm text-body hover:border-ink hover:bg-hairline-soft hover:text-ink"
           onClick={addCard}
         >
-          <PlusIcon /> Add server
+          <PlusIcon /> {t("settings.mcp.addServer")}
         </button>
       </div>
     </div>
@@ -271,6 +267,7 @@ function McpCard({
   onConfirmDelete: () => void;
   onCancelDelete: () => void;
 }) {
+  const t = useT();
   const e = card.entry;
   const setEntry = (patch: Partial<McpServerEntry>): void =>
     onChange({ entry: { ...e, ...patch } });
@@ -314,23 +311,23 @@ function McpCard({
           {dirty && (
             <span
               aria-hidden="true"
-              title="Unsaved changes"
+              title={t("settings.mcp.unsavedChanges")}
               className="h-2 w-2 shrink-0 rounded-full bg-warning"
             />
           )}
           <span className="truncate text-sm font-medium text-ink">
             {card.originalName ?? (
-              <span className="italic text-body">New server</span>
+              <span className="italic text-body">{t("settings.mcp.newServer")}</span>
             )}
           </span>
-          <TransportBadge remote={isHttp} label={transportLabel(resolvedTransport)} />
+          <TransportBadge remote={isHttp} label={transportLabel(resolvedTransport, t)} />
           <span className="truncate font-mono text-xs text-body">
-            {e.command || e.url || "not configured"}
+            {e.command || e.url || t("settings.mcp.notConfigured")}
           </span>
         </button>
         <div className="flex shrink-0 items-center gap-2">
           <Button variant="ghost" size="sm" onClick={onSave}>
-            Save
+            {t("settings.mcp.save")}
           </Button>
           {confirming ? (
             <span className="flex items-center gap-2 text-xs">
@@ -340,7 +337,7 @@ function McpCard({
                 className="font-medium text-error hover:underline"
                 onClick={onConfirmDelete}
               >
-                Delete
+                {t("settings.mcp.delete")}
               </Button>
               <Button
                 variant="link"
@@ -348,13 +345,13 @@ function McpCard({
                 className="text-body hover:underline"
                 onClick={onCancelDelete}
               >
-                Cancel
+                {t("settings.mcp.cancel")}
               </Button>
             </span>
           ) : (
             <IconButton
               icon={<Trash2 size={16} />}
-              label="Delete server"
+              label={t("settings.mcp.deleteServer")}
               variant="ghost"
               size="sm"
               onClick={onRequestDelete}
@@ -369,38 +366,36 @@ function McpCard({
           id={`mcp-card-${card.id}-body`}
           className="space-y-5 border-t border-hairline px-4 py-4"
         >
-          {/* Identity */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Input
-              label="Name"
+              label={t("settings.mcp.name")}
               required
               value={card.name}
               onChange={(ev) => onChange({ name: ev.target.value })}
             />
           </div>
 
-          {/* Transport category */}
           <div>
-            <SectionLabel>Transport</SectionLabel>
+            <SectionLabel>{t("settings.mcp.transport")}</SectionLabel>
             <div className="grid grid-cols-2 gap-2">
               <CategoryButton
                 active={!isHttp}
-                title="stdio"
-                desc="Run a subprocess on this machine"
+                title={t("settings.mcp.stdioTitle")}
+                desc={t("settings.mcp.stdioDesc")}
                 onClick={() => setCategory(false)}
               />
               <CategoryButton
                 active={isHttp}
-                title="Remote HTTP"
-                desc="Connect to a network endpoint"
+                title={t("settings.mcp.remoteHttpTitle")}
+                desc={t("settings.mcp.remoteHttpDesc")}
                 onClick={() => setCategory(true)}
               />
             </div>
             {isHttp && (
               <div className="mt-3">
-                <Label>Protocol</Label>
+                <Label>{t("settings.mcp.protocol")}</Label>
                 <div className="flex flex-wrap gap-1.5">
-                  {PROTOCOL_OPTIONS.map((opt) => {
+                  {PROTOCOL_DEFS.map((opt) => {
                     const active = resolvedTransport === opt.value;
                     return (
                       <button
@@ -414,36 +409,34 @@ function McpCard({
                             : "inline-flex items-center rounded-full border border-hairline bg-canvas-elevated px-3 py-1 text-xs text-body hover:border-ink hover:text-ink"
                         }
                       >
-                        {opt.label}
+                        {t(opt.labelKey)}
                       </button>
                     );
                   })}
                 </div>
                 <HelperText>
-                  SSE and Streamable HTTP share the same fields — switching
-                  never clears your input.
+                  {t("settings.mcp.protocolHelper")}
                 </HelperText>
               </div>
             )}
           </div>
 
-          {/* Configuration fields */}
           <div>
-            <SectionLabel>{isHttp ? "Endpoint" : "Process"}</SectionLabel>
+            <SectionLabel>{isHttp ? t("settings.mcp.endpoint") : t("settings.mcp.process")}</SectionLabel>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {isHttp ? (
                 <>
                   <div className="sm:col-span-2">
                     <Input
-                      label="URL"
+                      label={t("settings.mcp.url")}
                       required
                       value={e.url ?? ""}
                       onChange={(ev) => setEntry({ url: ev.target.value })}
-                      placeholder="https://…"
+                      placeholder={t("settings.mcp.urlPlaceholder")}
                     />
                   </div>
                   <Input
-                    label="Timeout (s)"
+                    label={t("settings.mcp.timeout")}
                     type="number"
                     value={e.timeout ?? 30}
                     onChange={(ev) =>
@@ -452,8 +445,8 @@ function McpCard({
                   />
                   <div className="sm:col-span-2">
                     <KeyValueEditor
-                      label="HTTP headers"
-                      helper="Custom headers sent with each request (e.g. Authorization)."
+                      label={t("settings.mcp.httpHeaders")}
+                      helper={t("settings.mcp.httpHeadersHelper")}
                       entries={e.headers ?? {}}
                       onChange={(headers) => setEntry({ headers })}
                     />
@@ -462,14 +455,14 @@ function McpCard({
               ) : (
                 <>
                   <Input
-                    label="Command"
+                    label={t("settings.mcp.command")}
                     required
                     value={e.command ?? ""}
                     onChange={(ev) => setEntry({ command: ev.target.value })}
-                    placeholder="npx"
+                    placeholder={t("settings.mcp.commandPlaceholder")}
                   />
                   <Input
-                    label="Timeout (s)"
+                    label={t("settings.mcp.timeout")}
                     type="number"
                     value={e.timeout ?? 30}
                     onChange={(ev) =>
@@ -478,15 +471,15 @@ function McpCard({
                   />
                   <div className="sm:col-span-2">
                     <Input
-                      label="Working directory"
+                      label={t("settings.mcp.workingDirectory")}
                       value={e.cwd ?? ""}
                       onChange={(ev) => setEntry({ cwd: ev.target.value })}
                     />
                   </div>
                   <div className="sm:col-span-2">
                     <Textarea
-                      label="Args (one per line or comma-separated)"
-                      helper="Use newlines or commas to separate arguments."
+                      label={t("settings.mcp.args")}
+                      helper={t("settings.mcp.argsHelper")}
                       mono={false}
                       value={kvListToText(e.args ?? [])}
                       onChange={(ev) =>
@@ -496,8 +489,8 @@ function McpCard({
                   </div>
                   <div className="sm:col-span-2">
                     <KeyValueEditor
-                      label="Environment variables"
-                      helper="Variables available to the server process."
+                      label={t("settings.mcp.envVars")}
+                      helper={t("settings.mcp.envVarsHelper")}
                       entries={e.env ?? {}}
                       onChange={(env) => setEntry({ env })}
                     />
@@ -514,10 +507,10 @@ function McpCard({
 
 // ─── small presentational helpers (locality: only this editor uses them) ─────
 
-function transportLabel(t: McpTransport): string {
-  if (t === "stdio") return "stdio";
-  if (t === "sse") return "SSE";
-  return "Streamable HTTP";
+function transportLabel(transport: McpTransport, t: (key: "settings.mcp.stdioTitle" | "settings.mcp.protocolSse" | "settings.mcp.protocolStreamable") => string): string {
+  if (transport === "stdio") return t("settings.mcp.stdioTitle");
+  if (transport === "sse") return t("settings.mcp.protocolSse");
+  return t("settings.mcp.protocolStreamable");
 }
 
 function StatusDot({ on }: { on: boolean }) {

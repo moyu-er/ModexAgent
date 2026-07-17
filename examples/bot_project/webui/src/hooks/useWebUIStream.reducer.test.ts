@@ -446,3 +446,45 @@ describe("clearPendingApproval", () => {
     expect(next.pendingApprovals["s.subagent"]).toHaveLength(1);
   });
 });
+
+describe("applyServerEvent translator injection", () => {
+  it("uses the injected t for the error-event system notice, not the English default", () => {
+    const ref = { current: null as string | null };
+    const sentinel = (key: string): string => `X:${key}`;
+    const state = applyServerEvent(
+      emptyState(),
+      {
+        event: "error",
+        session_id: "s.main",
+        agent_name: "main",
+        message: "boom",
+      },
+      "s.main",
+      ref,
+      sentinel as unknown as Parameters<typeof applyServerEvent>[4],
+    );
+    expect(state.messages).toHaveLength(1);
+    const block = state.messages[0]!.blocks[0]!;
+    expect(block.kind).toBe("text");
+    expect(block.kind === "text" && block.text).toBe("X:chat.errorPrefixboom");
+  });
+
+  it("falls back to the English default when no t is passed (source compatibility)", () => {
+    const ref = { current: null as string | null };
+    const state = applyServerEvent(
+      emptyState(),
+      {
+        event: "error",
+        session_id: "s.main",
+        agent_name: "main",
+        message: "",
+      },
+      "s.main",
+      ref,
+    );
+    expect(state.messages).toHaveLength(1);
+    const block = state.messages[0]!.blocks[0]!;
+    expect(block.kind).toBe("text");
+    expect(block.kind === "text" && block.text).toBe("⚠ An error occurred");
+  });
+});

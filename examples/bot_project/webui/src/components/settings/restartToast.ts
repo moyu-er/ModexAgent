@@ -6,25 +6,23 @@
 
 import type { ToastContextValue } from "../ToastContext";
 import { restartSystem } from "../../lib/api";
+import type { TFn } from "../../i18n";
 
-export function restartToast(toast: ToastContextValue): void {
+export function restartToast(toast: ToastContextValue, t: TFn): void {
   toast.restart.setRestartNeeded(true);
   toast.show({
-    message: "Saved. Restart to apply.",
+    message: t("toast.savedRestart"),
     tone: "success",
     action: {
-      label: "Restart now",
+      label: t("toast.restartNow"),
       onClick: () => {
         void restartSystem()
           .then(() => {
-            // Best-effort: clear once the restart call resolves. The WS drops
-            // and reconnects shortly after; if a stale dot survives to the
-            // reloaded UI it will simply clear on next page load.
             toast.restart.clearRestartNeeded();
           })
           .catch(() => {
             toast.show({
-              message: "Restart unavailable — run `modexbot restart` in your terminal.",
+              message: t("toast.restartUnavailable"),
               tone: "warning",
             });
           });

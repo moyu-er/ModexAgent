@@ -5,6 +5,7 @@ import {
   type FC,
   type RefObject,
 } from "react";
+import { useT } from "../i18n";
 
 /**
  * ConversationSpine — a right-margin navigation rail.
@@ -130,6 +131,7 @@ export const ConversationSpine: FC<ConversationSpineProps> = ({
   contentRef,
   anchors,
 }) => {
+  const t = useT();
   const [ratios, setRatios] = useState<number[]>([]);
   const [active, setActive] = useState<number>(-1);
   const rafRef = useRef<number | null>(null);
@@ -144,14 +146,16 @@ export const ConversationSpine: FC<ConversationSpineProps> = ({
       setRatios(next);
       setActive(computeActiveIndex(next, viewportCenterRatio(scrollRef.current)));
     };
-    // 首次同步测量，让新增 anchor 立即出现而不是等下一帧。
+    // First synchronous measure so newly-added anchors appear immediately
+    // instead of waiting for the next frame.
     remeasure();
     const content = contentRef.current;
     let ro: ResizeObserver | undefined;
     if (content && typeof ResizeObserver !== "undefined") {
       ro = new ResizeObserver(() => {
-        // 流式 delta 高频改变 content 高度：rAF 合并同帧多次回调，避免
-        // 每 token 一次 N 次 DOM 查询 + setState（长对话时卡顿的根因）。
+        // Streaming deltas change content height at high frequency: rAF
+        // coalesces multiple callbacks in the same frame, avoiding N DOM
+        // queries + setState per token (the root cause of lag in long chats).
         if (measureRafRef.current != null) return;
         measureRafRef.current = requestAnimationFrame(() => {
           measureRafRef.current = null;
@@ -208,7 +212,7 @@ export const ConversationSpine: FC<ConversationSpineProps> = ({
   return (
     <div
       className="absolute bottom-6 right-3 top-6 z-10 hidden w-5 md:flex md:justify-center"
-      aria-label="Conversation navigation"
+      aria-label={t("chat.conversationNav")}
       role="navigation"
     >
       {/* Hairline rail */}
@@ -226,7 +230,7 @@ export const ConversationSpine: FC<ConversationSpineProps> = ({
             onClick={(): void => jumpTo(i)}
             className="group absolute left-1/2 flex h-5 w-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center"
             style={{ top: `${topPct}%`, visibility: finiteR !== null ? "visible" : "hidden" }}
-            aria-label={`Jump to question: ${a.preview}`}
+            aria-label={t("chat.jumpToQuestion", { preview: a.preview })}
             aria-current={isActive ? "true" : undefined}
           >
             <span

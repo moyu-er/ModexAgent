@@ -24,6 +24,7 @@ import { IconButton } from "../ui/IconButton";
 import { Trash2 } from "lucide-react";
 import { UploadIcon } from "../ui/icons";
 import { CATEGORY } from "./categoryMeta";
+import { useT } from "../../i18n";
 
 interface Preview {
   name: string;
@@ -34,6 +35,7 @@ interface Preview {
 
 export function GlobalSkillsView() {
   const toast = useToast();
+  const t = useT();
   const [skills, setSkills] = useState<SkillEntry[] | null>(null);
   const [loadError, setLoadError] = useState<string>("");
   const [uploading, setUploading] = useState(false);
@@ -58,10 +60,10 @@ export function GlobalSkillsView() {
   }, []);
 
   if (loadError) {
-    return <p className="text-sm text-error">Failed to load: {loadError}</p>;
+    return <p className="text-sm text-error">{t("common.failedToLoad", { error: loadError })}</p>;
   }
   if (!skills) {
-    return <p className="text-sm text-mute">Loading…</p>;
+    return <p className="text-sm text-mute">{t("common.loading")}</p>;
   }
 
   const sortedSkills = skills
@@ -74,7 +76,7 @@ export function GlobalSkillsView() {
       const built = await buildUpload(files);
       if (!built) {
         toast.show({
-          message: "Could not derive a skill name.",
+          message: t("settings.skills.noName"),
           tone: "warning",
         });
         return;
@@ -92,7 +94,7 @@ export function GlobalSkillsView() {
       });
     } catch (e) {
       toast.show({
-        message: `Could not read files: ${String(e)}`,
+        message: t("settings.skills.readFailed", { detail: String(e) }),
         tone: "warning",
       });
     }
@@ -109,7 +111,7 @@ export function GlobalSkillsView() {
     try {
       await uploadSkill(preview.name, preview.files);
       toast.show({
-        message: `Uploaded skill "${preview.name}".`,
+        message: t("settings.skills.uploaded", { name: preview.name }),
         tone: "success",
       });
       setPreview(null);
@@ -117,7 +119,7 @@ export function GlobalSkillsView() {
       await load();
     } catch (e) {
       toast.show({
-        message: `Upload failed: ${e instanceof ApiError ? `${e.status} ${e.detail}` : String(e)}`,
+        message: t("settings.skills.uploadFailed", { detail: e instanceof ApiError ? `${e.status} ${e.detail}` : String(e) }),
         tone: "warning",
       });
     } finally {
@@ -132,10 +134,10 @@ export function GlobalSkillsView() {
       if (selectedSkill === name) {
         setSelectedSkill(null);
       }
-      toast.show({ message: `Deleted "${name}".`, tone: "success" });
+      toast.show({ message: t("settings.skills.deleted", { name }), tone: "success" });
     } catch (e) {
       toast.show({
-        message: `Delete failed: ${e instanceof ApiError ? `${e.status} ${e.detail}` : String(e)}`,
+        message: t("settings.skills.deleteFailed", { detail: e instanceof ApiError ? `${e.status} ${e.detail}` : String(e) }),
         tone: "warning",
       });
     } finally {
@@ -156,13 +158,13 @@ export function GlobalSkillsView() {
           <PageHeadIcon size={18} />
         </span>
         <div>
-          <div className="page-title">{meta.title}</div>
-          <div className="page-sub">{meta.sub}</div>
+          <div className="page-title">{meta.titleTerm ?? t(meta.titleKey!)}</div>
+          <div className="page-sub">{t(meta.subKey)}</div>
         </div>
       </div>
 
       <p className="text-xs text-mute">
-        Skills available to every pool's agents.
+        {t("settings.skills.availableToAll")}
       </p>
 
       {/* Drop zone — wraps the hidden directory picker input so clicking
@@ -194,7 +196,7 @@ export function GlobalSkillsView() {
         }`}
       >
         <UploadIcon className="h-4 w-4" />
-        {uploading ? "Uploading…" : "Drop a directory here or click to upload"}
+        {uploading ? t("settings.skills.uploading") : t("settings.skills.dropOrClick")}
         <input
           ref={fileRef}
           id="skill-upload"
@@ -228,8 +230,8 @@ export function GlobalSkillsView() {
           </svg>
           <input
             type="text"
-            aria-label="Search skills"
-            placeholder="Search skills…"
+            aria-label={t("settings.skills.searchSkills")}
+            placeholder={t("settings.skills.searchPlaceholder")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="w-full bg-transparent text-sm text-ink placeholder:text-faint focus:outline-none"
@@ -259,7 +261,7 @@ export function GlobalSkillsView() {
                 onClick={cancelPreview}
                 disabled={uploading}
               >
-                Cancel
+                {t("settings.skills.cancel")}
               </Button>
               <Button
                 variant="primary"
@@ -267,7 +269,7 @@ export function GlobalSkillsView() {
                 loading={uploading}
                 onClick={() => void confirmUpload()}
               >
-                Confirm upload
+                {t("settings.skills.confirmUpload")}
               </Button>
             </div>
           </div>
@@ -276,7 +278,7 @@ export function GlobalSkillsView() {
 
       {skills.length === 0 && !preview ? (
         <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-sm text-mute">
-          No skills uploaded yet.
+          {t("settings.skills.noSkills")}
         </p>
       ) : null}
 
@@ -312,11 +314,11 @@ export function GlobalSkillsView() {
                         className="rounded-full border border-hairline px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-mute"
                         title={
                           s.origin === "repo"
-                            ? "Repo-managed skill — can be deleted"
-                            : "User-installed skill from ~/.agents/skills — cannot be deleted here"
+                            ? t("settings.skills.repoOriginTitle")
+                            : t("settings.skills.userOriginTitle")
                         }
                       >
-                        {s.origin === "repo" ? "local" : "global"}
+                        {s.origin === "repo" ? t("settings.skills.local") : t("settings.skills.global")}
                       </span>
                     )}
                     {s.description && (
@@ -336,7 +338,7 @@ export function GlobalSkillsView() {
                           {s.origin === "repo" && (
                             <IconButton
                               icon={<Trash2 size={16} />}
-                              label={`Delete skill ${s.name}`}
+                              label={t("settings.skills.deleteSkill", { name: s.name })}
                               variant="danger"
                               size="sm"
                               onClick={(e) => {
@@ -350,7 +352,7 @@ export function GlobalSkillsView() {
                             size="sm"
                             onClick={() => setSelectedSkill(null)}
                           >
-                            Close
+                            {t("settings.skills.close")}
                           </Button>
                         </div>
                       </div>
@@ -358,7 +360,7 @@ export function GlobalSkillsView() {
                         <p className="mt-2 text-sm text-body">{s.description}</p>
                       ) : (
                         <p className="mt-2 text-sm text-faint italic">
-                          No description.
+                          {t("settings.skills.noDescription")}
                         </p>
                       )}
                     </div>
@@ -372,15 +374,15 @@ export function GlobalSkillsView() {
 
       {skills !== null && skills.length > 0 && sortedSkills.length === 0 && (
         <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-sm text-mute">
-          No skills match &ldquo;{query}&rdquo;.
+          {t("settings.skills.noMatch", { query })}
         </p>
       )}
 
       {pendingDelete ? (
         <ConfirmDialog
-          title={`Delete skill "${pendingDelete}"?`}
-          message="The skill will be removed. Per-agent links that referenced it go dangling."
-          confirmLabel="Delete"
+          title={t("settings.skills.deleteTitle", { name: pendingDelete })}
+          message={t("settings.skills.deleteMessage")}
+          confirmLabel={t("settings.skills.delete")}
           tone="danger"
           onConfirm={() => void onDeleteConfirmed(pendingDelete)}
           onCancel={() => setPendingDelete(null)}

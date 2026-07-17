@@ -5,6 +5,7 @@ import { eventsToMessages } from "../types/events";
 import { WebSocketClient, buildWsUrl } from "../lib/ws-client";
 import { fetchApprovals, fetchMessages, fetchTodos, submitApproval as apiSubmitApproval } from "../lib/api";
 import { applyServerEvent, clearPendingApproval, type StreamState } from "./useWebUIStream.reducer";
+import { useT } from "../i18n";
 
 /** Events that mark the start of an assistant turn (set isStreaming=true). */
 const STREAM_START_EVENTS = new Set<string>([
@@ -48,6 +49,7 @@ export function useWebUIStream(
   currentWs?: string,
   onSessionCreated?: (sessionId: string, parentSessionId: string | null) => void,
 ): UseWebUIStreamResult {
+  const t = useT();
   const [state, setState] = useState<StreamState>({
     messages: [],
     isStreaming: false,
@@ -128,7 +130,7 @@ export function useWebUIStream(
         !!submittingApprovals[(event as ApprovalRequestEvent).tool_call_id];
       if (!isApprovalRequestInFlight) {
         setState((prev) =>
-          applyServerEvent(prev, event, sessionId, pendingRequestRef),
+          applyServerEvent(prev, event, sessionId, pendingRequestRef, t),
         );
       }
 

@@ -10,6 +10,7 @@ import BootScreen from "./components/BootScreen";
 import { buildTree } from "./lib/sessionTree";
 import { storageGetInt, storageSet } from "./lib/storage";
 import type { OutgoingAttachmentRef } from "./types/attachments";
+import { useT } from "./i18n";
 
 const SIDEBAR_WIDTH_KEY = "modexbot_sidebar_width";
 const DEFAULT_SIDEBAR_WIDTH = 260;
@@ -29,6 +30,7 @@ function saveSidebarWidth(width: number): void {
 }
 
 const AppInner: FC = () => {
+  const t = useT();
   const {
     sessions,
     selectedId,
@@ -178,8 +180,8 @@ const AppInner: FC = () => {
     <ToastProvider>
       <div className="flex h-screen w-screen flex-col overflow-hidden bg-canvas">
         {/* Top status bar — brand · workspace · pool */}
-        <div className="statusline" role="contentinfo" aria-label="Session status">
-          <span className="brand" title={isConnected ? "Connected" : "Disconnected"}>
+        <div className="statusline" role="contentinfo" aria-label={t("chat.sessionStatus")}>
+          <span className="brand" title={isConnected ? t("chat.connected") : t("chat.disconnected")}>
             <span className={isConnected ? "dot-signal" : "dot-dim"} aria-hidden="true" />
             ModexBot
           </span>
@@ -216,7 +218,7 @@ const AppInner: FC = () => {
         <div
           onMouseDown={onResizeMouseDown}
           className="group relative hidden w-2 flex-shrink-0 cursor-col-resize select-none md:block"
-          title="Drag to resize sidebar"
+          title={t("chat.dragResizeSidebar")}
         >
           <div
             className={`absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors ${

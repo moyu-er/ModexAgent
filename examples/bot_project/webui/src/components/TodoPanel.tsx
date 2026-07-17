@@ -8,6 +8,7 @@ import {
   XIcon,
   ChevronDownIcon,
 } from "./ui/icons";
+import { useT } from "../i18n";
 
 const PAGE_SIZE = 4;
 
@@ -30,6 +31,7 @@ export interface TodoPanelProps {
  * neutral but not cold; light/dark flip via the CSS variables.
  */
 export const TodoPanel: FC<TodoPanelProps> = ({ todos, sessionId }) => {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [page, setPage] = useState(0);
 
@@ -73,7 +75,7 @@ export const TodoPanel: FC<TodoPanelProps> = ({ todos, sessionId }) => {
           <div className="flex items-center justify-between px-4 pt-4 pb-2">
             <div className="flex items-center gap-2">
               <span className="text-sm font-semibold text-ink">
-                Tasks
+                {t("todo.tasks")}
               </span>
               <span className="rounded-full bg-hairline px-2 py-0.5 text-[11px] font-medium text-body">
                 {doneCount}/{todos.length}
@@ -83,7 +85,7 @@ export const TodoPanel: FC<TodoPanelProps> = ({ todos, sessionId }) => {
               type="button"
               onClick={() => setOpen(false)}
               className="rounded-full p-1 text-mute transition-colors hover:bg-hairline-soft hover:text-body"
-              aria-label="Close"
+              aria-label={t("todo.close")}
             >
               <XIcon className="h-3.5 w-3.5" />
             </button>
@@ -134,11 +136,11 @@ export const TodoPanel: FC<TodoPanelProps> = ({ todos, sessionId }) => {
                 type="button"
                 disabled={effectivePage === 0}
                 onClick={() => setPage((p) => Math.max(0, p - 1))}
-                aria-label="Previous page"
+                aria-label={t("todo.previousPage")}
                 className="flex items-center gap-1 rounded-lg px-3 py-1 text-[11px] font-medium text-body transition-colors hover:bg-hairline-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/50 disabled:cursor-not-allowed disabled:opacity-30"
               >
                 <ChevronLeftIcon className="h-3 w-3" />
-                prev
+                {t("todo.prev")}
               </button>
               <span className="text-[11px] tabular-nums text-mute">
                 {effectivePage + 1} / {pageCount}
@@ -147,10 +149,10 @@ export const TodoPanel: FC<TodoPanelProps> = ({ todos, sessionId }) => {
                 type="button"
                 disabled={effectivePage >= pageCount - 1}
                 onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
-                aria-label="Next page"
+                aria-label={t("todo.nextPage")}
                 className="flex items-center gap-1 rounded-lg px-3 py-1 text-[11px] font-medium text-body transition-colors hover:bg-hairline-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/50 disabled:cursor-not-allowed disabled:opacity-30"
               >
-                next
+                {t("todo.next")}
                 <ChevronRightIcon className="h-3 w-3" />
               </button>
             </div>
@@ -168,13 +170,13 @@ export const TodoPanel: FC<TodoPanelProps> = ({ todos, sessionId }) => {
             ? " translate-y-2 opacity-0 pointer-events-none"
             : " translate-y-0 opacity-100")
         }
-        aria-label="Toggle task list"
+        aria-label={t("todo.toggleTaskList")}
       >
         <span className="flex h-5 w-5 items-center justify-center rounded-full bg-warning text-[10px] font-bold text-canvas">
           {todos.length}
         </span>
         <span className="text-[13px] font-medium text-ink">
-          Tasks
+          {t("todo.tasks")}
         </span>
         <ChevronDownIcon
           className={`h-3 w-3 text-mute transition-transform duration-300 ${open ? "rotate-180" : ""}`}
