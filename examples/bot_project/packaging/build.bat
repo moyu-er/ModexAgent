@@ -88,9 +88,9 @@ if not defined ISCC_EXE (
 echo  Inno Setup: !ISCC_EXE!
 
 :: --- 1. Version ---
-set "BOT_PYPROJECT=%~dp0..\pyproject.toml"
-set "VERSION=0.1.0"
-for /f "delims=" %%l in ('findstr /r "^version" "%BOT_PYPROJECT%"') do (
+set "VERSION_FILE=%~dp0..\..\..\src\modex_agent\_version.py"
+set "VERSION=1.0.0"
+for /f "delims=" %%l in ('findstr /r "__version__" "%VERSION_FILE%"') do (
     for /f "tokens=2 delims== " %%v in ("%%l") do (
         set "RAW_VER=%%v"
         set "RAW_VER=!RAW_VER:"=!"

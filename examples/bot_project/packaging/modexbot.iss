@@ -37,7 +37,7 @@
 #define MyAppURL "https://github.com/moyu-er/ModexAgent"
 
 #ifndef MyAppVersion
-  #define MyAppVersion "0.1.0"
+  #define MyAppVersion "1.0.0"
 #endif
 
 ; Detect whether Electron was packaged into staging (build.bat --skip-electron
