@@ -122,7 +122,7 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 
 ## Multi-Agent Setup
 
-- `main` pool: Main agent with all MCP tools, file/shell tools, communication tools + subagents (office-expert, query-12306).
+- `default` pool: General-purpose assistant with file/shell tools, MCP tools (playwright), communication tools + subagents (office-expert).
 - `coder` pool: Main agent + subagents (planner, worker, reviewer, scout, oracle, delegate, context-builder).
 - Communication: `send_to_agent` (async inbox-based).
 - `SubagentAutoSendHook` auto-forwards subagent output to parent.

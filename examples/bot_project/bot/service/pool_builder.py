@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 
 from bot.config.memory_defaults import subagent_memory
 from bot.service.model_choice import ModelChoiceBindHook, ModelChoiceRegistry
-from bot.service.model_config import BotModelConfig
+from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg
 from bot.service.model_provider import BotModelProvider
 from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.core.constants import ExecutionStrategy
@@ -156,7 +156,7 @@ async def create_pool(
     session_registry: SessionRegistry | None = None,
     session_store: SessionStore | None = None,
     transcript_store: TranscriptStore | None = None,
-    bot_model_config: BotModelConfig,
+    bot_model_config: BotModelConfig | None,
     model_choice_registry: ModelChoiceRegistry,
     mcp_registry: McpConnectionRegistry | None = None,
     persistence: Any | None = None,
@@ -177,7 +177,7 @@ async def create_pool(
 
     provider = _build_llm_provider(pool_name, bot_model_config)
     terminal_manager = _build_terminal_manager(main_spec, pool_name, workspace_handle)
-    default_resolved = bot_model_config.default_resolved()
+    default_resolved = _resolved_or_placeholder(bot_model_config).default_resolved()
 
     inbox_dir = data_dir / "inbox" / pool_name
     inbox_db_path = data_dir / "state.db"
@@ -462,10 +462,42 @@ def _fallback_context_manager(main_spec: MainAgentSpec, system_prompt: str) -> A
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+def _placeholder_model_config() -> BotModelConfig:
+    """A minimal valid BotModelConfig used when no model.yml is configured.
+
+    Lets the bot boot so the user can configure a real model via the WebUI
+    (Settings → Models) or ``modexbot config``. The placeholder provider has
+    empty api_key/base_url, so every real LLM call fails — but
+    ``BotModelProvider.chat_stream`` catches the provider-build failure and
+    returns an ``LLMResponse(finish_reason=ERROR)``, and the ReAct LLM/end
+    nodes surface that as a turn error instead of crashing the process.
+    """
+    return BotModelConfig(
+        default_provider="_unconfigured",
+        default_model="_placeholder",
+        providers=[
+            ProviderCfg(
+                key="_unconfigured",
+                name="_unconfigured",
+                api_key="",
+                base_url="",
+                models=[
+                    ModelCfg(name="_placeholder", model="_placeholder"),
+                ],
+            )
+        ],
+    )
+
+
+def _resolved_or_placeholder(cfg: BotModelConfig | None) -> BotModelConfig:
+    """Return ``cfg`` when a real model is configured, else the placeholder."""
+    return cfg or _placeholder_model_config()
+
+
 def _build_llm_provider(
-    pool_name: str, bot_model_config: BotModelConfig
+    pool_name: str, bot_model_config: BotModelConfig | None
 ) -> BotModelProvider:
-    provider = BotModelProvider(bot_model_config)
+    provider = BotModelProvider(_resolved_or_placeholder(bot_model_config))
     logger.info("Pool '%s': BotModelProvider (default=%s)", pool_name, provider.model)
     return provider
 
@@ -1072,7 +1104,7 @@ async def _register_main_agent(
     factory: DefaultAgentFactory,
     broker: MessageBroker,
     context_manager: Any,
-    bot_model_config: BotModelConfig,
+    bot_model_config: BotModelConfig | None,
 ) -> None:
     """Register the main (NORMAL) agent with factory defaults (Design B).
 
@@ -1085,7 +1117,8 @@ async def _register_main_agent(
         AgentLLMConfig,
     )
 
-    default_resolved = bot_model_config.default_resolved()
+    resolved_cfg = _resolved_or_placeholder(bot_model_config)
+    default_resolved = resolved_cfg.default_resolved()
     descriptor = AgentDescriptor(
         address=AgentAddress(kind="agent", name=main_spec.agent_name),
         llm_config=AgentLLMConfig(
@@ -1241,7 +1274,7 @@ def _wire_main_pipeline(
     tool_manager: ToolManager,
     *,
     root_provider: WorkspaceRootProvider | None = None,
-    bot_model_config: BotModelConfig,
+    bot_model_config: BotModelConfig | None,
     model_choice_registry: ModelChoiceRegistry,
     cassette_recorder: CassetteRecorder | None = None,
 ) -> None:
@@ -1280,7 +1313,13 @@ def _wire_main_pipeline(
     # deprecated: the correct approach is to rely on the system prompt layer
     # (TodoAwareSystemPromptProvider) and clear tool descriptions instead of
     # injecting synthetic tool calls into the conversation history.
-    _add_hook(pipeline, ModelChoiceBindHook(bot_model_config, model_choice_registry))
+    _add_hook(
+        pipeline,
+        ModelChoiceBindHook(
+            _resolved_or_placeholder(bot_model_config),
+            model_choice_registry,
+        ),
+    )
     if cassette_recorder is not None:
         _add_hook(pipeline, CassetteFlushHook(cassette_recorder))
 
@@ -1305,7 +1344,8 @@ def _wire_main_pipeline(
     # otherwise clobber the pipeline's configured policy.
     # model_capabilities threads the per-pool modality declaration so
     # the inline renderer can bind to it per turn (ADR-0014 §1/§3).
-    default_resolved = bot_model_config.default_resolved()
+    resolved_cfg = _resolved_or_placeholder(bot_model_config)
+    default_resolved = resolved_cfg.default_resolved()
     services_kwargs: dict[str, Any] = dict(
         safety=pipeline.safety,
         model_capabilities=default_resolved.capabilities,

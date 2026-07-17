@@ -441,8 +441,7 @@ skills/                     # 每 pool 的技能（自动发现）
 │   ├── weather/SKILL.md
 │   └── github/SKILL.md
 └── subagents/              # Subagent 技能（按 agent name 自动发现）
-    ├── office-expert/
-    └── query-12306/
+    └── office-expert/
 
 local_skills/               # 项目级本地技能（来源：local）
 └── huashu-design/SKILL.md

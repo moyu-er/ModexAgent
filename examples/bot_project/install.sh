@@ -408,24 +408,21 @@ if [ ! -f "config/model.yml" ]; then
 fi
 
 # ==========================================================================
-# 6. modexbot install (config wizard + frontend build)
+# 6. modexbot install (frontend build only — no model gate)
 # ==========================================================================
 if [ "$HAS_NODE" -eq 1 ]; then
     echo ""
-    echo "Running modexbot install (config check + frontend build)..."
+    echo "Running modexbot install (frontend build)..."
     "$VENV_PYTHON" -m modexbot install || {
         echo ""
         echo "[WARNING] modexbot install encountered errors."
         echo "  You can retry after fixing the issues above:"
-        echo "    $VENV_PYTHON -m modexbot install"
+        echo "    $VENV_PYTHON" -m modexbot install"
     }
 else
     echo ""
-    echo "[INFO] Node.js not available - running config wizard only."
-    echo "  Frontend build will be skipped (WebUI will NOT be available)."
-    echo ""
-    "$VENV_PYTHON" -m modexbot config
-    echo ""
+    echo "[INFO] Node.js not available — skipping frontend build (WebUI will NOT be available)."
+    echo "  The bot still starts; configure a model via WebUI Settings or 'modexbot config'."
     echo "  After installing Node.js, rebuild the frontend with:"
     echo "    $VENV_PYTHON -m modexbot install -f"
 fi

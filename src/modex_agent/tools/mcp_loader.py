@@ -123,7 +123,7 @@ async def load_per_agent_mcp(
     if not manager.connected_servers:
         logger.warning(
             "Agent %s: MCP config %s — %d server(s) configured but NONE connected "
-            "(check MCP_BEARER_TOKEN env var and network)",
+            "(check MCP server credentials/env vars and network)",
             agent_name, registry_path.name, len(servers),
         )
         return

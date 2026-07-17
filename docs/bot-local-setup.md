@@ -97,10 +97,6 @@ Key fields in `.env`:
 ```env
 # Timezone for timestamps
 TIMEZONE=Asia/Shanghai
-
-# MCP server credentials
-MCP_BEARER_TOKEN=your_modelscope_bearer_token
-MINIMAX_MCP_API_KEY=your_minimax_api_key
 ```
 
 > [!NOTE]

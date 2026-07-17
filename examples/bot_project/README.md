@@ -446,8 +446,7 @@ skills/                     # per-pool skills (auto-discovered)
 │   ├── weather/SKILL.md
 │   └── github/SKILL.md
 └── subagents/              # Subagent skills (auto-discovered by agent name)
-    ├── office-expert/
-    └── query-12306/
+    └── office-expert/
 
 local_skills/               # project-wide local skills (origin: local)
 └── huashu-design/SKILL.md
