@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ConfigPayload, RegistrySection } from "../../types/config";
-import { fetchConfig, saveConfig } from "../../lib/api";
+import { ApiError, fetchConfig, saveConfig } from "../../lib/api";
 import { ConfigForm } from "./ConfigForm";
 import { SectionLabel } from "../ui/SectionLabel";
 import { ModelEditor } from "./ModelEditor";
@@ -15,6 +15,9 @@ import { ActionBar } from "../ui/ActionBar";
 import { ChevronLeft } from "lucide-react";
 import { CATEGORY, type ViewKey } from "./categoryMeta";
 import { IM_BRAND_ICONS } from "./imBrands";
+import { useT, type MessageKey, type TFn } from "../../i18n";
+import { TERMS } from "../../i18n/terms";
+import { validateModelValues } from "./modelValidation";
 
 // Re-export so any existing `import { ViewKey } from "./SettingsView"` keeps
 // resolving; categoryMeta.ts is now the canonical declaration.
@@ -29,18 +32,19 @@ interface Props {
 // holds the new standalone views (each owns its own persistence + toasts).
 interface NavEntry {
   key: ViewKey;
-  label: string;
+  labelKey?: MessageKey;
+  labelTerm?: string;
 }
 
 const CONFIG_GROUP: NavEntry[] = [
-  { key: "im", label: "IM Adapters" },
-  { key: "model", label: "Models" },
+  { key: "im", labelKey: "settings.nav.imAdapters" },
+  { key: "model", labelKey: "settings.nav.models" },
 ];
 
 const POOLS_GROUP: NavEntry[] = [
-  { key: "pools", label: "Pools" },
-  { key: "mcp", label: "MCP" },
-  { key: "skills", label: "Skills" },
+  { key: "pools", labelKey: "settings.nav.pools" },
+  { key: "mcp", labelTerm: TERMS.mcp },
+  { key: "skills", labelTerm: TERMS.skills },
 ];
 
 /** Domains backed by the /api/config persisted-config API (shared save footer). */
@@ -74,6 +78,30 @@ function writeTabToUrl(tab: ViewKey): void {
 
 const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
 
+function formatSaveError(e: unknown, t: TFn): string {
+  if (e instanceof ApiError) {
+    try {
+      const body = JSON.parse(e.detail) as {
+        error?: string;
+        fields?: Record<string, string[]>;
+      };
+      if (body.fields && Object.keys(body.fields).length > 0) {
+        const parts = Object.entries(body.fields).map(
+          ([field, msgs]) => `${field}: ${(msgs ?? []).join(", ")}`,
+        );
+        return t("settings.common.saveFailed", { detail: parts.join("; ") });
+      }
+      if (body.error) {
+        return t("settings.common.saveFailed", { detail: body.error });
+      }
+    } catch {
+      // detail is not JSON — fall through
+    }
+    return t("settings.common.saveFailed", { detail: `${e.status} ${e.detail}` });
+  }
+  return t("settings.common.saveFailed", { detail: String(e) });
+}
+
 /**
  * Hook owning a single `dirty` boolean. The persisted-domain views derive it
  * from form/original; non-persisted views leave it false (each child manages
@@ -89,6 +117,7 @@ function useDirty(form: ConfigPayload | null, original: ConfigPayload | null): b
 
 export function SettingsView({ onExit }: Props) {
   const toast = useToast();
+  const t = useT();
   const [view, setView] = useState<ViewKey>(readInitialTab);
   const [original, setOriginal] = useState<ConfigPayload | null>(null);
   const [form, setForm] = useState<ConfigPayload | null>(null);
@@ -117,14 +146,16 @@ export function SettingsView({ onExit }: Props) {
 
   useEffect(() => {
     if (!isPersisted) return;
-    void load(view).catch((e: unknown) => setError(String(e)));
-  }, [view, isPersisted]);
+    void load(view).catch((e: unknown) =>
+      setError(t("common.failedToLoad", { error: String(e) })),
+    );
+  }, [view, isPersisted, t]);
 
   // Loading state only applies to persisted-config views.
   if (isPersisted && (!form || !original)) {
     return (
       <div className="flex h-full items-center justify-center text-mute">
-        {error ? `Failed to load: ${error}` : "Loading…"}
+        {error ? t("common.failedToLoad", { error }) : t("common.loading")}
       </div>
     );
   }
@@ -155,16 +186,24 @@ export function SettingsView({ onExit }: Props) {
 
   const onSave = async (): Promise<boolean> => {
     if (!view || !isPersisted) return false;
+    const payload = assemblePayload();
+    if (view === "model") {
+      const errKey = validateModelValues(payload);
+      if (errKey) {
+        setError(t(errKey));
+        return false;
+      }
+    }
     setSaving(true);
     setError("");
     try {
-      const updated = await saveConfig(view, assemblePayload());
+      const updated = await saveConfig(view, payload);
       setOriginal(updated);
       setForm(clone(updated));
-      if (updated.restart_required) restartToast(toast);
+      if (updated.restart_required) restartToast(toast, t);
       return true;
     } catch (e) {
-      setError(`Save failed: ${String(e)}`);
+      setError(formatSaveError(e, t));
       return false;
     } finally {
       setSaving(false);
@@ -179,7 +218,7 @@ export function SettingsView({ onExit }: Props) {
   return (
     <div data-testid="settings-shell" className="flex h-full flex-col md:flex-row">
       <aside
-        aria-label="Settings navigation"
+        aria-label={t("settings.nav.settingsNavigation")}
         className="w-full shrink-0 border-b border-hairline bg-canvas p-3 md:w-52 md:border-b-0 md:border-r"
       >
         <Button
@@ -189,20 +228,22 @@ export function SettingsView({ onExit }: Props) {
           className="mb-5 w-full justify-start gap-2 px-3 text-sm font-medium text-ink hover:bg-hairline-soft"
         >
           <ChevronLeft className="h-4 w-4" />
-          Back
+          {t("settings.nav.back")}
         </Button>
         <div className="space-y-4">
           <SidebarGroup
-            title="Configuration"
+            title={t("settings.nav.configuration")}
             entries={CONFIG_GROUP}
             active={view}
             onSelect={switchView}
+            t={t}
           />
           <SidebarGroup
-            title="Pools & Agents"
+            title={t("settings.nav.poolsAgents")}
             entries={POOLS_GROUP}
             active={view}
             onSelect={switchView}
+            t={t}
           />
         </div>
       </aside>
@@ -234,7 +275,7 @@ export function SettingsView({ onExit }: Props) {
                 onClick={onCancel}
                 disabled={!dirty || saving}
               >
-                Cancel
+                {t("common.cancel")}
               </Button>
               <Button
                 variant="primary"
@@ -243,7 +284,7 @@ export function SettingsView({ onExit }: Props) {
                 disabled={!dirty || saving}
                 loading={saving}
               >
-                Save
+                {t("common.save")}
               </Button>
             </ActionBar>
           )}
@@ -252,9 +293,9 @@ export function SettingsView({ onExit }: Props) {
 
       {discardView !== null ? (
         <ConfirmDialog
-          title="Discard unsaved changes?"
-          message="Switching now will lose your edits to the current view."
-          confirmLabel="Discard"
+          title={t("settings.common.discardUnsavedTitle")}
+          message={t("settings.common.discardSwitchView")}
+          confirmLabel={t("settings.common.discard")}
           tone="danger"
           onConfirm={() => {
             const next = discardView;
@@ -274,11 +315,13 @@ function SidebarGroup({
   entries,
   active,
   onSelect,
+  t,
 }: {
   title: string;
   entries: NavEntry[];
   active: ViewKey;
   onSelect: (k: ViewKey) => void;
+  t: (key: MessageKey, params?: Record<string, string | number>) => string;
 }) {
   return (
     <div className="rounded-lg border border-hairline bg-canvas-elevated p-2">
@@ -300,7 +343,7 @@ function SidebarGroup({
                 <span className="category-chip">
                   <Icon size={14} />
                 </span>
-                {e.label}
+                {e.labelTerm ?? t(e.labelKey!)}
               </button>
             </li>
           );

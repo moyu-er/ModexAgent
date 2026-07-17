@@ -30,6 +30,37 @@ const imPayload = {
   },
 };
 
+const modelPayload = {
+  domain: "model",
+  label: "Models",
+  flavor: "singleton" as const,
+  restart_required: false,
+  values: {
+    default_provider: "DeepSeek",
+    default_model: "m1",
+    max_context_tokens: 200000,
+    providers: [
+      {
+        key: "deepseek",
+        name: "DeepSeek",
+        base_url: "https://api.deepseek.com",
+        interface_format: "openai_compatible",
+        api_key: { has_value: true, hint: "••••" },
+        models: [
+          {
+            name: "m1",
+            model: "m1",
+            capabilities: ["text"],
+            temperature: 0.7,
+            max_output_tokens: 50000,
+            reasoning_effort: "none",
+          },
+        ],
+      },
+    ],
+  },
+};
+
 // URL state persists across tests in happy-dom; reset ?tab= so each test
 // starts on the IM view (the default) regardless of the previous test's nav.
 beforeEach(() => {
@@ -216,5 +247,122 @@ describe("SettingsView", () => {
     );
     // Detail pane should also show delete button; source badge stays on the row.
     expect(screen.getByRole("button", { name: "Delete skill weather" })).toBeTruthy();
+  });
+
+  describe("Models save validation", () => {
+    it("blocks save with inline error when default model is cleared — no PUT issued", async () => {
+      let putCalled = false;
+      const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+        const method = init?.method ?? "GET";
+        if (method === "PUT") {
+          putCalled = true;
+          return Promise.resolve(makeResponse(200, JSON.stringify(modelPayload)));
+        }
+        return Promise.resolve(makeResponse(200, JSON.stringify(modelPayload)));
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      window.history.replaceState(null, "", "/?tab=model");
+      render(
+        <ToastProvider>
+          <SettingsView onExit={() => {}} />
+        </ToastProvider>,
+      );
+
+      await waitFor(() => expect(screen.getByDisplayValue("DeepSeek")).toBeTruthy());
+
+      fireEvent.click(screen.getByRole("button", { name: "Remove model" }));
+      fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+      fireEvent.click(screen.getByText("Save"));
+
+      await waitFor(() => {
+        expect(screen.getByText(/Select a default model before saving/)).toBeTruthy();
+      });
+
+      expect(putCalled).toBe(false);
+    });
+
+    it("shows a friendly error from a 400 ApiError JSON body with fields", async () => {
+      const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url.endsWith("/api/config/model") && method === "GET") {
+          return Promise.resolve(makeResponse(200, JSON.stringify(modelPayload)));
+        }
+        if (url.endsWith("/api/config/model") && method === "PUT") {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                error: "validation",
+                fields: { default_model: ["is required"] },
+              }),
+              { status: 400 },
+            ),
+          );
+        }
+        return Promise.resolve(makeResponse(200, JSON.stringify(modelPayload)));
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      window.history.replaceState(null, "", "/?tab=model");
+      render(
+        <ToastProvider>
+          <SettingsView onExit={() => {}} />
+        </ToastProvider>,
+      );
+
+      await waitFor(() => expect(screen.getByDisplayValue("DeepSeek")).toBeTruthy());
+
+      fireEvent.change(screen.getByDisplayValue("200000"), {
+        target: { value: "128000" },
+      });
+
+      fireEvent.click(screen.getByText("Save"));
+
+      await waitFor(() => {
+        expect(screen.getByText(/Save failed:/)).toBeTruthy();
+      });
+      expect(screen.getByText(/default_model: is required/)).toBeTruthy();
+    });
+
+    it("shows a friendly error from a 400 ApiError JSON body with error string", async () => {
+      const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url.endsWith("/api/config/model") && method === "GET") {
+          return Promise.resolve(makeResponse(200, JSON.stringify(modelPayload)));
+        }
+        if (url.endsWith("/api/config/model") && method === "PUT") {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({ error: "Something went wrong" }),
+              { status: 400 },
+            ),
+          );
+        }
+        return Promise.resolve(makeResponse(200, JSON.stringify(modelPayload)));
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      window.history.replaceState(null, "", "/?tab=model");
+      render(
+        <ToastProvider>
+          <SettingsView onExit={() => {}} />
+        </ToastProvider>,
+      );
+
+      await waitFor(() => expect(screen.getByDisplayValue("DeepSeek")).toBeTruthy());
+
+      fireEvent.change(screen.getByDisplayValue("200000"), {
+        target: { value: "128000" },
+      });
+
+      fireEvent.click(screen.getByText("Save"));
+
+      await waitFor(() => {
+        expect(screen.getByText(/Save failed: Something went wrong/)).toBeTruthy();
+      });
+    });
   });
 });
