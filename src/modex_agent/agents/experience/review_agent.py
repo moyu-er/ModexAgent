@@ -93,7 +93,7 @@ class ExperienceReviewAgent(ScopedFileAgent):
         trace_key = invocation_id or uuid.uuid4().hex[:8]
         session_id = f"{trace_key}.experience-review"
         _td = traces_dir or (experience_dir.parent / "review_traces")
-        trace_path = _td / f"{trace_key}"/ "operations.jsonl"
+        trace_path = _td / f"{trace_key}"/ "trajectory.jsonl"
 
         logger.info(
             "ExperienceReviewAgent starting: invocation=%s session=%s",

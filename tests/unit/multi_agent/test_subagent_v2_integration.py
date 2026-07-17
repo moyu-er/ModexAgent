@@ -14,12 +14,11 @@ import re
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.constants import StopReason
 from modex_agent.core.emitter import AgentResult
+from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
 from modex_agent.hook.builtin.subagent_auto_send import SubagentAutoSendHook
 from modex_agent.memory.history import ListMessageHistory
@@ -28,12 +27,11 @@ from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_local import LocalFileInboxServer
-from modex_agent.runtime.enums import AgentKind, OperationKind, OperationStatus, TurnPhase
+from modex_agent.runtime.enums import AgentKind, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
-from modex_agent.core.session_id import SessionInfo
-from modex_agent.trace import JsonFileTraceStore, TraceCollectorHook
-
+from modex_agent.trace import OtelSpanTraceStore, TraceCollectorHook
+from modex_agent.trace.semconv import GenAiAttr, SpanName, SpanStatusCode
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -46,6 +44,7 @@ def _make_context(
     session_id: str = SESSION_ID,
     agent_name: str = "worker",
     parent_session_id: str = "conv123.main",
+    trace_store: OtelSpanTraceStore | None = None,
 ) -> AgentContext:
     session = SessionInfo(
         session_id=session_id,
@@ -57,7 +56,10 @@ def _make_context(
         agent_kind=AgentKind.REACT,
         phase=TurnPhase.CREATED,
     )
-    runtime = AgentRuntime(services=AgentRuntimeServices(), state=state)
+    services = AgentRuntimeServices()
+    if trace_store is not None:
+        services.trace_store = trace_store
+    runtime = AgentRuntime(services=services, state=state)
     return AgentContext(
         system_prompt="test",
         history=ListMessageHistory(),
@@ -112,8 +114,8 @@ class TestFullLifecycleNotification:
 
         # --- infrastructure ---
         bus = _make_bus(tmp_path)
-        store = JsonFileTraceStore(base_dir=runtime_dir / "trace")
-        trace_hook = TraceCollectorHook(store=store)
+        store = OtelSpanTraceStore(base_dir=runtime_dir / "trace")
+        trace_hook = TraceCollectorHook()
         auto_hook = SubagentAutoSendHook(
             agent_bus=bus,
             self_name="worker",
@@ -121,27 +123,30 @@ class TestFullLifecycleNotification:
             runtime_dir=runtime_dir,
         )
 
-        ctx = _make_context(session_id=session_id)
+        ctx = _make_context(session_id=session_id, trace_store=store)
         result = AgentResult(content="done", stop_reason=StopReason.COMPLETED)
 
-        # Step 1: trace_hook.before_turn -> generates trace_id, writes TURN_START
+        # Step 1: trace_hook.before_turn -> pre-registers trace_id + root span_id
         await trace_hook.before_turn(ctx)
 
         # Step 2: auto_hook.finally_turn -> sends XML notification
         with _mock_output_exists(runtime_dir, session_id):
             await auto_hook.finally_turn(ctx, result)
 
+        # Step 3: trace_hook.finally_turn -> writes the root invoke_agent span
+        await trace_hook.finally_turn(ctx, result)
+
         # --- Verify trace ---
-        records = await store.list_by_session(session_id)
-        assert len(records) >= 1
+        spans = await store.list_by_session(session_id)
+        assert len(spans) >= 1
 
         turn_start = next(
-            (r for r in records if r.kind == OperationKind.TURN_START), None,
+            (s for s in spans if s.name == SpanName.INVOKE_AGENT.value), None,
         )
         assert turn_start is not None
-        assert turn_start.session_id == session_id
-        assert turn_start.agent_name == "worker"
-        assert turn_start.status == OperationStatus.COMPLETED
+        assert turn_start.attributes[GenAiAttr.SESSION_ID] == session_id
+        assert turn_start.attributes[GenAiAttr.AGENT_NAME] == "worker"
+        assert turn_start.status.code == SpanStatusCode.OK
 
         # --- Verify bus ---
         # The notification is sent to the parent's inbox via parent_session_id.
@@ -196,31 +201,24 @@ class TestCrashSendsErrorNotification:
 
 
 class TestTraceCollectorRecordsErrorTurnEnd:
-    """Trace: error TURN_END recorded correctly."""
+    """Trace: error TURN_END produces no additional span (root on TURN_START)."""
 
-    async def test_trace_collector_records_error_turn_end(self, tmp_path: Path) -> None:
-        # Use a path-safe session ID for the trace store to avoid Windows
-        # issues with colons in directory names.
+    async def test_trace_collector_error_turn_end(self, tmp_path: Path) -> None:
         session_id = "conv123-worker-a1b2"
-        store = JsonFileTraceStore(base_dir=tmp_path / "trace")
-        trace_hook = TraceCollectorHook(store=store)
+        store = OtelSpanTraceStore(base_dir=tmp_path / "trace")
+        trace_hook = TraceCollectorHook()
 
-        ctx = _make_context(session_id=session_id)
+        ctx = _make_context(session_id=session_id, trace_store=store)
 
-        # Step 1: before_turn -> TURN_START
+        # Step 1: before_turn -> TURN_START span
         await trace_hook.before_turn(ctx)
 
-        # Step 2: finally_turn with error -> TURN_END(FAILED)
+        # Step 2: finally_turn with error -> no new span (TURN_END is a no-op)
         await trace_hook.finally_turn(
             ctx, AgentResult(error="timeout", stop_reason=StopReason.ERROR),
         )
 
-        records = await store.list_by_session(session_id)
-        assert len(records) == 2
-
-        turn_end = next(
-            (r for r in records if r.kind == OperationKind.TURN_END), None,
-        )
-        assert turn_end is not None
-        assert turn_end.status == OperationStatus.FAILED
-        assert turn_end.error == "timeout"
+        spans = await store.list_by_session(session_id)
+        # Only the TURN_START span — TURN_END produces no span in OTel format.
+        assert len(spans) == 1
+        assert spans[0].name == SpanName.INVOKE_AGENT.value

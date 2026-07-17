@@ -193,5 +193,5 @@ async def test_build_communication_restores_subagent_output_path(tmp_path):
         target=_tgt("helper", AgentCommKind.SUBAGENT), content="more", invocation_id="", context=ctx,
     )
     assert "Trace" in ack and "live execution log" in ack
-    assert "operations.jsonl" in ack
+    assert "spans.jsonl" in ack
     assert "Output" in ack and "final deliverable" in ack

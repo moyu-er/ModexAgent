@@ -61,10 +61,10 @@ class TestExperienceReviewHookExecution:
             invocation_id="test-inv",
         )
 
-        # trace layout: experience_dir.parent / "review_traces" / {trace_key} / operations.jsonl
+        # trace layout: experience_dir.parent / "review_traces" / {trace_key} / trajectory.jsonl
         # (trace_key = invocation_id when provided; traces never pollute the experience dir)
         trace_key = "test-inv"
-        trace_file = exp_dir.parent / "review_traces" / trace_key / "operations.jsonl"
+        trace_file = exp_dir.parent / "review_traces" / trace_key / "trajectory.jsonl"
         review_traces = exp_dir.parent / "review_traces"
         assert trace_file.exists(), (
             f"Expected trace file at {trace_file}, not found. "
