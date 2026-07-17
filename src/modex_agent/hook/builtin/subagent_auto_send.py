@@ -49,11 +49,13 @@ class SubagentAutoSendHook(FinallyTurnHook):
         self_name: str = "",
         parent_name: str = "main",
         runtime_dir: Path | None = None,
+        trace_enabled: bool = True,
     ) -> None:
         self._agent_bus = agent_bus
         self._self_name = self_name
         self._parent_name = parent_name
         self._runtime_dir = runtime_dir or Path(".")
+        self._trace_enabled = trace_enabled
 
     # -- FINALLY_TURN (always fires) ------------------------------------------
 
@@ -69,9 +71,14 @@ class SubagentAutoSendHook(FinallyTurnHook):
         #    runtime_dir is the resolved workspace runtime dir (absolute),
         #    captured at materialize; pools are per-workspace so it is correct
         #    for this subagent's lifetime. Trace is written by
-        #    TraceCollectorHook -> JsonFileTraceStore per session_id; the dir is
-        #    created by the store on first write, not here.
-        trace_path = self._runtime_dir / "trace" / session_id / "operations.jsonl"
+        #    TraceCollectorHook -> OtelSpanTraceStore per session_id; the dir is
+        #    created by the store on first write, not here. When trace is
+        #    disabled (trace_backend=off), trace_path is None and the <trace>
+        #    XML element is omitted entirely.
+        if self._trace_enabled:
+            trace_path = self._runtime_dir / "trace" / session_id / "spans.jsonl"
+        else:
+            trace_path = None
         output_path = self._runtime_dir / "output" / session_id / "OUTPUT.md"
 
         # 2. Check OUTPUT.md status
@@ -106,7 +113,7 @@ class SubagentAutoSendHook(FinallyTurnHook):
             error=error or "",
             hint=hint,
             summary=summary,
-            trace_path=str(trace_path),
+            trace_path=str(trace_path) if trace_path is not None else None,
             output_path=str(output_path),
             output_status=output_status,
         )
@@ -181,12 +188,17 @@ class SubagentAutoSendHook(FinallyTurnHook):
         error: str,
         hint: str,
         summary: str,
-        trace_path: str,
+        trace_path: str | None,
         output_path: str,
         output_status: str,
     ) -> str:
         from modex_agent.utils.xml import xml_text
 
+        trace_block = (
+            f"    <trace>{xml_text(trace_path)}</trace>\n"
+            if trace_path is not None
+            else ""
+        )
         return (
             "<subagent_notification>\n"
             f"  <agent>{xml_text(agent_name)}</agent>\n"
@@ -198,7 +210,7 @@ class SubagentAutoSendHook(FinallyTurnHook):
             f"  <hint>{xml_text(hint)}</hint>\n"
             f"  <summary>{xml_text(summary)}</summary>\n"
             f"  <artifacts>\n"
-            f"    <trace>{xml_text(trace_path)}</trace>\n"
+            f"{trace_block}"
             f"    <output>{xml_text(output_path)}</output>\n"
             f"    <output_status>{xml_text(output_status)}</output_status>\n"
             f"  </artifacts>\n"

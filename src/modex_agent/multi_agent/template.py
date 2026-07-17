@@ -213,6 +213,7 @@ class AgentTemplate:
                     self_name=name,
                     parent_name=parent_name,
                     runtime_dir=runtime_dir,
+                    trace_enabled=deps.trace_enabled,
                 )
             )
         if deps.notification_service is not None:

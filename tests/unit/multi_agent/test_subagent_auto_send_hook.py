@@ -130,7 +130,7 @@ class TestSubagentAutoSendHookFinallyTurn:
             await hook.finally_turn(ctx, result)
 
         xml = (await bus.consume("conv123.main"))[0].payload["content"]
-        expected_trace = str(runtime_dir / "trace" / session_id / "operations.jsonl")
+        expected_trace = str(runtime_dir / "trace" / session_id / "spans.jsonl")
         expected_output = str(runtime_dir / "output" / session_id / "OUTPUT.md")
         assert _extract_xml_field(xml, "trace") == expected_trace
         assert _extract_xml_field(xml, "output") == expected_output
@@ -431,7 +431,7 @@ class TestSubagentAutoSendHookBuildXml:
             error="",
             hint="",
             summary="Task done.",
-            trace_path="trace/conv123.worker:abc123/operations.jsonl",
+            trace_path="trace/conv123.worker:abc123/spans.jsonl",
             output_path="output/conv123.worker:abc123/OUTPUT.md",
             output_status="written",
         )

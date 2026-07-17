@@ -45,6 +45,7 @@ class SendDeps:
     agent_bus: AgentMessageBus | None = None
     session_registry: SessionRegistry | None = None
     workspace_path_resolver: WorkspacePathResolver | None = None
+    trace_enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -190,6 +191,8 @@ class SendStrategy(ABC):
         self, target_kind: AgentCommKind | None, session_id: str
     ) -> Path | None:
         """Compute subagent execution-trace dir for the ack text."""
+        if not self._deps.trace_enabled:
+            return None
         runtime_dir = self._subagent_runtime_dir(target_kind)
         if runtime_dir is None:
             return None

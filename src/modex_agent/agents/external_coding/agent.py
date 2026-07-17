@@ -47,8 +47,11 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
+import uuid
 from abc import abstractmethod
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from typing import Any
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
@@ -82,6 +85,87 @@ class _EmissionAccumulator:
     def __init__(self) -> None:
         self.text: list[str] = []
         self.tool_names: dict[str, str] = {}
+
+
+# W3C traceparent propagation: inject into child subprocess env so the
+# child's instrumentation can continue the parent trace. The parent opens
+# a logical invoke_agent CLIENT span marked repro.incomplete=true (the
+# external CLI's internal spans are invisible to us).
+
+_TRACEPARENT_ENV = "TRACEPARENT"
+_TRACESTATE_ENV = "TRACESTATE"
+_REPRO_INCOMPLETE_ATTR = "repro.incomplete"
+_PROVIDER_KIND_ATTR = "gen_ai.provider.kind"
+_INVOKE_AGENT_SPAN_NAME = "invoke_agent"
+
+
+def _otel_inject(carrier: dict[str, str]) -> None:
+    """Inject the current OTel span context into *carrier*.
+
+    No-op when the OTel SDK (``[observability]`` extra) is not installed.
+    The import is lazy — never at module level.
+    """
+    try:
+        from opentelemetry import propagate  # type: ignore[import-not-found]
+    except ImportError:
+        return
+    propagate.inject(carrier)
+
+
+def _resolve_traceparent() -> tuple[str, str | None]:
+    """Resolve ``(traceparent, tracestate)`` for child-subprocess injection.
+
+    Preference order:
+    1. OTel SDK ``propagate.inject()`` — picks up the active span context.
+    2. ``os.environ["TRACEPARENT"]`` — an outer instrumentation set it.
+    3. Generate a fresh W3C traceparent ``00-<trace_id>-<span_id>-01``.
+    """
+    carrier: dict[str, str] = {}
+    _otel_inject(carrier)
+    traceparent = carrier.get("traceparent") or os.environ.get(_TRACEPARENT_ENV)
+    tracestate = carrier.get("tracestate") or os.environ.get(_TRACESTATE_ENV)
+    if not traceparent:
+        trace_id = uuid.uuid4().hex  # 32 hex chars
+        span_id = uuid.uuid4().hex[:16]  # 16 hex chars
+        traceparent = f"00-{trace_id}-{span_id}-01"
+    return traceparent, tracestate
+
+
+def _inject_traceparent_into_env(env: dict[str, str]) -> dict[str, str]:
+    """Return a new env dict with ``TRACEPARENT`` (and ``TRACESTATE``) set."""
+    traceparent, tracestate = _resolve_traceparent()
+    traced = dict(env)
+    traced[_TRACEPARENT_ENV] = traceparent
+    if tracestate:
+        traced[_TRACESTATE_ENV] = tracestate
+    return traced
+
+
+@contextlib.contextmanager
+def _otel_invoke_agent_span(provider_kind: str) -> Iterator[Any]:
+    """Open an OTel ``invoke_agent`` CLIENT span if the SDK is installed.
+
+    The span is marked ``repro.incomplete=true`` and
+    ``gen_ai.provider.kind``. Yields the OTel span (or ``None`` when the
+    SDK is not available). The span ends automatically when the context
+    manager exits.
+    """
+    try:
+        from opentelemetry import trace as otel_trace
+        from opentelemetry.trace import SpanKind  # type: ignore[import-not-found]
+    except ImportError:
+        yield None
+        return
+    tracer = otel_trace.get_tracer("modex_agent.external_coding")
+    with tracer.start_as_current_span(
+        _INVOKE_AGENT_SPAN_NAME,
+        kind=SpanKind.CLIENT,
+        attributes={
+            _REPRO_INCOMPLETE_ATTR: True,
+            _PROVIDER_KIND_ATTR: provider_kind,
+        },
+    ) as span:
+        yield span
 
 
 __all__ = [
@@ -369,17 +453,30 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
         on_emission: Callable[[Emission], Awaitable[None]],
         modex_sid: str,
     ) -> BackendResult:
-        """Run the backend once, retrying fresh on :class:`StaleSessionError`."""
-        try:
-            return await self._backend.execute_streaming(opts, env, on_emission)
-        except StaleSessionError:
-            logger.info(
-                "Stale provider session for %s; invalidating and retrying fresh",
-                modex_sid,
-            )
-            await self._session_store.invalidate(modex_sid)
-            retry_opts = opts.model_copy(update={"resume_session_id": None})
-            return await self._backend.execute_streaming(retry_opts, env, on_emission)
+        """Run the backend once, retrying fresh on :class:`StaleSessionError`.
+
+        Before dispatching, a W3C ``traceparent`` is injected into the
+        subprocess env and an ``invoke_agent`` CLIENT span is opened
+        (marked ``repro.incomplete=true``) so the child CLI's
+        instrumentation can continue the parent trace.
+        """
+        traced_env = _inject_traceparent_into_env(env)
+        with _otel_invoke_agent_span(str(self._provider_kind)):
+            try:
+                result = await self._backend.execute_streaming(
+                    opts, traced_env, on_emission
+                )
+            except StaleSessionError:
+                logger.info(
+                    "Stale provider session for %s; invalidating and retrying fresh",
+                    modex_sid,
+                )
+                await self._session_store.invalidate(modex_sid)
+                retry_opts = opts.model_copy(update={"resume_session_id": None})
+                result = await self._backend.execute_streaming(
+                    retry_opts, traced_env, on_emission
+                )
+            return result
 
     async def _handle_emission(
         self,

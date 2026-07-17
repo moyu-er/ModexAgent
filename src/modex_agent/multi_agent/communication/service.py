@@ -8,6 +8,7 @@ instances — subagent materialization is owned by ``AgentTemplate.materialize``
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -30,6 +31,7 @@ from modex_agent.multi_agent.communication.strategies.subagent_dispatch import (
     SubagentDispatchStrategy,
 )
 from modex_agent.multi_agent.communication.topology import TopologyPolicy
+from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.registry import AgentRegistry
 from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 from modex_agent.multi_agent.tools import CommunicationTarget, CommunicationTargetStore
@@ -37,7 +39,46 @@ from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
+    from modex_agent.core.session_id import SessionInfo
     from modex_agent.multi_agent.pool import AgentPool
+
+
+def _resolve_current_traceparent() -> str | None:
+    """Resolve the current traceparent for cross-pool propagation.
+
+    Does NOT generate a fresh traceparent — only forwards an existing
+    context (OTel inject or ``os.environ``). Returns ``None`` when no
+    trace context is active.
+    """
+    carrier: dict[str, str] = {}
+    try:
+        from opentelemetry import propagate  # type: ignore[import-not-found]
+    except ImportError:
+        pass
+    else:
+        propagate.inject(carrier)
+    return carrier.get("traceparent") or os.environ.get("TRACEPARENT")
+
+
+class _TracePropagatingPeerNormal(PeerNormalStrategy):
+    """PeerNormalStrategy that stamps the current traceparent into the envelope.
+
+    Overrides :meth:`build_envelope` to add the current ``traceparent``
+    to the envelope's ``metadata`` so the receiving pool can continue the
+    trace when it dispatches its own subprocesses.
+    """
+
+    def build_envelope(
+        self,
+        req: SendRequest,
+        session: SessionInfo,
+        invocation_id: str,
+    ) -> AgentMessageEnvelope:
+        envelope = super().build_envelope(req, session, invocation_id)
+        traceparent = _resolve_current_traceparent()
+        if traceparent:
+            envelope.metadata["traceparent"] = traceparent
+        return envelope
 
 
 class AgentCommunicationService:
@@ -63,6 +104,7 @@ class AgentCommunicationService:
         project_dir: Path | None = None,
         target_store: CommunicationTargetStore | None = None,
         workspace_path_resolver: WorkspacePathResolver | None = None,
+        trace_enabled: bool = True,
     ) -> None:
         self._source = source
         self._broker = broker
@@ -84,11 +126,12 @@ class AgentCommunicationService:
             agent_bus=agent_bus,
             session_registry=session_registry,
             workspace_path_resolver=workspace_path_resolver,
+            trace_enabled=trace_enabled,
         )
         self._strategies: dict[SendStrategyKind, SendStrategy] = {
             SendStrategyKind.SUBAGENT_DISPATCH: SubagentDispatchStrategy(deps),
             SendStrategyKind.PARENT_REPLY: ParentReplyStrategy(deps),
-            SendStrategyKind.PEER_NORMAL: PeerNormalStrategy(deps),
+            SendStrategyKind.PEER_NORMAL: _TracePropagatingPeerNormal(deps),
         }
 
     async def send_async(
