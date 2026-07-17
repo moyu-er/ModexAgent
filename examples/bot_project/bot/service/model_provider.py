@@ -22,6 +22,11 @@ from .model_config import BotModelConfig, ResolvedModel
 
 logger = logging.getLogger(__name__)
 
+# Sentinel provider key used by pool_builder._placeholder_model_config().
+# When the resolved model's provider key matches this, no real model is
+# configured — chat_stream fails fast instead of making a doomed network call.
+_PLACEHOLDER_PROVIDER_KEY = "_unconfigured"
+
 
 class BotModelProvider(StreamingLLMProvider):
     """按 turn ContextVar 代理到真实 LLM provider。"""
@@ -64,9 +69,26 @@ class BotModelProvider(StreamingLLMProvider):
     ) -> LLMResponse:
         try:
             resolved = self._resolved()
+        except Exception as exc:  # resolve failed: return ERROR, don't raise
+            logger.exception("BotModelProvider resolve failed")
+            return LLMResponse(
+                content=None,
+                finish_reason=FinishReason.ERROR.value,
+                error=f"model provider unavailable: {exc}",
+            )
+        # Fail fast when no real model is configured (placeholder config from
+        # pool_builder._placeholder_model_config). Avoids a doomed network call
+        # to api.openai.com + the full retry/backoff loop before erroring.
+        if resolved.provider.key == _PLACEHOLDER_PROVIDER_KEY:
+            return LLMResponse(
+                content=None,
+                finish_reason=FinishReason.ERROR.value,
+                error="no model configured — set one via WebUI Settings → Models or 'modexbot config'",
+            )
+        try:
             real = self._real_provider(resolved)
-        except Exception as exc:  # provider 创建失败：返回 ERROR，不抛
-            logger.exception("BotModelProvider resolve/build failed")
+        except Exception as exc:  # provider build failed: return ERROR, don't raise
+            logger.exception("BotModelProvider build failed")
             return LLMResponse(
                 content=None,
                 finish_reason=FinishReason.ERROR.value,
