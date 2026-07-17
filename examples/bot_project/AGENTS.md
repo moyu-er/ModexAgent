@@ -214,6 +214,9 @@ are the converged seams; no platform preconditions on any OS.
 | `templates/` | Template files for knowledge, soul, user memory (see `templates/AGENTS.md`) |
 | `tests/` | Test suites including `input_pipeline/` (see `tests/AGENTS.md`) |
 | `plugins/` | Bot plugins (see `plugins/AGENTS.md`) |
+| `experiences/` | Self-learned EXPERIENCE.md storage — runtime-populated by `ExperienceReviewAgent` (not committed; created on first use) |
+| `packaging/` | Windows installer build — Inno Setup + Electron + python-build-standalone (see `packaging/README.md`) |
+| `subworkspace/` | Workspace isolation/runtime target — runtime-populated (`.modex/` state only; not committed) |
 
 ## Testing
 

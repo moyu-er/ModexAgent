@@ -296,8 +296,11 @@ modexbot stop
 **手动启动（调试用）：**
 
 ```bash
-# Pool 模式（多 Agent 协作 + WebUI）
-python bot_service.py
+# Pool 模式（多 Agent 协作 + WebUI）— 前台运行
+python -m modexbot _run
+
+# 或使用调试入口（写入 PID，'modexbot stop' 仍可生效）
+python debug_main.py
 ```
 
 ## 核心特性详解

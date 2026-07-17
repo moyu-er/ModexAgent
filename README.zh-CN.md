@@ -91,130 +91,81 @@ ModexAgent 是一个用于构建 AI Agent 应用的 Python 框架。它将模型
 
 ## 快速开始
 
-### 一键安装（推荐）
+### Windows — 安装包（推荐）
 
-无需系统 Python、pip 或 npm —— 引导脚本自动处理一切：
+从 [Releases](https://github.com/moyu-er/ModexAgent/releases/latest) 页面下载安装包，双击即可安装。安装包已内置完整的 Python 运行环境和所有依赖，**无需预装任何开发工具，安装过程也不需要联网**。
+
+1. **下载** — 打开 [Releases](https://github.com/moyu-er/ModexAgent/releases/latest) 页面，下载 `ModexBot-Setup-x.x.x.exe`
+2. **安装** — 双击运行，按提示完成安装（无需管理员权限）
+3. **启动** — 双击桌面上的「ModexBot」图标，或在开始菜单中找到 ModexBot
+4. **配置模型** — 首次启动后，在 WebUI 的「设置」页面填入模型 API Key（支持 DeepSeek、OpenAI 等）
+
+WebUI 会自动打开，开始对话吧！
+
+<details>
+<summary>命令行操作</summary>
+
+安装后可在任意终端使用 `modexbot` 命令：
+
+| 命令 | 作用 |
+|------|------|
+| `modexbot start` | 启动 |
+| `modexbot stop` | 停止 |
+| `modexbot restart` | 重启 |
+| `modexbot logs -f` | 查看实时日志 |
+| `modexbot config` | 配置向导 |
+| `modexbot model` | 模型设置 |
+
+通过「添加或删除程序」卸载。你的配置文件（含 API Key）会保留，方便下次重装。
+
+</details>
+
+### macOS / Linux / 开发者 — 从源码运行
+
+macOS/Linux 暂无安装包，可从源码运行：
 
 ```bash
-git clone git@github.com:moyu-er/ModexAgent.git
-cd ModexAgent\examples\bot_project
+git clone https://github.com/moyu-er/ModexAgent.git
+cd ModexAgent/examples/bot_project
 
-# Windows（双击或在任意终端中运行）
+# Windows
 install.bat
 
 # Linux / macOS
 chmod +x install.sh && ./install.sh
 ```
 
-脚本会自动检测并安装缺失的运行时（Node.js、uv），创建 Python 虚拟环境，安装全部依赖，复制 `.env.example` → `.env`，运行配置向导，编译 WebUI 前端，并将 `modexbot` 注册到系统 PATH。重复运行安全——每一步都是幂等的。
-
-脚本完成后：
+脚本会自动安装缺失的 `uv` + Node.js，配置 Python 环境，编译 WebUI 前端，并将 `modexbot` 注册到系统 PATH。然后：
 
 ```bash
-# 可在任意目录执行，无需激活 venv
-modexbot start
+modexbot start   # 打开 http://localhost:21800/webui/
 ```
 
-然后浏览器访问 `http://localhost:21800/webui/`。
-
-常用命令：`modexbot stop` | `modexbot restart` | `modexbot logs -f` | `modexbot install -f` | `modexbot config` | `modexbot model`
-
-> [!TIP]
-> `examples/bot_project/` 是一个功能完整的**多通道 Agent 应用** —— 浏览器 WebUI 加上可插拔的 IM 适配器（QQ、Telegram 开箱即用；Discord/飞书/钉钉通过一个 `register_*.py` 模块即可接入）。它是框架各项能力的集大成示例。详细能力、配置和多 Agent 设置见 [examples/bot_project/README.zh-CN.md](examples/bot_project/README.zh-CN.md)。
-
-### 手动配置
-
-如需逐步手动设置：
-
-```bash
-git clone git@github.com:moyu-er/ModexAgent.git
-cd ModexAgent
-
-# 创建虚拟环境（uv 自动下载 Python 3.12）
-uv venv --python 3.12
-
-# Windows
-.venv\Scripts\activate
-# macOS / Linux
-source .venv/bin/activate
-
-# 安装框架
-uv pip install -e ".[all,dev]"
-
-# 安装 bot 项目（注册 'modexbot' CLI）
-# 保持 venv 激活状态，或使用 --python 显式指定路径
-cd examples\bot_project
-uv pip install -e ".[webui,dev]"
-
-# 配置环境并构建前端
-cp .env.example .env
-modexbot install    # 配置向导 + WebUI 前端构建
-modexbot start
-```
+详细步骤和故障排除见 **[docs/bot-local-setup.md](docs/bot-local-setup.md)**。
 
 ## 项目结构
 
-```text
-src/modex_agent/        # 框架包（src layout，见 ADR-0003）
-  core/              # 根：Agent/Context/Emitter/Provider/Tool ABC、图引擎、类型、常量
-  agents/            # Agent 运行时：ReAct（图驱动）、Summarizer、ExperienceReview
-  pipeline/          # 端到端流程编排（AgentPipeline）
-  memory/            # 多级记忆 + Dream 引擎 + 上下文治理
-  multi_agent/       # 多 Agent：池内星型 + 跨池对等网，Pool、broker、inbox、通信
-  tools/             # 工具注册 + 执行；终端、MCP、AST、LSP、web 工具集
-  providers/         # LLM 提供者（LiteLLM、OpenAI 兼容接口）
-  hook/              # 生命周期 Hook 扩展点（InboxFlush、SubagentAutoSend）
-  interceptor/       # AOP 拦截器链（ControlDrain、ToolResultLimit、…）
-  control/           # 运行时控制传输（/stop + 暂停通道）
-  approval/          # 分级审批策略与分类器
-  commands/          # Slash 指令系统
-  input_pipeline/    # 用户输入的通用阶段式管线
-  adapters/          # I/O 适配器基类——将平台 I/O 与 Agent 逻辑解耦
-  messaging/         # 消息 broker 抽象层
-  workspace/         # Workspace 机制：多活隔离、按 pool 的资源
-  runtime/           # 运行时状态存储、快照、编解码
-  sandbox/           # 沙箱适配器（Subprocess / Landlock / Docker / E2B）+ 安全 guard
-  ioc/               # 类型化配置（Pydantic v2）+ 工厂层
-  plugins/           # 插件系统
-  registry/          # 注册表
-  trace/             # 统一的操作级 trace 系统
-  utils/             # 根邻接的纯叶子原语（ADR-0006：不依赖任何其他包）
-
-examples/
-  bot_project/       # 多通道 Agent 示例：WebUI + IM 适配器（QQ、Telegram）—— Pool 模式
-  sandbox/           # 沙箱使用示例
-
-tests/               # 单元、集成和端到端测试
-docs/                # ADR + 架构文档
+```
+ModexAgent/
+├── src/modex_agent/   # 框架包——ABC、运行时、记忆、多 Agent、工具、WebUI 接入
+├── examples/
+│   └── bot_project/   # 参考应用：WebUI + IM 适配器（QQ、Telegram）—— Pool 模式
+├── tests/             # 单元、架构、一致性、集成测试
+└── docs/              # ADR、设计文档、Agent 文档
 ```
 
-## 按需安装
-
-| Extra     | 包含内容                                                                     | 适用场景          |
-| --------- | ---------------------------------------------------------------------------- | ----------------- |
-| `llm`     | `litellm`, `openai`                                                          | LLM Provider      |
-| `sandbox` | `docker`, `e2b-code-interpreter`                                             | 沙箱执行          |
-| `gateway` | `qq-botpy`, `aiohttp`                                                        | QQ Bot 适配器     |
-| `skills`  | `pypdf`, `python-docx`, `openpyxl`, `python-pptx`, `pdfplumber`             | 文档处理技能      |
-| `terminal`| `pywinpty`（Win）、`pexpect` + `libtmux`（Unix）                             | 交互式终端        |
-| `dev`     | `pytest`, `pytest-asyncio`, `ruff`, `mypy`                                   | 开发测试          |
-| `all`     | 以上全部（除 `dev`）                                                          | 一键完整安装      |
-
-```bash
-# 示例：仅安装框架核心 + LLM 支持
-uv pip install -e ".[llm]"
-
-# 示例：完整开发环境
-uv pip install -e ".[all,dev]"
-```
+`src/modex_agent/` 是可复用框架；`examples/bot_project/` 是基于它构建的端到端应用。各模块的 `AGENTS.md` 文件有详细说明。
 
 ## 文档
 
 | 文档 | 说明 |
 | --- | --- |
-| [ADR 索引](docs/adr/) | 架构决策记录——pool-only 装配、src-layout 改名、依赖树、facade-only 模块、保留真实 seam、可中断审批 + 批原子性、基于 token 的压缩、双轴终端、认领/透传 input pipeline、附件系统、原生多模态、统一收件箱驱动消息、ReAct 循环检测（ADR-0001 ~ 0016） |
+| [ADR 索引](docs/adr/) | 架构决策记录（ADR-0001 ~ 0024） |
+| [文档总览](docs/AGENTS.md) | `docs/` 目录索引——ADR、设计文档、Agent 文档 |
 | [CONTEXT.md](CONTEXT.md) | 领域术语表——Pool、Workspace、ReAct Agent、Graph、GraphInterrupt、Assembly 等 |
+| [本地环境搭建](docs/bot-local-setup.md) | 从源码搭建 bot 的详细步骤（前置依赖、venv、配置向导、故障排除） |
 | [Bot 示例](examples/bot_project/README.md) | bot_project 详解（多通道 IM + WebUI、多 Agent 配置） |
+| [外部编码 Agent](docs/design/external-coding-agent-integration/spec.md) | 将 Pi / OpenCode 等编码 Agent CLI 接入为 pool 主 Agent（ADR-0022） |
 | 各模块 `AGENTS.md` | `src/modex_agent/` 下每个包都附带 `AGENTS.md`，描述其职责与关键文件 |
 
 ## 开发命令

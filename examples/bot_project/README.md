@@ -134,6 +134,8 @@ QQ User / Group      Telegram Chat        Browser (WebUI)
 
 ## Quick Start
 
+> **Windows users:** download the self-contained installer from [Releases](https://github.com/moyu-er/ModexAgent/releases) — no Python, Node.js, or network required. See the [root README](../../README.md) for details. The instructions below are for running from source (all platforms).
+
 ### Prerequisites
 
 Only **two** runtimes are needed — everything else (including Python 3.12) is managed automatically:
@@ -297,8 +299,11 @@ modexbot stop
 **Manual start (for debugging):**
 
 ```bash
-# Pool mode (multi-agent collaboration + WebUI)
-python bot_service.py
+# Pool mode (multi-agent collaboration + WebUI) — foreground
+python -m modexbot _run
+
+# Or use the debug entry (writes PID so 'modexbot stop' still works)
+python debug_main.py
 ```
 
 ## Core Feature Details

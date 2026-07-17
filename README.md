@@ -91,149 +91,79 @@ The browser WebUI talks to the agent over **WebSocket** (streaming chat, live st
 
 ## Quick Start
 
-### One-Click Setup (Recommended)
+### Windows — Installer (Recommended)
 
-No Python, pip, or npm required — the bootstrap script handles everything:
+Download the installer from [Releases](https://github.com/moyu-er/ModexAgent/releases/latest) and double-click to install. The installer bundles everything — Python runtime, all dependencies, the WebUI frontend — so **no prerequisites and no internet connection during installation**.
+
+1. **Download** — Go to [Releases](https://github.com/moyu-er/ModexAgent/releases/latest), download `ModexBot-Setup-x.x.x.exe`
+2. **Install** — Double-click the downloaded `.exe`, follow the wizard (no admin rights needed)
+3. **Launch** — Double-click the "ModexBot" desktop shortcut, or find it in the Start Menu
+4. **Configure** — On first launch, open **Settings** in the WebUI and enter your model API key (supports DeepSeek, OpenAI, and more)
+
+The WebUI opens automatically. Start chatting!
+
+<details>
+<summary>Command-line usage</summary>
+
+After installation, `modexbot` is available from any terminal:
+
+| Command | Action |
+|---------|--------|
+| `modexbot start` | Start the bot |
+| `modexbot stop` | Stop the bot |
+| `modexbot restart` | Restart |
+| `modexbot logs -f` | Follow live logs |
+| `modexbot config` | Config wizard |
+| `modexbot model` | Model settings |
+
+Uninstall via **Add/Remove Programs** — your config files (API keys, etc.) are preserved.
+
+</details>
+
+### macOS / Linux / Developers — From Source
+
+No installer for macOS/Linux yet. Run from source instead:
 
 ```bash
-git clone git@github.com:moyu-er/ModexAgent.git
-cd ModexAgent\examples\bot_project
+git clone https://github.com/moyu-er/ModexAgent.git
+cd ModexAgent/examples/bot_project
 
-# Windows (double-click, or run in any terminal)
+# Windows
 install.bat
 
 # Linux / macOS
 chmod +x install.sh && ./install.sh
 ```
 
-The script auto-detects and installs missing runtimes (Node.js, uv), creates the Python virtual environment, installs all dependencies, copies `.env.example` → `.env`, runs the config wizard, builds the WebUI frontend, and registers `modexbot` on your system PATH. Re-running is safe — every step is idempotent.
-
-After the script completes:
+The script auto-installs `uv` + Node.js if missing, sets up the Python environment, builds the WebUI, and registers `modexbot` on your PATH. Then:
 
 ```bash
-# Works from ANY directory, no activation needed
-modexbot start
+modexbot start   # open http://localhost:21800/webui/
 ```
 
-Then open `http://localhost:21800/webui/`.
-
-Common commands: `modexbot stop` | `modexbot restart` | `modexbot logs -f` | `modexbot install -f` | `modexbot config` | `modexbot model`
-
-> [!TIP]
-> `examples/bot_project/` is a fully functional **multi-channel agent application** — a browser WebUI plus pluggable IM adapters (QQ, Telegram ship out of the box; Discord/Feishu/DingTalk drop in via one `register_*.py` module). It is the canonical demonstration of every framework capability. See [examples/bot_project/README.md](examples/bot_project/README.md) for detailed capabilities, configuration, and multi-agent setup.
-
-### Manual Setup
-
-If you prefer to set up step-by-step:
-
-```bash
-git clone git@github.com:moyu-er/ModexAgent.git
-cd ModexAgent
-
-# Create virtual environment at repo root (uv downloads Python 3.12 automatically)
-uv venv --python 3.12
-
-# Windows
-.venv\Scripts\activate
-# macOS / Linux
-source .venv/bin/activate
-
-# Install framework
-uv pip install -e ".[all,dev]"
-
-# Install bot project (registers the 'modexbot' CLI)
-# Keep the venv activated, or use --python path explicitly
-cd examples\bot_project
-uv pip install -e ".[webui,dev]"
-
-# Setup environment and build frontend
-cp .env.example .env
-modexbot install    # config wizard + WebUI frontend build
-modexbot start
-```
+For detailed steps and troubleshooting, see **[docs/bot-local-setup.md](docs/bot-local-setup.md)**.
 
 ## Project Structure
 
-```text
-src/modex_agent/        # the framework package (src layout — see ADR-0003)
-  core/              # Root: Agent/Context/Emitter/Provider/Tool ABCs, graph engine, types, constants
-  agents/            # Agent runtimes: ReAct (graph-driven), Summarizer, ExperienceReview
-  pipeline/          # End-to-end orchestration (AgentPipeline)
-  memory/            # Multi-tier memory + Dream Engine + context governance
-  multi_agent/       # Multi-agent: per-pool star + cross-pool peer mesh, Pool, broker, inbox, communication
-  tools/             # Tool registry + execution; terminal, MCP, AST, LSP, web toolkits
-  providers/         # LLM providers (LiteLLM, OpenAI-compatible)
-  hook/              # Lifecycle hook extension points (InboxFlush, SubagentAutoSend)
-  interceptor/       # AOP interceptor chains (ControlDrain, ToolResultLimit, ...)
-  control/           # Runtime control transport (the /stop + pause channel)
-  approval/          # Tiered approval policies and classifiers
-  commands/          # Slash command system
-  input_pipeline/    # Generic stage pipeline for user-input processing
-  adapters/          # I/O adapter base classes — decouple platform I/O from agent logic
-  messaging/         # Message broker abstraction layer
-  workspace/         # Workspace mechanism: multi-live isolation, per-pool resources
-  runtime/           # Runtime state stores, snapshots, codecs
-  sandbox/           # Sandbox adapters (Subprocess / Landlock / Docker / E2B) + security guards
-  ioc/               # Typed configuration (Pydantic v2) + factory layer
-  plugins/           # Plugin system
-  registry/          # Registries
-  trace/             # Unified operation-level trace system
-  utils/             # Root-adjacent pure-leaf primitives (ADR-0006: imports no other package)
-
-examples/
-  bot_project/       # Multi-channel agent example: WebUI + IM adapters (QQ, Telegram) — Pool mode
-  sandbox/           # Sandbox usage examples
-
-tests/               # Unit, integration, and end-to-end tests
-docs/                # ADRs + architecture documentation
+```
+ModexAgent/
+├── src/modex_agent/   # The framework package — ABCs, runtime, memory, multi-agent, tools, WebUI wiring
+├── examples/
+│   └── bot_project/   # Reference application: WebUI + IM adapters (QQ, Telegram) — Pool mode
+├── tests/             # Unit, architecture, conformance, and integration tests
+└── docs/              # ADRs, design docs, agent docs
 ```
 
-## Optional Extras
-
-| Extra     | Includes                                                                     | Use Case              |
-| --------- | ---------------------------------------------------------------------------- | --------------------- |
-| `llm`     | `litellm`, `openai`                                                          | LLM Provider          |
-| `sandbox` | `docker`, `e2b-code-interpreter`                                             | Sandbox execution     |
-| `gateway` | `qq-botpy`, `aiohttp`                                                        | QQ Bot adapter        |
-| `skills`  | `pypdf`, `python-docx`, `openpyxl`, `python-pptx`, `pdfplumber`             | Document processing   |
-| `terminal`| `pywinpty` (Win), `pexpect` + `libtmux` (Unix)                              | Interactive terminal  |
-| `dev`     | `pytest`, `pytest-asyncio`, `ruff`, `mypy`                                   | Development           |
-| `all`     | Everything above (except `dev`)                                              | One-shot full install |
-
-```bash
-# Core framework + LLM support only
-uv pip install -e ".[llm]"
-
-# Full development environment
-uv pip install -e ".[all,dev]"
-```
-
-### External coding agents (Pi / OpenCode)
-
-Industry coding agent CLIs can be registered as pool main agents, addressable by other agents through `send_to_agent`. The external agent replies via the `modexbot send` CLI shim (bundled with this wheel).
-
-**Prerequisites:** install the provider CLI (`pi` or `opencode`) on `PATH`. If missing, the pool is silently skipped at startup.
-
-**Configure** `examples/bot_project/config/pools/pool_pi/pool.yml`:
-
-```yaml
-main_agent_name: pi
-execution_strategy: external_coding
-provider_kind: pi
-peers:
-  - default
-```
-
-Add a reciprocal peer entry on the `default` pool. Boot the bot — the default pool's main agent can now dispatch work to Pi via `send_to_agent(pi, "...")`, and Pi can reply via `modexbot send --to <name> --content <text>` (learnt from the injected system prompt).
-
-See [ADR-0022](docs/adr/0022-external-coding-agent-integration.md) for the full design.
+`src/modex_agent/` is the reusable framework; `examples/bot_project/` is the canonical end-to-end application built on top of it. Per-module `AGENTS.md` files document each package in detail.
 
 ## Documentation
 
 | Document | Description |
 | --- | --- |
-| [ADR index](docs/adr/) | Architecture Decision Records — pool-only assembly, src-layout rename, dependency tree, facade-only modules, retaining real seams, interruptible approval + batch atomicity, token-based compression, two-axis terminal, claim/pass-through input pipeline, attachment system, native multimodal, unified-inbox agent messaging, ReAct loop detection, cross-pool peer communication, external coding agent integration (ADR-0001 ~ 0022) |
+| [ADR index](docs/adr/) | Architecture Decision Records (ADR-0001 ~ 0024) |
+| [Docs overview](docs/AGENTS.md) | Index of `docs/` — ADRs, design docs, agent docs |
 | [CONTEXT.md](CONTEXT.md) | Domain glossary — Pool, Workspace, ReAct Agent, Graph, GraphInterrupt, Assembly, etc. |
+| [Bot local setup](docs/bot-local-setup.md) | Step-by-step bot setup from source (prerequisites, venv, config wizard, troubleshooting) |
 | [Bot example](examples/bot_project/README.md) | bot_project walkthrough (multi-channel IM + WebUI, multi-agent setup, configuration) |
 | [External coding agents](docs/design/external-coding-agent-integration/spec.md) | Integrate Pi / OpenCode / future coding agent CLIs as pool main agents (ADR-0022) |
 | Per-module `AGENTS.md` | Every package under `src/modex_agent/` ships an `AGENTS.md` describing its responsibility and key files |
