@@ -212,6 +212,7 @@ CREATE TABLE todos (
 CREATE INDEX idx_todos_pool ON todos (pool) WHERE pool IS NOT NULL;
 
 -- Memory — Session Messages (with state machine)
+-- state CHECK values MUST match MessageRowState enum in persistence/adapters/message_store.py
 CREATE TABLE memory_session_messages (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     scope_key       TEXT NOT NULL,
