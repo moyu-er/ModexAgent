@@ -33,6 +33,17 @@ class MainAgentSpec(BaseModel):
     mcp: list[str] = Field(default_factory=list)
     execution_strategy: ExecutionStrategyKind = ExecutionStrategyKind.REACT
     provider_kind: ProviderKind | None = None
+    roles: list[str] = Field(default_factory=list)
+    """Agent role tags (T1 data layer). Values are plain strings — preset
+    values are :class:`modex_agent.core.constants.AgentRole` members, custom
+    strings are allowed. Pure metadata透传 to :class:`AgentDescriptor.roles`;
+    no runtime behavior change in T1."""
+    prompt_name: str | None = None
+    """Explicit prompt identifier (decouples prompt identity from agent name).
+    ``None`` (default) preserves the agent-name convention — the prompt md
+    ``agents/<agent_name>.md`` is used. A non-None value references a different
+    prompt md by name. Pure metadata in T1; runtime wiring comes in later
+    tickets."""
 
 
 class SubagentSpec(BaseModel):
@@ -54,6 +65,12 @@ class SubagentSpec(BaseModel):
     fork_max_messages: int = Field(
         default=DEFAULT_FORK_MAX_MESSAGES, ge=1, le=MAX_FORK_MAX_MESSAGES
     )
+    roles: list[str] = Field(default_factory=list)
+    """Agent role tags (T1 data layer). Same contract as
+    :attr:`MainAgentSpec.roles`."""
+    prompt_name: str | None = None
+    """Explicit prompt identifier — same contract as
+    :attr:`MainAgentSpec.prompt_name`."""
 
 
 class PoolSpec(BaseModel):

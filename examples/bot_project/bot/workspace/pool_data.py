@@ -170,6 +170,7 @@ async def build_pool_data(
             else ArchiveInjectionConfig(count=0),
         ),
         experience_manager=experience_manager,
+        roles=list(pool_spec.main.roles),
     )
 
     return PoolData(

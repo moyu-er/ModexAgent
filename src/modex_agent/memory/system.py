@@ -135,6 +135,7 @@ class MemorySystemContextManager(ContextManager):
         parent_prompt_lookup: Callable[[str], Awaitable[str | None]] | None = None,
         fork_context_spec: ForkContextSpec | None = None,
         archive_injection_config: ArchiveInjectionConfig | None = None,
+        roles: list[str] | None = None,
     ) -> None:
         from modex_agent.memory.injection import FullInjectionPolicy
 
@@ -159,6 +160,7 @@ class MemorySystemContextManager(ContextManager):
         # the in-memory pool, never from a session store.
         self._parent_prompt_lookup = parent_prompt_lookup
         self._fork_context_spec = fork_context_spec
+        self._roles: list[str] = list(roles) if roles else []
 
     def wrap_governance(
         self,
@@ -244,6 +246,7 @@ class MemorySystemContextManager(ContextManager):
         from modex_agent.core.prompt import SystemPromptPipeline
         from modex_agent.memory.injection.full_injection import FullInjectionPolicy
         from modex_agent.memory.prompt_pipeline.providers import (
+            AgentRoleContractProvider,
             ArchiveProvider,
             BasePromptProvider,
             ExperienceProvider,
@@ -382,6 +385,10 @@ class MemorySystemContextManager(ContextManager):
             )
             if skill_prompt:
                 providers.append(SkillProvider(skill_prompt))
+
+        # 10. Agent role contracts (after business providers; near end).
+        if self._roles:
+            providers.append(AgentRoleContractProvider(self._roles))
 
         pipeline = SystemPromptPipeline(providers)
 

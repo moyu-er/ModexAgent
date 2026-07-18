@@ -96,6 +96,38 @@ async def test_materialize_subagent_inherits_reasoning_effort() -> None:
 
 
 @pytest.mark.asyncio
+async def test_materialize_subagent_passes_roles_to_descriptor() -> None:
+    """T1 data-layer透传: SubagentSpec.roles lands on AgentDescriptor.roles.
+
+    The materialize call constructs the descriptor from the spec; the
+    ``roles`` field must round-trip verbatim. Preset values (AgentRole
+    members) collapse to their plain string value via StrEnum; custom
+    strings are preserved as-is.
+    """
+    deps, factory = _make_deps()
+    template = AgentTemplate(
+        spec=SubagentSpec(agent_name="scout", roles=["planner", "custom-role"])
+    )
+    parent = SessionIdFactory().create(agent_name="main")
+    await template.materialize(parent_session=parent, invocation_id="inv1", deps=deps)
+    call_kwargs = factory.create_agent.call_args.kwargs
+    descriptor = call_kwargs.get("descriptor") or factory.create_agent.call_args.args[0]
+    assert descriptor.roles == ["planner", "custom-role"]
+
+
+@pytest.mark.asyncio
+async def test_materialize_subagent_roles_default_empty() -> None:
+    """When SubagentSpec omits roles, descriptor.roles defaults to []."""
+    deps, factory = _make_deps()
+    template = AgentTemplate(spec=SubagentSpec(agent_name="scout"))
+    parent = SessionIdFactory().create(agent_name="main")
+    await template.materialize(parent_session=parent, invocation_id="inv1", deps=deps)
+    call_kwargs = factory.create_agent.call_args.kwargs
+    descriptor = call_kwargs.get("descriptor") or factory.create_agent.call_args.args[0]
+    assert descriptor.roles == []
+
+
+@pytest.mark.asyncio
 async def test_materialize_subagent_wires_hooks_to_hook_runner():
     """ADR-0015 D5: SubagentAutoSendHook must reach pipeline.hook_runner
     (factory's hooks= param only stores on pipeline.hooks, which isn't

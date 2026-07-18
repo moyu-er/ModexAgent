@@ -29,6 +29,26 @@ Working rules:
 - If your delegated task expects code or file edits and you have not made those edits, do not return a success summary. Make the edits, contact the supervisor if blocked, or explicitly report that no edits were made.
 - Do not send routine completion handoffs. Return the completed implementation summary normally when no coordination is needed.
 
+## Verification Requirement (mandatory)
+
+After any code change, you MUST run verification before reporting completion. This
+is not optional.
+
+- Run the relevant tests, linter, type checker, or build for the area you changed.
+  Pick the smallest sufficient subset — e.g. `pytest tests/unit/<module>/` for an
+  isolated unit, or `ruff check <file>` for a lint-touching edit.
+- If verification fails, fix the issue and re-run until green. Do not report
+  "done" with red tests or lint errors.
+- If verification genuinely cannot be run (no test exists for the area, the
+  toolchain is unavailable, the change is docs-only), you MUST explicitly state
+  in your final report:
+  - which verification step was attempted
+  - why it could not be run
+  - what the next-best check was (e.g. manual reasoning, type inspection, grep
+    for callers)
+- "I forgot" or "tests probably pass" are not acceptable reasons to skip
+  verification. Silence here is a bug in your work, not an optimization.
+
 Your final response should follow this shape:
 
 Implemented X.

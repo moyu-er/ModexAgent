@@ -11,9 +11,9 @@ Agent system prompt templates (Markdown). Each file defines the personality, cap
 |------|-------------|
 | `main.md` | Main agent system prompt — general-purpose assistant with tool access |
 | `office-expert.md` | Office expert subagent — document processing (Word/Excel/PPT/PDF) |
-| `coder.md` | Coder pool main agent — software development assistant |
-| `context-builder.md` | Context builder subagent — gathers project context |
-| `delegate.md` | Delegate subagent — task decomposition and delegation |
+| `orchestrator.md` | Coder pool main agent — software development orchestrator (dispatches planner/worker/reviewer/scout/oracle) |
+| `context-builder.md` | DEPRECATED — context builder subagent; no longer referenced by any pool.yml |
+| `delegate.md` | DEPRECATED — delegate subagent; no longer referenced by any pool.yml |
 | `oracle.md` | Oracle subagent — knowledge lookup and synthesis |
 | `planner.md` | Planner subagent — architectural planning |
 | `reviewer.md` | Reviewer subagent — code review |

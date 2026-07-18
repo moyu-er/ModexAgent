@@ -92,6 +92,27 @@ class InterfaceFormat(StrEnum):
     ANTHROPIC = "anthropic"
 
 
+class AgentRole(StrEnum):
+    """Preset agent role constants.
+
+    Bots may extend with custom string roles outside this enum; the
+    ``roles`` field on ``MainAgentSpec`` / ``SubagentSpec`` /
+    ``AgentDescriptor`` is ``list[str]`` (not ``list[AgentRole]``) so custom
+    values are preserved verbatim. The enum exists to centralize the seven
+    canonical preset names (rule 1, rule 14) — string literals elsewhere
+    should reference ``AgentRole.PLANNER.value`` etc. instead of bare
+    ``"planner"``.
+    """
+
+    PLANNER = "planner"
+    IMPLEMENTER = "implementer"
+    REVIEWER = "reviewer"
+    SCOUT = "scout"
+    ORACLE = "oracle"
+    COORDINATOR = "coordinator"
+    COMMUNICATOR = "communicator"
+
+
 class ErrorMessages:
     """错误消息常量"""
 

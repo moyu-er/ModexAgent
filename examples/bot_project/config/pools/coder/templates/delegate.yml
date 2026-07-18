@@ -1,6 +1,0 @@
-agent_name: delegate
-description: Lightweight subagent for simple delegated tasks
-max_steps: 50
-context_mode: fresh
-system_prompt_mode: append
-tool_preset: read_write

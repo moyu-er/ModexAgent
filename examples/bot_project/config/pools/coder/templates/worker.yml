@@ -4,3 +4,4 @@ max_steps: 150
 context_mode: fork
 fork_max_messages: 60
 tool_preset: read_write
+roles: [implementer]

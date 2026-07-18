@@ -450,6 +450,7 @@ class _PoolAssemblyMixin:
             base_system_prompt=system_prompt,
             injection_policy=FullInjectionPolicy(pruned_manager=None),
             experience_manager=None,
+            roles=list(main_spec.roles),
         )
 
     # ── Cell sessions dir ────────────────────────────────────────────────

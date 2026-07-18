@@ -3,3 +3,4 @@ description: Fast codebase recon — returns compressed context for handoff
 max_steps: 60
 tool_preset: read_only
 context_mode: fresh
+roles: [scout]

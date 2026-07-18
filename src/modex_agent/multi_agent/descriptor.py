@@ -74,6 +74,12 @@ class AgentDescriptor:
     ContextGovernance chain (tool chain repair + final legality) for the
     subagent pipeline. None means the subagent gets no governance — the
     default in factory.create_agent."""
+    roles: list[str] = field(default_factory=list, compare=False)
+    """Agent role tags (T1 data layer). Plain strings — preset values are
+    :class:`modex_agent.core.constants.AgentRole` members, custom strings
+    are allowed. ``compare=False`` excludes this field from the auto-generated
+    ``__eq__`` / ``__hash__`` because roles are metadata, not identity —
+    pool registration dedup is unaffected by role changes."""
 
 
 @dataclass

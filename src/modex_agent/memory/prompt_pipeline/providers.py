@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from modex_agent.core.constants import AgentRole
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.core.scope import MemoryContext
 from modex_agent.core.session_id import SessionInfo, session_id_prefix_of
@@ -231,6 +232,101 @@ class ExperienceProvider(SystemPromptProvider):
 
     async def _fetch_content(self) -> str:
         return self._experience_xml
+
+
+_AGENT_ROLE_CONTRACT_REVIEWER = """\
+## Role Contract — Reviewer
+
+You are a verification role. Your final reply MUST contain a \
+<verification status="passed|failed" reason="brief justification"/> tag. \
+Use `status="passed"` only when the reviewed change is correct, complete, and \
+verified. Use `status="failed"` when issues remain. The coordinator relies on \
+this tag to decide next steps."""
+
+_AGENT_ROLE_CONTRACT_IMPLEMENTER = """\
+## Role Contract — Implementer
+
+You are an implementation role. After any code modification, you MUST run \
+verification commands (tests, lint, build, or typecheck as appropriate) or \
+explicitly explain why verification cannot be run. Declaring a task complete \
+without verification is a failure mode."""
+
+_AGENT_ROLE_CONTRACT_COORDINATOR = """\
+## Role Contract — Coordinator
+
+You are a coordinator role. Verification-role agents report back with a \
+<verification status="passed|failed" reason="..."/> tag. When status is \
+`failed`, you MUST dispatch the implementation role to fix the issues — do not \
+end your turn with unresolved failures. Max 2 review cycles before escalating \
+to the user."""
+
+_AGENT_ROLE_CONTRACT_PLANNER = """\
+## Role Contract — Planner
+
+You are a planning role. Produce concrete, step-by-step implementation plans. \
+Identify files to touch, patterns to follow, and risks. Do not implement — \
+hand off to the implementation role."""
+
+_AGENT_ROLE_CONTRACT_SCOUT = """\
+## Role Contract — Scout
+
+You are an exploration role. Map relevant files, patterns, and constraints. \
+Report findings concisely. Do not implement or modify code."""
+
+_AGENT_ROLE_CONTRACT_ORACLE = """\
+## Role Contract — Oracle
+
+You are a consulting role. Provide architecture and design reasoning. Weigh \
+tradeoffs, identify edge cases, recommend approaches. Do not implement."""
+
+_AGENT_ROLE_CONTRACT_COMMUNICATOR = """\
+## Role Contract — Communicator
+
+You are a communication role. Relay information between agents or to the user \
+accurately and concisely. Do not modify code or make decisions."""
+
+_AGENT_ROLE_CONTRACTS: dict[str, str] = {
+    AgentRole.REVIEWER.value: _AGENT_ROLE_CONTRACT_REVIEWER,
+    AgentRole.IMPLEMENTER.value: _AGENT_ROLE_CONTRACT_IMPLEMENTER,
+    AgentRole.COORDINATOR.value: _AGENT_ROLE_CONTRACT_COORDINATOR,
+    AgentRole.PLANNER.value: _AGENT_ROLE_CONTRACT_PLANNER,
+    AgentRole.SCOUT.value: _AGENT_ROLE_CONTRACT_SCOUT,
+    AgentRole.ORACLE.value: _AGENT_ROLE_CONTRACT_ORACLE,
+    AgentRole.COMMUNICATOR.value: _AGENT_ROLE_CONTRACT_COMMUNICATOR,
+}
+
+
+class AgentRoleContractProvider(SystemPromptProvider):
+    """Injects role-specific runtime contracts based on the agent's ``roles``.
+
+    For each preset role present in ``roles``, the provider appends a short
+    contract segment shaping the agent's behavior (e.g. REVIEWER must emit a
+    ``<verification status="passed|failed" .../>`` tag; IMPLEMENTER must run
+    verification after code changes). Unrecognized role strings are ignored
+    silently — the provider injects nothing for them and does not error.
+
+    Version is derived from the sorted set of recognized roles so the cache
+    invalidates exactly when the recognized role set changes. Unrecognized
+    roles do not affect the version (they contribute no content). Order of
+    ``roles`` does not affect the version, but content order follows the
+    input list so callers can shape prompt ordering deterministically.
+    """
+
+    def __init__(self, roles: list[str]) -> None:
+        super().__init__()
+        self._roles: list[str] = list(roles)
+
+    async def _fetch_version(self) -> str:
+        recognized = sorted(r for r in self._roles if r in _AGENT_ROLE_CONTRACTS)
+        return f"roles:{','.join(recognized)}" if recognized else "roles:none"
+
+    async def _fetch_content(self) -> str:
+        parts: list[str] = []
+        for role in self._roles:
+            contract = _AGENT_ROLE_CONTRACTS.get(role)
+            if contract is not None:
+                parts.append(contract)
+        return "\n\n---\n\n".join(parts)
 
 
 class ProviderBlocksProvider(SystemPromptProvider):

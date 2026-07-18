@@ -3,3 +3,4 @@ description: Versatile review specialist for code diffs, plans, and solutions
 max_steps: 100
 context_mode: fresh
 tool_preset: read_write
+roles: [reviewer]

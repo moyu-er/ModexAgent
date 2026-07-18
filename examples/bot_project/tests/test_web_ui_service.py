@@ -78,8 +78,13 @@ async def test_coder_session_transcript_written_to_coder_pool_directory() -> Non
     Regression: when _build_agent_pool_map produced an empty mapping, the
     transcript dispatcher fell back to the main pool for every agent, so a
     coder session's transcript ended up at
-    .modex/sessions/<ws>/main/<uuid>.coder.jsonl instead of
-    .modex/sessions/<ws>/coder/<uuid>.coder.jsonl.
+    .modex/sessions/<ws>/main/<uuid>.orchestrator.jsonl instead of
+    .modex/sessions/<ws>/coder/<uuid>.orchestrator.jsonl.
+
+    Note: the coder pool's main agent is named `orchestrator` (the directory
+    stays `coder/`, but `main_agent_name: orchestrator` in pool.yml overrides
+    the default). Session IDs and transcript filenames carry the agent name,
+    so the file is `<uuid>.orchestrator.jsonl` under the `coder/` pool dir.
     """
     data_dir = Path(tempfile.mkdtemp())
     input_adapter = WebSocketInputAdapter()
@@ -92,9 +97,21 @@ async def test_coder_session_transcript_written_to_coder_pool_directory() -> Non
         _project_dir = project_dir
 
     mapping = WebUIService._build_agent_pool_map(_MappingSource())
-    assert mapping.get("coder") == "coder", (
-        "test setup: real project must map coder agent to coder pool"
+    assert mapping.get("orchestrator") == "coder", (
+        "test setup: real project must map orchestrator agent to coder pool"
     )
+
+    # pool_name -> main_agent_name, mirroring WebUIService production wiring
+    # (_agent_map = {name: pi.main_agent_name for ...}). _build_agent_pool_map
+    # returns agent_name -> pool_name, which is the wrong direction for the
+    # resolver contract; read main agent names from PoolStore directly.
+    from modex_agent.multi_agent.pool_config import PoolStore
+
+    _pool_store = PoolStore(base_dir=project_dir)
+    _pool_to_main_agent = {
+        s.name: _pool_store.read_pool(s.name).main.agent_name
+        for s in _pool_store.list_pools()
+    }
 
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     store.set_agent_pool_map(mapping)
@@ -107,9 +124,11 @@ async def test_coder_session_transcript_written_to_coder_pool_directory() -> Non
         home_sessions_dir=WorkspacePaths(root=data_dir / ".modex").sessions_dir,
     )
     server.set_workspace_index(store)
-    server.set_pool_agent_names(["main", "coder"])
+    server.set_pool_agent_names(["main", "orchestrator"])
     server.set_agent_pool_map(mapping)
-    server.set_agent_resolver(lambda pool_name: mapping.get(pool_name, pool_name))
+    server.set_agent_resolver(
+        lambda pool_name: _pool_to_main_agent.get(pool_name, pool_name)
+    )
 
     from bot.service.session_gc import SessionGarbageCollector, SessionGcConfig
 
@@ -124,7 +143,12 @@ async def test_coder_session_transcript_written_to_coder_pool_directory() -> Non
     from tests.webui._pipeline_fixture import attach_default_pipeline
 
     attach_default_pipeline(
-        server, store, input_adapter, agent_pool_map=mapping, workspace_root=data_dir
+        server,
+        store,
+        input_adapter,
+        agent_pool_map=mapping,
+        workspace_root=data_dir,
+        available_pools=lambda: set(_pool_to_main_agent.keys()),
     )
 
     client = TestClient(TestServer(server.app))
@@ -156,15 +180,16 @@ async def test_coder_session_transcript_written_to_coder_pool_directory() -> Non
             assert echoed["event"] == "user_message"
 
         # The transcript MUST live under the coder pool directory.
-        expected_file = data_dir / ".modex" / "sessions" / "coder" / f"{uuid_prefix}.coder.jsonl"
+        # Filename suffix is the main agent name (orchestrator), not the pool name.
+        expected_file = data_dir / ".modex" / "sessions" / "coder" / f"{uuid_prefix}.orchestrator.jsonl"
         assert expected_file.exists(), (
-            f"coder transcript not found at expected path {expected_file}"
+            f"orchestrator transcript not found at expected path {expected_file}"
         )
 
         # It MUST NOT have leaked into the main pool directory.
-        wrong_file = data_dir / ".modex" / "sessions" / "main" / f"{uuid_prefix}.coder.jsonl"
+        wrong_file = data_dir / ".modex" / "sessions" / "main" / f"{uuid_prefix}.orchestrator.jsonl"
         assert not wrong_file.exists(), (
-            f"coder transcript leaked into main pool directory {wrong_file}"
+            f"orchestrator transcript leaked into main pool directory {wrong_file}"
         )
 
         # Deleting the session must remove the transcript from the coder dir.

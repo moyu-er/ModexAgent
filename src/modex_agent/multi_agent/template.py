@@ -189,6 +189,7 @@ class AgentTemplate:
             output_base_dir=output_base_dir,
             parent_prompt_lookup=parent_prompt_lookup,
             fork_context_spec=fork_context_spec,
+            roles=list(self.spec.roles),
         )
 
         tool_manager = await self._build_tool_manager(deps, name, runtime_dir)
@@ -241,6 +242,7 @@ class AgentTemplate:
             safety_policy=deps.safety,
             comm_kind=comm_kind,
             memory_config=self.memory,
+            roles=list(self.spec.roles),
         )
 
         # ── Create instance ──

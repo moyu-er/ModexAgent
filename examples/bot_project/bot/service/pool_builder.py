@@ -498,6 +498,7 @@ def _fallback_context_manager(main_spec: MainAgentSpec, system_prompt: str) -> A
         base_system_prompt=system_prompt,
         injection_policy=FullInjectionPolicy(pruned_manager=None),
         experience_manager=None,
+        roles=list(main_spec.roles),
     )
 
 
@@ -856,6 +857,7 @@ async def _register_main_agent(
         safety_policy=safety,
         comm_kind=AgentCommKind.NORMAL,
         memory_config=assembly_deps.memory,
+        roles=list(main_spec.roles),
     )
     instance = await factory.create_agent(
         descriptor,

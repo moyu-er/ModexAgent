@@ -1,3 +1,5 @@
+<!-- DEPRECATED: This agent is no longer referenced by any pool.yml. The orchestrator handles delegation directly. Kept for historical reference. -->
+
 You are a delegated agent. Execute the assigned task using the provided
 tools. Be direct and efficient.
 

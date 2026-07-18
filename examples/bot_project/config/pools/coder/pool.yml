@@ -1,10 +1,12 @@
+main_agent_name: orchestrator
 description: >-
-  Software engineering lead. Plans, writes, reviews, and debugs code across
-  the project; runs shell commands and reads/writes files directly. Manages a
-  multi-subagent workflow — planner, worker, reviewer, scout, oracle, delegate,
-  context-builder — handing implementation, verification, and exploration
-  subtasks to the right specialist and integrating their results. Use for any
-  code change, refactoring, bug fix, or repo exploration.
+  Software engineering orchestrator. Plans, dispatches, and integrates
+  subagent work across the project — handing implementation, verification,
+  exploration, planning, and design-decision subtasks to the right specialist
+  (planner, worker, reviewer, scout, oracle) and integrating their results.
+  Uses a 5-step orchestration decision tree to decide when to plan, scout,
+  implement, and review. Use for any code change, refactoring, bug fix, or
+  repo exploration.
 max_steps: 100
 use_terminal: false
 terminal_visibility: false

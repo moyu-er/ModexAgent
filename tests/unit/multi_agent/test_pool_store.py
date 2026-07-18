@@ -450,3 +450,104 @@ class TestExternalPoolRoundTrip:
         assert spec.main.execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING
         assert spec.main.provider_kind == ProviderKind.PI
         assert spec.main.description == "Pi agent"
+
+
+class TestRolesRoundTrip:
+    """T1 data-layer: ``roles`` round-trips through PoolStore save → load.
+
+    Preset values (AgentRole members) serialize as their plain string value
+    via StrEnum; custom strings are preserved verbatim. An empty ``roles``
+    list is omitted from YAML on write (default-noise suppression) and
+    defaults back to ``[]`` on read.
+    """
+
+    def test_main_agent_roles_round_trip(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+        tree = PoolSpec(
+            name="default",
+            main_agent_name="default",
+            main=MainAgentSpec(
+                agent_name="default",
+                roles=["coordinator", "planner"],
+            ),
+        )
+        store.write_pool("default", tree)
+        spec = store.read_pool("default")
+        assert spec.main.roles == ["coordinator", "planner"]
+
+    def test_subagent_roles_round_trip(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+        tree = PoolSpec(
+            name="default",
+            main_agent_name="default",
+            main=MainAgentSpec(agent_name="default"),
+            subagents=[
+                SubagentSpec(
+                    agent_name="helper",
+                    roles=["implementer", "reviewer"],
+                )
+            ],
+        )
+        store.write_pool("default", tree)
+        spec = store.read_pool("default")
+        assert len(spec.subagents) == 1
+        assert spec.subagents[0].roles == ["implementer", "reviewer"]
+
+    def test_roles_preserve_custom_strings(self, tmp_path: Path) -> None:
+        # Custom (non-preset) strings must survive the round-trip verbatim.
+        store = _store(tmp_path)
+        tree = PoolSpec(
+            name="default",
+            main_agent_name="default",
+            main=MainAgentSpec(
+                agent_name="default",
+                roles=["custom-role", "another-role"],
+            ),
+        )
+        store.write_pool("default", tree)
+        spec = store.read_pool("default")
+        assert spec.main.roles == ["custom-role", "another-role"]
+
+    def test_roles_mixed_preset_and_custom_round_trip(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+        tree = PoolSpec(
+            name="default",
+            main_agent_name="default",
+            main=MainAgentSpec(
+                agent_name="default",
+                roles=["planner", "custom-role"],
+            ),
+        )
+        store.write_pool("default", tree)
+        spec = store.read_pool("default")
+        assert spec.main.roles == ["planner", "custom-role"]
+
+    def test_empty_roles_omitted_from_yaml(self, tmp_path: Path) -> None:
+        # Default-noise suppression: an empty roles list is NOT written
+        # to pool.yml (matches the existing pattern for mcp=[], etc.).
+        store = _store(tmp_path)
+        tree = PoolSpec(
+            name="default",
+            main_agent_name="default",
+            main=MainAgentSpec(agent_name="default", roles=[]),
+        )
+        store.write_pool("default", tree)
+        data = _read_yml(store, "default")
+        assert "roles" not in data
+        # And on read it defaults back to [].
+        spec = store.read_pool("default")
+        assert spec.main.roles == []
+
+    def test_roles_preserve_order_through_round_trip(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+        tree = PoolSpec(
+            name="default",
+            main_agent_name="default",
+            main=MainAgentSpec(
+                agent_name="default",
+                roles=["coordinator", "planner", "reviewer"],
+            ),
+        )
+        store.write_pool("default", tree)
+        spec = store.read_pool("default")
+        assert spec.main.roles == ["coordinator", "planner", "reviewer"]

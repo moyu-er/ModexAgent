@@ -4,3 +4,4 @@ max_steps: 60
 tool_preset: read_only
 context_mode: fork
 fork_max_messages: 60
+roles: [oracle]
