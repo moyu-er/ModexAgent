@@ -11,8 +11,6 @@ prompt REST API. Every method returns a frozen Pydantic payload (from
 * :class:`UnknownPoolError` / :class:`UnknownPromptError` /
    :class:`UnknownMcpServer` (KeyError subclasses) for not-found — the route
    maps these to HTTP 404.
-* :class:`DefaultPoolProtectedError` when a delete/rename targets the default
-  pool — the route maps this to HTTP 409 Conflict.
 
 ``restart_required`` semantics: a per-process ``set`` of dirty artifact
 classes that becomes ``True`` after any write that touches a pool root
@@ -27,13 +25,15 @@ upload/delete is hot-reload per spec, so those do NOT set the marker; only
 
 from __future__ import annotations
 
+import logging
+import shutil
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
 
-from bot.config import PromptContent, SkillEntry
+from bot.config import PromptContent, PromptSummary, PromptUsage, SkillEntry
 from bot.config.mcp_registry import (
     UnknownMcpServer,
     delete_server,
@@ -50,10 +50,8 @@ from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.ioc.configs.mcp import MCPServerEntry
 from modex_agent.multi_agent.pool_config import PoolSpec, PoolStore
 from modex_agent.multi_agent.pool_config.store import (
-    _DEFAULT_MAIN_PROMPT,
     PoolSummary,
     PoolValidationError,
-    RenameReport,
 )
 from modex_agent.multi_agent.pool_router import PoolRoutingStore
 
@@ -62,9 +60,47 @@ from modex_agent.multi_agent.pool_router import PoolRoutingStore
 # everything. Kept as a set so the source of the dirty state is diagnosable.
 _RESTART_DIRTY_CLASSES: frozenset[str] = frozenset({"pool", "mcp", "prompt", "skill_assign"})
 
+logger = logging.getLogger(__name__)
 
-class DefaultPoolProtectedError(Exception):
-    """Raised when a delete/rename targets the protected default pool."""
+
+class PoolNotEmptyError(Exception):
+    """Raised when a delete targets a pool with active agent sessions."""
+
+    def __init__(self, pool_name: str, busy_agents: list[str]) -> None:
+        self.pool_name = pool_name
+        self.busy_agents = busy_agents
+        super().__init__(
+            f"Pool {pool_name!r} has active sessions in agents: {busy_agents}"
+        )
+
+
+class PromptInUseError(Exception):
+    """Raised when a delete targets a prompt md still referenced by agents.
+
+    Carries the ``usages`` list so the route handler can serialize them into
+    the HTTP 409 response body without re-computing. Mirrors the
+    :class:`PoolNotEmptyError` precedent for the dedicated-exception-maps-to-409
+    pattern.
+    """
+
+    def __init__(self, prompt_name: str, usages: list[PromptUsage]) -> None:
+        self.prompt_name = prompt_name
+        self.usages = usages
+        super().__init__(
+            f"Prompt {prompt_name!r} is referenced by {len(usages)} agent(s)"
+        )
+
+
+# Subdirectories under <workspace>/.modex/ that hold per-pool artifacts.
+# The cascade removes <data_dir>/<subdir>/<pool_name>/ for each entry.
+_POOL_ARTIFACT_SUBDIRS: tuple[str, ...] = (
+    "sessions",
+    "runtime_state",
+    "memory",
+    "experiences",
+    "inbox",
+    "session_index",
+)
 
 
 class PoolConfigController:
@@ -81,17 +117,17 @@ class PoolConfigController:
         skills_store: SkillsStore,
         prompt_store: PromptStore,
         mcp_registry_path: Path,
-        default_pool: str,
         restarter: Callable[[], None] | None = None,
         pool_session_store: PoolRoutingStore | None = None,
+        is_pool_busy: Callable[[str], tuple[bool, list[str]]] | None = None,
     ) -> None:
         self._pools: PoolStore = pool_store
         self._skills: SkillsStore = skills_store
         self._prompts: PromptStore = prompt_store
         self._mcp_path: Path = mcp_registry_path
-        self.default_pool: str = default_pool
         self._restarter: Callable[[], None] | None = restarter
         self._pool_session_store: PoolRoutingStore | None = pool_session_store
+        self._is_pool_busy: Callable[[str], tuple[bool, list[str]]] | None = is_pool_busy
         # Coarse per-process dirty marker. The set tracks which artifact
         # classes triggered the marker (diagnostic); ``__bool__`` below is the
         # single source of truth for the API hint.
@@ -115,31 +151,6 @@ class PoolConfigController:
             self._dirty.add(c)
 
     # ------------------------------------------------------------------ #
-    # rename convergence helpers
-    # ------------------------------------------------------------------ #
-
-    def _apply_agent_renames(self, pool_name: str, report: RenameReport) -> None:
-        """Move per-agent skill directories after ``write_pool`` renames templates/md.
-
-        This is the single convergence point for agent-rename side-effects that
-        live outside :class:`PoolStore` (skills). Templates and prompt md are
-        already handled inside :meth:`PoolStore.write_pool`.
-        """
-        for old_agent, new_agent in report.agent_renames.items():
-            self._skills.rename_agent_skills(pool_name, old_agent, new_agent)
-
-    def _apply_pool_rename(self, old_pool: str, new_pool: str) -> None:
-        """Move all resources keyed by pool name after the pool directory is renamed.
-
-        Handles skill directories and, when a :class:`PoolSessionStore` is
-        available, migrates stored session->pool mappings from ``old_pool`` to
-        ``new_pool``.
-        """
-        self._skills.rename_pool_skills(old_pool, new_pool)
-        if self._pool_session_store is not None:
-            self._pool_session_store.rename_pool(old_pool, new_pool)
-
-    # ------------------------------------------------------------------ #
     # pools
     # ------------------------------------------------------------------ #
 
@@ -158,17 +169,15 @@ class PoolConfigController:
         For ``external_coding`` pools, all per-pool skill assignments are
         removed after PoolStore commits: external pools have no subagents and
         no per-agent skill roots, so any leftover ``skills/<pool>/`` tree is
-        orphaned. The cleanup runs after agent-rename convergence (so renames
-        land first) and before the dirty marker (so ``restart_required``
-        reflects the full save). React saves skip the cleanup and preserve
+        orphaned. The cleanup runs before the dirty marker (so
+        ``restart_required`` reflects the full save). React saves preserve
         skill assignments.
         """
         tree = self._filter_stale_mcp(tree)
         try:
-            report = self._pools.write_pool(name, tree)
+            self._pools.write_pool(name, tree)
         except PoolValidationError as exc:
             raise FieldValidationError({"pool": [str(exc)]}) from exc
-        self._apply_agent_renames(name, report)
         if tree.main.execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING:
             self._skills.clear_pool_skills(name)
         self._mark("pool")
@@ -199,24 +208,36 @@ class PoolConfigController:
         return self.read_pool(name)
 
     def delete_pool(self, name: str) -> None:
-        if name == self.default_pool:
-            raise DefaultPoolProtectedError(f"Refusing to delete the default pool {name!r}")
-        try:
-            self._pools.delete_pool(name, default_pool=self.default_pool)
-        except PoolValidationError as exc:
-            raise FieldValidationError({"pool": [str(exc)]}) from exc
+        if self._is_pool_busy is not None:
+            busy, busy_agents = self._is_pool_busy(name)
+            if busy:
+                raise PoolNotEmptyError(name, busy_agents)
+        self._cascade_delete(name)
         self._mark("pool")
 
-    def rename_pool(self, old: str, new: str) -> PoolSpec:
-        if old == self.default_pool:
-            raise DefaultPoolProtectedError(f"Refusing to rename the default pool {old!r}")
+    def _cascade_delete(self, name: str) -> None:
+        """Remove every artifact owned by *name* across file + routing stores.
+
+        File-first: SQLite-backed session/memory/etc. data is left for the
+        ``SessionArtifactCleaner`` orphan sweep (lazy cleanup) — only the
+        routing table is touched on the SQLite side, via
+        ``PoolRoutingStore.delete_pool_routes``.
+        """
         try:
-            self._pools.rename_pool(old, new)
+            self._pools.delete_pool(name)
         except PoolValidationError as exc:
             raise FieldValidationError({"pool": [str(exc)]}) from exc
-        self._apply_pool_rename(old, new)
-        self._mark("pool")
-        return self.read_pool(new)
+        self._skills.clear_pool_skills(name)
+        if self._pool_session_store is not None:
+            deleted = self._pool_session_store.delete_pool_routes(name)
+            if deleted:
+                logger.info("Deleted %d routing entries for pool %r", deleted, name)
+        data_dir = self._pools.base_dir / ".modex"
+        for subdir in _POOL_ARTIFACT_SUBDIRS:
+            artifact_dir = data_dir / subdir / name
+            if artifact_dir.exists():
+                shutil.rmtree(artifact_dir, ignore_errors=True)
+                logger.info("Removed %s for pool %r", artifact_dir, name)
 
     def add_peer(self, name_a: str, name_b: str) -> tuple[PoolSpec, PoolSpec]:
         """Atomically add a bidirectional peer edge and return both updated trees."""
@@ -240,19 +261,6 @@ class PoolConfigController:
     # prompts
     # ------------------------------------------------------------------ #
 
-    def read_prompt(self, agent: str) -> PromptContent:
-        """Read ``agents/<agent>.md``; seed a default if it does not exist yet.
-
-        The webui prompt editor opens on a GET, so returning 404 for a brand-new
-        agent blocks the user before they can save their first system prompt.
-        Seeding here makes ``edit = create-or-update`` while keeping writes
-        explicit (PUT still goes through ``write_prompt``).
-        """
-        try:
-            return self._prompts.read_or_seed_prompt(agent, _DEFAULT_MAIN_PROMPT)
-        except PromptValidationError as exc:
-            raise FieldValidationError({"agent": [str(exc)]}) from exc
-
     def write_prompt(self, agent: str, content: str) -> PromptContent:
         try:
             self._prompts.write_prompt(agent, content)
@@ -260,6 +268,111 @@ class PoolConfigController:
             raise FieldValidationError({"agent": [str(exc)]}) from exc
         self._mark("prompt")
         return self._prompts.read_prompt(agent)
+
+    def create_prompt(self, name: str, content: str | None = None) -> PromptContent:
+        """Create ``agents/<name>.md``; refuse if it already exists.
+
+        Distinct from :meth:`write_prompt` (which is upsert): create rejects a
+        duplicate name with :class:`PromptExistsError` so the route can map it
+        to HTTP 409. When ``content`` is omitted the seed text is
+        :data:`PromptStore.DEFAULT_PROMPT_SEED`. Sets ``restart_required``
+        because the new prompt md is an agent-root artifact.
+        """
+        body = content if content is not None else PromptStore.DEFAULT_PROMPT_SEED
+        try:
+            self._prompts.create_prompt(name, body)
+        except PromptValidationError as exc:
+            raise FieldValidationError({"name": [str(exc)]}) from exc
+        self._mark("prompt")
+        return self._prompts.read_prompt(name)
+
+    def list_prompts(self) -> list[PromptSummary]:
+        """List every ``agents/*.md`` whose name matches the agent-name regex.
+
+        Delegates to :meth:`PromptStore.list_prompts`. Read-only: does NOT set
+        ``restart_required`` and does NOT touch disk.
+        """
+        return self._prompts.list_prompts()
+
+    def read_prompt_strict(self, name: str) -> PromptContent:
+        """Read ``agents/<name>.md`` WITHOUT seeding (the new global API path).
+
+        Raises :class:`UnknownPromptError` (KeyError) when the file is absent —
+        the route maps this to HTTP 404. This is distinct from the legacy
+        seeding-on-read behavior (removed in Ticket 6) and is the read path
+        backing ``GET /api/prompts/{name}``.
+        """
+        try:
+            return self._prompts.read_prompt(name)
+        except PromptValidationError as exc:
+            raise FieldValidationError({"name": [str(exc)]}) from exc
+
+    def find_prompt_usages(self, prompt_name: str) -> list[PromptUsage]:
+        """Scan every pool for agents that reference *prompt_name*.
+
+        Read-only. For each pool's main agent and each subagent, two reference
+        cases are checked:
+
+        1. **Explicit**: ``agent.prompt_name`` is non-None/non-empty and equals
+           *prompt_name*.
+        2. **Fallback**: ``agent.prompt_name`` is None/empty AND
+           ``agent.agent_name`` equals *prompt_name* (the agent falls back to
+           ``agents/<agent_name>.md``).
+
+        Returns the full list; an empty list means the prompt is unreferenced
+        and safe to delete.
+        """
+        usages: list[PromptUsage] = []
+        for summary in self._pools.list_pools():
+            pool_name = summary.name
+            try:
+                tree = self._pools.read_pool(pool_name)
+            except KeyError:
+                continue
+            main = tree.main
+            if (main.prompt_name and main.prompt_name == prompt_name) or (
+                not main.prompt_name and main.agent_name == prompt_name
+            ):
+                usages.append(
+                    PromptUsage(
+                        pool=pool_name, agent_kind="main", agent_name=main.agent_name,
+                    )
+                )
+            for sub in tree.subagents:
+                if (sub.prompt_name and sub.prompt_name == prompt_name) or (
+                    not sub.prompt_name and sub.agent_name == prompt_name
+                ):
+                    usages.append(
+                        PromptUsage(
+                            pool=pool_name,
+                            agent_kind="subagent",
+                            agent_name=sub.agent_name,
+                        )
+                    )
+        return usages
+
+    def delete_prompt(self, name: str) -> None:
+        """Delete ``agents/<name>.md`` if no agent references it.
+
+        Calls :meth:`find_prompt_usages` first; if non-empty, raises
+        :class:`PromptInUseError` carrying the usage list (mapped to HTTP 409).
+        If unreferenced, delegates to :meth:`PromptStore.delete_prompt` (raises
+        :class:`UnknownPromptError` → HTTP 404 if absent; raises
+        :class:`FieldValidationError` → HTTP 400 on a bad name).
+
+        Does NOT set ``restart_required`` — deleting a prompt doesn't change
+        running agents (they still have their cached prompt until restart; the
+        deletion takes effect on next restart when the prompt file is absent
+        and the fallback default kicks in).
+        """
+        usages = self.find_prompt_usages(name)
+        if usages:
+            raise PromptInUseError(name, usages)
+        try:
+            self._prompts.delete_prompt(name)
+        except PromptValidationError as exc:
+            raise FieldValidationError({"name": [str(exc)]}) from exc
+
 
     # ------------------------------------------------------------------ #
     # MCP registry

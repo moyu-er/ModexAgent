@@ -535,11 +535,17 @@ class TestPromptMdCoupling:
         report = store.write_pool("main", tree)
         assert report.agent_renames == {}
 
-    def test_store_seeds_md_for_new_agents(self, store: PoolStore, tmp_path: Path) -> None:
+    def test_store_seeds_md_for_new_agents(self, tmp_path: Path) -> None:
         # write_pool now seeds a default prompt md for every agent present in the
         # saved tree that does not already have one. This makes the webui flow
         # "save pool → edit system prompt" work without a prior explicit prompt
         # write, while PromptStore still owns the content shape/format.
+        #
+        # Diverges from the shared ``store`` fixture (which uses the framework
+        # default empty seed) because this test asserts the canonical seed text
+        # — production wiring passes ``PromptStore.DEFAULT_PROMPT_SEED``.
+        from bot.config.prompt_store import PromptStore
+
         _seed_pool_yml(tmp_path, "coding", main_agent="coding")
         tree = PoolSpec(
             name="coding",
@@ -547,13 +553,17 @@ class TestPromptMdCoupling:
             main=MainAgentSpec(agent_name="coding"),
             subagents=[SubagentSpec(agent_name="brandnew")],
         )
+        store = PoolStore(
+            base_dir=tmp_path,
+            default_prompt_seed=PromptStore.DEFAULT_PROMPT_SEED,
+        )
         store.write_pool("coding", tree)
         md = tmp_path / "agents" / "brandnew.md"
         assert md.exists()
         assert "You are an AI assistant" in md.read_text(encoding="utf-8")
 
 
-# ─── create / delete / rename / list ─────────────────────────────────────────
+# ─── create / delete / list ─────────────────────────────────────────────────
 
 
 class TestCreateDeleteRenameList:
@@ -577,44 +587,16 @@ class TestCreateDeleteRenameList:
         with pytest.raises(PoolValidationError):
             store.create_pool("research")
 
-    def test_delete_pool_removes_dir_and_md(self, store: PoolStore, tmp_path: Path) -> None:
+    def test_delete_pool_removes_dir_but_leaves_md(self, store: PoolStore, tmp_path: Path) -> None:
         store.create_pool("research")
         assert (tmp_path / "agents" / "research.md").exists()
-        store.delete_pool("research", default_pool="main")
+        store.delete_pool("research")
         assert not (tmp_path / "config" / "pools" / "research").exists()
-        assert not (tmp_path / "agents" / "research.md").exists()
-
-    def test_delete_refuses_default_pool(self, store: PoolStore, tmp_path: Path) -> None:
-        store.create_pool("main")
-        with pytest.raises(PoolValidationError):
-            store.delete_pool("main", default_pool="main")
+        assert (tmp_path / "agents" / "research.md").exists()
 
     def test_delete_unknown_raises(self, store: PoolStore) -> None:
         with pytest.raises(UnknownPoolError):
             store.delete_pool("nope")
-
-    def test_rename_pool_renames_directory(self, store: PoolStore, tmp_path: Path) -> None:
-        """Pool identity = directory name, so renaming the directory IS the
-        rename; pool.yml has no ``name:`` field to update."""
-        store.create_pool("old")
-        store.rename_pool("old", "new")
-        assert not (tmp_path / "config" / "pools" / "old").exists()
-        new_yml = tmp_path / "config" / "pools" / "new" / "pool.yml"
-        assert new_yml.exists()
-        raw = yaml.safe_load(new_yml.read_text("utf-8"))
-        assert "name" not in raw  # no name field written/updated
-        # The renamed pool reads back under its new (dir) name.
-        assert store.read_pool("new").name == "new"
-
-    def test_rename_refuses_existing_target(self, store: PoolStore, tmp_path: Path) -> None:
-        store.create_pool("alpha")
-        store.create_pool("beta")
-        with pytest.raises(PoolValidationError):
-            store.rename_pool("alpha", "beta")
-
-    def test_rename_unknown_raises(self, store: PoolStore) -> None:
-        with pytest.raises(UnknownPoolError):
-            store.rename_pool("nope", "new")
 
     def test_list_pools(self, store: PoolStore, tmp_path: Path) -> None:
         store.create_pool("main")

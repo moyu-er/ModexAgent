@@ -1,9 +1,9 @@
 // PoolsView — left/right layout: pool list + PoolEditor.
 //
-// Left list: listPools() summary; + Add pool (inline rename-style input, NOT
-// window.prompt); per-pool inline rename + delete (delete uses the shared
-// ConfirmDialog — NOT window.confirm). Deleting the default pool returns 409
-// from the backend → surface as a toast.
+// Left list: listPools() summary; + Add pool (inline input, NOT
+// window.prompt); per-pool delete (delete uses the shared ConfirmDialog — NOT
+// window.confirm). Deleting the default pool returns 409 from the backend →
+// surface as a toast.
 //
 // Switching to another pool while the current PoolEditor is dirty is guarded
 // by a ConfirmDialog at this level (PoolEditor itself never sees the switch).
@@ -14,7 +14,6 @@ import {
   createPool,
   deletePool,
   listPools,
-  renamePool,
 } from "../../lib/poolApi";
 import { ApiError } from "../../lib/api";
 import { useToast } from "../ToastContext";
@@ -26,7 +25,6 @@ import { Button } from "../ui/Button";
 import { IconButton } from "../ui/IconButton";
 import { Input } from "../ui/Input";
 import {
-  EditIcon,
   PlusIcon,
   SearchIcon,
 } from "../ui/icons";
@@ -39,12 +37,7 @@ type Confirm =
   | { kind: "switch"; name: string }
   | null;
 
-interface RenameState {
-  name: string;
-  draft: string;
-}
-
-export function PoolsView() {
+export function PoolsView({ onNavigateToPrompts }: { onNavigateToPrompts: () => void }) {
   const toast = useToast();
   const t = useT();
   const [pools, setPools] = useState<PoolSummary[] | null>(null);
@@ -52,7 +45,6 @@ export function PoolsView() {
   const [selected, setSelected] = useState<string | null>(null);
   const [adding, setAdding] = useState<boolean>(false);
   const [newName, setNewName] = useState<string>("");
-  const [rename, setRename] = useState<RenameState | null>(null);
   const [confirm, setConfirm] = useState<Confirm>(null);
   /** Dirty signal: PoolEditor flips this via onDirtyChange. */
   const [dirty, setDirty] = useState<boolean>(false);
@@ -115,28 +107,6 @@ export function PoolsView() {
     }
   };
 
-  const onRename = async (): Promise<void> => {
-    if (!rename) return;
-    const next = rename.draft.trim();
-    const oldName = rename.name;
-    if (!next || next === oldName) {
-      setRename(null);
-      return;
-    }
-    try {
-      await renamePool(oldName, next);
-      setRename(null);
-      await load();
-      if (selected === oldName) setSelected(next);
-    } catch (e) {
-      toast.show({
-        message: t("settings.pools.renameFailed", { detail: e instanceof ApiError ? `${e.status} ${e.detail}` : String(e) }),
-        tone: "warning",
-      });
-      setRename(null);
-    }
-  };
-
   const handleSave = async (): Promise<void> => {
     const save = saveRef.current;
     if (!save) return;
@@ -162,17 +132,10 @@ export function PoolsView() {
       }
     } catch (e) {
       setConfirm(null);
-      if (e instanceof ApiError && e.status === 409) {
-        toast.show({
-          message: t("settings.pools.cannotDeleteDefault", { name }),
-          tone: "warning",
-        });
-      } else {
-        toast.show({
-          message: t("settings.pools.deleteFailed", { detail: e instanceof ApiError ? `${e.status} ${e.detail}` : String(e) }),
-          tone: "warning",
-        });
-      }
+      toast.show({
+        message: t("settings.pools.deleteFailed", { detail: e instanceof ApiError ? `${e.status} ${e.detail}` : String(e) }),
+        tone: "warning",
+      });
     }
   };
 
@@ -251,67 +214,34 @@ export function PoolsView() {
           <ul className="space-y-1">
             {visiblePools.map((p) => {
               const isSel = p.name === selected;
-              const isRenaming = rename?.name === p.name;
               return (
                 <li key={p.name} className="space-y-1">
-                  {isRenaming ? (
-                    <input
-                      autoFocus
-                      className="w-full rounded-sm border border-hairline bg-canvas-elevated px-2 py-1 text-sm text-ink focus:border-link focus:outline-none focus:ring-1 focus:ring-link"
-                      value={rename!.draft}
-                      onChange={(e) =>
-                        setRename({
-                          name: rename!.name,
-                          draft: e.target.value,
-                        })
-                      }
-                      onBlur={() => void onRename()}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") void onRename();
-                        if (e.key === "Escape") setRename(null);
-                      }}
-                    />
-                  ) : (
-                    <div
-                      className={`flex items-center gap-1 rounded-md border px-3 py-2 ${
-                        isSel
-                          ? "border-hairline bg-hairline-soft font-semibold text-ink"
-                          : "border-transparent text-body hover:bg-hairline-soft"
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        className="min-w-0 flex-1 truncate text-left text-sm"
-                        onClick={() => onSelect(p.name)}
-                      onDoubleClick={() =>
-                        setRename({ name: p.name, draft: p.name })
-                      }
+                  <div
+                    className={`flex items-center gap-1 rounded-md border px-3 py-2 ${
+                      isSel
+                        ? "border-hairline bg-hairline-soft font-semibold text-ink"
+                        : "border-transparent text-body hover:bg-hairline-soft"
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 truncate text-left text-sm"
+                      onClick={() => onSelect(p.name)}
                       title={t("settings.pools.subagentCount", { count: p.subagent_count })}
                     >
-                        {p.name}
-                      </button>
-                      <IconButton
-                        icon={<EditIcon />}
-                        label={t("settings.pools.renameName", { name: p.name })}
-                        variant="ghost"
-                        size="sm"
-                        className="text-mute hover:text-link"
-                        onClick={() =>
-                          setRename({ name: p.name, draft: p.name })
-                        }
-                      />
-                      <IconButton
-                        icon={<Trash2 size={16} />}
-                        label={t("settings.pools.deleteName", { name: p.name })}
-                        variant="ghost"
-                        size="sm"
-                        className="text-mute hover:text-error"
-                        onClick={() =>
-                          setConfirm({ kind: "delete", name: p.name })
-                        }
-                      />
-                    </div>
-                  )}
+                      {p.name}
+                    </button>
+                    <IconButton
+                      icon={<Trash2 size={16} />}
+                      label={t("settings.pools.deleteName", { name: p.name })}
+                      variant="ghost"
+                      size="sm"
+                      className="text-mute hover:text-error"
+                      onClick={() =>
+                        setConfirm({ kind: "delete", name: p.name })
+                      }
+                    />
+                  </div>
                 </li>
               );
             })}
@@ -349,6 +279,7 @@ export function PoolsView() {
                 onCancel={(cancel) => {
                   cancelRef.current = cancel;
                 }}
+                onNavigateToPrompts={onNavigateToPrompts}
               />
             </div>
             <ActionBar>

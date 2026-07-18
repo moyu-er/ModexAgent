@@ -1,22 +1,21 @@
-// System-prompt editor for a single agent (main or subagent). Loads the
-// markdown body via getPrompt(), edits in a monospace textarea, and saves with
-// savePrompt(). Save is DEFERRED (explicit Save button) — unlike skill toggles,
-// the prompt is plain text and edits shouldn't fire one REST call per keystroke.
+// System-prompt editor for a single prompt. Loads the markdown body via
+// getPrompt(promptName) from the global prompts API, edits in a monospace
+// textarea, and saves via the caller-provided onSave callback.
+//
+// Save is DEFERRED (explicit Save button) — the prompt is plain text and
+// edits shouldn't fire one REST call per keystroke.
 //
 // A successful save implies a restart, so we surface the uniform restart toast
 // (with "Restart now" action) and arm the persistent indicator.
 //
 // Discarding unsaved edits uses the shared ConfirmDialog (no window.confirm).
-//
-// Rendered as a sibling inside the PoolEditor's slide-over — the pool editor
-// stays mounted behind it so unsaved pool edits aren't lost. The optional
-// `slideOverHeader` slot lets the caller inject a Close button into the
-// slide-over's header strip.
+// The optional `onClose` / `slideOverHeader` slots support a slide-over host;
+// when absent (the PromptsView case), Discard resets the draft in place.
 
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import type { PromptContent } from "../../types/pool";
-import { getPrompt, savePrompt } from "../../lib/poolApi";
+import { getPrompt } from "../../lib/promptsApi";
 import { ApiError } from "../../lib/api";
 import { useToast } from "../ToastContext";
 import { restartToast } from "./restartToast";
@@ -27,14 +26,16 @@ import { HelperText } from "../ui/HelperText";
 import { useT } from "../../i18n";
 
 interface Props {
-  pool: string;
-  agent: string;
-  onClose: () => void;
+  promptName: string;
+  onClose?: () => void;
+  /** When provided, the Save button is shown and persistence is delegated here.
+   * When absent, the editor is read-only (no Save button, textarea disabled). */
+  onSave?: (content: string) => Promise<void>;
   /** Optional header rendered at the top (used by the slide-over variant). */
   slideOverHeader?: ReactNode;
 }
 
-export function PromptEditor({ pool, agent, onClose, slideOverHeader }: Props) {
+export function PromptEditor({ promptName, onClose, onSave, slideOverHeader }: Props) {
   const toast = useToast();
   const t = useT();
   const [original, setOriginal] = useState<string | null>(null);
@@ -43,9 +44,11 @@ export function PromptEditor({ pool, agent, onClose, slideOverHeader }: Props) {
   const [saving, setSaving] = useState<boolean>(false);
   const [confirmDiscard, setConfirmDiscard] = useState<boolean>(false);
 
+  const readOnly = onSave === undefined;
+
   useEffect(() => {
     let cancelled = false;
-    getPrompt(pool, agent)
+    getPrompt(promptName)
       .then((c: PromptContent) => {
         if (cancelled) return;
         setOriginal(c.content);
@@ -57,15 +60,17 @@ export function PromptEditor({ pool, agent, onClose, slideOverHeader }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [pool, agent]);
+  }, [promptName]);
 
   if (loadError) {
     return (
       <div className="space-y-3 p-4">
         <p className="text-sm text-error">{t("settings.promptEditor.failedToLoad", { error: loadError })}</p>
-        <Button variant="link" onClick={onClose}>
-          {t("settings.promptEditor.back")}
-        </Button>
+        {onClose && (
+          <Button variant="link" onClick={onClose}>
+            {t("settings.promptEditor.back")}
+          </Button>
+        )}
       </div>
     );
   }
@@ -77,15 +82,15 @@ export function PromptEditor({ pool, agent, onClose, slideOverHeader }: Props) {
   const dirty = draft !== original;
   const requestClose = (): void => {
     if (dirty) setConfirmDiscard(true);
-    else onClose();
+    else onClose?.();
   };
 
-  const onSave = async (): Promise<void> => {
+  const doSave = async (): Promise<void> => {
+    if (!onSave) return;
     setSaving(true);
     try {
-      const saved = await savePrompt(pool, agent, draft);
-      setOriginal(saved.content);
-      setDraft(saved.content);
+      await onSave(draft);
+      setOriginal(draft);
       // Prompt writes unconditionally mark the pool dirty (no hot-reload path
       // yet), so the restart toast fires unconditionally.
       restartToast(toast, t);
@@ -108,20 +113,22 @@ export function PromptEditor({ pool, agent, onClose, slideOverHeader }: Props) {
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-sm font-semibold text-ink">
-                {t("settings.promptEditor.systemPromptAgent", { agent })}
+                {t("settings.promptEditor.systemPromptAgent", { agent: promptName })}
               </h2>
               <HelperText>
                 {t("settings.promptEditor.basePromptHelper")}
               </HelperText>
             </div>
-            <Button variant="link" onClick={requestClose}>
-              {t("settings.promptEditor.back")}
-            </Button>
+            {onClose && (
+              <Button variant="link" onClick={requestClose}>
+                {t("settings.promptEditor.back")}
+              </Button>
+            )}
           </div>
         ) : (
           <div>
             <h3 className="text-sm font-medium text-ink">
-              {t("settings.promptEditor.agentLabel", { agent })}
+              {t("settings.promptEditor.agentLabel", { agent: promptName })}
             </h3>
             <HelperText>
               {t("settings.promptEditor.basePromptHelper")}
@@ -137,25 +144,28 @@ export function PromptEditor({ pool, agent, onClose, slideOverHeader }: Props) {
           spellCheck={false}
           style={{ minHeight: "420px" }}
           className="text-sm"
+          disabled={readOnly}
         />
       </div>
 
-      <div className="sticky bottom-0 z-10 mt-auto flex justify-end gap-2 border-t border-hairline bg-canvas-elevated px-4 pb-3 pt-3">
-        <Button
-          variant="secondary"
-          onClick={requestClose}
-        >
-          {t("settings.promptEditor.cancel")}
-        </Button>
-        <Button
-          variant="primary"
-          onClick={() => void onSave()}
-          disabled={!dirty || saving}
-          loading={saving}
-        >
-          {saving ? t("settings.promptEditor.saving") : t("settings.promptEditor.save")}
-        </Button>
-      </div>
+      {!readOnly && (
+        <div className="sticky bottom-0 z-10 mt-auto flex justify-end gap-2 border-t border-hairline bg-canvas-elevated px-4 pb-3 pt-3">
+          <Button
+            variant="secondary"
+            onClick={requestClose}
+          >
+            {t("settings.promptEditor.cancel")}
+          </Button>
+          <Button
+            variant="primary"
+            onClick={() => void doSave()}
+            disabled={!dirty || saving}
+            loading={saving}
+          >
+            {saving ? t("settings.promptEditor.saving") : t("settings.promptEditor.save")}
+          </Button>
+        </div>
+      )}
 
       {confirmDiscard ? (
         <ConfirmDialog
@@ -165,7 +175,8 @@ export function PromptEditor({ pool, agent, onClose, slideOverHeader }: Props) {
           tone="danger"
           onConfirm={() => {
             setConfirmDiscard(false);
-            onClose();
+            setDraft(original);
+            onClose?.();
           }}
           onCancel={() => setConfirmDiscard(false)}
         />

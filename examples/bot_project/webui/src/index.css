@@ -68,6 +68,7 @@
   --color-cat-skills: #8b5cf6;
   --color-cat-models: #db2777;
   --color-cat-im: #65a30d;
+  --color-cat-prompts: #0d9488;
 
   /* Radius (8px base, 12px cards, pill for badges) */
   --radius-xs: 4px;
@@ -149,6 +150,7 @@
   --color-cat-skills: #a78bfa;
   --color-cat-models: #f472b6;
   --color-cat-im: #a3e635;
+  --color-cat-prompts: #2dd4bf;
 
   /* Shadows */
   --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.3);

@@ -16,12 +16,13 @@ import {
   Boxes,
   Command,
   Sparkles,
+  FileText,
   type LucideProps,
 } from "lucide-react";
 import type { MessageKey } from "../../i18n";
 import { TERMS } from "../../i18n/terms";
 
-export type ViewKey = "im" | "model" | "pools" | "mcp" | "skills";
+export type ViewKey = "im" | "model" | "pools" | "mcp" | "skills" | "prompts";
 
 export interface CategoryMeta {
   icon: ComponentType<LucideProps>;
@@ -61,5 +62,11 @@ export const CATEGORY: Record<ViewKey, CategoryMeta> = {
     catVar: "var(--color-cat-skills)",
     titleTerm: TERMS.skills,
     subKey: "settings.skills.sub",
+  },
+  prompts: {
+    icon: FileText,
+    catVar: "var(--color-cat-prompts)",
+    titleKey: "settings.prompts.title",
+    subKey: "settings.prompts.sub",
   },
 };

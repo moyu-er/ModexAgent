@@ -47,7 +47,7 @@ afterEach(() => vi.unstubAllGlobals());
 async function renderView(): Promise<void> {
   render(
     <ToastProvider>
-      <PoolsView />
+      <PoolsView onNavigateToPrompts={() => {}} />
     </ToastProvider>,
   );
   await waitFor(() =>
@@ -64,7 +64,7 @@ describe("PoolsView", () => {
       return Promise.resolve(
         makeResponse(
           200,
-          url.includes("/skills") ? [] : externalTree("default"),
+          url.includes("/skills") || url === "/api/prompts" ? [] : externalTree("default"),
         ),
       );
     });
@@ -92,7 +92,7 @@ describe("PoolsView", () => {
       }
       // pool GET (default selected first)
       return Promise.resolve(
-        makeResponse(200, url.includes("/skills") ? [] : tree("default")),
+        makeResponse(200, url.includes("/skills") || url === "/api/prompts" ? [] : tree("default")),
       );
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -103,29 +103,26 @@ describe("PoolsView", () => {
     await waitFor(() => expect(screen.getByText(/Pool: default/)).toBeTruthy());
   });
 
-  it("delete pool opens a custom ConfirmDialog (not window.confirm) and 409 surfaces a toast", async () => {
+  it("delete pool opens a custom ConfirmDialog (not window.confirm) and errors surface a toast", async () => {
     const fetchMock = vi.fn((url: string, init?: RequestInit) => {
       const method = init?.method ?? "GET";
       if (url === "/api/pools") return Promise.resolve(makeResponse(200, pools));
       if (url === "/api/pools/research" && method === "DELETE") {
-        return Promise.resolve(makeResponse(409, { error: "in use" }));
+        return Promise.resolve(makeResponse(500, { error: "in use" }));
       }
       return Promise.resolve(
-        makeResponse(200, url.includes("/skills") ? [] : tree("default")),
+        makeResponse(200, url.includes("/skills") || url === "/api/prompts" ? [] : tree("default")),
       );
     });
     vi.stubGlobal("fetch", fetchMock);
     await renderView();
     await waitFor(() => expect(screen.getByText("research")).toBeTruthy());
-    // hover-only delete button — find by aria-label
     fireEvent.click(screen.getByRole("button", { name: "Delete research" }));
-    // custom confirm dialog appears (no window.confirm)
     expect(screen.getByRole("dialog")).toBeTruthy();
     expect(screen.getByText(/Delete pool "research"\?/)).toBeTruthy();
-    // confirm
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     await waitFor(() =>
-      expect(screen.getByText(/Cannot delete "research"/)).toBeTruthy(),
+      expect(screen.getByText(/Delete failed:/)).toBeTruthy(),
     );
   });
 
@@ -135,13 +132,13 @@ describe("PoolsView", () => {
       if (url === "/api/pools") return Promise.resolve(makeResponse(200, pools));
       if (url === "/api/pools/default" && method === "GET") {
         return Promise.resolve(
-          makeResponse(200, url.includes("/skills") ? [] : tree("default")),
+          makeResponse(200, tree("default")),
         );
       }
       if (url === "/api/pools/research" && method === "GET") {
         return Promise.resolve(makeResponse(200, tree("research")));
       }
-      return Promise.resolve(makeResponse(200, url.includes("/skills") ? [] : {}));
+      return Promise.resolve(makeResponse(200, url.includes("/skills") || url === "/api/prompts" ? [] : {}));
     });
     vi.stubGlobal("fetch", fetchMock);
     await renderView();
@@ -167,7 +164,7 @@ describe("PoolsView", () => {
       }
       if (url === "/api/pools") return Promise.resolve(makeResponse(200, pools));
       return Promise.resolve(
-        makeResponse(200, url.includes("/skills") ? [] : tree("default")),
+        makeResponse(200, url.includes("/skills") || url === "/api/prompts" ? [] : tree("default")),
       );
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -197,7 +194,7 @@ describe("PoolsView", () => {
         return Promise.resolve(makeResponse(200, manyPools));
       }
       return Promise.resolve(
-        makeResponse(200, url.includes("/skills") ? [] : tree("default")),
+        makeResponse(200, url.includes("/skills") || url === "/api/prompts" ? [] : tree("default")),
       );
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -218,7 +215,7 @@ describe("PoolsView", () => {
         return Promise.resolve(makeResponse(200, pools));
       }
       return Promise.resolve(
-        makeResponse(200, url.includes("/skills") ? [] : tree("default")),
+        makeResponse(200, url.includes("/skills") || url === "/api/prompts" ? [] : tree("default")),
       );
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -229,77 +226,5 @@ describe("PoolsView", () => {
     expect(
       await waitFor(() => screen.getByPlaceholderText("new-pool-name")),
     ).toBeTruthy();
-  });
-
-  it("renames a pool and updates selection to the new name", async () => {
-    let listCalls = 0;
-    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
-      const method = init?.method ?? "GET";
-      if (url === "/api/pools/research" && method === "PATCH") {
-        return Promise.resolve(makeResponse(200, { name: "renamed" }));
-      }
-      if (url === "/api/pools" && method === "GET") {
-        listCalls++;
-        return Promise.resolve(
-          makeResponse(
-            200,
-            listCalls > 1
-              ? [
-                  { name: "default", main_agent_name: "main", subagent_count: 0 },
-                  { name: "renamed", main_agent_name: "main", subagent_count: 2 },
-                ]
-              : pools,
-          ),
-        );
-      }
-      return Promise.resolve(
-        makeResponse(200, url.includes("/skills") ? [] : tree("default")),
-      );
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    await renderView();
-    await waitFor(() => expect(screen.getByText("research")).toBeTruthy());
-
-    fireEvent.click(screen.getByText("research"));
-    await waitFor(() => expect(screen.getByText(/Pool: research/)).toBeTruthy());
-
-    fireEvent.click(screen.getByRole("button", { name: "Rename research" }));
-    const input = await waitFor(() => screen.getByDisplayValue("research"));
-    fireEvent.change(input, { target: { value: "renamed" } });
-    fireEvent.keyDown(input, { key: "Enter" });
-
-    await waitFor(() => {
-      type Call = [unknown, RequestInit?];
-      const calls = fetchMock.mock.calls as unknown as Call[];
-      const patches = calls.filter(
-        (c) => c[1]?.method === "PATCH" && c[0] === "/api/pools/research",
-      );
-      expect(patches.length).toBe(1);
-      expect(JSON.parse((patches[0]![1]!.body as string) ?? "{}")).toEqual({
-        name: "renamed",
-      });
-    });
-
-    await waitFor(() => expect(screen.getByText("renamed")).toBeTruthy());
-    expect(screen.queryByText("research")).toBeNull();
-    await waitFor(() => expect(screen.getByText(/Pool: renamed/)).toBeTruthy());
-  });
-
-  it("rename button renders the EditIcon SVG (not a Unicode pencil)", async () => {
-    const fetchMock = vi.fn((url: string) => {
-      if (url === "/api/pools") {
-        return Promise.resolve(makeResponse(200, pools));
-      }
-      return Promise.resolve(
-        makeResponse(200, url.includes("/skills") ? [] : tree("default")),
-      );
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    await renderView();
-    await waitFor(() => expect(screen.getByText("default")).toBeTruthy());
-    const renameBtn = screen.getByRole("button", { name: "Rename default" });
-    // The button now contains an SVG, not the literal ✎ character.
-    expect(renameBtn.querySelector("svg")).toBeTruthy();
-    expect(renameBtn.textContent).not.toContain("✎");
   });
 });

@@ -27,11 +27,13 @@ from aiohttp import ClientSession, ClientTimeout, web
 
 from bot.adapters.channels import set_conv_channel
 from bot.adapters.web_socket import WebSocketInputAdapter
+from bot.config.prompt_store import PromptExistsError
 from bot.service.config_controller import ConfigController, FieldValidationError
 from bot.service.model_config import BotModelConfig
 from bot.service.pool_config_controller import (
-    DefaultPoolProtectedError,
     PoolConfigController,
+    PoolNotEmptyError,
+    PromptInUseError,
 )
 from bot.webui.events import (
     DeltaEnvelope,
@@ -40,6 +42,7 @@ from bot.webui.events import (
 )
 from bot.webui.model_fetch import ModelFetchError, fetch_provider_models
 from bot.webui.transcript_store import TranscriptStore
+from modex_agent.core.constants import InterfaceFormat
 from modex_agent.core.session_id import (
     SessionIdFactory,
     SessionInfo,
@@ -758,11 +761,6 @@ class WebUIServer:
         self.app.router.add_get("/api/pools/{pool}", self._handle_read_pool)
         self.app.router.add_put("/api/pools/{pool}", self._handle_write_pool)
         self.app.router.add_delete("/api/pools/{pool}", self._handle_delete_pool)
-        self.app.router.add_patch("/api/pools/{pool}", self._handle_rename_pool)
-        self.app.router.add_get("/api/pools/{pool}/agents/{agent}/prompt", self._handle_read_prompt)
-        self.app.router.add_put(
-            "/api/pools/{pool}/agents/{agent}/prompt", self._handle_write_prompt
-        )
         self.app.router.add_post("/api/pools/{pool}/peers", self._handle_add_peer)
         self.app.router.add_delete("/api/pools/{pool}/peers/{peer}", self._handle_remove_peer)
         self.app.router.add_get("/api/mcp", self._handle_read_mcp)
@@ -772,6 +770,11 @@ class WebUIServer:
         self.app.router.add_get("/api/skills", self._handle_list_skills)
         self.app.router.add_post("/api/skills", self._handle_upload_skill)
         self.app.router.add_delete("/api/skills/{name}", self._handle_delete_skill)
+        self.app.router.add_get("/api/prompts", self._handle_list_prompts)
+        self.app.router.add_post("/api/prompts", self._handle_create_prompt)
+        self.app.router.add_get("/api/prompts/{name}", self._handle_read_prompt_strict)
+        self.app.router.add_put("/api/prompts/{name}", self._handle_write_prompt_global)
+        self.app.router.add_delete("/api/prompts/{name}", self._handle_delete_prompt_global)
         self.app.router.add_get(
             "/api/pools/{pool}/agents/{agent}/skills", self._handle_list_agent_skills
         )
@@ -890,10 +893,27 @@ class WebUIServer:
     async def _handle_fetch_provider_models(self, request: web.Request) -> web.Response:
         """POST /api/models/fetch -- fetch a provider's model list server-side.
 
-        Body: ``{"provider_key": "<key>"}``. All connection info (base_url,
-        api_key, interface_format, models_url) is read from the persisted
-        model.yml — never from the request. The provider must be saved first.
-        Returns ``{models: [{id, owned_by}]}``.
+        Two mutually exclusive request forms, both converging on
+        :func:`fetch_provider_models`:
+
+        **Form A** (read from saved config):
+            Body: ``{"provider_key": "<key>"}``. All connection info
+            (base_url, api_key, interface_format, models_url) is read
+            from the persisted model.yml. Returns 404 if the key is
+            unknown.
+
+        **Form B** (inline connection info, no persistence):
+            Body: ``{"base_url": "...", "api_key": "...",
+            "interface_format": "openai_compatible"|"anthropic",
+            "models_url": null | "..."}``. Connection info is read from
+            the request body and held in-memory only — never persisted,
+            never logged. ``interface_format`` defaults to
+            ``"openai_compatible"``, ``models_url`` defaults to ``None``.
+            Returns 422 if ``base_url`` or ``api_key`` is empty.
+
+        Returns ``{models: [{id, owned_by}]}``. The handler logs
+        ``provider_key`` (Form A) or ``base_url`` (Form B) for
+        diagnostics; ``api_key`` is never logged.
         """
         try:
             body = await request.json()
@@ -901,45 +921,99 @@ class WebUIServer:
             logger.warning("fetch_provider_models: bad JSON body: %s", exc)
             return web.json_response({"error": "invalid body"}, status=400)
 
-        provider_key = body.get("provider_key") if isinstance(body, dict) else None
-        if not isinstance(provider_key, str) or not provider_key:
-            return web.json_response(
-                {"error": "validation", "fields": {"provider_key": ["required"]}},
-                status=400,
-            )
+        if not isinstance(body, dict):
+            return web.json_response({"error": "invalid body"}, status=400)
 
-        if self._model_config_loader is None:
-            return web.json_response({"error": "model config not loaded"}, status=503)
+        provider_key = body.get("provider_key")
+        if isinstance(provider_key, str) and provider_key:
+            # Form A — read connection info from saved model.yml.
+            if self._model_config_loader is None:
+                return web.json_response(
+                    {"error": "model config not loaded"}, status=503
+                )
+            cfg = self._model_config_loader()
+            if cfg is None:
+                return web.json_response(
+                    {"error": "model config not loaded"}, status=503
+                )
 
-        cfg = self._model_config_loader()
-        if cfg is None:
-            return web.json_response({"error": "model config not loaded"}, status=503)
+            provider = cfg.find_provider_by_key(provider_key)
+            if provider is None:
+                return web.json_response(
+                    {"error": f"provider not found: {provider_key}"},
+                    status=404,
+                )
 
-        provider = cfg.find_provider_by_key(provider_key)
-        if provider is None:
-            return web.json_response(
-                {"error": f"provider not found: {provider_key} (save the provider first)"},
-                status=404,
-            )
+            if not provider.api_key:
+                return web.json_response({"error": "API key is required"}, status=400)
+            if not provider.base_url and not provider.models_url:
+                return web.json_response({"error": "Base URL is required"}, status=400)
 
-        if not provider.api_key:
-            return web.json_response({"error": "API key is required"}, status=400)
-        if not provider.base_url and not provider.models_url:
-            return web.json_response({"error": "Base URL is required"}, status=400)
+            base_url = provider.base_url
+            api_key = provider.api_key
+            interface_format = provider.interface_format
+            models_url = provider.models_url
+            log_label = f"provider_key={provider_key}"
+        else:
+            # Form B — read connection info inline from the request body.
+            base_url = body.get("base_url")
+            api_key = body.get("api_key")
+            if not isinstance(base_url, str) or not base_url:
+                return web.json_response(
+                    {"error": "validation", "fields": {"base_url": ["required"]}},
+                    status=422,
+                )
+            if not isinstance(api_key, str) or not api_key:
+                return web.json_response(
+                    {"error": "validation", "fields": {"api_key": ["required"]}},
+                    status=422,
+                )
+
+            interface_raw = body.get("interface_format") or "openai_compatible"
+            try:
+                interface_format = InterfaceFormat(interface_raw)
+            except ValueError:
+                return web.json_response(
+                    {
+                        "error": "validation",
+                        "fields": {
+                            "interface_format": [
+                                "expected one of: "
+                                + ", ".join(f.value for f in InterfaceFormat)
+                            ]
+                        },
+                    },
+                    status=422,
+                )
+
+            models_url = body.get("models_url")
+            if models_url is not None and not isinstance(models_url, str):
+                return web.json_response(
+                    {
+                        "error": "validation",
+                        "fields": {"models_url": ["must be a string or null"]},
+                    },
+                    status=422,
+                )
+            log_label = f"base_url={base_url}"
+
+        # Diagnostics: log only provider_key (Form A) or base_url (Form B).
+        # api_key is never logged.
+        logger.info("fetch_provider_models: %s", log_label)
 
         session = await self._get_http_session()
         try:
             models = await fetch_provider_models(
                 session=session,
-                base_url=provider.base_url,
-                api_key=provider.api_key,
-                interface_format=provider.interface_format,
-                models_url_override=provider.models_url,
+                base_url=base_url,
+                api_key=api_key,
+                interface_format=interface_format,
+                models_url_override=models_url,
             )
         except ModelFetchError as exc:
             return web.json_response({"error": exc.reason, "status": exc.status}, status=502)
         except Exception:  # noqa: BLE001 - unexpected network/parse failure
-            logger.exception("fetch_provider_models failed for %s", provider_key)
+            logger.exception("fetch_provider_models failed for %s", log_label)
             return web.json_response({"error": "fetch failed"}, status=500)
 
         return web.json_response({"models": [m.model_dump() for m in models]})
@@ -1045,51 +1119,25 @@ class WebUIServer:
         return web.json_response(written.model_dump(mode="json"))
 
     async def _handle_delete_pool(self, request: web.Request) -> web.Response:
-        """DELETE /api/pools/{pool} -- delete a pool (refuses the default pool)."""
+        """DELETE /api/pools/{pool} -- delete a pool."""
         if (miss := self._pool_cfg_required()) is not None:
             return miss
         pool = request.match_info["pool"]
         try:
             self._pool_config_controller.delete_pool(pool)
-        except DefaultPoolProtectedError as exc:
-            return web.json_response({"error": str(exc)}, status=409)
         except KeyError:
             return web.json_response({"error": f"unknown pool: {pool}"}, status=404)
         except FieldValidationError as exc:
             return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
+        except PoolNotEmptyError as exc:
+            return web.json_response(
+                {"error": "pool_not_empty", "busy_agents": exc.busy_agents},
+                status=409,
+            )
         except Exception:  # noqa: BLE001
             logger.exception("delete_pool failed")
             return web.json_response({"error": "delete failed"}, status=500)
         return web.json_response({"deleted": pool})
-
-    async def _handle_rename_pool(self, request: web.Request) -> web.Response:
-        """PATCH /api/pools/{pool} -- rename a pool. Body: {"name": "<new>"}."""
-        if (miss := self._pool_cfg_required()) is not None:
-            return miss
-        old = request.match_info["pool"]
-        try:
-            body = await request.json()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("rename_pool: bad JSON body: %s", exc)
-            return web.json_response({"error": "invalid body"}, status=400)
-        new = body.get("name") if isinstance(body, dict) else None
-        if not isinstance(new, str) or not new:
-            return web.json_response(
-                {"error": "validation", "fields": {"name": ["required"]}},
-                status=400,
-            )
-        try:
-            tree = self._pool_config_controller.rename_pool(old, new)
-        except DefaultPoolProtectedError as exc:
-            return web.json_response({"error": str(exc)}, status=409)
-        except KeyError:
-            return web.json_response({"error": f"unknown pool: {old}"}, status=404)
-        except FieldValidationError as exc:
-            return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
-        except Exception:  # noqa: BLE001
-            logger.exception("rename_pool failed")
-            return web.json_response({"error": "rename failed"}, status=500)
-        return web.json_response(tree.model_dump(mode="json"))
 
     async def _handle_add_peer(self, request: web.Request) -> web.Response:
         """POST /api/pools/{pool}/peers -- add a bidirectional peer edge.
@@ -1154,49 +1202,6 @@ class WebUIServer:
             }
         )
 
-    async def _handle_read_prompt(self, request: web.Request) -> web.Response:
-        """GET /api/pools/{pool}/agents/{agent}/prompt -- read the agent prompt md."""
-        if (miss := self._pool_cfg_required()) is not None:
-            return miss
-        agent = request.match_info["agent"]
-        try:
-            prompt = self._pool_config_controller.read_prompt(agent)
-        except KeyError:
-            return web.json_response({"error": f"unknown agent: {agent}"}, status=404)
-        except FieldValidationError as exc:
-            return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
-        except Exception:  # noqa: BLE001
-            logger.exception("read_prompt failed")
-            return web.json_response({"error": "read failed"}, status=500)
-        return web.json_response(prompt.model_dump(mode="json"))
-
-    async def _handle_write_prompt(self, request: web.Request) -> web.Response:
-        """PUT /api/pools/{pool}/agents/{agent}/prompt -- write the agent prompt md."""
-        if (miss := self._pool_cfg_required()) is not None:
-            return miss
-        agent = request.match_info["agent"]
-        try:
-            body = await request.json()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("write_prompt: bad JSON body: %s", exc)
-            return web.json_response({"error": "invalid body"}, status=400)
-        content = body.get("content") if isinstance(body, dict) else None
-        if not isinstance(content, str):
-            return web.json_response(
-                {"error": "validation", "fields": {"content": ["required"]}},
-                status=400,
-            )
-        try:
-            prompt = self._pool_config_controller.write_prompt(agent, content)
-        except KeyError:
-            return web.json_response({"error": f"unknown agent: {agent}"}, status=404)
-        except FieldValidationError as exc:
-            return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
-        except Exception:  # noqa: BLE001
-            logger.exception("write_prompt failed")
-            return web.json_response({"error": "write failed"}, status=500)
-        return web.json_response(prompt.model_dump(mode="json"))
-
     async def _handle_read_mcp(self, request: web.Request) -> web.Response:
         """GET /api/mcp -- read the typed MCP registry mapping."""
         if (miss := self._pool_cfg_required()) is not None:
@@ -1255,6 +1260,141 @@ class WebUIServer:
             logger.exception("list_skills failed")
             return web.json_response({"error": "read failed"}, status=500)
         return web.json_response([s.model_dump(mode="json") for s in skills])
+
+    async def _handle_list_prompts(self, request: web.Request) -> web.Response:
+        """GET /api/prompts -- list agent prompt md files (name/size/mtime)."""
+        if (miss := self._pool_cfg_required()) is not None:
+            return miss
+        try:
+            prompts = self._pool_config_controller.list_prompts()
+        except Exception:  # noqa: BLE001
+            logger.exception("list_prompts failed")
+            return web.json_response({"error": "read failed"}, status=500)
+        return web.json_response([p.model_dump(mode="json") for p in prompts])
+
+    async def _handle_read_prompt_strict(self, request: web.Request) -> web.Response:
+        """GET /api/prompts/{name} -- read one prompt md WITHOUT seeding.
+
+        Returns 404 when the file is absent (does not call ``read_or_seed``);
+        returns 400 on a malformed name.
+        """
+        if (miss := self._pool_cfg_required()) is not None:
+            return miss
+        name = request.match_info["name"]
+        try:
+            prompt = self._pool_config_controller.read_prompt_strict(name)
+        except KeyError:
+            return web.json_response({"error": f"unknown prompt: {name}"}, status=404)
+        except FieldValidationError as exc:
+            return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
+        except Exception:  # noqa: BLE001
+            logger.exception("read_prompt_strict failed")
+            return web.json_response({"error": "read failed"}, status=500)
+        return web.json_response(prompt.model_dump(mode="json"))
+
+    async def _handle_write_prompt_global(self, request: web.Request) -> web.Response:
+        """PUT /api/prompts/{name} -- upsert the prompt md for ``name``.
+
+        Reuses :meth:`PoolConfigController.write_prompt` (atomic write + marks
+        ``restart_required`` on the ``prompt`` artifact class). Creates the
+        file if absent (upsert semantics — no 409 on existing names).
+        """
+        if (miss := self._pool_cfg_required()) is not None:
+            return miss
+        name = request.match_info["name"]
+        try:
+            body = await request.json()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("write_prompt_global: bad JSON body: %s", exc)
+            return web.json_response({"error": "invalid body"}, status=400)
+        content = body.get("content") if isinstance(body, dict) else None
+        if not isinstance(content, str):
+            return web.json_response(
+                {"error": "validation", "fields": {"content": ["required"]}},
+                status=400,
+            )
+        try:
+            prompt = self._pool_config_controller.write_prompt(name, content)
+        except FieldValidationError as exc:
+            return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
+        except Exception:  # noqa: BLE001
+            logger.exception("write_prompt_global failed")
+            return web.json_response({"error": "write failed"}, status=500)
+        return web.json_response(prompt.model_dump(mode="json"))
+
+    async def _handle_create_prompt(self, request: web.Request) -> web.Response:
+        """POST /api/prompts -- create a new prompt md.
+
+        Body: ``{"name": str, "content"?: str}``. Validates the name against the
+        agent-name regex; rejects a duplicate name with HTTP 409 via
+        :class:`PromptExistsError`. When ``content`` is omitted the seed text
+        is :data:`PromptStore.DEFAULT_PROMPT_SEED`.
+        """
+        if (miss := self._pool_cfg_required()) is not None:
+            return miss
+        try:
+            body = await request.json()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("create_prompt: bad JSON body: %s", exc)
+            return web.json_response({"error": "invalid body"}, status=400)
+        name = body.get("name") if isinstance(body, dict) else None
+        if not isinstance(name, str) or not name:
+            return web.json_response(
+                {"error": "validation", "fields": {"name": ["required"]}},
+                status=400,
+            )
+        content = body.get("content") if isinstance(body, dict) else None
+        if content is not None and not isinstance(content, str):
+            return web.json_response(
+                {"error": "validation", "fields": {"content": ["must be a string"]}},
+                status=400,
+            )
+        try:
+            prompt = self._pool_config_controller.create_prompt(name, content)
+        except FieldValidationError as exc:
+            return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
+        except PromptExistsError:
+            return web.json_response(
+                {"error": "exists", "name": name},
+                status=409,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("create_prompt failed")
+            return web.json_response({"error": "create failed"}, status=500)
+        return web.json_response(prompt.model_dump(mode="json"), status=201)
+
+    async def _handle_delete_prompt_global(self, request: web.Request) -> web.Response:
+        """DELETE /api/prompts/{name} -- delete a prompt md if unreferenced.
+
+        Returns 200 with ``{deleted: str}`` when unreferenced; removes the file.
+        Returns 409 with ``{error: "in_use", usages: [...]}`` when any pool's
+        main agent or subagent references the prompt (explicit ``prompt_name``
+        match or the fallback case where ``prompt_name`` is empty and
+        ``agent_name`` equals the prompt name). Returns 404 when the file does
+        not exist. Does NOT remove the file on 409.
+        """
+        if (miss := self._pool_cfg_required()) is not None:
+            return miss
+        name = request.match_info["name"]
+        try:
+            self._pool_config_controller.delete_prompt(name)
+        except KeyError:
+            return web.json_response({"error": f"unknown prompt: {name}"}, status=404)
+        except FieldValidationError as exc:
+            return web.json_response({"error": "validation", "fields": exc.errors}, status=400)
+        except PromptInUseError as exc:
+            return web.json_response(
+                {
+                    "error": "in_use",
+                    "usages": [u.model_dump(mode="json") for u in exc.usages],
+                },
+                status=409,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("delete_prompt failed")
+            return web.json_response({"error": "delete failed"}, status=500)
+        return web.json_response({"deleted": name})
+
 
     async def _handle_upload_skill(self, request: web.Request) -> web.Response:
         """POST /api/skills -- upload a global skill.

@@ -7,6 +7,7 @@ import { ModelEditor } from "./ModelEditor";
 import { GlobalMcpView } from "./GlobalMcpView";
 import { GlobalSkillsView } from "./GlobalSkillsView";
 import { PoolsView } from "./PoolsView";
+import { PromptsView } from "./PromptsView";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useToast } from "../ToastContext";
 import { restartToast } from "./restartToast";
@@ -45,6 +46,7 @@ const POOLS_GROUP: NavEntry[] = [
   { key: "pools", labelKey: "settings.nav.pools" },
   { key: "mcp", labelTerm: TERMS.mcp },
   { key: "skills", labelTerm: TERMS.skills },
+  { key: "prompts", labelKey: "settings.nav.prompts" },
 ];
 
 /** Domains backed by the /api/config persisted-config API (shared save footer). */
@@ -57,6 +59,7 @@ const VALID_TABS: ReadonlySet<ViewKey> = new Set([
   "pools",
   "mcp",
   "skills",
+  "prompts",
 ]);
 
 /** Read the initial tab from window.location.search without coupling to React Router. */
@@ -256,14 +259,14 @@ export function SettingsView({ onExit }: Props) {
             ) : view === "skills" ? (
               <GlobalSkillsView />
             ) : view === "pools" ? (
-              <PoolsView />
+              <PoolsView onNavigateToPrompts={() => setView("prompts")} />
+            ) : view === "prompts" ? (
+              <PromptsView />
             ) : form && isPersisted ? (
               <PersistedDomain
                 form={form}
                 error={error}
                 onChange={setForm}
-                dirty={dirty}
-                onSave={onSave}
               />
             ) : null}
           </div>
@@ -357,14 +360,10 @@ function PersistedDomain({
   form,
   error,
   onChange,
-  dirty,
-  onSave,
 }: {
   form: ConfigPayload;
   error: string;
   onChange: (next: ConfigPayload) => void;
-  dirty: boolean;
-  onSave: () => Promise<boolean>;
 }) {
   return (
     <>
@@ -413,8 +412,6 @@ function PersistedDomain({
         <ModelEditor
           values={form.values ?? {}}
           onChange={(next) => onChange({ ...form, values: next })}
-          dirty={dirty}
-          onSave={onSave}
         />
       ) : (
         <ConfigForm

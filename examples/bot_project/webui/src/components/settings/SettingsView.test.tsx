@@ -250,7 +250,7 @@ describe("SettingsView", () => {
   });
 
   describe("Models save validation", () => {
-    it("blocks save with inline error when default model is cleared — no PUT issued", async () => {
+    it("allows save when default model is cleared — PUT issued (Ticket #4 relaxation)", async () => {
       let putCalled = false;
       const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
         const method = init?.method ?? "GET";
@@ -276,11 +276,14 @@ describe("SettingsView", () => {
 
       fireEvent.click(screen.getByText("Save"));
 
+      // Ticket #4: empty default is now valid — PUT must go through.
       await waitFor(() => {
-        expect(screen.getByText(/Select a default model before saving/)).toBeTruthy();
+        expect(putCalled).toBe(true);
       });
 
-      expect(putCalled).toBe(false);
+      expect(
+        screen.queryByText(/Select a default model before saving/),
+      ).toBeNull();
     });
 
     it("shows a friendly error from a 400 ApiError JSON body with fields", async () => {
