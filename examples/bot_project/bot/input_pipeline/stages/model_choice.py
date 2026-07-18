@@ -22,12 +22,26 @@ logger = logging.getLogger(__name__)
 class ModelChoiceStage(InputStage):
     """Resolve the WebUI-selected provider/model into a ResolvedModel on the envelope."""
 
-    def __init__(self, model_config: BotModelConfig) -> None:
+    def __init__(self, model_config: BotModelConfig | None) -> None:
         self._model_config = model_config
 
     async def process(
         self, envelope: UserInputEnvelope, ctx: BotInputContext
     ) -> StageResult:
+        # When no model.yml is configured (fresh install), model_config is None.
+        # Skip model resolution and let the pipeline continue so PersistUserMessageStage
+        # saves the session and EnqueueStage delivers the message to the target pool.
+        #
+        # Downstream behavior per pool:
+        # - external_coding: ExternalTurnRunner does not read RESOLVED_MODEL, so the
+        #   external CLI (opencode/pi) executes normally with its own model.
+        # - react: EnqueueStage does not register into ModelChoiceRegistry; at turn
+        #   start, ModelChoiceBindHook falls back to the placeholder default (built by
+        #   pool_builder._resolved_or_placeholder) whose empty api_key causes
+        #   BotModelProvider to emit LLMResponse(finish_reason=ERROR). The user sees an
+        #   explicit "model not configured" turn error instead of a silent failure.
+        if self._model_config is None:
+            return Continue(value=envelope)
         provider_name = envelope.metadata.get(RoutingMeta.MODEL_PROVIDER)
         model_name = envelope.metadata.get(RoutingMeta.MODEL_MODEL)
         resolved = self._model_config.resolve(provider_name, model_name)
