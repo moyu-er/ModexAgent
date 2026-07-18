@@ -44,6 +44,17 @@ from modex_agent.core.session_cleanup import (
 from modex_agent.core.session_id import agent_of
 from modex_agent.core.session_scope_discovery import discover_file_session_scopes
 from modex_agent.core.session_store import safe_filename
+
+# TODO(adr-0006): these three imports violate ADR-0006 — core runtime-imports
+# memory/runtime/workspace (tier-2+). `tests/architecture/test_dependency_tree.py
+# ::test_core_no_unexpected_runtime_upward_imports` fails on this file because
+# of them. The violation predates the prompt-configuration feature branch
+# (introduced by the SQLite persistence refactor, commit 5ef3ee7a) and is
+# tracked as a known pre-existing issue. The fix is a dependency inversion:
+# move the consumed surfaces (sanitize_scope_key, JsonFileTodoStore/
+# JsonFileTurnStateStore, WorkspacePaths/safe_segment) down into core, or
+# relocate this file out of core. Do NOT silence by adding to
+# EXPECTED_OFFENDERS without a follow-up ticket.
 from modex_agent.memory.stores.utils import sanitize_scope_key
 from modex_agent.runtime.store import JsonFileTodoStore, JsonFileTurnStateStore
 from modex_agent.workspace.paths import WorkspacePaths, safe_segment

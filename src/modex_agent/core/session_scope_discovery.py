@@ -5,6 +5,15 @@ from __future__ import annotations
 from pathlib import Path
 
 from modex_agent.core.scope import RecordScope
+
+# TODO(adr-0006): this import violates ADR-0006 — core runtime-imports
+# workspace (tier 2). `tests/architecture/test_dependency_tree.py
+# ::test_core_no_unexpected_runtime_upward_imports` fails on this file
+# because of it. The violation predates the prompt-configuration feature
+# branch (introduced by the SQLite persistence refactor, commit 5ef3ee7a)
+# and is tracked as a known pre-existing issue. The fix is a dependency
+# inversion: move the consumed surfaces (SUBDIR_MEMORY, WorkspacePaths)
+# down into core, or relocate this file out of core.
 from modex_agent.workspace.paths import SUBDIR_MEMORY, WorkspacePaths
 
 _SESSION_MEMORY_SUBDIR = "session"
