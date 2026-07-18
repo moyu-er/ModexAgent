@@ -3,7 +3,7 @@
 
 # docs/adr
 
-Architecture Decision Records for the ModexAgent framework (ADR-0001 ~ 0024).
+Architecture Decision Records for the ModexAgent framework (ADR-0001 ~ 0025).
 
 ## Purpose
 
@@ -53,5 +53,6 @@ ADRs document significant architectural decisions, including the context driving
 | 0022 | External coding agent integration |
 | 0023 | Hybrid persistence (SQLite + file) |
 | 0024 | Agent observability, reproducibility, and training data |
+| 0025 | Execution strategy abstraction and pipeline slimming |
 
 <!-- MANUAL -->

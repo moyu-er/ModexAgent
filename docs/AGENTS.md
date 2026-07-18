@@ -44,6 +44,7 @@ Each feature has a directory under `design/<feature-slug>/` containing:
 
 | Feature | ADR | Key files |
 |---------|-----|-----------|
+| Execution strategy refactor | ADR-0025 | PRD.md, spec.md, tickets.md |
 | Agent observability | ADR-0024 | PRD.md, tickets.md |
 | Hybrid persistence | ADR-0023 | PRD.md, SCHEMA-DESIGN.md, tickets.md, sqlite-deployment-and-lifecycle.md, webui-transcript-sqlite.md |
 | External coding agent integration | ADR-0022 | spec.md, tickets.md, glossary.md |
