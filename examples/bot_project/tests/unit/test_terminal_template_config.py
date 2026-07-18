@@ -4,6 +4,11 @@
 directly from ``main_spec``. The terminal/process/command tools are
 main-branch-style: configuring ``use_terminal: true`` on the main agent
 in pool.yml is all that's needed, for ANY pool.
+
+Ticket 6: the helper moved from ``pool_builder`` into the shared
+:class:`_PoolAssemblyMixin` (inherited by ``ReactExecutionStrategy``).
+Patches target ``bot.service._assembly_helpers`` and the helper is invoked
+via a ``ReactExecutionStrategy`` instance.
 """
 from __future__ import annotations
 
@@ -18,22 +23,25 @@ def _main_spec(use_terminal: bool, terminal_visibility: bool = True):
 
 
 def test_build_terminal_manager_creates_when_main_agent_opts_in(monkeypatch):
-    from bot.service import pool_builder
+    from bot.service import _assembly_helpers as helpers
 
     sentinel = object()
     monkeypatch.setattr(
-        pool_builder,
+        helpers,
         "detect_platform_shell",
         lambda: SimpleNamespace(family=SimpleNamespace(value="bash")),
     )
-    monkeypatch.setattr(pool_builder, "create_terminal_manager", lambda **kw: sentinel)
+    monkeypatch.setattr(helpers, "create_terminal_manager", lambda **kw: sentinel)
 
-    mgr = pool_builder._build_terminal_manager(_main_spec(True), "main", None)
+    from bot.service.react_strategy import ReactExecutionStrategy
+
+    strategy = ReactExecutionStrategy()
+    mgr = strategy._build_terminal_manager(_main_spec(True), "main", None)
     assert mgr is sentinel
 
 
 def test_build_terminal_manager_skips_when_main_agent_opts_out(monkeypatch):
-    from bot.service import pool_builder
+    from bot.service import _assembly_helpers as helpers
 
     attempted = {"n": 0}
 
@@ -41,20 +49,23 @@ def test_build_terminal_manager_skips_when_main_agent_opts_out(monkeypatch):
         attempted["n"] += 1
         return object()
 
-    monkeypatch.setattr(pool_builder, "detect_platform_shell", lambda: SimpleNamespace())
-    monkeypatch.setattr(pool_builder, "create_terminal_manager", boom)
+    monkeypatch.setattr(helpers, "detect_platform_shell", lambda: SimpleNamespace())
+    monkeypatch.setattr(helpers, "create_terminal_manager", boom)
 
-    mgr = pool_builder._build_terminal_manager(_main_spec(False), "coding", None)
+    from bot.service.react_strategy import ReactExecutionStrategy
+
+    strategy = ReactExecutionStrategy()
+    mgr = strategy._build_terminal_manager(_main_spec(False), "coding", None)
     assert mgr is None
     assert attempted["n"] == 0
 
 
 def test_build_terminal_manager_works_for_any_pool_main_agent(monkeypatch):
-    from bot.service import pool_builder
+    from bot.service import _assembly_helpers as helpers
 
     sentinel = object()
     monkeypatch.setattr(
-        pool_builder,
+        helpers,
         "detect_platform_shell",
         lambda: SimpleNamespace(family=SimpleNamespace(value="bash")),
     )
@@ -64,9 +75,12 @@ def test_build_terminal_manager_works_for_any_pool_main_agent(monkeypatch):
         seen.update(kw)
         return sentinel
 
-    monkeypatch.setattr(pool_builder, "create_terminal_manager", fake)
+    monkeypatch.setattr(helpers, "create_terminal_manager", fake)
 
-    mgr = pool_builder._build_terminal_manager(
+    from bot.service.react_strategy import ReactExecutionStrategy
+
+    strategy = ReactExecutionStrategy()
+    mgr = strategy._build_terminal_manager(
         _main_spec(True, terminal_visibility=False), "research", None
     )
     assert mgr is sentinel

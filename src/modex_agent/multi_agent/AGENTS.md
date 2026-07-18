@@ -94,7 +94,7 @@ per invocation by pipeline providers, so reuse is safe.)
 | `router.py` | `DefaultMeshRouter` — session identity resolved via `InputMessage.session` (no string parsing). |
 | `envelope.py` | `AgentMessageEnvelope` — source, target, session id, agent_session_id, invocation id, message_type, payload. |
 | `descriptor.py` | `AgentDescriptor`, `AgentInstance`, `AgentLLMConfig` — agent metadata + `comm_kind`. |
-| `factory.py` | Agent instance factory — assembles `AgentInstance`; injects descriptor metadata into pipelines. |
+| `factory.py` | Agent instance factory — assembles `AgentInstance` via `create_agent()`. `DefaultAgentFactory` builds react agents (provider + tools + skill + TurnContextBuilder + ApprovalResumer/ApprovalRenderer + ReActTurnRunner + hooks + pipeline). `ExternalCodingAwareFactory` (in `examples/bot_project/bot/service/external_coding_strategy.py`) overrides `create_agent` to build only 6 objects (ExternalCodingAgent + broker I/O + emitter + ExternalTurnRunner + pipeline, no hooks/provider/tools) — external_coding pools boot without `model.yml`. `_get_builder` dispatch (runtime agent-construction, not assembly branching) is retained per ADR-0025 D5 deviations. |
 | `subagent_validator.py` | Framework-layer star-topology enforcement at registration. |
 | `address.py` / `message_xml.py` / `state.py` / `registry.py` | Agent addressing dataclasses, agent-message XML, state enums, registry ABC. |
 

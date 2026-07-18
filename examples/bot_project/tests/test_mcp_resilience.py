@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from bot.service.pool_builder import _build_tools
+from bot.service.react_strategy import ReactExecutionStrategy
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 from modex_agent.multi_agent.pool_config.specs import MainAgentSpec
 
@@ -29,6 +29,10 @@ class TestBuildToolsMcpResilience:
         with TemporaryDirectory() as tmp:
             return Path(tmp)
 
+    @pytest.fixture
+    def strategy(self) -> ReactExecutionStrategy:
+        return ReactExecutionStrategy()
+
     @pytest.mark.asyncio
     async def test_mcp_empty_selection_skips_loading(
         self,
@@ -36,16 +40,17 @@ class TestBuildToolsMcpResilience:
         assembly_deps: PoolAssemblyDeps,
         project_dir: Path,
         data_dir: Path,
+        strategy: ReactExecutionStrategy,
     ) -> None:
         assert main_spec.mcp == []
 
         output_adapter = MagicMock()
 
         with patch(
-            "bot.service.pool_builder._load_agent_mcp_tools",
+            "bot.service.builders._load_agent_mcp_tools",
             new=AsyncMock(return_value=([], None)),
         ) as mock_load_mcp:
-            tool_manager, mcp_manager, _todo_store = await _build_tools(
+            tool_manager, mcp_manager, _todo_store = await strategy._build_tools(
                 main_spec=main_spec,
                 assembly_deps=assembly_deps,
                 terminal_manager=None,
@@ -68,16 +73,17 @@ class TestBuildToolsMcpResilience:
         assembly_deps: PoolAssemblyDeps,
         project_dir: Path,
         data_dir: Path,
+        strategy: ReactExecutionStrategy,
     ) -> None:
         main_spec = MainAgentSpec(agent_name="main", mcp=["playwright"])
 
         output_adapter = MagicMock()
 
         with patch(
-            "bot.service.pool_builder._load_agent_mcp_tools",
+            "bot.service.builders._load_agent_mcp_tools",
             new=AsyncMock(side_effect=RuntimeError("MCP boom")),
         ) as mock_load_mcp:
-            tool_manager, mcp_manager, _todo_store = await _build_tools(
+            tool_manager, mcp_manager, _todo_store = await strategy._build_tools(
                 main_spec=main_spec,
                 assembly_deps=assembly_deps,
                 terminal_manager=None,

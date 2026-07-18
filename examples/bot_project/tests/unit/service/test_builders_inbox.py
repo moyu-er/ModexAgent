@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
-from bot.service._external_coding_wiring import build_external_coding_env_spec
+from bot.service.external_coding_strategy import build_external_coding_env_spec
 from bot.service.builders import build_inbox
 
 from modex_agent.core.scope import RecordScope

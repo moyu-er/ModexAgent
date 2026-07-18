@@ -1,4 +1,4 @@
-"""TurnRunner — locked-message processing + turn execution (extracted from pipeline).
+"""ReActTurnRunner — locked-message processing + turn execution (extracted from pipeline).
 
 Unit tests for the three responsibilities moved out of ``AgentPipeline``:
 ``execute_turn`` (GraphInterrupt handling + finally cleanup), the
@@ -28,7 +28,7 @@ from modex_agent.pipeline.approval_renderer import ApprovalRenderer
 from modex_agent.pipeline.approval_resumer import ApprovalResumer
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
-from modex_agent.pipeline.turn_runner import TurnRunner
+from modex_agent.pipeline.turn_runner import ReActTurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.runtime.models import TurnSnapshot
 from modex_agent.runtime.store import InMemoryTurnStateStore
@@ -110,8 +110,8 @@ def _make_runner(
     builder: TurnContextBuilder | None = None,
     registry: TurnSessionRegistry | None = None,
     on_session_end: Any = None,
-) -> TurnRunner:
-    """Construct a TurnRunner with sane defaults; tests override what they exercise."""
+) -> ReActTurnRunner:
+    """Construct a ReActTurnRunner with sane defaults; tests override what they exercise."""
     agent = agent or _OkAgent()
     turn_store = turn_store if turn_store is not None else InMemoryTurnStateStore()
     registry = registry or TurnSessionRegistry()
@@ -121,7 +121,7 @@ def _make_runner(
     if builder is None:
         builder = MagicMock(spec=TurnContextBuilder)
 
-    return TurnRunner(
+    return ReActTurnRunner(
         agent=agent,
         context_manager=_FlushingCtxMgr(),
         context_manager_factory=None,

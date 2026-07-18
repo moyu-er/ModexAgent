@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from modex_agent.pipeline.pipeline import AgentPipeline
+from tests.unit.pipeline._helpers import _make_react_pipeline
 
 
 class _MinimalAgent:
@@ -64,9 +64,8 @@ class TestPipelineCleanupSessionResources:
         channel = MagicMock()
         channel.cleanup_session = AsyncMock()
 
-        pipeline = AgentPipeline(
+        pipeline = _make_react_pipeline(
             agent=_MinimalAgent(),
-            context_manager=MagicMock(),
             tool_manager=_MinimalToolManager(),
             input_adapter=_MinimalInputAdapter(),
             output_adapter=_MinimalOutputAdapter(),
@@ -90,22 +89,19 @@ class TestPipelineCleanupSessionResources:
         channel = MagicMock()
         channel.cleanup_session = AsyncMock()
 
-        pipeline = AgentPipeline(
+        pipeline = _make_react_pipeline(
             agent=_MinimalAgent(),
-            context_manager=MagicMock(),
             tool_manager=_MinimalToolManager(),
             input_adapter=_MinimalInputAdapter(),
             output_adapter=_MinimalOutputAdapter(),
             control_channel=channel,
         )
 
-        # Simulate lingering session resources that were not cleaned up
         pipeline._registry._session_locks["s1"] = "fake_lock"
         pipeline._registry._injection_queues["s1"] = "fake_queue"
 
         await pipeline.stop()
 
-        # After stop(), session resources should be cleaned up
         assert len(pipeline._registry._session_locks) == 0, (
             f"stop() should clean _session_locks, got {pipeline._registry._session_locks}"
         )

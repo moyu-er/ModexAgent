@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
-from bot.service.pool_builder import _build_tools
+from bot.service.react_strategy import ReactExecutionStrategy
 
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 from modex_agent.multi_agent.pool_config.specs import MainAgentSpec
@@ -32,8 +32,9 @@ async def test_build_tools_registers_todo_tools_and_pool_todo_store(
         tool_supplements=[ToolSupplement.TODO],
     )
     assembly_deps = PoolAssemblyDeps()
+    strategy = ReactExecutionStrategy()
 
-    tool_manager, _mcp_manager, todo_store = await _build_tools(
+    tool_manager, _mcp_manager, todo_store = await strategy._build_tools(
         main_spec=main_spec,
         assembly_deps=assembly_deps,
         terminal_manager=None,
@@ -57,8 +58,9 @@ async def test_build_tools_without_todo_supplement_does_not_register_todo_tools(
 ) -> None:
     main_spec = MainAgentSpec(agent_name="main", tool_supplements=[])
     assembly_deps = PoolAssemblyDeps()
+    strategy = ReactExecutionStrategy()
 
-    tool_manager, _mcp_manager, _todo_store = await _build_tools(
+    tool_manager, _mcp_manager, _todo_store = await strategy._build_tools(
         main_spec=main_spec,
         assembly_deps=assembly_deps,
         terminal_manager=None,

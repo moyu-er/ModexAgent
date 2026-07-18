@@ -227,12 +227,12 @@ async def test_poller_lazy_materializes_missing_subagent():
             pool._agents["scout"] = inst
             return inst
 
-    pool._template_registry = MagicMock()
-    pool._template_registry.get_template = MagicMock(
+    pool.template_registry = MagicMock()
+    pool.template_registry.get_template = MagicMock(
         return_value=_FakeTemplate(spec=SubagentSpec(agent_name="scout"))
     )
-    pool._materialize_deps = MagicMock()
-    pool._pool_name = "main"
+    pool.materialize_deps = MagicMock()
+    pool.pool_name = "main"
 
     sf = SessionIdFactory()
     child_session = sf.create_with_prefix(
@@ -262,12 +262,12 @@ async def test_poller_materialize_failure_leaves_message_in_inbox():
         async def materialize(self, parent_session, invocation_id, deps):
             raise RuntimeError("MCP server hung")
 
-    pool._template_registry = MagicMock()
-    pool._template_registry.get_template = MagicMock(
+    pool.template_registry = MagicMock()
+    pool.template_registry.get_template = MagicMock(
         return_value=_FailingTemplate(spec=SubagentSpec(agent_name="scout"))
     )
-    pool._materialize_deps = MagicMock()
-    pool._pool_name = "main"
+    pool.materialize_deps = MagicMock()
+    pool.pool_name = "main"
 
     try:
         await bus.send("inv2.scout", _envelope("hello", session_id="inv2.scout"))

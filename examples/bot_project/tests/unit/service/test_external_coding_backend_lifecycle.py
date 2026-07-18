@@ -1,7 +1,7 @@
 from unittest.mock import AsyncMock
 
 import pytest
-from bot.service._external_coding_wiring import _OpenCodeFallbackBackend
+from bot.service.external_coding_strategy import _OpenCodeFallbackBackend
 
 
 @pytest.mark.asyncio

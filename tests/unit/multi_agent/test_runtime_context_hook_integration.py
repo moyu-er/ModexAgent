@@ -37,7 +37,8 @@ def _make_runtime(hook_runner=None, runtime_mgr=None):
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.hook.builtin import SubagentAutoSendHook, RuntimeContextHook
-from modex_agent.pipeline.pipeline import AgentPipeline
+
+from tests.unit.pipeline._helpers import _make_react_pipeline
 
 
 class FakeAgent:
@@ -125,7 +126,7 @@ class TestRuntimeContextHookNoAutoInjection:
 
     def test_pipeline_does_not_auto_inject_runtime_context_hook(self):
         mgr = RuntimeContextManager()
-        pipeline = AgentPipeline(
+        pipeline = _make_react_pipeline(
             agent=FakeAgent(),
             context_manager=MagicMock(),
             tool_manager=InMemoryToolManager(),
@@ -137,7 +138,7 @@ class TestRuntimeContextHookNoAutoInjection:
         assert not any(isinstance(h, RuntimeContextHook) for h in pipeline.hooks)
 
     def test_pipeline_no_injection_without_manager(self):
-        pipeline = AgentPipeline(
+        pipeline = _make_react_pipeline(
             agent=FakeAgent(),
             context_manager=MagicMock(),
             tool_manager=InMemoryToolManager(),

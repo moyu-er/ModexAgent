@@ -34,7 +34,13 @@ from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
 from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 from modex_agent.multi_agent.pool_config.specs import MainAgentSpec
+from modex_agent.pipeline.approval_renderer import ApprovalRenderer
+from modex_agent.pipeline.approval_resumer import ApprovalResumer
 from modex_agent.pipeline.pipeline import AgentPipeline
+from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
+from modex_agent.pipeline.turn_runner import ReActTurnRunner
+from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
+from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.runtime.services import AgentRuntimeServices
 
 _YML = """
@@ -103,14 +109,57 @@ class _StandInPool:
 
 
 def _make_pipeline() -> AgentPipeline:
-    return AgentPipeline(
-        agent=_Agent(),
-        context_manager=MagicMock(name="ctx_mgr"),
+    agent = _Agent()
+    registry = TurnSessionRegistry()
+    builder = TurnContextBuilder(
+        agent=agent,
         tool_manager=InMemoryToolManager(),
+        sanitizer=None,
+        command_processor=None,
+        skill_manager=None,
+        context_builder=None,
+        agent_descriptor=None,
+        max_iterations=10,
+        safety=RuntimeSafetyPolicy(),
+        runtime_services=None,
+        runtime_context_manager=None,
+        governance=None,
+        hook_runner=None,
+        interceptor_chain=None,
+        control_channel=None,
+        emitter_factory=None,
+        output_adapter=_OutputAdapter(),
+        turn_store=None,
+        registry=registry,
+    )
+    approval = ApprovalRenderer(agent=agent, user_interface=None)  # type: ignore[arg-type]
+    resumer = ApprovalResumer(agent=agent, turn_store=None, user_interface=None)
+    turn_runner = ReActTurnRunner(
+        agent=agent,
+        context_manager=MagicMock(name="ctx_mgr"),
+        context_manager_factory=None,
+        on_session_start=None,
+        on_session_end=None,
+        safety=builder._safety,
+        turn_store=None,
+        registry=registry,
+        builder=builder,
+        resumer=resumer,
+        approval=approval,
+        workspace_manager=None,
+        pool_name=None,
+        pool_data_resolver=None,
+        agent_descriptor=None,
+    )
+    pipeline = AgentPipeline(
+        agent=agent,
+        turn_runner=turn_runner,
         input_adapter=_InputAdapter(),
         output_adapter=_OutputAdapter(),
-        sanitizer=None,
+        registry=registry,
     )
+    turn_runner.bind_to_pipeline(pipeline)
+    return pipeline
 
 
 def _make_main_spec(*, approval: ApprovalConfig | None) -> MainAgentSpec:
@@ -147,7 +196,9 @@ def test_wires_approval_runtime_when_enabled_and_tools_gated() -> None:
         )
     )
 
-    services = pipeline.runtime_services
+    builder = pipeline._turn_runner.turn_context_builder
+    assert builder is not None
+    services = builder.runtime_services
     assert isinstance(services, AgentRuntimeServices)
     assert isinstance(services.approval, ApprovalRuntime)
     assert isinstance(services.approval.classifier, TieredToolApprovalClassifier)
@@ -171,7 +222,9 @@ def test_leaves_approval_untouched_but_threads_capabilities_when_disabled() -> N
         )
     )
 
-    services = pipeline.runtime_services
+    builder = pipeline._turn_runner.turn_context_builder
+    assert builder is not None
+    services = builder.runtime_services
     assert isinstance(services, AgentRuntimeServices)
     assert services.approval is None  # approval stays default-off
     # Capabilities threaded from the default resolved model (default TEXT-only).
@@ -221,7 +274,12 @@ def test_wired_classifier_anchors_to_live_workspace_root() -> None:
         model_choice_registry=_REGISTRY,
     )
 
-    classifier = pipeline.runtime_services.approval.classifier
+    builder = pipeline._turn_runner.turn_context_builder
+    assert builder is not None
+    services = builder.runtime_services
+    assert services is not None
+    assert services.approval is not None
+    classifier = services.approval.classifier
     ctx = AgentContext(
         system_prompt="t",
         history=ListMessageHistory(),

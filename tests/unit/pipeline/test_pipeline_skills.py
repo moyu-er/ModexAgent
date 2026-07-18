@@ -7,7 +7,8 @@ import pytest
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.skills import DefaultSkillBuilder, InlineSkillSource, SkillManager
 from modex_agent.core.skills.models import Skill
-from modex_agent.pipeline.pipeline import AgentPipeline
+
+from tests.unit.pipeline._helpers import _make_react_pipeline
 
 
 class FakeAgent:
@@ -106,7 +107,7 @@ class TestAgentPipelineSkills:
         tm = FakeToolManager()
         source = InlineSkillSource([Skill(name="ps1", content="pipeline skill")])
         sm = SkillManager(source=source, builder=DefaultSkillBuilder())
-        pipeline = AgentPipeline(
+        pipeline = _make_react_pipeline(
             agent=FakeAgent(),
             context_manager=cm,
             tool_manager=tm,
@@ -120,7 +121,7 @@ class TestAgentPipelineSkills:
     async def test_pipeline_without_skill_manager(self):
         cm = FakeContextManager(base_system_prompt="Base")
         tm = FakeToolManager()
-        pipeline = AgentPipeline(
+        pipeline = _make_react_pipeline(
             agent=FakeAgent(),
             context_manager=cm,
             tool_manager=tm,
@@ -134,7 +135,7 @@ class TestAgentPipelineSkills:
     async def test_pipeline_sanitizer_can_be_disabled_with_none(self):
         cm = FakeContextManager(base_system_prompt="Base")
         tm = FakeToolManager()
-        pipeline = AgentPipeline(
+        pipeline = _make_react_pipeline(
             agent=FakeAgent(),
             context_manager=cm,
             tool_manager=tm,
@@ -143,3 +144,4 @@ class TestAgentPipelineSkills:
             sanitizer=None,
         )
         assert pipeline.sanitizer is None
+

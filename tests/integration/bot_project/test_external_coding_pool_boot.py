@@ -87,8 +87,8 @@ async def test_pool_pi_boots_with_external_coding_strategy(
     from bot.service.core import BotService
 
     with patch.object(BotService, "_project_dir", property(lambda self: bot_service_config.parent)), patch(
-        "bot.service.pool_builder._build_llm_provider", return_value=_MockProvider()
-    ), patch("bot.service.pool_builder._load_agent_mcp_tools", return_value=([], None)), patch(
+        "bot.service._assembly_helpers._PoolAssemblyMixin._build_llm_provider", return_value=_MockProvider()
+    ), patch("bot.service.builders._load_agent_mcp_tools", return_value=([], None)), patch(
         "shutil.which", side_effect=_fake_which(provider_available=True)
     ):
         service = BotService(
@@ -135,8 +135,8 @@ async def test_pool_pi_skips_main_agent_when_provider_missing(
     from bot.service.core import BotService
 
     with patch.object(BotService, "_project_dir", property(lambda self: bot_service_config.parent)), patch(
-        "bot.service.pool_builder._build_llm_provider", return_value=_MockProvider()
-    ), patch("bot.service.pool_builder._load_agent_mcp_tools", return_value=([], None)), patch(
+        "bot.service._assembly_helpers._PoolAssemblyMixin._build_llm_provider", return_value=_MockProvider()
+    ), patch("bot.service.builders._load_agent_mcp_tools", return_value=([], None)), patch(
         "shutil.which", side_effect=_fake_which(provider_available=False)
     ):
         service = BotService(
@@ -157,8 +157,14 @@ async def test_pool_pi_skips_main_agent_when_provider_missing(
             resident_names = [d.address.name for d in pool_pi.pool.list_agents()]
             assert "pi" not in resident_names
 
-            # The communication tool is still wired so peer sends can land here.
-            assert "send_to_agent" in pool_pi.tool_manager.list_tools()
+            # external_coding pools don't register send_to_agent (the external
+            # agent has no tool surface — it communicates via `modexctl send`).
+            # Peer sends still land in the pool's inbox via the broker bus,
+            # verified by test_default_pool_can_send_to_pool_pi_inbox.
+            assert "send_to_agent" not in pool_pi.tool_manager.list_tools()
+            # Pool is still structurally intact for peer routing.
+            assert pool_pi.agent_bus is not None
+            assert pool_pi.target_store is not None
         finally:
             await service.stop()
 
@@ -175,8 +181,8 @@ async def test_default_pool_can_send_to_pool_pi_inbox(
     from bot.service.core import BotService
 
     with patch.object(BotService, "_project_dir", property(lambda self: bot_service_config.parent)), patch(
-        "bot.service.pool_builder._build_llm_provider", return_value=_MockProvider()
-    ), patch("bot.service.pool_builder._load_agent_mcp_tools", return_value=([], None)), patch(
+        "bot.service._assembly_helpers._PoolAssemblyMixin._build_llm_provider", return_value=_MockProvider()
+    ), patch("bot.service.builders._load_agent_mcp_tools", return_value=([], None)), patch(
         "shutil.which", side_effect=_fake_which(provider_available=False)
     ):
         service = BotService(

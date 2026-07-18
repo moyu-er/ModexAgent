@@ -25,8 +25,9 @@ from modex_agent.core.emitter import AgentResult
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import InputMessage
-from modex_agent.pipeline.pipeline import AgentPipeline
 from modex_agent.utils.deduplicator import MessageDeduplicator
+
+from tests.unit.pipeline._helpers import _make_react_pipeline
 
 
 class _InputAdapter:
@@ -61,9 +62,9 @@ class _AlwaysDuplicateDeduplicator(MessageDeduplicator):
         return True
 
 
-def _pipeline(*, deduplicator: MessageDeduplicator | None) -> AgentPipeline:
+def _pipeline(*, deduplicator: MessageDeduplicator | None):
     """Minimal AgentPipeline with the given deduplicator (no command_processor)."""
-    return AgentPipeline(
+    return _make_react_pipeline(
         agent=_Agent(),
         context_manager=InMemoryContextManager(),
         tool_manager=InMemoryToolManager(),
@@ -74,7 +75,7 @@ def _pipeline(*, deduplicator: MessageDeduplicator | None) -> AgentPipeline:
     )
 
 
-def _spy_process_locked(pipeline: AgentPipeline) -> list[dict[str, Any]]:
+def _spy_process_locked(pipeline) -> list[dict[str, Any]]:
     """Replace ``process_locked`` with a recording coroutine; return the call log."""
     calls: list[dict[str, Any]] = []
     original = pipeline._turn_runner.process_locked

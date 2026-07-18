@@ -524,8 +524,8 @@ memory:
             from modex_agent.agents.react import ReActEvent
             return _BufferingEmitter[ReActEvent]()
 
-        with patch("bot.service.pool_builder._build_llm_provider", return_value=_MockProvider()), patch(
-            "bot.service.pool_builder._load_agent_mcp_tools", return_value=([], None)
+        with patch("bot.service._assembly_helpers._PoolAssemblyMixin._build_llm_provider", return_value=_MockProvider()), patch(
+            "bot.service.builders._load_agent_mcp_tools", return_value=([], None)
         ), patch("bot.service.core.BotService._build_default_provider", return_value=_MockProvider()):
             service = BotService(
                 config_dir=config_dir,
@@ -636,8 +636,8 @@ memory:
             encoding="utf-8",
         )
 
-        with patch("bot.service.pool_builder._build_llm_provider", return_value=_MockProvider()), patch(
-            "bot.service.pool_builder._load_agent_mcp_tools", return_value=([], None)
+        with patch("bot.service._assembly_helpers._PoolAssemblyMixin._build_llm_provider", return_value=_MockProvider()), patch(
+            "bot.service.builders._load_agent_mcp_tools", return_value=([], None)
         ), patch("bot.service.core.BotService._build_default_provider", return_value=_MockProvider()):
             service = BotService(
                 config_dir=config_dir,

@@ -9,7 +9,8 @@ import pytest
 from modex_agent.core.graph.interrupt import GraphInterrupt
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import InputMessage
-from modex_agent.pipeline.pipeline import AgentPipeline
+
+from tests.unit.pipeline._helpers import _make_react_pipeline
 
 
 class _FakeInputAdapter:
@@ -41,7 +42,7 @@ class TestPipelineRunInterrupt:
         tool_manager.shutdown = AsyncMock()
         output_adapter = MagicMock()
         output_adapter.send = AsyncMock()
-        p = AgentPipeline(
+        p = _make_react_pipeline(
             agent=MagicMock(),
             context_manager=MagicMock(),
             tool_manager=tool_manager,
