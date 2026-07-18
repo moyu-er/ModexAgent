@@ -390,6 +390,7 @@ async def _assemble_resources(
             mcp_registry=service._mcp_registry,
             persistence=persistence,
             app_config=app_config,
+            strategy_registry=service._strategy_registry,
         )
 
     # Phase 2: cross-pool peer wiring. Must run after all Phase 1 pools are built

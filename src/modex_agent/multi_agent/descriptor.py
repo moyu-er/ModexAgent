@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from modex_agent.core.constants import ExecutionStrategy, ReasoningEffort
+from modex_agent.core.constants import ExecutionStrategyKind, ReasoningEffort
 from modex_agent.multi_agent.comm_kind import AgentCommKind
 
 if TYPE_CHECKING:
@@ -59,7 +59,7 @@ class AgentDescriptor:
     denied_tools: list[str] | None = None
     allowed_skills: list[str] | None = None
     max_iterations: int = 15
-    execution_strategy: ExecutionStrategy = ExecutionStrategy.REACT  # ExecutionStrategy member
+    execution_strategy: ExecutionStrategyKind = ExecutionStrategyKind.REACT  # ExecutionStrategyKind member
     context_manager: ContextManager | None = None
     context_strategy: str = "persistent"  # "persistent" | "ephemeral" | "shared"
     inbox_strategy: str = "drain_all"  # "drain_all" | "drain_limit" | "peek_latest"

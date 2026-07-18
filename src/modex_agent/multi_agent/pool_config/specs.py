@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from modex_agent.agents.external_coding.paths import ProviderKind
-from modex_agent.core.constants import ExecutionStrategy
+from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.ioc.configs.approval import ApprovalConfig
 from modex_agent.tools.presets import (
     DEFAULT_FORK_MAX_MESSAGES,
@@ -31,7 +31,7 @@ class MainAgentSpec(BaseModel):
     tool_supplements: list[ToolSupplement] = Field(default_factory=lambda: [ToolSupplement.TODO])
     approval: ApprovalConfig | None = None
     mcp: list[str] = Field(default_factory=list)
-    execution_strategy: ExecutionStrategy = ExecutionStrategy.REACT
+    execution_strategy: ExecutionStrategyKind = ExecutionStrategyKind.REACT
     provider_kind: ProviderKind | None = None
 
 

@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from modex_agent.core.constants import ExecutionStrategy
+from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.ioc.configs.skills import SkillsConfig
 from modex_agent.multi_agent.pool_config.specs import SubagentSpec
@@ -236,7 +236,7 @@ class AgentTemplate:
             ),
             system_prompt_template=system_prompt,
             max_iterations=self.spec.max_steps,
-            execution_strategy=ExecutionStrategy.REACT,
+            execution_strategy=ExecutionStrategyKind.REACT,
             context_strategy="persistent",
             safety_policy=deps.safety,
             comm_kind=comm_kind,

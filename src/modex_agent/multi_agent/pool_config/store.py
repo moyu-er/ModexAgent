@@ -52,7 +52,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from modex_agent.core.constants import ExecutionStrategy
+from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.multi_agent.pool_config.specs import (
     MainAgentSpec,
     PoolSpec,
@@ -261,7 +261,10 @@ class PoolStore:
         _validate_name(name, "pool")
         self._validate_tree(name, tree)
 
-        if tree.main.execution_strategy == ExecutionStrategy.EXTERNAL_CODING:
+        # External coding pools have no subagents — strip any the frontend
+        # sent before writing. validate_pool_spec is defense-in-depth at
+        # assembly time; the store is the single pool.yml write path.
+        if tree.main.execution_strategy != ExecutionStrategyKind.REACT:
             tree = tree.model_copy(update={"subagents": []})
 
         existing = self._read_existing_pool_yml(name)
@@ -331,8 +334,10 @@ class PoolStore:
                 f"Pool {pool_name!r}: main_agent_name ({tree.main_agent_name!r}) "
                 f"must equal main.agent_name ({tree.main.agent_name!r})"
             )
+        # External coding requires a provider_kind so the strategy knows which
+        # CLI backend to build. validate_pool_spec is defense-in-depth.
         if (
-            tree.main.execution_strategy == ExecutionStrategy.EXTERNAL_CODING
+            tree.main.execution_strategy != ExecutionStrategyKind.REACT
             and tree.main.provider_kind is None
         ):
             raise PoolValidationError(
@@ -426,11 +431,15 @@ class PoolStore:
         if tree.main.agent_name != pool_name:
             data["main_agent_name"] = tree.main.agent_name
         main_dump = tree.main.model_dump(mode="json")
-        if tree.main.execution_strategy == ExecutionStrategy.EXTERNAL_CODING:
+        if tree.main.execution_strategy != ExecutionStrategyKind.REACT:
+            # External coding: write only description + routing keys.
+            # Native fields (max_steps, tools, approval, mcp) are meaningless
+            # for external CLIs and omitted to keep pool.yml clean.
             if main_dump["description"]:
                 data["description"] = main_dump["description"]
             data["execution_strategy"] = main_dump["execution_strategy"]
-            data["provider_kind"] = main_dump["provider_kind"]
+            if main_dump.get("provider_kind") is not None:
+                data["provider_kind"] = main_dump["provider_kind"]
         else:
             for field in _MAIN_AGENT_EDITABLE_FIELDS:
                 value = main_dump[field]
@@ -438,8 +447,6 @@ class PoolStore:
                 if value is None or value == default:
                     continue
                 data[field] = value
-            if tree.main.execution_strategy != ExecutionStrategy.REACT:
-                data["execution_strategy"] = main_dump["execution_strategy"]
         if tree.peers:
             data["peers"] = list(tree.peers)
         if "media" in existing:

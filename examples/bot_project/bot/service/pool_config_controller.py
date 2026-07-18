@@ -46,7 +46,7 @@ from bot.config.prompt_store import (
 )
 from bot.config.skills_store import SkillsStore
 from bot.service.config_controller import FieldValidationError
-from modex_agent.core.constants import ExecutionStrategy
+from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.ioc.configs.mcp import MCPServerEntry
 from modex_agent.multi_agent.pool_config import PoolSpec, PoolStore
 from modex_agent.multi_agent.pool_config.store import (
@@ -169,7 +169,7 @@ class PoolConfigController:
         except PoolValidationError as exc:
             raise FieldValidationError({"pool": [str(exc)]}) from exc
         self._apply_agent_renames(name, report)
-        if tree.main.execution_strategy == ExecutionStrategy.EXTERNAL_CODING:
+        if tree.main.execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING:
             self._skills.clear_pool_skills(name)
         self._mark("pool")
         return self.read_pool(name)

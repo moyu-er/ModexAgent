@@ -4,9 +4,9 @@ Bypasses history, system prompt pipeline, governance, attachment injection,
 and ``ctx_mgr.save``. The external CLI maintains its own context; ModexAgent
 only forwards the per-turn input via :attr:`AgentContext.current_input`.
 
-Behaviour parallels :meth:`TurnRunner.process_locked
-<modex_agent.pipeline.turn_runner.TurnRunner.process_locked>` but skips ~80%
-of the work that is irrelevant to external coding agents:
+Behaviour parallels :meth:`ReActTurnRunner.process_locked
+<modex_agent.pipeline.turn_runner.ReActTurnRunner.process_locked>` but skips
+~80% of the work that is irrelevant to external coding agents:
 
 * No slash-command parsing (handled pre-lock by Pipeline).
 * No sanitizer / attachment injection / route modifier.
@@ -29,8 +29,8 @@ Kept (WebUI ``is_active`` / ``get_active_turn_uuid`` + ``/stop`` depend on them)
 Lives under ``agents/external_coding/`` (not ``pipeline/``) because the
 external_coding package owns its full execution story — parallel to how it
 owns its :class:`~modex_agent.agents.external_coding.agent.ExternalCodingAgent`
-subclass. The pipeline package injects this runner (T4) via union typing;
-no ABC or Protocol is introduced.
+subclass. The pipeline package injects this runner via the
+:class:`modex_agent.pipeline.turn_runner_abc.TurnRunner` ABC (ADR-0025 D3).
 """
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from modex_agent.core.agent import AgentContext
@@ -46,6 +46,7 @@ from modex_agent.core.constants import StopReason
 from modex_agent.core.emitter import AgentResult, StreamingAwareEmitter
 from modex_agent.core.history import ListMessageHistory
 from modex_agent.core.tool_manager import InMemoryToolManager
+from modex_agent.pipeline.turn_runner_abc import TurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.runtime.models import TurnIdentity
 
@@ -57,20 +58,19 @@ if TYPE_CHECKING:
     from modex_agent.core.types import InputMessage
     from modex_agent.multi_agent.router import RouteResult
     from modex_agent.pipeline.adapters import OutputAdapter
-
 logger = logging.getLogger(__name__)
 
 __all__ = ["ExternalTurnRunner"]
 
 
-class ExternalTurnRunner:
+class ExternalTurnRunner(TurnRunner):
     """Simplified turn runner for external_coding pools.
 
     The :meth:`process_locked` signature mirrors
-    :meth:`TurnRunner.process_locked
-    <modex_agent.pipeline.turn_runner.TurnRunner.process_locked>` so the
-    pipeline can swap runners via union typing (T4) without changing call
-    sites.
+    :meth:`ReActTurnRunner.process_locked
+    <modex_agent.pipeline.turn_runner.ReActTurnRunner.process_locked>` so the
+    pipeline can swap runners via the ``TurnRunner`` ABC without changing
+    call sites.
 
     Approval is not supported — external CLIs have their own permission
     systems. ``route_result`` is accepted for signature compatibility but
@@ -96,17 +96,10 @@ class ExternalTurnRunner:
         self._on_session_end = on_session_end
         self._safety = safety
 
-    def update_emitter_factory(
-        self, value: Callable[..., ContentEmitter] | None
+    def set_emitter_factory(
+        self, emitter_factory: Callable[..., ContentEmitter[Any]] | None
     ) -> None:
-        """Accept a post-construction emitter_factory override.
-
-        ExternalTurnRunner stores emitter_factory directly (not through
-        TurnContextBuilder), so the pipeline's post-construction reassignment
-        must reach this attribute. Called unconditionally by the pipeline
-        alongside the TurnContextBuilder mirror.
-        """
-        self._emitter_factory = value
+        self._emitter_factory = emitter_factory
 
     async def process_locked(
         self,
@@ -127,7 +120,7 @@ class ExternalTurnRunner:
         agent_name = self._agent.name
         turn_start = time.monotonic()
 
-        # 1. on_session_start (timeout-guarded — mirrors TurnRunner).
+        # 1. on_session_start (timeout-guarded — mirrors ReActTurnRunner).
         if self._on_session_start is not None:
             try:
                 await asyncio.wait_for(

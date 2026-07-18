@@ -147,6 +147,13 @@ class BotService(AgentBuilderMixin):
         # None when the flag is off (or registry absent) → legacy per-pool path.
         self._mcp_registry: McpConnectionRegistry | None = None
 
+        # Execution-strategy registry (ADR-0025, ticket 3). Built in
+        # initialize() with the shipped strategies (react in ticket 3;
+        # external_coding added in ticket 4). Threaded through wiring.py into
+        # create_pool so react pools are assembled via
+        # ReactExecutionStrategy.assemble() instead of inline _build_* calls.
+        self._strategy_registry: Any = None
+
         # T26: Registry-level SQLite persistence manager. Opened at initialize()
         # (before workspace materialize), closed at stop() AFTER evict_all (the
         # registry DB is the last-to-close persistence layer). None when
@@ -375,6 +382,25 @@ class BotService(AgentBuilderMixin):
             self.control_channel = self._build_control_channel()
             self.command_processor = self._build_main_command_processor()
             self.plugin_integration = PluginIntegration(config={"enabled": False})
+
+            # ADR-0025 ticket 3: build the execution-strategy registry with
+            # the shipped react strategy. Threaded through wiring.py into
+            # create_pool so react pools are assembled via
+            # ReactExecutionStrategy.assemble() instead of inline _build_*.
+            # ADR-0025 ticket 4: register ExternalCodingExecutionStrategy so
+            # external_coding pools are assembled via strategy.assemble()
+            # (provider-availability gate + external_coding_deps build).
+            from bot.service.external_coding_strategy import (
+                ExternalCodingExecutionStrategy,
+            )
+            from bot.service.react_strategy import ReactExecutionStrategy
+            from modex_agent.multi_agent.execution_strategy import (
+                ExecutionStrategyRegistry,
+            )
+
+            self._strategy_registry = ExecutionStrategyRegistry()
+            self._strategy_registry.register(ReactExecutionStrategy())
+            self._strategy_registry.register(ExternalCodingExecutionStrategy())
 
             # T26: open the registry DB BEFORE workspace materialization so the
             # registry store is ready when workspaces start using it. The

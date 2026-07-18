@@ -49,11 +49,16 @@ class StopReason(StrEnum):
     LOOP_DETECTED = "loop_detected"
 
 
-class ExecutionStrategy(StrEnum):
+class ExecutionStrategyKind(StrEnum):
     """Agent 执行策略。
 
     与 ``AgentDescriptor.execution_strategy`` 对应，集中管理所有合法的
     执行策略值，避免分散在 descriptor / pool config / 业务层中的硬编码字符串。
+
+    Renamed from ``ExecutionStrategy`` so the bare name refers exclusively to
+    the ABC in ``modex_agent.multi_agent.execution_strategy`` (ADR-0025).
+    Pool.yml string values (``react`` / ``external_coding`` / ...) are
+    unchanged — this is a Python-symbol-only rename.
     """
 
     REACT = "react"
