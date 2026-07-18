@@ -2,34 +2,34 @@ import { describe, it, expect } from "vitest";
 import { validateModelValues } from "./modelValidation";
 
 describe("validateModelValues", () => {
-  it("returns defaultRequired when default_provider is empty", () => {
+  it("returns null when default_provider is empty (allow save without default)", () => {
     expect(validateModelValues({
       default_provider: "",
       default_model: "m1",
       providers: [{ name: "P", models: [{ name: "m1" }] }],
-    })).toBe("settings.models.defaultRequired");
+    })).toBeNull();
   });
 
-  it("returns defaultRequired when default_model is empty", () => {
+  it("returns null when default_model is empty (allow save without default)", () => {
     expect(validateModelValues({
       default_provider: "P",
       default_model: "",
       providers: [{ name: "P", models: [{ name: "m1" }] }],
-    })).toBe("settings.models.defaultRequired");
+    })).toBeNull();
   });
 
-  it("returns defaultRequired when both defaults are empty", () => {
+  it("returns null when both defaults are empty", () => {
     expect(validateModelValues({
       default_provider: "",
       default_model: "",
       providers: [{ name: "P", models: [{ name: "m1" }] }],
-    })).toBe("settings.models.defaultRequired");
+    })).toBeNull();
   });
 
-  it("returns defaultRequired when defaults are missing entirely", () => {
+  it("returns null when defaults are missing entirely", () => {
     expect(validateModelValues({
       providers: [{ name: "P", models: [{ name: "m1" }] }],
-    })).toBe("settings.models.defaultRequired");
+    })).toBeNull();
   });
 
   it("returns defaultNotFound when the combo does not exist in providers", () => {
@@ -75,20 +75,20 @@ describe("validateModelValues", () => {
     })).toBe("settings.models.defaultNotFound");
   });
 
-  it("returns null when providers is empty but defaults are also empty", () => {
+  it("returns null when providers is empty and defaults are also empty", () => {
     expect(validateModelValues({
       default_provider: "",
       default_model: "",
       providers: [],
-    })).toBe("settings.models.defaultRequired");
+    })).toBeNull();
   });
 
-  it("handles whitespace-only defaults as empty", () => {
+  it("handles whitespace-only defaults as empty (passes validation)", () => {
     expect(validateModelValues({
       default_provider: "  ",
       default_model: "  ",
       providers: [{ name: "P", models: [{ name: "m1" }] }],
-    })).toBe("settings.models.defaultRequired");
+    })).toBeNull();
   });
 
   it("handles missing providers array", () => {

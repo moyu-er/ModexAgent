@@ -69,6 +69,7 @@ async def test_pipeline_turns_attachment_ref_into_persisted_attachment() -> None
 
         ctx = BotInputContext(
             default_pool="main",
+            available_pools=lambda: {"main"},
             pool_session_store=pool_store,
             agent_pool_map={"main": "main"},
             agent_resolver=lambda p: p,
@@ -124,6 +125,7 @@ async def test_pipeline_noop_when_no_attachments() -> None:
 
         ctx = BotInputContext(
             default_pool="main",
+            available_pools=lambda: {"main"},
             pool_session_store=pool_store,
             agent_pool_map={"main": "main"},
             agent_resolver=lambda p: p,

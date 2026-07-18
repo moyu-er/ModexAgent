@@ -80,6 +80,7 @@ async def test_ws_sqlite_send_persists_user_before_enqueue(tmp_path: Path) -> No
     server.set_input_context(
         BotInputContext(
             default_pool="main",
+            available_pools=lambda: {"main"},
             pool_session_store=pool_store,
             agent_pool_map={"main": "main"},
             agent_resolver=lambda pool: pool,
@@ -207,6 +208,7 @@ async def test_ws_sqlite_send_reaches_workspace_dispatcher(tmp_path: Path) -> No
     server.set_input_context(
         BotInputContext(
             default_pool="main",
+            available_pools=lambda: {"main"},
             pool_session_store=pool_store,
             agent_pool_map={"main": "main"},
             agent_resolver=lambda pool: pool,

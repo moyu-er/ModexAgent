@@ -1,6 +1,11 @@
 import { useState, useEffect, useCallback, useMemo, useRef, type FC } from "react";
 import { createPortal } from "react-dom";
-import { fetchProviderModels, ApiError, type FetchedModel } from "../../lib/api";
+import {
+  fetchProviderModels,
+  ApiError,
+  type FetchedModel,
+  type FetchProviderModelsRequest,
+} from "../../lib/api";
 import { XIcon } from "../ui/icons";
 import { IconButton } from "../ui/IconButton";
 import { Button } from "../ui/Button";
@@ -9,7 +14,8 @@ import { useT, type TFn } from "../../i18n";
 export interface FetchModelsModalProps {
   open: boolean;
   onClose: () => void;
-  providerKey: string;
+  /** Form A (provider_key) or Form B (inline connection info). */
+  fetchRequest: FetchProviderModelsRequest;
   existingModelIds: Set<string>;
   onImport: (models: FetchedModel[]) => void;
 }
@@ -18,6 +24,12 @@ type LoadState =
   | { kind: "loading" }
   | { kind: "error"; message: string }
   | { kind: "success"; models: FetchedModel[] };
+
+/** Label shown in the modal header — `provider_key` for Form A, `base_url` for Form B. */
+function displayLabel(req: FetchProviderModelsRequest): string {
+  if ("provider_key" in req) return req.provider_key;
+  return req.base_url;
+}
 
 function describeError(err: unknown, t: TFn): string {
   if (err instanceof ApiError) {
@@ -38,7 +50,7 @@ function describeError(err: unknown, t: TFn): string {
 export const FetchModelsModal: FC<FetchModelsModalProps> = ({
   open,
   onClose,
-  providerKey,
+  fetchRequest,
   existingModelIds,
   onImport,
 }) => {
@@ -48,25 +60,25 @@ export const FetchModelsModal: FC<FetchModelsModalProps> = ({
   const [query, setQuery] = useState("");
   const fetchSeq = useRef(0);
 
-  const load = useCallback(async (key: string) => {
+  const load = useCallback(async () => {
     const seq = ++fetchSeq.current;
     setState({ kind: "loading" });
     setSelected(new Set());
     try {
-      const result = await fetchProviderModels(key);
+      const result = await fetchProviderModels(fetchRequest);
       if (seq !== fetchSeq.current) return;
       setState({ kind: "success", models: result.models });
     } catch (err) {
       if (seq !== fetchSeq.current) return;
       setState({ kind: "error", message: describeError(err, t) });
     }
-  }, [t]);
+  }, [fetchRequest, t]);
 
   useEffect(() => {
-    if (open && providerKey) {
-      load(providerKey);
+    if (open) {
+      load();
     }
-  }, [open, providerKey, load]);
+  }, [open, load]);
 
   const filteredModels = useMemo(() => {
     if (state.kind !== "success") return [];
@@ -126,7 +138,7 @@ export const FetchModelsModal: FC<FetchModelsModalProps> = ({
         <div className="flex shrink-0 items-center justify-between border-b border-hairline px-4 py-3">
           <h3 className="text-sm font-semibold text-ink">
             {t("settings.modelsFetch.title")}
-            <span className="ml-2 font-mono text-xs text-body">{providerKey}</span>
+            <span className="ml-2 font-mono text-xs text-body">{displayLabel(fetchRequest)}</span>
           </h3>
           <IconButton
             icon={<XIcon />}
@@ -163,7 +175,7 @@ export const FetchModelsModal: FC<FetchModelsModalProps> = ({
                 type="button"
                 variant="secondary"
                 size="sm"
-                onClick={() => load(providerKey)}
+                onClick={() => load()}
               >
                 {t("settings.modelsFetch.retry")}
               </Button>

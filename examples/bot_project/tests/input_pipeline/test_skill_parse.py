@@ -25,6 +25,7 @@ class _FakeRegistry:
 def _ctx() -> BotInputContext:
     return BotInputContext(
         default_pool="main",
+        available_pools=lambda: {"main"},
         pool_session_store=MagicMock(),
         agent_pool_map={"main": "main"},
         agent_resolver=lambda p: p,

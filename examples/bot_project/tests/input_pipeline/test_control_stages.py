@@ -51,6 +51,7 @@ def _ctx(
     cmd_adapter = _FakeAdapter()
     return BotInputContext(
         default_pool="main",
+        available_pools=lambda: {"main", "coding"},
         pool_session_store=store,
         agent_pool_map={"main": "main", "coding": "coding"},
         agent_resolver=lambda p: p,

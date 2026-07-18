@@ -32,6 +32,7 @@ export { IMPLEMENTATION_DEFS };
 
 export interface ExternalMainAgentFieldsProps {
   node: MainAgentNode;
+  savedAgentName: string;
   errFor: ErrFn;
   patch: (p: Partial<MainAgentNode>) => void;
   implementationValue: ImplementationChoice;
@@ -40,6 +41,7 @@ export interface ExternalMainAgentFieldsProps {
 
 export function ExternalMainAgentFields({
   node,
+  savedAgentName,
   errFor,
   patch,
   implementationValue,
@@ -107,6 +109,8 @@ export function ExternalMainAgentFields({
         error={errFor("main.agent_name")}
         value={node.agent_name}
         onChange={(e) => patch({ agent_name: e.target.value })}
+        disabled={savedAgentName !== ""}
+        helper={savedAgentName !== "" ? t("settings.pools.agentNameLocked") : undefined}
       />
 
       <Input

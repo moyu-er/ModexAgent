@@ -29,7 +29,7 @@ describe("FetchModelsModal", () => {
       <FetchModelsModal
         open
         onClose={() => {}}
-        providerKey="test"
+        fetchRequest={{ provider_key: "test" }}
         existingModelIds={new Set()}
         onImport={() => {}}
       />,
@@ -54,7 +54,7 @@ describe("FetchModelsModal", () => {
       <FetchModelsModal
         open
         onClose={() => {}}
-        providerKey="test"
+        fetchRequest={{ provider_key: "test" }}
         existingModelIds={new Set()}
         onImport={() => {}}
       />,
@@ -76,7 +76,7 @@ describe("FetchModelsModal", () => {
       <FetchModelsModal
         open
         onClose={() => {}}
-        providerKey="test"
+        fetchRequest={{ provider_key: "test" }}
         existingModelIds={new Set(["claude-sonnet-4"])}
         onImport={() => {}}
       />,
@@ -101,7 +101,7 @@ describe("FetchModelsModal", () => {
       <FetchModelsModal
         open
         onClose={() => {}}
-        providerKey="test"
+        fetchRequest={{ provider_key: "test" }}
         existingModelIds={new Set()}
         onImport={() => {}}
       />,
@@ -130,7 +130,7 @@ describe("FetchModelsModal", () => {
       <FetchModelsModal
         open
         onClose={onClose}
-        providerKey="test"
+        fetchRequest={{ provider_key: "test" }}
         existingModelIds={new Set()}
         onImport={onImport}
       />,
@@ -163,7 +163,7 @@ describe("FetchModelsModal", () => {
       <FetchModelsModal
         open
         onClose={() => {}}
-        providerKey="test"
+        fetchRequest={{ provider_key: "test" }}
         existingModelIds={new Set()}
         onImport={() => {}}
       />,
@@ -185,7 +185,7 @@ describe("FetchModelsModal", () => {
       <FetchModelsModal
         open
         onClose={() => {}}
-        providerKey="test"
+        fetchRequest={{ provider_key: "test" }}
         existingModelIds={new Set()}
         onImport={() => {}}
       />,
@@ -206,7 +206,7 @@ describe("FetchModelsModal", () => {
       <FetchModelsModal
         open
         onClose={() => {}}
-        providerKey="test"
+        fetchRequest={{ provider_key: "test" }}
         existingModelIds={new Set()}
         onImport={() => {}}
       />,
@@ -218,5 +218,45 @@ describe("FetchModelsModal", () => {
 
     const importBtn = screen.getByText(/Import selected/).closest("button")!;
     expect(importBtn.disabled).toBe(true);
+  });
+
+  it("Form B: submits inline connection info in the request body", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(makeResponse(200, { models: mockModels }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <FetchModelsModal
+        open
+        onClose={() => {}}
+        fetchRequest={{
+          base_url: "https://api.x.com",
+          api_key: "sk-inline",
+          interface_format: "openai_compatible",
+          models_url: null,
+        }}
+        existingModelIds={new Set()}
+        onImport={() => {}}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("claude-sonnet-4")).toBeTruthy();
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const call = fetchMock.mock.calls[0]!;
+    expect(call[0]).toBe("/api/models/fetch");
+    const opts = call[1] as RequestInit;
+    expect(opts.method).toBe("POST");
+    expect(JSON.parse(opts.body as string)).toEqual({
+      base_url: "https://api.x.com",
+      api_key: "sk-inline",
+      interface_format: "openai_compatible",
+      models_url: null,
+    });
+
+    expect(screen.getByText("https://api.x.com")).toBeTruthy();
   });
 });

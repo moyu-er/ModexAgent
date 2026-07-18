@@ -108,18 +108,6 @@ class TestLocalFilePoolRoutingStore:
 
         assert store.get_pool("sess-123") is None
 
-    def test_rename_pool_updates_matching_routes(
-        self, store: LocalFilePoolRoutingStore
-    ) -> None:
-        store.set_pool("sess-a", "coding")
-        store.set_pool("sess-b", "main")
-
-        changed = store.rename_pool("coding", "engineering")
-
-        assert changed == 1
-        assert store.get_pool("sess-a") == "engineering"
-        assert store.get_pool("sess-b") == "main"
-
     def test_list_prefixes_returns_sorted_stored_prefixes(
         self, store: LocalFilePoolRoutingStore
     ) -> None:
@@ -138,16 +126,47 @@ class TestLocalFilePoolRoutingStore:
         with pytest.raises(ValidationError):
             store.get_pool("corrupt")
 
-    def test_rename_pool_skips_corrupted_routes(
+    def test_delete_pool_routes_removes_only_matching(
         self, store: LocalFilePoolRoutingStore
     ) -> None:
-        store._file("corrupt").write_text("{not valid json", encoding="utf-8")
-        store.set_pool("valid", "coding")
+        store.set_pool("sess-a", "pool_a")
+        store.set_pool("sess-b", "pool_b")
+        store.set_pool("sess-c", "pool_a")
 
-        changed = store.rename_pool("coding", "engineering")
+        deleted = store.delete_pool_routes("pool_a")
 
-        assert changed == 1
-        assert store.get_pool("valid") == "engineering"
+        assert deleted == 2
+        assert store.get_pool("sess-a") is None
+        assert store.get_pool("sess-c") is None
+        assert store.get_pool("sess-b") == "pool_b"
+        assert store.list_prefixes() == ["sess-b"]
+
+    def test_delete_pool_routes_no_match_returns_zero(
+        self, store: LocalFilePoolRoutingStore
+    ) -> None:
+        store.set_pool("sess-1", "pool_a")
+        deleted = store.delete_pool_routes("nonexistent")
+        assert deleted == 0
+        assert store.get_pool("sess-1") == "pool_a"
+
+    def test_delete_pool_routes_skips_corrupt_files(
+        self, store: LocalFilePoolRoutingStore
+    ) -> None:
+        """Corrupt JSON files are skipped, not raised — delete_pool_routes
+        must not abort the cascade on a single bad record."""
+        store.set_pool("sess-good", "pool_a")
+        # Write a corrupt file that also matches the pool name (would be
+        # deleted if parseable, but parse fails so it's skipped).
+        store._file("sess-corrupt").write_text(
+            "{not valid json", encoding="utf-8"
+        )
+
+        deleted = store.delete_pool_routes("pool_a")
+
+        assert deleted == 1
+        assert store.get_pool("sess-good") is None
+        # Corrupt file is left in place (not deleted by delete_pool_routes).
+        assert store._file("sess-corrupt").exists()
 
 
 # ── PoolRouter Tests ──

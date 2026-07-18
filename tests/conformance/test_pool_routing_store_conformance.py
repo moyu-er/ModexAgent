@@ -71,15 +71,37 @@ class TestPoolRoutingStoreConformance:
         pool_routing_store.set_pool("s1", "default")
         assert pool_routing_store.list_prefixes() == ["s1", "s2"]
 
-    def test_rename_pool_updates_routes(self, pool_routing_store: PoolRoutingStore) -> None:
-        pool_routing_store.set_pool("s1", "old")
-        pool_routing_store.set_pool("s2", "old")
-        pool_routing_store.set_pool("s3", "other")
-        count = pool_routing_store.rename_pool("old", "new")
-        assert count == 2
-        assert pool_routing_store.get_pool("s1") == "new"
-        assert pool_routing_store.get_pool("s2") == "new"
-        assert pool_routing_store.get_pool("s3") == "other"
+    # -- delete_pool_routes --
+
+    def test_delete_pool_routes_removes_only_matching(
+        self, pool_routing_store: PoolRoutingStore
+    ) -> None:
+        pool_routing_store.set_pool("s1", "pool_a")
+        pool_routing_store.set_pool("s2", "pool_b")
+        pool_routing_store.set_pool("s3", "pool_a")
+        pool_routing_store.set_pool("s4", "pool_c")
+
+        deleted = pool_routing_store.delete_pool_routes("pool_a")
+
+        assert deleted == 2
+        assert pool_routing_store.get_pool("s1") is None
+        assert pool_routing_store.get_pool("s3") is None
+        assert pool_routing_store.get_pool("s2") == "pool_b"
+        assert pool_routing_store.get_pool("s4") == "pool_c"
+        assert sorted(pool_routing_store.list_prefixes()) == ["s2", "s4"]
+
+    def test_delete_pool_routes_no_match_returns_zero(
+        self, pool_routing_store: PoolRoutingStore
+    ) -> None:
+        pool_routing_store.set_pool("s1", "pool_a")
+        deleted = pool_routing_store.delete_pool_routes("nonexistent")
+        assert deleted == 0
+        assert pool_routing_store.get_pool("s1") == "pool_a"
+
+    def test_delete_pool_routes_empty_store_returns_zero(
+        self, pool_routing_store: PoolRoutingStore
+    ) -> None:
+        assert pool_routing_store.delete_pool_routes("any") == 0
 
     # -- convenience .get() / .set() aliases (used by ResolvePoolStage etc.) --
 

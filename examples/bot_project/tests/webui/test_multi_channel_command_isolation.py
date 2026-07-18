@@ -150,6 +150,7 @@ async def test_control_commands_isolated_across_im_channels(tmp_path: Path):
     qq_adapter = _FakeAdapter("qq", project_dir, project_dir)
     ctx_qq = BotInputContext(
         default_pool="main",
+        available_pools=lambda: {"main", "coding"},
         pool_session_store=MagicMock(),
         agent_pool_map={"main": "main"},
         agent_resolver=lambda p: p,
@@ -167,6 +168,7 @@ async def test_control_commands_isolated_across_im_channels(tmp_path: Path):
     tg_adapter = _FakeAdapter("telegram", workspace_dir, project_dir)
     ctx_tg = BotInputContext(
         default_pool="main",
+        available_pools=lambda: {"main", "coding"},
         pool_session_store=MagicMock(),
         agent_pool_map={"main": "main"},
         agent_resolver=lambda p: p,
@@ -256,6 +258,7 @@ async def test_webui_control_command_does_not_leak_to_im(tmp_path: Path):
     ws_adapter = _FakeAdapter("websocket", project_dir, project_dir)
     ctx_ws = BotInputContext(
         default_pool="main",
+        available_pools=lambda: {"main", "coding"},
         pool_session_store=MagicMock(),
         agent_pool_map={"main": "main"},
         agent_resolver=lambda p: p,

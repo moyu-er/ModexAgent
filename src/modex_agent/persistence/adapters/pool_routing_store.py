@@ -2,7 +2,6 @@
 
 Session-prefix → pool routing is stored in the ``pool_routing`` table. Unlike
 :class:`~modex_agent.multi_agent.pool_router.LocalFilePoolRoutingStore`,
-``rename_pool`` is a single atomic ``UPDATE`` (no per-file scan/rewrite), and
 routing corruption raises an explicit error instead of silently skipping.
 
 Uses a synchronous ``sqlite3`` connection because the ``PoolRoutingStore`` ABC
@@ -78,27 +77,18 @@ class SqlitePoolRoutingStore(PoolRoutingStore):
             (session_prefix,),
         )
 
-    def rename_pool(self, old_pool: str, new_pool: str) -> int:
-        """Atomically rename all routes from *old_pool* to *new_pool*.
-
-        A single ``UPDATE`` rewrites both ``pool_name`` and the ``scope`` JSON
-        so the ``pool`` generated column stays consistent. Returns the number
-        of rows changed.
-        """
-        scope = json.dumps({"pool": new_pool}, ensure_ascii=False)
-        cursor = self._conn.execute(
-            "UPDATE pool_routing "
-            "SET pool_name = ?, scope = ?, updated_at = datetime('now') "
-            "WHERE pool_name = ?",
-            (new_pool, scope, old_pool),
-        )
-        return cursor.rowcount
-
     def list_prefixes(self) -> list[str]:
         rows = self._conn.execute(
             "SELECT session_prefix FROM pool_routing ORDER BY session_prefix"
         ).fetchall()
         return [str(row["session_prefix"]) for row in rows]
+
+    def delete_pool_routes(self, pool_name: str) -> int:
+        cursor = self._conn.execute(
+            "DELETE FROM pool_routing WHERE pool_name = ?",
+            (pool_name,),
+        )
+        return cursor.rowcount
 
     # -- lifecycle ---------------------------------------------------------
 

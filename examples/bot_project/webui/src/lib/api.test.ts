@@ -3,6 +3,7 @@ import {
   ApiError,
   fetchApprovals,
   fetchPools,
+  fetchProviderModels,
   submitApproval,
 } from "./api";
 
@@ -117,5 +118,78 @@ describe("approval API", () => {
         body: JSON.stringify({ tool_call_id: "c1", action: "allow" }),
       }),
     );
+  });
+});
+
+describe("fetchProviderModels", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("Form A: POSTs {provider_key} to /api/models/fetch", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          makeResponse(200, "OK", JSON.stringify({ models: [{ id: "m1" }] })),
+        ),
+      ),
+    );
+
+    const out = await fetchProviderModels({ provider_key: "deepseek" });
+    expect(out).toEqual({ models: [{ id: "m1" }] });
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/models/fetch",
+      expect.objectContaining({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider_key: "deepseek" }),
+      }),
+    );
+  });
+
+  it("Form B: POSTs inline connection info to /api/models/fetch", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(
+          makeResponse(200, "OK", JSON.stringify({ models: [{ id: "m1" }] })),
+        ),
+      ),
+    );
+
+    const out = await fetchProviderModels({
+      base_url: "https://api.x.com",
+      api_key: "sk-test",
+      interface_format: "openai_compatible",
+      models_url: null,
+    });
+    expect(out).toEqual({ models: [{ id: "m1" }] });
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/models/fetch",
+      expect.objectContaining({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          base_url: "https://api.x.com",
+          api_key: "sk-test",
+          interface_format: "openai_compatible",
+          models_url: null,
+        }),
+      }),
+    );
+  });
+
+  it("throws ApiError on non-2xx", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve(makeResponse(422, "Unprocessable", '{"error":"validation"}')),
+      ),
+    );
+
+    await expect(
+      fetchProviderModels({ provider_key: "x" }),
+    ).rejects.toMatchObject({ status: 422 });
   });
 });

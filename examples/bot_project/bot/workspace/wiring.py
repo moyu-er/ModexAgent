@@ -434,7 +434,13 @@ async def _assemble_resources(
         await pi.broker_bridge.start()
 
     default_pool = service._default_pool_name
-    if default_pool not in pools:
+    if default_pool is None:
+        # No nominated default — derive from the runtime pools dict (first
+        # pool, or None when zero pools exist). The zero-pool case is
+        # expected (the user hasn't created any pool yet); PoolRouter and
+        # ResolvePoolStage guard it downstream, so stay silent.
+        default_pool = next(iter(pools), None)
+    elif default_pool not in pools:
         fallback = next(iter(pools), default_pool)
         if fallback != default_pool:
             logger.warning(

@@ -62,6 +62,7 @@ def _outbound_attachment() -> Attachment:
 def _ctx(store: WorkspaceScopedTranscriptStore) -> BotInputContext:
     return BotInputContext(
         default_pool="main",
+        available_pools=lambda: {"main"},
         pool_session_store=MagicMock(),
         agent_pool_map={"main": "main"},
         agent_resolver=lambda p: p,

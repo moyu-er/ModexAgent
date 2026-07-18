@@ -15,5 +15,5 @@ class InputContext(ABC):
 
     @property
     @abstractmethod
-    def default_pool(self) -> str:
+    def default_pool(self) -> str | None:
         ...

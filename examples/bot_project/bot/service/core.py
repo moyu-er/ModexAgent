@@ -77,7 +77,6 @@ class BotService(AgentBuilderMixin):
     # Whether this service runs the WebUI. Set True by WebUIService; controls
     # workspace-level transcript/session_index store wiring. Read by _is_webui().
     webui: bool = False
-    _default_pool: str = "default"
 
     def __init__(
         self,
@@ -99,7 +98,6 @@ class BotService(AgentBuilderMixin):
         self.output_adapter = output_adapter
         self.emitter_factory = emitter_factory
         self._app_config = app_config
-        self._default_pool: str = "default"  # business-layer default; AppConfig no longer owns this
         # Multi-model config (config/model.yml 的 models: 块) + per-turn choice
         # registry。_load_app_config 解析并缓存；_build_*_provider / wiring 读取。
         self._bot_model_config: BotModelConfig | None = None
@@ -187,8 +185,8 @@ class BotService(AgentBuilderMixin):
         self._tasks: list[asyncio.Task] = []
 
     @property
-    def _default_pool_name(self) -> str:
-        return self._default_pool
+    def _default_pool_name(self) -> str | None:
+        return None
 
     def _is_webui(self) -> bool:
         """Whether this service runs the WebUI (class attribute ``webui``)."""

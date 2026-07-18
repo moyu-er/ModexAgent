@@ -143,6 +143,7 @@ async def test_attachment_flow_to_llm_injection_and_asymmetry() -> None:
         enqueued: list[InputMessage] = []
         ctx = BotInputContext(
             default_pool="main",
+            available_pools=lambda: {"main"},
             pool_session_store=pool_store,
             agent_pool_map={"main": "main"},
             agent_resolver=lambda p: p,

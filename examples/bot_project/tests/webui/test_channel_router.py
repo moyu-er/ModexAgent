@@ -156,6 +156,7 @@ async def test_control_command_notice_routes_to_websocket(adapters, tmp_path: Pa
 
     ctx = BotInputContext(
         default_pool="main",
+        available_pools=lambda: {"main", "coding"},
         pool_session_store=MagicMock(),
         agent_pool_map={"main": "main"},
         agent_resolver=lambda p: p,
@@ -209,6 +210,7 @@ async def test_control_command_notice_routes_to_qq(adapters, tmp_path: Path):
 
     ctx = BotInputContext(
         default_pool="main",
+        available_pools=lambda: {"main", "coding"},
         pool_session_store=MagicMock(),
         agent_pool_map={"main": "main"},
         agent_resolver=lambda p: p,

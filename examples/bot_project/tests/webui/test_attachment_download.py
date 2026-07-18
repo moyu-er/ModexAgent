@@ -93,6 +93,7 @@ def _full_pipeline_server(tmp_path: Path) -> tuple[WebUIServer, WorkspaceScopedM
     )
     ctx = BotInputContext(
         default_pool="main",
+        available_pools=lambda: {"main"},
         pool_session_store=pool_store,
         agent_pool_map={"main": "main"},
         agent_resolver=lambda p: p,
@@ -124,6 +125,7 @@ def _input_ctx(store: WorkspaceScopedTranscriptStore, root: Path) -> BotInputCon
     media_store = WorkspaceScopedMediaStore(data_dir_name=_DATA_DIR)
     return BotInputContext(
         default_pool="main",
+        available_pools=lambda: {"main"},
         pool_session_store=MagicMock(),
         agent_pool_map={"main": "main"},
         agent_resolver=lambda p: p,

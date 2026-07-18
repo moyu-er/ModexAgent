@@ -21,8 +21,9 @@ export function validateModelValues(
   const defaultProvider = String(values.default_provider ?? "").trim();
   const defaultModel = String(values.default_model ?? "").trim();
 
+  // Allow saving without a default — the user can set it after fetching models.
   if (defaultProvider === "" || defaultModel === "") {
-    return "settings.models.defaultRequired";
+    return null;
   }
 
   const providers = (values.providers as ProviderLike[] | undefined) ?? [];

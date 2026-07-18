@@ -15,7 +15,7 @@ import type { ReactNode } from "react";
 import type { SecretMaskValue, SecretWrite } from "../../types/config";
 import { SecretField } from "./SecretField";
 import { FetchModelsModal } from "./FetchModelsModal";
-import type { FetchedModel } from "../../lib/api";
+import type { FetchedModel, FetchProviderModelsRequest } from "../../lib/api";
 import { Card } from "../ui/Card";
 import { Select } from "../ui/Select";
 import { Input } from "../ui/Input";
@@ -59,10 +59,6 @@ interface Provider {
 interface Props {
   values: Record<string, unknown>;
   onChange: (next: Record<string, unknown>) => void;
-  /** Whether the form has unsaved changes (controls fetch-button availability). */
-  dirty: boolean;
-  /** Save the form, then resolve with true on success / false on failure. */
-  onSave: () => Promise<boolean>;
 }
 
 // Closed enum (backend Modality). Multi-select via chips — never free text,
@@ -106,7 +102,7 @@ function pickFirstCombo(
   return null;
 }
 
-export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
+export function ModelEditor({ values, onChange }: Props) {
   const t = useT();
   const defaultProvider = String(values.default_provider ?? "");
   const defaultModel = String(values.default_model ?? "");
@@ -349,16 +345,9 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
 
   const handleFetchClick = useCallback(
     async (pi: number): Promise<void> => {
-      const p = providers[pi];
-      if (!p || !p.key) return;
-      // If the form is dirty, save first so the backend has the real api_key.
-      if (dirty) {
-        const ok = await onSave();
-        if (!ok) return;
-      }
       setFetchTarget(pi);
     },
-    [providers, dirty, onSave],
+    [],
   );
 
   const handleFetchImport = useCallback(
@@ -576,19 +565,16 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
                     <div>
                       <div className="mb-2 flex items-center justify-between">
                         <SectionLabel>{t("settings.models.models")}</SectionLabel>
-                        {p.key && (
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            size="sm"
-                            className="gap-1.5"
-                            onClick={() => handleFetchClick(pi)}
-                            disabled={!p.key}
-                          >
-                            <Download size={14} />
-                            {dirty ? t("settings.models.saveAndFetch") : t("settings.models.fetchModels")}
-                          </Button>
-                        )}
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          className="gap-1.5"
+                          onClick={() => handleFetchClick(pi)}
+                        >
+                          <Download size={14} />
+                          {t("settings.models.fetchModels")}
+                        </Button>
                       </div>
                       <div className="space-y-2.5">
                         {(p.models ?? []).map((m, mi) => {
@@ -804,17 +790,27 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
         </div>
       </div>
 
-      {fetchTarget !== null && providers[fetchTarget] && (
-        <FetchModelsModal
-          open
-          onClose={() => setFetchTarget(null)}
-          providerKey={providers[fetchTarget]!.key}
-          existingModelIds={
-            new Set(providers[fetchTarget]!.models.map((m) => m.model))
-          }
-          onImport={(models) => handleFetchImport(fetchTarget, models)}
-        />
-      )}
+      {fetchTarget !== null && providers[fetchTarget] && (() => {
+        const p = providers[fetchTarget]!;
+        const fetchRequest: FetchProviderModelsRequest = p.key
+          ? { provider_key: p.key }
+          : {
+              base_url: p.base_url || "",
+              api_key:
+                "value" in p.api_key ? p.api_key.value : "",
+              interface_format: p.interface_format || "openai_compatible",
+              models_url: p.models_url ?? null,
+            };
+        return (
+          <FetchModelsModal
+            open
+            onClose={() => setFetchTarget(null)}
+            fetchRequest={fetchRequest}
+            existingModelIds={new Set(p.models.map((m) => m.model))}
+            onImport={(models) => handleFetchImport(fetchTarget, models)}
+          />
+        );
+      })()}
     </div>
   );
 }
