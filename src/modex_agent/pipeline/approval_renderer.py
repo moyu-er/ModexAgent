@@ -78,6 +78,22 @@ class ApprovalRenderer:
         self._on_drain = on_drain
         self._approval_pending: dict[str, list[InputMessage]] = {}
 
+    @property
+    def user_interface(self) -> ApprovalUserInterface | None:
+        return self._user_interface
+
+    @user_interface.setter
+    def user_interface(self, value: ApprovalUserInterface | None) -> None:
+        self._user_interface = value
+
+    @property
+    def on_drain(self) -> Callable[[InputMessage], Awaitable[None]] | None:
+        return self._on_drain
+
+    @on_drain.setter
+    def on_drain(self, value: Callable[[InputMessage], Awaitable[None]] | None) -> None:
+        self._on_drain = value
+
     async def detect(
         self,
         input_msg: InputMessage,

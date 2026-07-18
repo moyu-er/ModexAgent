@@ -171,6 +171,47 @@ class TurnContextBuilder:
         self._turn_store = turn_store
         self._registry = registry
 
+    # ── Post-construction wiring (typed setters) ─────────────────────────
+    #
+    # The builder is a mutable runtime object (not frozen); pool_builder's
+    # post-assembly wiring calls these setters to thread pool-level concerns
+    # (governance, interceptor chain, runtime services, emitter factory) into
+    # the builder after it has been constructed by the factory. Replaces the
+    # previous direct ``builder._xxx = value`` assignment from outside the
+    # class (type-safety rule 6 / rule 8).
+
+    @property
+    def governance(self) -> ContextGovernance | None:
+        return self._governance
+
+    @governance.setter
+    def governance(self, value: ContextGovernance | None) -> None:
+        self._governance = value
+
+    @property
+    def runtime_services(self) -> AgentRuntimeServices | None:
+        return self._runtime_services
+
+    @runtime_services.setter
+    def runtime_services(self, value: AgentRuntimeServices | None) -> None:
+        self._runtime_services = value
+
+    @property
+    def interceptor_chain(self) -> InterceptorChain | None:
+        return self._interceptor_chain
+
+    @interceptor_chain.setter
+    def interceptor_chain(self, value: InterceptorChain | None) -> None:
+        self._interceptor_chain = value
+
+    @property
+    def emitter_factory(self) -> Callable[..., ContentEmitter[Any]] | None:
+        return self._emitter_factory
+
+    @emitter_factory.setter
+    def emitter_factory(self, value: Callable[..., ContentEmitter[Any]] | None) -> None:
+        self._emitter_factory = value
+
     async def build_turn_request(
         self,
         input_msg: InputMessage,

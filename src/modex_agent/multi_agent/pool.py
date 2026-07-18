@@ -193,6 +193,38 @@ class AgentPool(AgentRegistry):
         """Expose the session registry for poller and wiring access."""
         return self._session_registry
 
+    @property
+    def materialize_deps(self) -> AgentMaterializeDeps | None:
+        return self._materialize_deps
+
+    @materialize_deps.setter
+    def materialize_deps(self, value: AgentMaterializeDeps | None) -> None:
+        self._materialize_deps = value
+
+    @property
+    def template_registry(self) -> AgentTemplateRegistry | None:
+        return self._template_registry
+
+    @template_registry.setter
+    def template_registry(self, value: AgentTemplateRegistry | None) -> None:
+        self._template_registry = value
+
+    @property
+    def pool_name(self) -> str | None:
+        return self._pool_name
+
+    @pool_name.setter
+    def pool_name(self, value: str | None) -> None:
+        self._pool_name = value
+
+    @property
+    def context_fork_builder(self) -> ContextForkBuilder | None:
+        return self._context_fork_builder
+
+    @context_fork_builder.setter
+    def context_fork_builder(self, value: ContextForkBuilder | None) -> None:
+        self._context_fork_builder = value
+
     def start_poller(self) -> None:
         """Start the attached poller, if any."""
         if self._poller is not None:
