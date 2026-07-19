@@ -15,16 +15,16 @@ Add `tests/architecture/test_terminal_backend_contract.py` (lightweight): assert
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `TerminalBackend` ABC has `_write_blocking` / `_read_blocking` opt-in hooks (default `raise NotImplementedError`)
-- [ ] `TerminalBackend` ABC has concrete `write` / `read_pending` template methods wrapping the hooks in `loop.run_in_executor`
-- [ ] `TerminalBackend` ABC has concrete `current_segment` / `clear_input_line` / `drain_startup` (byte-stream defaults, calling `_shell_family()` for readline detection)
-- [ ] `_shell_family` exists on `TerminalBackend` as a non-abstract method with a safe default
-- [ ] All four backends' existing overrides remain intact and unchanged — no production behavior changes
-- [ ] New `tests/architecture/test_terminal_backend_contract.py` asserts the scaffolding shape; existing tests pass
-- [ ] `ruff check src/modex_agent/tools/terminal/backends/` clean
-- [ ] `mypy src/modex_agent/tools/terminal/backends/` clean
+- [x] `TerminalBackend` ABC has `_write_blocking` / `_read_blocking` opt-in hooks (default `raise NotImplementedError`)
+- [x] `TerminalBackend` ABC has concrete `write` / `read_pending` template methods wrapping the hooks in `loop.run_in_executor`
+- [x] `TerminalBackend` ABC has concrete `current_segment` / `clear_input_line` / `drain_startup` (byte-stream defaults, calling `_shell_family()` for readline detection)
+- [x] `_shell_family` exists on `TerminalBackend` as a non-abstract method with a safe default
+- [x] All four backends' existing overrides remain intact and unchanged — no production behavior changes
+- [x] New `tests/architecture/test_terminal_backend_contract.py` asserts the scaffolding shape; existing tests pass
+- [x] `ruff check src/modex_agent/tools/terminal/backends/` clean
+- [x] `mypy src/modex_agent/tools/terminal/backends/` clean
 
 ## Comments
 

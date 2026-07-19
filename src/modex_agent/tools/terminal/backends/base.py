@@ -10,10 +10,12 @@ Implementations:
 
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 
+from modex_agent.tools.terminal.prompt import drain_windows_startup
 from modex_agent.tools.terminal.results import SlidingOutputBuffer, TerminalRead, TerminalSegment
-from modex_agent.tools.terminal.types import Platform, TerminalVisibility
+from modex_agent.tools.terminal.types import Platform, ShellFamily, TerminalVisibility
 
 
 def extract_current_segment_from_buffer(text: str) -> TerminalSegment:
@@ -105,13 +107,81 @@ class TerminalBackend(ABC):
     ) -> None:
         """Start the shell process."""
 
-    @abstractmethod
-    async def write(self, data: str) -> None:
-        """Send input to the PTY."""
+    # ------------------------------------------------------------------
+    # Async-safety contract (ADR-0032 D1)
+    # ------------------------------------------------------------------
+    # Opt-in hooks for synchronous PTY transports. Backends whose
+    # underlying ``write`` / ``read`` is blocking implement these; the
+    # template methods below wrap them in ``loop.run_in_executor``.
+    # Backends with native async I/O (visible-windows post-04) or a
+    # snapshot model (tmux post-05) override ``write`` / ``read_pending``
+    # directly and never implement the hooks.
+    #
+    # The hooks default to ``raise NotImplementedError`` so a backend
+    # that fails to override either the hook OR the template gets a clear
+    # error rather than silent passthrough.
 
-    @abstractmethod
+    def _write_blocking(self, data: str) -> None:
+        """Blocking write hook for synchronous PTY transports.
+
+        Override in backends whose underlying ``write`` is a blocking
+        call (pywinpty ``PtyProcess.write``, pexpect ``send``). The
+        base-class ``write`` template wraps this in
+        ``loop.run_in_executor(None, ...)``. Backends with native async
+        I/O or a snapshot model override ``write`` directly and never
+        implement this hook.
+        """
+        raise NotImplementedError
+
+    def _read_blocking(self, timeout: float, max_size: int) -> str:
+        """Blocking read hook for synchronous PTY transports.
+
+        Override in backends whose underlying ``read`` is a blocking
+        call (pywinpty socket ``recv``, pexpect ``read_nonblocking``).
+        The base-class ``read_pending`` template wraps this in
+        ``loop.run_in_executor(None, ...)``. Backends with native async
+        I/O or a snapshot model override ``read_pending`` directly and
+        never implement this hook.
+        """
+        raise NotImplementedError
+
+    async def write(self, data: str) -> None:
+        """Send input to the PTY via the blocking hook, executor-wrapped.
+
+        Template method (ADR-0032 D1). Backends with synchronous I/O
+        implement ``_write_blocking`` and inherit this template; backends
+        with native async I/O or a snapshot model override ``write``
+        directly.
+
+        Dormant this ticket — every backend's existing ``write`` override
+        still wins.
+        """
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self._write_blocking, data)
+
     async def read_pending(self, timeout: float = 5.0, max_size: int = 65536) -> TerminalRead:
-        """Read pending PTY output as a TerminalRead struct."""
+        """Read pending PTY output via the blocking hook, executor-wrapped.
+
+        Template method (ADR-0032 D1). Reads raw bytes through
+        ``_read_blocking``, appends them to ``self._output_buffer`` when
+        non-empty, and returns a ``TerminalRead``. Backends with native
+        async I/O or a snapshot model override ``read_pending`` directly.
+
+        Dormant this ticket — every backend's existing ``read_pending``
+        override still wins.
+        """
+        loop = asyncio.get_running_loop()
+
+        def _do_read() -> str:
+            return self._read_blocking(timeout, max_size)
+
+        try:
+            raw = await loop.run_in_executor(None, _do_read)
+            if raw and self._output_buffer is not None:
+                self._append_to_buffer(raw)
+            return TerminalRead(stdout=raw, raw=raw)
+        except Exception:
+            return TerminalRead(stdout="", raw="")
 
     async def read(self, timeout: float = 5.0, max_size: int = 65536) -> str:
         """Read PTY output. Non-blocking; returns collected text on timeout.
@@ -122,9 +192,71 @@ class TerminalBackend(ABC):
         result = await self.read_pending(timeout=timeout, max_size=max_size)
         return result.raw
 
-    @abstractmethod
+    # ------------------------------------------------------------------
+    # Shared byte-stream behaviors (ADR-0032 D4)
+    # ------------------------------------------------------------------
+    # Concrete defaults backed by the ``_shell_family`` hook. Tmux
+    # overrides ``current_segment`` / ``drain_startup`` because its
+    # snapshot I/O model diverges from the byte-stream path; the three
+    # byte-stream backends inherit these defaults after their migration
+    # tickets (02–05) land. This ticket the defaults are dormant — every
+    # backend's existing override still wins.
+
+    def _shell_family(self) -> ShellFamily:
+        """Return the shell family of the running shell.
+
+        Non-abstract safe default (``ShellFamily.SH``) —
+        conservative-correct: SH uses readline, so the readline-gated
+        shared behaviors (``clear_input_line`` / ``drain_startup``) are
+        active by default. Ticket 06 promotes this to ``@abstractmethod``
+        after all backends implement it.
+        """
+        return ShellFamily.SH
+
     async def current_segment(self) -> TerminalSegment:
-        """Snapshot the visible terminal content and cursor line."""
+        """Snapshot the visible terminal content and cursor line.
+
+        Default byte-stream implementation (ADR-0032 D4). Tmux overrides
+        to use ``capture_pane()`` because its snapshot I/O model does not
+        accumulate into ``self._output_buffer``.
+
+        Dormant this ticket — every backend's existing
+        ``current_segment`` override still wins.
+        """
+        if self._output_buffer is None:
+            return TerminalSegment(text="")
+        return extract_current_segment_from_buffer(self._output_buffer.text)
+
+    async def clear_input_line(self) -> None:
+        """Clear the current input line without interrupting jobs.
+
+        For readline shells (bash/zsh/sh) this sends Ctrl+A Ctrl+K
+        (``\\x01\\x0b``). For non-readline shells (cmd/powershell) this
+        is a no-op.
+
+        Dormant this ticket — every backend's existing
+        ``clear_input_line`` override still wins.
+        """
+        if self._shell_family().uses_readline():
+            await self.write("\x01\x0b")
+
+    async def drain_startup(self) -> None:
+        """Wait until the terminal is ready for input (prompt visible).
+
+        Default byte-stream implementation (ADR-0032 D4): delegates to
+        the shared ``drain_windows_startup`` helper. Tmux overrides
+        because its snapshot I/O model requires ``capture_pane``-based
+        prompt detection rather than byte-stream prompt detection.
+
+        Dormant this ticket — every backend's existing ``drain_startup``
+        override still wins.
+        """
+        await drain_windows_startup(
+            read_fn=self.read,
+            write_fn=self.write,
+            is_alive_fn=self.is_alive,
+            uses_readline=self._shell_family().uses_readline(),
+        )
 
     @abstractmethod
     async def interrupt(self) -> None:
@@ -141,22 +273,6 @@ class TerminalBackend(ABC):
     @abstractmethod
     async def kill(self) -> None:
         """Force kill (SIGKILL equivalent)."""
-
-    @abstractmethod
-    async def drain_startup(self) -> None:
-        """Wait until the terminal is ready for input (prompt visible).
-
-        Called after start().  Default is a no-op; subclasses override
-        to consume startup banners, ANSI sequences, etc.
-        """
-
-    @abstractmethod
-    async def clear_input_line(self) -> None:
-        """Clear the current input line without interrupting jobs.
-
-        For readline shells this sends Ctrl+A Ctrl+K.
-        For non-readline shells this is a no-op.
-        """
 
     @abstractmethod
     def stdin_writable(self) -> bool:
