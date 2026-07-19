@@ -35,11 +35,21 @@ _PIPELINE = _FRAMEWORK_SRC / "pipeline" / "pipeline.py"
 # - subagent_validator.py — runtime subagent registration validation.
 # - execution_strategy.py — docstring text (the phrase "if execution_strategy =="
 #   appears in the module docstring describing what the ABC replaces).
+# - pool_config/specs.py — Pydantic @model_validator cross-field validation
+#   (provider_kind set iff execution_strategy == EXTERNAL_CODING). Same
+#   validation category as subagent_validator.py; not assembly branching.
+# - template.py — T5 subagent materialize dispatch: when the spec's
+#   execution_strategy is EXTERNAL_CODING, materialize delegates to
+#   deps.subagent_external_coding_builder.build() instead of
+#   agent_factory.create_agent(). Same runtime construction-dispatch category
+#   as factory.py._get_builder; the react path is byte-for-byte unchanged.
 _ALLOWED_EXECUTION_STRATEGY_FILES = {
     _FRAMEWORK_SRC / "multi_agent" / "communication" / "strategies" / "peer_normal.py",
     _FRAMEWORK_SRC / "multi_agent" / "factory.py",
     _FRAMEWORK_SRC / "multi_agent" / "subagent_validator.py",
     _FRAMEWORK_SRC / "multi_agent" / "execution_strategy.py",
+    _FRAMEWORK_SRC / "multi_agent" / "pool_config" / "specs.py",
+    _FRAMEWORK_SRC / "multi_agent" / "template.py",
 }
 
 # Patterns that indicate strategy-specific assembly branching (forbidden).

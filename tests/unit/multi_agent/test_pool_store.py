@@ -196,10 +196,12 @@ class TestExternalPoolStoreValidatesProviderKind:
 
     def test_external_save_without_provider_kind_raises(self, tmp_path: Path) -> None:
         store = _store(tmp_path)
-        tree = PoolSpec(
+        # model_construct skips MainAgentSpec's validator so the store-level
+        # check (WebUI defense for raw input) is what gets exercised.
+        tree = PoolSpec.model_construct(
             name="pool_pi",
             main_agent_name="pi",
-            main=MainAgentSpec(
+            main=MainAgentSpec.model_construct(
                 agent_name="pi",
                 execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
                 provider_kind=None,
@@ -212,10 +214,10 @@ class TestExternalPoolStoreValidatesProviderKind:
         self, tmp_path: Path
     ) -> None:
         store = _store(tmp_path)
-        tree = PoolSpec(
+        tree = PoolSpec.model_construct(
             name="pool_pi",
             main_agent_name="pi",
-            main=MainAgentSpec(
+            main=MainAgentSpec.model_construct(
                 agent_name="pi",
                 execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
                 provider_kind=None,

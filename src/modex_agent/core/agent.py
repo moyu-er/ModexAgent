@@ -47,7 +47,7 @@ class AgentImplementation(StrEnum):
     - NORMAL + NATIVE = modex main agent (default/coder pool main)
     - NORMAL + EXTERNAL = external coding CLI as pool main (opencode/pi)
     - SUBAGENT + NATIVE = modex subagent (the only subagent shape today)
-    - SUBAGENT + EXTERNAL = reserved (external CLI as subagent, future)
+    - SUBAGENT + EXTERNAL = supported (external CLI as subagent, ADR-0027)
     """
 
     NATIVE = "native"
