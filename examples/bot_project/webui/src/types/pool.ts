@@ -95,6 +95,10 @@ export interface SubagentNode {
   roles?: string[];
   /** Explicit prompt reference (T1 schema). When empty/undefined, the runtime falls back to `agents/<agent_name>.md`. */
   prompt_name?: string;
+  /** Execution strategy; backend default is "react". Present on read; omit on write to use the default. */
+  execution_strategy?: ExecutionStrategy;
+  /** External coding provider; null when the subagent is native. */
+  provider_kind?: ProviderKind | null;
 }
 
 export interface PoolTree {

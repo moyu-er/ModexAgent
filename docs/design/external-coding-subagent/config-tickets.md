@@ -22,7 +22,7 @@ Work the **frontier**: any ticket whose blockers are all done. For this breakdow
 - [ ] A subagent spec with `execution_strategy: react` + `provider_kind: null` round-trips: write → read → `provider_kind` is None (not a string "null")
 - [ ] Unit test in `tests/unit/multi_agent/pool_config/` (or `tests/unit/multi_agent/test_pool_config.py`) covers the round-trip for both external and native subagent specs
 
-## S2 — Frontend types: SubagentNode gains execution_strategy + provider_kind
+## S2 — Frontend types: SubagentNode gains execution_strategy + provider_kind  ✅ DONE
 
 **What to build:** The TypeScript `SubagentNode` interface in `pool.ts` gains optional `execution_strategy` and `provider_kind` fields, mirroring `MainAgentNode`. The `defaultSubagent()` factory in `PoolEditor.tsx` defaults `execution_strategy` to `"react"` so new subagents are native by default. This is a pure type extension — no UI behavior change.
 

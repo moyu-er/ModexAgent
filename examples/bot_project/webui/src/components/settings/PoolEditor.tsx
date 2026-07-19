@@ -81,12 +81,25 @@ const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
 // the catalog yet) do not silently persist through a Save. Native pools are
 // passed through.
 const normalizeTree = (tree: PoolTree): PoolTree => {
-  if (tree.main.execution_strategy !== "external_coding") return tree;
-  const normalized = selectProvider(tree.main.provider_kind);
-  if (normalized === tree.main.provider_kind) return tree;
+  let changed = false;
+  // Normalize main
+  const mainNormalized = tree.main.execution_strategy === "external_coding"
+    ? selectProvider(tree.main.provider_kind)
+    : tree.main.provider_kind;
+  if (mainNormalized !== tree.main.provider_kind) changed = true;
+  // Normalize subagents
+  const subagents = tree.subagents.map((s) => {
+    if (s.execution_strategy !== "external_coding") return s;
+    const normalized = selectProvider(s.provider_kind);
+    if (normalized === s.provider_kind) return s;
+    changed = true;
+    return { ...s, provider_kind: normalized };
+  });
+  if (!changed) return tree;
   return {
     ...tree,
-    main: { ...tree.main, provider_kind: normalized },
+    main: { ...tree.main, provider_kind: mainNormalized },
+    subagents,
   };
 };
 
@@ -141,6 +154,7 @@ const defaultSubagent = (): SubagentNode => ({
   tool_supplements: [],
   context_mode: "fork",
   mcp: [],
+  execution_strategy: "react",
 });
 
 type FieldErrors = Record<string, string[]>;
