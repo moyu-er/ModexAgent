@@ -42,6 +42,7 @@ from typing import Any
 import yaml
 
 from modex_agent.agents.external_coding.agent import StreamingProviderBackend
+from modex_agent.agents.external_coding.backend_provider import PoolScopedBackendProvider
 from modex_agent.agents.external_coding.builder import ExternalCodingAgentBuilder
 from modex_agent.agents.external_coding.contracts import ProviderEventParser
 from modex_agent.agents.external_coding.paths import ProviderKind
@@ -250,7 +251,9 @@ class ExternalCodingAwareFactory(DefaultAgentFactory):
         from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 
         # 1. Agent — provider=None (ExternalCodingAgentBuilder ignores it;
-        #    the external CLI owns its own model configuration).
+        #    the external CLI owns its own model configuration). ADR-0027:
+        #    wrap the pool-scoped backend in a BackendProvider so the agent
+        #    borrows it per turn instead of holding a fixed reference.
         deps = self._external_coding_deps
         missing = [
             name
@@ -261,10 +264,11 @@ class ExternalCodingAwareFactory(DefaultAgentFactory):
             raise ValueError(
                 f"ExternalCodingAwareFactory missing external_coding deps: {', '.join(missing)}"
             )
+        backend_provider = PoolScopedBackendProvider(deps["backend"])
         agent = ExternalCodingAgentBuilder.build_agent(
             descriptor,
             provider=None,
-            backend=deps["backend"],
+            backend_provider=backend_provider,
             session_store=deps["session_store"],
             parser=deps["parser"],
             provider_kind=deps["provider_kind"],
@@ -272,67 +276,18 @@ class ExternalCodingAwareFactory(DefaultAgentFactory):
             base_env=deps.get("base_env"),
         )
 
-        # 2. Broker I/O (same shape as DefaultAgentFactory.create_agent).
-        if broker is None:
-            logger.warning("Creating external agent with isolated broker.")
-            broker = InMemoryMessageBroker()
-            await broker.start()
-        address = descriptor.address
-        input_adapter = BrokerInputAdapter(broker=broker, address=address)
-        if output_adapter is not None and isinstance(output_adapter, OutputAdapter):
-            pipe_output_adapter = output_adapter
-            emitter_output_adapter = output_adapter
-        else:
-            pipe_output_adapter = BrokerOutputAdapter(
-                broker=broker,
-                sender=address,
-                default_topic=f"agent:{address.name}:out",
-            )
-            emitter_output_adapter = BrokerOutputAdapter(
-                broker=broker,
-                sender=address,
-                default_topic=f"agent:{address.name}:out",
-            )
-
-        # 3. Emitter factory (uses the same builder entry point as react).
-        emitter_factory = ExternalCodingAgentBuilder.build_emitter_factory(emitter_output_adapter)
-
-        # 4. Registry + ExternalTurnRunner (no TurnContextBuilder, no
-        #    ApprovalResumer, no ApprovalRenderer, no hooks).
-        registry = TurnSessionRegistry()
+        # 2. Assemble pipeline via shared helper (converged with subagent path).
         safety: RuntimeSafetyPolicy = descriptor.safety_policy or RuntimeSafetyPolicy()
-        turn_runner = ExternalTurnRunner(
-            agent=agent,
-            emitter_factory=emitter_factory,
-            output_adapter=pipe_output_adapter,
-            registry=registry,
-            on_session_start=None,
-            on_session_end=None,
+        return ExternalCodingAgentBuilder.assemble_pipeline(
+            descriptor,
+            agent,
+            broker=broker,
             safety=safety,
-        )
-
-        # 5. Pipeline — 9 params, no dream_engine, no hooks. No
-        #    ``bind_to_pipeline`` needed: ExternalTurnRunner inherits the
-        #    ABC's no-op default (no approval.on_drain to late-bind).
-        pipeline = AgentPipeline(
-            agent=agent,
-            turn_runner=turn_runner,
-            input_adapter=input_adapter,
-            output_adapter=pipe_output_adapter,
-            registry=registry,
-            safety=safety,
-            router=DefaultMeshRouter(session_registry=self._session_registry),
+            hook_runner=None,  # main agents don't fire FINALLY_TURN
+            session_registry=self._session_registry,
             control_channel=self._control_channel,
-        )
-
-        # 6. AgentInstance — ``context_manager`` is required by the dataclass
-        #    but ExternalTurnRunner never reads it. Use the provided one
-        #    (pool default) or a cheap ``InMemoryContextManager`` fallback.
-        ctx_mgr = context_manager or InMemoryContextManager(base_system_prompt="")
-        return AgentInstance(
-            descriptor=descriptor,
-            context_manager=ctx_mgr,
-            pipeline=pipeline,
+            output_adapter=output_adapter if isinstance(output_adapter, OutputAdapter) else None,
+            context_manager=context_manager,
         )
 
 

@@ -11,6 +11,7 @@ from modex_agent.agents.external_coding.agent import (
     ExternalCodingAgent,
     ScriptedStreamingAdapter,
 )
+from modex_agent.agents.external_coding.backend_provider import PoolScopedBackendProvider
 from modex_agent.agents.external_coding.builder import ExternalCodingAgentBuilder
 from modex_agent.agents.external_coding.paths import ExternalPaths, ProviderKind
 from modex_agent.agents.external_coding.providers.pi_parser import PiEventParser
@@ -53,7 +54,7 @@ class TestExternalCodingAgentBuilderPoolRegistration:
         agent = ExternalCodingAgentBuilder.build_agent(
             descriptor,
             provider=None,
-            backend=adapter,
+            backend_provider=PoolScopedBackendProvider(adapter),
             session_store=store,
             parser=PiEventParser(),
             provider_kind=ProviderKind.PI,
@@ -109,7 +110,7 @@ class TestExternalCodingAgentBuilderFluentApi:
 
         agent = (
             ExternalCodingAgentBuilder()
-            .with_backend(adapter)
+            .with_backend_provider(PoolScopedBackendProvider(adapter))
             .with_session_store(store)
             .with_parser(PiEventParser())
             .with_provider_kind(ProviderKind.PI)

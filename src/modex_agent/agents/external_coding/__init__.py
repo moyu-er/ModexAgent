@@ -10,13 +10,26 @@ CLI) land in T2–T8.
 Per ADR-0022, the framework footprint outside this sub-package stays
 at two lines (factory branch) plus one comment (descriptor). All
 heavy lifting lives here.
+
+ADR-0027 (T2) introduces the :class:`BackendProvider` borrowing seam:
+:class:`ExternalCodingAgent` borrows a backend per turn rather than
+holding a fixed instance. The main-agent path wraps its pre-built
+backend in :class:`PoolScopedBackendProvider`.
 """
 
+from .backend_provider import (
+    BackendFactory,
+    BackendProvider,
+    CachingBackendProvider,
+    PoolScopedBackendProvider,
+    TurnContext,
+)
 from .contracts import ProviderBackend, ProviderEventParser
 from .env_builder import ExternalEnvBuilder
 from .events import ExternalCodingEvent
 from .paths import ExternalPaths, ProviderKind
 from .session_store import ExternalSessionMapStore, LocalFileExternalSessionMapStore
+from .subagent_builder import SubagentExternalCodingBuilder
 from .types import (
     BackendResult,
     BackendStatus,
@@ -43,6 +56,12 @@ __all__ = [
     "BackendResult",
     "ProviderBackend",
     "ProviderEventParser",
+    # Backend provider seam (ADR-0027)
+    "BackendProvider",
+    "BackendFactory",
+    "PoolScopedBackendProvider",
+    "CachingBackendProvider",
+    "TurnContext",
     # Session persistence
     "ExternalSessionMapStore",
     "LocalFileExternalSessionMapStore",
@@ -52,4 +71,6 @@ __all__ = [
     "OutboxLine",
     # Per-line emission
     "Emission",
+    # Subagent materialize seam (T5)
+    "SubagentExternalCodingBuilder",
 ]

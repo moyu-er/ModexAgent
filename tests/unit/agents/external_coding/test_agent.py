@@ -34,6 +34,11 @@ from modex_agent.agents.external_coding.agent import (
     StaleSessionError,
     StreamingProviderBackend,
 )
+from modex_agent.agents.external_coding.backend_provider import (
+    BackendProvider,
+    PoolScopedBackendProvider,
+    TurnContext,
+)
 from modex_agent.agents.external_coding.events import ExternalCodingEvent
 from modex_agent.agents.external_coding.paths import ExternalPaths, ProviderKind
 from modex_agent.agents.external_coding.providers.pi_parser import PiEventParser
@@ -132,6 +137,11 @@ def _make_spec(workdir: Path, session_id: str = "pool1.agent1") -> ExternalEnvSp
         targets=[("helper", "a helper agent")],
         modexctl_bin_dir=workdir / "bin",
     )
+
+
+def _pool_provider(backend: StreamingProviderBackend) -> PoolScopedBackendProvider:
+    """Wrap a backend in the default pool-scoped provider (T2 migration helper)."""
+    return PoolScopedBackendProvider(backend)
 
 
 def _make_ctx(session_id: str = "pool1.agent1") -> AgentContext:
@@ -296,7 +306,7 @@ class TestExternalCodingAgentFullTurn:
         paths = ExternalPaths(tmp_path)
         store = LocalFileExternalSessionMapStore(paths)
         agent = ExternalCodingAgent(
-            backend=adapter,
+            backend_provider=_pool_provider(adapter),
             session_store=store,
             parser=PiEventParser(),
             provider_kind=ProviderKind.PI,
@@ -365,7 +375,7 @@ class TestAgentsMdIdempotency:
         spec = _make_spec(tmp_path)
         store = LocalFileExternalSessionMapStore(ExternalPaths(tmp_path))
         agent = ExternalCodingAgent(
-            backend=adapter,
+            backend_provider=_pool_provider(adapter),
             session_store=store,
             parser=PiEventParser(),
             provider_kind=ProviderKind.PI,
@@ -408,7 +418,7 @@ class TestExternalCodingAgentStop:
 
         backend = _BlockingBackend()
         agent = ExternalCodingAgent(
-            backend=backend,
+            backend_provider=_pool_provider(backend),
             session_store=LocalFileExternalSessionMapStore(ExternalPaths(tmp_path)),
             parser=PiEventParser(),
             provider_kind=ProviderKind.PI,
@@ -462,7 +472,7 @@ class TestExternalCodingAgentStop:
 
         backend = _BlockingFailOnceBackend()
         agent = ExternalCodingAgent(
-            backend=backend,
+            backend_provider=_pool_provider(backend),
             session_store=LocalFileExternalSessionMapStore(ExternalPaths(tmp_path)),
             parser=PiEventParser(),
             provider_kind=ProviderKind.PI,
@@ -517,7 +527,7 @@ class TestExternalCodingAgentStop:
 
         backend = _FailOnceBackend()
         agent = ExternalCodingAgent(
-            backend=backend,
+            backend_provider=_pool_provider(backend),
             session_store=LocalFileExternalSessionMapStore(ExternalPaths(tmp_path)),
             parser=PiEventParser(),
             provider_kind=ProviderKind.PI,
@@ -557,7 +567,7 @@ class TestExternalCodingAgentStop:
 
         backend = _CancelledOnceBackend()
         agent = ExternalCodingAgent(
-            backend=backend,
+            backend_provider=_pool_provider(backend),
             session_store=LocalFileExternalSessionMapStore(ExternalPaths(tmp_path)),
             parser=PiEventParser(),
             provider_kind=ProviderKind.PI,
@@ -605,7 +615,7 @@ class TestCurrentAgentContextLifecycle:
         spec = _make_spec(tmp_path)
         store = LocalFileExternalSessionMapStore(ExternalPaths(tmp_path))
         agent = ExternalCodingAgent(
-            backend=adapter_with_fx,
+            backend_provider=_pool_provider(adapter_with_fx),
             session_store=store,
             parser=PiEventParser(),
             provider_kind=ProviderKind.PI,
@@ -639,7 +649,7 @@ class TestCurrentAgentContextLifecycle:
         spec = _make_spec(tmp_path)
         store = LocalFileExternalSessionMapStore(ExternalPaths(tmp_path))
         agent = ExternalCodingAgent(
-            backend=_AlwaysFailing(),
+            backend_provider=_pool_provider(_AlwaysFailing()),
             session_store=store,
             parser=PiEventParser(),
             provider_kind=ProviderKind.PI,
@@ -691,7 +701,7 @@ class TestStaleSessionRecovery:
 
         backend = _FlakyBackend()
         agent = ExternalCodingAgent(
-            backend=backend,
+            backend_provider=_pool_provider(backend),
             session_store=store,
             parser=PiEventParser(),
             provider_kind=ProviderKind.PI,
@@ -726,7 +736,7 @@ class TestStaleSessionRecovery:
         spec = _make_spec(tmp_path)
         store = LocalFileExternalSessionMapStore(ExternalPaths(tmp_path))
         agent = ExternalCodingAgent(
-            backend=_AlwaysStale(),
+            backend_provider=_pool_provider(_AlwaysStale()),
             session_store=store,
             parser=PiEventParser(),
             provider_kind=ProviderKind.PI,
@@ -767,7 +777,7 @@ class TestOutboundSendViaRouting:
         adapter = ScriptedStreamingAdapter(scripted, PiEventParser(), send_side_effect=side_effect)
         store = LocalFileExternalSessionMapStore(ExternalPaths(tmp_path))
         agent = ExternalCodingAgent(
-            backend=adapter,
+            backend_provider=_pool_provider(adapter),
             session_store=store,
             parser=PiEventParser(),
             provider_kind=ProviderKind.PI,
@@ -818,7 +828,7 @@ class TestExternalCodingAgentBuilder:
 
         agent = (
             ExternalCodingAgentBuilder()
-            .with_backend(adapter)
+            .with_backend_provider(_pool_provider(adapter))
             .with_session_store(store)
             .with_parser(PiEventParser())
             .with_provider_kind(ProviderKind.PI)
@@ -843,3 +853,234 @@ class TestExecOptionsRetryCopy:
         assert retried.prompt == "x"
         # Original is untouched (frozen semantics via copy).
         assert opts.resume_session_id == "old"
+
+
+# ---------------------------------------------------------------------------
+# Seam 3 — BackendProvider acquire/release lifecycle (ADR-0027, T2)
+# ---------------------------------------------------------------------------
+
+
+class _RecordingProvider(BackendProvider):
+    """BackendProvider test double that records every call.
+
+    ``acquire`` returns the wrapped backend so the agent can drive a real
+    turn. ``release`` and ``close_all`` record their arguments so a test
+    can assert ordering, ``turn_failed`` propagation, and shutdown
+    routing without observing the backend itself.
+    """
+
+    def __init__(self, backend: StreamingProviderBackend) -> None:
+        self._backend = backend
+        self.acquire_calls: list[tuple[str, TurnContext]] = []
+        self.release_calls: list[tuple[StreamingProviderBackend, bool]] = []
+        self.close_all_calls: int = 0
+
+    async def acquire(
+        self, modex_session_id: str, turn_context: TurnContext
+    ) -> StreamingProviderBackend:
+        self.acquire_calls.append((modex_session_id, turn_context))
+        return self._backend
+
+    async def release(
+        self, backend: StreamingProviderBackend, *, turn_failed: bool
+    ) -> None:
+        self.release_calls.append((backend, turn_failed))
+
+    async def close_all(self) -> None:
+        self.close_all_calls += 1
+
+
+class _FailingBackend(StreamingProviderBackend):
+    """Backend whose ``execute_streaming`` always raises."""
+
+    def __init__(self, exc: BaseException) -> None:
+        self._exc = exc
+
+    async def execute_streaming(
+        self,
+        opts: ExecOptions,
+        env: dict[str, str],
+        on_emission: Callable[[Emission], Awaitable[None]],
+    ) -> BackendResult:
+        raise self._exc
+
+
+class _CountingCloseBackend(StreamingProviderBackend):
+    """Backend that counts ``close()`` calls — for PoolScopedBackendProvider tests."""
+
+    def __init__(self) -> None:
+        self.close_calls = 0
+
+    async def execute_streaming(
+        self,
+        opts: ExecOptions,
+        env: dict[str, str],
+        on_emission: Callable[[Emission], Awaitable[None]],
+    ) -> BackendResult:
+        return BackendResult(status=BackendStatus.COMPLETED)
+
+    async def close(self) -> None:
+        self.close_calls += 1
+
+
+class TestRunTurnAcquireReleaseLifecycle:
+    """Seam 3 — ``_run_turn`` borrows a backend per turn via the provider."""
+
+    @pytest.mark.asyncio
+    async def test_acquire_called_once_before_execute_streaming(self, tmp_path: Path) -> None:
+        scripted = ScriptedProviderBackend(
+            ScriptedProgramme(steps=(_pi_text_step("hi"),), session_id="prov-1")
+        )
+        adapter = ScriptedStreamingAdapter(scripted, PiEventParser())
+        provider = _RecordingProvider(adapter)
+        agent = ExternalCodingAgent(
+            backend_provider=provider,
+            session_store=LocalFileExternalSessionMapStore(ExternalPaths(tmp_path)),
+            parser=PiEventParser(),
+            provider_kind=ProviderKind.PI,
+            spec=_make_spec(tmp_path),
+            base_env={"PATH": "/usr/bin"},
+        )
+
+        await agent.run(_make_ctx(), RecordingEmitter())
+
+        # acquire ran exactly once, before execute_streaming recorded its opts.
+        assert len(provider.acquire_calls) == 1
+        modex_sid, turn_context = provider.acquire_calls[0]
+        assert modex_sid == "pool1.agent1"
+        assert turn_context.provider_kind is ProviderKind.PI
+        assert turn_context.workdir == tmp_path
+        # The backend was actually used (the adapter recorded the call).
+        assert len(adapter.recorded_opts) == 1
+
+    @pytest.mark.asyncio
+    async def test_release_turn_failed_false_on_success_path(self, tmp_path: Path) -> None:
+        scripted = ScriptedProviderBackend(
+            ScriptedProgramme(steps=(_pi_text_step("hi"),), session_id="prov-1")
+        )
+        adapter = ScriptedStreamingAdapter(scripted, PiEventParser())
+        provider = _RecordingProvider(adapter)
+        agent = ExternalCodingAgent(
+            backend_provider=provider,
+            session_store=LocalFileExternalSessionMapStore(ExternalPaths(tmp_path)),
+            parser=PiEventParser(),
+            provider_kind=ProviderKind.PI,
+            spec=_make_spec(tmp_path),
+            base_env={"PATH": "/usr/bin"},
+        )
+
+        await agent.run(_make_ctx(), RecordingEmitter())
+
+        # release ran exactly once with turn_failed=False on the success path.
+        assert len(provider.release_calls) == 1
+        released_backend, turn_failed = provider.release_calls[0]
+        assert released_backend is adapter
+        assert turn_failed is False
+
+    @pytest.mark.asyncio
+    async def test_release_turn_failed_true_on_exception_path(self, tmp_path: Path) -> None:
+        # A backend whose execute_streaming always raises a non-stale error.
+        boom = RuntimeError("boom")
+        provider = _RecordingProvider(_FailingBackend(boom))
+        agent = ExternalCodingAgent(
+            backend_provider=provider,
+            session_store=LocalFileExternalSessionMapStore(ExternalPaths(tmp_path)),
+            parser=PiEventParser(),
+            provider_kind=ProviderKind.PI,
+            spec=_make_spec(tmp_path),
+            base_env={"PATH": "/usr/bin"},
+        )
+
+        result = await agent.run(_make_ctx(), RecordingEmitter())
+
+        # The turn surfaced as an error result (the harness catches the
+        # exception and emits an AgentResult with stop_reason=ERROR).
+        assert result.stop_reason == StopReason.ERROR
+        # release was called with turn_failed=True in the finally block,
+        # even though the turn failed before reaching _execute_with_retry's
+        # own StaleSessionError retry.
+        assert len(provider.release_calls) == 1
+        _, turn_failed = provider.release_calls[0]
+        assert turn_failed is True
+
+
+class TestStopCallsCloseAll:
+    """Seam 3 — ``stop()`` routes through ``BackendProvider.close_all``."""
+
+    @pytest.mark.asyncio
+    async def test_stop_calls_provider_close_all(self, tmp_path: Path) -> None:
+        backend = _CountingCloseBackend()
+        provider = _RecordingProvider(backend)
+        agent = ExternalCodingAgent(
+            backend_provider=provider,
+            session_store=LocalFileExternalSessionMapStore(ExternalPaths(tmp_path)),
+            parser=PiEventParser(),
+            provider_kind=ProviderKind.PI,
+            spec=_make_spec(tmp_path),
+        )
+
+        await agent.stop()
+
+        # close_all was called; the underlying backend.close() was NOT
+        # called directly by the agent (the provider owns that routing).
+        assert provider.close_all_calls == 1
+        assert backend.close_calls == 0
+        assert agent._stopped is True
+
+
+class TestPoolScopedBackendProvider:
+    """Seam 3 — the main-agent provider implementation contract."""
+
+    @pytest.mark.asyncio
+    async def test_acquire_returns_same_backend_every_time(self, tmp_path: Path) -> None:
+        backend = _CountingCloseBackend()
+        provider = PoolScopedBackendProvider(backend)
+        ctx = TurnContext(provider_kind=ProviderKind.PI, workdir=tmp_path)
+
+        first = await provider.acquire("sid-1", ctx)
+        second = await provider.acquire("sid-2", ctx)
+
+        assert first is backend
+        assert second is backend
+
+    @pytest.mark.asyncio
+    async def test_release_is_no_op(self, tmp_path: Path) -> None:
+        backend = _CountingCloseBackend()
+        provider = PoolScopedBackendProvider(backend)
+
+        # release must not close the backend or otherwise touch it; the
+        # pool owns the lifetime. Both turn_failed values must be accepted.
+        await provider.release(backend, turn_failed=False)
+        await provider.release(backend, turn_failed=True)
+
+        assert backend.close_calls == 0
+
+    @pytest.mark.asyncio
+    async def test_close_all_calls_backend_close(self, tmp_path: Path) -> None:
+        backend = _CountingCloseBackend()
+        provider = PoolScopedBackendProvider(backend)
+
+        await provider.close_all()
+
+        assert backend.close_calls == 1
+
+    @pytest.mark.asyncio
+    async def test_close_all_propagates_backend_close_failure(self, tmp_path: Path) -> None:
+        failure = RuntimeError("close failed")
+
+        class _CloseFailingBackend(StreamingProviderBackend):
+            async def execute_streaming(
+                self,
+                opts: ExecOptions,
+                env: dict[str, str],
+                on_emission: Callable[[Emission], Awaitable[None]],
+            ) -> BackendResult:
+                return BackendResult(status=BackendStatus.COMPLETED)
+
+            async def close(self) -> None:
+                raise failure
+
+        provider = PoolScopedBackendProvider(_CloseFailingBackend())
+
+        with pytest.raises(RuntimeError, match="close failed"):
+            await provider.close_all()
