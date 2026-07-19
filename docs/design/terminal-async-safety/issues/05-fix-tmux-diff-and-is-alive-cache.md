@@ -55,18 +55,18 @@ This ticket does NOT touch the visible-windows, hidden-windows, or pexpect backe
 
 **Blocked by:** 01 — Prefactor: expand `TerminalBackend` with async-safety scaffolding.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `TmuxPtyBackend.read` uses `capture-pane -p -S -` (full scrollback)
-- [ ] `_diff_output` rewritten to prefix-match (returns suffix if previous is a line-prefix of current; falls back to all-current on prefix failure)
-- [ ] `is_alive` has 1-second TTL cache (`_alive_cache: tuple[float, bool] | None`); cache invalidated on `terminate`/`kill`
-- [ ] `TmuxPtyBackend` implements `_shell_family`
-- [ ] `TmuxPtyBackend` deletes the inline shell-suffix tuple from `clear_input_line` and `drain_startup`
-- [ ] `TmuxPtyBackend` deletes `_uses_readline` private helper if present
-- [ ] `TmuxPtyBackend` keeps `write`/`read_pending`/`current_segment`/`drain_startup` overrides (snapshot backend — D5)
-- [ ] `tests/unit/tools/terminal/backends/test_tmux_pty.py` covers prefix-match diff (including 60-line scroll case), `is_alive` TTL, shell-family, inherited `clear_input_line`
-- [ ] `ruff check src/modex_agent/tools/terminal/backends/tmux_pty.py` clean
-- [ ] `mypy src/modex_agent/tools/terminal/backends/tmux_pty.py` clean
+- [x] `TmuxPtyBackend.read` uses `capture-pane -p -S -` (full scrollback)
+- [x] `_diff_output` rewritten to prefix-match (returns suffix if previous is a line-prefix of current; falls back to all-current on prefix failure)
+- [x] `is_alive` has 1-second TTL cache (`_alive_cache: tuple[float, bool] | None`); cache invalidated on `terminate`/`kill`
+- [x] `TmuxPtyBackend` implements `_shell_family`
+- [x] `TmuxPtyBackend` deletes the inline shell-suffix tuple from `clear_input_line` and `drain_startup`
+- [x] `TmuxPtyBackend` deletes `_uses_readline` private helper if present
+- [x] `TmuxPtyBackend` keeps `write`/`read_pending`/`current_segment`/`drain_startup` overrides (snapshot backend — D5)
+- [x] `tests/unit/tools/terminal/backends/test_tmux_pty.py` covers prefix-match diff (including 60-line scroll case), `is_alive` TTL, shell-family, inherited `clear_input_line`
+- [x] `ruff check src/modex_agent/tools/terminal/backends/tmux_pty.py` clean
+- [x] `mypy src/modex_agent/tools/terminal/backends/tmux_pty.py` clean
 
 ## Comments
 
