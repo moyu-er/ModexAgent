@@ -228,7 +228,7 @@ export function SettingsView({ onExit }: Props) {
           variant="ghost"
           size="sm"
           onClick={onExit}
-          className="mb-5 w-full justify-start gap-2 px-3 text-sm font-medium text-ink hover:bg-hairline-soft"
+          className="mb-5 w-full justify-start gap-2 px-3 text-base font-medium text-ink hover:bg-hairline-soft"
         >
           <ChevronLeft className="h-4 w-4" />
           {t("settings.nav.back")}
@@ -271,7 +271,7 @@ export function SettingsView({ onExit }: Props) {
             ) : null}
           </div>
           {isPersisted && form && (
-            <ActionBar>
+            <ActionBar dirty={dirty}>
               <Button
                 variant="secondary"
                 size="sm"
@@ -328,7 +328,7 @@ function SidebarGroup({
 }) {
   return (
     <div className="rounded-lg border border-hairline bg-canvas-elevated p-2">
-      <h2 className="mb-1.5 px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-widest text-mute border-b border-hairline">
+      <h2 className="mb-1.5 border-b border-hairline px-2 pb-1.5 text-xs font-semibold uppercase tracking-wide text-mute">
         {title}
       </h2>
       <ul className="mt-1.5 space-y-0.5">
@@ -385,7 +385,7 @@ function PersistedDomain({
                       >
                         <Icon className="h-5 w-5" />
                       </span>
-                      <span className="font-mono text-sm font-semibold text-bright">
+                      <span className="font-mono text-base font-semibold text-bright">
                         {section.label}
                       </span>
                     </div>
@@ -421,7 +421,7 @@ function PersistedDomain({
         />
       )}
 
-      {error && <p className="mt-4 text-sm text-error">{error}</p>}
+      {error && <p className="mt-4 text-base text-error">{error}</p>}
     </>
   );
 }

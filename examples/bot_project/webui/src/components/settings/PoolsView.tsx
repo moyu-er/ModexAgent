@@ -19,7 +19,6 @@ import { ApiError } from "../../lib/api";
 import { useToast } from "../ToastContext";
 import { PoolEditor } from "./PoolEditor";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { SectionLabel } from "../ui/SectionLabel";
 import { ActionBar } from "../ui/ActionBar";
 import { Button } from "../ui/Button";
 import { IconButton } from "../ui/IconButton";
@@ -78,10 +77,10 @@ export function PoolsView({ onNavigateToPrompts }: { onNavigateToPrompts: () => 
   }, [pools, filter]);
 
   if (loadError) {
-    return <p className="text-sm text-error">{t("common.failedToLoad", { error: loadError })}</p>;
+    return <p className="text-base text-error">{t("common.failedToLoad", { error: loadError })}</p>;
   }
   if (!pools) {
-    return <p className="text-sm text-mute">{t("common.loading")}</p>;
+    return <p className="text-base text-mute">{t("common.loading")}</p>;
   }
 
   const onSelect = (name: string): void => {
@@ -166,18 +165,6 @@ export function PoolsView({ onNavigateToPrompts }: { onNavigateToPrompts: () => 
         aria-label={t("settings.pools.poolList")}
         className="flex max-h-48 w-full shrink-0 flex-col gap-3 border-b border-hairline bg-canvas-elevated pb-3 lg:max-h-none lg:w-64 lg:border-b-0 lg:border-r lg:pb-0 lg:pr-3"
       >
-        <div className="flex items-center justify-between">
-          <SectionLabel>{t("settings.pools.title")}</SectionLabel>
-          <IconButton
-            icon={<PlusIcon />}
-            label={t("settings.pools.addPool")}
-            variant="ghost"
-            size="sm"
-            className="text-mute hover:text-link"
-            onClick={() => setAdding(true)}
-          />
-        </div>
-
         <Input
           aria-label={t("settings.pools.filterPools")}
           placeholder={t("settings.pools.filterPoolsPlaceholder")}
@@ -197,7 +184,7 @@ export function PoolsView({ onNavigateToPrompts }: { onNavigateToPrompts: () => 
             <input
               autoFocus
               placeholder={t("settings.pools.newPoolName")}
-              className="mb-1 w-full rounded-sm border border-hairline bg-canvas-elevated px-2 py-1 text-sm text-ink focus:border-link focus:outline-none focus:ring-1 focus:ring-link"
+              className="mb-1 w-full rounded-sm border border-hairline bg-canvas-elevated px-2 py-1 text-base text-ink focus:border-link focus:outline-none focus:ring-1 focus:ring-link"
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               onBlur={() => void onAdd()}
@@ -225,7 +212,7 @@ export function PoolsView({ onNavigateToPrompts }: { onNavigateToPrompts: () => 
                   >
                     <button
                       type="button"
-                      className="min-w-0 flex-1 truncate text-left text-sm"
+                      className="min-w-0 flex-1 truncate text-left text-base"
                       onClick={() => onSelect(p.name)}
                       title={t("settings.pools.subagentCount", { count: p.subagent_count })}
                     >
@@ -245,6 +232,23 @@ export function PoolsView({ onNavigateToPrompts }: { onNavigateToPrompts: () => 
                 </li>
               );
             })}
+
+            {/* Add-pool action — sits at the end of the list as a dashed
+                + row, so the list reads as the single source of truth for
+                pools and the affordance is contextual to the items. */}
+            {!adding && (
+              <li>
+                <button
+                  type="button"
+                  onClick={() => setAdding(true)}
+                  aria-label={t("settings.pools.addPool")}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-hairline px-3 py-2 text-base text-mute transition-colors hover:border-border-strong hover:bg-hairline-soft hover:text-link"
+                >
+                  <PlusIcon />
+                  {t("settings.pools.addPool")}
+                </button>
+              </li>
+            )}
           </ul>
 
           {pools.length > 0 && visiblePools.length === 0 && (
@@ -282,7 +286,7 @@ export function PoolsView({ onNavigateToPrompts }: { onNavigateToPrompts: () => 
                 onNavigateToPrompts={onNavigateToPrompts}
               />
             </div>
-            <ActionBar>
+            <ActionBar dirty={dirty}>
               <Button
                 variant="secondary"
                 size="sm"
@@ -303,7 +307,7 @@ export function PoolsView({ onNavigateToPrompts }: { onNavigateToPrompts: () => 
             </ActionBar>
           </>
         ) : (
-          <p className="text-sm text-mute">
+          <p className="text-base text-mute">
             {t("settings.pools.selectOrCreate")}
           </p>
         )}
