@@ -265,6 +265,15 @@ async def create_pool(
 
     default_resolved = _resolved_or_placeholder(bot_model_config).default_resolved()
 
+    # Wrap before _build_agent_factory AND AgentMaterializeDeps so both the
+    # main-agent _create_with_emitter path and the external-subagent
+    # BotSubagentExternalCodingBuilder path receive the same wrapped factory.
+    if emitter_factory is not None and workspace_resolver is not None:
+        emitter_factory = _WorkspaceEmitterFactory(
+            emitter_factory,
+            lambda: _cell_sessions_dir(workspace_resolver),
+        )
+
     factory = _build_agent_factory(
         provider, tool_manager, skill_manager,
         inbox_server, shared_hooks, shared_hook_runner,
@@ -335,6 +344,7 @@ async def create_pool(
         workspace_path_resolver=path_resolver, mcp_registry=mcp_registry,
         todo_store=todo_store, trace_enabled=_resolve_trace_enabled(app_config),
         subagent_external_coding_builder=subagent_external_coding_builder,
+        emitter_factory=emitter_factory,
     )
     pool.materialize_deps = deps
     pool.template_registry = template_registry
@@ -794,19 +804,10 @@ def _build_agent_factory(
     # (R) once the workspace is assembled; R.resolve_workspace().pool_data[pool]
     # is what the pipeline reads per turn.
     #
-    # When both emitters and a workspace resolver are configured, the emitter
-    # factory is also wrapped so every created emitter gets a sessions-dir
-    # provider derived from the resolver cell: transcript writes then resolve
-    # the owning workspace's sessions dir from the cell - the SAME source that
-    # memory/runtime/output use - instead of the fallible bind_workspace_root
-    # ctxvar (which is lost across the broker-queue task boundary).
+    # ``emitter_factory`` arrives pre-wrapped by ``create_pool`` so both
+    # this wrapper and ``AgentMaterializeDeps.emitter_factory`` see the same
+    # factory (external subagents bypass this wrapper).
     _orig_create = factory.create_agent
-
-    if emitter_factory is not None and workspace_resolver is not None:
-        emitter_factory = _WorkspaceEmitterFactory(
-            emitter_factory,
-            lambda: _cell_sessions_dir(workspace_resolver),
-        )
 
     async def _create_with_emitter(*args: Any, **kwargs: Any) -> Any:
         instance = await _orig_create(*args, **kwargs)

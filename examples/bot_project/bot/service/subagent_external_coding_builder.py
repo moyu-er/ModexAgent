@@ -184,8 +184,8 @@ class BotSubagentExternalCodingBuilder(SubagentExternalCodingBuilder):
         method MUST NOT call ``pool.register_resident`` or
         ``deps.on_subagent_created``.
         """
+        from bot.scope import BotRecordScope
         from bot.service.builders import build_external_session_map_store
-        from modex_agent.core.scope import RecordScope
 
         # ── 0. Resolve per-invocation identity ───────────────────────────
         agent_name = spec.agent_name
@@ -218,7 +218,7 @@ class BotSubagentExternalCodingBuilder(SubagentExternalCodingBuilder):
             self._app_config,
             self._persistence,
             workspace_dir,
-            RecordScope(pool=self._pool_name),
+            BotRecordScope(pool=self._pool_name),
         )
 
         # ── 3. ProviderEventParser per provider_kind ─────────────────────

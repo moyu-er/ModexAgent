@@ -343,6 +343,18 @@ class AgentTemplate:
             deps=deps,
         )
 
+        # External subagents bypass pool_builder's ``_create_with_emitter``
+        # wrapper, so the framework must inject the emitter factory here.
+        # ``ExternalTurnRunner`` inherits the no-op ``set_pool_context``
+        # default, so only emitter wiring is needed.
+        if (
+            instance.pipeline is not None
+            and deps.emitter_factory is not None
+        ):
+            instance.pipeline._turn_runner.set_emitter_factory(
+                deps.emitter_factory
+            )
+
         await deps.pool.register_resident(descriptor, instance)
 
         if parent_session is not None and deps.on_subagent_created is not None:

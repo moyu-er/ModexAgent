@@ -151,6 +151,7 @@ def _make_deps(
     project_dir: Path | None = None,
     workspace_path_resolver: Any | None = None,
     session_registry: Any | None = None,
+    emitter_factory: Any | None = None,
 ) -> AgentMaterializeDeps:
     return AgentMaterializeDeps(
         agent_factory=MagicMock(),
@@ -161,6 +162,7 @@ def _make_deps(
         project_dir=project_dir,
         workspace_path_resolver=workspace_path_resolver,
         session_registry=session_registry,
+        emitter_factory=emitter_factory,
     )
 
 
@@ -487,6 +489,14 @@ async def test_build_outbox_path_matches_external_paths_layout(
     hook: SubagentAutoSendHook = auto_send_specs[0].hook
     expected = ExternalPaths(tmp_path).outbox
     assert hook._external_outbox_path == expected
+
+
+# Emitter factory injection for external subagents is owned by
+# ``AgentTemplate._materialize_external`` (framework-layer dispatch point),
+# not by ``BotSubagentExternalCodingBuilder.build``. Regression tests live in
+# ``tests/unit/multi_agent/test_template_materialize.py`` —
+# ``test_materialize_external_injects_emitter_factory_into_turn_runner`` and
+# ``test_materialize_external_skips_emitter_injection_when_deps_emitter_none``.
 
 
 # ---------------------------------------------------------------------------
