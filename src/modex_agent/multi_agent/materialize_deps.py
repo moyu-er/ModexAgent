@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from modex_agent.agents.external_coding.subagent_builder import SubagentExternalCodingBuilder
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.core.session_id import SessionIdFactory
     from modex_agent.core.session_registry import SessionRegistry
@@ -64,3 +65,12 @@ class AgentMaterializeDeps:
     mcp_registry: McpConnectionRegistry | None = None
     todo_store: TodoStore | None = None
     trace_enabled: bool = True
+    subagent_external_coding_builder: SubagentExternalCodingBuilder | None = None
+    """Optional seam for ``EXTERNAL_CODING`` subagent materialization (T5).
+    Injected only by pools that declare at least one external_coding subagent;
+    react-only pools leave it ``None``. ``AgentTemplate.materialize`` checks
+    the spec's ``execution_strategy`` and dispatches to ``builder.build(...)``
+    instead of ``agent_factory.create_agent(...)`` when it is
+    ``EXTERNAL_CODING``; the dispatch ends with the same
+    ``pool.register_resident`` + ``on_subagent_created`` calls the react path
+    makes."""

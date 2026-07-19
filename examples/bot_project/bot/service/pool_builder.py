@@ -933,6 +933,7 @@ def _build_communication(
                 name=t.spec.agent_name,
                 kind=AgentCommKind.SUBAGENT,
                 description=t.spec.description,
+                execution_strategy=t.spec.execution_strategy,
             )
         )
     logger.info("Pool '%s': communication store (%d targets)", pool_name, len(main_store.list()))

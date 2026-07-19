@@ -7,6 +7,7 @@ from modex_agent.core.constants import ExecutionStrategyKind, ReasoningEffort
 from modex_agent.multi_agent.comm_kind import AgentCommKind
 
 if TYPE_CHECKING:
+    from modex_agent.agents.external_coding.paths import ProviderKind
     from modex_agent.core.context import ContextManager
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.ioc.configs.memory import MemoryConfig
@@ -60,6 +61,13 @@ class AgentDescriptor:
     allowed_skills: list[str] | None = None
     max_iterations: int = 15
     execution_strategy: ExecutionStrategyKind = ExecutionStrategyKind.REACT  # ExecutionStrategyKind member
+    provider_kind: ProviderKind | None = None
+    """External-coding provider discriminator — symmetric with
+    ``execution_strategy``. Set iff ``execution_strategy`` is
+    ``EXTERNAL_CODING``; ``None`` for every react/pipeline/single-turn agent.
+    Mirrors :attr:`modex_agent.multi_agent.pool_config.specs.SubagentSpec.provider_kind`
+    and :attr:`MainAgentSpec.provider_kind`; the spec's value is forwarded
+    verbatim by ``AgentTemplate.materialize``."""
     context_manager: ContextManager | None = None
     context_strategy: str = "persistent"  # "persistent" | "ephemeral" | "shared"
     inbox_strategy: str = "drain_all"  # "drain_all" | "drain_limit" | "peek_latest"

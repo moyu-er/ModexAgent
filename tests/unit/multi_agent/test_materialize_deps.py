@@ -135,3 +135,23 @@ def test_llm_reasoning_effort_defaults_to_none_and_settable() -> None:
         llm_reasoning_effort=ReasoningEffort.HIGH,
     )
     assert deps_set.llm_reasoning_effort == ReasoningEffort.HIGH
+
+
+def test_subagent_external_coding_builder_defaults_none_and_settable() -> None:
+    deps_default = AgentMaterializeDeps(
+        agent_factory=MagicMock(),
+        pool=MagicMock(),
+        session_factory=SessionIdFactory(),
+        broker=MagicMock(),
+    )
+    assert deps_default.subagent_external_coding_builder is None
+
+    builder = MagicMock()
+    deps_set = AgentMaterializeDeps(
+        agent_factory=MagicMock(),
+        pool=MagicMock(),
+        session_factory=SessionIdFactory(),
+        broker=MagicMock(),
+        subagent_external_coding_builder=builder,  # type: ignore[arg-type]
+    )
+    assert deps_set.subagent_external_coding_builder is builder

@@ -69,6 +69,15 @@ class SubagentDispatchStrategy(SendStrategy):
         self, req: SendRequest, session: SessionInfo, invocation_id: str
     ) -> AgentSendResult:
         """Add trace/output paths for subagent ack."""
+        from modex_agent.core.constants import ExecutionStrategyKind
+
+        if req.target.execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING:
+            return self._build_external_result(req, session, invocation_id)
+        return self._build_native_result(req, session, invocation_id)
+
+    def _build_native_result(
+        self, req: SendRequest, session: SessionInfo, invocation_id: str
+    ) -> AgentSendResult:
         created_new_task = req.invocation_id is None or req.invocation_id.strip() == ""
         return AgentSendResult(
             target_agent=req.target.name,
@@ -78,4 +87,16 @@ class SubagentDispatchStrategy(SendStrategy):
             created_new_task=created_new_task,
             output_path=self._subagent_output_path(req.target.kind, str(session)),
             trace_dir=self._subagent_trace_dir(req.target.kind, str(session)),
+        )
+
+    def _build_external_result(
+        self, req: SendRequest, session: SessionInfo, invocation_id: str
+    ) -> AgentSendResult:
+        created_new_task = req.invocation_id is None or req.invocation_id.strip() == ""
+        return AgentSendResult(
+            target_agent=req.target.name,
+            target_kind=req.target.kind,
+            session_id=str(session),
+            invocation_id=invocation_id,
+            created_new_task=created_new_task,
         )
