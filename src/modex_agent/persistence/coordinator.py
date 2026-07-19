@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -37,6 +36,7 @@ from modex_agent.runtime.approval_decision import (
 from modex_agent.runtime.enums import TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import JsonValue, TurnSnapshot
 from modex_agent.runtime.store import ActiveTurnConflictError
+from modex_agent.utils.time import now_ms
 
 if TYPE_CHECKING:
     from modex_agent.persistence.connection import ConnectionManager
@@ -79,12 +79,12 @@ def _build_scope(snapshot: TurnSnapshot) -> str:
     ).canonical()
 
 
-def _iso_to_epoch(iso_str: str) -> float:
-    """Parse an ISO-8601 timestamp string to epoch seconds (float)."""
+def _iso_to_epoch_ms(iso_str: str) -> int:
+    """Parse an ISO-8601 timestamp string to epoch milliseconds (int)."""
     dt = datetime.fromisoformat(iso_str)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
-    return dt.timestamp()
+    return int(dt.timestamp() * 1000)
 
 
 class SqliteDecisionCoordinator(ApprovalDecisionCoordinator):
@@ -162,8 +162,9 @@ class SqliteDecisionCoordinator(ApprovalDecisionCoordinator):
         payload_json = json.dumps(payload, ensure_ascii=False, default=str)
         scope_json = _build_scope(snapshot)
         db_phase = _phase_to_db(snapshot.phase)
-        now = time.time()
-        decided_at_epoch = _iso_to_epoch(entry.decided_at)
+        now = now_ms()
+        created_at_ms = int(snapshot.created_at * 1000)
+        decided_at_ms = _iso_to_epoch_ms(entry.decided_at)
 
         async with self._connection.transaction() as tx:
             # Active-turn conflict pre-check (same logic as save_turn).
@@ -186,11 +187,11 @@ class SqliteDecisionCoordinator(ApprovalDecisionCoordinator):
             try:
                 await tx.execute(
                     "INSERT INTO turn_snapshots "
-                    "(session_id, agent_id, turn_id, scope, agent_kind, phase, "
+                    "(session_id, agent_id, turn_id, scope_key, agent_kind, phase, "
                     " reason, created_at, updated_at, schema_version, payload_json) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                     "ON CONFLICT(session_id, agent_id, turn_id) DO UPDATE SET "
-                    " scope = excluded.scope,"
+                    " scope_key = excluded.scope_key,"
                     " agent_kind = excluded.agent_kind,"
                     " phase = excluded.phase,"
                     " reason = excluded.reason,"
@@ -206,7 +207,7 @@ class SqliteDecisionCoordinator(ApprovalDecisionCoordinator):
                         snapshot.agent_kind.value,
                         db_phase,
                         snapshot.reason.value,
-                        snapshot.created_at,
+                        created_at_ms,
                         now,
                         snapshot.schema_version,
                         payload_json,
@@ -222,7 +223,7 @@ class SqliteDecisionCoordinator(ApprovalDecisionCoordinator):
             # propagates and rolls back the snapshot upsert above.
             await tx.execute(
                 "INSERT INTO approval_audit_log "
-                "(turn_uuid, session_id, scope, agent_id, turn_id, tool_name, "
+                "(turn_uuid, session_id, scope_key, agent_id, turn_id, tool_name, "
                 " tool_call_id, decision, deny_reason, decided_at, decided_by) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
@@ -235,7 +236,7 @@ class SqliteDecisionCoordinator(ApprovalDecisionCoordinator):
                     entry.tool_call_id,
                     entry.decision,
                     entry.deny_reason,
-                    decided_at_epoch,
+                    decided_at_ms,
                     entry.decided_by,
                 ),
             )

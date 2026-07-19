@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping, Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +42,20 @@ def _require_archive(bundle: MemoryStoreBundle) -> ArchiveStore:
     """Return the archive store from the bundle, asserting it is present."""
     assert bundle.archive is not None, "Archive layer requires bundle.archive"
     return bundle.archive
+
+
+def _parse_created_at(value: object) -> datetime | None:
+    """Parse a ``created_at`` value into a timezone-aware datetime.
+
+    The file backend serialises timestamps as int ms (T9); legacy data and
+    the SQLite adapter may also emit ISO-8601 strings or float ms. Returns
+    ``None`` for missing/empty values.
+    """
+    if isinstance(value, int | float):
+        return datetime.fromtimestamp(value / 1000.0, tz=UTC)
+    if isinstance(value, str) and value:
+        return datetime.fromisoformat(value)
+    return None
 
 
 class ScopedArchiveMemoryManager(ArchiveMemoryManager):
@@ -112,7 +126,7 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
     async def append(self, context: MemoryContext, entry: ArchiveEntry) -> ArchiveEntry:
         metadata = dict(entry.metadata)
         if entry.created_at is not None:
-            metadata["created_at"] = entry.created_at.isoformat()
+            metadata["created_at"] = int(entry.created_at.timestamp() * 1000)
         result = await self.append_bundle(
             context,
             (
@@ -279,7 +293,9 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
                 "raw_refs": list(entry.raw_refs),
                 "session_id": context.session_id,
                 "channel": ArchiveChannel.CONTEXT.value,
-                "created_at": entry.created_at.isoformat() if entry.created_at else None,
+                "created_at": int(entry.created_at.timestamp() * 1000)
+                if entry.created_at
+                else None,
             }
         )
         await self._maybe_prune(context)
@@ -288,7 +304,7 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
             summary=str(stored.get("summary", "")),
             metadata=stored.get("metadata") or {},
             entry_id=int(stored["entry_id"]) if stored.get("entry_id") is not None else None,
-            created_at=datetime.fromisoformat(created_at) if isinstance(created_at, str) else None,
+            created_at=_parse_created_at(created_at),
             raw_refs=list(stored.get("raw_refs") or []),
         )
 
@@ -399,10 +415,7 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
 
     def _entry_from_dict(self, entry: dict[str, object]) -> ArchiveEntry:
         created_at = entry.get("created_at")
-        if isinstance(created_at, str):
-            parsed_created_at = datetime.fromisoformat(created_at)
-        else:
-            parsed_created_at = None
+        parsed_created_at = _parse_created_at(created_at)
         metadata = entry.get("metadata")
         raw_refs = entry.get("raw_refs")
         raw_entry_id = entry.get("archive_id", entry.get("entry_id"))

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +14,7 @@ from modex_agent.memory.core.split_stores import (
     MessageStore,
 )
 from modex_agent.memory.core.store_metadata import StoreMetadata
+from modex_agent.utils.time import now_ms
 
 
 class InMemoryScopedStorage(StoreMetadata, MessageStore, KVStore, CursorStore, ArchiveStore):
@@ -32,7 +32,7 @@ class InMemoryScopedStorage(StoreMetadata, MessageStore, KVStore, CursorStore, A
         self._logs: list[dict[str, Any]] = []
         self._cursors: dict[str, int] = {"default": 0}
         self._version = 0
-        self._updated_at = datetime.now(UTC)
+        self._updated_at = now_ms()
         self._archive_state: dict[str, Any] | None = None
         self._channel_logs: dict[str, list[dict[str, Any]]] = {}
 
@@ -52,7 +52,7 @@ class InMemoryScopedStorage(StoreMetadata, MessageStore, KVStore, CursorStore, A
 
     def _touch(self) -> None:
         self._version += 1
-        self._updated_at = datetime.now(UTC)
+        self._updated_at = now_ms()
 
     async def get(self, key: str) -> Any | None:
         async with self.get_lock().read():
@@ -206,7 +206,7 @@ class InMemoryScopedStorage(StoreMetadata, MessageStore, KVStore, CursorStore, A
                 **entry,
                 "cursor": cursor,
                 "entry_id": entry.get("entry_id") or cursor,
-                "created_at": entry.get("created_at") or datetime.now(UTC).isoformat(),
+                "created_at": entry.get("created_at") or now_ms(),
             }
             self._logs.append(stored)
             self._touch()
@@ -248,7 +248,7 @@ class InMemoryScopedStorage(StoreMetadata, MessageStore, KVStore, CursorStore, A
                 **entry,
                 "cursor": archive_id,
                 "entry_id": entry.get("entry_id") or archive_id,
-                "created_at": entry.get("created_at") or datetime.now(UTC).isoformat(),
+                "created_at": entry.get("created_at") or now_ms(),
             }
             self._channel_logs.setdefault(channel, []).append(stored)
             self._touch()

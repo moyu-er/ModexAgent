@@ -1,20 +1,18 @@
 """SQLite-backed :class:`~modex_agent.core.session_store.SessionStore`.
 
-Session metadata is stored in the ``sessions`` table. The ``scope`` JSON column
-holds structured isolation dimensions (pool, agent_id, session_prefix,
+Session metadata is stored in the ``sessions`` table. The ``scope_key`` JSON
+column holds structured isolation dimensions (agent_id, session_prefix,
 parent_session_id, invocation_id); STORED generated columns extract these for
 indexed queries. Free-form session metadata is stored as JSON in
 ``metadata_json``.
 
 All queries use the generated columns and their indexes — never
-``json_extract`` at query time.
+``json_extract`` at query time. Timestamps are int ms (ADR-0029).
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
-from datetime import UTC, datetime
 from sqlite3 import Row
 from typing import TYPE_CHECKING, Any
 
@@ -28,25 +26,16 @@ if TYPE_CHECKING:
 #: Columns selected for SessionInfo reconstruction.
 _SESSION_COLUMNS = "session_id, agent_id, parent_session_id, metadata_json, created_at, updated_at"
 
+#: Must match the schema DEFAULT expression — COALESCE fallback must equal
+#: leaving the column unset so the auto-updated_at trigger sees no change.
+_NOW_MS_SQL = "CAST(strftime('%s','now') AS INTEGER) * 1000"
+
 
 class SqliteSessionStore(SessionStore):
-    """Session metadata CRUD backed by the ``sessions`` table.
+    """Session metadata CRUD backed by the ``sessions`` table."""
 
-    The ``pool_resolver`` callable maps a :class:`SessionInfo` to its pool
-    name so the ``scope`` JSON (and the derived ``pool`` generated column) can
-    be populated at write time. When ``None``, the pool is read from
-    ``session.metadata["pool"]``.
-    """
-
-    def __init__(
-        self,
-        connection: ConnectionManager,
-        pool_resolver: Callable[[SessionInfo], str | None] | None = None,
-    ) -> None:
+    def __init__(self, connection: ConnectionManager) -> None:
         self._connection = connection
-        self._pool_resolver: Callable[[SessionInfo], str | None] = (
-            pool_resolver or _default_pool_resolver
-        )
 
     # -- SessionStore ABC --------------------------------------------------
 
@@ -56,18 +45,17 @@ class SqliteSessionStore(SessionStore):
         metadata_json = (
             json.dumps(session.metadata, ensure_ascii=False) if session.metadata else None
         )
-        created = _to_db_timestamp(session.created_at)
-        updated = _to_db_timestamp(session.updated_at)
         await self._connection.execute(
             "INSERT INTO sessions "
-            "(session_id, scope, metadata_json, created_at, updated_at) "
-            "VALUES (?, ?, ?, COALESCE(?, datetime('now')), "
-            "COALESCE(?, datetime('now'))) "
+            "(session_id, scope_key, metadata_json, created_at, updated_at) "
+            f"VALUES (?, ?, ?, COALESCE(?, {_NOW_MS_SQL}), "
+            f"COALESCE(?, {_NOW_MS_SQL})) "
             "ON CONFLICT(session_id) DO UPDATE SET "
-            "scope = excluded.scope, "
+            "scope_key = excluded.scope_key, "
             "metadata_json = excluded.metadata_json, "
             "updated_at = excluded.updated_at",
-            (session.session_id, scope_json, metadata_json, created, updated),
+            (session.session_id, scope_json, metadata_json,
+             session.created_at, session.updated_at),
         )
 
     async def get(self, session_id: str) -> SessionInfo | None:
@@ -122,9 +110,6 @@ class SqliteSessionStore(SessionStore):
         )
         if session.parent_session_id is not None:
             scope = scope.model_copy(update={"parent_session_id": session.parent_session_id})
-        pool = self._pool_resolver(session)
-        if pool is not None:
-            scope = scope.model_copy(update={"pool": pool})
         invocation_id = session.metadata.get("invocation_id")
         if invocation_id is not None:
             scope = scope.model_copy(update={"invocation_id": invocation_id})
@@ -132,10 +117,6 @@ class SqliteSessionStore(SessionStore):
 
 
 # -- module-level helpers -------------------------------------------------
-
-
-def _default_pool_resolver(session: SessionInfo) -> str | None:
-    return session.metadata.get("pool")
 
 
 def _row_to_session(row: Row) -> SessionInfo:
@@ -146,25 +127,7 @@ def _row_to_session(row: Row) -> SessionInfo:
         session_id=row["session_id"],
         agent_name=agent_id if agent_id is not None else "unknown",
         parent_session_id=row["parent_session_id"],
-        created_at=_from_db_timestamp(row["created_at"]),
-        updated_at=_from_db_timestamp(row["updated_at"]),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
         metadata=metadata,
     )
-
-
-def _to_db_timestamp(ms: int | None) -> str | None:
-    """Convert ms-epoch to SQLite ``datetime('now')``-compatible text."""
-    if ms is None:
-        return None
-    dt = datetime.fromtimestamp(ms / 1000, tz=UTC)
-    return dt.strftime("%Y-%m-%d %H:%M:%S")
-
-
-def _from_db_timestamp(text: str | None) -> int | None:
-    """Parse SQLite datetime text back to ms-epoch."""
-    if text is None:
-        return None
-    dt = datetime.fromisoformat(text)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
-    return int(dt.timestamp() * 1000)

@@ -1,7 +1,7 @@
 """SQLite-backed ``InboxMQ`` adapter (T20).
 
 Implements the full :class:`~modex_agent.multi_agent.inbox.server.InboxMQ`
-contract against the workspace DB schema (T06):
+contract against the workspace DB schema (T06 / ADR-0031):
 
 - **Async surface** (``receive``/``consume``/``peek``/``count``/``clear``/
   ``sessions_with_pending``/``wakeup``/``wait_wakeup``/``reap_expired``) goes
@@ -17,15 +17,26 @@ contract against the workspace DB schema (T06):
 Idempotency is enforced at the DB level via ``UNIQUE(scope_key, message_id)``
 on ``inbox_messages`` (``ON CONFLICT DO NOTHING``) plus a separate
 ``inbox_delivered_ids`` table that survives ``clear()``-style row deletion.
+
+Schema notes (ADR-0031):
+
+- ``inbox_topics`` is insert-once-delete-on-cleanup — no state machine, no
+  ``last_active``/``message_count`` maintenance.
+- ``inbox_messages`` carries only the projection-extracted columns
+  (``message_id``/``message_type``/``session_id``) plus ``payload_json``
+  (the full ``InboxMessage`` dict). The 5 dead business columns
+  (``source_name``/``source_kind``/``content``/``envelope_session_id``/
+  ``envelope_agent_session_id``) are gone.
+- ``inbox_delivered_ids`` FK is single-column ``scope_key`` (no ``session_id``).
+- ``InboxMessage.timestamp`` (datetime) ↔ ``created_at`` (int ms) conversion
+  happens at this adapter boundary.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import sqlite3
-import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -33,15 +44,33 @@ from typing import Any
 from modex_agent.core.scope import RecordScope
 from modex_agent.multi_agent.inbox.server import InboxMQ
 from modex_agent.multi_agent.inbox.types import InboxMessage
+from modex_agent.persistence.column_projection import (
+    ColumnField,
+    ColumnProjection,
+)
 from modex_agent.persistence.connection import (
     ConnectionManager,
     ConnectionNotOpenError,
     Transaction,
 )
+from modex_agent.utils.time import now_ms
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["SqliteInboxMQ"]
+
+#: ColumnProjection for ``inbox_messages``: extract ``message_id`` /
+#: ``message_type`` / ``session_id`` to indexed columns; store the residual
+#: ``InboxMessage`` dict (``source``/``content``/``timestamp`` int ms /
+#: ``metadata``) in ``payload_json``.
+_INBOX_PROJECTION = ColumnProjection(
+    fields=(
+        ColumnField(column="message_id", dict_keys=("message_id",)),
+        ColumnField(column="message_type", dict_keys=("message_type",)),
+        ColumnField(column="session_id", dict_keys=("session_id",)),
+    ),
+    json_column="payload_json",
+)
 
 
 class SqliteInboxMQ(InboxMQ):
@@ -81,7 +110,6 @@ class SqliteInboxMQ(InboxMQ):
         """Idempotent intake within this inbox's exact session scope."""
         conn = self._require_connection()
         scope_key = self._scope_key(session_id)
-        now = time.time()
 
         async with conn.transaction(immediate=True) as tx:
             # Already consumed — permanent dedup via delivered_ids.
@@ -93,8 +121,8 @@ class SqliteInboxMQ(InboxMQ):
             if delivered is not None:
                 return False
 
-            await self._ensure_topic(tx, session_id, scope_key, now)
-            inserted = await self._insert_message(tx, session_id, scope_key, message, now)
+            await self._ensure_topic(tx, session_id, scope_key)
+            inserted = await self._insert_message(tx, session_id, scope_key, message)
             return inserted
 
     async def consume(
@@ -116,7 +144,7 @@ class SqliteInboxMQ(InboxMQ):
             if not rows:
                 return []
 
-            now = time.time()
+            now = now_ms()
             messages: list[InboxMessage] = []
             for row in rows:
                 await tx.execute(
@@ -126,24 +154,18 @@ class SqliteInboxMQ(InboxMQ):
                 )
                 await tx.execute(
                     "INSERT INTO inbox_delivered_ids "
-                    "(owner_scope_key, scope_key, session_id, message_id, delivered_at) "
-                    "VALUES (?, ?, ?, ?, ?) "
+                    "(owner_scope_key, scope_key, message_id, delivered_at) "
+                    "VALUES (?, ?, ?, ?) "
                     "ON CONFLICT DO NOTHING",
                     (
                         self._owner_scope_key,
                         scope_key,
-                        session_id,
                         row["message_id"],
                         now,
                     ),
                 )
                 messages.append(self._row_to_message(row))
 
-            await tx.execute(
-                "UPDATE inbox_topics SET state = 'active', last_active = ? "
-                "WHERE scope_key = ?",
-                (now, scope_key),
-            )
             return messages
 
     async def peek(self, session_id: str) -> list[InboxMessage]:
@@ -181,11 +203,6 @@ class SqliteInboxMQ(InboxMQ):
                 "DELETE FROM inbox_delivered_ids WHERE scope_key = ?",
                 (scope_key,),
             )
-            await tx.execute(
-                "UPDATE inbox_topics SET state = 'idle', message_count = 0, "
-                "last_active = ? WHERE scope_key = ?",
-                (time.time(), scope_key),
-            )
 
     async def sessions_with_pending(self) -> list[str]:
         """Return session ids with at least one pending message."""
@@ -219,9 +236,10 @@ class SqliteInboxMQ(InboxMQ):
         closes. Never reuses the async ``ConnectionManager``'s connection.
         """
         scope_key = self._scope_key(session_id)
-        now = time.time()
-        source_kind = message.metadata.get("source_kind", "agent")
-        payload_json = json.dumps(message.metadata) if message.metadata else None
+        ts_ms = int(message.timestamp.timestamp() * 1000)
+        columns, payload_json = _INBOX_PROJECTION.split(
+            self._message_dict(session_id, message, ts_ms)
+        )
 
         conn = sqlite3.connect(str(self._db_path), isolation_level=None)
         try:
@@ -239,12 +257,12 @@ class SqliteInboxMQ(InboxMQ):
                 conn.execute("COMMIT")
                 return False
 
-            # Upsert topic.
+            # Upsert topic (insert-once; timestamps via DEFAULT).
             conn.execute(
                 "INSERT INTO inbox_topics "
-                "(owner_scope_key, scope_key, session_id, scope, created_at, last_active) "
-                "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(scope_key) DO NOTHING",
-                (self._owner_scope_key, scope_key, session_id, scope_key, now, now),
+                "(owner_scope_key, scope_key, session_id) "
+                "VALUES (?, ?, ?) ON CONFLICT(scope_key) DO NOTHING",
+                (self._owner_scope_key, scope_key, session_id),
             )
             topic_id = conn.execute(
                 "SELECT topic_id FROM inbox_topics WHERE scope_key = ?",
@@ -259,40 +277,27 @@ class SqliteInboxMQ(InboxMQ):
 
             cursor = conn.execute(
                 "INSERT INTO inbox_messages "
-                "(topic_id, owner_scope_key, scope_key, session_id, scope, "
-                " message_id, message_type, "
-                " source_name, source_kind, content, payload_json, "
-                " envelope_session_id, envelope_agent_session_id, "
+                "(topic_id, owner_scope_key, scope_key, session_id, "
+                " message_id, message_type, payload_json, "
                 " state, seq, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?) "
                 "ON CONFLICT(scope_key, message_id) DO NOTHING",
                 (
                     topic_id,
                     self._owner_scope_key,
                     scope_key,
-                    session_id,
-                    scope_key,
-                    message.message_id,
-                    message.message_type,
-                    message.source,
-                    source_kind,
-                    message.content,
+                    columns["session_id"],
+                    columns["message_id"],
+                    columns["message_type"],
                     payload_json,
-                    message.metadata.get("session_id"),
-                    message.metadata.get("agent_session_id"),
                     seq,
-                    message.timestamp.timestamp(),
+                    ts_ms,
                 ),
             )
             if cursor.rowcount == 0:
                 conn.execute("COMMIT")
                 return False
 
-            conn.execute(
-                "UPDATE inbox_topics SET last_active = ?, message_count = message_count + 1 "
-                "WHERE scope_key = ?",
-                (now, scope_key),
-            )
             conn.execute("COMMIT")
             return True
         except BaseException:
@@ -333,7 +338,7 @@ class SqliteInboxMQ(InboxMQ):
         if self._message_ttl_seconds is None:
             return 0
 
-        cutoff = time.time() - self._message_ttl_seconds
+        cutoff = now_ms() - int(self._message_ttl_seconds * 1000)
         async with conn.transaction(immediate=True) as tx:
             await tx.execute(
                 "DELETE FROM inbox_messages "
@@ -372,18 +377,40 @@ class SqliteInboxMQ(InboxMQ):
         session_scope = self._scope.model_copy(update={"session_id": session_id})
         return session_scope.canonical()
 
+    @staticmethod
+    def _message_dict(
+        session_id: str,
+        message: InboxMessage,
+        ts_ms: int,
+    ) -> dict[str, Any]:
+        """Build the dict fed to ``_INBOX_PROJECTION.split()``.
+
+        ``session_id`` is the receive-path parameter (the destination session);
+        it overrides ``message.session_id`` so the column and the round-tripped
+        ``InboxMessage.session_id`` match the API contract. ``timestamp`` is
+        encoded as int ms to match the ``created_at`` column type.
+        """
+        return {
+            "session_id": session_id,
+            "source": message.source,
+            "content": message.content,
+            "message_type": message.message_type,
+            "message_id": message.message_id,
+            "timestamp": ts_ms,
+            "metadata": message.metadata,
+        }
+
     async def _ensure_topic(
         self,
         tx: Transaction,
         session_id: str,
         scope_key: str,
-        now: float,
     ) -> None:
         await tx.execute(
             "INSERT INTO inbox_topics "
-            "(owner_scope_key, scope_key, session_id, scope, created_at, last_active) "
-            "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(scope_key) DO NOTHING",
-            (self._owner_scope_key, scope_key, session_id, scope_key, now, now),
+            "(owner_scope_key, scope_key, session_id) "
+            "VALUES (?, ?, ?) ON CONFLICT(scope_key) DO NOTHING",
+            (self._owner_scope_key, scope_key, session_id),
         )
 
     async def _insert_message(
@@ -392,7 +419,6 @@ class SqliteInboxMQ(InboxMQ):
         session_id: str,
         scope_key: str,
         message: InboxMessage,
-        now: float,
     ) -> bool:
         topic_id = await tx.query_value(
             "SELECT topic_id FROM inbox_topics WHERE scope_key = ?",
@@ -405,45 +431,32 @@ class SqliteInboxMQ(InboxMQ):
             int,
             (scope_key,),
         )
-        source_kind = message.metadata.get("source_kind", "agent")
-        payload_json = json.dumps(message.metadata) if message.metadata else None
+        ts_ms = int(message.timestamp.timestamp() * 1000)
+        columns, payload_json = _INBOX_PROJECTION.split(
+            self._message_dict(session_id, message, ts_ms)
+        )
 
         await tx.execute(
             "INSERT INTO inbox_messages "
-            "(topic_id, owner_scope_key, scope_key, session_id, scope, "
-            " message_id, message_type, "
-            " source_name, source_kind, content, payload_json, "
-            " envelope_session_id, envelope_agent_session_id, "
+            "(topic_id, owner_scope_key, scope_key, session_id, "
+            " message_id, message_type, payload_json, "
             " state, seq, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?) "
             "ON CONFLICT(scope_key, message_id) DO NOTHING",
             (
                 topic_id,
                 self._owner_scope_key,
                 scope_key,
-                session_id,
-                scope_key,
-                message.message_id,
-                message.message_type,
-                message.source,
-                source_kind,
-                message.content,
+                columns["session_id"],
+                columns["message_id"],
+                columns["message_type"],
                 payload_json,
-                message.metadata.get("session_id"),
-                message.metadata.get("agent_session_id"),
                 seq,
-                message.timestamp.timestamp(),
+                ts_ms,
             ),
         )
         changes = await tx.query_value("SELECT changes()", int)
-        if changes > 0:
-            await tx.execute(
-                "UPDATE inbox_topics SET last_active = ?, "
-                "message_count = message_count + 1 WHERE scope_key = ?",
-                (now, scope_key),
-            )
-            return True
-        return False
+        return changes > 0
 
     async def _select_pending(
         self,
@@ -472,17 +485,15 @@ class SqliteInboxMQ(InboxMQ):
     @staticmethod
     def _row_to_message(row: sqlite3.Row) -> InboxMessage:
         """Reconstruct an ``InboxMessage`` from a DB row."""
-        metadata: dict[str, Any] = {}
-        payload = row["payload_json"]
-        if payload:
-            metadata = json.loads(payload)
-        timestamp = datetime.fromtimestamp(row["created_at"], tz=UTC)
+        row_dict = dict(row)
+        assembled = _INBOX_PROJECTION.assemble(row_dict, row["payload_json"])
+        timestamp = datetime.fromtimestamp(row["created_at"] / 1000, tz=UTC)
         return InboxMessage(
-            session_id=row["session_id"],
-            source=row["source_name"],
-            content=row["content"],
-            message_type=row["message_type"],
-            message_id=row["message_id"],
+            session_id=assembled["session_id"],
+            source=assembled["source"],
+            content=assembled["content"],
+            message_type=assembled["message_type"],
+            message_id=assembled["message_id"],
             timestamp=timestamp,
-            metadata=metadata,
+            metadata=assembled.get("metadata") or {},
         )

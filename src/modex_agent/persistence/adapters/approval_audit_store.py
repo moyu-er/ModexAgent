@@ -54,17 +54,17 @@ class ApprovalAuditStore(ABC):
 # ---------------------------------------------------------------------------
 
 
-def _iso_to_epoch(iso_str: str) -> float:
-    """Parse an ISO-8601 timestamp string to epoch seconds (float)."""
+def _iso_to_epoch_ms(iso_str: str) -> int:
+    """Parse an ISO-8601 timestamp string to epoch milliseconds (int)."""
     dt = datetime.fromisoformat(iso_str)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
-    return dt.timestamp()
+    return int(dt.timestamp() * 1000)
 
 
-def _epoch_to_iso(epoch: float) -> str:
-    """Convert epoch seconds (float) to an ISO-8601 UTC timestamp string."""
-    return datetime.fromtimestamp(epoch, tz=UTC).isoformat()
+def _epoch_ms_to_iso(epoch_ms: int) -> str:
+    """Convert epoch milliseconds (int) to an ISO-8601 UTC timestamp string."""
+    return datetime.fromtimestamp(epoch_ms / 1000.0, tz=UTC).isoformat()
 
 
 class SqliteApprovalAuditStore(ApprovalAuditStore):
@@ -72,15 +72,18 @@ class SqliteApprovalAuditStore(ApprovalAuditStore):
 
     Uses the ``approval_audit_log`` table. Each :meth:`record` is a single
     ``INSERT`` — no ``ON CONFLICT`` clause, so recording the same entry twice
-    creates two rows. The ``scope`` column is populated from the injected
-    :class:`RecordScope` so the generated ``pool`` column is available for
-    workspace-level queries.
+    creates two rows. The ``scope_key`` column is populated from the injected
+    :class:`RecordScope`'s canonical JSON. The table is append-only: there is
+    no ``updated_at`` column and no auto-update trigger (ADR-0029).
+    ``decided_at`` is stored as integer milliseconds (ADR-0029 §2); the
+    adapter converts :class:`ApprovalAuditEntry.decided_at` (ISO-8601 string)
+    to/from int ms at the boundary.
 
     Args:
         connection: The workspace ``ConnectionManager`` shared with other
             adapters.
         scope: A ``RecordScope`` whose canonical JSON populates the
-            ``scope`` column.
+            ``scope_key`` column.
     """
 
     def __init__(self, connection: ConnectionManager, scope: RecordScope) -> None:
@@ -89,10 +92,10 @@ class SqliteApprovalAuditStore(ApprovalAuditStore):
 
     async def record(self, entry: ApprovalAuditEntry) -> None:
         """Append *entry* as one row. Fails on DB constraint violations."""
-        decided_at_epoch = _iso_to_epoch(entry.decided_at)
+        decided_at_ms = _iso_to_epoch_ms(entry.decided_at)
         await self._connection.execute(
             "INSERT INTO approval_audit_log "
-            "(turn_uuid, session_id, scope, agent_id, turn_id, tool_name, "
+            "(turn_uuid, session_id, scope_key, agent_id, turn_id, tool_name, "
             " tool_call_id, decision, deny_reason, decided_at, decided_by) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
@@ -105,7 +108,7 @@ class SqliteApprovalAuditStore(ApprovalAuditStore):
                 entry.tool_call_id,
                 entry.decision,
                 entry.deny_reason,
-                decided_at_epoch,
+                decided_at_ms,
                 entry.decided_by,
             ),
         )
@@ -124,9 +127,9 @@ class SqliteApprovalAuditStore(ApprovalAuditStore):
         )
         params: list[SqlParameter] = [session_id]
         if since is not None:
-            since_epoch = since.timestamp()
+            since_ms = int(since.timestamp() * 1000)
             query += " AND decided_at >= ?"
-            params.append(since_epoch)
+            params.append(since_ms)
         query += " ORDER BY decided_at ASC, id ASC LIMIT ?"
         params.append(limit)
 
@@ -141,7 +144,7 @@ class SqliteApprovalAuditStore(ApprovalAuditStore):
                 tool_call_id=row["tool_call_id"],
                 decision=row["decision"],
                 deny_reason=row["deny_reason"],
-                decided_at=_epoch_to_iso(row["decided_at"]),
+                decided_at=_epoch_ms_to_iso(row["decided_at"]),
                 decided_by=row["decided_by"],
             )
             for row in rows

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import time
+from typing import Any
 
 from modex_agent.core.scope import RecordScope
 from modex_agent.persistence.connection import ConnectionManager, SqlParameter
@@ -20,6 +20,7 @@ from modex_agent.runtime.codec import RuntimeStateCodecRegistry
 from modex_agent.runtime.enums import AgentKind, TurnPhase
 from modex_agent.runtime.models import StateQueryScope, TurnIdentity, TurnSnapshot
 from modex_agent.runtime.store import ActiveTurnConflictError, TurnStateStore
+from modex_agent.utils.time import now_ms
 
 _ACTIVE_PHASES = frozenset({TurnPhase.RUNNING, TurnPhase.SUSPENDED})
 
@@ -57,10 +58,11 @@ class SqliteTurnStateStore(TurnStateStore):
         payload_json = json.dumps(payload, ensure_ascii=False, default=str)
         scope_json = self._build_scope(snapshot)
         db_phase = _phase_to_db(snapshot.phase)
-        now = time.time()
+        now = now_ms()
         agent_id = snapshot.identity.agent_id
         session_id = str(snapshot.identity.session)
         turn_id = snapshot.identity.turn_id
+        created_at_ms = int(snapshot.created_at * 1000)
 
         try:
             async with self._connection.transaction() as tx:
@@ -80,11 +82,11 @@ class SqliteTurnStateStore(TurnStateStore):
                         )
                 await tx.execute(
                     "INSERT INTO turn_snapshots "
-                    "(session_id, agent_id, turn_id, scope, agent_kind, phase, "
+                    "(session_id, agent_id, turn_id, scope_key, agent_kind, phase, "
                     " reason, created_at, updated_at, schema_version, payload_json) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                     "ON CONFLICT(session_id, agent_id, turn_id) DO UPDATE SET "
-                    " scope = excluded.scope,"
+                    " scope_key = excluded.scope_key,"
                     " agent_kind = excluded.agent_kind,"
                     " phase = excluded.phase,"
                     " reason = excluded.reason,"
@@ -100,7 +102,7 @@ class SqliteTurnStateStore(TurnStateStore):
                         snapshot.agent_kind.value,
                         db_phase,
                         snapshot.reason.value,
-                        snapshot.created_at,
+                        created_at_ms,
                         now,
                         snapshot.schema_version,
                         payload_json,
@@ -114,13 +116,13 @@ class SqliteTurnStateStore(TurnStateStore):
 
     async def load_turn(self, identity: TurnIdentity) -> TurnSnapshot | None:
         row = await self._connection.query_one(
-            "SELECT payload_json, agent_kind FROM turn_snapshots "
+            "SELECT payload_json, agent_kind, created_at FROM turn_snapshots "
             "WHERE session_id = ? AND agent_id = ? AND turn_id = ?",
             (str(identity.session), identity.agent_id, identity.turn_id),
         )
         if row is None:
             return None
-        return self._decode(row["payload_json"], row["agent_kind"])
+        return self._decode(row["payload_json"], row["agent_kind"], row["created_at"])
 
     async def delete_turn(self, identity: TurnIdentity) -> None:
         await self._connection.execute(
@@ -129,7 +131,7 @@ class SqliteTurnStateStore(TurnStateStore):
         )
 
     async def list_active_turns(self, scope: StateQueryScope) -> list[TurnSnapshot]:
-        query = "SELECT payload_json, agent_kind FROM turn_snapshots WHERE 1=1"
+        query = "SELECT payload_json, agent_kind, created_at FROM turn_snapshots WHERE 1=1"
         params: list[SqlParameter] = []
         if scope.agent_id is not None:
             query += " AND agent_id = ?"
@@ -148,15 +150,18 @@ class SqliteTurnStateStore(TurnStateStore):
             params.append(scope.reason.value)
         if scope.created_before is not None:
             query += " AND created_at < ?"
-            params.append(scope.created_before)
+            params.append(int(scope.created_before * 1000))
         rows = await self._connection.query_all(query, params)
-        return [self._decode(row["payload_json"], row["agent_kind"]) for row in rows]
+        return [
+            self._decode(row["payload_json"], row["agent_kind"], row["created_at"])
+            for row in rows
+        ]
 
     # ---- Public helper (not part of ABC) ----
 
     async def find_active_turn(self, agent_id: str, session_id: str) -> TurnSnapshot | None:
         row = await self._connection.query_one(
-            "SELECT payload_json, agent_kind FROM turn_snapshots "
+            "SELECT payload_json, agent_kind, created_at FROM turn_snapshots "
             "WHERE agent_id = ? AND session_id = ? "
             f"AND phase IN ({_ACTIVE_PHASE_SQL}) "
             "LIMIT 1",
@@ -164,7 +169,7 @@ class SqliteTurnStateStore(TurnStateStore):
         )
         if row is None:
             return None
-        return self._decode(row["payload_json"], row["agent_kind"])
+        return self._decode(row["payload_json"], row["agent_kind"], row["created_at"])
 
     # ---- Internal helpers ----
 
@@ -178,7 +183,15 @@ class SqliteTurnStateStore(TurnStateStore):
             parent_session_id=session.parent_session_id,
         ).canonical()
 
-    def _decode(self, payload_json: str, agent_kind_raw: str) -> TurnSnapshot:
+    def _decode(
+        self, payload_json: str, agent_kind_raw: str, created_at_ms: int
+    ) -> TurnSnapshot:
         agent_kind = AgentKind(agent_kind_raw)
         codec = self._codec_registry.get(agent_kind)
-        return codec.decode_turn(json.loads(payload_json))
+        payload: dict[str, Any] = json.loads(payload_json)
+        # Phase 1 boundary conversion: the runtime dataclass keeps
+        # ``created_at`` as float seconds until Phase 2; the DB column is
+        # int ms. Re-inject the canonical float-seconds value so the codec
+        # decodes a payload consistent with what ``encode_turn`` produced.
+        payload["created_at"] = created_at_ms / 1000.0
+        return codec.decode_turn(payload)

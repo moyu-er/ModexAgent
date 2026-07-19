@@ -8,10 +8,10 @@ scope. Values are JSON-encoded in ``value_json``.
 from __future__ import annotations
 
 import json
-import time
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.memory.core.split_stores import KVStore
+from modex_agent.utils.time import now_ms
 
 if TYPE_CHECKING:
     from modex_agent.core.scope import RecordScope
@@ -36,16 +36,15 @@ class SqliteKVStore(KVStore):
 
     async def set(self, key: str, value: Any) -> None:
         await self._connection.execute(
-            "INSERT INTO memory_kv (scope_key, key, scope, value_json, updated_at) "
-            "VALUES (?, ?, ?, ?, ?) "
+            "INSERT INTO memory_kv (scope_key, key, value_json, updated_at) "
+            "VALUES (?, ?, ?, ?) "
             "ON CONFLICT(scope_key, key) DO UPDATE SET "
             "value_json = excluded.value_json, updated_at = excluded.updated_at",
             (
                 self._scope_json,
                 key,
-                self._scope_json,
                 json.dumps(value, ensure_ascii=False),
-                time.time(),
+                now_ms(),
             ),
         )
 

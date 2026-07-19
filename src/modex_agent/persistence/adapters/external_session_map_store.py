@@ -7,20 +7,24 @@ reads alongside async writes through the ConnectionManager, mirroring the
 pattern established by :class:`~modex_agent.persistence.adapters.inbox_mq.SqliteInboxMQ`).
 ``commit`` and ``invalidate`` go through the async ``ConnectionManager``.
 
-The ``invalidated`` column implements soft-delete (matching
+The ``invalidated`` column (INTEGER CHECK 0/1) implements soft-delete
+(matching
 :class:`~modex_agent.agents.external_coding.session_store.LocalFileExternalSessionMapStore`):
 ``invalidate`` sets ``invalidated = 1``; ``resolve`` treats invalidated
-entries as absent — returning ``(None, False)``.
+entries as absent — returning ``(None, False)``. ``last_committed_at`` is
+stored as integer milliseconds (ADR-0029 §2); ``created_at``/``updated_at``
+are owned by the schema DEFAULT + the
+``trg_external_session_map_auto_updated_at`` trigger.
 """
 
 from __future__ import annotations
 
 import sqlite3
-import time
 from typing import TYPE_CHECKING
 
 from modex_agent.agents.external_coding.paths import ProviderKind
 from modex_agent.agents.external_coding.session_store import ExternalSessionMapStore
+from modex_agent.utils.time import now_ms
 
 if TYPE_CHECKING:
     from modex_agent.core.scope import RecordScope
@@ -30,14 +34,14 @@ if TYPE_CHECKING:
 class SqliteExternalSessionMapStore(ExternalSessionMapStore):
     """SQLite-backed session map using the ``external_session_map`` table.
 
-    The ``scope`` column is populated from the injected ``RecordScope`` so
-    the generated ``pool`` column is available for workspace-level queries.
+    The ``scope_key`` column is populated from the injected
+    :class:`RecordScope`'s canonical JSON.
 
     Args:
         connection: The workspace ``ConnectionManager`` shared with other
             adapters. Used for async writes (``commit``, ``invalidate``).
         scope: A ``RecordScope`` whose canonical JSON populates the
-            ``scope`` column.
+            ``scope_key`` column.
     """
 
     def __init__(self, connection: ConnectionManager, scope: RecordScope) -> None:
@@ -82,11 +86,12 @@ class SqliteExternalSessionMapStore(ExternalSessionMapStore):
 
         Upserts the row by ``modex_session_id`` (PK). Resets
         ``invalidated = 0`` so a re-commit after invalidate reactivates
-        the entry.
+        the entry. ``last_committed_at`` is written as int ms (ADR-0029 §2);
+        ``updated_at`` is owned by the auto-update trigger.
         """
         await self._connection.execute(
             "INSERT INTO external_session_map "
-            "(modex_session_id, provider_session_id, provider_kind, scope, "
+            "(modex_session_id, provider_session_id, provider_kind, scope_key, "
             "last_committed_at, invalidated) "
             "VALUES (?, ?, ?, ?, ?, 0) "
             "ON CONFLICT(modex_session_id) DO UPDATE SET "
@@ -99,7 +104,7 @@ class SqliteExternalSessionMapStore(ExternalSessionMapStore):
                 provider_session_id,
                 provider_kind.value,
                 self._scope_json,
-                time.time(),
+                now_ms(),
             ),
         )
 

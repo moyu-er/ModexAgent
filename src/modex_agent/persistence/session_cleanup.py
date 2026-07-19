@@ -24,7 +24,6 @@ _SCOPE_DELETES: Final[tuple[str, ...]] = (
     "turn_snapshots",
     "todos",
     "external_session_map",
-    "sessions",
 )
 _SCOPE_KEY_DELETES: Final[tuple[str, ...]] = (
     "memory_session_messages",
@@ -37,11 +36,11 @@ _SCOPE_KEY_DELETES: Final[tuple[str, ...]] = (
 _INBOX_CHILD_TABLES: Final[tuple[str, ...]] = (
     "inbox_messages",
     "inbox_delivered_ids",
-    "inbox_dead_letter",
 )
 _SCOPE_DISCOVERY_SQL: Final[str] = " UNION ".join(
     [
-        *(f"SELECT scope FROM {table}" for table in _SCOPE_DELETES),
+        "SELECT scope_key FROM sessions",
+        *(f"SELECT scope_key FROM {table}" for table in _SCOPE_DELETES),
         *(f"SELECT scope_key FROM {table}" for table in _SCOPE_KEY_DELETES),
         "SELECT scope_key FROM inbox_topics",
         *(f"SELECT scope_key FROM {table}" for table in _INBOX_CHILD_TABLES),
@@ -65,15 +64,11 @@ class SqliteSessionDatabaseCleaner(SessionDatabaseCleaner):
             for row in rows:
                 persisted_scope_key = str(row[0])
                 try:
-                    scope = RecordScope.model_validate_json(persisted_scope_key)
-                except ValidationError:
+                    scope = RecordScope.from_canonical(persisted_scope_key)
+                except (ValidationError, ValueError):
                     continue
                 if scope.session_id is None:
                     continue
-                # Non-canonical scope keys (e.g. stored with different JSON
-                # formatting by older code) are canonicalized rather than
-                # rejected — the scope is still valid, just the serialization
-                # differs. This is resilient to pre-existing data.
                 canonical_key = scope.canonical()
                 if session_ids is None or scope.session_id in session_ids:
                     scopes[canonical_key] = scope
@@ -88,29 +83,20 @@ class SqliteSessionDatabaseCleaner(SessionDatabaseCleaner):
     async def delete_session_rows(self, scope: RecordScope) -> int:
         if scope.session_id is None:
             raise MissingSessionScopeError
-        scope_key = scope.canonical()
         session_id = scope.session_id
+        scope_key = scope.canonical()
         deleted = 0
         try:
             async with self._connection.transaction(immediate=True) as transaction:
+                deleted += await self._delete(
+                    transaction,
+                    "DELETE FROM sessions WHERE session_id = ?",
+                    session_id,
+                )
                 for table in _SCOPE_DELETES:
-                    # Delete by scope_key (canonical) first, then fall back to
-                    # session_id for the sessions table to handle rows written
-                    # before the canonical-scope migration (old format).
                     deleted += await self._delete(
                         transaction,
-                        f"DELETE FROM {table} WHERE scope = ?",
-                        scope_key,
-                    )
-                if scope.pool is not None:
-                    # The sessions table also has a session_id column; delete
-                    # by it as a backward-compat fallback so legacy rows with
-                    # non-canonical scope JSON are not orphaned.
-                    deleted += await self._delete(
-                        transaction,
-                        "DELETE FROM sessions WHERE session_id = ? "
-                        "AND scope != ?",
-                        session_id,
+                        f"DELETE FROM {table} WHERE scope_key = ?",
                         scope_key,
                     )
                 for table in _SCOPE_KEY_DELETES:
