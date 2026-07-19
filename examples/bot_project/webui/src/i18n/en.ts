@@ -29,15 +29,17 @@ export const en = {
     failedToLoad: "Failed to load: {error}",
   },
   boot: {
-    loadingModexBot: "Loading ModexBot…",
     starting: "Starting backend…",
     connecting: "Connecting to backend…",
     stillStarting: "Still starting — this can take a few seconds on first launch.",
     takingLong: "Taking longer than usual. Check logs if this persists.",
-    loading: "Loading",
+    errorHeading: "Backend is not responding",
   },
   chat: {
-    selectConversation: "Select a conversation to start chatting",
+    emptyHeadline: "Chat with your agents",
+    emptyHintSelect: "Select a conversation from the sidebar",
+    emptyHintNew: "Or start a new conversation to begin",
+    emptyHintComposer: "Enter sends · Shift+Enter adds a newline",
     denyBatchNotice: "Denying any one cancels the whole batch",
     approveAll: "Approve All",
     awaitingApproval: "awaiting approval",
@@ -109,6 +111,7 @@ export const en = {
     networkError: "Network error",
   },
   approval: {
+    eyebrow: "Approval",
     awaitingApproval: "awaiting approval",
     approve: "Approve",
     denyAll: "Deny All",
@@ -135,7 +138,7 @@ export const en = {
     result: "Result",
   },
   reasoning: {
-    thinking: "Thinking",
+    label: "Reasoning",
   },
   attachments: {
     fileUnavailable: "File no longer available",
@@ -514,6 +517,7 @@ export const en = {
   },
   ui: {
     formActions: "Form actions",
+    unsavedChanges: "Unsaved changes",
     keyValue: {
       entry: "Entry",
       keyPlaceholder: "KEY",

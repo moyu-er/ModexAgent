@@ -6,7 +6,7 @@ type Theme = "dark" | "light";
 
 function getInitialTheme(): Theme {
   if (typeof window === "undefined") {
-    return "light";
+    return "dark";
   }
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -16,7 +16,9 @@ function getInitialTheme(): Theme {
   } catch {
     // localStorage unavailable
   }
-  return "light";
+  // Dark is the default theme (Teal & Ember redesign); a saved preference
+  // always wins over the default.
+  return "dark";
 }
 
 function applyTheme(theme: Theme): void {
