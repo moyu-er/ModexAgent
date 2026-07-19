@@ -298,6 +298,15 @@ class BotService(AgentBuilderMixin):
         print(">> Initializing Bot Service")
         print("=" * 60)
 
+        # ADR-0027 T8: register cooperative SIGTERM/SIGINT handlers that
+        # run atexit cleanup (killing any live ``opencode serve``
+        # subprocesses) before exit. Idempotent — safe to call every boot.
+        from modex_agent.agents.external_coding.os_layer import (
+            register_signal_handlers,
+        )
+
+        register_signal_handlers()
+
         # 1. Load config (IOC AppConfig is the only source of truth)
         if self._app_config is None:
             self._app_config = self._load_app_config()

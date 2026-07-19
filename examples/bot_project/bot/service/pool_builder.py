@@ -306,6 +306,19 @@ async def create_pool(
 
         tool_manager = InMemoryToolManager(config=ToolManagerConfig())
 
+    # ADR-0027 T8: inject a SubagentExternalCodingBuilder iff this pool
+    # declares at least one external_coding subagent. React-only pools
+    # leave it None — AgentTemplate._materialize_external raises only when
+    # an EXTERNAL_CODING subagent is dispatched without a builder.
+    subagent_external_coding_builder = _maybe_build_external_subagent_builder(
+        pool_spec=pool_spec,
+        pool_name=pool_name,
+        project_dir=project_dir,
+        data_dir=data_dir,
+        app_config=app_config,
+        persistence=persistence,
+    )
+
     deps = AgentMaterializeDeps(
         agent_factory=factory, pool=pool, session_factory=session_factory,
         broker=broker, safety=safety,
@@ -321,6 +334,7 @@ async def create_pool(
         context_fork_builder=context_fork_builder,
         workspace_path_resolver=path_resolver, mcp_registry=mcp_registry,
         todo_store=todo_store, trace_enabled=_resolve_trace_enabled(app_config),
+        subagent_external_coding_builder=subagent_external_coding_builder,
     )
     pool.materialize_deps = deps
     pool.template_registry = template_registry
@@ -499,6 +513,44 @@ def _fallback_context_manager(main_spec: MainAgentSpec, system_prompt: str) -> A
         injection_policy=FullInjectionPolicy(pruned_manager=None),
         experience_manager=None,
         roles=list(main_spec.roles),
+    )
+
+
+def _maybe_build_external_subagent_builder(
+    *,
+    pool_spec: PoolSpec,
+    pool_name: str,
+    project_dir: Path,
+    data_dir: Path,
+    app_config: Any | None,
+    persistence: Any | None,
+) -> Any | None:
+    """Construct a ``BotSubagentExternalCodingBuilder`` iff this pool has external subagents.
+
+    Returns ``None`` for react-only pools so ``AgentMaterializeDeps``
+    leaves ``subagent_external_coding_builder=None`` (zero overhead —
+    ``AgentTemplate.materialize`` never touches the field on the react
+    path). When at least one subagent declares
+    ``execution_strategy=EXTERNAL_CODING``, returns a pool-scoped builder
+    that per-invocation assembles a fully-wired ``ExternalCodingAgent``
+    subagent (T8).
+    """
+    has_external = any(
+        sub.execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING
+        for sub in pool_spec.subagents
+    )
+    if not has_external:
+        return None
+    from bot.service.subagent_external_coding_builder import (
+        BotSubagentExternalCodingBuilder,
+    )
+
+    return BotSubagentExternalCodingBuilder(
+        pool_name=pool_name,
+        project_dir=project_dir,
+        data_dir=data_dir,
+        app_config=app_config,
+        persistence=persistence,
     )
 
 
