@@ -35,6 +35,7 @@ subclass. The pipeline package injects this runner via the
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -46,6 +47,7 @@ from modex_agent.core.constants import StopReason
 from modex_agent.core.emitter import AgentResult, StreamingAwareEmitter
 from modex_agent.core.history import ListMessageHistory
 from modex_agent.core.tool_manager import InMemoryToolManager
+from modex_agent.hook.abc import HookPayload, HookPoint
 from modex_agent.pipeline.turn_runner_abc import TurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.runtime.models import TurnIdentity
@@ -56,6 +58,7 @@ if TYPE_CHECKING:
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.core.types import InputMessage
+    from modex_agent.hook.runner import HookRunner
     from modex_agent.multi_agent.router import RouteResult
     from modex_agent.pipeline.adapters import OutputAdapter
 logger = logging.getLogger(__name__)
@@ -87,6 +90,7 @@ class ExternalTurnRunner(TurnRunner):
         on_session_start: Callable[[str], Awaitable[None]] | None = None,
         on_session_end: Callable[[str], Awaitable[None]] | None = None,
         safety: RuntimeSafetyPolicy,
+        hook_runner: HookRunner | None = None,
     ) -> None:
         self._agent = agent
         self._emitter_factory = emitter_factory
@@ -95,6 +99,7 @@ class ExternalTurnRunner(TurnRunner):
         self._on_session_start = on_session_start
         self._on_session_end = on_session_end
         self._safety = safety
+        self._hook_runner = hook_runner
 
     def set_emitter_factory(
         self, emitter_factory: Callable[..., ContentEmitter[Any]] | None
@@ -202,6 +207,20 @@ class ExternalTurnRunner(TurnRunner):
             self._registry.unregister_turn(session_id)
             # No ctx_mgr.flush() — the external CLI persists its own state;
             # the empty ListMessageHistory above is never written to.
+            if self._hook_runner is not None:
+                # FINALLY_TURN fires once per turn on every path. asyncio.shield
+                # protects dispatch when the turn task itself is being cancelled
+                # (/stop via task.cancel()); the shielded coroutine continues in
+                # the background while the outer await re-raises CancelledError
+                # so on_session_end below still runs.
+                with contextlib.suppress(asyncio.CancelledError):
+                    await asyncio.shield(
+                        self._hook_runner.dispatch(
+                            HookPoint.FINALLY_TURN,
+                            agent_context,
+                            HookPayload(data={"result": result}),
+                        )
+                    )
             if self._on_session_end is not None:
                 try:
                     await asyncio.wait_for(
