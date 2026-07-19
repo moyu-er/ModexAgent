@@ -111,12 +111,12 @@ describe("ModelEditor", () => {
   it("default dropdown lists provider/model combos and selecting updates default", () => {
     const onChange = vi.fn();
     render(<ModelEditor values={values} onChange={onChange} />);
-    const select = screen.getByLabelText(/Default model/) as HTMLSelectElement;
-    // the one model combo exists as an option
-    const optionText = screen.getByText("DeepSeek / m1");
-    expect(optionText).toBeTruthy();
+    const trigger = screen.getByLabelText(/Default model/);
+    // The trigger shows the current combo; the panel lists it as an option.
+    expect(trigger.textContent).toContain("DeepSeek / m1");
+    fireEvent.click(trigger);
     // options are keyed by index into the combos array (robust to names with spaces)
-    fireEvent.change(select, { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("option", { name: "DeepSeek / m1" }));
     const next = onChange.mock.calls[0]![0]! as {
       default_provider: string;
       default_model: string;
@@ -128,9 +128,10 @@ describe("ModelEditor", () => {
   it("interface format dropdown exists and updates the provider", () => {
     const onChange = vi.fn();
     render(<ModelEditor values={values} onChange={onChange} />);
-    const formatSelect = screen.getByLabelText("Interface format") as HTMLSelectElement;
-    expect(formatSelect.value).toBe("openai_compatible");
-    fireEvent.change(formatSelect, { target: { value: "anthropic" } });
+    const trigger = screen.getByLabelText("Interface format");
+    expect(trigger.textContent).toContain("OpenAI Compatible");
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("option", { name: "Anthropic" }));
     const next = onChange.mock.calls[0]![0]! as {
       providers: { interface_format: string }[];
     };
@@ -192,9 +193,10 @@ describe("ModelEditor", () => {
   it("reasoning effort dropdown defaults to none and changing updates the model", () => {
     const onChange = vi.fn();
     render(<ModelEditor values={values} onChange={onChange} />);
-    const reasoningSelect = screen.getByLabelText("Reasoning effort") as HTMLSelectElement;
-    expect(reasoningSelect.value).toBe("none");
-    fireEvent.change(reasoningSelect, { target: { value: "medium" } });
+    const trigger = screen.getByLabelText("Reasoning effort");
+    expect(trigger.textContent).toContain("none");
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("option", { name: "medium" }));
     const next = onChange.mock.calls[0]![0]! as {
       providers: { models: { reasoning_effort: string }[] }[];
     };

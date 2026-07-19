@@ -117,14 +117,17 @@ describe("ModelSelector", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: /Model/i }));
+    const listbox = screen.getByRole("listbox");
     const options = screen.getAllByRole("option");
 
-    expect(document.activeElement).toBe(options[0]!);
+    // Focus sits on the listbox; the active option is the activedescendant.
+    expect(document.activeElement).toBe(listbox);
+    expect(listbox.getAttribute("aria-activedescendant")).toBe(options[0]!.id);
 
-    fireEvent.keyDown(options[0]!, { key: "ArrowDown" });
-    expect(document.activeElement).toBe(options[1]!);
+    fireEvent.keyDown(listbox, { key: "ArrowDown" });
+    expect(listbox.getAttribute("aria-activedescendant")).toBe(options[1]!.id);
 
-    fireEvent.keyDown(options[1]!, { key: "Enter" });
+    fireEvent.keyDown(listbox, { key: "Enter" });
     expect(onChange).toHaveBeenCalledWith({
       provider: "MiniMax",
       model: "MiniMax-Text-01",
@@ -132,7 +135,7 @@ describe("ModelSelector", () => {
     expect(screen.queryByRole("listbox")).toBeNull();
   });
 
-  it("traps Tab and Shift+Tab while the dropdown is open", () => {
+  it("Tab closes the dropdown without selecting", () => {
     render(
       <ModelSelector
         models={models}
@@ -143,21 +146,11 @@ describe("ModelSelector", () => {
 
     const trigger = screen.getByRole("button", { name: /Model/i });
     fireEvent.click(trigger);
-    const options = screen.getAllByRole("option");
+    fireEvent.keyDown(screen.getByRole("listbox"), { key: "Tab" });
 
-    expect(document.activeElement).toBe(options[0]!);
-
-    fireEvent.keyDown(options[0]!, { key: "Tab" });
-    expect(document.activeElement).toBe(options[1]!);
-
-    fireEvent.keyDown(options[1]!, { key: "Tab" });
-    expect(document.activeElement).toBe(options[2]!);
-
-    fireEvent.keyDown(options[2]!, { key: "Tab" });
-    expect(document.activeElement).toBe(trigger);
-
-    fireEvent.keyDown(trigger, { key: "Tab", shiftKey: true });
-    expect(document.activeElement).toBe(options[2]!);
+    expect(screen.queryByRole("listbox")).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("closes on Escape and returns focus to the trigger", () => {
@@ -172,8 +165,7 @@ describe("ModelSelector", () => {
     const trigger = screen.getByRole("button", { name: /Model/i });
     fireEvent.click(trigger);
 
-    const options = screen.getAllByRole("option");
-    fireEvent.keyDown(options[0]!, { key: "Escape" });
+    fireEvent.keyDown(screen.getByRole("listbox"), { key: "Escape" });
 
     expect(screen.queryByRole("listbox")).toBeNull();
     expect(document.activeElement).toBe(trigger);
@@ -191,13 +183,11 @@ describe("ModelSelector", () => {
     fireEvent.click(screen.getByRole("button", { name: /Model/i }));
     expect(screen.getByRole("listbox")).toBeTruthy();
 
-    fireEvent.mouseDown(document.body);
+    fireEvent.pointerDown(document.body);
     expect(screen.queryByRole("listbox")).toBeNull();
   });
 
-  it("applies dark-mode token classes when .dark is present", () => {
-    document.documentElement.classList.add("dark");
-
+  it("uses the shared popover surface with brand-tint selection", () => {
     render(
       <ModelSelector
         models={models}
@@ -208,10 +198,12 @@ describe("ModelSelector", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Model/i }));
     const listbox = screen.getByRole("listbox");
-    const option = screen.getAllByRole("option")[0]!;
+    const selected = screen.getAllByRole("option")[0]!;
 
-    expect(listbox.classList.contains("bg-canvas-elevated")).toBe(true);
+    expect(listbox.classList.contains("bg-canvas-popover")).toBe(true);
     expect(listbox.classList.contains("border-hairline")).toBe(true);
-    expect(option.classList.contains("hover:bg-hairline-soft")).toBe(true);
+    expect(listbox.classList.contains("dropdown-panel-enter")).toBe(true);
+    expect(selected.querySelector("span.bg-brand")).toBeTruthy();
+    expect(selected.classList.contains("hover:bg-accent")).toBe(true);
   });
 });

@@ -94,7 +94,7 @@ export function AgentMcpSelector({ value, onChange }: Props) {
         </div>
       </Card>
       {open && (
-        <div className="absolute left-0 right-0 top-full z-10 mt-1 max-h-64 overflow-y-auto rounded-md border border-hairline bg-canvas-elevated shadow-floating">
+        <div className="dropdown-panel-enter absolute left-0 right-0 top-full z-10 mt-1 max-h-64 overflow-y-auto rounded-md border border-hairline bg-canvas-popover shadow-popover">
           <div className="px-3 py-2">
             {loadError ? (
               <p className="text-xs text-error">{t("settings.agentMcp.failedToLoad", { error: loadError })}</p>
