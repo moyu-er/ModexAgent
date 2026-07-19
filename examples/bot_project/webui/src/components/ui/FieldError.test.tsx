@@ -3,12 +3,13 @@ import { render, screen } from "@testing-library/react";
 import { FieldError } from "./FieldError";
 
 describe("FieldError", () => {
-  it("renders with role=alert and error text color", () => {
+  it("renders with role=alert, danger color, and an icon", () => {
     render(<FieldError>Required</FieldError>);
     const el = screen.getByRole("alert");
     expect(el.textContent).toBe("Required");
-    expect(el.className).toContain("text-error");
+    expect(el.className).toContain("text-danger");
     expect(el.className).toContain("text-xs");
+    expect(el.querySelector("svg")).toBeTruthy();
   });
 
   it("forwards id and className", () => {

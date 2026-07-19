@@ -29,10 +29,10 @@ describe("Checkbox", () => {
     expect(screen.getByRole("alert").textContent).toBe("bad");
   });
 
-  it("error uses error border on the box", () => {
+  it("error uses danger border on the box", () => {
     render(<Checkbox label="x" error="bad" />);
     const box = screen.getByLabelText("x");
-    expect(box.className).toContain("border-error");
+    expect(box.className).toContain("border-danger");
     expect(box.getAttribute("aria-invalid")).toBe("true");
   });
 

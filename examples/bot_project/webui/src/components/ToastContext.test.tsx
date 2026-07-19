@@ -44,13 +44,17 @@ describe("ToastContext", () => {
     expect(screen.queryByText("Saved")).toBeNull();
   });
 
-  it("auto-dismisses after the timeout when no action is present", () => {
+  it("auto-dismisses after ~4s when no action is present", () => {
     vi.useFakeTimers();
     renderProvider();
     act(() => lastShow!({ message: "Boo" }));
     expect(screen.queryByText("Boo")).toBeTruthy();
     act(() => {
-      vi.advanceTimersByTime(6000);
+      vi.advanceTimersByTime(3999);
+    });
+    expect(screen.queryByText("Boo")).toBeTruthy();
+    act(() => {
+      vi.advanceTimersByTime(1);
     });
     expect(screen.queryByText("Boo")).toBeNull();
   });
@@ -63,7 +67,7 @@ describe("ToastContext", () => {
       lastShow!({ message: "Decide", action: { label: "Go", onClick } }),
     );
     act(() => {
-      vi.advanceTimersByTime(6000);
+      vi.advanceTimersByTime(10000);
     });
     expect(screen.queryByText("Decide")).toBeTruthy();
   });
