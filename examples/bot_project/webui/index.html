@@ -2,20 +2,21 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>ModexBot</title>
     <link rel="icon" type="image/jpeg" href="logo.jpg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500&display=swap"
       rel="stylesheet"
     />
     <script>
       // Apply the saved theme before React hydrates to avoid a flash.
+      // Dark is the default; only an explicit "light" preference opts out.
       (function () {
         const saved = localStorage.getItem("modexbot_theme");
-        const theme = saved === "dark" ? "dark" : "light";
+        const theme = saved === "light" ? "light" : "dark";
         if (theme === "dark") {
           document.documentElement.classList.add("dark");
         } else {
@@ -23,22 +24,82 @@
         }
       })();
     </script>
+    <style>
+      /* Pre-React boot loader (DESIGN.md §7): theme-aware canvas background
+         with a breathing logo mark — no spinner, no text. Lives in <head> so
+         the very first paint already matches the saved theme. Colors are
+         inlined because index.css (and its CSS vars) has not loaded yet;
+         dark is the default theme, html:not(.dark) covers saved light. */
+      #__boot_loader {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #0e1512;
+      }
+      html:not(.dark) #__boot_loader {
+        background: #fafaf7;
+      }
+      #__boot_loader svg {
+        width: 72px;
+        height: 72px;
+        animation: __boot_breathe 2.4s ease-in-out infinite;
+      }
+      html.dark #__boot_loader svg {
+        filter: drop-shadow(0 0 16px rgba(45, 212, 168, 0.45));
+      }
+      @keyframes __boot_breathe {
+        0%,
+        100% {
+          opacity: 0.55;
+          transform: scale(0.97);
+        }
+        50% {
+          opacity: 1;
+          transform: scale(1);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #__boot_loader svg {
+          animation: none;
+        }
+      }
+    </style>
   </head>
   <body class="bg-canvas text-ink">
     <div id="root">
-      <!-- Pre-React loading placeholder: visible until main.tsx hydrates #root.
-           Inlined styles (no CSS vars) so it renders before index.css loads. -->
-      <div id="__boot_loader" style="position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;background:#fafaf9;color:#18181b;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;">
-        <div style="width:34px;height:34px;border-radius:50%;border:3px solid rgba(5,150,105,0.18);border-top-color:#059669;animation:__boot_spin 0.9s linear infinite;"></div>
-        <div style="font-size:14px;font-weight:500;letter-spacing:0.01em;">Loading ModexBot…</div>
-        <div id="__boot_status" style="font-size:12px;color:#71717a;min-height:16px;">Connecting to backend…</div>
+      <!-- Pre-React loading placeholder: visible until main.tsx hydrates
+           #root. Inline SVG = byte-identical copy of public/logo-icon.svg
+           (the CANONICAL source). This copy MUST stay inline — it renders
+           before the React bundle loads, so it cannot import the asset. When
+           the logo changes, update public/logo-icon.svg first, then mirror
+           the paths here and in LogoMarkIcon (src/components/ui/icons.tsx). -->
+      <div id="__boot_loader">
+        <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <g stroke="#2DD4A8" stroke-linecap="round">
+            <path d="M50 50 Q58 32 50 14" stroke-width="2.1"/>
+            <path d="M50 50 Q68 42 86 50" stroke-width="2.1"/>
+            <path d="M50 50 Q42 68 50 86" stroke-width="2.1"/>
+            <path d="M50 50 Q32 58 14 50" stroke-width="2.1"/>
+            <path d="M50 50 Q60 40 71.2 28.8" stroke-width="1.2" opacity="0.4"/>
+            <path d="M50 50 Q60 60 71.2 71.2" stroke-width="1.2" opacity="0.4"/>
+            <path d="M50 50 Q40 60 28.8 71.2" stroke-width="1.2" opacity="0.4"/>
+            <path d="M50 50 Q40 40 28.8 28.8" stroke-width="1.2" opacity="0.4"/>
+          </g>
+          <g fill="#2DD4A8">
+            <polygon points="50,39 61,50 50,61 39,50"/>
+            <circle cx="50" cy="14" r="4.6"/>
+            <circle cx="86" cy="50" r="4.6"/>
+            <circle cx="50" cy="86" r="4.6"/>
+            <circle cx="14" cy="50" r="4.6"/>
+            <circle cx="71.2" cy="28.8" r="2.1" opacity="0.55"/>
+            <circle cx="71.2" cy="71.2" r="2.1" opacity="0.55"/>
+            <circle cx="28.8" cy="71.2" r="2.1" opacity="0.55"/>
+            <circle cx="28.8" cy="28.8" r="2.1" opacity="0.55"/>
+          </g>
+        </svg>
       </div>
-      <style>
-        @keyframes __boot_spin { to { transform: rotate(360deg); } }
-        html.dark #__boot_loader { background:#0a0a0b; color:#fafafa; }
-        html.dark #__boot_loader > div:first-child { border-color: rgba(16,185,129,0.22); border-top-color:#10b981; }
-        html.dark #__boot_status { color:#a1a1aa; }
-      </style>
     </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

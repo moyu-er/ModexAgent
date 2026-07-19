@@ -1,4 +1,4 @@
-// tailwind.config.js - AI Chat UI 配色系统
+// tailwind.config.js - AI Chat UI 配色系统（Teal & Ember，见 DESIGN.md §2–§4）
 //
 // 颜色单一真相源在 src/index.css 的 :root / .dark CSS 变量里（见 --color-*）。
 // 这里每个 token 仅映射到对应的 var()，组件用单 class（如 bg-canvas）即可，
@@ -22,6 +22,14 @@ export default {
         "inline-code-bg": v("inline-code-bg"),
         "inline-code-text": v("inline-code-text"),
 
+        // 品牌（logo teal）+ ember 次级强调 + 语义色
+        brand: v("brand"),
+        "brand-deep": v("brand-deep"),
+        "brand-bright": v("brand-bright"),
+        "brand-soft": v("brand-soft"),
+        ember: v("ember"),
+        danger: v("danger"),
+
         // 状态反馈
         success: v("success"),
         warning: v("warning"),
@@ -35,21 +43,24 @@ export default {
           hardline: v("severity-hardline"),
         },
 
-        // 中性 token 阶梯（loom 风格：暖白底 / 近黑底，zinc 文字梯度）
+        // 中性 token 阶梯（暖纸底 / 带 teal 底色的暖石墨底，mint-white 文字梯度）
         ink: v("ink"),
         bright: v("bright"),
         body: v("body"),
         mute: v("mute"),
         faint: v("faint"),
         hairline: v("hairline"),
+        "border-strong": v("border-strong"),
         "hairline-strong": v("hairline-strong"),
         "hairline-soft": v("hairline-soft"),
+        selection: v("selection"),
         canvas: v("canvas"),
         "canvas-sidebar": v("canvas-sidebar"),
         "canvas-elevated": v("canvas-elevated"),
         "canvas-popover": v("canvas-popover"),
 
-        // 强调色（emerald 体系；link 复用为 primary/signal，使所有 *-link 类自动转翡翠绿）
+        // 历史别名：link/primary/signal 在 index.css 里已指向 brand 系列，
+        // 所有 *-link / *-primary / *-signal 类自动变为新 teal，无需改组件。
         link: v("link"),
         "link-deep": v("link-deep"),
         "link-soft": v("link-soft"),
@@ -64,12 +75,24 @@ export default {
           skills: v("cat-skills"),
           models: v("cat-models"),
           im: v("cat-im"),
+          prompts: v("cat-prompts"),
         },
       },
       fontFamily: {
-        sans: [
-          "Geist",
+        // Single-family system (DESIGN.md §3): Inter carries both display and
+        // body roles — weight + tracking differentiate tiers, not family.
+        // `display` is a semantic alias to Inter so existing `font-display`
+        // usages keep working; components pair it with font-bold + tracking.
+        display: [
           "Inter",
+          "Noto Sans SC",
+          "ui-sans-serif",
+          "system-ui",
+          "sans-serif",
+        ],
+        sans: [
+          "Inter",
+          "Noto Sans SC",
           "ui-sans-serif",
           "system-ui",
           "-apple-system",
@@ -77,14 +100,41 @@ export default {
           "Roboto",
           "sans-serif",
         ],
+        // JetBrains Mono: code blocks, inline code, eyebrow labels, paths,
+        // badges — the developer-tool monospace (DESIGN.md §3).
         mono: [
-          "Geist Mono",
           "JetBrains Mono",
+          "Noto Sans SC",
           "ui-monospace",
           "SFMono-Regular",
           "Menlo",
           "monospace",
         ],
+      },
+      // Type scale — 7 tiers, single source of truth in index.css :root
+      // (DESIGN.md §3). Every text-[Npx] arbitrary value converges onto
+      // these. Line-heights are paired per tier so `text-base` alone gives
+      // the right leading without a separate leading-* class.
+      fontSize: {
+        xs: ["var(--text-xs)", { lineHeight: "var(--leading-tight)" }],
+        sm: ["var(--text-sm)", { lineHeight: "var(--leading-snug)" }],
+        base: ["var(--text-base)", { lineHeight: "var(--leading-snug)" }],
+        md: ["var(--text-md)", { lineHeight: "var(--leading-relaxed)" }],
+        lg: ["var(--text-lg)", { lineHeight: "var(--leading-tight)" }],
+        xl: ["var(--text-xl)", { lineHeight: "var(--leading-tight)" }],
+        "2xl": ["var(--text-2xl)", { lineHeight: "var(--leading-tight)" }],
+      },
+      lineHeight: {
+        tight: "var(--leading-tight)",
+        snug: "var(--leading-snug)",
+        relaxed: "var(--leading-relaxed)",
+        prose: "var(--leading-prose)",
+      },
+      letterSpacing: {
+        tight: "var(--tracking-tight)",
+        normal: "var(--tracking-normal)",
+        wide: "var(--tracking-wide)",
+        eyebrow: "var(--tracking-eyebrow)",
       },
       borderRadius: {
         xs: "var(--radius-xs)",
@@ -95,6 +145,12 @@ export default {
         full: "var(--radius-full)",
       },
       boxShadow: {
+        // floating is a soft elevation shadow used by floating widgets
+        // (TodoPanel pill). Kept as a literal rgba, not a var() token, because
+        // it's a shadow value (not a color) and mirrors the rgba style of the
+        // --shadow-* tokens in index.css; both themes use the same dark
+        // shadow on a light/elevated surface. The card/popover shadows below
+        // DO map to var() tokens because they differ per theme.
         floating:
           "0 2px 2px rgba(0,0,0,0.04), 0 8px 16px -4px rgba(0,0,0,0.08)",
         card: "var(--shadow-card)",
@@ -103,9 +159,12 @@ export default {
       },
       transitionTimingFunction: {
         app: "var(--ease)",
+        out: "var(--ease-out)",
       },
       transitionDuration: {
+        fast: "var(--dur-fast)",
         app: "var(--dur)",
+        slow: "var(--dur-slow)",
       },
     },
   },
