@@ -50,11 +50,12 @@ interface Palette {
   glow: boolean;
 }
 
-/* DESIGN.md §7: firefly teal + ember in dark; deepened variants and NO
-   glow in light. */
+/* DESIGN.md §7: firefly teal + ember in dark (matches the dark brand ladder
+   --color-brand #2DD4BF / --color-brand-bright #5EEAD4); deepened variants
+   and NO glow in light. */
 const PALETTES: Record<"dark" | "light", Palette> = {
   dark: {
-    main: ["#5EEAD4", "#2DD4A8", "#99F6E4"],
+    main: ["#5EEAD4", "#2DD4BF", "#99F6E4"],
     ember: ["#FBBF24", "#F59E0B"],
     glow: true,
   },

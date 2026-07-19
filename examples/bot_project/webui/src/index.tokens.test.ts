@@ -104,6 +104,10 @@ const REQUIRED_TOKENS = [
 /** Legacy emerald values that must not survive the retokening. */
 const LEGACY_EMERALD = ["#059669", "#10b981", "#047857", "#34d399", "#065f46"];
 
+/** Legacy "Midnight Ink" (cyan/slate) values replaced by Warm Graphite —
+ *  catching them here prevents the old cyan brand from sneaking back. */
+const LEGACY_MIDNIGHT = ["#22d3ee", "#06b6d4", "#67e8f9", "#0a0f1e", "#070b17"];
+
 /** Legacy font families replaced by the Inter single-family system (§3).
  *  Catching them here prevents a stale import or stack from sneaking back. */
 const LEGACY_FONTS = ["Geist Mono", "Space Grotesk"];
@@ -118,19 +122,30 @@ describe("Teal & Ember design tokens (index.css)", () => {
   });
 
   it("pins the canonical brand values from DESIGN.md §2.1", () => {
-    expect(dark).toContain("--color-brand: #2DD4A8");
+    // Dark theme: Warm Graphite — same teal brand spine as light, lifted
+    // for dark-surface contrast, over a neutral warm-grey canvas
+    expect(dark).toContain("--color-brand: #2DD4BF");
     expect(light).toContain("--color-brand: #0D9488");
-    expect(dark).toContain("--color-ember: #F5A524");
+    expect(dark).toContain("--color-ember: #F59E0B");
     expect(light).toContain("--color-ember: #B45309");
+    expect(dark).toContain("--color-canvas: #1B1B1D");
   });
 
-  it("uses brand-tinted alpha hairlines in dark mode (§2.2)", () => {
-    expect(dark).toContain("--color-hairline: rgba(45, 212, 168, 0.14)");
-    expect(dark).toContain("--color-border-strong: rgba(45, 212, 168, 0.28)");
+  it("uses neutral white-alpha hairlines in dark mode (§2.2 — Warm Graphite)", () => {
+    // Dark theme keeps hue-free white-alpha borders so the teal accent reads
+    // as the single colored thread, not as a tint over every surface.
+    expect(dark).toContain("--color-hairline: rgba(255, 255, 255, 0.08)");
+    expect(dark).toContain("--color-border-strong: rgba(255, 255, 255, 0.16)");
   });
 
   it("leaves no legacy emerald values behind", () => {
     for (const hex of LEGACY_EMERALD) {
+      expect(css.toLowerCase()).not.toContain(hex.toLowerCase());
+    }
+  });
+
+  it("leaves no legacy Midnight Ink (cyan) values behind", () => {
+    for (const hex of LEGACY_MIDNIGHT) {
       expect(css.toLowerCase()).not.toContain(hex.toLowerCase());
     }
   });

@@ -9,11 +9,14 @@
  * ``bg-canvas-light dark:bg-canvas-dark`` pair) and pick up the right value
  * automatically. Edit a color here once — never in the tailwind config.
  *
- * Visual language: "Teal & Ember Console" — a teal spine (brand = logo teal,
- * #2DD4A8 dark / #0D9488 light) with an amber (ember) heartbeat, over a warm
- * paper / warm graphite-with-teal-undertone canvas. Dark-mode borders are
- * brand-tinted alpha ("teal shimmer"). See
- * docs/design/teal-ember-redesign/DESIGN.md §2–§4.
+ * Visual language: "Teal & Ember Console" — light theme keeps the original
+ * spine (brand = logo teal #0D9488 + amber ember #B45309 over warm paper).
+ * Dark theme is "Warm Graphite": a neutral warm-grey canvas (#1B1B1D,
+ * Linear / Raycast family) with the SAME teal brand hue as the light theme,
+ * lifted to #2DD4BF for dark-surface contrast, and amber ember (#F59E0B)
+ * heartbeat. Dark borders are neutral white-alpha (the "neutral shimmer") so
+ * the teal accent reads as the single colored thread, not a tint over every
+ * surface. See docs/design/teal-ember-redesign/DESIGN.md §2–§4.
  *
  * Legacy names (link / primary / signal / error / hairline-strong / ease) are
  * kept as aliases of the new tokens so existing components keep working
@@ -165,7 +168,7 @@
      brand-bright text (§6) */
   --color-user-bubble: var(--color-canvas-elevated);
   --color-user-bubble-text: var(--color-brand-bright);
-  --color-user-bubble-border: rgba(45, 212, 168, 0.28);
+  --color-user-bubble-border: rgba(45, 212, 191, 0.28);
 
   /* Assistant rail badge — brand 14% over dark canvas */
   --color-brand-soft: color-mix(in srgb, var(--color-brand) 14%, transparent);
@@ -174,40 +177,46 @@
   --color-inline-code-bg: color-mix(in srgb, var(--color-brand) 14%, transparent);
   --color-inline-code-text: var(--color-brand-bright);
 
-  /* Core palette (§2.1) — warm graphite canvas with a teal undertone,
-     mint-white ink */
-  --color-canvas: #0E1512;
-  --color-canvas-sidebar: #0B1210;
-  --color-canvas-elevated: #18201D;
-  --color-canvas-popover: #131B18;
-  --color-ink: #E6F2ED;
+  /* Core palette (§2.1) — Warm Graphite: neutral warm-grey canvas (Linear /
+     Raycast family) with stone-family text. The hue-free canvas lets the
+     teal brand read as the single colored thread, and both themes share one
+     warm, paper-adjacent temperament. */
+  --color-canvas: #1B1B1D;
+  --color-canvas-sidebar: #141416;
+  --color-canvas-elevated: #232326;
+  --color-canvas-popover: #1F1F22;
+  --color-ink: #F5F5F4;
   --color-bright: #FFFFFF;
-  --color-body: #B9CFC7;
-  --color-mute: #8FA69D;
-  --color-faint: #5F7A70;
+  --color-body: #D6D3D1;
+  --color-mute: #A8A29E;
+  --color-faint: #78716C;
 
-  /* Borders (§2.2) — brand-tinted alpha: the "teal shimmer" signature */
-  --color-hairline: rgba(45, 212, 168, 0.14);
-  --color-border-strong: rgba(45, 212, 168, 0.28);
+  /* Borders (§2.2) — neutral white-alpha: the "neutral shimmer" rule.
+     Kept hue-free so the teal accent reads as the single colored thread
+     rather than tinting every container edge. */
+  --color-hairline: rgba(255, 255, 255, 0.08);
+  --color-border-strong: rgba(255, 255, 255, 0.16);
   --color-hairline-strong: var(--color-border-strong); /* legacy alias */
-  --color-hairline-soft: rgba(45, 212, 168, 0.06);
+  --color-hairline-soft: rgba(255, 255, 255, 0.04);
 
-  /* Selection (§2.3) */
-  --color-selection: rgba(45, 212, 168, 0.3);
+  /* Selection (§2.3) — teal-tinted to match the dark brand */
+  --color-selection: rgba(45, 212, 191, 0.28);
 
-  /* Brand = logo teal (§2.1); ember is the secondary accent */
-  --color-brand: #2DD4A8;
+  /* Brand = teal (§2.1) — the SAME hue family as the light theme (#0D9488),
+     lifted to #2DD4BF so it keeps ≥4.5:1 contrast on the dark canvas.
+     One brand across both themes; only lightness shifts. */
+  --color-brand: #2DD4BF;
   --color-brand-deep: #14B8A6;
   --color-brand-bright: #5EEAD4;
-  --color-ember: #F5A524;
+  --color-ember: #F59E0B;
   --color-danger: #F87171;
 
   /* Text color on a brand fill/gradient (§5.1) — dark ink on the bright
      dark-theme gradient (see :root note). */
   --color-on-brand: var(--color-canvas);
 
-  /* Status (§2.1): success = brand, warning = ember family */
-  --color-success: #2DD4A8;
+  /* Status (§2.1): success = brand teal, warning = amber family */
+  --color-success: var(--color-brand);
   --color-warning: #FBBF24;
   --color-error: var(--color-danger); /* legacy alias */
 
@@ -225,15 +234,15 @@
   --color-signal: var(--color-brand);
   --color-accent: color-mix(in srgb, var(--color-brand) 10%, transparent);
 
-  /* Per-config-category accent colors (§2.3) — rebalanced; T06 polish.
-     Dark-theme variants are brighter so chips stay visible on graphite,
-     matching the brand #2DD4A8 / ember #F5A524 lightness family. */
+  /* Per-config-category accent colors (§2.3) — rebalanced for the Warm
+     Graphite canvas. Saturation/lightness family matches brand #2DD4BF /
+     ember #F59E0B so chips stay readable on the warm-grey canvas. */
   --color-cat-mcp: #E89B6B;     /* terracotta, lifted */
-  --color-cat-pools: #4BC9DA;   /* cyan */
+  --color-cat-pools: #3B82F6;   /* blue — distinct from brand teal */
   --color-cat-skills: #A78BFA;  /* indigo, lifted */
   --color-cat-models: #F472B6;  /* magenta, lifted */
   --color-cat-im: #A3D94C;      /* lime, lifted */
-  --color-cat-prompts: #2DD4A8; /* brand */
+  --color-cat-prompts: #2DD4BF; /* brand teal — prompts are the "home" domain */
 
   /* Session-row brand tints (§8) — solid tokens (see :root note). */
   --color-session-hover: color-mix(in oklab, var(--color-brand) 8%, var(--color-canvas-sidebar));
@@ -280,9 +289,9 @@
   --tracking-wide: 0.02em;
   --tracking-eyebrow: 0.28em;
 
-  /* Scrollbar — subdued teal shimmer */
-  --color-scrollbar-thumb: rgba(45, 212, 168, 0.22);
-  --color-scrollbar-thumb-hover: rgba(45, 212, 168, 0.32);
+  /* Scrollbar — subdued neutral-white shimmer (hue-free, like the borders) */
+  --color-scrollbar-thumb: rgba(255, 255, 255, 0.12);
+  --color-scrollbar-thumb-hover: rgba(255, 255, 255, 0.2);
 }
 
 /* Drift-enabled glow position. @property makes the custom property animatable
@@ -586,10 +595,10 @@
     animation: checkbox-check 180ms var(--ease-out);
   }
   .dark .checkbox-custom:checked {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M3.5 8.5L6.5 11.5L12.5 4.5' stroke='%230E1512' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M3.5 8.5L6.5 11.5L12.5 4.5' stroke='%231B1B1D' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   }
   .dark .checkbox-custom:indeterminate {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M4 8H12' stroke='%230E1512' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M4 8H12' stroke='%231B1B1D' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   }
   @keyframes checkbox-check {
     from {
@@ -739,6 +748,22 @@
     letter-spacing: var(--tracking-eyebrow);
     text-transform: uppercase;
     color: var(--color-brand);
+  }
+
+  /* Chat meta labels (§6) — agent name, tool name, reasoning label, and the
+   * Args/Result section labels inside a tool card. Deliberately distinct from
+   * .eyebrow: the sans family (Inter), normal case, and zero letter-spacing
+   * let names like "main"/"read_file"/"Reasoning" read naturally instead of
+   * being uppercased and dotted apart by mono + 0.28em tracking. Color is set
+   * by the caller (brand / mute / per-agent tone) — this class owns only
+   * font, size, weight, case, and tracking. */
+  .chat-label {
+    font-family: theme("fontFamily.sans");
+    font-size: var(--text-xs);
+    font-weight: 600;
+    letter-spacing: var(--tracking-normal);
+    text-transform: none;
+    line-height: var(--leading-tight);
   }
 
   /* Settings group header eyebrow variant (§8): mute-colored so the group

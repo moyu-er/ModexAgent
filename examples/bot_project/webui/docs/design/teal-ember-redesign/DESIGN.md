@@ -1,68 +1,95 @@
 # ModexBot WebUI Design System — "Teal & Ember Console"
 
-Status: proposed (2026-07-18)
-Supersedes: the stale "Notion-inspired" section in `webui/AGENTS.md`
+Status: implemented
+Last revised: 2026-07-19 — dark theme replaced "Midnight Ink" (cyan/slate) with
+"Warm Graphite" (neutral warm-grey canvas + the light theme's teal brand hue).
 Reference: `docs/design/2026-07-17-website-design.md` in the `modex-agent` website repo
 (implementation: `docs/stylesheets/extra.css`, `docs/stylesheets/home.css`, `docs/javascripts/particles.js`)
 
 ## 1. Design intent
 
-The website speaks "Teal & Ember": a teal spine (brand `#2DD4A8`, the exact logo color)
-with an amber heartbeat. The WebUI adopts the same language, tuned for a console:
-denser, content-first, motion serving state changes rather than decoration.
+The website speaks "Teal & Ember": a teal spine with an amber heartbeat. The WebUI
+adopts the same language, tuned for a console: denser, content-first, motion serving
+state changes rather than decoration.
 
-Three problems this redesign fixes:
+Design principles:
 
-1. **Brand drift** — UI accent was emerald `#059669`; the logo is `#2DD4A8`. Now unified.
-2. **Dead boot experience** — a bare spinner saying "Connecting to backend…". Replaced by
-   a branded particle-morph boot sequence (§7).
-3. **Fragmented control language** — three independent dropdown implementations, three
-   radius scales, buttons/inputs/cards drifting apart. Converged to one spec (§5, §6).
-
-Dark theme is the default (developer console, and the brand glow lives best in the dark);
-light theme is a first-class equal, not an inversion.
+1. **One brand, two themes** — the SAME teal hue family carries both themes
+   (`#0D9488` light / `#2DD4BF` dark). Only lightness shifts between themes; the
+   brand never changes hue. (The interim "Midnight Ink" cyan `#22D3EE` was dropped
+   because it made the two themes read as two different products.)
+2. **Neutral canvas, colored thread** — both canvases are near-neutral (warm paper
+   light / warm graphite dark). The teal accent is the single colored thread;
+   borders and scrollbars stay hue-free so they never tint every surface.
+3. **Dark is the default** (developer console), light is a first-class equal, not
+   an inversion.
 
 ## 2. Color tokens
 
 Single source of truth: `src/index.css` (`:root` / `.dark`), mapped by `tailwind.config.js`.
 Derived shades are computed with `color-mix(in srgb, …)` from these tokens — never
-hard-code raw hex in components.
+hard-code raw hex in components. `src/index.tokens.test.ts` pins the canonical
+values so the palette cannot silently drift.
 
 ### 2.1 Core palette
 
 | Token | Light (DAY) | Dark (NIGHT, default) | Usage |
 |---|---|---|---|
-| `--color-canvas` | `#FAFAF7` | `#0E1512` | app background (warm paper / warm graphite w/ teal undertone) |
-| `--color-canvas-sidebar` | `#F4F5F2` | `#0B1210` | sidebar, recessed zones |
-| `--color-canvas-elevated` | `#FFFFFF` | `#18201D` | cards, bubbles, panels |
-| `--color-canvas-popover` | `#FFFFFF` | `#131B18` | dropdowns, modals, toasts |
-| `--color-ink` | `#1A2B26` | `#E6F2ED` | primary text (mint-white in dark) |
-| `--color-body` | `#2E443C` | `#B9CFC7` | secondary text |
-| `--color-mute` | `#5A6E66` | `#8FA69D` | tertiary text |
-| `--color-faint` | `#8AA096` | `#5F7A70` | placeholders, disabled |
-| `--color-brand` | `#0D9488` | `#2DD4A8` | primary accent = logo teal |
+| `--color-canvas` | `#F6F7F5` | `#1B1B1D` | app background (warm paper / warm graphite) |
+| `--color-canvas-sidebar` | `#F0F1EF` | `#141416` | sidebar, recessed zones |
+| `--color-canvas-elevated` | `#FFFFFF` | `#232326` | cards, bubbles, panels |
+| `--color-canvas-popover` | `#FFFFFF` | `#1F1F22` | dropdowns, modals, toasts |
+| `--color-ink` | `#1A2B26` | `#F5F5F4` | primary text |
+| `--color-bright` | `#0E1512` | `#FFFFFF` | highest-contrast headings |
+| `--color-body` | `#2E443C` | `#D6D3D1` | secondary text |
+| `--color-mute` | `#5A6E66` | `#A8A29E` | tertiary text |
+| `--color-faint` | `#8AA096` | `#78716C` | placeholders, disabled |
+| `--color-brand` | `#0D9488` | `#2DD4BF` | primary accent — same teal hue, lifted for dark |
 | `--color-brand-deep` | `#0F766E` | `#14B8A6` | pressed/hover accent |
 | `--color-brand-bright` | `#14B8A6` | `#5EEAD4` | glows, highlights |
-| `--color-ember` | `#B45309` | `#F5A524` | secondary accent: badges, metric values, rare highlights |
+| `--color-ember` | `#B45309` | `#F59E0B` | secondary accent: badges, metric values, rare highlights |
 | `--color-danger` | `#DC2626` | `#F87171` | errors, destructive |
 | `--color-warning` | `#B45309` | `#FBBF24` | warnings (= ember family) |
-| `--color-success` | `#0D9488` | `#2DD4A8` | success (= brand) |
+| `--color-success` | `#0D9488` | `#2DD4BF` | success (= brand) |
+| `--color-on-brand` | `#FFFFFF` | `var(--color-canvas)` | text on brand fill/gradient |
 
-### 2.2 Borders — the "teal shimmer" rule
+The dark canvas ladder (`#1B1B1D` / `#141416` / `#232326` / `#1F1F22`) is the
+Linear/Raycast warm-graphite family: neutral, no blue or teal cast, easy on the
+eyes for long sessions. Dark text uses the stone family (warm neutrals).
 
-- Light: neutral `--color-hairline: #E2E5E0`, `--color-border-strong: #CBD3CE`.
-- Dark: **brand-tinted alpha borders** — `--color-hairline: rgba(45,212,168,.14)`,
-  `--color-border-strong: rgba(45,212,168,.28)`. Every container in dark mode carries a
-  faint teal shimmer; this is the signature look and must be applied consistently.
+### 2.2 Borders — the "neutral shimmer" rule
+
+- Light: neutral `--color-hairline: #E1E4E0`, `--color-border-strong: #CBD3CE`,
+  `--color-hairline-soft: #EFF1ED`.
+- Dark: **hue-free white-alpha borders** — `--color-hairline: rgba(255,255,255,.08)`,
+  `--color-border-strong: rgba(255,255,255,.16)`,
+  `--color-hairline-soft: rgba(255,255,255,.04)`. Dark scrollbars follow the same
+  rule (`rgba(255,255,255,.12/.2)`). No border or scrollbar in dark mode carries a
+  brand tint; this keeps the teal accent reading as the single colored thread.
+  (Supersedes the original "teal shimmer" brand-tinted border rule.)
 
 ### 2.3 Functional / domain colors
 
-- Approval severities keep 4 levels, re-derived: normal = mute, sensitive = ember,
-  dangerous = danger, hardline = `#9F1239`/`#FB7185`.
-- Settings domain category colors (mcp/pools/skills/models/im/prompts): keep 6 distinct
-  hues but rebalance to the same saturation/lightness family as brand/ember so chips feel
-  like one set. Exact values fixed in implementation pass P4.
-- Selection: `rgba(45,212,168,.30)` dark / `rgba(20,184,166,.25)` light.
+- Approval severities: normal = brand 30%/40% alpha, sensitive = ember,
+  dangerous = danger, hardline = `#9F1239` light / `#FB7185` dark.
+- Selection: `rgba(20,184,166,.25)` light / `rgba(45,212,191,.28)` dark.
+- Settings domain category colors — 6 distinct hues, rebalanced per theme to sit
+  beside brand/ember in one saturation/lightness family:
+
+| Category | Light | Dark | Hue |
+|---|---|---|---|
+| `--color-cat-mcp` | `#C26A3E` | `#E89B6B` | terracotta |
+| `--color-cat-pools` | `#2A8E9E` | `#3B82F6` | blue (kept distinct from brand teal) |
+| `--color-cat-skills` | `#6D5AD0` | `#A78BFA` | indigo |
+| `--color-cat-models` | `#C5377A` | `#F472B6` | magenta |
+| `--color-cat-im` | `#6B9F2E` | `#A3D94C` | olive / lime |
+| `--color-cat-prompts` | `#0D9488` | `#2DD4BF` | brand teal — prompts are the "home" domain |
+
+- Code syntax highlighting: `vscDarkPlus` (Prism) in dark — a neutral-grey code
+  palette that sits cleanly on the warm-graphite canvas; `oneLight` in light.
+  (The interim `oneDark` was dropped: its purple cast clashed with the canvas.)
+  The block chrome (header bar, borders) comes from tokens, only the syntax
+  colors come from the Prism theme.
 
 ## 3. Typography
 
@@ -90,8 +117,6 @@ unity high.
 Single source of truth in `index.css` `:root` / `.dark` as `--text-*` CSS
 variables; `tailwind.config.js` maps `text-xs/sm/base/md/lg/xl/2xl` to them.
 **No `text-[Npx]` arbitrary values, no hardcoded `font-size:` in components.**
-Every tier pairs with a default line-height so `text-{tier}` alone yields the
-right leading.
 
 | Token class | `--text-*` | px | Default line-height | Used for |
 |---|---|---|---|---|
@@ -128,15 +153,7 @@ settings group headers. The `.eyebrow-muted` variant swaps brand color for
 Four-tier text-color ladder (`--color-*`), each with a fixed semantic role.
 **Body text is always `ink`/`bright`; auxiliary is always `mute`; only
 non-interactive decoration uses `faint`.** `faint` never carries information
-the user must read.
-
-| Token | Light | Dark | Semantic role | Used for |
-|---|---|---|---|---|
-| `--color-bright` | `#0E1512` | `#FFFFFF` | highest-contrast heading | page-title, boot headline, modal title, prose `strong`/`th` |
-| `--color-ink` | `#1A2B26` | `#E6F2ED` | primary text | message body, form input values, nav-item.active, prose body |
-| `--color-body` | `#2E443C` | `#B9CFC7` | secondary text / default control | nav-item default, card body, form label, agent label |
-| `--color-mute` | `#5A6E66` | `#8FA69D` | auxiliary / meta | page-sub, helper text, statusline, eyebrow-muted, trace-card meta |
-| `--color-faint` | `#8AA096` | `#5F7A70` | placeholder / disabled / decoration | placeholder text, disabled, breadcrumb separators |
+the user must read. Dark values are the stone family (see §2.1).
 
 ### 3.7 Markdown prose (`.prose-chat`)
 
@@ -154,15 +171,13 @@ all derive color from the ink ladder.
 
 | Token | Value | Used for |
 |---|---|---|
-| `--radius-xs` | 6px | checkboxes, tiny chips |
-| `--radius-sm` | 8px | small buttons, inputs |
+| `--radius-xs` | 6px | checkboxes, tiny chips, bubble tail corners |
+| `--radius-sm` | 8px | small buttons, inputs, session rows |
 | `--radius-md` | 12px | buttons, cards, dropdown panels |
 | `--radius-lg` | 16px | message bubbles, composer, modals |
 | `--radius-pill` | 999px | chips, tags, status dots containers, ModelSelector trigger |
 
-Removes the current 6/16/full split (Button 6px vs composer 16px vs selector full).
-
-### Elevation (dark: shadows carry a teal tint)
+### Elevation (dark: hover glow carries a teal tint)
 
 - `card`: `0 1px 3px rgba(0,0,0,.05)` light / `0 1px 3px rgba(0,0,0,.35)` dark
 - `card-hover`: + `0 0 1.5rem color-mix(brand 12%)` glow on hoverable cards
@@ -172,19 +187,20 @@ Removes the current 6/16/full split (Button 6px vs composer 16px vs selector ful
 
 - `--dur-fast: 150ms`, `--dur: 220ms`, `--dur-slow: 350ms`
 - `--ease-out: cubic-bezier(.2,.7,.2,1)` (enter), exits at ~65% duration ease-in
-- Hover lift: `translateY(-2px)` cards / `-1px` buttons; press: scale .98
+- Hover lift: `translateY(-1px)` buttons; press: scale .98
 - Stagger: 50ms per sibling (lists, boot elements)
-- Only `transform` + `opacity` animate; `prefers-reduced-motion` zeroes all of it
-  (already enforced globally — keep and extend).
+- Only `transform` + `opacity` animate; a global `prefers-reduced-motion` guard
+  zeroes all of it.
 
 ## 5. Component spec (convergence)
 
 ### 5.1 Buttons (one `Button`, restyled)
 
-- Primary: gradient `linear-gradient(120deg, brand, brand-bright)`, ink-colored text
-  (dark) / white (light), glow shadow `0 .5rem 1.5rem color-mix(brand 18%)`,
-  hover lift -1px + brighter glow. Radius `md`. Min height 36px (44px on touch).
-- Ghost: elevated bg + 1px hairline; hover border → `border-strong` (teal shimmer).
+- Primary: gradient `linear-gradient(120deg, brand, brand-bright)`,
+  `--color-on-brand` text (white light / dark-canvas-ink dark), glow shadow
+  `0 .5rem 1.5rem color-mix(brand 18%)`, hover lift -1px + brighter glow.
+  Radius `md`. One primary CTA per area.
+- Ghost: elevated bg + 1px hairline; hover border → `border-strong`.
 - Danger: semantic danger, never gradient. Disabled: opacity .45, no pointer.
 
 ### 5.2 Inputs
@@ -193,109 +209,94 @@ Label above (13px medium), input 36px, radius `sm`, elevated bg, hairline border
 focus: 2px brand ring + border-brand; helper text below (12px mute); error below field
 (12px danger + icon). No placeholder-only labels.
 
-### 5.3 Dropdowns — one visual spec, at most two implementations
-
-All three current implementations (`Select`, `SelectMenu`, `ModelSelector`) converge to
-this spec; the native `<select>` wrapper is dropped entirely:
+### 5.3 Dropdowns — one visual spec
 
 - Trigger: radius `sm` (form) or `pill` (inline/model), chevron rotates 180° on open.
-- Panel: popover bg, 1px hairline (teal shimmer in dark), radius `md`, popover shadow,
-  opens with 150ms fade + `translateY(-4px→0)` from trigger direction.
-- Item: 32px row, hover = brand 8% tint; selected = 2px brand bar left + check icon.
-- Group headers: sticky mono eyebrow (as ModelSelector already does).
-- Full keyboard nav (arrows/Home/End/Esc/typeahead) — SelectMenu already has it; port to all.
-
-Target end state: one shared `DropdownPanel` primitive + two triggers (form field vs
-inline pill). ModelSelector keeps its grouping, sidebar pool picker keeps its density.
+- Panel: popover bg, 1px hairline, radius `md`, popover shadow, opens with 150ms
+  fade + `translateY(±4px→0)` from the trigger direction (`.dropdown-panel-enter`).
+- Item: 32px row, hover = brand tint; selected = 2px brand bar left + check icon.
+- Group headers: sticky mono eyebrow. Full keyboard nav.
 
 ### 5.4 Checkbox / dialog / toast
 
-Checkbox: keep custom SVG check, restyle to radius `xs`, brand fill, 180ms check-draw.
-Modals: popover bg, radius `lg`, scrim `rgba(0,0,0,.5)`, enter = scale .96→1 + fade 180ms
-from trigger. Toasts: popover bg + hairline, brand/ember/danger icon dot, auto-dismiss 4s,
-`aria-live="polite"`.
+Checkbox: custom SVG check, radius `xs`, brand fill, 180ms check-draw; the check
+mark is white on the deep light-theme teal, dark-canvas ink on the bright
+dark-theme teal (stroke hex mirrors `--color-canvas`, hardcoded inside the
+data-URI — the one deliberate exception to the no-hex rule). Modals: popover bg,
+radius `lg`, scrim `rgba(0,0,0,.5)`, enter = scale .96→1 + fade 180ms. Toasts:
+popover bg + hairline, brand/ember/danger icon dot, auto-dismiss, `aria-live="polite"`.
 
 ## 6. Chat surface
 
-- **Assistant messages**: subtle surface (not a full bubble, not bare canvas) —
-  `brand-soft` tint bg + 2px brand left rail, `radius-lg` with a `tl-xs` tail corner,
-  max-width 72ch. Avatar is the `Bot` glyph (lucide) in a brand-tinted circular badge,
-  matching the chat header's agent indicator — not the project logo.
-- **User bubble**: right-aligned, radius `lg` with 6px tail corner, dark =
-  `elevated` bg + brand-alpha border + brand-bright text; light = brand 8% tint bg +
-  brand-deep text. Max-width 72ch.
-- **Reasoning block**: collapsible, mono eyebrow "REASONING" + chevron, hairline left
-  border 2px brand-alpha, dim text.
-- **ToolTraceCard**: elevated card, radius `md`, mono eyebrow header, severity color only
-  in a 3px left bar + status icon — no full-bleed color washes.
-- **ApprovalCard**: elevated + severity left bar; actions = primary (approve) + ghost
-  (reject), `deny_reason` shown as helper text.
-- **Composer**: floating, radius `lg`, elevated bg, hairline border; focus → brand ring +
-  subtle glow. Buttons inside: icon ghost buttons, send = primary gradient circle.
-- **Empty state** (no conversation selected): logo-icon watermark (brand, 8% opacity,
-  96px) + display-font headline + 2–3 mono-eyebrow hints — replaces the single bare line.
-- **Typing indicator**: three brand dots, 1.2s pulse stagger (replaces plain spinner
-  where applicable); streaming keeps the existing typewriter.
+- **Assistant messages**: elevated surface (`--color-canvas-elevated`) with a 1px
+  hairline border and a 2px brand-alpha left rail, `radius-lg` with a `tl-xs`
+  tail corner, max-width 72ch — a "document" feel, distinct from both the canvas
+  and the user's branded tint bubble.
+- **User bubble**: right-aligned, radius `lg` with `xs` tail corner; light =
+  brand 8% tint bg + brand-deep text + brand 22% border; dark = elevated bg +
+  brand-bright text + `rgba(45,212,191,.28)` border. Max-width 72ch.
+- **Reasoning block**: collapsible, mono eyebrow + chevron, 2px brand-alpha left
+  border, dim text.
+- **ToolTraceCard / ApprovalCard**: elevated card, radius `md`, severity color
+  only in a 2px inset left bar + status icon — no full-bleed color washes.
+  Approval actions = primary (approve) + ghost (reject), `deny_reason` as helper text.
+- **Composer**: floating, radius `lg`, elevated bg, hairline border; focus-within
+  → 2px brand ring + subtle brand glow. Send = primary gradient.
+- **Typing indicator**: three brand dots, 1.2s staggered pulse.
 
-## 7. Boot experience (the centerpiece fix)
+## 7. Boot experience
 
 Three phases, all branded, smooth hand-off between them:
 
 1. **Pre-React (index.html inline)**: background already set to the *saved theme's*
-   canvas color (fixes the white flash in dark mode), centered logo-icon.svg with a slow
-   breathing glow — no spinner, no text. ~10 lines of inline SVG/CSS.
-2. **BootScreen**: full-canvas **particle morph** — port of the website's
-   `particles.js` (vanilla, zero-dep, DPR-capped, IO/visibility paused,
-   reduced-motion → static frame). Sequence: particles drift loosely → gather into the
-   star-topology logo mark (hold while connecting) → on `ready`, disperse radially as the
-   app fades in (spatial continuity: the logo "explodes" into the UI).
-   Below the stage: mono eyebrow status line with the existing staged copy
-   ("STARTING BACKEND…" → "CONNECTING…" → "STILL STARTING…"), plus a 24s+ error state:
-   hairline card with the raw error in mono + a primary "Retry" button.
-   Particle density: ≤600 desktop / ≤300 mobile (boot is transient — keep it cheap).
-3. **Entry**: App fades in 250ms with sidebar/session list staggering in at 50ms
+   canvas color (no white flash in dark mode), centered logo-icon with a slow
+   breathing glow — no spinner, no text.
+2. **BootScreen**: full-canvas **particle morph** (`src/lib/particles.ts`, vanilla,
+   zero-dep, DPR-capped, IO/visibility paused, reduced-motion → static frame).
+   Particles drift → gather into the logo mark (hold while connecting) → on
+   `ready`, disperse radially as the app fades in. Palette: dark = firefly teal
+   (`#5EEAD4` / `#2DD4BF` / `#99F6E4`, matching the dark brand ladder) + ember
+   (`#FBBF24` / `#F59E0B`) with glow; light = deepened teals, no glow.
+   Below the stage: mono eyebrow status line; 24s+ error state with retry.
+3. **Entry**: app fades in 250ms with sidebar/session list staggering at 50ms
    (one-time per cold start).
 
 ## 8. Layout & chrome
 
-- **Statusline**: keep 32px; add logo-icon.svg (14px, brand) before the "ModexBot"
-  wordmark (Space Grotesk). Connection dot keeps brand/mute states + glow.
-- **Sidebar**: `canvas-sidebar` bg, hairline right border (teal shimmer dark). Workspace
-  path in mono. Session rows: radius `sm`, hover brand 6% tint, active = brand 10% tint +
-  2px brand left bar. "New Conversation" = primary gradient button (the only gradient
-  button in chrome).
-- **Settings**: keep two-column shell. Group headers = mono eyebrow; category chips
-  recolored per §2.3; `ActionBar` sticky bottom with backdrop blur + top hairline;
-  unsaved-changes indicator (ember dot).
-- **Page transitions**: chat ↔ settings crossfade 200ms (no more instant swap).
-- **Mobile** (the website's weakness — do better here): drawer sidebar with 40% scrim;
-  composer respects `safe-area-inset-bottom`; all touch targets ≥44px; boot particles
-  ignore touch-drag (no repel on scroll); layout uses `100dvh`.
+- **Statusline**: 32px, chrome tone halfway between canvas and sidebar; brand
+  wordmark in display font (Inter 700, `tracking-wide`) + connection dot
+  (brand glow / dim).
+- **Sidebar**: `canvas-sidebar` bg, hairline right border. Session rows: radius
+  `sm`, hover = brand 6–8% tint over sidebar, active = brand 10–12% tint + 2px
+  brand left bar (solid tokens — `/alpha` modifiers on `var()` colors generate
+  no CSS in this Tailwind setup).
+- **Settings**: two-column shell; category chips recolored per §2.3; active nav
+  item = inset 2px `--cat` bar + 9% `--cat` gradient; `ActionBar` sticky bottom
+  with backdrop blur + top hairline; unsaved-changes = ember dot.
+- **Page transitions**: chat ↔ settings crossfade ~200ms.
+- **Mobile**: drawer sidebar with scrim; composer respects `safe-area-inset-bottom`;
+  touch targets ≥44px (invisible `::before` hit-area expansion on coarse pointers);
+  layout uses `100dvh`.
 
 ## 9. Accessibility floor
 
-- Contrast: body ≥4.5:1, secondary ≥3:1 in both themes (verify mint-white on `#18201D`
-  and brand on dark — brand-bright is for large text/glow only, body links in dark use
-  brand-bright).
-- Focus-visible: 2px brand outline + 3px offset everywhere (matches website).
+- Contrast: body ≥4.5:1, secondary ≥3:1 in both themes. The dark brand `#2DD4BF`
+  on canvas `#1B1B1D` and stone-family text on the graphite ladder were chosen
+  to meet this; `brand-bright` is for large text/glow only.
+- Focus-visible: 2px brand ring everywhere.
 - Color never the only signal: severity/status always pair icon + text.
 - `prefers-reduced-motion`: particles render one static frame; all UI motion zeroed.
+- `color-scheme: light/dark` set per theme so native controls follow.
 
 ## 10. i18n
 
-Stays en-only for now; all new copy (boot stages, empty state, retry) goes through the
-i18n catalog. No hardcoded display strings (existing rule — now also applies to the
-pre-React loader, which uses no text at all).
+All user-facing copy goes through the i18n catalog (`src/i18n/`). No hardcoded
+display strings (the pre-React loader uses no text at all).
 
-## 11. Implementation phases (subsequent work)
+## 11. Revision history
 
-| Phase | Scope |
+| Date | Change |
 |---|---|
-| P0 tokens | Rewrite `index.css` token set, tailwind mapping, fonts (add Space Grotesk), radius/motion tokens, dark-default |
-| P1 boot | Pre-React loader + BootScreen particle morph + entry transition |
-| P2 primitives | Button/Input/Card/Checkbox/Toast restyle; DropdownPanel convergence (Select/SelectMenu/ModelSelector) |
-| P3 chat | Bubbles, reasoning, tool trace, approval, composer, empty state, typing indicator |
-| P4 chrome | Sidebar, statusline, settings pages, category colors, logo-icon integration (copy `assets/logo-icon.svg` → `webui/public/`) |
-| P5 polish | Mobile pass, reduced-motion audit, contrast audit, docs (`webui/AGENTS.md` design section rewrite, delete stale DESIGN-notion reference, remove stray `webui/nul`) |
-
-Out of scope: new features, routing, state-management changes, backend changes.
+| 2026-07-18 | Initial "Teal & Ember Console" spec (P0–P5 implemented): token system, boot experience, component convergence, chat surface, chrome. Dark = warm graphite w/ teal undertone + "teal shimmer" borders + logo teal `#2DD4A8`. |
+| 2026-07-19 | Dark theme iteration "Midnight Ink" (slate-blue canvas + cyan `#22D3EE`) — prototyped, then rejected: brand hue split across themes, cold blue cast, `oneDark` purple clash. Never shipped to main. |
+| 2026-07-19 | Dark theme finalized as "Warm Graphite": neutral warm-grey canvas, brand unified on the light theme's teal hue (`#2DD4BF`), neutral white-alpha borders/scrollbars, `vscDarkPlus` code theme. Chosen from a 6-variant interactive prototype reviewed against the live homepage layout. |

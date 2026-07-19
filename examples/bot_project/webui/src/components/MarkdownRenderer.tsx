@@ -11,7 +11,7 @@ import bash from "react-syntax-highlighter/dist/esm/languages/prism/bash";
 import css from "react-syntax-highlighter/dist/esm/languages/prism/css";
 import yaml from "react-syntax-highlighter/dist/esm/languages/prism/yaml";
 import markdown from "react-syntax-highlighter/dist/esm/languages/prism/markdown";
-import { oneDark, oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { vscDarkPlus, oneLight } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { useTheme } from "../hooks/useTheme";
 import { MermaidBlock } from "./MermaidBlock";
 import { useT } from "../i18n";
@@ -75,7 +75,7 @@ const CodeBlock: FC<CodeBlockProps> = ({ language, value, isDark }) => {
       </div>
       <SyntaxHighlighter
         language={lang}
-        style={isDark ? oneDark : oneLight}
+        style={isDark ? vscDarkPlus : oneLight}
         className="!m-0 !rounded-none !bg-canvas !p-4"
         codeTagProps={{ className: "font-mono text-base leading-relaxed" }}
       >

@@ -35,7 +35,7 @@ export const ToolTraceCard: FC<ToolTraceCardProps> = ({ tool }) => {
       >
         <ChevronToggleIcon open={expanded} className="text-mute" />
         <Wrench size={13} strokeWidth={1.75} className="text-mute" aria-hidden="true" />
-        <span className="eyebrow">{tool.tool}</span>
+        <span className="chat-label text-brand">{tool.tool}</span>
         {tool.result !== undefined && (
           <span className="ml-auto flex items-center gap-1 text-xs text-success">
             <Check size={11} strokeWidth={2.5} aria-hidden="true" />
@@ -46,7 +46,7 @@ export const ToolTraceCard: FC<ToolTraceCardProps> = ({ tool }) => {
       {expanded && (
         <div className="mt-1.5 rounded border border-hairline bg-canvas p-3">
           <div className="mb-2">
-            <span className="text-xs font-semibold uppercase text-mute">
+            <span className="chat-label text-mute">
               {t("toolTrace.args")}
             </span>
             <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-xs text-body">
@@ -55,7 +55,7 @@ export const ToolTraceCard: FC<ToolTraceCardProps> = ({ tool }) => {
           </div>
           {tool.result !== undefined && (
             <div>
-              <span className="text-xs font-semibold uppercase text-mute">
+              <span className="chat-label text-mute">
                 {t("toolTrace.result")}
               </span>
               <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-xs text-ink">

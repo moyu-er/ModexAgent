@@ -151,7 +151,7 @@ export const MessageBubble: FC<MessageBubbleProps> = ({ message, sessionId, work
             messages keep the branded bubble (surface tokens in CSS). */}
         <div className={isUser ? "bubble-user" : "bubble-assistant"}>
           {!isUser && message.agent_name && (
-            <div className={`mb-1.5 text-xs font-semibold uppercase tracking-eyebrow font-mono ${agentLabelClass(message.agent_name)}`}>
+            <div className={`mb-1.5 chat-label ${agentLabelClass(message.agent_name)}`}>
               {message.agent_name}
             </div>
           )}
