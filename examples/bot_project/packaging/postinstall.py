@@ -103,8 +103,11 @@ def create_cli_shims(app_dir: Path) -> None:
     scripts_dir = app_dir / "python" / "Scripts"
     scripts_dir.mkdir(parents=True, exist_ok=True)
 
+    # MODEXBOT_PORT=21810 makes the installed modexbot default to a different
+    # port than the dev venv (21800), so both can run side-by-side. Explicit
+    # --port still wins.
     shims = {
-        "modexbot.bat": f'@echo off\r\n"{python_exe}" -m modexbot %*',
+        "modexbot.bat": f'@echo off\r\nset MODEXBOT_PORT=21810\r\n"{python_exe}" -m modexbot %*',
         "modexctl.bat": f'@echo off\r\n"{python_exe}" -c "from modexctl.main import main; main()" %*',
     }
 

@@ -63,7 +63,11 @@ def _resolve_venv_python() -> Path:
 _VENV_PYTHON: Path = _resolve_venv_python()
 _PID_FILE: Path = _PKG_ROOT / ".modex" / "bot.pid"
 _LOG_FILE: Path = _PKG_ROOT / "logs" / "bot.log"
-_DEFAULT_PORT: int = 21800
+# Allow the install shim (modexbot.bat, which sets MODEXBOT_PORT=21810) to
+# default to a different port than the dev venv (no env → 21800). This lets
+# installed and dev instances run side-by-side without port conflicts.
+# Explicit `--port` always wins.
+_DEFAULT_PORT: int = int(os.environ.get("MODEXBOT_PORT", "21800"))
 _DEFAULT_LOG_LINES: int = 50
 
 

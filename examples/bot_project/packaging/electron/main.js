@@ -47,7 +47,10 @@ const BOT_PROJECT = IS_PACKAGED
 const LOG_DIR = path.join(BOT_PROJECT, "logs");
 const LOG_FILE = path.join(LOG_DIR, "electron-launcher.log");
 
-const WEBUI_URL = "http://localhost:21800/webui/";
+// Install build uses 21810 so it can run alongside the dev instance (21800).
+// Dev mode (IS_PACKAGED=false) still uses 21800.
+const WEBUI_PORT = IS_PACKAGED ? 21810 : 21800;
+const WEBUI_URL = `http://localhost:${WEBUI_PORT}/webui/`;
 const POLL_INTERVAL_MS = 1000;
 const MAX_WAIT_MS = 90000;
 
@@ -124,10 +127,11 @@ function startPythonBot() {
   log("Starting Python bot subprocess...");
   log(`  Python: ${BUNDLED_PYTHON}`);
   log(`  CWD:    ${BOT_PROJECT}`);
+  log(`  Port:   ${WEBUI_PORT}`);
 
   pythonProcess = spawn(
     BUNDLED_PYTHON,
-    ["-m", "modexbot", "start"],
+    ["-m", "modexbot", "start", "--port", String(WEBUI_PORT)],
     {
       cwd: BOT_PROJECT,
       stdio: ["ignore", "pipe", "pipe"],
@@ -181,11 +185,12 @@ function startPythonBot() {
 function killPythonBot() {
   // `modexbot start` daemonizes: the spawned launcher exits immediately
   // (code 0) and the real bot runs detached. So pythonProcess is usually
-  // null by the time we shut down. Use `modexbot stop` — the CLI finds and
-  // stops the background bot regardless of how it was started.
+  // null by the time we shut down. Use `modexbot stop --port <WEBUI_PORT>`
+  // — the CLI finds and stops the background bot on that port regardless
+  // of how it was started.
   log("Stopping bot via modexbot stop...");
   try {
-    execSync(`"${BUNDLED_PYTHON}" -m modexbot stop`, {
+    execSync(`"${BUNDLED_PYTHON}" -m modexbot stop --port ${WEBUI_PORT}`, {
       cwd: BOT_PROJECT,
       stdio: "ignore",
       windowsHide: true,
@@ -382,6 +387,18 @@ function quitApp(reason) {
 }
 
 // ── App lifecycle ───────────────────────────────────────────────────────────
+
+// Override userData path in packaged builds so the install's single-instance
+// lock, cookies, cache, etc. live under %APPDATA%\ModexBot-Installed and do
+// NOT collide with a dev `electron .` run (which uses %APPDATA%\ModexBot from
+// package.json's "name"). MUST run before requestSingleInstanceLock().
+if (IS_PACKAGED) {
+  try {
+    app.setPath("userData", path.join(app.getPath("appData"), "ModexBot-Installed"));
+  } catch (e) {
+    log(`Failed to override userData path: ${e.message}`);
+  }
+}
 
 // Single instance lock — second launch focuses existing window
 const gotLock = app.requestSingleInstanceLock();

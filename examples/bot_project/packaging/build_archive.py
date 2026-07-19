@@ -99,6 +99,37 @@ def _prune_excluded(app_dir: Path) -> None:
     print(f"    Pruned: {removed_bytes / 1e6:.1f} MB total")
 
 
+def _overlay_working_tree(repo_root: Path, app_dir: Path) -> None:
+    """Overlay working-tree content over the git-archive baseline.
+
+    ``git archive HEAD`` exports committed files only, silently dropping
+    uncommitted edits. This overlay copies every git-tracked file from the
+    working tree so uncommitted edits are included in the installer. Files
+    not tracked by git (gitignored or new) are NOT included — the
+    .gitignore boundary is preserved. Skips _ARCHIVE_EXCLUDES top-level
+    dirs to avoid copying files that _prune_excluded just deleted.
+    """
+    result = subprocess.run(
+        ["git", "ls-files"],
+        cwd=str(repo_root),
+        capture_output=True, text=True, check=True,
+    )
+    tracked = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    copied = 0
+    for rel in tracked:
+        top = rel.replace("\\", "/").split("/", 1)[0]
+        if top in _ARCHIVE_EXCLUDES:
+            continue
+        src = repo_root / rel
+        if not src.is_file():
+            continue
+        dst = app_dir / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        copied += 1
+    print(f"    Overlaid {copied} working-tree files onto archive baseline")
+
+
 # --- Public API -------------------------------------------------------------
 
 
@@ -135,11 +166,16 @@ def build_archive(staging_dir: Path, force_frontend: bool = False) -> Path:
 
     print(f"  [build_archive] Source exported → {app_dir}")
 
-    # 3. Prune non-runtime directories (tests/assets/docs/.github/...) that
+    # 3. Overlay working-tree content over the git-archive baseline so
+    #    uncommitted edits make it into the installer. Must run before
+    #    _prune_excluded so prune still removes tests/assets/docs/etc.
+    _overlay_working_tree(repo_root, app_dir)
+
+    # 4. Prune non-runtime directories (tests/assets/docs/.github/...) that
     #    git archive included but the installer doesn't need.
     _prune_excluded(app_dir)
 
-    # 4. Copy pre-built frontend dist/ (gitignored, not in archive)
+    # 5. Copy pre-built frontend dist/ (gitignored, not in archive)
     src_dist = repo_root / "examples" / "bot_project" / "bot" / "web" / "dist"
     dst_dist = app_dir / "examples" / "bot_project" / "bot" / "web" / "dist"
     if src_dist.exists():

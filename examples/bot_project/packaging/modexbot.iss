@@ -154,14 +154,14 @@ Name: "{group}\ModexBot (Browser)"; \
 ; Start Menu — stop
 Name: "{group}\ModexBot Stop"; \
   Filename: "{app}\python\python.exe"; \
-  Parameters: "-m modexbot stop"; \
+  Parameters: "-m modexbot stop --port 21810"; \
   WorkingDir: "{app}\app\examples\bot_project"; \
   Comment: "Stop ModexBot"
 
 ; Start Menu — logs
 Name: "{group}\ModexBot Logs"; \
   Filename: "{app}\python\python.exe"; \
-  Parameters: "-m modexbot logs -f"; \
+  Parameters: "-m modexbot logs -f --port 21810"; \
   WorkingDir: "{app}\app\examples\bot_project"; \
   Comment: "View ModexBot logs"
 
@@ -206,7 +206,7 @@ Name: "{userdesktop}\ModexBot"; \
 ; ============================================================================
 [UninstallRun]
 Filename: "{app}\python\python.exe"; \
-  Parameters: "-m modexbot stop"; \
+  Parameters: "-m modexbot stop --port 21810"; \
   WorkingDir: "{app}\app\examples\bot_project"; \
   Flags: runhidden; \
   RunOnceId: "StopBot"
@@ -279,9 +279,12 @@ begin
     Paths := '';
   if Pos(';' + LowerCase(Path) + ';', ';' + LowerCase(Paths) + ';') > 0 then
     Exit;
-  if (Paths <> '') and (Copy(Paths, Length(Paths), 1) <> ';') then
-    Paths := Paths + ';';
-  Paths := Paths + Path;
+  // Prepend (not append) so the installed modexbot.bat wins over dev venv
+  // or anaconda copies of modexbot.exe that may already be on PATH.
+  if Paths <> '' then
+    Paths := Path + ';' + Paths
+  else
+    Paths := Path;
   RegWriteStringValue(HKEY_CURRENT_USER, 'Environment', 'Path', Paths);
   BroadcastSettingChange();
 end;
