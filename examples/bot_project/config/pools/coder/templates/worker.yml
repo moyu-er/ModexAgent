@@ -1,4 +1,9 @@
 agent_name: worker
-description: Implementation agent — the single writer thread (OpenCode-powered)
+description: >-
+  Executes delegated implementation tasks — writes and edits code with narrow,
+  coherent changes, runs verification, and reports back with a summary of
+  changes, validation results, and open risks. Use for any code change, bug
+  fix, or refactoring that has a clear scope. Does not explore, plan, or
+  review — hand it a task and it implements it.
 execution_strategy: external_coding
 provider_kind: opencode

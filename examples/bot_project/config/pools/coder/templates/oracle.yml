@@ -1,5 +1,9 @@
 agent_name: oracle
-description: Decision-consistency oracle — prevents drift from inherited decisions
+description: >-
+  Decision-consistency checker — reconstructs inherited decisions and constraints
+  from context, then identifies drift, contradictions, or hidden assumptions in
+  the current trajectory. Use when a design decision needs validation or when the
+  approach feels uncertain mid-task. Does not write code or propose new plans.
 max_steps: 60
 tool_preset: read_only
 context_mode: fork

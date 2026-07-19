@@ -1,5 +1,9 @@
 agent_name: reviewer
-description: Versatile review specialist for code diffs, plans, and solutions
+description: >-
+  Reviews code diffs, plans, or proposed solutions against intent, correctness,
+  and codebase conventions — returns structured findings with blockers, notes,
+  and verifiable evidence. Use after any code change before considering the task
+  complete. Does not implement fixes — it only reports issues.
 max_steps: 100
 context_mode: fresh
 tool_preset: read_write

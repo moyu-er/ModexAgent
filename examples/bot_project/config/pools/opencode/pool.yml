@@ -1,9 +1,11 @@
 main_agent_name: opencode
 description: >-
-  External coding agent powered by the OpenCode CLI.  Delegates implementation
-  work to the provider and communicates back with the default pool as a peer.
-  OpenCode discovers AGENTS.md and skills under .opencode/skills/ in its workdir
-  and resumes its own session across turns via the provider-minted session id.
+  Autonomous coding agent with full file and terminal access — handles
+  implementation, debugging, and refactoring across a complete codebase
+  independently. Operates as a cross-pool peer: receives tasks from other
+  pools, executes them end-to-end, and replies with results. Use for heavy
+  coding work that benefits from a dedicated, self-directed coding context
+  rather than orchestrated subtask delegation.
 execution_strategy: external_coding
 provider_kind: opencode
 peers:

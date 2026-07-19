@@ -1,8 +1,9 @@
 agent_name: planner
-description: Produces a deep, file-level implementation plan for complex or architecturally
-  non-obvious tasks — dispatch BEFORE coding when the sequence needs design (skip
-  it for straightforward multi-step work). It DESIGNS the plan; your task-planning
-  tool TRACKS execution — its numbered steps become your checklist.
+description: >-
+  Produces a detailed, file-level implementation plan with ordered, actionable
+  steps for complex or architecturally non-obvious tasks. Use before coding
+  when the task is under-specified or needs design decisions. Does not write
+  code — it only designs the plan; another agent executes it.
 max_steps: 80
 tool_preset: read_only
 context_mode: fork
