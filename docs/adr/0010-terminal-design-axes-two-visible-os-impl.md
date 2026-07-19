@@ -1,5 +1,17 @@
 # Terminal system design axes: two visible axes, OS collapsed to implementation
 
+**Status**: Partially superseded by ADR-0032 (backend-layer async-safety
+contract, shared-behavior convergence, tmux correctness fixes). ADR-0010
+Decisions 1–7 (two design axes, OS-named managers removed, transport-named
+backends, structural-vs-switch visibility diagnostic, factory capability
+table, L2-Session-owns-state, single manager with capability flags) all
+stand. ADR-0032 revises only the *backend implementation layer* that
+ADR-0010 left unspecified — ADR-0010 never mandated synchronous I/O inside
+`async def`, never mandated per-backend duplication of `clear_input_line` /
+`drain_startup` / `current_segment`, and never mandated tmux's tail-match
+diff. ADR-0032 fills those gaps. See the disposition section at the end of
+this document.
+
 The terminal tool chain historically presented three orthogonal axes to
 upstream code: **operating system** (Windows / Linux, materialised as
 `WindowsHiddenTerminalManager` / `WindowsVisibleTerminalManager` /
@@ -415,3 +427,76 @@ ABC" choice above.
   `Session.execute` to `CommandTool.execute`'s orchestration.
 - No new domain term is added for the factory's capability table — it is
   implementation, not language.
+
+---
+
+## Disposition — superseded by ADR-0032 (2026-07-20)
+
+ADR-0032 ("Terminal backend async-safety and behavior convergence") revises
+the backend implementation layer that this ADR left unspecified. The
+relationship is **partial**: ADR-0010 decisions that stand unchanged are
+listed below, followed by the specific points ADR-0032 revises.
+
+### ADR-0010 decisions that stand
+
+- **D1** — Two design axes (Shell Family × Visibility); OS at implementation
+  layer. Unchanged by ADR-0032.
+- **D2** — OS-named manager subclasses removed. Unchanged.
+- **D3** — Backend subclasses named by transport. Unchanged.
+- **D4** — Visibility difference expressed by subclass (structural) vs
+  parameter (switch). Unchanged. ADR-0032 D5 explicitly preserves tmux's
+  snapshot I/O model rather than forcing it into the byte-stream shape, which
+  is consistent with D4's "structural difference → subclass / override"
+  diagnostic.
+- **D5** — `PexpectBackend` is visible-only-rejected. Unchanged.
+- **D6** — Linux-visible MVP is `TmuxBackend(visibility=VISIBLE)`. Unchanged.
+- **D7** — L2 Session owns state and primitives; L5 Tools own
+  orchestration. Unchanged. ADR-0032 is entirely within the backend layer
+  (L3, below L2 Session); Session's surface is untouched.
+- **D8** — One terminal manager with optional capability flags. Unchanged.
+
+### Points ADR-0032 revises
+
+ADR-0010 did not specify the backend I/O safety contract, the placement of
+shared backend behaviors, or tmux's diff algorithm. The gaps produced three
+classes of defect (synchronous blocking I/O inside `async def`, divergent
+copy-pasted behaviors, tmux tail-match diff mismatches on scroll) that
+surfaced in production. ADR-0032 fills those gaps:
+
+1. **Async-safety contract** (ADR-0032 D1) — `TerminalBackend.write` /
+   `read_pending` become template methods delegating to opt-in
+   `_write_blocking` / `_read_blocking` hooks wrapped in
+   `run_in_executor`. Native-async backends (visible-windows after D2)
+   override the templates directly. ADR-0010 did not address this; ADR-0032
+   makes the contract structural.
+2. **Visible-windows IPC rewrite** (ADR-0032 D2) — `WinptyConsoleWindowBackend`
+   rewritten with `asyncio.open_connection` / `asyncio.start_server`,
+   eliminating the `socket.settimeout` leak that produced partial `sendall`
+   and lost Enter. ADR-0010 D4 named the visible-windows path "structural"
+   (separate host process + socket bridge) and that structural split is
+   preserved; only the IPC layer changes from raw socket to asyncio stream.
+3. **Shared-behavior convergence** (ADR-0032 D4) — `current_segment`,
+   `clear_input_line`, `drain_startup` become concrete methods on
+   `TerminalBackend` with an abstract `_shell_family()` hook. ADR-0010 did
+   not address where these behaviors live; the original implementation
+   copy-pasted them with divergent shell-detection heuristics. ADR-0032
+   consolidates them.
+4. **Tmux correctness** (ADR-0032 D5) — tmux's `_diff_output` switches from
+   tail-match to prefix-match over `capture-pane -p -S -` (full scrollback);
+   `is_alive` gets a 1-second TTL cache. ADR-0010 D4 named tmux a "switch"
+   visibility backend and that stands; ADR-0032 fixes the implementation
+   bugs in the snapshot-read path without changing tmux's I/O model.
+5. **Architecture guard test** (ADR-0032 D6) — new
+   `tests/architecture/test_terminal_async_safety.py` asserts the
+   async-safety contract on every backend subclass. ADR-0010 had no such
+   guard; the regression class that produced the synchronous-I/O bug was
+   not detectable.
+
+### Reading order
+
+Engineers touching the terminal backend layer should read ADR-0010 first
+(architecture: axes, transport naming, structural-vs-switch diagnostic,
+L2/L4/L5 layering) then ADR-0032 (backend-layer I/O safety, shared-behavior
+placement, tmux correctness). ADR-0010 remains the authority on the
+*architecture* of the terminal system; ADR-0032 is the authority on the
+*backend implementation contract* within that architecture.
