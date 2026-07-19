@@ -23,14 +23,14 @@ This ticket does NOT touch the visible-windows or tmux backends.
 
 **Blocked by:** 01 — Prefactor: expand `TerminalBackend` with async-safety scaffolding.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `PexpectPtyBackend` implements `_write_blocking`, `_read_blocking`, `_shell_family`
-- [ ] `PexpectPtyBackend` deletes its 6 overrides (`write`, `read`, `read_pending`, `current_segment`, `clear_input_line`, `drain_startup`) — all inherited from `TerminalBackend`
-- [ ] `PexpectPtyBackend` deletes `_uses_readline` private helper
-- [ ] `tests/unit/tools/terminal/backends/test_pexpect_pty.py` covers hook contract, shell-family detection, error handling, base-class inheritance
-- [ ] `ruff check src/modex_agent/tools/terminal/backends/pexpect_pty.py` clean
-- [ ] `mypy src/modex_agent/tools/terminal/backends/pexpect_pty.py` clean
+- [x] `PexpectPtyBackend` implements `_write_blocking`, `_read_blocking`, `_shell_family`
+- [x] `PexpectPtyBackend` deletes its 6 overrides (`write`, `read`, `read_pending`, `current_segment`, `clear_input_line`, `drain_startup`) — all inherited from `TerminalBackend`
+- [x] `PexpectPtyBackend` deletes `_uses_readline` private helper
+- [x] `tests/unit/tools/terminal/backends/test_pexpect_pty.py` covers hook contract, shell-family detection, error handling, base-class inheritance
+- [x] `ruff check src/modex_agent/tools/terminal/backends/pexpect_pty.py` clean
+- [x] `mypy src/modex_agent/tools/terminal/backends/pexpect_pty.py` clean
 
 ## Comments
 
