@@ -247,3 +247,61 @@ class TestBuildResultExecutionStrategyBranch:
 
         target = CommunicationTarget(name="worker", kind=AgentCommKind.SUBAGENT)
         assert target.execution_strategy == ExecutionStrategyKind.REACT
+
+
+class TestBuildEnvelopeXmlBranch:
+    """build_envelope must emit peer-format XML (with <reply_contract> +
+    modexctl send) when target is external, agent-format XML (minimal)
+    when target is native.
+
+    Regression: external subagents received the minimal build_agent_message
+    format — no reply_contract, no modexctl send instructions — so the
+    external CLI had no idea how to reply. Native subagents have
+    SubagentAutoSendHook to auto-deliver replies; external CLIs do not.
+    """
+
+    def test_external_target_envelope_xml_has_reply_contract_and_modexctl(self) -> None:
+        from modex_agent.core.constants import ExecutionStrategyKind
+
+        strategy = SubagentDispatchStrategy(_make_deps())
+        req = SendRequest(
+            target=CommunicationTarget(
+                name="coder",
+                kind=AgentCommKind.SUBAGENT,
+                execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+            ),
+            content="implement feature X",
+            invocation_id="task-1",
+            context=_make_context(),
+        )
+        session = strategy.build_session(req, "task-1")
+
+        envelope = strategy.build_envelope(req, session, "task-1")
+        xml = envelope.payload["content"]
+
+        assert "<reply_contract>" in xml
+        assert 'modexctl send --to "main"' in xml
+        assert "INVISIBLE" in xml
+
+    def test_native_target_envelope_xml_is_minimal_no_reply_contract(self) -> None:
+        from modex_agent.core.constants import ExecutionStrategyKind
+
+        strategy = SubagentDispatchStrategy(_make_deps())
+        req = SendRequest(
+            target=CommunicationTarget(
+                name="worker",
+                kind=AgentCommKind.SUBAGENT,
+                execution_strategy=ExecutionStrategyKind.REACT,
+            ),
+            content="do work",
+            invocation_id="task-1",
+            context=_make_context(),
+        )
+        session = strategy.build_session(req, "task-1")
+
+        envelope = strategy.build_envelope(req, session, "task-1")
+        xml = envelope.payload["content"]
+
+        assert "<reply_contract>" not in xml
+        assert "modexctl send" not in xml
+        assert 'invocation_id="task-1"' in xml

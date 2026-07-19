@@ -10,11 +10,18 @@ The reply contract tells the *receiver* how to reply to the *sender*. The
 wording (send_to_agent tool vs modexctl send CLI) based on what the
 **receiver** can use — not the sender. No ``implementation`` attribute is
 emitted on the XML; the sender's implementation is invisible to agents.
+
+``build_dispatch_xml`` is the convergence point: it picks the minimal
+``build_agent_message`` format for native targets (SubagentAutoSendHook
+delivers replies automatically) and the full ``build_peer_agent_message``
+format for external targets (the external CLI has no auto-send hook — it
+MUST see the reply contract to know ``modexctl send`` is required).
 """
 
 from __future__ import annotations
 
 from modex_agent.core.agent import AgentImplementation
+from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.utils.xml import xml_attr, xml_text
 
 
@@ -87,6 +94,39 @@ def build_peer_agent_message(
         "</agent_message>",
     ]
     return "\n".join(lines)
+
+
+def build_dispatch_xml(
+    *,
+    source: str,
+    invocation_id: str | None,
+    content: str,
+    target_execution_strategy: ExecutionStrategyKind,
+) -> str:
+    """Build the agent_message XML for send_to_agent dispatch.
+
+    Single convergence point for the "target is external → peer format"
+    rule. ``SubagentDispatchStrategy`` and ``ParentReplyStrategy`` both
+    delegate here so the branching lives in one place.
+
+    External targets receive ``build_peer_agent_message`` with the full
+    ``<reply_contract>`` (the external CLI has no SubagentAutoSendHook
+    equivalent — it MUST see ``modexctl send`` instructions to reply).
+    Native targets receive the minimal ``build_agent_message`` (the
+    SubagentAutoSendHook delivers the reply automatically, so the
+    contract is unnecessary token overhead).
+    """
+    if target_execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING:
+        return build_peer_agent_message(
+            source=source,
+            content=content,
+            receiver_implementation=AgentImplementation.EXTERNAL,
+        )
+    return build_agent_message(
+        source=source,
+        invocation_id=invocation_id,
+        content=content,
+    )
 
 
 def build_agent_result(

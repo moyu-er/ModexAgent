@@ -175,3 +175,58 @@ class TestParentReplyStrategy:
 
         assert envelope.message_type == AgentMessageType.AGENT_MESSAGE
         assert envelope.invocation_id is None
+
+    def test_build_envelope_external_target_uses_peer_format(self) -> None:
+        """When parent is external (e.g. opencode pool main), the reply XML
+        must carry <reply_contract> + modexctl send so the external CLI
+        knows how to continue the conversation."""
+        from modex_agent.core.constants import ExecutionStrategyKind
+
+        strategy = ParentReplyStrategy(_make_deps())
+        req = SendRequest(
+            target=CommunicationTarget(
+                name="main",
+                kind=AgentCommKind.NORMAL,
+                execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+            ),
+            content="task done",
+            invocation_id=None,
+            context=_make_context(
+                agent_name="worker",
+                comm_kind=AgentCommKind.SUBAGENT,
+                parent_session_id="conv-1.main",
+            ),
+        )
+        session = strategy.build_session(req, "")
+
+        envelope = strategy.build_envelope(req, session, "")
+        xml = envelope.payload["content"]
+
+        assert "<reply_contract>" in xml
+        assert 'modexctl send --to "worker"' in xml
+
+    def test_build_envelope_native_target_uses_minimal_format(self) -> None:
+        from modex_agent.core.constants import ExecutionStrategyKind
+
+        strategy = ParentReplyStrategy(_make_deps())
+        req = SendRequest(
+            target=CommunicationTarget(
+                name="main",
+                kind=AgentCommKind.NORMAL,
+                execution_strategy=ExecutionStrategyKind.REACT,
+            ),
+            content="task done",
+            invocation_id=None,
+            context=_make_context(
+                agent_name="worker",
+                comm_kind=AgentCommKind.SUBAGENT,
+                parent_session_id="conv-1.main",
+            ),
+        )
+        session = strategy.build_session(req, "")
+
+        envelope = strategy.build_envelope(req, session, "")
+        xml = envelope.payload["content"]
+
+        assert "<reply_contract>" not in xml
+        assert "modexctl send" not in xml
