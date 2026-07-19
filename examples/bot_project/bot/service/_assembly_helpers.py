@@ -271,9 +271,9 @@ class _PoolAssemblyMixin:
             todo_dir: Path = pool_data.runtime_dir / "todos"
         else:
             todo_dir = data_dir / "runtime_state" / pool_name / "todos"
-        from modex_agent.core.scope import RecordScope
+        from bot.scope import BotRecordScope
 
-        todo_scope = RecordScope(pool=pool_name)
+        todo_scope = BotRecordScope(pool=pool_name)
         todo_store = build_todo_store(app_config, persistence, todo_dir, todo_scope)
 
         # Preset tools: file/search/bash gated by main_spec.tool_preset. A bash

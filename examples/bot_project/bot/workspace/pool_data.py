@@ -15,13 +15,13 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
+from bot.scope import BotRecordScope
 from modex_agent.core.experience import (
     ExperienceManager,
     FileExperienceSource,
     PerFileExperienceMetaStore,
 )
 from modex_agent.core.provider import LLMProvider
-from modex_agent.core.scope import RecordScope
 from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.memory.system import MemorySystemContextManager
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
@@ -103,7 +103,7 @@ async def build_pool_data(
         app_config,
         persistence,
         memory_dir,
-        RecordScope(pool=pool_name, workspace_id=str(ctx.target)),
+        BotRecordScope(pool=pool_name, workspace_id=str(ctx.target)),
     )
     memory_system = create_memory(
         memory_cfg,

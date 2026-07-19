@@ -60,8 +60,6 @@ from modex_agent.agents.external_coding.types import (
     ExecOptions,
     ExternalEnvSpec,
 )
-from modex_agent.core.agent import Agent
-from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.multi_agent.descriptor import AgentDescriptor, AgentInstance
 from modex_agent.multi_agent.execution_strategy import (
     ExecutionStrategy as ExecutionStrategyABC,
@@ -480,14 +478,14 @@ class ExternalCodingExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
         provider_kind = self._read_provider_kind(pool_spec, project_dir)
         backend = self._build_external_coding_backend(provider_kind)
         parser = self._build_external_coding_parser(provider_kind)
+        from bot.scope import BotRecordScope
         from bot.service.builders import build_external_session_map_store
-        from modex_agent.core.scope import RecordScope
 
         session_store = build_external_session_map_store(
             app_config,
             persistence,
             workspace_dir,
-            RecordScope(pool=pool_name),
+            BotRecordScope(pool=pool_name),
         )
         spec = build_external_coding_env_spec(
             pool_name, pool_spec, project_dir, inbox_dir, workspace_dir, main_agent_name

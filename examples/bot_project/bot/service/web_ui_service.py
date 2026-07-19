@@ -503,11 +503,11 @@ class WebUIService(BotService):
         todo_store = None
         persistence = resources.persistence
         if persistence is not None:
-            from modex_agent.core.scope import RecordScope
+            from bot.scope import BotRecordScope
             from modex_agent.persistence.adapters.todo_store import SqliteTodoStore
 
             todo_store = SqliteTodoStore(
-                persistence.connection, RecordScope(pool=pool)
+                persistence.connection, BotRecordScope(pool=pool)
             )
         return RuntimeStores(todo_store=todo_store, turn_store=turn_store)
 

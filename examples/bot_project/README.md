@@ -724,9 +724,7 @@ Plugins dynamically extend tools, memory providers, and skill sources without mo
 ```yaml
 plugins:
   enabled: true
-  configurations:
-    tool_call_cleanup:
-      enabled: true                   # Clean up redundant tool call records
+  configurations: {}
 ```
 
 ## Logs

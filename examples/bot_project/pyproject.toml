@@ -32,6 +32,7 @@ packages = ["modexbot"]
 [tool.hatch.build]
 include = [
     "bot/**/*.py",
+    "bot/**/*.sql",
     "modexbot/**/*.py",
     "bot/web/dist/**/*",
 ]
