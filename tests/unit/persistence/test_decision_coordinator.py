@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,19 @@ from modex_agent.runtime.models import (
 from modex_agent.runtime.store import ActiveTurnConflictError
 
 
+class _PoolScopedRecordScope(RecordScope):
+    """Test-local ``RecordScope`` subclass adding the pool dimension.
+
+    ADR-0028 removed ``pool`` from the framework's base ``RecordScope``; the
+    bot project re-adds it via ``BotRecordScope``. This test constructs a
+    pool-scoped ``RecordScope`` for the audit store (matching the bot's
+    canonical JSON) and uses this local subclass to avoid crossing the
+    framework/examples boundary (mirrors ``BotRecordScope``).
+    """
+
+    pool: str | None = None
+
+
 @pytest.fixture
 async def connection(tmp_path: Path) -> AsyncIterator[ConnectionManager]:
     mgr = ConnectionManager(tmp_path / "state.db", DatabaseKind.WORKSPACE)
@@ -59,7 +73,7 @@ def turn_state_store(
 def audit_store(
     connection: ConnectionManager,
 ) -> SqliteApprovalAuditStore:
-    return SqliteApprovalAuditStore(connection, RecordScope(pool="default"))
+    return SqliteApprovalAuditStore(connection, _PoolScopedRecordScope(pool="default"))
 
 
 @pytest.fixture
@@ -324,3 +338,38 @@ async def test_audit_survives_snapshot_deletion(
     assert await turn_state_store.load_turn(snapshot.identity) is None
     entries = await audit_store.query("s1.main")
     assert [entry.turn_uuid for entry in entries] == ["uuid-1"]
+
+
+# ---------------------------------------------------------------------------
+# ADR-0029 §2 regression — coordinator must write int-ms timestamps
+# ---------------------------------------------------------------------------
+
+
+async def test_coordinator_timestamps_round_trip_as_epoch_ms(
+    coordinator: SqliteDecisionCoordinator,
+    turn_state_store: SqliteTurnStateStore,
+    audit_store: SqliteApprovalAuditStore,
+) -> None:
+    """Coordinator-written rows must decode through the proper adapters.
+
+    Float-seconds writes into the INTEGER ms columns decode to 1970; this
+    asserts snapshot ``created_at`` and audit ``decided_at`` round-trip to
+    the correct modern epoch.
+    """
+    snapshot = _make_snapshot()
+    entry = _make_entry()
+
+    await coordinator.apply_decision(snapshot, entry)
+
+    loaded = await turn_state_store.load_turn(snapshot.identity)
+    assert loaded is not None
+    assert datetime.fromtimestamp(loaded.created_at, tz=UTC).year > 2020
+
+    entries = await audit_store.query("s1.main")
+    assert len(entries) == 1
+    assert datetime.fromisoformat(entries[0].decided_at).year > 2020
+
+    since_entries = await audit_store.query(
+        "s1.main", since=datetime(2020, 1, 1, tzinfo=UTC)
+    )
+    assert len(since_entries) == 1

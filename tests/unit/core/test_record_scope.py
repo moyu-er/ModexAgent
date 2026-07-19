@@ -36,7 +36,6 @@ from modex_agent.core.scope import (
 # ---------------------------------------------------------------------------
 
 _ALL_FIELDS = (
-    "pool",
     "workspace_id",
     "session_id",
     "session_prefix",
@@ -49,6 +48,18 @@ _ALL_FIELDS = (
     "invocation_id",
     "parent_session_id",
 )
+
+
+class _PoolScopedRecordScope(RecordScope):
+    """Test-local ``RecordScope`` subclass adding the pool dimension.
+
+    ADR-0028 removed ``pool`` from the framework's base ``RecordScope``; the
+    bot project re-adds it via ``BotRecordScope``. Tests that specifically
+    exercise the pool dimension use this local subclass to avoid crossing
+    the framework/examples boundary (mirrors ``BotRecordScope``).
+    """
+
+    pool: str | None = None
 
 
 class TestRecordScopeModel:
@@ -93,6 +104,95 @@ class TestRecordScopeModel:
         assert rs.canonical() == canonical_json(rs.model_dump(exclude_none=True))
 
 
+class TestRecordScopeFromCanonicalRoundTrip:
+    """Round-trip tests for ``canonical()`` → ``from_canonical()``.
+
+    Covers ADR-0028 §3 (canonical JSON divergence is intentional) and the
+    content-based ``__scope_type__`` stamp mechanism that lets the framework
+    restore subclass instances without importing business layers.
+    """
+
+    def test_base_class_round_trip_preserves_fields(self) -> None:
+        rs = RecordScope(session_id="s1", user_id="u1", agent_id="a1")
+        restored = RecordScope.from_canonical(rs.canonical())
+        assert restored == rs
+        assert type(restored) is RecordScope
+
+    def test_base_canonical_has_no_scope_type_stamp(self) -> None:
+        rs = RecordScope(session_id="s1")
+        assert "__scope_type__" not in rs.canonical()
+
+    def test_subclass_canonical_stamps_scope_type(self) -> None:
+        sub = _PoolScopedRecordScope(pool="default", session_id="s1")
+        canonical = sub.canonical()
+        assert '"__scope_type__":"pool"' in canonical
+        assert "_PoolScopedRecordScope" not in canonical
+
+    def test_two_subclasses_with_same_extra_fields_produce_same_canonical(self) -> None:
+        class _PoolScopeA(RecordScope):
+            pool: str | None = None
+
+        class _PoolScopeB(RecordScope):
+            pool: str | None = None
+
+        a = _PoolScopeA(pool="default", session_id="s1")
+        b = _PoolScopeB(pool="default", session_id="s1")
+        assert a.canonical() == b.canonical()
+
+    def test_subclass_with_multiple_extra_fields_stamps_sorted(self) -> None:
+        class _RegionOrgScope(RecordScope):
+            region: str | None = None
+            org: str | None = None
+
+        sub = _RegionOrgScope(region="us-east", org="acme", session_id="s1")
+        assert '"__scope_type__":"org,region"' in sub.canonical()
+
+    def test_subclass_round_trip_preserves_extra_fields(self) -> None:
+        sub = _PoolScopedRecordScope(pool="coder", session_id="s1", user_id="u1")
+        restored = RecordScope.from_canonical(sub.canonical())
+        # Content-based stamping means from_canonical may return any registered
+        # subclass with the same extra-field set (e.g. BotRecordScope if the
+        # bot project was imported first). Assert field-value equality rather
+        # than type identity — structurally identical subclasses are
+        # interchangeable by design (ADR-0028 §3 + content-based stamp).
+        assert restored.model_dump() == sub.model_dump()
+        assert getattr(restored, "pool", None) == "coder"
+        assert restored.session_id == "s1"
+        assert restored.user_id == "u1"
+
+    def test_subclass_with_none_extra_field_omits_stamp(self) -> None:
+        sub = _PoolScopedRecordScope(pool=None, session_id="s1")
+        canonical = sub.canonical()
+        assert "__scope_type__" not in canonical
+
+    def test_legacy_scope_key_without_stamp_falls_back_to_base(self) -> None:
+        legacy = '{"session_id": "old.main", "pool": "default"}'
+        restored = RecordScope.from_canonical(legacy)
+        assert type(restored) is RecordScope
+        assert restored.session_id == "old.main"
+        assert not hasattr(restored, "pool")
+
+    def test_legacy_scope_key_with_unknown_fields_drops_them(self) -> None:
+        legacy = '{"session_id": "old.main", "unknown_dim": "x"}'
+        restored = RecordScope.from_canonical(legacy)
+        assert restored.session_id == "old.main"
+        assert not hasattr(restored, "unknown_dim")
+
+    def test_invalid_json_raises_value_error(self) -> None:
+        with pytest.raises(ValueError):
+            RecordScope.from_canonical("not json{")
+
+    def test_non_object_json_raises_value_error(self) -> None:
+        with pytest.raises(ValueError):
+            RecordScope.from_canonical("[1, 2, 3]")
+
+    def test_unknown_scope_type_falls_back_to_base(self) -> None:
+        canonical = '{"__scope_type__": "nonexistent_dim", "session_id": "s1"}'
+        restored = RecordScope.from_canonical(canonical)
+        assert type(restored) is RecordScope
+        assert restored.session_id == "s1"
+
+
 class TestRecordScopeToPathSegment:
     def test_no_dimensions_returns_empty(self) -> None:
         # mirrors GlobalScope's empty-key behavior
@@ -120,7 +220,7 @@ class TestRecordScopeToPathSegment:
         assert rs.to_path_segment("user", "session") == "u1:default"
 
     def test_all_twelve_dimensions_accepted(self) -> None:
-        rs = RecordScope(
+        rs = _PoolScopedRecordScope(
             pool="p1",
             workspace_id="w1",
             session_id="s1",

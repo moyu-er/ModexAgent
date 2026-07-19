@@ -21,8 +21,8 @@ def _record(
     *,
     workspace_id: str | None = None,
     display_name: str | None = None,
-    created_at: str = "2026-01-01T00:00:00+00:00",
-    last_active: str = "2026-01-02T00:00:00+00:00",
+    created_at: int = 1767225600000,  # 2026-01-01T00:00:00Z in ms epoch
+    last_active: int = 1767312000000,  # 2026-01-02T00:00:00Z in ms epoch
     is_home: bool = False,
     metadata_json: dict[str, Any] | None = None,
 ) -> WorkspaceRecord:

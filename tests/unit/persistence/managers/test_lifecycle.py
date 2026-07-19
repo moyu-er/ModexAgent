@@ -20,9 +20,16 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from modex_agent.core.scope import RecordScope
 from modex_agent.persistence.config import PersistenceBackend, PersistenceConfig
 from modex_agent.persistence.managers.registry import RegistryPersistenceManager
 from modex_agent.persistence.managers.workspace import WorkspacePersistenceManager
+
+
+class _PoolScopedRecordScope(RecordScope):
+    """Test-only RecordScope subclass with pool dimension (ADR-0028)."""
+
+    pool: str | None = None
 
 # ---------------------------------------------------------------------------
 # PersistenceConfig
@@ -78,15 +85,13 @@ class TestWorkspacePersistenceManagerLifecycle:
 
     @pytest.mark.asyncio
     async def test_open_close_reopen_preserves_data(self, tmp_path: Path) -> None:
-        from modex_agent.core.scope import RecordScope
-
         manager = WorkspacePersistenceManager(tmp_path / "state.db")
         await manager.open()
         try:
-            scope = RecordScope(pool="default", session_id="s1")
+            scope = _PoolScopedRecordScope(pool="default", session_id="s1")
             bundle = manager.create_bundle(scope)
             await bundle.messages.append_message(
-                {"role": "user", "content": "hello"}
+                {"id": "m1", "role": "user", "content": "hello"}
             )
         finally:
             await manager.close()
@@ -94,7 +99,7 @@ class TestWorkspacePersistenceManagerLifecycle:
         manager2 = WorkspacePersistenceManager(tmp_path / "state.db")
         await manager2.open()
         try:
-            scope = RecordScope(pool="default", session_id="s1")
+            scope = _PoolScopedRecordScope(pool="default", session_id="s1")
             bundle2 = manager2.create_bundle(scope)
             msgs = await bundle2.messages.load_messages()
             assert len(msgs) == 1
@@ -164,8 +169,8 @@ class TestRegistryPersistenceManagerLifecycle:
             record = WorkspaceRecord(
                 workspace_id="ws-1",
                 target_path=str((tmp_path / "proj").resolve()),
-                created_at="2026-01-01T00:00:00Z",
-                last_active="2026-01-01T00:00:00Z",
+                created_at=1735689600000,
+                last_active=1735689600000,
             )
             await manager.store.upsert_workspace(record)
         finally:

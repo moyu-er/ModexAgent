@@ -40,8 +40,8 @@ def _record(
     *,
     workspace_id: str | None = None,
     display_name: str | None = None,
-    created_at: str = "2026-01-01T00:00:00Z",
-    last_active: str = "2026-01-01T00:00:00Z",
+    created_at: int = 1735689600000,
+    last_active: int = 1735689600000,
     is_home: bool = False,
     metadata_json: dict[str, object] | None = None,
 ) -> WorkspaceRecord:
@@ -67,14 +67,14 @@ class TestWorkspaceRecordModel:
             workspace_id="ws-1",
             target_path="/home/user/proj",
             display_name="proj",
-            created_at="2026-01-01T00:00:00Z",
-            last_active="2026-01-02T00:00:00Z",
+            created_at=1735689600000,
+            last_active=1735776000000,
         )
         assert r.workspace_id == "ws-1"
         assert r.target_path == "/home/user/proj"
         assert r.display_name == "proj"
-        assert r.created_at == "2026-01-01T00:00:00Z"
-        assert r.last_active == "2026-01-02T00:00:00Z"
+        assert r.created_at == 1735689600000
+        assert r.last_active == 1735776000000
         assert r.is_home is False
         assert r.metadata_json == {}
 
@@ -82,8 +82,8 @@ class TestWorkspaceRecordModel:
         r = WorkspaceRecord(
             workspace_id="ws-1",
             target_path="/p",
-            created_at="2026-01-01T00:00:00Z",
-            last_active="2026-01-01T00:00:00Z",
+            created_at=1735689600000,
+            last_active=1735689600000,
         )
         assert r.display_name is None
 
@@ -91,8 +91,8 @@ class TestWorkspaceRecordModel:
         r = WorkspaceRecord(
             workspace_id="ws-1",
             target_path="/p",
-            created_at="2026-01-01T00:00:00Z",
-            last_active="2026-01-01T00:00:00Z",
+            created_at=1735689600000,
+            last_active=1735689600000,
         )
         assert r.is_home is False
 
@@ -100,8 +100,8 @@ class TestWorkspaceRecordModel:
         r = WorkspaceRecord(
             workspace_id="ws-1",
             target_path="/p",
-            created_at="2026-01-01T00:00:00Z",
-            last_active="2026-01-01T00:00:00Z",
+            created_at=1735689600000,
+            last_active=1735689600000,
         )
         assert r.metadata_json == {}
 
@@ -109,14 +109,14 @@ class TestWorkspaceRecordModel:
         r1 = WorkspaceRecord(
             workspace_id="ws-1",
             target_path="/p",
-            created_at="2026-01-01T00:00:00Z",
-            last_active="2026-01-01T00:00:00Z",
+            created_at=1735689600000,
+            last_active=1735689600000,
         )
         r2 = WorkspaceRecord(
             workspace_id="ws-2",
             target_path="/p2",
-            created_at="2026-01-01T00:00:00Z",
-            last_active="2026-01-01T00:00:00Z",
+            created_at=1735689600000,
+            last_active=1735689600000,
         )
         r1.metadata_json["key"] = "value"
         assert r2.metadata_json == {}
@@ -125,8 +125,8 @@ class TestWorkspaceRecordModel:
         r = WorkspaceRecord(
             workspace_id="ws-1",
             target_path="/p",
-            created_at="2026-01-01T00:00:00Z",
-            last_active="2026-01-01T00:00:00Z",
+            created_at=1735689600000,
+            last_active=1735689600000,
         )
         with pytest.raises(ValidationError):
             r.target_path = "/other"  # type: ignore[misc]
@@ -136,8 +136,8 @@ class TestWorkspaceRecordModel:
             WorkspaceRecord(
                 workspace_id="ws-1",
                 target_path="/p",
-                created_at="2026-01-01T00:00:00Z",
-                last_active="2026-01-01T00:00:00Z",
+                created_at=1735689600000,
+                last_active=1735689600000,
                 unknown_field="x",  # type: ignore[call-arg]
             )
 
@@ -145,16 +145,16 @@ class TestWorkspaceRecordModel:
         with pytest.raises(ValidationError):
             WorkspaceRecord(
                 target_path="/p",
-                created_at="2026-01-01T00:00:00Z",
-                last_active="2026-01-01T00:00:00Z",
+                created_at=1735689600000,
+                last_active=1735689600000,
             )
 
     def test_target_path_required(self) -> None:
         with pytest.raises(ValidationError):
             WorkspaceRecord(
                 workspace_id="ws-1",
-                created_at="2026-01-01T00:00:00Z",
-                last_active="2026-01-01T00:00:00Z",
+                created_at=1735689600000,
+                last_active=1735689600000,
             )
 
     def test_created_at_required(self) -> None:
@@ -162,7 +162,7 @@ class TestWorkspaceRecordModel:
             WorkspaceRecord(
                 workspace_id="ws-1",
                 target_path="/p",
-                last_active="2026-01-01T00:00:00Z",
+                last_active=1735689600000,
             )
 
     def test_last_active_required(self) -> None:
@@ -170,15 +170,15 @@ class TestWorkspaceRecordModel:
             WorkspaceRecord(
                 workspace_id="ws-1",
                 target_path="/p",
-                created_at="2026-01-01T00:00:00Z",
+                created_at=1735689600000,
             )
 
     def test_metadata_json_accepts_arbitrary_dict(self) -> None:
         r = WorkspaceRecord(
             workspace_id="ws-1",
             target_path="/p",
-            created_at="2026-01-01T00:00:00Z",
-            last_active="2026-01-01T00:00:00Z",
+            created_at=1735689600000,
+            last_active=1735689600000,
             metadata_json={"custom": "value", "nested": {"a": 1}},
         )
         assert r.metadata_json["custom"] == "value"
@@ -251,14 +251,14 @@ class TestGlobalWorkspaceStoreNewInterface:
     async def test_upsert_replaces_existing_by_target_path(self, tmp_path: Path) -> None:
         store = GlobalWorkspaceStore(home=tmp_path, data_dir_name=".modex")
         target = str(tmp_path / "proj")
-        r1 = _record(target, display_name="Old", last_active="2026-01-01T00:00:00Z")
+        r1 = _record(target, display_name="Old", last_active=1735689600000)
         await store.upsert_workspace(r1)
-        r2 = _record(target, display_name="New", last_active="2026-06-01T00:00:00Z")
+        r2 = _record(target, display_name="New", last_active=1748736000000)
         await store.upsert_workspace(r2)
         got = await store.get_workspace(target)
         assert got is not None
         assert got.display_name == "New"
-        assert got.last_active == "2026-06-01T00:00:00Z"
+        assert got.last_active == 1748736000000
 
     async def test_delete_workspace_removes_record(self, tmp_path: Path) -> None:
         store = GlobalWorkspaceStore(home=tmp_path, data_dir_name=".modex")
@@ -279,13 +279,13 @@ class TestGlobalWorkspaceStoreNewInterface:
     async def test_list_workspaces_orders_by_last_active_desc(self, tmp_path: Path) -> None:
         store = GlobalWorkspaceStore(home=tmp_path, data_dir_name=".modex")
         await store.upsert_workspace(
-            _record(str(tmp_path / "old"), last_active="2026-01-01T00:00:00Z")
+            _record(str(tmp_path / "old"), last_active=1735689600000)
         )
         await store.upsert_workspace(
-            _record(str(tmp_path / "new"), last_active="2026-06-01T00:00:00Z")
+            _record(str(tmp_path / "new"), last_active=1748736000000)
         )
         await store.upsert_workspace(
-            _record(str(tmp_path / "mid"), last_active="2026-03-01T00:00:00Z")
+            _record(str(tmp_path / "mid"), last_active=1740787200000)
         )
         records = await store.list_workspaces(order_by="last_active")
         assert len(records) == 3
@@ -298,15 +298,15 @@ class TestGlobalWorkspaceStoreNewInterface:
         await store.upsert_workspace(
             _record(
                 str(tmp_path / "first"),
-                created_at="2026-01-01T00:00:00Z",
-                last_active="2026-06-01T00:00:00Z",
+                created_at=1735689600000,
+                last_active=1748736000000,
             )
         )
         await store.upsert_workspace(
             _record(
                 str(tmp_path / "second"),
-                created_at="2026-05-01T00:00:00Z",
-                last_active="2026-06-01T00:00:00Z",
+                created_at=1746057600000,
+                last_active=1748736000000,
             )
         )
         records = await store.list_workspaces(order_by="created_at")
@@ -320,7 +320,7 @@ class TestGlobalWorkspaceStoreNewInterface:
             await store.upsert_workspace(
                 _record(
                     str(tmp_path / f"ws{i}"),
-                    last_active=f"2026-01-0{i + 1}T00:00:00Z",
+                    last_active=1735689600000 + i * 86400000,
                 )
             )
         records = await store.list_workspaces(order_by="last_active", limit=3)
@@ -338,7 +338,7 @@ class TestGlobalWorkspaceStoreNewInterface:
             await store.upsert_workspace(
                 _record(
                     str(tmp_path / f"ws{i}"),
-                    last_active=f"2026-01-0{(i % 9) + 1}T00:00:00Z",
+                    last_active=1735689600000 + (i % 9) * 86400000,
                 )
             )
         records = await store.list_workspaces()

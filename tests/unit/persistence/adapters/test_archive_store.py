@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
-from modex_agent.core.scope import RecordScope
+from modex_agent.core.scope import MemoryContext, RecordScope
+from modex_agent.memory.archive_models import ArchiveChannel, ArchiveWrite
+from modex_agent.memory.core.split_stores import MemoryStoreBundle
+from modex_agent.memory.layers.archive import ScopedArchiveMemoryManager
+from modex_agent.memory.layers.config import ArchiveMemoryConfig
 from modex_agent.persistence import ConnectionManager
 from modex_agent.persistence.adapters.archive_store import SqliteArchiveStore
+from modex_agent.persistence.adapters.cursor_store import SqliteCursorStore
+from modex_agent.persistence.adapters.kv_store import SqliteKVStore
+from modex_agent.persistence.adapters.message_store import SqliteMessageStore
 
 
 class TestGeneralLog:
@@ -219,6 +226,58 @@ class TestRetention:
     async def test_cleanup_empty_dirs_is_noop(self, archive_store: SqliteArchiveStore) -> None:
         result = await archive_store.cleanup_empty_dirs()
         assert result == 0
+
+
+class TestCreatedAtRoundTrip:
+    """Regression for bug I2: created_at must survive SQLite read-back."""
+
+    async def test_read_back_created_at_stays_int_ms(
+        self, archive_store: SqliteArchiveStore
+    ) -> None:
+        created_ms = 1735689600000  # 2025-01-01T00:00:00Z in epoch ms
+        await archive_store.append_channel_log(
+            "context",
+            {"archive_id": 1, "summary": "a", "created_at": created_ms},
+        )
+
+        logs = await archive_store.read_channel_logs("context")
+
+        assert isinstance(logs[0]["created_at"], int)
+        assert logs[0]["created_at"] == created_ms
+
+    async def test_manager_read_paths_parse_created_at(
+        self, connection: ConnectionManager, scope: RecordScope
+    ) -> None:
+        bundle = MemoryStoreBundle(
+            messages=SqliteMessageStore(connection, scope, ttl_seconds=0.0),
+            kv=SqliteKVStore(connection, scope),
+            cursors=SqliteCursorStore(connection, scope),
+            archive=SqliteArchiveStore(connection, scope),
+        )
+
+        async def factory(_context: MemoryContext) -> MemoryStoreBundle:
+            return bundle
+
+        manager = ScopedArchiveMemoryManager(factory, ArchiveMemoryConfig())
+        ctx = MemoryContext(session_id="s1", user_id="u1")
+        await manager.append_bundle(
+            ctx,
+            (
+                ArchiveWrite(channel=ArchiveChannel.CONTEXT, summary="timestamp probe entry"),
+                ArchiveWrite(channel=ArchiveChannel.KNOWLEDGE, summary="knowledge entry"),
+            ),
+        )
+
+        recent = await manager.get_recent(ctx, limit=5, channel=ArchiveChannel.CONTEXT)
+        found = await manager.search(ctx, "timestamp probe", limit=5)
+        unprocessed = await manager.get_unprocessed(ctx, "knowledge")
+
+        assert len(recent) == 1
+        assert len(found) == 1
+        assert len(unprocessed.entries) == 1
+        for entry in (*recent, *found, *unprocessed.entries):
+            assert entry.created_at is not None
+            assert entry.created_at.year > 2020
 
 
 class TestArchiveScopeIsolation:

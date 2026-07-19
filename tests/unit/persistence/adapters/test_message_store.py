@@ -270,7 +270,8 @@ class TestSoftDeleteRetain:
         rev = await message_store.get_revision()
         result = await message_store.retain_messages([msg("m1"), msg("m2")], rev)
         assert result is not None
-        assert (await message_store.load_all_messages()) == [msg("m1"), msg("m2")]
+        loaded = await message_store.load_all_messages()
+        assert [m["id"] for m in loaded] == ["m1", "m2"]
 
     async def test_load_all_includes_prune_soft_deleted(
         self, message_store: SqliteMessageStore

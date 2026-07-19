@@ -17,9 +17,22 @@ from modex_agent.persistence.adapters.message_store import SqliteMessageStore
 from modex_agent.persistence.managers.workspace import WorkspacePersistenceManager
 
 
+class _PoolScopedRecordScope(RecordScope):
+    """Framework-test-local ``RecordScope`` subclass adding the pool dimension.
+
+    Framework tests need to construct pool-scoped scope_keys (matching the
+    bot's ``BotRecordScope`` canonical JSON). ``BotRecordScope`` lives in the
+    examples layer and cannot be imported by framework tests (ADR-0028
+    layering); this local subclass mirrors its ``pool`` field so the tests
+    can construct compatible scope_keys without crossing the boundary.
+    """
+
+    pool: str | None = None
+
+
 @pytest.fixture
 def scope() -> RecordScope:
-    return RecordScope(pool="default", session_id="s1", agent_id="main")
+    return _PoolScopedRecordScope(pool="default", session_id="s1", agent_id="main")
 
 
 class TestBundleFieldAreIndependent:

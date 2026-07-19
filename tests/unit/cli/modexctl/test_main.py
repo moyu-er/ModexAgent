@@ -31,6 +31,12 @@ from modexctl.main import (
 )
 
 
+# Reuse the production _PoolScopedRecordScope so canonical() stamps match
+# (ADR-0028: __scope_type__ uses fully-qualified class name; a test-local
+# subclass with the same short name would produce a different stamp).
+from modexctl.main import _PoolScopedRecordScope
+
+
 @pytest.fixture()
 def runner() -> CliRunner:
     return CliRunner()
@@ -256,18 +262,18 @@ class TestSendCommand:
         conn = sqlite3.connect(str(db_path))
         try:
             row = conn.execute(
-                "SELECT source_name, content, payload_json FROM inbox_messages "
+                "SELECT payload_json FROM inbox_messages "
                 "WHERE session_id = ?",
                 ("abc.analyst",),
             ).fetchone()
         finally:
             conn.close()
         assert row is not None
-        assert row[0] == "coder"
-        assert "<agent_message" in row[1]
-        assert "hello" in row[1]
-        metadata = json.loads(row[2])
-        assert metadata["agent_session_id"] == "abc.analyst"
+        payload = json.loads(row[0])
+        assert payload["source"] == "coder"
+        assert "<agent_message" in payload["content"]
+        assert "hello" in payload["content"]
+        assert payload["metadata"]["agent_session_id"] == "abc.analyst"
 
     def test_stdin_writes_multiline_content(
         self, runner: CliRunner, comm_env: None, tmp_path: Path
@@ -284,15 +290,16 @@ class TestSendCommand:
         conn = sqlite3.connect(str(db_path))
         try:
             row = conn.execute(
-                "SELECT content FROM inbox_messages WHERE session_id = ?",
+                "SELECT payload_json FROM inbox_messages WHERE session_id = ?",
                 ("abc.analyst",),
             ).fetchone()
         finally:
             conn.close()
         assert row is not None
-        assert "line one" in row[0]
-        assert "line two" in row[0]
-        assert "line three" in row[0]
+        payload = json.loads(row[0])
+        assert "line one" in payload["content"]
+        assert "line two" in payload["content"]
+        assert "line three" in payload["content"]
 
     def test_content_and_stdin_mutually_exclusive(
         self, runner: CliRunner, comm_env: None
@@ -315,19 +322,19 @@ class TestSendCommand:
         )
         with sqlite3.connect(paths.state_db) as connection:
             row = connection.execute(
-                "SELECT owner_scope_key, scope_key, content "
+                "SELECT owner_scope_key, scope_key, payload_json "
                 "FROM inbox_messages WHERE session_id = ?",
                 ("abc.analyst",),
             ).fetchone()
 
         assert result.exit_code == 0
         assert row is not None
-        assert row[0] == RecordScope(pool="pool_analyst").canonical()
-        assert row[1] == RecordScope(
+        assert row[0] == _PoolScopedRecordScope(pool="pool_analyst").canonical()
+        assert row[1] == _PoolScopedRecordScope(
             pool="pool_analyst",
             session_id="abc.analyst",
         ).canonical()
-        assert "same database" in row[2]
+        assert "same database" in json.loads(row[2])["content"]
         assert not (paths.inbox_dir / "state.db").exists()
 
     def test_no_content_source_errors(

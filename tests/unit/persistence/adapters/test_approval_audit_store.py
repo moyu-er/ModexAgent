@@ -18,11 +18,24 @@ from modex_agent.persistence.adapters.approval_audit_store import (
 )
 
 
+class _PoolScopedRecordScope(RecordScope):
+    """Framework-test-local ``RecordScope`` subclass adding the pool dimension.
+
+    Framework tests need to construct pool-scoped scope_keys (matching the
+    bot's ``BotRecordScope`` canonical JSON). ``BotRecordScope`` lives in the
+    examples layer and cannot be imported by framework tests (ADR-0028
+    layering); this local subclass mirrors its ``pool`` field so the tests
+    can construct compatible scope_keys without crossing the boundary.
+    """
+
+    pool: str | None = None
+
+
 @pytest.fixture
 async def store(tmp_path: Path) -> AsyncIterator[SqliteApprovalAuditStore]:
     manager = ConnectionManager(tmp_path / "state.db", DatabaseKind.WORKSPACE)
     await manager.open()
-    scope = RecordScope(pool="default")
+    scope = _PoolScopedRecordScope(pool="default")
     yield SqliteApprovalAuditStore(manager, scope)
     await manager.close()
 

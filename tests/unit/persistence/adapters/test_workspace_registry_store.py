@@ -13,6 +13,7 @@ Covers:
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -28,13 +29,18 @@ from modex_agent.workspace.record import WorkspaceRecord
 # ---------------------------------------------------------------------------
 
 
+def _ts(year: int, month: int = 1, day: int = 1) -> int:
+    """Build a Unix-epoch millisecond timestamp (ADR-0029)."""
+    return int(datetime(year, month, day, tzinfo=UTC).timestamp() * 1000)
+
+
 def _record(
     target_path: str,
     *,
     workspace_id: str | None = None,
     display_name: str | None = None,
-    created_at: str = "2026-01-01T00:00:00Z",
-    last_active: str = "2026-01-01T00:00:00Z",
+    created_at: int = _ts(2026, 1, 1),
+    last_active: int = _ts(2026, 1, 1),
     is_home: bool = False,
     metadata_json: dict[str, object] | None = None,
 ) -> WorkspaceRecord:
@@ -130,19 +136,19 @@ class TestWorkspaceUpsertReplace:
         manager, store = await _open_store(tmp_path)
         target = str(tmp_path / "proj")
         try:
-            r1 = _record(target, display_name="Old", last_active="2026-01-01T00:00:00Z")
+            r1 = _record(target, display_name="Old", last_active=_ts(2026, 1, 1))
             await store.upsert_workspace(r1)
             r2 = _record(
                 target,
                 workspace_id=r1.workspace_id,
                 display_name="New",
-                last_active="2026-06-01T00:00:00Z",
+                last_active=_ts(2026, 6, 1),
             )
             await store.upsert_workspace(r2)
             got = await store.get_workspace(target)
             assert got is not None
             assert got.display_name == "New"
-            assert got.last_active == "2026-06-01T00:00:00Z"
+            assert got.last_active == _ts(2026, 6, 1)
         finally:
             await manager.close()
 
@@ -164,7 +170,7 @@ class TestWorkspaceUpsertReplace:
                 _record(
                     target,
                     workspace_id="ws-replacement",
-                    last_active="2026-12-01T00:00:00Z",
+                    last_active=_ts(2026, 12, 1),
                 )
             )
             workspace = await store.get_workspace(target)
@@ -232,13 +238,13 @@ class TestListWorkspaces:
         manager, store = await _open_store(tmp_path)
         try:
             await store.upsert_workspace(
-                _record(str(tmp_path / "old"), last_active="2026-01-01T00:00:00Z")
+                _record(str(tmp_path / "old"), last_active=_ts(2026, 1, 1))
             )
             await store.upsert_workspace(
-                _record(str(tmp_path / "new"), last_active="2026-06-01T00:00:00Z")
+                _record(str(tmp_path / "new"), last_active=_ts(2026, 6, 1))
             )
             await store.upsert_workspace(
-                _record(str(tmp_path / "mid"), last_active="2026-03-01T00:00:00Z")
+                _record(str(tmp_path / "mid"), last_active=_ts(2026, 3, 1))
             )
             records = await store.list_workspaces(order_by="last_active")
             assert len(records) == 3
@@ -255,15 +261,15 @@ class TestListWorkspaces:
             await store.upsert_workspace(
                 _record(
                     str(tmp_path / "first"),
-                    created_at="2026-01-01T00:00:00Z",
-                    last_active="2026-06-01T00:00:00Z",
+                    created_at=_ts(2026, 1, 1),
+                    last_active=_ts(2026, 6, 1),
                 )
             )
             await store.upsert_workspace(
                 _record(
                     str(tmp_path / "second"),
-                    created_at="2026-05-01T00:00:00Z",
-                    last_active="2026-06-01T00:00:00Z",
+                    created_at=_ts(2026, 5, 1),
+                    last_active=_ts(2026, 6, 1),
                 )
             )
             records = await store.list_workspaces(order_by="created_at")
@@ -281,7 +287,7 @@ class TestListWorkspaces:
                 await store.upsert_workspace(
                     _record(
                         str(tmp_path / f"ws{i}"),
-                        last_active=f"2026-01-0{i + 1}T00:00:00Z",
+                        last_active=_ts(2026, 1, i + 1),
                     )
                 )
             records = await store.list_workspaces(order_by="last_active", limit=3)
@@ -297,7 +303,7 @@ class TestListWorkspaces:
                 await store.upsert_workspace(
                     _record(
                         str(tmp_path / f"ws{i}"),
-                        last_active=f"2026-01-0{(i % 9) + 1}T00:00:00Z",
+                        last_active=_ts(2026, 1, (i % 9) + 1),
                     )
                 )
             records = await store.list_workspaces()
@@ -321,10 +327,10 @@ class TestListWorkspaces:
         manager, store = await _open_store(tmp_path)
         try:
             await store.upsert_workspace(
-                _record(str(tmp_path / "a"), last_active="2026-01-01T00:00:00Z")
+                _record(str(tmp_path / "a"), last_active=_ts(2026, 1, 1))
             )
             await store.upsert_workspace(
-                _record(str(tmp_path / "b"), last_active="2026-07-01T00:00:00Z")
+                _record(str(tmp_path / "b"), last_active=_ts(2026, 7, 1))
             )
             recent = await store.list_workspaces()
             assert recent[0].target_path == str((tmp_path / "b").resolve())

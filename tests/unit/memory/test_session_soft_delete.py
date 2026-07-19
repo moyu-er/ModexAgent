@@ -26,6 +26,12 @@ from modex_agent.persistence.adapters.kv_store import SqliteKVStore
 from modex_agent.persistence.adapters.message_store import SqliteMessageStore
 
 
+class _PoolScopedRecordScope(RecordScope):
+    """Test-only RecordScope subclass with pool dimension (ADR-0028)."""
+
+    pool: str | None = None
+
+
 def _msg(mid: str, content: str = "x") -> dict[str, object]:
     return {"id": mid, "role": "user", "content": content}
 
@@ -34,7 +40,7 @@ def _msg(mid: str, content: str = "x") -> dict[str, object]:
 async def sqlite_session(
     tmp_path: Path,
 ) -> AsyncGenerator[tuple[ScopedSessionMemoryManager, SqliteMessageStore]]:
-    scope = RecordScope(pool="default", session_id="s1", agent_id="main")
+    scope = _PoolScopedRecordScope(pool="default", session_id="s1", agent_id="main")
     mgr = ConnectionManager(tmp_path / "state.db", DatabaseKind.WORKSPACE)
     await mgr.open()
     message_store = SqliteMessageStore(mgr, scope, ttl_seconds=0.0)

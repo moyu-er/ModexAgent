@@ -25,8 +25,12 @@ from modex_agent.persistence import ConnectionManager, DatabaseKind
 
 @pytest.fixture
 def scope() -> RecordScope:
-    """A standard RecordScope for conformance tests."""
-    return RecordScope(pool="default", session_id="s1", agent_id="main")
+    """A standard RecordScope for conformance tests.
+
+    Note: ``pool`` lives on ``BotRecordScope`` (ADR-0028); framework-side
+    conformance tests use the base ``RecordScope`` without ``pool``.
+    """
+    return RecordScope(session_id="s1", agent_id="main")
 
 
 @pytest_asyncio.fixture

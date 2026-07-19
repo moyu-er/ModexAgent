@@ -1,7 +1,9 @@
 """Tests for :class:`SqlitePoolRoutingStore`.
 
-Covers pool routing CRUD and corruption detection (explicit error instead of
-silent default fallback).
+Covers pool routing CRUD. Corruption detection was removed in ADR-0028 (the
+``pool`` generated column and the ``scope`` column were dropped); the
+``PoolRoutingCorruptionError`` class is retained only for backward
+compatibility and is no longer raised by the adapter.
 """
 
 from __future__ import annotations
@@ -12,7 +14,6 @@ import pytest
 
 from modex_agent.persistence import ConnectionManager, DatabaseKind
 from modex_agent.persistence.adapters import (
-    PoolRoutingCorruptionError,
     SqlitePoolRoutingStore,
 )
 
@@ -152,79 +153,6 @@ async def test_delete_pool_routes_empty_table_returns_zero(tmp_path: Path) -> No
     manager, store = await _open_routing(tmp_path)
     try:
         assert store.delete_pool_routes("any") == 0
-    finally:
-        store.close()
-        await manager.close()
-
-
-# ── corruption ────────────────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_corruption_scope_missing_pool_raises(tmp_path: Path) -> None:
-    """A row whose scope lacks a 'pool' field is corruption, not a missing
-    route — get_pool must raise, not return None or a default."""
-    manager, store = await _open_routing(tmp_path)
-    try:
-        # Insert a corrupt row directly: scope has no 'pool' key.
-        await manager.execute(
-            "INSERT INTO pool_routing (session_prefix, pool_name, scope) VALUES (?, ?, ?)",
-            ("corrupt-1", "pool_a", '{"foo": "bar"}'),
-        )
-        with pytest.raises(PoolRoutingCorruptionError):
-            store.get_pool("corrupt-1")
-    finally:
-        store.close()
-        await manager.close()
-
-
-@pytest.mark.asyncio
-async def test_corruption_scope_pool_mismatch_raises(tmp_path: Path) -> None:
-    """pool_name and scope.$.pool disagree — corruption."""
-    manager, store = await _open_routing(tmp_path)
-    try:
-        await manager.execute(
-            "INSERT INTO pool_routing (session_prefix, pool_name, scope) VALUES (?, ?, ?)",
-            ("corrupt-2", "pool_a", '{"pool": "pool_b"}'),
-        )
-        with pytest.raises(PoolRoutingCorruptionError):
-            store.get_pool("corrupt-2")
-    finally:
-        store.close()
-        await manager.close()
-
-
-@pytest.mark.asyncio
-async def test_corruption_empty_pool_name_raises(tmp_path: Path) -> None:
-    manager, store = await _open_routing(tmp_path)
-    try:
-        await manager.execute(
-            "INSERT INTO pool_routing (session_prefix, pool_name, scope) VALUES (?, ?, ?)",
-            ("corrupt-3", "", '{"pool": ""}'),
-        )
-        with pytest.raises(PoolRoutingCorruptionError):
-            store.get_pool("corrupt-3")
-    finally:
-        store.close()
-        await manager.close()
-
-
-@pytest.mark.asyncio
-async def test_corruption_does_not_affect_valid_rows(tmp_path: Path) -> None:
-    """A corrupt row raises on access, but valid rows still work."""
-    manager, store = await _open_routing(tmp_path)
-    try:
-        store.set_pool("valid", "coding")
-        await manager.execute(
-            "INSERT INTO pool_routing (session_prefix, pool_name, scope) VALUES (?, ?, ?)",
-            ("corrupt", "x", '{"foo": "bar"}'),
-        )
-
-        # Valid row still works.
-        assert store.get_pool("valid") == "coding"
-        # Corrupt row raises.
-        with pytest.raises(PoolRoutingCorruptionError):
-            store.get_pool("corrupt")
     finally:
         store.close()
         await manager.close()

@@ -32,6 +32,12 @@ from modex_agent.persistence.managers import WorkspacePersistenceManager
 from modex_agent.persistence.memory_registry import HybridMemoryStoreRegistry
 
 
+class _PoolScopedRecordScope(RecordScope):
+    """Test-only RecordScope subclass with pool dimension (ADR-0028)."""
+
+    pool: str | None = None
+
+
 class _FixedEstimator(TokenEstimator):
     def estimate_text(self, text: str) -> int:
         _ = text
@@ -68,7 +74,7 @@ async def test_hybrid_registry_routes_structured_stores_and_keeps_documents_on_d
     registry = HybridMemoryStoreRegistry(
         file_root=tmp_path / "memory",
         persistence=persistence,
-        base_scope=RecordScope(pool="main", workspace_id="workspace-1"),
+        base_scope=_PoolScopedRecordScope(pool="main", workspace_id="workspace-1"),
     )
     await registry.initialize()
     context = MemoryContext(session_id="session-1", user_id="user-1")
@@ -89,7 +95,7 @@ async def test_hybrid_registry_routes_structured_stores_and_keeps_documents_on_d
             context=context,
         )
 
-        await session.messages.append_message({"role": "user", "content": "hello"})
+        await session.messages.append_message({"id": "m1", "role": "user", "content": "hello"})
         assert isinstance(archive.messages, DirArchiveStorage)
         assert isinstance(archive.archive, SqliteArchiveStore)
         assert isinstance(knowledge.messages, MarkdownKnowledgeStorage)
@@ -140,7 +146,7 @@ async def test_hybrid_archive_prompt_omits_file_path_metadata(
     registry = HybridMemoryStoreRegistry(
         file_root=tmp_path / "memory",
         persistence=persistence,
-        base_scope=RecordScope(pool="main", workspace_id="workspace-1"),
+        base_scope=_PoolScopedRecordScope(pool="main", workspace_id="workspace-1"),
     )
     system = create_memory_system(
         tmp_path / "memory",
@@ -178,7 +184,7 @@ async def test_sqlite_cleanup_commits_generated_archive_and_injects_context(
     registry = HybridMemoryStoreRegistry(
         file_root=tmp_path / "memory",
         persistence=persistence,
-        base_scope=RecordScope(pool="main", workspace_id="workspace-1"),
+        base_scope=_PoolScopedRecordScope(pool="main", workspace_id="workspace-1"),
     )
     system = create_memory_system(
         tmp_path / "memory",
@@ -192,7 +198,7 @@ async def test_sqlite_cleanup_commits_generated_archive_and_injects_context(
         for index in range(10):
             await system.layers.session.add_messages(
                 context,
-                [{"role": "user", "content": f"message-{index}"}],
+                [{"id": f"msg-{index}", "role": "user", "content": f"message-{index}"}],
             )
 
         result = await cleanup_session(
