@@ -1,9 +1,9 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-07-07 -->
+<!-- Updated: 2026-07-18 -->
 
 # webui
 
-React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connects to the bot's WebUI backend (aiohttp) via REST API and WebSocket. Uses a Notion-inspired warm palette (`src/index.css` `:root` / `.dark` blocks) with all color tokens mapped through CSS variables — edit colors once, never in the tailwind config.
+React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connects to the bot's WebUI backend (aiohttp) via REST API and WebSocket. All color tokens live in `src/index.css` `:root` / `.dark` blocks, mapped through CSS variables — edit colors once, never in the tailwind config. The current design system is "Teal & Ember Console" (see `docs/design/teal-ember-redesign/` and the Design System section below).
 
 ## Key Files
 
@@ -31,7 +31,7 @@ React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connect
 |------|-------------|
 | `App.tsx` | Root component — manages conversations, pools, workspace state, sidebar resize |
 | `main.tsx` | React entry point |
-| `index.css` | Global styles + single source of truth for Notion palette (CSS variables in `:root` / `.dark` blocks) |
+| `index.css` | Global styles + single source of truth for the Teal & Ember palette (CSS variables in `:root` / `.dark` blocks) — tokens, radii, shadows, motion, component classes |
 | `vite-env.d.ts` | Vite type declarations |
 | `components/ChatView.tsx` | Chat area — message list + input box |
 | `components/MessageBubble.tsx` | Individual message rendering (text, reasoning, tool calls) |
@@ -73,7 +73,7 @@ React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connect
 ### Working In This Directory
 - `npm run dev` starts the dev server with proxy to backend.
 - `npm run build` outputs to `dist/`, which is served by the backend at `/webui/`.
-- `npm test` runs Vitest — 301 tests across 51 files covering hooks, reducers, UI primitives, and all settings views.
+- `npm test` runs Vitest — 563 tests across 67 files covering hooks, reducers, UI primitives, dropdowns, boot, and all settings views.
 - The frontend has **no direct pool switching** for existing conversations — it's purely a display filter in the sidebar dropdown.
 - Workspace switching is done via `WorkspaceBrowser` → `POST /api/workspace/cd`.
 - `useWebUIStream.ts` is the core hook — it handles WebSocket lifecycle, optimistic messages (`request_id`-based dedup), and streaming state.
@@ -98,11 +98,26 @@ React frontend for the ModexAgent bot. Vite + TypeScript + Tailwind CSS. Connect
 - Universal proper nouns (`MCP`, `Skill`, `Skills`) live in `src/i18n/terms.ts` as `TERMS`, are used directly at render sites (not via `t()`), and are never translated. Sentences that embed these terms (e.g. `"No MCP servers configured."`) stay in the catalog — only the surrounding words translate.
 - Section-local protocol/product labels (`stdio`, `SSE`, `OpenAI Compatible`, `Anthropic`) stay in the catalog and are never translated in any locale.
 
+## Specs & Issue Tracker
+
+WebUI specs/PRDs live as local markdown under `docs/design/<feature-slug>/` (mirrors the repo-root convention in `docs/agents/issue-tracker.md`):
+
+- One feature per directory: `docs/design/<feature-slug>/`
+- The PRD is `docs/design/<feature-slug>/PRD.md`; accompanying design records (token/component specs) live alongside it (e.g. `DESIGN.md`)
+- Triage state is a `Status:` line near the top of the PRD (label vocabulary: repo-root `docs/agents/triage-labels.md`)
+
+Spec reference: `docs/design/teal-ember-redesign/` — the "Teal & Ember Console" redesign (PRD + DESIGN.md). The redesign is shipped (T01–T07); the directory is now the design-system record, not an active spec.
+
 ## Design System
 
-- **Palette source of truth**: `src/index.css` — Notion palette (warm paper `#f6f5f4` canvas, near-black `#000000` ink, single `#0075de` blue accent). Dark mode keeps warm stone backgrounds and shifts text/symbol colors to a sky-blue accent (`#62aef0`).
-- **Design reference**: `docs/DESIGN-notion.md` — the Notion design analysis this palette is derived from.
-- **Typography**: Geist (body) + Geist Mono (code, section eyebrows). Loaded from Google Fonts in `index.html`.
+The WebUI ships the **Teal & Ember Console** design system (redesign landed 2026-07-18, T01–T07). Full normative spec: `docs/design/teal-ember-redesign/DESIGN.md`.
+
+- **Palette source of truth**: `src/index.css` `:root` / `.dark` blocks — all colors as CSS variables (`--color-*`), mapped through `tailwind.config.js` via `var(--color-*)`. Edit colors once in `index.css`; never in the tailwind config or components. Brand teal `#2DD4BF` (dark) / `#0D9488` (light) — one teal hue across both themes, only lightness shifts; ember `#F59E0B` / `#B45309` secondary accent; warm-paper (light) / neutral warm-graphite (dark, "Warm Graphite") canvas. Dark borders/scrollbars are hue-free white-alpha ("neutral shimmer"). Dark is the default theme; light remains first-class.
+- **Typography**: Inter (display + body) + JetBrains Mono (code, section eyebrows). CJK fallback via Noto Sans SC. Loaded from Google Fonts in `index.html` with `font-display: swap`. (Geist / Geist Mono / Space Grotesk were removed in the typography unification.)
+- **Tokens**: color (`brand`/`ember`/`danger`/`success`/`warning`/`error`, ink ladder `ink`/`bright`/`body`/`mute`/`faint`, canvas layers `canvas`/`canvas-sidebar`/`canvas-elevated`/`canvas-popover`, hairline family, per-category `cat-*` accents), radius scale (`xs`/`sm`/`md`/`lg`/`pill`/`full`), elevation (`--shadow-card`/`-card-hover`/`-popover`), motion (`--dur-fast`/`--dur`/`--dur-slow` + `--ease-out`). Derived shades use `color-mix()` — no raw hex in components.
+- **Component language**: single primary CTA (`.btn-primary` gradient + glow), converged `DropdownPanel` (all dropdowns), eyebrow-header + severity-left-bar trace cards, floating composer with brand focus glow, branded checkbox check-draw, modal/toast/crossfade motion. All motion is transform/opacity only; the global `prefers-reduced-motion` guard zeroes every animation.
+- **Accessibility floor**: WCAG AA contrast both themes, 2px brand focus rings on every interactive element, ≥44px touch targets on coarse pointers (hit-area expansion), `100dvh` mobile layout, safe-area-inset composer clearance, static boot frame under reduced-motion.
+- **Legacy aliases**: `link`/`primary`/`signal` → brand family; `error` → `danger`; `hairline-strong` → `border-strong`. Existing components keep working untouched.
 
 ## Dependencies
 

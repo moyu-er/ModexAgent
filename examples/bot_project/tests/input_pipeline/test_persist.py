@@ -21,6 +21,7 @@ from modex_agent.workspace.runtime import bind_workspace_root
 def _ctx(store: WorkspaceScopedTranscriptStore) -> BotInputContext:
     return BotInputContext(
         default_pool="main",
+        available_pools=lambda: {"main", "coding"},
         pool_session_store=MagicMock(),
         agent_pool_map={"coding": "coding", "main": "main"},
         agent_resolver=lambda p: p,

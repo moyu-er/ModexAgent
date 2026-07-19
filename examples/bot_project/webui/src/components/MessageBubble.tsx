@@ -78,7 +78,7 @@ function renderBlock(
 
   if (isUser) {
     return (
-      <div key={`txt-${index}`} className="whitespace-pre-wrap break-words text-[15px] leading-relaxed">
+      <div key={`txt-${index}`} className="whitespace-pre-wrap break-words text-md leading-relaxed">
         {block.text}
       </div>
     );
@@ -86,7 +86,7 @@ function renderBlock(
 
   if (isStreaming) {
     return (
-      <div key={`txt-${index}`} className="text-[15px] leading-relaxed">
+      <div key={`txt-${index}`} className="text-md leading-relaxed">
         <TypewriterText text={block.text} isStreaming={isStreaming} />
       </div>
     );
@@ -106,9 +106,27 @@ const UserAvatar: FC = () => (
   </div>
 );
 
-const AssistantAvatar: FC = () => (
-  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-link to-link-deep text-white">
-    <Bot size={14} aria-hidden="true" />
+/** Assistant rail mark: the Bot glyph (matches the chat header's agent
+ *  indicator), in a brand-tinted circular badge so it reads as an avatar
+ *  rather than a bare logo. */
+const AssistantRailMark: FC = () => (
+  <div
+    className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-soft text-brand"
+    aria-hidden="true"
+  >
+    <Bot size={15} />
+  </div>
+);
+
+/** Typing indicator (§6): three staggered brand dots + a text label. */
+const TypingDots: FC<{ label: string }> = ({ label }) => (
+  <div className="mt-1 flex items-center gap-2" role="status" aria-label={label}>
+    <span className="typing-dots" aria-hidden="true">
+      <span className="typing-dot" />
+      <span className="typing-dot" />
+      <span className="typing-dot" />
+    </span>
+    <span className="text-xs text-mute">{label}</span>
   </div>
 );
 
@@ -125,14 +143,15 @@ export const MessageBubble: FC<MessageBubbleProps> = ({ message, sessionId, work
       id={`msg-${message.id}`}
       className={`mb-6 flex w-full items-start gap-2 ${isUser ? "flex-row-reverse" : "flex-row"}`}
     >
-      {isUser ? <UserAvatar /> : <AssistantAvatar />}
+      {isUser ? <UserAvatar /> : <AssistantRailMark />}
 
       <div className={`flex min-w-0 flex-1 flex-col ${isUser ? "items-end" : "items-start"}`}>
-        <div
-          className={`${ isUser ? "bubble-user w-fit max-w-[98%] min-w-[50%]" : "bubble-assistant w-fit max-w-[85%] min-w-[60%]" }`}
-        >
+        {/* Assistant prose: subtle brand-tinted surface with a left accent
+            rail (§6) — distinct from canvas, not a full bubble. User
+            messages keep the branded bubble (surface tokens in CSS). */}
+        <div className={isUser ? "bubble-user" : "bubble-assistant"}>
           {!isUser && message.agent_name && (
-            <div className={`mb-1.5 text-[10px] font-semibold uppercase tracking-wide font-mono ${agentLabelClass(message.agent_name)}`}>
+            <div className={`mb-1.5 chat-label ${agentLabelClass(message.agent_name)}`}>
               {message.agent_name}
             </div>
           )}
@@ -153,19 +172,11 @@ export const MessageBubble: FC<MessageBubbleProps> = ({ message, sessionId, work
 
           {message.isStreaming &&
             (message.blocks ?? []).length === 0 &&
-            !isUser && (
-              <div className="mt-1 flex items-center gap-2">
-                <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-link opacity-40" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-link" />
-                </span>
-                <span className="text-xs text-mute">{t("message.thinking")}</span>
-              </div>
-            )}
+            !isUser && <TypingDots label={t("message.thinking")} />}
         </div>
 
         {timeStr && (
-          <div className="mt-1 px-1 text-[10px] text-mute">
+          <div className="mt-1 px-1 text-xs text-mute">
             {timeStr}
           </div>
         )}

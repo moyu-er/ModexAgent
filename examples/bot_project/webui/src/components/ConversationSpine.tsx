@@ -236,13 +236,13 @@ export const ConversationSpine: FC<ConversationSpineProps> = ({
             <span
               className={`block rounded-full transition-all duration-150 ${
                 isActive
-                  ? "h-2 w-2 bg-link ring-2 ring-link/25"
-                  : "h-1.5 w-1.5 bg-mute group-hover:h-2 group-hover:bg-link"
+                  ? "h-2 w-2 bg-brand ring-2 ring-brand"
+                  : "h-1.5 w-1.5 bg-mute group-hover:h-2 group-hover:bg-brand"
               }`}
             />
             {/* Mono margin-note tooltip — peeks left into the content gutter. */}
             <span
-              className="pointer-events-none absolute right-full mr-2 max-w-[220px] truncate rounded border border-hairline bg-canvas-elevated px-2 py-1 font-mono text-[10px] text-body opacity-0 shadow-sm transition-opacity duration-150 group-hover:opacity-100"
+              className="pointer-events-none absolute right-full mr-2 max-w-[220px] truncate rounded border border-hairline bg-canvas-elevated px-2 py-1 font-mono text-xs text-body opacity-0 shadow-sm transition-opacity duration-150 group-hover:opacity-100"
             >
               {a.preview}
             </span>

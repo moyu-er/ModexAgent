@@ -224,7 +224,7 @@ class CapturingOutputAdapter(OutputAdapter):
 async def test_pipeline_continue_runs_agent_without_appending_command() -> None:
     from modex_agent.core.context import InMemoryContextManager
     from modex_agent.core.tool_manager import InMemoryToolManager
-    from modex_agent.pipeline.pipeline import AgentPipeline
+    from tests.unit.pipeline._helpers import _make_react_pipeline
 
     agent = FakeAgent()
     processor = FakeCommandProcessor(
@@ -235,7 +235,7 @@ async def test_pipeline_continue_runs_agent_without_appending_command() -> None:
             append_user_message=False,
         )
     )
-    pipeline = AgentPipeline(
+    pipeline = _make_react_pipeline(
         agent=agent,
         context_manager=InMemoryContextManager(base_system_prompt="system"),
         tool_manager=InMemoryToolManager(),
@@ -253,7 +253,7 @@ async def test_pipeline_continue_during_pending_approval_returns_notice() -> Non
     """/continue during pending approval returns notice and does not auto-deny."""
     from modex_agent.core.context import InMemoryContextManager
     from modex_agent.core.tool_manager import InMemoryToolManager
-    from modex_agent.pipeline.pipeline import AgentPipeline
+    from tests.unit.pipeline._helpers import _make_react_pipeline
 
     agent = FakeAgent()
     processor = FakeCommandProcessor(
@@ -265,7 +265,7 @@ async def test_pipeline_continue_during_pending_approval_returns_notice() -> Non
             notice="Approval is pending; /continue is blocked.",
         )
     )
-    pipeline = AgentPipeline(
+    pipeline = _make_react_pipeline(
         agent=agent,
         context_manager=InMemoryContextManager(base_system_prompt="system"),
         tool_manager=InMemoryToolManager(),
@@ -288,7 +288,7 @@ async def test_pipeline_drops_slash_command_when_busy_in_queue_mode() -> None:
     from modex_agent.core.agent_runtime_config import BusyInputMode
     from modex_agent.core.context import InMemoryContextManager
     from modex_agent.core.tool_manager import InMemoryToolManager
-    from modex_agent.pipeline.pipeline import AgentPipeline
+    from tests.unit.pipeline._helpers import _make_react_pipeline
 
     agent = FakeAgent()
     processor = FakeCommandProcessor(
@@ -300,7 +300,7 @@ async def test_pipeline_drops_slash_command_when_busy_in_queue_mode() -> None:
         )
     )
     output_adapter = CapturingOutputAdapter()
-    pipeline = AgentPipeline(
+    pipeline = _make_react_pipeline(
         agent=agent,
         context_manager=InMemoryContextManager(base_system_prompt="system"),
         tool_manager=InMemoryToolManager(),
@@ -337,7 +337,7 @@ async def test_pipeline_drops_slash_command_when_busy_in_queue_mode() -> None:
 async def test_pipeline_skill_uses_transformed_user_content() -> None:
     from modex_agent.core.context import InMemoryContextManager
     from modex_agent.core.tool_manager import InMemoryToolManager
-    from modex_agent.pipeline.pipeline import AgentPipeline
+    from tests.unit.pipeline._helpers import _make_react_pipeline
 
     agent = FakeAgent()
     processor = FakeCommandProcessor(
@@ -349,7 +349,7 @@ async def test_pipeline_skill_uses_transformed_user_content() -> None:
             append_user_message=True,
         )
     )
-    pipeline = AgentPipeline(
+    pipeline = _make_react_pipeline(
         agent=agent,
         context_manager=InMemoryContextManager(base_system_prompt="system"),
         tool_manager=InMemoryToolManager(),
@@ -370,7 +370,7 @@ async def test_pipeline_skill_propagates_xml_format_to_agent_messages() -> None:
     """Skill XML content must carry content_format and truncatable_paths."""
     from modex_agent.core.context import InMemoryContextManager
     from modex_agent.core.tool_manager import InMemoryToolManager
-    from modex_agent.pipeline.pipeline import AgentPipeline
+    from tests.unit.pipeline._helpers import _make_react_pipeline
 
     agent = FakeAgent()
     xml_content = (
@@ -390,7 +390,7 @@ async def test_pipeline_skill_propagates_xml_format_to_agent_messages() -> None:
             truncatable_paths=["command_context", "user_input"],
         )
     )
-    pipeline = AgentPipeline(
+    pipeline = _make_react_pipeline(
         agent=agent,
         context_manager=InMemoryContextManager(base_system_prompt="system"),
         tool_manager=InMemoryToolManager(),

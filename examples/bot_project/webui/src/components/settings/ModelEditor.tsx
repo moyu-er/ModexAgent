@@ -1,7 +1,7 @@
-// ModelEditor.tsx — Vercel Geist redesign of the persisted-config Models
+// ModelEditor.tsx — Inter redesign of the persisted-config Models
 // view. Replaces local SVG glyph helpers and the legacy `bg-user-bubble` /
 // `text-user-bubble-text` chip palette with the shared `ui/Card`,
-// `ui/Select`, `ui/Input`, and `ui/icons` primitives plus Geist surface
+// `ui/DropdownPanel`, `ui/Input`, and `ui/icons` primitives plus Inter surface
 // tokens. Save is owned by SettingsView; this component only mutates
 // `values` via `onChange`.
 //
@@ -15,9 +15,9 @@ import type { ReactNode } from "react";
 import type { SecretMaskValue, SecretWrite } from "../../types/config";
 import { SecretField } from "./SecretField";
 import { FetchModelsModal } from "./FetchModelsModal";
-import type { FetchedModel } from "../../lib/api";
+import type { FetchedModel, FetchProviderModelsRequest } from "../../lib/api";
 import { Card } from "../ui/Card";
-import { Select } from "../ui/Select";
+import { DropdownPanel, type DropdownOption } from "../ui/DropdownPanel";
 import { Input } from "../ui/Input";
 import { IconButton } from "../ui/IconButton";
 import { Button } from "../ui/Button";
@@ -33,7 +33,6 @@ import {
   AudioIcon,
 } from "../ui/icons";
 import { Trash2, Download } from "lucide-react";
-import type { SelectOption } from "../ui/Select";
 import { CATEGORY } from "./categoryMeta";
 import { useT, type MessageKey } from "../../i18n";
 
@@ -59,10 +58,6 @@ interface Provider {
 interface Props {
   values: Record<string, unknown>;
   onChange: (next: Record<string, unknown>) => void;
-  /** Whether the form has unsaved changes (controls fetch-button availability). */
-  dirty: boolean;
-  /** Save the form, then resolve with true on success / false on failure. */
-  onSave: () => Promise<boolean>;
 }
 
 // Closed enum (backend Modality). Multi-select via chips — never free text,
@@ -106,18 +101,18 @@ function pickFirstCombo(
   return null;
 }
 
-export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
+export function ModelEditor({ values, onChange }: Props) {
   const t = useT();
   const defaultProvider = String(values.default_provider ?? "");
   const defaultModel = String(values.default_model ?? "");
   const maxContext = Number(values.max_context_tokens ?? 0);
   const providers = (values.providers as Provider[] | undefined) ?? [];
 
-  const REASONING_EFFORT_OPTIONS: SelectOption[] = REASONING_EFFORTS.map((e) => ({
+  const REASONING_EFFORT_OPTIONS: DropdownOption[] = REASONING_EFFORTS.map((e) => ({
     value: e,
     label: e,
   }));
-  const INTERFACE_FORMAT_OPTIONS: SelectOption[] = INTERFACE_FORMAT_DEFS.map((d) => ({
+  const INTERFACE_FORMAT_OPTIONS: DropdownOption[] = INTERFACE_FORMAT_DEFS.map((d) => ({
     value: d.value,
     label: t(d.labelKey),
   }));
@@ -186,11 +181,11 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
   );
   const comboExists = currentComboIdx >= 0 && defaultProvider !== "";
 
-  // Build the Select options for the default-model combo picker. We keep an
+  // Build the options for the default-model combo picker. We keep an
   // internal index-based value (so the backend contract never sees spaces or
-  // special chars in dropdown keys), but render it through the new Select
-  // primitive — never a raw <select>.
-  const defaultSelectOptions: SelectOption[] = combos.map((c, i) => ({
+  // special chars in dropdown keys), but render it through the shared
+  // DropdownPanel primitive — never a raw <select>.
+  const defaultSelectOptions: DropdownOption[] = combos.map((c, i) => ({
     value: String(i),
     label: `${c.pName} / ${c.mName}`,
   }));
@@ -349,16 +344,9 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
 
   const handleFetchClick = useCallback(
     async (pi: number): Promise<void> => {
-      const p = providers[pi];
-      if (!p || !p.key) return;
-      // If the form is dirty, save first so the backend has the real api_key.
-      if (dirty) {
-        const ok = await onSave();
-        if (!ok) return;
-      }
       setFetchTarget(pi);
     },
-    [providers, dirty, onSave],
+    [],
   );
 
   const handleFetchImport = useCallback(
@@ -415,14 +403,13 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
 
       {/* Top: default model + max context tokens */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_220px]">
-        <Select
+        <DropdownPanel
           label={t("settings.models.defaultModel")}
           required
           options={defaultSelectOptions}
           value={defaultSelectValue}
           disabled={!comboExists && defaultSelectOptions.length === 1}
-          onChange={(e) => {
-            const v = e.target.value;
+          onChange={(v) => {
             if (v === placeholderValue) return;
             const idx = Number(v);
             const c = combos[idx];
@@ -472,7 +459,7 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
                       className={`transition-transform ${isOpen ? "rotate-90" : ""}`}
                     />
                     <StatusDot on={keySet} />
-                    <span className="truncate text-sm font-medium text-ink">
+                    <span className="truncate text-base font-medium text-ink">
                       {p.name || (
                         <span className="italic text-body">{t("settings.models.untitledProvider")}</span>
                       )}
@@ -545,12 +532,12 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
                           />
                         </div>
                         <div className="sm:col-span-2">
-                          <Select
+                          <DropdownPanel
                             label={t("settings.models.interfaceFormat")}
                             options={INTERFACE_FORMAT_OPTIONS}
                             value={p.interface_format ?? "openai_compatible"}
-                            onChange={(e) =>
-                              handleInterfaceFormatChange(pi, e.target.value)
+                            onChange={(v) =>
+                              handleInterfaceFormatChange(pi, v)
                             }
                           />
                         </div>
@@ -576,19 +563,16 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
                     <div>
                       <div className="mb-2 flex items-center justify-between">
                         <SectionLabel>{t("settings.models.models")}</SectionLabel>
-                        {p.key && (
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            size="sm"
-                            className="gap-1.5"
-                            onClick={() => handleFetchClick(pi)}
-                            disabled={!p.key}
-                          >
-                            <Download size={14} />
-                            {dirty ? t("settings.models.saveAndFetch") : t("settings.models.fetchModels")}
-                          </Button>
-                        )}
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          className="gap-1.5"
+                          onClick={() => handleFetchClick(pi)}
+                        >
+                          <Download size={14} />
+                          {t("settings.models.fetchModels")}
+                        </Button>
                       </div>
                       <div className="space-y-2.5">
                         {(p.models ?? []).map((m, mi) => {
@@ -751,13 +735,13 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
 
                               {/* Reasoning effort (closed enum) */}
                               <div className="mt-3">
-                                <Select
+                                <DropdownPanel
                                   label={t("settings.models.reasoningEffort")}
                                   options={REASONING_EFFORT_OPTIONS}
                                   value={m.reasoning_effort ?? "none"}
-                                  onChange={(e) =>
+                                  onChange={(v) =>
                                     updateModel(pi, mi, {
-                                      reasoning_effort: e.target.value,
+                                      reasoning_effort: v,
                                     })
                                   }
                                 />
@@ -789,14 +773,14 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
           })}
 
           {providers.length === 0 && (
-            <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-sm text-body">
+            <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-base text-body">
               {t("settings.models.noProviders")}
             </p>
           )}
 
           <button
             type="button"
-            className="mt-1 flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-hairline py-2.5 text-sm text-body hover:border-ink hover:bg-hairline-soft hover:text-ink"
+            className="mt-1 flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-hairline py-2.5 text-base text-body hover:border-ink hover:bg-hairline-soft hover:text-ink"
             onClick={addProvider}
           >
             <PlusIcon /> {t("settings.models.addProvider")}
@@ -804,17 +788,27 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
         </div>
       </div>
 
-      {fetchTarget !== null && providers[fetchTarget] && (
-        <FetchModelsModal
-          open
-          onClose={() => setFetchTarget(null)}
-          providerKey={providers[fetchTarget]!.key}
-          existingModelIds={
-            new Set(providers[fetchTarget]!.models.map((m) => m.model))
-          }
-          onImport={(models) => handleFetchImport(fetchTarget, models)}
-        />
-      )}
+      {fetchTarget !== null && providers[fetchTarget] && (() => {
+        const p = providers[fetchTarget]!;
+        const fetchRequest: FetchProviderModelsRequest = p.key
+          ? { provider_key: p.key }
+          : {
+              base_url: p.base_url || "",
+              api_key:
+                "value" in p.api_key ? p.api_key.value : "",
+              interface_format: p.interface_format || "openai_compatible",
+              models_url: p.models_url ?? null,
+            };
+        return (
+          <FetchModelsModal
+            open
+            onClose={() => setFetchTarget(null)}
+            fetchRequest={fetchRequest}
+            existingModelIds={new Set(p.models.map((m) => m.model))}
+            onImport={(models) => handleFetchImport(fetchTarget, models)}
+          />
+        );
+      })()}
     </div>
   );
 }
@@ -824,7 +818,7 @@ export function ModelEditor({ values, onChange, dirty, onSave }: Props) {
 function DefaultBadge() {
   const t = useT();
   return (
-    <span className="inline-flex items-center gap-1 rounded-full border border-link px-2 py-0.5 text-[11px] font-medium text-link">
+    <span className="inline-flex items-center gap-1 rounded-full border border-link px-2 py-0.5 text-xs font-medium text-link">
       <DefaultStarIcon className="h-3 w-3" /> {t("settings.models.defaultBadge")}
     </span>
   );

@@ -62,7 +62,7 @@ export function SecretField({ value, onChange }: Props) {
   if (!editing && value.has_value) {
     return (
       <div className="flex items-center gap-2">
-        <span className="font-mono text-sm text-ink">
+        <span className="font-mono text-base text-ink">
           {value.hint ?? "••••••••"}
         </span>
         <IconButton
@@ -96,7 +96,7 @@ export function SecretField({ value, onChange }: Props) {
   return (
     <div className="flex items-center gap-2">
       <input
-        className="w-full rounded-xs border border-hairline bg-canvas-elevated px-2.5 py-1.5 font-mono text-sm text-ink placeholder:text-faint focus:border-link focus:outline-none focus:ring-1 focus:ring-link"
+        className="w-full rounded-xs border border-hairline bg-canvas-elevated px-2.5 py-1.5 font-mono text-base text-ink placeholder:text-faint focus:border-link focus:outline-none focus:ring-1 focus:ring-link"
         type={revealed ? "text" : "password"}
         role="textbox"
         aria-label={t("settings.secretField.secretValue")}

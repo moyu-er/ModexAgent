@@ -1,9 +1,9 @@
 // Checkbox.tsx — labeled checkbox primitive.
 //
-// Renders a native <input type="checkbox"> restyled with the Notion-style
-// `.checkbox-custom` class: 4px corners, hairline border, blue fill with a
-// white checkmark when checked. The label wraps the visible text so clicking
-// anywhere on the label toggles the box.
+// Renders a native <input type="checkbox"> restyled with the `.checkbox-custom`
+// class (index.css): xs (6px) corners, hairline border, brand fill with a
+// check-draw animation when checked (DESIGN.md §5.4). The label wraps the
+// visible text so clicking anywhere on the label toggles the box.
 
 import type { InputHTMLAttributes } from "react";
 import { forwardRef, useId } from "react";
@@ -26,7 +26,7 @@ export const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(function Che
   const hasError = Boolean(error);
   const boxCls = [
     "checkbox-custom",
-    hasError ? "border-error" : "",
+    hasError ? "border-danger" : "",
     className,
   ]
     .filter(Boolean)
@@ -35,7 +35,7 @@ export const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(function Che
     <div className="block">
       <label
         htmlFor={inputId}
-        className="inline-flex cursor-pointer items-center gap-2 text-sm text-ink"
+        className="inline-flex cursor-pointer items-center gap-2 text-base text-ink"
       >
         <input
           ref={ref}
@@ -53,7 +53,7 @@ export const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(function Che
         />
         <span>
           {label}
-          {required ? <span className="ml-0.5 text-error">*</span> : null}
+          {required ? <span className="ml-0.5 text-danger">*</span> : null}
         </span>
       </label>
       {error ? (

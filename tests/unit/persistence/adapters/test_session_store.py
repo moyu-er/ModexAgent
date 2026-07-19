@@ -1,7 +1,7 @@
 """Tests for :class:`SqliteSessionStore`.
 
 Covers session CRUD, parent-child graph queries, prefix-based listing, and
-scope/pool round-tripping through the STORED generated columns.
+generated-column derivation from the ``scope_key`` JSON.
 """
 
 from __future__ import annotations
@@ -234,28 +234,7 @@ async def test_get_children_no_children_returns_empty(tmp_path: Path) -> None:
         await manager.close()
 
 
-# ── scope / pool round-trip ───────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_pool_resolver_populates_scope(tmp_path: Path) -> None:
-    """The pool_resolver's value lands in scope and the generated column."""
-    manager = ConnectionManager(tmp_path / "state.db", DatabaseKind.WORKSPACE)
-    await manager.open()
-    try:
-        store = SqliteSessionStore(manager, pool_resolver=lambda s: "coding")
-        await store.save(SessionInfo(session_id="p.main", agent_name="main"))
-
-        row = await manager.query_one(
-            "SELECT pool, agent_id, session_prefix FROM sessions WHERE session_id = ?",
-            ("p.main",),
-        )
-        assert row is not None
-        assert row[0] == "coding"
-        assert row[1] == "main"
-        assert row[2] == "p"
-    finally:
-        await manager.close()
+# ── generated columns from scope_key ───────────────────────────────────────
 
 
 @pytest.mark.asyncio

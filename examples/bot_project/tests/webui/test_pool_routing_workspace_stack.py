@@ -197,6 +197,7 @@ async def test_non_home_workspace_routes_to_coding_with_shared_store() -> None:
         # Production wiring: pipeline ctx uses the shared store.
         ctx = BotInputContext(
             default_pool="main",
+            available_pools=lambda: {"main", "coding"},
             pool_session_store=shared_store,
             agent_pool_map={"main": "main", "coding": "coding"},
             agent_resolver=lambda p: {"main": "main", "coding": "coding"}.get(p, p),
@@ -294,6 +295,7 @@ async def test_home_workspace_coding_conversation_routes_to_coding() -> None:
         server.set_input_pipeline(pipe)
         ctx = BotInputContext(
             default_pool="main",
+            available_pools=lambda: {"main", "coding"},
             pool_session_store=shared_store,
             agent_pool_map={"main": "main", "coding": "coding"},
             agent_resolver=lambda p: {"main": "main", "coding": "coding"}.get(p, p),

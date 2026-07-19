@@ -13,7 +13,8 @@ from modex_agent.core.context import ContextState
 from modex_agent.core.emitter import AgentResult, StreamingAwareEmitter
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import InputMessage
-from modex_agent.pipeline.pipeline import AgentPipeline
+
+from tests.unit.pipeline._helpers import _make_react_pipeline
 
 
 class _CapturingAgent:
@@ -100,7 +101,7 @@ class TestPipelineEmitterSelection:
 
     def _make_pipeline(self, emitter_factory=None):
         agent = _CapturingAgent()
-        pipeline = AgentPipeline(
+        pipeline = _make_react_pipeline(
             agent=agent,
             context_manager=_StubContextManager(),
             tool_manager=_StubToolManager(),

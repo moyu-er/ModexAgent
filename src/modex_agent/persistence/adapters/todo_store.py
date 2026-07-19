@@ -9,7 +9,6 @@ in the ``items_json`` column. All methods are async and go through the
 from __future__ import annotations
 
 import json
-import time
 from typing import TYPE_CHECKING
 
 from modex_agent.runtime.store import TodoItem, TodoStore
@@ -22,17 +21,19 @@ if TYPE_CHECKING:
 class SqliteTodoStore(TodoStore):
     """SQLite-backed per-session todo list using the ``todos`` table.
 
-    The ``scope`` column is populated from the injected ``RecordScope`` so
-    the generated ``pool`` column is available for workspace-level queries.
-    Todo items are serialized as a JSON array of ``{"content", "status"}``
-    dicts in the ``items_json`` column (same format as
-    :class:`~modex_agent.runtime.store.JsonFileTodoStore`).
+    The ``scope_key`` column is populated from the injected ``RecordScope``'s
+    canonical JSON. Todo items are serialized as a JSON array of
+    ``{"content", "status"}`` dicts in the ``items_json`` column (same format
+    as :class:`~modex_agent.runtime.store.JsonFileTodoStore`).
+    ``created_at``/``updated_at`` are owned by the schema DEFAULT + the
+    ``trg_todos_auto_updated_at`` trigger (ADR-0029), so the adapter does not
+    write them explicitly.
 
     Args:
         connection: The workspace ``ConnectionManager`` shared with other
             adapters.
         scope: A ``RecordScope`` whose canonical JSON populates the
-            ``scope`` column.
+            ``scope_key`` column.
     """
 
     def __init__(self, connection: ConnectionManager, scope: RecordScope) -> None:
@@ -49,13 +50,14 @@ class SqliteTodoStore(TodoStore):
         items_json = json.dumps(
             [t.to_dict() for t in todos], ensure_ascii=False
         )
+        # updated_at is owned by the trigger (fires on UPDATE when unchanged);
+        # created_at/updated_at on INSERT use the schema DEFAULT.
         await self._connection.execute(
-            "INSERT INTO todos (session_id, scope, items_json, updated_at) "
-            "VALUES (?, ?, ?, ?) "
+            "INSERT INTO todos (session_id, scope_key, items_json) "
+            "VALUES (?, ?, ?) "
             "ON CONFLICT(session_id) DO UPDATE SET "
-            "items_json = excluded.items_json, "
-            "updated_at = excluded.updated_at",
-            (session_id, self._scope_json, items_json, time.time()),
+            "items_json = excluded.items_json",
+            (session_id, self._scope_json, items_json),
         )
 
     async def get(self, session_id: str) -> list[TodoItem]:

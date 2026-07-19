@@ -6,7 +6,7 @@ when a workspace manager is wired, and fall back to its own ``self.*``
 stores otherwise.
 
 These tests target ``_resolve_pool_data`` directly (pure resolution
-logic, now on :class:`TurnRunner`) and the snapshot-vs-self selection
+logic, now on :class:`ReActTurnRunner`) and the snapshot-vs-self selection
 performed in ``TurnContextBuilder.build_runtime_and_context``. They
 construct the runner directly, wiring only the deps the tested paths read.
 """
@@ -22,7 +22,7 @@ import pytest
 
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
-from modex_agent.pipeline.turn_runner import TurnRunner
+from modex_agent.pipeline.turn_runner import ReActTurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 
 
@@ -44,8 +44,8 @@ class _FakePoolData(PoolDataSnapshot):
     experience_dir: Path | None = None
 
 
-def _make_runner(**attrs: Any) -> TurnRunner:
-    """Build a TurnRunner wiring only the deps ``_resolve_pool_data`` /
+def _make_runner(**attrs: Any) -> ReActTurnRunner:
+    """Build a ReActTurnRunner wiring only the deps ``_resolve_pool_data`` /
     ``_is_subagent`` read. The rest default to lightweight fakes so the
     constructor's keyword-only contract is satisfied."""
     defaults: dict[str, Any] = dict(
@@ -66,7 +66,7 @@ def _make_runner(**attrs: Any) -> TurnRunner:
         agent_descriptor=None,
     )
     defaults.update(attrs)
-    return TurnRunner(**defaults)
+    return ReActTurnRunner(**defaults)
 
 
 def _make_builder(**attrs: Any) -> TurnContextBuilder:

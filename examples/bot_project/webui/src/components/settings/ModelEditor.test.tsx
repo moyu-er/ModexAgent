@@ -3,8 +3,6 @@ import { useState } from "react";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 import { ModelEditor } from "./ModelEditor";
 
-const noopSave = vi.fn().mockResolvedValue(true);
-
 const values = {
   default_provider: "DeepSeek",
   default_model: "m1",
@@ -32,7 +30,7 @@ const values = {
 
 describe("ModelEditor", () => {
   it("renders provider and model names (not [object Object])", () => {
-    render(<ModelEditor values={values} onChange={() => {}} dirty={false} onSave={noopSave} />);
+    render(<ModelEditor values={values} onChange={() => {}} />);
     // default provider (DeepSeek) is expanded by default → its fields are visible
     expect(screen.getByDisplayValue("DeepSeek")).toBeTruthy(); // provider name input
     expect(screen.getByLabelText(/Model identifier/)).toBeTruthy(); // model routing input
@@ -41,7 +39,7 @@ describe("ModelEditor", () => {
 
   it("Add provider calls onChange with one more provider", () => {
     const onChange = vi.fn();
-    render(<ModelEditor values={values} onChange={onChange} dirty={false} onSave={noopSave} />);
+    render(<ModelEditor values={values} onChange={onChange} />);
     fireEvent.click(screen.getByRole("button", { name: /Add provider/ }));
     expect(onChange).toHaveBeenCalled();
     const next = onChange.mock.calls[0]![0]! as { providers: unknown[] };
@@ -50,7 +48,7 @@ describe("ModelEditor", () => {
 
   it("newly added provider has base_url and interface_format defaults", () => {
     const onChange = vi.fn();
-    render(<ModelEditor values={values} onChange={onChange} dirty={false} onSave={noopSave} />);
+    render(<ModelEditor values={values} onChange={onChange} />);
     fireEvent.click(screen.getByRole("button", { name: /Add provider/ }));
     const next = onChange.mock.calls[0]![0]! as {
       providers: { base_url: string; interface_format: string }[];
@@ -70,8 +68,6 @@ describe("ModelEditor", () => {
         <ModelEditor
           values={v}
           onChange={(next) => setV(next)}
-          dirty={false}
-          onSave={noopSave}
         />
       );
     };
@@ -95,7 +91,7 @@ describe("ModelEditor", () => {
 
   it("Remove provider removes it after inline confirm", () => {
     const onChange = vi.fn();
-    render(<ModelEditor values={values} onChange={onChange} dirty={false} onSave={noopSave} />);
+    render(<ModelEditor values={values} onChange={onChange} />);
     fireEvent.click(screen.getByRole("button", { name: "Remove provider" }));
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     const next = onChange.mock.calls[0]![0]! as { providers: unknown[] };
@@ -104,7 +100,7 @@ describe("ModelEditor", () => {
 
   it("Add model appends to the provider's models", () => {
     const onChange = vi.fn();
-    render(<ModelEditor values={values} onChange={onChange} dirty={false} onSave={noopSave} />);
+    render(<ModelEditor values={values} onChange={onChange} />);
     fireEvent.click(screen.getByRole("button", { name: /Add model/ }));
     const next = onChange.mock.calls[0]![0]! as {
       providers: { models: unknown[] }[];
@@ -114,13 +110,13 @@ describe("ModelEditor", () => {
 
   it("default dropdown lists provider/model combos and selecting updates default", () => {
     const onChange = vi.fn();
-    render(<ModelEditor values={values} onChange={onChange} dirty={false} onSave={noopSave} />);
-    const select = screen.getByLabelText(/Default model/) as HTMLSelectElement;
-    // the one model combo exists as an option
-    const optionText = screen.getByText("DeepSeek / m1");
-    expect(optionText).toBeTruthy();
+    render(<ModelEditor values={values} onChange={onChange} />);
+    const trigger = screen.getByLabelText(/Default model/);
+    // The trigger shows the current combo; the panel lists it as an option.
+    expect(trigger.textContent).toContain("DeepSeek / m1");
+    fireEvent.click(trigger);
     // options are keyed by index into the combos array (robust to names with spaces)
-    fireEvent.change(select, { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("option", { name: "DeepSeek / m1" }));
     const next = onChange.mock.calls[0]![0]! as {
       default_provider: string;
       default_model: string;
@@ -131,10 +127,11 @@ describe("ModelEditor", () => {
 
   it("interface format dropdown exists and updates the provider", () => {
     const onChange = vi.fn();
-    render(<ModelEditor values={values} onChange={onChange} dirty={false} onSave={noopSave} />);
-    const formatSelect = screen.getByLabelText("Interface format") as HTMLSelectElement;
-    expect(formatSelect.value).toBe("openai_compatible");
-    fireEvent.change(formatSelect, { target: { value: "anthropic" } });
+    render(<ModelEditor values={values} onChange={onChange} />);
+    const trigger = screen.getByLabelText("Interface format");
+    expect(trigger.textContent).toContain("OpenAI Compatible");
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("option", { name: "Anthropic" }));
     const next = onChange.mock.calls[0]![0]! as {
       providers: { interface_format: string }[];
     };
@@ -143,7 +140,7 @@ describe("ModelEditor", () => {
 
   it("editing max_context_tokens calls onChange", () => {
     const onChange = vi.fn();
-    render(<ModelEditor values={values} onChange={onChange} dirty={false} onSave={noopSave} />);
+    render(<ModelEditor values={values} onChange={onChange} />);
     const numInput = screen.getByDisplayValue("200000") as HTMLInputElement;
     fireEvent.change(numInput, { target: { value: "128000" } });
     const next = onChange.mock.calls[0]![0]! as { max_context_tokens: number };
@@ -152,7 +149,7 @@ describe("ModelEditor", () => {
 
   it("capabilities chips toggle membership (enum multi-select)", () => {
     const onChange = vi.fn();
-    render(<ModelEditor values={values} onChange={onChange} dirty={false} onSave={noopSave} />);
+    render(<ModelEditor values={values} onChange={onChange} />);
     // m1 starts with ["text"]; clicking Image adds it. Chips now render an
     // SVG alongside the label so we locate them by aria-label.
     fireEvent.click(screen.getByRole("button", { name: "Image" }));
@@ -166,7 +163,7 @@ describe("ModelEditor", () => {
 
   it("capability chips render an inline SVG icon with currentColor stroke", () => {
     const { container } = render(
-      <ModelEditor values={values} onChange={() => {}} dirty={false} onSave={noopSave} />,
+      <ModelEditor values={values} onChange={() => {}} />,
     );
     // The Text capability chip is the only one selected (aria-pressed=true).
     const textChip = screen.getByRole("button", { name: "Text" });
@@ -195,10 +192,11 @@ describe("ModelEditor", () => {
 
   it("reasoning effort dropdown defaults to none and changing updates the model", () => {
     const onChange = vi.fn();
-    render(<ModelEditor values={values} onChange={onChange} dirty={false} onSave={noopSave} />);
-    const reasoningSelect = screen.getByLabelText("Reasoning effort") as HTMLSelectElement;
-    expect(reasoningSelect.value).toBe("none");
-    fireEvent.change(reasoningSelect, { target: { value: "medium" } });
+    render(<ModelEditor values={values} onChange={onChange} />);
+    const trigger = screen.getByLabelText("Reasoning effort");
+    expect(trigger.textContent).toContain("none");
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole("option", { name: "medium" }));
     const next = onChange.mock.calls[0]![0]! as {
       providers: { models: { reasoning_effort: string }[] }[];
     };
@@ -206,12 +204,38 @@ describe("ModelEditor", () => {
   });
 
   it("marks required fields with a star and leaves defaulted numeric fields unmarked", () => {
-    render(<ModelEditor values={values} onChange={() => {}} dirty={false} onSave={noopSave} />);
+    render(<ModelEditor values={values} onChange={() => {}} />);
     // required: Provider key label has a star
     expect(screen.getByText("Provider key").closest("label")?.textContent).toMatch(/\*/);
     // optional: Temperature label has no star
     expect(screen.getByText("Temperature").closest("label")?.textContent).not.toMatch(
       /\*/,
     );
+  });
+
+  it("Fetch Models button is always available (no dirty-save precondition)", () => {
+    render(<ModelEditor values={values} onChange={() => {}} />);
+    const fetchBtn = screen.getByRole("button", { name: /Fetch models/ });
+    expect(fetchBtn).toBeTruthy();
+    expect(fetchBtn.hasAttribute("disabled")).toBe(false);
+  });
+
+  it("Fetch Models button appears even when provider has no key (unsaved draft)", () => {
+    const draftValues = {
+      ...values,
+      providers: [
+        {
+          ...values.providers[0],
+          key: "",
+          api_key: { has_value: false },
+        },
+      ],
+    };
+    render(
+      <ModelEditor values={draftValues} onChange={() => {}} />,
+    );
+    const fetchBtn = screen.getByRole("button", { name: /Fetch models/ });
+    expect(fetchBtn).toBeTruthy();
+    expect(fetchBtn.hasAttribute("disabled")).toBe(false);
   });
 });

@@ -89,6 +89,7 @@ def _make_pipeline_ctx(store: JSONLTranscriptStore, enqueued: list[InputMessage]
     sink = enqueued if enqueued is not None else MagicMock()
     return BotInputContext(
         default_pool="main",
+        available_pools=lambda: {"main", "coding"},
         pool_session_store=pool_store,
         agent_pool_map={"main": "main", "coding": "coding"},
         agent_resolver=lambda p: p,
@@ -302,6 +303,7 @@ async def test_im_pipeline_skips_control_commands() -> None:
     pool_store.get.return_value = "main"
     ctx = BotInputContext(
         default_pool="main",
+        available_pools=lambda: {"main", "coding"},
         pool_session_store=pool_store,
         agent_pool_map={"main": "main"},
         agent_resolver=lambda p: p,

@@ -25,10 +25,15 @@ from modex_agent.memory.sanitizer import ToolChainSanitizationIssue
 
 @dataclass(frozen=True)
 class StorageRevision:
-    """Revision metadata returned by scoped storage writes."""
+    """Revision metadata returned by scoped storage writes.
+
+    ``updated_at`` is a Unix-epoch millisecond integer (ADR-0029 §6). Both
+    file and SQLite backends pass ``now_ms()`` directly — no ``datetime``
+    bridge at the adapter boundary.
+    """
 
     message_count: int
-    updated_at: datetime
+    updated_at: int
     version: int = 0
 
 

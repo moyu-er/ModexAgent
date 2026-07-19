@@ -5,7 +5,6 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +25,7 @@ from modex_agent.memory.core.split_stores import (
 from modex_agent.memory.core.store_metadata import StoreMetadata
 from modex_agent.memory.utils import safe_atomic_replace
 from modex_agent.utils.file_io import read_json_robust, read_jsonl_robust
+from modex_agent.utils.time import now_ms
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ class DefaultScopedStorage(StoreMetadata, MessageStore, KVStore, CursorStore, Ar
         self.directory = Path(directory)
         self.layer = layer
         self._version = 0
-        self._updated_at = datetime.now(UTC)
+        self._updated_at = now_ms()
 
     def get_lock(self) -> StorageLock:
         """Return the shared read/write lock for this store instance."""
@@ -87,7 +87,7 @@ class DefaultScopedStorage(StoreMetadata, MessageStore, KVStore, CursorStore, Ar
 
     def _touch(self) -> None:
         self._version += 1
-        self._updated_at = datetime.now(UTC)
+        self._updated_at = now_ms()
 
     @property
     def _kv_path(self) -> Path:
@@ -311,7 +311,7 @@ class DefaultScopedStorage(StoreMetadata, MessageStore, KVStore, CursorStore, Ar
                 **entry,
                 "cursor": cursor,
                 "entry_id": entry.get("entry_id") or cursor,
-                "created_at": entry.get("created_at") or datetime.now(UTC).isoformat(),
+                "created_at": entry.get("created_at") or now_ms(),
             }
             self.directory.mkdir(parents=True, exist_ok=True)
             with self._log_path.open("a", encoding="utf-8") as handle:
@@ -328,7 +328,7 @@ class DefaultScopedStorage(StoreMetadata, MessageStore, KVStore, CursorStore, Ar
                 **entry,
                 "cursor": archive_id,
                 "entry_id": entry.get("entry_id") or archive_id,
-                "created_at": entry.get("created_at") or datetime.now(UTC).isoformat(),
+                "created_at": entry.get("created_at") or now_ms(),
             }
             self.directory.mkdir(parents=True, exist_ok=True)
             with path.open("a", encoding="utf-8") as handle:

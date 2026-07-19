@@ -148,7 +148,27 @@ describe("SettingsView", () => {
     expect(puts.length).toBeGreaterThanOrEqual(1);
   });
 
-  // Render-smoke: each non-persisted sidebar route mounts the right child view.
+  it("shows the unsaved-changes ember dot only while dirty", async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(makeResponse(200, JSON.stringify(imPayload))));
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <ToastProvider>
+        <SettingsView onExit={() => {}} />
+      </ToastProvider>,
+    );
+    await waitFor(() => expect(screen.getByDisplayValue("A")).toBeTruthy());
+    // Clean state — no unsaved-changes indicator.
+    expect(screen.queryByRole("status")).toBeNull();
+    // Edit → dirty → ember dot appears.
+    fireEvent.change(screen.getByDisplayValue("A"), { target: { value: "B" } });
+    expect(screen.getByRole("status")).toBeTruthy();
+    expect(screen.getByRole("status").getAttribute("aria-label")).toBe("Unsaved changes");
+    // Cancel reverts → dot disappears.
+    fireEvent.click(screen.getByText("Cancel"));
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+
   // The IM view must load first so the persisted-domain gate is satisfied; then
   // we click into Pools / MCP / Skills and assert each child's distinctive copy
   // appears. Guards against the regression where a placeholder was rendered
@@ -250,7 +270,7 @@ describe("SettingsView", () => {
   });
 
   describe("Models save validation", () => {
-    it("blocks save with inline error when default model is cleared — no PUT issued", async () => {
+    it("allows save when default model is cleared — PUT issued (Ticket #4 relaxation)", async () => {
       let putCalled = false;
       const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
         const method = init?.method ?? "GET";
@@ -276,11 +296,14 @@ describe("SettingsView", () => {
 
       fireEvent.click(screen.getByText("Save"));
 
+      // Ticket #4: empty default is now valid — PUT must go through.
       await waitFor(() => {
-        expect(screen.getByText(/Select a default model before saving/)).toBeTruthy();
+        expect(putCalled).toBe(true);
       });
 
-      expect(putCalled).toBe(false);
+      expect(
+        screen.queryByText(/Select a default model before saving/),
+      ).toBeNull();
     });
 
     it("shows a friendly error from a 400 ApiError JSON body with fields", async () => {

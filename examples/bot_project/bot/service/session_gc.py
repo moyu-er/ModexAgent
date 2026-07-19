@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from bot.scope import BotRecordScope
 from modex_agent.core.cleanup import (
     DefaultSessionArtifactCleaner,
     SessionCleanupResult,
@@ -34,6 +35,7 @@ from modex_agent.core.cleanup import (
 from modex_agent.core.scope import RecordScope
 from modex_agent.core.session_cleanup import MissingSessionScopeError
 from modex_agent.core.session_id import SessionInfo, session_id_prefix_of
+from modex_agent.core.session_scope_discovery import discover_file_session_pool_map
 from modex_agent.core.session_store import LocalFileSessionStore, SessionStore
 from modex_agent.workspace.paths import WorkspacePaths
 
@@ -191,7 +193,7 @@ def _cleanup_orphan_pool_routes(paths: WorkspacePaths) -> int:
 class _Job:
     __slots__ = ("scope", "ws_root")
 
-    def __init__(self, scope: RecordScope, ws_root: Path) -> None:
+    def __init__(self, scope: BotRecordScope, ws_root: Path) -> None:
         self.scope = scope
         self.ws_root = ws_root
 
@@ -328,7 +330,7 @@ class SessionGarbageCollector:
         """
         if ws_root is not None and pool is not None:
             paths = WorkspacePaths(root=ws_root / self._data_dir_name)
-            scope = RecordScope(
+            scope = BotRecordScope(
                 session_id=root_session_id,
                 pool=pool,
                 workspace_id=str(ws_root.resolve()),
@@ -351,7 +353,7 @@ class SessionGarbageCollector:
                 )
                 await self._enqueue_persisted_scopes(
                     paths,
-                    RecordScope(
+                    BotRecordScope(
                         session_id=root_session_id,
                         pool=pool,
                         workspace_id=str(ws_root.resolve()),
@@ -367,7 +369,7 @@ class SessionGarbageCollector:
             await self._clean_record_and_transcript(root_session_id, pool, paths)
             await self._enqueue_persisted_scopes(
                 paths,
-                RecordScope(
+                BotRecordScope(
                     session_id=root_session_id,
                     pool=pool,
                     workspace_id=str(ws_root.resolve()),
@@ -403,6 +405,7 @@ class SessionGarbageCollector:
                 live_session_ids=frozenset(graph).difference(orphan_session_ids),
                 workspace_id=workspace_id,
             )
+            pool_map = discover_file_session_pool_map(paths, workspace_id)
             discovered_session_ids = {
                 scope.session_id for scope in orphan_scopes if scope.session_id is not None
             }
@@ -410,7 +413,7 @@ class SessionGarbageCollector:
                 if orphan.session_id in discovered_session_ids:
                     continue
                 if self._enqueue(
-                    RecordScope(
+                    BotRecordScope(
                         session_id=orphan.session_id,
                         pool=self._pool_of(paths, orphan),
                         workspace_id=workspace_id,
@@ -419,7 +422,7 @@ class SessionGarbageCollector:
                 ):
                     enqueued_sessions += 1
             for scope in orphan_scopes:
-                if self._enqueue(scope, ws_root):
+                if self._enqueue(scope, ws_root, pool_map=pool_map):
                     enqueued_artifacts += 1
             removed_routes += _cleanup_orphan_pool_routes(paths)
         logger.info(
@@ -433,12 +436,37 @@ class SessionGarbageCollector:
 
     # -- internals -------------------------------------------------------
 
-    def _enqueue(self, scope: RecordScope, ws_root: Path) -> bool:
-        key = (ws_root.resolve(), scope.canonical())
+    def _enqueue(
+        self,
+        scope: RecordScope,
+        ws_root: Path,
+        *,
+        pool_map: dict[str, str] | None = None,
+    ) -> bool:
+        # Framework discovery returns base RecordScope (no pool); wrap so
+        # job.scope.pool reads work (ADR-0028 framework/business boundary).
+        # When pool_map is provided (from discover_file_session_pool_map),
+        # recover the pool directory name for discovered scopes so cleanup
+        # targets the correct pool-partitioned directory.
+        if isinstance(scope, BotRecordScope):
+            bot_scope = scope
+        else:
+            pool = (
+                pool_map.get(scope.canonical(), "default")
+                if pool_map is not None
+                else "default"
+            )
+            # scope may already carry a `pool` extra field (e.g. when
+            # from_canonical returned a different subclass with the same
+            # extra-field signature). Override it with the pool_map result.
+            fields = scope.model_dump()
+            fields["pool"] = pool
+            bot_scope = BotRecordScope(**fields)
+        key = (ws_root.resolve(), bot_scope.canonical())
         if key in self._inflight:
             return False
         self._inflight.add(key)
-        self._queue.put_nowait(_Job(scope, ws_root))
+        self._queue.put_nowait(_Job(bot_scope, ws_root))
         return True
 
     async def _enqueue_persisted_scopes(
@@ -453,14 +481,16 @@ class SessionGarbageCollector:
         # Use the SQLite-aware _list_sessions instead of the file-only
         # _read_session_index so live session IDs are correct in SQLite mode.
         live_sessions = await self._list_sessions(paths)
+        workspace_id = fallback_scope.workspace_id or str(ws_root.resolve())
         discovered = await self._cleaner_factory.discover_orphan_scopes(
             paths,
             live_session_ids=frozenset(s.session_id for s in live_sessions),
-            workspace_id=fallback_scope.workspace_id or str(ws_root.resolve()),
+            workspace_id=workspace_id,
         )
+        pool_map = discover_file_session_pool_map(paths, workspace_id)
         matching = [scope for scope in discovered if scope.session_id == session_id]
         for scope in matching or [fallback_scope]:
-            self._enqueue(scope, ws_root)
+            self._enqueue(scope, ws_root, pool_map=pool_map)
 
     async def _worker_loop(self) -> None:
         while True:
@@ -522,7 +552,7 @@ class SessionGarbageCollector:
                 )
                 await self._enqueue_persisted_scopes(
                     paths,
-                    RecordScope(
+                    BotRecordScope(
                         session_id=child.session_id,
                         pool=self._pool_of(paths, child, fallback=job.scope.pool),
                         workspace_id=job.scope.workspace_id,

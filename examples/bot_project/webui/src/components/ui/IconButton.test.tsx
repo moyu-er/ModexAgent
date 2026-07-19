@@ -25,20 +25,22 @@ describe("IconButton", () => {
     expect(screen.getByRole("button").className).toContain("h-8 w-8");
   });
 
-  it("is circular and uses the link focus ring", () => {
+  it("is circular and uses the brand focus ring", () => {
     render(<IconButton icon={<Icon />} label="x" />);
     const el = screen.getByRole("button");
     expect(el.className).toContain("rounded-full");
-    expect(el.className).toContain("focus-visible:ring-link/30");
+    expect(el.className).toContain("focus-visible:ring-brand");
   });
 
-  it("variant mapping applies Notion color classes", () => {
+  it("variant mapping applies Teal & Ember token classes", () => {
     const { rerender } = render(<IconButton icon={<Icon />} label="x" variant="primary" />);
-    expect(screen.getByRole("button").className).toContain("bg-link");
+    expect(screen.getByRole("button").className).toContain("btn-primary");
     rerender(<IconButton icon={<Icon />} label="x" variant="secondary" />);
     expect(screen.getByRole("button").className).toContain("border-hairline");
     rerender(<IconButton icon={<Icon />} label="x" variant="ghost" />);
     expect(screen.getByRole("button").className).toContain("text-body");
+    rerender(<IconButton icon={<Icon />} label="x" variant="danger" />);
+    expect(screen.getByRole("button").className).toContain("text-danger");
   });
 
   it("disabled blocks click", () => {

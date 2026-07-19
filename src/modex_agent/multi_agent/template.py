@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from modex_agent.core.constants import ExecutionStrategy
+from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.ioc.configs.skills import SkillsConfig
 from modex_agent.multi_agent.pool_config.specs import SubagentSpec
@@ -90,7 +90,16 @@ class AgentTemplate:
         parent context (e.g. a cold-started template): it still gets a built
         tool_manager, skill_manager, and session-scoped memory; only the three
         parent-dependent features above are skipped.
+
+        ``EXTERNAL_CODING`` subagents dispatch early to
+        :meth:`_materialize_external`, skipping react-specific assembly
+        (memory, tool_manager, skill_manager, hooks) — the external builder
+        owns that assembly. React/pipeline/single-turn subagents take the
+        existing path below.
         """
+        if self.spec.execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING:
+            return await self._materialize_external(parent_session, invocation_id, deps)
+
         from modex_agent.multi_agent.address import AgentAddress
         from modex_agent.multi_agent.comm_kind import AgentCommKind
         from modex_agent.multi_agent.descriptor import AgentDescriptor, AgentLLMConfig
@@ -189,6 +198,7 @@ class AgentTemplate:
             output_base_dir=output_base_dir,
             parent_prompt_lookup=parent_prompt_lookup,
             fork_context_spec=fork_context_spec,
+            roles=list(self.spec.roles),
         )
 
         tool_manager = await self._build_tool_manager(deps, name, runtime_dir)
@@ -236,11 +246,13 @@ class AgentTemplate:
             ),
             system_prompt_template=system_prompt,
             max_iterations=self.spec.max_steps,
-            execution_strategy=ExecutionStrategy.REACT,
+            execution_strategy=self.spec.execution_strategy,
+            provider_kind=self.spec.provider_kind,
             context_strategy="persistent",
             safety_policy=deps.safety,
             comm_kind=comm_kind,
             memory_config=self.memory,
+            roles=list(self.spec.roles),
         )
 
         # ── Create instance ──
@@ -276,6 +288,75 @@ class AgentTemplate:
         await deps.pool.register_resident(descriptor, instance)
 
         # ── Record parent-child relationship (subagent only) ──
+        if parent_session is not None and deps.on_subagent_created is not None:
+            session_id = f"{invocation_id or ''}.{name}"
+            await deps.on_subagent_created(session_id, str(parent_session))
+
+        return instance
+
+    async def _materialize_external(
+        self,
+        parent_session: SessionInfo | str | None,
+        invocation_id: str | None,
+        deps: AgentMaterializeDeps,
+    ) -> AgentInstance:
+        """External-coding subagent dispatch (T5).
+
+        Delegates the full subagent assembly (provider backend, parser,
+        session store, env builder, harness, pipeline) to
+        :attr:`AgentMaterializeDeps.subagent_external_coding_builder`. The
+        dispatch ends with the same ``pool.register_resident`` +
+        ``on_subagent_created`` calls the react path makes, so parent-child
+        wiring is uniform across execution strategies.
+
+        Raises ``ValueError`` if no builder is wired — react-only pools do
+        not inject one, and an ``EXTERNAL_CODING`` subagent without a builder
+        is a configuration error the framework cannot recover from.
+        """
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.comm_kind import AgentCommKind
+        from modex_agent.multi_agent.descriptor import AgentDescriptor
+
+        if deps.subagent_external_coding_builder is None:
+            raise ValueError(
+                f"Subagent {self.spec.agent_name!r} requires external_coding "
+                "execution_strategy but no subagent_external_coding_builder is "
+                "wired in AgentMaterializeDeps"
+            )
+
+        name = self.spec.agent_name
+        descriptor = AgentDescriptor(
+            address=AgentAddress(name=name),
+            execution_strategy=self.spec.execution_strategy,
+            provider_kind=self.spec.provider_kind,
+            comm_kind=AgentCommKind.SUBAGENT,
+            max_iterations=self.spec.max_steps,
+            system_prompt_template="",
+            roles=list(self.spec.roles),
+        )
+
+        instance = await deps.subagent_external_coding_builder.build(
+            spec=self.spec,
+            descriptor=descriptor,
+            parent_session=parent_session,
+            invocation_id=invocation_id,
+            deps=deps,
+        )
+
+        # External subagents bypass pool_builder's ``_create_with_emitter``
+        # wrapper, so the framework must inject the emitter factory here.
+        # ``ExternalTurnRunner`` inherits the no-op ``set_pool_context``
+        # default, so only emitter wiring is needed.
+        if (
+            instance.pipeline is not None
+            and deps.emitter_factory is not None
+        ):
+            instance.pipeline._turn_runner.set_emitter_factory(
+                deps.emitter_factory
+            )
+
+        await deps.pool.register_resident(descriptor, instance)
+
         if parent_session is not None and deps.on_subagent_created is not None:
             session_id = f"{invocation_id or ''}.{name}"
             await deps.on_subagent_created(session_id, str(parent_session))

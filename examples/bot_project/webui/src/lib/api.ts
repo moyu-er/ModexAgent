@@ -83,18 +83,39 @@ export interface FetchedModel {
 }
 
 /**
+ * Request body for `POST /api/models/fetch`. Two mutually exclusive forms:
+ *
+ *  - Form A: `{ provider_key }` — read connection info from saved model.yml.
+ *    The provider must already be persisted.
+ *  - Form B: `{ base_url, api_key, interface_format, models_url }` — read
+ *    connection info inline from the request body. Nothing is persisted;
+ *    `api_key` is held in-memory only.
+ *
+ * Both forms converge server-side on the same `fetch_provider_models` pure
+ * function.
+ */
+export type FetchProviderModelsRequest =
+  | { provider_key: string }
+  | {
+      base_url: string;
+      api_key: string;
+      interface_format: string;
+      models_url: string | null;
+    };
+
+/**
  * Fetch the available model list from a provider's model-list endpoint
- * (e.g. /v1/models). The provider must already be saved — all connection
- * info (base_url, api_key, interface_format, models_url) is read server-side
- * from model.yml; only the provider key crosses the wire.
+ * (e.g. /v1/models). Pass Form A to read connection info from saved
+ * model.yml, or Form B to pass it inline (e.g. for an unsaved draft
+ * provider). See `FetchProviderModelsRequest` for the two shapes.
  */
 export async function fetchProviderModels(
-  providerKey: string,
+  req: FetchProviderModelsRequest,
 ): Promise<{ models: FetchedModel[] }> {
   const resp = await fetch(`${API_BASE}/models/fetch`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ provider_key: providerKey }),
+    body: JSON.stringify(req),
   });
   await assertOk(resp);
   return resp.json() as Promise<{ models: FetchedModel[] }>;

@@ -7,10 +7,10 @@ cursor per scope.
 
 from __future__ import annotations
 
-import time
 from typing import TYPE_CHECKING
 
 from modex_agent.memory.core.split_stores import CursorStore
+from modex_agent.utils.time import now_ms
 
 if TYPE_CHECKING:
     from modex_agent.core.scope import RecordScope
@@ -35,9 +35,9 @@ class SqliteCursorStore(CursorStore):
 
     async def set_last_cursor(self, cursor_name: str, cursor: int) -> None:
         await self._connection.execute(
-            "INSERT INTO memory_cursors (scope_key, cursor_name, scope, cursor_value, updated_at) "
-            "VALUES (?, ?, ?, ?, ?) "
+            "INSERT INTO memory_cursors (scope_key, cursor_name, cursor_value, updated_at) "
+            "VALUES (?, ?, ?, ?) "
             "ON CONFLICT(scope_key, cursor_name) DO UPDATE SET "
             "cursor_value = excluded.cursor_value, updated_at = excluded.updated_at",
-            (self._scope_json, cursor_name, self._scope_json, cursor, time.time()),
+            (self._scope_json, cursor_name, cursor, now_ms()),
         )

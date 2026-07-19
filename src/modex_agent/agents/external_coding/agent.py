@@ -66,6 +66,7 @@ from modex_agent.core.turn_events import (
 )
 from modex_agent.workspace.runtime import is_workspace_root_bound, resolve_workspace_root
 
+from .backend_provider import BackendProvider, TurnContext
 from .contracts import ProviderBackend, ProviderEventParser
 from .env_builder import ExternalEnvBuilder
 from .events import ExternalCodingEvent
@@ -219,7 +220,9 @@ class StreamingProviderBackend(ProviderBackend):
         Default no-op. Backends that hold external resources (e.g.
         :class:`OpenCodeServerBackend` manages an ``opencode serve``
         subprocess) override this. Called by
-        :meth:`ExternalCodingAgent.stop` during pool shutdown.
+        :meth:`BackendProvider.close_all` during pool shutdown — for
+        :class:`PoolScopedBackendProvider` (main-agent path) this runs once
+        at :meth:`ExternalCodingAgent.stop`.
         """
 
 
@@ -311,9 +314,12 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
     """Framework harness wrapping any :class:`StreamingProviderBackend`.
 
     The agent owns the per-turn lifecycle described in the module
-    docstring. It is constructed with its stable collaborators (backend,
-    session store, parser, provider kind, env spec, base env) and run
-    once per turn via :meth:`run`.
+    docstring. It is constructed with its stable collaborators (backend
+    provider, session store, parser, provider kind, env spec, base env)
+    and run once per turn via :meth:`run`. Per turn it borrows a backend
+    from :meth:`BackendProvider.acquire` and returns it via
+    :meth:`BackendProvider.release` (in a ``finally`` block) so a
+    provider can observe turn failures.
 
     The ``spec`` (:class:`ExternalEnvSpec`) is treated as per-turn input
     — callers (T6's builder, wired from the live
@@ -327,7 +333,7 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
     def __init__(
         self,
         *,
-        backend: StreamingProviderBackend,
+        backend_provider: BackendProvider,
         session_store: ExternalSessionMapStore,
         parser: ProviderEventParser,
         provider_kind: ProviderKind,
@@ -337,7 +343,7 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
         thinking_level: str | None = None,
         timeout: float | None = None,
     ) -> None:
-        self._backend = backend
+        self._backend_provider = backend_provider
         self._session_store = session_store
         self._parser = parser
         self._provider_kind = provider_kind
@@ -358,7 +364,7 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
             return
         stop_task = self._stop_task
         if stop_task is None:
-            stop_task = asyncio.create_task(self._backend.close())
+            stop_task = asyncio.create_task(self._backend_provider.close_all())
             self._stop_task = stop_task
         try:
             await stop_task
@@ -421,6 +427,14 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
 
         self._ensure_runtime_block(paths)
 
+        # Clear the outbox so <replied> reflects only THIS turn's sends.
+        # SubagentAutoSendHook reads outbox.jsonl at FINALLY_TURN to set
+        # <replied>; without clearing, a reply from a prior turn would
+        # produce a false positive.
+        outbox = paths.outbox
+        if outbox.exists():
+            outbox.write_text("", encoding="utf-8")
+
         prompt = await self._extract_prompt(ctx)
         opts = ExecOptions(
             prompt=prompt,
@@ -437,17 +451,35 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
         async def on_emission(emission: Emission) -> None:
             await self._handle_emission(emission, emitter, accumulator)
 
-        backend_result = await self._execute_with_retry(opts, env, on_emission, modex_sid)
-
-        if backend_result.session_id:
-            await self._session_store.commit(
-                modex_sid, backend_result.session_id, self._provider_kind
+        # Borrow a backend for this turn. PoolScopedBackendProvider returns
+        # the same instance every turn; CachingBackendProvider (T6) may swap
+        # it. Release happens in `finally` so a turn that raises still
+        # returns the backend (and lets the provider observe turn_failed).
+        turn_context = TurnContext(
+            provider_kind=self._provider_kind, workdir=current_workdir
+        )
+        backend = await self._backend_provider.acquire(modex_sid, turn_context)
+        turn_failed = False
+        try:
+            backend_result = await self._execute_with_retry(
+                backend, opts, env, on_emission, modex_sid
             )
 
-        return self._build_agent_result(backend_result, accumulator.text)
+            if backend_result.session_id:
+                await self._session_store.commit(
+                    modex_sid, backend_result.session_id, self._provider_kind
+                )
+
+            return self._build_agent_result(backend_result, accumulator.text)
+        except Exception:
+            turn_failed = True
+            raise
+        finally:
+            await self._backend_provider.release(backend, turn_failed=turn_failed)
 
     async def _execute_with_retry(
         self,
+        backend: StreamingProviderBackend,
         opts: ExecOptions,
         env: dict[str, str],
         on_emission: Callable[[Emission], Awaitable[None]],
@@ -459,11 +491,18 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
         subprocess env and an ``invoke_agent`` CLIENT span is opened
         (marked ``repro.incomplete=true``) so the child CLI's
         instrumentation can continue the parent trace.
+
+        The ``backend`` parameter is the borrowed instance from
+        :meth:`BackendProvider.acquire`. The ``StaleSessionError`` retry
+        stays internal to this method — it retries with the SAME backend
+        and a fresh ``resume_session_id``. A turn-level failure (exception
+        propagating out of this method) is what triggers
+        ``release(backend, turn_failed=True)`` in :meth:`_run_turn`.
         """
         traced_env = _inject_traceparent_into_env(env)
         with _otel_invoke_agent_span(str(self._provider_kind)):
             try:
-                result = await self._backend.execute_streaming(
+                result = await backend.execute_streaming(
                     opts, traced_env, on_emission
                 )
             except StaleSessionError:
@@ -473,7 +512,7 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
                 )
                 await self._session_store.invalidate(modex_sid)
                 retry_opts = opts.model_copy(update={"resume_session_id": None})
-                result = await self._backend.execute_streaming(
+                result = await backend.execute_streaming(
                     retry_opts, traced_env, on_emission
                 )
             return result

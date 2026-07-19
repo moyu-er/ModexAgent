@@ -74,6 +74,15 @@ Hybrid persistence: per-workspace SQLite (`<workspace>/.modex/state.db`) for tra
 - **Terminal state store removed** (T19): `JsonTerminalStateStore` and the `save_state()`/`load_state()` path in `BaseTerminalManager` were dead code and are deleted.
 - **`RecordScope`** (frozen Pydantic) carries all scope dimensions; `canonical()` is the DB scope-key source, `to_path_segment()` drives file paths. `Scope` ABC replaces `MemoryScope`; `build_scope(dims)` is the factory. `PeerPairScope` removed (T04).
 
+## Phase 1 Schema Optimization (ADR-0028 ~ ADR-0031)
+
+Four ADRs landed together as Phase 1 of the persistence schema optimization:
+
+- **ADR-0028 (RecordScope base/subclass split + pool removal):** `pool` field removed from the framework base `RecordScope` (now `extra="forbid"`); business layer subclasses via `BotRecordScope(pool=...)` in `examples/bot_project/bot/scope.py`. Subclass extra fields are auto-registered via `__init_subclass__` keyed by frozenset of extra field names. `canonical()` stamps `__scope_type__` with sorted comma-joined extra field names (content-based, not class-name-based) so structurally identical subclasses in different modules (e.g. `BotRecordScope` and modexctl's `_PoolScopedRecordScope`) produce identical scope_keys. `from_canonical()` dispatches via O(1) registry lookup.
+- **ADR-0029 (Epoch-millisecond timestamp unification):** all DB timestamp columns are `INTEGER` milliseconds (not TEXT ISO strings). `utils/time.py` exports `now_ms()`/`now_s()` as the single source of truth. `ChatMessage.created_at` stays ISO string at the API surface but round-trips through the SQLite adapter as int ms (Supplement note in ADR-0029).
+- **ADR-0030 (ColumnProjection abstraction):** `persistence/column_projection.py` provides declarative field-mapping that splits a dict into typed columns + residual JSON. `ContentCodec` handles the str-vs-list[dict] content duality. All SQLite adapters use this for INSERT/SELECT.
+- **ADR-0031 (Schema simplification):** `scope` column removed (only `scope_key` remains); dead tables (`inbox_dead_letter`, `workspace_meta`) dropped; `inbox_topics` minimized; `message_id`/`content` nullable (framework API allows None); `role` CHECK extended to 6 values (user/assistant/system/tool/agent/pending).
+
 ## Multi-Agent Communication Rules
 
 - Star topology: subagents communicate only through main agent. `subagent_validator.py` enforces at registration.

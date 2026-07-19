@@ -93,10 +93,10 @@ export function GlobalMcpView() {
   }, []);
 
   if (loadError) {
-    return <p className="text-sm text-error">{t("common.failedToLoad", { error: loadError })}</p>;
+    return <p className="text-base text-error">{t("common.failedToLoad", { error: loadError })}</p>;
   }
   if (!cards) {
-    return <p className="text-sm text-mute">{t("common.loading")}</p>;
+    return <p className="text-base text-mute">{t("common.loading")}</p>;
   }
 
   const update = (i: number, patch: Partial<CardState>): void => {
@@ -229,14 +229,14 @@ export function GlobalMcpView() {
         ))}
 
         {cards.length === 0 && (
-          <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-sm text-mute">
+          <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-base text-mute">
             {t("settings.mcp.noServers")}
           </p>
         )}
 
         <button
           type="button"
-          className="mt-1 flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-hairline py-2.5 text-sm text-body hover:border-ink hover:bg-hairline-soft hover:text-ink"
+          className="mt-1 flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-hairline py-2.5 text-base text-body hover:border-ink hover:bg-hairline-soft hover:text-ink"
           onClick={addCard}
         >
           <PlusIcon /> {t("settings.mcp.addServer")}
@@ -315,7 +315,7 @@ function McpCard({
               className="h-2 w-2 shrink-0 rounded-full bg-warning"
             />
           )}
-          <span className="truncate text-sm font-medium text-ink">
+          <span className="truncate text-base font-medium text-ink">
             {card.originalName ?? (
               <span className="italic text-body">{t("settings.mcp.newServer")}</span>
             )}
@@ -535,7 +535,7 @@ function TransportBadge({
 }) {
   return (
     <span
-      className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${
+      className={`inline-flex shrink-0 items-center rounded-full border px-2 py-0.5 text-xs font-medium ${
         remote ? "border-link text-link" : "border-hairline text-mute"
       }`}
     >
@@ -567,7 +567,7 @@ function CategoryButton({
       }
     >
       <div
-        className={`text-sm font-medium ${
+        className={`text-base font-medium ${
           active ? "text-link" : "text-ink"
         }`}
       >

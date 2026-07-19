@@ -60,10 +60,10 @@ export function GlobalSkillsView() {
   }, []);
 
   if (loadError) {
-    return <p className="text-sm text-error">{t("common.failedToLoad", { error: loadError })}</p>;
+    return <p className="text-base text-error">{t("common.failedToLoad", { error: loadError })}</p>;
   }
   if (!skills) {
-    return <p className="text-sm text-mute">{t("common.loading")}</p>;
+    return <p className="text-base text-mute">{t("common.loading")}</p>;
   }
 
   const sortedSkills = skills
@@ -189,7 +189,7 @@ export function GlobalSkillsView() {
           // fall back to files for synthetic test events.
           void showPreview(e.dataTransfer?.files ?? null);
         }}
-        className={`flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed px-4 py-6 text-sm transition-colors ${
+        className={`flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed px-4 py-6 text-base transition-colors ${
           dragOver
             ? "border-link bg-hairline-soft text-link"
             : "border-hairline text-mute hover:text-ink"
@@ -234,7 +234,7 @@ export function GlobalSkillsView() {
             placeholder={t("settings.skills.searchPlaceholder")}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            className="w-full bg-transparent text-sm text-ink placeholder:text-faint focus:outline-none"
+            className="w-full bg-transparent text-base text-ink placeholder:text-faint focus:outline-none"
           />
         </div>
       )}
@@ -245,7 +245,7 @@ export function GlobalSkillsView() {
         <Card className="px-4 py-3">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 space-y-1">
-              <p className="truncate text-sm font-medium text-ink">
+              <p className="truncate text-base font-medium text-ink">
                 {preview.name}
               </p>
               <p className="text-xs text-mute">
@@ -277,7 +277,7 @@ export function GlobalSkillsView() {
       ) : null}
 
       {skills.length === 0 && !preview ? (
-        <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-sm text-mute">
+        <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-base text-mute">
           {t("settings.skills.noSkills")}
         </p>
       ) : null}
@@ -306,12 +306,12 @@ export function GlobalSkillsView() {
                       }
                     }}
                   >
-                    <span className="flex-1 truncate font-mono text-sm font-medium text-ink">
+                    <span className="flex-1 truncate font-mono text-base font-medium text-ink">
                       {s.name}
                     </span>
                     {s.origin && (
                       <span
-                        className="rounded-full border border-hairline px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-mute"
+                        className="rounded-full border border-hairline px-1.5 py-0.5 font-mono text-xs uppercase tracking-eyebrow text-mute"
                         title={
                           s.origin === "repo"
                             ? t("settings.skills.repoOriginTitle")
@@ -333,7 +333,7 @@ export function GlobalSkillsView() {
                   {isSelected && (
                     <div className="rounded-b-md border-x border-b border-hairline bg-canvas-elevated px-4 pb-4 pt-2">
                       <div className="flex items-start justify-between gap-3">
-                        <h3 className="text-sm font-semibold text-ink">{s.name}</h3>
+                        <h3 className="text-base font-semibold text-ink">{s.name}</h3>
                         <div className="flex shrink-0 items-center gap-2">
                           {s.origin === "repo" && (
                             <IconButton
@@ -357,9 +357,9 @@ export function GlobalSkillsView() {
                         </div>
                       </div>
                       {s.description ? (
-                        <p className="mt-2 text-sm text-body">{s.description}</p>
+                        <p className="mt-2 text-base text-body">{s.description}</p>
                       ) : (
-                        <p className="mt-2 text-sm text-faint italic">
+                        <p className="mt-2 text-base text-faint italic">
                           {t("settings.skills.noDescription")}
                         </p>
                       )}
@@ -373,7 +373,7 @@ export function GlobalSkillsView() {
       )}
 
       {skills !== null && skills.length > 0 && sortedSkills.length === 0 && (
-        <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-sm text-mute">
+        <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-base text-mute">
           {t("settings.skills.noMatch", { query })}
         </p>
       )}

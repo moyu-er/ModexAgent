@@ -55,6 +55,92 @@ from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.runtime.models import StateQueryScope
 from modex_agent.runtime.store import InMemoryTurnStateStore
 
+
+def _make_react_pipeline(
+    *,
+    agent,
+    context_manager=None,
+    tool_manager=None,
+    input_adapter=None,
+    output_adapter=None,
+    emitter_factory=None,
+    turn_store=None,
+    runtime_services=None,
+    command_processor=None,
+    user_interface=None,
+    sanitizer=None,
+    max_iterations=10,
+    safety=None,
+):
+    from modex_agent.core.llm_struct import RuntimeSafetyPolicy
+    from modex_agent.pipeline.approval_renderer import ApprovalRenderer
+    from modex_agent.pipeline.approval_resumer import ApprovalResumer
+    from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
+    from modex_agent.pipeline.turn_runner import ReActTurnRunner
+    from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
+    from modex_agent.core.context import InMemoryContextManager
+    from modex_agent.core.agent_runtime_config import BusyInputMode
+    from modex_agent.pipeline.pipeline import AgentPipeline
+    _UNSET = object()
+    if sanitizer is None:
+        from modex_agent.utils.sanitizer import ContentSanitizer
+        sanitizer = ContentSanitizer.sanitize
+    ctx_mgr = context_manager or InMemoryContextManager()
+    resolved_safety = safety or RuntimeSafetyPolicy()
+    registry = TurnSessionRegistry()
+    builder = TurnContextBuilder(
+        agent=agent,
+        tool_manager=tool_manager,
+        sanitizer=sanitizer,
+        command_processor=command_processor,
+        skill_manager=None,
+        context_builder=None,
+        agent_descriptor=None,
+        max_iterations=max_iterations,
+        safety=resolved_safety,
+        runtime_services=runtime_services,
+        runtime_context_manager=None,
+        governance=None,
+        hook_runner=None,
+        interceptor_chain=None,
+        control_channel=None,
+        emitter_factory=emitter_factory,
+        output_adapter=output_adapter,
+        turn_store=turn_store,
+        registry=registry,
+    )
+    approval_resumer = ApprovalResumer(agent=agent, turn_store=turn_store, user_interface=user_interface)
+    approval = ApprovalRenderer(agent=agent, user_interface=user_interface)
+    turn_runner = ReActTurnRunner(
+        agent=agent,
+        context_manager=ctx_mgr,
+        context_manager_factory=None,
+        on_session_start=None,
+        on_session_end=None,
+        safety=resolved_safety,
+        turn_store=turn_store,
+        registry=registry,
+        builder=builder,
+        resumer=approval_resumer,
+        approval=approval,
+        workspace_manager=None,
+        pool_name=None,
+        pool_data_resolver=None,
+        agent_descriptor=None,
+    )
+    pipeline = AgentPipeline(
+        agent=agent,
+        turn_runner=turn_runner,
+        input_adapter=input_adapter,
+        output_adapter=output_adapter,
+        registry=registry,
+        safety=resolved_safety,
+        command_processor=command_processor,
+    )
+    turn_runner.bind_to_pipeline(pipeline)
+    return pipeline
+
+
 pytestmark = pytest.mark.integration
 
 
@@ -199,7 +285,7 @@ def _build_pipeline_with_webui_emitter(
             sessions_dir_provider=lambda: sessions_dir,
         )
 
-    pipeline = AgentPipeline(
+    pipeline = _make_react_pipeline(
         agent=agent,
         context_manager=InMemoryContextManager(),
         tool_manager=tool_manager,
@@ -472,7 +558,10 @@ async def test_denied_tool_result_message_is_explicit_rejection(tmp_path: Path) 
     )
 
     # 3. read back the agent's history (what messages.jsonl persists)
-    state = pipeline.context_manager._sessions[session.session_id]
+    ctx_mgr = pipeline._turn_runner.context_manager
+    assert ctx_mgr is not None
+    state = ctx_mgr.get_session_state(session.session_id)
+    assert state is not None
     messages = await state.history.to_list()
     tool_msgs = [m for m in messages if m.get("role") == "tool"]
     assert tool_msgs, f"no tool message recorded after deny; messages={messages}"
@@ -561,7 +650,7 @@ async def test_deny_all_on_batch_seals_all_pending_requests(tmp_path: Path) -> N
             sessions_dir_provider=lambda: sessions_dir,
         )
 
-    pipeline = AgentPipeline(
+    pipeline = _make_react_pipeline(
         agent=agent,
         context_manager=InMemoryContextManager(),
         tool_manager=tool_manager,
@@ -616,7 +705,10 @@ async def test_deny_all_on_batch_seals_all_pending_requests(tmp_path: Path) -> N
     assert pending_after == [], f"pending snapshot leaked after deny-all: {pending_after}"
 
     # 4. The agent's history contains two tool results, both explicit rejections.
-    state = pipeline.context_manager._sessions[session.session_id]
+    ctx_mgr = pipeline._turn_runner.context_manager
+    assert ctx_mgr is not None
+    state = ctx_mgr.get_session_state(session.session_id)
+    assert state is not None
     messages = await state.history.to_list()
     tool_msgs = [m for m in messages if m.get("role") == "tool"]
     assert len(tool_msgs) == 2, f"expected 2 tool messages after deny-all, got {tool_msgs}"

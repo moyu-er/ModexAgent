@@ -49,7 +49,7 @@ def build_im_pipeline(
 
 
 def build_webui_pipeline(
-    *, skill_registry: SkillRegistry, bot_model_config: BotModelConfig
+    *, skill_registry: SkillRegistry, bot_model_config: BotModelConfig | None
 ) -> UserInputPipeline:
     """WebUI pipeline: SetChannel→ResolveWs→ResolvePool→ModelChoice→Ingest→Approval→
     Skill→Unsupported→Persist→Enqueue.

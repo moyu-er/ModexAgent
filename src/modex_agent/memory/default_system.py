@@ -408,7 +408,9 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
                 "metadata": dict(e.metadata),
                 "archive_id": e.entry_id,
                 "cursor": e.entry_id,
-                "created_at": e.created_at.isoformat() if e.created_at is not None else None,
+                "created_at": int(e.created_at.timestamp() * 1000)
+                if e.created_at is not None
+                else None,
             }
             for e in entries
         ]

@@ -13,7 +13,7 @@ from modex_agent.agents.react.state import (
     ReActTurnState,
 )
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.constants import ExecutionStrategy
+from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.hook import HookErrorPolicy, HookPayload, HookPoint, HookRunner, HookSpec
@@ -129,7 +129,7 @@ async def _fire(ctx: AgentContext, hook: CheckpointHook) -> None:
 def _desc() -> AgentDescriptor:
     return AgentDescriptor(
         address=AgentAddress(name="main"),
-        execution_strategy=ExecutionStrategy.REACT,
+        execution_strategy=ExecutionStrategyKind.REACT,
         comm_kind=AgentCommKind.NORMAL,
         system_prompt_template="",
     )

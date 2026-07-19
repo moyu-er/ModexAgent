@@ -48,7 +48,7 @@ class BotInputContext(InputContext):
     def __init__(
         self,
         *,
-        default_pool: str,
+        default_pool: str | None,
         pool_session_store: PoolRoutingStore,
         agent_pool_map: dict[str, str],
         agent_resolver: Callable[[str], str],
@@ -61,6 +61,7 @@ class BotInputContext(InputContext):
         media_config: MediaConfig | None = None,
         media_config_for_pool: Callable[[str], MediaConfig] | None = None,
         model_choice_registry: ModelChoiceRegistry | None = None,
+        available_pools: Callable[[], set[str]] | None = None,
     ) -> None:
         self._default_pool = default_pool
         self._pool_session_store = pool_session_store
@@ -75,15 +76,16 @@ class BotInputContext(InputContext):
         self._media_config = media_config or MediaConfig()
         self._media_config_for_pool = media_config_for_pool
         self._model_choice_registry = model_choice_registry
+        self._available_pools = available_pools or (lambda: set())
 
     def current_ws(self) -> Path:
         return self._current_ws_provider()
 
     @property
-    def default_pool(self) -> str:
+    def default_pool(self) -> str | None:
         return self._default_pool
 
-    def pool_for_agent(self, agent: str) -> str:
+    def pool_for_agent(self, agent: str) -> str | None:
         return self._agent_pool_map.get(agent, self._default_pool)
 
     def agent_for_pool(self, pool: str) -> str:
@@ -120,6 +122,14 @@ class BotInputContext(InputContext):
     @property
     def model_choice_registry(self) -> ModelChoiceRegistry | None:
         return self._model_choice_registry
+
+    def available_pools(self) -> set[str]:
+        """Return the current set of pool names (re-read at call time).
+
+        Defaults to an empty set when no provider was injected (e.g. tests
+        that don't exercise the zero-pool guard).
+        """
+        return self._available_pools()
 
     def media_config_for(self, pool: str) -> MediaConfig:
         """Return the perception-gate config to apply for *pool*.

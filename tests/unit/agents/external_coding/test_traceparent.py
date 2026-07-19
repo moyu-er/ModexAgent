@@ -21,6 +21,7 @@ from modex_agent.agents.external_coding.agent import (
     ExternalCodingAgent,
     ScriptedStreamingAdapter,
 )
+from modex_agent.agents.external_coding.backend_provider import PoolScopedBackendProvider
 from modex_agent.agents.external_coding.events import ExternalCodingEvent
 from modex_agent.agents.external_coding.paths import ExternalPaths, ProviderKind
 from modex_agent.agents.external_coding.providers.pi_parser import PiEventParser
@@ -115,7 +116,7 @@ def _make_agent(
     spec = _make_spec(tmp_path)
     store = LocalFileExternalSessionMapStore(ExternalPaths(tmp_path))
     agent = ExternalCodingAgent(
-        backend=adapter,
+        backend_provider=PoolScopedBackendProvider(adapter),
         session_store=store,
         parser=PiEventParser(),
         provider_kind=ProviderKind.PI,

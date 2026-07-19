@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bot.plugins.integration import PluginIntegration
+from bot.scope import BotRecordScope
 from modex_agent.core.scope import RecordScope
 from modex_agent.core.session_store import SessionStore
 from modex_agent.core.skills import SkillManager
@@ -218,7 +219,7 @@ def build_inbox(
 
         return SqliteInboxMQ(
             db_path,
-            RecordScope(pool=pool_name),
+            BotRecordScope(pool=pool_name),
             connection=persistence.connection,
         )
     from modex_agent.multi_agent.inbox.server_local import LocalFileInboxMQ
@@ -265,7 +266,7 @@ def build_session_store(
         assert persistence is not None
         from modex_agent.persistence.adapters.session_store import SqliteSessionStore
 
-        return SqliteSessionStore(persistence.connection, pool_resolver=pool_resolver)
+        return SqliteSessionStore(persistence.connection)
     from bot.service.session_store import WorkspacePoolSessionStore
 
     return WorkspacePoolSessionStore(

@@ -93,7 +93,7 @@ export const Sidebar: FC<SidebarProps> = ({
       {/* Workspace indicator (click to browse) */}
       <div className="border-b border-hairline px-4 py-3">
         <div className="flex items-center justify-between">
-          <span className="text-xs font-semibold uppercase tracking-wider text-mute">
+          <span className="text-xs font-semibold uppercase tracking-wide text-mute">
             {t("sidebar.workspace")}
           </span>
           {!isHome && (
@@ -114,7 +114,7 @@ export const Sidebar: FC<SidebarProps> = ({
           size="md"
           onClick={(): void => setBrowserOpen(true)}
           title={t("sidebar.browseWorkspace")}
-          className="-ml-2 mt-1.5 h-auto w-full justify-start gap-1.5 truncate rounded-sm px-2 py-1 text-left font-mono text-sm text-body hover:bg-hairline-soft hover:text-ink"
+          className="-ml-2 mt-1.5 h-auto w-full justify-start gap-1.5 truncate rounded-sm px-2 py-1 text-left font-mono text-base text-body hover:bg-hairline-soft hover:text-ink"
         >
           <Folder size={16} className="shrink-0" />
           <span className="truncate">{String(workspace || t("sidebar.notSet"))}</span>
@@ -170,7 +170,7 @@ export const Sidebar: FC<SidebarProps> = ({
 
       {/* Header */}
       <div className="flex items-center justify-between border-b border-hairline px-4 py-3">
-        <h2 className="text-xs font-semibold uppercase tracking-wider text-mute">
+        <h2 className="text-xs font-semibold uppercase tracking-wide text-mute">
           {t("sidebar.conversations")}
         </h2>
         <div className="flex items-center gap-1">
@@ -211,11 +211,11 @@ export const Sidebar: FC<SidebarProps> = ({
       {/* Session tree */}
       <div className="flex-1 overflow-y-auto py-2">
         {isLoadingSessions ? (
-          <p className="px-4 py-3 text-sm text-mute">
+          <p className="px-4 py-3 text-base text-mute">
             {t("sidebar.loading")}
           </p>
         ) : sessionTree.length === 0 ? (
-          <p className="px-4 py-3 text-sm text-mute">
+          <p className="px-4 py-3 text-base text-mute">
             {t("sidebar.noConversations", { pool: activePool })}
           </p>
         ) : (
@@ -235,7 +235,7 @@ export const Sidebar: FC<SidebarProps> = ({
           variant="primary"
           size="lg"
           onClick={handleNew}
-          className="h-auto w-full rounded-sm py-2.5 text-sm"
+          className="h-auto w-full rounded-sm py-2.5 text-base"
         >
           <Plus size={16} />
           {t("sidebar.newConversation")}

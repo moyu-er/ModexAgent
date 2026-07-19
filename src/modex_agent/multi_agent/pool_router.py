@@ -9,7 +9,6 @@ PoolRoutingStore (set by ResolvePoolStage / UI callbacks).
 from __future__ import annotations
 
 import logging
-import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -44,13 +43,13 @@ class PoolRoutingStore(ABC):
         ...
 
     @abstractmethod
-    def rename_pool(self, old_pool: str, new_pool: str) -> int:
-        """Rename matching pool routes and return the number changed."""
+    def list_prefixes(self) -> list[str]:
+        """Return all stored session prefixes in deterministic order."""
         ...
 
     @abstractmethod
-    def list_prefixes(self) -> list[str]:
-        """Return all stored session prefixes in deterministic order."""
+    def delete_pool_routes(self, pool_name: str) -> int:
+        """Delete all routes pointing to *pool_name*. Returns count deleted."""
         ...
 
     def get(self, session_prefix: str, default: str | None = None) -> str | None:
@@ -100,31 +99,26 @@ class LocalFilePoolRoutingStore(PoolRoutingStore):
     def delete_pool(self, session_prefix: str) -> None:
         self._file(session_prefix).unlink(missing_ok=True)
 
-    def rename_pool(self, old_pool: str, new_pool: str) -> int:
-        """Rewrite every stored session->pool mapping from ``old_pool`` to ``new_pool``.
-
-        Returns the number of records rewritten.
-        """
-        count = 0
-        for file in self._dir.glob("*.json"):
-            try:
-                record = _PoolRoutingRecord.model_validate_json(file.read_text(encoding="utf-8"))
-            except (OSError, ValidationError):
-                continue
-            if record.pool == old_pool:
-                updated = record.model_copy(update={"pool": new_pool})
-                tmp = file.with_suffix(".tmp")
-                tmp.write_text(updated.model_dump_json(), encoding="utf-8")
-                os.replace(tmp, file)
-                count += 1
-        return count
-
     def list_prefixes(self) -> list[str]:
         records = (
             _PoolRoutingRecord.model_validate_json(file.read_text(encoding="utf-8"))
             for file in self._dir.glob("*.json")
         )
         return sorted(record.session_id for record in records)
+
+    def delete_pool_routes(self, pool_name: str) -> int:
+        count = 0
+        for file in self._dir.glob("*.json"):
+            try:
+                record = _PoolRoutingRecord.model_validate_json(
+                    file.read_text(encoding="utf-8")
+                )
+            except (OSError, ValidationError):
+                continue
+            if record.pool == pool_name:
+                file.unlink(missing_ok=True)
+                count += 1
+        return count
 
 
 class PoolRouter:
@@ -143,7 +137,7 @@ class PoolRouter:
         broker: MessageBroker,
         pools: dict[str, PoolInstance],
         session_store: PoolRoutingStore,
-        default_pool: str,
+        default_pool: str | None,
     ) -> None:
         self._input_adapter = input_adapter
         self._broker = broker
@@ -166,9 +160,14 @@ class PoolRouter:
         # stable across pool switches.
         session_prefix = msg.session.session_id_prefix
         target = self._session_store.get_pool(session_prefix) or self._default_pool
-        pool = self._pools.get(target)
-        if pool is None:
-            pool = self._pools[self._default_pool]
+        if target is None or target not in self._pools:
+            logger.error(
+                "No routable pool for session %s (target=%s)",
+                session_prefix,
+                target,
+            )
+            return
+        pool = self._pools[target]
         await self._route_to_pool(msg, pool)
 
     def set_pool(self, session_id: str, pool_name: str) -> None:

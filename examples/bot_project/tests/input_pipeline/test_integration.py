@@ -77,6 +77,7 @@ def _make_ctx(
         current_ws_provider = (lambda root=workspace_root: root)
     return BotInputContext(
         default_pool="main",
+        available_pools=lambda: {"main", "coding"},
         pool_session_store=pool_store,
         agent_pool_map={"main": "main", "coding": "coding"},
         agent_resolver=lambda p: p,
@@ -403,6 +404,7 @@ async def test_multi_channel_pool_isolation() -> None:
             cmd_adapter_im._try_intercept_control = AsyncMock(return_value=False)
             ctx_im = BotInputContext(
                 default_pool="main",
+                available_pools=lambda: {"main", "coding"},
                 pool_session_store=pool_store,
                 agent_pool_map={"main": "main", "coding": "coding"},
                 agent_resolver=lambda p: p,
@@ -420,6 +422,7 @@ async def test_multi_channel_pool_isolation() -> None:
             cmd_adapter_ws._try_intercept_control = AsyncMock(return_value=False)
             ctx_ws = BotInputContext(
                 default_pool="main",
+                available_pools=lambda: {"main", "coding"},
                 pool_session_store=pool_store,
                 agent_pool_map={"main": "main", "coding": "coding"},
                 agent_resolver=lambda p: p,

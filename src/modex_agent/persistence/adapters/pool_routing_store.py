@@ -2,7 +2,6 @@
 
 Session-prefix → pool routing is stored in the ``pool_routing`` table. Unlike
 :class:`~modex_agent.multi_agent.pool_router.LocalFilePoolRoutingStore`,
-``rename_pool`` is a single atomic ``UPDATE`` (no per-file scan/rewrite), and
 routing corruption raises an explicit error instead of silently skipping.
 
 Uses a synchronous ``sqlite3`` connection because the ``PoolRoutingStore`` ABC
@@ -24,14 +23,23 @@ from modex_agent.multi_agent.pool_router import PoolRoutingStore
 class PoolRoutingCorruptionError(RuntimeError):
     """Raised when a ``pool_routing`` row has inconsistent data.
 
-    The ``pool_name`` column and the ``pool`` generated column (extracted from
-    ``scope.$.pool``) must agree and be non-empty. A mismatch indicates the
-    row was tampered with outside the adapter.
+    Retained for backward compatibility with callers that catch this
+    exception type. The ADR-0028 schema no longer has a ``pool`` generated
+    column, so the adapter does not raise this from ``get_pool``; the class
+    is kept exported so downstream code importing it continues to load.
     """
 
 
 class SqlitePoolRoutingStore(PoolRoutingStore):
-    """Session-prefix → pool routing backed by the ``pool_routing`` table."""
+    """Session-prefix → pool routing backed by the ``pool_routing`` table.
+
+    The ``scope_key`` column is populated from a minimal
+    ``{"pool": <pool_name>}`` JSON (matching the previous ``scope`` column's
+    contents) so the cascade cleaner (T11) can still locate rows by scope.
+    ``created_at``/``updated_at`` are owned by the schema DEFAULT + the
+    ``trg_pool_routing_auto_updated_at`` trigger (ADR-0029), so the adapter
+    does not write them explicitly.
+    """
 
     def __init__(self, db_path: Path) -> None:
         self._conn = sqlite3.connect(
@@ -46,30 +54,24 @@ class SqlitePoolRoutingStore(PoolRoutingStore):
 
     def get_pool(self, session_prefix: str) -> str | None:
         row: Row | None = self._conn.execute(
-            "SELECT pool_name, pool FROM pool_routing WHERE session_prefix = ?",
+            "SELECT pool_name FROM pool_routing WHERE session_prefix = ?",
             (session_prefix,),
         ).fetchone()
         if row is None:
             return None
-        pool_name: str = row["pool_name"]
-        scope_pool: str | None = row["pool"]
-        if not pool_name or scope_pool is None or scope_pool != pool_name:
-            raise PoolRoutingCorruptionError(
-                f"corrupt pool_routing row for prefix {session_prefix!r}: "
-                f"pool_name={pool_name!r}, scope_pool={scope_pool!r}"
-            )
-        return pool_name
+        return row["pool_name"]
 
     def set_pool(self, session_prefix: str, pool_name: str) -> None:
-        scope = json.dumps({"pool": pool_name}, ensure_ascii=False)
+        scope_key = json.dumps({"pool": pool_name}, ensure_ascii=False)
+        # updated_at is owned by the trigger (fires on UPDATE when unchanged);
+        # created_at/updated_at on INSERT use the schema DEFAULT.
         self._conn.execute(
-            "INSERT INTO pool_routing (session_prefix, pool_name, scope) "
+            "INSERT INTO pool_routing (session_prefix, pool_name, scope_key) "
             "VALUES (?, ?, ?) "
             "ON CONFLICT(session_prefix) DO UPDATE SET "
             "pool_name = excluded.pool_name, "
-            "scope = excluded.scope, "
-            "updated_at = datetime('now')",
-            (session_prefix, pool_name, scope),
+            "scope_key = excluded.scope_key",
+            (session_prefix, pool_name, scope_key),
         )
 
     def delete_pool(self, session_prefix: str) -> None:
@@ -78,27 +80,18 @@ class SqlitePoolRoutingStore(PoolRoutingStore):
             (session_prefix,),
         )
 
-    def rename_pool(self, old_pool: str, new_pool: str) -> int:
-        """Atomically rename all routes from *old_pool* to *new_pool*.
-
-        A single ``UPDATE`` rewrites both ``pool_name`` and the ``scope`` JSON
-        so the ``pool`` generated column stays consistent. Returns the number
-        of rows changed.
-        """
-        scope = json.dumps({"pool": new_pool}, ensure_ascii=False)
-        cursor = self._conn.execute(
-            "UPDATE pool_routing "
-            "SET pool_name = ?, scope = ?, updated_at = datetime('now') "
-            "WHERE pool_name = ?",
-            (new_pool, scope, old_pool),
-        )
-        return cursor.rowcount
-
     def list_prefixes(self) -> list[str]:
         rows = self._conn.execute(
             "SELECT session_prefix FROM pool_routing ORDER BY session_prefix"
         ).fetchall()
         return [str(row["session_prefix"]) for row in rows]
+
+    def delete_pool_routes(self, pool_name: str) -> int:
+        cursor = self._conn.execute(
+            "DELETE FROM pool_routing WHERE pool_name = ?",
+            (pool_name,),
+        )
+        return cursor.rowcount
 
     # -- lifecycle ---------------------------------------------------------
 

@@ -27,7 +27,7 @@ import asyncio
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .server import InboxMQ
@@ -44,6 +44,21 @@ def _safe_dir_name(session_id: str) -> str:
 
         return base64.urlsafe_b64encode(session_id.encode()).decode()[:200]
     return safe
+
+
+def _parse_inbox_timestamp(value: object) -> datetime:
+    """Parse a ``pending.jsonl`` timestamp into a timezone-aware datetime.
+
+    T9 switched :class:`LocalFileInboxMQ`'s own writes to int ms, but the
+    ``modexctl send`` CLI (via :class:`OutboxLine`) still serialises
+    ``timestamp`` as an ISO-8601 string until a follow-up ticket aligns it.
+    The reader therefore accepts both representations.
+    """
+    if isinstance(value, int):
+        return datetime.fromtimestamp(value / 1000, tz=UTC)
+    if isinstance(value, str):
+        return datetime.fromisoformat(value)
+    raise TypeError(f"unsupported inbox timestamp type: {type(value).__name__}")
 
 
 class LocalFileInboxMQ(InboxMQ):
@@ -112,7 +127,7 @@ class LocalFileInboxMQ(InboxMQ):
                     "source": message.source,
                     "content": message.content,
                     "message_type": message.message_type,
-                    "timestamp": message.timestamp.isoformat(),
+                    "timestamp": int(message.timestamp.timestamp() * 1000),
                     "metadata": message.metadata,
                 },
                 ensure_ascii=False,
@@ -169,7 +184,7 @@ class LocalFileInboxMQ(InboxMQ):
                         content=data["content"],
                         message_type=data["message_type"],
                         message_id=data["message_id"],
-                        timestamp=datetime.fromisoformat(data["timestamp"]),
+                        timestamp=_parse_inbox_timestamp(data["timestamp"]),
                         metadata=data.get("metadata", {}),
                     )
                 )
@@ -199,7 +214,7 @@ class LocalFileInboxMQ(InboxMQ):
                     content=data["content"],
                     message_type=data["message_type"],
                     message_id=data["message_id"],
-                    timestamp=datetime.fromisoformat(data["timestamp"]),
+                    timestamp=_parse_inbox_timestamp(data["timestamp"]),
                     metadata=data.get("metadata", {}),
                 )
             )
@@ -306,7 +321,7 @@ class LocalFileInboxMQ(InboxMQ):
                 "source": message.source,
                 "content": message.content,
                 "message_type": message.message_type,
-                "timestamp": message.timestamp.isoformat(),
+                "timestamp": int(message.timestamp.timestamp() * 1000),
                 "metadata": message.metadata,
             },
             ensure_ascii=False,

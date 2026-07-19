@@ -35,6 +35,7 @@ def attach_default_pipeline(
     agent_pool_map=None,
     pool_session_store=None,
     workspace_root: Path | None = None,
+    available_pools: Callable[[], set[str]] | None = None,
 ) -> None:
     agent_pool_map = agent_pool_map or {"main": "main", "coding": "coding"}
     pipe = build_webui_pipeline(
@@ -58,6 +59,7 @@ def attach_default_pipeline(
         current_ws_provider = (lambda: _Path.cwd())
     ctx = BotInputContext(
         default_pool="main",
+        available_pools=available_pools or (lambda: {"main", "coding"}),
         pool_session_store=pool_session_store,
         agent_pool_map=agent_pool_map,
         agent_resolver=lambda p: agent_pool_map.get(p, p),

@@ -73,6 +73,10 @@ export interface MainAgentNode {
   execution_strategy?: ExecutionStrategy;
   /** External coding provider; null when the agent is native (execution_strategy !== "external_coding"). */
   provider_kind?: ProviderKind | null;
+  /** Agent role tags (T1 data layer). Plain strings — preset AgentRole values or custom strings. */
+  roles?: string[];
+  /** Explicit prompt reference (T1 schema). When empty/undefined, the runtime falls back to `agents/<agent_name>.md`. */
+  prompt_name?: string;
 }
 
 export interface SubagentNode {
@@ -87,6 +91,14 @@ export interface SubagentNode {
   system_prompt_mode?: SystemPromptMode;
   /** Parent-context truncation cap; 1..100, default 80. Only meaningful when context_mode === "fork". Omitted on the wire when at default. */
   fork_max_messages?: number;
+  /** Agent role tags (T1 data layer). Plain strings — preset AgentRole values or custom strings. */
+  roles?: string[];
+  /** Explicit prompt reference (T1 schema). When empty/undefined, the runtime falls back to `agents/<agent_name>.md`. */
+  prompt_name?: string;
+  /** Execution strategy; backend default is "react". Present on read; omit on write to use the default. */
+  execution_strategy?: ExecutionStrategy;
+  /** External coding provider; null when the subagent is native. */
+  provider_kind?: ProviderKind | null;
 }
 
 export interface PoolTree {
@@ -109,6 +121,18 @@ export interface PoolSummary {
 export interface PromptContent {
   name: string;
   content: string;
+}
+
+export interface PromptSummary {
+  name: string;
+  size_bytes: number;
+  mtime: string;
+}
+
+export interface PromptUsage {
+  pool: string;
+  agent_kind: "main" | "subagent";
+  agent_name: string;
 }
 
 // ─── Skills ──────────────────────────────────────────────────────────────────

@@ -5,10 +5,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
-from bot.service._external_coding_wiring import build_external_coding_env_spec
+from bot.scope import BotRecordScope
+from bot.service.external_coding_strategy import build_external_coding_env_spec
 from bot.service.builders import build_inbox
 
-from modex_agent.core.scope import RecordScope
 from modex_agent.ioc.configs.app import AppConfig
 from modex_agent.multi_agent.inbox.server_local import LocalFileInboxMQ
 from modex_agent.multi_agent.pool_config.specs import MainAgentSpec, PoolSpec
@@ -29,7 +29,7 @@ def test_build_inbox_uses_pool_record_scope_for_sqlite(tmp_path: Path) -> None:
     )
 
     assert isinstance(inbox, SqliteInboxMQ)
-    assert inbox._scope == RecordScope(pool="pool_coder")
+    assert inbox._scope == BotRecordScope(pool="pool_coder")
 
 
 def test_build_inbox_keeps_file_backend(tmp_path: Path) -> None:

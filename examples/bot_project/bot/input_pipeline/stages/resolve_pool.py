@@ -12,7 +12,7 @@ from enum import StrEnum
 from bot.input_pipeline.context import BotInputContext
 from modex_agent.core.session_id import SessionInfo, encode_snowflake, session_id_prefix_of
 from modex_agent.input_pipeline.envelope import UserInputEnvelope
-from modex_agent.input_pipeline.stage import Continue, InputStage, StageResult
+from modex_agent.input_pipeline.stage import Continue, InputStage, StageResult, Terminate
 
 
 class RoutingMeta(StrEnum):
@@ -53,7 +53,7 @@ def conversation_session_prefix(envelope: UserInputEnvelope, ctx: BotInputContex
 
 def resolve_session_routing(
     envelope: UserInputEnvelope, ctx: BotInputContext
-) -> tuple[str, str, str]:
+) -> tuple[str | None, str, str]:
     """Read-only pool/agent/full_session_id resolution.
 
     Shared by S5 and S3 (S3 needs full_session_id to target CANCEL_TURN before
@@ -64,11 +64,18 @@ def resolve_session_routing(
     full ``session.session_id``. When the upstream channel already established a
     session (``envelope.pre_resolved_session``), it is reused verbatim — this
     prevents the WebUI from double-encoding the prefix.
+
+    Returns ``pool=None`` when no routable pool exists (no explicit pool, no
+    stored mapping, and no default pool). The caller (``ResolvePoolStage``)
+    terminates with ``pool_unavailable`` in that case.
     """
     session_prefix = conversation_session_prefix(envelope, ctx)
     pool = envelope.explicit_pool or ctx.pool_session_store.get(
         session_prefix, ctx.default_pool
     )
+    if pool is None:
+        # No routable pool — caller terminates. Agent/session are moot.
+        return None, "", ""
     if envelope.pre_resolved_session is not None:
         session: SessionInfo = envelope.pre_resolved_session
         agent = session.agent_name
@@ -84,7 +91,22 @@ class ResolvePoolStage(InputStage):
     async def process(
         self, envelope: UserInputEnvelope, ctx: BotInputContext
     ) -> StageResult:
+        available = ctx.available_pools()
+        if not available:
+            return Terminate(
+                reason="no_pool_configured",
+                response={
+                    "message": "No pool is configured. Please create a pool in the settings first."
+                },
+            )
         pool, agent, full_sid = resolve_session_routing(envelope, ctx)
+        if pool is None or pool not in available:
+            return Terminate(
+                reason="pool_unavailable",
+                response={
+                    "message": f"Pool '{pool}' is not available. It may have been removed. Please select a different pool."
+                },
+            )
         # Always persist the resolved pool mapping so PoolRouter routes
         # correctly, whether the pool was explicitly chosen (WebUI dropdown) or
         # resolved from fallback. Without this, a session created in a non-main

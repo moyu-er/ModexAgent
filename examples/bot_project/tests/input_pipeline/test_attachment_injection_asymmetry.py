@@ -102,6 +102,7 @@ async def test_injection_is_transient_transcript_excludes_it() -> None:
         enqueued: list[InputMessage] = []
         ctx = BotInputContext(
             default_pool="main",
+            available_pools=lambda: {"main"},
             pool_session_store=pool_store,
             agent_pool_map={"main": "main"},
             agent_resolver=lambda p: p,

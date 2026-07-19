@@ -38,6 +38,7 @@ def build_session_only_memory(
     output_base_dir: Path | None = None,
     parent_prompt_lookup: Callable[[str], Awaitable[str | None]] | None = None,
     fork_context_spec: ForkContextSpec | None = None,
+    roles: list[str] | None = None,
 ) -> MemorySystemContextManager:
     """Create a session-only memory system for a subagent.
 
@@ -80,6 +81,7 @@ def build_session_only_memory(
         output_base_dir=output_base_dir,
         parent_prompt_lookup=parent_prompt_lookup,
         fork_context_spec=fork_context_spec,
+        roles=roles,
     )
 
 

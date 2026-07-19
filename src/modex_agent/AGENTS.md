@@ -26,7 +26,7 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 | `core/` | 25 py | `graph/`, `skills/`, `experience/` | ABCs — `Agent[E]`, `ContentEmitter[E]`, `Tool`, `ContextManager`, `SessionArtifactCleaner`/`SessionDatabaseCleaner`, graph engine, types (see `core/AGENTS.md`) |
 | `agents/` | 2 py | `react/`, `external_coding/`, `experience/`, `summarizer/` | Agent implementations — `ReActAgent`, `ExternalCodingAgent` (Pi/OpenCode CLI harness), `SummarizerAgent`, `ExperienceReviewAgent` (see `agents/AGENTS.md`) |
 | `memory/` | 17 py | `consolidation/`, `core/`, `injection/`, `layers/`, `pipeline/`, `prompts/`, `pruned/`, `registry/`, `stores/`, `tools/` | Three-layer memory — session/archive/knowledge, compaction, consolidation, governance, injection. Split store ABCs (`MessageStore`/`KVStore`/`CursorStore`/`ArchiveStore`) + `MemoryStoreBundle` (see `memory/AGENTS.md`) |
-| `persistence/` | 24 py | `adapters/`, `managers/`, `migrations/` | Hybrid persistence layer (ADR-0023). `ConnectionManager` + `MigrationRunner` (per-workspace SQLite), `PersistenceBackend`/`PersistenceConfig`, `SqliteSessionDatabaseCleaner`, SQLite adapters for the split store + runtime-state ABCs |
+| `persistence/` | 26 py | `adapters/`, `managers/`, `migrations/` | Hybrid persistence layer (ADR-0023, ADR-0028~0031). `ConnectionManager` + `MigrationRunner` (per-workspace SQLite), `PersistenceBackend`/`PersistenceConfig`, `ColumnProjection` (ADR-0030), `SqliteSessionDatabaseCleaner`, SQLite adapters for the split store + runtime-state ABCs. All timestamps are INTEGER ms (ADR-0029) |
 | `multi_agent/` | 20 py | `inbox/` | Star-topology orchestration — `AgentPool`, inbox (`InboxMQ`), `AgentMessageBus` (see `multi_agent/AGENTS.md`) |
 | `tools/` | 8 py | `ast/`, `lsp/`, `mcp/`, `overflow/`, `standard/`, `terminal/`, `web/` | Tool subsystem — registry, executor, MCP, terminal (pexpect/tmux/winpty), overflow, standard tools (see `tools/AGENTS.md`) |
 | `sandbox/` | 17 py | `adapters/` | Sandboxed execution — Subprocess, Docker, E2B, Landlock, guards, environment builder (see `sandbox/AGENTS.md`) |
@@ -44,7 +44,7 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 | `workspace/` | 13 py | — | `WorkspaceContext` ABC, `DefaultWorkspaceContext` — cd/exit/restore workspace switching with callback notification and persistence (see `workspace/AGENTS.md`) |
 | `input_pipeline/` | 5 py | — | Extensible user-input stage pipeline — `UserInputEnvelope`, `InputStage` ABC, `Continue`/`Terminate`, `UserInputPipeline` (see `input_pipeline/AGENTS.md`) |
 | `trace/` | 4 py | — | Tracing and observability — `TraceStore`, `TraceHooks`, `TraceType` |
-| `utils/` | 10 py | — | tokenizer, context_builder, deduplicator, sanitizer, helpers |
+| `utils/` | 11 py | — | tokenizer, context_builder, deduplicator, sanitizer, helpers, `time` (`now_ms`/`now_s` — ADR-0029 single source of truth) |
 | `adapters/` | 2 py | — | `PlatformAdapter` ABC, `AdapterRegistry`, `StreamingMode` |
 | `media/` | 6 py | — | Attachment/media handling (ADR-0013) — `MediaStore` ABC, MIME classification, security gate, storage routing (`LocalFileMediaStore`) |
 | `cli/` | 2 py | `modexbot/` | Framework-side CLI shim — `modexbot`/`modexctl` facade for external coding agent peer messaging (the registered `modexctl` console script lives in `src/modexctl/`) |

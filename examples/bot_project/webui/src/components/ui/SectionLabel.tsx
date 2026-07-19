@@ -6,7 +6,7 @@ interface Props {
 
 export function SectionLabel({ children }: Props) {
   return (
-    <div className="mb-2 text-[10px] font-mono font-semibold uppercase tracking-wide text-mute">
+    <div className="mb-2 text-xs font-mono font-semibold uppercase tracking-eyebrow text-mute">
       {children}
     </div>
   );

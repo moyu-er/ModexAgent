@@ -74,10 +74,10 @@ export const AttachmentRenderer: FC<AttachmentRendererProps> = ({ view }) => {
       >
         <FileIcon />
         <span className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate text-[13px] font-medium text-mute">
+          <span className="truncate text-base font-medium text-mute">
             {view.name}
           </span>
-          <span className="text-[11px] italic text-mute">
+          <span className="text-xs italic text-mute">
             {t("attachments.fileUnavailable")}
           </span>
         </span>
@@ -110,10 +110,10 @@ export const AttachmentRenderer: FC<AttachmentRendererProps> = ({ view }) => {
     >
       <FileIcon />
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate text-[13px] font-medium text-ink">
+        <span className="truncate text-base font-medium text-ink">
           {view.name}
         </span>
-        <span className="text-[11px] text-mute">
+        <span className="text-xs text-mute">
           {formatBytes(view.size)}
         </span>
       </span>

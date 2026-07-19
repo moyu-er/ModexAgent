@@ -1,6 +1,11 @@
 import { useState, useEffect, useCallback, useMemo, useRef, type FC } from "react";
 import { createPortal } from "react-dom";
-import { fetchProviderModels, ApiError, type FetchedModel } from "../../lib/api";
+import {
+  fetchProviderModels,
+  ApiError,
+  type FetchedModel,
+  type FetchProviderModelsRequest,
+} from "../../lib/api";
 import { XIcon } from "../ui/icons";
 import { IconButton } from "../ui/IconButton";
 import { Button } from "../ui/Button";
@@ -9,7 +14,8 @@ import { useT, type TFn } from "../../i18n";
 export interface FetchModelsModalProps {
   open: boolean;
   onClose: () => void;
-  providerKey: string;
+  /** Form A (provider_key) or Form B (inline connection info). */
+  fetchRequest: FetchProviderModelsRequest;
   existingModelIds: Set<string>;
   onImport: (models: FetchedModel[]) => void;
 }
@@ -18,6 +24,12 @@ type LoadState =
   | { kind: "loading" }
   | { kind: "error"; message: string }
   | { kind: "success"; models: FetchedModel[] };
+
+/** Label shown in the modal header — `provider_key` for Form A, `base_url` for Form B. */
+function displayLabel(req: FetchProviderModelsRequest): string {
+  if ("provider_key" in req) return req.provider_key;
+  return req.base_url;
+}
 
 function describeError(err: unknown, t: TFn): string {
   if (err instanceof ApiError) {
@@ -38,7 +50,7 @@ function describeError(err: unknown, t: TFn): string {
 export const FetchModelsModal: FC<FetchModelsModalProps> = ({
   open,
   onClose,
-  providerKey,
+  fetchRequest,
   existingModelIds,
   onImport,
 }) => {
@@ -48,25 +60,25 @@ export const FetchModelsModal: FC<FetchModelsModalProps> = ({
   const [query, setQuery] = useState("");
   const fetchSeq = useRef(0);
 
-  const load = useCallback(async (key: string) => {
+  const load = useCallback(async () => {
     const seq = ++fetchSeq.current;
     setState({ kind: "loading" });
     setSelected(new Set());
     try {
-      const result = await fetchProviderModels(key);
+      const result = await fetchProviderModels(fetchRequest);
       if (seq !== fetchSeq.current) return;
       setState({ kind: "success", models: result.models });
     } catch (err) {
       if (seq !== fetchSeq.current) return;
       setState({ kind: "error", message: describeError(err, t) });
     }
-  }, [t]);
+  }, [fetchRequest, t]);
 
   useEffect(() => {
-    if (open && providerKey) {
-      load(providerKey);
+    if (open) {
+      load();
     }
-  }, [open, providerKey, load]);
+  }, [open, load]);
 
   const filteredModels = useMemo(() => {
     if (state.kind !== "success") return [];
@@ -112,7 +124,7 @@ export const FetchModelsModal: FC<FetchModelsModalProps> = ({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-overlay"
+      className="modal-scrim-enter fixed inset-0 z-50 flex items-center justify-center bg-overlay"
       onClick={onClose}
       onKeyDown={(e): void => {
         if (e.key === "Escape") onClose();
@@ -120,13 +132,13 @@ export const FetchModelsModal: FC<FetchModelsModalProps> = ({
       role="presentation"
     >
       <div
-        className="flex w-[560px] max-w-[90vw] max-h-[75vh] flex-col rounded-lg border border-hairline bg-canvas-elevated shadow-lg"
+        className="modal-panel-enter flex w-[560px] max-w-[90vw] max-h-[75vh] flex-col rounded-lg border border-hairline bg-canvas-popover shadow-popover"
         onClick={(e): void => e.stopPropagation()}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-hairline px-4 py-3">
-          <h3 className="text-sm font-semibold text-ink">
+          <h3 className="text-base font-semibold text-ink">
             {t("settings.modelsFetch.title")}
-            <span className="ml-2 font-mono text-xs text-body">{providerKey}</span>
+            <span className="ml-2 font-mono text-xs text-body">{displayLabel(fetchRequest)}</span>
           </h3>
           <IconButton
             icon={<XIcon />}
@@ -144,7 +156,7 @@ export const FetchModelsModal: FC<FetchModelsModalProps> = ({
               placeholder={t("settings.modelsFetch.searchPlaceholder")}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              className="w-full rounded-md border border-hairline bg-canvas px-3 py-1.5 text-sm text-ink placeholder:text-faint focus:border-link focus:outline-none"
+              className="h-9 w-full rounded-sm border border-hairline bg-canvas-elevated px-3 text-base text-ink placeholder:text-faint focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand"
             />
           </div>
         )}
@@ -152,18 +164,18 @@ export const FetchModelsModal: FC<FetchModelsModalProps> = ({
         <div className="min-h-[240px] flex-1 overflow-y-auto px-2 py-2">
           {isLoading && (
             <div className="flex items-center justify-center py-8">
-              <span className="text-sm text-body">{t("settings.modelsFetch.fetching")}</span>
+              <span className="text-base text-body">{t("settings.modelsFetch.fetching")}</span>
             </div>
           )}
 
           {isError && state.kind === "error" && (
             <div className="flex flex-col items-center gap-3 py-8">
-              <p className="px-4 text-center text-sm text-error">{state.message}</p>
+              <p className="px-4 text-center text-base text-error">{state.message}</p>
               <Button
                 type="button"
                 variant="secondary"
                 size="sm"
-                onClick={() => load(providerKey)}
+                onClick={() => load()}
               >
                 {t("settings.modelsFetch.retry")}
               </Button>
@@ -184,7 +196,7 @@ export const FetchModelsModal: FC<FetchModelsModalProps> = ({
 
           {grouped.map(([vendor, items]) => (
             <div key={vendor} className="mb-2">
-              <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-mute">
+              <div className="px-3 py-1 text-xs font-semibold uppercase tracking-eyebrow text-mute">
                 {vendor} ({items.length})
               </div>
               {items.map((m) => {
@@ -193,7 +205,7 @@ export const FetchModelsModal: FC<FetchModelsModalProps> = ({
                 return (
                   <label
                     key={m.id}
-                    className={`flex items-center gap-2.5 rounded px-3 py-1.5 text-sm transition-colors ${
+                    className={`flex items-center gap-2.5 rounded px-3 py-1.5 text-base transition-colors ${
                       exists
                         ? "cursor-default opacity-50"
                         : "cursor-pointer hover:bg-hairline-soft"
@@ -208,7 +220,7 @@ export const FetchModelsModal: FC<FetchModelsModalProps> = ({
                     />
                     <span className="truncate font-mono text-xs text-ink">{m.id}</span>
                     {exists && (
-                      <span className="ml-auto shrink-0 text-[10px] text-mute">{t("settings.modelsFetch.alreadyAdded")}</span>
+                      <span className="ml-auto shrink-0 text-xs text-mute">{t("settings.modelsFetch.alreadyAdded")}</span>
                     )}
                   </label>
                 );

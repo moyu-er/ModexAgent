@@ -1,5 +1,9 @@
 agent_name: office-expert
-description: Process Office documents (Word/Excel/PowerPoint/PDF) including format conversion, content extraction, editing, and annotations.
+description: >-
+  Creates, reads, edits, converts, and analyzes Office documents (Word, Excel,
+  PowerPoint, PDF) using the OfficeCLI toolchain. Handles formatting, charts,
+  batch operations, and format conversion. Use when the task involves .docx,
+  .xlsx, .pptx, or .pdf file manipulation.
 max_steps: 100
 tool_preset: read_write
 tool_supplements:

@@ -52,7 +52,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from modex_agent.core.constants import ExecutionStrategy
+from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.multi_agent.pool_config.specs import (
     MainAgentSpec,
     PoolSpec,
@@ -85,6 +85,10 @@ _SUBAGENT_YAML_FIELDS: tuple[str, ...] = (
     "mcp",
     "system_prompt_mode",
     "fork_max_messages",
+    "roles",
+    "prompt_name",
+    "execution_strategy",
+    "provider_kind",
 )
 
 # Sentinel for "no default" (distinct from None, which is itself a value).
@@ -92,12 +96,17 @@ _MISSING: object = object()
 
 # Per-field defaults used to skip writing default-noise to template files.
 # Fields not listed here are always written. Values reference the framework
-# enums/constants so there is one source of truth.
+# enums/constants so there is one source of truth. ``prompt_name`` defaults to
+# None so a None value is skipped (no ``prompt_name: null`` in the YAML).
 _SUBAGENT_DEFAULTS: dict[str, object] = {
     "tool_supplements": [],
     "mcp": [],
     "system_prompt_mode": SystemPromptMode.REPLACE.value,
     "fork_max_messages": DEFAULT_FORK_MAX_MESSAGES,
+    "roles": [],
+    "prompt_name": None,
+    "execution_strategy": ExecutionStrategyKind.REACT.value,
+    "provider_kind": None,
 }
 
 # Fields written into the main-agent entry of pool.yml's `agents:` block.
@@ -113,6 +122,8 @@ _MAIN_AGENT_EDITABLE_FIELDS: tuple[str, ...] = (
     "tool_supplements",
     "approval",
     "mcp",
+    "roles",
+    "prompt_name",
 )
 
 # Per-field defaults for the main-agent editable fields. Values equal to their
@@ -123,6 +134,8 @@ _MAIN_AGENT_DEFAULTS: dict[str, object] = {
     "description": "",
     "tool_supplements": ["todo"],
     "mcp": [],
+    "roles": [],
+    "prompt_name": None,
 }
 
 
@@ -172,12 +185,25 @@ class PoolStore:
         ``PoolStore(base_dir=Path("examples/bot_project"))`` — defaults to the
         bot project root so production code can use the default; tests inject
         ``tmp_path``.
+
+        ``default_prompt_seed`` is the text ``create_pool`` writes into
+        ``agents/<name>.md`` for a brand-new main agent. Defaults to ``""`` at
+        the framework level so framework tests that don't care about prompt
+        content still pass; the bot layer passes
+        :data:`bot.config.prompt_store.PromptStore.DEFAULT_PROMPT_SEED` (the
+        single canonical default) at construction time.
     """
 
-    def __init__(self, base_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        base_dir: Path | None = None,
+        *,
+        default_prompt_seed: str = "",
+    ) -> None:
         self.base_dir: Path = Path(base_dir) if base_dir is not None else Path(".")
         self.pools_dir: Path = self.base_dir / "config" / "pools"
         self.agents_dir: Path = self.base_dir / "agents"
+        self._default_prompt_seed: str = default_prompt_seed
 
     # ─── read ───────────────────────────────────────────────────────────────
 
@@ -261,7 +287,10 @@ class PoolStore:
         _validate_name(name, "pool")
         self._validate_tree(name, tree)
 
-        if tree.main.execution_strategy == ExecutionStrategy.EXTERNAL_CODING:
+        # External coding pools have no subagents — strip any the frontend
+        # sent before writing. validate_pool_spec is defense-in-depth at
+        # assembly time; the store is the single pool.yml write path.
+        if tree.main.execution_strategy != ExecutionStrategyKind.REACT:
             tree = tree.model_copy(update={"subagents": []})
 
         existing = self._read_existing_pool_yml(name)
@@ -331,8 +360,10 @@ class PoolStore:
                 f"Pool {pool_name!r}: main_agent_name ({tree.main_agent_name!r}) "
                 f"must equal main.agent_name ({tree.main.agent_name!r})"
             )
+        # External coding requires a provider_kind so the strategy knows which
+        # CLI backend to build. validate_pool_spec is defense-in-depth.
         if (
-            tree.main.execution_strategy == ExecutionStrategy.EXTERNAL_CODING
+            tree.main.execution_strategy != ExecutionStrategyKind.REACT
             and tree.main.provider_kind is None
         ):
             raise PoolValidationError(
@@ -426,11 +457,15 @@ class PoolStore:
         if tree.main.agent_name != pool_name:
             data["main_agent_name"] = tree.main.agent_name
         main_dump = tree.main.model_dump(mode="json")
-        if tree.main.execution_strategy == ExecutionStrategy.EXTERNAL_CODING:
+        if tree.main.execution_strategy != ExecutionStrategyKind.REACT:
+            # External coding: write only description + routing keys.
+            # Native fields (max_steps, tools, approval, mcp) are meaningless
+            # for external CLIs and omitted to keep pool.yml clean.
             if main_dump["description"]:
                 data["description"] = main_dump["description"]
             data["execution_strategy"] = main_dump["execution_strategy"]
-            data["provider_kind"] = main_dump["provider_kind"]
+            if main_dump.get("provider_kind") is not None:
+                data["provider_kind"] = main_dump["provider_kind"]
         else:
             for field in _MAIN_AGENT_EDITABLE_FIELDS:
                 value = main_dump[field]
@@ -438,8 +473,6 @@ class PoolStore:
                 if value is None or value == default:
                     continue
                 data[field] = value
-            if tree.main.execution_strategy != ExecutionStrategy.REACT:
-                data["execution_strategy"] = main_dump["execution_strategy"]
         if tree.peers:
             data["peers"] = list(tree.peers)
         if "media" in existing:
@@ -640,7 +673,9 @@ class PoolStore:
         """Ensure every agent in the saved tree has a corresponding prompt md.
 
         Only creates missing files; existing files (including those just
-        renamed) are left untouched so user edits are preserved.
+        renamed) are left untouched so user edits are preserved. The seed
+        content is :attr:`self._default_prompt_seed` (injected at construction
+        by the bot layer; empty string at the framework level).
         """
         self.agents_dir.mkdir(parents=True, exist_ok=True)
         for agent_name in {new_main_name, *new_subagent_names}:
@@ -648,7 +683,7 @@ class PoolStore:
             if md.exists():
                 continue
             tmp = md.with_name(md.name + ".tmp")
-            tmp.write_text(_DEFAULT_MAIN_PROMPT, encoding="utf-8")
+            tmp.write_text(self._default_prompt_seed, encoding="utf-8")
             os.replace(tmp, md)
 
     def _commit_tmp(self, tmp_path: Path) -> None:
@@ -661,7 +696,7 @@ class PoolStore:
         target = tmp_path.with_name(name[: -len(".tmp")])
         os.replace(tmp_path, target)
 
-    # ─── listing / create / delete / rename ─────────────────────────────────
+    # ─── listing / create / delete ─────────────────────────────────
 
     def list_pools(self) -> list[PoolSummary]:
         """List all pools under ``config/pools/`` as summaries."""
@@ -690,9 +725,10 @@ class PoolStore:
         """Create a new pool dir + seed pool.yml + main agent md.
 
         Seeds a minimal pool.yml (main agent whose name == ``name``; default
-        ``llm``) and a default ``agents/<name>.md`` prompt. Pool identity IS
-        the directory name; memory is the baked main-agent default injected at
-        pool-build (not persisted here). Refuses if the pool already exists.
+        ``llm``) and a default ``agents/<name>.md`` prompt seeded with
+        :attr:`self._default_prompt_seed`. Pool identity IS the directory name;
+        memory is the baked main-agent default injected at pool-build (not
+        persisted here). Refuses if the pool already exists.
         """
         _validate_name(name, "pool")
         pool_dir = self._pool_dir(name)
@@ -708,47 +744,23 @@ class PoolStore:
         # Seed the default main-agent prompt md.
         self.agents_dir.mkdir(parents=True, exist_ok=True)
         md = self.agents_dir / f"{name}.md"
-        md.write_text(_DEFAULT_MAIN_PROMPT, encoding="utf-8")
+        md.write_text(self._default_prompt_seed, encoding="utf-8")
         return self.read_pool(name)
 
-    def delete_pool(self, name: str, default_pool: str = "main") -> None:
-        """Remove a pool dir AND its main agent's prompt md.
+    def delete_pool(self, name: str) -> None:
+        """Remove a pool dir.
 
-        Refuses to delete ``default_pool`` (callers pass the protected name).
+        Prompts are pool-independent resources (``agents/<name>.md`` is keyed by
+        agent name, not pool), so the main-agent prompt md is NOT removed here.
+        A prompt may be shared across pools (same main agent name); the
+        reference check on ``DELETE /api/prompts/{name}`` is the single source
+        of truth for "is this prompt safe to remove".
         """
         _validate_name(name, "pool")
-        if name == default_pool:
-            raise PoolValidationError(f"Refusing to delete the default pool {name!r}")
         pool_dir = self._pool_dir(name)
         if not pool_dir.exists():
             raise UnknownPoolError(f"Unknown pool: {name!r}")
-        # Determine the main agent name to remove its md too.
-        try:
-            tree = self.read_pool(name)
-            main_md = self.agents_dir / f"{tree.main.agent_name}.md"
-            if main_md.exists():
-                main_md.unlink(missing_ok=True)
-        except (UnknownPoolError, PoolValidationError):
-            pass
         shutil.rmtree(pool_dir)
-
-    def rename_pool(self, old: str, new: str) -> None:
-        """Rename a pool directory.
-
-        The pool's identity IS its directory name, so renaming the directory
-        IS the rename — pool.yml has no ``name:`` field to update. The main
-        agent's name is independent and untouched. Session-store references
-        are reconciled at the controller layer.
-        """
-        _validate_name(old, "pool")
-        _validate_name(new, "pool")
-        old_dir = self._pool_dir(old)
-        new_dir = self._pool_dir(new)
-        if not old_dir.exists():
-            raise UnknownPoolError(f"Unknown pool: {old!r}")
-        if new_dir.exists():
-            raise PoolValidationError(f"Pool {new!r} already exists")
-        old_dir.rename(new_dir)
 
     def add_peer_pair(self, name_a: str, name_b: str) -> None:
         """Atomically add a bidirectional peer relationship between two pools.
@@ -871,17 +883,3 @@ def _atomic_stage(target: Path, text: str) -> Path:
     tmp.parent.mkdir(parents=True, exist_ok=True)
     tmp.write_text(text, encoding="utf-8")
     return tmp
-
-
-_DEFAULT_MAIN_PROMPT = """\
-You are an AI assistant.
-
-## Interaction Guidelines
-- Respond naturally and concisely.
-- Give direct answers first, then add explanation.
-- Be honest about uncertainty — never fabricate information.
-
-## Output Constraints
-- Keep responses reasonably concise.
-- Do not output internal debug info or raw tool returns.
-"""

@@ -13,16 +13,16 @@ describe("Card", () => {
     expect(el.className).toContain("p-4");
   });
 
-  it("elevated adds shadow-floating", () => {
+  it("elevated adds the card shadow token", () => {
     render(<Card elevated>raised</Card>);
     const el = screen.getByText("raised");
-    expect(el.className).toContain("shadow-floating");
+    expect(el.className).toContain("shadow-card");
   });
 
-  it("non-elevated has no shadow-floating", () => {
+  it("non-elevated has no shadow", () => {
     render(<Card>flat</Card>);
     const el = screen.getByText("flat");
-    expect(el.className).not.toContain("shadow-floating");
+    expect(el.className).not.toContain("shadow-card");
   });
 
   it("merges extra className", () => {

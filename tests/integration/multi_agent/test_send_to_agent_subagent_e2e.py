@@ -232,8 +232,8 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
     async def _create_then_wire_workspace(*args: Any, **kwargs: Any) -> Any:
         instance = await original_create(*args, **kwargs)
         if instance.pipeline is not None:
-            instance.pipeline.workspace_manager = workspace_manager
-            instance.pipeline.pool_name = "main"
+            instance.pipeline._turn_runner._workspace_manager = workspace_manager  # type: ignore[attr-defined]
+            instance.pipeline._turn_runner._pool_name = "main"  # type: ignore[attr-defined]
         return instance
 
     factory.create_agent = _create_then_wire_workspace  # type: ignore[method-assign]
@@ -285,10 +285,10 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
         context_fork_builder=context_fork_builder,
         workspace_path_resolver=path_resolver,
     )
-    pool._materialize_deps = deps
-    pool._template_registry = template_registry
-    pool._pool_name = "main"
-    pool._context_fork_builder = context_fork_builder
+    pool.materialize_deps = deps
+    pool.template_registry = template_registry
+    pool.pool_name = "main"
+    pool.context_fork_builder = context_fork_builder
 
     # --- communication service for the main agent (pure router) ---
     service = AgentCommunicationService(

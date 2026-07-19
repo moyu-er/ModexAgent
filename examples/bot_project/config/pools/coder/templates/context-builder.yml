@@ -1,5 +1,0 @@
-agent_name: context-builder
-description: Deep requirements analysis — get context analysis
-max_steps: 60
-tool_preset: read_only
-context_mode: fresh

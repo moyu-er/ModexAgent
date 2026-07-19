@@ -473,7 +473,7 @@ export function VideoIcon({ className, ...rest }: IconProps) {
 /**
  * Compact chevron for inline expand/collapse toggles (e.g. ReasoningBlock,
  * SessionTree, ToolTraceCard). Caller controls the collapsed/expanded state
- * via the ``open`` prop. Sized h-3 w-3 to match the small ``text-[10px]``
+ * via the ``open`` prop. Sized h-3 w-3 to match the small ``text-xs``
  * glyphs that previously lived in JSX.
  */
 export function ChevronToggleIcon({
@@ -507,6 +507,52 @@ export function FileIcon({ className, ...rest }: IconProps) {
         strokeLinejoin="round"
       />
       <path d="M10 2.5v3h3" {...STROKE} strokeWidth={1.3} />
+    </svg>
+  );
+}
+
+/**
+ * ModexAgent logo mark — the curved star-topology "agent hub" glyph.
+ *
+ * Source of truth: `public/logo-icon.svg`. This component is a byte-identical
+ * inline copy of those paths, inlined so callers tint it via `currentColor`
+ * (e.g. `text-brand`). The third copy lives inline in `index.html` (pre-React
+ * loader, which must render before the bundle loads). When the logo changes,
+ * update `public/logo-icon.svg` FIRST, then mirror the paths here and in
+ * index.html. Unlike the other glyphs it uses a 100x100 viewBox; size it with
+ * className (h-4 w-4 rail mark, h-24 w-24 watermark, …).
+ */
+export function LogoMarkIcon({ className, ...rest }: IconProps) {
+  return (
+    <svg
+      className={`h-4 w-4 shrink-0 ${className ?? ""}`.trim()}
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 100 100"
+      fill="none"
+      aria-hidden={true}
+      {...rest}
+    >
+      <g stroke="currentColor" strokeLinecap="round">
+        <path d="M50 50 Q58 32 50 14" strokeWidth="2.1" />
+        <path d="M50 50 Q68 42 86 50" strokeWidth="2.1" />
+        <path d="M50 50 Q42 68 50 86" strokeWidth="2.1" />
+        <path d="M50 50 Q32 58 14 50" strokeWidth="2.1" />
+        <path d="M50 50 Q60 40 71.2 28.8" strokeWidth="1.2" opacity="0.4" />
+        <path d="M50 50 Q60 60 71.2 71.2" strokeWidth="1.2" opacity="0.4" />
+        <path d="M50 50 Q40 60 28.8 71.2" strokeWidth="1.2" opacity="0.4" />
+        <path d="M50 50 Q40 40 28.8 28.8" strokeWidth="1.2" opacity="0.4" />
+      </g>
+      <g fill="currentColor">
+        <polygon points="50,39 61,50 50,61 39,50" />
+        <circle cx="50" cy="14" r="4.6" />
+        <circle cx="86" cy="50" r="4.6" />
+        <circle cx="50" cy="86" r="4.6" />
+        <circle cx="14" cy="50" r="4.6" />
+        <circle cx="71.2" cy="28.8" r="2.1" opacity="0.55" />
+        <circle cx="71.2" cy="71.2" r="2.1" opacity="0.55" />
+        <circle cx="28.8" cy="71.2" r="2.1" opacity="0.55" />
+        <circle cx="28.8" cy="28.8" r="2.1" opacity="0.55" />
+      </g>
     </svg>
   );
 }

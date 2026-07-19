@@ -18,10 +18,21 @@ describe("Input", () => {
     expect(input.getAttribute("type")).toBe("email");
   });
 
-  it("error swaps border to error and replaces helper", () => {
+  it("field is 36px with sm radius and a 2px brand focus ring", () => {
+    render(<Input label="x" />);
+    const input = screen.getByLabelText("x");
+    expect(input.className).toContain("h-9");
+    expect(input.className).toContain("rounded-sm");
+    expect(input.className).toContain("focus:ring-2");
+    expect(input.className).toContain("focus:border-brand");
+    expect(input.className).toContain("focus:ring-brand");
+  });
+
+  it("error swaps border to danger and replaces helper", () => {
     render(<Input label="x" helper="ok" error="too short" />);
     const input = screen.getByLabelText("x");
-    expect(input.className).toContain("border-error");
+    expect(input.className).toContain("border-danger");
+    expect(input.className).toContain("focus:ring-danger");
     expect(input.getAttribute("aria-invalid")).toBe("true");
     expect(screen.getByRole("alert").textContent).toBe("too short");
     expect(screen.queryByText("ok")).toBeNull();

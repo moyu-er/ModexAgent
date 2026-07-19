@@ -8,6 +8,7 @@ from bot.input_pipeline.context import BotInputContext
 def test_bot_input_context_default_pool() -> None:
     ctx = BotInputContext(
         default_pool="main",
+        available_pools=lambda: {"main"},
         pool_session_store=MagicMock(),
         agent_pool_map={"main": "main"},
         agent_resolver=lambda p: p,
@@ -17,11 +18,13 @@ def test_bot_input_context_default_pool() -> None:
     )
     assert ctx.default_pool == "main"
     assert ctx.agent_for_pool("main") == "main"
+    assert ctx.available_pools() == {"main"}
 
 
 def test_agent_for_pool_falls_back_to_default() -> None:
     ctx = BotInputContext(
         default_pool="main",
+        available_pools=lambda: {"main"},
         pool_session_store=MagicMock(),
         agent_pool_map={"coding": "coding"},
         agent_resolver=lambda p: "main",
@@ -29,5 +32,32 @@ def test_agent_for_pool_falls_back_to_default() -> None:
         enqueue_message=MagicMock(),
         command_adapter=MagicMock(),
     )
-    # unknown pool -> default
     assert ctx.agent_for_pool("unknown") == "main"
+
+
+def test_bot_input_context_default_pool_can_be_none() -> None:
+    ctx = BotInputContext(
+        default_pool=None,
+        available_pools=lambda: set(),
+        pool_session_store=MagicMock(),
+        agent_pool_map={},
+        agent_resolver=lambda p: p,
+        transcript_store=MagicMock(),
+        enqueue_message=MagicMock(),
+        command_adapter=MagicMock(),
+    )
+    assert ctx.default_pool is None
+    assert ctx.available_pools() == set()
+
+
+def test_bot_input_context_available_pools_defaults_to_empty() -> None:
+    ctx = BotInputContext(
+        default_pool="main",
+        pool_session_store=MagicMock(),
+        agent_pool_map={"main": "main"},
+        agent_resolver=lambda p: p,
+        transcript_store=MagicMock(),
+        enqueue_message=MagicMock(),
+        command_adapter=MagicMock(),
+    )
+    assert ctx.available_pools() == set()

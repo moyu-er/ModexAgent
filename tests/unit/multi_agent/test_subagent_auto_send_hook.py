@@ -7,6 +7,9 @@ Covers:
 - No agent_bus → no error (graceful no-op)
 - result=None → crash notification
 - OUTPUT.md missing → output_status=missing, hint
+- EXTERNAL branch: <replied> true/false, no <trace>/<output>/<output_status>,
+  uniform fields identical to react; default REACT strategy stays byte-for-byte
+  unchanged (ADR-0027, Seam 4).
 """
 
 import re
@@ -15,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.constants import StopReason
+from modex_agent.core.constants import ExecutionStrategyKind, StopReason
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.tool_manager import InMemoryToolManager, ToolManagerConfig
 from modex_agent.hook.builtin import SubagentAutoSendHook
@@ -329,12 +332,295 @@ class TestSubagentAutoSendHookFinallyTurn:
         assert msgs[0].payload["metadata"]["agent_type"] == "worker"
 
 
+class TestSubagentAutoSendHookExternalBranch:
+    """Seam 4 — EXTERNAL execution_strategy branch (ADR-0027).
+
+    The external subagent notification carries the same uniform fields as a
+    react subagent's notification, but a different ``<artifacts>`` block:
+    only ``<replied>`` (bool), no ``<trace>`` / ``<output>`` / ``<output_status>``.
+    The parent agent's decision logic reads only the uniform fields and does
+    not branch on subagent kind.
+    """
+
+    def _make_external_hook(
+        self,
+        bus: LocalAgentMessageBus,
+        runtime_dir: Path,
+        outbox_path: Path,
+    ) -> SubagentAutoSendHook:
+        return SubagentAutoSendHook(
+            agent_bus=bus,
+            self_name="pi_worker",
+            parent_name="main",
+            runtime_dir=runtime_dir,
+            execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+            external_outbox_path=outbox_path,
+        )
+
+    def _write_outbox(self, outbox_path: Path, entries: list[str]) -> None:
+        outbox_path.parent.mkdir(parents=True, exist_ok=True)
+        outbox_path.write_text(
+            "\n".join(entries) + ("\n" if entries else ""),
+            encoding="utf-8",
+        )
+
+    async def test_external_replied_true_when_outbox_has_entries(
+        self, tmp_path: Path,
+    ):
+        """EXTERNAL branch with non-empty outbox → <replied>true</replied>."""
+        runtime_dir = tmp_path / "runtime"
+        outbox = tmp_path / "workdir" / ".modex" / "external" / "outbox.jsonl"
+        self._write_outbox(
+            outbox,
+            ['{"target":"main","content":"hi from pi"}'],
+        )
+
+        bus = _make_bus(tmp_path)
+        hook = self._make_external_hook(bus, runtime_dir, outbox)
+        ctx = _make_context("abc12345.pi_worker")
+        result = AgentResult(content="done", stop_reason=StopReason.COMPLETED)
+
+        await hook.finally_turn(ctx, result)
+
+        xml = (await bus.consume("conv123.main"))[0].payload["content"]
+        assert "<subagent_notification>" in xml
+        assert _extract_xml_field(xml, "replied") == "true"
+
+    async def test_external_replied_false_when_outbox_empty(
+        self, tmp_path: Path,
+    ):
+        """EXTERNAL branch with empty outbox file → <replied>false</replied>."""
+        runtime_dir = tmp_path / "runtime"
+        outbox = tmp_path / "workdir" / ".modex" / "external" / "outbox.jsonl"
+        self._write_outbox(outbox, [])
+
+        bus = _make_bus(tmp_path)
+        hook = self._make_external_hook(bus, runtime_dir, outbox)
+        ctx = _make_context("abc12345.pi_worker")
+        result = AgentResult(content="done", stop_reason=StopReason.COMPLETED)
+
+        await hook.finally_turn(ctx, result)
+
+        xml = (await bus.consume("conv123.main"))[0].payload["content"]
+        assert _extract_xml_field(xml, "replied") == "false"
+
+    async def test_external_replied_false_when_outbox_missing(
+        self, tmp_path: Path,
+    ):
+        """EXTERNAL branch with no outbox file → <replied>false</replied>."""
+        runtime_dir = tmp_path / "runtime"
+        outbox = tmp_path / "workdir" / ".modex" / "external" / "outbox.jsonl"
+
+        bus = _make_bus(tmp_path)
+        hook = self._make_external_hook(bus, runtime_dir, outbox)
+        ctx = _make_context("abc12345.pi_worker")
+        result = AgentResult(content="done", stop_reason=StopReason.COMPLETED)
+
+        await hook.finally_turn(ctx, result)
+
+        xml = (await bus.consume("conv123.main"))[0].payload["content"]
+        assert _extract_xml_field(xml, "replied") == "false"
+
+    async def test_external_artifacts_omits_trace_output_output_status(
+        self, tmp_path: Path,
+    ):
+        """EXTERNAL branch <artifacts> contains only <replied> — no react tags."""
+        runtime_dir = tmp_path / "runtime"
+        outbox = tmp_path / "workdir" / ".modex" / "external" / "outbox.jsonl"
+        self._write_outbox(
+            outbox,
+            ['{"target":"main","content":"hi"}'],
+        )
+
+        bus = _make_bus(tmp_path)
+        hook = self._make_external_hook(bus, runtime_dir, outbox)
+        ctx = _make_context("abc12345.pi_worker")
+        result = AgentResult(content="done", stop_reason=StopReason.COMPLETED)
+
+        await hook.finally_turn(ctx, result)
+
+        xml = (await bus.consume("conv123.main"))[0].payload["content"]
+        assert "<replied>" in xml
+        assert "<trace>" not in xml
+        assert "</trace>" not in xml
+        assert "<output>" not in xml
+        assert "</output>" not in xml
+        assert "<output_status>" not in xml
+        assert "</output_status>" not in xml
+        artifacts_block = re.search(
+            r"<artifacts>(.*?)</artifacts>", xml, re.DOTALL,
+        )
+        assert artifacts_block is not None
+        inner = artifacts_block.group(1)
+        assert "<replied>" in inner
+        assert "<trace>" not in inner
+        assert "<output" not in inner
+
+    async def test_external_uniform_fields_match_react_contract(
+        self, tmp_path: Path,
+    ):
+        """EXTERNAL notification carries the same uniform fields a react
+        notification would carry for the same result — the parent's decision
+        logic reads only these fields and does not branch on subagent kind."""
+        runtime_dir = tmp_path / "runtime"
+        outbox = tmp_path / "workdir" / ".modex" / "external" / "outbox.jsonl"
+        self._write_outbox(outbox, ['{"target":"main","content":"hi"}'])
+
+        bus = _make_bus(tmp_path)
+        hook = self._make_external_hook(bus, runtime_dir, outbox)
+        ctx = _make_context("abc12345.pi_worker", agent_name="pi_worker")
+        result = AgentResult(
+            content="Final answer.",
+            stop_reason=StopReason.COMPLETED,
+        )
+
+        await hook.finally_turn(ctx, result)
+
+        xml = (await bus.consume("conv123.main"))[0].payload["content"]
+        assert _extract_xml_field(xml, "agent") == "pi_worker"
+        assert _extract_xml_field(xml, "invocation_id") == "abc12345"
+        assert _extract_xml_field(xml, "status") == "completed"
+        assert _extract_xml_field(xml, "stop_reason") == "completed"
+        assert _extract_xml_field(xml, "is_normal") == "true"
+        assert _extract_xml_field(xml, "error") == ""
+        assert _extract_xml_field(xml, "hint") == ""
+        assert _extract_xml_field(xml, "summary") == "Final answer."
+
+    async def test_external_normal_when_no_replied_but_completed(
+        self, tmp_path: Path,
+    ):
+        """EXTERNAL branch: missing OUTPUT.md must NOT mark the subagent
+        incomplete — the deliverable signal is <replied>, not <output_status>.
+
+        _classify_stop is called with output_status='written' for EXTERNAL
+        so the 'OUTPUT.md was not written' branch never fires for external
+        subagents."""
+        runtime_dir = tmp_path / "runtime"
+        outbox = tmp_path / "workdir" / ".modex" / "external" / "outbox.jsonl"
+        self._write_outbox(outbox, [])
+
+        bus = _make_bus(tmp_path)
+        hook = self._make_external_hook(bus, runtime_dir, outbox)
+        ctx = _make_context("abc12345.pi_worker")
+        result = AgentResult(content="done", stop_reason=StopReason.COMPLETED)
+
+        await hook.finally_turn(ctx, result)
+
+        xml = (await bus.consume("conv123.main"))[0].payload["content"]
+        assert _extract_xml_field(xml, "is_normal") == "true"
+        assert _extract_xml_field(xml, "status") == "completed"
+        assert _extract_xml_field(xml, "replied") == "false"
+        assert "OUTPUT.md was not written" not in _extract_xml_field(xml, "hint")
+
+    async def test_external_error_propagates_uniform_error_fields(
+        self, tmp_path: Path,
+    ):
+        """EXTERNAL branch error path: uniform error/hint fields are populated
+        exactly like the react branch — the only difference is <artifacts>."""
+        runtime_dir = tmp_path / "runtime"
+        outbox = tmp_path / "workdir" / ".modex" / "external" / "outbox.jsonl"
+        self._write_outbox(outbox, [])
+
+        bus = _make_bus(tmp_path)
+        hook = self._make_external_hook(bus, runtime_dir, outbox)
+        ctx = _make_context("abc12345.pi_worker")
+        result = AgentResult(
+            content="",
+            stop_reason=StopReason.ERROR,
+            error="provider crashed",
+        )
+
+        await hook.finally_turn(ctx, result)
+
+        xml = (await bus.consume("conv123.main"))[0].payload["content"]
+        assert _extract_xml_field(xml, "is_normal") == "false"
+        assert _extract_xml_field(xml, "status") == "incomplete"
+        assert _extract_xml_field(xml, "error") == "provider crashed"
+        assert "crashed with error" in _extract_xml_field(xml, "hint")
+        assert "provider crashed" in _extract_xml_field(xml, "hint")
+        assert "<replied>" in xml
+        assert "<trace>" not in xml
+        assert "<output>" not in xml
+        assert "<output_status>" not in xml
+
+    async def test_external_no_outbox_path_replied_false(
+        self, tmp_path: Path,
+    ):
+        """EXTERNAL branch with external_outbox_path=None → <replied>false
+        (defensive default — T8 always passes a real path, but the hook
+        tolerates a missing path without raising)."""
+        runtime_dir = tmp_path / "runtime"
+        bus = _make_bus(tmp_path)
+        hook = SubagentAutoSendHook(
+            agent_bus=bus,
+            self_name="pi_worker",
+            parent_name="main",
+            runtime_dir=runtime_dir,
+            execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+            external_outbox_path=None,
+        )
+        ctx = _make_context("abc12345.pi_worker")
+        result = AgentResult(content="done", stop_reason=StopReason.COMPLETED)
+
+        await hook.finally_turn(ctx, result)
+
+        xml = (await bus.consume("conv123.main"))[0].payload["content"]
+        assert _extract_xml_field(xml, "replied") == "false"
+        assert "<trace>" not in xml
+        assert "<output_status>" not in xml
+
+    async def test_default_execution_strategy_is_react_backward_compat(
+        self, tmp_path: Path,
+    ):
+        """A hook constructed without execution_strategy (the default) must
+        produce react-style XML — byte-for-byte identical to a hook that
+        explicitly passes ExecutionStrategyKind.REACT. Existing react
+        subagents don't pass the new params; their notifications must not
+        change."""
+        runtime_dir = tmp_path / "runtime"
+        session_id = "abc12345.worker"
+
+        bus_default = _make_bus(tmp_path / "default")
+        hook_default = SubagentAutoSendHook(
+            agent_bus=bus_default,
+            self_name="worker",
+            parent_name="main",
+            runtime_dir=runtime_dir,
+        )
+        bus_react = _make_bus(tmp_path / "react")
+        hook_react = SubagentAutoSendHook(
+            agent_bus=bus_react,
+            self_name="worker",
+            parent_name="main",
+            runtime_dir=runtime_dir,
+            execution_strategy=ExecutionStrategyKind.REACT,
+        )
+
+        result = AgentResult(content="Done.", stop_reason=StopReason.COMPLETED)
+        with _mock_output_exists(runtime_dir, session_id):
+            await hook_default.finally_turn(_make_context(session_id), result)
+            await hook_react.finally_turn(_make_context(session_id), result)
+
+        xml_default = (
+            await bus_default.consume("conv123.main")
+        )[0].payload["content"]
+        xml_react = (
+            await bus_react.consume("conv123.main")
+        )[0].payload["content"]
+
+        assert "<trace>" in xml_default
+        assert "<output>" in xml_default
+        assert "<output_status>" in xml_default
+        assert "<replied>" not in xml_default
+        assert xml_default == xml_react
+
+
 class TestSubagentAutoSendHookClassifyStop:
-    """Unit tests for _classify_stop static method."""
+    """Unit tests for _classify_stop_native and _classify_stop_external."""
 
     def test_error_returns_false_with_hint(self):
-        is_normal, hint = SubagentAutoSendHook._classify_stop(
-            "completed", "written", "Division by zero",
+        is_normal, hint = SubagentAutoSendHook._classify_stop_native(
+            "completed", "written", "Division by zero", "",
         )
         assert is_normal is False
         assert "crashed" in hint
@@ -342,51 +628,66 @@ class TestSubagentAutoSendHookClassifyStop:
         assert "incomplete" in hint.lower()
 
     def test_error_with_invocation_id_includes_it(self):
-        is_normal, hint = SubagentAutoSendHook._classify_stop(
-            "completed", "written", "timeout", invocation_id="abc123",
+        is_normal, hint = SubagentAutoSendHook._classify_stop_native(
+            "completed", "written", "timeout", "abc123",
         )
         assert is_normal is False
         assert "invocation_id=abc123" in hint
 
     def test_max_iterations_returns_false_with_hint(self):
-        is_normal, hint = SubagentAutoSendHook._classify_stop(
-            "max_iterations", "written", None,
+        is_normal, hint = SubagentAutoSendHook._classify_stop_native(
+            "max_iterations", "written", None, "",
         )
         assert is_normal is False
         assert "max_iterations" in hint
         assert "incomplete" in hint.lower()
 
     def test_max_iterations_with_invocation_id_includes_it(self):
-        is_normal, hint = SubagentAutoSendHook._classify_stop(
-            "max_iterations", "written", None, invocation_id="xyz789",
+        is_normal, hint = SubagentAutoSendHook._classify_stop_native(
+            "max_iterations", "written", None, "xyz789",
         )
         assert is_normal is False
         assert "invocation_id=xyz789" in hint
 
     def test_missing_output_returns_false_with_hint(self):
-        is_normal, hint = SubagentAutoSendHook._classify_stop(
-            "completed", "missing", None,
+        is_normal, hint = SubagentAutoSendHook._classify_stop_native(
+            "completed", "missing", None, "",
         )
         assert is_normal is False
         assert "OUTPUT.md was not written" in hint
 
     def test_missing_output_with_invocation_id_includes_it(self):
-        is_normal, hint = SubagentAutoSendHook._classify_stop(
-            "completed", "missing", None, invocation_id="resume123",
+        is_normal, hint = SubagentAutoSendHook._classify_stop_native(
+            "completed", "missing", None, "resume123",
         )
         assert is_normal is False
         assert "invocation_id=resume123" in hint
 
     def test_completed_with_output_returns_true(self):
-        is_normal, hint = SubagentAutoSendHook._classify_stop(
-            "completed", "written", None,
+        is_normal, hint = SubagentAutoSendHook._classify_stop_native(
+            "completed", "written", None, "",
         )
         assert is_normal is True
         assert hint == ""
 
     def test_cancelled_with_output_returns_true(self):
-        is_normal, hint = SubagentAutoSendHook._classify_stop(
-            "cancelled", "written", None,
+        is_normal, hint = SubagentAutoSendHook._classify_stop_native(
+            "cancelled", "written", None, "",
+        )
+        assert is_normal is True
+        assert hint == ""
+
+    def test_external_error_hint_does_not_mention_trace(self):
+        is_normal, hint = SubagentAutoSendHook._classify_stop_external(
+            "completed", "Division by zero", "abc123",
+        )
+        assert is_normal is False
+        assert "trace" not in hint.lower()
+        assert "last output" in hint.lower()
+
+    def test_external_completed_returns_true_no_output_check(self):
+        is_normal, hint = SubagentAutoSendHook._classify_stop_external(
+            "completed", None, "",
         )
         assert is_normal is True
         assert hint == ""

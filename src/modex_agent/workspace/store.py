@@ -13,19 +13,15 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from modex_agent.utils.time import now_ms
 from modex_agent.workspace.paths import RESERVED_GLOBAL_DIR
 from modex_agent.workspace.record import WorkspaceRecord
 from modex_agent.workspace.registry import WorkspaceRegistryStore
 
 _VALID_ORDER_BY: frozenset[str] = frozenset({"last_active", "created_at"})
-
-
-def _now_iso() -> str:
-    return datetime.now(UTC).isoformat()
 
 
 class GlobalWorkspaceStore(WorkspaceRegistryStore):
@@ -89,7 +85,7 @@ class GlobalWorkspaceStore(WorkspaceRegistryStore):
     @staticmethod
     def _migrate_legacy(data: dict[str, Any]) -> list[WorkspaceRecord]:
         targets = data.get("targets", [])
-        now = _now_iso()
+        now = now_ms()
         return [
             WorkspaceRecord(
                 workspace_id=str(uuid.uuid4()),

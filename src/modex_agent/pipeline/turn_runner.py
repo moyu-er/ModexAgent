@@ -1,4 +1,4 @@
-"""TurnRunner — locked-message processing + turn execution.
+"""ReActTurnRunner — locked-message processing + turn execution.
 
 Owns the three responsibilities that used to live as private methods on the
 pipeline god-object:
@@ -17,6 +17,9 @@ pipeline god-object:
 Behaviour is identical to the pre-extraction methods — pure move. The runner
 holds no back-reference to the pipeline: every dependency is injected via the
 constructor and stored as ``self._<name>``.
+
+Inherits :class:`modex_agent.pipeline.turn_runner_abc.TurnRunner` (the ABC
+seam between ``AgentPipeline`` and concrete turn runners — ADR-0025 D3).
 """
 from __future__ import annotations
 
@@ -52,6 +55,7 @@ from modex_agent.pipeline.approval_renderer import ApprovalRenderer
 from modex_agent.pipeline.approval_resumer import ApprovalResumer
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
+from modex_agent.pipeline.turn_runner_abc import TurnRunner
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.runtime.enums import TurnCustomKey
 from modex_agent.runtime.models import TurnSnapshot
@@ -70,13 +74,16 @@ async def _safe_flush(ctx_mgr: ContextManager, session_id: str, *, timeout: floa
         logger.exception("Memory flush failed for %s", session_id)
 
 
-class TurnRunner:
+class ReActTurnRunner(TurnRunner):
     """Run the locked turn flow + agent turn execution + approval-resume driver.
 
     Constructed eagerly in the pipeline ``__init__`` with all of the
     turn-execution dependencies. Every method is a verbatim move of the
     corresponding pipeline private method, with ``self.X`` rewritten to
     ``self._X``.
+
+    Concrete implementation of the :class:`TurnRunner` ABC for ReAct pools
+    (ADR-0025 D3).
     """
 
     def __init__(
@@ -114,23 +121,90 @@ class TurnRunner:
         self._pool_data_resolver = pool_data_resolver
         self._agent_descriptor = agent_descriptor
 
-    def update_emitter_factory(
-        self, value: Callable[..., ContentEmitter] | None
-    ) -> None:
-        """Accept a post-construction emitter_factory override.
-
-        TurnRunner resolves emitter_factory through TurnContextBuilder, which
-        the pipeline updates directly — so this is a no-op here. The method
-        exists so the pipeline can call it unconditionally on both runner
-        types without ``hasattr`` dispatch.
-        """
-        return
-
     @property
     def _user_interface(self) -> ApprovalUserInterface | None:
-        # Delegate so pool injection (pipeline._user_interface = ...) reaches
-        # the renderer that this runner reads during execute_turn.
         return self._approval._user_interface
+
+    async def cleanup_session(self, session_id: str) -> None:
+        self._approval.cleanup_session(session_id)
+
+    async def load_pending_approval(
+        self,
+        session_id: str,
+        *,
+        pool_data: PoolDataSnapshot | None = None,
+    ) -> TurnSnapshot | None:
+        return await self._resumer.load_pending(session_id, pool_data=pool_data)
+
+    def bind_to_pipeline(self, pipeline: Any) -> None:
+        self._approval.on_drain = pipeline._process_message
+
+    def set_pool_context(
+        self,
+        *,
+        workspace_manager: WorkspaceManager | None = None,
+        pool_name: str | None = None,
+    ) -> None:
+        if workspace_manager is not None:
+            self._workspace_manager = workspace_manager
+        if pool_name is not None:
+            self._pool_name = pool_name
+
+    def set_emitter_factory(
+        self, emitter_factory: Callable[..., ContentEmitter[Any]] | None
+    ) -> None:
+        self._builder.emitter_factory = emitter_factory
+
+    @property
+    def approval_renderer(self) -> ApprovalRenderer:
+        return self._approval
+
+    @property
+    def agent_descriptor(self) -> AgentDescriptor | None:
+        return self._agent_descriptor
+
+    @property
+    def context_manager(self) -> ContextManager:
+        return self._context_manager
+
+    @property
+    def skill_manager(self) -> Any:
+        return self._builder._skill_manager
+
+    @property
+    def turn_store(self) -> TurnStateStore | None:
+        return self._turn_store
+
+    @property
+    def hook_runner(self) -> Any:
+        return self._builder._hook_runner
+
+    @property
+    def hooks(self) -> list[Any]:
+        runner = self._builder._hook_runner
+        if runner is None:
+            return []
+        return [spec.hook for spec in runner.hook_specs]
+
+    @property
+    def sanitizer(self) -> Callable[[str], str] | None:
+        return self._builder._sanitizer
+
+    @property
+    def tool_manager(self) -> Any:
+        return self._builder._tool_manager
+
+    @property
+    def interceptor_chain(self) -> Any:
+        return self._builder._interceptor_chain
+
+    @property
+    def runtime_context_manager(self) -> Any:
+        return self._builder._runtime_context_manager
+
+    @property
+    def turn_context_builder(self) -> TurnContextBuilder:
+        return self._builder
 
     def _resolve_pool_data(
         self, session_id: str = ""

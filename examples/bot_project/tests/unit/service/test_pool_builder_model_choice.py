@@ -10,8 +10,10 @@ sys.path.insert(0, str(Path(__file__).parents[3]))
 from bot.service.model_choice import ModelChoiceBindHook, ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
 from bot.service.model_provider import BotModelProvider
-from bot.service.pool_builder import _build_llm_provider, _wire_main_pipeline
+from bot.service.pool_builder import _wire_main_pipeline
+from bot.service.react_strategy import ReactExecutionStrategy
 
+from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.hook.runner import HookRunner
 from modex_agent.ioc.configs.approval import ApprovalConfig
@@ -19,7 +21,12 @@ from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 from modex_agent.multi_agent.pool_config.specs import MainAgentSpec
+from modex_agent.pipeline.approval_renderer import ApprovalRenderer
+from modex_agent.pipeline.approval_resumer import ApprovalResumer
 from modex_agent.pipeline.pipeline import AgentPipeline
+from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
+from modex_agent.pipeline.turn_runner import ReActTurnRunner
+from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 
 _YML = """
 models:
@@ -45,7 +52,8 @@ class _Agent:
 
 def test_build_llm_provider_returns_bot_model_provider(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
-    prov = _build_llm_provider("main", cfg)
+    strategy = ReactExecutionStrategy()
+    prov = strategy._build_llm_provider("main", cfg)
     assert isinstance(prov, BotModelProvider)
 
 
@@ -57,15 +65,57 @@ def test_wire_main_pipeline_adds_model_choice_hook(tmp_path: Path) -> None:
     )
     assembly_deps = PoolAssemblyDeps(memory=MemoryConfig())
 
-    pipeline = AgentPipeline(
-        agent=_Agent(),
-        context_manager=MagicMock(),
+    agent = _Agent()
+    registry = TurnSessionRegistry()
+    hook_runner = HookRunner()
+    builder = TurnContextBuilder(
+        agent=agent,
         tool_manager=InMemoryToolManager(),
+        sanitizer=None,
+        command_processor=None,
+        skill_manager=None,
+        context_builder=None,
+        agent_descriptor=None,
+        max_iterations=10,
+        safety=RuntimeSafetyPolicy(),
+        runtime_services=None,
+        runtime_context_manager=None,
+        governance=None,
+        hook_runner=hook_runner,
+        interceptor_chain=None,
+        control_channel=None,
+        emitter_factory=None,
+        output_adapter=MagicMock(),
+        turn_store=None,
+        registry=registry,
+    )
+    approval = ApprovalRenderer(agent=agent, user_interface=None)  # type: ignore[arg-type]
+    resumer = ApprovalResumer(agent=agent, turn_store=None, user_interface=None)
+    turn_runner = ReActTurnRunner(
+        agent=agent,
+        context_manager=MagicMock(),
+        context_manager_factory=None,
+        on_session_start=None,
+        on_session_end=None,
+        safety=RuntimeSafetyPolicy(),
+        turn_store=None,
+        registry=registry,
+        builder=builder,
+        resumer=resumer,
+        approval=approval,
+        workspace_manager=None,
+        pool_name=None,
+        pool_data_resolver=None,
+        agent_descriptor=None,
+    )
+    pipeline = AgentPipeline(
+        agent=agent,
+        turn_runner=turn_runner,
         input_adapter=MagicMock(),
         output_adapter=MagicMock(),
-        sanitizer=None,
-        hook_runner=HookRunner(),
+        registry=registry,
     )
+    turn_runner.bind_to_pipeline(pipeline)
     main_inst = MagicMock()
     main_inst.pipeline = pipeline
     pool = MagicMock()

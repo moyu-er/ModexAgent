@@ -77,7 +77,7 @@ models:
     await broker.start()
     workspace_handle = WorkspaceHandle(target=target, data_root=target / ".modex")
 
-    with patch("bot.service.pool_builder.shutil.which", return_value=which_result):
+    with patch("bot.service.external_coding_strategy.shutil.which", return_value=which_result):
         pool_instance = await create_pool(
             pool_name="ext_pool",
             pool_spec=pool_spec,
@@ -95,6 +95,61 @@ models:
             control_channel=InMemoryControlChannel(),
             workspace_handle=workspace_handle,
             bot_model_config=bot_model_config,
+            model_choice_registry=ModelChoiceRegistry(),
+        )
+
+    await broker.stop()
+    return pool_instance
+
+
+async def _build_external_pool_no_model(
+    tmp_path: Path, *, which_result: str | None
+) -> PoolInstance:
+    """Call ``create_pool`` for an external_coding pool with ``bot_model_config=None``.
+
+    Verifies the external_coding path boots without ``model.yml`` configured
+    — no ``BotModelProvider`` is built because ``ExternalCodingAgentBuilder``
+    ignores the provider parameter.
+    """
+    from bot.service.model_choice import ModelChoiceRegistry
+    from bot.service.pool_builder import create_pool
+    from bot.workspace.handle import WorkspaceHandle
+
+    target = tmp_path / "ws"
+    target.mkdir()
+
+    pool_spec = PoolSpec(
+        name="ext_pool",
+        main_agent_name="ext",
+        main=MainAgentSpec(
+            agent_name="ext",
+            execution_strategy="external_coding",
+            provider_kind="pi",
+        ),
+    )
+    assembly_deps = PoolAssemblyDeps(memory=MemoryConfig())
+    broker = InMemoryMessageBroker()
+    await broker.start()
+    workspace_handle = WorkspaceHandle(target=target, data_root=target / ".modex")
+
+    with patch("bot.service.external_coding_strategy.shutil.which", return_value=which_result):
+        pool_instance = await create_pool(
+            pool_name="ext_pool",
+            pool_spec=pool_spec,
+            assembly_deps=assembly_deps,
+            project_dir=tmp_path,
+            data_dir=target / ".modex",
+            broker=broker,
+            output_adapter=object(),  # type: ignore[arg-type]
+            safety=RuntimeSafetyPolicy(),
+            retention=SessionRetentionPolicy(),
+            im_ui=object(),
+            shared_hooks=[],
+            shared_hook_runner=HookRunner(),
+            shared_interceptor_chain=InterceptorChain(),
+            control_channel=InMemoryControlChannel(),
+            workspace_handle=workspace_handle,
+            bot_model_config=None,
             model_choice_registry=ModelChoiceRegistry(),
         )
 
@@ -131,3 +186,28 @@ async def test_external_coding_pool_skips_agent_when_provider_missing(
     assert any(
         "main agent registration skipped" in r.message for r in caplog.records
     )
+
+
+@pytest.mark.asyncio
+async def test_external_coding_pool_boots_without_model_yml(
+    tmp_path: Path,
+) -> None:
+    """external_coding pool boots with ``bot_model_config=None`` (no model.yml).
+
+    The external CLI owns its own model configuration, so the pool builder
+    must not require a ``BotModelProvider``. This verifies the
+    ``ExternalCodingAwareFactory.create_agent`` override builds the agent
+    without ever touching the model config.
+    """
+    pool_instance = await _build_external_pool_no_model(
+        tmp_path, which_result="/usr/bin/pi"
+    )
+
+    assert "ext" in pool_instance.pool._agents
+    agent = pool_instance.pool._agents["ext"].pipeline.agent
+    assert isinstance(agent, ExternalCodingAgent)
+    # No provider is built for external_coding pools.
+    assert pool_instance.provider is None
+    # No react-only collaborators either.
+    assert pool_instance.tool_manager is not None
+    assert "send_to_agent" not in pool_instance.tool_manager.list_tools()

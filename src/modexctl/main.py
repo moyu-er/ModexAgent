@@ -18,6 +18,22 @@ from modex_agent.multi_agent.message_type import AgentMessageType
 from modex_agent.multi_agent.message_xml import build_peer_agent_message
 from modex_agent.persistence.adapters import SqliteInboxMQ
 
+
+class _PoolScopedRecordScope(RecordScope):
+    """Framework-CLI-local RecordScope subclass adding the pool dimension.
+
+    modexctl runs in a bot workspace context (ADR-0022 peer messaging) and
+    must construct pool-scoped scope_keys that match the bot's
+    ``BotRecordScope`` canonical JSON.  BotRecordScope lives in the examples
+    layer and cannot be imported by framework code (ADR-0028 layering).
+    ``RecordScope.canonical()`` stamps subclass identity by content — the
+    sorted names of non-``None`` extra fields — not by class name, so this
+    local subclass (same ``pool`` field as ``BotRecordScope``) produces
+    identical scope_keys without crossing the framework/examples boundary.
+    """
+
+    pool: str | None = None
+
 EXIT_OK: int = 0
 EXIT_USAGE: int = 1
 EXIT_ROUTING: int = 2
@@ -288,7 +304,7 @@ def _send(
     )
     db_path = inbox_root.parent / "state.db"
     _ensure_inbox_db(db_path)
-    mq = SqliteInboxMQ(db_path=db_path, scope=RecordScope(pool=target_pool))
+    mq = SqliteInboxMQ(db_path=db_path, scope=_PoolScopedRecordScope(pool=target_pool))
     mq.deliver(target_sid, message)
     typer.echo(
         f"Message delivered to '{to}' (session: {target_sid}).\n"

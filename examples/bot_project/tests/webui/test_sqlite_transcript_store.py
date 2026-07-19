@@ -437,7 +437,7 @@ async def test_session_gc_deletes_sqlite_descendant_transcripts(tmp_path: Path) 
     await connection.open()
     await BotWorkspaceMigrationRunner(connection).run_pending()
     transcript = SqliteTranscriptStore(connection)
-    session_store = SqliteSessionStore(connection, pool_resolver=lambda _: "main")
+    session_store = SqliteSessionStore(connection)
     root = SessionInfo(session_id="conv.main", agent_name="main")
     child = SessionInfo(
         session_id="conv.worker.a1",
@@ -476,7 +476,7 @@ async def test_session_gc_sweep_preserves_live_sqlite_sessions(tmp_path: Path) -
         workspace / ".modex" / "state.db", DatabaseKind.WORKSPACE
     )
     await connection.open()
-    session_store = SqliteSessionStore(connection, pool_resolver=lambda _: "main")
+    session_store = SqliteSessionStore(connection)
     await session_store.save(SessionInfo(session_id="live.main", agent_name="main"))
 
     class RecordingCleaner(SessionCleanerOperations):

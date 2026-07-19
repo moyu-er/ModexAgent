@@ -32,9 +32,11 @@ turns of that conversation.
 from __future__ import annotations
 
 import asyncio
+import atexit
 import json
 import logging
 import socket
+import weakref
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import override
@@ -42,7 +44,12 @@ from typing import override
 import aiohttp
 
 from ..agent import StreamingProviderBackend
-from ..os_layer import resolve_executable, spawn_process_group, terminate_process_group
+from ..os_layer import (
+    _sync_kill_proc,
+    resolve_executable,
+    spawn_process_group,
+    terminate_process_group,
+)
 from ..types import BackendResult, BackendStatus, Emission, ExecOptions
 from .opencode_sse_parser import OpenCodeSSEParser, SSEEventType
 
@@ -65,6 +72,25 @@ def _find_free_port() -> int:
         return s.getsockname()[1]
 
 
+_live_server_backends: weakref.WeakSet[OpenCodeServerBackend] = weakref.WeakSet()
+
+
+def _atexit_cleanup() -> None:
+    """Walk all live ``OpenCodeServerBackend`` instances and sync-kill their procs.
+
+    Registered with ``atexit`` at module import. Runs at interpreter
+    shutdown (or via ``atexit._run_exitfuncs()`` from the signal handler).
+    Skips backends whose proc already exited or was never spawned.
+    """
+    for backend in list(_live_server_backends):
+        proc = backend._server_proc
+        if proc is not None and proc.returncode is None:
+            _sync_kill_proc(proc.pid)
+
+
+atexit.register(_atexit_cleanup)
+
+
 class OpenCodeServerBackend(StreamingProviderBackend):
     """SSE-based backend — ``opencode serve`` + ``GET /event`` stream."""
 
@@ -77,6 +103,7 @@ class OpenCodeServerBackend(StreamingProviderBackend):
         self._http_session: aiohttp.ClientSession | None = None
         self._lifecycle_lock = asyncio.Lock()
         self._closed = False
+        self._finalizer: weakref.finalize | None = None
 
     _PER_TURN_ENV_KEYS: tuple[str, ...] = (
         "MODEX_SESSION_ID",
@@ -84,20 +111,14 @@ class OpenCodeServerBackend(StreamingProviderBackend):
         "MODEX_AGENT_POOL_MAP",
     )
 
-    async def _ensure_server(
-        self, workdir: Path, env: dict[str, str]
-    ) -> str:
+    async def _ensure_server(self, workdir: Path, env: dict[str, str]) -> str:
         async with self._lifecycle_lock:
             if self._closed:
                 raise RuntimeError("OpenCode server backend is closed")
             return await self._ensure_server_locked(workdir, env)
 
-    async def _ensure_server_locked(
-        self, workdir: Path, env: dict[str, str]
-    ) -> str:
-        env_fingerprint = "|".join(
-            f"{k}={env.get(k, '')}" for k in self._PER_TURN_ENV_KEYS
-        )
+    async def _ensure_server_locked(self, workdir: Path, env: dict[str, str]) -> str:
+        env_fingerprint = "|".join(f"{k}={env.get(k, '')}" for k in self._PER_TURN_ENV_KEYS)
         if (
             self._server_proc is not None
             and self._server_url is not None
@@ -135,11 +156,26 @@ class OpenCodeServerBackend(StreamingProviderBackend):
         self._server_workdir = workdir
         self._server_env_fingerprint = env_fingerprint
 
+        # Register cleanup: weakref.finalize sync-kills if GC'd without close().
+        # Detach any prior finalizer first (restart path).
+        if self._finalizer is not None:
+            self._finalizer.detach()
+        self._finalizer = weakref.finalize(self, _sync_kill_proc, self._server_proc.pid)
+        _live_server_backends.add(self)
+
         try:
             await self._wait_ready()
         except BaseException:  # noqa: BLE001 - startup rollback must include cancellation
             try:  # noqa: SIM105 - a bare raise below preserves the startup exception
                 await self._stop_server()
+                # Detach finalizer on rollback — _stop_server reaped the proc,
+                # so the finalizer's pid is stale. Without detach, a later GC
+                # would _sync_kill_proc(stale_pid) which may kill an unrelated
+                # process if the OS reuses the pid.
+                if self._finalizer is not None:
+                    self._finalizer.detach()
+                    self._finalizer = None
+                _live_server_backends.discard(self)
             except BaseException:  # noqa: BLE001 - preserve the active startup exception
                 pass
             raise
@@ -162,7 +198,7 @@ class OpenCodeServerBackend(StreamingProviderBackend):
                 ) as resp:
                     if resp.status == 200:
                         return
-            except (aiohttp.ClientError, asyncio.TimeoutError, OSError):
+            except (TimeoutError, aiohttp.ClientError, OSError):
                 pass
             await asyncio.sleep(_HEALTH_POLL_INTERVAL)
         raise SSEUnavailableError(
@@ -190,6 +226,10 @@ class OpenCodeServerBackend(StreamingProviderBackend):
         async with self._lifecycle_lock:
             self._closed = True
             await self._stop_server()
+            if self._finalizer is not None:
+                self._finalizer.detach()
+                self._finalizer = None
+            _live_server_backends.discard(self)
 
     def _ensure_http_session(self) -> aiohttp.ClientSession:
         if self._http_session is None or self._http_session.closed:
@@ -210,7 +250,12 @@ class OpenCodeServerBackend(StreamingProviderBackend):
             return data["id"]
 
     async def _send_prompt_async(
-        self, server_url: str, session_id: str, workdir: str, prompt: str, model: str | None,
+        self,
+        server_url: str,
+        session_id: str,
+        workdir: str,
+        prompt: str,
+        model: str | None,
         system_prompt: str | None = None,
     ) -> None:
         session = self._ensure_http_session()
@@ -219,7 +264,11 @@ class OpenCodeServerBackend(StreamingProviderBackend):
         }
         if model:
             parts = model.split("/", 1)
-            payload["model"] = {"providerID": parts[0], "modelID": parts[1]} if len(parts) == 2 else {"providerID": "", "modelID": model}
+            payload["model"] = (
+                {"providerID": parts[0], "modelID": parts[1]}
+                if len(parts) == 2
+                else {"providerID": "", "modelID": model}
+            )
         if system_prompt:
             payload["system"] = system_prompt
         async with session.post(
@@ -272,7 +321,11 @@ class OpenCodeServerBackend(StreamingProviderBackend):
             sse_resp.raise_for_status()
 
             await self._send_prompt_async(
-                server_url, session_id, workdir_str, opts.prompt, opts.model,
+                server_url,
+                session_id,
+                workdir_str,
+                opts.prompt,
+                opts.model,
                 system_prompt=opts.system_prompt,
             )
 
@@ -282,7 +335,7 @@ class OpenCodeServerBackend(StreamingProviderBackend):
                     line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
                     if not line.startswith("data:"):
                         continue
-                    json_str = line[len("data:"):].strip()
+                    json_str = line[len("data:") :].strip()
                     if not json_str:
                         continue
                     try:
@@ -329,13 +382,11 @@ class OpenCodeServerBackend(StreamingProviderBackend):
                         await on_emission(emission)
 
             await asyncio.wait_for(_consume_sse(), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return BackendResult(status=BackendStatus.TIMEOUT, session_id=session_id)
         except Exception as exc:
             logger.exception("OpenCode SSE backend error")
-            return BackendResult(
-                status=BackendStatus.FAILED, session_id=session_id, error=str(exc)
-            )
+            return BackendResult(status=BackendStatus.FAILED, session_id=session_id, error=str(exc))
         finally:
             sse_resp.close()
 

@@ -146,6 +146,7 @@ async def test_qq_attachment_ref_flows_through_im_pipeline_to_persisted_record()
 
         ctx = BotInputContext(
             default_pool="main",
+            available_pools=lambda: {"main"},
             pool_session_store=pool_store,
             agent_pool_map={"main": "main"},
             agent_resolver=lambda p: p,

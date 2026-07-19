@@ -96,6 +96,38 @@ async def test_materialize_subagent_inherits_reasoning_effort() -> None:
 
 
 @pytest.mark.asyncio
+async def test_materialize_subagent_passes_roles_to_descriptor() -> None:
+    """T1 data-layer透传: SubagentSpec.roles lands on AgentDescriptor.roles.
+
+    The materialize call constructs the descriptor from the spec; the
+    ``roles`` field must round-trip verbatim. Preset values (AgentRole
+    members) collapse to their plain string value via StrEnum; custom
+    strings are preserved as-is.
+    """
+    deps, factory = _make_deps()
+    template = AgentTemplate(
+        spec=SubagentSpec(agent_name="scout", roles=["planner", "custom-role"])
+    )
+    parent = SessionIdFactory().create(agent_name="main")
+    await template.materialize(parent_session=parent, invocation_id="inv1", deps=deps)
+    call_kwargs = factory.create_agent.call_args.kwargs
+    descriptor = call_kwargs.get("descriptor") or factory.create_agent.call_args.args[0]
+    assert descriptor.roles == ["planner", "custom-role"]
+
+
+@pytest.mark.asyncio
+async def test_materialize_subagent_roles_default_empty() -> None:
+    """When SubagentSpec omits roles, descriptor.roles defaults to []."""
+    deps, factory = _make_deps()
+    template = AgentTemplate(spec=SubagentSpec(agent_name="scout"))
+    parent = SessionIdFactory().create(agent_name="main")
+    await template.materialize(parent_session=parent, invocation_id="inv1", deps=deps)
+    call_kwargs = factory.create_agent.call_args.kwargs
+    descriptor = call_kwargs.get("descriptor") or factory.create_agent.call_args.args[0]
+    assert descriptor.roles == []
+
+
+@pytest.mark.asyncio
 async def test_materialize_subagent_wires_hooks_to_hook_runner():
     """ADR-0015 D5: SubagentAutoSendHook must reach pipeline.hook_runner
     (factory's hooks= param only stores on pipeline.hooks, which isn't
@@ -127,3 +159,123 @@ async def test_materialize_subagent_wires_hooks_to_hook_runner():
     await template.materialize(parent_session=parent, invocation_id="inv1", deps=deps)
     # SubagentAutoSendHook must be added to hook_runner (not just pipeline.hooks)
     assert fake_instance.pipeline.hook_runner.add.call_count >= 1
+
+
+# ---------------------------------------------------------------------------
+# EXTERNAL_CODING subagent dispatch — emitter_factory post-build wiring
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_materialize_external_injects_emitter_factory_into_turn_runner():
+    """Regression: external subagents bypass pool_builder's
+    ``_create_with_emitter`` wrapper (which injects the WebUI emitter for
+    react subagents + external main agent). The framework must inject the
+    emitter in ``_materialize_external`` so the external subagent's turns
+    write transcript events. Without it, ``ExternalTurnRunner`` keeps the
+    default ``StreamingAwareEmitter``+``BrokerOutputAdapter`` from
+    ``assemble_pipeline`` and turns are invisible in the WebUI history.
+    """
+    from modex_agent.agents.external_coding.subagent_builder import (
+        SubagentExternalCodingBuilder,
+    )
+    from modex_agent.core.constants import ExecutionStrategyKind
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.multi_agent.descriptor import (
+        AgentDescriptor,
+        AgentInstance,
+    )
+    from modex_agent.multi_agent.pool_config.specs import ProviderKind
+
+    sentinel_emitter_factory = MagicMock(name="webui_emitter_factory")
+    fake_turn_runner = MagicMock()
+    fake_pipeline = MagicMock()
+    fake_pipeline._turn_runner = fake_turn_runner
+    fake_instance = AgentInstance(
+        descriptor=MagicMock(),
+        context_manager=MagicMock(),
+        pipeline=fake_pipeline,
+    )
+
+    class _StubBuilder(SubagentExternalCodingBuilder):
+        async def build(self, spec, descriptor, parent_session, invocation_id, deps):
+            return fake_instance
+
+    pool = MagicMock()
+    pool.register_resident = AsyncMock()
+    deps = AgentMaterializeDeps(
+        agent_factory=MagicMock(),
+        pool=pool,
+        session_factory=SessionIdFactory(),
+        broker=MagicMock(),
+        subagent_external_coding_builder=_StubBuilder(),
+        emitter_factory=sentinel_emitter_factory,
+    )
+    spec = SubagentSpec(
+        agent_name="coder",
+        execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+        provider_kind=ProviderKind.OPENCODE,
+    )
+    template = AgentTemplate(spec=spec)
+    parent = SessionInfo.from_str("inv1.main")
+
+    await template.materialize(
+        parent_session=parent, invocation_id="inv1", deps=deps
+    )
+
+    fake_turn_runner.set_emitter_factory.assert_called_once_with(
+        sentinel_emitter_factory
+    )
+
+
+@pytest.mark.asyncio
+async def test_materialize_external_skips_emitter_injection_when_deps_emitter_none():
+    """No emitter_factory in deps → no set_emitter_factory call; the
+    external subagent keeps the default factory from assemble_pipeline."""
+    from modex_agent.agents.external_coding.subagent_builder import (
+        SubagentExternalCodingBuilder,
+    )
+    from modex_agent.core.constants import ExecutionStrategyKind
+    from modex_agent.core.session_id import SessionInfo
+    from modex_agent.multi_agent.descriptor import (
+        AgentDescriptor,
+        AgentInstance,
+    )
+    from modex_agent.multi_agent.pool_config.specs import ProviderKind
+
+    fake_turn_runner = MagicMock()
+    fake_pipeline = MagicMock()
+    fake_pipeline._turn_runner = fake_turn_runner
+    fake_instance = AgentInstance(
+        descriptor=MagicMock(),
+        context_manager=MagicMock(),
+        pipeline=fake_pipeline,
+    )
+
+    class _StubBuilder(SubagentExternalCodingBuilder):
+        async def build(self, spec, descriptor, parent_session, invocation_id, deps):
+            return fake_instance
+
+    pool = MagicMock()
+    pool.register_resident = AsyncMock()
+    deps = AgentMaterializeDeps(
+        agent_factory=MagicMock(),
+        pool=pool,
+        session_factory=SessionIdFactory(),
+        broker=MagicMock(),
+        subagent_external_coding_builder=_StubBuilder(),
+        emitter_factory=None,
+    )
+    spec = SubagentSpec(
+        agent_name="coder",
+        execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+        provider_kind=ProviderKind.OPENCODE,
+    )
+    template = AgentTemplate(spec=spec)
+    parent = SessionInfo.from_str("inv1.main")
+
+    await template.materialize(
+        parent_session=parent, invocation_id="inv1", deps=deps
+    )
+
+    fake_turn_runner.set_emitter_factory.assert_not_called()

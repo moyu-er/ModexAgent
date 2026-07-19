@@ -51,23 +51,39 @@ const tree = {
 
 const poolList = [{ name: "default", main_agent_name: "main", subagent_count: 0 }];
 
+const promptList = [
+  { name: "coder", size_bytes: 100, mtime: "2024-01-01T00:00:00Z" },
+  { name: "office-expert", size_bytes: 200, mtime: "2024-01-02T00:00:00Z" },
+];
+
 function defaultFetch(url: string): Response {
   if (url === "/api/pools") return makeResponse(200, poolList);
+  if (url === "/api/prompts") return makeResponse(200, promptList);
   if (url.includes("/skills")) return makeResponse(200, []);
   return makeResponse(200, tree);
 }
 
 afterEach(() => vi.unstubAllGlobals());
 
+// DropdownPanel interaction helper: open the labeled dropdown and click an
+// option by its visible name (the native <select> wrapper is gone — all
+// dropdowns are now listbox panels).
+function pickOption(field: string | RegExp, option: string | RegExp): void {
+  fireEvent.click(screen.getByLabelText(field));
+  fireEvent.click(screen.getByRole("option", { name: option }));
+}
+
 async function renderEditor(props: {
   pool?: string;
   onDirtyChange?: (d: boolean) => void;
+  onNavigateToPrompts?: () => void;
 }): Promise<void> {
   render(
     <ToastProvider>
       <PoolEditor
         pool={props.pool ?? "default"}
         onDirtyChange={props.onDirtyChange}
+        onNavigateToPrompts={props.onNavigateToPrompts ?? (() => {})}
       />
     </ToastProvider>,
   );
@@ -77,7 +93,7 @@ async function renderEditor(props: {
 }
 
 /** Renders PoolEditor together with the ActionBar now hosted by PoolsView. */
-function EditorWithActionBar({ pool }: { pool?: string }) {
+function EditorWithActionBar({ pool, onNavigateToPrompts }: { pool?: string; onNavigateToPrompts?: () => void }) {
   const saveRef = useRef<(() => Promise<void>) | null>(null);
   const cancelRef = useRef<(() => void) | null>(null);
   const [dirty, setDirty] = useState<boolean>(false);
@@ -86,6 +102,7 @@ function EditorWithActionBar({ pool }: { pool?: string }) {
       <PoolEditor
         pool={pool ?? "default"}
         onDirtyChange={setDirty}
+        onNavigateToPrompts={onNavigateToPrompts ?? (() => {})}
         onSave={(save) => {
           saveRef.current = save;
         }}
@@ -144,11 +161,21 @@ describe("PoolEditor", () => {
     const onDirtyChange = vi.fn();
     await renderEditor({ onDirtyChange });
     await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
-    // mcp selector also fires a fetch on mount; ignore it.
-    fireEvent.change(screen.getByDisplayValue("main"), {
-      target: { value: "boss" },
+    fireEvent.change(screen.getByDisplayValue("12"), {
+      target: { value: "99" },
     });
     expect(onDirtyChange).toHaveBeenCalledWith(true);
+  });
+
+  it("saved agent name is locked — input is disabled", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => Promise.resolve(defaultFetch(url))),
+    );
+    await renderEditor({});
+    await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
+    const nameInput = screen.getByDisplayValue("main") as HTMLInputElement;
+    expect(nameInput.disabled).toBe(true);
   });
 
   it("Save calls savePool (PUT) and surfaces restart toast when restart_required", async () => {
@@ -164,8 +191,8 @@ describe("PoolEditor", () => {
     vi.stubGlobal("fetch", fetchMock);
     await renderEditorWithActionBar();
     await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
-    fireEvent.change(screen.getByDisplayValue("main"), {
-      target: { value: "boss" },
+    fireEvent.change(screen.getByDisplayValue("12"), {
+      target: { value: "99" },
     });
     fireEvent.click(screen.getByText("Save"));
     await waitFor(() =>
@@ -175,11 +202,10 @@ describe("PoolEditor", () => {
     const calls = fetchMock.mock.calls as unknown as Call[];
     const puts = calls.filter((c) => c[1]?.method === "PUT");
     expect(puts.length).toBeGreaterThanOrEqual(1);
-    // The PUT body carries the edited value (agent_name "boss"), not just any PUT.
     const putBody = JSON.parse(String(puts[0]![1]!.body)) as {
-      main?: { agent_name?: string };
+      main?: { max_steps?: number };
     };
-    expect(putBody.main?.agent_name).toBe("boss");
+    expect(putBody.main?.max_steps).toBe(99);
   });
 
   it("validation error (400 fields) maps onto inline field error", async () => {
@@ -254,99 +280,6 @@ describe("PoolEditor", () => {
     expect(true).toBe(true);
   });
 
-  // ─── system-prompt Edit button gating ──────────────────────────────────
-  // Regression: clicking "System prompt [Edit]" on an unnamed subagent built
-  // an URL with a double slash (`/agents//prompt`), which aiohttp routed to
-  // a 404. The button is now disabled when agent_name is empty/invalid; the
-  // backend PUT still creates the file once a valid name is provided.
-
-  it("disables 'System prompt [Edit]' for an untitled (empty-name) subagent", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string) => Promise.resolve(defaultFetch(url))),
-    );
-    await renderEditor({});
-    await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
-
-    // Add a subagent — auto-expanded with empty agent_name.
-    fireEvent.click(screen.getByRole("button", { name: /Add subagent/ }));
-    await waitFor(() =>
-      expect(screen.queryAllByText("Loading…")).toHaveLength(0),
-    );
-
-    const editBtns = screen.getAllByRole("button", {
-      name: /System prompt \[Edit\]/,
-    }) as HTMLButtonElement[];
-    // [main, subagent]
-    expect(editBtns.length).toBe(2);
-    expect(editBtns[0]!.disabled).toBe(false);
-    expect(editBtns[1]!.disabled).toBe(true);
-    expect(screen.getByText(/Provide an agent name/)).toBeTruthy();
-  });
-
-  it("enables 'System prompt [Edit]' once a valid name is typed", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string) => Promise.resolve(defaultFetch(url))),
-    );
-    await renderEditor({});
-    await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
-
-    fireEvent.click(screen.getByRole("button", { name: /Add subagent/ }));
-    await waitFor(() =>
-      expect(screen.queryAllByText("Loading…")).toHaveLength(0),
-    );
-
-    // After add-subagent (approval disabled, main + subagent descriptions
-    // rendered) the DOM textboxes (role="textbox") are, in order:
-    //   [mainName, mainDescription, subagentName, subagentDescription]
-    // — number inputs are role="spinbutton", textareas don't exist here.
-    const textboxes = screen.getAllByRole("textbox") as HTMLInputElement[];
-    expect(textboxes.length).toBe(4);
-    const subagentNameInput = textboxes[2]!;
-    expect(subagentNameInput.value).toBe("");
-    fireEvent.change(subagentNameInput, { target: { value: "oracle" } });
-
-    const editBtns = screen.getAllByRole("button", {
-      name: /System prompt \[Edit\]/,
-    }) as HTMLButtonElement[];
-    expect(editBtns[1]!.disabled).toBe(false);
-    expect(screen.queryByText(/Provide an agent name/)).toBeNull();
-  });
-
-  it("disables main agent's 'System prompt [Edit]' when main name is cleared", async () => {
-    // Use a no-subagent tree so only main's Edit button is in the DOM
-    // (existing subagent's button is gated behind a collapsed card).
-    const treeNoSub = { ...tree, subagents: [] };
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string) =>
-        Promise.resolve(
-          makeResponse(
-            200,
-            url === "/api/pools"
-              ? poolList
-              : url.includes("/skills")
-                ? []
-                : treeNoSub,
-          ),
-        ),
-      ),
-    );
-    await renderEditor({});
-    await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
-
-    fireEvent.change(screen.getByDisplayValue("main"), {
-      target: { value: "" },
-    });
-
-    const editBtns = screen.getAllByRole("button", {
-      name: /System prompt \[Edit\]/,
-    }) as HTMLButtonElement[];
-    expect(editBtns.length).toBe(1);
-    expect(editBtns[0]!.disabled).toBe(true);
-  });
-
   it("renders the 'Skill assignments save immediately.' caption", async () => {
     vi.stubGlobal(
       "fetch",
@@ -355,13 +288,20 @@ describe("PoolEditor", () => {
     await renderEditor({});
     await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
     // Main agent's caption is always visible. (Subagent captions only render
-    // when the card is expanded.) We assert main caption exists with Geist styling.
+    // when the card is expanded.) We assert main caption exists with Inter styling.
     const caption = screen.getByText(/Skill assignments save immediately/);
     expect(caption.className).toContain("italic");
     expect(caption.className).toContain("text-body");
   });
 
-  it("System prompt [Edit] opens a slide-over (does not unmount PoolEditor)", async () => {
+  // ─── prompt selector (replaces the inline "Edit system prompt" button) ───
+  //
+  // Ticket 5: each agent card carries a dropdown populated from
+  // GET /api/prompts. The first option is always "none" (the agent-name
+  // fallback). A "Manage prompts" link jumps to the Prompts tab via
+  // onNavigateToPrompts.
+
+  it("renders a prompt selector on the main agent with 'none' as the first option", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((url: string) => Promise.resolve(defaultFetch(url))),
@@ -369,17 +309,139 @@ describe("PoolEditor", () => {
     await renderEditor({});
     await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
 
-    const editBtn = screen.getByRole("button", {
-      name: /System prompt \[Edit\]/,
-    }) as HTMLButtonElement;
-    fireEvent.click(editBtn);
+    const trigger = screen.getByLabelText("Prompt");
+    expect(trigger.textContent).toContain("none");
+    fireEvent.click(trigger);
+    const opts = screen.getAllByRole("option");
+    expect(opts[0]!.textContent).toBe("none");
+  });
 
-    // Slide-over dialog renders the prompt editor; the underlying Pool header
-    // is still in the DOM (i.e. the editor was not unmounted).
-    await waitFor(() =>
-      expect(screen.getByRole("dialog", { name: /prompt editor/i })).toBeTruthy(),
+  it("prompt selector lists prompts from GET /api/prompts", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => Promise.resolve(defaultFetch(url))),
     );
-    expect(screen.getByText(/Pool: default/)).toBeTruthy();
+    await renderEditor({});
+    await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
+
+    fireEvent.click(screen.getByLabelText("Prompt"));
+    const labels = screen.getAllByRole("option").map((o) => o.textContent);
+    // ["none", "coder", "office-expert"] — "none" is the fallback.
+    expect(labels).toEqual(["none", "coder", "office-expert"]);
+  });
+
+  it("selecting a prompt updates form.main.prompt_name", async () => {
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (url.includes("/pools/default") && method === "PUT") {
+        return Promise.resolve(
+          makeResponse(200, { ...tree, restart_required: false }),
+        );
+      }
+      return Promise.resolve(defaultFetch(url));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await renderEditorWithActionBar();
+    await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
+
+    pickOption("Prompt", "coder");
+    expect(screen.getByLabelText("Prompt").textContent).toContain("coder");
+
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls as [string, RequestInit?][];
+      expect(calls.filter((c) => c[1]?.method === "PUT").length).toBeGreaterThanOrEqual(1);
+    });
+    const calls = fetchMock.mock.calls as [string, RequestInit?][];
+    const puts = calls.filter((c) => c[1]?.method === "PUT");
+    const body = puts[0]?.[1]?.body;
+    if (typeof body !== "string") throw new Error("PUT body missing");
+    const putBody = JSON.parse(body) as { main?: { prompt_name?: string } };
+    expect(putBody.main?.prompt_name).toBe("coder");
+  });
+
+  it("selecting 'none' clears form.main.prompt_name on save", async () => {
+    // Loaded tree carries an explicit prompt_name — selecting "none" must
+    // drop it back to undefined so the YAML omits the field on save.
+    const treeWithPrompt = {
+      ...tree,
+      main: { ...tree.main, prompt_name: "coder" },
+    };
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (url.includes("/pools/default") && method === "PUT") {
+        return Promise.resolve(
+          makeResponse(200, { ...tree, restart_required: false }),
+        );
+      }
+      return Promise.resolve(
+        makeResponse(
+          200,
+          url === "/api/pools" ? poolList
+          : url === "/api/prompts" ? promptList
+          : url.includes("/skills") ? []
+          : treeWithPrompt,
+        ),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await renderEditorWithActionBar();
+    await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
+
+    const trigger = screen.getByLabelText("Prompt");
+    await waitFor(() => expect(trigger.textContent).toContain("coder"));
+    pickOption("Prompt", "none");
+    expect(screen.getByLabelText("Prompt").textContent).toContain("none");
+
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls as [string, RequestInit?][];
+      expect(calls.filter((c) => c[1]?.method === "PUT").length).toBeGreaterThanOrEqual(1);
+    });
+    const calls = fetchMock.mock.calls as [string, RequestInit?][];
+    const puts = calls.filter((c) => c[1]?.method === "PUT");
+    const body = puts[0]?.[1]?.body;
+    if (typeof body !== "string") throw new Error("PUT body missing");
+    const putBody = JSON.parse(body) as { main?: { prompt_name?: string } };
+    expect(putBody.main?.prompt_name).toBeUndefined();
+  });
+
+  it("'Manage prompts' link calls onNavigateToPrompts", async () => {
+    const onNavigateToPrompts = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => Promise.resolve(defaultFetch(url))),
+    );
+    await renderEditor({ onNavigateToPrompts });
+    await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
+
+    const manageLinks = screen.getAllByRole("button", { name: "Manage prompts" });
+    expect(manageLinks.length).toBeGreaterThanOrEqual(1);
+    fireEvent.click(manageLinks[0]!);
+    expect(onNavigateToPrompts).toHaveBeenCalledTimes(1);
+  });
+
+  it("prompt selector on a subagent binds to form.subagents[i].prompt_name", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => Promise.resolve(defaultFetch(url))),
+    );
+    await renderEditor({});
+    await waitFor(() => expect(screen.getByText("researcher")).toBeTruthy());
+
+    // Expand the subagent card so its prompt selector is in the DOM.
+    fireEvent.click(screen.getByText("researcher"));
+
+    // Two prompt selectors exist now: main + subagent. The subagent one
+    // is the second dropdown labeled "Prompt".
+    const triggers = screen.getAllByLabelText("Prompt");
+    expect(triggers.length).toBe(2);
+    const subTrigger = triggers[1]!;
+    expect(subTrigger.textContent).toContain("none");
+
+    fireEvent.click(subTrigger);
+    fireEvent.click(screen.getByRole("option", { name: "office-expert" }));
+    expect(subTrigger.textContent).toContain("office-expert");
   });
 
   const multiPoolList = [
@@ -397,9 +459,11 @@ describe("PoolEditor", () => {
             200,
             url === "/api/pools"
               ? multiPoolList
-              : url.includes("/skills")
-                ? []
-                : treeWithPeer,
+              : url === "/api/prompts"
+                ? promptList
+                : url.includes("/skills")
+                  ? []
+                  : treeWithPeer,
           ),
         ),
       ),
@@ -428,8 +492,7 @@ describe("PoolEditor", () => {
     await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
 
     fireEvent.click(screen.getByRole("button", { name: /Add peer/ }));
-    const select = screen.getByLabelText("New peer pool") as HTMLSelectElement;
-    fireEvent.change(select, { target: { value: "research" } });
+    pickOption("New peer pool", "research (research-main)");
     fireEvent.click(screen.getByRole("button", { name: /^Add$/ }));
 
     await waitFor(() => expect(screen.getByText("research")).toBeTruthy());
@@ -450,7 +513,7 @@ describe("PoolEditor", () => {
           makeResponse(200, { pool_a: { ...tree, peers: [] }, pool_b: { ...tree, name: "research", peers: [] } }),
         );
       }
-      return Promise.resolve(makeResponse(200, url.includes("/skills") ? [] : treeWithPeer));
+      return Promise.resolve(makeResponse(200, url === "/api/prompts" ? promptList : url.includes("/skills") ? [] : treeWithPeer));
     });
     vi.stubGlobal("fetch", fetchMock);
     await renderEditor({});
@@ -483,8 +546,7 @@ describe("PoolEditor", () => {
     await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
 
     fireEvent.click(screen.getByRole("button", { name: /Add peer/ }));
-    const select = screen.getByLabelText("New peer pool") as HTMLSelectElement;
-    fireEvent.change(select, { target: { value: "research" } });
+    pickOption("New peer pool", "research (research-main)");
     fireEvent.click(screen.getByRole("button", { name: /^Add$/ }));
 
     await waitFor(() => expect(screen.getByText("already a peer")).toBeTruthy());
@@ -510,6 +572,7 @@ describe("PoolEditor", () => {
 
   function externalFetch(url: string): Response {
     if (url === "/api/pools") return makeResponse(200, poolList);
+    if (url === "/api/prompts") return makeResponse(200, promptList);
     if (url.includes("/skills")) return makeResponse(200, []);
     return makeResponse(200, treeExternal);
   }
@@ -520,40 +583,33 @@ describe("PoolEditor", () => {
       vi.fn((url: string) => Promise.resolve(defaultFetch(url))),
     );
     await renderEditor({});
-    const impl = screen.getByLabelText("Implementation") as HTMLSelectElement;
-    expect(impl.value).toBe("react");
+    const impl = screen.getByLabelText("Implementation");
+    expect(impl.textContent).toContain("Native");
     // Native controls are visible in native mode.
     expect(screen.getByLabelText("Max steps")).toBeTruthy();
     // No external runtime panel in native mode.
     expect(screen.queryByTestId("external-runtime-panel")).toBeNull();
   });
 
-  it("external mode groups Implementation + Provider in one runtime panel; Provider has only OpenCode; hides native-only controls, subagents and system prompt", async () => {
+  it("external mode groups Implementation + Provider in one runtime panel; Provider has only OpenCode; hides native-only controls and subagents", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn((url: string) => Promise.resolve(externalFetch(url))),
     );
     await renderEditor({});
 
-    // Both selects live inside one runtime panel (semantic group, not a
+    // Both dropdowns live inside one runtime panel (semantic group, not a
     // fragile class) — the approved runtime-first layout.
     const panel = screen.getByTestId("external-runtime-panel");
-    const impl = within(panel).getByLabelText(
-      "Implementation",
-    ) as HTMLSelectElement;
-    const provider = within(panel).getByLabelText(
-      "Provider",
-    ) as HTMLSelectElement;
-    expect(impl.value).toBe("external_coding");
-    expect(provider.value).toBe("opencode");
-    // Provider dropdown carries exactly one option: OpenCode.
-    expect(provider.querySelectorAll("option")).toHaveLength(1);
-    // Provider dropdown options equal the catalog.
-    expect(
-      Array.from(provider.querySelectorAll("option")).map(
-        (o) => (o as HTMLOptionElement).value,
-      ),
-    ).toEqual(PROVIDER_OPTIONS.map((o) => o.value));
+    const impl = within(panel).getByLabelText("Implementation");
+    const provider = within(panel).getByLabelText("Provider");
+    expect(impl.textContent).toContain("External");
+    expect(provider.textContent).toContain("OpenCode");
+    // Provider dropdown options equal the catalog (exactly one: OpenCode).
+    fireEvent.click(provider);
+    const providerOptions = screen.getAllByRole("option").map((o) => o.textContent);
+    expect(providerOptions).toEqual(PROVIDER_OPTIONS.map((o) => o.label));
+    fireEvent.keyDown(screen.getByRole("listbox"), { key: "Escape" });
 
     // Identity fields follow the runtime panel.
     expect(screen.getByLabelText(/Agent name/)).toBeTruthy();
@@ -567,9 +623,6 @@ describe("PoolEditor", () => {
       screen.queryByText("Approval required for write/edit tools"),
     ).toBeNull();
     expect(screen.queryByText("Skill assignments save immediately.")).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: /System prompt \[Edit\]/ }),
-    ).toBeNull();
 
     // Subagents section is hidden entirely.
     expect(screen.queryByText("Subagents")).toBeNull();
@@ -596,9 +649,11 @@ describe("PoolEditor", () => {
             200,
             url === "/api/pools"
               ? multiPoolList
-              : url.includes("/skills")
-                ? []
-                : treeExtPeer,
+              : url === "/api/prompts"
+                ? promptList
+                : url.includes("/skills")
+                  ? []
+                  : treeExtPeer,
           ),
         ),
       ),
@@ -617,9 +672,7 @@ describe("PoolEditor", () => {
     // Native pool carries one subagent.
     expect(screen.getByText("researcher")).toBeTruthy();
 
-    fireEvent.change(screen.getByLabelText("Implementation"), {
-      target: { value: "external_coding" },
-    });
+    pickOption("Implementation", "External");
 
     // Confirm dialog opens with the save/cancel persisted-config disclaimer.
     expect(
@@ -638,9 +691,7 @@ describe("PoolEditor", () => {
     );
 
     // Draft untouched: still native, subagent still present.
-    expect(
-      (screen.getByLabelText("Implementation") as HTMLSelectElement).value,
-    ).toBe("react");
+    expect(screen.getByLabelText("Implementation").textContent).toContain("Native");
     expect(screen.getByText("researcher")).toBeTruthy();
 
     // Disk untouched: no PUT issued.
@@ -656,21 +707,15 @@ describe("PoolEditor", () => {
     await renderEditor({});
     expect(screen.getByText("researcher")).toBeTruthy();
 
-    fireEvent.change(screen.getByLabelText("Implementation"), {
-      target: { value: "external_coding" },
-    });
+    pickOption("Implementation", "External");
     fireEvent.click(
       screen.getByRole("button", { name: "Switch to External" }),
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
-    expect(
-      (screen.getByLabelText("Implementation") as HTMLSelectElement).value,
-    ).toBe("external_coding");
+    expect(screen.getByLabelText("Implementation").textContent).toContain("External");
     expect(screen.queryByText("researcher")).toBeNull();
-    expect(
-      (screen.getByLabelText("Provider") as HTMLSelectElement).value,
-    ).toBe("opencode");
+    expect(screen.getByLabelText("Provider").textContent).toContain("OpenCode");
   });
 
   it("Save after native→external PUT carries strategy, provider and cleared subagents", async () => {
@@ -686,9 +731,7 @@ describe("PoolEditor", () => {
     vi.stubGlobal("fetch", fetchMock);
     await renderEditorWithActionBar();
 
-    fireEvent.change(screen.getByLabelText("Implementation"), {
-      target: { value: "external_coding" },
-    });
+    pickOption("Implementation", "External");
     fireEvent.click(
       screen.getByRole("button", { name: "Switch to External" }),
     );
@@ -735,9 +778,11 @@ describe("PoolEditor", () => {
           200,
           url === "/api/pools"
             ? poolList
-            : url.includes("/skills")
-              ? []
-              : treePiExternal,
+            : url === "/api/prompts"
+              ? promptList
+              : url.includes("/skills")
+                ? []
+                : treePiExternal,
         ),
       );
     });
@@ -745,9 +790,9 @@ describe("PoolEditor", () => {
     await renderEditorWithActionBar();
 
     // Provider shows catalog default for unsupported pi.
-    expect(
-      (screen.getByLabelText("Provider") as HTMLSelectElement).value,
-    ).toBe(DEFAULT_EXTERNAL_PROVIDER);
+    expect(screen.getByLabelText("Provider").textContent).toContain(
+      DEFAULT_EXTERNAL_PROVIDER_DESCRIPTOR.label,
+    );
 
     // Touch a field to enable Save.
     fireEvent.change(screen.getByLabelText(/Agent name/), {
@@ -779,21 +824,207 @@ describe("PoolEditor", () => {
       vi.fn((url: string) => Promise.resolve(externalFetch(url))),
     );
     await renderEditor({});
-    expect(
-      (screen.getByLabelText("Implementation") as HTMLSelectElement).value,
-    ).toBe("external_coding");
+    expect(screen.getByLabelText("Implementation").textContent).toContain("External");
 
-    fireEvent.change(screen.getByLabelText("Implementation"), {
-      target: { value: "react" },
-    });
+    pickOption("Implementation", "Native");
 
     // No confirm dialog.
     expect(screen.queryByRole("dialog")).toBeNull();
-    // Now native: Implementation react, native controls visible, provider gone.
-    expect(
-      (screen.getByLabelText("Implementation") as HTMLSelectElement).value,
-    ).toBe("react");
+    // Now native: Implementation Native, native controls visible, provider gone.
+    expect(screen.getByLabelText("Implementation").textContent).toContain("Native");
     expect(screen.getByLabelText("Max steps")).toBeTruthy();
     expect(screen.queryByLabelText("Provider")).toBeNull();
+  });
+
+  // ─── Roles multi-select dropdown ───────────────────────────────────────
+  //
+  // T4: both MainAgentFields and SubagentCard render a Roles dropdown.
+  // Seven preset AgentRole values show as localized checkboxes; a "Custom…"
+  // entry reveals a free-text input. Selected roles show as removable chips.
+  // The backend stores list[str] verbatim (no enum validation), so custom
+  // strings round-trip unchanged.
+
+  it("renders a Roles trigger on the main agent", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => Promise.resolve(defaultFetch(url))),
+    );
+    await renderEditor({});
+    await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
+    expect(screen.getByText("Roles")).toBeTruthy();
+  });
+
+  it("renders a Roles trigger on a subagent when its card is expanded", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => Promise.resolve(defaultFetch(url))),
+    );
+    await renderEditor({});
+    await waitFor(() => expect(screen.getByText("researcher")).toBeTruthy());
+    // Only main's Roles trigger is visible while the subagent card is collapsed.
+    expect(screen.getAllByText("Roles")).toHaveLength(1);
+    // Expand the subagent card by clicking its header.
+    fireEvent.click(screen.getByText("researcher"));
+    // Now both main and subagent Roles triggers are present.
+    expect(screen.getAllByText("Roles")).toHaveLength(2);
+  });
+
+  it("selecting a preset role adds it to form state (chip with remove button appears)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => Promise.resolve(defaultFetch(url))),
+    );
+    await renderEditor({});
+    await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
+    fireEvent.click(screen.getByText("Roles"));
+    fireEvent.click(screen.getByLabelText("Reviewer"));
+    // Close the popover so the checkbox label is no longer in the DOM —
+    // the only remaining "Reviewer" surface is the chip's remove button.
+    fireEvent.click(screen.getByText("Roles"));
+    expect(
+      screen.getByRole("button", { name: "Remove role reviewer" }),
+    ).toBeTruthy();
+  });
+
+  it("clicking 'Custom…' reveals the free-text custom role input", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => Promise.resolve(defaultFetch(url))),
+    );
+    await renderEditor({});
+    await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
+    fireEvent.click(screen.getByText("Roles"));
+    fireEvent.click(screen.getByText("Custom…"));
+    expect(
+      screen.getByPlaceholderText("Type a custom role…"),
+    ).toBeTruthy();
+  });
+
+  it("typing a custom role and clicking Add adds it to form state", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => Promise.resolve(defaultFetch(url))),
+    );
+    await renderEditor({});
+    await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
+    fireEvent.click(screen.getByText("Roles"));
+    fireEvent.click(screen.getByText("Custom…"));
+    fireEvent.change(screen.getByPlaceholderText("Type a custom role…"), {
+      target: { value: "office-expert" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Add$/ }));
+    // Close popover — the chip's remove button is the remaining surface.
+    fireEvent.click(screen.getByText("Roles"));
+    expect(
+      screen.getByRole("button", { name: "Remove role office-expert" }),
+    ).toBeTruthy();
+  });
+
+  it("multiple roles (preset + custom) can be selected for one agent", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => Promise.resolve(defaultFetch(url))),
+    );
+    await renderEditor({});
+    await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
+    fireEvent.click(screen.getByText("Roles"));
+    fireEvent.click(screen.getByLabelText("Reviewer"));
+    fireEvent.click(screen.getByText("Custom…"));
+    fireEvent.change(screen.getByPlaceholderText("Type a custom role…"), {
+      target: { value: "office-expert" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Add$/ }));
+    fireEvent.click(screen.getByText("Roles"));
+    expect(
+      screen.getByRole("button", { name: "Remove role reviewer" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Remove role office-expert" }),
+    ).toBeTruthy();
+  });
+
+  it("removing a role via the chip remove button drops it from form state", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => Promise.resolve(defaultFetch(url))),
+    );
+    await renderEditor({});
+    await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
+    fireEvent.click(screen.getByText("Roles"));
+    fireEvent.click(screen.getByLabelText("Reviewer"));
+    fireEvent.click(screen.getByText("Roles"));
+    expect(
+      screen.getByRole("button", { name: "Remove role reviewer" }),
+    ).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove role reviewer" }),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Remove role reviewer" }),
+    ).toBeNull();
+  });
+
+  it("Save PUT carries roles (preset + custom) in the request body", async () => {
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (url.includes("/pools/default") && method === "PUT") {
+        return Promise.resolve(
+          makeResponse(200, { ...tree, restart_required: false }),
+        );
+      }
+      return Promise.resolve(defaultFetch(url));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await renderEditorWithActionBar();
+    await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
+    fireEvent.click(screen.getByText("Roles"));
+    fireEvent.click(screen.getByLabelText("Reviewer"));
+    fireEvent.click(screen.getByText("Custom…"));
+    fireEvent.change(screen.getByPlaceholderText("Type a custom role…"), {
+      target: { value: "office-expert" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Add$/ }));
+    fireEvent.click(screen.getByText("Roles"));
+    fireEvent.click(screen.getByText("Save"));
+    await waitFor(() => {
+      const calls = fetchMock.mock.calls as [string, RequestInit?][];
+      expect(
+        calls.filter((c) => c[1]?.method === "PUT").length,
+      ).toBeGreaterThanOrEqual(1);
+    });
+    const calls = fetchMock.mock.calls as [string, RequestInit?][];
+    const puts = calls.filter((c) => c[1]?.method === "PUT");
+    const body = puts[0]?.[1]?.body;
+    if (typeof body !== "string") throw new Error("PUT body missing");
+    const putBody = JSON.parse(body) as { main?: { roles?: string[] } };
+    expect(putBody.main?.roles).toEqual(["reviewer", "office-expert"]);
+  });
+
+  it("renders existing roles from the loaded tree as chips (round-trip display)", async () => {
+    const treeWithRoles = {
+      ...tree,
+      main: { ...tree.main, roles: ["reviewer", "office-expert"] },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        Promise.resolve(
+          makeResponse(
+            200,
+            url === "/api/pools" ? poolList
+            : url === "/api/prompts" ? promptList
+            : treeWithRoles,
+          ),
+        ),
+      ),
+    );
+    await renderEditor({});
+    await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
+    expect(
+      screen.getByRole("button", { name: "Remove role reviewer" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Remove role office-expert" }),
+    ).toBeTruthy();
   });
 });

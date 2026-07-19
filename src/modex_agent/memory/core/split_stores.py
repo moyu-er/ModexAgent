@@ -46,6 +46,7 @@ _META_FIELDS: frozenset[str] = frozenset(
         "reasoning_content",
         "content_format",
         "token_count",
+        "created_at",
     }
 )
 

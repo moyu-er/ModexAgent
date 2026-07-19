@@ -35,6 +35,24 @@ def _real_agent_pool_map() -> dict[str, str]:
     return WebUIService._build_agent_pool_map(_Source())
 
 
+def _real_pool_to_main_agent() -> dict[str, str]:
+    """Build pool_name -> main_agent_name from the real project config.
+
+    Mirrors WebUIService production wiring
+    (_agent_map = {name: pi.main_agent_name for ...}). The coder pool's
+    main agent is `orchestrator` (main_agent_name override in pool.yml);
+    the directory name `coder/` is the pool identity, not the agent name.
+    """
+    from modex_agent.multi_agent.pool_config import PoolStore
+
+    project_dir = _real_project_dir()
+    pool_store = PoolStore(base_dir=project_dir)
+    return {
+        s.name: pool_store.read_pool(s.name).main.agent_name
+        for s in pool_store.list_pools()
+    }
+
+
 def _make_server(
     data_dir: Path,
 ) -> tuple[WebUIServer, WebSocketInputAdapter]:
@@ -46,6 +64,7 @@ def _make_server(
     """
     inp = WebSocketInputAdapter()
     mapping = _real_agent_pool_map()
+    pool_to_main_agent = _real_pool_to_main_agent()
     store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
     store.set_agent_pool_map(mapping)
     server = WebUIServer(
@@ -57,9 +76,11 @@ def _make_server(
     )
     server.set_workspace_index(store)
     server.set_data_dir_name(".modex")
-    server.set_pool_agent_names(["default", "coder"])
+    server.set_pool_agent_names(list(pool_to_main_agent.values()))
     server.set_agent_pool_map(mapping)
-    server.set_agent_resolver(lambda pool_name: mapping.get(pool_name, pool_name))
+    server.set_agent_resolver(
+        lambda pool_name: pool_to_main_agent.get(pool_name, pool_name)
+    )
     # Inject session store + factory so POST /api/sessions auto-saves.
     session_store = WorkspacePoolSessionStore(
         base_dir=data_dir,
@@ -114,7 +135,9 @@ async def test_pool_filter_hides_and_shows_sessions() -> None:
     await client.start_server()
     try:
         # Write transcripts directly (no session store entries — test transcript fallback).
-        await _simulate_qa_turn(server._store, "conv1", "coder", "hi", "hello", data_dir)
+        # The coder pool's main agent is `orchestrator`; the transcript file lands
+        # under coder/ because agent_pool_map["orchestrator"] = "coder".
+        await _simulate_qa_turn(server._store, "conv1", "orchestrator", "hi", "hello", data_dir)
         await _simulate_qa_turn(server._store, "conv2", "default", "hi", "hello", data_dir)
 
         # Without pool filter, both sessions visible.
@@ -122,7 +145,7 @@ async def test_pool_filter_hides_and_shows_sessions() -> None:
         assert resp.status == 200
         sessions = await resp.json()
         sids = {s["session_id"] for s in sessions}
-        assert "conv1.coder" in sids
+        assert "conv1.orchestrator" in sids
         assert "conv2.default" in sids
 
         # Filter to coder pool.
@@ -130,14 +153,14 @@ async def test_pool_filter_hides_and_shows_sessions() -> None:
         assert resp.status == 200
         sessions = await resp.json()
         sids = {s["session_id"] for s in sessions}
-        assert "conv1.coder" in sids
+        assert "conv1.orchestrator" in sids
         assert "conv2.default" not in sids
 
         resp = await client.get("/api/sessions?pool=default")
         assert resp.status == 200
         sessions = await resp.json()
         sids = {s["session_id"] for s in sessions}
-        assert "conv1.coder" not in sids
+        assert "conv1.orchestrator" not in sids
         assert "conv2.default" in sids
     finally:
         await client.close()
@@ -201,12 +224,15 @@ async def test_pool_and_workspace_filter_combined() -> None:
     client = TestClient(TestServer(server.app))
     await client.start_server()
     try:
+        # coder pool's main agent is `orchestrator`; session_id suffix is the
+        # agent name, so sid_a ends with `.orchestrator`. The transcript lands
+        # under the `coder/` pool directory via agent_pool_map routing.
         resp = await client.post("/api/sessions", json={"pool": "coder"})
         assert resp.status == 200
         coder_a = await resp.json()
         sid_a: str = coder_a["session_id"]
         conv_a = sid_a.split(".")[0]
-        await _simulate_qa_turn(server._store, conv_a, "coder", "hi", "hello", data_dir_a)
+        await _simulate_qa_turn(server._store, conv_a, "orchestrator", "hi", "hello", data_dir_a)
 
         # Switch to workspace B (route this turn's writes to data_dir_b).
         resp = await client.post("/api/sessions", json={"pool": "default"})
@@ -216,7 +242,8 @@ async def test_pool_and_workspace_filter_combined() -> None:
         conv_b = sid_b.split(".")[0]
         await _simulate_qa_turn(server._store, conv_b, "default", "hi", "hello", data_dir_b)
 
-        # Verify physical isolation: each session is in its workspace dir
+        # Verify physical isolation: each session is in its workspace dir.
+        # Pool dir is `coder` (pool name); filename suffix is `orchestrator` (agent name).
         assert (data_dir_a / ".modex" / "sessions" / "coder" / f"{sid_a}.jsonl").exists()
         assert not (data_dir_b / ".modex" / "sessions" / "coder" / f"{sid_a}.jsonl").exists()
         assert (data_dir_b / ".modex" / "sessions" / "default" / f"{sid_b}.jsonl").exists()

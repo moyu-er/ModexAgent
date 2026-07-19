@@ -34,7 +34,7 @@ describe("ConfirmDialog", () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
-  it("danger tone renders the confirm button with error styling", () => {
+  it("danger tone renders the confirm button with danger styling", () => {
     render(
       <ConfirmDialog
         title="Delete"
@@ -45,7 +45,19 @@ describe("ConfirmDialog", () => {
       />,
     );
     const btn = screen.getByRole("button", { name: "Delete" });
-    expect(btn.className).toContain("text-error");
+    expect(btn.className).toContain("text-danger");
+  });
+
+  it("panel uses the modal spec: popover surface, lg radius, scale+fade entry", () => {
+    render(<ConfirmDialog title="Discard?" onConfirm={() => {}} onCancel={() => {}} />);
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.className).toContain("bg-overlay");
+    expect(dialog.className).toContain("modal-scrim-enter");
+    const panel = dialog.querySelector(".modal-panel-enter") as HTMLElement;
+    expect(panel).toBeTruthy();
+    expect(panel.className).toContain("rounded-lg");
+    expect(panel.className).toContain("bg-canvas-popover");
+    expect(panel.className).toContain("shadow-popover");
   });
 
   it("Escape key fires onCancel", () => {

@@ -9,6 +9,7 @@ import { ModelSelector } from "./ModelSelector";
 import { TodoPanel } from "./TodoPanel";
 import { Button } from "./ui/Button";
 import { IconButton } from "./ui/IconButton";
+import { LogoMarkIcon } from "./ui/icons";
 import { fetchMediaConfig, fetchModels, uploadAttachment, type ModelChoice } from "../lib/api";
 import { formatBytes } from "../lib/format";
 import { useT } from "../i18n";
@@ -284,7 +285,7 @@ export const ChatView: FC<ChatViewProps> = ({
           {agentName && (
             <>
               <Bot size={15} className="text-signal" aria-hidden="true" />
-              <span className="font-mono text-sm font-semibold text-ink">
+              <span className="font-mono text-base font-semibold text-ink">
                 {agentName}
               </span>
             </>
@@ -299,10 +300,19 @@ export const ChatView: FC<ChatViewProps> = ({
         <div ref={scrollRef} className="absolute inset-0 overflow-y-auto">
           <div ref={contentRef} className={`${CONTENT_WIDTH} px-3 py-6 md:px-5`}>
             {messages.length === 0 && (
-              <div className="flex h-[55vh] items-center justify-center">
-                <p className="text-sm text-body">
-                  {t("chat.selectConversation")}
-                </p>
+              <div className="flex h-[55vh] flex-col items-center justify-center gap-4 text-center">
+                <LogoMarkIcon
+                  data-logo-mark
+                  className="h-24 w-24 text-brand opacity-[0.08]"
+                />
+                <h2 className="font-display text-xl font-bold text-ink">
+                  {t("chat.emptyHeadline")}
+                </h2>
+                <div className="flex flex-col gap-1.5">
+                  <p className="eyebrow">{t("chat.emptyHintSelect")}</p>
+                  <p className="eyebrow">{t("chat.emptyHintNew")}</p>
+                  <p className="eyebrow">{t("chat.emptyHintComposer")}</p>
+                </div>
               </div>
             )}
             {messages.map((msg) => (
@@ -349,8 +359,12 @@ export const ChatView: FC<ChatViewProps> = ({
       {/* Floating todo widget — outside the scroll area so it stays visible */}
       <TodoPanel todos={todos} sessionId={sessionId} />
 
-      {/* Floating composer */}
-      <div className="px-3 pb-6 pt-2 md:px-5">
+      {/* Floating composer — pb-6 + safe-area-inset-bottom so it clears the
+          mobile home indicator (§8). md: resets horizontal padding to 5. */}
+      <div
+        className="px-3 pb-6 pt-2 md:px-5"
+        style={{ paddingBottom: "max(env(safe-area-inset-bottom, 0px), 1.5rem)" }}
+      >
         <div className={CONTENT_WIDTH}>
           {readOnly ? (
             <div className="composer">
@@ -358,7 +372,7 @@ export const ChatView: FC<ChatViewProps> = ({
                 type="text"
                 disabled
                 placeholder={t("chat.readOnlyPlaceholder")}
-                className="flex-1 cursor-not-allowed bg-transparent py-1 text-sm text-faint placeholder:text-faint outline-none"
+                className="flex-1 cursor-not-allowed bg-transparent py-1 text-base text-faint placeholder:text-faint outline-none"
               />
               <IconButton
                 icon={<SendHorizonal size={18} />}
@@ -374,7 +388,7 @@ export const ChatView: FC<ChatViewProps> = ({
               {(pendingUploads.length > 0 || uploadError) && (
                 <div className="mb-2 flex flex-col gap-1.5">
                   {uploadError && (
-                    <div className="rounded-md border border-error/40 bg-error/10 px-2.5 py-1.5 text-xs text-error">
+                    <div className="rounded-md border border-danger bg-canvas-elevated px-2.5 py-1.5 text-xs text-danger">
                       {uploadError}
                     </div>
                   )}
@@ -433,7 +447,7 @@ export const ChatView: FC<ChatViewProps> = ({
                         : t("chat.messagePlaceholder")
                   }
                   rows={1}
-                  className="max-h-[320px] min-h-[56px] flex-1 resize-none overflow-y-auto bg-transparent py-3.5 text-[15px] leading-relaxed text-ink outline-none placeholder:text-faint"
+                  className="max-h-[320px] min-h-[56px] flex-1 resize-none overflow-y-auto bg-transparent py-3.5 text-md leading-relaxed text-ink outline-none placeholder:text-faint"
                 />
                 {models.length > 0 && (
                   <ModelSelector

@@ -5,6 +5,8 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from modex_agent.agents.external_coding.paths import ProviderKind
+from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.ioc.configs.approval import ApprovalConfig
 from modex_agent.multi_agent.pool_config import (
     MainAgentSpec,
@@ -81,6 +83,18 @@ class TestSubagentSpec:
         assert spec.mcp == []
         assert spec.system_prompt_mode == SystemPromptMode.REPLACE
         assert spec.fork_max_messages == 80
+        assert spec.execution_strategy == ExecutionStrategyKind.REACT
+        assert spec.provider_kind is None
+
+    def test_subagent_spec_round_trip_external_coding(self) -> None:
+        spec = SubagentSpec(
+            agent_name="worker",
+            execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+            provider_kind=ProviderKind.OPENCODE,
+        )
+        assert spec.execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING
+        assert spec.provider_kind == ProviderKind.OPENCODE
+        assert spec.agent_name == "worker"
 
     def test_subagent_spec_fork_max_messages_bounds(self) -> None:
         with pytest.raises(ValidationError):
@@ -190,3 +204,70 @@ class TestPoolAssemblyDeps:
     def test_deps_rejects_unknown_keys(self) -> None:
         with pytest.raises(ValidationError):
             PoolAssemblyDeps(unknown_key=True)
+
+
+class TestExecutionStrategyValidator:
+    """Cross-field validator: provider_kind set iff execution_strategy==EXTERNAL_CODING.
+
+    Covers both :class:`SubagentSpec` (new field) and :class:`MainAgentSpec`
+    (backfilled validator). The same rule applies to both, so the cases are
+    parametrized over the spec class.
+    """
+
+    @pytest.mark.parametrize(
+        "spec_cls",
+        [SubagentSpec, MainAgentSpec],
+        ids=["subagent", "main"],
+    )
+    def test_rejects_react_with_provider_kind(self, spec_cls: type) -> None:
+        with pytest.raises(ValidationError) as exc:
+            spec_cls(
+                agent_name="x",
+                execution_strategy=ExecutionStrategyKind.REACT,
+                provider_kind=ProviderKind.OPENCODE,
+            )
+        assert "provider_kind" in str(exc.value)
+
+    @pytest.mark.parametrize(
+        "spec_cls",
+        [SubagentSpec, MainAgentSpec],
+        ids=["subagent", "main"],
+    )
+    def test_rejects_external_coding_without_provider_kind(
+        self, spec_cls: type
+    ) -> None:
+        with pytest.raises(ValidationError) as exc:
+            spec_cls(
+                agent_name="x",
+                execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+                provider_kind=None,
+            )
+        assert "provider_kind" in str(exc.value)
+
+    @pytest.mark.parametrize(
+        "spec_cls",
+        [SubagentSpec, MainAgentSpec],
+        ids=["subagent", "main"],
+    )
+    def test_accepts_external_coding_with_provider_kind(self, spec_cls: type) -> None:
+        spec = spec_cls(
+            agent_name="x",
+            execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+            provider_kind=ProviderKind.OPENCODE,
+        )
+        assert spec.execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING
+        assert spec.provider_kind == ProviderKind.OPENCODE
+
+    @pytest.mark.parametrize(
+        "spec_cls",
+        [SubagentSpec, MainAgentSpec],
+        ids=["subagent", "main"],
+    )
+    def test_accepts_react_without_provider_kind(self, spec_cls: type) -> None:
+        spec = spec_cls(
+            agent_name="x",
+            execution_strategy=ExecutionStrategyKind.REACT,
+            provider_kind=None,
+        )
+        assert spec.execution_strategy == ExecutionStrategyKind.REACT
+        assert spec.provider_kind is None

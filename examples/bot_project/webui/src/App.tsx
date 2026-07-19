@@ -7,10 +7,13 @@ import { useWebUIStream } from "./hooks/useWebUIStream";
 import { useSessions } from "./hooks/useSessions";
 import { useBackendReady } from "./hooks/useBackendReady";
 import BootScreen from "./components/BootScreen";
+import { DISPERSE_MS } from "./lib/particles";
 import { buildTree } from "./lib/sessionTree";
 import { storageGetInt, storageSet } from "./lib/storage";
 import type { OutgoingAttachmentRef } from "./types/attachments";
 import { useT } from "./i18n";
+import { LogoMarkIcon } from "./components/ui/icons";
+import { ViewCrossfade } from "./components/ui/ViewCrossfade";
 
 const SIDEBAR_WIDTH_KEY = "modexbot_sidebar_width";
 const DEFAULT_SIDEBAR_WIDTH = 260;
@@ -178,10 +181,13 @@ const AppInner: FC = () => {
 
   return (
     <ToastProvider>
-      <div className="flex h-screen w-screen flex-col overflow-hidden bg-canvas">
-        {/* Top status bar — brand · workspace · pool */}
+      <div className="flex h-[100dvh] w-screen flex-col overflow-hidden bg-canvas">
+        {/* Top status bar — logo mark · brand wordmark · workspace · pool (§8) */}
         <div className="statusline" role="contentinfo" aria-label={t("chat.sessionStatus")}>
           <span className="brand" title={isConnected ? t("chat.connected") : t("chat.disconnected")}>
+            <span className="brand-mark" aria-hidden="true">
+              <LogoMarkIcon className="h-4 w-4" />
+            </span>
             <span className={isConnected ? "dot-signal" : "dot-dim"} aria-hidden="true" />
             ModexBot
           </span>
@@ -223,34 +229,38 @@ const AppInner: FC = () => {
           <div
             className={`absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-colors ${
               resizing.current
-                ? "bg-link"
-                : "bg-hairline group-hover:bg-link/50"
+                ? "bg-brand"
+                : "bg-hairline group-hover:bg-brand"
             }`}
           />
         </div>
 
         <main className="flex flex-1 flex-col min-w-0">
-          {view === "settings" ? (
-            <SettingsView onExit={() => setView("chat")} />
-          ) : (
-            <ChatView
-              messages={messages}
-              isStreaming={isStreaming}
-              isPending={isPending}
-              todos={todos}
-              pendingApprovals={pendingApprovals}
-              isApprovingBatch={isApprovingBatch}
-              submitApproval={submitApproval}
-              onApproveAll={onApproveAll}
-              sessionId={selectedId}
-              workspace={streamWs}
-              onSend={handleSend}
-              onPause={pause}
-              readOnly={isSelectedSubagent}
-              onOpenSidebar={() => setSidebarMobileOpen(true)}
-              agentName={agentName}
-            />
-          )}
+          {/* Chat↔settings crossfade (§8): ~200ms transform+opacity, both views
+           * keyed so each swap re-triggers the enter animation. No instant swap. */}
+          <ViewCrossfade viewKey={view}>
+            {view === "settings" ? (
+              <SettingsView onExit={() => setView("chat")} />
+            ) : (
+              <ChatView
+                messages={messages}
+                isStreaming={isStreaming}
+                isPending={isPending}
+                todos={todos}
+                pendingApprovals={pendingApprovals}
+                isApprovingBatch={isApprovingBatch}
+                submitApproval={submitApproval}
+                onApproveAll={onApproveAll}
+                sessionId={selectedId}
+                workspace={streamWs}
+                onSend={handleSend}
+                onPause={pause}
+                readOnly={isSelectedSubagent}
+                onOpenSidebar={() => setSidebarMobileOpen(true)}
+                agentName={agentName}
+              />
+            )}
+          </ViewCrossfade>
         </main>
 
         {sidebarMobileOpen && (
@@ -267,11 +277,42 @@ const AppInner: FC = () => {
 };
 
 const App: FC = () => {
-  const { ready, attempts, lastError } = useBackendReady();
-  if (!ready) {
-    return <BootScreen attempts={attempts} lastError={lastError} />;
-  }
-  return <AppInner />;
+  const { ready, attempts, lastError, retry } = useBackendReady();
+  // Boot → app handoff (DESIGN.md §7): when the backend flips ready, the app
+  // mounts underneath with a one-time fade/stagger while BootScreen plays the
+  // disperse on top; BootScreen unmounts after the disperse window.
+  const [bootDone, setBootDone] = useState(false);
+
+  useEffect(() => {
+    if (!ready) return;
+    // Under prefers-reduced-motion the particle disperse is a static frame
+    // (no animation), so the 800ms DISPERSE_MS hold is dead time — skip it
+    // and unmount BootScreen near-instantly. A 1-frame delay keeps React's
+    // mount/unmount ordering stable (app-enter + boot-exit in the same paint
+    // would otherwise flash an empty intermediate frame).
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const hold = reduced ? 16 : DISPERSE_MS;
+    const timer = setTimeout(() => setBootDone(true), hold);
+    return (): void => clearTimeout(timer);
+  }, [ready]);
+
+  return (
+    <>
+      {ready && (
+        <div className="app-enter">
+          <AppInner />
+        </div>
+      )}
+      {!bootDone && (
+        <BootScreen
+          attempts={attempts}
+          lastError={lastError}
+          exiting={ready}
+          onRetry={retry}
+        />
+      )}
+    </>
+  );
 };
 
 export default App;

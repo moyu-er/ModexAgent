@@ -10,7 +10,7 @@ from modex_agent.multi_agent.communication.result import AgentSendResult
 from modex_agent.multi_agent.communication.strategies.base import SendRequest, SendStrategy
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
 from modex_agent.multi_agent.message_type import AgentMessageType
-from modex_agent.multi_agent.message_xml import build_agent_message
+from modex_agent.multi_agent.message_xml import build_dispatch_xml
 
 _TASK_ID_BYTES = 8
 
@@ -45,10 +45,11 @@ class SubagentDispatchStrategy(SendStrategy):
         """Build a TASK_REQUEST envelope."""
         effective_source = self._resolve_source(req)
         parent_sid = req.context.session
-        xml_content = build_agent_message(
+        xml_content = build_dispatch_xml(
             source=effective_source.name,
             invocation_id=invocation_id,
             content=req.content,
+            target_execution_strategy=req.target.execution_strategy,
         )
         return AgentMessageEnvelope(
             payload={"content": xml_content, "message_type": AgentMessageType.TASK_REQUEST},
@@ -69,6 +70,15 @@ class SubagentDispatchStrategy(SendStrategy):
         self, req: SendRequest, session: SessionInfo, invocation_id: str
     ) -> AgentSendResult:
         """Add trace/output paths for subagent ack."""
+        from modex_agent.core.constants import ExecutionStrategyKind
+
+        if req.target.execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING:
+            return self._build_external_result(req, session, invocation_id)
+        return self._build_native_result(req, session, invocation_id)
+
+    def _build_native_result(
+        self, req: SendRequest, session: SessionInfo, invocation_id: str
+    ) -> AgentSendResult:
         created_new_task = req.invocation_id is None or req.invocation_id.strip() == ""
         return AgentSendResult(
             target_agent=req.target.name,
@@ -78,4 +88,16 @@ class SubagentDispatchStrategy(SendStrategy):
             created_new_task=created_new_task,
             output_path=self._subagent_output_path(req.target.kind, str(session)),
             trace_dir=self._subagent_trace_dir(req.target.kind, str(session)),
+        )
+
+    def _build_external_result(
+        self, req: SendRequest, session: SessionInfo, invocation_id: str
+    ) -> AgentSendResult:
+        created_new_task = req.invocation_id is None or req.invocation_id.strip() == ""
+        return AgentSendResult(
+            target_agent=req.target.name,
+            target_kind=req.target.kind,
+            session_id=str(session),
+            invocation_id=invocation_id,
+            created_new_task=created_new_task,
         )

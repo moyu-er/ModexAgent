@@ -1,7 +1,7 @@
 // Card.tsx — surface container primitive.
 //
 // Renders a rounded-md bordered surface over the elevated canvas. Pass
-// `elevated` to add the floating shadow from the Geist palette. `id` is
+// `elevated` to add the `card` elevation shadow token (DESIGN.md §4). `id` is
 // forwarded so callers can anchor scroll targets (e.g. provider cards).
 
 import type { ReactNode } from "react";
@@ -21,7 +21,7 @@ export interface CardProps {
 export function Card({ children, className, elevated = false, hoverable = false, id }: CardProps) {
   const cls = [
     "rounded-md border border-hairline bg-canvas-elevated p-4",
-    elevated ? "shadow-floating" : "",
+    elevated ? "shadow-card" : "",
     hoverable ? "card-hoverable" : "",
     className,
   ]

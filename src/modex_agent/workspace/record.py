@@ -27,8 +27,8 @@ class WorkspaceRecord(BaseModel):
         workspace_id: Stable identifier (UUID) for the workspace.
         target_path: Resolved absolute path (string) — the natural key.
         display_name: Optional human-readable name for UI display.
-        created_at: ISO-8601 timestamp string of first registration.
-        last_active: ISO-8601 timestamp string of most recent activity.
+        created_at: Unix-epoch millisecond timestamp of first registration.
+        last_active: Unix-epoch millisecond timestamp of most recent activity.
         is_home: ``True`` for the implicit home workspace.
         metadata_json: Arbitrary extension metadata (origin, tags, …).
     """
@@ -38,7 +38,7 @@ class WorkspaceRecord(BaseModel):
     workspace_id: str
     target_path: str
     display_name: str | None = None
-    created_at: str
-    last_active: str
+    created_at: int
+    last_active: int
     is_home: bool = False
     metadata_json: dict[str, Any] = Field(default_factory=dict)

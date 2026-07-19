@@ -77,7 +77,6 @@ class BotService(AgentBuilderMixin):
     # Whether this service runs the WebUI. Set True by WebUIService; controls
     # workspace-level transcript/session_index store wiring. Read by _is_webui().
     webui: bool = False
-    _default_pool: str = "default"
 
     def __init__(
         self,
@@ -99,7 +98,6 @@ class BotService(AgentBuilderMixin):
         self.output_adapter = output_adapter
         self.emitter_factory = emitter_factory
         self._app_config = app_config
-        self._default_pool: str = "default"  # business-layer default; AppConfig no longer owns this
         # Multi-model config (config/model.yml 的 models: 块) + per-turn choice
         # registry。_load_app_config 解析并缓存；_build_*_provider / wiring 读取。
         self._bot_model_config: BotModelConfig | None = None
@@ -147,6 +145,13 @@ class BotService(AgentBuilderMixin):
         # None when the flag is off (or registry absent) → legacy per-pool path.
         self._mcp_registry: McpConnectionRegistry | None = None
 
+        # Execution-strategy registry (ADR-0025, ticket 3). Built in
+        # initialize() with the shipped strategies (react in ticket 3;
+        # external_coding added in ticket 4). Threaded through wiring.py into
+        # create_pool so react pools are assembled via
+        # ReactExecutionStrategy.assemble() instead of inline _build_* calls.
+        self._strategy_registry: Any = None
+
         # T26: Registry-level SQLite persistence manager. Opened at initialize()
         # (before workspace materialize), closed at stop() AFTER evict_all (the
         # registry DB is the last-to-close persistence layer). None when
@@ -180,8 +185,8 @@ class BotService(AgentBuilderMixin):
         self._tasks: list[asyncio.Task] = []
 
     @property
-    def _default_pool_name(self) -> str:
-        return self._default_pool
+    def _default_pool_name(self) -> str | None:
+        return None
 
     def _is_webui(self) -> bool:
         """Whether this service runs the WebUI (class attribute ``webui``)."""
@@ -293,6 +298,15 @@ class BotService(AgentBuilderMixin):
         print(">> Initializing Bot Service")
         print("=" * 60)
 
+        # ADR-0027 T8: register cooperative SIGTERM/SIGINT handlers that
+        # run atexit cleanup (killing any live ``opencode serve``
+        # subprocesses) before exit. Idempotent — safe to call every boot.
+        from modex_agent.agents.external_coding.os_layer import (
+            register_signal_handlers,
+        )
+
+        register_signal_handlers()
+
         # 1. Load config (IOC AppConfig is the only source of truth)
         if self._app_config is None:
             self._app_config = self._load_app_config()
@@ -375,6 +389,25 @@ class BotService(AgentBuilderMixin):
             self.control_channel = self._build_control_channel()
             self.command_processor = self._build_main_command_processor()
             self.plugin_integration = PluginIntegration(config={"enabled": False})
+
+            # ADR-0025 ticket 3: build the execution-strategy registry with
+            # the shipped react strategy. Threaded through wiring.py into
+            # create_pool so react pools are assembled via
+            # ReactExecutionStrategy.assemble() instead of inline _build_*.
+            # ADR-0025 ticket 4: register ExternalCodingExecutionStrategy so
+            # external_coding pools are assembled via strategy.assemble()
+            # (provider-availability gate + external_coding_deps build).
+            from bot.service.external_coding_strategy import (
+                ExternalCodingExecutionStrategy,
+            )
+            from bot.service.react_strategy import ReactExecutionStrategy
+            from modex_agent.multi_agent.execution_strategy import (
+                ExecutionStrategyRegistry,
+            )
+
+            self._strategy_registry = ExecutionStrategyRegistry()
+            self._strategy_registry.register(ReactExecutionStrategy())
+            self._strategy_registry.register(ExternalCodingExecutionStrategy())
 
             # T26: open the registry DB BEFORE workspace materialization so the
             # registry store is ready when workspaces start using it. The

@@ -152,6 +152,16 @@ class ContextManager(ABC):
     ) -> ContextGovernance | None:
         return governance
 
+    def get_session_state(self, session_id: str) -> ContextState | None:
+        """Return the cached ``ContextState`` for ``session_id`` if one exists.
+
+        Synchronous, side-effect-free peek used by tests / diagnostics to
+        inspect what has already been loaded. Returns ``None`` by default
+        (subclasses without an in-memory session cache, or when the session
+        has not been loaded yet). Use :meth:`load` for the lazy-create path.
+        """
+        return None
+
 
 class InMemoryContextManager(ContextManager):
     """内存中的上下文管理器"""
@@ -175,6 +185,9 @@ class InMemoryContextManager(ContextManager):
                 metadata={},
             )
         return self._sessions[session_id]
+
+    def get_session_state(self, session_id: str) -> ContextState | None:
+        return self._sessions.get(session_id)
 
     async def save(
         self,

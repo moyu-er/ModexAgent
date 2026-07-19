@@ -718,10 +718,8 @@ tools:
 ```yaml
 plugins:
   enabled: true
-  configurations:
-    tool_call_cleanup:
-      enabled: true                   # 清理冗余的工具调用记录
-```
+  configurations: {}
+'''
 
 ## 日志
 

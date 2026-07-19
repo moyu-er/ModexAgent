@@ -23,10 +23,18 @@ describe("Textarea", () => {
     expect(ta.className).not.toContain("font-mono");
   });
 
-  it("error replaces helper and adds error border", () => {
+  it("uses sm radius and the brand focus ring", () => {
+    render(<Textarea label="x" />);
+    const ta = screen.getByLabelText("x");
+    expect(ta.className).toContain("rounded-sm");
+    expect(ta.className).toContain("focus:ring-2");
+    expect(ta.className).toContain("focus:border-brand");
+  });
+
+  it("error replaces helper and adds danger border", () => {
     render(<Textarea label="x" helper="ok" error="nope" />);
     const ta = screen.getByLabelText("x");
-    expect(ta.className).toContain("border-error");
+    expect(ta.className).toContain("border-danger");
     expect(screen.getByRole("alert").textContent).toBe("nope");
     expect(screen.queryByText("ok")).toBeNull();
   });

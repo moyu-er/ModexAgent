@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-from modex_agent.core.constants import ExecutionStrategy
+from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.context import ContextManager, InMemoryContextManager
 from modex_agent.core.runtime_context import RuntimeContextManager
 from modex_agent.core.session_registry import SessionRegistry
@@ -39,6 +39,7 @@ if TYPE_CHECKING:
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import Agent
+    from modex_agent.pipeline.turn_runner_abc import TurnRunner
 
 
 class AgentFactory(ABC):
@@ -121,12 +122,14 @@ class DefaultAgentFactory(AgentFactory):
             reasoning_effort=cfg.reasoning_effort,
         )
 
-    def _get_builder(self, execution_strategy: ExecutionStrategy):
-        if execution_strategy == ExecutionStrategy.EXTERNAL_CODING:
+    def _get_builder(
+        self, execution_strategy: ExecutionStrategyKind
+    ) -> type[Any] | None:
+        if execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING:
             from modex_agent.agents.external_coding.builder import ExternalCodingAgentBuilder
 
             return ExternalCodingAgentBuilder
-        if execution_strategy in (ExecutionStrategy.REACT, ExecutionStrategy.PIPELINE):
+        if execution_strategy in (ExecutionStrategyKind.REACT, ExecutionStrategyKind.PIPELINE):
             from modex_agent.agents.react.builder import ReActAgentBuilder
 
             return ReActAgentBuilder
@@ -158,6 +161,80 @@ class DefaultAgentFactory(AgentFactory):
         # persistent / shared 默认使用标准内存管理器
         return InMemoryContextManager(base_system_prompt=descriptor.system_prompt_template or "")
 
+    def _build_turn_runner(
+        self,
+        *,
+        agent: Agent,
+        descriptor: AgentDescriptor,
+        ctx_mgr: ContextManager,
+        filtered_tools: Any,
+        skill_mgr: SkillManager | None,
+        hook_runner: HookRunner,
+        agent_interceptor_chain: Any,
+        context_manager_factory: Callable[[str], ContextManager] | None,
+        emitter_factory: Callable[..., Any] | None,
+        pipe_output_adapter: Any,
+        registry: Any,
+        turn_store: Any,
+        runtime_context_manager: RuntimeContextManager,
+        safety: Any,
+        subagent_governance: Any,
+    ) -> TurnRunner:
+        from modex_agent.pipeline.approval_renderer import ApprovalRenderer
+        from modex_agent.pipeline.approval_resumer import ApprovalResumer
+        from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
+        from modex_agent.pipeline.turn_runner import ReActTurnRunner
+        from modex_agent.utils.sanitizer import ContentSanitizer
+
+        sanitizer = ContentSanitizer.sanitize
+        turn_context_builder = TurnContextBuilder(
+            agent=agent,
+            tool_manager=filtered_tools,
+            sanitizer=sanitizer,
+            command_processor=None,
+            skill_manager=skill_mgr,
+            context_builder=None,
+            agent_descriptor=descriptor,
+            max_iterations=descriptor.max_iterations,
+            safety=safety,
+            runtime_services=None,
+            runtime_context_manager=runtime_context_manager,
+            governance=subagent_governance,
+            hook_runner=hook_runner,
+            interceptor_chain=agent_interceptor_chain,
+            control_channel=self._control_channel,
+            emitter_factory=emitter_factory,
+            output_adapter=pipe_output_adapter,
+            turn_store=turn_store,
+            registry=registry,
+        )
+        approval_resumer = ApprovalResumer(
+            agent=agent,
+            turn_store=turn_store,
+            user_interface=None,
+        )
+        approval = ApprovalRenderer(
+            agent=agent,  # type: ignore[arg-type]
+            user_interface=None,
+        )
+        return ReActTurnRunner(
+            agent=agent,
+            context_manager=ctx_mgr,
+            context_manager_factory=context_manager_factory,
+            on_session_start=None,
+            on_session_end=None,
+            safety=safety,
+            turn_store=turn_store,
+            registry=registry,
+            builder=turn_context_builder,
+            resumer=approval_resumer,
+            approval=approval,
+            workspace_manager=None,
+            pool_name=None,
+            pool_data_resolver=None,
+            agent_descriptor=descriptor,
+        )
+
     async def create_agent(
         self,
         descriptor: AgentDescriptor,
@@ -176,10 +253,8 @@ class DefaultAgentFactory(AgentFactory):
         provider = self._resolve_llm_provider(descriptor)
         agent = self._build_agent(descriptor, provider)
 
-        # Context manager
         ctx_mgr = self._resolve_context_manager(descriptor, session_id, context_manager)
 
-        # Tool manager with filtering
         tool_mgr = tool_manager or self._default_tool_manager or InMemoryToolManager()
         filtered_tools = FilteredToolManager(
             base=tool_mgr,
@@ -187,9 +262,6 @@ class DefaultAgentFactory(AgentFactory):
             denied_tools=descriptor.denied_tools,
         )
 
-        # Skill manager filtering (rebuild with filter if skills configured)
-        # Subagents must NOT inherit the main agent's SkillManager —
-        # they either have their own skills or none at all.
         if skill_manager is not None:
             skill_mgr = skill_manager
         elif descriptor.comm_kind != AgentCommKind.SUBAGENT:
@@ -204,16 +276,6 @@ class DefaultAgentFactory(AgentFactory):
                 cache=skill_mgr._cache,
             )
 
-        agent_hooks: list[Any] = list(self._default_hooks) + list(hooks or [])
-
-        # InboxFlushHook is auto-injected for every agent whose
-        # ``inbox_strategy != "none"`` and whose factory has a consumer. It is
-        # added to ``pipeline.hook_runner`` AFTER construction (below) — NOT to
-        # ``agent_hooks``, because ``AgentPipeline`` stores that list on
-        # ``pipeline.hooks``, which the turn loop never dispatches (only
-        # ``hook_runner`` is dispatched via ``runtime.hooks``). Putting it on
-        # the runner here is the single wiring point for BOTH main and
-        # subagent fold-in; pool_builder no longer adds a separate copy.
         auto_inbox_flush = (
             InboxFlushHook(
                 consumer=self._inbox_consumer,
@@ -223,12 +285,6 @@ class DefaultAgentFactory(AgentFactory):
             else None
         )
 
-        # Subagent governance: build a lightweight chain (tool chain repair +
-        # final legality) from the template's MemoryConfig. Main agents
-        # already have governance wired on the pipeline at the pool level
-        # (see pool_builder._wire_main_pipeline), so we only build here for
-        # subagents. create_subagent_governance handles missing config by
-        # returning a default (tool chain repair + final legality) chain.
         subagent_governance: Any | None = None
         if descriptor.comm_kind == AgentCommKind.SUBAGENT:
             from modex_agent.ioc.factories.governance import create_subagent_governance
@@ -242,6 +298,7 @@ class DefaultAgentFactory(AgentFactory):
         from modex_agent.messaging.broker_memory import InMemoryMessageBroker
         from modex_agent.multi_agent.router import DefaultMeshRouter
         from modex_agent.pipeline.pipeline import AgentPipeline
+        from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 
         if broker is None:
             logger.warning(
@@ -269,64 +326,58 @@ class DefaultAgentFactory(AgentFactory):
         if builder is None:
             raise ValueError(f"Unsupported execution_strategy: {descriptor.execution_strategy}")
         emitter_factory = builder.build_emitter_factory(emitter_output_adapter)
-        # Each agent needs its own HookRunner so that agent-specific hooks
-        # (e.g. SubagentAutoSendHook) don't leak across agents. The turn loop
-        # dispatches ONLY hook_runner (via runtime.hooks), so we always create
-        # one even when no shared default runner is provided.
         hook_runner = HookRunner(
             self._default_hook_runner.hook_specs if self._default_hook_runner is not None else None
         )
-        # Per-agent InterceptorChain copy to prevent cross-agent state leakage.
-        # Mirrors the HookRunner copy pattern above.
         agent_interceptor_chain = None
         if self._default_interceptor_chain is not None:
             from modex_agent.interceptor.chain import InterceptorChain
 
             agent_interceptor_chain = InterceptorChain(self._default_interceptor_chain.interceptors)
-        pipeline = AgentPipeline(
+
+        registry = TurnSessionRegistry()
+        turn_runner = self._build_turn_runner(
             agent=agent,
-            context_manager=ctx_mgr,
-            tool_manager=filtered_tools,
-            input_adapter=input_adapter,
-            output_adapter=pipe_output_adapter,
-            emitter_factory=emitter_factory,
-            max_iterations=descriptor.max_iterations,
-            skill_manager=skill_mgr,
-            hooks=agent_hooks,
+            descriptor=descriptor,
+            ctx_mgr=ctx_mgr,
+            filtered_tools=filtered_tools,
+            skill_mgr=skill_mgr,
             hook_runner=hook_runner,
-            interceptor_chain=agent_interceptor_chain,
-            turn_store=self._default_turn_store,
+            agent_interceptor_chain=agent_interceptor_chain,
             context_manager_factory=context_manager_factory,
+            emitter_factory=emitter_factory,
+            pipe_output_adapter=pipe_output_adapter,
+            registry=registry,
+            turn_store=self._default_turn_store,
             runtime_context_manager=self._runtime_context_manager,
             safety=descriptor.safety_policy,
-            agent_descriptor=descriptor,
+            subagent_governance=subagent_governance,
+        )
+        pipeline = AgentPipeline(
+            agent=agent,
+            turn_runner=turn_runner,
+            input_adapter=input_adapter,
+            output_adapter=pipe_output_adapter,
+            registry=registry,
+            safety=descriptor.safety_policy,
             router=DefaultMeshRouter(session_registry=self._session_registry),
             control_channel=self._control_channel,
-            governance=subagent_governance,
         )
+        turn_runner.bind_to_pipeline(pipeline)
 
-        # Auto-inject TraceCollectorHook — ALL agents get per-session trace.
-        # The hook reads the store per turn from ctx.runtime.services.trace_store
-        # (resolved per turn from the active workspace's pool_data), so it
-        # follows workspace switches and works for main agents and subagents
-        # uniformly — no special-casing, no distinction.
         from modex_agent.hook import HookErrorPolicy, HookSpec
         from modex_agent.hook.builtin import LoopDetectionHook
         from modex_agent.hook.builtin.checkpoint import CheckpointHook
         from modex_agent.hook.builtin.training_data import TrainingDataHook
         from modex_agent.trace import TraceCollectorHook
 
-        # Hooks that must be DISPATCHED (the turn loop only runs hook_runner,
-        # never the pipeline.hooks list) are added here as HookSpecs. We always
-        # have a hook_runner at this point, so no dead-list fallback is needed.
-        # Read observability config (None = all defaults, same as today's behavior)
         obs = self._observability_config
         checkpoint_per_iteration = obs.checkpoint_per_iteration if obs is not None else True
         training_relevant = obs.training_relevant if obs is not None else False
         training_max_iterations = obs.training_max_iterations if obs is not None else 20
         training_max_tokens = obs.training_max_tokens if obs is not None else 100_000
 
-        live_hooks: list[Hook] = [
+        live_hooks: list[Any] = [
             TraceCollectorHook(),
             LoopDetectionHook(),
         ]
@@ -342,7 +393,7 @@ class DefaultAgentFactory(AgentFactory):
         if auto_inbox_flush is not None:
             live_hooks.append(auto_inbox_flush)
         for hook in live_hooks:
-            pipeline.hook_runner.add(HookSpec(hook=hook, on_error=HookErrorPolicy.LOG))
+            hook_runner.add(HookSpec(hook=hook, on_error=HookErrorPolicy.LOG))
 
         return AgentInstance(
             descriptor=descriptor,

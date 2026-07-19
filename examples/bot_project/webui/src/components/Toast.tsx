@@ -1,10 +1,12 @@
-// Presentational toast. Single responsibility: render one toast. All timing,
-// stacking, and dismissal logic lives in ToastContext.
+// Presentational toast (DESIGN.md §5.4). Single responsibility: render one
+// toast. All timing, stacking, and dismissal logic lives in ToastContext.
+// Popover surface + hairline; severity is carried by the dot (brand=info/
+// success, ember=warning, danger=error) — never by a full-bleed color wash.
 
 import type { ReactNode } from "react";
 import { useT } from "../i18n";
 
-export type ToastTone = "info" | "success" | "warning";
+export type ToastTone = "info" | "success" | "warning" | "error";
 
 export interface ToastAction {
   label: string;
@@ -18,16 +20,11 @@ export interface ToastProps {
   onDismiss: () => void;
 }
 
-const TONE_BORDER: Record<ToastTone, string> = {
-  info: "border-link",
-  success: "border-success",
-  warning: "border-warning",
-};
-
 const TONE_DOT: Record<ToastTone, string> = {
-  info: "bg-link",
+  info: "bg-brand",
   success: "bg-success",
   warning: "bg-warning",
+  error: "bg-danger",
 };
 
 export function Toast({ message, tone = "info", action, onDismiss }: ToastProps) {
@@ -36,14 +33,17 @@ export function Toast({ message, tone = "info", action, onDismiss }: ToastProps)
     <div
       role="status"
       aria-live="polite"
-      className={`pointer-events-auto flex w-80 items-start gap-2.5 rounded-lg border bg-canvas-elevated px-3 py-2.5 shadow-lg ${TONE_BORDER[tone]}`}
+      className="toast-enter pointer-events-auto flex w-80 items-start gap-2.5 rounded-md border border-hairline bg-canvas-popover px-3.5 py-3 shadow-popover"
     >
-      <span aria-hidden="true" className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${TONE_DOT[tone]}`} />
-      <p className="flex-1 break-words text-sm text-ink">{message}</p>
+      <span
+        aria-hidden="true"
+        className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${TONE_DOT[tone]}`}
+      />
+      <p className="flex-1 break-words text-base text-ink">{message}</p>
       {action ? (
         <button
           type="button"
-          className="shrink-0 text-xs font-medium text-link hover:underline"
+          className="shrink-0 text-xs font-medium text-brand hover:underline"
           onClick={() => {
             action.onClick();
             onDismiss();

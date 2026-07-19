@@ -27,7 +27,7 @@ export interface TodoPanelProps {
  * paginated items, and status icons (spinner = in_progress, hollow ring =
  * pending).  Always visible — never scrolled away by streaming output.
  *
- * Uses Geist surface tokens with a warm `warning` accent so the panel feels
+ * Uses Inter surface tokens with a warm `warning` accent so the panel feels
  * neutral but not cold; light/dark flip via the CSS variables.
  */
 export const TodoPanel: FC<TodoPanelProps> = ({ todos, sessionId }) => {
@@ -74,10 +74,10 @@ export const TodoPanel: FC<TodoPanelProps> = ({ todos, sessionId }) => {
           {/* Header */}
           <div className="flex items-center justify-between px-4 pt-4 pb-2">
             <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold text-ink">
+              <span className="text-base font-semibold text-ink">
                 {t("todo.tasks")}
               </span>
-              <span className="rounded-full bg-hairline px-2 py-0.5 text-[11px] font-medium text-body">
+              <span className="rounded-full bg-hairline px-2 py-0.5 text-xs font-medium text-body">
                 {doneCount}/{todos.length}
               </span>
             </div>
@@ -94,7 +94,7 @@ export const TodoPanel: FC<TodoPanelProps> = ({ todos, sessionId }) => {
           {/* Progress bar */}
           <div className="mx-4 h-1 overflow-hidden rounded-full bg-hairline">
             <div
-              className="h-full rounded-full bg-gradient-to-r from-warning-soft to-warning transition-all duration-500 ease-out"
+              className="h-full rounded-full bg-gradient-to-r from-ember to-warning transition-all duration-500 ease-out"
               style={{ width: `${pct}%` }}
             />
           </div>
@@ -115,7 +115,7 @@ export const TodoPanel: FC<TodoPanelProps> = ({ todos, sessionId }) => {
                     </span>
                     <span
                       className={
-                        "min-w-0 flex-1 text-[13px] leading-snug" +
+                        "min-w-0 flex-1 text-base leading-snug" +
                         (isActive
                           ? " font-semibold text-ink"
                           : " text-body")
@@ -137,12 +137,12 @@ export const TodoPanel: FC<TodoPanelProps> = ({ todos, sessionId }) => {
                 disabled={effectivePage === 0}
                 onClick={() => setPage((p) => Math.max(0, p - 1))}
                 aria-label={t("todo.previousPage")}
-                className="flex items-center gap-1 rounded-lg px-3 py-1 text-[11px] font-medium text-body transition-colors hover:bg-hairline-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/50 disabled:cursor-not-allowed disabled:opacity-30"
+                className="flex items-center gap-1 rounded-lg px-3 py-1 text-xs font-medium text-body transition-colors hover:bg-hairline-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning disabled:cursor-not-allowed disabled:opacity-45"
               >
                 <ChevronLeftIcon className="h-3 w-3" />
                 {t("todo.prev")}
               </button>
-              <span className="text-[11px] tabular-nums text-mute">
+              <span className="text-xs tabular-nums text-mute">
                 {effectivePage + 1} / {pageCount}
               </span>
               <button
@@ -150,7 +150,7 @@ export const TodoPanel: FC<TodoPanelProps> = ({ todos, sessionId }) => {
                 disabled={effectivePage >= pageCount - 1}
                 onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
                 aria-label={t("todo.nextPage")}
-                className="flex items-center gap-1 rounded-lg px-3 py-1 text-[11px] font-medium text-body transition-colors hover:bg-hairline-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning/50 disabled:cursor-not-allowed disabled:opacity-30"
+                className="flex items-center gap-1 rounded-lg px-3 py-1 text-xs font-medium text-body transition-colors hover:bg-hairline-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning disabled:cursor-not-allowed disabled:opacity-45"
               >
                 {t("todo.next")}
                 <ChevronRightIcon className="h-3 w-3" />
@@ -165,17 +165,17 @@ export const TodoPanel: FC<TodoPanelProps> = ({ todos, sessionId }) => {
         type="button"
         onClick={() => setOpen((v) => !v)}
         className={
-          "fixed bottom-20 right-5 z-50 flex items-center gap-2 rounded-full border border-warning/30 bg-canvas-elevated px-3.5 py-2 shadow-floating transition-all duration-300 ease-out dark:border-warning/20" +
+          "fixed bottom-20 right-5 z-50 flex items-center gap-2 rounded-full border border-warning bg-canvas-elevated px-3.5 py-2 shadow-floating transition-all duration-300 ease-out" +
           (open
             ? " translate-y-2 opacity-0 pointer-events-none"
             : " translate-y-0 opacity-100")
         }
         aria-label={t("todo.toggleTaskList")}
       >
-        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-warning text-[10px] font-bold text-canvas">
+        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-warning text-xs font-bold text-canvas">
           {todos.length}
         </span>
-        <span className="text-[13px] font-medium text-ink">
+        <span className="text-base font-medium text-ink">
           {t("todo.tasks")}
         </span>
         <ChevronDownIcon

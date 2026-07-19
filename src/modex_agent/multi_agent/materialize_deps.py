@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from modex_agent.agents.external_coding.subagent_builder import SubagentExternalCodingBuilder
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.core.session_id import SessionIdFactory
     from modex_agent.core.session_registry import SessionRegistry
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
     from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 
 from modex_agent.core.constants import ReasoningEffort
+from modex_agent.core.emitter import ContentEmitter
 from modex_agent.runtime.store import TodoStore
 
 
@@ -64,3 +66,25 @@ class AgentMaterializeDeps:
     mcp_registry: McpConnectionRegistry | None = None
     todo_store: TodoStore | None = None
     trace_enabled: bool = True
+    subagent_external_coding_builder: SubagentExternalCodingBuilder | None = None
+    """Optional seam for ``EXTERNAL_CODING`` subagent materialization (T5).
+    Injected only by pools that declare at least one external_coding subagent;
+    react-only pools leave it ``None``. ``AgentTemplate.materialize`` checks
+    the spec's ``execution_strategy`` and dispatches to ``builder.build(...)``
+    instead of ``agent_factory.create_agent(...)`` when it is
+    ``EXTERNAL_CODING``; the dispatch ends with the same
+    ``pool.register_resident`` + ``on_subagent_created`` calls the react path
+    makes."""
+    emitter_factory: Callable[[str], ContentEmitter] | None = None
+    """WebUI (or other channel) emitter factory for transcript persistence.
+
+    React subagents receive this via the ``_create_with_emitter`` wrapper in
+    ``pool_builder._build_agent_factory`` (which calls
+    ``turn_runner.set_emitter_factory`` after ``factory.create_agent``
+    returns). External-coding subagents bypass that wrapper because
+    ``BotSubagentExternalCodingBuilder.build`` calls ``assemble_pipeline``
+    directly — so the builder MUST call ``set_emitter_factory`` itself when
+    this field is set, otherwise the subagent's ``ExternalTurnRunner`` keeps
+    the default ``StreamingAwareEmitter``+``BrokerOutputAdapter`` and never
+    writes transcript events (ADR-0027 regression: external subagent turns
+    were invisible in the WebUI history)."""

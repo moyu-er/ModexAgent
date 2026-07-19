@@ -23,6 +23,7 @@ from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import InputMessage
+from modex_agent.hook import FinallyTurnHook, HookRunner, HookSpec
 from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 
 # ---------------------------------------------------------------------------
@@ -69,6 +70,31 @@ class _HangingAgent:
         return AgentResult(content="unreachable")
 
 
+class _CancelAgent:
+    """``agent.run()`` raises ``CancelledError`` directly (not via task.cancel())."""
+
+    name = "cancel-agent"
+
+    async def run(self, context: AgentContext, emitter: Any) -> AgentResult:
+        raise asyncio.CancelledError()
+
+
+class _StubFinallyTurnHook(FinallyTurnHook):
+    """Records ``(ctx, result)`` for each ``finally_turn`` invocation."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[AgentContext, AgentResult | None]] = []
+
+    @property
+    def name(self) -> str:
+        return "stub_finally_turn_external"
+
+    async def finally_turn(
+        self, ctx: AgentContext, result: AgentResult | None
+    ) -> None:
+        self.calls.append((ctx, result))
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -83,6 +109,7 @@ def _make_runner(
     on_session_start: Any = None,
     on_session_end: Any = None,
     safety: RuntimeSafetyPolicy | None = None,
+    hook_runner: HookRunner | None = None,
 ) -> ExternalTurnRunner:
     resolved_agent: Any = agent if agent is not None else _RecordingAgent()
     return ExternalTurnRunner(
@@ -93,6 +120,7 @@ def _make_runner(
         on_session_start=on_session_start,
         on_session_end=on_session_end,
         safety=safety or RuntimeSafetyPolicy(),
+        hook_runner=hook_runner,
     )
 
 
@@ -422,3 +450,106 @@ async def test_turn_identity_set() -> None:
     assert ctx.identity is not None
     assert ctx.identity.agent_id == "recording-agent"
     assert ctx.identity.session == session
+
+
+# ---------------------------------------------------------------------------
+# FINALLY_TURN hook dispatch (T3 — Seam 4 partial)
+# ---------------------------------------------------------------------------
+
+
+def _hook_runner_with(hook: _StubFinallyTurnHook) -> HookRunner:
+    return HookRunner([HookSpec(hook)])
+
+
+async def test_finally_turn_hook_fires_once_on_success() -> None:
+    """Hook fires exactly once with the success ``AgentResult``."""
+    hook = _StubFinallyTurnHook()
+    runner = _make_runner(
+        agent=_RecordingAgent(
+            result=AgentResult(content="ok", stop_reason=StopReason.COMPLETED)
+        ),
+        hook_runner=_hook_runner_with(hook),
+    )
+
+    result = await runner.process_locked(
+        _make_input(), "s1", session=_session()
+    )
+
+    assert result is not None
+    assert result.content == "ok"
+    assert len(hook.calls) == 1
+    assert hook.calls[0][1] is result
+
+
+async def test_finally_turn_hook_fires_once_on_exception() -> None:
+    """Hook fires exactly once with the error ``AgentResult`` on agent exception."""
+    hook = _StubFinallyTurnHook()
+    runner = _make_runner(
+        agent=_ErrorAgent(), hook_runner=_hook_runner_with(hook)
+    )
+
+    result = await runner.process_locked(
+        _make_input(), "s1", session=_session()
+    )
+
+    assert result is not None
+    assert result.stop_reason is StopReason.ERROR
+    assert "boom" in (result.error or "")
+    assert len(hook.calls) == 1
+    assert hook.calls[0][1] is result
+
+
+async def test_finally_turn_hook_fires_once_on_cancelled_error() -> None:
+    """Hook fires exactly once with ``result=None`` when ``agent.run`` raises
+    ``CancelledError``.
+
+    The finally block dispatches ``FINALLY_TURN`` (shielded) before
+    re-propagating the cancellation. ``result`` stays ``None`` because the
+    ``CancelledError`` except block emits a CANCELLED result but does NOT
+    assign it to the local ``result`` variable.
+    """
+    hook = _StubFinallyTurnHook()
+    runner = _make_runner(
+        agent=_CancelAgent(), hook_runner=_hook_runner_with(hook)
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await runner.process_locked(
+            _make_input(), "s1", session=_session()
+        )
+
+    assert len(hook.calls) == 1
+    assert hook.calls[0][1] is None
+
+
+async def test_finally_turn_hook_no_dispatch_when_hook_runner_none() -> None:
+    """When ``hook_runner=None`` (main-agent external pool default) no dispatch
+    happens — behavior is unchanged.
+
+    If the ``None`` guard were missing, attempting ``None.dispatch(...)`` would
+    raise ``AttributeError`` and this test would fail. The successful return of
+    the agent's ``AgentResult`` is the verification.
+    """
+    expected = AgentResult(content="ok", stop_reason=StopReason.COMPLETED)
+    runner = _make_runner(agent=_RecordingAgent(result=expected))
+
+    result = await runner.process_locked(
+        _make_input(), "s1", session=_session()
+    )
+
+    assert result is expected
+
+
+async def test_finally_turn_hook_receives_agent_context() -> None:
+    """The hook receives the same ``AgentContext`` built for the turn."""
+    hook = _StubFinallyTurnHook()
+    runner = _make_runner(
+        agent=_RecordingAgent(), hook_runner=_hook_runner_with(hook)
+    )
+
+    await runner.process_locked(_make_input("ctx-check"), "s1", session=_session())
+
+    assert len(hook.calls) == 1
+    received_ctx = hook.calls[0][0]
+    assert isinstance(received_ctx, AgentContext)
+    assert received_ctx.current_input == "ctx-check"

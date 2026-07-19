@@ -1,5 +1,10 @@
 agent_name: scout
-description: Fast codebase recon — returns compressed context for handoff
+description: >-
+  Fast read-only codebase reconnaissance — maps the relevant files, entry points,
+  key types, and data flow for a given area, then returns a compressed context
+  summary. Use before implementing when the codebase context is unclear or
+  unfamiliar. Does not modify files or make decisions.
 max_steps: 60
 tool_preset: read_only
 context_mode: fresh
+roles: [scout]

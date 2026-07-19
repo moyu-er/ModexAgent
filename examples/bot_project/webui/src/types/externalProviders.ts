@@ -43,8 +43,8 @@ const PROVIDER_BY_KIND: ReadonlyMap<ProviderKind, ProviderDescriptor> =
   new Map(EXTERNAL_PROVIDERS.map((d) => [d.value, d]));
 
 /**
- * Selectable <option> shape for the existing Select primitive.
- * Fields are mutable to satisfy the Select component's SelectOption[] prop.
+ * Selectable option shape for the shared DropdownPanel primitive.
+ * Fields are mutable to satisfy DropdownPanel's DropdownOption[] prop.
  */
 export interface ProviderOption {
   value: ProviderKind;

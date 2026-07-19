@@ -5,11 +5,8 @@ import {
   savePool,
   createPool,
   deletePool,
-  renamePool,
   addPeer,
   removePeer,
-  getPrompt,
-  savePrompt,
 } from "./poolApi";
 import { ApiError } from "./api";
 
@@ -76,18 +73,6 @@ describe("poolApi", () => {
     expect(init?.body).toBe(JSON.stringify({ name: "p" }));
   });
 
-  it("renamePool PATCHes /api/pools/{old} with {name: new}", async () => {
-    const fetchMock = vi.fn(() =>
-      Promise.resolve(makeResponse(200, { name: "new" })),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-    await renamePool("old", "new");
-    const [url, init] = call(fetchMock, 0);
-    expect(url).toBe("/api/pools/old");
-    expect(init?.method).toBe("PATCH");
-    expect(init?.body).toBe(JSON.stringify({ name: "new" }));
-  });
-
   it("addPeer POSTs {peer} to /api/pools/{pool}/peers", async () => {
     const fetchMock = vi.fn(() =>
       Promise.resolve(makeResponse(200, { pool_a: { name: "a" }, pool_b: { name: "b" } })),
@@ -124,31 +109,6 @@ describe("poolApi", () => {
     const [url, init] = call(fetchMock, 0);
     expect(url).toBe("/api/pools/p");
     expect(init?.method).toBe("DELETE");
-  });
-
-  it("getPrompt + savePrompt hit the agent prompt route", async () => {
-    const fetchMock = vi.fn(() =>
-      Promise.resolve(makeResponse(200, { name: "a", content: "hi" })),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-    await getPrompt("p", "a");
-    const [url0] = call(fetchMock, 0);
-    expect(url0).toBe("/api/pools/p/agents/a/prompt");
-
-    await savePrompt("p", "a", "new");
-    const [, init] = call(fetchMock, 1);
-    expect(init?.method).toBe("PUT");
-    expect(init?.body).toBe(JSON.stringify({ content: "new" }));
-  });
-
-  it("encodes special characters in path segments", async () => {
-    const fetchMock = vi.fn(() =>
-      Promise.resolve(makeResponse(200, { name: "a b", content: "" })),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-    await getPrompt("a b", "c/d");
-    const [url] = call(fetchMock, 0);
-    expect(url).toBe("/api/pools/a%20b/agents/c%2Fd/prompt");
   });
 
   it("throws ApiError carrying status + detail on non-2xx", async () => {

@@ -37,6 +37,20 @@ from modex_agent.core.session_cleanup import (
 )
 from modex_agent.workspace.paths import WorkspacePaths
 
+
+class _PoolScopedRecordScope(RecordScope):
+    """Test-local ``RecordScope`` subclass adding the pool dimension.
+
+    ADR-0028 removed ``pool`` from the framework's base ``RecordScope``; the
+    bot project re-adds it via ``BotRecordScope``. These tests construct
+    pool-scoped ``RecordScope`` instances (matching the bot's canonical JSON)
+    and use this local subclass to avoid crossing the framework/examples
+    boundary (mirrors ``BotRecordScope``).
+    """
+
+    pool: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # SessionCleanupResult
 # ---------------------------------------------------------------------------
@@ -192,7 +206,7 @@ def test_cleaner_removes_all_nine_units(tmp_path: Path) -> None:
     _seed_full_session(paths, pool, sid)
 
     cleaner = DefaultSessionArtifactCleaner(paths=paths)
-    scope = RecordScope(session_id=sid, pool=pool)
+    scope = _PoolScopedRecordScope(session_id=sid, pool=pool)
     result = asyncio.run(cleaner.clean_session_artifacts(sid, scope))
 
     for unit in session_artifact_paths(sid, pool, paths):
@@ -205,7 +219,7 @@ def test_cleaner_removes_all_nine_units(tmp_path: Path) -> None:
 def test_cleaner_idempotent_when_already_gone(tmp_path: Path) -> None:
     paths = _paths_for(tmp_path)
     cleaner = DefaultSessionArtifactCleaner(paths=paths)
-    scope = RecordScope(session_id="ghost.coding", pool="coding")
+    scope = _PoolScopedRecordScope(session_id="ghost.coding", pool="coding")
 
     result = asyncio.run(cleaner.clean_session_artifacts("ghost.coding", scope))
     assert result.files_deleted == 0
@@ -226,7 +240,7 @@ def test_cleaner_preserves_pool_shared_and_siblings(tmp_path: Path) -> None:
     (knowledge / "MEMORY.md").write_text("kept", encoding="utf-8")
 
     cleaner = DefaultSessionArtifactCleaner(paths=paths)
-    scope = RecordScope(session_id="aaa.coding", pool=pool)
+    scope = _PoolScopedRecordScope(session_id="aaa.coding", pool=pool)
     asyncio.run(cleaner.clean_session_artifacts("aaa.coding", scope))
 
     # sibling untouched
@@ -287,7 +301,7 @@ def test_cleaner_rejects_session_scope_mismatch_before_database_or_files(
         asyncio.run(
             cleaner.clean_session_artifacts(
                 argument_session,
-                RecordScope(session_id=scoped_session, pool=pool),
+                _PoolScopedRecordScope(session_id=scoped_session, pool=pool),
             )
         )
 
@@ -329,7 +343,7 @@ def test_cleaner_rejects_missing_scope_session_before_database_or_files(
         asyncio.run(
             cleaner.clean_session_artifacts(
                 session_id,
-                RecordScope(pool=pool),
+                _PoolScopedRecordScope(pool=pool),
             )
         )
 
@@ -344,7 +358,7 @@ def test_cleaner_accepts_optional_database_cleaner(tmp_path: Path) -> None:
     _seed_full_session(paths, pool, sid)
 
     cleaner = DefaultSessionArtifactCleaner(paths=paths, database_cleaner=None)
-    scope = RecordScope(session_id=sid, pool=pool)
+    scope = _PoolScopedRecordScope(session_id=sid, pool=pool)
     result = asyncio.run(cleaner.clean_session_artifacts(sid, scope))
 
     assert result.db_rows_deleted == 0
@@ -354,7 +368,7 @@ def test_cleaner_accepts_optional_database_cleaner(tmp_path: Path) -> None:
 def test_cleaner_delegates_structured_row_cleanup(tmp_path: Path) -> None:
     class _DatabaseCleaner(SessionDatabaseCleaner):
         async def delete_session_rows(self, scope: RecordScope) -> int:
-            assert scope == RecordScope(session_id="aaa.coding", pool="coding")
+            assert scope == _PoolScopedRecordScope(session_id="aaa.coding", pool="coding")
             return 4
 
         async def list_session_scopes(
@@ -367,7 +381,7 @@ def test_cleaner_delegates_structured_row_cleanup(tmp_path: Path) -> None:
         paths=paths,
         database_cleaner=_DatabaseCleaner(),
     )
-    scope = RecordScope(session_id="aaa.coding", pool="coding")
+    scope = _PoolScopedRecordScope(session_id="aaa.coding", pool="coding")
 
     result = asyncio.run(cleaner.clean_session_artifacts("aaa.coding", scope))
 
@@ -399,7 +413,7 @@ def test_cleaner_records_database_failure_and_still_cleans_files(tmp_path: Path)
     result = asyncio.run(
         cleaner.clean_session_artifacts(
             session_id,
-            RecordScope(session_id=session_id, pool=pool),
+            _PoolScopedRecordScope(session_id=session_id, pool=pool),
         )
     )
 
@@ -433,7 +447,7 @@ def test_cleaner_does_not_swallow_unrelated_database_failure(tmp_path: Path) -> 
         asyncio.run(
             cleaner.clean_session_artifacts(
                 session_id,
-                RecordScope(session_id=session_id, pool=pool),
+                _PoolScopedRecordScope(session_id=session_id, pool=pool),
             )
         )
 
@@ -461,7 +475,7 @@ def test_cleaner_retains_memory_marker_when_file_cleanup_fails(
     result = asyncio.run(
         DefaultSessionArtifactCleaner(paths=paths).clean_session_artifacts(
             session_id,
-            RecordScope(session_id=session_id, pool=pool),
+            _PoolScopedRecordScope(session_id=session_id, pool=pool),
         )
     )
 
@@ -473,7 +487,7 @@ def test_cleaner_retains_memory_marker_when_file_cleanup_fails(
     retry = asyncio.run(
         DefaultSessionArtifactCleaner(paths=paths).clean_session_artifacts(
             session_id,
-            RecordScope(session_id=session_id, pool=pool),
+            _PoolScopedRecordScope(session_id=session_id, pool=pool),
         )
     )
     assert retry.errors == []
@@ -500,10 +514,9 @@ def test_cleaner_discovers_orphan_scopes_from_files_and_database(
                 ),
                 RecordScope(
                     session_id="duplicate.coding",
-                    pool="coding",
                     workspace_id="workspace-a",
                 ),
-                RecordScope(
+                _PoolScopedRecordScope(
                     session_id="live.coding",
                     pool="coding",
                     workspace_id="workspace-a",
@@ -541,17 +554,14 @@ def test_cleaner_discovers_orphan_scopes_from_files_and_database(
             ),
             RecordScope(
                 session_id="duplicate.coding",
-                pool="coding",
                 workspace_id="workspace-a",
             ),
             RecordScope(
                 session_id="memory-only.coding",
-                pool="coding",
                 workspace_id="workspace-a",
             ),
             RecordScope(
                 session_id="transcript-only.research",
-                pool="research",
                 workspace_id="workspace-a",
             ),
         ],

@@ -58,6 +58,54 @@ class TestAgentDescriptor:
         assert desc.allowed_callers == ["planner"]
 
 
+class TestAgentDescriptorRolesField:
+    """T1 data-layer: ``roles`` is metadata, NOT identity.
+
+    The ``compare=False`` flag on the dataclass field excludes ``roles``
+    from the auto-generated ``__eq__`` / ``__hash__``. Two descriptors
+    that differ only in ``roles`` MUST be equal — pool registration dedup
+    keys on identity (address + capabilities), not role tags.
+    """
+
+    def test_roles_defaults_to_empty_list(self) -> None:
+        desc = AgentDescriptor(address=AgentAddress(kind="agent", name="coder"))
+        assert desc.roles == []
+
+    def test_roles_accepts_preset_and_custom_strings(self) -> None:
+        desc = AgentDescriptor(
+            address=AgentAddress(kind="agent", name="coder"),
+            roles=["planner", "custom-role"],
+        )
+        assert desc.roles == ["planner", "custom-role"]
+
+    def test_eq_excludes_roles(self) -> None:
+        """Two descriptors differing only in roles are equal."""
+        addr = AgentAddress(kind="agent", name="coder")
+        a = AgentDescriptor(address=addr, roles=["planner"])
+        b = AgentDescriptor(address=addr, roles=["reviewer"])
+        assert a == b
+
+    def test_eq_excludes_roles_even_when_one_empty(self) -> None:
+        """Empty roles vs non-empty roles: still equal."""
+        addr = AgentAddress(kind="agent", name="coder")
+        a = AgentDescriptor(address=addr, roles=[])
+        b = AgentDescriptor(address=addr, roles=["planner", "oracle"])
+        assert a == b
+
+    def test_eq_still_includes_other_fields(self) -> None:
+        """Sanity: equality still keys on non-roles fields."""
+        addr = AgentAddress(kind="agent", name="coder")
+        a = AgentDescriptor(address=addr, max_iterations=10)
+        b = AgentDescriptor(address=addr, max_iterations=20)
+        assert a != b
+
+    def test_eq_still_includes_address(self) -> None:
+        """Sanity: different addresses still unequal."""
+        a = AgentDescriptor(address=AgentAddress(kind="agent", name="coder"))
+        b = AgentDescriptor(address=AgentAddress(kind="agent", name="reviewer"))
+        assert a != b
+
+
 class TestAgentInstance:
     def test_creation_and_stop(self) -> None:
         from unittest.mock import MagicMock

@@ -18,6 +18,7 @@ Three responsibilities keep provider backends OS-agnostic:
 from __future__ import annotations
 
 import asyncio
+import atexit
 import contextlib
 import logging
 import os
@@ -25,6 +26,7 @@ import re
 import signal
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Final
 
@@ -116,7 +118,9 @@ def resolve_executable(
         if real_exe is not None:
             if logger is not None:
                 logger.info(
-                    "Resolved %s.cmd shim to native exe: %s", name, real_exe,
+                    "Resolved %s.cmd shim to native exe: %s",
+                    name,
+                    real_exe,
                 )
             return ResolvedExecutable(argv0=real_exe)
 
@@ -294,9 +298,82 @@ async def _terminate_windows(proc: asyncio.subprocess.Process) -> None:
         await asyncio.wait_for(proc.wait(), timeout=2.0)
 
 
+# ---------------------------------------------------------------------------
+# _sync_kill_proc — sync kill for finalize/atexit/signal context
+# ---------------------------------------------------------------------------
+
+
+def _sync_kill_proc(pid: int) -> None:
+    """Synchronously kill a process by PID.
+
+    Safe to call from ``__del__``, ``weakref.finalize``, ``atexit``,
+    and signal handlers — no awaits, no logging, no propagated exceptions.
+
+    POSIX: ``os.kill(pid, SIGKILL)``. Windows: ``taskkill /F /T /PID``.
+    ``ProcessLookupError`` and ``OSError`` (process already dead, or
+    ``taskkill`` not found) are suppressed.
+    """
+    try:
+        if _IS_WINDOWS:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                capture_output=True,
+                check=False,
+            )
+        else:
+            os.kill(pid, signal.SIGKILL)  # type: ignore[attr-defined]
+    except (ProcessLookupError, OSError):
+        pass
+
+
+# ---------------------------------------------------------------------------
+# register_signal_handlers — cooperative SIGTERM/SIGINT cleanup
+# ---------------------------------------------------------------------------
+
+_signal_handlers_registered: bool = False
+
+
+def register_signal_handlers() -> None:
+    """Register SIGTERM/SIGINT handlers that run atexit cleanup then exit.
+
+    Idempotent — safe to call multiple times. Cooperative — chains to
+    the previous handler if non-default (checked via ``signal.getsignal``
+    before registering). Called once at bot startup (T8's responsibility).
+
+    The handler calls ``atexit._run_exitfuncs()`` (which runs all
+    registered atexit hooks, including ``_atexit_cleanup`` from
+    :mod:`opencode_server_backend`) then ``sys.exit(0)``.
+    """
+    global _signal_handlers_registered
+    if _signal_handlers_registered:
+        return
+    _signal_handlers_registered = True
+
+    def _signal_cleanup(signum: int, frame: object) -> None:
+        atexit._run_exitfuncs()
+        sys.exit(0)
+
+    def _make_chained(prev: object) -> Callable[[int, object], None]:
+        # Chain: previous handler runs first (cooperative), then our cleanup.
+        def _chained(signum: int, frame: object) -> None:
+            if callable(prev):
+                prev(signum, frame)  # type: ignore[operator]
+            _signal_cleanup(signum, frame)
+
+        return _chained
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        prev = signal.getsignal(sig)
+        if prev == signal.SIG_DFL or prev is None:
+            signal.signal(sig, _signal_cleanup)
+        else:
+            signal.signal(sig, _make_chained(prev))
+
+
 __all__ = [
     "ResolvedExecutable",
     "resolve_executable",
     "spawn_process_group",
     "terminate_process_group",
+    "register_signal_handlers",
 ]

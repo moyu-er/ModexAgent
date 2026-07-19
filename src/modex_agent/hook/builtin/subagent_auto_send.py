@@ -2,6 +2,15 @@
 
 Fires on FINALLY_TURN (guaranteed) — no communication tool check needed.
 Subagents have no communication tools; this hook is the sole notification path.
+
+ADR-0027 — the notification's uniform fields (``agent``, ``invocation_id``,
+``status``, ``stop_reason``, ``is_normal``, ``error``, ``hint``, ``summary``)
+are constructed identically for react and external subagents. Only the
+``<artifacts>`` block differs: react carries ``<trace>`` + ``<output>`` +
+``<output_status>``; external carries only ``<replied>`` (bool — whether the
+subagent emitted at least one ``modexctl send`` during the turn). The parent
+agent's decision logic reads only the uniform fields and does not branch on
+subagent kind.
 """
 
 from __future__ import annotations
@@ -11,6 +20,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.hook.abc import FinallyTurnHook
 
 if TYPE_CHECKING:
@@ -50,12 +60,16 @@ class SubagentAutoSendHook(FinallyTurnHook):
         parent_name: str = "main",
         runtime_dir: Path | None = None,
         trace_enabled: bool = True,
+        execution_strategy: ExecutionStrategyKind = ExecutionStrategyKind.REACT,
+        external_outbox_path: Path | None = None,
     ) -> None:
         self._agent_bus = agent_bus
         self._self_name = self_name
         self._parent_name = parent_name
         self._runtime_dir = runtime_dir or Path(".")
         self._trace_enabled = trace_enabled
+        self._execution_strategy = execution_strategy
+        self._external_outbox_path = external_outbox_path
 
     # -- FINALLY_TURN (always fires) ------------------------------------------
 
@@ -63,28 +77,6 @@ class SubagentAutoSendHook(FinallyTurnHook):
         if self._agent_bus is None:
             return
 
-        session_id = str(ctx.session)
-
-        # 1. Derive artifact paths from session_id (deterministic).
-        #    Absolute, workspace-rooted — mirrors send_to_agent's ack so the
-        #    parent can read them directly without resolving a relative fragment.
-        #    runtime_dir is the resolved workspace runtime dir (absolute),
-        #    captured at materialize; pools are per-workspace so it is correct
-        #    for this subagent's lifetime. Trace is written by
-        #    TraceCollectorHook -> OtelSpanTraceStore per session_id; the dir is
-        #    created by the store on first write, not here. When trace is
-        #    disabled (trace_backend=off), trace_path is None and the <trace>
-        #    XML element is omitted entirely.
-        if self._trace_enabled:
-            trace_path = self._runtime_dir / "trace" / session_id / "spans.jsonl"
-        else:
-            trace_path = None
-        output_path = self._runtime_dir / "output" / session_id / "OUTPUT.md"
-
-        # 2. Check OUTPUT.md status
-        output_status = "written" if output_path.exists() else "missing"
-
-        # 3. Determine stop condition
         stop_reason: str = "error"
         error: str | None = "subagent crashed"
         content = ""
@@ -93,18 +85,39 @@ class SubagentAutoSendHook(FinallyTurnHook):
             error = result.error
             content = result.content or ""
 
-        # 4. Get invocation_id from session snowflake
         invocation_id = ctx.session.session_id_prefix
+        session_id = str(ctx.session)
 
-        is_normal, hint = self._classify_stop(
+        if self._execution_strategy is ExecutionStrategyKind.EXTERNAL_CODING:
+            xml = self._build_external_xml(
+                stop_reason, error, content, invocation_id,
+            )
+        else:
+            xml = self._build_native_xml(
+                stop_reason, error, content, invocation_id, session_id,
+            )
+
+        await self._notify_parent(ctx, session_id, xml)
+
+    def _build_native_xml(
+        self,
+        stop_reason: str,
+        error: str | None,
+        content: str,
+        invocation_id: str,
+        session_id: str,
+    ) -> str:
+        trace_path: Path | None = None
+        if self._trace_enabled:
+            trace_path = self._runtime_dir / "trace" / session_id / "spans.jsonl"
+        output_path = self._runtime_dir / "output" / session_id / "OUTPUT.md"
+        output_status = "written" if output_path.exists() else "missing"
+
+        is_normal, hint = self._classify_stop_native(
             stop_reason, output_status, error, invocation_id,
         )
-
-        # 5. Truncate last assistant output
         summary = self._truncate_content(content, max_chars=1500)
-
-        # 6. Build XML notification
-        xml = self._build_xml(
+        return self._build_xml(
             agent_name=self._self_name,
             invocation_id=invocation_id,
             status="completed" if is_normal else "incomplete",
@@ -118,8 +131,29 @@ class SubagentAutoSendHook(FinallyTurnHook):
             output_status=output_status,
         )
 
-        # 7. Send to parent inbox
-        await self._notify_parent(ctx, session_id, xml)
+    def _build_external_xml(
+        self,
+        stop_reason: str,
+        error: str | None,
+        content: str,
+        invocation_id: str,
+    ) -> str:
+        replied = self._check_replied()
+        is_normal, hint = self._classify_stop_external(
+            stop_reason, error, invocation_id,
+        )
+        summary = self._truncate_content(content, max_chars=1500)
+        return self._build_xml(
+            agent_name=self._self_name,
+            invocation_id=invocation_id,
+            status="completed" if is_normal else "incomplete",
+            stop_reason=stop_reason,
+            is_normal=is_normal,
+            error=error or "",
+            hint=hint,
+            summary=summary,
+            replied=replied,
+        )
 
     # -- stop classification --------------------------------------------------
 
@@ -132,17 +166,12 @@ class SubagentAutoSendHook(FinallyTurnHook):
     })
 
     @staticmethod
-    def _classify_stop(
+    def _classify_stop_native(
         stop_reason: str,
         output_status: str,
         error: str | None,
-        invocation_id: str = "",
+        invocation_id: str,
     ) -> tuple[bool, str]:
-        """Classify whether the stop was normal and produce an actionable hint.
-
-        The hint tells the parent agent HOW to continue — always including the
-        invocation_id so the parent can resume this exact session.
-        """
         resume = (
             f" To continue, send a message with invocation_id={invocation_id}."
             if invocation_id
@@ -175,10 +204,87 @@ class SubagentAutoSendHook(FinallyTurnHook):
             )
         return True, ""
 
+    @staticmethod
+    def _classify_stop_external(
+        stop_reason: str,
+        error: str | None,
+        invocation_id: str,
+    ) -> tuple[bool, str]:
+        resume = (
+            f" To continue, send a message with invocation_id={invocation_id}."
+            if invocation_id
+            else ""
+        )
+        if error:
+            return False, (
+                f"Subagent crashed with error: {error}. Task is incomplete. "
+                "Check the subagent's last output for details. "
+                "The subagent session can be resumed — "
+                f"send a message with invocation_id={invocation_id} to continue."
+                if invocation_id
+                else f"Subagent crashed with error: {error}. Task is incomplete."
+            )
+        if stop_reason == "loop_detected":
+            return False, (
+                f"Subagent stopped with {stop_reason} — it was stuck in a loop "
+                f"(repeating the same output or the same tool calls). "
+                f"Task is incomplete.{resume}"
+            )
+        if stop_reason in SubagentAutoSendHook._NON_NORMAL_STOPS:
+            return False, (
+                f"Subagent stopped with {stop_reason} — task is incomplete."
+                f"{resume}"
+            )
+        return True, ""
+
     # -- XML builder ----------------------------------------------------------
 
     @staticmethod
     def _build_xml(
+        *,
+        agent_name: str,
+        invocation_id: str,
+        status: str,
+        stop_reason: str,
+        is_normal: bool,
+        error: str,
+        hint: str,
+        summary: str,
+        trace_path: str | None = None,
+        output_path: str = "",
+        output_status: str = "",
+        replied: bool | None = None,
+    ) -> str:
+        from modex_agent.utils.xml import xml_text
+
+        if replied is not None:
+            return SubagentAutoSendHook._build_external_xml_block(
+                agent_name=agent_name,
+                invocation_id=invocation_id,
+                status=status,
+                stop_reason=stop_reason,
+                is_normal=is_normal,
+                error=error,
+                hint=hint,
+                summary=summary,
+                replied=replied,
+            )
+        return SubagentAutoSendHook._build_native_xml_block(
+            agent_name=agent_name,
+            invocation_id=invocation_id,
+            status=status,
+            stop_reason=stop_reason,
+            is_normal=is_normal,
+            error=error,
+            hint=hint,
+            summary=summary,
+            trace_path=trace_path,
+            output_path=output_path,
+            output_status=output_status,
+        )
+
+    @staticmethod
+    def _build_native_xml_block(
         *,
         agent_name: str,
         invocation_id: str,
@@ -209,11 +315,42 @@ class SubagentAutoSendHook(FinallyTurnHook):
             f"  <error>{xml_text(error)}</error>\n"
             f"  <hint>{xml_text(hint)}</hint>\n"
             f"  <summary>{xml_text(summary)}</summary>\n"
-            f"  <artifacts>\n"
+            "  <artifacts>\n"
             f"{trace_block}"
             f"    <output>{xml_text(output_path)}</output>\n"
             f"    <output_status>{xml_text(output_status)}</output_status>\n"
-            f"  </artifacts>\n"
+            "  </artifacts>\n"
+            f"</subagent_notification>"
+        )
+
+    @staticmethod
+    def _build_external_xml_block(
+        *,
+        agent_name: str,
+        invocation_id: str,
+        status: str,
+        stop_reason: str,
+        is_normal: bool,
+        error: str,
+        hint: str,
+        summary: str,
+        replied: bool,
+    ) -> str:
+        from modex_agent.utils.xml import xml_text
+
+        return (
+            "<subagent_notification>\n"
+            f"  <agent>{xml_text(agent_name)}</agent>\n"
+            f"  <invocation_id>{xml_text(invocation_id)}</invocation_id>\n"
+            f"  <status>{xml_text(status)}</status>\n"
+            f"  <stop_reason>{xml_text(stop_reason)}</stop_reason>\n"
+            f"  <is_normal>{str(is_normal).lower()}</is_normal>\n"
+            f"  <error>{xml_text(error)}</error>\n"
+            f"  <hint>{xml_text(hint)}</hint>\n"
+            f"  <summary>{xml_text(summary)}</summary>\n"
+            "  <artifacts>\n"
+            f"    <replied>{str(replied).lower()}</replied>\n"
+            "  </artifacts>\n"
             f"</subagent_notification>"
         )
 
@@ -275,6 +412,23 @@ class SubagentAutoSendHook(FinallyTurnHook):
             )
 
     # -- content helpers ------------------------------------------------------
+
+    def _check_replied(self) -> bool:
+        """Return True if the external subagent emitted any modexctl send.
+
+        Simplified for T7: checks whether outbox.jsonl has any content at all.
+        Turn-window filtering (entries timestamped within the current turn's
+        start/end window) requires BEFORE_TURN dispatch, which T3 did not add
+        to ExternalTurnRunner; it can be layered in as a future refinement
+        without changing this method's signature.
+        """
+        if self._external_outbox_path is None:
+            return False
+        try:
+            content = self._external_outbox_path.read_text(encoding="utf-8").strip()
+            return bool(content)
+        except OSError:
+            return False
 
     @classmethod
     def _truncate_content(cls, content: str, max_chars: int = 1500) -> str:

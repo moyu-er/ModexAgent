@@ -180,3 +180,29 @@ async def test_default_memory_system_accepts_custom_estimator(tmp_path) -> None:
     spy = Spy()
     ms = create_memory_system(workspace=tmp_path, session_only=True, token_estimator=spy)
     assert ms._token_estimator is spy
+
+
+async def test_context_manager_load_injects_role_contract_when_roles_set(system) -> None:
+    from modex_agent.core.constants import AgentRole
+
+    manager = MemorySystemContextManager(system, roles=[AgentRole.REVIEWER.value])
+    state = await manager.load("role-contract-session")
+    assert state.system_prompt_pipeline is not None
+    prompt = await state.system_prompt_pipeline.get_or_refresh()
+    assert '<verification status="passed|failed' in prompt
+
+
+async def test_context_manager_load_omits_role_contract_when_roles_empty(system) -> None:
+    manager = MemorySystemContextManager(system, roles=[])
+    state = await manager.load("no-role-session")
+    assert state.system_prompt_pipeline is not None
+    prompt = await state.system_prompt_pipeline.get_or_refresh()
+    assert '<verification status=' not in prompt
+
+
+async def test_context_manager_load_omits_role_contract_when_roles_none(system) -> None:
+    manager = MemorySystemContextManager(system)
+    state = await manager.load("default-roles-session")
+    assert state.system_prompt_pipeline is not None
+    prompt = await state.system_prompt_pipeline.get_or_refresh()
+    assert '<verification status=' not in prompt

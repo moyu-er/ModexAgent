@@ -13,7 +13,6 @@ from modex_agent.core.emitter import AgentResult
 from modex_agent.core.graph.interrupt import GraphInterrupt
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import InputMessage, ToolCall
-from modex_agent.pipeline.pipeline import AgentPipeline
 from modex_agent.runtime.enums import AgentKind, ApprovalSubjectType, SnapshotReason, TurnPhase
 from modex_agent.runtime.models import (
     ApprovalRequestState,
@@ -24,6 +23,8 @@ from modex_agent.runtime.models import (
 from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.runtime.store import InMemoryTurnStateStore
+
+from tests.unit.pipeline._helpers import _make_react_pipeline
 
 
 class _InputAdapter:
@@ -73,8 +74,8 @@ def _pipeline(
     runtime_services: AgentRuntimeServices | None = None,
     context_manager: InMemoryContextManager | None = None,
     agent: object | None = None,
-) -> AgentPipeline:
-    return AgentPipeline(
+):
+    return _make_react_pipeline(
         agent=agent or _Agent(),
         context_manager=context_manager or InMemoryContextManager(),
         tool_manager=InMemoryToolManager(),
@@ -136,7 +137,7 @@ def test_pipeline_copies_runtime_services_template_into_each_turn() -> None:
     )
     context_state = ContextState()
 
-    agent_context, _ = pipeline._turn_context_builder.build_runtime_and_context(
+    agent_context, _ = pipeline._turn_runner._builder.build_runtime_and_context(  # type: ignore[union-attr]
         SessionInfo.from_str("s1", default_agent_name="main"),
         context_state,
         InMemoryContextManager(),

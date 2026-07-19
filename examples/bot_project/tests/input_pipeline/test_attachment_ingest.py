@@ -41,6 +41,7 @@ def _ctx(
 ) -> BotInputContext:
     return BotInputContext(
         default_pool="main",
+        available_pools=lambda: {"main"},
         pool_session_store=MagicMock(),
         agent_pool_map={"main": "main"},
         agent_resolver=lambda p: p,
@@ -65,6 +66,7 @@ def _ctx_with_pool_config(
     """
     return BotInputContext(
         default_pool="main",
+        available_pools=lambda: {"main"},
         pool_session_store=MagicMock(),
         agent_pool_map={"main": "main"},
         agent_resolver=lambda p: p,
@@ -229,6 +231,7 @@ async def test_noop_when_media_store_not_wired() -> None:
         # No media_store on the context.
         ctx = BotInputContext(
             default_pool="main",
+            available_pools=lambda: {"main"},
             pool_session_store=MagicMock(),
             agent_pool_map={"main": "main"},
             agent_resolver=lambda p: p,

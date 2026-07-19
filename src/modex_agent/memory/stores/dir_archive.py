@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import shutil
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -19,6 +18,7 @@ from modex_agent.memory.core.split_stores import (
 )
 from modex_agent.memory.core.store_metadata import StoreMetadata
 from modex_agent.utils.file_io import read_json_robust
+from modex_agent.utils.time import now_ms
 
 if TYPE_CHECKING:
     pass
@@ -246,11 +246,9 @@ class DirArchiveStorage(StoreMetadata, MessageStore, KVStore, CursorStore, Archi
         return self._revision()
 
     def _revision(self) -> StorageRevision:
-        from datetime import UTC, datetime
-
         return StorageRevision(
             message_count=0,
-            updated_at=datetime.now(UTC),
+            updated_at=now_ms(),
             version=0,
         )
 
@@ -287,7 +285,7 @@ class DirArchiveStorage(StoreMetadata, MessageStore, KVStore, CursorStore, Archi
     async def append_log(self, entry: dict[str, Any]) -> dict[str, Any]:
         self._base.mkdir(parents=True, exist_ok=True)
         log_path = self._base / "archive.jsonl"
-        stored = {**entry, "created_at": entry.get("created_at") or datetime.now(UTC).isoformat()}
+        stored = {**entry, "created_at": entry.get("created_at") or now_ms()}
         with log_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(stored, ensure_ascii=False) + "\n")
         return stored

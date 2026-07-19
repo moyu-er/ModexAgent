@@ -13,11 +13,11 @@ channel separates general-log entries (``append_log`` / ``read_logs`` /
 from __future__ import annotations
 
 import json
-import time
 from sqlite3 import Row
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.memory.core.split_stores import ArchiveStore
+from modex_agent.utils.time import now_ms
 
 if TYPE_CHECKING:
     from modex_agent.core.scope import RecordScope
@@ -39,13 +39,13 @@ class SqliteArchiveStore(ArchiveStore):
     async def append_log(self, entry: dict[str, Any]) -> dict[str, Any]:
         async with self._connection.transaction(immediate=True) as tx:
             archive_id = await self._next_archive_id_tx(tx)
-            created_at = entry.get("created_at") or time.time()
+            created_at = entry.get("created_at") or now_ms()
             summary = entry.get("summary")
             await tx.execute(
                 "INSERT INTO memory_archive_entries "
-                "(scope_key, scope, archive_id, channel, summary, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (self._scope_json, self._scope_json, archive_id, _LOG_CHANNEL, summary, created_at),
+                "(scope_key, archive_id, channel, summary, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (self._scope_json, archive_id, _LOG_CHANNEL, summary, created_at),
             )
             await self._set_next_archive_id_tx(tx, archive_id + 1)
             return {
@@ -71,15 +71,14 @@ class SqliteArchiveStore(ArchiveStore):
                 "DELETE FROM memory_archive_entries WHERE scope_key = ? AND channel = ?",
                 (self._scope_json, _LOG_CHANNEL),
             )
-            now = time.time()
+            now = now_ms()
             for entry in entries:
                 archive_id = int(entry.get("archive_id", 0) or 0)
                 await tx.execute(
                     "INSERT INTO memory_archive_entries "
-                    "(scope_key, scope, archive_id, channel, summary, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    "(scope_key, archive_id, channel, summary, created_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
                     (
-                        self._scope_json,
                         self._scope_json,
                         archive_id,
                         _LOG_CHANNEL,
@@ -107,23 +106,23 @@ class SqliteArchiveStore(ArchiveStore):
         if next_id is not None:
             await self._connection.execute(
                 "INSERT INTO memory_archive_state "
-                "(scope_key, scope, next_archive_id, state_json, updated_at) "
-                "VALUES (?, ?, ?, ?, ?) "
+                "(scope_key, next_archive_id, state_json, updated_at) "
+                "VALUES (?, ?, ?, ?) "
                 "ON CONFLICT(scope_key) DO UPDATE SET "
                 "next_archive_id = excluded.next_archive_id, "
                 "state_json = excluded.state_json, "
                 "updated_at = excluded.updated_at",
-                (self._scope_json, self._scope_json, int(next_id), state_json, time.time()),
+                (self._scope_json, int(next_id), state_json, now_ms()),
             )
         else:
             await self._connection.execute(
                 "INSERT INTO memory_archive_state "
-                "(scope_key, scope, next_archive_id, state_json, updated_at) "
-                "VALUES (?, ?, ?, ?, ?) "
+                "(scope_key, next_archive_id, state_json, updated_at) "
+                "VALUES (?, ?, ?, ?) "
                 "ON CONFLICT(scope_key) DO UPDATE SET "
                 "state_json = excluded.state_json, "
                 "updated_at = excluded.updated_at",
-                (self._scope_json, self._scope_json, 1, state_json, time.time()),
+                (self._scope_json, 1, state_json, now_ms()),
             )
 
     # -- channel log (3 methods) --------------------------------------------
@@ -134,13 +133,13 @@ class SqliteArchiveStore(ArchiveStore):
             allocate_id = archive_id == 0
             if archive_id == 0:
                 archive_id = await self._next_archive_id_tx(tx)
-            created_at = entry.get("created_at") or time.time()
+            created_at = entry.get("created_at") or now_ms()
             summary = entry.get("summary")
             await tx.execute(
                 "INSERT INTO memory_archive_entries "
-                "(scope_key, scope, archive_id, channel, summary, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (self._scope_json, self._scope_json, archive_id, channel, summary, created_at),
+                "(scope_key, archive_id, channel, summary, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (self._scope_json, archive_id, channel, summary, created_at),
             )
             if allocate_id:
                 await self._set_next_archive_id_tx(tx, archive_id + 1)
@@ -173,15 +172,14 @@ class SqliteArchiveStore(ArchiveStore):
                 "DELETE FROM memory_archive_entries WHERE scope_key = ? AND channel = ?",
                 (self._scope_json, channel),
             )
-            now = time.time()
+            now = now_ms()
             for entry in entries:
                 archive_id = int(entry.get("archive_id", 0) or 0)
                 await tx.execute(
                     "INSERT INTO memory_archive_entries "
-                    "(scope_key, scope, archive_id, channel, summary, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    "(scope_key, archive_id, channel, summary, created_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
                     (
-                        self._scope_json,
                         self._scope_json,
                         archive_id,
                         channel,
@@ -239,12 +237,12 @@ class SqliteArchiveStore(ArchiveStore):
     async def _set_next_archive_id_tx(self, tx: Transaction, value: int) -> None:
         await tx.execute(
             "INSERT INTO memory_archive_state "
-            "(scope_key, scope, next_archive_id, state_json, updated_at) "
-            "VALUES (?, ?, ?, NULL, ?) "
+            "(scope_key, next_archive_id, state_json, updated_at) "
+            "VALUES (?, ?, NULL, ?) "
             "ON CONFLICT(scope_key) DO UPDATE SET "
             "next_archive_id = excluded.next_archive_id, "
             "updated_at = excluded.updated_at",
-            (self._scope_json, self._scope_json, value, time.time()),
+            (self._scope_json, value, now_ms()),
         )
 
     @staticmethod
@@ -254,7 +252,7 @@ class SqliteArchiveStore(ArchiveStore):
             "archive_id": archive_id,
             "channel": channel,
             "summary": row[1],
-            "created_at": float(row[2]),
+            "created_at": int(row[2]),
             "cursor": archive_id,
             "entry_id": archive_id,
         }

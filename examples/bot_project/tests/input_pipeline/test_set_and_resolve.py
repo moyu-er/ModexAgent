@@ -3,13 +3,14 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-
+from bot.adapters import channels
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.resolve_pool import ResolvePoolStage
 from bot.input_pipeline.stages.set_channel import SetChannelStage
-from bot.adapters import channels
+
 from modex_agent.core.session_id import SessionIdFactory, encode_snowflake
 from modex_agent.input_pipeline.envelope import UserInputEnvelope
+from modex_agent.input_pipeline.stage import Terminate
 
 
 def _ctx(store_get: str = "main") -> BotInputContext:
@@ -17,6 +18,7 @@ def _ctx(store_get: str = "main") -> BotInputContext:
     store.get.return_value = store_get
     return BotInputContext(
         default_pool="main",
+        available_pools=lambda: {"main", "coding"},
         pool_session_store=store,
         agent_pool_map={"main": "main", "coding": "coding"},
         agent_resolver=lambda p: p,
@@ -71,11 +73,11 @@ async def test_resolve_pool_default_when_store_empty() -> None:
 
 @pytest.mark.asyncio
 async def test_resolve_pool_persists_explicit_pool_choice() -> None:
-    # WebUI UI selection: explicit_pool must be persisted so PoolRouter routes.
     store = MagicMock()
-    store.get.return_value = "main"  # store currently says main
+    store.get.return_value = "main"
     ctx = BotInputContext(
         default_pool="main",
+        available_pools=lambda: {"main", "coding"},
         pool_session_store=store,
         agent_pool_map={"main": "main", "coding": "coding"},
         agent_resolver=lambda p: p,
@@ -87,19 +89,16 @@ async def test_resolve_pool_persists_explicit_pool_choice() -> None:
         external_id="u1", content="hi", channel="websocket", explicit_pool="coding"
     )
     await ResolvePoolStage().process(env, ctx)
-    # Pool store keys by the agent-independent snowflake.
     store.set.assert_called_once_with(encode_snowflake("u1"), "coding")
 
 
 @pytest.mark.asyncio
 async def test_resolve_pool_persists_even_when_no_explicit_pool() -> None:
-    # IM path (explicit_pool=None): resolved pool is always persisted so
-    # PoolRouter never silently defaults to "main". This is an idempotent
-    # write — it doesn't change the stored pool, just ensures the mapping exists.
     store = MagicMock()
     store.get.return_value = "coding"
     ctx = BotInputContext(
         default_pool="main",
+        available_pools=lambda: {"main", "coding"},
         pool_session_store=store,
         agent_pool_map={"main": "main", "coding": "coding"},
         agent_resolver=lambda p: p,
@@ -112,4 +111,50 @@ async def test_resolve_pool_persists_even_when_no_explicit_pool() -> None:
     )
     await ResolvePoolStage().process(env, ctx)
     store.set.assert_called_once_with("4YEJ6AuZcPW5eZRoP", "coding")
-    assert env.metadata["resolved_pool"] == "coding"  # read from store
+    assert env.metadata["resolved_pool"] == "coding"
+
+
+@pytest.mark.asyncio
+async def test_resolve_pool_terminates_when_no_pool_configured() -> None:
+    ctx = BotInputContext(
+        default_pool="main",
+        available_pools=lambda: set(),
+        pool_session_store=MagicMock(),
+        agent_pool_map={"main": "main"},
+        agent_resolver=lambda p: p,
+        transcript_store=MagicMock(),
+        enqueue_message=MagicMock(),
+        command_adapter=MagicMock(),
+    )
+    env = UserInputEnvelope(
+        external_id="u1", content="hi", channel="websocket", explicit_pool=None
+    )
+    result = await ResolvePoolStage().process(env, ctx)
+    assert isinstance(result, Terminate)
+    assert result.reason == "no_pool_configured"
+    assert result.response is not None
+    assert "No pool is configured" in result.response["message"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_pool_terminates_when_resolved_pool_unavailable() -> None:
+    store = MagicMock()
+    store.get.return_value = "ghost"
+    ctx = BotInputContext(
+        default_pool="main",
+        available_pools=lambda: {"main"},
+        pool_session_store=store,
+        agent_pool_map={"main": "main"},
+        agent_resolver=lambda p: p,
+        transcript_store=MagicMock(),
+        enqueue_message=MagicMock(),
+        command_adapter=MagicMock(),
+    )
+    env = UserInputEnvelope(
+        external_id="u1", content="hi", channel="qq", explicit_pool=None
+    )
+    result = await ResolvePoolStage().process(env, ctx)
+    assert isinstance(result, Terminate)
+    assert result.reason == "pool_unavailable"
+    assert result.response is not None
+    assert "ghost" in result.response["message"]

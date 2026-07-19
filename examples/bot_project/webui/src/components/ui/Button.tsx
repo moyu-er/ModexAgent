@@ -1,10 +1,16 @@
-// Button.tsx — primary action primitive.
+// Button.tsx — primary action primitive (Teal & Ember §5.1).
 //
 // Five visual variants (primary/secondary/ghost/danger/link) and three sizes.
-// `loading` swaps the label for a spinner, sets `aria-busy`, and forces the
-// button into a disabled state so the user can't fire two clicks. All other
-// native button attributes (type, onClick, autoFocus, data-*, aria-*) are
-// forwarded onto the underlying <button>.
+// - primary: THE single primary-CTA styling — gradient + glow lives in the
+//   `.btn-primary` CSS class (index.css); never re-implement it per callsite.
+// - secondary: the bordered neutral button — elevated bg + hairline, hover
+//   border strengthens to the teal-shimmer border-strong.
+// - ghost: borderless, hover tint only.
+// - danger: semantic danger color, NEVER a gradient.
+// `loading` swaps in a spinner, sets `aria-busy`, and forces the button into
+// a disabled state so the user can't fire two clicks. All other native button
+// attributes (type, onClick, autoFocus, data-*, aria-*) are forwarded onto the
+// underlying <button>.
 
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { forwardRef } from "react";
@@ -21,29 +27,30 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   children?: ReactNode;
 }
 
+// md = 36px min height per §5.1.
 const SIZE_CLS: Record<ButtonSize, string> = {
   sm: "h-7 px-2.5 text-xs gap-1.5",
-  md: "h-8 px-3 text-sm gap-2",
-  lg: "h-10 px-4 text-sm gap-2",
+  md: "h-9 px-3.5 text-base gap-2",
+  lg: "h-10 px-4 text-base gap-2",
 };
+
+// Hover lift (-1px) + press scale (.98) per §4, except the inline link
+// variant. Primary gets its motion from `.btn-primary` (with the glow).
+const LIFT_PRESS_CLS = "enabled:hover:-translate-y-px enabled:active:scale-[0.98]";
 
 const VARIANT_CLS: Record<ButtonVariant, string> = {
-  primary:
-    "bg-link text-canvas-elevated hover:bg-link-deep border border-transparent btn-primary-glow",
-  secondary:
-    "bg-canvas-elevated text-ink border border-hairline hover:bg-hairline-soft",
-  ghost:
-    "bg-transparent text-ink hover:bg-hairline-soft border border-transparent",
-  danger:
-    "bg-transparent text-error border border-error hover:bg-error/10",
-  link:
-    "bg-transparent text-link hover:underline border border-transparent px-0 h-auto",
+  primary: "btn-primary border border-transparent",
+  secondary: `bg-canvas-elevated text-ink border border-hairline hover:border-border-strong ${LIFT_PRESS_CLS}`,
+  ghost: `bg-transparent text-body hover:bg-hairline-soft hover:text-ink border border-transparent ${LIFT_PRESS_CLS}`,
+  danger: `bg-transparent text-danger border border-danger hover:bg-hairline-soft ${LIFT_PRESS_CLS}`,
+  link: "bg-transparent text-brand hover:underline border border-transparent px-0 h-auto",
 };
 
-const SHAPE_CLS: Record<ButtonShape, string> = {
-  square: "rounded-sm",
-  pill: "rounded-pill",
-};
+// Radius scale (§4): small buttons radius-sm, default buttons radius-md.
+function radiusCls(size: ButtonSize, shape: ButtonShape): string {
+  if (shape === "pill") return "rounded-pill";
+  return size === "sm" ? "rounded-sm" : "rounded-md";
+}
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
   {
@@ -61,12 +68,12 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
 ) {
   const isDisabled = disabled || loading;
   const cls = [
-    "inline-flex items-center justify-center font-medium transition-[color,background-color,border-color,transform,box-shadow] duration-app ease-app",
-    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-link/30",
-    "disabled:cursor-not-allowed disabled:opacity-60",
+    "inline-flex items-center justify-center font-medium transition-[color,background-color,border-color,transform,box-shadow] duration-app ease-out",
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
+    "disabled:cursor-not-allowed disabled:opacity-45",
     VARIANT_CLS[variant],
     SIZE_CLS[size],
-    SHAPE_CLS[shape],
+    radiusCls(size, shape),
     className,
   ]
     .filter(Boolean)

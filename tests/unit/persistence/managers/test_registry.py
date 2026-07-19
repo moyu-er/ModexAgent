@@ -82,8 +82,8 @@ class TestRegistryPersistenceManagerLifecycle:
             workspace_id="ws-survive",
             target_path=str((tmp_path / "proj").resolve()),
             display_name="Survivor",
-            created_at="2026-01-01T00:00:00Z",
-            last_active="2026-01-01T00:00:00Z",
+            created_at=1735689600000,
+            last_active=1735689600000,
         )
         await manager.store.upsert_workspace(record)
         await manager.close()
@@ -111,8 +111,8 @@ class TestRegistryPersistenceManagerStore:
             record = WorkspaceRecord(
                 workspace_id="ws-1",
                 target_path=str((tmp_path / "proj").resolve()),
-                created_at="2026-01-01T00:00:00Z",
-                last_active="2026-01-01T00:00:00Z",
+                created_at=1735689600000,
+                last_active=1735689600000,
             )
             await manager.store.upsert_workspace(record)
             got = await manager.store.get_workspace(str(tmp_path / "proj"))

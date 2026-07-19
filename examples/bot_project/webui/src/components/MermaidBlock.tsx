@@ -171,7 +171,7 @@ export const MermaidBlock: FC<MermaidBlockProps> = ({ chart, isDark }) => {
       </div>
 
       {showSource ? (
-        <pre className="overflow-x-auto bg-canvas p-4 font-mono text-[13px] leading-relaxed text-ink">
+        <pre className="overflow-x-auto bg-canvas p-4 font-mono text-base leading-relaxed text-ink">
           <code>{chart}</code>
         </pre>
       ) : svg ? (
@@ -230,7 +230,7 @@ export const MermaidBlock: FC<MermaidBlockProps> = ({ chart, isDark }) => {
             <button
               type="button"
               onClick={() => setZoomed(false)}
-              className="flex items-center gap-1 text-sm text-white/80 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+              className="flex items-center gap-1 text-base text-white/80 transition-colors hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
             >
               <XIcon />
               {t("mermaid.close")}

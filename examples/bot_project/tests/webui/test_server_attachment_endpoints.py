@@ -40,6 +40,7 @@ def _make_server(workspace_root: Path, *, media_config: MediaConfig | None = Non
 
     ctx = BotInputContext(
         default_pool="main",
+        available_pools=lambda: {"main"},
         pool_session_store=MagicMock(),
         agent_pool_map={"main": "main"},
         agent_resolver=lambda p: p,

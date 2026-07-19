@@ -37,6 +37,7 @@ from modex_agent.core.types import InputMessage, LLMResponse, OutputMessage, Too
 from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
 from modex_agent.ioc.factories.approval import build_approval_runtime
 from modex_agent.pipeline.pipeline import AgentPipeline
+from tests.unit.pipeline._helpers import _make_react_pipeline
 from modex_agent.runtime.enums import SnapshotReason, TurnPhase
 from modex_agent.runtime.models import StateQueryScope
 from modex_agent.runtime.services import AgentRuntimeServices
@@ -235,7 +236,7 @@ def _build_pipeline(
         turn_store=turn_store,
     )
 
-    pipeline = AgentPipeline(
+    pipeline = _make_react_pipeline(
         agent=agent,
         context_manager=InMemoryContextManager(),
         tool_manager=tool_manager,
@@ -293,7 +294,7 @@ def _build_pipeline_with_agent(
         governance=governance,
     )
 
-    return AgentPipeline(
+    return _make_react_pipeline(
         agent=agent,
         context_manager=context_manager or InMemoryContextManager(),
         tool_manager=tool_manager,
@@ -501,8 +502,9 @@ async def test_default_off_no_suspend_even_for_dangerous_path(tmp_path: Path) ->
     )
 
     # Sanity: the factory returned None, so runtime_services has no approval.
-    assert pipeline.runtime_services is not None
-    assert pipeline.runtime_services.approval is None, (
+    _rs = pipeline._turn_runner._builder._runtime_services  # type: ignore[attr-defined]
+    assert _rs is not None
+    assert _rs.approval is None, (
         "build_approval_runtime must return None when enabled=False"
     )
 
@@ -706,10 +708,10 @@ async def test_post_construction_governance_mirrors_and_backfills_dangling_toolc
     governance = CompositeGovernance(
         [LossyContentCompactionGovernance(), ToolChainRepairGovernance()]
     )
-    pipeline.governance = governance
+    pipeline._turn_runner._builder._governance = governance  # type: ignore[attr-defined]
 
     # The mirror setter must propagate to the builder (the bug was that it didn't).
-    assert pipeline._turn_context_builder._governance is governance
+    assert pipeline._turn_runner._builder._governance  # type: ignore[attr-defined] is governance
 
     result = await pipeline._process_message(
         InputMessage(content="continue", session=session)

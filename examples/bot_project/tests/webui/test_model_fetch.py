@@ -3,15 +3,21 @@ response parsing, and the 404/405 fallback loop."""
 
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from aiohttp.test_utils import TestClient, TestServer
 
 sys.path.insert(0, str(Path(__file__).parents[2]))
 
+from bot.adapters.web_socket import WebSocketInputAdapter  # noqa: E402
+from bot.service.model_config import BotModelConfig, ModelCfg, ProviderCfg  # noqa: E402
+from bot.service.workspace_store import WorkspaceScopedTranscriptStore  # noqa: E402
 from bot.webui.model_fetch import (  # noqa: E402
+    FetchedModel,
     ModelFetchError,
     _build_headers,
     _ends_with_version_segment,
@@ -20,9 +26,9 @@ from bot.webui.model_fetch import (  # noqa: E402
     build_models_url_candidates,
     fetch_provider_models,
 )
+from bot.webui.server import WebUIServer  # noqa: E402
 
 from modex_agent.core.constants import InterfaceFormat  # noqa: E402
-
 # ── URL candidate construction ──────────────────────────────────────────────
 
 
@@ -274,3 +280,201 @@ class TestFetchProviderModels:
             "https://api.anthropic.com/v1/models",
             headers={"x-api-key": "sk-ant", "anthropic-version": "2023-06-01"},
         )
+
+
+# ── HTTP handler tests (POST /api/models/fetch) ──────────────────────────────
+
+
+# The fetch_provider_models reference bound in bot.webui.server's namespace;
+# patch this to avoid real outbound HTTP calls in handler tests.
+_FETCH_MODELS_PATH = "bot.webui.server.fetch_provider_models"
+_SERVER_LOGGER = "bot.webui.server"
+
+
+def _make_model_config() -> BotModelConfig:
+    return BotModelConfig(
+        default_provider="DeepSeek",
+        default_model="m1",
+        providers=[
+            ProviderCfg(
+                key="deepseek",
+                name="DeepSeek",
+                base_url="https://api.deepseek.com",
+                api_key="sk-test-key",
+                models=[ModelCfg(name="m1", model="m1")],
+            ),
+        ],
+    )
+
+
+def _make_fetch_client(
+    tmp_path: Path,
+    loader: MagicMock | None = None,
+) -> TestClient:
+    store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
+    server = WebUIServer(
+        WebSocketInputAdapter(),
+        store,
+        static_dist=None,
+        home_sessions_dir=tmp_path / ".modex",
+    )
+    if loader is not None:
+        server.set_model_config_loader(loader)
+    return TestClient(TestServer(server.app))
+
+
+class TestFetchProviderModelsHandler:
+    """HTTP handler tests for POST /api/models/fetch.
+
+    Mirrors the TestClient pattern from tests/webui/test_pool_routes.py.
+    The real fetch_provider_models is mocked where the handler would
+    otherwise make an outbound HTTP call.
+    """
+
+    @pytest.mark.asyncio
+    async def test_form_a_unknown_provider_key_returns_404(self, tmp_path: Path) -> None:
+        loader = MagicMock(return_value=_make_model_config())
+        client = _make_fetch_client(tmp_path, loader=loader)
+        await client.start_server()
+        try:
+            resp = await client.post("/api/models/fetch", json={"provider_key": "unknown"})
+            assert resp.status == 404
+            data = await resp.json()
+            assert "provider not found" in data["error"]
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_form_b_empty_base_url_returns_422(self, tmp_path: Path) -> None:
+        client = _make_fetch_client(tmp_path)
+        await client.start_server()
+        try:
+            resp = await client.post(
+                "/api/models/fetch",
+                json={
+                    "base_url": "",
+                    "api_key": "sk-test",
+                    "interface_format": "openai_compatible",
+                },
+            )
+            assert resp.status == 422
+            data = await resp.json()
+            assert data["error"] == "validation"
+            assert "base_url" in data["fields"]
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_form_b_empty_api_key_returns_422(self, tmp_path: Path) -> None:
+        client = _make_fetch_client(tmp_path)
+        await client.start_server()
+        try:
+            resp = await client.post(
+                "/api/models/fetch",
+                json={
+                    "base_url": "https://api.x.com",
+                    "api_key": "",
+                    "interface_format": "openai_compatible",
+                },
+            )
+            assert resp.status == 422
+            data = await resp.json()
+            assert data["error"] == "validation"
+            assert "api_key" in data["fields"]
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_form_b_invalid_interface_format_returns_422(self, tmp_path: Path) -> None:
+        client = _make_fetch_client(tmp_path)
+        await client.start_server()
+        try:
+            resp = await client.post(
+                "/api/models/fetch",
+                json={
+                    "base_url": "https://api.x.com",
+                    "api_key": "sk-test",
+                    "interface_format": "bogus",
+                },
+            )
+            assert resp.status == 422
+            data = await resp.json()
+            assert data["error"] == "validation"
+            assert "interface_format" in data["fields"]
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_form_b_does_not_call_model_config_loader(self, tmp_path: Path) -> None:
+        loader = MagicMock(return_value=_make_model_config())
+        client = _make_fetch_client(tmp_path, loader=loader)
+        await client.start_server()
+        try:
+            fake_models = [FetchedModel(id="m1")]
+            with patch(_FETCH_MODELS_PATH, new=AsyncMock(return_value=fake_models)):
+                resp = await client.post(
+                    "/api/models/fetch",
+                    json={
+                        "base_url": "https://api.x.com",
+                        "api_key": "sk-test",
+                        "interface_format": "openai_compatible",
+                    },
+                )
+                assert resp.status == 200, await resp.text()
+            loader.assert_not_called()
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_log_contains_label_never_api_key(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """logger.info call args contain base_url= (Form B) or provider_key=
+        (Form A), never api_key (neither the literal key name nor the secret
+        value)."""
+        loader = MagicMock(return_value=_make_model_config())
+        client = _make_fetch_client(tmp_path, loader=loader)
+        await client.start_server()
+        fake_models = [FetchedModel(id="m1")]
+        try:
+            with patch(_FETCH_MODELS_PATH, new=AsyncMock(return_value=fake_models)):
+                # Form A — log should contain provider_key=, not api_key.
+                caplog.clear()
+                with caplog.at_level(logging.INFO, logger=_SERVER_LOGGER):
+                    resp = await client.post(
+                        "/api/models/fetch", json={"provider_key": "deepseek"}
+                    )
+                    assert resp.status == 200, await resp.text()
+                form_a_msgs = [
+                    r.getMessage()
+                    for r in caplog.records
+                    if r.name == _SERVER_LOGGER
+                    and "fetch_provider_models" in r.getMessage()
+                ]
+                assert any("provider_key=" in m for m in form_a_msgs), form_a_msgs
+                assert all("api_key" not in m for m in form_a_msgs), form_a_msgs
+                assert all("sk-test-key" not in m for m in form_a_msgs), form_a_msgs
+
+                # Form B — log should contain base_url=, not api_key.
+                caplog.clear()
+                with caplog.at_level(logging.INFO, logger=_SERVER_LOGGER):
+                    resp = await client.post(
+                        "/api/models/fetch",
+                        json={
+                            "base_url": "https://api.x.com",
+                            "api_key": "sk-test-key",
+                            "interface_format": "openai_compatible",
+                        },
+                    )
+                    assert resp.status == 200, await resp.text()
+                form_b_msgs = [
+                    r.getMessage()
+                    for r in caplog.records
+                    if r.name == _SERVER_LOGGER
+                    and "fetch_provider_models" in r.getMessage()
+                ]
+                assert any("base_url=" in m for m in form_b_msgs), form_b_msgs
+                assert all("api_key" not in m for m in form_b_msgs), form_b_msgs
+                assert all("sk-test-key" not in m for m in form_b_msgs), form_b_msgs
+        finally:
+            await client.close()

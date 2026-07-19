@@ -7,6 +7,7 @@ import { ModelEditor } from "./ModelEditor";
 import { GlobalMcpView } from "./GlobalMcpView";
 import { GlobalSkillsView } from "./GlobalSkillsView";
 import { PoolsView } from "./PoolsView";
+import { PromptsView } from "./PromptsView";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { useToast } from "../ToastContext";
 import { restartToast } from "./restartToast";
@@ -45,6 +46,7 @@ const POOLS_GROUP: NavEntry[] = [
   { key: "pools", labelKey: "settings.nav.pools" },
   { key: "mcp", labelTerm: TERMS.mcp },
   { key: "skills", labelTerm: TERMS.skills },
+  { key: "prompts", labelKey: "settings.nav.prompts" },
 ];
 
 /** Domains backed by the /api/config persisted-config API (shared save footer). */
@@ -57,6 +59,7 @@ const VALID_TABS: ReadonlySet<ViewKey> = new Set([
   "pools",
   "mcp",
   "skills",
+  "prompts",
 ]);
 
 /** Read the initial tab from window.location.search without coupling to React Router. */
@@ -225,7 +228,7 @@ export function SettingsView({ onExit }: Props) {
           variant="ghost"
           size="sm"
           onClick={onExit}
-          className="mb-5 w-full justify-start gap-2 px-3 text-sm font-medium text-ink hover:bg-hairline-soft"
+          className="mb-5 w-full justify-start gap-2 px-3 text-base font-medium text-ink hover:bg-hairline-soft"
         >
           <ChevronLeft className="h-4 w-4" />
           {t("settings.nav.back")}
@@ -256,19 +259,19 @@ export function SettingsView({ onExit }: Props) {
             ) : view === "skills" ? (
               <GlobalSkillsView />
             ) : view === "pools" ? (
-              <PoolsView />
+              <PoolsView onNavigateToPrompts={() => setView("prompts")} />
+            ) : view === "prompts" ? (
+              <PromptsView />
             ) : form && isPersisted ? (
               <PersistedDomain
                 form={form}
                 error={error}
                 onChange={setForm}
-                dirty={dirty}
-                onSave={onSave}
               />
             ) : null}
           </div>
           {isPersisted && form && (
-            <ActionBar>
+            <ActionBar dirty={dirty}>
               <Button
                 variant="secondary"
                 size="sm"
@@ -325,7 +328,7 @@ function SidebarGroup({
 }) {
   return (
     <div className="rounded-lg border border-hairline bg-canvas-elevated p-2">
-      <h2 className="mb-1.5 px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-widest text-mute border-b border-hairline">
+      <h2 className="mb-1.5 border-b border-hairline px-2 pb-1.5 text-xs font-semibold uppercase tracking-wide text-mute">
         {title}
       </h2>
       <ul className="mt-1.5 space-y-0.5">
@@ -357,14 +360,10 @@ function PersistedDomain({
   form,
   error,
   onChange,
-  dirty,
-  onSave,
 }: {
   form: ConfigPayload;
   error: string;
   onChange: (next: ConfigPayload) => void;
-  dirty: boolean;
-  onSave: () => Promise<boolean>;
 }) {
   return (
     <>
@@ -386,7 +385,7 @@ function PersistedDomain({
                       >
                         <Icon className="h-5 w-5" />
                       </span>
-                      <span className="font-mono text-sm font-semibold text-bright">
+                      <span className="font-mono text-base font-semibold text-bright">
                         {section.label}
                       </span>
                     </div>
@@ -413,8 +412,6 @@ function PersistedDomain({
         <ModelEditor
           values={form.values ?? {}}
           onChange={(next) => onChange({ ...form, values: next })}
-          dirty={dirty}
-          onSave={onSave}
         />
       ) : (
         <ConfigForm
@@ -424,7 +421,7 @@ function PersistedDomain({
         />
       )}
 
-      {error && <p className="mt-4 text-sm text-error">{error}</p>}
+      {error && <p className="mt-4 text-base text-error">{error}</p>}
     </>
   );
 }

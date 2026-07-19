@@ -1,9 +1,9 @@
 // PoolsView — left/right layout: pool list + PoolEditor.
 //
-// Left list: listPools() summary; + Add pool (inline rename-style input, NOT
-// window.prompt); per-pool inline rename + delete (delete uses the shared
-// ConfirmDialog — NOT window.confirm). Deleting the default pool returns 409
-// from the backend → surface as a toast.
+// Left list: listPools() summary; + Add pool (inline input, NOT
+// window.prompt); per-pool delete (delete uses the shared ConfirmDialog — NOT
+// window.confirm). Deleting the default pool returns 409 from the backend →
+// surface as a toast.
 //
 // Switching to another pool while the current PoolEditor is dirty is guarded
 // by a ConfirmDialog at this level (PoolEditor itself never sees the switch).
@@ -14,19 +14,16 @@ import {
   createPool,
   deletePool,
   listPools,
-  renamePool,
 } from "../../lib/poolApi";
 import { ApiError } from "../../lib/api";
 import { useToast } from "../ToastContext";
 import { PoolEditor } from "./PoolEditor";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { SectionLabel } from "../ui/SectionLabel";
 import { ActionBar } from "../ui/ActionBar";
 import { Button } from "../ui/Button";
 import { IconButton } from "../ui/IconButton";
 import { Input } from "../ui/Input";
 import {
-  EditIcon,
   PlusIcon,
   SearchIcon,
 } from "../ui/icons";
@@ -39,12 +36,7 @@ type Confirm =
   | { kind: "switch"; name: string }
   | null;
 
-interface RenameState {
-  name: string;
-  draft: string;
-}
-
-export function PoolsView() {
+export function PoolsView({ onNavigateToPrompts }: { onNavigateToPrompts: () => void }) {
   const toast = useToast();
   const t = useT();
   const [pools, setPools] = useState<PoolSummary[] | null>(null);
@@ -52,7 +44,6 @@ export function PoolsView() {
   const [selected, setSelected] = useState<string | null>(null);
   const [adding, setAdding] = useState<boolean>(false);
   const [newName, setNewName] = useState<string>("");
-  const [rename, setRename] = useState<RenameState | null>(null);
   const [confirm, setConfirm] = useState<Confirm>(null);
   /** Dirty signal: PoolEditor flips this via onDirtyChange. */
   const [dirty, setDirty] = useState<boolean>(false);
@@ -86,10 +77,10 @@ export function PoolsView() {
   }, [pools, filter]);
 
   if (loadError) {
-    return <p className="text-sm text-error">{t("common.failedToLoad", { error: loadError })}</p>;
+    return <p className="text-base text-error">{t("common.failedToLoad", { error: loadError })}</p>;
   }
   if (!pools) {
-    return <p className="text-sm text-mute">{t("common.loading")}</p>;
+    return <p className="text-base text-mute">{t("common.loading")}</p>;
   }
 
   const onSelect = (name: string): void => {
@@ -112,28 +103,6 @@ export function PoolsView() {
         message: t("settings.pools.createFailed", { detail: e instanceof ApiError ? `${e.status} ${e.detail}` : String(e) }),
         tone: "warning",
       });
-    }
-  };
-
-  const onRename = async (): Promise<void> => {
-    if (!rename) return;
-    const next = rename.draft.trim();
-    const oldName = rename.name;
-    if (!next || next === oldName) {
-      setRename(null);
-      return;
-    }
-    try {
-      await renamePool(oldName, next);
-      setRename(null);
-      await load();
-      if (selected === oldName) setSelected(next);
-    } catch (e) {
-      toast.show({
-        message: t("settings.pools.renameFailed", { detail: e instanceof ApiError ? `${e.status} ${e.detail}` : String(e) }),
-        tone: "warning",
-      });
-      setRename(null);
     }
   };
 
@@ -162,17 +131,10 @@ export function PoolsView() {
       }
     } catch (e) {
       setConfirm(null);
-      if (e instanceof ApiError && e.status === 409) {
-        toast.show({
-          message: t("settings.pools.cannotDeleteDefault", { name }),
-          tone: "warning",
-        });
-      } else {
-        toast.show({
-          message: t("settings.pools.deleteFailed", { detail: e instanceof ApiError ? `${e.status} ${e.detail}` : String(e) }),
-          tone: "warning",
-        });
-      }
+      toast.show({
+        message: t("settings.pools.deleteFailed", { detail: e instanceof ApiError ? `${e.status} ${e.detail}` : String(e) }),
+        tone: "warning",
+      });
     }
   };
 
@@ -203,18 +165,6 @@ export function PoolsView() {
         aria-label={t("settings.pools.poolList")}
         className="flex max-h-48 w-full shrink-0 flex-col gap-3 border-b border-hairline bg-canvas-elevated pb-3 lg:max-h-none lg:w-64 lg:border-b-0 lg:border-r lg:pb-0 lg:pr-3"
       >
-        <div className="flex items-center justify-between">
-          <SectionLabel>{t("settings.pools.title")}</SectionLabel>
-          <IconButton
-            icon={<PlusIcon />}
-            label={t("settings.pools.addPool")}
-            variant="ghost"
-            size="sm"
-            className="text-mute hover:text-link"
-            onClick={() => setAdding(true)}
-          />
-        </div>
-
         <Input
           aria-label={t("settings.pools.filterPools")}
           placeholder={t("settings.pools.filterPoolsPlaceholder")}
@@ -234,7 +184,7 @@ export function PoolsView() {
             <input
               autoFocus
               placeholder={t("settings.pools.newPoolName")}
-              className="mb-1 w-full rounded-sm border border-hairline bg-canvas-elevated px-2 py-1 text-sm text-ink focus:border-link focus:outline-none focus:ring-1 focus:ring-link"
+              className="mb-1 w-full rounded-sm border border-hairline bg-canvas-elevated px-2 py-1 text-base text-ink focus:border-link focus:outline-none focus:ring-1 focus:ring-link"
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               onBlur={() => void onAdd()}
@@ -251,70 +201,54 @@ export function PoolsView() {
           <ul className="space-y-1">
             {visiblePools.map((p) => {
               const isSel = p.name === selected;
-              const isRenaming = rename?.name === p.name;
               return (
                 <li key={p.name} className="space-y-1">
-                  {isRenaming ? (
-                    <input
-                      autoFocus
-                      className="w-full rounded-sm border border-hairline bg-canvas-elevated px-2 py-1 text-sm text-ink focus:border-link focus:outline-none focus:ring-1 focus:ring-link"
-                      value={rename!.draft}
-                      onChange={(e) =>
-                        setRename({
-                          name: rename!.name,
-                          draft: e.target.value,
-                        })
-                      }
-                      onBlur={() => void onRename()}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") void onRename();
-                        if (e.key === "Escape") setRename(null);
-                      }}
-                    />
-                  ) : (
-                    <div
-                      className={`flex items-center gap-1 rounded-md border px-3 py-2 ${
-                        isSel
-                          ? "border-hairline bg-hairline-soft font-semibold text-ink"
-                          : "border-transparent text-body hover:bg-hairline-soft"
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        className="min-w-0 flex-1 truncate text-left text-sm"
-                        onClick={() => onSelect(p.name)}
-                      onDoubleClick={() =>
-                        setRename({ name: p.name, draft: p.name })
-                      }
+                  <div
+                    className={`flex items-center gap-1 rounded-md border px-3 py-2 ${
+                      isSel
+                        ? "border-hairline bg-hairline-soft font-semibold text-ink"
+                        : "border-transparent text-body hover:bg-hairline-soft"
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 truncate text-left text-base"
+                      onClick={() => onSelect(p.name)}
                       title={t("settings.pools.subagentCount", { count: p.subagent_count })}
                     >
-                        {p.name}
-                      </button>
-                      <IconButton
-                        icon={<EditIcon />}
-                        label={t("settings.pools.renameName", { name: p.name })}
-                        variant="ghost"
-                        size="sm"
-                        className="text-mute hover:text-link"
-                        onClick={() =>
-                          setRename({ name: p.name, draft: p.name })
-                        }
-                      />
-                      <IconButton
-                        icon={<Trash2 size={16} />}
-                        label={t("settings.pools.deleteName", { name: p.name })}
-                        variant="ghost"
-                        size="sm"
-                        className="text-mute hover:text-error"
-                        onClick={() =>
-                          setConfirm({ kind: "delete", name: p.name })
-                        }
-                      />
-                    </div>
-                  )}
+                      {p.name}
+                    </button>
+                    <IconButton
+                      icon={<Trash2 size={16} />}
+                      label={t("settings.pools.deleteName", { name: p.name })}
+                      variant="ghost"
+                      size="sm"
+                      className="text-mute hover:text-error"
+                      onClick={() =>
+                        setConfirm({ kind: "delete", name: p.name })
+                      }
+                    />
+                  </div>
                 </li>
               );
             })}
+
+            {/* Add-pool action — sits at the end of the list as a dashed
+                + row, so the list reads as the single source of truth for
+                pools and the affordance is contextual to the items. */}
+            {!adding && (
+              <li>
+                <button
+                  type="button"
+                  onClick={() => setAdding(true)}
+                  aria-label={t("settings.pools.addPool")}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-hairline px-3 py-2 text-base text-mute transition-colors hover:border-border-strong hover:bg-hairline-soft hover:text-link"
+                >
+                  <PlusIcon />
+                  {t("settings.pools.addPool")}
+                </button>
+              </li>
+            )}
           </ul>
 
           {pools.length > 0 && visiblePools.length === 0 && (
@@ -349,9 +283,10 @@ export function PoolsView() {
                 onCancel={(cancel) => {
                   cancelRef.current = cancel;
                 }}
+                onNavigateToPrompts={onNavigateToPrompts}
               />
             </div>
-            <ActionBar>
+            <ActionBar dirty={dirty}>
               <Button
                 variant="secondary"
                 size="sm"
@@ -372,7 +307,7 @@ export function PoolsView() {
             </ActionBar>
           </>
         ) : (
-          <p className="text-sm text-mute">
+          <p className="text-base text-mute">
             {t("settings.pools.selectOrCreate")}
           </p>
         )}

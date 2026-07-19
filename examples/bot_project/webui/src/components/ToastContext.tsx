@@ -1,5 +1,5 @@
 // Toast system — Provider + useToast hook. Toasts render bottom-right, stacked.
-// Auto-dismiss after ~6s UNLESS an action is present (actionable toasts stay
+// Auto-dismiss after ~4s UNLESS an action is present (actionable toasts stay
 // until the user clicks the action or dismisses). Respects prefers-reduced-motion
 // (instant render, no transition).
 
@@ -43,7 +43,7 @@ export interface ToastContextValue {
 
 const ToastContext = createContext<ToastContextValue | null>(null);
 
-const AUTO_DISMISS_MS = 6000;
+const AUTO_DISMISS_MS = 4000;
 
 interface ActiveToast {
   id: number;

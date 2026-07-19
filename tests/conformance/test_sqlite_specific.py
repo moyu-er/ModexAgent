@@ -5,10 +5,11 @@ verify SQLite-only capabilities:
 
 1. **WAL multi-connection concurrency** — framework + CLI simultaneous write.
 2. **Partial unique index** — one-active-turn enforcement at the DB level.
-3. **Generated column derivation** — scope JSON → extracted columns.
+3. **Generated column derivation** — scope_key JSON → extracted columns.
 4. **Migration idempotency** — running migrations twice is a no-op.
 5. **Crash recovery** — write without close → reopen → data intact.
 6. **Cross-platform CI** — these tests run on Windows/macOS/Linux.
+7. **Schema invariants** — ADR-0028/0029/0031 column/table/trigger contracts.
 """
 
 from __future__ import annotations
@@ -39,6 +40,60 @@ from modex_agent.runtime.store import ActiveTurnConflictError
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+class _PoolScopedRecordScope(RecordScope):
+    """Framework-test-local ``RecordScope`` subclass adding the pool dimension.
+
+    ``RecordScope`` no longer carries ``pool`` (ADR-0028); tests that need a
+    pool-scoped scope_key (matching the bot's ``BotRecordScope`` canonical
+    JSON) use this local subclass.
+    """
+
+    pool: str | None = None
+
+
+# Tables that own an ``auto_updated_at`` trigger (ADR-0029 §1).
+_MUTABLE_TABLES_WITH_TRIGGERS: tuple[str, ...] = (
+    "memory_session_messages",
+    "inbox_topics",
+    "inbox_messages",
+    "turn_snapshots",
+    "sessions",
+    "todos",
+    "memory_kv",
+    "memory_cursors",
+    "memory_revisions",
+    "memory_archive_state",
+    "external_session_map",
+    "pool_routing",
+)
+
+# Tables dropped in ADR-0031 — must NOT exist in the migrated workspace DB.
+_DROPPED_TABLES: tuple[str, ...] = (
+    "workspace_meta",
+    "inbox_dead_letter",
+)
+
+# Workspace-DB tables that have a ``scope_key`` column (ADR-0031 merged the
+# legacy ``scope`` column into ``scope_key``).
+_SCOPE_KEY_TABLES: tuple[str, ...] = (
+    "memory_session_messages",
+    "inbox_topics",
+    "inbox_messages",
+    "inbox_delivered_ids",
+    "turn_snapshots",
+    "sessions",
+    "todos",
+    "approval_audit_log",
+    "memory_kv",
+    "memory_cursors",
+    "memory_revisions",
+    "memory_archive_entries",
+    "memory_archive_state",
+    "external_session_map",
+    "pool_routing",
+)
 
 
 async def _open_workspace(tmp_path: Path) -> AsyncGenerator[ConnectionManager]:
@@ -236,28 +291,13 @@ class TestPartialUniqueIndex:
 
 
 # ===========================================================================
-# 3. Generated column derivation from scope JSON
+# 3. Generated column derivation from scope_key JSON
 # ===========================================================================
 
 
 class TestGeneratedColumns:
-    """STORED generated columns extract fields from the ``scope`` JSON so
+    """STORED generated columns extract fields from the ``scope_key`` JSON so
     queries use indexed columns instead of ``json_extract`` at query time."""
-
-    async def test_sessions_pool_generated_from_scope(self, tmp_path: Path) -> None:
-        mgr = ConnectionManager(tmp_path / "workspace.db", DatabaseKind.WORKSPACE)
-        await mgr.open()
-        store = SqliteSessionStore(mgr)
-        from modex_agent.core.session_id import SessionInfo
-
-        await store.save(
-            SessionInfo(session_id="s1.main", agent_name="main", metadata={"pool": "coding"})
-        )
-        # the generated column 'pool' should be 'coding'
-        row = await mgr.query_one("SELECT pool FROM sessions WHERE session_id = ?", ("s1.main",))
-        assert row is not None
-        assert row["pool"] == "coding"
-        await mgr.close()
 
     async def test_sessions_agent_id_generated_from_scope(self, tmp_path: Path) -> None:
         mgr = ConnectionManager(tmp_path / "workspace.db", DatabaseKind.WORKSPACE)
@@ -289,24 +329,25 @@ class TestGeneratedColumns:
         assert row["session_prefix"] is not None
         await mgr.close()
 
-    async def test_pool_routing_pool_generated_matches_pool_name(self, tmp_path: Path) -> None:
-        from modex_agent.persistence.adapters.pool_routing_store import (
-            SqlitePoolRoutingStore,
-        )
-
-        db_path = tmp_path / "workspace.db"
-        mgr = ConnectionManager(db_path, DatabaseKind.WORKSPACE)
+    async def test_sessions_parent_session_id_generated(self, tmp_path: Path) -> None:
+        mgr = ConnectionManager(tmp_path / "workspace.db", DatabaseKind.WORKSPACE)
         await mgr.open()
-        store = SqlitePoolRoutingStore(db_path)
-        store.set_pool("s1", "engineering")
-        # the generated 'pool' column must match pool_name
-        row = store._conn.execute(  # type: ignore[attr-defined]
-            "SELECT pool_name, pool FROM pool_routing WHERE session_prefix = ?",
-            ("s1",),
-        ).fetchone()
-        assert row["pool_name"] == "engineering"
-        assert row["pool"] == "engineering"
-        store.close()
+        store = SqliteSessionStore(mgr)
+        from modex_agent.core.session_id import SessionInfo
+
+        await store.save(
+            SessionInfo(
+                session_id="c.child",
+                agent_name="child",
+                parent_session_id="c.parent",
+            )
+        )
+        row = await mgr.query_one(
+            "SELECT parent_session_id FROM sessions WHERE session_id = ?",
+            ("c.child",),
+        )
+        assert row is not None
+        assert row["parent_session_id"] == "c.parent"
         await mgr.close()
 
 
@@ -381,7 +422,7 @@ class TestCrashRecovery:
 
     async def test_audit_log_survives_reopen(self, tmp_path: Path) -> None:
         db_path = tmp_path / "workspace.db"
-        scope = RecordScope(pool="default")
+        scope = _PoolScopedRecordScope(pool="default")
         mgr1 = ConnectionManager(db_path, DatabaseKind.WORKSPACE)
         await mgr1.open()
         store1 = SqliteApprovalAuditStore(mgr1, scope)
@@ -428,11 +469,11 @@ class TestCrossPlatform:
         mgr = ConnectionManager(spacy, DatabaseKind.WORKSPACE)
         await mgr.open()
         await mgr.execute(
-            "INSERT INTO workspace_meta (key, value_json, updated_at) VALUES ('test', '\"ok\"', 0)"
+            "INSERT INTO sessions (session_id, scope_key) VALUES ('test', '{}')"
         )
-        row = await mgr.query_one("SELECT value_json FROM workspace_meta WHERE key = 'test'")
+        row = await mgr.query_one("SELECT session_id FROM sessions WHERE session_id = 'test'")
         assert row is not None
-        assert row[0] == '"ok"'
+        assert row[0] == "test"
         await mgr.close()
 
     async def test_db_path_with_unicode_works(self, tmp_path: Path) -> None:
@@ -441,11 +482,11 @@ class TestCrossPlatform:
         mgr = ConnectionManager(unicode_path, DatabaseKind.WORKSPACE)
         await mgr.open()
         await mgr.execute(
-            "INSERT INTO workspace_meta (key, value_json, updated_at) VALUES ('test', '\"ok\"', 0)"
+            "INSERT INTO sessions (session_id, scope_key) VALUES ('test', '{}')"
         )
-        row = await mgr.query_one("SELECT value_json FROM workspace_meta WHERE key = 'test'")
+        row = await mgr.query_one("SELECT session_id FROM sessions WHERE session_id = 'test'")
         assert row is not None
-        assert row[0] == '"ok"'
+        assert row[0] == "test"
         await mgr.close()
 
     async def test_foreign_keys_enforced(self, tmp_path: Path) -> None:
@@ -456,3 +497,97 @@ class TestCrossPlatform:
         assert row is not None
         assert row[0] == 1
         await mgr.close()
+
+
+# ===========================================================================
+# 7. Schema invariants — ADR-0028/0029/0031 contracts
+# ===========================================================================
+
+
+class TestSchemaInvariants:
+    """Guard the schema shape mandated by ADR-0028 (pool removal),
+    ADR-0029 (epoch-ms INTEGER timestamps + auto-updated_at triggers), and
+    ADR-0031 (scope/scope_key merge + dead-table drops).
+    """
+
+    async def test_dropped_tables_absent(self, tmp_path: Path) -> None:
+        mgr = ConnectionManager(tmp_path / "workspace.db", DatabaseKind.WORKSPACE)
+        await mgr.open()
+        rows = await mgr.query_all(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN (?, ?)",
+            list(_DROPPED_TABLES),
+        )
+        await mgr.close()
+        assert rows == [], f"dropped tables still present: {[r['name'] for r in rows]}"
+
+    async def test_auto_updated_at_triggers_exist(self, tmp_path: Path) -> None:
+        mgr = ConnectionManager(tmp_path / "workspace.db", DatabaseKind.WORKSPACE)
+        await mgr.open()
+        expected = tuple(f"trg_{t}_auto_updated_at" for t in _MUTABLE_TABLES_WITH_TRIGGERS)
+        placeholders = ",".join("?" for _ in expected)
+        rows = await mgr.query_all(
+            f"SELECT name FROM sqlite_master WHERE type='trigger' AND name IN ({placeholders})",
+            list(expected),
+        )
+        present = {r["name"] for r in rows}
+        await mgr.close()
+        missing = set(expected) - present
+        assert not missing, f"missing auto_updated_at triggers: {sorted(missing)}"
+
+    async def test_timestamp_columns_are_integer(self, tmp_path: Path) -> None:
+        """Every ``created_at``/``updated_at``/``decided_at``/``consumed_at``
+        /``delivered_at``/``last_committed_at``/``deleted_at`` column in the
+        workspace DB must be ``INTEGER`` (ADR-0029 §2)."""
+        mgr = ConnectionManager(tmp_path / "workspace.db", DatabaseKind.WORKSPACE)
+        await mgr.open()
+        rows = await mgr.query_all(
+            "SELECT name FROM sqlite_master WHERE type='table'",
+        )
+        table_names = [r["name"] for r in rows]
+        timestamp_columns = (
+            "created_at",
+            "updated_at",
+            "decided_at",
+            "consumed_at",
+            "delivered_at",
+            "last_committed_at",
+            "deleted_at",
+        )
+        offenders: list[str] = []
+        for table in table_names:
+            if table == "sqlite_sequence" or table.startswith("sqlite_"):
+                continue
+            info = await mgr.query_all(f"PRAGMA table_info({table})")
+            for col in info:
+                if col["name"] in timestamp_columns and col["type"].upper() != "INTEGER":
+                    offenders.append(f"{table}.{col['name']}={col['type']}")
+        await mgr.close()
+        assert not offenders, f"non-INTEGER timestamp columns: {offenders}"
+
+    async def test_scope_key_column_present_no_legacy_scope(self, tmp_path: Path) -> None:
+        """Every scoped table has ``scope_key`` and none has a legacy
+        ``scope`` column (ADR-0031 merged scope into scope_key)."""
+        mgr = ConnectionManager(tmp_path / "workspace.db", DatabaseKind.WORKSPACE)
+        await mgr.open()
+        offenders: list[str] = []
+        for table in _SCOPE_KEY_TABLES:
+            info = await mgr.query_all(f"PRAGMA table_info({table})")
+            col_names = {col["name"] for col in info}
+            if "scope_key" not in col_names:
+                offenders.append(f"{table}: missing scope_key")
+            if "scope" in col_names:
+                offenders.append(f"{table}: legacy scope column still present")
+        await mgr.close()
+        assert not offenders, f"scope_key/scope violations: {offenders}"
+
+    async def test_pool_routing_has_no_pool_generated_column(self, tmp_path: Path) -> None:
+        """ADR-0028 removed the ``pool`` generated column from
+        ``pool_routing``; only ``pool_name`` and ``scope_key`` remain."""
+        mgr = ConnectionManager(tmp_path / "workspace.db", DatabaseKind.WORKSPACE)
+        await mgr.open()
+        info = await mgr.query_all("PRAGMA table_info(pool_routing)")
+        col_names = {col["name"] for col in info}
+        await mgr.close()
+        assert "pool" not in col_names, "pool_routing still has legacy 'pool' column"
+        assert "pool_name" in col_names
+        assert "scope_key" in col_names

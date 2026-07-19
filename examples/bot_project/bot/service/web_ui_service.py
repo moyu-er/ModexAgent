@@ -374,6 +374,10 @@ class WebUIService(BotService):
         # Pool/MCP/skills/prompt REST API (Phase 2B). All four stores share the
         # same base dir (the bot project root) and the MCP registry path under
         # ``config/mcp/registry.json``; default_pool comes from BotService.
+        # ``PromptStore.DEFAULT_PROMPT_SEED`` is the single canonical default
+        # prompt text (no framework-layer duplicate) — passed into ``PoolStore``
+        # so ``create_pool`` seeds main-agent prompt md with the canonical text
+        # instead of a framework-hardcoded string.
         from bot.config.mcp_registry import REGISTRY_PATH as _mcp_registry_path
         from bot.config.prompt_store import PromptStore
         from bot.config.skills_store import SkillsStore
@@ -382,13 +386,16 @@ class WebUIService(BotService):
 
         self._server.set_pool_config_controller(
             PoolConfigController(
-                pool_store=PoolStore(base_dir=project_dir),
+                pool_store=PoolStore(
+                    base_dir=project_dir,
+                    default_prompt_seed=PromptStore.DEFAULT_PROMPT_SEED,
+                ),
                 skills_store=SkillsStore(base_dir=project_dir),
                 prompt_store=PromptStore(base_dir=project_dir),
                 mcp_registry_path=project_dir / _mcp_registry_path,
-                default_pool=self._default_pool_name,
                 restarter=_trigger_restart,
                 pool_session_store=self._pool_session_store,
+                is_pool_busy=self._is_pool_busy_provider,
             )
         )
 
@@ -496,11 +503,11 @@ class WebUIService(BotService):
         todo_store = None
         persistence = resources.persistence
         if persistence is not None:
-            from modex_agent.core.scope import RecordScope
+            from bot.scope import BotRecordScope
             from modex_agent.persistence.adapters.todo_store import SqliteTodoStore
 
             todo_store = SqliteTodoStore(
-                persistence.connection, RecordScope(pool=pool)
+                persistence.connection, BotRecordScope(pool=pool)
             )
         return RuntimeStores(todo_store=todo_store, turn_store=turn_store)
 
@@ -520,6 +527,19 @@ class WebUIService(BotService):
     def _pool_for_agent(self, agent_name: str) -> str:
         """Return the pool name for *agent_name*, defaulting to ``main``."""
         return self._agent_pool_map.get(agent_name, _DEFAULT_AGENT_NAME)
+
+    def _is_pool_busy_provider(self, pool_name: str) -> tuple[bool, list[str]]:
+        """Check if a pool has agents with active turns (``AgentState.WORKING``)."""
+        from modex_agent.multi_agent.state import AgentState
+
+        pool_instance = self._pools.get(pool_name)
+        if pool_instance is None:
+            return (False, [])
+        busy: list[str] = []
+        for desc in pool_instance.pool.list_agents():
+            if pool_instance.pool.get_status(desc.address.name) == AgentState.WORKING:
+                busy.append(desc.address.name)
+        return (bool(busy), busy)
 
     async def start(self) -> None:
         """Start aiohttp server, then BotService (pools, router).
@@ -763,6 +783,7 @@ class WebUIService(BotService):
             media_store=self._media_store,
             media_config_for_pool=self._media_config_for_pool,
             model_choice_registry=self._model_choice_registry,
+            available_pools=self._available_pools_provider,
         )
 
     def _build_agent_pool_map(self) -> dict[str, str]:
@@ -778,6 +799,18 @@ class WebUIService(BotService):
                 mapping[sub.agent_name] = summary.name
 
         return mapping
+
+    def _available_pools_provider(self) -> set[str]:
+        """Return the current set of pool names (re-read from disk each call).
+
+        Used by the input pipeline's ``ResolvePoolStage`` to guard the
+        zero-pool and stale-pool cases. Reads the same PoolStore the
+        PoolConfigController wraps so the WebUI's pool CRUD is reflected
+        without a service restart.
+        """
+        from modex_agent.multi_agent.pool_config import PoolStore
+
+        return {p.name for p in PoolStore(base_dir=self._project_dir).list_pools()}
 
     async def stop(self) -> None:
         if self._session_gc is not None:

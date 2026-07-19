@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import json
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -25,7 +26,6 @@ from bot.service.workspace_store import WorkspaceScopedTranscriptStore
 from bot.webui.server import WebUIServer
 
 from modex_agent.multi_agent.pool_config import PoolStore
-from modex_agent.multi_agent.pool_router import PoolSessionStore
 
 _BOT_PROJECT = Path(__file__).resolve().parents[2]
 if str(_BOT_PROJECT) not in sys.path:
@@ -57,13 +57,20 @@ def _seed_pool_yml(
     return p
 
 
-def _make_controller(tmp_path: Path, default_pool: str = "main") -> PoolConfigController:
+def _make_controller(
+    tmp_path: Path,
+    *,
+    is_pool_busy: Callable[[str], tuple[bool, list[str]]] | None = None,
+) -> PoolConfigController:
     return PoolConfigController(
-        pool_store=PoolStore(base_dir=tmp_path),
+        pool_store=PoolStore(
+            base_dir=tmp_path,
+            default_prompt_seed=PromptStore.DEFAULT_PROMPT_SEED,
+        ),
         skills_store=SkillsStore(base_dir=tmp_path, user_global_dir=tmp_path / "user_skills"),
         prompt_store=PromptStore(base_dir=tmp_path),
         mcp_registry_path=tmp_path / REGISTRY_PATH,
-        default_pool=default_pool,
+        is_pool_busy=is_pool_busy,
     )
 
 
@@ -176,122 +183,188 @@ async def test_create_and_delete_pool(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_delete_default_pool_refused(tmp_path: Path) -> None:
+async def test_delete_any_pool_including_first(tmp_path: Path) -> None:
+    """Deleting any pool — including the first (alphabetical) and the last — succeeds."""
     _seed_pool_yml(tmp_path, "main")
-    client = _make_client(_make_controller(tmp_path, default_pool="main"), tmp_path)
+    _seed_pool_yml(tmp_path, "research")
+    client = _make_client(_make_controller(tmp_path), tmp_path)
     await client.start_server()
     try:
         resp = await client.delete("/api/pools/main")
-        assert resp.status == 409
-        data = await resp.json()
-        assert "default" in data["error"].lower()
+        assert resp.status == 200, await resp.text()
+        listed = await (await client.get("/api/pools")).json()
+        names = [p["name"] for p in listed]
+        assert "main" not in names
+        assert "research" in names
+
+        resp = await client.delete("/api/pools/research")
+        assert resp.status == 200, await resp.text()
+        listed = await (await client.get("/api/pools")).json()
+        assert listed == []
     finally:
         await client.close()
 
 
 @pytest.mark.asyncio
-async def test_rename_pool(tmp_path: Path) -> None:
+async def test_delete_pool_cascades_artifacts(tmp_path: Path) -> None:
+    """DELETE /api/pools/{name} removes config, skills, routing, and every
+    per-pool subdirectory under <workspace>/.modex/."""
+    from modex_agent.multi_agent.pool_router import LocalFilePoolRoutingStore
+
     _seed_pool_yml(tmp_path, "main")
-    _seed_pool_yml(tmp_path, "extra")
-    cli = _make_client(_make_controller(tmp_path), tmp_path)
-    await cli.start_server()
+    # Seed per-pool artifacts under .modex/.
+    data_dir = tmp_path / ".modex"
+    for subdir in ("sessions", "runtime_state", "memory", "experiences", "inbox", "session_index"):
+        pool_artifact = data_dir / subdir / "main"
+        pool_artifact.mkdir(parents=True, exist_ok=True)
+        (pool_artifact / "dummy.txt").write_text("x", encoding="utf-8")
+    # Seed a routing entry pointing at "main".
+    routing_store = LocalFilePoolRoutingStore(data_dir)
+    routing_store.set_pool("sess-cascade", "main")
+    assert routing_store.get_pool("sess-cascade") == "main"
+    # Seed per-pool skills directory.
+    skills_main = tmp_path / "skills" / "main" / "main" / "hello"
+    skills_main.mkdir(parents=True, exist_ok=True)
+    (skills_main / "SKILL.md").write_text("# hello\n", encoding="utf-8")
+
+    controller = PoolConfigController(
+        pool_store=PoolStore(
+            base_dir=tmp_path,
+            default_prompt_seed=PromptStore.DEFAULT_PROMPT_SEED,
+        ),
+        skills_store=SkillsStore(base_dir=tmp_path, user_global_dir=tmp_path / "user_skills"),
+        prompt_store=PromptStore(base_dir=tmp_path),
+        mcp_registry_path=tmp_path / REGISTRY_PATH,
+        pool_session_store=routing_store,
+        is_pool_busy=lambda name: (False, []),
+    )
+    client = _make_client(controller, tmp_path)
+    await client.start_server()
     try:
-        resp = await cli.patch("/api/pools/extra", json={"name": "renamed"})
+        resp = await client.delete("/api/pools/main")
         assert resp.status == 200, await resp.text()
-        data = await resp.json()
-        assert data["name"] == "renamed"
-        listed = await (await cli.get("/api/pools")).json()
-        names = [p["name"] for p in listed]
-        assert "renamed" in names and "extra" not in names
+        assert (await resp.json()) == {"deleted": "main"}
+
+        # config/pools/main/ is gone.
+        assert not (tmp_path / "config" / "pools" / "main").exists()
+        # agents/main.md survives: prompts are pool-independent resources.
+        assert (tmp_path / "agents" / "main.md").exists()
+        # skills/main/ is gone.
+        assert not (tmp_path / "skills" / "main").exists()
+        # Every per-pool .modex/<subdir>/main/ is gone.
+        for subdir in ("sessions", "runtime_state", "memory", "experiences", "inbox", "session_index"):
+            assert not (data_dir / subdir / "main").exists(), subdir
+        # Routing entry removed.
+        assert routing_store.get_pool("sess-cascade") is None
+        # GET /api/pools no longer lists "main".
+        listed = await (await client.get("/api/pools")).json()
+        assert "main" not in [p["name"] for p in listed]
     finally:
-        await cli.close()
+        await client.close()
 
 
 @pytest.mark.asyncio
-async def test_rename_default_pool_refused(tmp_path: Path) -> None:
+async def test_delete_pool_leaves_prompt_md(tmp_path: Path) -> None:
+    """DELETE /api/pools/{name} leaves ``agents/<main_agent_name>.md`` on disk.
+
+    Prompts are pool-independent resources keyed by agent name; the reference
+    check on ``DELETE /api/prompts/{name}`` is the single source of truth for
+    "is this prompt safe to remove".
+    """
     _seed_pool_yml(tmp_path, "main")
-    client = _make_client(_make_controller(tmp_path, default_pool="main"), tmp_path)
+    prompt_md = tmp_path / "agents" / "main.md"
+    assert prompt_md.exists()
+
+    client = _make_client(_make_controller(tmp_path), tmp_path)
     await client.start_server()
     try:
-        resp = await client.patch("/api/pools/main", json={"name": "x"})
-        assert resp.status == 409
+        resp = await client.delete("/api/pools/main")
+        assert resp.status == 200, await resp.text()
+        assert (await resp.json()) == {"deleted": "main"}
+    finally:
+        await client.close()
+
+    # The pool dir is gone but the prompt md survives.
+    assert not (tmp_path / "config" / "pools" / "main").exists()
+    assert prompt_md.exists()
+    assert prompt_md.read_text(encoding="utf-8") == "# main\n"
+
+
+@pytest.mark.asyncio
+async def test_shared_prompt_survives_pool_deletion(tmp_path: Path) -> None:
+    """A prompt md shared by two pools (same main agent name) survives deletion
+    of one pool and remains readable via the global prompts endpoint for the
+    surviving pool's agent.
+    """
+    # Two pools whose main agent is named "main" — both fall back to
+    # agents/main.md as their system prompt.
+    _seed_pool_yml(tmp_path, "alpha", main_agent="main")
+    _seed_pool_yml(tmp_path, "beta", main_agent="main")
+    shared_md = tmp_path / "agents" / "main.md"
+    shared_md.write_text("shared prompt body\n", encoding="utf-8")
+
+    client = _make_client(_make_controller(tmp_path), tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.delete("/api/pools/alpha")
+        assert resp.status == 200, await resp.text()
+
+        # The shared prompt md survives the cascade.
+        assert shared_md.exists()
+        assert shared_md.read_text(encoding="utf-8") == "shared prompt body\n"
+
+        # The surviving pool's agent can still read the prompt via the global
+        # prompts endpoint.
+        resp = await client.get("/api/prompts/main")
+        assert resp.status == 200, await resp.text()
+        body = await resp.json()
+        assert body["name"] == "main"
+        assert body["content"] == "shared prompt body\n"
+
+        # And the surviving pool itself is still listed.
+        listed = await (await client.get("/api/pools")).json()
+        names = [p["name"] for p in listed]
+        assert "alpha" not in names
+        assert "beta" in names
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_delete_pool_with_active_sessions_returns_409(tmp_path: Path) -> None:
+    """When is_pool_busy reports active agents, the delete is rejected with
+    409 and no artifact is removed."""
+    _seed_pool_yml(tmp_path, "main")
+    # Seed artifacts that should survive the rejected delete.
+    data_dir = tmp_path / ".modex"
+    artifact_dir = data_dir / "sessions" / "main"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    (artifact_dir / "keep.txt").write_text("x", encoding="utf-8")
+
+    def _busy(_name: str) -> tuple[bool, list[str]]:
+        return (True, ["main"])
+
+    client = _make_client(_make_controller(tmp_path, is_pool_busy=_busy), tmp_path)
+    await client.start_server()
+    try:
+        resp = await client.delete("/api/pools/main")
+        assert resp.status == 409, await resp.text()
+        data = await resp.json()
+        assert data["error"] == "pool_not_empty"
+        assert data["busy_agents"] == ["main"]
+
+        # No artifact removed.
+        assert (tmp_path / "config" / "pools" / "main").exists()
+        assert (tmp_path / "agents" / "main.md").exists()
+        assert artifact_dir.exists()
+        # Pool still listed.
+        listed = await (await client.get("/api/pools")).json()
+        assert "main" in [p["name"] for p in listed]
     finally:
         await client.close()
 
 
 # ─── prompts ─────────────────────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_read_write_prompt(tmp_path: Path) -> None:
-    _seed_pool_yml(tmp_path, "main")
-    client = _make_client(_make_controller(tmp_path), tmp_path)
-    await client.start_server()
-    try:
-        resp = await client.get("/api/pools/main/agents/main/prompt")
-        assert resp.status == 200
-        data = await resp.json()
-        assert data["name"] == "main"
-        assert "# main" in data["content"]
-
-        resp = await client.put(
-            "/api/pools/main/agents/main/prompt", json={"content": "new body"}
-        )
-        assert resp.status == 200, await resp.text()
-        assert (await resp.json())["content"] == "new body"
-    finally:
-        await client.close()
-
-
-@pytest.mark.asyncio
-async def test_read_prompt_seeds_missing_md(tmp_path: Path) -> None:
-    _seed_pool_yml(tmp_path, "main")
-    client = _make_client(_make_controller(tmp_path), tmp_path)
-    await client.start_server()
-    try:
-        resp = await client.get("/api/pools/main/agents/ghost/prompt")
-        assert resp.status == 200, await resp.text()
-        data = await resp.json()
-        assert data["name"] == "ghost"
-        assert "You are an AI assistant" in data["content"]
-        # File was created on disk by the GET seed path.
-        assert (tmp_path / "agents" / "ghost.md").exists()
-    finally:
-        await client.close()
-
-
-@pytest.mark.asyncio
-async def test_write_prompt_creates_if_missing(tmp_path: Path) -> None:
-    """PUT auto-creates ``agents/<name>.md`` — the contract the webui relies on
-    when the user provides an agent name and saves a fresh system prompt.
-    Locks in: a GET-first 404 turns into 200 after PUT, and the md lands on disk.
-    """
-    _seed_pool_yml(tmp_path, "main")
-    client = _make_client(_make_controller(tmp_path), tmp_path)
-    await client.start_server()
-    try:
-        # Pre-condition: GET already seeds the default (we changed behavior).
-        # PUT still overrides with caller content, so the test still validates
-        # the create-or-update contract.
-        resp = await client.put(
-            "/api/pools/main/agents/oracle/prompt",
-            json={"content": "fresh prompt body"},
-        )
-        assert resp.status == 200, await resp.text()
-        body = await resp.json()
-        assert body["content"] == "fresh prompt body"
-
-        # Round-trip: GET now succeeds and returns the PUT content.
-        resp = await client.get("/api/pools/main/agents/oracle/prompt")
-        assert resp.status == 200
-        assert (await resp.json())["content"] == "fresh prompt body"
-
-        # File landed on disk.
-        on_disk = tmp_path / "agents" / "oracle.md"
-        assert on_disk.exists()
-        assert on_disk.read_text(encoding="utf-8") == "fresh prompt body"
-    finally:
-        await client.close()
 
 
 @pytest.mark.asyncio
@@ -518,84 +591,6 @@ async def test_upload_skill_json_then_list_and_assign(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_write_pool_renames_agent_skills(tmp_path: Path) -> None:
-    """Agent rename through PUT /api/pools/{pool} moves per-agent skill links."""
-    _seed_pool_yml(tmp_path, "main")
-    # Seed a subagent template.
-    templates_dir = tmp_path / "config" / "pools" / "main" / "templates"
-    templates_dir.mkdir(parents=True, exist_ok=True)
-    (templates_dir / "researcher.yml").write_text(
-        yaml.safe_dump({"agent_name": "researcher", "description": "Old"}),
-        encoding="utf-8",
-    )
-    ctrl = _make_controller(tmp_path)
-    client = _make_client(ctrl, tmp_path)
-    await client.start_server()
-    try:
-        # Upload and assign a skill to the subagent.
-        files = {"SKILL.md": base64.b64encode(b"# hello\n").decode()}
-        resp = await client.post("/api/skills", json={"name": "hello", "files": files})
-        assert resp.status == 200, await resp.text()
-        resp = await client.post("/api/pools/main/agents/researcher/skills/hello")
-        assert resp.status == 200, await resp.text()
-        assert (tmp_path / "skills" / "main" / "researcher" / "hello").exists()
-
-        # Rename the subagent via PUT.
-        got = await (await client.get("/api/pools/main")).json()
-        got["subagents"][0]["agent_name"] = "scout"
-        resp = await client.put("/api/pools/main", json=got)
-        assert resp.status == 200, await resp.text()
-
-        # Skill link followed the rename.
-        assert not (tmp_path / "skills" / "main" / "researcher").exists()
-        dst = tmp_path / "skills" / "main" / "scout" / "hello"
-        assert dst.exists()
-        assert (dst / "SKILL.md").read_text(encoding="utf-8") == "# hello\n"
-    finally:
-        await client.close()
-
-
-@pytest.mark.asyncio
-async def test_rename_pool_moves_skills_and_session_store(tmp_path: Path) -> None:
-    """PATCH /api/pools/{pool} rename moves skill dirs and updates sessions."""
-    _seed_pool_yml(tmp_path, "main")
-    _seed_pool_yml(tmp_path, "extra")
-    session_store = PoolSessionStore(tmp_path)
-    session_store.set("conv-123", "extra")
-    ctrl = PoolConfigController(
-        pool_store=PoolStore(base_dir=tmp_path),
-        skills_store=SkillsStore(base_dir=tmp_path, user_global_dir=tmp_path / "user_skills"),
-        prompt_store=PromptStore(base_dir=tmp_path),
-        mcp_registry_path=tmp_path / REGISTRY_PATH,
-        default_pool="main",
-        pool_session_store=session_store,
-    )
-    client = _make_client(ctrl, tmp_path)
-    await client.start_server()
-    try:
-        # Assign a skill under the pool that will be renamed.
-        files = {"SKILL.md": base64.b64encode(b"# skill\n").decode()}
-        resp = await client.post("/api/skills", json={"name": "skill", "files": files})
-        assert resp.status == 200, await resp.text()
-        resp = await client.post("/api/pools/extra/agents/extra/skills/skill")
-        assert resp.status == 200, await resp.text()
-
-        resp = await client.patch("/api/pools/extra", json={"name": "renamed"})
-        assert resp.status == 200, await resp.text()
-
-        # Skill dir moved with the pool.
-        assert not (tmp_path / "skills" / "extra").exists()
-        dst = tmp_path / "skills" / "renamed" / "extra" / "skill"
-        assert dst.exists()
-        assert (dst / "SKILL.md").read_text(encoding="utf-8") == "# skill\n"
-
-        # Session store record rewritten.
-        assert session_store.get("conv-123", "main") == "renamed"
-    finally:
-        await client.close()
-
-
-@pytest.mark.asyncio
 async def test_upload_skill_multipart(tmp_path: Path) -> None:
     from aiohttp import FormData
 
@@ -695,17 +690,6 @@ async def test_read_pool_bad_name_400_or_404(tmp_path: Path) -> None:
     await client.start_server()
     try:
         resp = await client.get("/api/pools/..")
-        assert resp.status in (400, 404)
-    finally:
-        await client.close()
-
-
-@pytest.mark.asyncio
-async def test_read_prompt_traversal_rejected(tmp_path: Path) -> None:
-    client = _make_client(_make_controller(tmp_path), tmp_path)
-    await client.start_server()
-    try:
-        resp = await client.get("/api/pools/main/agents/..%2F..%2Fetc/prompt")
         assert resp.status in (400, 404)
     finally:
         await client.close()
@@ -1058,6 +1042,6 @@ async def test_write_pool_external_missing_provider_kind_400(
         assert resp.status == 400
         data = await resp.json()
         assert data["error"] == "validation"
-        assert "pool" in data["fields"]
+        assert "main" in data["fields"]
     finally:
         await client.close()

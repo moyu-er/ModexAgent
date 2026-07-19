@@ -5,7 +5,6 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
-import time
 from collections.abc import Collection
 from pathlib import Path
 from typing import Any
@@ -16,6 +15,7 @@ from modex_agent.memory.core.models import StorageRevision
 from modex_agent.memory.stores.utils import ensure_scope_dir
 from modex_agent.memory.utils import safe_atomic_replace
 from modex_agent.utils.file_io import read_json_robust, read_jsonl_robust
+from modex_agent.utils.time import now_ms
 
 logger = logging.getLogger(__name__)
 
@@ -77,12 +77,10 @@ class FileStorage:
         pass
 
     async def get_revision(self, scope_key: str = "default") -> StorageRevision:
-        from datetime import UTC, datetime
-
         messages = await self.load_messages(scope_key)
         return StorageRevision(
             message_count=len(messages),
-            updated_at=datetime.now(UTC),
+            updated_at=now_ms(),
             version=await self.get_last_cursor(scope_key, "default"),
         )
 
@@ -150,7 +148,7 @@ class FileStorage:
         async with self.get_lock(scope_key).write():
             scope_dir = self._scope_dir(scope_key)
             path = self._scope_metadata_path(scope_dir)
-            now = time.time()
+            now = now_ms()
             created_at = now
             if path.exists():
                 existing = self._read_scope_record(scope_dir)
