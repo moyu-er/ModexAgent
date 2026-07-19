@@ -66,6 +66,28 @@ class FetchedModel(BaseModel):
     display_name: str | None = None
 
 
+class FetchModelsReq(BaseModel):
+    """Unified wire schema for ``POST /api/models/fetch``.
+
+    All fields optional. Inline fields take priority; ``None``/empty fields
+    fall back to the saved provider looked up by ``provider_key`` in
+    ``model.yml``. After merge, ``api_key`` and (``base_url`` or
+    ``models_url``) must be non-empty — enforced by the handler before
+    calling :func:`fetch_provider_models`.
+
+    ``provider_key`` is consumed only by the handler (for saved lookup +
+    diagnostics); :func:`fetch_provider_models` ignores it.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    provider_key: str | None = None
+    base_url: str | None = None
+    api_key: str | None = None
+    interface_format: InterfaceFormat | None = None
+    models_url: str | None = None
+
+
 class ModelFetchError(Exception):
     """Raised when fetching models from a provider fails.
 
