@@ -34,7 +34,7 @@ Work the **frontier**: any ticket whose blockers are all done. For this breakdow
 - [ ] TypeScript compiles with no new errors (`npm run build` in `webui/`)
 - [ ] Existing frontend tests pass (`npm test` in `webui/`)
 
-## S3 — Frontend UI: SubagentCard native/external toggle + conditional field rendering
+## S3 — Frontend UI: SubagentCard native/external toggle + conditional field rendering  ✅ DONE
 
 **What to build:** The `SubagentCard` component in `PoolEditor.tsx` gains a native/external implementation toggle at the top (reusing `IMPLEMENTATION_DEFS` + `DropdownPanel`). When a subagent is `external_coding`:
 - A Provider dropdown appears (reusing `PROVIDER_OPTIONS` + `selectProvider` + `PROVIDER_BRAND_ICONS`)

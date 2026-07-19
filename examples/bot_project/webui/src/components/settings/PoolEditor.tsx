@@ -23,6 +23,7 @@ import type {
   PoolSummary,
   PoolTree,
   PromptSummary,
+  ProviderKind,
   SubagentNode,
   SystemPromptMode,
   ToolPreset,
@@ -40,9 +41,11 @@ import {
   IMPLEMENTATION_DEFS,
   type ImplementationChoice,
 } from "./ExternalMainAgentFields";
+import { PROVIDER_BRAND_ICONS } from "./externalBrands";
 import {
   DEFAULT_EXTERNAL_PROVIDER,
   descriptorFor,
+  PROVIDER_OPTIONS,
   selectProvider,
 } from "../../types/externalProviders";
 import { Card } from "../ui/Card";
@@ -1162,9 +1165,35 @@ function SubagentCard({
   onNavigateToPrompts: () => void;
 }) {
   const t = useT();
-  const summary = `${node.tool_preset} · mcp·${node.mcp.length} · ${
-    node.context_mode
-  }`;
+  const isExternal = node.execution_strategy === "external_coding";
+  const effectiveStrategy: ImplementationChoice = isExternal
+    ? "external_coding"
+    : "react";
+  const descriptor = descriptorFor(node.provider_kind);
+  const IMPLEMENTATION_OPTIONS = IMPLEMENTATION_DEFS.map((d) => ({
+    value: d.value,
+    label: t(d.labelKey),
+  }));
+
+  // Subagent implementation switch is non-destructive: native field values
+  // stay in form state (hidden, not cleared) so toggling back restores them.
+  // No confirm dialog — the switch only affects this subagent.
+  const onSubagentImplementationChange = (next: ImplementationChoice): void => {
+    if (next === "external_coding") {
+      if (isExternal) return;
+      onPatch({
+        execution_strategy: "external_coding",
+        provider_kind: DEFAULT_EXTERNAL_PROVIDER,
+      });
+      return;
+    }
+    if (!isExternal) return;
+    onPatch({ execution_strategy: "react", provider_kind: null });
+  };
+
+  const summary = isExternal
+    ? `external · ${selectProvider(node.provider_kind)}`
+    : `${node.tool_preset} · mcp·${node.mcp.length} · ${node.context_mode}`;
   return (
     <Card>
       <div className="flex items-center gap-2 px-3 py-2.5">
@@ -1221,140 +1250,218 @@ function SubagentCard({
       </div>
       {open && (
         <div className="space-y-4 border-t border-hairline px-4 py-4">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Input
-              label={t("settings.pools.agentName")}
-              required
-              error={errFor(`subagents.${index}.agent_name`)}
-              value={node.agent_name}
-              onChange={(e) => onPatch({ agent_name: e.target.value })}
-              disabled={savedAgentName !== ""}
-              helper={savedAgentName !== "" ? t("settings.pools.agentNameLocked") : undefined}
-            />
-            <Input
-              label={t("settings.pools.maxSteps")}
-              type="number"
-              error={errFor(`subagents.${index}.max_steps`)}
-              value={node.max_steps}
-              onChange={(e) =>
-                onPatch({ max_steps: Number(e.target.value) })
-              }
-            />
-          </div>
-
-          <Input
-            label={t("settings.pools.description")}
-            required
-            error={errFor(`subagents.${index}.description`)}
-            value={node.description}
-            onChange={(e) => onPatch({ description: e.target.value })}
+          <DropdownPanel
+            label={t("settings.external.implementation")}
+            options={IMPLEMENTATION_OPTIONS}
+            value={effectiveStrategy}
+            onChange={(v) =>
+              onSubagentImplementationChange(v as ImplementationChoice)
+            }
           />
-
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <DropdownPanel
-              label={t("settings.pools.toolPreset")}
-              error={errFor(`subagents.${index}.tool_preset`)}
-              options={PRESET_OPTIONS}
-              value={node.tool_preset}
-              onChange={(v) =>
-                onPatch({ tool_preset: v as ToolPreset })
-              }
-            />
-            <div>
-              <DropdownPanel
-                label={t("settings.pools.contextMode")}
-                error={errFor(`subagents.${index}.context_mode`)}
-                options={CONTEXT_MODE_OPTIONS}
-                value={node.context_mode}
-                onChange={(v) =>
-                  onPatch({
-                    context_mode: v as ContextMode,
-                  })
-                }
-              />
-              <HelperText>
-                {t(CONTEXT_MODE_HINT_KEY[node.context_mode])}
-              </HelperText>
-            </div>
-            <div>
-              <DropdownPanel
-                label={t("settings.pools.systemPromptMode")}
-                error={errFor(`subagents.${index}.system_prompt_mode`)}
-                options={SYSTEM_PROMPT_MODE_OPTIONS}
-                value={node.system_prompt_mode ?? "replace"}
-                onChange={(v) =>
-                  onPatch({
-                    system_prompt_mode: v as SystemPromptMode,
-                  })
-                }
-              />
-              <HelperText>
-                {t(SYSTEM_PROMPT_MODE_HINT_KEY[node.system_prompt_mode ?? "replace"])}
-              </HelperText>
-            </div>
-            {node.context_mode === "fork" && (
-              <div>
-                <Input
-                  label={t("settings.pools.forkMaxMessages")}
-                  type="number"
-                  min={1}
-                  max={FORK_MAX_MAX}
-                  error={errFor(`subagents.${index}.fork_max_messages`)}
-                  value={node.fork_max_messages ?? FORK_MAX_DEFAULT}
-                  onChange={(e) => {
-                    const n = Number.parseInt(e.target.value, 10);
-                    onPatch({
-                      fork_max_messages: Number.isFinite(n)
-                        ? Math.min(Math.max(n, 1), FORK_MAX_MAX)
-                        : FORK_MAX_DEFAULT,
-                    });
-                  }}
+          {isExternal ? (
+            <>
+              <div
+                role="group"
+                aria-label={t("settings.external.externalRuntime")}
+                data-testid="external-runtime-panel"
+                className="space-y-3 rounded-md border border-hairline bg-hairline-soft p-3"
+              >
+                {(() => {
+                  const brand = node.provider_kind
+                    ? PROVIDER_BRAND_ICONS[node.provider_kind]
+                    : undefined;
+                  if (!brand) return null;
+                  const { Icon } = brand;
+                  return (
+                    <div className="flex items-center gap-2.5">
+                      <Icon className="h-7 w-7 rounded-sm" />
+                      <span className="font-mono text-base font-semibold text-bright">
+                        {descriptor.label}
+                      </span>
+                    </div>
+                  );
+                })()}
+                <DropdownPanel
+                  label={t("settings.external.provider")}
+                  options={PROVIDER_OPTIONS}
+                  value={selectProvider(node.provider_kind)}
+                  onChange={(v) =>
+                    onPatch({ provider_kind: v as ProviderKind })
+                  }
                 />
-                <HelperText>
-                  {t("settings.pools.forkMaxHelper", { max: FORK_MAX_MAX, default: FORK_MAX_DEFAULT })}
-                </HelperText>
+                <div>
+                  <p className="text-xs font-medium text-ink">
+                    {t("settings.external.managedByProvider")}
+                  </p>
+                  <p className="mt-1 text-xs text-body">
+                    {t("settings.external.providerRunHelper", {
+                      cli: descriptor.cliName,
+                    })}
+                  </p>
+                </div>
               </div>
-            )}
-          </div>
 
-          <div>
-            <span className="mb-1 block text-xs font-medium text-body">
-              {t("settings.pools.toolSupplements")}
-            </span>
-            <SupplementsChips
-              value={node.tool_supplements}
-              onChange={(next) => onPatch({ tool_supplements: next })}
-            />
-          </div>
+              <Input
+                label={t("settings.external.agentName")}
+                required
+                error={errFor(`subagents.${index}.agent_name`)}
+                value={node.agent_name}
+                onChange={(e) => onPatch({ agent_name: e.target.value })}
+                disabled={savedAgentName !== ""}
+                helper={
+                  savedAgentName !== ""
+                    ? t("settings.pools.agentNameLocked")
+                    : undefined
+                }
+              />
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <AgentMcpSelector
-              value={node.mcp}
-              onChange={(next) => onPatch({ mcp: next })}
-            />
-            <div>
-              <AgentSkillSelector pool={pool} agent={savedAgentName} />
-              <p className="mt-1 text-xs italic text-body">
-                {t("settings.pools.skillAssignmentsImmediate")}
-              </p>
-            </div>
-          </div>
+              <Input
+                label={t("settings.external.description")}
+                required
+                error={errFor(`subagents.${index}.description`)}
+                helper={t("settings.external.descriptionHelper")}
+                value={node.description}
+                onChange={(e) => onPatch({ description: e.target.value })}
+              />
+            </>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Input
+                  label={t("settings.pools.agentName")}
+                  required
+                  error={errFor(`subagents.${index}.agent_name`)}
+                  value={node.agent_name}
+                  onChange={(e) => onPatch({ agent_name: e.target.value })}
+                  disabled={savedAgentName !== ""}
+                  helper={savedAgentName !== "" ? t("settings.pools.agentNameLocked") : undefined}
+                />
+                <Input
+                  label={t("settings.pools.maxSteps")}
+                  type="number"
+                  error={errFor(`subagents.${index}.max_steps`)}
+                  value={node.max_steps}
+                  onChange={(e) =>
+                    onPatch({ max_steps: Number(e.target.value) })
+                  }
+                />
+              </div>
 
-          <RolesSelector
-            value={node.roles ?? []}
-            onChange={(next) => onPatch({ roles: next })}
-          />
+              <Input
+                label={t("settings.pools.description")}
+                required
+                error={errFor(`subagents.${index}.description`)}
+                value={node.description}
+                onChange={(e) => onPatch({ description: e.target.value })}
+              />
 
-          <PromptSelector
-            label={t("settings.pools.promptName")}
-            value={node.prompt_name}
-            prompts={prompts}
-            promptsError={promptsError}
-            onChange={(next) => onPatch({ prompt_name: next })}
-            onNavigateToPrompts={onNavigateToPrompts}
-            errFor={errFor}
-            loc={`subagents.${index}.prompt_name`}
-          />
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <DropdownPanel
+                  label={t("settings.pools.toolPreset")}
+                  error={errFor(`subagents.${index}.tool_preset`)}
+                  options={PRESET_OPTIONS}
+                  value={node.tool_preset}
+                  onChange={(v) =>
+                    onPatch({ tool_preset: v as ToolPreset })
+                  }
+                />
+                <div>
+                  <DropdownPanel
+                    label={t("settings.pools.contextMode")}
+                    error={errFor(`subagents.${index}.context_mode`)}
+                    options={CONTEXT_MODE_OPTIONS}
+                    value={node.context_mode}
+                    onChange={(v) =>
+                      onPatch({
+                        context_mode: v as ContextMode,
+                      })
+                    }
+                  />
+                  <HelperText>
+                    {t(CONTEXT_MODE_HINT_KEY[node.context_mode])}
+                  </HelperText>
+                </div>
+                <div>
+                  <DropdownPanel
+                    label={t("settings.pools.systemPromptMode")}
+                    error={errFor(`subagents.${index}.system_prompt_mode`)}
+                    options={SYSTEM_PROMPT_MODE_OPTIONS}
+                    value={node.system_prompt_mode ?? "replace"}
+                    onChange={(v) =>
+                      onPatch({
+                        system_prompt_mode: v as SystemPromptMode,
+                      })
+                    }
+                  />
+                  <HelperText>
+                    {t(SYSTEM_PROMPT_MODE_HINT_KEY[node.system_prompt_mode ?? "replace"])}
+                  </HelperText>
+                </div>
+                {node.context_mode === "fork" && (
+                  <div>
+                    <Input
+                      label={t("settings.pools.forkMaxMessages")}
+                      type="number"
+                      min={1}
+                      max={FORK_MAX_MAX}
+                      error={errFor(`subagents.${index}.fork_max_messages`)}
+                      value={node.fork_max_messages ?? FORK_MAX_DEFAULT}
+                      onChange={(e) => {
+                        const n = Number.parseInt(e.target.value, 10);
+                        onPatch({
+                          fork_max_messages: Number.isFinite(n)
+                            ? Math.min(Math.max(n, 1), FORK_MAX_MAX)
+                            : FORK_MAX_DEFAULT,
+                        });
+                      }}
+                    />
+                    <HelperText>
+                      {t("settings.pools.forkMaxHelper", { max: FORK_MAX_MAX, default: FORK_MAX_DEFAULT })}
+                    </HelperText>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <span className="mb-1 block text-xs font-medium text-body">
+                  {t("settings.pools.toolSupplements")}
+                </span>
+                <SupplementsChips
+                  value={node.tool_supplements}
+                  onChange={(next) => onPatch({ tool_supplements: next })}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <AgentMcpSelector
+                  value={node.mcp}
+                  onChange={(next) => onPatch({ mcp: next })}
+                />
+                <div>
+                  <AgentSkillSelector pool={pool} agent={savedAgentName} />
+                  <p className="mt-1 text-xs italic text-body">
+                    {t("settings.pools.skillAssignmentsImmediate")}
+                  </p>
+                </div>
+              </div>
+
+              <RolesSelector
+                value={node.roles ?? []}
+                onChange={(next) => onPatch({ roles: next })}
+              />
+
+              <PromptSelector
+                label={t("settings.pools.promptName")}
+                value={node.prompt_name}
+                prompts={prompts}
+                promptsError={promptsError}
+                onChange={(next) => onPatch({ prompt_name: next })}
+                onNavigateToPrompts={onNavigateToPrompts}
+                errFor={errFor}
+                loc={`subagents.${index}.prompt_name`}
+              />
+            </>
+          )}
         </div>
       )}
     </Card>
