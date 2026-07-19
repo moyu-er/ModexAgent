@@ -87,6 +87,8 @@ _SUBAGENT_YAML_FIELDS: tuple[str, ...] = (
     "fork_max_messages",
     "roles",
     "prompt_name",
+    "execution_strategy",
+    "provider_kind",
 )
 
 # Sentinel for "no default" (distinct from None, which is itself a value).
@@ -103,6 +105,8 @@ _SUBAGENT_DEFAULTS: dict[str, object] = {
     "fork_max_messages": DEFAULT_FORK_MAX_MESSAGES,
     "roles": [],
     "prompt_name": None,
+    "execution_strategy": ExecutionStrategyKind.REACT.value,
+    "provider_kind": None,
 }
 
 # Fields written into the main-agent entry of pool.yml's `agents:` block.
