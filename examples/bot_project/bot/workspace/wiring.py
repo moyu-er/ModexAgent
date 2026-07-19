@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from bot.service.core import BotService
+    from modex_agent.core.provider import LLMProvider
     from modex_agent.multi_agent.pool_instance import PoolInstance
     from modex_agent.persistence.managers import WorkspacePersistenceManager
 
@@ -83,6 +84,29 @@ def build_single_workspace_stack(service: BotService, *, data_dir_name: str) -> 
     Uses a WorkspaceController that rejects /cd /exit.
     """
     return build_workspace_stack(service, data_dir_name=data_dir_name, enabled=False)
+
+
+def _build_assembly_deps_for_pools(
+    *,
+    pool_names: list[str],
+    max_context_tokens: int | None,
+) -> dict[str, PoolAssemblyDeps]:
+    """Build PoolAssemblyDeps for every pool from memory_defaults presets.
+
+    All native main agents get the same converged memory + experience preset
+    (see ``bot.config.memory_defaults``). External_coding pools receive the
+    same deps, but ``_wire_pool_to_resources`` skips them at wiring time
+    because their main agent has no ``AgentPipeline``
+    (``pipeline is None`` → early return).
+    """
+    from bot.config.memory_defaults import main_agent_experience, main_agent_memory
+
+    memory = main_agent_memory(max_context_tokens=max_context_tokens)
+    experience = main_agent_experience()
+    return {
+        name: PoolAssemblyDeps(memory=memory, experience=experience)
+        for name in pool_names
+    }
 
 
 def build_workspace_stack(
@@ -246,31 +270,15 @@ async def _assemble_resources(
             owns_persistence = True
             logger.info("[workspace-build] SQLite workspace DB opened at %s", db_path)
 
-    from bot.config.memory_defaults import main_agent_memory
-    from modex_agent.ioc.configs.memory import MemoryConfig
-
-    def _main_agent_memory(max_context_tokens: int | None) -> MemoryConfig:
-        cfg = main_agent_memory()
-        if max_context_tokens is None:
-            return cfg
-        return cfg.model_copy(
-            update={
-                "session": cfg.session.model_copy(
-                    update={"max_context_tokens": max_context_tokens}
-                )
-            }
-        )
-
     max_context_tokens = (
         service._bot_model_config.max_context_tokens
         if service._bot_model_config is not None
         else None
     )
-    memory = _main_agent_memory(max_context_tokens)
-    assembly_deps: dict[str, PoolAssemblyDeps] = {
-        name: PoolAssemblyDeps(memory=memory)
-        for name in pool_names
-    }
+    assembly_deps: dict[str, PoolAssemblyDeps] = _build_assembly_deps_for_pools(
+        pool_names=pool_names,
+        max_context_tokens=max_context_tokens,
+    )
 
     # 1. Workspace-level stores.
     ctx.paths.mkdir_skeleton()
@@ -425,7 +433,9 @@ async def _assemble_resources(
     # superseded. The Drainer + idle poller (still spawned per pool until Task
     # 8 disables them) operate on each pool's own bus.
     for name, pi in pools.items():
-        _wire_pool_to_resources(pi, name, assembly_deps[name], resources)
+        _wire_pool_to_resources(
+            pi, name, assembly_deps[name], resources, service._default_provider
+        )
         # Start this pool's output broker bridge so agent output published to
         # THIS workspace's broker reaches the output adapter. This MUST happen
         # at materialization for EVERY workspace — home and non-home alike —
@@ -534,8 +544,17 @@ def _wire_pool_to_resources(
     name: str,
     deps: PoolAssemblyDeps,
     resources: PoolWorkspaceResources,
+    default_provider: LLMProvider | None,
 ) -> None:
-    """Wire one pool's main pipeline + experience hook to the workspace R."""
+    """Wire one pool's main pipeline + experience hook to the workspace R.
+
+    ``default_provider`` is the bot-global default LLM provider (from
+    ``model.yml`` via ``BotService._default_provider``). ExperienceReviewAgent
+    uses it to run ReAct — experience review is a background task that should
+    NOT depend on any pool's own provider (external_coding pools have none).
+    When ``default_provider`` is None (model.yml unconfigured), experience
+    review is skipped with a warning; the bot itself boots and runs normally.
+    """
 
     main_inst = pool_instance.pool._agents.get(pool_instance.main_agent_name)
     pipeline = main_inst.pipeline if main_inst is not None else None
@@ -544,6 +563,14 @@ def _wire_pool_to_resources(
 
     exp_cfg = deps.experience
     if exp_cfg is None or not exp_cfg.enabled:
+        return
+
+    if default_provider is None:
+        logger.warning(
+            "Experience review skipped for pool %r: no default LLM provider "
+            "(configure model.yml to enable)",
+            name,
+        )
         return
 
     pool_data = resources.pool_data.get(name)
@@ -555,7 +582,7 @@ def _wire_pool_to_resources(
     from modex_agent.hook.builtin.experience_review import ExperienceReviewHook
 
     review_agent = ExperienceReviewAgent(
-        provider=pool_instance.provider,
+        provider=default_provider,
         max_iterations=exp_cfg.max_iterations,
     )
     hook = ExperienceReviewHook(

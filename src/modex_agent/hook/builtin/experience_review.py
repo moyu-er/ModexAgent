@@ -32,6 +32,7 @@ from modex_agent.core.experience import (
     auto_correct_frontmatter_name,
     validate_experience_md,
 )
+from modex_agent.core.message import ChatMessage
 from modex_agent.hook.abc import AfterTurnHook
 from modex_agent.memory.snapshot import (
     DEFAULT_SNAPSHOT_MAX_CONTENT_LEN,
@@ -157,16 +158,23 @@ class ExperienceReviewHook(AfterTurnHook):
         # Gather existing experiences for user message
         existing_xml = await self._build_existing_experiences_xml(exp_dir)
 
+        # Fork mode: pass the raw history (preserving tool_calls / tool_results
+        # / structured content) to the reviewer so its ReAct loop can inspect
+        # the real conversation. Falls back to the text snapshot when history
+        # cannot be converted to ChatMessage objects.
+        fork_messages = self._build_fork_messages(history_list)
+
         invocation_id = uuid.uuid4().hex
         logger.info(
-            "ExperienceReviewHook: triggering review invocation=%s turn=%s dir=%s",
+            "ExperienceReviewHook: triggering review invocation=%s turn=%s dir=%s fork=%s",
             invocation_id,
             self._turn_counter,
             exp_dir,
+            bool(fork_messages),
         )
 
         task = asyncio.create_task(
-            self._do_review(snapshot, existing_xml, invocation_id, exp_dir),
+            self._do_review(snapshot, existing_xml, invocation_id, exp_dir, fork_messages),
             name=f"exp-review-{invocation_id[:8]}",
         )
         self._pending.add(task)
@@ -222,6 +230,7 @@ class ExperienceReviewHook(AfterTurnHook):
         existing_xml: str,
         invocation_id: str,
         exp_dir: Path,
+        fork_messages: list[ChatMessage] | None = None,
     ) -> None:
         before = self._scan_experience_dir(exp_dir)
         try:
@@ -231,6 +240,7 @@ class ExperienceReviewHook(AfterTurnHook):
                 meta_store=self._meta_store,
                 existing_experiences=existing_xml,
                 invocation_id=invocation_id,
+                conversation_messages=fork_messages,
             )
             logger.info(
                 "ExperienceReviewHook: review completed invocation=%s ok=%s",
@@ -439,6 +449,36 @@ class ExperienceReviewHook(AfterTurnHook):
                     pass
 
         return False
+
+    def _build_fork_messages(
+        self,
+        history_list: Sequence[Any],
+    ) -> list[ChatMessage] | None:
+        """Convert raw history dicts to ChatMessage objects for fork mode.
+
+        Returns ``None`` when conversion fails (caller falls back to text
+        snapshot). Truncates to ``snapshot_max_messages`` to bound the
+        reviewer's context window.
+        """
+        if not history_list:
+            return None
+        truncated = list(history_list[-self._snapshot_max_messages :])
+        forked: list[ChatMessage] = []
+        for msg in truncated:
+            try:
+                if isinstance(msg, ChatMessage):
+                    forked.append(msg)
+                elif isinstance(msg, dict):
+                    forked.append(ChatMessage.model_validate(msg))
+                else:
+                    return None
+            except Exception:
+                logger.debug(
+                    "Fork message conversion failed — falling back to text snapshot",
+                    exc_info=True,
+                )
+                return None
+        return forked if forked else None
 
     def _capture_snapshot(self, messages: Sequence[Any]) -> str:
         """Extract recent user/assistant messages as a text snapshot."""

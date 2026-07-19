@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 from modex_agent.agents.summarizer.abc import _get_registry
 from modex_agent.agents.summarizer.scoped_file_agent import ScopedFileAgent
 from modex_agent.core.experience import ExperienceMetaStore
+from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import LLMProvider
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.memory.tools.experience import (
@@ -68,11 +71,14 @@ class ExperienceReviewAgent(ScopedFileAgent):
         existing_experiences: str = "",
         invocation_id: str = "",
         traces_dir: Path | None = None,
+        conversation_messages: Sequence[ChatMessage] | None = None,
     ) -> bool:
         """Main entry: review conversation and create/update experiences.
 
         Args:
-            conversation_snapshot: Formatted conversation history.
+            conversation_snapshot: Formatted conversation history (text). Used
+                as the review instruction body when ``conversation_messages``
+                is absent; ignored (may be empty) when fork mode is active.
             experience_dir: Target directory for EXPERIENCE.md files.
             meta_store: Metadata store for lifecycle management.
             existing_experiences: Pre-formatted XML of existing experiences.
@@ -80,11 +86,18 @@ class ExperienceReviewAgent(ScopedFileAgent):
             traces_dir: Directory for JSONL trace files.  If None, defaults to
                 ``experience_dir.parent / "review_traces"`` so traces never
                 pollute the experience data directory.
+            conversation_messages: Forked parent-session messages (fork mode).
+                When provided, the reviewer's ReAct history is seeded with
+                these messages (preserving tool_calls / tool_results /
+                structured content) followed by the review instruction user
+                message. When ``None`` or empty, falls back to embedding
+                ``conversation_snapshot`` in a single user message (legacy).
 
         Returns:
             True if agent ran successfully, False otherwise.
         """
-        if not conversation_snapshot.strip():
+        fork_active = bool(conversation_messages)
+        if not fork_active and not conversation_snapshot.strip():
             return True
 
         system_prompt = self.build_system_prompt(experience_dir)
@@ -93,12 +106,13 @@ class ExperienceReviewAgent(ScopedFileAgent):
         trace_key = invocation_id or uuid.uuid4().hex[:8]
         session_id = f"{trace_key}.experience-review"
         _td = traces_dir or (experience_dir.parent / "review_traces")
-        trace_path = _td / f"{trace_key}"/ "trajectory.jsonl"
+        trace_path = _td / f"{trace_key}" / "trajectory.jsonl"
 
         logger.info(
-            "ExperienceReviewAgent starting: invocation=%s session=%s",
+            "ExperienceReviewAgent starting: invocation=%s session=%s fork=%s",
             invocation_id or trace_key,
             session_id,
+            fork_active,
         )
 
         for attempt in range(2):
@@ -111,6 +125,7 @@ class ExperienceReviewAgent(ScopedFileAgent):
                 agent_name="ExperienceReviewAgent",
                 trace_path=trace_path,
                 max_iterations=self.max_iterations,
+                conversation_messages=conversation_messages if fork_active else None,
             )
             if ok:
                 logger.info(
@@ -143,8 +158,16 @@ class ExperienceReviewAgent(ScopedFileAgent):
         trace_path: Path,
         max_iterations: int,
         temperature: float = 0.2,
+        conversation_messages: Sequence[ChatMessage] | None = None,
     ) -> bool:
-        """Run ReAct agent with experience-specific tools."""
+        """Run ReAct agent with experience-specific tools.
+
+        When ``conversation_messages`` is provided (fork mode), the reviewer's
+        history is seeded with the parent session's messages — preserving
+        tool_calls, tool_results, and structured content — followed by the
+        review instruction user message. Otherwise a single-user-message
+        history is used (legacy text-snapshot mode).
+        """
         from modex_agent.agents.react.state import ReActTurnState
         from modex_agent.agents.summarizer.emitter import SummarizerTrajectoryEmitter
         from modex_agent.core.agent import AgentContext
@@ -171,11 +194,19 @@ class ExperienceReviewAgent(ScopedFileAgent):
         for tool in tools:
             tool_manager.register(tool)
 
-        history = ListMessageHistory(
-            [
-                {"role": MessageRole.USER, "content": user_msg},
-            ]
-        )
+        # Build the seed history. In fork mode, prepend the parent session's
+        # messages (preserving tool_calls / tool_results / structured content)
+        # so the reviewer can inspect the real conversation via ReAct. The
+        # review instruction is appended as the final user message.
+        seed: list[dict[str, Any]] = []
+        if conversation_messages:
+            for msg in conversation_messages:
+                if isinstance(msg, ChatMessage):
+                    seed.append(msg.model_dump())
+                elif isinstance(msg, dict):
+                    seed.append(dict(msg))
+        seed.append({"role": MessageRole.USER, "content": user_msg})
+        history = ListMessageHistory(seed)
 
         # HookRunner with RunLoggingHook so ReActAgent dispatches
         # BEFORE_TURN / AFTER_TURN / tool hooks for observability.

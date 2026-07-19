@@ -161,6 +161,132 @@ trees; normal OpenCode turns retain the warm server for reuse.
 
 See ADR-0022 and `docs/design/external-coding-agent-integration/` for the full design.
 
+## Memory + Experience Presets (Target State)
+
+All native agents receive **baked, non-user-editable** memory + experience
+configuration from a single converged source: `bot/config/memory_defaults.py`.
+Neither `pool.yml` nor `templates/*.yml` may carry a `memory:` or
+`experience:` block — the framework's `MainAgentSpec` / `SubagentSpec` use
+`extra="forbid"` and reject them. Configuration is uniform across all pools;
+per-pool override is not supported.
+
+### Preset surface (`bot/config/memory_defaults.py`)
+
+| Preset | Used by | Contents |
+|---|---|---|
+| `main_agent_memory(max_context_tokens)` | every native main agent | session (token-budget compression, `max_context_tokens` from `model.yml`) + archive (global scope, FIFO 20) + knowledge (global scope, `templates/knowledge`) + dream_engine (600s interval) + governance (tool_chain_repair + lossy_compaction) + pruned + user_retention (default on) |
+| `main_agent_experience()` | every native main agent | `ExperienceConfig(enabled=True)` — fires `ExperienceReviewHook` |
+| `subagent_memory()` | every native subagent | session + governance (tool_chain_repair only, NO lossy_compaction) + pruned + user_retention (default on). archive/knowledge/dream = None. No experience preset — review is main-agent-only. |
+
+### Wiring chain (consumers perform NO additional config construction)
+
+```
+wiring._build_assembly_deps_for_pools()
+  └─ PoolAssemblyDeps(memory=main_agent_memory(...), experience=main_agent_experience())
+       │
+       ├─ pool_data.build_pool_data()
+       │    ├─ create_memory_system(memory_cfg)        → MemorySystem (archive/knowledge/dream/pruned layers)
+       │    ├─ _build_experience_manager(exp_cfg)      → ExperienceManager (None when exp_cfg disabled)
+       │    └─ MemorySystemContextManager(experience_manager=...)  → ExperienceProvider injects XML into system prompt
+       │
+       ├─ pool_builder._wire_main_pipeline()
+       │    └─ builder.governance = create_governance(memory)  → CompositeGovernance (lossy + tool_chain_repair)
+       │
+       ├─ wiring._wire_pool_to_resources()
+│    └─ ExperienceReviewHook(provider=service._default_provider, ...)  → registered on pipeline.hook_runner
+│       (reviewer uses the bot-global default LLM from model.yml, runs ReAct with forked parent history)
+       │
+       └─ background.BackgroundTaskRunner
+            └─ ExperienceCurator(experience_dir, meta_store, max_experiences)  → LRU eviction loop
+
+pool_builder.create_pool()
+  └─ AgentTemplateRegistry(default_subagent_memory=subagent_memory())
+       └─ AgentTemplate.materialize()
+            ├─ build_session_only_memory(cfg)          → session-only MemorySystem (archive/knowledge = None)
+            ├─ factory.create_subagent_governance(cfg) → ToolChainRepairGovernance only
+            └─ resolver.pruned_manager()               → reuses the parent pool's PrunedManager
+```
+
+### External (external_coding) exclusion — structural, not config-based
+
+External main agents and subagents are excluded at **three** independent
+points, so the presets never reach them regardless of config:
+
+1. **Subagent**: `AgentTemplate.materialize` (`template.py:100`) early-dispatches
+   to `_materialize_external` when `execution_strategy == EXTERNAL_CODING` —
+   skips native memory/tool/skill/hooks assembly entirely.
+2. **Main agent pipeline**: `pool_builder.create_pool` (`pool_builder.py:389`)
+   takes the external branch, skipping `_wire_main_pipeline` (no governance,
+   no hooks, no approval renderer).
+3. **Experience hook**: `wiring._wire_pool_to_resources` (`wiring.py:534`)
+   early-returns when `pipeline is None` (external agents have no
+   `AgentPipeline` — they use `ExternalTurnRunner`).
+
+### Experience review mechanism (three coupled components)
+
+The experience system is **reviewer + hook + injection** working together.
+All three must be active for experience to function:
+
+1. **ExperienceManager** (`pool_data.py:151`): built when `assembly_deps.experience`
+   is enabled. Held by `MemorySystemContextManager`. At turn load
+   (`system.py:366-377`), `build_prompt()` renders saved experiences as XML
+   metadata → `ExperienceProvider` injects into the main agent's system prompt
+   so the LLM sees `<available_experiences>` and can call the `experience` tool.
+
+2. **ExperienceReviewHook** (`wiring.py:539-552`: registered on the main
+   agent's `pipeline.hook_runner`. Fires `after_turn` when
+   `stop_reason == completed` and history ≥ `min_messages`. Spawns a
+   background task that runs `ExperienceReviewAgent.review()` — a ReAct loop
+using **the bot-global default LLM provider** (`service._default_provider`,
+from `model.yml`) with **forked parent history** (`conversation_messages`
+parameter) so the reviewer sees the full structured conversation (tool_calls,
+tool_results) rather than a flattened text snapshot. The provider is shared
+across all pools (native and external) — experience review is a background
+task that does NOT depend on any pool's own provider. When `default_provider`
+is None (model.yml unconfigured), experience review is skipped with a
+warning; the bot itself boots and runs normally.
+
+3. **ExperienceCurator** (`background.py:109-178`): a background loop per pool
+   that runs LRU eviction when experience count exceeds `max_experiences`.
+   Pinned experiences are immune; the least-recently-used unpinned ones are
+   deleted permanently.
+
+If any of these three is missing, experience degrades silently:
+- No `ExperienceManager` → no `<available_experiences>` in system prompt →
+  LLM never learns from past sessions.
+- No `ExperienceReviewHook` → no review after turns → EXPERIENCE.md files
+  never created/updated.
+- No `ExperienceCurator` → no eviction → experience dir grows unbounded.
+
+### Governance derivation
+
+Governance is **derived from memory config**, never configured independently:
+
+- **Main agent**: `pool_builder.py:1105` calls `create_governance(memory)` →
+  `CompositeGovernance` with `LossyContentCompactionGovernance` (truncates
+  oversized tool_results/assistant/user content per `LossyConfig`) +
+  `ToolChainRepairGovernance` (repairs broken tool_call/tool_result pairing
+  before LLM call). Injected onto `turn_context_builder.governance`.
+- **Subagent**: `factory.py:292` calls `create_subagent_governance(memory)` →
+  `ToolChainRepairGovernance` only (no lossy compaction — subagents are
+  short-lived task workers with small context windows). Injected onto
+  `turn_context_builder.governance` via `_build_turn_runner`.
+
+### Why `subagent_memory()` carries `governance` and `pruned` fields
+
+These are **consumed at different points** than `build_session_only_memory`:
+
+- `governance`: consumed by `factory.create_subagent_governance(descriptor.memory_config)`
+  (`factory.py:292`), NOT by `build_session_only_memory`. The subagent's
+  `MemorySystemContextManager` has no governance field — governance lives on
+  `TurnContextBuilder`.
+- `pruned`: the subagent's `PrunedManager` comes from
+  `resolver.pruned_manager()` (`template.py:156`), which returns the
+  **parent pool's** `PrunedManager`. The `pruned` field in `subagent_memory()`
+  is structurally redundant but kept for symmetry with `main_agent_memory()`.
+- `archive`/`knowledge`/`dream_engine`: `None` — correctly ignored by
+  `build_session_only_memory` (subagents have no long-term layers).
+
 ## Skills (global library + per-agent assignment)
 
 The global skill **library** has two sources, REPO PRIORITY:
