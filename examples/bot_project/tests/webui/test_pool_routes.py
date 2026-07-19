@@ -1042,6 +1042,6 @@ async def test_write_pool_external_missing_provider_kind_400(
         assert resp.status == 400
         data = await resp.json()
         assert data["error"] == "validation"
-        assert "pool" in data["fields"]
+        assert "main" in data["fields"]
     finally:
         await client.close()

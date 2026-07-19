@@ -156,6 +156,8 @@ from modex_agent.core.cleanup import (
 from modex_agent.core.scope import RecordScope
 from modex_agent.workspace.paths import WorkspacePaths
 
+from bot.scope import BotRecordScope
+
 
 class _RecordingFactory(SessionCleanerOperations):
     def __init__(
@@ -219,7 +221,7 @@ def test_collector_retries_when_cleaner_operation_fails(tmp_path):
         config=SessionGcConfig(max_workers=1),
         cleaner_factory=_FailingFactory(),
     )
-    gc._enqueue(RecordScope(session_id="aaa.coding", pool="coding"), tmp_path)
+    gc._enqueue(BotRecordScope(session_id="aaa.coding", pool="coding"), tmp_path)
 
     asyncio.run(gc._drain_for_tests())
 
@@ -236,7 +238,7 @@ def test_collector_passes_typed_pool_session_scope_to_cleaner(
         config=SessionGcConfig(max_workers=1),
         cleaner_factory=cleaner,
     )
-    scope = RecordScope(session_id="aaa.coding", pool="coding")
+    scope = BotRecordScope(session_id="aaa.coding", pool="coding")
     gc._enqueue(scope, tmp_path)
 
     asyncio.run(gc._drain_for_tests())
@@ -245,7 +247,7 @@ def test_collector_passes_typed_pool_session_scope_to_cleaner(
 
 
 def test_collector_forwards_full_workspace_scope_unchanged(tmp_path: Path) -> None:
-    scope = RecordScope(
+    scope = BotRecordScope(
         pool="coding",
         workspace_id="workspace-1",
         session_id="aaa.coding",
@@ -271,7 +273,7 @@ def test_collector_forwards_full_workspace_scope_unchanged(tmp_path: Path) -> No
 
 
 def test_sweep_discovers_and_cleans_db_only_orphan_scope(tmp_path: Path) -> None:
-    scope = RecordScope(
+    scope = BotRecordScope(
         pool="coding",
         workspace_id=str(tmp_path.resolve()),
         session_id="db-only.coding",
@@ -302,7 +304,7 @@ def test_sweep_recovers_db_only_orphan_from_existing_database(tmp_path: Path) ->
     from modex_agent.persistence.managers import WorkspacePersistenceManager
 
     paths = _paths_for(tmp_path)
-    scope = RecordScope(
+    scope = BotRecordScope(
         pool="coding",
         workspace_id=str(tmp_path.resolve()),
         session_id="db-only.coding",
@@ -314,7 +316,7 @@ def test_sweep_recovers_db_only_orphan_from_existing_database(tmp_path: Path) ->
         manager = WorkspacePersistenceManager(paths.state_db)
         await manager.open()
         await manager.connection.execute(
-            "INSERT INTO sessions (session_id, scope) VALUES (?, ?)",
+            "INSERT INTO sessions (session_id, scope_key) VALUES (?, ?)",
             (scope.session_id, scope.canonical()),
         )
         await manager.close()
@@ -342,7 +344,7 @@ def test_sweep_recovers_db_only_orphan_from_existing_database(tmp_path: Path) ->
 
 
 def test_dedup_keeps_same_session_with_distinct_scope_identities(tmp_path: Path) -> None:
-    first = RecordScope(
+    first = BotRecordScope(
         workspace_id=str(tmp_path.resolve()),
         session_id="shared.main",
         pool="main",
@@ -367,7 +369,7 @@ def test_dedup_keeps_same_session_with_distinct_scope_identities(tmp_path: Path)
 def test_dedup_keeps_same_scope_in_distinct_workspace_roots(tmp_path: Path) -> None:
     first_root = tmp_path / "first"
     second_root = tmp_path / "second"
-    scope = RecordScope(session_id="shared.main", pool="main")
+    scope = BotRecordScope(session_id="shared.main", pool="main")
     factory = _RecordingFactory()
     gc = SessionGarbageCollector(
         workspace_roots_provider=lambda: [first_root, second_root],
@@ -407,7 +409,7 @@ def test_sweep_passes_live_session_ids_to_discovery(tmp_path: Path) -> None:
 def test_foreground_delete_uses_discovered_exact_scope(tmp_path: Path) -> None:
     paths = _paths_for(tmp_path)
     _seed_full_session(paths, "main", "root.main")
-    exact_scope = RecordScope(
+    exact_scope = BotRecordScope(
         pool="main",
         workspace_id=str(tmp_path.resolve()),
         session_id="root.main",
@@ -434,7 +436,7 @@ def test_foreground_delete_uses_discovered_exact_scope(tmp_path: Path) -> None:
 def test_foreground_delete_resolves_pool_when_workspace_is_known(tmp_path: Path) -> None:
     paths = _paths_for(tmp_path)
     _seed_full_session(paths, "coding", "root.main")
-    exact_scope = RecordScope(
+    exact_scope = BotRecordScope(
         pool="coding",
         workspace_id=str(tmp_path.resolve()),
         session_id="root.main",
@@ -463,7 +465,7 @@ def test_child_propagation_uses_discovered_exact_scope(tmp_path: Path) -> None:
     paths = _paths_for(tmp_path)
     _seed_full_session(paths, "main", "root.main")
     _seed_full_session(paths, "coding", "child.worker", "root.main")
-    child_scope = RecordScope(
+    child_scope = BotRecordScope(
         pool="coding",
         workspace_id=str(tmp_path.resolve()),
         session_id="child.worker",
@@ -491,7 +493,7 @@ def test_child_propagation_uses_discovered_exact_scope(tmp_path: Path) -> None:
 def test_sweep_parent_orphan_uses_discovered_exact_scope(tmp_path: Path) -> None:
     paths = _paths_for(tmp_path)
     _seed_full_session(paths, "coding", "child.worker", "missing.main")
-    exact_scope = RecordScope(
+    exact_scope = BotRecordScope(
         pool="coding",
         workspace_id=str(tmp_path.resolve()),
         session_id="child.worker",
@@ -520,7 +522,7 @@ def test_clean_session_removes_all_nine_units(tmp_path):
     paths = _paths_for(tmp_path)
     _seed_full_session(paths, "coding", "aaa.coding")
     cleaner = _cleaner(paths)
-    scope = RecordScope(session_id="aaa.coding", pool="coding")
+    scope = BotRecordScope(session_id="aaa.coding", pool="coding")
     asyncio.run(cleaner.clean_session_artifacts("aaa.coding", scope))
     for unit in _session_artifact_paths("aaa.coding", "coding", paths):
         assert not unit.exists(), f"still present: {unit}"
@@ -529,7 +531,7 @@ def test_clean_session_removes_all_nine_units(tmp_path):
 def test_clean_session_idempotent_when_already_gone(tmp_path):
     paths = _paths_for(tmp_path)
     cleaner = _cleaner(paths)
-    scope = RecordScope(session_id="ghost.coding", pool="coding")
+    scope = BotRecordScope(session_id="ghost.coding", pool="coding")
     asyncio.run(cleaner.clean_session_artifacts("ghost.coding", scope))  # must not raise
     asyncio.run(cleaner.clean_session_artifacts("ghost.coding", scope))  # twice is fine
 
@@ -546,7 +548,7 @@ def test_clean_session_preserves_pool_shared_and_siblings(tmp_path):
     (knowledge / "MEMORY.md").write_text("kept", encoding="utf-8")
 
     cleaner = _cleaner(paths)
-    scope = RecordScope(session_id="aaa.coding", pool="coding")
+    scope = BotRecordScope(session_id="aaa.coding", pool="coding")
     asyncio.run(cleaner.clean_session_artifacts("aaa.coding", scope))
 
     # sibling untouched
@@ -633,7 +635,7 @@ def test_dedup_suppresses_concurrent_duplicate(tmp_path):
     paths = _paths_for(tmp_path)
     _seed_full_session(paths, "coding", "aaa.coding", None)
     gc = _collector(tmp_path)
-    scope = RecordScope(session_id="aaa.coding", pool="coding")
+    scope = BotRecordScope(session_id="aaa.coding", pool="coding")
     added1 = gc._enqueue(scope, tmp_path)
     added2 = gc._enqueue(scope, tmp_path)
     assert added1 is True
@@ -736,7 +738,7 @@ def test_dedup_removed_on_clean_failure(tmp_path):
         config=SessionGcConfig(max_workers=1),
         cleaner_factory=_BoomFactory(),
     )
-    gc._enqueue(RecordScope(session_id="aaa.coding", pool="coding"), tmp_path)
+    gc._enqueue(BotRecordScope(session_id="aaa.coding", pool="coding"), tmp_path)
 
     async def _run():
         await gc._drain_for_tests()
@@ -836,7 +838,7 @@ def test_clean_session_emits_log(tmp_path, caplog):
     paths = _paths_for(tmp_path)
     _seed_full_session(paths, "coding", "aaa.coding", None)
     gc = _collector(tmp_path)
-    gc._enqueue(RecordScope(session_id="aaa.coding", pool="coding"), tmp_path)
+    gc._enqueue(BotRecordScope(session_id="aaa.coding", pool="coding"), tmp_path)
 
     with caplog.at_level(logging.INFO, logger="bot.service.session_gc"):
         async def _run():
@@ -896,10 +898,7 @@ def test_sqlite_delete_session_tree_removes_sessions_row_synchronously(tmp_path)
     async def _run() -> int:
         manager = WorkspacePersistenceManager(paths.state_db)
         await manager.open()
-        store = SqliteSessionStore(
-            manager.connection,
-            pool_resolver=lambda _s: pool,
-        )
+        store = SqliteSessionStore(manager.connection)
         await store.save(
             SessionInfo(
                 session_id=session_id,
@@ -913,7 +912,7 @@ def test_sqlite_delete_session_tree_removes_sessions_row_synchronously(tmp_path)
         async def _session_store_resolver(_index_dir: Path):
             m = WorkspacePersistenceManager(paths.state_db)
             await m.open()
-            return SqliteSessionStore(m.connection, pool_resolver=lambda _s: pool)
+            return SqliteSessionStore(m.connection)
 
         gc = SessionGarbageCollector(
             workspace_roots_provider=lambda: [tmp_path],
@@ -998,7 +997,7 @@ def test_sqlite_delete_session_tree_removes_transcript_events(tmp_path):
         async def _session_store_resolver(_index_dir: Path):
             m = WorkspacePersistenceManager(paths.state_db)
             await m.open()
-            return SqliteSessionStore(m.connection, pool_resolver=lambda _s: pool)
+            return SqliteSessionStore(m.connection)
 
         gc = SessionGarbageCollector(
             workspace_roots_provider=lambda: [tmp_path],

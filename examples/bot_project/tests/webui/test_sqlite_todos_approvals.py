@@ -57,20 +57,20 @@ class TestSqliteTodosEndpoint:
         )
         conn = sqlite3.connect(str(sqlite_db))
         conn.execute(
-            "INSERT INTO todos (session_id, scope, items_json, updated_at) VALUES (?, ?, ?, ?)",
-            (session_id, scope, items, 1000.0),
+            "INSERT INTO todos (session_id, scope_key, items_json, updated_at) VALUES (?, ?, ?, ?)",
+            (session_id, scope, items, 1000),
         )
         conn.commit()
         conn.close()
 
         # Build a SqliteTodoStore for the resolver.
-        from modex_agent.core.scope import RecordScope
         from modex_agent.persistence import ConnectionManager, DatabaseKind
         from modex_agent.persistence.adapters.todo_store import SqliteTodoStore
+        from bot.scope import BotRecordScope
 
         mgr = ConnectionManager(sqlite_db, DatabaseKind.WORKSPACE)
         await mgr.open()
-        todo_store = SqliteTodoStore(mgr, RecordScope(pool="default"))
+        todo_store = SqliteTodoStore(mgr, BotRecordScope(pool="default"))
 
         server = WebUIServer(
             input_adapter=MagicMock(),

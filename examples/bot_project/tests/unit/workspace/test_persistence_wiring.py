@@ -178,11 +178,10 @@ async def test_session_registry_loads_before_pool_creation(tmp_path: Path) -> No
     service._home_persistence = manager
     ctx = WorkspaceContext.from_target(home, data_dir_name=".modex", home=home)
     await manager.connection.execute(
-        "INSERT INTO sessions (session_id, scope) VALUES (?, ?)",
+        "INSERT INTO sessions (session_id, scope_key) VALUES (?, ?)",
         (
             "existing.main",
-            '{"session_id":"existing.main","session_prefix":"existing",'
-            '"agent_id":"main"}',
+            '{"session_id":"existing.main","session_prefix":"existing","agent_id":"main"}',
         ),
     )
     pool_spec = MagicMock()

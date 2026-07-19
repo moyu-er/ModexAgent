@@ -42,7 +42,7 @@ async def test_ws_sqlite_send_persists_user_before_enqueue(tmp_path: Path) -> No
     persistence = WorkspacePersistenceManager(paths.state_db)
     await persistence.open()
     connection = persistence.connection
-    session_store = SqliteSessionStore(connection, pool_resolver=lambda _: "main")
+    session_store = SqliteSessionStore(connection)
 
     async def resolve_transcript(_: Path) -> TranscriptStore:
         return await build_database_transcript_store(connection)
@@ -145,7 +145,7 @@ async def test_ws_sqlite_send_reaches_workspace_dispatcher(tmp_path: Path) -> No
     persistence = WorkspacePersistenceManager(paths.state_db)
     await persistence.open()
     connection = persistence.connection
-    session_store = SqliteSessionStore(connection, pool_resolver=lambda _: "main")
+    session_store = SqliteSessionStore(connection)
 
     async def resolve_transcript(_: Path) -> TranscriptStore:
         return await build_database_transcript_store(connection)
