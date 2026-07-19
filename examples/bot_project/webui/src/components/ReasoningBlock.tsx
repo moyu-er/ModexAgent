@@ -6,6 +6,8 @@ export interface ReasoningBlockProps {
   reasoning: string;
 }
 
+/** Collapsible reasoning block (§6): mono eyebrow header + chevron; the body
+ *  is dim mono text behind a 2px brand-alpha left border (`.reasoning-body`). */
 export const ReasoningBlock: FC<ReasoningBlockProps> = ({ reasoning }) => {
   const t = useT();
   const [expanded, setExpanded] = useState(false);
@@ -23,13 +25,14 @@ export const ReasoningBlock: FC<ReasoningBlockProps> = ({ reasoning }) => {
       <button
         type="button"
         onClick={toggle}
-        className="flex items-center gap-1 text-xs font-medium text-mute transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-link/50"
+        aria-expanded={expanded}
+        className="flex items-center gap-1.5 transition-colors hover:brightness-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
       >
-        <ChevronToggleIcon open={expanded} />
-        {t("reasoning.thinking")}
+        <ChevronToggleIcon open={expanded} className="text-mute" />
+        <span className="eyebrow">{t("reasoning.label")}</span>
       </button>
       {expanded && (
-        <div className="mt-1.5 rounded border-l-2 border-hairline bg-canvas-elevated p-3">
+        <div className="reasoning-body mt-1.5">
           <pre className="whitespace-pre-wrap break-words font-mono text-xs text-mute">
             {reasoning}
           </pre>

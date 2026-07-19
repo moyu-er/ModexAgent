@@ -92,4 +92,44 @@ describe("ApprovalCard", () => {
         .disabled,
     ).toBe(true);
   });
+
+  it("carries severity in the left bar + status icon + text label, never color alone", () => {
+    const { container } = render(
+      <ApprovalCard view={view} onApprove={vi.fn()} onDeny={vi.fn()} />,
+    );
+    // Shared trace-card shell with a 3px severity left bar via --sev.
+    const card = container.querySelector(".trace-card") as HTMLElement;
+    expect(card).toBeTruthy();
+    expect(card.style.getPropertyValue("--sev")).toBe(
+      "var(--color-severity-dangerous)",
+    );
+    // Status icon next to the tier text label.
+    const icon = container.querySelector("[data-severity-icon]") as HTMLElement;
+    expect(icon).toBeTruthy();
+    expect(icon.className).toContain("text-severity-dangerous");
+    // Text label means severity is never conveyed by color alone.
+    expect(screen.getByText("dangerous")).toBeTruthy();
+  });
+
+  it("falls back to normal severity for unknown tiers", () => {
+    const { container } = render(
+      <ApprovalCard
+        view={{ ...view, tier: "safe" }}
+        onApprove={vi.fn()}
+        onDeny={vi.fn()}
+      />,
+    );
+    const card = container.querySelector(".trace-card") as HTMLElement;
+    expect(card.style.getPropertyValue("--sev")).toBe(
+      "var(--color-severity-normal)",
+    );
+    expect(
+      (container.querySelector("[data-severity-icon]") as HTMLElement).className,
+    ).toContain("text-severity-normal");
+  });
+
+  it("renders the eyebrow header", () => {
+    render(<ApprovalCard view={view} onApprove={vi.fn()} onDeny={vi.fn()} />);
+    expect(screen.getByText("Approval").className).toContain("eyebrow");
+  });
 });
