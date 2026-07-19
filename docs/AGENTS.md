@@ -44,6 +44,7 @@ Each feature has a directory under `design/<feature-slug>/` containing:
 
 | Feature | ADR | Key files |
 |---------|-----|-----------|
+| Phase 1 persistence schema optimization | ADR-0028, ADR-0029, ADR-0030, ADR-0031 | PRD.md, tickets.md |
 | External coding subagent | ADR-0027 | PRD.md, tickets.md |
 | Execution strategy refactor | ADR-0025 | PRD.md, spec.md, tickets.md |
 | Agent observability | ADR-0024 | PRD.md, tickets.md |
