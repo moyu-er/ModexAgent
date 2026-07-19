@@ -25,16 +25,16 @@ This ticket does NOT touch the visible-windows or pexpect or tmux backends.
 
 **Blocked by:** 01 — Prefactor: expand `TerminalBackend` with async-safety scaffolding.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `WinptyHiddenBackend` implements `_write_blocking`, `_read_blocking`, `_shell_family`
-- [ ] `WinptyHiddenBackend` deletes its 6 overrides (`write`, `read`, `read_pending`, `current_segment`, `clear_input_line`, `drain_startup`) — all inherited from `TerminalBackend`
-- [ ] `WinptyHiddenBackend` deletes `_uses_readline` private helper
-- [ ] `tests/unit/tools/terminal/backends/test_windows_hidden.py` covers hook contract, shell-family detection, error handling, base-class inheritance
-- [ ] Existing `tests/framework/tools/terminal/test_windows_terminal_command_process_workflow.py` passes (the HIDDEN-parametrized case; VISIBLE remains skipped)
-- [ ] `ruff check src/modex_agent/tools/terminal/backends/windows_hidden.py` clean
-- [ ] `mypy src/modex_agent/tools/terminal/backends/windows_hidden.py` clean
-- [ ] No `settimeout`-style global-state-mutating calls inside any remaining method on this backend
+- [x] `WinptyHiddenBackend` implements `_write_blocking`, `_read_blocking`, `_shell_family`
+- [x] `WinptyHiddenBackend` deletes its 6 overrides (`write`, `read`, `read_pending`, `current_segment`, `clear_input_line`, `drain_startup`) — all inherited from `TerminalBackend`
+- [x] `WinptyHiddenBackend` deletes `_uses_readline` private helper
+- [x] `tests/unit/tools/terminal/backends/test_windows_hidden.py` covers hook contract, shell-family detection, error handling, base-class inheritance
+- [x] Existing `tests/framework/tools/terminal/test_windows_terminal_command_process_workflow.py` passes (the HIDDEN-parametrized case; VISIBLE remains skipped)
+- [x] `ruff check src/modex_agent/tools/terminal/backends/windows_hidden.py` clean
+- [x] `mypy src/modex_agent/tools/terminal/backends/windows_hidden.py` clean
+- [x] No `settimeout`-style global-state-mutating calls inside any remaining method on this backend
 
 ## Comments
 
