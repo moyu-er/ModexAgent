@@ -208,6 +208,10 @@ class DefaultSessionArtifactCleaner(SessionArtifactCleaner):
             raise MissingSessionScopeError
         if scope_session_id != session_id:
             raise SessionScopeMismatchError(session_id, scope_session_id)
+        # ADR-0028: pool lives on BotRecordScope (business subclass), not base
+        # RecordScope. ``to_path_segment`` returns "default" for absent fields
+        # (via getattr-with-default), so this works for both base and subclass
+        # without dynamic attribute probing (rule 6).
         pool = scope.to_path_segment("pool")
 
         files = 0

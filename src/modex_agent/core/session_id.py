@@ -9,21 +9,23 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import time
 import warnings
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# Timestamp producers live in `modex_agent.utils.time` (ADR-0029 §2). They are
+# re-exported here so existing callers of `from modex_agent.core.session_id
+# import now_ms` keep working. New code should import from `utils.time` directly.
+# The `as` idiom marks these as explicit re-exports under mypy
+# `no_implicit_reexport` (strict mode).
+from modex_agent.utils.time import now_ms as now_ms  # noqa: F401
+from modex_agent.utils.time import now_s as now_s
+
 logger = logging.getLogger(__name__)
 
 # base58 alphabet (Bitcoin), stdlib-only implementation.
 _BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-
-
-def now_ms() -> int:
-    """Current Unix time in milliseconds."""
-    return int(time.time() * 1000)
 
 
 def encode_snowflake(raw: str) -> str:

@@ -63,11 +63,19 @@ class ChatMessage(BaseModel):
     @field_validator("created_at", mode="before")
     @classmethod
     def _parse_created_at(cls, v: Any) -> datetime:
-        """Parse created_at from string ("YYYY-MM-DD HH:MM:SS"), datetime, or int."""
+        """Parse created_at from string ("YYYY-MM-DD HH:MM:SS"), datetime, or int.
+
+        Int values are interpreted as epoch milliseconds when >= 1e12 (ADR-0029
+        storage format), otherwise epoch seconds. The threshold 1e12 corresponds
+        to year ~2001 in milliseconds / year ~33658 in seconds — any real-world
+        timestamp is unambiguously on one side.
+        """
         tz = get_user_timezone()
         if isinstance(v, datetime):
             return v
         if isinstance(v, int | float):
+            if v >= 1e12:
+                v = v / 1000.0
             return datetime.fromtimestamp(v, tz=tz)
         if isinstance(v, str):
             try:

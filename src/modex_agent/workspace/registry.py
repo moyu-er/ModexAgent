@@ -13,20 +13,15 @@ import uuid
 from abc import ABC, abstractmethod
 from collections import deque
 from collections.abc import Iterator
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Generic, TypeVar
 
+from modex_agent.utils.time import now_ms
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.factory import ResourceFactory
 from modex_agent.workspace.record import WorkspaceRecord
 
 R = TypeVar("R")
-
-
-def _now_iso() -> str:
-    """Current UTC timestamp as an ISO-8601 string."""
-    return datetime.now(UTC).isoformat()
 
 
 class WorkspaceRegistryStore(ABC):
@@ -94,7 +89,7 @@ class WorkspaceRegistryStore(ABC):
         preserving existing metadata), then deletes non-home records whose
         target is no longer in ``targets``.
         """
-        now = _now_iso()
+        now = now_ms()
         desired = {str(Path(t).resolve()) for t in targets}
         for target in desired:
             if await self.get_workspace(target) is None:
@@ -193,7 +188,7 @@ class WorkspaceRegistry(Generic[R]):
             ctx = WorkspaceContext.from_target(
                 target, data_dir_name=self._data_dir_name, home=self._home
             )
-            now = _now_iso()
+            now = now_ms()
             await self._store.upsert_workspace(
                 WorkspaceRecord(
                     workspace_id=str(uuid.uuid4()),
