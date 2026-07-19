@@ -32,6 +32,8 @@ from modex_agent.agents.external_coding.agent import (
     StaleSessionError,
     StreamingProviderBackend,
 )
+from modex_agent.agents.external_coding.backend_provider import PoolScopedBackendProvider
+from modex_agent.agents.external_coding.contracts import ProviderEventParser
 from modex_agent.agents.external_coding.events import ExternalCodingEvent
 from modex_agent.agents.external_coding.paths import ExternalPaths, ProviderKind
 from modex_agent.agents.external_coding.providers.pi_parser import PiEventParser
@@ -57,7 +59,9 @@ from modex_agent.cli.modexbot.routing import (
 )
 from modex_agent.cli.modexbot.writer import _write_line
 from modex_agent.core.agent import AgentCommKind, AgentContext
+from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.emitter import AgentResult, ContentEmitter
+from modex_agent.core.turn_events import TurnEvent, TurnTextEvent
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo
 from modex_agent.core.session_registry import InMemorySessionRegistry
@@ -100,6 +104,21 @@ class RecordingEmitter(ContentEmitter[ExternalCodingEvent]):  # type: ignore[typ
     ) -> None:
         self.events.append((event, data))
 
+    async def emit_turn_event(self, event: TurnEvent) -> None:
+        if isinstance(event, TurnTextEvent):
+            self.deltas.append(event.text)
+        from modex_agent.core.turn_events import (
+            TurnReasoningEvent,
+            TurnToolCallEvent,
+            TurnToolResultEvent,
+        )
+        if isinstance(event, TurnToolCallEvent):
+            self.events.append((ExternalCodingEvent.TOOL_USE, event))
+        elif isinstance(event, TurnToolResultEvent):
+            self.events.append((ExternalCodingEvent.TOOL_RESULT, event))
+        elif isinstance(event, TurnReasoningEvent):
+            self.events.append((ExternalCodingEvent.THINKING, event))
+
     async def emit_delta(self, delta: str) -> None:
         self.deltas.append(delta)
 
@@ -134,7 +153,7 @@ def _pi_text_step(text: str) -> ScriptedStep:
 
 
 def _pi_tool_use_step(
-    tool_name: str = "bash", cmd: str = "ls"
+    tool_name: str = "bash", cmd: str = "ls", call_id: str = "call-1"
 ) -> ScriptedStep:
     """A Pi-format ``tool_execution_start`` step emitting a tool_use event."""
     import json
@@ -144,6 +163,7 @@ def _pi_tool_use_step(
             {
                 "type": "tool_execution_start",
                 "tool_name": tool_name,
+                "tool_call_id": call_id,
                 "args": {"cmd": cmd},
             }
         )
@@ -477,7 +497,7 @@ class _ExternalPoolBundle:
         instance.descriptor = AgentDescriptor(
             address=AgentAddress(name=name),
             context_strategy="persistent",
-            execution_strategy="external_coding",
+            execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
         )
         return instance
 
@@ -540,7 +560,7 @@ def _build_external_agent(
         scripted, PiEventParser(), send_side_effect=send_side_effect
     )
     agent = ExternalCodingAgent(
-        backend=adapter,
+        backend_provider=PoolScopedBackendProvider(adapter),
         session_store=store,
         parser=PiEventParser(),
         provider_kind=ProviderKind.PI,
@@ -548,3 +568,290 @@ def _build_external_agent(
         base_env={"PATH": "/usr/bin"},
     )
     return agent, adapter, spec, store
+
+
+# ---------------------------------------------------------------------------
+# External subagent bundle (T8 — BotSubagentExternalCodingBuilder shape)
+# ---------------------------------------------------------------------------
+
+
+class _ExternalSubagentBundle:
+    """A pool bundle whose resident is an external-coding subagent.
+
+    Mirrors the assembly performed by ``BotSubagentExternalCodingBuilder``
+    (T8) but with the scripted backend swapped in for the real
+    ``OpenCodeServerBackend`` / ``PiBackend`` so the test exercises the
+    real ``ExternalCodingAgent`` + ``ExternalTurnRunner`` + ``HookRunner``
+    + ``SubagentAutoSendHook`` wiring without spawning any subprocess.
+
+    The bundle wires:
+
+    - A ``CachingBackendProvider`` wrapping a factory whose ``create()``
+      returns the supplied scripted adapter (so ``acquire`` is deterministic).
+    - A ``HookRunner`` carrying ``SubagentAutoSendHook`` with
+      ``execution_strategy=EXTERNAL_CODING`` + ``external_outbox_path``.
+    - A real ``ExternalTurnRunner`` so ``FINALLY_TURN`` fires.
+    - A real ``AgentPipeline`` so the parent's ``InboxPoller`` can dispatch.
+
+    The bundle's parent agent is a fake (``_FakePoolBundle`` pattern) so
+    tests can assert the subagent's ``modexctl send`` reply lands in the
+    parent's inbox and that the ``<subagent_notification>`` (with
+    ``<replied>=true``) reaches the parent after the turn ends.
+    """
+
+    def __init__(
+        self,
+        *,
+        subagent_name: str,
+        parent_name: str,
+        pool_name: str,
+        inbox_root: Path,
+        workdir: Path,
+        backend: StreamingProviderBackend,
+        parser: ProviderEventParser | None = None,
+        provider_kind: ProviderKind = ProviderKind.PI,
+    ) -> None:
+        self.subagent_name = subagent_name
+        self.parent_name = parent_name
+        self.pool_name = pool_name
+        self.workdir = workdir
+        self.broker = InMemoryMessageBroker()
+        self.server = LocalFileInboxServer(workspace=inbox_root / pool_name)
+        self.producer = InboxProducer(server=self.server)
+        self.consumer = InboxConsumer(server=self.server)
+        self.bus = LocalAgentMessageBus(
+            producer=self.producer, consumer=self.consumer, broker=self.broker
+        )
+        self.session_factory = SessionIdFactory()
+        self.session_registry = InMemorySessionRegistry()
+        self.target_store = CommunicationTargetStore()
+
+        # Build the ExternalCodingAgent + ExternalTurnRunner + AgentPipeline
+        # via the same construction path BotSubagentExternalCodingBuilder uses.
+        from modex_agent.agents.external_coding.backend_provider import (
+            CachingBackendProvider,
+        )
+        from modex_agent.agents.external_coding.builder import (
+            ExternalCodingAgentBuilder,
+        )
+        from modex_agent.agents.external_coding.turn_runner import (
+            ExternalTurnRunner,
+        )
+        from modex_agent.agents.external_coding.types import ExternalEnvSpec
+        from modex_agent.core.constants import ExecutionStrategyKind
+        from modex_agent.core.context import InMemoryContextManager
+        from modex_agent.hook import HookErrorPolicy, HookRunner, HookSpec
+        from modex_agent.hook.builtin.subagent_auto_send import (
+            SubagentAutoSendHook,
+        )
+        from modex_agent.messaging.broker_bridge import (
+            BrokerInputAdapter,
+            BrokerOutputAdapter,
+        )
+        from modex_agent.multi_agent.address import AgentAddress
+        from modex_agent.multi_agent.comm_kind import AgentCommKind
+        from modex_agent.multi_agent.descriptor import (
+            AgentDescriptor,
+            AgentInstance,
+        )
+        from modex_agent.pipeline.pipeline import AgentPipeline
+        from modex_agent.pipeline.turn_session_registry import (
+            TurnSessionRegistry,
+        )
+
+        self.descriptor = AgentDescriptor(
+            address=AgentAddress(name=subagent_name),
+            execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+            provider_kind=provider_kind,
+            comm_kind=AgentCommKind.SUBAGENT,
+            max_iterations=80,
+            system_prompt_template="",
+        )
+
+        # Per-invocation env spec — star topology (only parent in targets).
+        env_spec = ExternalEnvSpec(
+            workspace_root=workdir,
+            inbox_root=workdir / ".modex" / "inbox",
+            workdir=workdir,
+            session_id=f"inv.{subagent_name}",
+            agent_name=subagent_name,
+            provider_session_id="",
+            agent_pool_map={subagent_name: pool_name},
+            targets=[(parent_name, "")],
+            modexctl_bin_dir=workdir / "bin",
+        )
+
+        # ExternalSessionMapStore — file backend for the test.
+        paths = ExternalPaths(workdir)
+        session_store = ExternalSessionStore(paths)
+
+        # CachingBackendProvider with a stub factory returning the scripted
+        # backend. ``is_warm`` returns False so the provider uses the
+        # stateless single-instance path — one scripted backend shared
+        # across all turns of this subagent invocation.
+        from modex_agent.agents.external_coding.backend_provider import (
+            BackendFactory,
+        )
+
+        class _ScriptedFactory(BackendFactory):
+            def __init__(self, backend_: StreamingProviderBackend) -> None:
+                self._backend = backend_
+
+            def create(self, provider_kind: ProviderKind) -> StreamingProviderBackend:
+                return self._backend
+
+            def is_warm(self, provider_kind: ProviderKind) -> bool:
+                return False
+
+        self.backend_provider = CachingBackendProvider(_ScriptedFactory(backend))
+
+        agent = ExternalCodingAgentBuilder.build_agent(
+            self.descriptor,
+            provider=None,
+            backend_provider=self.backend_provider,
+            session_store=session_store,
+            parser=parser or PiEventParser(),
+            provider_kind=provider_kind,
+            spec=env_spec,
+            base_env={"PATH": "/usr/bin"},
+        )
+
+        # Broker I/O.
+        address = self.descriptor.address
+        input_adapter = BrokerInputAdapter(broker=self.broker, address=address)
+        pipe_output_adapter = BrokerOutputAdapter(
+            broker=self.broker,
+            sender=address,
+            default_topic=f"agent:{address.name}:out",
+        )
+        emitter_output_adapter = BrokerOutputAdapter(
+            broker=self.broker,
+            sender=address,
+            default_topic=f"agent:{address.name}:out",
+        )
+        emitter_factory = ExternalCodingAgentBuilder.build_emitter_factory(
+            emitter_output_adapter
+        )
+
+        # HookRunner carrying SubagentAutoSendHook (T7 external branch).
+        from modex_agent.agents.external_coding.paths import ExternalPaths as _EP
+
+        outbox_path = _EP(workdir).outbox
+        outbox_path.parent.mkdir(parents=True, exist_ok=True)
+        self.hook_runner = HookRunner()
+        self.hook_runner.add(
+            HookSpec(
+                hook=SubagentAutoSendHook(
+                    agent_bus=self.bus,
+                    self_name=subagent_name,
+                    parent_name=parent_name,
+                    runtime_dir=workdir / ".modex" / "runtime_state" / pool_name,
+                    trace_enabled=False,
+                    execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+                    external_outbox_path=outbox_path,
+                ),
+                on_error=HookErrorPolicy.LOG,
+            )
+        )
+
+        # ExternalTurnRunner with hook_runner so FINALLY_TURN fires.
+        self.registry = TurnSessionRegistry()
+        from modex_agent.core.llm_struct import RuntimeSafetyPolicy
+
+        self.turn_runner = ExternalTurnRunner(
+            agent=agent,
+            emitter_factory=emitter_factory,
+            output_adapter=pipe_output_adapter,
+            registry=self.registry,
+            safety=RuntimeSafetyPolicy(),
+            hook_runner=self.hook_runner,
+        )
+
+        self.pipeline = AgentPipeline(
+            agent=agent,
+            turn_runner=self.turn_runner,
+            input_adapter=input_adapter,
+            output_adapter=pipe_output_adapter,
+            registry=self.registry,
+        )
+
+        self.instance = AgentInstance(
+            descriptor=self.descriptor,
+            context_manager=InMemoryContextManager(base_system_prompt=""),
+            pipeline=self.pipeline,
+        )
+
+        # Pool scaffold — fake factory, register the subagent as resident.
+        factory = MagicMock()
+        factory.create_agent = AsyncMock()
+        factory._default_hooks = []
+        factory._default_hook_runner = None
+        factory._default_interceptor_chain = None
+        factory._default_turn_store = None
+        factory._inbox_consumer = self.consumer
+
+        self.pool = AgentPool(
+            broker=self.broker,
+            agent_factory=factory,
+            agent_bus=self.bus,
+            inbox_consumer=self.consumer,
+            session_factory=self.session_factory,
+            retention=SessionRetentionPolicy(),
+            session_registry=self.session_registry,
+        )
+        self.poller = InboxPoller(self.pool, interval=0.05)
+        self.pool.attach_poller(self.poller)
+        self.pool._agents[subagent_name] = self.instance
+        self.pool._status[subagent_name] = AgentState.IDLE
+
+    async def start(self) -> None:
+        await self.broker.start()
+        self.pool.start_poller()
+
+    async def stop(self) -> None:
+        await self.pool.shutdown_all()
+        await self.broker.stop()
+
+    def make_context(self, session_id: str) -> AgentContext:
+        return AgentContext(
+            system_prompt="test",
+            history=ListMessageHistory([]),
+            tool_manager=InMemoryToolManager(),
+            session=SessionInfo.from_str(session_id),
+            comm_kind=AgentCommKind.NORMAL,
+        )
+
+
+def _build_external_subagent_bundle(
+    *,
+    subagent_name: str = "coder",
+    parent_name: str = "main",
+    pool_name: str = "default",
+    inbox_root: Path,
+    workdir: Path,
+    programme: ScriptedProgramme,
+    send_side_effect: Callable[[ExecOptions], Awaitable[None]] | None = None,
+    provider_kind: ProviderKind = ProviderKind.PI,
+) -> _ExternalSubagentBundle:
+    """Assemble an external-subagent pool bundle with a scripted backend.
+
+    Mirrors :func:`_build_external_agent` (main-agent path) but produces a
+    bundle shaped like ``BotSubagentExternalCodingBuilder.build()``'s output:
+    ``CachingBackendProvider`` + ``HookRunner(SubagentAutoSendHook)`` +
+    ``ExternalTurnRunner`` + ``AgentPipeline``. The scripted backend is
+    swapped in for the real ``OpenCodeServerBackend`` / ``PiBackend``.
+    """
+    scripted = ScriptedProviderBackend(programme)
+    backend: StreamingProviderBackend = ScriptedStreamingAdapter(
+        scripted, PiEventParser(), send_side_effect=send_side_effect
+    )
+    return _ExternalSubagentBundle(
+        subagent_name=subagent_name,
+        parent_name=parent_name,
+        pool_name=pool_name,
+        inbox_root=inbox_root,
+        workdir=workdir,
+        backend=backend,
+        parser=PiEventParser(),
+        provider_kind=provider_kind,
+    )

@@ -35,6 +35,7 @@ from pathlib import Path
 import pytest
 
 from modex_agent.agents.external_coding.agent import ExternalCodingAgent
+from modex_agent.agents.external_coding.backend_provider import PoolScopedBackendProvider
 from modex_agent.agents.external_coding.events import ExternalCodingEvent
 from modex_agent.agents.external_coding.paths import ProviderKind
 from modex_agent.agents.external_coding.providers.pi_parser import PiEventParser
@@ -328,12 +329,12 @@ async def test_stale_session_recovery(tmp_path: Path) -> None:
     )
 
     # Pre-seed a stale mapping so the first turn attempts a resume.
-    await store.acommit(modex_sid, "prov-old", ProviderKind.PI)
+    await store.commit(modex_sid, "prov-old", ProviderKind.PI)
 
     # Wrap the adapter in a flaky backend: first call raises, second succeeds.
     flaky = _FlakyStreamingBackend(adapter)
     stale_agent = ExternalCodingAgent(
-        backend=flaky,
+        backend_provider=PoolScopedBackendProvider(flaky),
         session_store=store,
         parser=PiEventParser(),
         provider_kind=ProviderKind.PI,
