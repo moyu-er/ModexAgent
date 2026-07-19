@@ -45,18 +45,18 @@ This ticket does NOT touch the hidden-windows, pexpect, or tmux backends.
 
 **Blocked by:** 01 — Prefactor: expand `TerminalBackend` with async-safety scaffolding.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Parent side (`visible_windows.py`) uses `asyncio.start_server` + `StreamReader`/`StreamWriter`; no raw `socket.socket`, no `settimeout`, no `sendall`/`recv`
-- [ ] Host side (`visible_windows_host.py`) uses `asyncio.open_connection`; the two forwarding threads become asyncio tasks in a single event loop; `_stdin_to_pty` and `_resize_monitor` remain threads
-- [ ] `TCP_NODELAY` set on both parent and host transports
-- [ ] `WinptyConsoleWindowBackend` overrides `write`/`read_pending` directly with native async (no `_write_blocking`/`_read_blocking` — D1 point 2 escape hatch)
-- [ ] `WinptyConsoleWindowBackend` deletes `current_segment`/`clear_input_line`/`drain_startup` overrides (inherited from base); deletes `_uses_readline` (replaced by `_shell_family`)
-- [ ] `WinptyConsoleWindowBackend` implements `_shell_family`
-- [ ] `tests/unit/tools/terminal/backends/test_visible_windows.py` covers write/drain, read-with-timeout, shell-family, connection-reset, TCP_NODELAY
-- [ ] `tests/framework/tools/terminal/test_windows_terminal_command_process_workflow.py` VISIBLE parametrization un-skipped and passing (or remaining flakiness documented with specific cause)
-- [ ] `ruff check src/modex_agent/tools/terminal/backends/visible_windows.py src/modex_agent/tools/terminal/backends/visible_windows_host.py` clean
-- [ ] `mypy src/modex_agent/tools/terminal/backends/visible_windows.py src/modex_agent/tools/terminal/backends/visible_windows_host.py` clean
+- [x] Parent side (`visible_windows.py`) uses `asyncio.start_server` + `StreamReader`/`StreamWriter`; no raw `socket.socket`, no `settimeout`, no `sendall`/`recv`
+- [x] Host side (`visible_windows_host.py`) uses `asyncio.open_connection`; the two forwarding threads become asyncio tasks in a single event loop; `_stdin_to_pty` and `_resize_monitor` remain threads
+- [x] `TCP_NODELAY` set on both parent and host transports
+- [x] `WinptyConsoleWindowBackend` overrides `write`/`read_pending` directly with native async (no `_write_blocking`/`_read_blocking` — D1 point 2 escape hatch)
+- [x] `WinptyConsoleWindowBackend` deletes `current_segment`/`clear_input_line`/`drain_startup` overrides (inherited from base); deletes `_uses_readline` (replaced by `_shell_family`)
+- [x] `WinptyConsoleWindowBackend` implements `_shell_family`
+- [x] `tests/unit/tools/terminal/backends/test_visible_windows.py` covers write/drain, read-with-timeout, shell-family, connection-reset, TCP_NODELAY
+- [x] `tests/framework/tools/terminal/test_windows_terminal_command_process_workflow.py` VISIBLE parametrization un-skipped and passing (or remaining flakiness documented with specific cause)
+- [x] `ruff check src/modex_agent/tools/terminal/backends/visible_windows.py src/modex_agent/tools/terminal/backends/visible_windows_host.py` clean
+- [x] `mypy src/modex_agent/tools/terminal/backends/visible_windows.py src/modex_agent/tools/terminal/backends/visible_windows_host.py` clean
 
 ## Comments
 
