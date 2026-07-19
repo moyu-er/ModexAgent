@@ -65,7 +65,7 @@ export function PromptEditor({ promptName, onClose, onSave, slideOverHeader }: P
   if (loadError) {
     return (
       <div className="space-y-3 p-4">
-        <p className="text-sm text-error">{t("settings.promptEditor.failedToLoad", { error: loadError })}</p>
+        <p className="text-base text-error">{t("settings.promptEditor.failedToLoad", { error: loadError })}</p>
         {onClose && (
           <Button variant="link" onClick={onClose}>
             {t("settings.promptEditor.back")}
@@ -76,7 +76,7 @@ export function PromptEditor({ promptName, onClose, onSave, slideOverHeader }: P
   }
 
   if (original === null) {
-    return <p className="p-4 text-sm text-mute">{t("settings.promptEditor.loading")}</p>;
+    return <p className="p-4 text-base text-mute">{t("settings.promptEditor.loading")}</p>;
   }
 
   const dirty = draft !== original;
@@ -112,7 +112,7 @@ export function PromptEditor({ promptName, onClose, onSave, slideOverHeader }: P
         {!slideOverHeader ? (
           <div className="flex items-center justify-between">
             <div>
-              <h2 className="text-sm font-semibold text-ink">
+              <h2 className="text-base font-semibold text-ink">
                 {t("settings.promptEditor.systemPromptAgent", { agent: promptName })}
               </h2>
               <HelperText>
@@ -127,7 +127,7 @@ export function PromptEditor({ promptName, onClose, onSave, slideOverHeader }: P
           </div>
         ) : (
           <div>
-            <h3 className="text-sm font-medium text-ink">
+            <h3 className="text-base font-medium text-ink">
               {t("settings.promptEditor.agentLabel", { agent: promptName })}
             </h3>
             <HelperText>
@@ -143,7 +143,7 @@ export function PromptEditor({ promptName, onClose, onSave, slideOverHeader }: P
           onChange={(e) => setDraft(e.target.value)}
           spellCheck={false}
           style={{ minHeight: "420px" }}
-          className="text-sm"
+          className="text-base"
           disabled={readOnly}
         />
       </div>

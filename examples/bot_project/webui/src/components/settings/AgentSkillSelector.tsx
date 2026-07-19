@@ -148,9 +148,9 @@ export function AgentSkillSelector({ pool, agent }: Props) {
         </div>
       </Card>
       {open && (
-        <div className="absolute left-0 right-0 top-full z-10 mt-1 max-h-64 overflow-y-auto rounded-md border border-hairline bg-canvas-elevated shadow-floating">
+        <div className="dropdown-panel-enter absolute left-0 right-0 top-full z-10 mt-1 max-h-64 overflow-y-auto rounded-md border border-hairline bg-canvas-popover shadow-popover">
           <div className="px-3 py-2">
-            <p className="mb-2 text-[11px] text-mute">
+            <p className="mb-2 text-xs text-mute">
               {t("settings.agentSkill.changesImmediate")}
             </p>
             {loadError ? (
@@ -176,14 +176,14 @@ export function AgentSkillSelector({ pool, agent }: Props) {
                   );
                 })}
                 {localSkills.map((s) => (
-                  <li key={`l-${s.name}`} className="flex items-center gap-2 text-sm text-ink">
+                  <li key={`l-${s.name}`} className="flex items-center gap-2 text-base text-ink">
                     <span
                       aria-hidden="true"
                       className="inline-block h-4 w-4 shrink-0 rounded-xs border border-hairline bg-canvas-elevated"
                       title={t("settings.agentSkill.localSkillTitle")}
                     />
                     <span className="truncate">{s.name}</span>
-                    <span className="rounded-full border border-hairline px-1.5 py-0.5 text-[10px] text-mute">
+                    <span className="rounded-full border border-hairline px-1.5 py-0.5 text-xs text-mute">
                       {t("settings.agentSkill.local")}
                     </span>
                   </li>

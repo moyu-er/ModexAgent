@@ -72,9 +72,9 @@ const SessionNode: FC<{
           <div className="flex shrink-0">
             {Array.from({ length: depth }).map((_, level) => (
               <div key={level} className="relative" style={{ width: "20px" }}>
-                <div className="absolute inset-y-0 left-1.5 border-l border-hairline/60" />
+                <div className="absolute inset-y-0 left-1.5 border-l border-hairline" />
                 {level === depth - 1 && (
-                  <div className="absolute left-1.5 right-0 top-1/2 border-t border-hairline/60" />
+                  <div className="absolute left-1.5 right-0 top-1/2 border-t border-hairline" />
                 )}
               </div>
             ))}
@@ -101,7 +101,7 @@ const SessionNode: FC<{
                 data-testid="expand-arrow"
                 onClick={(): void => onToggleExpand(node.session_id)}
                 icon={<ChevronToggleIcon open={expanded} />}
-                className="h-7 w-4 rounded-sm text-mute hover:text-ink focus-visible:ring-link/50"
+                className="h-7 w-4 rounded-sm text-mute hover:text-ink focus-visible:ring-brand"
               />
             )}
           </div>
@@ -110,11 +110,11 @@ const SessionNode: FC<{
            * composite clickable tree entry (icon + truncated name +
            * timestamp). The semantic role of the element is a list-row
            * selection target rather than a discrete action button.
-           * Geist tokens are used for every visual decision. */}
+           * Inter tokens are used for every visual decision. */}
           <button
             type="button"
             onClick={(): void => onSelect(node.session_id)}
-            className={`flex-1 min-w-0 py-1.5 text-left font-mono text-sm transition-colors ${
+            className={`flex-1 min-w-0 py-1.5 text-left font-mono text-base transition-colors ${
               isSelected
                 ? "text-link"
                 : "text-mute hover:text-ink"
@@ -127,7 +127,7 @@ const SessionNode: FC<{
               <span className="truncate">{node.displayName}</span>
             </span>
             {typeof node.updated_at === "number" && (
-              <span className="block truncate text-[10px] font-sans text-faint">
+              <span className="block truncate text-xs font-sans text-faint">
                 {formatShort(node.updated_at)}
               </span>
             )}
@@ -144,7 +144,7 @@ const SessionNode: FC<{
                 onDelete(node.session_id);
               }}
               icon={<XIcon className="h-3.5 w-3.5" />}
-              className="text-faint hover:text-error focus-visible:ring-link/50"
+              className="text-faint hover:text-error focus-visible:ring-brand"
             />
           )}
         </div>

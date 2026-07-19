@@ -131,10 +131,10 @@ export function PromptsView() {
   };
 
   if (loadError) {
-    return <p className="text-sm text-error">{t("common.failedToLoad", { error: loadError })}</p>;
+    return <p className="text-base text-error">{t("common.failedToLoad", { error: loadError })}</p>;
   }
   if (!prompts) {
-    return <p className="text-sm text-mute">{t("common.loading")}</p>;
+    return <p className="text-base text-mute">{t("common.loading")}</p>;
   }
 
   const meta = CATEGORY.prompts;
@@ -164,7 +164,7 @@ export function PromptsView() {
       </div>
 
       {prompts.length === 0 ? (
-        <div className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-sm text-mute">
+        <div className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-base text-mute">
           {t("settings.prompts.noPrompts")}
         </div>
       ) : (
@@ -192,7 +192,7 @@ export function PromptsView() {
                       }
                     }}
                   >
-                    <span className="flex-1 truncate font-mono text-sm font-medium text-ink">
+                    <span className="flex-1 truncate font-mono text-base font-medium text-ink">
                       {p.name}
                     </span>
                     <IconButton
@@ -218,7 +218,7 @@ export function PromptsView() {
                 <PromptEditor promptName={selected} onSave={onSave} />
               </Card>
             ) : (
-              <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-sm text-mute">
+              <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-base text-mute">
                 {t("settings.prompts.selectToView")}
               </p>
             )}
@@ -237,7 +237,7 @@ export function PromptsView() {
           }}
         >
           <Card elevated className="w-full max-w-sm p-4">
-            <h3 className="text-sm font-semibold text-ink">
+            <h3 className="text-base font-semibold text-ink">
               {t("settings.prompts.newPrompt")}
             </h3>
             <div className="mt-3">
@@ -314,7 +314,7 @@ export function PromptsView() {
           }}
         >
           <Card elevated className="w-full max-w-lg p-4">
-            <h3 className="text-sm font-semibold text-ink">
+            <h3 className="text-base font-semibold text-ink">
               {t("settings.prompts.inUseTitle", { name: inUseName })}
             </h3>
             <p className="mt-2 text-xs text-body">
@@ -337,7 +337,7 @@ export function PromptsView() {
                 </thead>
                 <tbody>
                   {inUseUsages.map((u, i) => (
-                    <tr key={`${u.pool}-${u.agent_kind}-${u.agent_name}-${i}`} className="border-b border-hairline/50">
+                    <tr key={`${u.pool}-${u.agent_kind}-${u.agent_name}-${i}`} className="border-b border-hairline">
                       <td className="py-1.5 pr-3 font-mono text-ink">{u.pool}</td>
                       <td className="py-1.5 pr-3 text-body">{u.agent_kind}</td>
                       <td className="py-1.5 font-mono text-ink">{u.agent_name}</td>

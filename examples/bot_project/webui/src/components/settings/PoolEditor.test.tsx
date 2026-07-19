@@ -65,6 +65,14 @@ function defaultFetch(url: string): Response {
 
 afterEach(() => vi.unstubAllGlobals());
 
+// DropdownPanel interaction helper: open the labeled dropdown and click an
+// option by its visible name (the native <select> wrapper is gone — all
+// dropdowns are now listbox panels).
+function pickOption(field: string | RegExp, option: string | RegExp): void {
+  fireEvent.click(screen.getByLabelText(field));
+  fireEvent.click(screen.getByRole("option", { name: option }));
+}
+
 async function renderEditor(props: {
   pool?: string;
   onDirtyChange?: (d: boolean) => void;
@@ -280,7 +288,7 @@ describe("PoolEditor", () => {
     await renderEditor({});
     await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
     // Main agent's caption is always visible. (Subagent captions only render
-    // when the card is expanded.) We assert main caption exists with Geist styling.
+    // when the card is expanded.) We assert main caption exists with Inter styling.
     const caption = screen.getByText(/Skill assignments save immediately/);
     expect(caption.className).toContain("italic");
     expect(caption.className).toContain("text-body");
@@ -288,7 +296,7 @@ describe("PoolEditor", () => {
 
   // ─── prompt selector (replaces the inline "Edit system prompt" button) ───
   //
-  // Ticket 5: each agent card carries a <select> populated from
+  // Ticket 5: each agent card carries a dropdown populated from
   // GET /api/prompts. The first option is always "none" (the agent-name
   // fallback). A "Manage prompts" link jumps to the Prompts tab via
   // onNavigateToPrompts.
@@ -301,11 +309,11 @@ describe("PoolEditor", () => {
     await renderEditor({});
     await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
 
-    const select = screen.getByLabelText("Prompt") as HTMLSelectElement;
-    const opts = Array.from(select.options) as HTMLOptionElement[];
-    expect(opts[0]!.value).toBe("");
+    const trigger = screen.getByLabelText("Prompt");
+    expect(trigger.textContent).toContain("none");
+    fireEvent.click(trigger);
+    const opts = screen.getAllByRole("option");
     expect(opts[0]!.textContent).toBe("none");
-    expect(select.value).toBe("");
   });
 
   it("prompt selector lists prompts from GET /api/prompts", async () => {
@@ -316,10 +324,10 @@ describe("PoolEditor", () => {
     await renderEditor({});
     await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
 
-    const select = screen.getByLabelText("Prompt") as HTMLSelectElement;
-    const values = Array.from(select.options).map((o) => (o as HTMLOptionElement).value);
-    // ["", "coder", "office-expert"] — "" is the "none" fallback.
-    expect(values).toEqual(["", "coder", "office-expert"]);
+    fireEvent.click(screen.getByLabelText("Prompt"));
+    const labels = screen.getAllByRole("option").map((o) => o.textContent);
+    // ["none", "coder", "office-expert"] — "none" is the fallback.
+    expect(labels).toEqual(["none", "coder", "office-expert"]);
   });
 
   it("selecting a prompt updates form.main.prompt_name", async () => {
@@ -336,9 +344,8 @@ describe("PoolEditor", () => {
     await renderEditorWithActionBar();
     await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
 
-    const select = screen.getByLabelText("Prompt") as HTMLSelectElement;
-    fireEvent.change(select, { target: { value: "coder" } });
-    expect(select.value).toBe("coder");
+    pickOption("Prompt", "coder");
+    expect(screen.getByLabelText("Prompt").textContent).toContain("coder");
 
     fireEvent.click(screen.getByText("Save"));
     await waitFor(() => {
@@ -381,10 +388,10 @@ describe("PoolEditor", () => {
     await renderEditorWithActionBar();
     await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
 
-    const select = screen.getByLabelText("Prompt") as HTMLSelectElement;
-    await waitFor(() => expect(select.value).toBe("coder"));
-    fireEvent.change(select, { target: { value: "" } });
-    expect(select.value).toBe("");
+    const trigger = screen.getByLabelText("Prompt");
+    await waitFor(() => expect(trigger.textContent).toContain("coder"));
+    pickOption("Prompt", "none");
+    expect(screen.getByLabelText("Prompt").textContent).toContain("none");
 
     fireEvent.click(screen.getByText("Save"));
     await waitFor(() => {
@@ -426,14 +433,15 @@ describe("PoolEditor", () => {
     fireEvent.click(screen.getByText("researcher"));
 
     // Two prompt selectors exist now: main + subagent. The subagent one
-    // is the second <select> with label "Prompt".
-    const selects = screen.getAllByLabelText("Prompt") as HTMLSelectElement[];
-    expect(selects.length).toBe(2);
-    const subSelect = selects[1]!;
-    expect(subSelect.value).toBe("");
+    // is the second dropdown labeled "Prompt".
+    const triggers = screen.getAllByLabelText("Prompt");
+    expect(triggers.length).toBe(2);
+    const subTrigger = triggers[1]!;
+    expect(subTrigger.textContent).toContain("none");
 
-    fireEvent.change(subSelect, { target: { value: "office-expert" } });
-    expect(subSelect.value).toBe("office-expert");
+    fireEvent.click(subTrigger);
+    fireEvent.click(screen.getByRole("option", { name: "office-expert" }));
+    expect(subTrigger.textContent).toContain("office-expert");
   });
 
   const multiPoolList = [
@@ -484,8 +492,7 @@ describe("PoolEditor", () => {
     await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
 
     fireEvent.click(screen.getByRole("button", { name: /Add peer/ }));
-    const select = screen.getByLabelText("New peer pool") as HTMLSelectElement;
-    fireEvent.change(select, { target: { value: "research" } });
+    pickOption("New peer pool", "research (research-main)");
     fireEvent.click(screen.getByRole("button", { name: /^Add$/ }));
 
     await waitFor(() => expect(screen.getByText("research")).toBeTruthy());
@@ -539,8 +546,7 @@ describe("PoolEditor", () => {
     await waitFor(() => expect(screen.getByDisplayValue("main")).toBeTruthy());
 
     fireEvent.click(screen.getByRole("button", { name: /Add peer/ }));
-    const select = screen.getByLabelText("New peer pool") as HTMLSelectElement;
-    fireEvent.change(select, { target: { value: "research" } });
+    pickOption("New peer pool", "research (research-main)");
     fireEvent.click(screen.getByRole("button", { name: /^Add$/ }));
 
     await waitFor(() => expect(screen.getByText("already a peer")).toBeTruthy());
@@ -577,8 +583,8 @@ describe("PoolEditor", () => {
       vi.fn((url: string) => Promise.resolve(defaultFetch(url))),
     );
     await renderEditor({});
-    const impl = screen.getByLabelText("Implementation") as HTMLSelectElement;
-    expect(impl.value).toBe("react");
+    const impl = screen.getByLabelText("Implementation");
+    expect(impl.textContent).toContain("Native");
     // Native controls are visible in native mode.
     expect(screen.getByLabelText("Max steps")).toBeTruthy();
     // No external runtime panel in native mode.
@@ -592,25 +598,18 @@ describe("PoolEditor", () => {
     );
     await renderEditor({});
 
-    // Both selects live inside one runtime panel (semantic group, not a
+    // Both dropdowns live inside one runtime panel (semantic group, not a
     // fragile class) — the approved runtime-first layout.
     const panel = screen.getByTestId("external-runtime-panel");
-    const impl = within(panel).getByLabelText(
-      "Implementation",
-    ) as HTMLSelectElement;
-    const provider = within(panel).getByLabelText(
-      "Provider",
-    ) as HTMLSelectElement;
-    expect(impl.value).toBe("external_coding");
-    expect(provider.value).toBe("opencode");
-    // Provider dropdown carries exactly one option: OpenCode.
-    expect(provider.querySelectorAll("option")).toHaveLength(1);
-    // Provider dropdown options equal the catalog.
-    expect(
-      Array.from(provider.querySelectorAll("option")).map(
-        (o) => (o as HTMLOptionElement).value,
-      ),
-    ).toEqual(PROVIDER_OPTIONS.map((o) => o.value));
+    const impl = within(panel).getByLabelText("Implementation");
+    const provider = within(panel).getByLabelText("Provider");
+    expect(impl.textContent).toContain("External");
+    expect(provider.textContent).toContain("OpenCode");
+    // Provider dropdown options equal the catalog (exactly one: OpenCode).
+    fireEvent.click(provider);
+    const providerOptions = screen.getAllByRole("option").map((o) => o.textContent);
+    expect(providerOptions).toEqual(PROVIDER_OPTIONS.map((o) => o.label));
+    fireEvent.keyDown(screen.getByRole("listbox"), { key: "Escape" });
 
     // Identity fields follow the runtime panel.
     expect(screen.getByLabelText(/Agent name/)).toBeTruthy();
@@ -673,9 +672,7 @@ describe("PoolEditor", () => {
     // Native pool carries one subagent.
     expect(screen.getByText("researcher")).toBeTruthy();
 
-    fireEvent.change(screen.getByLabelText("Implementation"), {
-      target: { value: "external_coding" },
-    });
+    pickOption("Implementation", "External");
 
     // Confirm dialog opens with the save/cancel persisted-config disclaimer.
     expect(
@@ -694,9 +691,7 @@ describe("PoolEditor", () => {
     );
 
     // Draft untouched: still native, subagent still present.
-    expect(
-      (screen.getByLabelText("Implementation") as HTMLSelectElement).value,
-    ).toBe("react");
+    expect(screen.getByLabelText("Implementation").textContent).toContain("Native");
     expect(screen.getByText("researcher")).toBeTruthy();
 
     // Disk untouched: no PUT issued.
@@ -712,21 +707,15 @@ describe("PoolEditor", () => {
     await renderEditor({});
     expect(screen.getByText("researcher")).toBeTruthy();
 
-    fireEvent.change(screen.getByLabelText("Implementation"), {
-      target: { value: "external_coding" },
-    });
+    pickOption("Implementation", "External");
     fireEvent.click(
       screen.getByRole("button", { name: "Switch to External" }),
     );
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
-    expect(
-      (screen.getByLabelText("Implementation") as HTMLSelectElement).value,
-    ).toBe("external_coding");
+    expect(screen.getByLabelText("Implementation").textContent).toContain("External");
     expect(screen.queryByText("researcher")).toBeNull();
-    expect(
-      (screen.getByLabelText("Provider") as HTMLSelectElement).value,
-    ).toBe("opencode");
+    expect(screen.getByLabelText("Provider").textContent).toContain("OpenCode");
   });
 
   it("Save after native→external PUT carries strategy, provider and cleared subagents", async () => {
@@ -742,9 +731,7 @@ describe("PoolEditor", () => {
     vi.stubGlobal("fetch", fetchMock);
     await renderEditorWithActionBar();
 
-    fireEvent.change(screen.getByLabelText("Implementation"), {
-      target: { value: "external_coding" },
-    });
+    pickOption("Implementation", "External");
     fireEvent.click(
       screen.getByRole("button", { name: "Switch to External" }),
     );
@@ -803,9 +790,9 @@ describe("PoolEditor", () => {
     await renderEditorWithActionBar();
 
     // Provider shows catalog default for unsupported pi.
-    expect(
-      (screen.getByLabelText("Provider") as HTMLSelectElement).value,
-    ).toBe(DEFAULT_EXTERNAL_PROVIDER);
+    expect(screen.getByLabelText("Provider").textContent).toContain(
+      DEFAULT_EXTERNAL_PROVIDER_DESCRIPTOR.label,
+    );
 
     // Touch a field to enable Save.
     fireEvent.change(screen.getByLabelText(/Agent name/), {
@@ -837,20 +824,14 @@ describe("PoolEditor", () => {
       vi.fn((url: string) => Promise.resolve(externalFetch(url))),
     );
     await renderEditor({});
-    expect(
-      (screen.getByLabelText("Implementation") as HTMLSelectElement).value,
-    ).toBe("external_coding");
+    expect(screen.getByLabelText("Implementation").textContent).toContain("External");
 
-    fireEvent.change(screen.getByLabelText("Implementation"), {
-      target: { value: "react" },
-    });
+    pickOption("Implementation", "Native");
 
     // No confirm dialog.
     expect(screen.queryByRole("dialog")).toBeNull();
-    // Now native: Implementation react, native controls visible, provider gone.
-    expect(
-      (screen.getByLabelText("Implementation") as HTMLSelectElement).value,
-    ).toBe("react");
+    // Now native: Implementation Native, native controls visible, provider gone.
+    expect(screen.getByLabelText("Implementation").textContent).toContain("Native");
     expect(screen.getByLabelText("Max steps")).toBeTruthy();
     expect(screen.queryByLabelText("Provider")).toBeNull();
   });

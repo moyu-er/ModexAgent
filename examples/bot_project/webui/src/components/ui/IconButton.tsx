@@ -3,7 +3,7 @@
 // The `label` prop is mandatory and used as both aria-label and title so the
 // button is accessible by name even though its only visible content is the
 // SVG. `icon` is a ReactNode so callers can pass any SVG (usually one of the
-// components in icons.tsx). Size mapping matches the Geist circular icon
+// components in icons.tsx). Size mapping matches the Inter circular icon
 // button: sm 28px / md 32px.
 
 import type { ButtonHTMLAttributes, ReactNode } from "react";
@@ -25,13 +25,13 @@ const SIZE_CLS: Record<IconButtonSize, string> = {
 };
 
 const VARIANT_CLS: Record<IconButtonVariant, string> = {
-  primary: "bg-link text-canvas-elevated hover:bg-link-deep border border-transparent",
+  primary: "btn-primary border border-transparent",
   secondary:
-    "bg-canvas-elevated text-ink border border-hairline hover:bg-canvas",
+    "bg-canvas-elevated text-ink border border-hairline hover:border-border-strong",
   ghost:
     "bg-transparent text-body hover:bg-hairline-soft hover:text-ink border border-transparent",
   danger:
-    "bg-transparent text-error hover:bg-error/10 border border-transparent",
+    "bg-transparent text-danger hover:bg-hairline-soft border border-transparent",
 };
 
 export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton(
@@ -50,9 +50,9 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
   ref,
 ) {
   const cls = [
-    "inline-flex items-center justify-center rounded-full transition-colors",
-    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-link/30",
-    "disabled:cursor-not-allowed disabled:opacity-60",
+    "inline-flex items-center justify-center rounded-full transition-[color,background-color,border-color,transform,box-shadow] duration-app ease-out",
+    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
+    "disabled:cursor-not-allowed disabled:opacity-45",
     VARIANT_CLS[variant],
     SIZE_CLS[size],
     className,

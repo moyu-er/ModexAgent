@@ -13,7 +13,7 @@ import {
   selectProvider,
 } from "../../types/externalProviders";
 import { Input } from "../ui/Input";
-import { Select } from "../ui/Select";
+import { DropdownPanel } from "../ui/DropdownPanel";
 import { PROVIDER_BRAND_ICONS } from "./externalBrands";
 import { useT, type MessageKey } from "../../i18n";
 
@@ -69,27 +69,27 @@ export function ExternalMainAgentFields({
           return (
             <div className="flex items-center gap-2.5">
               <Icon className="h-7 w-7 rounded-sm" />
-              <span className="font-mono text-sm font-semibold text-bright">
+              <span className="font-mono text-base font-semibold text-bright">
                 {descriptor.label}
               </span>
             </div>
           );
         })()}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Select
+          <DropdownPanel
             label={t("settings.external.implementation")}
             options={IMPLEMENTATION_OPTIONS}
             value={implementationValue}
-            onChange={(e) =>
-              onImplementationChange(e.target.value as ImplementationChoice)
+            onChange={(v) =>
+              onImplementationChange(v as ImplementationChoice)
             }
           />
-          <Select
+          <DropdownPanel
             label={t("settings.external.provider")}
             options={PROVIDER_OPTIONS}
             value={selectProvider(node.provider_kind)}
-            onChange={(e) =>
-              patch({ provider_kind: e.target.value as ProviderKind })
+            onChange={(v) =>
+              patch({ provider_kind: v as ProviderKind })
             }
           />
         </div>

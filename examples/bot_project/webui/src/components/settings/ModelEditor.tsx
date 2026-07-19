@@ -1,7 +1,7 @@
-// ModelEditor.tsx — Vercel Geist redesign of the persisted-config Models
+// ModelEditor.tsx — Inter redesign of the persisted-config Models
 // view. Replaces local SVG glyph helpers and the legacy `bg-user-bubble` /
 // `text-user-bubble-text` chip palette with the shared `ui/Card`,
-// `ui/Select`, `ui/Input`, and `ui/icons` primitives plus Geist surface
+// `ui/DropdownPanel`, `ui/Input`, and `ui/icons` primitives plus Inter surface
 // tokens. Save is owned by SettingsView; this component only mutates
 // `values` via `onChange`.
 //
@@ -17,7 +17,7 @@ import { SecretField } from "./SecretField";
 import { FetchModelsModal } from "./FetchModelsModal";
 import type { FetchedModel, FetchProviderModelsRequest } from "../../lib/api";
 import { Card } from "../ui/Card";
-import { Select } from "../ui/Select";
+import { DropdownPanel, type DropdownOption } from "../ui/DropdownPanel";
 import { Input } from "../ui/Input";
 import { IconButton } from "../ui/IconButton";
 import { Button } from "../ui/Button";
@@ -33,7 +33,6 @@ import {
   AudioIcon,
 } from "../ui/icons";
 import { Trash2, Download } from "lucide-react";
-import type { SelectOption } from "../ui/Select";
 import { CATEGORY } from "./categoryMeta";
 import { useT, type MessageKey } from "../../i18n";
 
@@ -109,11 +108,11 @@ export function ModelEditor({ values, onChange }: Props) {
   const maxContext = Number(values.max_context_tokens ?? 0);
   const providers = (values.providers as Provider[] | undefined) ?? [];
 
-  const REASONING_EFFORT_OPTIONS: SelectOption[] = REASONING_EFFORTS.map((e) => ({
+  const REASONING_EFFORT_OPTIONS: DropdownOption[] = REASONING_EFFORTS.map((e) => ({
     value: e,
     label: e,
   }));
-  const INTERFACE_FORMAT_OPTIONS: SelectOption[] = INTERFACE_FORMAT_DEFS.map((d) => ({
+  const INTERFACE_FORMAT_OPTIONS: DropdownOption[] = INTERFACE_FORMAT_DEFS.map((d) => ({
     value: d.value,
     label: t(d.labelKey),
   }));
@@ -182,11 +181,11 @@ export function ModelEditor({ values, onChange }: Props) {
   );
   const comboExists = currentComboIdx >= 0 && defaultProvider !== "";
 
-  // Build the Select options for the default-model combo picker. We keep an
+  // Build the options for the default-model combo picker. We keep an
   // internal index-based value (so the backend contract never sees spaces or
-  // special chars in dropdown keys), but render it through the new Select
-  // primitive — never a raw <select>.
-  const defaultSelectOptions: SelectOption[] = combos.map((c, i) => ({
+  // special chars in dropdown keys), but render it through the shared
+  // DropdownPanel primitive — never a raw <select>.
+  const defaultSelectOptions: DropdownOption[] = combos.map((c, i) => ({
     value: String(i),
     label: `${c.pName} / ${c.mName}`,
   }));
@@ -404,14 +403,13 @@ export function ModelEditor({ values, onChange }: Props) {
 
       {/* Top: default model + max context tokens */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1fr_220px]">
-        <Select
+        <DropdownPanel
           label={t("settings.models.defaultModel")}
           required
           options={defaultSelectOptions}
           value={defaultSelectValue}
           disabled={!comboExists && defaultSelectOptions.length === 1}
-          onChange={(e) => {
-            const v = e.target.value;
+          onChange={(v) => {
             if (v === placeholderValue) return;
             const idx = Number(v);
             const c = combos[idx];
@@ -461,7 +459,7 @@ export function ModelEditor({ values, onChange }: Props) {
                       className={`transition-transform ${isOpen ? "rotate-90" : ""}`}
                     />
                     <StatusDot on={keySet} />
-                    <span className="truncate text-sm font-medium text-ink">
+                    <span className="truncate text-base font-medium text-ink">
                       {p.name || (
                         <span className="italic text-body">{t("settings.models.untitledProvider")}</span>
                       )}
@@ -534,12 +532,12 @@ export function ModelEditor({ values, onChange }: Props) {
                           />
                         </div>
                         <div className="sm:col-span-2">
-                          <Select
+                          <DropdownPanel
                             label={t("settings.models.interfaceFormat")}
                             options={INTERFACE_FORMAT_OPTIONS}
                             value={p.interface_format ?? "openai_compatible"}
-                            onChange={(e) =>
-                              handleInterfaceFormatChange(pi, e.target.value)
+                            onChange={(v) =>
+                              handleInterfaceFormatChange(pi, v)
                             }
                           />
                         </div>
@@ -737,13 +735,13 @@ export function ModelEditor({ values, onChange }: Props) {
 
                               {/* Reasoning effort (closed enum) */}
                               <div className="mt-3">
-                                <Select
+                                <DropdownPanel
                                   label={t("settings.models.reasoningEffort")}
                                   options={REASONING_EFFORT_OPTIONS}
                                   value={m.reasoning_effort ?? "none"}
-                                  onChange={(e) =>
+                                  onChange={(v) =>
                                     updateModel(pi, mi, {
-                                      reasoning_effort: e.target.value,
+                                      reasoning_effort: v,
                                     })
                                   }
                                 />
@@ -775,14 +773,14 @@ export function ModelEditor({ values, onChange }: Props) {
           })}
 
           {providers.length === 0 && (
-            <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-sm text-body">
+            <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-base text-body">
               {t("settings.models.noProviders")}
             </p>
           )}
 
           <button
             type="button"
-            className="mt-1 flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-hairline py-2.5 text-sm text-body hover:border-ink hover:bg-hairline-soft hover:text-ink"
+            className="mt-1 flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-hairline py-2.5 text-base text-body hover:border-ink hover:bg-hairline-soft hover:text-ink"
             onClick={addProvider}
           >
             <PlusIcon /> {t("settings.models.addProvider")}
@@ -820,7 +818,7 @@ export function ModelEditor({ values, onChange }: Props) {
 function DefaultBadge() {
   const t = useT();
   return (
-    <span className="inline-flex items-center gap-1 rounded-full border border-link px-2 py-0.5 text-[11px] font-medium text-link">
+    <span className="inline-flex items-center gap-1 rounded-full border border-link px-2 py-0.5 text-xs font-medium text-link">
       <DefaultStarIcon className="h-3 w-3" /> {t("settings.models.defaultBadge")}
     </span>
   );

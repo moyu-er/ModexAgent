@@ -26,13 +26,13 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function 
   const inputId = id ?? generatedId;
   const hasError = Boolean(error);
   const cls = [
-    "w-full rounded-xs border px-3 py-2 text-sm",
+    "w-full rounded-sm border px-3 py-2 text-base",
     "bg-canvas-elevated text-ink placeholder:text-faint",
     hasError
-      ? "border-error focus:border-error focus:ring-error/30"
-      : "border-hairline focus:border-link focus:ring-link/30",
-    "focus:outline-none focus:ring-1",
-    "disabled:cursor-not-allowed disabled:opacity-60",
+      ? "border-danger focus:border-danger focus:ring-danger"
+      : "border-hairline focus:border-brand focus:ring-brand",
+    "focus:outline-none focus:ring-2",
+    "disabled:cursor-not-allowed disabled:opacity-45",
     "min-h-[80px] resize-y",
     mono ? "font-mono" : "",
     className,

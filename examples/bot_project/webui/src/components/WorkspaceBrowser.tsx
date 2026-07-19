@@ -107,7 +107,7 @@ export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
   // containing block for ``position: fixed`` and trap the dialog on the left.
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-overlay"
+      className="modal-scrim-enter fixed inset-0 z-50 flex items-center justify-center bg-overlay"
       onClick={onClose}
       onKeyDown={(e): void => {
         if (e.key === "Escape") onClose();
@@ -115,12 +115,12 @@ export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
       role="presentation"
     >
       <div
-        className="flex w-[520px] max-w-[90vw] max-h-[70vh] flex-col rounded-lg border border-hairline bg-canvas-elevated shadow-lg"
+        className="modal-panel-enter flex w-[520px] max-w-[90vw] max-h-[70vh] flex-col rounded-lg border border-hairline bg-canvas-popover shadow-popover"
         onClick={(e): void => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex shrink-0 items-center justify-between border-b border-hairline px-4 py-3">
-          <h3 className="text-sm font-semibold text-ink">
+          <h3 className="text-base font-semibold text-ink">
             {t("workspace.chooseWorkspace")}
           </h3>
           <IconButton
@@ -199,7 +199,7 @@ export const WorkspaceBrowser: FC<WorkspaceBrowserProps> = ({
 
         {/* Footer */}
         <div className="flex shrink-0 items-center justify-between border-t border-hairline px-4 py-3">
-          <p className="max-w-[300px] truncate font-mono text-[10px] text-mute">
+          <p className="max-w-[300px] truncate font-mono text-xs text-mute">
             {current}
           </p>
           <div className="flex shrink-0 gap-2">

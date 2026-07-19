@@ -77,7 +77,7 @@ const CodeBlock: FC<CodeBlockProps> = ({ language, value, isDark }) => {
         language={lang}
         style={isDark ? oneDark : oneLight}
         className="!m-0 !rounded-none !bg-canvas !p-4"
-        codeTagProps={{ className: "font-mono text-[13px] leading-relaxed" }}
+        codeTagProps={{ className: "font-mono text-base leading-relaxed" }}
       >
         {value}
       </SyntaxHighlighter>

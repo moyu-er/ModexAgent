@@ -49,7 +49,7 @@ import { Card } from "../ui/Card";
 import { SectionLabel } from "../ui/SectionLabel";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
-import { Select } from "../ui/Select";
+import { DropdownPanel } from "../ui/DropdownPanel";
 import { Checkbox } from "../ui/Checkbox";
 import { Textarea } from "../ui/Textarea";
 import { HelperText } from "../ui/HelperText";
@@ -275,10 +275,10 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel, onNavigateTo
   }, [allPools, form?.peers, pool]);
 
   if (loadError) {
-    return <p className="text-sm text-error">{t("common.failedToLoad", { error: loadError })}</p>;
+    return <p className="text-base text-error">{t("common.failedToLoad", { error: loadError })}</p>;
   }
   if (!form || !original) {
-    return <p className="text-sm text-body">{t("common.loading")}</p>;
+    return <p className="text-base text-body">{t("common.loading")}</p>;
   }
 
   // ── form mutation helpers ──────────────────────────────────────────────────
@@ -470,12 +470,12 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel, onNavigateTo
             />
           ) : (
             <>
-              <Select
+              <DropdownPanel
                 label={t("settings.pools.implementation")}
                 options={IMPLEMENTATION_OPTIONS}
                 value={effectiveStrategy}
-                onChange={(e) =>
-                  onImplementationChange(e.target.value as ImplementationChoice)
+                onChange={(v) =>
+                  onImplementationChange(v as ImplementationChoice)
                 }
               />
               <MainAgentFields
@@ -505,7 +505,7 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel, onNavigateTo
               <Card key={peer}>
                 <div className="flex items-center justify-between gap-3 px-3 py-2.5">
                   <div className="min-w-0">
-                    <div className="truncate text-sm font-medium text-ink">
+                    <div className="truncate text-base font-medium text-ink">
                       {peer}
                     </div>
                     <div className="truncate text-xs text-body">
@@ -549,14 +549,14 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel, onNavigateTo
             );
           })}
           {form.peers.length === 0 && (
-            <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-sm text-body">
+            <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-base text-body">
               {t("settings.pools.noPeers")}
             </p>
           )}
           {addingPeer ? (
             <div className="flex items-center gap-2">
-              <Select
-                aria-label={t("settings.pools.newPeerPool")}
+              <DropdownPanel
+                ariaLabel={t("settings.pools.newPeerPool")}
                 options={[
                   { value: "", label: t("settings.pools.selectPool") },
                   ...availablePeers.map((p) => ({
@@ -565,7 +565,7 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel, onNavigateTo
                   })),
                 ]}
                 value={newPeer}
-                onChange={(e) => setNewPeer(e.target.value)}
+                onChange={(v) => setNewPeer(v)}
                 className="flex-1"
               />
               <Button
@@ -599,7 +599,7 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel, onNavigateTo
             </Button>
           )}
           {peerError && (
-            <p className="text-sm text-error">{peerError}</p>
+            <p className="text-base text-error">{peerError}</p>
           )}
         </div>
       </section>
@@ -632,7 +632,7 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel, onNavigateTo
             />
           ))}
           {form.subagents.length === 0 && (
-            <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-sm text-body">
+            <p className="rounded-md border border-dashed border-hairline px-3 py-6 text-center text-base text-body">
               {t("settings.pools.noSubagents")}
             </p>
           )}
@@ -789,7 +789,7 @@ function RolesSelector({
           />
           <span className="text-xs font-medium text-ink">{header}</span>
           {value.length > 0 && (
-            <span className="rounded-full border border-hairline bg-hairline-soft px-1.5 py-0.5 text-[10px] text-body">
+            <span className="rounded-full border border-hairline bg-hairline-soft px-1.5 py-0.5 text-xs text-body">
               {value.length}
             </span>
           )}
@@ -807,7 +807,7 @@ function RolesSelector({
               <button
                 type="button"
                 aria-label={t("settings.pools.roles.removeRole", { name: role })}
-                className="text-link-deep/70 hover:text-error"
+                className="text-link-deep hover:text-error"
                 onClick={() => removeRole(role)}
               >
                 <XIcon className="h-3 w-3" />
@@ -917,12 +917,12 @@ function PromptSelector({
   const fieldError = errFor(loc);
   return (
     <div>
-      <Select
+      <DropdownPanel
         label={label}
         options={options}
         value={value ?? ""}
         error={fieldError}
-        onChange={(e) => onChange(e.target.value || undefined)}
+        onChange={(v) => onChange(v || undefined)}
         helper={
           promptsError
             ? t("settings.pools.promptsLoadFailed", { error: promptsError })
@@ -1003,13 +1003,13 @@ function MainAgentFields({
           value={node.max_steps}
           onChange={(e) => patch({ max_steps: Number(e.target.value) })}
         />
-        <Select
+        <DropdownPanel
           label={t("settings.pools.toolPreset")}
           error={errFor("main.tool_preset")}
           options={PRESET_OPTIONS}
           value={node.tool_preset}
-          onChange={(e) =>
-            patch({ tool_preset: e.target.value as ToolPreset })
+          onChange={(v) =>
+            patch({ tool_preset: v as ToolPreset })
           }
         />
         <div>
@@ -1161,7 +1161,7 @@ function SubagentCard({
           aria-expanded={open}
         >
           <ChevronDownIcon open={open} className="text-body" />
-          <span className="truncate text-sm font-medium text-ink">
+          <span className="truncate text-base font-medium text-ink">
             {node.agent_name || (
               <span className="italic text-body">
                 {t("settings.pools.untitledSubagent")}
@@ -1237,24 +1237,24 @@ function SubagentCard({
           />
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Select
+            <DropdownPanel
               label={t("settings.pools.toolPreset")}
               error={errFor(`subagents.${index}.tool_preset`)}
               options={PRESET_OPTIONS}
               value={node.tool_preset}
-              onChange={(e) =>
-                onPatch({ tool_preset: e.target.value as ToolPreset })
+              onChange={(v) =>
+                onPatch({ tool_preset: v as ToolPreset })
               }
             />
             <div>
-              <Select
+              <DropdownPanel
                 label={t("settings.pools.contextMode")}
                 error={errFor(`subagents.${index}.context_mode`)}
                 options={CONTEXT_MODE_OPTIONS}
                 value={node.context_mode}
-                onChange={(e) =>
+                onChange={(v) =>
                   onPatch({
-                    context_mode: e.target.value as ContextMode,
+                    context_mode: v as ContextMode,
                   })
                 }
               />
@@ -1263,14 +1263,14 @@ function SubagentCard({
               </HelperText>
             </div>
             <div>
-              <Select
+              <DropdownPanel
                 label={t("settings.pools.systemPromptMode")}
                 error={errFor(`subagents.${index}.system_prompt_mode`)}
                 options={SYSTEM_PROMPT_MODE_OPTIONS}
                 value={node.system_prompt_mode ?? "replace"}
-                onChange={(e) =>
+                onChange={(v) =>
                   onPatch({
-                    system_prompt_mode: e.target.value as SystemPromptMode,
+                    system_prompt_mode: v as SystemPromptMode,
                   })
                 }
               />

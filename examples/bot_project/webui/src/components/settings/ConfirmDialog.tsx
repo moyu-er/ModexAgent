@@ -7,7 +7,6 @@
 import { useEffect } from "react";
 import type { ReactNode } from "react";
 import { Button } from "../ui/Button";
-import { Card } from "../ui/Card";
 import { useT } from "../../i18n";
 
 export interface ConfirmDialogProps {
@@ -50,14 +49,14 @@ export function ConfirmDialog({
       role="dialog"
       aria-modal="true"
       aria-label={title}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-overlay p-4"
+      className="modal-scrim-enter fixed inset-0 z-50 flex items-center justify-center bg-overlay p-4"
       onClick={(e) => {
         // Click on the backdrop (not its children) cancels.
         if (e.target === e.currentTarget) onCancel();
       }}
     >
-      <Card elevated className="w-full max-w-sm p-4">
-        <h3 className="text-sm font-semibold text-ink">{title}</h3>
+      <div className="modal-panel-enter w-full max-w-sm rounded-lg border border-hairline bg-canvas-popover p-4 shadow-popover">
+        <h3 className="text-base font-semibold text-ink">{title}</h3>
         {message ? (
           <div className="mt-2 text-xs text-body">{message}</div>
         ) : null}
@@ -69,7 +68,7 @@ export function ConfirmDialog({
             {confirm}
           </Button>
         </div>
-      </Card>
+      </div>
     </div>
   );
 }

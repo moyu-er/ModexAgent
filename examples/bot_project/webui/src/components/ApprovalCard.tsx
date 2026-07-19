@@ -1,4 +1,5 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { AlertTriangle, OctagonAlert, ShieldAlert, ShieldCheck, type LucideIcon } from "lucide-react";
 import type { ApprovalRequestView } from "../types/events";
 import { Button } from "./ui/Button";
 import { ChevronDownIcon } from "./ui/icons";
@@ -17,26 +18,42 @@ interface Props {
 // the preview stays compact regardless of how the JSON is shaped.
 const PREVIEW_MAX_LINES = 3;
 
-// Severity-tier badge styling. Each tier gets a calm, low-saturation accent so
-// the higher tiers read as serious without glaring. Unknown tiers fall back to
-// `normal`.
-const TIER_BADGE: Record<string, string> = {
-  normal:
-    "border-severity-normal/40 bg-severity-normal/10 text-severity-normal",
-  sensitive:
-    "border-severity-sensitive/40 bg-severity-sensitive/10 text-severity-sensitive",
-  dangerous:
-    "border-severity-dangerous/40 bg-severity-dangerous/10 text-severity-dangerous",
-  hardline:
-    "border-severity-hardline/40 bg-severity-hardline/10 text-severity-hardline",
+// Severity presentation (§6): each tier is a 3px left bar color (--sev on the
+// shared trace-card shell) + a status icon + the tier text label — severity is
+// never conveyed by color alone. Unknown tiers fall back to `normal`.
+const TIER_PRESENTATION: Record<
+  string,
+  { sev: string; cls: string; Icon: LucideIcon }
+> = {
+  normal: {
+    sev: "var(--color-severity-normal)",
+    cls: "text-severity-normal",
+    Icon: ShieldCheck,
+  },
+  sensitive: {
+    sev: "var(--color-severity-sensitive)",
+    cls: "text-severity-sensitive",
+    Icon: AlertTriangle,
+  },
+  dangerous: {
+    sev: "var(--color-severity-dangerous)",
+    cls: "text-severity-dangerous",
+    Icon: ShieldAlert,
+  },
+  hardline: {
+    sev: "var(--color-severity-hardline)",
+    cls: "text-severity-hardline",
+    Icon: OctagonAlert,
+  },
 };
 
-/** Inline pending-approval card. Shows tool name + tier and per-card
- *  [Approve] / [Deny All]. The tool arguments preview the first few lines by
- *  default; the chevron toggle at the bottom edge reveals the rest. Deny is
- *  batch-level: denying any card cancels the whole batch (backend preempts the
- *  rest). Cards only ever render pending requests — decided ones are dropped
- *  from the list by the hook. */
+/** Inline pending-approval card (§6): shares the trace-card language —
+ *  elevated surface, mono eyebrow header, 3px severity left bar + status
+ *  icon. Actions are primary (approve) + ghost (reject). The tool arguments
+ *  preview the first few lines by default; the chevron toggle at the bottom
+ *  edge reveals the rest. Deny is batch-level: denying any card cancels the
+ *  whole batch (backend preempts the rest). Cards only ever render pending
+ *  requests — decided ones are dropped from the list by the hook. */
 export function ApprovalCard({ view, onApprove, onDeny, disabled }: Props) {
   const t = useT();
   const [expanded, setExpanded] = useState(false);
@@ -72,19 +89,26 @@ export function ApprovalCard({ view, onApprove, onDeny, disabled }: Props) {
   const hasMore = multiLineOverflow || overflowing;
   const toggle = (): void => setExpanded((prev) => !prev);
 
-  const badgeClass = TIER_BADGE[view.tier] ?? TIER_BADGE.normal;
+  const tier = TIER_PRESENTATION[view.tier] ?? TIER_PRESENTATION.normal!;
 
   return (
-    <div className="my-2 overflow-hidden rounded-md border border-hairline bg-canvas-elevated">
+    <div
+      className="trace-card my-2"
+      style={{ "--sev": tier.sev } as CSSProperties}
+    >
       <div className="p-3">
-        <div className="flex items-center gap-2 text-sm">
-          <span
-            className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${badgeClass}`}
-          >
-            {view.tier}
+        <div className="flex items-center gap-2 text-base">
+          <span className="eyebrow">{t("approval.eyebrow")}</span>
+          <span data-severity-icon className={`flex items-center ${tier.cls}`}>
+            <tier.Icon size={14} aria-hidden={true} />
           </span>
           <span className="font-mono font-semibold text-ink">
             {view.tool_name}
+          </span>
+          <span
+            className={`text-xs font-semibold uppercase tracking-eyebrow ${tier.cls}`}
+          >
+            {view.tier}
           </span>
           <span className="text-xs text-mute">
             {t("approval.awaitingApproval")}
@@ -101,7 +125,7 @@ export function ApprovalCard({ view, onApprove, onDeny, disabled }: Props) {
             {t("approval.approve")}
           </Button>
           <Button
-            variant="danger"
+            variant="ghost"
             size="sm"
             disabled={disabled}
             onClick={() => onDeny(view.tool_call_id)}
@@ -133,7 +157,7 @@ export function ApprovalCard({ view, onApprove, onDeny, disabled }: Props) {
           onClick={toggle}
           aria-expanded={expanded}
           aria-label={expanded ? t("approval.collapseArgs") : t("approval.expandArgs")}
-            className="flex w-full items-center justify-center gap-1 border-t border-hairline py-1 text-[11px] text-mute transition-colors hover:bg-hairline-soft"
+            className="flex w-full items-center justify-center gap-1 border-t border-hairline py-1 text-xs text-mute transition-colors hover:bg-hairline-soft"
           >
             <span>{expanded ? t("approval.showLess") : t("approval.showMore")}</span>
             <ChevronDownIcon
