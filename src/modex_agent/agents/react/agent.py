@@ -365,6 +365,27 @@ class ReActAgent(Agent[ReActEvent]):
                     if state.phase not in (TurnPhase.COMPLETED, TurnPhase.FAILED)
                     else state.phase
                 )
+                # Persist the terminal phase so the active-turn guard
+                # (partial unique index on phase IN ('running','suspended'))
+                # releases this (agent_id, session_id) slot. Without this,
+                # the last CheckpointHook snapshot stays phase='running' in
+                # the DB and the next turn on the same session hits
+                # ActiveTurnConflictError.
+                if runtime is not None and runtime.services.turn_store is not None:
+                    try:
+                        from modex_agent.agents.react.state import ReActSnapshotPolicy
+                        from modex_agent.runtime.enums import SnapshotReason
+
+                        terminal_snapshot = ReActSnapshotPolicy().capture(
+                            state, SnapshotReason.TURN_INTERRUPTED
+                        )
+                        await runtime.services.turn_store.save_turn(terminal_snapshot)
+                    except Exception:
+                        logger.warning(
+                            "Failed to persist terminal turn snapshot for turn %s",
+                            state.identity.turn_id,
+                            exc_info=True,
+                        )
             context.emitter = None
             current_agent_context.reset(ctx_token)
 
