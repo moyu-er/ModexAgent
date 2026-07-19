@@ -1,7 +1,4 @@
 agent_name: worker
-description: Implementation agent — the single writer thread
-max_steps: 150
-context_mode: fork
-fork_max_messages: 60
-tool_preset: read_write
-roles: [implementer]
+description: Implementation agent — the single writer thread (OpenCode-powered)
+execution_strategy: external_coding
+provider_kind: opencode

@@ -60,7 +60,7 @@ When a subagent is `react` (default), the card renders exactly as today — byte
 - [ ] i18n: reuses existing `settings.external.*` keys (native/external/provider/managedByProvider/providerRunHelper) — no new keys needed
 - [ ] `npm run build` succeeds; `npm test` passes
 
-## S4 — Config: convert coder/worker to opencode external subagent
+## S4 — Config: convert coder/worker to opencode external subagent  ✅ DONE
 
 **What to build:** The coder pool's `worker` subagent template (`config/pools/coder/templates/worker.yml`) is converted from a native react subagent to an external_coding opencode subagent. This is the live proof that the S1-S3 config layer works end-to-end — the main `orchestrator` agent delegates implementation work to an opencode-powered worker via `send_to_agent`, and the worker replies via `modexctl send`.
 
