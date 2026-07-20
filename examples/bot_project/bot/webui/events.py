@@ -183,17 +183,27 @@ class UserMessageEvent(ServerEvent):
 
 @dataclass
 class ModelContentDelta(ServerEvent):
-    """A chunk of model-generated content (streaming)."""
+    """A chunk of model-generated content (streaming).
+
+    ``segment_id`` groups deltas belonging to the same output segment so the
+    partial materializer can merge them into one text block on refresh. Empty
+    for legacy transcripts (treated as a single anonymous segment).
+    """
     text: str = ""
     turn_id: str = ""
+    segment_id: str = ""
     event: str = field(default=WebUIEventType.MODEL_CONTENT_DELTA.value, init=False)
 
 
 @dataclass
 class ModelReasoningDelta(ServerEvent):
-    """A chunk of model reasoning (streaming, e.g. thinking blocks)."""
+    """A chunk of model reasoning (streaming, e.g. thinking blocks).
+
+    ``segment_id`` mirrors :class:`ModelContentDelta` for reasoning streams.
+    """
     text: str = ""
     turn_id: str = ""
+    segment_id: str = ""
     event: str = field(default=WebUIEventType.MODEL_REASONING_DELTA.value, init=False)
 
 

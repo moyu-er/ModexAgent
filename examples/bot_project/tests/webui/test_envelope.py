@@ -33,7 +33,7 @@ def test_from_event_splits_envelope_and_payload() -> None:
     assert envelope.parent_session_id == "conv.coding"
     assert envelope.metadata == {"k": "v"}
     # event-specific fields live in payload
-    assert envelope.payload == {"text": "hello", "turn_id": "turn_1"}
+    assert envelope.payload == {"text": "hello", "turn_id": "turn_1", "segment_id": ""}
 
 
 def test_from_event_carries_tool_call_fields() -> None:
