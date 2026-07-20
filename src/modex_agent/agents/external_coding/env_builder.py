@@ -51,13 +51,13 @@ class ExternalEnvBuilder:
         provide one).
 
         Args:
-            spec: Source values for the 9 ``MODEX_*`` fields.
+            spec: Source values for the ``MODEX_*`` fields.
             base_env: Base environment to merge with (typically
                 ``os.environ``). Only ``PATH`` is read from it; the
                 result is a fresh dict the caller can mutate freely.
 
         Returns:
-            New ``dict[str, str]`` containing the 8 ``MODEX_*`` string
+            New ``dict[str, str]`` containing the ``MODEX_*`` string
             vars plus a recreated ``PATH`` with the modexctl directory
             prepended.
         """
@@ -70,7 +70,10 @@ class ExternalEnvBuilder:
             "MODEX_PROVIDER_SESSION_ID": spec.provider_session_id,
             "MODEX_AGENT_POOL_MAP": _format_pool_map(spec.agent_pool_map),
             "MODEX_TARGETS": _format_targets(spec.targets),
+            "MODEX_COMM_KIND": spec.comm_kind.value,
         }
+        if spec.parent_session_id is not None:
+            modex["MODEX_PARENT_SESSION_ID"] = spec.parent_session_id
 
         base_path = base_env.get("PATH", "")
         new_path = (

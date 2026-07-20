@@ -302,6 +302,10 @@ async def test_build_env_spec_targets_only_parent_star_topology(
     assert spec_template.session_id == "inv123.coder"
     # provider_session_id is empty — session_store resolves/commits it.
     assert spec_template.provider_session_id == ""
+    # comm_kind=SUBAGENT + parent_session_id: modexctl send routes to the
+    # parent's full session_id verbatim, not via prefix-reuse.
+    assert spec_template.comm_kind is AgentCommKind.SUBAGENT
+    assert spec_template.parent_session_id == "inv123.main"
 
 
 @pytest.mark.asyncio

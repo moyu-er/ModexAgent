@@ -65,6 +65,7 @@ from modex_agent.agents.external_coding.subagent_builder import (
     SubagentExternalCodingBuilder,
 )
 from modex_agent.agents.external_coding.types import ExternalEnvSpec
+from modex_agent.core.agent import AgentCommKind
 from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.context import InMemoryContextManager
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
@@ -195,9 +196,8 @@ class BotSubagentExternalCodingBuilder(SubagentExternalCodingBuilder):
 
         # ── 0. Resolve per-invocation identity ───────────────────────────
         agent_name = spec.agent_name
-        parent_name = (
-            str(parent_session).split(".")[-1] if parent_session else ""
-        )
+        parent_session_str = str(parent_session) if parent_session else ""
+        parent_name = parent_session_str.split(".")[-1] if parent_session_str else ""
         session_id = f"{invocation_id or ''}.{agent_name}"
 
         # workspace_root / workdir / inbox_root come from the workspace
@@ -221,6 +221,14 @@ class BotSubagentExternalCodingBuilder(SubagentExternalCodingBuilder):
         #     native CommunicationTargetStore, not this external snapshot.
         #     A pool restart is required for changes to take effect here.
         #
+        # comm_kind=SUBAGENT + parent_session_id: modexctl send uses the
+        # parent's full session_id verbatim as target_sid, bypassing
+        # ADR-0019 prefix-reuse (which would mint a phantom parent session
+        # because subagent session prefixes are invocation_ids, not
+        # conversation_ids). The main-agent-as-peer path uses comm_kind=NORMAL
+        # and relies on prefix-reuse — the two paths are fully separated
+        # in modexctl.
+        #
         # agent_pool_map must include the parent so `modexctl send --to <parent>`
         # can resolve the parent's pool. Subagents are registered into the
         # parent's pool (AgentTemplate._materialize_external → pool.register_resident),
@@ -237,6 +245,8 @@ class BotSubagentExternalCodingBuilder(SubagentExternalCodingBuilder):
             provider_session_id="",  # fresh — session_store resolves/commits
             agent_pool_map=agent_pool_map,
             targets=[(parent_name, "")] if parent_name else [],
+            comm_kind=AgentCommKind.SUBAGENT,
+            parent_session_id=parent_session_str or None,
             modexctl_bin_dir=_modexctl_bin_dir(),
         )
 

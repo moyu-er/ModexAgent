@@ -23,6 +23,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
+from modex_agent.core.agent import AgentCommKind
+
 from .events import ExternalCodingEvent
 from .paths import ProviderKind
 
@@ -109,7 +111,7 @@ class SessionMapEntry(BaseModel):
 
 
 class ExternalEnvSpec(BaseModel):
-    """Source values for the 9 ``MODEX_*`` vars harness injects per spawn.
+    """Source values for the ``MODEX_*`` vars harness injects per spawn.
 
     The builder (``ExternalEnvBuilder.build``) takes an instance of this
     spec plus a base env and produces the dict passed to
@@ -119,6 +121,16 @@ class ExternalEnvSpec(BaseModel):
     ``agent_pool_map`` and ``targets`` are refreshed every turn from the
     `CommunicationTargetStore`; the rest are stable across the session
     lifetime.
+
+    Two comm kinds drive two independent routing logics in ``modexctl``:
+
+    - ``NORMAL`` (main-agent-as-peer): ``modexctl send`` derives
+      ``target_sid = prefix + "." + target_name`` via ADR-0019
+      prefix-reuse. ``parent_session_id`` is ``None``.
+    - ``SUBAGENT``: ``modexctl send`` uses ``parent_session_id`` verbatim
+      as ``target_sid``. Subagent session prefixes are invocation_ids,
+      not conversation_ids, so prefix-reuse would mint a phantom parent
+      session. ``parent_session_id`` is required.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -141,6 +153,20 @@ class ExternalEnvSpec(BaseModel):
     )
     modexctl_bin_dir: Path = Field(
         description="Directory prepended to PATH so bash tools find ``modexctl``."
+    )
+    comm_kind: AgentCommKind = Field(
+        default=AgentCommKind.NORMAL,
+        description=(
+            "Routing kind — drives which target_sid derivation modexctl uses. "
+            "NORMAL: ADR-0019 prefix-reuse. SUBAGENT: parent_session_id verbatim."
+        ),
+    )
+    parent_session_id: str | None = Field(
+        default=None,
+        description=(
+            "Parent's full session_id. Required when comm_kind=SUBAGENT; "
+            "ignored when comm_kind=NORMAL."
+        ),
     )
 
 
