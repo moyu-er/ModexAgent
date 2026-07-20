@@ -44,6 +44,7 @@ import yaml
 from modex_agent.agents.external_coding.agent import StreamingProviderBackend
 from modex_agent.agents.external_coding.backend_provider import PoolScopedBackendProvider
 from modex_agent.agents.external_coding.builder import ExternalCodingAgentBuilder
+from modex_agent.agents.external_coding.cli_resolver import resolve_modexctl_bin_dir
 from modex_agent.agents.external_coding.contracts import ProviderEventParser
 from modex_agent.agents.external_coding.paths import ProviderKind
 from modex_agent.agents.external_coding.providers.opencode_backend import OpenCodeBackend
@@ -299,11 +300,19 @@ class ExternalCodingAwareFactory(DefaultAgentFactory):
 
 
 def _modexctl_bin_dir() -> Path:
-    exe = shutil.which("modexctl")
-    if exe:
-        return Path(exe).parent
-    logger.warning("modexctl not found on PATH; falling back to '.' for modexctl_bin_dir")
-    return Path(".")
+    """Resolve the ``modexctl`` binary directory for the spawn ``PATH``.
+
+    Delegates to :func:`modex_agent.agents.external_coding.cli_resolver.resolve_modexctl_bin_dir`
+    — the single source of truth. The previous inline ``shutil.which`` +
+    ``Path(".")`` fallback (which never pointed at a real modexctl and
+    caused silent cross-pool messaging failures when the bot was launched
+    without the venv ``Scripts`` directory on PATH) is removed.
+
+    Raises:
+        ModexctlResolutionError: forwarded from the resolver when all four
+            resolution strategies fail. Surfaced at pool assembly time.
+    """
+    return resolve_modexctl_bin_dir()
 
 
 def _build_agent_pool_map(

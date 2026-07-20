@@ -271,37 +271,118 @@ begin
   Result := ExpandConstant('{app}\python\Scripts');
 end;
 
+// ============================================================================
+// Idempotent PATH registration (Layer 3 fix)
+// ============================================================================
+// Previous EnvAddPath/EnvRemovePath matched the *exact* string of the path
+// being added. Reinstalling to a different directory left the old path
+// entry behind, accumulating stale entries across reinstalls. The new
+// implementation uses a marker substring ('\python\Scripts' under a ModexBot
+// install) to identify our entries, so:
+//
+//   - EnvAddPath: removes ALL existing ModexBot marker entries first, then
+//     prepends the new one. Idempotent — reinstalling to the same or a
+//     different directory leaves exactly ONE entry, always the latest.
+//   - EnvRemovePath: removes ALL marker entries, not just one. Survives
+//     uninstall even if the install dir changed between install and uninstall.
+//
+// Marker choice: '\python\Scripts' (case-insensitive). This is specific
+// enough — only ModexBot's bundled python-build-standalone layout uses
+// 'python\Scripts' as a directory name on the user's PATH. Other apps
+// typically use '<AppName>\Scripts' or '<AppName>\bin'. Even if a false
+// positive occurred, the worst case is removing an unrelated stale entry,
+// not corrupting the user's PATH (we only touch HKCU\Environment\Path).
+//
+// Inno Setup 6.4+ provides StringSplit / StringJoin with this signature:
+//   function StringSplit(const S: String; const Separators: TArrayOfString;
+//                        const Typ: TSplitType): TArrayOfString;
+//   function StringJoin(const Separator: String;
+//                       const Values: TArrayOfString): String;
+// ============================================================================
+
+function IsModexBotPathEntry(Entry: string): Boolean;
+begin
+  // Match our install layout: any path ending in '\python\Scripts' (case-
+  // insensitive). The ModexBot install dir is per-user (%LOCALAPPDATA%\
+  // Programs\ModexBot), so this is specific to our registration.
+  Result := Pos('\python\Scripts', LowerCase(Entry)) > 0;
+end;
+
 procedure EnvAddPath(Path: string);
 var
   Paths: string;
+  RawEntries: TArrayOfString;
+  KeptEntries: TArrayOfString;
+  I: Integer;
+  KeptCount: Integer;
 begin
   if not RegQueryStringValue(HKEY_CURRENT_USER, 'Environment', 'Path', Paths) then
     Paths := '';
-  if Pos(';' + LowerCase(Path) + ';', ';' + LowerCase(Paths) + ';') > 0 then
-    Exit;
-  // Prepend (not append) so the installed modexbot.bat wins over dev venv
-  // or anaconda copies of modexbot.exe that may already be on PATH.
-  if Paths <> '' then
-    Paths := Path + ';' + Paths
-  else
-    Paths := Path;
-  RegWriteStringValue(HKEY_CURRENT_USER, 'Environment', 'Path', Paths);
+
+  // stExcludeEmpty drops empty entries (no leading/trailing/duplicate ';'
+  // artefacts). Single-element Separators array per Inno Setup API.
+  RawEntries := StringSplit(Paths, [';'], stExcludeEmpty);
+
+  // First pass: count entries we'll keep so we can size the array once.
+  KeptCount := 0;
+  for I := 0 to GetArrayLength(RawEntries) - 1 do
+    if not IsModexBotPathEntry(RawEntries[I]) then
+      KeptCount := KeptCount + 1;
+
+  // Always reserve one slot for the new path we're prepending.
+  SetArrayLength(KeptEntries, KeptCount + 1);
+  KeptEntries[0] := Path;
+  KeptCount := 1;
+  for I := 0 to GetArrayLength(RawEntries) - 1 do
+  begin
+    if not IsModexBotPathEntry(RawEntries[I]) then
+    begin
+      KeptEntries[KeptCount] := RawEntries[I];
+      KeptCount := KeptCount + 1;
+    end;
+  end;
+
+  RegWriteStringValue(HKEY_CURRENT_USER, 'Environment', 'Path', StringJoin(';', KeptEntries));
   BroadcastSettingChange();
 end;
 
 procedure EnvRemovePath(Path: string);
 var
   Paths: string;
-  P: Integer;
+  RawEntries: TArrayOfString;
+  KeptEntries: TArrayOfString;
+  I: Integer;
+  KeptCount: Integer;
 begin
   if not RegQueryStringValue(HKEY_CURRENT_USER, 'Environment', 'Path', Paths) then
     Exit;
-  P := Pos(';' + LowerCase(Path) + ';', ';' + LowerCase(Paths) + ';');
-  if P = 0 then
-    Exit;
-  Delete(Paths, P, Length(Path) + 1);
-  RegWriteStringValue(HKEY_CURRENT_USER, 'Environment', 'Path', Paths);
-  BroadcastSettingChange();
+
+  RawEntries := StringSplit(Paths, [';'], stExcludeEmpty);
+
+  // Count survivors first.
+  KeptCount := 0;
+  for I := 0 to GetArrayLength(RawEntries) - 1 do
+    if not IsModexBotPathEntry(RawEntries[I]) then
+      KeptCount := KeptCount + 1;
+
+  SetArrayLength(KeptEntries, KeptCount);
+  KeptCount := 0;
+  for I := 0 to GetArrayLength(RawEntries) - 1 do
+  begin
+    if not IsModexBotPathEntry(RawEntries[I]) then
+    begin
+      KeptEntries[KeptCount] := RawEntries[I];
+      KeptCount := KeptCount + 1;
+    end;
+  end;
+
+  // Only write + broadcast if something actually changed. Avoids spurious
+  // WM_SETTINGCHANGE broadcasts on uninstall when no marker was present.
+  if StringJoin(';', KeptEntries) <> Paths then
+  begin
+    RegWriteStringValue(HKEY_CURRENT_USER, 'Environment', 'Path', StringJoin(';', KeptEntries));
+    BroadcastSettingChange();
+  end;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);

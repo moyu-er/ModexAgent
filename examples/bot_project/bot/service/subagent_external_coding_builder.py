@@ -38,7 +38,6 @@ from __future__ import annotations
 
 import logging
 import os
-import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -46,6 +45,7 @@ from modex_agent.agents.external_coding.backend_provider import (
     BackendFactory,
     CachingBackendProvider,
 )
+from modex_agent.agents.external_coding.cli_resolver import resolve_modexctl_bin_dir
 from modex_agent.agents.external_coding.builder import ExternalCodingAgentBuilder
 from modex_agent.agents.external_coding.contracts import ProviderEventParser
 from modex_agent.agents.external_coding.os_layer import register_signal_handlers
@@ -125,14 +125,17 @@ class BotBackendFactory(BackendFactory):
 def _modexctl_bin_dir() -> Path:
     """Resolve the ``modexctl`` binary directory for the spawn ``PATH``.
 
-    Mirrors :func:`bot.service.external_coding_strategy._modexctl_bin_dir`:
-    ``shutil.which`` first, falling back to ``.`` if not on PATH (logged).
+    Delegates to :func:`modex_agent.agents.external_coding.cli_resolver.resolve_modexctl_bin_dir`
+    — the single source of truth. The previous inline ``shutil.which`` +
+    ``Path(".")`` fallback (which never pointed at a real modexctl and
+    caused silent cross-pool messaging failures) is removed.
+
+    Raises:
+        ModexctlResolutionError: forwarded from the resolver when all four
+            resolution strategies fail. The bot surfaces this at pool
+            materialisation time rather than silently corrupting the spawn env.
     """
-    exe = shutil.which("modexctl")
-    if exe:
-        return Path(exe).parent
-    logger.warning("modexctl not found on PATH; falling back to '.' for modexctl_bin_dir")
-    return Path(".")
+    return resolve_modexctl_bin_dir()
 
 
 class BotSubagentExternalCodingBuilder(SubagentExternalCodingBuilder):
