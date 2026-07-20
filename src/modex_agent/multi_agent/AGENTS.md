@@ -96,7 +96,8 @@ per invocation by pipeline providers, so reuse is safe.)
 | `descriptor.py` | `AgentDescriptor`, `AgentInstance`, `AgentLLMConfig` — agent metadata + `comm_kind`. |
 | `factory.py` | Agent instance factory — assembles `AgentInstance` via `create_agent()`. `DefaultAgentFactory` builds react agents (provider + tools + skill + TurnContextBuilder + ApprovalResumer/ApprovalRenderer + ReActTurnRunner + hooks + pipeline). `ExternalCodingAwareFactory` (in `examples/bot_project/bot/service/external_coding_strategy.py`) overrides `create_agent` to build only 6 objects (ExternalCodingAgent + broker I/O + emitter + ExternalTurnRunner + pipeline, no hooks/provider/tools) — external_coding pools boot without `model.yml`. `_get_builder` dispatch (runtime agent-construction, not assembly branching) is retained per ADR-0025 D5 deviations. |
 | `subagent_validator.py` | Framework-layer star-topology enforcement at registration. |
-| `address.py` / `message_xml.py` / `state.py` / `registry.py` | Agent addressing dataclasses, agent-message XML, state enums, registry ABC. |
+| `message_xml.py` | XML message builders — `build_agent_message` (subagent dispatch / parent reply), `build_peer_agent_message` (cross-pool peer with `<reply_contract>`), `build_agent_result` (hook-generated turn result), and `build_dispatch_xml` (single convergence point for the "target is external → peer format" rule, delegated to by `SubagentDispatchStrategy` and `ParentReplyStrategy`). The `target_execution_strategy == EXTERNAL_CODING` branch in `build_dispatch_xml` is a runtime per-target site retained per ADR-0025 D5 deviations, same category as `peer_normal.py`. |
+| `address.py` / `state.py` / `registry.py` | Agent addressing dataclasses, state enums, registry ABC. |
 
 ## Subdirectories
 
