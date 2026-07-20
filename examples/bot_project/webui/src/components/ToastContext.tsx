@@ -13,6 +13,7 @@ import {
   type FC,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import { Toast, type ToastAction, type ToastTone } from "./Toast";
 
 export interface ShowToastOpts {
@@ -105,8 +106,12 @@ function ToastViewport({
   onDismiss: (id: number) => void;
 }) {
   if (toasts.length === 0) return null;
-  return (
-    <div className="pointer-events-none fixed bottom-4 right-4 z-50 flex flex-col items-end gap-2">
+  // Portal to document.body and use z-[60] so toasts always render above
+  // modals (which use z-50). The container is pointer-events-none so it
+  // never blocks modal interaction; each Toast is pointer-events-auto so
+  // its action buttons remain clickable even while a modal is open.
+  return createPortal(
+    <div className="pointer-events-none fixed bottom-4 right-4 z-[60] flex flex-col items-end gap-2">
       {toasts.map((t) => (
         <Toast
           key={t.id}
@@ -116,7 +121,8 @@ function ToastViewport({
           onDismiss={() => onDismiss(t.id)}
         />
       ))}
-    </div>
+    </div>,
+    document.body,
   );
 }
 

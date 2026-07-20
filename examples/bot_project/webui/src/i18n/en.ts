@@ -181,6 +181,10 @@ export const en = {
       pools: "Pools",
       prompts: "Prompts",
     },
+    modal: {
+      title: "Settings",
+      close: "Close settings",
+    },
     common: {
       discardUnsavedTitle: "Discard unsaved changes?",
       discardSwitchView: "Switching now will lose your edits to the current view.",

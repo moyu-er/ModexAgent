@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef, type FC } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
-import { SettingsView } from "./components/settings/SettingsView";
+import { SettingsModal } from "./components/settings/SettingsView";
 import { ToastProvider } from "./components/ToastContext";
 import { useWebUIStream } from "./hooks/useWebUIStream";
 import { useSessions } from "./hooks/useSessions";
@@ -13,7 +13,6 @@ import { storageGetInt, storageSet } from "./lib/storage";
 import type { OutgoingAttachmentRef } from "./types/attachments";
 import { useT } from "./i18n";
 import { LogoMarkIcon } from "./components/ui/icons";
-import { ViewCrossfade } from "./components/ui/ViewCrossfade";
 
 const SIDEBAR_WIDTH_KEY = "modexbot_sidebar_width";
 const DEFAULT_SIDEBAR_WIDTH = 260;
@@ -119,7 +118,7 @@ const AppInner: FC = () => {
     [onSent, send, selectedId],
   );
 
-  const [view, setView] = useState<"chat" | "settings">("chat");
+  const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
 
   // ── Sidebar resize (refs keep the drag smooth without re-registering listeners)
   const [sidebarMobileOpen, setSidebarMobileOpen] = useState(false);
@@ -217,7 +216,7 @@ const AppInner: FC = () => {
           onGoHome={handleGoHome}
           onPoolChange={handlePoolChange}
           revealSessionId={revealSessionId}
-          onOpenSettings={() => setView("settings")}
+          onOpenSettings={() => setSettingsOpen(true)}
         />
 
         {/* Resize handle — desktop only */}
@@ -236,32 +235,29 @@ const AppInner: FC = () => {
         </div>
 
         <main className="flex flex-1 flex-col min-w-0">
-          {/* Chat↔settings crossfade (§8): ~200ms transform+opacity, both views
-           * keyed so each swap re-triggers the enter animation. No instant swap. */}
-          <ViewCrossfade viewKey={view}>
-            {view === "settings" ? (
-              <SettingsView onExit={() => setView("chat")} />
-            ) : (
-              <ChatView
-                messages={messages}
-                isStreaming={isStreaming}
-                isPending={isPending}
-                todos={todos}
-                pendingApprovals={pendingApprovals}
-                isApprovingBatch={isApprovingBatch}
-                submitApproval={submitApproval}
-                onApproveAll={onApproveAll}
-                sessionId={selectedId}
-                workspace={streamWs}
-                onSend={handleSend}
-                onPause={pause}
-                readOnly={isSelectedSubagent}
-                onOpenSidebar={() => setSidebarMobileOpen(true)}
-                agentName={agentName}
-              />
-            )}
-          </ViewCrossfade>
+          <ChatView
+            messages={messages}
+            isStreaming={isStreaming}
+            isPending={isPending}
+            todos={todos}
+            pendingApprovals={pendingApprovals}
+            isApprovingBatch={isApprovingBatch}
+            submitApproval={submitApproval}
+            onApproveAll={onApproveAll}
+            sessionId={selectedId}
+            workspace={streamWs}
+            onSend={handleSend}
+            onPause={pause}
+            readOnly={isSelectedSubagent}
+            onOpenSidebar={() => setSidebarMobileOpen(true)}
+            agentName={agentName}
+          />
         </main>
+
+        <SettingsModal
+          open={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+        />
 
         {sidebarMobileOpen && (
           <div
