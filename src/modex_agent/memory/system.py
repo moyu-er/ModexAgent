@@ -13,7 +13,6 @@ from modex_agent.core.governance import ContextGovernance
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.core.scope import MemoryAgentRole, MemoryContext
-from modex_agent.core.skills import SkillManager
 from modex_agent.memory.core.system import (
     MemorySystem,  # noqa: F401 — re-export
 )
@@ -33,6 +32,7 @@ if TYPE_CHECKING:
     from modex_agent.agents.summarizer.abc import ArchiveGenerator, KnowledgeConsolidatorBase
     from modex_agent.core.experience import ExperienceManager
     from modex_agent.core.provider import LLMProvider
+    from modex_agent.core.skills import SkillManager
     from modex_agent.core.tool_manager import ToolManager
     from modex_agent.memory.prompt_pipeline.providers import ForkContextSpec
     from modex_agent.memory.stores.dir_archive import DirArchiveStorage
@@ -256,7 +256,6 @@ class MemorySystemContextManager(ContextManager):
             ProviderPrefetchProvider,
             PrunedProvider,
             RuntimeProvider,
-            SkillProvider,
             TodoAwareSystemPromptProvider,
         )
 
@@ -295,9 +294,7 @@ class MemorySystemContextManager(ContextManager):
                 AppendParentPromptProvider,
             )
 
-            providers.append(
-                AppendParentPromptProvider(self._parent_prompt_lookup, parent_sid)
-            )
+            providers.append(AppendParentPromptProvider(self._parent_prompt_lookup, parent_sid))
 
         # 2. Base system prompt (static)
         if self.base_system_prompt:
@@ -378,13 +375,9 @@ class MemorySystemContextManager(ContextManager):
 
         # 9. Skills (static)
         if skill_manager is not None:
-            from modex_agent.core.skills import ResolutionContext
-
-            skill_prompt = await skill_manager.build_prompt(
-                ResolutionContext.from_runtime(tool_manager=tool_manager)
-            )
-            if skill_prompt:
-                providers.append(SkillProvider(skill_prompt))
+            provider = await skill_manager.build_provider(tool_manager)
+            if provider is not None:
+                providers.append(provider)
 
         # 10. Agent role contracts (after business providers; near end).
         if self._roles:
@@ -454,14 +447,12 @@ class MemorySystemContextManager(ContextManager):
     async def build_system_prompt(
         self,
         tool_manager: ToolManager | None,
-        skill_manager: SkillManager | None = None,
         runtime_info: dict[str, Any] | None = None,
     ) -> str:
         """Build system prompt by delegating to load() and resolving pipeline."""
         state = await self.load(
             session_id=self._last_session_id or "default",
             tool_manager=tool_manager,
-            skill_manager=skill_manager,
             runtime_info=runtime_info,
         )
         if state.system_prompt_pipeline is not None:

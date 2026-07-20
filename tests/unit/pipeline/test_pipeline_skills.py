@@ -34,16 +34,10 @@ class FakeContextManager:
     async def save(self, session_id, user_message, assistant_result, metadata=None):
         pass
 
-    async def build_system_prompt(self, tool_manager, skill_manager=None, runtime_info=None):
+    async def build_system_prompt(self, tool_manager, runtime_info=None):
         parts = [self.base_system_prompt]
-        if skill_manager is not None:
-            from modex_agent.core.skills import ResolutionContext
-
-            skill_prompt = await skill_manager.build_prompt(
-                ResolutionContext.from_runtime(tool_manager=tool_manager)
-            )
-            if skill_prompt:
-                parts.append(skill_prompt)
+        if runtime_info:
+            parts.append(str(runtime_info))
         return "\n\n---\n\n".join(parts)
 
     async def clear(self, session_id):
@@ -73,7 +67,11 @@ class FakeInputAdapter:
     async def receive(self):
         from modex_agent.pipeline.pipeline import InputMessage
 
-        yield InputMessage(content="hi", source="test", session=SessionInfo.from_str("test", default_agent_name="main"))
+        yield InputMessage(
+            content="hi",
+            source="test",
+            session=SessionInfo.from_str("test", default_agent_name="main"),
+        )
         await asyncio.sleep(10)  # block indefinitely after first message
 
 
@@ -144,4 +142,3 @@ class TestAgentPipelineSkills:
             sanitizer=None,
         )
         assert pipeline.sanitizer is None
-

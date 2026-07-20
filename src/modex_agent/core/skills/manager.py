@@ -4,8 +4,11 @@ from typing import TYPE_CHECKING
 
 from .builder import DefaultSkillBuilder
 from .models import ResolutionContext, Skill
+from .provider import SkillProvider
 
 if TYPE_CHECKING:
+    from modex_agent.core.tool_manager import ToolManager
+
     from .builder import SkillPromptBuilder
     from .cache import SkillCache
     from .filter import SkillFilter
@@ -68,6 +71,26 @@ class SkillManager:
             )
         skills = await self.list_skills(context)
         return await self._builder.build(skills, context)
+
+    async def build_provider(
+        self,
+        tool_manager: ToolManager | None,
+    ) -> SkillProvider | None:
+        """Build a :class:`SkillProvider` for the system-prompt pipeline.
+
+        Single convergence point: the ONLY way to turn a ``SkillManager`` into
+        a pipeline provider. All ``ContextManager.load()`` implementations call
+        this instead of inlining ``build_prompt`` + ``SkillProvider`` construction,
+        so skill injection lives in exactly one place.
+
+        Returns ``None`` when no skills are loaded (caller skips appending).
+        """
+        skill_prompt = await self.build_prompt(
+            ResolutionContext.from_runtime(tool_manager=tool_manager)
+        )
+        if not skill_prompt:
+            return None
+        return SkillProvider(skill_prompt)
 
     async def get_skill(self, name: str) -> Skill | None:
         """Get a single skill by name, checking overrides first.

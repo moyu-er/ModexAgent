@@ -12,11 +12,11 @@ from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.history import ListMessageHistory, MessageHistory
 from modex_agent.core.message import ChatMessage
-from modex_agent.core.skills import ResolutionContext, SkillManager
 
 if TYPE_CHECKING:
     from modex_agent.core.governance import ContextGovernance
     from modex_agent.core.prompt import SystemPromptPipeline
+    from modex_agent.core.skills import SkillManager
     from modex_agent.core.tool_manager import ToolManager
     from modex_agent.memory.default_system import DefaultMemorySystem
 
@@ -119,12 +119,13 @@ class ContextManager(ABC):
     async def build_system_prompt(
         self,
         tool_manager: ToolManager | None,
-        skill_manager: SkillManager | None = None,
         runtime_info: dict[str, Any] | None = None,
     ) -> str:
         """构建系统提示词
 
-        子类可以覆盖此方法实现自定义的系统提示词构建逻辑。
+        Skill injection is NOT handled here — it flows exclusively through
+        :meth:`load` via ``skill_manager.build_provider()``. Subclasses must
+        NOT add skill logic to this method.
         """
         pass
 
@@ -210,7 +211,6 @@ class InMemoryContextManager(ContextManager):
     async def build_system_prompt(
         self,
         tool_manager: ToolManager | None,
-        skill_manager: SkillManager | None = None,
         runtime_info: dict[str, Any] | None = None,
     ) -> str:
         """Base-class fallback.  MemorySystemContextManager overrides this
@@ -220,16 +220,6 @@ class InMemoryContextManager(ContextManager):
         """
         parts = [self.base_system_prompt]
 
-        # Skills — persistent reference (included in base class when no
-        # MemorySystem pipeline is available to inject them via load()).
-        if skill_manager is not None:
-            skill_prompt = await skill_manager.build_prompt(
-                ResolutionContext.from_runtime(tool_manager=tool_manager)
-            )
-            if skill_prompt:
-                parts.append(skill_prompt)
-
-        # 添加运行时信息
         if runtime_info:
             runtime_text = self._format_runtime_info(runtime_info)
             if runtime_text:
