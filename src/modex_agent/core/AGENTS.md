@@ -7,7 +7,7 @@ Abstract base classes and shared types forming the framework's type-safe foundat
 
 ## Purpose
 
-The `core/` module defines the foundational contracts (`Agent[E]`, `Tool`, `LLMProvider`, `ContextManager`, `ContentEmitter[E]`), type system (`MessageRole`, `MessageType`, `ToolCall`), runtime context (`AgentContext`, `RuntimeContext`), session identity (`SessionInfo`, `SessionRegistry`, `SessionStore`), and sub-systems (graph engine, skills, experience). Every other framework module imports from `core/`.
+The `core/` module defines the foundational contracts (`Agent[E]`, `Tool`, `LLMProvider`, `ContextManager`, `ContentEmitter[E]`), type system (`MessageRole`, `MessageType`, `ToolCall`), runtime context (`AgentContext`, `RuntimeContext`), session identity (`SessionInfo`, `SessionRegistry`, `SessionStore`), and sub-systems (skills, experience). Every other framework module imports from `core/`. The graph engine was extracted to the standalone `modex_graph` package (ADR-0033); the old `core/graph/` directory is deleted.
 
 ## Key Files
 
@@ -42,7 +42,6 @@ The `core/` module defines the foundational contracts (`Agent[E]`, `Tool`, `LLMP
 
 | Directory | Files | Purpose |
 |-----------|-------|---------|
-| `graph/` | 5 py | Directed graph state machine — `Graph[R]`, `Node[R]`, `Edge`, `GraphEngine`, `GraphInterrupt`, `GraphNode`(StrEnum) (see `graph/AGENTS.md`) |
 | `skills/` | 7 py | Skill loading, filtering, caching, progressive prompt building — `SkillManager`, `SkillSource` ABCs, `SkillPromptBuilder`, `SkillFilter` hierarchy (see `skills/AGENTS.md`) |
 | `experience/` | 10 py | Experience layer — `ExperienceManager`, `FileExperienceSource`, `ExperiencePromptBuilder`, `ExperienceCurator`, validation, metadata tracking (see `experience/AGENTS.md`) |
 

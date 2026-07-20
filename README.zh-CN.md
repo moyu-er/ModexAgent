@@ -38,7 +38,7 @@ ModexAgent 是一个用于构建 AI Agent 应用的 Python 框架。它将模型
 
 ## 核心特性
 
-- **图驱动的 ReAct 引擎** — 执行循环以 `Graph[R] + Node[R] + Edge` 的泛型图结构建模，支持 `GraphInterrupt` 挂起与状态持久化恢复，天然适合审批和断点续跑场景。内置循环检测：ReAct 陷入死循环时以受控退出收尾，而不是空烧 token（ADR-0016）。
+- **图驱动的 ReAct 引擎** — 执行循环以 `Graph[S] + Node[S]` 的泛型图结构建模（由独立的 `modex_graph` 包驱动，ADR-0033），支持 `GraphInterrupt` 挂起与状态持久化恢复，天然适合审批和断点续跑场景。内置循环检测：ReAct 陷入死循环时以受控退出收尾，而不是空烧 token（ADR-0016）。
 - **可中断审批** — Agent 在做出有风险的改动前会先征求你的同意。当它试图写或改项目文件夹之外的文件时，会暂停并请求确认——在 WebUI 点一下「批准」，或在聊天里回复 `/approve`，它就从原地继续。默认关闭，可按 Agent 单独开启。
 - **跨平台交互式终端** — 内置完整终端工具链，支持 Windows（WinPTY/ConPTY）、Linux/macOS（pexpect/tmux）三端统一接口；支持可见终端窗口与后台 PTY 两种模式，248+ 单元测试覆盖。
 - **多 Agent 协作** — 每个 pool 内部是严格星型：主 Agent 作为通信中枢，子 Agent 只能经 `send_to_agent` 与父 Agent 通信（框架按需走 broker、异步 inbox 或隔离 subagent 会话）。跨 pool 时主 Agent 之间是对等的——一个主 Agent 可 `send_to_agent` 另一个 pool 的主 Agent，对方在自己的 bus 上接收并回复。subagent↔subagent、subagent→非父 NORMAL 的发送会被拓扑关卡拒绝。

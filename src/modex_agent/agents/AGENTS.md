@@ -7,7 +7,7 @@ Agent reasoning pattern implementations. Each sub-package implements a specific 
 
 ## Purpose
 
-The `agents/` module provides concrete agent implementations: the `ReActAgent` (Thought→Action→Observation loop with approval suspension/resume), `ExternalCodingAgent` (Pi/OpenCode CLI harness), `SummarizerAgent` (single-turn tool-free summarization), and `ExperienceReviewAgent` (ReAct-based conversation review for experience creation/update). New agent strategies go in new subdirectories.
+The `agents/` module provides concrete agent implementations: the `ReActAgent` (Thought→Action→Observation loop with approval suspension/resume, built on the `modex_graph` engine), `ExternalCodingAgent` (Pi/OpenCode CLI harness), and `ExperienceReviewAgent` (ReAct-based conversation review for experience creation/update). The deprecated `SummarizerAgent` was removed (ADR-0033 D10). New agent strategies go in new subdirectories.
 
 ## Key Files
 
@@ -19,9 +19,9 @@ The `agents/` module provides concrete agent implementations: the `ReActAgent` (
 
 | Directory | Files | Purpose |
 |-----------|-------|---------|
-| `react/` | 11 py (incl. `nodes/`) | `ReActAgent` — 4-node graph (START→LLM→TOOL→END), `TieredToolApprovalClassifier`, `ReActTurnState`, approval suspend/resume (see `react/AGENTS.md`) |
+| `react/` | 14 py (incl. `nodes/`) | `ReActAgent` — 4-node graph (START→LLM→TOOL→END) built on `modex_graph`, `TieredToolApprovalClassifier`, `ReActTurnState` (GraphState), `ReactGraphRuntime` adapter, approval suspend/resume (see `react/AGENTS.md`) |
 | `external_coding/` | 21 py (incl. `providers/`) | `ExternalCodingAgent` — provider-neutral streaming harness, Pi/OpenCode adapters, session-map ABC, env/prompt/path/OS process seams (see `external_coding/AGENTS.md`, ADR-0022) |
-| `summarizer/` | 8 py | `SummarizerAgent` (single-turn, no tools), `ArchiveSummarizer` (MD archive generation), `KnowledgeConsolidator` (ReAct-based knowledge consolidation), `ScopedFileAgent` base class (see `summarizer/AGENTS.md`) |
+| `summarizer/` | 6 py | `ArchiveSummarizer` (MD archive generation), `KnowledgeConsolidator` (ReAct-based knowledge consolidation), `ScopedFileAgent` base class (see `summarizer/AGENTS.md`). The deprecated `SummarizerAgent` was removed (ADR-0033 D10). |
 | `experience/` | 2 py | `ExperienceReviewAgent` — ReAct agent that reviews conversations and creates/updates EXPERIENCE.md files using experience tools (see `experience/AGENTS.md`) |
 
 ### react/ Submodule Details
@@ -30,28 +30,29 @@ The ReAct module is the primary agent runtime. Key components:
 
 | File | Description |
 |------|-------------|
-| `agent.py` | `ReActAgent(Agent[ReActEvent])` — event enum, turn context setup, delegates to graph |
-| `graph.py` | `ReActGraph` — 4-node graph: START→LLM→TOOL→END with reason-based edges |
-| `state.py` | `ReActTurnState`, snapshot payload keys, `ReActRuntimeStateCodec` |
+| `agent.py` | `ReActAgent(Agent[ReActEvent])` — event enum, turn context setup, constructs `Graph` + `GraphEngine` + `ReActGraphContext`, delegates to `engine.run_async()` |
+| `graph.py` | `build_react_graph()` — builds `Graph[ReActTurnState]` with 4 nodes + 8 edges using `modex_graph.Graph` API |
+| `context.py` | `ReActGraphContext(GraphContext[ReActTurnState])` — type-safe accessors (`agent_ctx`, `tool_manager`, `context_manager`) |
+| `runtime.py` | `ReactGraphRuntime(GraphRuntime)` — AOP bridge: maps ReAct StrEnums to `HookPoint`/`InterceptorScope`/`ReActEvent`, bridges `GraphContext.user_data` → `AgentContext` for all AOP services |
+| `codec.py` | Channel codec registrations for `ApprovalTransaction`/`ToolBatchState`/`ToolCallState`/`ApprovalRequestState`/`ToolArguments` via `register_codec` |
+| `state.py` | `ReActTurnState(GraphState)`, `ReActSnapshotPolicy` (simplified via `state.checkpoint()`), `ReActRuntimeStateCodec` |
 | `builder.py` | `ReActAgentBuilder` — `build_agent()` + `build_emitter_factory()` from `AgentDescriptor` |
 | `approval.py` | `ApprovalRuntime` + `TieredToolApprovalClassifier` (NORMAL/DANGEROUS path-based) |
-| `constants.py` | `ReActNode`, `ReActReason` enums |
+| `constants.py` | `ReActNode`, `ReActReason`, `ReActHookPoint`, `ReActScope`, `ReActEvent` StrEnums |
 | `nodes/start.py` | `StartNode` — routes to LLM (fresh) or stored `current_node` (resume from suspended) |
-| `nodes/llm.py` | `LLMNode` — calls LLM, handles streaming, emits iteration events |
-| `nodes/tool.py` | `ToolNode` — classify all → suspend for approval → batch execute → route |
-| `nodes/end.py` | `EndNode` — assembles `AgentResult` (normal/error/cancelled) |
+| `nodes/llm.py` | `LLMNode` — calls LLM, handles streaming, dispatches hooks/interceptors via `ctx.runtime.*`, emits iteration events |
+| `nodes/tool.py` | `ToolNode` — classify all → suspend for approval via `ctx.interrupt(tx)` → batch execute → route |
+| `nodes/end.py` | `EndNode` — assembles `AgentResult` (normal/error/cancelled), writes `ctx.state.result` |
 
 ### summarizer/ Submodule Details
 
 | File | Description |
 |------|-------------|
-| `agent.py` | `SummarizerAgent(Agent)` — single-turn LLM call, no tools. Used for compression, fact extraction, memory update |
 | `scoped_file_agent.py` | `ScopedFileAgent` — ReAct agent base with scoped file tools, `SummarizerTrajectoryEmitter` for JSONL traces, 2-attempt retry |
 | `archive_agent.py` | `ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator)` — generates `context.md`/`knowledge.md`/`index.md` from pruned messages |
 | `consolidator.py` | `KnowledgeConsolidator(ScopedFileAgent, KnowledgeConsolidatorBase)` — reads `knowledge.md` from archives, updates `SOUL.md`/`USER.md`/`MEMORY.md` via ReAct |
 | `emitter.py` | `SummarizerTrajectoryEmitter` — JSONL trace file writer for agent observability |
 | `abc.py` | `ArchiveGenerator` ABC, `KnowledgeConsolidatorBase` ABC, `ArchiveSummarizerResult`, lazy prompt loader |
-| `strategy.py` | `SummarizationStrategy` — configurable summarization approach |
 
 ### experience/ Submodule Details
 
@@ -89,9 +90,8 @@ The `ExperienceReviewAgent`:
 
 ```
 Agent[E]
-├── ReActAgent               (graph-based, 4-node, with approval)
+├── ReActAgent               (modex_graph-based, 4-node, with approval)
 ├── ExternalCodingAgent      (external CLI harness, provider backend lifecycle)
-├── SummarizerAgent          (single-turn, no tools)
 └── ScopedFileAgent          (ReAct with scoped file tools)
     ├── ArchiveSummarizer    (pruned → archive files)
     ├── KnowledgeConsolidator (archive → knowledge files)
@@ -104,7 +104,6 @@ Agent[E]
 - New agent strategies go in new subdirectories
 - Each agent must inherit `Agent[E]` and define `event_enum`
 - External coding teardown converges through `StreamingProviderBackend.close()`; do not add provider-kind branches to agent, pool, or workspace shutdown.
-- `SummarizerAgent` uses predefined prompt types: PROMPT_COMPRESSION, PROMPT_FACT_EXTRACTION, PROMPT_MEMORY_UPDATE, PROMPT_KNOWLEDGE_CONSOLIDATION
 - `ScopedFileAgent._run_agent()` is the shared entry point for all ReAct-based summarizers
 - Prompt templates come from `SummarizerPromptRegistry` loaded via `_get_registry()`
 

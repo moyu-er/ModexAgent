@@ -6,8 +6,9 @@
 
 `src/modex_agent/` is the reusable agent framework (src layout — see ADR-0003). Key areas:
 
-- `modex_agent/core/`: ABCs — `Agent[E]`, `ContentEmitter[E]`, `Tool`, `ContextManager`, graph engine (`Graph[R]`/`Node[R]`), skills, experience system, types.
-- `modex_agent/agents/react/`: graph-based ReAct runtime (4-node: START→LLM→TOOL→END), approval suspension/resume, `TieredToolApprovalClassifier`.
+- `modex_agent/core/`: ABCs — `Agent[E]`, `ContentEmitter[E]`, `Tool`, `ContextManager`, skills, experience system, types. (The graph engine was extracted to the standalone `modex_graph` package per ADR-0033; the old `core/graph/` directory is deleted.)
+- `src/modex_graph/`: standalone graph engine package (sibling of `modex_agent`, depends only on Pydantic + stdlib). Provides `Graph[S]`/`Node[S]`/`CompiledGraph`/`GraphEngine`/`GraphContext`/`NodeResult`/`Command`/`Task`/`BaseChannel`/`LastValue`/`ReducerChannel`/`GraphState`/`GraphRuntime`/`GraphBubbleUp` family. See ADR-0033.
+- `modex_agent/agents/react/`: graph-based ReAct runtime (4-node: START→LLM→TOOL→END), approval suspension/resume, `TieredToolApprovalClassifier`. Built on `modex_graph`.
 - `modex_agent/agents/external_coding/`: `ExternalCodingAgent` harness for Pi/OpenCode, provider-neutral streaming/events, session mapping, env/prompt injection, and cross-platform process-tree ownership.
 - `modex_agent/agents/experience/`: `ExperienceReviewAgent` — ReAct agent that reviews conversations and creates/updates EXPERIENCE.md files.
 - `modex_agent/core/experience/`: experience layer — `ExperienceManager`, `FileExperienceSource`, `ExperiencePromptBuilder`, `ExperienceCurator`, validation, metadata tracking.
