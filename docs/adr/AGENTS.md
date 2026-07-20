@@ -61,5 +61,6 @@ ADRs document significant architectural decisions, including the context driving
 | 0030 | Column projection SQLite adapter field extraction |
 | 0031 | Persistence schema simplification |
 | 0032 | Terminal backend async-safety and behavior convergence |
+| 0033 | Generalized Graph Engine (Phase a) |
 
 <!-- MANUAL -->

@@ -29,12 +29,36 @@ The entry-point agent in a pool that receives user input, dispatches to subagent
 _Avoid_: primary agent, root agent, orchestrator
 
 **ReAct Agent**:
-The reasoning loop built on `Graph[R]` — a 4-node state machine (START → LLM → TOOL → END) that interleaves model calls with tool execution. The `ReActAgent` is the only shipped agent runtime; other agent types (Summarizer, ExperienceReview) are built on the same graph engine.
+The reasoning loop that interleaves model calls with tool execution — a 4-node graph (START → LLM → TOOL → END) configured on top of the **Graph Engine**. The `ReActAgent` is one configuration of the graph engine, not the only agent runtime. Other agents that need tool use (`ArchiveSummarizer`, `KnowledgeConsolidator`, `ExperienceReviewAgent`) inherit `ScopedFileAgent` and internally build a `ReActAgent` in clean mode; `ExternalCodingAgent` does not use the graph engine at all.
 _Avoid_: ReAct loop, reasoning loop (when referring to the module/agent), agent loop
 
-**Graph**:
-The state-machine engine powering agent execution. `Graph[R]` holds named `Node[R]` instances and directed `Edge` instances; `GraphEngine` iterates nodes, propagates `GraphInterrupt`, and reads the result from per-turn state (`TurnCustomKey.GRAPH_RESULT`). Generic over result type `R`.
-_Avoid_: state machine, workflow engine, pipeline (use "pipeline" only for `AgentPipeline`)
+**Graph Engine**:
+The standalone, framework-agnostic graph + scheduling engine that powers graph-shaped agent execution. Lives in `src/modex_graph/` as a **sibling package of `modex_agent`** — `modex_agent` depends on `modex_graph`, the reverse is forbidden and enforced by architecture guard test. Depends only on Pydantic + standard library. Provides: `Graph[S]` (mutable builder + immutable `Node[S]` registry), `GraphEngine` (sequential scheduler with `run`/`run_async` dual entry, `inspect.isawaitable` sync/async unification), `GraphContext[S]` (per-run state + runtime interface + emit/interrupt helpers + `user_data` escape hatch), `NodeResult` + `Command` (transition + state update + dynamic goto + interrupt + resume), `BaseChannel` + `LastValue` + `ReducerChannel` (per-field state semantics for snapshot/reducer), `GraphState` (Pydantic `BaseModel` subclass with per-field Annotated channel declaration), `GraphRuntime` (AOP bridge ABC with no-op defaults — `before_node`/`after_node`/`before_iteration`/`after_iteration` auto-invoked by engine; `dispatch_hook`/`around`/`apply_governance`/`drain_control`/`capture_snapshot`/`emit` invoked explicitly by nodes via string-typed hook_point/scope/event_type), `GraphInterrupt` + `GraphBubbleUp` exception family. Per ADR-0033 (planned).
+_Avoid_: state machine, workflow engine, pipeline (use "pipeline" only for `AgentPipeline`), graph (use "Graph Engine" for the package; "Graph" informally for a configured topology)
+
+**Node**:
+The unit of execution in the Graph Engine. `Node[S]` is an ABC with one method: `execute(ctx: GraphContext[S]) -> NodeResult`. The method may be implemented as `def` (sync) or `async def` (async) — the engine detects via `inspect.isawaitable` and unifies both. A node reads/writes the shared `S` state, optionally emits events via `ctx.emit(...)`, optionally interrupts via `ctx.interrupt(...)`, and returns a structured `NodeResult` describing the transition + optional state update + optional `Command`. A `Graph` can itself be a `Node` (Graph-is-a-Node, Flow-is-a-Node) enabling nested subgraphs.
+_Avoid_: step (too generic), task (collides with multi-agent task), stage (collides with input pipeline stages)
+
+**NodeResult**:
+The structured return value of `Node.execute`. A frozen Pydantic value object with three optional fields: `transition: str | None` (action string for static edge lookup), `state_update: Mapping[str, Any] | None` (declarative state update applied to channels), `command: Command | None` (dynamic goto / interrupt / resume override). A node may alternatively mutate state imperatively (`ctx.state.x = y`) — the engine syncs Pydantic fields to channels at snapshot time. Both styles coexist (Z-style dual-mode state access, ADR-0033).
+_Avoid_: node output (too generic — NodeResult is the typed return), transition (that is one field of NodeResult)
+
+**Command**:
+The dynamic routing primitive — a frozen Pydantic value object bundling optional `goto` (str | list[str] | list[Task] for dynamic target / multi-target / fan-out), `interrupt` (value to surface to caller), `resume` (value to apply on resume). When a node returns `NodeResult(command=Command(goto=...))`, the command overrides the static `transition`. State updates live on `NodeResult.state_update`, not on `Command` (separation of routing from state mutation). Used to unify the approval suspend/resume path: `ctx.interrupt(value)` raises `GraphInterrupt` carrying the value, resume re-enters the engine with `Command(resume=...)`.
+_Avoid_: directive (too generic), routing command (collides with slash commands)
+
+**Channel**:
+The per-field state semantics on a `GraphState`. Each field annotated with `Annotated[T, ChannelSpec]` is backed by a `BaseChannel` instance that owns its own update / checkpoint / restore behavior. Phase a (ADR-0033) ships exactly two channels: `LastValue` (single-writer, default) and `ReducerChannel` (binary operator fan-in). Additional channels (Topic / Ephemeral / Barrier / etc.) are deferred to Phase c when a real second use case appears — the `BaseChannel` ABC is the extension seam. Channels are the snapshot substrate: `GraphState.checkpoint()` returns per-channel JSON; `from_checkpoint()` restores each channel independently.
+_Avoid_: slot (too generic), field (that is the Pydantic field; the channel is its state-semantics backing)
+
+**GraphRuntime**:
+The framework-defined ABC that lets a `Node` invoke AOP concerns (hooks, snapshot, control drain, governance, approval suspension) without the Graph Engine knowing their concrete types. Lives in the Graph Engine package as an ABC with no-op default methods. `modex_agent` provides `ReactGraphRuntime` (and similar) implementations that bridge to `HookRunner` / `SnapshotPolicy` / `ControlChannel` / `ApprovalRuntime`. A standalone graph user supplies `GraphRuntime()` (no-op defaults) or their own subclass. The engine calls `ctx.runtime.hooks(point, ctx)` / `ctx.runtime.capture_snapshot(ctx, reason)` / `ctx.runtime.drain_control(ctx)` at well-defined points; default no-ops make the Graph Engine runnable with zero AOP wiring.
+_Avoid_: runtime services (that is `AgentRuntimeServices`), runtime context (too generic), graph services
+
+**GraphBubbleUp**:
+The control-flow-via-exception family for the Graph Engine. Base class `GraphBubbleUp(Exception)`; concrete subclasses `GraphInterrupt` (HITL suspend, raised by `ctx.interrupt(value)`), `GraphDrained` (cooperative shutdown, raised at superstep boundary when a drain is requested — planned Phase c), `ParentCommand` (subgraph→parent routing, planned Phase c). The engine never swallows these; they propagate to the caller (typically `TurnRunner.process_locked`). Reinforces the existing "never catch and swallow `GraphInterrupt`" rule with a formal exception hierarchy.
+_Avoid_: graph exception (too generic), control exception (collides with `modex_agent/control/`)
 
 **GraphInterrupt**:
 The exception type nodes raise to pause graph execution after persisting resumable turn state. Carries `value`, `node_name`, `iteration`. Approval suspension is the primary producer. Must propagate upward — never caught and swallowed.
@@ -221,7 +245,7 @@ Read-only re-rendering of a recorded trace — no code executes, no LLM calls fi
 _Avoid_: replay (ambiguous — qualify with the level)
 
 **Checkpoint Re-execution** (reproducibility level 2):
-Resume agent execution from a saved graph-state snapshot; nodes after the checkpoint re-run, including fresh LLM calls (non-deterministic). The default reproducibility level in ModexAgent. Served by the Repro Path (通路 B1). Built on existing `TurnSnapshot` / `RuntimeStateCodec` infrastructure, extended to per-iteration granularity via `AfterIterationHook`-driven checkpointing. The industry analog is LangGraph's time-travel.
+Resume agent execution from a saved graph-state snapshot; nodes after the checkpoint re-run, including fresh LLM calls (non-deterministic). The default reproducibility level in ModexAgent. Served by the Repro Path (通路 B1). Built on existing `TurnSnapshot` / `RuntimeStateCodec` infrastructure, extended to per-iteration granularity via `AfterIterationHook`-driven checkpointing.
 _Avoid_: replay (too ambiguous), deterministic replay (this level is NOT deterministic)
 
 **Deterministic Replay** (reproducibility level 4):
@@ -298,8 +322,8 @@ _Avoid_: pool bundle (use "Pool Instance" for deployment-scoped runtime resource
 - A **Pool** is described by exactly one **PoolConfig**; multiple pools in one workspace each have their own `PoolConfig`.
 - A **Pool** contains one **Main Agent** (the entry point) and zero or more subagents. Subagents are not separate pools — they share the pool's bus, broker, and tracker.
 - **Assembly** turns `AppConfig` (root) into nested `PoolConfig` instances, then into `Pool` runtime objects held by a `Workspace`.
-- A **ReAct Agent** runs on a **Graph**; the graph is the execution substrate, the ReAct agent is one configuration of it (4-node loop).
-- A **GraphInterrupt** is raised by a `Node[R]`; the engine propagates it, the pipeline catches it for approval, and re-enters the graph after persistence.
+- A **ReAct Agent** runs on the **Graph Engine**; the graph is the execution substrate, the ReAct agent is one configuration of it (4-node loop). Other tool-using agents (`ArchiveSummarizer`/`KnowledgeConsolidator`/`ExperienceReviewAgent`) inherit `ScopedFileAgent` and internally construct a `ReActAgent` in clean mode, so they indirectly use the Graph Engine. `ExternalCodingAgent` does NOT use the Graph Engine — it drives a subprocess streaming harness directly.
+- A **GraphInterrupt** is raised by a `Node[S]` (via `ctx.interrupt(value)`); the engine propagates it as part of the **GraphBubbleUp** family, the `TurnRunner` catches it for approval, and re-enters the graph after persistence. The Graph Engine's interrupt model is **suspend-without-re-execution** (the node's already-applied state updates persist; resume re-enters at the next iteration).
 - **Terminal Visibility** is the second upstream-visible design axis of the terminal system (alongside **Shell Family**). The OS axis does NOT exist at this level: Windows-vs-Linux is an implementation fork realised inside `TerminalBackend` subclasses. **Two invariants**: (a) the manager layer (`BaseTerminalManager`) is forked ONLY by (Shell Family, Visibility), never by OS or by capability — capabilities are folded inward as default-off flags per ADR-0010 Decision 8; (b) `_expected_state` (set by `set_expected_state(...)`, consumed by `detect_interference` on visible sessions via `TerminalTool`) and the trio `_busy_after_timeout` / `_last_status` / `_command_started_at` (updated by `apply_outcome(...)`) are **two orthogonal state slots** in `TerminalSession` and coexist under ADR-0010 Decision 7 — neither subsumes the other.
 - Every inter-agent message flows through one per-pool **Agent Inbox** addressed to a receiver session. The pool's **InboxPoller** is the sole between-turn driver; **single-flight** per session is enforced by an `inflight` task table (no per-session lock). A message arriving mid-turn is **folded into** the running turn (`InboxFlushHook`, inter-agent types only), not turned into a follow-up turn; a human DM (`external_input`) is left for the next between-turn. A subagent instance is **materialized** on the first turn of its session. Both directions — `send_to_agent` (agent→agent `task_request`) and the subagent reply (`SubagentAutoSendHook` → `agent_result`) — converge on one carrier, `bus.send(session_id, envelope)`. Decided in ADR-0015 as revised by the poll-driven redesign.
 
