@@ -17,7 +17,10 @@ with five star-topology adjustments mandated by ADR-0027:
    ``modex_session_id`` and bounded across the process.
 2. **ExternalEnvSpec**: per-invocation, ``MODEX_TARGETS`` contains only the
    parent agent (star topology — subagents never talk to peers).
-   ``MODEX_AGENT_POOL_MAP`` carries only this subagent's own pool.
+   ``MODEX_AGENT_POOL_MAP`` carries this subagent's own pool plus the
+   parent's pool entry (both in the same pool — subagents are registered
+   into the parent's pool) so ``modexctl send --to <parent>`` can resolve
+   the target pool.
 3. **HookRunner**: carries :class:`SubagentAutoSendHook` (T7) with
    ``execution_strategy=EXTERNAL_CODING`` and the per-workdir
    ``external_outbox_path``. ``ExternalTurnRunner`` dispatches
@@ -204,6 +207,27 @@ class BotSubagentExternalCodingBuilder(SubagentExternalCodingBuilder):
         inbox_root = self._resolve_inbox_root(deps, workspace_dir)
 
         # ── 1. ExternalEnvSpec (per-invocation, star-topology targets) ──
+        #
+        # Dynamism across three time scales:
+        #   • per-invocation — DYNAMIC. Each parent→child call rebuilds this
+        #     spec with the caller's parent_name.
+        #   • per-turn       — STATIC. ExternalCodingAgent._run_turn refreshes
+        #     only session_id + workdir via model_copy; agent_pool_map and
+        #     targets are frozen for the agent's lifetime. (spec.md claims a
+        #     per-turn refresh from CommunicationTargetStore — never
+        #     implemented; this is a known spec deviation.)
+        #   • runtime-config — STATIC. pool_spec.subagents/peers are read
+        #     from disk at bot boot; WebUI peer add/remove mutates only the
+        #     native CommunicationTargetStore, not this external snapshot.
+        #     A pool restart is required for changes to take effect here.
+        #
+        # agent_pool_map must include the parent so `modexctl send --to <parent>`
+        # can resolve the parent's pool. Subagents are registered into the
+        # parent's pool (AgentTemplate._materialize_external → pool.register_resident),
+        # so the parent's pool is self._pool_name.
+        agent_pool_map: dict[str, str] = {agent_name: self._pool_name}
+        if parent_name:
+            agent_pool_map[parent_name] = self._pool_name
         env_spec = ExternalEnvSpec(
             workspace_root=workspace_dir,
             inbox_root=inbox_root,
@@ -211,7 +235,7 @@ class BotSubagentExternalCodingBuilder(SubagentExternalCodingBuilder):
             session_id=session_id,
             agent_name=agent_name,
             provider_session_id="",  # fresh — session_store resolves/commits
-            agent_pool_map={agent_name: self._pool_name},
+            agent_pool_map=agent_pool_map,
             targets=[(parent_name, "")] if parent_name else [],
             modexctl_bin_dir=_modexctl_bin_dir(),
         )

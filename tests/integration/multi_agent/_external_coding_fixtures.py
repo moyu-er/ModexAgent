@@ -669,6 +669,7 @@ class _ExternalSubagentBundle:
         )
 
         # Per-invocation env spec — star topology (only parent in targets).
+        # agent_pool_map includes the parent (same pool) so modexctl send can route.
         env_spec = ExternalEnvSpec(
             workspace_root=workdir,
             inbox_root=workdir / ".modex" / "inbox",
@@ -676,7 +677,7 @@ class _ExternalSubagentBundle:
             session_id=f"inv.{subagent_name}",
             agent_name=subagent_name,
             provider_session_id="",
-            agent_pool_map={subagent_name: pool_name},
+            agent_pool_map={subagent_name: pool_name, parent_name: pool_name},
             targets=[(parent_name, "")],
             modexctl_bin_dir=workdir / "bin",
         )

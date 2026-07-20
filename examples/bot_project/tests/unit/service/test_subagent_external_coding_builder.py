@@ -296,12 +296,58 @@ async def test_build_env_spec_targets_only_parent_star_topology(
 
     spec_template: ExternalEnvSpec = _external_agent(instance)._spec_template
     assert spec_template.targets == [("main", "")]
-    # agent_pool_map contains ONLY this subagent's own pool entry.
-    assert spec_template.agent_pool_map == {"coder": "default"}
+    # Parent shares the subagent's pool (registered via pool.register_resident).
+    assert spec_template.agent_pool_map == {"coder": "default", "main": "default"}
     # session_id is invocation-prefixed.
     assert spec_template.session_id == "inv123.coder"
     # provider_session_id is empty — session_store resolves/commits it.
     assert spec_template.provider_session_id == ""
+
+
+@pytest.mark.asyncio
+async def test_build_env_spec_agent_pool_map_includes_parent_for_modexctl_reply(
+    tmp_path: Path,
+) -> None:
+    """``MODEX_AGENT_POOL_MAP`` must include the parent so ``modexctl send`` can route.
+
+    Regression: external-coding subagent ``worker`` could not reply to parent
+    ``orchestrator`` — ``modexctl send --to orchestrator`` raised
+    ``target 'orchestrator' not in MODEX_AGENT_POOL_MAP (known: ['worker'])``
+    because ``agent_pool_map`` omitted the parent. Subagents are registered
+    into the parent's pool, so the parent's pool equals ``self._pool_name``.
+    """
+    builder = BotSubagentExternalCodingBuilder(
+        pool_name="default",
+        project_dir=tmp_path,
+        data_dir=tmp_path / ".modex",
+    )
+    spec = _make_subagent_spec(agent_name="worker")
+    descriptor = _make_descriptor(agent_name="worker")
+    deps = _make_deps(
+        broker=MagicMock(),
+        agent_bus=MagicMock(),
+        project_dir=tmp_path,
+    )
+
+    instance = await builder.build(
+        spec=spec,
+        descriptor=descriptor,
+        parent_session="inv123.orchestrator",
+        invocation_id="inv123",
+        deps=deps,
+    )
+
+    spec_template: ExternalEnvSpec = _external_agent(instance)._spec_template
+    assert "orchestrator" in spec_template.agent_pool_map
+    assert spec_template.agent_pool_map["orchestrator"] == "default"
+    assert spec_template.agent_pool_map["worker"] == "default"
+
+    env = ExternalEnvBuilder.build(spec_template, base_env={"PATH": "/usr/bin"})
+    from modexctl.main import _parse_pool_map, _resolve_target_pool
+
+    pool_map = _parse_pool_map(env["MODEX_AGENT_POOL_MAP"])
+    assert _resolve_target_pool(pool_map, "orchestrator") == "default"
+    assert _resolve_target_pool(pool_map, "worker") == "default"
 
 
 @pytest.mark.asyncio
@@ -363,7 +409,7 @@ async def test_build_env_spec_passes_through_env_builder_for_modex_targets(
     spec_template: ExternalEnvSpec = _external_agent(instance)._spec_template
     env = ExternalEnvBuilder.build(spec_template, base_env={"PATH": "/usr/bin"})
     assert env["MODEX_TARGETS"] == "main="
-    assert env["MODEX_AGENT_POOL_MAP"] == "coder=default"
+    assert env["MODEX_AGENT_POOL_MAP"] == "coder=default;main=default"
     assert env["MODEX_SESSION_ID"] == "inv123.coder"
     assert env["MODEX_AGENT_NAME"] == "coder"
     assert env["MODEX_PROVIDER_SESSION_ID"] == ""

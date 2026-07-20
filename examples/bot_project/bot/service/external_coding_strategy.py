@@ -368,6 +368,24 @@ def build_external_coding_env_spec(
 
     Kept as a module-level function because tests import it directly
     (``test_builders_inbox.py``).
+
+    Dynamism across two time scales (no per-invocation dimension — main
+    agents are assembled once at boot):
+      • per-turn       — STATIC. ``ExternalCodingAgent._run_turn`` refreshes
+        only session_id + workdir via model_copy; agent_pool_map and
+        targets are frozen for the agent's lifetime. (spec.md claims a
+        per-turn refresh from CommunicationTargetStore — never implemented;
+        known spec deviation.)
+      • runtime-config — STATIC. pool_spec.subagents/peers are read from
+        disk at bot boot; WebUI peer add/remove mutates only the native
+        CommunicationTargetStore, not this external snapshot. A pool
+        restart is required for changes to take effect here.
+
+    The ``targets`` ⊆ ``agent_pool_map.keys()`` invariant holds: every
+    name in targets (subagents + peers' mains) has a pool_map entry, so
+    ``modexctl send --to <any target>`` always resolves. The main agent's
+    own name is in pool_map but not in targets (main never self-sends;
+    modexctl rejects self-send explicitly).
     """
     return ExternalEnvSpec(
         workspace_root=workspace_dir,
