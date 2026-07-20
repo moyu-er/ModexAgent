@@ -4,7 +4,7 @@
 
 **Blocked by:** 04 — node code must use `ctx.runtime.*` AOP and `ctx.state.x` access patterns, ready for the new `GraphContext` to provide them.
 
-**Status:** ready-for-agent
+**Status:** completed (commit 8045db1b)
 
 ## Acceptance criteria
 

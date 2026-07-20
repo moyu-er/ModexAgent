@@ -1,6 +1,7 @@
-"""SummarizerAgent — lightweight, tool-free agent for text summarization and analysis."""
+"""Summarizer package — file-scoped ReAct agents for offline memory processing.
 
-from modex_agent.agents.summarizer.agent import SummarizerAgent, SummarizerEvent
-from modex_agent.agents.summarizer.strategy import DefaultSummarizerStrategy, SummarizerStrategy
-
-__all__ = ["DefaultSummarizerStrategy", "SummarizerAgent", "SummarizerEvent", "SummarizerStrategy"]
+The deprecated single-turn ``SummarizerAgent`` and its ``SummarizerStrategy``
+helpers were removed (graph-engine migration D10). The remaining agents
+(``ArchiveSummarizer``, ``KnowledgeConsolidator``, ``ScopedFileAgent``) are
+still in use by ``DreamEngine`` and are imported from their own modules.
+"""

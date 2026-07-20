@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately. Fully independent of tickets 01-05.
 
-**Status:** ready-for-agent
+**Status:** completed (commit 603c2953)
 
 ## Acceptance criteria
 
