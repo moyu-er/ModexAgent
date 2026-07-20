@@ -13,7 +13,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from modex_agent.agents.react.state import ReActSnapshotPolicy
+from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
 from modex_agent.approval.constants import ApprovalDecision
 from modex_agent.approval.types import ApprovalAction
 from modex_agent.approval.views import view_from_request
@@ -112,7 +112,7 @@ class ApprovalResumer:
         precision); ``None`` keeps the legacy decide-next-PENDING behaviour
         for IM ``/approve``.
         """
-        approval = ReActSnapshotPolicy.approval_from_snapshot(snapshot)
+        approval = ReActTurnState.from_checkpoint(dict(snapshot.state_payload)).approval
         if approval is None:
             return None
 
@@ -143,7 +143,12 @@ class ApprovalResumer:
             pool_data.decision_coordinator if pool_data is not None else None
         )
         if decided_request is not None and coordinator is not None:
-            turn_uuid = snapshot.state_payload.get(TurnCustomKey.TURN_UUID.value)
+            # In the NEW checkpoint format (Pydantic model_dump), turn_uuid
+            # lives inside the ``custom`` dict, not at the top level.
+            custom = snapshot.state_payload.get("custom", {})
+            if not isinstance(custom, dict):
+                custom = {}
+            turn_uuid = custom.get(TurnCustomKey.TURN_UUID.value)
             if not isinstance(turn_uuid, str):
                 raise MissingApprovalTurnUuidError(
                     "Persisted approval snapshot has no turn UUID"

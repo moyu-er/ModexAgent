@@ -11,7 +11,6 @@ import pytest
 
 from modex_agent.agents.react.state import (
     ReActRuntimeStateCodec,
-    ReActSnapshotPayloadKey,
 )
 from modex_agent.core.scope import RecordScope
 from modex_agent.core.session_id import SessionInfo
@@ -98,10 +97,10 @@ def _make_snapshot(
         turn_id=turn_id,
     )
     state_payload: dict[str, JsonValue] = {
-        ReActSnapshotPayloadKey.CURRENT_NODE.value: "tool",
-        ReActSnapshotPayloadKey.ITERATION.value: 1,
-        ReActSnapshotPayloadKey.TOOL_BATCHES.value: [],
-        TurnCustomKey.TURN_UUID.value: turn_uuid,
+        "current_node": "tool",
+        "iteration": 1,
+        "tool_batches": [],
+        "custom": {TurnCustomKey.TURN_UUID.value: turn_uuid},
     }
     return TurnSnapshot(
         identity=identity,
@@ -167,8 +166,8 @@ async def test_apply_decision_rejects_mismatched_identity_without_writes(
     ("state_payload_update", "remove_turn_uuid"),
     [
         ({}, True),
-        ({TurnCustomKey.TURN_UUID.value: 123}, False),
-        ({TurnCustomKey.TURN_UUID.value: "other-uuid"}, False),
+        ({"custom": {TurnCustomKey.TURN_UUID.value: 123}}, False),
+        ({"custom": {TurnCustomKey.TURN_UUID.value: "other-uuid"}}, False),
     ],
 )
 async def test_apply_decision_rejects_invalid_persisted_turn_uuid_without_writes(
@@ -181,7 +180,9 @@ async def test_apply_decision_rejects_invalid_persisted_turn_uuid_without_writes
     snapshot = _make_snapshot()
     state_payload = dict(snapshot.state_payload)
     if remove_turn_uuid:
-        state_payload.pop(TurnCustomKey.TURN_UUID.value)
+        custom = state_payload.get("custom")
+        if isinstance(custom, dict):
+            custom.pop(TurnCustomKey.TURN_UUID.value, None)
     state_payload.update(state_payload_update)
     invalid_snapshot = TurnSnapshot(
         identity=snapshot.identity,

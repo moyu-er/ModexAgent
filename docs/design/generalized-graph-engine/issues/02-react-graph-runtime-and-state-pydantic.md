@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 — `modex_graph` package must exist with `GraphRuntime` ABC + `register_codec` API + `Codec` type.
 
-**Status:** ready-for-agent
+**Status:** completed (commit ab1543b2)
 
 ## Acceptance criteria
 

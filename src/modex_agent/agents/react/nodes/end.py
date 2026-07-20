@@ -66,7 +66,17 @@ class EndNode(Node):
 
         if ctx.emitter is not None:
             await ctx.emitter.emit_complete(result)
-        ctx.runtime.state.custom[TurnCustomKey.GRAPH_RESULT] = result
+        # ADR-0033 D9.3: write to the explicit ``state.result`` field instead
+        # of the old ``custom[TurnCustomKey.GRAPH_RESULT]`` dict escape hatch.
+        # ``ReActAgent.run()`` reads ``state.result`` after the engine returns.
+        # Still uses old engine (``ctx.runtime.state``) — ticket 04 changes to
+        # ``ctx.state.result``.
+        # Backward compat: also write to ``custom[GRAPH_RESULT]`` so the old
+        # ``result_extractor`` in graph.py and existing tests that read
+        # ``custom[GRAPH_RESULT]`` continue to work. Ticket 04 removes this.
+        if state is not None:
+            state.result = result
+            state.custom[TurnCustomKey.GRAPH_RESULT] = result
 
         if state is not None:
             state.mark_completed()

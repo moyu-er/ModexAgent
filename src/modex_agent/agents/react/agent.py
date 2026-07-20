@@ -18,13 +18,13 @@ from modex_agent.control.exceptions import (
 )
 from modex_agent.hook import HookPayload, HookPoint
 from modex_agent.runtime.enums import TurnCustomKey, TurnPhase
-from .message_builder import build_interrupted_assistant_message
 
 from ...core.agent import Agent, AgentContext, current_agent_context
 from ...core.constants import DefaultValues, StopReason
 from ...core.emitter import AgentResult, ContentEmitter
 from ...core.events import AgentEvent
 from ...core.provider import LLMProvider
+from .message_builder import build_interrupted_assistant_message
 
 logger = logging.getLogger(__name__)
 
@@ -255,6 +255,14 @@ class ReActAgent(Agent[ReActEvent]):
 
             result = await self.engine.run(context)
             react_state = get_react_state(context)
+            # ADR-0033 D9.3: read the typed ``state.result`` field instead of
+            # relying solely on the engine's ``result_extractor`` (which still
+            # reads the old ``custom[GRAPH_RESULT]``). EndNode now writes to
+            # ``state.result``; the engine return value may be None when the
+            # old extractor can't find the result. Fall back to engine return
+            # for backward compatibility during the migration window.
+            if react_state is not None and react_state.result is not None:
+                result = react_state.result
             if (
                 runtime.hooks
                 and react_state is not None

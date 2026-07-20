@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 — ReAct state types must be Pydantic `BaseModel` + channel codec registrations must exist.
 
-**Status:** ready-for-agent
+**Status:** completed (commit 5ef5e3fb)
 
 ## Acceptance criteria
 

@@ -1,39 +1,48 @@
-"""ReAct typed turn state, snapshot policy, and runtime state codec."""
+"""ReAct typed turn state, snapshot policy, and runtime state codec.
+
+Per ADR-0033 Stage 2 (ticket 03): ``ReActTurnState`` migrates from a plain
+``TurnStateBase`` dataclass subclass to a ``GraphState(BaseModel)`` subclass
+with per-field ``Annotated[T, LastValue]`` channel declarations.
+``ReActSnapshotPolicy`` is simplified from ~310 lines of hand-written payload
+flattening to ~50 lines calling ``state.checkpoint()`` /
+``state.from_checkpoint()``.
+
+ReAct still uses the old ``core/graph/`` engine for execution — only the state
+type and snapshot path changed. Ticket 04 will switch to the new
+``modex_graph`` engine and disassemble the god nodes.
+"""
 
 from __future__ import annotations
 
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass, field
-from enum import StrEnum
-from uuid import uuid4
+from typing import Annotated, Any
 
-from modex_agent.approval.constants import ApprovalDecision, ApprovalStatus, ApprovalTier
+from pydantic import Field
+
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.emitter import AgentResult
+from modex_agent.core.llm_struct import LLMErrorInfo  # noqa: F401 — needed for model_rebuild()
+from modex_agent.core.message import ChatMessage  # noqa: F401 — needed for model_rebuild()
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import LLMResponse
 from modex_agent.runtime.codec import RuntimeStateCodec, RuntimeStateCodecConfig
 from modex_agent.runtime.enums import (
     AgentKind,
-    ApprovalSubjectType,
     MessageDeltaSource,
     OperationKind,
-    OperationStatus,
     SnapshotReason,
     ToolBatchStatus,
     ToolCallStatus,
-    TurnCustomKey,
     TurnPhase,
 )
 from modex_agent.runtime.models import (
-    ApprovalRequestState,
     ApprovalTransaction,
+    CancellationState,
     JsonValue,
     MessageDelta,
     OperationState,
     ResumePoint,
-    ToolArguments,
     ToolBatchState,
     ToolCallState,
     TurnIdentity,
@@ -41,75 +50,105 @@ from modex_agent.runtime.models import (
     TurnStateBase,
 )
 from modex_agent.runtime.policy import SnapshotPolicy
+from modex_graph.channel import LastValue
+from modex_graph.state import GraphState
 
 from .constants import ReActNode
 
 # =========================================================================
-# ReActTurnState
+# ReActTurnState — GraphState(BaseModel) + TurnStateBase
 # =========================================================================
 
 
-class ReActSnapshotPayloadKey(StrEnum):
-    CURRENT_NODE = "current_node"
-    ITERATION = "iteration"
-    TOOL_BATCHES = "tool_batches"
-    APPROVAL = "approval"
-    TURN_UUID = TurnCustomKey.TURN_UUID.value
+class ReActTurnState(GraphState, TurnStateBase):
+    """ReAct-specific turn state — a ``GraphState(BaseModel)`` subclass.
 
+    Inherits ``TurnStateBase`` (for ``isinstance`` compatibility and shared
+    methods like ``add_operation`` / ``update_operation``) and ``GraphState``
+    (for per-field channel declaration + ``checkpoint()`` /
+    ``from_checkpoint()``).
 
-class ToolBatchSnapshotKey(StrEnum):
-    BATCH_ID = "batch_id"
-    ITERATION = "iteration"
-    STATUS = "status"
-    APPROVAL_ID = "approval_id"
-    OPERATION_ID = "operation_id"
-    CALLS = "calls"
+    All fields are declared with ``Annotated[T, LastValue]`` per ADR-0033 D4.
+    The new explicit ``result`` field replaces the old
+    ``custom[TurnCustomKey.GRAPH_RESULT]`` pattern (ADR-0033 D9.3).
 
-
-class ToolCallSnapshotKey(StrEnum):
-    CALL_ID = "call_id"
-    TOOL_NAME = "tool_name"
-    ARGUMENTS = "arguments"
-    APPROVAL_ID = "approval_id"
-    DECISION = "decision"
-    STATUS = "status"
-
-
-class ApprovalSnapshotKey(StrEnum):
-    APPROVAL_ID = "approval_id"
-    TURN_ID = "turn_id"
-    SUBJECT_TYPE = "subject_type"
-    SUBJECT_IDS = "subject_ids"
-    REQUESTS = "requests"
-    DECISIONS = "decisions"
-    STATUS = "status"
-    DENY_REASON = "deny_reason"
-
-
-class ApprovalRequestSnapshotKey(StrEnum):
-    REQUEST_ID = "request_id"
-    APPROVAL_ID = "approval_id"
-    TOOL_CALL_ID = "tool_call_id"
-    TOOL_NAME = "tool_name"
-    ARGUMENTS = "arguments"
-    TIER = "tier"
-    ITERATION = "iteration"
-    CREATED_AT = "created_at"
-
-
-@dataclass
-class ReActTurnState(TurnStateBase):
-    """ReAct-specific turn state — extends the generic turn state base.
-
-    Graph nodes read and write this object directly through
-    ``AgentContext.runtime.state``.
+    ``checkpoint()`` / ``from_checkpoint()`` are overridden to use Pydantic's
+    ``model_dump(mode='json')`` / ``model_validate()`` — this handles all
+    field types (BaseModels, dataclasses, enums, primitives, nested types)
+    without per-type codec registration for non-Pydantic types like
+    ``TurnIdentity`` / ``LLMResponse`` / ``AgentResult``.
     """
 
-    current_node: ReActNode = ReActNode.START
-    iteration: int = 0
-    llm_response: LLMResponse | None = None
-    tool_batches: list[ToolBatchState] = field(default_factory=list)
-    approval: ApprovalTransaction | None = None
+    # ---- TurnStateBase fields (re-declared for Pydantic compatibility) ----
+    # TurnStateBase is a @dataclass; its fields use dataclasses.field() for
+    # defaults, which Pydantic v2 doesn't process when inherited. Re-declaring
+    # with pydantic.Field() ensures correct default handling + Annotated channel
+    # metadata. The types match TurnStateBase exactly.
+    identity: Annotated[TurnIdentity, LastValue] = Field(
+        default_factory=lambda: TurnIdentity(
+            agent_id="react",
+            session=SessionInfo.from_str("default"),
+            turn_id="default",
+        )
+    )
+    agent_kind: Annotated[AgentKind, LastValue] = AgentKind.REACT
+    phase: Annotated[TurnPhase, LastValue] = TurnPhase.CREATED
+    created_at: Annotated[float, LastValue] = Field(default_factory=time.time)
+    updated_at: Annotated[float, LastValue] = Field(default_factory=time.time)
+    message_delta: Annotated[list[MessageDelta], LastValue] = Field(default_factory=list)
+    operations: Annotated[list[OperationState], LastValue] = Field(default_factory=list)
+    cancellation: Annotated[CancellationState | None, LastValue] = None
+    custom: Annotated[dict[str, Any], LastValue] = Field(default_factory=dict)
+
+    # ---- ReAct-specific fields ----
+    current_node: Annotated[ReActNode, LastValue] = ReActNode.START
+    iteration: Annotated[int, LastValue] = 0
+    llm_response: Annotated[LLMResponse | None, LastValue] = None
+    tool_batches: Annotated[list[ToolBatchState], LastValue] = Field(default_factory=list)
+    approval: Annotated[ApprovalTransaction | None, LastValue] = None
+    # NEW (ADR-0033 D9.3): explicit result field replaces
+    # custom[TurnCustomKey.GRAPH_RESULT]. Written by EndNode, read by
+    # ReActAgent.run() after engine returns.
+    result: Annotated[AgentResult | None, LastValue] = None
+
+    # ---- checkpoint / from_checkpoint (override GraphState per-channel
+    #      mechanism with Pydantic model_dump / model_validate) ----
+    #
+    # Pydantic's built-in serialization handles all field types correctly:
+    # - Pydantic BaseModels (ApprovalTransaction, ToolBatchState, etc.) via
+    #   model_dump / model_validate.
+    # - Dataclasses (TurnIdentity, LLMResponse, AgentResult, MessageDelta,
+    #   OperationState, CancellationState) via Pydantic's dataclass support.
+    # - Enums (ReActNode, AgentKind, TurnPhase, etc.) via value serialization.
+    # - Primitives (int, float, str, bool, None) pass through.
+    #
+    # The per-channel mechanism in GraphState.checkpoint() uses
+    # encode_value() / decode_value() which has a known limitation: PEP 604
+    # pipe unions (``T | None``) produce ``types.UnionType`` which
+    # ``decode_value`` doesn't handle (it only checks ``origin is Union`` from
+    # ``typing``). Using ``Optional[T]`` (typing.Optional) works around this
+    # for BaseModel fields with registered codecs, but dataclass types without
+    # codecs still fall through to the lossy ``str(value)`` fallback.
+    # ``model_dump`` / ``model_validate`` avoids all these issues.
+
+    def checkpoint(self) -> dict[str, JsonValue]:
+        """Serialize state to ``dict[str, JsonValue]`` via Pydantic model_dump.
+
+        Round-trips with ``from_checkpoint(data)``. The returned dict is
+        JSON-serializable and can be persisted directly as
+        ``TurnSnapshot.state_payload``.
+        """
+        return self.model_dump(mode="json")
+
+    @classmethod
+    def from_checkpoint(cls, data: dict[str, Any]) -> ReActTurnState:
+        """Reconstruct a state instance from a checkpoint dict.
+
+        Round-trips with ``checkpoint()``. Uses Pydantic's ``model_validate``
+        which handles all field types including nested dataclasses and
+        BaseModels.
+        """
+        return cls.model_validate(data)
 
     # ---- tool batch helpers ----
 
@@ -118,7 +157,7 @@ class ReActTurnState(TurnStateBase):
         iteration: int,
         calls: list[ToolCallState],
     ) -> ToolBatchState:
-        batch_id = uuid4().hex
+        batch_id = uuid4_hex()
         op = self.add_operation(OperationKind.TOOL_BATCH, batch_id)
         batch = ToolBatchState(
             batch_id=batch_id,
@@ -152,6 +191,13 @@ class ReActTurnState(TurnStateBase):
         self.updated_at = time.time()
 
 
+def uuid4_hex() -> str:
+    """Generate a UUID4 hex string (isolated for testability)."""
+    from uuid import uuid4
+
+    return uuid4().hex
+
+
 def require_react_state(ctx: AgentContext) -> ReActTurnState:
     """Validate and return typed ReActTurnState from AgentContext.runtime.state."""
     runtime = ctx.runtime
@@ -171,13 +217,30 @@ def get_react_state(ctx: AgentContext) -> ReActTurnState | None:
     return state if isinstance(state, ReActTurnState) else None
 
 
+# Resolve forward references. MessageDelta references ChatMessage (imported
+# under TYPE_CHECKING in runtime/models.py) and LLMResponse references
+# LLMErrorInfo (imported under TYPE_CHECKING in core/types.py). The runtime
+# imports above (ChatMessage, LLMResponse) make these resolvable.
+ReActTurnState.model_rebuild()
+
+
 # =========================================================================
-# ReActSnapshotPolicy
+# ReActSnapshotPolicy — simplified via state.checkpoint() / from_checkpoint()
 # =========================================================================
 
 
 class ReActSnapshotPolicy(SnapshotPolicy):
-    """ReAct-specific snapshot policy — captures current_node, iteration, tool_batches, approval."""
+    """ReAct-specific snapshot policy.
+
+    Captures the full ``ReActTurnState`` via ``state.checkpoint()`` (Pydantic
+    ``model_dump``) and restores via ``state.from_checkpoint()`` (Pydantic
+    ``model_validate``). The old ``_build_payload`` (~230 lines),
+    ``serialize_approval`` (~30 lines), ``approval_from_snapshot`` (~60 lines),
+    and ``state_from_snapshot`` (~80 lines) are collapsed to ~50 lines total.
+
+    ``ApprovalTransaction`` is now a ``LastValue`` channel field that uses
+    Pydantic's built-in serialization — no hand-written codec pair.
+    """
 
     def should_capture(self, state: TurnStateBase, reason: SnapshotReason) -> bool:
         return True
@@ -194,212 +257,45 @@ class ReActSnapshotPolicy(SnapshotPolicy):
             reason=reason,
             resume_point=ResumePoint(agent_kind=AgentKind.REACT, phase=state.phase),
             message_delta=list(state.message_delta),
-            state_payload=self._build_payload(state),
-        )
-
-    def _build_payload(self, state: ReActTurnState) -> dict[str, JsonValue]:
-        payload: dict[str, JsonValue] = {
-            ReActSnapshotPayloadKey.CURRENT_NODE.value: state.current_node.value,
-            ReActSnapshotPayloadKey.ITERATION.value: state.iteration,
-            ReActSnapshotPayloadKey.TOOL_BATCHES.value: [
-                {
-                    ToolBatchSnapshotKey.BATCH_ID.value: b.batch_id,
-                    ToolBatchSnapshotKey.ITERATION.value: b.iteration,
-                    ToolBatchSnapshotKey.STATUS.value: b.status.value,
-                    ToolBatchSnapshotKey.APPROVAL_ID.value: b.approval_id,
-                    ToolBatchSnapshotKey.OPERATION_ID.value: b.operation_id,
-                    ToolBatchSnapshotKey.CALLS.value: [
-                        {
-                            ToolCallSnapshotKey.CALL_ID.value: tc.call_id,
-                            ToolCallSnapshotKey.TOOL_NAME.value: tc.tool_name,
-                            ToolCallSnapshotKey.ARGUMENTS.value: dict(tc.arguments.values),
-                            ToolCallSnapshotKey.APPROVAL_ID.value: tc.approval_id,
-                            ToolCallSnapshotKey.DECISION.value: tc.decision.value
-                            if tc.decision
-                            else None,
-                            ToolCallSnapshotKey.STATUS.value: tc.status.value,
-                        }
-                        for tc in b.calls
-                    ],
-                }
-                for b in state.tool_batches
-            ],
-        }
-        turn_uuid = state.custom.get(TurnCustomKey.TURN_UUID)
-        if turn_uuid is not None:
-            payload[ReActSnapshotPayloadKey.TURN_UUID.value] = turn_uuid
-        if state.approval is not None:
-            payload[ReActSnapshotPayloadKey.APPROVAL.value] = self.serialize_approval(
-                state.approval
-            )
-        return payload
-
-    @staticmethod
-    def serialize_approval(tx: ApprovalTransaction) -> dict[str, JsonValue]:
-        return {
-            ApprovalSnapshotKey.APPROVAL_ID.value: tx.approval_id,
-            ApprovalSnapshotKey.TURN_ID.value: tx.turn_id,
-            ApprovalSnapshotKey.SUBJECT_TYPE.value: tx.subject_type.value,
-            ApprovalSnapshotKey.SUBJECT_IDS.value: list(tx.subject_ids),
-            ApprovalSnapshotKey.REQUESTS.value: [
-                {
-                    ApprovalRequestSnapshotKey.REQUEST_ID.value: r.request_id,
-                    ApprovalRequestSnapshotKey.APPROVAL_ID.value: r.approval_id,
-                    ApprovalRequestSnapshotKey.TOOL_CALL_ID.value: r.tool_call_id,
-                    ApprovalRequestSnapshotKey.TOOL_NAME.value: r.tool_name,
-                    ApprovalRequestSnapshotKey.ARGUMENTS.value: dict(r.arguments.values),
-                    ApprovalRequestSnapshotKey.TIER.value: r.tier.value
-                    if hasattr(r.tier, "value")
-                    else str(r.tier),
-                    ApprovalRequestSnapshotKey.ITERATION.value: r.iteration,
-                    ApprovalRequestSnapshotKey.CREATED_AT.value: r.created_at,
-                }
-                for r in tx.requests
-            ],
-            ApprovalSnapshotKey.DECISIONS.value: {
-                k: v.value if hasattr(v, "value") else str(v) for k, v in tx.decisions.items()
-            },
-            ApprovalSnapshotKey.STATUS.value: tx.status.value
-            if hasattr(tx.status, "value")
-            else str(tx.status),
-            ApprovalSnapshotKey.DENY_REASON.value: tx.deny_reason,
-        }
-
-    @staticmethod
-    def approval_from_snapshot(snapshot: TurnSnapshot) -> ApprovalTransaction | None:
-        approval_data = snapshot.state_payload.get(ReActSnapshotPayloadKey.APPROVAL.value)
-        if not isinstance(approval_data, Mapping):
-            return None
-
-        requests: list[ApprovalRequestState] = []
-        raw_requests = approval_data.get(ApprovalSnapshotKey.REQUESTS.value, [])
-        if isinstance(raw_requests, list):
-            for request_data in raw_requests:
-                if not isinstance(request_data, Mapping):
-                    continue
-                requests.append(
-                    ApprovalRequestState(
-                        request_id=str(request_data[ApprovalRequestSnapshotKey.REQUEST_ID.value]),
-                        approval_id=str(request_data[ApprovalRequestSnapshotKey.APPROVAL_ID.value]),
-                        tool_call_id=str(
-                            request_data[ApprovalRequestSnapshotKey.TOOL_CALL_ID.value]
-                        ),
-                        tool_name=str(request_data[ApprovalRequestSnapshotKey.TOOL_NAME.value]),
-                        arguments=ToolArguments(
-                            values=dict(
-                                request_data.get(ApprovalRequestSnapshotKey.ARGUMENTS.value, {})
-                                or {}
-                            ),
-                        ),
-                        tier=ApprovalTier(str(request_data[ApprovalRequestSnapshotKey.TIER.value])),
-                        iteration=int(request_data[ApprovalRequestSnapshotKey.ITERATION.value]),
-                        created_at=float(
-                            request_data.get(
-                                ApprovalRequestSnapshotKey.CREATED_AT.value,
-                                snapshot.created_at,
-                            )
-                        ),
-                    )
-                )
-
-        raw_decisions = approval_data.get(ApprovalSnapshotKey.DECISIONS.value, {})
-        decisions = {
-            str(key): ApprovalDecision(str(value))
-            for key, value in dict(
-                raw_decisions if isinstance(raw_decisions, Mapping) else {}
-            ).items()
-        }
-        return ApprovalTransaction(
-            approval_id=str(approval_data[ApprovalSnapshotKey.APPROVAL_ID.value]),
-            turn_id=str(approval_data[ApprovalSnapshotKey.TURN_ID.value]),
-            subject_type=ApprovalSubjectType(
-                str(approval_data[ApprovalSnapshotKey.SUBJECT_TYPE.value])
-            ),
-            subject_ids=[
-                str(item) for item in approval_data.get(ApprovalSnapshotKey.SUBJECT_IDS.value, [])
-            ],
-            requests=requests,
-            decisions=decisions,
-            status=ApprovalStatus(str(approval_data[ApprovalSnapshotKey.STATUS.value])),
-            deny_reason=approval_data.get(ApprovalSnapshotKey.DENY_REASON.value),  # type: ignore[arg-type]
+            state_payload=state.checkpoint(),
         )
 
     @staticmethod
     def replace_approval(snapshot: TurnSnapshot, tx: ApprovalTransaction) -> TurnSnapshot:
-        payload = dict(snapshot.state_payload)
-        payload[ReActSnapshotPayloadKey.APPROVAL.value] = ReActSnapshotPolicy.serialize_approval(tx)
-        snapshot.state_payload = payload
+        """Replace the approval transaction in a snapshot.
+
+        Deserializes the state from ``snapshot.state_payload`` via
+        ``ReActTurnState.from_checkpoint()``, assigns ``state.approval = tx``
+        (mutable, not frozen), re-checkpoints via ``state.checkpoint()``, and
+        replaces ``snapshot.state_payload``.
+
+        Semantic preserved: the external approval decision path
+        (``ApprovalRenderer`` → ``apply_decision`` → ``replace_approval``)
+        works identically — ``ApprovalTransaction.decisions`` dict is mutated
+        by ``apply_decision``, then ``replace_approval`` persists the updated
+        transaction into the snapshot.
+        """
+        state = ReActTurnState.from_checkpoint(dict(snapshot.state_payload))
+        state.approval = tx
+        snapshot.state_payload = state.checkpoint()
         return snapshot
 
     @staticmethod
     def state_from_snapshot(snapshot: TurnSnapshot) -> ReActTurnState:
-        payload = snapshot.state_payload
-        state = ReActTurnState(
-            identity=snapshot.identity,
-            agent_kind=AgentKind.REACT,
-            phase=snapshot.phase,
-            current_node=ReActNode(str(payload[ReActSnapshotPayloadKey.CURRENT_NODE.value])),
-            iteration=int(payload[ReActSnapshotPayloadKey.ITERATION.value]),
-            message_delta=list(snapshot.message_delta),
-            approval=ReActSnapshotPolicy.approval_from_snapshot(snapshot),
-        )
-        turn_uuid = payload.get(ReActSnapshotPayloadKey.TURN_UUID.value)
-        if turn_uuid is not None:
-            state.custom[TurnCustomKey.TURN_UUID] = str(turn_uuid)
+        """Restore a ``ReActTurnState`` from a ``TurnSnapshot``."""
+        return ReActTurnState.from_checkpoint(dict(snapshot.state_payload))
 
-        raw_batches = payload.get(ReActSnapshotPayloadKey.TOOL_BATCHES.value, [])
-        if isinstance(raw_batches, list):
-            for batch_data in raw_batches:
-                if not isinstance(batch_data, Mapping):
-                    continue
-                calls: list[ToolCallState] = []
-                raw_calls = batch_data.get(ToolBatchSnapshotKey.CALLS.value, [])
-                if isinstance(raw_calls, list):
-                    for call_data in raw_calls:
-                        if not isinstance(call_data, Mapping):
-                            continue
-                        raw_decision = call_data.get(ToolCallSnapshotKey.DECISION.value)
-                        calls.append(
-                            ToolCallState(
-                                call_id=str(call_data[ToolCallSnapshotKey.CALL_ID.value]),
-                                tool_name=str(call_data[ToolCallSnapshotKey.TOOL_NAME.value]),
-                                arguments=ToolArguments(
-                                    values=dict(
-                                        call_data.get(ToolCallSnapshotKey.ARGUMENTS.value, {}) or {}
-                                    ),
-                                ),
-                                approval_id=call_data.get(ToolCallSnapshotKey.APPROVAL_ID.value),  # type: ignore[arg-type]
-                                decision=(
-                                    ApprovalDecision(str(raw_decision))
-                                    if raw_decision is not None
-                                    else None
-                                ),
-                                status=ToolCallStatus(
-                                    str(call_data[ToolCallSnapshotKey.STATUS.value])
-                                ),
-                            )
-                        )
-                state.tool_batches.append(
-                    ToolBatchState(
-                        batch_id=str(batch_data[ToolBatchSnapshotKey.BATCH_ID.value]),
-                        iteration=int(batch_data[ToolBatchSnapshotKey.ITERATION.value]),
-                        calls=calls,
-                        approval_id=batch_data.get(ToolBatchSnapshotKey.APPROVAL_ID.value),  # type: ignore[arg-type]
-                        status=ToolBatchStatus(str(batch_data[ToolBatchSnapshotKey.STATUS.value])),
-                        operation_id=batch_data.get(ToolBatchSnapshotKey.OPERATION_ID.value),  # type: ignore[arg-type]
-                    )
-                )
-                batch = state.tool_batches[-1]
-                if batch.operation_id is not None:
-                    state.operations.append(
-                        OperationState(
-                            operation_id=batch.operation_id,
-                            kind=OperationKind.TOOL_BATCH,
-                            status=OperationStatus.WAITING,
-                            subject_id=batch.batch_id,
-                        )
-                    )
-        return state
+    @staticmethod
+    def approval_from_snapshot(snapshot: TurnSnapshot) -> ApprovalTransaction | None:
+        """Extract the approval transaction from a snapshot.
+
+        Thin wrapper around ``ReActTurnState.from_checkpoint()`` — the OLD
+        60-line manual field-by-field reconstruction is replaced by Pydantic
+        ``model_validate``. Kept as a static method for backward compatibility
+        with call sites in ``pipeline/approval_resumer.py``,
+        ``pipeline/approval_renderer.py``, and tests.
+        """
+        return ReActTurnState.from_checkpoint(dict(snapshot.state_payload)).approval
 
 
 # =========================================================================
@@ -408,7 +304,14 @@ class ReActSnapshotPolicy(SnapshotPolicy):
 
 
 class ReActRuntimeStateCodec(RuntimeStateCodec):
-    """Codec that round-trips ReAct snapshot payloads."""
+    """Codec that round-trips ReAct snapshot payloads.
+
+    Essentially unchanged from pre-migration: encodes ``TurnSnapshot`` to a
+    JSON-compatible dict (payload ``dict[str, JsonValue]`` ↔ JSON bytes) and
+    decodes back. The structure of ``state_payload`` changed (field names
+    instead of custom enum keys), but the codec doesn't care about the
+    internal structure — it just passes the dict through.
+    """
 
     agent_kind = AgentKind.REACT
 
@@ -455,14 +358,15 @@ class ReActRuntimeStateCodec(RuntimeStateCodec):
                 phase=TurnPhase(str(resume_data["phase"])),
             ),
             message_delta=[
-                self._decode_message_delta(md) for md in payload.get("message_delta", [])
+                self._decode_message_delta(md)  # type: ignore[arg-type]
+                for md in payload.get("message_delta", [])  # type: ignore[union-attr]
             ],
-            state_payload=dict(payload.get("state_payload", {})),
-            schema_version=int(payload.get("schema_version", 1)),
-            created_at=float(payload.get("created_at", time.time())),
+            state_payload=dict(payload.get("state_payload", {})),  # type: ignore[arg-type]
+            schema_version=int(payload.get("schema_version", 1)),  # type: ignore[arg-type]
+            created_at=float(payload.get("created_at", time.time())),  # type: ignore[arg-type]
         )
 
-    def _encode_message_delta(self, md: MessageDelta) -> dict[str, JsonValue]:
+    def _encode_message_delta(self, md: MessageDelta) -> dict[str, Any]:
         msg = md.message
         return {
             "role": msg.role,
@@ -478,11 +382,21 @@ class ReActRuntimeStateCodec(RuntimeStateCodec):
         return MessageDelta(
             message=ChatMessage(
                 role=str(data.get("role", "")),
-                content=data.get("content"),
-                tool_calls=data.get("tool_calls"),
-                tool_call_id=data.get("tool_call_id"),
-                name=data.get("name"),
+                content=data.get("content"),  # type: ignore[arg-type]
+                tool_calls=data.get("tool_calls"),  # type: ignore[arg-type]
+                tool_call_id=data.get("tool_call_id"),  # type: ignore[arg-type]
+                name=data.get("name"),  # type: ignore[arg-type]
             ),
             source=MessageDeltaSource(str(data["source"])),
-            provider_payload=data.get("provider_payload"),
+            provider_payload=data.get("provider_payload"),  # type: ignore[arg-type]
         )
+
+
+# Re-export types that other modules import from this module.
+__all__ = [
+    "ReActRuntimeStateCodec",
+    "ReActSnapshotPolicy",
+    "ReActTurnState",
+    "get_react_state",
+    "require_react_state",
+]

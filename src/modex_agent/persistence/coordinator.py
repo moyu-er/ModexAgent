@@ -137,7 +137,12 @@ class SqliteDecisionCoordinator(ApprovalDecisionCoordinator):
         agent_id = snapshot.identity.agent_id
         session_id = str(snapshot.identity.session)
         turn_id = snapshot.identity.turn_id
-        persisted_turn_uuid = snapshot.state_payload.get(TurnCustomKey.TURN_UUID.value)
+        # In the NEW checkpoint format (Pydantic model_dump), turn_uuid
+        # lives inside the ``custom`` dict, not at the top level.
+        custom = snapshot.state_payload.get("custom", {})
+        if not isinstance(custom, dict):
+            custom = {}
+        persisted_turn_uuid = custom.get(TurnCustomKey.TURN_UUID.value)
         identity_pairs: tuple[tuple[str, str, JsonValue], ...] = (
             ("session_id", session_id, entry.session_id),
             ("agent_id", agent_id, entry.agent_id),
