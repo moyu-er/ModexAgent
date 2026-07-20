@@ -4,7 +4,7 @@
 
 **Blocked by:** 03 — `ReActTurnState` must be a `GraphState` with working checkpoint, and `ReactGraphRuntime` must exist (from ticket 02) ready to be wired in.
 
-**Status:** ready-for-agent
+**Status:** completed (commit 42affb0c)
 
 ## Acceptance criteria
 

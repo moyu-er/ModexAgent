@@ -8,6 +8,7 @@ from modex_agent.agents.react.constants import ReActNode
 from modex_agent.agents.react.injection_drainer import InjectionDrainer
 from modex_agent.agents.react.llm_client import ReactLlmClient
 from modex_agent.agents.react.nodes.llm import LLMNode
+from modex_agent.agents.react.runtime import ReactGraphRuntime
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.session_id import SessionInfo
@@ -55,6 +56,8 @@ async def test_probe_continues_loop_and_keeps_xml_out_of_stream(tmp_path, monkey
         [HookSpec(hook=TodoCompletionProbeHook(store=store, tool_manager=tm))]
     )
     runtime = AgentRuntime(services=services, state=state)
+    # Ticket 04: nodes dispatch hooks through ``runtime.graph_runtime``.
+    runtime.graph_runtime = ReactGraphRuntime(hook_runner=services.hooks)
 
     ctx = AgentContext(
         system_prompt="", history=ListMessageHistory(), tool_manager=tm,

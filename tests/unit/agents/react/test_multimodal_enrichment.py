@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 from modex_agent.agents.react.nodes.llm import LLMNode, enrich_inline_attachments
+from modex_agent.agents.react.runtime import ReactGraphRuntime
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.session_id import SessionInfo
@@ -64,7 +65,11 @@ def _make_runtime(capabilities: ModelCapabilities | None) -> AgentRuntime:
     )
     services = AgentRuntimeServices()
     services.model_capabilities = capabilities
-    return AgentRuntime(services=services, state=state)
+    runtime = AgentRuntime(services=services, state=state)
+    # Ticket 04: nodes route AOP through ``runtime.graph_runtime``. Tests that
+    # bypass ``ReActAgent.run()`` must set it themselves.
+    runtime.graph_runtime = ReactGraphRuntime()
+    return runtime
 
 
 def _scoped_history(tmp_path: Path) -> ScopedMessageHistory:
@@ -351,7 +356,9 @@ class TestEnrichmentGuard:
                 seen.extend(messages)
                 return messages
 
-        runtime.services.governance = _RecordingGovernance()  # type: ignore[assignment]
+        # Ticket 04: governance routes through ``ReactGraphRuntime`` — set it
+        # on ``graph_runtime`` (not ``runtime.services``) so the node sees it.
+        runtime.graph_runtime = ReactGraphRuntime(governance=_RecordingGovernance())  # type: ignore[arg-type]
 
         ctx = AgentContext(
             system_prompt="sys",

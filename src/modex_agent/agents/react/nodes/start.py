@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
-from modex_agent.agents.react.agent import ReActEvent
-from modex_agent.agents.react.constants import ReActNode, ReActReason
-from modex_agent.agents.react.state import get_react_state
+from modex_agent.agents.react.constants import ReActEvent as GraphReActEvent
+from modex_agent.agents.react.constants import (
+    ReActNode,
+    ReActReason,
+)
+from modex_agent.agents.react.runtime import ReactGraphRuntime
+from modex_agent.agents.react.state import ReActTurnState, get_react_state
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.graph.node import Node, NodeTransition
 from modex_agent.runtime.enums import TurnPhase
+from modex_graph.context import GraphContext
 
 
 class StartNode(Node):
@@ -30,6 +35,23 @@ class StartNode(Node):
             state.current_node = ReActNode.START
             state.iteration = 0
 
-        if ctx.emitter is not None:
-            await ctx.emitter.emit(ReActEvent.START)
+        await self._emit(ctx, state, GraphReActEvent.START)
         return NodeTransition(ReActNode.LLM, ReActReason.NORMAL_START)
+
+    @staticmethod
+    async def _emit(
+        ctx: AgentContext,
+        state: ReActTurnState | None,
+        event: GraphReActEvent,
+        data: object = None,
+    ) -> None:
+        """Route an emit call through ``ReactGraphRuntime.emit``.
+
+        No-op when ``state`` or ``runtime`` is None.
+        """
+        runtime = ctx.runtime
+        if runtime is None or state is None:
+            return
+        graph_runtime = runtime.graph_runtime or ReactGraphRuntime()
+        graph_ctx = GraphContext(state=state, runtime=graph_runtime, user_data=ctx)
+        await graph_runtime.emit(event, data, graph_ctx)

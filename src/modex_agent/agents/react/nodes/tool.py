@@ -6,10 +6,15 @@ import logging
 from typing import Any
 from uuid import uuid4
 
-from modex_agent.agents.react.agent import ReActEvent
-from modex_agent.agents.react.constants import ReActNode, ReActReason
+from modex_agent.agents.react.constants import ReActEvent as GraphReActEvent
+from modex_agent.agents.react.constants import (
+    ReActHookPoint,
+    ReActNode,
+    ReActReason,
+)
 from modex_agent.agents.react.message_builder import build_tool_message
-from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState, get_react_state
+from modex_agent.agents.react.runtime import ReactGraphRuntime
+from modex_agent.agents.react.state import ReActTurnState, get_react_state
 from modex_agent.agents.react.tool_executor import ToolExecutor
 from modex_agent.approval.constants import ApprovalDecision, ApprovalTier
 from modex_agent.core.agent import AgentContext
@@ -17,7 +22,6 @@ from modex_agent.core.graph.interrupt import interrupt
 from modex_agent.core.graph.node import Node, NodeTransition
 from modex_agent.core.tool_manager import ToolResult
 from modex_agent.core.types import ToolCall
-from modex_agent.hook import HookPayload, HookPoint
 from modex_agent.runtime.enums import (
     ApprovalDenyPolicy,
     ApprovalSubjectType,
@@ -37,6 +41,7 @@ from modex_agent.runtime.models import (
     ToolBatchState,
     ToolCallState,
 )
+from modex_graph.context import GraphContext
 
 logger = logging.getLogger(__name__)
 
@@ -64,16 +69,13 @@ class ToolNode(Node):
             ctx.runtime.state.custom.get(TurnCustomKey.MAX_TOOLS_PER_TURN) if ctx.runtime else None
         )
         if max_tools is not None and len(tool_calls) > max_tools:
-            if ctx.emitter is not None:
-                await ctx.emitter.emit(
-                    ReActEvent.ERROR, f"Exceeded max_tools_per_turn ({max_tools})"
-                )
+            await self._emit(
+                ctx, state, GraphReActEvent.ERROR, f"Exceeded max_tools_per_turn ({max_tools})"
+            )
             return NodeTransition(ReActNode.END, ReActReason.TURN_CANCELLED)
 
         decisions = self._classify_all(tool_calls, ctx)
-        if ctx.emitter is not None:
-            for tc in tool_calls:
-                await ctx.emitter.emit(ReActEvent.TOOL_CALL_START, tc)
+        await self._emit_batch(ctx, state, GraphReActEvent.TOOL_CALL_START, tool_calls)
         call_states = [
             ToolCallState(
                 call_id=tc.call_id or uuid4().hex,
@@ -139,11 +141,14 @@ class ToolNode(Node):
         react_state.phase = TurnPhase.SUSPENDED
         react_state.current_node = ReActNode.TOOL
 
-        snapshot = ReActSnapshotPolicy().capture(
-            react_state,
-            SnapshotReason.TOOL_APPROVAL_REQUIRED,
-        )
-        await ctx.runtime.turn_store.save_turn(snapshot)
+        # ADR-0033 D5 + ticket 04: snapshot capture routes through
+        # ``graph_runtime.capture_snapshot`` instead of calling
+        # ``ReActSnapshotPolicy().capture()`` + ``turn_store.save_turn()``
+        # directly. The raise stays as ``interrupt(...)`` (old engine still
+        # uses ``GraphInterrupt`` — ticket 05 switches to ``ctx.interrupt``).
+        graph_runtime = ctx.runtime.graph_runtime or ReactGraphRuntime()
+        graph_ctx = GraphContext(state=react_state, runtime=graph_runtime, user_data=ctx)
+        await graph_runtime.capture_snapshot(graph_ctx, SnapshotReason.TOOL_APPROVAL_REQUIRED.value)
         return interrupt(requests)
 
     async def _resume_suspended_batch(self, ctx: AgentContext) -> NodeTransition:
@@ -248,27 +253,20 @@ class ToolNode(Node):
     ) -> NodeTransition:
         decisions = self._normalize_batch_decisions(decisions)
         state = get_react_state(ctx)
-        if ctx.emitter is not None:
-            await ctx.emitter.emit(
-                ReActEvent.PROGRESS,
+        graph_ctx = self._graph_ctx(state, ctx) if state is not None else None
+
+        if graph_ctx is not None:
+            await graph_ctx.runtime.emit(
+                GraphReActEvent.PROGRESS,
                 {"hint": self._format_hint(tool_calls), "tool_hint": True},
+                graph_ctx,
             )
-        if ctx.runtime and ctx.runtime.hooks:
-            await ctx.runtime.hooks.dispatch(
-                HookPoint.BEFORE_TOOL_EXECUTION,
-                ctx,
-                payload=HookPayload(data={"tool_calls": tool_calls}),
+            await graph_ctx.runtime.dispatch_hook(
+                ReActHookPoint.BEFORE_TOOL_EXECUTION,
+                graph_ctx,
+                data={"tool_calls": tool_calls},
             )
-
-        # Drain control commands before tool execution
-        if ctx.runtime and ctx.runtime.control_channel:
-            from modex_agent.hook.builtin.control_drain import drain_control_channel
-
-            await drain_control_channel(
-                ctx.runtime.control_channel,
-                ctx,
-                turn_uuid=ctx.runtime.turn_uuid,
-            )
+            await graph_ctx.runtime.drain_control(graph_ctx)
 
         batch = state.active_tool_batch() if state else None
         denied_encountered = False
@@ -283,8 +281,8 @@ class ToolNode(Node):
                     error=self._denial_message(decision, tc, state),
                 )
 
-            if ctx.emitter is not None:
-                await ctx.emitter.emit(ReActEvent.TOOL_CALL_END, (tc, result))
+            if graph_ctx is not None:
+                await graph_ctx.runtime.emit(GraphReActEvent.TOOL_CALL_END, (tc, result), graph_ctx)
 
             tool_results.append(result)
 
@@ -315,17 +313,16 @@ class ToolNode(Node):
                 ToolBatchStatus.FAILED if denied_encountered else ToolBatchStatus.COMPLETED
             )
 
-        if ctx.runtime and ctx.runtime.hooks:
-            await ctx.runtime.hooks.dispatch(
-                HookPoint.AFTER_TOOL_EXECUTION,
-                ctx,
-                payload=HookPayload(data={"results": tool_results}),
+        if graph_ctx is not None:
+            await graph_ctx.runtime.dispatch_hook(
+                ReActHookPoint.AFTER_TOOL_EXECUTION,
+                graph_ctx,
+                data={"results": tool_results},
             )
-
-        if ctx.emitter is not None:
-            await ctx.emitter.emit(
-                ReActEvent.ITERATION_END,
+            await graph_ctx.runtime.emit(
+                GraphReActEvent.ITERATION_END,
                 {"iteration": state.iteration if state else 0, "has_tool_calls": True},
+                graph_ctx,
             )
 
         if denied_encountered:
@@ -366,9 +363,7 @@ class ToolNode(Node):
         single ``"Error: "`` so the final history content reads cleanly.
         """
         reason = (
-            state.approval.deny_reason
-            if state is not None and state.approval is not None
-            else None
+            state.approval.deny_reason if state is not None and state.approval is not None else None
         )
         if decision == ApprovalDecision.PREEMPTED:
             return (
@@ -394,3 +389,59 @@ class ToolNode(Node):
             return f"calling {tool_calls[0].tool_name}..."
         names = ", ".join(tc.tool_name for tc in tool_calls)
         return f"calling tools: {names}..."
+
+    @staticmethod
+    def _graph_ctx(
+        state: ReActTurnState | None,
+        ctx: AgentContext,
+    ) -> GraphContext[ReActTurnState] | None:
+        """Build a thin ``GraphContext`` wrapper for ``ReactGraphRuntime`` calls.
+
+        Returns ``None`` when ``state`` is ``None`` (caller must skip AOP
+        calls in that case). The agent's ``run()`` always sets
+        ``ctx.runtime.graph_runtime``; the ``or ReactGraphRuntime()`` fallback
+        covers direct-node-invocation tests that bypass ``run()``.
+        """
+        if state is None:
+            return None
+        runtime = ctx.runtime
+        if runtime is None:
+            return None
+        graph_runtime = runtime.graph_runtime or ReactGraphRuntime()
+        return GraphContext(state=state, runtime=graph_runtime, user_data=ctx)
+
+    @staticmethod
+    async def _emit(
+        ctx: AgentContext,
+        state: ReActTurnState,
+        event: GraphReActEvent,
+        data: object = None,
+    ) -> None:
+        """Route a single emit call through ``ReactGraphRuntime.emit``."""
+        runtime = ctx.runtime
+        if runtime is None:
+            return
+        graph_runtime = runtime.graph_runtime or ReactGraphRuntime()
+        graph_ctx = GraphContext(state=state, runtime=graph_runtime, user_data=ctx)
+        await graph_runtime.emit(event, data, graph_ctx)
+
+    @staticmethod
+    async def _emit_batch(
+        ctx: AgentContext,
+        state: ReActTurnState,
+        event: GraphReActEvent,
+        items: list[ToolCall],
+    ) -> None:
+        """Emit ``event`` once per item in ``items`` through ``ReactGraphRuntime.emit``.
+
+        Preserves the previous ``for tc in tool_calls: await ctx.emitter.emit(...)``
+        ordering — ``ReactGraphRuntime.emit`` is async and awaited in a loop,
+        so emit order matches the prior direct-emitter path.
+        """
+        runtime = ctx.runtime
+        if runtime is None:
+            return
+        graph_runtime = runtime.graph_runtime or ReactGraphRuntime()
+        graph_ctx = GraphContext(state=state, runtime=graph_runtime, user_data=ctx)
+        for item in items:
+            await graph_runtime.emit(event, item, graph_ctx)

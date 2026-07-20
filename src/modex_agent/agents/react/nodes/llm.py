@@ -3,18 +3,30 @@
 from __future__ import annotations
 
 from modex_agent.agents.react.agent import ReActEvent
-from modex_agent.agents.react.constants import ReActNode, ReActReason
+
+# ``constants.ReActEvent`` is the graph-runtime subset (9 events that route
+# through ``ReactGraphRuntime.emit``). ``ITERATION_START`` / ``MODEL_OUTPUT``
+# / ``MODEL_REASONING`` are NOT in it — they stay as direct
+# ``ctx.emitter.emit(...)`` calls (ADR-0033 D9.2: ``agent.ReActEvent`` is a
+# superset).
+from modex_agent.agents.react.constants import ReActEvent as GraphReActEvent
+from modex_agent.agents.react.constants import (
+    ReActHookPoint,
+    ReActNode,
+    ReActReason,
+    ReActScope,
+)
 from modex_agent.agents.react.injection_drainer import InjectionDrainer
 from modex_agent.agents.react.llm_client import ReactLlmClient
 from modex_agent.agents.react.message_builder import build_assistant_message
-from modex_agent.agents.react.state import get_react_state
+from modex_agent.agents.react.runtime import ReactGraphRuntime
+from modex_agent.agents.react.state import ReActTurnState, get_react_state
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.constants import FinishReason
 from modex_agent.core.graph.node import Node, NodeTransition
 from modex_agent.core.types import MessageRole
-from modex_agent.hook import HookPayload, HookPoint
-from modex_agent.interceptor.abc import InterceptorScope, IterationContext
 from modex_agent.ioc.configs.llm import Modality
+from modex_agent.media.media_utils import build_inline_image_block
 from modex_agent.runtime.dispatch import current_dispatch_deadline
 from modex_agent.runtime.enums import (
     MessageDeltaSource,
@@ -23,7 +35,7 @@ from modex_agent.runtime.enums import (
     TurnPhase,
 )
 from modex_agent.runtime.models import MessageDelta
-from modex_agent.media.media_utils import build_inline_image_block
+from modex_graph.context import GraphContext
 
 
 def _renew_dispatch_deadline() -> None:
@@ -47,9 +59,11 @@ def enrich_inline_attachments(
     state, no/empty attachments, or no user message at the tail position.
     """
     runtime = ctx.runtime
-    if (runtime is None
-            or not runtime.model_capabilities
-            or not runtime.model_capabilities.supports(Modality.IMAGE)):
+    if (
+        runtime is None
+        or not runtime.model_capabilities
+        or not runtime.model_capabilities.supports(Modality.IMAGE)
+    ):
         return messages
 
     state = get_react_state(ctx)
@@ -90,7 +104,6 @@ def enrich_inline_attachments(
 
 
 class LLMNode(Node):
-
     def __init__(self, llm_client: ReactLlmClient, injection_drainer: InjectionDrainer) -> None:
         super().__init__(ReActNode.LLM)
         self._llm_client = llm_client
@@ -114,13 +127,15 @@ class LLMNode(Node):
                     tool_dict[tool_name] = temp
 
         if state.iteration > ctx.max_iterations:
-            if ctx.emitter is not None:
-                await ctx.emitter.emit(ReActEvent.MAX_ITERATIONS)
+            await self._emit(ctx, state, GraphReActEvent.MAX_ITERATIONS)
             return NodeTransition(ReActNode.END, ReActReason.MAX_ITERATIONS)
 
         runtime = ctx.runtime
+        graph_ctx = self._graph_ctx(state, ctx)
 
         async def actual_iteration():
+            # ITERATION_START is NOT in ``constants.ReActEvent`` (the
+            # graph-runtime subset) — it stays as a direct emitter call.
             if ctx.emitter is not None:
                 await ctx.emitter.emit(
                     ReActEvent.ITERATION_START,
@@ -128,21 +143,15 @@ class LLMNode(Node):
                 )
 
             # Signal completion of the previous iteration (skip on first iter).
-            if runtime and runtime.hooks and state.iteration > 1:
-                await runtime.hooks.dispatch(HookPoint.AFTER_ITERATION, ctx)
+            # Per ADR-0033 D5 rule 1: iteration hooks are node-controlled
+            # (NOT engine-auto-invoked). Dispatch at the same code points as
+            # before migration — timing is preserved by construction.
+            if state.iteration > 1:
+                await graph_ctx.runtime.dispatch_hook(ReActHookPoint.AFTER_ITERATION, graph_ctx)
 
-            if runtime and runtime.hooks:
-                await runtime.hooks.dispatch(HookPoint.BEFORE_ITERATION, ctx)
+            await graph_ctx.runtime.dispatch_hook(ReActHookPoint.BEFORE_ITERATION, graph_ctx)
 
-            # Drain control commands before LLM call
-            if ctx.runtime and ctx.runtime.control_channel:
-                from modex_agent.hook.builtin.control_drain import drain_control_channel
-
-                await drain_control_channel(
-                    ctx.runtime.control_channel,
-                    ctx,
-                    turn_uuid=ctx.runtime.turn_uuid,
-                )
+            await graph_ctx.runtime.drain_control(graph_ctx)
 
             if runtime and runtime.injection_queue:
                 await self._injection_drainer.drain(ctx)
@@ -150,22 +159,13 @@ class LLMNode(Node):
             messages = await self._build_messages(ctx)
             response = await self._llm_client.call(messages, ctx)
 
-            if runtime and runtime.hooks:
-                await runtime.hooks.dispatch(
-                    HookPoint.AFTER_LLM_RESPONSE,
-                    ctx,
-                    payload=HookPayload(data={"response": response}),
-                )
+            await graph_ctx.runtime.dispatch_hook(
+                ReActHookPoint.AFTER_LLM_RESPONSE,
+                graph_ctx,
+                data={"response": response},
+            )
 
-            # Drain control commands after LLM response
-            if ctx.runtime and ctx.runtime.control_channel:
-                from modex_agent.hook.builtin.control_drain import drain_control_channel
-
-                await drain_control_channel(
-                    ctx.runtime.control_channel,
-                    ctx,
-                    turn_uuid=ctx.runtime.turn_uuid,
-                )
+            await graph_ctx.runtime.drain_control(graph_ctx)
 
             if response.finish_reason == FinishReason.ERROR.value:
                 state.llm_response = response
@@ -191,18 +191,12 @@ class LLMNode(Node):
                 MessageDelta(message=assistant_msg, source=MessageDeltaSource.ASSISTANT)
             )
 
-        if (
-            runtime
-            and runtime.interceptors
-            and runtime.interceptors.has_scope(InterceptorScope.ITERATION)
-        ):
-            await runtime.interceptors.around_iteration(
-                ctx,
-                IterationContext(iteration=state.iteration, turn_id=str(ctx.session)),
-                actual_iteration,
-            )
-        else:
-            await actual_iteration()
+        # ``ReactGraphRuntime.around`` handles the no-interceptor-chain case
+        # as a pass-through (calls ``body()`` directly). When the chain exists
+        # but has no ITERATION-scoped interceptors, ``around_iteration``
+        # internally calls ``body()``. Both paths match the previous
+        # ``if has_scope(ITERATION): around_iteration else: actual_iteration``.
+        await graph_ctx.runtime.around(ReActScope.ITERATION, graph_ctx, actual_iteration)
 
         _renew_dispatch_deadline()
 
@@ -213,17 +207,57 @@ class LLMNode(Node):
         if response is not None and response.tool_calls:
             return NodeTransition(ReActNode.TOOL, ReActReason.HAS_TOOLS)
 
-        if ctx.emitter is not None:
-            await ctx.emitter.emit(
-                ReActEvent.ITERATION_END,
-                {
-                    "iteration": state.iteration,
-                    "has_tool_calls": False,
-                },
-            )
+        await self._emit(
+            ctx,
+            state,
+            GraphReActEvent.ITERATION_END,
+            {"iteration": state.iteration, "has_tool_calls": False},
+        )
         return NodeTransition(ReActNode.END, ReActReason.NO_TOOLS)
 
-    async def _build_messages(self, ctx: AgentContext) -> list[dict[str, object]]:
+    @staticmethod
+    def _graph_ctx(
+        state: ReActTurnState,
+        ctx: AgentContext,
+    ) -> GraphContext[ReActTurnState]:
+        """Build a thin ``GraphContext`` wrapper for ``ReactGraphRuntime`` calls.
+
+        ReAct still uses the old ``core/graph/`` engine, which passes
+        ``AgentContext`` to ``Node.execute``. ``ReactGraphRuntime`` methods
+        take ``GraphContext`` — this wrapper bridges the gap by stuffing
+        the ``AgentContext`` into ``user_data`` and the typed
+        ``ReActTurnState`` into ``state``. Ticket 05 will make this wrapper
+        unnecessary when the new engine passes ``ReActGraphContext``
+        directly.
+        """
+        runtime = ctx.runtime
+        assert runtime is not None  # get_react_state(ctx) early-returned otherwise
+        graph_runtime = runtime.graph_runtime or ReactGraphRuntime()
+        return GraphContext(state=state, runtime=graph_runtime, user_data=ctx)
+
+    @staticmethod
+    async def _emit(
+        ctx: AgentContext,
+        state: ReActTurnState,
+        event: GraphReActEvent,
+        data: object = None,
+    ) -> None:
+        """Route an emit call through ``ReactGraphRuntime.emit``.
+
+        ``ReactGraphRuntime.emit`` maps the str event to ``agent.ReActEvent``
+        and calls ``emitter.emit``. No-op when no emitter is wired.
+        """
+        runtime = ctx.runtime
+        if runtime is None:
+            return
+        graph_runtime = runtime.graph_runtime or ReactGraphRuntime()
+        graph_ctx = GraphContext(state=state, runtime=graph_runtime, user_data=ctx)
+        await graph_runtime.emit(event, data, graph_ctx)
+
+    async def _build_messages(
+        self,
+        ctx: AgentContext,
+    ) -> list[dict[str, object]]:
         messages: list[dict[str, object]] = []
 
         # Use pipeline for dynamic system prompt if available
@@ -236,7 +270,16 @@ class LLMNode(Node):
 
         messages.extend(await ctx.to_messages())
 
-        governance = ctx.runtime.governance if ctx.runtime else None
-        if governance is not None:
-            messages = await governance.apply(messages)
+        # Route governance through ``ReactGraphRuntime.apply_governance`` when
+        # a runtime is wired; otherwise skip (matches the original
+        # ``governance = ctx.runtime.governance if ctx.runtime else None``
+        # graceful-None path).
+        runtime = ctx.runtime
+        if runtime is not None:
+            state = get_react_state(ctx)
+            if state is not None:
+                graph_runtime = runtime.graph_runtime or ReactGraphRuntime()
+                graph_ctx = GraphContext(state=state, runtime=graph_runtime, user_data=ctx)
+                messages = await graph_runtime.apply_governance(messages, graph_ctx)
+
         return enrich_inline_attachments(messages, ctx)

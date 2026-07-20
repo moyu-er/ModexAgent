@@ -129,9 +129,7 @@ async def _persist_interrupted_partial(ctx: AgentContext, reason: str) -> None:
     msg = build_interrupted_assistant_message(content, tool_names, reason)
     if ctx.history is not None:
         await ctx.history.append(msg)
-    state.message_delta.append(
-        MessageDelta(message=msg, source=MessageDeltaSource.ASSISTANT)
-    )
+    state.message_delta.append(MessageDelta(message=msg, source=MessageDeltaSource.ASSISTANT))
 
 
 class ReActAgent(Agent[ReActEvent]):
@@ -230,6 +228,27 @@ class ReActAgent(Agent[ReActEvent]):
             context.identity = state.identity
             context.runtime = AgentRuntime(services=AgentRuntimeServices(), state=state)
         runtime = context.runtime
+
+        # ADR-0033 D5 + ticket 04: wire ``ReactGraphRuntime`` onto
+        # ``runtime.graph_runtime`` so nodes route AOP calls (hook dispatch,
+        # interceptor around, governance, control drain, snapshot capture,
+        # emit) through the graph-runtime bridge instead of reaching directly
+        # into ``runtime.services``. ``ReactGraphRuntime`` methods handle
+        # ``None`` services as no-ops, so clean mode (no services) is fine.
+        from modex_agent.agents.react.runtime import ReactGraphRuntime
+        from modex_agent.agents.react.state import ReActSnapshotPolicy
+
+        graph_runtime = ReactGraphRuntime(
+            hook_runner=runtime.services.hooks,
+            interceptor_chain=runtime.services.interceptors,
+            governance=runtime.services.governance,
+            control_channel=runtime.services.control_channel,
+            snapshot_policy=ReActSnapshotPolicy(),
+            turn_state_store=runtime.services.turn_store,
+            emitter=emitter,
+        )
+        runtime.graph_runtime = graph_runtime
+
         ctx_token = current_agent_context.set(context)
 
         # ``result`` stays None on a GraphInterrupt (approval suspend) so the
@@ -263,11 +282,7 @@ class ReActAgent(Agent[ReActEvent]):
             # for backward compatibility during the migration window.
             if react_state is not None and react_state.result is not None:
                 result = react_state.result
-            if (
-                runtime.hooks
-                and react_state is not None
-                and react_state.iteration > 0
-            ):
+            if runtime.hooks and react_state is not None and react_state.iteration > 0:
                 await runtime.hooks.dispatch(HookPoint.AFTER_ITERATION, context)
             if runtime.hooks:
                 await runtime.hooks.dispatch(
