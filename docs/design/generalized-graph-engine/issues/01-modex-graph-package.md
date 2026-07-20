@@ -4,7 +4,7 @@
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** completed (commit 9be20d83)
 
 ## Acceptance criteria
 

@@ -1,15 +1,27 @@
-"""Runtime state governance models — typed dataclasses for turn state, operations, approval, and snapshots."""
+"""Runtime state governance models — typed dataclasses and Pydantic BaseModels for turn state, operations, approval, and snapshots.
+
+Per ADR-0033 D14: the 5 ReAct state types that participate in the approval
+state machine (``ApprovalTransaction`` / ``ApprovalRequestState`` /
+``ToolBatchState`` / ``ToolCallState`` / ``ToolArguments``) are migrated from
+``@dataclass`` to Pydantic ``BaseModel`` to enable the universal channel
+codec (``model_dump()`` / ``model_validate()``). Frozen vs mutable is decided
+per type based on whether the approval state machine mutates the object at
+runtime.
+"""
 
 from __future__ import annotations
 
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, TypeAlias, Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from modex_agent.approval.constants import ApprovalDecision, ApprovalStatus, ApprovalTier
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.tool_manager import ToolResult
 
 from .enums import (
     AgentKind,
@@ -25,12 +37,12 @@ from .enums import (
 )
 
 if TYPE_CHECKING:
-    from modex_agent.core.tool_manager import ToolResult
     from modex_agent.core.message import ChatMessage
+    from modex_agent.core.tool_manager import ToolResult
 
 
-JsonPrimitive: TypeAlias = str | int | float | bool | None
-JsonValue: TypeAlias = JsonPrimitive | list["JsonValue"] | dict[str, "JsonValue"]
+type JsonPrimitive = str | int | float | bool | None
+type JsonValue = JsonPrimitive | list["JsonValue"] | dict[str, "JsonValue"]
 
 
 # ---------------------------------------------------------------------------
@@ -38,12 +50,21 @@ JsonValue: TypeAlias = JsonPrimitive | list["JsonValue"] | dict[str, "JsonValue"
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class ToolArguments:
+class ToolArguments(BaseModel):
     """Typed wrapper around tool arguments for approval, audit, and recovery.
 
-    ``values`` must be treated as read-only by consumers.
+    Per ADR-0033 D14: frozen Pydantic ``BaseModel`` — truly immutable leaf
+    value-object (just a typed wrapper around tool call arguments, never
+    mutated after construction). The frozen model config prevents field
+    reassignment; the ``values`` mapping is treated as read-only by
+    consumers.
+
+    Migrated from ``@dataclass(frozen=True)`` to ``BaseModel(frozen=True)``
+    so that ``model_dump()`` / ``model_validate()`` serve as the universal
+    channel codec (ADR-0033 D14).
     """
+
+    model_config = ConfigDict(frozen=True)
 
     values: Mapping[str, JsonValue]
 
@@ -165,8 +186,14 @@ class TurnStateBase:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class ApprovalRequestState:
+class ApprovalRequestState(BaseModel):
+    """Per-approval-request state (one per pending tool call).
+
+    Per ADR-0033 D14: mutable ``BaseModel`` (NOT frozen) — kept mutable for
+    consistency with ``ApprovalTransaction``, whose state machine may
+    reference and update these records during the approval lifecycle.
+    """
+
     request_id: str
     approval_id: str
     tool_call_id: str
@@ -174,21 +201,36 @@ class ApprovalRequestState:
     arguments: ToolArguments
     tier: ApprovalTier
     iteration: int
-    created_at: float = field(default_factory=time.time)
+    created_at: float = Field(default_factory=time.time)
 
 
-@dataclass
-class ApprovalTransaction:
+class ApprovalTransaction(BaseModel):
+    """Approval state machine — tracks per-tool-call decisions for a batch.
+
+    Per ADR-0033 D14: mutable ``BaseModel`` (NOT frozen). The approval state
+    machine mutates ``decisions`` dict externally (``apply_decision`` updates
+    ``approval.decisions[call_id]`` from ``PENDING`` to ``ALLOWED``/
+    ``DENIED``; ``_normalize_batch_decisions`` may rewrite ``ALLOWED`` to
+    ``PREEMPTED`` for atomicity per ADR-0011). Frozen would break the state
+    machine.
+
+    Migrated from ``@dataclass`` to mutable ``BaseModel`` so that
+    ``model_dump()`` / ``model_validate()`` serve as the universal channel
+    codec (ADR-0033 D14). Methods and properties are preserved verbatim —
+    Pydantic v2 allows methods on models, and mutable models permit field
+    reassignment (``validate_assignment`` defaults to ``False``).
+    """
+
     approval_id: str
     turn_id: str
     subject_type: ApprovalSubjectType
     subject_ids: list[str]
     requests: list[ApprovalRequestState]
-    decisions: dict[str, ApprovalDecision] = field(default_factory=dict)
+    decisions: dict[str, ApprovalDecision] = Field(default_factory=dict)
     status: ApprovalStatus = ApprovalStatus.PENDING
     deny_reason: str | None = None
-    created_at: float = field(default_factory=time.time)
-    updated_at: float = field(default_factory=time.time)
+    created_at: float = Field(default_factory=time.time)
+    updated_at: float = Field(default_factory=time.time)
 
     def apply_decision(
         self, tool_call_id: str, decision: ApprovalDecision, *, reason: str | None = None
@@ -242,8 +284,19 @@ class ApprovalDenialContext:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class ToolCallState:
+class ToolCallState(BaseModel):
+    """Per-tool-call execution state — tracks approval decision and execution status.
+
+    Per ADR-0033 D14: mutable ``BaseModel`` (NOT frozen). The ``decision``
+    field transitions ``PENDING`` → ``ALLOWED``/``DENIED``/``PREEMPTED``;
+    ``status`` transitions during execution; ``result`` is set after tool
+    execution. ``arbitrary_types_allowed=True`` allows the ``result`` field
+    to hold a ``ToolResult`` (a plain class, not a Pydantic model) without
+    validation.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     call_id: str
     tool_name: str
     arguments: ToolArguments
@@ -254,8 +307,14 @@ class ToolCallState:
     operation_id: str | None = None
 
 
-@dataclass
-class ToolBatchState:
+class ToolBatchState(BaseModel):
+    """Per-batch tool execution state — groups multiple ``ToolCallState`` records.
+
+    Per ADR-0033 D14: mutable ``BaseModel`` (NOT frozen). The ``status``
+    field transitions ``WAITING`` → ``COMPLETED``/``FAILED``/``CANCELLED``
+    during execution; ``operation_id`` may be set after construction.
+    """
+
     batch_id: str
     iteration: int
     calls: list[ToolCallState]
