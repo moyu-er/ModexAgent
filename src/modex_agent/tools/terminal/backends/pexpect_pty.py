@@ -128,7 +128,7 @@ class PexpectPtyBackend(TerminalBackend):
         if self._proc is None:
             return False
         try:
-            return self._proc.isalive()  # type: ignore[union-attr]
+            return self._proc.isalive()  # type: ignore[attr-defined,no-any-return]
         except Exception:
             return False
 
@@ -142,7 +142,7 @@ class PexpectPtyBackend(TerminalBackend):
     async def interrupt(self) -> None:
         if self._proc is None:
             raise RuntimeError("PTY not started")
-        self._proc.sendintr()  # type: ignore[union-attr]
+        self._proc.sendintr()  # type: ignore[attr-defined]
 
     async def terminate(self) -> None:
         if self._proc is not None:

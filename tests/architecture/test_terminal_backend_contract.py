@@ -1,10 +1,15 @@
-"""Architecture guard for the TerminalBackend async-safety scaffolding.
+"""Architecture guard for the TerminalBackend async-safety contract.
 
-Asserts the new contract shape from ADR-0032 D1/D4 exists on the base class
-BEFORE any backend migration begins (ticket 01 — expand step of the
-expand–contract sequence). After this ticket the contract is dormant: every
-backend's existing overrides still win. Subsequent tickets 02–05 activate
-the contract per backend; ticket 06 promotes ``_shell_family`` to abstract.
+Asserts the contract shape from ADR-0032 D1/D4 on the base class.
+
+Ticket 01 (expand step) added the scaffolding methods as non-abstract
+defaults. Tickets 02–05 activated the contract per backend (each backend
+implemented ``_shell_family`` and either the blocking-IO hooks or
+native-async overrides). Ticket 06 promoted ``_shell_family`` to
+``@abstractmethod`` (the contract is now enforced at instantiation time)
+and deleted the safe-default body. Ticket 07 adds the AST-level guard
+test (``test_terminal_async_safety.py``) that catches the regression
+class structurally.
 """
 
 from __future__ import annotations
@@ -14,7 +19,6 @@ import inspect
 import pytest
 
 from modex_agent.tools.terminal.backends.base import TerminalBackend
-from modex_agent.tools.terminal.types import ShellFamily
 
 # Methods that the scaffolding must add to TerminalBackend.
 _SCAFFOLD_METHODS = (
@@ -28,16 +32,16 @@ _SCAFFOLD_METHODS = (
     "_shell_family",
 )
 
-# Methods that were @abstractmethod before this ticket and must now be
+# Methods that were @abstractmethod before ticket 01 and must now be
 # concrete (so a bare TerminalBackend subclass no longer needs to override
-# them just to satisfy the ABC).
+# them just to satisfy the ABC). ``_shell_family`` is NOT in this list —
+# ticket 06 promoted it back to ``@abstractmethod``.
 _DEABSTRACTED_METHODS = (
     "write",
     "read_pending",
     "current_segment",
     "clear_input_line",
     "drain_startup",
-    "_shell_family",
 )
 
 
@@ -58,15 +62,11 @@ def test_scaffolding_methods_are_not_abstract() -> None:
         )
 
 
-def test_shell_family_safe_default_is_sh() -> None:
-    """_shell_family returns ShellFamily.SH by default (conservative-correct).
-
-    The default body does not touch ``self`` state, so the unbound method
-    can be invoked with ``None`` to exercise the base-class default
-    directly (instantiation would require a concrete subclass, which
-    would defeat the purpose of testing the default).
-    """
-    assert TerminalBackend._shell_family(None) is ShellFamily.SH  # type: ignore[arg-type]
+def test_shell_family_is_abstract() -> None:
+    """``_shell_family`` is ``@abstractmethod`` after ticket 06."""
+    assert "_shell_family" in TerminalBackend.__abstractmethods__, (
+        "_shell_family should be abstract on TerminalBackend after ticket 06"
+    )
 
 
 def test_write_blocking_hook_raises_not_implemented() -> None:

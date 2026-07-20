@@ -122,7 +122,7 @@ class WinptyHiddenBackend(WinptyBackend):
     async def interrupt(self) -> None:
         if self._proc is None:
             raise RuntimeError("PTY not started")
-        self._proc.sendintr()  # type: ignore[union-attr]
+        self._proc.sendintr()  # type: ignore[attr-defined]
 
     def stdin_writable(self) -> bool:
         return self._proc is not None
@@ -131,14 +131,14 @@ class WinptyHiddenBackend(WinptyBackend):
         if self._proc is None:
             return False
         try:
-            return self._proc.isalive()  # type: ignore[union-attr]
+            return self._proc.isalive()  # type: ignore[attr-defined,no-any-return]
         except Exception:
             return False
 
     async def terminate(self) -> None:
         if self._proc is not None:
             try:
-                self._proc.terminate(force=False)  # type: ignore[union-attr]
+                self._proc.terminate(force=False)  # type: ignore[attr-defined]
             except Exception:
                 pass
             self._proc = None
@@ -146,7 +146,7 @@ class WinptyHiddenBackend(WinptyBackend):
     async def kill(self) -> None:
         if self._proc is not None:
             try:
-                self._proc.terminate(force=True)  # type: ignore[union-attr]
+                self._proc.terminate(force=True)  # type: ignore[attr-defined]
             except Exception:
                 pass
             self._proc = None

@@ -524,9 +524,7 @@ async def _async_main() -> None:
     sock_task = asyncio.create_task(_socket_to_pty(proc, reader))
 
     # Wait for either to finish (shell died or parent disconnected).
-    done, pending = await asyncio.wait(
-        {pty_task, sock_task}, return_when=asyncio.FIRST_COMPLETED
-    )
+    done, pending = await asyncio.wait({pty_task, sock_task}, return_when=asyncio.FIRST_COMPLETED)
     for task in pending:
         task.cancel()
         # Drain the cancellation so it doesn't surface as an unhandled warning.

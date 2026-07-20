@@ -142,8 +142,7 @@ class WinptyConsoleWindowBackend(WinptyBackend):
         except TimeoutError:
             self._proc.kill()
             raise RuntimeError(
-                "Visible terminal host process did not connect within "
-                f"{_HOST_CONNECT_TIMEOUT}s"
+                f"Visible terminal host process did not connect within {_HOST_CONNECT_TIMEOUT}s"
             ) from None
         finally:
             server.close()

@@ -243,39 +243,100 @@ Agent calls terminal.execute(action="interrupt")
 
 ## Backends
 
-### Windows: WinptyConsoleWindowBackend
+### Async-safety contract (ADR-0032)
 
-Launches `visible_windows_host.py` in a new OS console window.
+`TerminalBackend` (ABC) enforces a structural async-safety contract so that
+no backend's `write` / `read_pending` blocks the event loop. Three I/O
+shapes are supported:
+
+1. **Blocking-IO hooks** (byte-stream backends: `WinptyHiddenBackend`,
+   `PexpectPtyBackend`) — implement `_write_blocking` / `_read_blocking`
+   hooks; the base-class `write` / `read_pending` template methods wrap them
+   in `loop.run_in_executor(None, …)`. The hooks are opt-in (default
+   `raise NotImplementedError`).
+
+2. **Native async** (byte-stream backend: `WinptyConsoleWindowBackend`) —
+   overrides `write` / `read_pending` directly with `asyncio.StreamWriter` /
+   `StreamReader`. No hooks. Used when the underlying transport is already
+   `await`-shaped (asyncio streams after ADR-0032 D2).
+
+3. **Snapshot backend** (`TmuxPtyBackend`) — overrides `write` /
+   `read_pending` / `current_segment` / `drain_startup` directly because
+   tmux's I/O model is a control-protocol snapshot (`send_keys` writes,
+   `capture_pane` reads a pane snapshot), not a byte stream. No hooks.
+   ADR-0032 D5 explicitly rejects forcing tmux into byte-stream shape via
+   `pipe-pane` as over-convergence.
+
+Every concrete backend implements `_shell_family() -> ShellFamily`
+(`@abstractmethod` on the base). The base class uses it to gate
+readline-dependent behaviors: `clear_input_line()` sends `\x01\x0b` iff
+`_shell_family().uses_readline()`; `drain_startup()` passes
+`uses_readline=_shell_family().uses_readline()` to the shared
+`drain_windows_startup` helper. This replaces the three divergent
+shell-detection heuristics that existed pre-ADR-0032 (fragile substring
+`"bash" in self._shell`, `_family_from_path`, inline suffix tuple).
+
+The three byte-stream backends inherit `current_segment` /
+`clear_input_line` / `drain_startup` from the base class; tmux overrides
+`current_segment` and `drain_startup` (snapshot I/O requires
+`capture_pane`-based prompt detection).
+
+Architecture guard: `tests/architecture/test_terminal_backend_contract.py`
+asserts the contract shape; `tests/architecture/test_terminal_async_safety.py`
+(ticket 07) asserts per-subclass compliance.
+
+### Windows: WinptyConsoleWindowBackend (visible)
+
+Launches `visible_windows_host.py` in a new OS console window. Per
+ADR-0032 D2, the parent↔host IPC bridge uses `asyncio.start_server` /
+`asyncio.open_connection` + `StreamReader` / `StreamWriter` (was: raw
+`socket.socket` + `settimeout` + `sendall` / `recv`). This structurally
+eliminates the `settimeout` leak and partial-`sendall` defects that
+produced the "tab stuck" and "command typed but not submitted" symptoms.
 
 - Human can see and type in the visible window
 - Agent commands also appear in the same window
-- Parent process communicates via local TCP socket
+- Parent↔host IPC: asyncio streams with `TCP_NODELAY` set on both sides
+- Host process: blocking pywinpty calls wrapped in `run_in_executor`;
+  `_stdin_to_pty` (human keyboard) and `_resize_monitor` remain threads
 - Uses `winpty.Backend.WinPTY` explicitly (avoids ConPTY DA1 pollution)
 - Human Ctrl+C is handled by `SetConsoleCtrlHandler` (host survives)
-- **Lifecycle fix**: `pty_to_socket()` treats empty `recv()` as timeout (continue polling) rather than breaking the thread, preventing premature I/O-forwarder death. `isalive()` check ensures host exits when shell dies.
+- `isalive()` check ensures host exits when shell dies
 
 Data flow:
 
 ```
-agent parent -> socket -> visible host -> pywinpty -> bash
+agent parent -> asyncio Stream -> visible host -> pywinpty -> bash
 human keyboard -> visible host -> pywinpty -> bash
-bash output -> pywinpty -> visible host -> socket -> agent
+bash output -> pywinpty -> visible host -> asyncio Stream -> agent
 bash output -> pywinpty -> visible host -> stdout (visible window)
 ```
 
-### Unix: PexpectPtyBackend (primary) + TmuxPtyBackend (fallback)
+### Windows: WinptyHiddenBackend (hidden)
 
-Linux uses a degradation chain: `PexpectPtyBackend` (native PTY via pexpect) → `TmuxPtyBackend` (tmux sessions).
-`create_pty_backend()` checks pexpect availability first; if unavailable, falls back to tmux. The
-single `BaseTerminalManager` (two-axis `shell_info` × `visibility`) auto-detects available backends
-through the factory.
+In-process pywinpty, no visible window. Implements `_write_blocking` /
+`_read_blocking` hooks (ADR-0032 D1/D3); the base-class template wraps
+them in `run_in_executor`, eliminating the synchronous-write-blocks-event-
+loop defect.
 
-### Windows: WinptyConsoleWindowBackend + WinptyHiddenBackend
+### Unix: PexpectPtyBackend (primary, hidden) + TmuxPtyBackend (fallback, both)
 
-Two Windows backends: visible (OS console window, human can observe/intervene) and hidden (headless, no visible window).
-`create_pty_backend()` on Windows uses `WinptyHiddenBackend` by default, selecting the transport from
-the platform + `visibility` axis (legacy aliases `VisibleWindowsPtyBackend` / `WindowsHiddenPtyBackend`
-are re-exported in `backends/__init__.py` for the migration window).
+Linux uses a degradation chain: `PexpectPtyBackend` (native PTY via
+pexpect) → `TmuxPtyBackend` (tmux sessions). `create_pty_backend()` checks
+pexpect availability first; if unavailable, falls back to tmux. The single
+`BaseTerminalManager` (two-axis `shell_info` × `visibility`) auto-detects
+available backends through the factory.
+
+`PexpectPtyBackend` implements `_write_blocking` / `_read_blocking` hooks
+(ADR-0032 D1/D3).
+
+`TmuxPtyBackend` is a **snapshot backend** (ADR-0032 D5):
+`capture-pane -p -S -` (full scrollback) + prefix-match diff (no
+duplicates on >30-line commands); `is_alive` has a 1-second TTL cache to
+avoid spawning `tmux ls` ~20×/s under the poll loop.
+
+Legacy aliases `VisibleWindowsPtyBackend` / `WindowsHiddenPtyBackend` are
+re-exported in `backends/__init__.py` for the migration window.
 
 ### Fallback: SubprocessExecutor
 

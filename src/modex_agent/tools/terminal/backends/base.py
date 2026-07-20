@@ -152,9 +152,6 @@ class TerminalBackend(ABC):
         implement ``_write_blocking`` and inherit this template; backends
         with native async I/O or a snapshot model override ``write``
         directly.
-
-        Dormant this ticket — every backend's existing ``write`` override
-        still wins.
         """
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._write_blocking, data)
@@ -166,9 +163,6 @@ class TerminalBackend(ABC):
         ``_read_blocking``, appends them to ``self._output_buffer`` when
         non-empty, and returns a ``TerminalRead``. Backends with native
         async I/O or a snapshot model override ``read_pending`` directly.
-
-        Dormant this ticket — every backend's existing ``read_pending``
-        override still wins.
         """
         loop = asyncio.get_running_loop()
 
@@ -195,23 +189,21 @@ class TerminalBackend(ABC):
     # ------------------------------------------------------------------
     # Shared byte-stream behaviors (ADR-0032 D4)
     # ------------------------------------------------------------------
-    # Concrete defaults backed by the ``_shell_family`` hook. Tmux
-    # overrides ``current_segment`` / ``drain_startup`` because its
+    # Concrete defaults backed by the ``_shell_family`` abstract hook.
+    # Tmux overrides ``current_segment`` / ``drain_startup`` because its
     # snapshot I/O model diverges from the byte-stream path; the three
-    # byte-stream backends inherit these defaults after their migration
-    # tickets (02–05) land. This ticket the defaults are dormant — every
-    # backend's existing override still wins.
+    # byte-stream backends inherit these defaults.
 
+    @abstractmethod
     def _shell_family(self) -> ShellFamily:
         """Return the shell family of the running shell.
 
-        Non-abstract safe default (``ShellFamily.SH``) —
-        conservative-correct: SH uses readline, so the readline-gated
-        shared behaviors (``clear_input_line`` / ``drain_startup``) are
-        active by default. Ticket 06 promotes this to ``@abstractmethod``
-        after all backends implement it.
+        Abstract hook (ADR-0032 D4.1). Every concrete subclass must
+        implement this — typically as a one-liner returning
+        ``_family_from_path(self._shell or "")``. The base class uses
+        the returned family to gate readline-dependent behaviors
+        (``clear_input_line`` / ``drain_startup``).
         """
-        return ShellFamily.SH
 
     async def current_segment(self) -> TerminalSegment:
         """Snapshot the visible terminal content and cursor line.
@@ -219,9 +211,6 @@ class TerminalBackend(ABC):
         Default byte-stream implementation (ADR-0032 D4). Tmux overrides
         to use ``capture_pane()`` because its snapshot I/O model does not
         accumulate into ``self._output_buffer``.
-
-        Dormant this ticket — every backend's existing
-        ``current_segment`` override still wins.
         """
         if self._output_buffer is None:
             return TerminalSegment(text="")
@@ -233,9 +222,6 @@ class TerminalBackend(ABC):
         For readline shells (bash/zsh/sh) this sends Ctrl+A Ctrl+K
         (``\\x01\\x0b``). For non-readline shells (cmd/powershell) this
         is a no-op.
-
-        Dormant this ticket — every backend's existing
-        ``clear_input_line`` override still wins.
         """
         if self._shell_family().uses_readline():
             await self.write("\x01\x0b")
@@ -247,9 +233,6 @@ class TerminalBackend(ABC):
         the shared ``drain_windows_startup`` helper. Tmux overrides
         because its snapshot I/O model requires ``capture_pane``-based
         prompt detection rather than byte-stream prompt detection.
-
-        Dormant this ticket — every backend's existing ``drain_startup``
-        override still wins.
         """
         await drain_windows_startup(
             read_fn=self.read,
