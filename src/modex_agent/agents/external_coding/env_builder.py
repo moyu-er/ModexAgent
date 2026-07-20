@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import os
 
+from modex_agent.core.agent import AgentCommKind
+
 from .types import ExternalEnvSpec
 
 
@@ -72,7 +74,7 @@ class ExternalEnvBuilder:
             "MODEX_TARGETS": _format_targets(spec.targets),
             "MODEX_COMM_KIND": spec.comm_kind.value,
         }
-        if spec.parent_session_id is not None:
+        if spec.comm_kind == AgentCommKind.SUBAGENT and spec.parent_session_id is not None:
             modex["MODEX_PARENT_SESSION_ID"] = spec.parent_session_id
 
         base_path = base_env.get("PATH", "")

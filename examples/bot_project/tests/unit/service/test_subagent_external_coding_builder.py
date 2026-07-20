@@ -382,6 +382,12 @@ async def test_build_env_spec_no_parent_yields_empty_targets(
 
     spec_template: ExternalEnvSpec = _external_agent(instance)._spec_template
     assert spec_template.targets == []
+    # comm_kind stays SUBAGENT even with no parent — the routing shape is
+    # determined by the builder path (subagent), not by parent presence.
+    # parent_session_id is None; modexctl send will error if invoked,
+    # which is correct (an orphan subagent has nowhere to reply).
+    assert spec_template.comm_kind is AgentCommKind.SUBAGENT
+    assert spec_template.parent_session_id is None
 
 
 @pytest.mark.asyncio

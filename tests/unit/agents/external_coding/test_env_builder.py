@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from modex_agent.agents.external_coding import ExternalEnvBuilder, ExternalEnvSpec
+from modex_agent.core.agent import AgentCommKind
 
 
 def _spec(
@@ -18,6 +19,8 @@ def _spec(
     provider_session_id: str = "provider-1",
     agent_pool_map: dict[str, str] | None = None,
     targets: list[tuple[str, str]] | None = None,
+    comm_kind: AgentCommKind = AgentCommKind.NORMAL,
+    parent_session_id: str | None = None,
 ) -> ExternalEnvSpec:
     return ExternalEnvSpec(
         workspace_root=tmp_path / "ws",
@@ -31,6 +34,8 @@ def _spec(
         else {"default": "pool_default"},
         targets=targets if targets is not None else [("default", "main pool")],
         modexctl_bin_dir=tmp_path / "bin",
+        comm_kind=comm_kind,
+        parent_session_id=parent_session_id,
     )
 
 
@@ -156,3 +161,96 @@ class TestExternalEnvBuilder:
         else:
             pairs = out["MODEX_AGENT_POOL_MAP"].split(";")
             assert dict(p.split("=", 1) for p in pairs) == agent_pool_map
+
+
+class TestCommKindAndParentSessionId:
+    """MODEX_COMM_KIND + MODEX_PARENT_SESSION_ID injection — the two
+    routing-branch selectors modexctl reads to pick subagent vs main path.
+
+    Regression guard: a future change that drops one of these vars, swaps
+    the wire value of comm_kind, or injects parent_session_id on the main
+    path would silently re-introduce the phantom-parent-session bug.
+    """
+
+    def test_normal_kind_injects_modex_comm_kind_normal(self, tmp_path: Path) -> None:
+        spec = _spec(tmp_path, comm_kind=AgentCommKind.NORMAL)
+        out = ExternalEnvBuilder.build(spec, base_env={})
+        assert out["MODEX_COMM_KIND"] == "normal"
+
+    def test_subagent_kind_injects_modex_comm_kind_subagent(self, tmp_path: Path) -> None:
+        spec = _spec(
+            tmp_path,
+            comm_kind=AgentCommKind.SUBAGENT,
+            parent_session_id="conv456.orchestrator",
+        )
+        out = ExternalEnvBuilder.build(spec, base_env={})
+        assert out["MODEX_COMM_KIND"] == "subagent"
+
+    def test_normal_kind_omits_parent_session_id_even_when_set(
+        self, tmp_path: Path
+    ) -> None:
+        """Main-agent path must NEVER inject MODEX_PARENT_SESSION_ID.
+
+        If it did, modexctl's normal branch is documented to ignore it,
+        but injecting it would (a) leak routing context the main agent
+        has no business seeing, and (b) let a future refactor accidentally
+        make the normal branch read it, collapsing the two paths back
+        into the bug this test suite was built to prevent.
+        """
+        spec = _spec(
+            tmp_path,
+            comm_kind=AgentCommKind.NORMAL,
+            parent_session_id="must-not-appear",
+        )
+        out = ExternalEnvBuilder.build(spec, base_env={})
+        assert "MODEX_PARENT_SESSION_ID" not in out
+
+    def test_subagent_kind_with_parent_injects_parent_session_id(
+        self, tmp_path: Path
+    ) -> None:
+        spec = _spec(
+            tmp_path,
+            comm_kind=AgentCommKind.SUBAGENT,
+            parent_session_id="conv456.orchestrator",
+        )
+        out = ExternalEnvBuilder.build(spec, base_env={})
+        assert out["MODEX_PARENT_SESSION_ID"] == "conv456.orchestrator"
+
+    def test_subagent_kind_without_parent_omits_parent_session_id(
+        self, tmp_path: Path
+    ) -> None:
+        """Cold-start subagent (parent_session=None) injects comm_kind=subagent
+        but no MODEX_PARENT_SESSION_ID. modexctl send will error on use —
+        which is the correct behavior (an orphan subagent cannot reply)."""
+        spec = _spec(
+            tmp_path,
+            comm_kind=AgentCommKind.SUBAGENT,
+            parent_session_id=None,
+        )
+        out = ExternalEnvBuilder.build(spec, base_env={})
+        assert out["MODEX_COMM_KIND"] == "subagent"
+        assert "MODEX_PARENT_SESSION_ID" not in out
+
+    def test_default_spec_is_normal_with_no_parent(
+        self, tmp_path: Path
+    ) -> None:
+        """An ExternalEnvSpec constructed with no comm_kind/parent_session_id
+        defaults to NORMAL + None — the main-agent-as-peer path."""
+        from modex_agent.agents.external_coding import ExternalEnvSpec
+
+        spec = ExternalEnvSpec(
+            workspace_root=tmp_path / "ws",
+            inbox_root=tmp_path / "inbox",
+            workdir=tmp_path / "wd",
+            session_id="conv.main",
+            agent_name="main",
+            provider_session_id="",
+            agent_pool_map={"main": "pool_main"},
+            targets=[],
+            modexctl_bin_dir=tmp_path / "bin",
+        )
+        assert spec.comm_kind is AgentCommKind.NORMAL
+        assert spec.parent_session_id is None
+        out = ExternalEnvBuilder.build(spec, base_env={})
+        assert out["MODEX_COMM_KIND"] == "normal"
+        assert "MODEX_PARENT_SESSION_ID" not in out

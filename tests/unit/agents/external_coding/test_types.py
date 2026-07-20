@@ -191,6 +191,32 @@ class TestExternalEnvSpec:
         restored = ExternalEnvSpec.model_validate_json(spec.model_dump_json())
         assert restored == spec
 
+    def test_defaults_to_normal_comm_kind_and_no_parent(
+        self, tmp_path: Path
+    ) -> None:
+        """Default ExternalEnvSpec is the main-agent-as-peer routing shape.
+
+        Omitting comm_kind/parent_session_id MUST yield NORMAL + None so a
+        main-agent builder that doesn't set them gets the prefix-reuse path.
+        If these defaults drift to SUBAGENT, every main agent's modexctl
+        send would route via a non-existent parent_session_id.
+        """
+        from modex_agent.core.agent import AgentCommKind
+
+        spec = ExternalEnvSpec(
+            workspace_root=tmp_path,
+            inbox_root=tmp_path,
+            workdir=tmp_path,
+            session_id="conv.main",
+            agent_name="main",
+            provider_session_id="",
+            agent_pool_map={"main": "pool"},
+            targets=[],
+            modexctl_bin_dir=tmp_path,
+        )
+        assert spec.comm_kind is AgentCommKind.NORMAL
+        assert spec.parent_session_id is None
+
 
 class TestOutboxMetadataAndLine:
     """The byte-exact match contract against ``LocalFileInboxServer.receive()``."""
