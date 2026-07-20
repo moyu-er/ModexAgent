@@ -19,7 +19,7 @@ from modex_agent.approval.types import ApprovalAction
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.context import ContextState, InMemoryContextManager
 from modex_agent.core.emitter import AgentResult
-from modex_agent.core.graph.interrupt import GraphInterrupt
+from modex_graph.exceptions import GraphInterrupt
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager

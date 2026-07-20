@@ -7,51 +7,38 @@ from modex_agent.agents.react.constants import (
     ReActNode,
     ReActReason,
 )
-from modex_agent.agents.react.runtime import ReactGraphRuntime
-from modex_agent.agents.react.state import ReActTurnState, get_react_state
-from modex_agent.core.agent import AgentContext
-from modex_agent.core.graph.node import Node, NodeTransition
+from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.runtime.enums import TurnPhase
 from modex_graph.context import GraphContext
+from modex_graph.node import Node
+from modex_graph.result import NodeResult
 
 
-class StartNode(Node):
+class StartNode(Node[ReActTurnState]):
     """Routes to LLM normally, or to resume target when turn is suspended."""
 
     def __init__(self) -> None:
-        super().__init__(ReActNode.START)
+        # Name is also set by ``Graph.add_node(name, node)``; setting it here
+        # keeps the instance usable for direct-invocation tests that bypass
+        # the graph builder.
+        self.name = ReActNode.START
 
-    async def execute(self, ctx: AgentContext) -> NodeTransition:
-        state = get_react_state(ctx)
+    async def execute(self, ctx: GraphContext[ReActTurnState]) -> NodeResult:
+        state = ctx.state
 
-        if state is not None and state.phase == TurnPhase.SUSPENDED:
-            # Resume from suspended turn — route to the saved node
-            resume_node = ReActNode(state.current_node.value)
-            return NodeTransition(resume_node, ReActReason.RESUME_TOOLS)
+        if state.phase == TurnPhase.SUSPENDED:
+            # Resume from suspended turn — route to the saved node (TOOL for
+            # approval resume). The static edge START --RESUME_TOOLS--> TOOL
+            # carries this transition; StartNode merely emits the reason.
+            return NodeResult(transition=ReActReason.RESUME_TOOLS)
 
-        # Fresh turn — initialize typed state
-        if state is not None:
-            state.phase = TurnPhase.RUNNING
-            state.current_node = ReActNode.START
-            state.iteration = 0
+        # Fresh turn — initialize typed state.
+        state.phase = TurnPhase.RUNNING
+        state.current_node = ReActNode.START
+        state.iteration = 0
 
-        await self._emit(ctx, state, GraphReActEvent.START)
-        return NodeTransition(ReActNode.LLM, ReActReason.NORMAL_START)
+        await ctx.runtime.emit(GraphReActEvent.START, None, ctx)
+        return NodeResult(transition=ReActReason.NORMAL_START)
 
-    @staticmethod
-    async def _emit(
-        ctx: AgentContext,
-        state: ReActTurnState | None,
-        event: GraphReActEvent,
-        data: object = None,
-    ) -> None:
-        """Route an emit call through ``ReactGraphRuntime.emit``.
 
-        No-op when ``state`` or ``runtime`` is None.
-        """
-        runtime = ctx.runtime
-        if runtime is None or state is None:
-            return
-        graph_runtime = runtime.graph_runtime or ReactGraphRuntime()
-        graph_ctx = GraphContext(state=state, runtime=graph_runtime, user_data=ctx)
-        await graph_runtime.emit(event, data, graph_ctx)
+__all__ = ["StartNode"]

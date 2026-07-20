@@ -10,7 +10,7 @@ from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
 from modex_agent.approval.constants import ApprovalTier
 from modex_agent.core.context import ContextState, InMemoryContextManager
 from modex_agent.core.emitter import AgentResult
-from modex_agent.core.graph.interrupt import GraphInterrupt
+from modex_graph.exceptions import GraphInterrupt
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import InputMessage, ToolCall
 from modex_agent.runtime.enums import AgentKind, ApprovalSubjectType, SnapshotReason, TurnPhase

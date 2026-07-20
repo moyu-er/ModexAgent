@@ -4,13 +4,11 @@ Per ADR-0033 D5.1: business modules subclass ``GraphContext[S]`` to add
 type-safe accessors (``agent_ctx`` / ``tool_manager`` / ``context_manager``)
 instead of ``cast(AgentContext, ctx.user_data)`` at every access site.
 
-Stage 3 status (ticket 04): defined but NOT used yet. The current ticket
-migrates AOP calls in nodes to ``ctx.runtime.graph_runtime.*`` but keeps
-the old ``core/graph/`` engine, which passes ``AgentContext`` (not
-``GraphContext``) to ``Node.execute``. Nodes construct thin
-``GraphContext`` wrappers per call. Ticket 05 switches to the new
-``modex_graph`` engine and ``ReActGraphContext`` becomes the actual
-execution context.
+Stage 4 (ticket 05): the new ``modex_graph.GraphEngine`` constructs and
+passes this context to ``Node.execute``. The wrapped ``AgentContext`` lives
+in ``user_data`` and is reached via the ``agent_ctx`` property; the typed
+``ReActTurnState`` is exposed directly as ``ctx.state`` (inherited from
+``GraphContext``).
 """
 
 from __future__ import annotations
@@ -34,14 +32,17 @@ class ReActGraphContext(GraphContext[ReActTurnState]):
     for the framework services ReAct nodes need. Eliminates
     ``cast(AgentContext, ctx.user_data)`` boilerplate.
 
-    NOT used in ticket 04 — nodes construct plain ``GraphContext`` wrappers.
-    Ticket 05 (engine switch) constructs ``ReActGraphContext`` as the
-    execution context passed to ``Node.execute``.
+    The new ``modex_graph.GraphEngine`` calls ``node.execute(ctx: GraphContext[S])``
+    — nodes receive a ``ReActGraphContext`` instance and access:
+    - ``ctx.state`` — the ``ReActTurnState`` (typed).
+    - ``ctx.runtime`` — the ``ReactGraphRuntime`` (AOP bridge).
+    - ``ctx.agent_ctx`` — the wrapped ``AgentContext`` (framework services,
+      tool_manager, history, emitter, identity, etc.).
     """
 
     @property
     def agent_ctx(self) -> AgentContext:
-        return cast(AgentContext, self.user_data)
+        return cast("AgentContext", self.user_data)
 
     @property
     def tool_manager(self) -> ToolManager | None:

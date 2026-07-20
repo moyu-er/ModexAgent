@@ -146,7 +146,7 @@ class MyAgent(Agent[MyEvent]):
 
 ### Internal
 - `modex_agent.core.agent` — `Agent[E]`, `AgentContext`
-- `modex_agent.core.graph` — `Graph[R]`, `Node[R]`, `GraphEngine`, `GraphInterrupt`
+- `modex_graph` — `Graph[S]`, `Node[S]`, `GraphEngine`, `GraphInterrupt`, `GraphContext`, `GraphRuntime` (ADR-0033)
 - `modex_agent.core.tool_manager` — `InMemoryToolManager`, `Tool`, `ToolResult`
 - `modex_agent.core.provider` — `LLMProvider`, `StreamingLLMProvider`
 - `modex_agent.core.emitter` — `ContentEmitter`, `AgentResult`

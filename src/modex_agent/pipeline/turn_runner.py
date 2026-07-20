@@ -49,7 +49,7 @@ from modex_agent.approval.types import ApprovalAction
 from modex_agent.approval.views import view_from_request
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult
-from modex_agent.core.graph.interrupt import GraphInterrupt
+from modex_graph.exceptions import GraphInterrupt
 from modex_agent.memory.history import inject_attachments_to_history
 from modex_agent.pipeline.approval_renderer import ApprovalRenderer
 from modex_agent.pipeline.approval_resumer import ApprovalResumer
