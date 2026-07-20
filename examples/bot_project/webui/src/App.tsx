@@ -14,6 +14,13 @@ import type { OutgoingAttachmentRef } from "./types/attachments";
 import { useT } from "./i18n";
 import { LogoMarkIcon } from "./components/ui/icons";
 
+interface PendingHeroSend {
+  content: string;
+  attachments?: OutgoingAttachmentRef[];
+  providerName?: string;
+  modelName?: string;
+}
+
 const SIDEBAR_WIDTH_KEY = "modexbot_sidebar_width";
 const DEFAULT_SIDEBAR_WIDTH = 260;
 const MIN_SIDEBAR_WIDTH = 200;
@@ -49,6 +56,7 @@ const AppInner: FC = () => {
     onSessionCreated,
     selectSession,
     handleNew,
+    createDraftForSend,
     handleDelete,
     handleWorkspaceChanged,
     handleGoHome,
@@ -95,15 +103,17 @@ const AppInner: FC = () => {
     [selectedId, sessions],
   );
 
-  // Display name of the selected session's owning agent (main or a subagent).
-  // Sourced from the session list — no backend change. Undefined when no
-  // session is open, in which case the chat header shows no label. The "…"
-  // sentinel is the session-list placeholder for not-yet-resolved agent names
-  // (fresh drafts); treat it as unknown so it never leaks into the header.
+  // Three-tier fallback: session list → infer from id suffix → active pool.
+  // Keeps the header populated through the hero-send → attach window where
+  // the session is not yet in the sidebar list.
   const agentName = useMemo(() => {
+    if (!selectedId) return undefined;
     const s = sessions.find((x) => x.session_id === selectedId);
-    return s && s.agent_name !== "…" ? s.agent_name : undefined;
-  }, [sessions, selectedId]);
+    if (s && s.agent_name !== "…" && s.agent_name) return s.agent_name;
+    const parts = selectedId.split(".");
+    if (parts.length >= 2) return parts[1] || "main";
+    return activePool || "main";
+  }, [sessions, selectedId, activePool]);
 
   const handleSend = useCallback(
     (
@@ -117,6 +127,36 @@ const AppInner: FC = () => {
     },
     [onSent, send, selectedId],
   );
+
+  // Hero-send flow: when the user submits from the no-session hero composer,
+  // create a client-side draft (which useWebUIStream attaches to the backend)
+  // and stash the payload. The effect below fires send() as soon as
+  // selectedId becomes the uuid prefix — send() adds the optimistic message
+  // immediately and queues the ws send for the `attached` handler to flush
+  // with the real session id. This bridges the async gap between "user
+  // pressed send" and "backend attached + ready to receive".
+  const pendingHeroSendRef = useRef<PendingHeroSend | null>(null);
+
+  const handleHeroSend = useCallback(
+    (
+      content: string,
+      attachments?: OutgoingAttachmentRef[],
+      providerName?: string,
+      modelName?: string,
+    ): void => {
+      createDraftForSend(activePool);
+      pendingHeroSendRef.current = { content, attachments, providerName, modelName };
+    },
+    [createDraftForSend, activePool],
+  );
+
+  useEffect((): void => {
+    const pending = pendingHeroSendRef.current;
+    if (!pending || !selectedId) return;
+    pendingHeroSendRef.current = null;
+    onSent(selectedId);
+    send(pending.content, pending.attachments, pending.providerName, pending.modelName);
+  }, [selectedId, onSent, send]);
 
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
 
@@ -247,6 +287,7 @@ const AppInner: FC = () => {
             sessionId={selectedId}
             workspace={streamWs}
             onSend={handleSend}
+            onHeroSend={handleHeroSend}
             onPause={pause}
             readOnly={isSelectedSubagent}
             onOpenSidebar={() => setSidebarMobileOpen(true)}

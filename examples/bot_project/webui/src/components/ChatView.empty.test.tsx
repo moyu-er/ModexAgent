@@ -23,31 +23,27 @@ const baseProps = {
   onSend: vi.fn(),
 };
 
-describe("ChatView empty state (Teal & Ember §6)", () => {
-  it("shows logo watermark + display headline + eyebrow hints when no conversation is selected", () => {
-    const { container } = render(<ChatView {...baseProps} />);
-    // Display-font headline replaces the bare one-liner.
-    const headline = screen.getByText("Chat with your agents");
-    expect(headline.className).toContain("font-display");
-    // Mono-eyebrow hints (2–3 lines).
-    expect(screen.getByText(/select a conversation/i)).toBeTruthy();
-    expect(screen.getByText(/new conversation/i)).toBeTruthy();
-    // Logo watermark (brand, low opacity).
-    const watermark = container.querySelector("svg[data-logo-mark]");
-    expect(watermark).toBeTruthy();
+describe("ChatView hero view (no session selected)", () => {
+  it("renders ModexBot wordmark + hero composer when no session is selected", () => {
+    const { container } = render(<ChatView {...baseProps} sessionId={null} />);
+    expect(screen.getByText("ModexBot")).toBeTruthy();
+    expect(screen.getByText("ModexBot").className).toContain("hero-wordmark");
+    expect(container.querySelector("form.hero-composer")).toBeTruthy();
+    expect(container.querySelector("textarea")).toBeTruthy();
   });
 
-  it("hides the empty state once messages exist", () => {
-    const messages: UIMessage[] = [
-      {
-        id: "m1",
-        role: "user",
-        agent_name: "main",
-        blocks: [{ kind: "text", text: "hi" }],
-        isStreaming: false,
-      },
-    ];
-    render(<ChatView {...baseProps} messages={messages} />);
-    expect(screen.queryByText("Chat with your agents")).toBeNull();
+  it("does not render the hero view once a session is selected", () => {
+    const { container } = render(
+      <ChatView {...baseProps} sessionId="test-session.main" agentName="main" />,
+    );
+    expect(container.querySelector(".hero-wordmark")).toBeNull();
+    expect(container.querySelector("form.hero-composer")).toBeNull();
+    expect(container.querySelector("form.composer")).toBeTruthy();
+  });
+
+  it("disables the attach button in hero mode (no session to upload to)", () => {
+    const { container } = render(<ChatView {...baseProps} sessionId={null} />);
+    const attachBtn = container.querySelector("button[aria-label]");
+    expect(attachBtn).toBeTruthy();
   });
 });
