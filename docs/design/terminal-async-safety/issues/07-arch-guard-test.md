@@ -34,17 +34,17 @@ This ticket does NOT touch production code. It only adds the guard test.
 
 **Blocked by:** 06 — Contract: finalize ABC, sweep dead code, update docs.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `tests/architecture/test_terminal_async_safety.py` exists
-- [ ] Assertion 1: hook-or-override consistency per subclass
-- [ ] Assertion 2: async-safety evidence (`run_in_executor` or `await`) in every overridden `write` / `read_pending`
-- [ ] Assertion 3: `_shell_family` implementation present on every concrete subclass
-- [ ] Assertion 4: no `socket.settimeout` call anywhere in `backends/`
-- [ ] Test passes against the post-06 codebase (all 4 backends in their final shape)
-- [ ] Test fails deliberately if any backend regresses (manually verify by temporarily reverting one backend to the old pattern, then restore)
-- [ ] `ruff check tests/architecture/test_terminal_async_safety.py` clean
-- [ ] `mypy tests/architecture/test_terminal_async_safety.py` clean
+- [x] `tests/architecture/test_terminal_async_safety.py` exists
+- [x] Assertion 1: hook-or-override consistency per subclass
+- [x] Assertion 2: async-safety evidence (`run_in_executor` or `await`) in every overridden `write` / `read_pending`
+- [x] Assertion 3: `_shell_family` implementation present on every concrete subclass
+- [x] Assertion 4: no `socket.settimeout` / `sock.settimeout` *call* anywhere in `backends/` (allow `fileobj.settimeout` inside `_read_blocking` hooks; allow `def settimeout` method definitions in ABCs)
+- [x] Test passes against the post-06 codebase (all 4 backends in their final shape)
+- [x] Test fails deliberately if any backend regresses (manually verified by renaming `_write_blocking` on `WinptyHiddenBackend`)
+- [x] `ruff check tests/architecture/test_terminal_async_safety.py` clean
+- [x] `mypy tests/architecture/test_terminal_async_safety.py` clean (only project-wide import-untyped config issue, same as existing arch tests)
 
 ## Comments
 
