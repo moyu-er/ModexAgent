@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "modex-graph"
+version = "1.0.0"
+description = "Generalized typed graph engine with sync/async dual mode, channels, and GraphBubbleUp exception family. Framework-agnostic sibling of modex_agent."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [{ name = "GYT", email = "gyt8193@qq.com" }]
+keywords = ["graph", "state-machine", "agent", "async", "pydantic"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+  "pydantic>=2.0.0,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.0.0",
+  "pytest-asyncio>=0.21.0",
+  "mypy>=1.0.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["modex_graph"]
+
+[tool.hatch.build.targets.wheel.sources]
+"." = "modex_graph"
+
+# NOTE: This file declares modex_graph as a standalone, framework-agnostic
+# package. It MUST NOT depend on modex_agent or any other ModexAgent module.
+# The architecture guard test in tests/architecture/test_modex_graph_isolation.py
+# enforces this at both grep-level and import-time (sys.modules block).

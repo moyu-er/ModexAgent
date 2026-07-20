@@ -38,6 +38,7 @@ classifiers = [
 
 dependencies = [
   "pydantic>=2.0.0,<3",
+  "modex-graph",  # ADR-0033 D11: sibling package, framework-agnostic graph engine.
   "filelock>=3.12.0",
   "httpx>=0.24.0",
   "pyyaml>=6.0.0",
@@ -93,7 +94,7 @@ all = ["ModexAgent[llm,sandbox,gateway,skills,terminal,ast]"]
 modexctl = "modexctl.main:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/modex_agent", "src/modexctl"]
+packages = ["src/modex_agent", "src/modexctl", "src/modex_graph"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/modex_agent/persistence/migrations" = "modex_agent/persistence/migrations"
