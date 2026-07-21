@@ -1,8 +1,9 @@
 # Memory retention thresholds stay per-scope polymorphic
 
 The memory maintenance layer keeps `ArchiveRetentionPolicy` and
-`KnowledgeRetentionPolicy` as ABCs (with their `Default*` implementations)
-rather than collapsing them into a single flat `MemoryMaintenanceConfig`.
+`CoreMemoryRetentionPolicy` as ABCs (with their `Default*` implementations;
+renamed from `KnowledgeRetentionPolicy` per ADR-0035) rather than collapsing
+them into a single flat `MemoryMaintenanceConfig`.
 `DefaultMemoryMaintenancePolicy.scan_once` calls
 `self._archive_retention.get_max_entries(ctx)` — retention thresholds vary by
 `MemoryContext`/scope, so a context-free flat config would silently drop that

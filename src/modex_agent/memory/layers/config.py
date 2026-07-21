@@ -43,7 +43,7 @@ class ArchiveMemoryConfig:
 
 
 @dataclass(frozen=True)
-class KnowledgeMemoryConfig:
+class CoreMemoryConfig:
     scope: Scope = field(default_factory=UserScope)
     default_files: dict[str, str] = field(
         default_factory=lambda: {
@@ -69,7 +69,7 @@ class UserRetentionBufferConfig:
 class MemoryLayerConfigSet:
     session: SessionMemoryConfig = field(default_factory=SessionMemoryConfig)
     archive: ArchiveMemoryConfig | None = field(default_factory=ArchiveMemoryConfig)
-    knowledge: KnowledgeMemoryConfig | None = field(default_factory=KnowledgeMemoryConfig)
+    core: CoreMemoryConfig | None = field(default_factory=CoreMemoryConfig)
     user_retention: UserRetentionBufferConfig | None = field(
         default_factory=UserRetentionBufferConfig
     )

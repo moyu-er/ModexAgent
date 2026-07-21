@@ -13,7 +13,7 @@ from modex_agent.memory.archive_models import (
 
 def test_archive_channel_values_are_protocol_constants() -> None:
     assert ArchiveChannel.CONTEXT.value == "context"
-    assert ArchiveChannel.KNOWLEDGE.value == "knowledge"
+    assert ArchiveChannel.CORE.value == "core"
 
 
 def test_archive_write_normalizes_metadata_channel() -> None:
@@ -32,20 +32,20 @@ def test_archive_state_defaults_start_at_one() -> None:
     state = ArchiveState()
 
     assert state.next_archive_id == 1
-    assert state.knowledge_consumed_archive_id == 0
+    assert state.core_consumed_archive_id == 0
 
 
 def test_archive_generation_inputs_are_typed() -> None:
     stats = ArchiveInputStats(
         input_messages=4,
         context_messages=3,
-        knowledge_messages=2,
+        core_messages=2,
         tool_chains=1,
         dropped_messages=1,
     )
     inputs = ArchiveGenerationInputs(
         context_transcript="[user]\nhello",
-        knowledge_transcript="[fact]\nhello",
+        core_transcript="[fact]\nhello",
         stats=stats,
     )
 
@@ -56,11 +56,11 @@ def test_archive_generation_inputs_are_typed() -> None:
 def test_bundle_result_tracks_shared_archive_id() -> None:
     result = ArchiveBundleResult(
         archive_id=7,
-        written_channels=(ArchiveChannel.CONTEXT, ArchiveChannel.KNOWLEDGE),
+        written_channels=(ArchiveChannel.CONTEXT, ArchiveChannel.CORE),
     )
 
     assert result.archive_id == 7
     assert result.written_channels == (
         ArchiveChannel.CONTEXT,
-        ArchiveChannel.KNOWLEDGE,
+        ArchiveChannel.CORE,
     )

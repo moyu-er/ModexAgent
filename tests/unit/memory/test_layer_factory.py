@@ -27,7 +27,7 @@ async def test_single_user_factory_builds_fieldized_layers_with_scoped_storage(t
 
     assert isinstance(layers, MemoryLayerSet)
     assert layers.archive is not None
-    assert layers.knowledge is not None
+    assert layers.core is not None
 
     await layers.session.add_messages(context, [{"role": "user", "content": "hello"}])
     messages = await layers.session.get_recent_messages(context)
@@ -35,11 +35,11 @@ async def test_single_user_factory_builds_fieldized_layers_with_scoped_storage(t
         context,
         ArchiveEntry(summary="summary", metadata={"source": "test"}),
     )
-    await layers.knowledge.ensure_defaults(context, {"memory": "seed"})
+    await layers.core.ensure_defaults(context, {"memory": "seed"})
 
     assert [message.content for message in messages] == ["hello"]
     assert stored_archive.entry_id == 1
-    assert (await layers.knowledge.get_file(context, "memory")) == "seed"
+    assert (await layers.core.get_file(context, "memory")) == "seed"
 
     records = await registry.list_records(agent_roles=None)
     session_key = scope_path_key(SessionScope(), context)
@@ -47,7 +47,7 @@ async def test_single_user_factory_builds_fieldized_layers_with_scoped_storage(t
     assert {(str(record.layer), record.scope_key) for record in records} == {
         ("session", session_key),
         ("archive", user_key),
-        ("knowledge", user_key),
+        ("core", user_key),
     }
 
 
@@ -70,7 +70,7 @@ async def test_session_only_factory_excludes_archive_and_knowledge(tmp_path: Pat
     )
 
     assert layers.archive is None
-    assert layers.knowledge is None
+    assert layers.core is None
     assert [message.content for message in await layers.session.get_recent_messages(context)] == [
         "one",
         "two",
@@ -87,14 +87,14 @@ async def test_factory_knowledge_layer_applies_memory_update(tmp_path: Path) -> 
     )
     context = MemoryContext(user_id="u1")
 
-    assert layers.knowledge is not None
-    result = await layers.knowledge.apply_update(
+    assert layers.core is not None
+    result = await layers.core.apply_update(
         context,
         MemoryUpdate(file_name="MEMORY.md", content="remember this", mode="append"),
     )
 
     assert result == "remember this"
-    assert await layers.knowledge.get_file(context, "MEMORY.md") == "remember this"
+    assert await layers.core.get_file(context, "MEMORY.md") == "remember this"
 
 
 @pytest.mark.asyncio

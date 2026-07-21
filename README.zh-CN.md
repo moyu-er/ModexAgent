@@ -43,7 +43,7 @@ ModexAgent 是一个用于构建 AI Agent 应用的 Python 框架。它将模型
 - **跨平台交互式终端** — 内置完整终端工具链，支持 Windows（WinPTY/ConPTY）、Linux/macOS（pexpect/tmux）三端统一接口；支持可见终端窗口与后台 PTY 两种模式，248+ 单元测试覆盖。
 - **多 Agent 协作** — 每个 pool 内部是严格星型：主 Agent 作为通信中枢，子 Agent 只能经 `send_to_agent` 与父 Agent 通信（框架按需走 broker、异步 inbox 或隔离 subagent 会话）。跨 pool 时主 Agent 之间是对等的——一个主 Agent 可 `send_to_agent` 另一个 pool 的主 Agent，对方在自己的 bus 上接收并回复。subagent↔subagent、subagent→非父 NORMAL 的发送会被拓扑关卡拒绝。
 - **Pool 运行时** — 多 Agent 常驻池，通过 `MessageBroker` + `AgentMessageBus` 路由消息，I/O 适配器与 Agent 逻辑完全解耦。
-- **多级记忆 + 自学习系统** — Session、Archive、Knowledge、UserRetentionBuffer、Pruned、Experience 六层记忆，支持 SessionScope / UserScope / GlobalScope 可配置隔离范围。Dream Engine 定期将 Archive 整合为 Knowledge；ExperienceReviewAgent 将对话沉淀为可复用的 EXPERIENCE.md 参考知识。
+- **多级记忆 + 自学习系统** — Session、Archive、Core Memory、UserRetentionBuffer、Pruned、Experience 六层记忆，支持 SessionScope / UserScope / GlobalScope 可配置隔离范围。Dream Engine 定期将 Archive 整合为 Core Memory；ExperienceReviewAgent 将对话沉淀为可复用的 EXPERIENCE.md 参考知识。（原 "Knowledge" 层依 ADR-0035 重命名为 "Core Memory"，以与即将推出的 KnowledgeBase（RAG 检索）模块区分。）
 - **Hook + Interceptor 扩展体系** — 生命周期 Hook（如 InboxFlush、SubagentAutoSend）与 AOP 拦截器链（ControlDrain、ToolResultLimit）正交组合，框架行为可逐层定制，不侵入核心代码。
 - **类型安全** — 全部使用 ABC 接口（零 Protocol），枚举替代原始字符串，`from __future__ import annotations` 全仓覆盖，mypy strict 级别检查。
 - **MCP 原生集成** — 动态加载 MCP 服务器（SSE/stdio），`MCPToolAdapter` 自动将 MCP 能力映射为框架 Tool 对象，支持工具、资源、Prompt 三类能力。
@@ -160,7 +160,7 @@ ModexAgent/
 
 | 文档 | 说明 |
 | --- | --- |
-| [ADR 索引](docs/adr/) | 架构决策记录（ADR-0001 ~ 0024） |
+| [ADR 索引](docs/adr/) | 架构决策记录（ADR-0001 ~ 0035） |
 | [文档总览](docs/AGENTS.md) | `docs/` 目录索引——ADR、设计文档、Agent 文档 |
 | [CONTEXT.md](CONTEXT.md) | 领域术语表——Pool、Workspace、ReAct Agent、Graph、GraphInterrupt、Assembly 等 |
 | [本地环境搭建](docs/bot-local-setup.md) | 从源码搭建 bot 的详细步骤（前置依赖、venv、配置向导、故障排除） |

@@ -19,19 +19,19 @@ class TestArchiveSummarizerConfig:
     def test_default_config(self) -> None:
         config = ArchiveSummarizerConfig()
         assert config.context_max_chars == 20_000
-        assert config.knowledge_max_chars == 3000
+        assert config.core_max_chars == 3000
         assert config.index_max_chars == 200
         assert config.max_iterations == 25
 
     def test_custom_config(self) -> None:
         config = ArchiveSummarizerConfig(
             context_max_chars=1000,
-            knowledge_max_chars=1200,
+            core_max_chars=1200,
             index_max_chars=200,
             max_iterations=5,
         )
         assert config.context_max_chars == 1000
-        assert config.knowledge_max_chars == 1200
+        assert config.core_max_chars == 1200
         assert config.index_max_chars == 200
         assert config.max_iterations == 5
 
@@ -50,7 +50,7 @@ class TestBuildSystemPrompt:
         prompt = ArchiveSummarizer.build_system_prompt(
             tmp_path,
             context_max_chars=500,
-            knowledge_max_chars=600,
+            core_max_chars=600,
             index_max_chars=100,
         )
         assert "500" in prompt

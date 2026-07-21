@@ -3,15 +3,15 @@
 
 # templates
 
-Template files used during agent memory initialization. These Markdown files serve as seed content for the agent's knowledge and personality layers.
+Template files used during agent memory initialization. These Markdown files serve as seed content for the agent's core memory and personality layers.
 
 ## Subdirectories
 
 | Directory | Purpose |
 |-----------|---------|
-| `knowledge/` | Knowledge seed templates |
+| `core/` | Core memory seed templates |
 
-## knowledge/
+## core/
 
 | File | Description |
 |------|-------------|
@@ -22,6 +22,6 @@ Template files used during agent memory initialization. These Markdown files ser
 ## For AI Agents
 
 ### Working In This Directory
-- These templates are read during agent initialization to seed the knowledge layer.
+- These templates are read during agent initialization to seed the core memory layer.
 - Do not add runtime logic here — these are pure content templates.
 - Content follows Markdown format with frontmatter-style headers.

@@ -32,7 +32,7 @@ from modex_agent.memory.layers.config import (
     UserRetentionBufferConfig,
 )
 from modex_agent.memory.layers.factory import MemoryLayerFactory
-from modex_agent.memory.layers.knowledge import ScopedKnowledgeMemoryManager
+from modex_agent.memory.layers.core import ScopedCoreMemoryManager
 from modex_agent.memory.layers.user_buffer import ScopedUserRetentionBuffer
 from modex_agent.memory.pruned.manager import PrunedManager
 from modex_agent.memory.registry.file import DefaultMemoryStoreRegistry
@@ -180,7 +180,7 @@ class TestUserLevelSharing:
         ctx_a = _ctx("sess-a", "user-1")
         ctx_b = _ctx("sess-b", "user-1")
 
-        knowledge = layer_set.knowledge
+        knowledge = layer_set.core
         assert knowledge is not None
 
         await knowledge.apply_update(
@@ -251,7 +251,7 @@ class TestUserLevelIsolation:
         ctx_a = _ctx("sess-a", "user-a")
         ctx_b = _ctx("sess-b", "user-b")
 
-        knowledge = layer_set.knowledge
+        knowledge = layer_set.core
         assert knowledge is not None
 
         await knowledge.apply_update(
@@ -358,7 +358,7 @@ class TestPerUserLockIsolation:
 
         engine = DreamEngine(
             history_manager=layer_set.archive,
-            long_term_manager=layer_set.knowledge,
+            long_term_manager=layer_set.core,
             registry=registry,
         )
 
@@ -397,7 +397,7 @@ class TestPerUserLockIsolation:
 
         engine = DreamEngine(
             history_manager=layer_set.archive,
-            long_term_manager=layer_set.knowledge,
+            long_term_manager=layer_set.core,
             registry=registry,
         )
 
@@ -526,7 +526,7 @@ class TestConcurrentCleanupSession:
                 _ = pruned_messages
                 return ArchiveGenerationResult(
                     documents=ArchiveDocuments(
-                        context="context", knowledge="knowledge", index="topic"
+                        context="context", core="knowledge", index="topic"
                     )
                 )
 
@@ -603,7 +603,7 @@ class TestConcurrentCleanupSession:
                 _ = pruned_messages
                 return ArchiveGenerationResult(
                     documents=ArchiveDocuments(
-                        context="context", knowledge="knowledge", index="topic"
+                        context="context", core="knowledge", index="topic"
                     )
                 )
 
@@ -697,16 +697,16 @@ class TestGlobalScopePath:
     async def test_knowledge_global_scope_writes_to_clean_path(self, tmp_path: Path) -> None:
         """Knowledge with GlobalScope writes to knowledge/ without user subdirectory."""
         from modex_agent.core.scope import GlobalScope
-        from modex_agent.memory.layers.config import KnowledgeMemoryConfig
+        from modex_agent.memory.layers.config import CoreMemoryConfig
 
         registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
         await registry.initialize()
 
-        knowledge_config = KnowledgeMemoryConfig(scope=GlobalScope())
+        knowledge_config = CoreMemoryConfig(scope=GlobalScope())
         storage_factory = MemoryLayerFactory._storage_factory(
-            registry, MemoryLayerName.KNOWLEDGE, knowledge_config.scope
+            registry, MemoryLayerName.CORE, knowledge_config.scope
         )
-        knowledge = ScopedKnowledgeMemoryManager(storage_factory, knowledge_config)
+        knowledge = ScopedCoreMemoryManager(storage_factory, knowledge_config)
 
         from modex_agent.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
 
@@ -720,11 +720,11 @@ class TestGlobalScopePath:
         )
 
         # Verify knowledge directory has no user subdirectory
-        knowledge_dir = tmp_path / "mem" / "knowledge"
+        knowledge_dir = tmp_path / "mem" / "core"
         assert knowledge_dir.exists(), f"Knowledge dir should exist at {knowledge_dir}"
-        # Default knowledge files (memory.md etc) should be directly in knowledge/
+        # Default knowledge files (memory.md etc) should be directly in core/
         assert (knowledge_dir / "memory.md").exists(), (
-            "memory.md should be at knowledge/memory.md, not in a subdirectory"
+            "memory.md should be at core/memory.md, not in a subdirectory"
         )
 
         await registry.close()
@@ -888,15 +888,15 @@ class TestScopePathPersistence:
 
     async def test_knowledge_user_scope_path_contains_user_id(self, tmp_path: Path) -> None:
         """Knowledge with UserScope writes to {root}/knowledge/{user_id}/memory.md."""
-        from modex_agent.memory.layers.config import KnowledgeMemoryConfig
+        from modex_agent.memory.layers.config import CoreMemoryConfig
 
         registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
         await registry.initialize()
-        knowledge_cfg = KnowledgeMemoryConfig()  # default: UserScope
+        knowledge_cfg = CoreMemoryConfig()  # default: UserScope
         storage_factory = MemoryLayerFactory._storage_factory(
-            registry, MemoryLayerName.KNOWLEDGE, knowledge_cfg.scope
+            registry, MemoryLayerName.CORE, knowledge_cfg.scope
         )
-        knowledge = ScopedKnowledgeMemoryManager(storage_factory, knowledge_cfg)
+        knowledge = ScopedCoreMemoryManager(storage_factory, knowledge_cfg)
 
         await knowledge.apply_update(
             _ctx("sess-1", "user-xyz"),
@@ -907,7 +907,7 @@ class TestScopePathPersistence:
             ),
         )
 
-        knowledge_dir = tmp_path / "mem" / "knowledge" / "user-xyz"
+        knowledge_dir = tmp_path / "mem" / "core" / "user-xyz"
         assert knowledge_dir.exists(), f"Knowledge dir missing: {knowledge_dir}"
         assert (knowledge_dir / "memory.md").exists(), "memory.md missing"
 
@@ -915,15 +915,15 @@ class TestScopePathPersistence:
 
     async def test_knowledge_user_scope_different_users_different_dirs(self, tmp_path: Path) -> None:
         """Two users get different knowledge subdirectories."""
-        from modex_agent.memory.layers.config import KnowledgeMemoryConfig
+        from modex_agent.memory.layers.config import CoreMemoryConfig
 
         registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
         await registry.initialize()
-        knowledge_cfg = KnowledgeMemoryConfig()
+        knowledge_cfg = CoreMemoryConfig()
         storage_factory = MemoryLayerFactory._storage_factory(
-            registry, MemoryLayerName.KNOWLEDGE, knowledge_cfg.scope
+            registry, MemoryLayerName.CORE, knowledge_cfg.scope
         )
-        knowledge = ScopedKnowledgeMemoryManager(storage_factory, knowledge_cfg)
+        knowledge = ScopedCoreMemoryManager(storage_factory, knowledge_cfg)
 
         await knowledge.apply_update(
             _ctx("sa", "user-a"),
@@ -934,8 +934,8 @@ class TestScopePathPersistence:
             MemoryUpdate(file_name="memory", content="B", mode=MemoryUpdateMode.APPEND),
         )
 
-        assert (tmp_path / "mem" / "knowledge" / "user-a").exists()
-        assert (tmp_path / "mem" / "knowledge" / "user-b").exists()
+        assert (tmp_path / "mem" / "core" / "user-a").exists()
+        assert (tmp_path / "mem" / "core" / "user-b").exists()
 
         await registry.close()
 
@@ -992,7 +992,7 @@ class TestSubagentMemoryLayers:
         assert layer_set.archive is None, (
             "subagent must NOT have archive layer — no persistent user memory"
         )
-        assert layer_set.knowledge is None, (
+        assert layer_set.core is None, (
             "subagent must NOT have knowledge layer — no access to SOUL/USER/MEMORY.md"
         )
 
@@ -1015,7 +1015,7 @@ class TestSubagentMemoryLayers:
         active = sum(1 for x in [
             layer_set.session,
             layer_set.archive,
-            layer_set.knowledge,
+            layer_set.core,
             layer_set.user_retention,
         ] if x is not None)
         assert active == 2, f"subagent should have 2 layers, got {active}"
@@ -1062,22 +1062,22 @@ class TestScopeFlexibility:
     async def test_knowledge_session_scope_path(self, tmp_path: Path) -> None:
         """Knowledge CAN be configured with SessionScope for per-session isolation."""
         from modex_agent.core.scope import SessionScope
-        from modex_agent.memory.layers.config import KnowledgeMemoryConfig
+        from modex_agent.memory.layers.config import CoreMemoryConfig
 
         registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
         await registry.initialize()
-        knowledge_cfg = KnowledgeMemoryConfig(scope=SessionScope())
+        knowledge_cfg = CoreMemoryConfig(scope=SessionScope())
         storage_factory = MemoryLayerFactory._storage_factory(
-            registry, MemoryLayerName.KNOWLEDGE, knowledge_cfg.scope
+            registry, MemoryLayerName.CORE, knowledge_cfg.scope
         )
-        knowledge = ScopedKnowledgeMemoryManager(storage_factory, knowledge_cfg)
+        knowledge = ScopedCoreMemoryManager(storage_factory, knowledge_cfg)
 
         await knowledge.apply_update(
             _ctx("conv-abc.main"),
             MemoryUpdate(file_name="memory", content="test", mode=MemoryUpdateMode.APPEND),
         )
 
-        knowledge_dir = tmp_path / "mem" / "knowledge" / "conv-abc.main"
+        knowledge_dir = tmp_path / "mem" / "core" / "conv-abc.main"
         assert knowledge_dir.exists(), f"SessionScope knowledge: {knowledge_dir}"
         assert (knowledge_dir / "memory.md").exists()
 

@@ -43,7 +43,7 @@ The framework core replaces traditional loops with a **graph-driven execution en
 - **Cross-platform Interactive Terminal** — Built-in terminal toolchain with unified interfaces for Windows (WinPTY/ConPTY), Linux, and macOS (pexpect/tmux); visible and headless PTY modes, covered by 248+ unit tests.
 - **Multi-agent Collaboration** — Each pool is a strict star: a main agent as hub, subagents talk only to their parent via the single `send_to_agent` tool (the framework routes through the broker, the async inbox, or an isolated subagent session as needed). Across pools, main agents communicate as peers — a main agent can `send_to_agent` another pool's main agent, which receives on its own bus and replies in kind. Subagent↔subagent and subagent→non-parent sends are rejected by the topology gate.
 - **Pool Runtime** — Multi-agent persistent pools with `MessageBroker` + `AgentMessageBus` routing. I/O adapters are fully decoupled from agent logic.
-- **Multi-tier Memory + Self-Learning** — Session, Archive, Knowledge, UserRetentionBuffer, Pruned, and Experience layers with configurable scopes (SessionScope / UserScope / GlobalScope). Dream Engine consolidates archives into knowledge; ExperienceReviewAgent turns conversations into reusable EXPERIENCE.md reference knowledge.
+- **Multi-tier Memory + Self-Learning** — Session, Archive, Core Memory, UserRetentionBuffer, Pruned, and Experience layers with configurable scopes (SessionScope / UserScope / GlobalScope). Dream Engine consolidates archives into core memory; ExperienceReviewAgent turns conversations into reusable EXPERIENCE.md reference knowledge. (The "Knowledge" layer was renamed to "Core Memory" per ADR-0035 to disambiguate from the forthcoming KnowledgeBase RAG module.)
 - **Hook + Interceptor Extension System** — Lifecycle hooks (InboxFlush, SubagentAutoSend) and AOP interceptor chains (ControlDrain, ToolResultLimit) compose orthogonally without core intrusion.
 - **Type Safety** — All interfaces use ABCs (zero Protocols), enums replacing raw strings, mypy strict-level checking.
 - **Native MCP Integration** — Dynamically load MCP servers (SSE/stdio). `MCPToolAdapter` maps MCP capabilities to framework Tool objects.
@@ -160,7 +160,7 @@ ModexAgent/
 
 | Document | Description |
 | --- | --- |
-| [ADR index](docs/adr/) | Architecture Decision Records (ADR-0001 ~ 0024) |
+| [ADR index](docs/adr/) | Architecture Decision Records (ADR-0001 ~ 0035) |
 | [Docs overview](docs/AGENTS.md) | Index of `docs/` — ADRs, design docs, agent docs |
 | [CONTEXT.md](CONTEXT.md) | Domain glossary — Pool, Workspace, ReAct Agent, Graph, GraphInterrupt, Assembly, etc. |
 | [Bot local setup](docs/bot-local-setup.md) | Step-by-step bot setup from source (prerequisites, venv, config wizard, troubleshooting) |

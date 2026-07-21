@@ -4,7 +4,7 @@
 # prompts
 
 ## Purpose
-Prompt template files used during memory consolidation and experience review. Contains system and user prompt pairs for three operations: archive consolidation (agent/user), experience review (system/user), and knowledge consolidation (system/user). Each pair is a markdown file loaded by the summarizer agents.
+Prompt template files used during memory consolidation and experience review. Contains system and user prompt pairs for three operations: archive consolidation (agent/user), experience review (system/user), and core memory consolidation (system/user, formerly "knowledge consolidation"; renamed per ADR-0035). Each pair is a markdown file loaded by the summarizer agents.
 
 ## Key Files
 | File | Description |
@@ -14,14 +14,14 @@ Prompt template files used during memory consolidation and experience review. Co
 | `archive/agent_user.md` | User prompt template for archive summarization |
 | `experience/review_system.md` | System prompt for the experience review agent |
 | `experience/review_user.md` | User prompt template for experience review |
-| `knowledge/consolidator_system.md` | System prompt for the knowledge consolidator agent |
-| `knowledge/consolidator_user.md` | User prompt template for knowledge consolidation |
+| `core_memory/consolidator_system.md` | System prompt for the core memory consolidator agent (renamed from `knowledge/consolidator_system.md` per ADR-0035) |
+| `core_memory/consolidator_user.md` | User prompt template for core memory consolidation (renamed from `knowledge/consolidator_user.md` per ADR-0035) |
 
 ## For AI Agents
 
 ### Working In This Directory
 - Prompts are plain markdown files with no Jinja/template syntax — loaded as-is by summarizer agents
-- Files are organized into three subdirectories matching their consolidation stage: `archive/`, `experience/`, `knowledge/`
+- Files are organized into three subdirectories matching their consolidation stage: `archive/`, `experience/`, `core_memory/` (renamed from `knowledge/` per ADR-0035)
 - Each subdirectory has a `*_system.md` (agent persona/instructions) and `*_user.md` (user input template with placeholders)
 
 ### Common Patterns
@@ -32,7 +32,7 @@ Prompt template files used during memory consolidation and experience review. Co
 ## Dependencies
 
 ### Internal
-- Consumed by `modex_agent.agents.summarizer` — `ArchiveSummarizer`, `KnowledgeConsolidator`
+- Consumed by `modex_agent.agents.summarizer` — `ArchiveSummarizer`, `CoreMemoryConsolidator` (renamed from `KnowledgeConsolidator` per ADR-0035)
 - Referenced by path in summarizer agent configurations
 
 <!-- MANUAL -->

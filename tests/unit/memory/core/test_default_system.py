@@ -86,8 +86,8 @@ async def test_exposes_layers_and_registry(system):
     assert system.layers.session is not None
     if system.layers.archive is not None:
         assert hasattr(system.layers.archive, 'append')
-    if system.layers.knowledge is not None:
-        assert hasattr(system.layers.knowledge, 'get_all')
+    if system.layers.core is not None:
+        assert hasattr(system.layers.core, 'get_all')
 
 
 async def test_search_no_providers(system):
@@ -110,10 +110,10 @@ async def test_search_includes_archive_entries(system):
     assert results[0]["summary"] == "用户喜欢 Python 数据分析"
 
 
-async def test_retrieve_knowledge_defaults_to_get_all(system):
+async def test_retrieve_core_memory_defaults_to_get_all(system):
     await system.initialize()
     ctx = MemoryContext(session_id="knowledge", user_id="user")
-    await system.layers.knowledge.apply_update(
+    await system.layers.core.apply_update(
         ctx,
         MemoryUpdate(
             file_name="memory",
@@ -123,8 +123,8 @@ async def test_retrieve_knowledge_defaults_to_get_all(system):
         ),
     )
 
-    retrieved = await system.retrieve_knowledge(ctx, query="ignored")
-    all_memory = await system.get_knowledge(ctx)
+    retrieved = await system.retrieve_core_memory(ctx, query="ignored")
+    all_memory = await system.get_core_memory(ctx)
 
     assert retrieved.memory == all_memory.memory
 

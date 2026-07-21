@@ -15,7 +15,7 @@
 - [ ] `SummarizerAgent` / `SummarizerStrategy` / `DefaultSummarizerStrategy` / `SummarizerEvent` removed from `modex_agent/agents/summarizer/__init__.py` `__all__`
 - [ ] `PROMPT_MEMORY_COMPRESSION` constant (and any other `PROMPT_*` constants only used by `SummarizerAgent`) either relocated to a still-existing module if externally referenced, or deleted if only referenced by the removed code
 - [ ] `tests/unit/agents/test_summarizer_memory_prompt.py` either deleted (if it only tested the removed `SummarizerAgent`) or updated to read the relocated constant
-- [ ] `modex_agent/agents/summarizer/` directory retains `ArchiveSummarizer` / `KnowledgeConsolidator` / `ScopedFileAgent` / `abc.py` / `archive_agent.py` / `consolidator.py` / `emitter.py` — these are still in use by `DreamEngine` (see `modex_agent/memory/consolidation/dream_engine.py`) and must NOT be removed
+- [ ] `modex_agent/agents/summarizer/` directory retains `ArchiveSummarizer` / `CoreMemoryConsolidator` (renamed from `KnowledgeConsolidator` per ADR-0035) / `ScopedFileAgent` / `abc.py` / `archive_agent.py` / `consolidator.py` / `emitter.py` — these are still in use by `DreamEngine` (see `modex_agent/memory/consolidation/dream_engine.py`) and must NOT be removed
 - [ ] Any imports of `SummarizerAgent` / `SummarizerStrategy` / `DefaultSummarizerStrategy` / `SummarizerEvent` elsewhere in `src/` are removed (verify with grep — expected to find none, since they have zero callers per pre-ticket analysis)
 - [ ] `modex_agent` package's `__init__.py` updated if it re-exported any of the removed symbols
 - [ ] `examples/bot_project/` scanned for any reference to the removed symbols — expected none, but verify

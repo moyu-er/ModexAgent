@@ -1,4 +1,4 @@
-"""Default knowledge memory manager backed by scoped storage factories."""
+"""Default core memory manager backed by scoped storage factories."""
 
 from __future__ import annotations
 
@@ -8,21 +8,21 @@ from pathlib import Path
 
 from modex_agent.core.scope import MemoryContext, Scope
 from modex_agent.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
-from modex_agent.memory.core.layers import KnowledgeMemoryManager
-from modex_agent.memory.core.models import LongTermMemory
+from modex_agent.memory.core.layers import CoreMemoryManager
+from modex_agent.memory.core.models import CoreMemoryContents
 from modex_agent.memory.core.store_metadata import StoreMetadata
-from modex_agent.memory.knowledge_search import (
-    FullDumpKnowledgeStrategy,
-    KnowledgeSearchStrategy,
+from modex_agent.memory.core_memory_search import (
+    FullDumpCoreMemoryStrategy,
+    CoreMemorySearchStrategy,
 )
-from modex_agent.memory.layers.config import KnowledgeMemoryConfig, StorageFactory
+from modex_agent.memory.layers.config import CoreMemoryConfig, StorageFactory
 from modex_agent.memory.utils import estimate_text_tokens
 
 logger = logging.getLogger(__name__)
 
 
-class ScopedKnowledgeMemoryManager(KnowledgeMemoryManager):
-    """Knowledge layer manager that resolves storage through a StorageFactory.
+class ScopedCoreMemoryManager(CoreMemoryManager):
+    """Core memory layer manager that resolves storage through a StorageFactory.
 
     Supports automatic consolidation: when a file exceeds the token threshold
     after an update, the consolidation function is called to compress it.
@@ -31,14 +31,14 @@ class ScopedKnowledgeMemoryManager(KnowledgeMemoryManager):
     def __init__(
         self,
         storage_factory: StorageFactory,
-        config: KnowledgeMemoryConfig | None = None,
-        search_strategy: KnowledgeSearchStrategy | None = None,
+        config: CoreMemoryConfig | None = None,
+        search_strategy: CoreMemorySearchStrategy | None = None,
         consolidation_fn: Callable[[str, str], Awaitable[str]] | None = None,
         consolidation_threshold_tokens: int = 2000,
     ) -> None:
         self._storage_factory = storage_factory
-        self._config = config or KnowledgeMemoryConfig()
-        self._search_strategy = search_strategy or FullDumpKnowledgeStrategy()
+        self._config = config or CoreMemoryConfig()
+        self._search_strategy = search_strategy or FullDumpCoreMemoryStrategy()
         self._consolidation_fn = consolidation_fn
         self._consolidation_threshold = consolidation_threshold_tokens
 
@@ -46,7 +46,7 @@ class ScopedKnowledgeMemoryManager(KnowledgeMemoryManager):
         return self._config.scope
 
     async def get_storage_path(self, context: MemoryContext) -> Path | None:
-        """Return the absolute path to knowledge storage, if file-backed."""
+        """Return the absolute path to core memory storage, if file-backed."""
         bundle = await self._storage_factory(context)
         store = bundle.messages
         if isinstance(store, StoreMetadata):
@@ -76,7 +76,7 @@ class ScopedKnowledgeMemoryManager(KnowledgeMemoryManager):
                     content = template_path.read_text(encoding="utf-8")
                 else:
                     logger.warning(
-                        "Knowledge template not found: %s (default_templates_dir=%s)",
+                        "Core memory template not found: %s (default_templates_dir=%s)",
                         template_path,
                         template_dir,
                     )
@@ -87,7 +87,7 @@ class ScopedKnowledgeMemoryManager(KnowledgeMemoryManager):
 
             if not content:
                 logger.warning(
-                    "Skipping empty default for knowledge file %s: "
+                    "Skipping empty default for core memory file %s: "
                     "no template and no fallback provided",
                     file_name,
                 )
@@ -95,12 +95,12 @@ class ScopedKnowledgeMemoryManager(KnowledgeMemoryManager):
 
             await bundle.kv.set(file_name, content)
 
-    async def retrieve(self, context: MemoryContext, query: str = "") -> LongTermMemory:
-        """Retrieve knowledge using the configured search strategy."""
+    async def retrieve(self, context: MemoryContext, query: str = "") -> CoreMemoryContents:
+        """Retrieve core memory using the configured search strategy."""
         full = await self.get_all(context)
         return await self._search_strategy.retrieve(full, query=query)
 
-    async def get_all(self, context: MemoryContext) -> LongTermMemory:
+    async def get_all(self, context: MemoryContext) -> CoreMemoryContents:
         await self.ensure_defaults(context)
         bundle = await self._storage_factory(context)
         files = self._config.default_files
@@ -114,7 +114,7 @@ class ScopedKnowledgeMemoryManager(KnowledgeMemoryManager):
                 custom[key] = value
             elif isinstance(value, dict) and "value" in value:
                 custom[key] = str(value.get("value") or "")
-        return LongTermMemory(
+        return CoreMemoryContents(
             soul=await self.get_file(context, "soul") or "",
             user=await self.get_file(context, "user") or "",
             memory=await self.get_file(context, "memory") or "",
@@ -182,7 +182,7 @@ class ScopedKnowledgeMemoryManager(KnowledgeMemoryManager):
         return result
 
     async def consolidate_file(self, context: MemoryContext, file_key: str) -> str | None:
-        """Manually trigger consolidation of a specific knowledge file.
+        """Manually trigger consolidation of a specific core memory file.
 
         Returns the consolidated content, or None if consolidation was skipped.
         """
@@ -203,7 +203,7 @@ class ScopedKnowledgeMemoryManager(KnowledgeMemoryManager):
         if tokens <= self._consolidation_threshold:
             return
         logger.info(
-            "Knowledge file %s exceeds threshold (%d > %d tokens), consolidating",
+            "Core memory file %s exceeds threshold (%d > %d tokens), consolidating",
             file_name,
             tokens,
             self._consolidation_threshold,

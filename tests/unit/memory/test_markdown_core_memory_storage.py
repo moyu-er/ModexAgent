@@ -1,4 +1,4 @@
-"""Tests for MarkdownKnowledgeStorage — stores knowledge as actual .md files."""
+"""Tests for MarkdownCoreMemoryStorage — stores knowledge as actual .md files."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -9,17 +9,17 @@ from modex_agent.core.scope import MemoryLayerName
 
 
 def _make_storage(tmp_path: Path):
-    """Create a MarkdownKnowledgeStorage instance."""
-    from modex_agent.memory.stores.markdown_knowledge import MarkdownKnowledgeStorage
+    """Create a MarkdownCoreMemoryStorage instance."""
+    from modex_agent.memory.stores.markdown_core import MarkdownCoreMemoryStorage
 
-    storage = MarkdownKnowledgeStorage(
+    storage = MarkdownCoreMemoryStorage(
         tmp_path,
-        layer=MemoryLayerName.KNOWLEDGE,
+        layer=MemoryLayerName.CORE,
     )
     return storage
 
 
-class TestMarkdownKnowledgeStorage:
+class TestMarkdownCoreMemoryStorage:
     """Verify knowledge files are stored as actual .md files on disk."""
 
     @pytest.mark.asyncio

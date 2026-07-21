@@ -164,8 +164,8 @@ def test_prompt_registry_no_escape_when_no_special_chars() -> None:
 EXPECTED_PROMPT_KEYS = {
     # Archive generation via ReAct agent (archive_agent.py)
     "archive/agent_system",
-    # Knowledge consolidation via ReAct agent (consolidator.py)
-    "knowledge/consolidator_system",
+    # Core memory consolidation via ReAct agent (consolidator.py)
+    "core_memory/consolidator_system",
 }
 
 
@@ -202,7 +202,7 @@ def test_archive_prompts_contain_expected_content() -> None:
 def test_consolidation_prompt_is_loadable() -> None:
     """Consolidation prompt must be loadable via the registry."""
     registry = create_default_registry()
-    system = registry.get_system("knowledge/consolidator")
+    system = registry.get_system("core_memory/consolidator")
     assert len(system) > 0, "Consolidation system prompt must not be empty"
 
 
@@ -220,9 +220,9 @@ def test_archive_prompt_forbids_bash_and_lists_exact_tools() -> None:
 
 
 def test_consolidator_prompt_forbids_bash_and_uses_correct_tool_names() -> None:
-    """Knowledge consolidator prompt must forbid bash and reference actual tool names."""
+    """Core memory consolidator prompt must forbid bash and reference actual tool names."""
     registry = create_default_registry()
-    system = registry.get_system("knowledge/consolidator")
+    system = registry.get_system("core_memory/consolidator")
     assert "bash" in system.lower()
     assert "`edit`" in system or "edit_file" not in system
     assert "edit_file" not in system

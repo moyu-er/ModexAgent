@@ -3,7 +3,7 @@
 
 # docs/adr
 
-Architecture Decision Records for the ModexAgent framework (ADR-0001 ~ 0034).
+Architecture Decision Records for the ModexAgent framework (ADR-0001 ~ 0035).
 
 ## Purpose
 
@@ -25,7 +25,7 @@ ADRs document significant architectural decisions, including the context driving
   `InboxPoller` / `Fold-in` / `Materialize` entries in `CONTEXT.md` for the
   current design.
 
-### ADR Index (0001–0032)
+### ADR Index (0001–0035)
 
 | ADR | Title |
 |-----|-------|
@@ -63,5 +63,6 @@ ADRs document significant architectural decisions, including the context driving
 | 0032 | Terminal backend async-safety and behavior convergence |
 | 0033 | Generalized Graph Engine (Phase a) — D5.2 `around` scope and D14 dataclass codec refined by ADR-0034 |
 | 0034 | Graph Engine Phase c Preliminaries |
+| 0035 | Core Memory and KnowledgeBase terminology split |
 
 <!-- MANUAL -->

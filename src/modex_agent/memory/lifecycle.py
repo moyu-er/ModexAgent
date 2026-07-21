@@ -34,15 +34,15 @@ class MaintenanceResult:
 
 
 class DefaultMemoryMaintenancePolicy:
-    """Default maintenance: idle auto-compact, archive/knowledge retention enforcement."""
+    """Default maintenance: idle auto-compact, archive/core memory retention enforcement."""
 
     def __init__(
         self,
         archive_retention_policy: ArchiveRetentionPolicy | None = None,
-        knowledge_retention_policy: KnowledgeRetentionPolicy | None = None,
+        core_retention_policy: CoreMemoryRetentionPolicy | None = None,
     ) -> None:
         self._archive_retention = archive_retention_policy
-        self._knowledge_retention = knowledge_retention_policy
+        self._core_memory_retention = core_retention_policy
 
     async def scan_once(
         self,
@@ -53,7 +53,7 @@ class DefaultMemoryMaintenancePolicy:
         import time
 
         results: list[MaintenanceResult] = []
-        has_work = self._archive_retention is not None or self._knowledge_retention is not None
+        has_work = self._archive_retention is not None or self._core_memory_retention is not None
         if not has_work:
             return results
 
@@ -95,19 +95,19 @@ class DefaultMemoryMaintenancePolicy:
                         kept_ids = {int(e.get("archive_id", e.get("cursor", 0)) or 0) for e in kept}
                         await archive_store.save_channel_logs(ArchiveChannel.CONTEXT.value, kept)
                         # Also prune KNOWLEDGE channel to match retained CONTEXT entries
-                        knowledge_entries = await archive_store.read_channel_logs(
-                            ArchiveChannel.KNOWLEDGE.value,
+                        core_entries = await archive_store.read_channel_logs(
+                            ArchiveChannel.CORE.value,
                             since_archive_id=0,
                             limit=1_000_000,
                         )
-                        knowledge_kept = [
+                        core_kept = [
                             e
-                            for e in knowledge_entries
+                            for e in core_entries
                             if int(e.get("archive_id", 0) or 0) in kept_ids
                         ]
                         await archive_store.save_channel_logs(
-                            ArchiveChannel.KNOWLEDGE.value,
-                            knowledge_kept,
+                            ArchiveChannel.CORE.value,
+                            core_kept,
                         )
                         entries = kept
                         pruned = True
@@ -135,19 +135,19 @@ class DefaultMemoryMaintenancePolicy:
                             await archive_store.save_channel_logs(
                                 ArchiveChannel.CONTEXT.value, kept
                             )
-                            knowledge_entries = await archive_store.read_channel_logs(
-                                ArchiveChannel.KNOWLEDGE.value,
+                            core_entries = await archive_store.read_channel_logs(
+                                ArchiveChannel.CORE.value,
                                 since_archive_id=0,
                                 limit=1_000_000,
                             )
-                            knowledge_kept = [
+                            core_kept = [
                                 e
-                                for e in knowledge_entries
+                                for e in core_entries
                                 if int(e.get("archive_id", 0) or 0) in kept_ids
                             ]
                             await archive_store.save_channel_logs(
-                                ArchiveChannel.KNOWLEDGE.value,
-                                knowledge_kept,
+                                ArchiveChannel.CORE.value,
+                                core_kept,
                             )
 
                     # FIFO eviction: delete oldest dirs exceeding max_archive_total,
@@ -171,7 +171,7 @@ class DefaultMemoryMaintenancePolicy:
                                 pass
                         if dir_storage is not None:
                             state = await dir_storage.read_archive_state() or {}
-                            consumed = state.get("knowledge_consumed_archive_id", 0)
+                            consumed = state.get("core_consumed_archive_id", 0)
                             deleted = await dir_storage.prune_to_max(
                                 max_total, min_safe_id=consumed
                             )
@@ -198,77 +198,77 @@ class DefaultMemoryMaintenancePolicy:
                         )
                     )
 
-        # ── Knowledge eviction ────────────────────────────────────────────────
-        if self._knowledge_retention is not None and layers.knowledge is not None:
+        # ── Core memory eviction ────────────────────────────────────────────
+        if self._core_memory_retention is not None and layers.core is not None:
             try:
-                knowledge_records = await registry.list_records(layer=MemoryLayerName.KNOWLEDGE)
+                core_records = await registry.list_records(layer=MemoryLayerName.CORE)
             except Exception:
-                logger.warning("Maintenance scan failed to list knowledge records", exc_info=True)
-                knowledge_records = []
+                logger.warning("Maintenance scan failed to list core memory records", exc_info=True)
+                core_records = []
 
-            for record in knowledge_records:
+            for record in core_records:
                 ctx = record.context
                 if ctx is None:
                     continue
                 try:
-                    knowledge_bundle = await registry.resolve(
-                        layer=MemoryLayerName.KNOWLEDGE,
-                        scope=layers.knowledge.get_scope(),
+                    core_bundle = await registry.resolve(
+                        layer=MemoryLayerName.CORE,
+                        scope=layers.core.get_scope(),
                         context=ctx,
                     )
-                    keys = await knowledge_bundle.kv.list_keys()
+                    keys = await core_bundle.kv.list_keys()
                     keys = [k for k in keys if not k.endswith("._meta")]
                     if not keys:
                         continue
 
                     # Build file -> last-update map from changelog
-                    knowledge_archive = knowledge_bundle.archive
+                    core_archive = core_bundle.archive
                     changelog: list[dict[str, Any]] = []
-                    if knowledge_archive is not None:
-                        changelog = await knowledge_archive.read_logs(since_cursor=0)
+                    if core_archive is not None:
+                        changelog = await core_archive.read_logs(since_cursor=0)
                     file_last_update: dict[str, float] = {}
                     for entry in changelog:
                         file_name = entry.get("file")
                         created_at = entry.get("created_at")
                         if not file_name or not created_at:
                             continue
-                        knowledge_entry_time: float | None = None
+                        core_entry_time: float | None = None
                         if isinstance(created_at, str):
                             from datetime import datetime
 
-                            knowledge_entry_time = datetime.fromisoformat(created_at).timestamp()
+                            core_entry_time = datetime.fromisoformat(created_at).timestamp()
                         elif isinstance(created_at, int | float):
-                            knowledge_entry_time = float(created_at)
-                        if knowledge_entry_time is not None:
+                            core_entry_time = float(created_at)
+                        if core_entry_time is not None:
                             prev = file_last_update.get(file_name, 0.0)
-                            file_last_update[file_name] = max(prev, knowledge_entry_time)
+                            file_last_update[file_name] = max(prev, core_entry_time)
 
                     pruned = False
                     for key in keys:
-                        if self._knowledge_retention.is_permanent_file(key):
+                        if self._core_memory_retention.is_permanent_file(key):
                             continue
-                        stale_days = self._knowledge_retention.get_stale_threshold_days(key)
+                        stale_days = self._core_memory_retention.get_stale_threshold_days(key)
                         if stale_days is None:
                             continue
                         last_update = file_last_update.get(key, record.updated_at or 0.0)
                         if time.time() - last_update > stale_days * 86400:
-                            await knowledge_bundle.kv.delete(key)
+                            await core_bundle.kv.delete(key)
                             pruned = True
 
                     if pruned:
                         results.append(
                             MaintenanceResult(
                                 scope_key=record.scope_key,
-                                task="knowledge_eviction",
+                                task="core_memory_eviction",
                                 success=True,
                             )
                         )
                 except Exception as exc:
-                    logger.warning("Knowledge eviction failed for %s: %s", record.scope_key, exc)
+                    logger.warning("Core memory eviction failed for %s: %s", record.scope_key, exc)
                     results.append(
                         MaintenanceResult(
                             scope_key=record.scope_key,
-                            task="knowledge_eviction",
+                            task="core_memory_eviction",
                             success=False,
                             detail=str(exc),
                         )
@@ -317,8 +317,8 @@ class DefaultArchiveRetentionPolicy(ArchiveRetentionPolicy):
         return self._max_archive_total
 
 
-class KnowledgeRetentionPolicy(ABC):
-    """Knowledge layer aging: which files are permanent, stale thresholds."""
+class CoreMemoryRetentionPolicy(ABC):
+    """Core memory layer aging: which files are permanent, stale thresholds."""
 
     @abstractmethod
     def is_permanent_file(self, file_key: str) -> bool: ...
@@ -327,7 +327,7 @@ class KnowledgeRetentionPolicy(ABC):
     def get_stale_threshold_days(self, file_key: str) -> int | None: ...
 
 
-class DefaultKnowledgeRetentionPolicy(KnowledgeRetentionPolicy):
+class DefaultCoreMemoryRetentionPolicy(CoreMemoryRetentionPolicy):
     def __init__(
         self,
         stale_days: int = 14,

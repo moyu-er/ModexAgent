@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from modex_agent.core.scope import MemoryContext
-from modex_agent.memory.core.models import LongTermMemory
+from modex_agent.memory.core.models import CoreMemoryContents
 from modex_agent.memory.injection.full_injection import FullInjectionPolicy
 
 
@@ -15,12 +15,12 @@ def _make_injectable_system(knowledge_dir: Path | None = None):
     """Create a mock InjectableMemorySystem."""
     system = AsyncMock()
     # ABC conformance — stub all abstract methods
-    system.get_knowledge = AsyncMock()
-    system.retrieve_knowledge = AsyncMock()
+    system.get_core_memory = AsyncMock()
+    system.retrieve_core_memory = AsyncMock()
     system.get_history_entries = AsyncMock()
     system.get_providers = lambda: []
     system.prefetch_memories = AsyncMock()
-    system.get_knowledge_directory = AsyncMock()
+    system.get_core_memory_directory = AsyncMock()
     system.get_storage_path = AsyncMock()
     system.get_history = AsyncMock()
     system.create_message_history = MagicMock()
@@ -29,13 +29,13 @@ def _make_injectable_system(knowledge_dir: Path | None = None):
     system.add_messages = AsyncMock()
     system.search = AsyncMock()
     system.clear = AsyncMock()
-    system.retrieve_knowledge = AsyncMock(return_value=LongTermMemory(
+    system.retrieve_core_memory = AsyncMock(return_value=CoreMemoryContents(
         soul="I am a test assistant.",
         user="- **Name**: (unknown)",
         memory="# Memory\n(empty)",
         custom={},
     ))
-    system.get_knowledge_directory = AsyncMock(return_value=knowledge_dir)
+    system.get_core_memory_directory = AsyncMock(return_value=knowledge_dir)
     system.get_history = AsyncMock(return_value=[])
     system.get_history_entries = AsyncMock(return_value=[])
     system.get_providers = MagicMock(return_value=[])
@@ -112,7 +112,7 @@ def test_scoped_storage_base_path(tmp_path):
     from modex_agent.core.scope import MemoryLayerName
     from modex_agent.memory.stores.scoped_file import DefaultScopedStorage
 
-    storage = DefaultScopedStorage(tmp_path, layer=MemoryLayerName.KNOWLEDGE)
+    storage = DefaultScopedStorage(tmp_path, layer=MemoryLayerName.CORE)
     result = storage.base_path
     assert result is not None
     assert result.is_absolute()

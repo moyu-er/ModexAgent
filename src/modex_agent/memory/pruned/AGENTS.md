@@ -19,7 +19,7 @@ Manages the pruned memory catalog — records of cleaned-up session messages tha
 ### Working In This Directory
 - Pruned catalog is independent of the archive system — works with archive off or failed
 - Topic falls back to time range when no CONTEXT archive is available
-- Injection priority: 85 (between knowledge=100 and archive=70)
+- Injection priority: 85 (between core memory=100 and archive=70)
 - The XML catalog points agents to per-session `pruned/{session_id}/` directories for reading full pruned content
 - Storage is session-scoped: one `PrunedManager` instance serves all sessions under a `pruned_base_dir`
 

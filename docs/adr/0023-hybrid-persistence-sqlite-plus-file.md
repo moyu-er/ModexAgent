@@ -33,11 +33,13 @@ operation but has structural problems in several stores:
    cursors, and archive extensions. A DB implementation would have to
    implement all five concerns in one class.
 
-A naive "replace everything with SQLite" is wrong: Markdown knowledge files
-(`SOUL.md`, `USER.md`, `MEMORY.md`), `EXPERIENCE.md` trees, media bytes, tool
-overflow chunks, pruned JSONL (agent file-tool access), and config YAML are
-correctly file-based. Their semantics require human editability, directory
-structure, streaming, or path-based discovery that a database cannot replace.
+A naive "replace everything with SQLite" is wrong: Markdown Core Memory files
+(`SOUL.md`, `USER.md`, `MEMORY.md`; the layer was renamed from "Knowledge" to
+"Core Memory" per ADR-0035 — the file *names* are unchanged), `EXPERIENCE.md`
+trees, media bytes, tool overflow chunks, pruned JSONL (agent file-tool
+access), and config YAML are correctly file-based. Their semantics require
+human editability, directory structure, streaming, or path-based discovery
+that a database cannot replace.
 
 ## Decision
 
@@ -48,7 +50,7 @@ Adopt a **hybrid persistence architecture**:
 ```
 <home>/.modex/_registry/state.db        Global registry (workspaces, session→workspace map)
 <workspace>/.modex/state.db             Per-workspace state
-<workspace>/.modex/memory/...           Markdown knowledge, archive documents (files)
+<workspace>/.modex/memory/...           Markdown Core Memory + archive documents (files)
 <workspace>/.modex/media/...            Attachment bytes (files)
 <workspace>/.modex/overflow/...         Tool overflow chunks (files)
 <workspace>/.modex/pruned/...           Pruned JSONL for agent file-tool access (files)
@@ -239,7 +241,7 @@ See `docs/design/hybrid-persistence/sqlite-deployment-and-lifecycle.md` for full
 - True composite B-tree indexes on any scope dimension combination.
 - Approval decisions are auditable.
 - Workspace remains a portable, deletable, backup-able unit.
-- File-based stores (knowledge, pruned, media, overflow) are untouched — no
+- File-based stores (core memory, pruned, media, overflow) are untouched — no
   forced migration of human-editable or binary data.
 
 **Negative:**

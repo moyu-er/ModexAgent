@@ -75,7 +75,8 @@ interrupted by a crash or transient failure is eventually completed.
 
 ### Non-deletable (shared) artifacts
 14. As the system, deleting a session does NOT remove pool-shared memory
-    (archive summaries tree, knowledge files), so that cross-session learned
+    (archive summaries tree, core memory files — formerly "knowledge files",
+    renamed per ADR-0035), so that cross-session learned
     content survives.
 15. As the system, deleting a session does NOT touch the unused runtime commands
     leaf, so that no unrelated state is affected.
@@ -170,7 +171,7 @@ interrupted by a crash or transient failure is eventually completed.
   - runtime trace dir and output dir (raw session id);
   - runtime todos file (dot-preserving segment);
   - runtime turns (hash-suffix segment under agent/session subdirs).
-- NOT cleaned (pool-shared or unused): the archive summary tree, knowledge files,
+- NOT cleaned (pool-shared or unused): the archive summary tree, core memory files (formerly "knowledge files", renamed per ADR-0035),
   and the unused runtime commands leaf.
 
 ### Failure / retry semantics
@@ -258,7 +259,7 @@ interrupted by a crash or transient failure is eventually completed.
   - foreground delete removes the full cascade and all ten artifact types for
     every session in it;
   - nested subagent-of-subagent cascades are fully removed;
-  - pool-shared artifacts (archive, knowledge) and the unused commands leaf
+  - pool-shared artifacts (archive, core memory — formerly "knowledge", renamed per ADR-0035) and the unused commands leaf
     survive a delete;
   - only the targeted session's artifact units are removed; siblings untouched;
   - crash recovery: simulate an interrupted cascade (root record gone, descendants
@@ -292,7 +293,7 @@ interrupted by a crash or transient failure is eventually completed.
   contention resolves when the turn ends).
 - Migrating the existing prefix-based cascade helper's other callers; only its
   cascade-deletion claim is superseded and noted.
-- Cleaning the pool-shared archive summary tree and knowledge files.
+- Cleaning the pool-shared archive summary tree and core memory files (formerly "knowledge files", renamed per ADR-0035).
 - Frontend changes (the delete call's contract is unchanged; the backend simply
   cleans more completely).
 - Synchronous removal of descendant sessions at click time (descendants leave the

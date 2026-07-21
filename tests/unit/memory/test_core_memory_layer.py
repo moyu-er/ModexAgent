@@ -6,14 +6,14 @@ from pathlib import Path
 from modex_agent.core.scope import MemoryContext, MemoryLayerName, UserScope
 from modex_agent.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
 from modex_agent.memory.layers.factory import MemoryLayerFactory
-from modex_agent.memory.layers.knowledge import ScopedKnowledgeMemoryManager
+from modex_agent.memory.layers.core import ScopedCoreMemoryManager
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry
 
 
 async def test_append_update_is_idempotent(tmp_path: Path):
     registry = DefaultMemoryStoreRegistry(tmp_path)
-    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.KNOWLEDGE)
-    manager = ScopedKnowledgeMemoryManager(factory)
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.CORE)
+    manager = ScopedCoreMemoryManager(factory)
     ctx = MemoryContext(session_id="knowledge", user_id="user")
     update = MemoryUpdate(
         file_name="memory",
@@ -30,11 +30,11 @@ async def test_append_update_is_idempotent(tmp_path: Path):
 
 async def test_replace_text_retry_is_idempotent(tmp_path: Path):
     registry = DefaultMemoryStoreRegistry(tmp_path)
-    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.KNOWLEDGE)
-    manager = ScopedKnowledgeMemoryManager(factory)
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.CORE)
+    manager = ScopedCoreMemoryManager(factory)
     ctx = MemoryContext(session_id="knowledge", user_id="user")
     storage = await registry.resolve(
-        layer=MemoryLayerName.KNOWLEDGE,
+        layer=MemoryLayerName.CORE,
         scope=UserScope(),
         context=ctx,
     )
@@ -55,8 +55,8 @@ async def test_replace_text_retry_is_idempotent(tmp_path: Path):
 
 async def test_retrieve_defaults_to_get_all(tmp_path: Path):
     registry = DefaultMemoryStoreRegistry(tmp_path)
-    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.KNOWLEDGE)
-    manager = ScopedKnowledgeMemoryManager(factory)
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.CORE)
+    manager = ScopedCoreMemoryManager(factory)
     ctx = MemoryContext(session_id="knowledge", user_id="user")
     await manager.apply_update(
         ctx,
@@ -77,11 +77,11 @@ async def test_retrieve_defaults_to_get_all(tmp_path: Path):
 
 async def test_replace_text_fallback_append_logs_warning(caplog, tmp_path: Path):
     registry = DefaultMemoryStoreRegistry(tmp_path)
-    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.KNOWLEDGE)
-    manager = ScopedKnowledgeMemoryManager(factory)
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.CORE)
+    manager = ScopedCoreMemoryManager(factory)
     ctx = MemoryContext(session_id="knowledge", user_id="user")
     storage = await registry.resolve(
-        layer=MemoryLayerName.KNOWLEDGE,
+        layer=MemoryLayerName.CORE,
         scope=UserScope(),
         context=ctx,
     )
@@ -94,7 +94,7 @@ async def test_replace_text_fallback_append_logs_warning(caplog, tmp_path: Path)
         reason="test",
     )
 
-    with caplog.at_level(logging.WARNING, logger="modex_agent.memory.layers.knowledge"):
+    with caplog.at_level(logging.WARNING, logger="modex_agent.memory.layers.core"):
         result = await manager.apply_update(ctx, update)
 
     assert result == "existing fact\nnew fact"
@@ -103,11 +103,11 @@ async def test_replace_text_fallback_append_logs_warning(caplog, tmp_path: Path)
 
 async def test_remove_skipped_logs_warning(caplog, tmp_path: Path):
     registry = DefaultMemoryStoreRegistry(tmp_path)
-    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.KNOWLEDGE)
-    manager = ScopedKnowledgeMemoryManager(factory)
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.CORE)
+    manager = ScopedCoreMemoryManager(factory)
     ctx = MemoryContext(session_id="knowledge", user_id="user")
     storage = await registry.resolve(
-        layer=MemoryLayerName.KNOWLEDGE,
+        layer=MemoryLayerName.CORE,
         scope=UserScope(),
         context=ctx,
     )
@@ -120,7 +120,7 @@ async def test_remove_skipped_logs_warning(caplog, tmp_path: Path):
         reason="test",
     )
 
-    with caplog.at_level(logging.WARNING, logger="modex_agent.memory.layers.knowledge"):
+    with caplog.at_level(logging.WARNING, logger="modex_agent.memory.layers.core"):
         result = await manager.apply_update(ctx, update)
 
     assert result == "existing fact"

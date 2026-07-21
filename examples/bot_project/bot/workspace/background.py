@@ -86,17 +86,17 @@ class BackgroundTaskRunner:
             return None
         memory_system = pool_data.context_manager.memory_system
         archive_manager = memory_system.archive_manager
-        knowledge_manager = memory_system.knowledge_manager
-        if archive_manager is None or knowledge_manager is None:
+        core_memory_manager = memory_system.core_memory_manager
+        if archive_manager is None or core_memory_manager is None:
             return None
 
         self._dream_interval = dream_cfg.interval
         engine = DreamEngine(
             history_manager=archive_manager,
-            long_term_manager=knowledge_manager,
+            long_term_manager=core_memory_manager,
             registry=memory_system.store_registry,
             max_consume_per_run=dream_cfg.max_consume_per_run,
-            consolidator=memory_system.knowledge_consolidator,
+            consolidator=memory_system.core_memory_consolidator,
         )
         self.dream_engine = engine
         logger.info(

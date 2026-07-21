@@ -43,7 +43,7 @@ class ArchiveSummarizerConfig:
     """Configuration for ArchiveSummarizer."""
 
     context_max_chars: int = 20_000
-    knowledge_max_chars: int = 3000
+    core_max_chars: int = 3000
     index_max_chars: int = 200
     max_iterations: int = 25
 
@@ -70,14 +70,14 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
     def build_system_prompt(
         archive_dir: Path,
         context_max_chars: int = 20_000,
-        knowledge_max_chars: int = 3000,
+        core_max_chars: int = 3000,
         index_max_chars: int = 200,
     ) -> str:
         """Build the system prompt from the template with variable substitution."""
         prompt = _get_registry().get_system(
             "archive/agent",
             context_max_chars=str(context_max_chars),
-            knowledge_max_chars=str(knowledge_max_chars),
+            knowledge_max_chars=str(core_max_chars),
             index_max_chars=str(index_max_chars),
         )
         # Append allowed directory information
@@ -201,7 +201,7 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
         archive_id: int,
         archive_dir: Path,
         context_max_chars: int = 20_000,
-        knowledge_max_chars: int = 3000,
+        core_max_chars: int = 3000,
         index_max_chars: int = 200,
     ) -> str:
         """Build the user message from the template with variable substitution.
@@ -214,7 +214,7 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
             archive_dir=str(archive_dir.resolve()),
             archive_id=str(archive_id),
             context_max_chars=str(context_max_chars),
-            knowledge_max_chars=str(knowledge_max_chars),
+            knowledge_max_chars=str(core_max_chars),
             index_max_chars=str(index_max_chars),
             transcript="__TRANSCRIPT__",
         )
@@ -230,7 +230,7 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
         filtered_messages = self.filter_messages(pruned_messages)
         transcript = self.format_transcript(filtered_messages)
         if not transcript.strip():
-            documents = ArchiveDocuments(context="", knowledge="", index="")
+            documents = ArchiveDocuments(context="", core="", index="")
             return ArchiveGenerationResult(documents=documents)
 
         with tempfile.TemporaryDirectory(prefix="modex-archive-") as temp_dir:
@@ -240,13 +240,13 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
                 0,
                 archive_dir,
                 context_max_chars=self._config.context_max_chars,
-                knowledge_max_chars=self._config.knowledge_max_chars,
+                core_max_chars=self._config.core_max_chars,
                 index_max_chars=self._config.index_max_chars,
             )
             system_prompt = self.build_system_prompt(
                 archive_dir,
                 context_max_chars=self._config.context_max_chars,
-                knowledge_max_chars=self._config.knowledge_max_chars,
+                core_max_chars=self._config.core_max_chars,
                 index_max_chars=self._config.index_max_chars,
             )
             trace_path = archive_dir / "trace.jsonl"
@@ -268,7 +268,7 @@ class ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator):
                 ):
                     documents = ArchiveDocuments(
                         context=(archive_dir / "context.md").read_text(encoding="utf-8"),
-                        knowledge=(archive_dir / "knowledge.md").read_text(encoding="utf-8"),
+                        core=(archive_dir / "knowledge.md").read_text(encoding="utf-8"),
                         index=(archive_dir / "index.md").read_text(encoding="utf-8"),
                     )
                     return ArchiveGenerationResult(

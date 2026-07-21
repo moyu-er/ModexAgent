@@ -21,7 +21,7 @@ The `agents/` module provides concrete agent implementations: the `ReActAgent` (
 |-----------|-------|---------|
 | `react/` | 14 py (incl. `nodes/`) | `ReActAgent` — 4-node graph (START→LLM→TOOL→END) built on `modex_graph`, `TieredToolApprovalClassifier`, `ReActTurnState` (GraphState), `ReactGraphRuntime` adapter, approval suspend/resume (see `react/AGENTS.md`) |
 | `external_coding/` | 21 py (incl. `providers/`) | `ExternalCodingAgent` — provider-neutral streaming harness, Pi/OpenCode adapters, session-map ABC, env/prompt/path/OS process seams (see `external_coding/AGENTS.md`, ADR-0022) |
-| `summarizer/` | 6 py | `ArchiveSummarizer` (MD archive generation), `KnowledgeConsolidator` (ReAct-based knowledge consolidation), `ScopedFileAgent` base class (see `summarizer/AGENTS.md`). The deprecated `SummarizerAgent` was removed (ADR-0033 D10). |
+| `summarizer/` | 6 py | `ArchiveSummarizer` (MD archive generation), `CoreMemoryConsolidator` (ReAct-based core memory consolidation; renamed from `KnowledgeConsolidator` per ADR-0035), `ScopedFileAgent` base class (see `summarizer/AGENTS.md`). The deprecated `SummarizerAgent` was removed (ADR-0033 D10). |
 | `experience/` | 2 py | `ExperienceReviewAgent` — ReAct agent that reviews conversations and creates/updates EXPERIENCE.md files using experience tools (see `experience/AGENTS.md`) |
 
 ### react/ Submodule Details
@@ -49,9 +49,9 @@ The ReAct module is the primary agent runtime. Key components:
 |------|-------------|
 | `scoped_file_agent.py` | `ScopedFileAgent` — ReAct agent base with scoped file tools, `SummarizerTrajectoryEmitter` for JSONL traces, 2-attempt retry |
 | `archive_agent.py` | `ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator)` — generates `context.md`/`knowledge.md`/`index.md` from pruned messages |
-| `consolidator.py` | `KnowledgeConsolidator(ScopedFileAgent, KnowledgeConsolidatorBase)` — reads `knowledge.md` from archives, updates `SOUL.md`/`USER.md`/`MEMORY.md` via ReAct |
+| `consolidator.py` | `CoreMemoryConsolidator(ScopedFileAgent, CoreMemoryConsolidatorBase)` (renamed from `KnowledgeConsolidator` per ADR-0035) — reads `knowledge.md` from archives, updates `SOUL.md`/`USER.md`/`MEMORY.md` via ReAct |
 | `emitter.py` | `SummarizerTrajectoryEmitter` — JSONL trace file writer for agent observability |
-| `abc.py` | `ArchiveGenerator` ABC, `KnowledgeConsolidatorBase` ABC, `ArchiveSummarizerResult`, lazy prompt loader |
+| `abc.py` | `ArchiveGenerator` ABC, `CoreMemoryConsolidatorBase` ABC (renamed from `KnowledgeConsolidatorBase` per ADR-0035), `ArchiveSummarizerResult`, lazy prompt loader |
 
 ### experience/ Submodule Details
 
@@ -93,7 +93,7 @@ Agent[E]
 ├── ExternalCodingAgent      (external CLI harness, provider backend lifecycle)
 └── ScopedFileAgent          (ReAct with scoped file tools)
     ├── ArchiveSummarizer    (pruned → archive files)
-    ├── KnowledgeConsolidator (archive → knowledge files)
+    ├── CoreMemoryConsolidator (archive → core memory files; renamed from KnowledgeConsolidator per ADR-0035)
     └── ExperienceReviewAgent (conversation → EXPERIENCE.md, in agents/experience/)
 ```
 

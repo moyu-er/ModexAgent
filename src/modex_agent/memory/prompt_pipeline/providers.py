@@ -190,18 +190,18 @@ class RuntimeProvider(SystemPromptProvider):
         return "\n".join(lines)
 
 
-class KnowledgeProvider(SystemPromptProvider):
-    """Knowledge files (SOUL.md, USER.md, MEMORY.md). Never refreshes during react."""
+class CoreMemoryProvider(SystemPromptProvider):
+    """Core memory files (SOUL.md, USER.md, MEMORY.md). Never refreshes during react."""
 
-    def __init__(self, knowledge_xml: str) -> None:
+    def __init__(self, core_memory_xml: str) -> None:
         super().__init__()
-        self._knowledge_xml = knowledge_xml
+        self._core_memory_xml = core_memory_xml
 
     async def _fetch_version(self) -> str:
         return "static"
 
     async def _fetch_content(self) -> str:
-        return self._knowledge_xml
+        return self._core_memory_xml
 
 
 # Moved to ``core.skills.provider`` to avoid a ``core → memory`` reverse

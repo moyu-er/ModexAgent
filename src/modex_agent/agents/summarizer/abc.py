@@ -60,14 +60,14 @@ class ArchiveGenerator(ABC):
         ...
 
 
-class KnowledgeConsolidatorBase(ABC):
+class CoreMemoryConsolidatorBase(ABC):
     """Contract for agents that consolidate archive knowledge into long-term memory.
 
     The DreamEngine calls ``consolidate()`` to read ``knowledge.md`` files
     from one or more archives and update ``SOUL.md`` / ``USER.md`` /
     ``MEMORY.md``.
 
-    Concrete implementation: :class:`~framework.agents.summarizer.consolidator.KnowledgeConsolidator`.
+    Concrete implementation: :class:`~framework.agents.summarizer.consolidator.CoreMemoryConsolidator`.
     """
 
     max_iterations: int
@@ -78,17 +78,17 @@ class KnowledgeConsolidatorBase(ABC):
         self,
         archive_ids: list[int],
         archive_base: Path,
-        knowledge_dir: Path,
+        core_memory_dir: Path,
         *,
         max_iterations: int | None = None,
         invocation_id: str = "",
     ) -> bool:
-        """Read knowledge.md from archives and update knowledge files.
+        """Read knowledge.md from archives and update core memory files.
 
         Args:
             archive_ids: Archive IDs to process.
             archive_base: Base directory containing archive subdirectories.
-            knowledge_dir: Directory containing knowledge files to update.
+            core_memory_dir: Directory containing core memory files to update.
             max_iterations: Optional override for max ReAct iterations.
                 When ``None``, the consolidator's default is used.
             invocation_id: Caller-supplied UUID for trace correlation.

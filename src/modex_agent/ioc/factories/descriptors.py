@@ -51,7 +51,7 @@ def build_session_only_memory(
     layer_config = MemoryLayerConfigSet(
         session=SessionMemoryConfig(),
         archive=None,
-        knowledge=None,
+        core=None,
         user_retention=UserRetentionBufferConfig(enabled=True),
     )
 

@@ -12,7 +12,7 @@
 - `modex_agent/agents/external_coding/`: `ExternalCodingAgent` harness for Pi/OpenCode, provider-neutral streaming/events, session mapping, env/prompt injection, and cross-platform process-tree ownership.
 - `modex_agent/agents/experience/`: `ExperienceReviewAgent` — ReAct agent that reviews conversations and creates/updates EXPERIENCE.md files.
 - `modex_agent/core/experience/`: experience layer — `ExperienceManager`, `FileExperienceSource`, `ExperiencePromptBuilder`, `ExperienceCurator`, validation, metadata tracking.
-- `modex_agent/memory/`: three-layer memory (session/archive/knowledge) + compression + governance + injection policies. Storage is backend-pluggable via split store ABCs (`MessageStore`/`KVStore`/`CursorStore`/`ArchiveStore`) composed by `MemoryStoreBundle`.
+- `modex_agent/memory/`: three-layer memory (session/archive/core) + compression + governance + injection policies. The Core Memory layer (formerly "Knowledge"; renamed per ADR-0035) holds the `SOUL.md` / `USER.md` / `MEMORY.md` triple. Storage is backend-pluggable via split store ABCs (`MessageStore`/`KVStore`/`CursorStore`/`ArchiveStore`) composed by `MemoryStoreBundle`.
 - `modex_agent/persistence/`: hybrid persistence layer (ADR-0023). `ConnectionManager` + `MigrationRunner` own one per-workspace SQLite DB; SQLite adapters implement the split store ABCs and the runtime-state ABCs. `PersistenceBackend` enum (`FILE` / `SQLITE`) and `PersistenceConfig` drive IOC factory selection. SQLite is the bot's default; file remains the framework default.
 - `modex_agent/multi_agent/`: star-topology subagent coordination, `AgentPool`, inbox, `AgentMessageBus`.
 - `modex_agent/ioc/`: typed config (`AppConfig` via Pydantic) + 7 factory modules. Pool configuration lives in `modex_agent/multi_agent/pool_config/`.
@@ -65,7 +65,7 @@ Shared vocabulary: module, interface, depth, seam, adapter, leverage, locality (
 
 ## Persistence Architecture (ADR-0023)
 
-Hybrid persistence: per-workspace SQLite (`<workspace>/.modex/state.db`) for transactional structured state, plus files for human-editable and binary data (knowledge markdown, archive documents, media bytes, pruned JSONL, overflow chunks, config YAML). No data migration from files to DB; users opt in by setting `persistence.backend`.
+Hybrid persistence: per-workspace SQLite (`<workspace>/.modex/state.db`) for transactional structured state, plus files for human-editable and binary data (core memory markdown, archive documents, media bytes, pruned JSONL, overflow chunks, config YAML). No data migration from files to DB; users opt in by setting `persistence.backend`.
 
 - **`PersistenceBackend`** enum (`FILE` / `SQLITE`) + **`PersistenceConfig`** (frozen Pydantic) drive IOC factory selection. `SQLITE` is the bot's default; `FILE` remains the framework default.
 - **`ConnectionManager`** owns one private `aiosqlite.Connection` per workspace DB, serializes adapter operations via a manager-owned lock, and runs migrations on open. `MigrationRunner` applies ordered SQL files tracked by a `schema_migrations` table (one explicit transaction per migration; no transaction-control statements in scripts). Two `DatabaseKind` streams: `WORKSPACE` (per-workspace) and `REGISTRY` (global).
@@ -110,7 +110,7 @@ Unit tests under `tests/unit/` (mirrors `src/modex_agent/` structure), architect
 
 ## Documentation
 
-Architecture Decision Records (ADRs) in `docs/adr/` (ADR-0001 ~ 0024) and design docs in `docs/design/`. See `docs/AGENTS.md` for the docs index. Read relevant ADRs before making significant architectural changes.
+Architecture Decision Records (ADRs) in `docs/adr/` (ADR-0001 ~ 0035) and design docs in `docs/design/`. See `docs/AGENTS.md` for the docs index. Read relevant ADRs before making significant architectural changes.
 
 ## Key Files
 

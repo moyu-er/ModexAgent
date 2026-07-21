@@ -43,10 +43,10 @@ class _MockArchiveGenerator(ArchiveGenerator):
     def __init__(
         self,
         canned_context: str = "[MOCK] compressed conversation context",
-        canned_knowledge: str = "[MOCK] compressed conversation knowledge",
+        canned_core: str = "[MOCK] compressed conversation core",
     ) -> None:
         self.canned_context = canned_context
-        self.canned_knowledge = canned_knowledge
+        self.canned_core = canned_core
         self.calls: list[list[Any]] = []
 
     async def generate(
@@ -57,7 +57,7 @@ class _MockArchiveGenerator(ArchiveGenerator):
         return ArchiveGenerationResult(
             documents=ArchiveDocuments(
                 context=self.canned_context,
-                knowledge=self.canned_knowledge,
+                core=self.canned_core,
                 index="mock index",
             )
         )
@@ -72,7 +72,7 @@ class _EmptyArchiveGenerator(ArchiveGenerator):
     ) -> ArchiveGenerationResult:
         _ = pruned_messages
         return ArchiveGenerationResult(
-            documents=ArchiveDocuments(context="", knowledge="", index=""),
+            documents=ArchiveDocuments(context="", core="", index=""),
         )
 
 
@@ -105,10 +105,10 @@ class _FakeInjectableMemorySystem(MemorySystem):
     async def clear(self, context: Any) -> None:
         pass
 
-    async def get_knowledge(self, context: Any) -> Any:
-        from modex_agent.memory.core.models import LongTermMemory
+    async def get_core_memory(self, context: Any) -> Any:
+        from modex_agent.memory.core.models import CoreMemoryContents
 
-        return LongTermMemory()
+        return CoreMemoryContents()
 
     async def get_storage_path(self, context: Any) -> Path | None:
         return self._archive_dir
@@ -119,10 +119,10 @@ class _FakeInjectableMemorySystem(MemorySystem):
     async def get_full_history(self, context: Any) -> list:
         return []
 
-    async def retrieve_knowledge(self, context: Any, query: str = "") -> Any:
-        from modex_agent.memory.core.models import LongTermMemory
+    async def retrieve_core_memory(self, context: Any, query: str = "") -> Any:
+        from modex_agent.memory.core.models import CoreMemoryContents
 
-        return LongTermMemory()
+        return CoreMemoryContents()
 
     async def get_history_entries(
         self,
@@ -150,7 +150,7 @@ class _FakeInjectableMemorySystem(MemorySystem):
             )
         return entries
 
-    async def get_knowledge_directory(self, context: Any) -> None:
+    async def get_core_memory_directory(self, context: Any) -> None:
         return None
 
     def get_providers(self) -> list:
@@ -339,7 +339,7 @@ async def test_archive_uses_mock_summarizer_output(tmp_path: Path):
     registry = DefaultMemoryStoreRegistry(tmp_path)
     mock = _MockArchiveGenerator(
         canned_context="[MOCK] compressed to archive",
-        canned_knowledge="[MOCK] compressed to archive",
+        canned_core="[MOCK] compressed to archive",
     )
     storage = DirArchiveStorage(tmp_path / "archives")
     system = _bot_project_system(
@@ -387,11 +387,11 @@ async def test_archive_skips_empty_generation(tmp_path: Path):
     )
 
 
-# ── Context injection: knowledge + archive + session ──────────────────────
+# ── Context injection: core + archive + session ──────────────────────
 
 
 @pytest.mark.asyncio
-async def test_full_injection_includes_knowledge_archive_and_session(tmp_path: Path):
+async def test_full_injection_includes_core_archive_and_session(tmp_path: Path):
     """FullInjectionPolicy assembles Knowledge, Archive, and Session messages."""
     from modex_agent.memory.injection import FullInjectionPolicy
     from modex_agent.memory.stores.dir_archive import DirArchiveStorage
@@ -438,18 +438,18 @@ async def test_injection_excludes_empty_archive_markers(tmp_path: Path):
     assert 'number="2"' not in content
 
 
-# ── Long-term knowledge: full update (existing + new) ─────────────────────
+# ── Long-term core: full update (existing + new) ─────────────────────
 
 
 @pytest.mark.asyncio
-async def test_knowledge_update_preserves_existing_when_adding_new(tmp_path: Path):
-    """Existing knowledge entries are preserved when new ones are added."""
+async def test_core_update_preserves_existing_when_adding_new(tmp_path: Path):
+    """Existing core entries are preserved when new ones are added."""
     registry = DefaultMemoryStoreRegistry(tmp_path)
     system = _bot_project_system(registry)
     await system.initialize()
-    ctx = _make_ctx("knowledge-update")
+    ctx = _make_ctx("core-update")
 
-    km = system._layers.knowledge
+    km = system._layers.core
     await km.ensure_defaults(ctx, {"memory": "- fact A\n- fact B\n"})
     before = await km.get_all(ctx)
     assert "fact A" in before.memory
@@ -473,14 +473,14 @@ async def test_knowledge_update_preserves_existing_when_adding_new(tmp_path: Pat
 
 
 @pytest.mark.asyncio
-async def test_knowledge_replace_text_updates_in_place(tmp_path: Path):
+async def test_core_replace_text_updates_in_place(tmp_path: Path):
     """replace_text mode corrects existing entries without losing other facts."""
     registry = DefaultMemoryStoreRegistry(tmp_path)
     system = _bot_project_system(registry)
     await system.initialize()
-    ctx = _make_ctx("knowledge-replace")
+    ctx = _make_ctx("core-replace")
 
-    km = system._layers.knowledge
+    km = system._layers.core
     await km.ensure_defaults(ctx, {"user": "- location: Tokyo\n- prefers dark mode\n"})
 
     from modex_agent.memory.core.consolidation import MemoryUpdate
@@ -508,7 +508,7 @@ async def test_archive_merges_multiple_cleanup_rounds(tmp_path: Path):
     registry = DefaultMemoryStoreRegistry(tmp_path)
     mock = _MockArchiveGenerator(
         canned_context="[MOCK] round context",
-        canned_knowledge="[MOCK] round knowledge",
+        canned_core="[MOCK] round core",
     )
     storage = DirArchiveStorage(tmp_path / "archives")
     system = _bot_project_system(
@@ -668,18 +668,18 @@ async def test_archive_search_falls_back_to_recent_when_no_match(tmp_path: Path)
     assert len(entries) > 0
 
 
-# ── Retrieval: knowledge files ────────────────────────────────────────────
+# ── Retrieval: core files ────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_knowledge_retrieve_returns_all_files(tmp_path: Path):
-    """retrieve_knowledge returns SOUL, USER, MEMORY even with empty query."""
+async def test_core_retrieve_returns_all_files(tmp_path: Path):
+    """retrieve_core_memory returns SOUL, USER, MEMORY even with empty query."""
     registry = DefaultMemoryStoreRegistry(tmp_path)
     system = _bot_project_system(registry)
     await system.initialize()
-    ctx = _make_ctx("knowledge-get")
+    ctx = _make_ctx("core-get")
 
-    km = system._layers.knowledge
+    km = system._layers.core
     await km.ensure_defaults(
         ctx,
         {
@@ -689,10 +689,10 @@ async def test_knowledge_retrieve_returns_all_files(tmp_path: Path):
         },
     )
 
-    knowledge = await system.retrieve_knowledge(ctx)
-    assert "bot personality" in knowledge.soul
-    assert "user preferences" in knowledge.user
-    assert "project context" in knowledge.memory
+    core = await system.retrieve_core_memory(ctx)
+    assert "bot personality" in core.soul
+    assert "user preferences" in core.user
+    assert "project context" in core.memory
 
 
 # ── Injection: priority ordering ──────────────────────────────────────────
@@ -700,7 +700,7 @@ async def test_knowledge_retrieve_returns_all_files(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_injection_priority_order_respected(tmp_path: Path):
-    """Sections are ordered by priority descending: knowledge > archive > compression."""
+    """Sections are ordered by priority descending: core > archive > compression."""
     from modex_agent.memory.injection import FullInjectionPolicy
 
     registry = DefaultMemoryStoreRegistry(tmp_path)
@@ -708,7 +708,7 @@ async def test_injection_priority_order_respected(tmp_path: Path):
     await system.initialize()
     ctx = _make_ctx("priority-order")
 
-    km = system._layers.knowledge
+    km = system._layers.core
     await km.ensure_defaults(ctx, {"memory": "- priority: 90"})
     await system._layers.archive.append(ctx, ArchiveEntry(summary="priority-70 entry"))
     await system._layers.session.add_messages(
@@ -751,7 +751,7 @@ async def test_injection_budget_trims_low_priority_first(tmp_path: Path):
     await system.initialize()
     ctx = _make_ctx("budget-trim")
 
-    km = system._layers.knowledge
+    km = system._layers.core
     await km.ensure_defaults(
         ctx,
         {
@@ -780,7 +780,7 @@ async def test_injection_budget_trims_low_priority_first(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_restricted_injection_session_only(tmp_path: Path):
-    """Peer/subagent policy: only session messages, no knowledge/archive."""
+    """Peer/subagent policy: only session messages, no core/archive."""
     from modex_agent.memory.injection import RestrictedInjectionPolicy
 
     registry = DefaultMemoryStoreRegistry(tmp_path)
@@ -788,7 +788,7 @@ async def test_restricted_injection_session_only(tmp_path: Path):
     await system.initialize()
     ctx = _make_ctx("restricted")
 
-    await system._layers.knowledge.ensure_defaults(ctx, {"memory": "- should not appear"})
+    await system._layers.core.ensure_defaults(ctx, {"memory": "- should not appear"})
     await system._layers.archive.append(ctx, ArchiveEntry(summary="should not appear"))
     await system._layers.session.add_messages(
         ctx,
@@ -864,7 +864,7 @@ async def test_three_tier_memory_cascade_preserves_tool_context(tmp_path: Path):
     registry = DefaultMemoryStoreRegistry(tmp_path)
     mock = _MockArchiveGenerator(
         canned_context="[ARCHIVE] user asked about weather, used shell+web_search, got sunny 28C",
-        canned_knowledge="[ARCHIVE] user asked about weather, used shell+web_search, got sunny 28C",
+        canned_core="[ARCHIVE] user asked about weather, used shell+web_search, got sunny 28C",
     )
     storage = DirArchiveStorage(tmp_path / "archives")
     system = _bot_project_system(
@@ -929,7 +929,7 @@ async def test_archive_entries_are_meaningful_for_dream_engine(tmp_path: Path):
     mock = _MockArchiveGenerator(
         canned_context="[ARCHIVE] user: fix login bug | tools: read_file(auth.py), shell(git log) | "
         "decision: use JWT instead of session | state: branch fix/auth, tests fail",
-        canned_knowledge="[ARCHIVE] user: fix login bug | tools: read_file(auth.py), shell(git log) | "
+        canned_core="[ARCHIVE] user: fix login bug | tools: read_file(auth.py), shell(git log) | "
         "decision: use JWT instead of session | state: branch fix/auth, tests fail",
     )
     storage = DirArchiveStorage(tmp_path / "archives")

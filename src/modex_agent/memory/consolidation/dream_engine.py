@@ -1,7 +1,7 @@
-"""DreamEngine — offline memory consolidation via KnowledgeConsolidator.
+"""DreamEngine — offline memory consolidation via CoreMemoryConsolidator.
 
-Uses a ReAct-based KnowledgeConsolidator agent to process archive entries
-and update knowledge files.
+Uses a ReAct-based CoreMemoryConsolidator agent to process archive entries
+and update core memory files.
 """
 
 from __future__ import annotations
@@ -9,14 +9,14 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from modex_agent.agents.summarizer.abc import KnowledgeConsolidatorBase
+from modex_agent.agents.summarizer.abc import CoreMemoryConsolidatorBase
 from modex_agent.core.scope import (
     MemoryAgentRole,
     MemoryContext,
     MemoryLayerName,
 )
 from modex_agent.memory.archive_models import ArchiveChannel
-from modex_agent.memory.core.layers import ArchiveMemoryManager, KnowledgeMemoryManager
+from modex_agent.memory.core.layers import ArchiveMemoryManager, CoreMemoryManager
 from modex_agent.memory.core.models import ArchiveEntry
 from modex_agent.memory.registry.base import MemoryStoreRegistry
 
@@ -24,23 +24,23 @@ logger = logging.getLogger(__name__)
 
 
 class DreamEngine:
-    """Offline DreamEngine: memory consolidation via KnowledgeConsolidator.
+    """Offline DreamEngine: memory consolidation via CoreMemoryConsolidator.
 
     Processes unprocessed archive entries through a ReAct-based
-    KnowledgeConsolidator agent that reads archive files, inspects
-    current knowledge, and produces targeted updates.
+    CoreMemoryConsolidator agent that reads archive files, inspects
+    current core memory, and produces targeted updates.
 
     Uses per-user locks so consolidation for user A does not block
-    user B — each user's archive/knowledge storage is independent.
+    user B — each user's archive/core memory storage is independent.
     """
 
     def __init__(
         self,
         history_manager: ArchiveMemoryManager,
-        long_term_manager: KnowledgeMemoryManager,
+        long_term_manager: CoreMemoryManager,
         *,
         registry: MemoryStoreRegistry | None = None,
-        consolidator: KnowledgeConsolidatorBase | None = None,
+        consolidator: CoreMemoryConsolidatorBase | None = None,
         max_consume_per_run: int = 3,
         per_archive_iterations: int = 10,
     ) -> None:
@@ -83,7 +83,7 @@ class DreamEngine:
             unprocessed = await self.history_manager.get_unprocessed(
                 context,
                 cursor_name="dream",
-                channel=ArchiveChannel.KNOWLEDGE,
+                channel=ArchiveChannel.CORE,
             )
             entries = unprocessed.entries
             if not entries:
@@ -133,10 +133,10 @@ class DreamEngine:
         if not archive_ids:
             return False
 
-        knowledge_dir = await self.long_term_manager.get_storage_path(context)
-        if knowledge_dir is None:
+        core_memory_dir = await self.long_term_manager.get_storage_path(context)
+        if core_memory_dir is None:
             logger.warning(
-                "DreamEngine: no knowledge storage path session=%s invocation=%s",
+                "DreamEngine: no core memory storage path session=%s invocation=%s",
                 context.session_id,
                 invocation_id,
             )
@@ -166,23 +166,23 @@ class DreamEngine:
         success = await self._consolidator.consolidate(
             archive_ids=archive_ids,
             archive_base=archive_base,
-            knowledge_dir=knowledge_dir,
+            core_memory_dir=core_memory_dir,
             max_iterations=dynamic_iterations,
             invocation_id=invocation_id,
         )
 
         if success:
             final_cursor = max(archive_ids)
-            await self._commit_knowledge_cursor(context, final_cursor)
+            await self._commit_core_memory_cursor(context, final_cursor)
             logger.info(
-                "DreamEngine cursor advanced: knowledge_consumed_archive_id=%d invocation=%s",
+                "DreamEngine cursor advanced: core_consumed_archive_id=%d invocation=%s",
                 final_cursor,
                 invocation_id,
             )
 
         return success
 
-    async def _commit_knowledge_cursor(
+    async def _commit_core_memory_cursor(
         self,
         context: MemoryContext,
         cursor: int,
@@ -191,19 +191,24 @@ class DreamEngine:
             context,
             "dream",
             cursor,
-            channel=ArchiveChannel.KNOWLEDGE,
+            channel=ArchiveChannel.CORE,
         )
         await self.history_manager.prune_consumed_pairs(context)
 
     async def _next_invocation_id(self, context: MemoryContext) -> int:
-        """Read and increment the knowledge invocation counter in archive state.
+        """Read and increment the core memory invocation counter in archive state.
 
         Uses the same ``state.json`` as the archive layer — the counter is
-        stored as ``knowledge_invocation_id`` alongside ``next_archive_id``
-        and ``knowledge_consumed_archive_id``.
+        stored as ``core_invocation_id`` alongside ``next_archive_id``
+        and ``core_consumed_archive_id``.
 
         Falls back to ``0`` when file-based storage is unavailable
         (e.g. in-memory backends for tests).
+
+        Note: this key was renamed from ``knowledge_invocation_id`` to
+        ``core_invocation_id`` per ADR-0035. Existing on-disk state files
+        with the old key will reset the counter to 0 (one-shot migration
+        cost; the counter is only used for trace correlation).
         """
         try:
             storage = await self.history_manager.get_storage_path(context)
@@ -216,9 +221,9 @@ class DreamEngine:
 
             dir_storage = DirArchiveStorage(storage)
             state = await dir_storage.read_archive_state() or {}
-            current: int = state.get("knowledge_invocation_id", 0)
+            current: int = state.get("core_invocation_id", 0)
             next_id = current + 1
-            state["knowledge_invocation_id"] = next_id
+            state["core_invocation_id"] = next_id
             await dir_storage.write_archive_state(state)
             return next_id
         except Exception:

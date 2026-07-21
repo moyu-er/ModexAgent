@@ -8,7 +8,7 @@ import pytest
 from modex_agent.memory.prompt_pipeline.providers import (
     BasePromptProvider,
     ExperienceProvider,
-    KnowledgeProvider,
+    CoreMemoryProvider,
     RuntimeProvider,
     SkillProvider,
 )
@@ -77,19 +77,19 @@ async def test_skill_empty_when_no_content():
     assert result == ""
 
 
-# -- KnowledgeProvider --
+# -- CoreMemoryProvider --
 
 
 @pytest.mark.asyncio
 async def test_knowledge_never_refreshes_during_react():
-    provider = KnowledgeProvider("knowledge content")
+    provider = CoreMemoryProvider("knowledge content")
     await provider.get_or_refresh()
     assert provider.last_version == "static"
 
 
 @pytest.mark.asyncio
 async def test_knowledge_empty_when_no_content():
-    provider = KnowledgeProvider("")
+    provider = CoreMemoryProvider("")
     result = await provider.get_or_refresh()
     assert result == ""
 

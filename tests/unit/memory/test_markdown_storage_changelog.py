@@ -1,8 +1,8 @@
-"""Tests for MarkdownKnowledgeStorage changelog compatibility.
+"""Tests for MarkdownCoreMemoryStorage changelog compatibility.
 
 The changelog tracks updates to knowledge files (append_log/read_logs/save_logs).
 These methods are inherited from DefaultScopedStorage, which writes to changelog.jsonl.
-MarkdownKnowledgeStorage must NOT interfere with non-.md key operations.
+MarkdownCoreMemoryStorage must NOT interfere with non-.md key operations.
 """
 from __future__ import annotations
 
@@ -14,12 +14,12 @@ from modex_agent.core.scope import MemoryLayerName
 
 
 def _make_storage(tmp_path: Path):
-    """Create a MarkdownKnowledgeStorage instance."""
-    from modex_agent.memory.stores.markdown_knowledge import MarkdownKnowledgeStorage
+    """Create a MarkdownCoreMemoryStorage instance."""
+    from modex_agent.memory.stores.markdown_core import MarkdownCoreMemoryStorage
 
-    storage = MarkdownKnowledgeStorage(
+    storage = MarkdownCoreMemoryStorage(
         tmp_path,
-        layer=MemoryLayerName.KNOWLEDGE,
+        layer=MemoryLayerName.CORE,
     )
     return storage
 

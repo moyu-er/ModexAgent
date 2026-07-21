@@ -18,7 +18,7 @@ class TestDirArchiveStorage:
         assert result is None
 
     async def test_write_and_read_state(self, store: DirArchiveStorage) -> None:
-        state = {"next_archive_id": 5, "knowledge_consumed_archive_id": 3}
+        state = {"next_archive_id": 5, "core_consumed_archive_id": 3}
         await store.write_archive_state(state)
         loaded = await store.read_archive_state()
         assert loaded == state
@@ -38,10 +38,10 @@ class TestDirArchiveStorage:
     ) -> None:
         await store.write_archive_state({"next_archive_id": 7})
         record = await store.append_channel_log(
-            "knowledge", {"summary": "fact"}
+            "core", {"summary": "fact"}
         )
         assert record["archive_id"] == 7
-        assert record["channel"] == "knowledge"
+        assert record["channel"] == "core"
         assert record["summary"] == "fact"
 
     async def test_read_channel_logs_since_id(

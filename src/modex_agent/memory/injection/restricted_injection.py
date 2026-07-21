@@ -8,7 +8,7 @@ from modex_agent.memory.pruned.manager import PrunedManager
 
 
 class RestrictedInjectionPolicy(MemoryInjectionPolicy):
-    """Subagent policy — session messages only, no knowledge/archive/providers.
+    """Subagent policy — session messages only, no core memory/archive/providers.
 
     No message-count cap: subagent sessions compress by tokens (they carry a
     cleanup config), so token compression is the sole size governor.

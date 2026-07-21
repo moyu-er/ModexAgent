@@ -1,6 +1,6 @@
-"""Tests for overwrite-based knowledge updates.
+"""Tests for overwrite-based core memory updates.
 
-Knowledge updates should generate complete new file content (not patches)
+Core memory updates should generate complete new file content (not patches)
 and save it as a full file replacement.
 """
 from __future__ import annotations
@@ -11,16 +11,16 @@ import pytest
 
 from modex_agent.core.scope import MemoryContext, MemoryLayerName
 from modex_agent.memory.core.split_stores import MemoryStoreBundle
-from modex_agent.memory.stores.markdown_knowledge import MarkdownKnowledgeStorage
+from modex_agent.memory.stores.markdown_core import MarkdownCoreMemoryStorage
 
 
-class TestOverwriteKnowledgeUpdate:
-    """Knowledge updates should overwrite files with complete content."""
+class TestOverwriteCoreMemoryUpdate:
+    """Core memory updates should overwrite files with complete content."""
 
     @pytest.mark.asyncio
     async def test_apply_update_overwrites_entire_file(self, tmp_path):
         """apply_update with section_replace mode should overwrite the entire .md file."""
-        storage = MarkdownKnowledgeStorage(tmp_path, layer=MemoryLayerName.KNOWLEDGE)
+        storage = MarkdownCoreMemoryStorage(tmp_path, layer=MemoryLayerName.CORE)
         await storage.initialize()
 
         # Create initial file
@@ -39,11 +39,11 @@ class TestOverwriteKnowledgeUpdate:
             reason="learned user name and timezone",
         )
 
-        from modex_agent.memory.layers.config import KnowledgeMemoryConfig
-        from modex_agent.memory.layers.knowledge import ScopedKnowledgeMemoryManager
+        from modex_agent.memory.layers.config import CoreMemoryConfig
+        from modex_agent.memory.layers.core import ScopedCoreMemoryManager
 
-        config = KnowledgeMemoryConfig()
-        manager = ScopedKnowledgeMemoryManager(
+        config = CoreMemoryConfig()
+        manager = ScopedCoreMemoryManager(
             storage_factory=AsyncMock(return_value=MemoryStoreBundle(
                 messages=storage, kv=storage, cursors=storage, archive=storage,
             )),
@@ -82,17 +82,17 @@ class TestOverwriteKnowledgeUpdate:
     @pytest.mark.asyncio
     async def test_template_not_found_skips_empty_md(self, tmp_path):
         """When template doesn't exist and no defaults, ensure_defaults skips empty files."""
-        storage = MarkdownKnowledgeStorage(tmp_path, layer=MemoryLayerName.KNOWLEDGE)
+        storage = MarkdownCoreMemoryStorage(tmp_path, layer=MemoryLayerName.CORE)
         await storage.initialize()
 
         # Template dir doesn't exist
         templates_dir = tmp_path / "nonexistent_templates"
 
-        from modex_agent.memory.layers.config import KnowledgeMemoryConfig
-        from modex_agent.memory.layers.knowledge import ScopedKnowledgeMemoryManager
+        from modex_agent.memory.layers.config import CoreMemoryConfig
+        from modex_agent.memory.layers.core import ScopedCoreMemoryManager
 
-        config = KnowledgeMemoryConfig(default_templates_dir=str(templates_dir))
-        manager = ScopedKnowledgeMemoryManager(
+        config = CoreMemoryConfig(default_templates_dir=str(templates_dir))
+        manager = ScopedCoreMemoryManager(
             storage_factory=AsyncMock(return_value=MemoryStoreBundle(
                 messages=storage, kv=storage, cursors=storage, archive=storage,
             )),

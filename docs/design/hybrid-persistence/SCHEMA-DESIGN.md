@@ -13,7 +13,7 @@ rationale and CONTEXT.md for domain terms.
 <home>/.modex/_registry/state.db        Global registry (workspaces, session→workspace map)
 
 <workspace>/.modex/state.db             Per-workspace state DB
-<workspace>/.modex/memory/...           Markdown knowledge, archive documents (files)
+<workspace>/.modex/memory/...           Markdown Core Memory + archive documents (files)
 <workspace>/.modex/media/...            Attachment bytes (files)
 <workspace>/.modex/overflow/...         Tool overflow chunks (files)
 <workspace>/.modex/pruned/...           Pruned JSONL for agent file-tool access (files)
@@ -538,7 +538,7 @@ CREATE TABLE workspace_meta (
 | `config/pools/*/pool.yml`, `config/model.yml`, `config/mcp/*.json` | human-authored, source-controlled, WebUI-edited |
 | `agents/*.md` | human-authored prompts |
 | `skills/<pool>/<agent>/<name>/SKILL.md` | human-authored, symlinked |
-| `memory/<pool>/knowledge/*.md` (`SOUL.md`, `USER.md`, `MEMORY.md`) | human-edited, file-tool-edited |
+| `memory/<pool>/knowledge/*.md` (`SOUL.md`, `USER.md`, `MEMORY.md`) | human-edited, file-tool-edited (Core Memory layer files; the on-disk directory name `knowledge/` is retained for now — the layer was renamed to "Core Memory" per ADR-0035) |
 | `experiences/<pool>/<agent>/*/EXPERIENCE.md` | agent-generated Markdown, file-tool-edited |
 | `media/uploads/<session>/<attachment_id>` | binary streams, size-budgeted |
 | `overflow/tool_overflow/<session>/<tool_call>/` | large text chunks, streamed |
@@ -601,7 +601,7 @@ CREATE TABLE workspace_meta (
 | Session messages | prune → soft_deleted | `cleanup_session()` | `UPDATE state='soft_deleted'` in same txn as content return |
 | Session messages | TTL physical delete | background job | `DELETE WHERE state='soft_deleted' AND deleted_at < ?` |
 | Archive entries | max_entries / max_age_days | `scan_once()` | `DELETE FROM memory_archive_entries WHERE ...` + delete Markdown dirs |
-| Knowledge | max_memory_chars | `scan_once()` | truncate file content (file system) |
+| Core Memory | max_memory_chars | `scan_once()` | truncate file content (file system) |
 | Pruned | `prune_oldest(keep_count)` | explicit call | delete oldest JSONL + index entries (file system) |
 | URB | `_enforce_limits` max_entries | each append/upsert | FIFO from list head (KVStore) |
 | Turn snapshots | completed retention | background job | `DELETE WHERE phase IN ('completed','cancelled','error') AND created_at < ?` |

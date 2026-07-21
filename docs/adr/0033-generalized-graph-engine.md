@@ -14,9 +14,11 @@ practice has only one consumer (`ReActAgent`). Other agents bypass it:
 `ExternalCodingAgent` drives a subprocess streaming harness directly;
 `SummarizerAgent` is deprecated and unused (separate removal tracked below).
 Tool-using agents that need the graph (`ArchiveSummarizer` /
-`KnowledgeConsolidator` / `ExperienceReviewAgent`) inherit `ScopedFileAgent`
-and internally construct a `ReActAgent` in clean mode — they use the graph
-indirectly through ReAct, never as a standalone engine.
+`KnowledgeConsolidator` / `ExperienceReviewAgent` — `KnowledgeConsolidator`
+was renamed to `CoreMemoryConsolidator` per ADR-0035; the new name is used
+in code) inherit `ScopedFileAgent` and internally construct a `ReActAgent`
+in clean mode — they use the graph indirectly through ReAct, never as a
+standalone engine.
 
 The graph engine has three structural defects that block generalization:
 

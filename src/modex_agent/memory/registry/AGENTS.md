@@ -12,7 +12,7 @@ Storage provider registry that resolves a memory layer + scope pair into a `Memo
 | `__init__.py` | Package init, re-exports registry classes |
 | `base.py` | `MemoryStoreRegistry` ABC — defines `resolve(layer, scope, context)` → `MemoryStoreBundle`, `list_records()`, `initialize()`, `close()` |
 | `file.py` | `DefaultMemoryStoreRegistry` — local file-backed registry. Resolves layer/scope pairs to `DefaultScopedStorage` directories under a root path, wiring each into a `MemoryStoreBundle`. Manages `.scope.json` metadata per scope directory |
-| `modex_agent.persistence.memory_registry` | `HybridMemoryStoreRegistry` — bot SQLite adapter that routes structured state through the workspace persistence manager while retaining knowledge and generated archive documents on files |
+| `modex_agent.persistence.memory_registry` | `HybridMemoryStoreRegistry` — bot SQLite adapter that routes structured state through the workspace persistence manager while retaining core memory and generated archive documents on files (core memory was renamed from "knowledge" per ADR-0035) |
 
 ## For AI Agents
 

@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 def _build_memory_layer_config(cfg: MemoryConfig) -> MemoryLayerConfigSet:
     """Convert MemoryConfig to framework MemoryLayerConfigSet.
 
-    Supports both old (short_term/long_term) and new (session/archive/knowledge) config.
+    Supports both old (short_term/long_term) and new (session/archive/core) config.
     Migration happens in MemoryConfig.model_post_init, so this function
     only reads from the new fields.
     """
@@ -52,21 +52,21 @@ def _build_memory_layer_config(cfg: MemoryConfig) -> MemoryLayerConfigSet:
             scope=build_scope(cfg.archive.scope),
         )
 
-    # Knowledge config (new field, migrated from long_term if old config used)
-    knowledge_config = None
-    if cfg.knowledge is not None and cfg.knowledge.enabled:
+    # Core memory config (new field, migrated from long_term if old config used)
+    core_memory_config = None
+    if cfg.core is not None and cfg.core.enabled:
         from modex_agent.core.scope import build_scope
-        from modex_agent.memory.layers.config import KnowledgeMemoryConfig
+        from modex_agent.memory.layers.config import CoreMemoryConfig
 
-        knowledge_config = KnowledgeMemoryConfig(
-            default_templates_dir=cfg.knowledge.default_templates_dir,
-            scope=build_scope(cfg.knowledge.scope),
+        core_memory_config = CoreMemoryConfig(
+            default_templates_dir=cfg.core.default_templates_dir,
+            scope=build_scope(cfg.core.scope),
         )
 
     return MemoryLayerConfigSet(
         session=session_config,
         archive=archive_config,
-        knowledge=knowledge_config,
+        core=core_memory_config,
         user_retention=user_retention_config,
     )
 
@@ -117,7 +117,7 @@ def create_memory(
     # Explicit summarizer_agent config overrides defaults.
     archive_agent = None
     archive_storage = None
-    knowledge_consolidator = None
+    core_memory_consolidator = None
 
     archive_enabled = cfg.archive is not None and cfg.archive.enabled
     summarizer_enabled = cfg.summarizer_agent is not None and cfg.summarizer_agent.enabled
@@ -127,12 +127,12 @@ def create_memory(
             ArchiveSummarizer,
             ArchiveSummarizerConfig,
         )
-        from modex_agent.agents.summarizer.consolidator import KnowledgeConsolidator
+        from modex_agent.agents.summarizer.consolidator import CoreMemoryConsolidator
 
         if cfg.summarizer_agent is not None:
             archive_config = ArchiveSummarizerConfig(
                 context_max_chars=cfg.summarizer_agent.context_max_chars,
-                knowledge_max_chars=cfg.summarizer_agent.knowledge_max_chars,
+                core_max_chars=cfg.summarizer_agent.core_max_chars,
                 index_max_chars=cfg.summarizer_agent.index_max_chars,
                 max_iterations=cfg.summarizer_agent.max_iterations,
             )
@@ -141,7 +141,7 @@ def create_memory(
             archive_config = ArchiveSummarizerConfig()
             max_iterations = ArchiveSummarizerConfig().max_iterations
 
-        # Archive summarizer / knowledge consolidator both require an LLM
+        # Archive summarizer / core memory consolidator both require an LLM
         # provider. When the bot starts without a model configured (first-run
         # state, user configures via WebUI afterward), skip building these
         # agents — they cannot run without a provider, and the memory system
@@ -150,15 +150,15 @@ def create_memory(
         if llm_provider is None:
             logger.warning(
                 "llm_provider is None — skipping archive summarizer and "
-                "knowledge consolidator (no model configured). Memory runs "
+                "core memory consolidator (no model configured). Memory runs "
                 "in degraded mode until a model is configured."
             )
         else:
             archive_agent = ArchiveSummarizer(llm_provider, config=archive_config)
 
-            knowledge_enabled = cfg.knowledge is not None and cfg.knowledge.enabled
-            if knowledge_enabled:
-                knowledge_consolidator = KnowledgeConsolidator(
+            core_enabled = cfg.core is not None and cfg.core.enabled
+            if core_enabled:
+                core_memory_consolidator = CoreMemoryConsolidator(
                     provider=llm_provider,
                     max_iterations=max_iterations,
                 )
@@ -174,7 +174,7 @@ def create_memory(
         pruned_manager=pruned_manager,
         archive_agent=archive_agent,
         archive_storage=archive_storage,
-        knowledge_consolidator=knowledge_consolidator,
+        core_memory_consolidator=core_memory_consolidator,
         token_estimator=token_estimator,
         store_registry=store_registry,
     )

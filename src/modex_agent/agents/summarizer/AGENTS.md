@@ -14,9 +14,9 @@ Summarizer and file-scoped ReAct agents for offline memory processing. Three con
 | `agent.py` | `SummarizerAgent(Agent)` — single-turn LLM call, no tools. Used for compression, fact extraction, memory update prompts |
 | `scoped_file_agent.py` | `ScopedFileAgent` — ReAct agent base with scoped file tools (read/write/edit/list), `SummarizerTrajectoryEmitter` for JSONL traces, 2-attempt retry |
 | `archive_agent.py` | `ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator)` — generates `context.md`/`knowledge.md`/`index.md` from pruned messages. Message filtering, transcript formatting, prompt templates |
-| `consolidator.py` | `KnowledgeConsolidator(ScopedFileAgent, KnowledgeConsolidatorBase)` — reads `knowledge.md` from archives, updates `SOUL.md`/`USER.md`/`MEMORY.md` via ReAct |
+| `consolidator.py` | `CoreMemoryConsolidator(ScopedFileAgent, CoreMemoryConsolidatorBase)` (renamed from `KnowledgeConsolidator` per ADR-0035) — reads `knowledge.md` from archives, updates `SOUL.md`/`USER.md`/`MEMORY.md` via ReAct |
 | `emitter.py` | `SummarizerTrajectoryEmitter` — JSONL trace file writer for agent observability |
-| `abc.py` | `ArchiveGenerator` ABC, `KnowledgeConsolidatorBase` ABC, `ArchiveSummarizerResult`, `_get_registry()` lazy prompt loader |
+| `abc.py` | `ArchiveGenerator` ABC, `CoreMemoryConsolidatorBase` ABC (renamed from `KnowledgeConsolidatorBase` per ADR-0035), `ArchiveSummarizerResult`, `_get_registry()` lazy prompt loader |
 | `strategy.py` | `SummarizationStrategy` — configurable summarization approach |
 
 ## Agent Hierarchy
@@ -26,7 +26,7 @@ Agent[E]
 └── SummarizerAgent           (single-turn, no tools)
 └── ScopedFileAgent           (ReAct with scoped file tools)
     ├── ArchiveSummarizer     (pruned → archive files)
-    ├── KnowledgeConsolidator (archive → knowledge files)
+    ├── CoreMemoryConsolidator (archive → core memory files; renamed from KnowledgeConsolidator per ADR-0035)
     └── ExperienceReviewAgent (conversation → EXPERIENCE.md, in agents/experience/)
 ```
 

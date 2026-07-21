@@ -15,7 +15,7 @@ from modex_agent.memory.injection.archive import (
 )
 from modex_agent.memory.injection.policy import MemoryInjectionPolicy
 from modex_agent.memory.pruned.manager import PrunedManager
-from modex_agent.memory.tags import KnowledgeTag
+from modex_agent.memory.tags import CoreMemoryTag
 from modex_agent.memory.utils import estimate_text_tokens
 from modex_agent.utils.xml import xml_attr, xml_text
 
@@ -31,11 +31,11 @@ class _PromptSection:
 
 
 class FullInjectionPolicy(MemoryInjectionPolicy):
-    """Main agent policy — knowledge + archive + providers + session.
+    """Main agent policy — core memory + archive + providers + session.
 
     Injection order (deterministic, priority-ordered):
     1. Previous conversations disclaimer → priority=110
-    2. Knowledge: identity, user profile, known facts → priority=100
+    2. Core memory: identity, user profile, known facts → priority=100
     3. Archive summaries: older topics → priority=70
     4. Provider static blocks → priority=60
     5. Provider prefetch → priority=50
@@ -87,7 +87,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
         sections: list[_PromptSection] = []
 
         self._inject_disclaimer(sections)
-        await self._inject_knowledge(sections, context, memory_system, query)
+        await self._inject_core_memory(sections, context, memory_system, query)
         await self._inject_archive(sections, context, memory_system)
         self._inject_pruned_catalog(sections, context)
         await self._inject_provider_blocks(sections, memory_system)
@@ -124,62 +124,62 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
             )
         )
 
-    async def _inject_knowledge(
+    async def _inject_core_memory(
         self,
         sections: list[_PromptSection],
         context: MemoryContext,
         memory_system: MemorySystem,
         query: str,
     ) -> None:
-        """Inject knowledge as natural XML with relative file names.
+        """Inject core memory as natural XML with relative file names.
 
         The directory path is emitted once at the top of the section; each
         element carries only the filename (e.g. ``file="SOUL.md"``).
         """
         try:
-            knowledge = await memory_system.retrieve_knowledge(context, query=query)
-            knowledge_dir = await memory_system.get_knowledge_directory(context)
+            core_memory_contents = await memory_system.retrieve_core_memory(context, query=query)
+            core_memory_dir = await memory_system.get_core_memory_directory(context)
 
             xml_parts: list[str] = []
 
-            if knowledge.soul:
+            if core_memory_contents.soul:
                 file_attr = ""
-                if knowledge_dir:
+                if core_memory_dir:
                     file_attr = ' file="SOUL.md"'
-                tag = KnowledgeTag.YOUR_IDENTITY.value
+                tag = CoreMemoryTag.YOUR_IDENTITY.value
                 xml_parts.extend(
                     [
                         f'<{tag}{file_attr} editable="true"'
                         f' description="Who you are: personality, principles, and behavior rules">'
-                        f"\n{xml_text(knowledge.soul)}\n"
+                        f"\n{xml_text(core_memory_contents.soul)}\n"
                         f"</{tag}>",
                     ]
                 )
 
-            if knowledge.user:
+            if core_memory_contents.user:
                 file_attr = ""
-                if knowledge_dir:
+                if core_memory_dir:
                     file_attr = ' file="USER.md"'
-                tag = KnowledgeTag.USER_PROFILE.value
+                tag = CoreMemoryTag.USER_PROFILE.value
                 xml_parts.extend(
                     [
                         f'<{tag}{file_attr} editable="true"'
                         f' description="Facts about the user: name, preferences, habits, communication style">'
-                        f"\n{xml_text(knowledge.user)}\n"
+                        f"\n{xml_text(core_memory_contents.user)}\n"
                         f"</{tag}>",
                     ]
                 )
 
-            if knowledge.memory:
+            if core_memory_contents.memory:
                 file_attr = ""
-                if knowledge_dir:
+                if core_memory_dir:
                     file_attr = ' file="MEMORY.md"'
-                tag = KnowledgeTag.KNOWN_FACTS.value
+                tag = CoreMemoryTag.KNOWN_FACTS.value
                 xml_parts.extend(
                     [
                         f'<{tag}{file_attr} editable="false"'
                         f' description="Known facts about the project: conventions, decisions, verified solutions">'
-                        f"\n{xml_text(knowledge.memory)}\n"
+                        f"\n{xml_text(core_memory_contents.memory)}\n"
                         f"</{tag}>",
                     ]
                 )
@@ -195,22 +195,22 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                         xml_content,
                         8000,
                         truncatable_paths=[
-                            KnowledgeTag.YOUR_IDENTITY.value,
-                            KnowledgeTag.USER_PROFILE.value,
-                            KnowledgeTag.KNOWN_FACTS.value,
+                            CoreMemoryTag.YOUR_IDENTITY.value,
+                            CoreMemoryTag.USER_PROFILE.value,
+                            CoreMemoryTag.KNOWN_FACTS.value,
                         ],
                     )
 
                 dir_line = ""
-                if knowledge_dir:
+                if core_memory_dir:
                     dir_line = (
-                        f"Directory: {xml_attr(str(knowledge_dir.resolve()))}\n\n"
+                        f"Directory: {xml_attr(str(core_memory_dir.resolve()))}\n\n"
                     )
                 heading = (
-                    "### Knowledge Files\n\n"
+                    "### Core Memory Files\n\n"
                     "Self-maintained files storing your personality, user preferences, "
                     'and learned facts. Files with `editable="true"` can be updated '
-                    "via file tools to evolve your knowledge over time.\n"
+                    "via file tools to evolve your core memory over time.\n"
                     f"{dir_line}\n"
                 )
                 sections.append(
@@ -220,7 +220,7 @@ class FullInjectionPolicy(MemoryInjectionPolicy):
                     )
                 )
         except Exception:
-            logger.debug("Knowledge injection skipped", exc_info=True)
+            logger.debug("Core memory injection skipped", exc_info=True)
 
     async def _inject_archive(
         self,

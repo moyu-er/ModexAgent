@@ -1,6 +1,6 @@
-"""Knowledge retrieval strategies.
+"""Core memory retrieval strategies.
 
-Provides pluggable strategies for retrieving knowledge files (SOUL, USER, MEMORY)
+Provides pluggable strategies for retrieving core memory files (SOUL, USER, MEMORY)
 with query-aware filtering and token budget enforcement.
 """
 
@@ -8,18 +8,18 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from modex_agent.memory.core.models import LongTermMemory
+from modex_agent.memory.core.models import CoreMemoryContents
 from modex_agent.memory.utils import estimate_text_tokens
 from modex_agent.utils.helpers import strip_think
 
 __all__ = [
-    "FullDumpKnowledgeStrategy",
-    "KnowledgeSearchStrategy",
+    "FullDumpCoreMemoryStrategy",
+    "CoreMemorySearchStrategy",
 ]
 
 
-class KnowledgeSearchStrategy(ABC):
-    """Strategy for retrieving knowledge content within a token budget.
+class CoreMemorySearchStrategy(ABC):
+    """Strategy for retrieving core memory content within a token budget.
 
     Receives the full LongTermMemory and returns a (possibly filtered/truncated)
     version suitable for injection into the system prompt.
@@ -28,14 +28,14 @@ class KnowledgeSearchStrategy(ABC):
     @abstractmethod
     async def retrieve(
         self,
-        knowledge: LongTermMemory,
+        core_memory: CoreMemoryContents,
         query: str = "",
         max_tokens: int = 5000,
-    ) -> LongTermMemory:
-        """Return knowledge content filtered to *max_tokens*.
+    ) -> CoreMemoryContents:
+        """Return core memory content filtered to *max_tokens*.
 
         Args:
-            knowledge: Full knowledge from storage.
+            core_memory: Full core memory from storage.
             query: Optional query for relevance filtering.
             max_tokens: Hard token budget for the returned content.
 
@@ -45,8 +45,8 @@ class KnowledgeSearchStrategy(ABC):
         ...
 
 
-class FullDumpKnowledgeStrategy(KnowledgeSearchStrategy):
-    """Default strategy: return all knowledge files, truncated to token budget.
+class FullDumpCoreMemoryStrategy(CoreMemorySearchStrategy):
+    """Default strategy: return all core memory files, truncated to token budget.
 
     SOUL and USER are always included in full (they are small and essential).
     MEMORY.md is truncated first if the total exceeds *max_tokens*.
@@ -55,16 +55,16 @@ class FullDumpKnowledgeStrategy(KnowledgeSearchStrategy):
 
     async def retrieve(
         self,
-        knowledge: LongTermMemory,
+        core_memory: CoreMemoryContents,
         query: str = "",
         max_tokens: int = 5000,
-    ) -> LongTermMemory:
+    ) -> CoreMemoryContents:
         _ = query
 
-        soul = self._clean(knowledge.soul)
-        user = self._clean(knowledge.user)
-        memory = self._clean(knowledge.memory)
-        custom = {k: self._clean(v) for k, v in knowledge.custom.items()}
+        soul = self._clean(core_memory.soul)
+        user = self._clean(core_memory.user)
+        memory = self._clean(core_memory.memory)
+        custom = {k: self._clean(v) for k, v in core_memory.custom.items()}
 
         # SOUL + USER are always included
         base_tokens = estimate_text_tokens(soul) + estimate_text_tokens(user)
@@ -83,7 +83,7 @@ class FullDumpKnowledgeStrategy(KnowledgeSearchStrategy):
         # MEMORY.md gets whatever is left
         memory = self._truncate_text(memory, memory_budget)
 
-        return LongTermMemory(soul=soul, user=user, memory=memory, custom=custom)
+        return CoreMemoryContents(soul=soul, user=user, memory=memory, custom=custom)
 
     @staticmethod
     def _clean(text: str) -> str:

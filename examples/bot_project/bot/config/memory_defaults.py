@@ -3,10 +3,10 @@
 Converged configuration surface for all native agents:
 
 - **main agent**: ``main_agent_memory()`` (full layers: session + archive +
-  knowledge + dream + pruned + governance with lossy compaction) +
+  core memory + dream + pruned + governance with lossy compaction) +
   ``main_agent_experience()`` (enabled, ExperienceReviewHook fires)
 - **subagent**: ``subagent_memory()`` (session + pruned + governance only —
-  no archive/knowledge/dream/experience)
+  no archive/core/dream/experience)
 
 External (external_coding) main agents and subagents are skipped structurally
 (template.py early-dispatch + pool_builder external branch + wiring
@@ -22,7 +22,7 @@ from modex_agent.ioc.configs.memory import (
     ArchiveConfig,
     DreamEngineConfig,
     GovernanceConfig,
-    KnowledgeConfig,
+    CoreMemoryConfig,
     LossyConfig,
     MemoryConfig,
     PrunedCatalogConfig,
@@ -50,9 +50,9 @@ def main_agent_memory(*, max_context_tokens: int | None = None) -> MemoryConfig:
             max_archive_total=20,
             max_archive_inject=3,
         ),
-        knowledge=KnowledgeConfig(
+        core=CoreMemoryConfig(
             enabled=True,
-            default_templates_dir="templates/knowledge",
+            default_templates_dir="templates/core",
             scope="global",
         ),
         dream_engine=DreamEngineConfig(
@@ -87,7 +87,7 @@ def main_agent_experience() -> ExperienceConfig:
 def subagent_memory() -> MemoryConfig:
     """Canonical subagent memory: session + pruned + governance only.
 
-    No archive/knowledge/dream — subagents are short-lived task workers.
+    No archive/core/dream — subagents are short-lived task workers.
     ``user_retention`` stays on (``UserRetentionConfig.enabled`` defaults True)
     so pruned user context is tracked. No experience preset: experience review
     is main-agent-only.
@@ -95,7 +95,7 @@ def subagent_memory() -> MemoryConfig:
     return MemoryConfig(
         session=SessionConfig(max_token_ratio=0.85, keep_ratio=0.3),
         archive=None,
-        knowledge=None,
+        core=None,
         governance=GovernanceConfig(tool_chain_repair=True),
         pruned=PrunedCatalogConfig(enabled=True, max_files=50, topic_max_chars=200),
     )

@@ -7,7 +7,7 @@ import pytest
 
 from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.archive_models import ArchiveChannel
-from modex_agent.memory.core.models import LongTermMemory
+from modex_agent.memory.core.models import CoreMemoryContents
 from modex_agent.memory.core.system import MemorySystem
 from modex_agent.memory.injection.full_injection import FullInjectionPolicy
 
@@ -29,8 +29,8 @@ def _archive_memory(
     memory = MagicMock(spec=MemorySystem)
     memory.get_history_entries = AsyncMock(side_effect=get_history_entries)
     memory.get_storage_path = AsyncMock(return_value=storage_path)
-    memory.retrieve_knowledge = AsyncMock(return_value=LongTermMemory())
-    memory.get_knowledge_directory = AsyncMock(return_value=None)
+    memory.retrieve_core_memory = AsyncMock(return_value=CoreMemoryContents())
+    memory.get_core_memory_directory = AsyncMock(return_value=None)
     memory.get_providers.return_value = []
     memory.prefetch_memories = AsyncMock(return_value=None)
     memory.get_history = AsyncMock(return_value=[])

@@ -23,7 +23,7 @@ Short-term Memory ──► History Archive ──► Long-term Memory
 - **`Scope`** — extracts a `RecordScope` from a context (Session, User, Tenant, Agent, Channel, Chat, Global, Composite). Lives in `modex_agent.core.scope`; `build_scope(dims)` is the factory
 - **`MemoryStoreBundle`** — frozen Pydantic model composing `MessageStore`, `KVStore`, `CursorStore`, and optional `ArchiveStore`. Returned by `MemoryStoreRegistry.resolve()`. Replaces the deleted `MemoryStorage` god-interface
 - **`CompressionStrategy`** — pluggable short-term memory compression
-- **`KnowledgeConsolidatorBase`** / **`DreamEngine`** — offline long-term memory consolidation via ReAct-based agent
+- **`KnowledgeConsolidatorBase`** / **`DreamEngine`** — offline long-term memory consolidation via ReAct-based agent. (Class renamed to `CoreMemoryConsolidatorBase` per ADR-0035; the base class below reflects the renamed API.)
 
 ## Usage
 
@@ -152,7 +152,7 @@ class SemanticRetrieval(RetrievalStrategy):
 
 #### 4. Wire It Into `MemorySystem`
 
-Because `MemorySystem` currently assembles long-term memories via `KnowledgeMemoryManager.get_all()`, a `RetrievalStrategy` is best invoked **before** prompt construction:
+Because `MemorySystem` currently assembles long-term memories via `CoreMemoryManager.get_all()` (renamed from `KnowledgeMemoryManager` per ADR-0035), a `RetrievalStrategy` is best invoked **before** prompt construction:
 
 ```python
 class RAGMemorySystem(MemorySystem):

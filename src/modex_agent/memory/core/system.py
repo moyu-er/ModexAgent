@@ -10,7 +10,7 @@ from typing import Any
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.archive_models import ArchiveChannel
-from modex_agent.memory.core.models import LongTermMemory
+from modex_agent.memory.core.models import CoreMemoryContents
 from modex_agent.memory.history import MessageHistory
 from modex_agent.memory.pruned.manager import PrunedManager
 
@@ -19,7 +19,7 @@ class MemorySystem(ABC):
     """Abstract application-facing memory capability — CRUD lifecycle + injection reads.
 
     A complete memory system must implement both the lifecycle methods
-    (initialize, close, CRUD) and the injection read methods (knowledge,
+    (initialize, close, CRUD) and the injection read methods (core memory,
     archive, providers) used by injection policies.
     """
 
@@ -75,17 +75,17 @@ class MemorySystem(ABC):
     # -- injection reads ------------------------------------------------------
 
     @abstractmethod
-    async def get_knowledge(self, context: MemoryContext) -> LongTermMemory:
-        """Return all long-term knowledge for the given context."""
+    async def get_core_memory(self, context: MemoryContext) -> CoreMemoryContents:
+        """Return all long-term core memory for the given context."""
         ...
 
     @abstractmethod
-    async def retrieve_knowledge(
+    async def retrieve_core_memory(
         self,
         context: MemoryContext,
         query: str = "",
-    ) -> LongTermMemory:
-        """Retrieve knowledge relevant to a query."""
+    ) -> CoreMemoryContents:
+        """Retrieve core memory relevant to a query."""
         ...
 
     @abstractmethod
@@ -111,8 +111,8 @@ class MemorySystem(ABC):
         ...
 
     @abstractmethod
-    async def get_knowledge_directory(self, context: MemoryContext) -> Path | None:
-        """Return the knowledge storage directory."""
+    async def get_core_memory_directory(self, context: MemoryContext) -> Path | None:
+        """Return the core memory storage directory."""
         ...
 
     @abstractmethod

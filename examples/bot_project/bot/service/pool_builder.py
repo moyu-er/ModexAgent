@@ -598,32 +598,32 @@ async def ensure_long_term_defaults(
     memory_cfg: MemoryConfig | None,
     memory_system: DefaultMemorySystem,
 ) -> None:
-    """Initialize default long-term memory files if knowledge is enabled.
+    """Initialize default long-term memory files if core memory is enabled.
 
-    Supports both old ``long_term`` config (deprecated) and new ``knowledge``
+    Supports both old ``long_term`` config (deprecated) and new ``core``
     config. Template paths in config are relative to the project directory.
     Resolves them to absolute paths before calling ``ensure_defaults`` so
-    the knowledge layer finds templates regardless of CWD (critical after
+    the core memory layer finds templates regardless of CWD (critical after
     ``/cd`` switches the conversation to a different workspace).
     """
     if memory_cfg is None:
         return
 
-    knowledge_enabled = False
+    core_enabled = False
     if memory_cfg.long_term is not None and memory_cfg.long_term.enabled:
-        knowledge_enabled = True
-    if memory_cfg.knowledge is not None and memory_cfg.knowledge.enabled:
-        knowledge_enabled = True
-    if not knowledge_enabled:
+        core_enabled = True
+    if memory_cfg.core is not None and memory_cfg.core.enabled:
+        core_enabled = True
+    if not core_enabled:
         return
 
-    lt_mgr = memory_system.knowledge_manager
+    lt_mgr = memory_system.core_memory_manager
     if lt_mgr is None:
         return
 
     raw_template_dir: str | None = None
-    if memory_cfg.knowledge is not None:
-        raw_template_dir = memory_cfg.knowledge.default_templates_dir
+    if memory_cfg.core is not None:
+        raw_template_dir = memory_cfg.core.default_templates_dir
     if not raw_template_dir and memory_cfg.long_term is not None:
         raw_template_dir = memory_cfg.long_term.default_templates_dir
     if raw_template_dir:

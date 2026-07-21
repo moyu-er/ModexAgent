@@ -14,7 +14,7 @@ The bot's memory + experience configuration is **baked, not user-editable**
 
 | Agent type | memory | experience | governance | hooks |
 |---|---|---|---|---|
-| native main | full layers (session+archive+knowledge+dream+pruned+governance+user_retention) | enabled (ExperienceReviewHook fires) | create_governance (lossy + tool_chain_repair) | MaxIter + TurnOutcome + ModelChoiceBind + ExperienceReview |
+| native main | full layers (session+archive+core+dream+pruned+governance+user_retention) | enabled (ExperienceReviewHook fires) | create_governance (lossy + tool_chain_repair) | MaxIter + TurnOutcome + ModelChoiceBind + ExperienceReview |
 | native subagent | minimal (session+pruned+governance+user_retention) | N/A | create_subagent_governance (tool_chain_repair only) | SubagentAutoSend + MaxIter |
 | external main | skipped structurally | skipped | skipped | skipped |
 | external subagent | skipped structurally | skipped | skipped | skipped |
@@ -51,7 +51,7 @@ from modex_agent.ioc.configs.memory import (  # noqa: E402
     ArchiveConfig,
     DreamEngineConfig,
     GovernanceConfig,
-    KnowledgeConfig,
+    CoreMemoryConfig,
     MemoryConfig,
     PrunedCatalogConfig,
     SessionConfig,
@@ -164,8 +164,8 @@ class TestMemoryDefaultsContract:
 
         Missing any layer breaks the corresponding subsystem:
         - No archive → no compression, context window blows up
-        - No knowledge → no SOUL/USER/MEMORY.md injection
-        - No dream_engine → no offline archive→knowledge consolidation
+        - No core → no SOUL/USER/MEMORY.md injection
+        - No dream_engine → no offline archive→core consolidation
         - No governance → no tool chain repair, no lossy compaction
         - No pruned → no cleanup catalog
         - No user_retention → no pruned user context tracking
@@ -186,10 +186,10 @@ class TestMemoryDefaultsContract:
         assert m.archive.max_archive_total > 0
 
         # Knowledge layer (SOUL/USER/MEMORY.md)
-        assert m.knowledge is not None, "knowledge must be enabled for main agents"
-        assert m.knowledge.enabled is True
-        assert isinstance(m.knowledge, KnowledgeConfig)
-        assert m.knowledge.default_templates_dir is not None
+        assert m.core is not None, "core memory must be enabled for main agents"
+        assert m.core.enabled is True
+        assert isinstance(m.core, CoreMemoryConfig)
+        assert m.core.default_templates_dir is not None
 
         # Dream engine (offline consolidation)
         assert m.dream_engine is not None, "dream_engine must be enabled for main agents"
@@ -243,7 +243,7 @@ class TestMemoryDefaultsContract:
 
         Subagents are short-lived task workers — they must NOT have:
         - archive (no long-term history needed)
-        - knowledge (no SOUL/USER/MEMORY.md)
+        - core (no SOUL/USER/MEMORY.md)
         - dream_engine (no offline consolidation)
         - lossy_compaction (small context windows, not worth the overhead)
 
@@ -267,7 +267,7 @@ class TestMemoryDefaultsContract:
 
         # MUST NOT have
         assert m.archive is None, "subagent must NOT have archive"
-        assert m.knowledge is None, "subagent must NOT have knowledge"
+        assert m.core is None, "subagent must NOT have core memory"
         assert m.dream_engine is None, "subagent must NOT have dream_engine"
         assert m.governance.lossy_compaction is None, (
             "subagent governance must NOT have lossy_compaction"
@@ -312,7 +312,7 @@ class TestAssemblyDepsUniformInjection:
         for m in memories:
             assert m is not None
             assert m.archive is not None and m.archive.enabled
-            assert m.knowledge is not None and m.knowledge.enabled
+            assert m.core is not None and m.core.enabled
             assert m.dream_engine is not None and m.dream_engine.enabled
             assert m.governance is not None and m.governance.lossy_compaction is not None
             assert m.pruned is not None and m.pruned.enabled
@@ -394,7 +394,7 @@ class TestSubagentTemplateMemoryInjection:
                 assert m.archive is None, (
                     f"{pool_name}/{t.spec.agent_name}: archive must be None"
                 )
-                assert m.knowledge is None
+                assert m.core is None
                 assert m.dream_engine is None
                 assert m.governance is not None and m.governance.tool_chain_repair is True
                 assert m.pruned is not None and m.pruned.enabled is True

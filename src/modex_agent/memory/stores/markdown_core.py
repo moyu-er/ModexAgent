@@ -1,6 +1,6 @@
-"""Knowledge storage that stores .md files as actual files on disk.
+"""Core memory storage that stores .md files as actual files on disk.
 
-Instead of kv.json, each knowledge file (SOUL.md, USER.md, MEMORY.md) is stored
+Instead of kv.json, each core memory file (SOUL.md, USER.md, MEMORY.md) is stored
 as a real file in the storage directory. Non-.md keys (metadata) still use kv.json.
 """
 
@@ -13,8 +13,8 @@ from modex_agent.memory.stores.scoped_file import DefaultScopedStorage
 from modex_agent.memory.utils import safe_atomic_replace
 
 
-class MarkdownKnowledgeStorage(DefaultScopedStorage):
-    """Knowledge layer storage backed by individual .md files.
+class MarkdownCoreMemoryStorage(DefaultScopedStorage):
+    """Core memory layer storage backed by individual .md files.
 
     ``get("SOUL.md")`` reads ``<dir>/SOUL.md``, ``set("SOUL.md", content)``
     writes ``<dir>/SOUL.md``.  Non-``.md`` keys (metadata starting with ``.``)

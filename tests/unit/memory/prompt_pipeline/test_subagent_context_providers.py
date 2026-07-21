@@ -19,7 +19,7 @@ from modex_agent.core.history import ListMessageHistory
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.scope import MemoryContext
 from modex_agent.memory.archive_models import ArchiveChannel
-from modex_agent.memory.core.models import LongTermMemory
+from modex_agent.memory.core.models import CoreMemoryContents
 from modex_agent.memory.core.system import MemorySystem
 from modex_agent.memory.prompt_pipeline.providers import (
     AppendParentPromptProvider,
@@ -123,13 +123,13 @@ class _MockMemory(MemorySystem):
         return []
 
     async def clear(self, context: MemoryContext) -> None: ...
-    async def get_knowledge(self, context: MemoryContext) -> LongTermMemory:
-        return LongTermMemory()
+    async def get_core_memory(self, context: MemoryContext) -> CoreMemoryContents:
+        return CoreMemoryContents()
 
-    async def retrieve_knowledge(
+    async def retrieve_core_memory(
         self, context: MemoryContext, query: str = ""
-    ) -> LongTermMemory:
-        return LongTermMemory()
+    ) -> CoreMemoryContents:
+        return CoreMemoryContents()
 
     async def get_history_entries(
         self,
@@ -149,7 +149,7 @@ class _MockMemory(MemorySystem):
     ) -> str | None:
         return None
 
-    async def get_knowledge_directory(
+    async def get_core_memory_directory(
         self, context: MemoryContext
     ) -> Path | None:
         return None

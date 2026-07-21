@@ -34,8 +34,8 @@ Uses **Pool mode** — multi-agent persistent pools with `MessageBroker` + `Agen
 | **LLM Dialogue** | Streaming and non-streaming output, supporting 100+ models via OpenAI-compatible APIs |
 | **ReAct Execution** | Thought → Action → Observation via the graph-driven engine, with loop detection that exits a runaway loop as a controlled stop |
 | **Tool Invocation** | Built-in file/shell tools + MCP dynamic tools + custom tools |
-| **Multi-tier Memory** | Session / Archive / Knowledge / UserRetentionBuffer / Pruned / Experience — with configurable scopes (UserScope / GlobalScope / SessionScope) |
-| **Self-Learning** | ExperienceReviewAgent turns conversations into reusable EXPERIENCE.md knowledge; Dream Engine consolidates archives into long-term memory |
+| **Multi-tier Memory** | Session / Archive / Core Memory / UserRetentionBuffer / Pruned / Experience — with configurable scopes (UserScope / GlobalScope / SessionScope) |
+| **Self-Learning** | ExperienceReviewAgent turns conversations into reusable EXPERIENCE.md knowledge; Dream Engine consolidates archives into core memory |
 | **Context Governance** | ToolChainRepair + Microcompact + TokenBudget auto-optimization |
 | **Tool Approval** | The agent asks before writing/editing outside your project; approve via WebUI or `/approve`. Off by default; opt-in per agent |
 | **Multi-Agent Collaboration** | Per-pool star (main agent + subagents via `send_to_agent`) + cross-pool peer messaging between main agents |
@@ -371,22 +371,23 @@ All user messages — from IM (QQ, Telegram) and WebUI — flow through a shared
 
 ```
 ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐
-│ Session   │  │  Archive  │  │ Knowledge │  │UserRetention│ │  Pruned   │  │Experience │
-│ Per-sess. │→ │ Per-user  │→ │ SOUL.md   │  │  Buffer    │  │Per-sess.  │  │EXPERIENCE │
-│ (auto-clean)│ │(compressed)│ │ USER.md   │  │ (prevents  │  │(catalog)  │  │.md files  │
-└───────────┘  └───────────┘  └───────────┘  │over-compact)│ └───────────┘  └───────────┘
-                                             └───────────┘
+│ Session   │  │  Archive  │  │   Core    │  │UserRetention│ │  Pruned   │  │Experience │
+│ Per-sess. │→ │ Per-user  │→ │ Memory    │  │  Buffer    │  │Per-sess.  │  │EXPERIENCE │
+│ (auto-clean)│ │(compressed)│ │ SOUL.md   │  │ (prevents  │  │(catalog)  │  │.md files  │
+└───────────┘  └───────────┘  │ USER.md   │  │over-compact)│ └───────────┘  └───────────┘
+                              │ MEMORY.md │
+                              └───────────┘
 ```
 
 - **Session**: Recent conversation history for the current session, auto-cleanup on overflow
 - **Archive**: Compressed historical records processed by the Consolidator, shared across sessions for the same user
-- **Knowledge**: Long-term knowledge files (SOUL.md / USER.md / MEMORY.md)
+- **Core Memory**: Long-term in-context memory files (SOUL.md / USER.md / MEMORY.md; renamed from "Knowledge" per ADR-0035)
 - **UserRetentionBuffer**: Extra retention buffer preventing over-aggressive governance compaction
 - **Pruned**: Catalog of pruned messages stored per-session for injection reference
 - **Experience**: Self-learned reusable reference knowledge from past conversations (EXPERIENCE.md)
-- **Dream Engine**: Offline periodic consolidation of archives into knowledge
+- **Dream Engine**: Offline periodic consolidation of archives into core memory
 - **ExperienceReviewAgent**: Reviews conversations and creates/updates EXPERIENCE.md files
-- **Configurable Scopes**: SessionScope / UserScope / GlobalScope — archive and knowledge can be per-user or global
+- **Configurable Scopes**: SessionScope / UserScope / GlobalScope — archive and core memory can be per-user or global
 
 ### Self-Learning (Experience System)
 

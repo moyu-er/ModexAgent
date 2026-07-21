@@ -20,7 +20,7 @@ System prompt pipeline — an ordered, versioned collection of `SystemPromptProv
 | `RuntimeProvider` | hourly | Always | Current date/hour + platform info |
 | `SkillProvider` | skill-set hash | Skills assigned | Active skill summaries |
 | `ExperienceProvider` | experience hash | Experience files exist | Relevant experience entries |
-| `KnowledgeProvider` | knowledge hash | Knowledge files exist | SOUL.md / USER.md / MEMORY.md content |
+| `CoreMemoryProvider` | core memory hash | Core Memory files exist | SOUL.md / USER.md / MEMORY.md content (provider renamed from `KnowledgeProvider` per ADR-0035) |
 | `ArchiveProvider` | retrieved content hash | Archive entries exist | Backend-neutral historical summaries; `context.md` paths only when file storage exposes one |
 | `PrunedProvider` | pruned hash | Pruned catalog exists | XML catalog of cleaned-up messages (priority 85) |
 | `RuntimeProvider` | hourly | Always | Runtime metadata |

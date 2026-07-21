@@ -235,7 +235,7 @@ async def _generate_archive_phase(
             content.strip()
             for content in (
                 documents.context,
-                documents.knowledge,
+                documents.core,
                 documents.index,
             )
         ):
@@ -254,7 +254,7 @@ async def _generate_archive_phase(
                 bundle.archive_id, "context.md", result.documents.context
             )
             await archive_storage.write_archive_file(
-                bundle.archive_id, "knowledge.md", result.documents.knowledge
+                bundle.archive_id, "knowledge.md", result.documents.core
             )
             await archive_storage.write_archive_file(
                 bundle.archive_id, "index.md", result.documents.index

@@ -174,9 +174,9 @@ per-pool override is not supported.
 
 | Preset | Used by | Contents |
 |---|---|---|
-| `main_agent_memory(max_context_tokens)` | every native main agent | session (token-budget compression, `max_context_tokens` from `model.yml`) + archive (global scope, FIFO 20) + knowledge (global scope, `templates/knowledge`) + dream_engine (600s interval) + governance (tool_chain_repair + lossy_compaction) + pruned + user_retention (default on) |
+| `main_agent_memory(max_context_tokens)` | every native main agent | session (token-budget compression, `max_context_tokens` from `model.yml`) + archive (global scope, FIFO 20) + core (global scope, `templates/core`) + dream_engine (600s interval) + governance (tool_chain_repair + lossy_compaction) + pruned + user_retention (default on) |
 | `main_agent_experience()` | every native main agent | `ExperienceConfig(enabled=True)` — fires `ExperienceReviewHook` |
-| `subagent_memory()` | every native subagent | session + governance (tool_chain_repair only, NO lossy_compaction) + pruned + user_retention (default on). archive/knowledge/dream = None. No experience preset — review is main-agent-only. |
+| `subagent_memory()` | every native subagent | session + governance (tool_chain_repair only, NO lossy_compaction) + pruned + user_retention (default on). archive/core/dream = None. No experience preset — review is main-agent-only. |
 
 ### Wiring chain (consumers perform NO additional config construction)
 
@@ -185,7 +185,7 @@ wiring._build_assembly_deps_for_pools()
   └─ PoolAssemblyDeps(memory=main_agent_memory(...), experience=main_agent_experience())
        │
        ├─ pool_data.build_pool_data()
-       │    ├─ create_memory_system(memory_cfg)        → MemorySystem (archive/knowledge/dream/pruned layers)
+       │    ├─ create_memory_system(memory_cfg)        → MemorySystem (archive/core/dream/pruned layers)
        │    ├─ _build_experience_manager(exp_cfg)      → ExperienceManager (None when exp_cfg disabled)
        │    └─ MemorySystemContextManager(experience_manager=...)  → ExperienceProvider injects XML into system prompt
        │
@@ -202,7 +202,7 @@ wiring._build_assembly_deps_for_pools()
 pool_builder.create_pool()
   └─ AgentTemplateRegistry(default_subagent_memory=subagent_memory())
        └─ AgentTemplate.materialize()
-            ├─ build_session_only_memory(cfg)          → session-only MemorySystem (archive/knowledge = None)
+            ├─ build_session_only_memory(cfg)          → session-only MemorySystem (archive/core = None)
             ├─ factory.create_subagent_governance(cfg) → ToolChainRepairGovernance only
             └─ resolver.pruned_manager()               → reuses the parent pool's PrunedManager
 ```
@@ -284,7 +284,7 @@ These are **consumed at different points** than `build_session_only_memory`:
   `resolver.pruned_manager()` (`template.py:156`), which returns the
   **parent pool's** `PrunedManager`. The `pruned` field in `subagent_memory()`
   is structurally redundant but kept for symmetry with `main_agent_memory()`.
-- `archive`/`knowledge`/`dream_engine`: `None` — correctly ignored by
+- `archive`/`core`/`dream_engine`: `None` — correctly ignored by
   `build_session_only_memory` (subagents have no long-term layers).
 
 ## Skills (global library + per-agent assignment)
@@ -337,7 +337,7 @@ are the converged seams; no platform preconditions on any OS.
 | `modexbot/` | CLI entry point for start/stop/restart (see `modexbot/AGENTS.md`) |
 | `agents/` | Agent system prompt templates (see `agents/AGENTS.md`) |
 | `skills/` | Agent skill definitions (self-documented via SKILL.md files) |
-| `templates/` | Template files for knowledge, soul, user memory (see `templates/AGENTS.md`) |
+| `templates/` | Template files for core memory, soul, user memory (see `templates/AGENTS.md`) |
 | `tests/` | Test suites including `input_pipeline/` (see `tests/AGENTS.md`) |
 | `plugins/` | Bot plugins (see `plugins/AGENTS.md`) |
 | `experiences/` | Self-learned EXPERIENCE.md storage — runtime-populated by `ExperienceReviewAgent` (not committed; created on first use) |

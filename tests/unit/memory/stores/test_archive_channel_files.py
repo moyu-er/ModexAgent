@@ -8,7 +8,7 @@ from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.registry.file import DefaultMemoryStoreRegistry
 
 
-async def test_file_registry_writes_context_and_knowledge_archive_files(tmp_path) -> None:
+async def test_file_registry_writes_context_and_core_archive_files(tmp_path) -> None:
     """ARCHIVE layer resolves to DirArchiveStorage — append_bundle writes MD files."""
     registry = DefaultMemoryStoreRegistry(tmp_path)
     await registry.initialize()
@@ -18,20 +18,20 @@ async def test_file_registry_writes_context_and_knowledge_archive_files(tmp_path
 
     await manager.append_bundle(ctx, (
         ArchiveWrite(channel=ArchiveChannel.CONTEXT, summary="context"),
-        ArchiveWrite(channel=ArchiveChannel.KNOWLEDGE, summary="knowledge"),
+        ArchiveWrite(channel=ArchiveChannel.CORE, summary="core"),
     ))
 
     # DirArchiveStorage writes content as {archive_id}/{channel}.md
     archive_root = tmp_path / "archive" / "default"
     assert (archive_root / "1" / "context.md").exists()
-    assert (archive_root / "1" / "knowledge.md").exists()
+    assert (archive_root / "1" / "core.md").exists()
     assert (archive_root / "state.json").exists()
     assert "context" in (archive_root / "1" / "context.md").read_text(encoding="utf-8")
-    assert "knowledge" in (archive_root / "1" / "knowledge.md").read_text(encoding="utf-8")
+    assert "core" in (archive_root / "1" / "core.md").read_text(encoding="utf-8")
 
     # No JSONL files in MD-only architecture
     assert not (archive_root / "context_archive.jsonl").exists()
-    assert not (archive_root / "knowledge_archive.jsonl").exists()
+    assert not (archive_root / "core_archive.jsonl").exists()
 
 
 async def test_append_channel_log_uses_archive_id_as_cursor() -> None:

@@ -71,21 +71,21 @@ class TestCreateMemoryCleanupConfig:
         system = create_memory(cfg, _make_provider(), tmp_path)
         assert system._archive_agent is not None
 
-    def test_knowledge_consolidator_created_when_knowledge_enabled(
+    def test_core_memory_consolidator_created_when_core_enabled(
         self, tmp_path: Path,
     ) -> None:
-        """When knowledge layer is enabled, knowledge_consolidator should be created."""
+        """When core layer is enabled, core_memory_consolidator should be created."""
         from modex_agent.ioc.configs.memory import (
             ArchiveConfig,
-            KnowledgeConfig,
+            CoreMemoryConfig,
         )
 
         cfg = MemoryConfig(
             archive=ArchiveConfig(enabled=True),
-            knowledge=KnowledgeConfig(enabled=True),
+            core=CoreMemoryConfig(enabled=True),
         )
         system = create_memory(cfg, _make_provider(), tmp_path)
-        assert system._knowledge_consolidator is not None
+        assert system._core_memory_consolidator is not None
 
 
 class TestBuildMemoryLayerConfigNewSchema:
@@ -95,13 +95,13 @@ class TestBuildMemoryLayerConfigNewSchema:
             MemoryConfig,
             SessionConfig,
             ArchiveConfig,
-            KnowledgeConfig,
+            CoreMemoryConfig,
         )
 
         cfg = MemoryConfig(
             session=SessionConfig(max_context_tokens=250000),
             archive=ArchiveConfig(enabled=True, max_entries=800),
-            knowledge=KnowledgeConfig(
+            core=CoreMemoryConfig(
                 enabled=True,
                 default_templates_dir="templates/knowledge",
             ),
@@ -110,8 +110,8 @@ class TestBuildMemoryLayerConfigNewSchema:
         layer_config = _build_memory_layer_config(cfg)
 
         assert layer_config.archive is not None
-        assert layer_config.knowledge is not None
-        assert layer_config.knowledge.default_templates_dir == "templates/knowledge"
+        assert layer_config.core is not None
+        assert layer_config.core.default_templates_dir == "templates/knowledge"
 
     def test_build_memory_layer_config_handles_disabled_archive(self) -> None:
         """archive.enabled=False should result in no archive layer."""
@@ -127,12 +127,12 @@ class TestBuildMemoryLayerConfigNewSchema:
 
     def test_build_memory_layer_config_handles_disabled_knowledge(self) -> None:
         """knowledge.enabled=False should result in no knowledge layer."""
-        from modex_agent.ioc.configs.memory import MemoryConfig, KnowledgeConfig
+        from modex_agent.ioc.configs.memory import MemoryConfig, CoreMemoryConfig
 
         cfg = MemoryConfig(
-            knowledge=KnowledgeConfig(enabled=False),
+            core=CoreMemoryConfig(enabled=False),
         )
 
         layer_config = _build_memory_layer_config(cfg)
 
-        assert layer_config.knowledge is None
+        assert layer_config.core is None

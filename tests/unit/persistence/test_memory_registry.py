@@ -24,7 +24,7 @@ from modex_agent.memory.layers.config import ArchiveMemoryConfig, MemoryLayerCon
 from modex_agent.memory.pruned.manager import PrunedManager
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry
 from modex_agent.memory.stores.dir_archive import DirArchiveStorage
-from modex_agent.memory.stores.markdown_knowledge import MarkdownKnowledgeStorage
+from modex_agent.memory.stores.markdown_core import MarkdownCoreMemoryStorage
 from modex_agent.memory.system import MemorySystemContextManager, create_memory_system
 from modex_agent.memory.token_estimator import TokenEstimator
 from modex_agent.persistence.adapters.archive_store import SqliteArchiveStore
@@ -52,7 +52,7 @@ class _TypedArchiveGenerator(ArchiveGenerator):
         _ = pruned_messages
         documents = ArchiveDocuments(
             context="SQLite cleanup context",
-            knowledge="SQLite cleanup knowledge",
+            core="SQLite cleanup knowledge",
             index="SQLite Cleanup Topic",
         )
         return ArchiveGenerationResult(
@@ -90,7 +90,7 @@ async def test_hybrid_registry_routes_structured_stores_and_keeps_documents_on_d
             context=context,
         )
         knowledge = await registry.resolve(
-            layer=MemoryLayerName.KNOWLEDGE,
+            layer=MemoryLayerName.CORE,
             scope=UserScope(),
             context=context,
         )
@@ -98,7 +98,7 @@ async def test_hybrid_registry_routes_structured_stores_and_keeps_documents_on_d
         await session.messages.append_message({"id": "m1", "role": "user", "content": "hello"})
         assert isinstance(archive.messages, DirArchiveStorage)
         assert isinstance(archive.archive, SqliteArchiveStore)
-        assert isinstance(knowledge.messages, MarkdownKnowledgeStorage)
+        assert isinstance(knowledge.messages, MarkdownCoreMemoryStorage)
         await knowledge.kv.set("MEMORY.md", "file-backed knowledge")
         archive_directory = archive.messages.directory
         archive_document = archive_directory / "1" / "context.md"

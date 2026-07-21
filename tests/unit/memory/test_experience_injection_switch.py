@@ -50,10 +50,10 @@ def _make_mock_memory_system() -> MagicMock:
     """A mock MemorySystem exposing everything load() touches."""
     mock_system = MagicMock()
     mock_system.ensure_within_budget = AsyncMock()
-    mock_system.retrieve_knowledge = AsyncMock(
+    mock_system.retrieve_core_memory = AsyncMock(
         return_value=MagicMock(soul="", user="", memory="")
     )
-    mock_system.get_knowledge_directory = AsyncMock(return_value=None)
+    mock_system.get_core_memory_directory = AsyncMock(return_value=None)
     mock_system.get_storage_path = AsyncMock(return_value=None)
     mock_system.get_providers = MagicMock(return_value=[])
     mock_system.prefetch_memories = AsyncMock(return_value=None)

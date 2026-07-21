@@ -130,7 +130,7 @@ class TestChannelLog:
     async def test_read_channel_logs(self, archive_store: SqliteArchiveStore) -> None:
         await archive_store.append_channel_log("context", {"archive_id": 1, "summary": "a"})
         await archive_store.append_channel_log("context", {"archive_id": 2, "summary": "b"})
-        await archive_store.append_channel_log("knowledge", {"archive_id": 1, "summary": "k"})
+        await archive_store.append_channel_log("core", {"archive_id": 1, "summary": "k"})
 
         logs = await archive_store.read_channel_logs("context")
         assert len(logs) == 2
@@ -172,26 +172,26 @@ class TestChannelLog:
 
     async def test_channels_are_independent(self, archive_store: SqliteArchiveStore) -> None:
         await archive_store.append_channel_log("context", {"archive_id": 1, "summary": "c1"})
-        await archive_store.append_channel_log("knowledge", {"archive_id": 1, "summary": "k1"})
+        await archive_store.append_channel_log("core", {"archive_id": 1, "summary": "k1"})
 
         context_logs = await archive_store.read_channel_logs("context")
-        knowledge_logs = await archive_store.read_channel_logs("knowledge")
+        core_logs = await archive_store.read_channel_logs("core")
         assert len(context_logs) == 1
-        assert len(knowledge_logs) == 1
+        assert len(core_logs) == 1
         assert context_logs[0]["summary"] == "c1"
-        assert knowledge_logs[0]["summary"] == "k1"
+        assert core_logs[0]["summary"] == "k1"
 
     async def test_same_archive_id_different_channels(
         self, archive_store: SqliteArchiveStore
     ) -> None:
         """UNIQUE (scope_key, archive_id, channel) allows same id across channels."""
         await archive_store.append_channel_log("context", {"archive_id": 1, "summary": "c"})
-        await archive_store.append_channel_log("knowledge", {"archive_id": 1, "summary": "k"})
+        await archive_store.append_channel_log("core", {"archive_id": 1, "summary": "k"})
 
         context = await archive_store.read_channel_logs("context")
-        knowledge = await archive_store.read_channel_logs("knowledge")
+        core = await archive_store.read_channel_logs("core")
         assert context[0]["archive_id"] == 1
-        assert knowledge[0]["archive_id"] == 1
+        assert core[0]["archive_id"] == 1
 
 
 class TestRetention:
@@ -264,7 +264,7 @@ class TestCreatedAtRoundTrip:
             ctx,
             (
                 ArchiveWrite(channel=ArchiveChannel.CONTEXT, summary="timestamp probe entry"),
-                ArchiveWrite(channel=ArchiveChannel.KNOWLEDGE, summary="knowledge entry"),
+                ArchiveWrite(channel=ArchiveChannel.CORE, summary="knowledge entry"),
             ),
         )
 

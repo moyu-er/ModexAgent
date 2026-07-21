@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from modex_agent.core.scope import MemoryContext
-from modex_agent.memory.layers.config import KnowledgeMemoryConfig
+from modex_agent.memory.layers.config import CoreMemoryConfig
 
 
 @pytest.mark.asyncio
@@ -31,12 +31,12 @@ async def test_template_path_resolves_relative_to_cwd(tmp_path, monkeypatch):
 
     try:
         # Create a config with relative path
-        config = KnowledgeMemoryConfig(
+        config = CoreMemoryConfig(
             default_templates_dir="templates/knowledge",
         )
 
         # Simulate ensure_defaults logic
-        from modex_agent.memory.layers.knowledge import ScopedKnowledgeMemoryManager
+        from modex_agent.memory.layers.core import ScopedCoreMemoryManager
 
         storage = AsyncMock()
         storage.get = AsyncMock(return_value=None)
@@ -46,7 +46,7 @@ async def test_template_path_resolves_relative_to_cwd(tmp_path, monkeypatch):
         bundle.archive = None
         storage_factory = AsyncMock(return_value=bundle)
 
-        manager = ScopedKnowledgeMemoryManager(
+        manager = ScopedCoreMemoryManager(
             storage_factory=storage_factory,
             config=config,
         )
@@ -67,7 +67,7 @@ async def test_template_path_absolute_works_anywhere(tmp_path):
     templates_dir.mkdir(parents=True)
     (templates_dir / "USER.md").write_text("# Absolute User", encoding="utf-8")
 
-    config = KnowledgeMemoryConfig(
+    config = CoreMemoryConfig(
         default_templates_dir=str(templates_dir.resolve()),
     )
 
@@ -79,9 +79,9 @@ async def test_template_path_absolute_works_anywhere(tmp_path):
     bundle.archive = None
     storage_factory = AsyncMock(return_value=bundle)
 
-    from modex_agent.memory.layers.knowledge import ScopedKnowledgeMemoryManager
+    from modex_agent.memory.layers.core import ScopedCoreMemoryManager
 
-    manager = ScopedKnowledgeMemoryManager(
+    manager = ScopedCoreMemoryManager(
         storage_factory=storage_factory,
         config=config,
     )
