@@ -1,7 +1,11 @@
 """Channel checkpoint round-trip tests: LastValue + ReducerChannel."""
+
 from __future__ import annotations
 
+import dataclasses
 from typing import Annotated, Any
+
+from pydantic import BaseModel
 
 from modex_graph import (
     BaseChannel,
@@ -149,6 +153,148 @@ class TestCustomCodec:
         restored = StateWithCustom.from_checkpoint(checkpoint)
         assert isinstance(restored.custom, CustomContainer)
         assert restored.custom.data == [1, 2, 3]
+
+
+class TestPEP604UnionCheckpoint:
+    """PEP 604 union (``T | None``) fields round-trip via the codec.
+
+    Covers the ``cancellation`` / ``llm_response`` / ``approval`` / ``result``
+    field shapes used in ``ReActTurnState``, where each is declared as
+    ``T | None`` and the non-None arm requires type-coerced decoding.
+    ``decode_value`` previously only checked ``origin is typing.Union`` and
+    missed ``types.UnionType`` (the runtime origin of ``T | None``), so
+    non-primitive payloads fell through to the as-is branch and lost their
+    type.
+    """
+
+    def test_pep604_union_with_non_none_value_round_trip(self) -> None:
+        from pydantic import BaseModel
+
+        class LlmResponse(BaseModel):
+            content: str = ""
+            tokens: int = 0
+
+        class ApprovalTxn(BaseModel):
+            tool_name: str = ""
+            approved: bool = False
+
+        class ToolResultValue(BaseModel):
+            output: str = ""
+            success: bool = True
+
+        class StateWithPep604(GraphState):
+            cancellation: Annotated[bool | None, LastValue] = None
+            llm_response: Annotated[LlmResponse | None, LastValue] = None
+            approval: Annotated[ApprovalTxn | None, LastValue] = None
+            result: Annotated[ToolResultValue | None, LastValue] = None
+
+        original = StateWithPep604(
+            cancellation=True,
+            llm_response=LlmResponse(content="hello", tokens=5),
+            approval=ApprovalTxn(tool_name="write_file", approved=True),
+            result=ToolResultValue(output="ok", success=True),
+        )
+        checkpoint = original.checkpoint()
+        assert checkpoint["cancellation"] is True
+        assert checkpoint["llm_response"] == {"content": "hello", "tokens": 5}
+        assert checkpoint["approval"] == {"tool_name": "write_file", "approved": True}
+        assert checkpoint["result"] == {"output": "ok", "success": True}
+
+        restored = StateWithPep604.from_checkpoint(checkpoint)
+        assert restored.cancellation is True
+        assert isinstance(restored.llm_response, LlmResponse)
+        assert restored.llm_response.content == "hello"
+        assert restored.llm_response.tokens == 5
+        assert isinstance(restored.approval, ApprovalTxn)
+        assert restored.approval.tool_name == "write_file"
+        assert restored.approval.approved is True
+        assert isinstance(restored.result, ToolResultValue)
+        assert restored.result.output == "ok"
+        assert restored.result.success is True
+
+
+class _NestedSessionInfo(BaseModel):
+    session_id: str = ""
+    user_id: str = ""
+
+
+@dataclasses.dataclass
+class TurnIdentity:
+    session: _NestedSessionInfo
+    turn: int
+
+
+class StateWithNestedDataclass(GraphState):
+    identity: Annotated[TurnIdentity, LastValue] = TurnIdentity(
+        session=_NestedSessionInfo(), turn=0
+    )
+
+
+class TestStdlibDataclassCheckpoint:
+    """Stdlib ``@dataclass`` fields round-trip via Pydantic ``TypeAdapter``.
+
+    ``encode_value`` previously recognised only Pydantic ``BaseModel`` and
+    fell through to ``str(value)`` for stdlib dataclasses — lossy for
+    dataclasses with nested ``BaseModel`` fields (e.g. ``TurnIdentity``
+    nesting ``SessionInfo``). The fix routes stdlib dataclasses through
+    ``TypeAdapter.dump_python`` / ``validate_python``.
+    """
+
+    def test_stdlib_dataclass_field_round_trip(self) -> None:
+        import dataclasses
+
+        @dataclasses.dataclass
+        class Pair:
+            left: int
+            right: str
+
+        class StateWithDataclass(GraphState):
+            pair: Annotated[Pair, LastValue] = Pair(left=0, right="")
+
+        original = StateWithDataclass(pair=Pair(left=10, right="hi"))
+        checkpoint = original.checkpoint()
+        assert checkpoint["pair"] == {"left": 10, "right": "hi"}
+
+        restored = StateWithDataclass.from_checkpoint(checkpoint)
+        assert isinstance(restored.pair, Pair)
+        assert restored.pair == Pair(left=10, right="hi")
+
+    def test_nested_basemodel_in_dataclass_round_trip(self) -> None:
+        original = StateWithNestedDataclass(
+            identity=TurnIdentity(session=_NestedSessionInfo(session_id="s1", user_id="u1"), turn=3)
+        )
+        checkpoint = original.checkpoint()
+        assert checkpoint["identity"] == {
+            "session": {"session_id": "s1", "user_id": "u1"},
+            "turn": 3,
+        }
+
+        restored = StateWithNestedDataclass.from_checkpoint(checkpoint)
+        assert isinstance(restored.identity, TurnIdentity)
+        assert isinstance(restored.identity.session, _NestedSessionInfo)
+        assert restored.identity.session.session_id == "s1"
+        assert restored.identity.session.user_id == "u1"
+        assert restored.identity.turn == 3
+
+    def test_list_of_dataclass_round_trip(self) -> None:
+        import dataclasses
+
+        @dataclasses.dataclass
+        class Point:
+            x: int
+            y: int
+
+        class StateWithList(GraphState):
+            points: Annotated[list[Point], LastValue] = []
+
+        original = StateWithList(points=[Point(1, 2), Point(3, 4)])
+        checkpoint = original.checkpoint()
+        assert checkpoint["points"] == [{"x": 1, "y": 2}, {"x": 3, "y": 4}]
+
+        restored = StateWithList.from_checkpoint(checkpoint)
+        assert isinstance(restored.points, list)
+        assert all(isinstance(p, Point) for p in restored.points)
+        assert restored.points == [Point(1, 2), Point(3, 4)]
 
 
 class TestBaseChannelABC:

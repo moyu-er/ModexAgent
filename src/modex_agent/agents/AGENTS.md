@@ -34,8 +34,7 @@ The ReAct module is the primary agent runtime. Key components:
 | `graph.py` | `build_react_graph()` — builds `Graph[ReActTurnState]` with 4 nodes + 8 edges using `modex_graph.Graph` API |
 | `context.py` | `ReActGraphContext(GraphContext[ReActTurnState])` — type-safe accessors (`agent_ctx`, `tool_manager`, `context_manager`) |
 | `runtime.py` | `ReactGraphRuntime(GraphRuntime)` — AOP bridge: maps ReAct StrEnums to `HookPoint`/`InterceptorScope`/`ReActEvent`, bridges `GraphContext.user_data` → `AgentContext` for all AOP services |
-| `codec.py` | Channel codec registrations for `ApprovalTransaction`/`ToolBatchState`/`ToolCallState`/`ApprovalRequestState`/`ToolArguments` via `register_codec` |
-| `state.py` | `ReActTurnState(GraphState)`, `ReActSnapshotPolicy` (simplified via `state.checkpoint()`), `ReActRuntimeStateCodec` |
+| `state.py` | `ReActTurnState(GraphState)`, `ReActSnapshotPolicy` (simplified via `state.checkpoint()` per-channel path, ADR-0034 D1), `ReActRuntimeStateCodec` |
 | `builder.py` | `ReActAgentBuilder` — `build_agent()` + `build_emitter_factory()` from `AgentDescriptor` |
 | `approval.py` | `ApprovalRuntime` + `TieredToolApprovalClassifier` (NORMAL/DANGEROUS path-based) |
 | `constants.py` | `ReActNode`, `ReActReason`, `ReActHookPoint`, `ReActScope`, `ReActEvent` StrEnums |

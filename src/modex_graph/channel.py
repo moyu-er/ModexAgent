@@ -31,11 +31,14 @@ codec differentiation is deferred to Phase c (no real use case yet).
 
 from __future__ import annotations
 
+import dataclasses
+import types
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Generic, Union, cast, get_args, get_origin
 
+from pydantic import TypeAdapter
 from typing_extensions import TypeVar
 
 if TYPE_CHECKING:
@@ -119,6 +122,20 @@ def _is_pydantic_model_class(cls: type) -> bool:
     return isinstance(cls, type) and issubclass(cls, BaseModel) and cls is not BaseModel
 
 
+# Stage 1 transition bridge (ADR-0034 D1): deleted in Stage 2 once the six
+# value objects migrate to BaseModel. Cached to avoid repeated construction.
+_TYPE_ADAPTERS: dict[type, TypeAdapter[Any]] = {}
+
+
+def _get_or_create_adapter(python_type: type) -> TypeAdapter[Any]:
+    """Return a cached `TypeAdapter` for `python_type`, constructing on first use."""
+    adapter = _TYPE_ADAPTERS.get(python_type)
+    if adapter is None:
+        adapter = TypeAdapter(python_type)
+        _TYPE_ADAPTERS[python_type] = adapter
+    return adapter
+
+
 def encode_value(value: Any) -> JsonValue:
     """Encode a Python value into a `JsonValue` for checkpoint storage.
 
@@ -126,10 +143,11 @@ def encode_value(value: Any) -> JsonValue:
     1. `None` → `None`.
     2. Primitive (`str`/`int`/`float`/`bool`) → returned as-is.
     3. Pydantic `BaseModel` → `value.model_dump(mode="json")`.
-    4. Registered codec for `type(value)` → `codec.encode(value)`.
-    5. `list` / `tuple` → element-wise encoding.
-    6. `dict` with `str` keys → value-wise encoding.
-    7. Fallback: `str(value)` (lossy; signals an unregistered non-serializable type).
+    4. Stdlib `@dataclass` → `TypeAdapter(type(value)).dump_python(value, mode="json")`.
+    5. Registered codec for `type(value)` → `codec.encode(value)`.
+    6. `list` / `tuple` → element-wise encoding.
+    7. `dict` with `str` keys → value-wise encoding.
+    8. Fallback: `str(value)` (lossy; signals an unregistered non-serializable type).
     """
     if value is None:
         return None
@@ -137,6 +155,9 @@ def encode_value(value: Any) -> JsonValue:
         return value
     if _is_pydantic_model_class(type(value)):
         return value.model_dump(mode="json")  # type: ignore[no-any-return]
+    if dataclasses.is_dataclass(value) and not _is_pydantic_model_class(type(value)):
+        adapter = _get_or_create_adapter(type(value))
+        return adapter.dump_python(value, mode="json")  # type: ignore[no-any-return]
     codec = _find_codec(type(value))
     if codec is not None:
         return codec.encode(value)
@@ -162,8 +183,10 @@ def decode_value(field_type: Any, data: JsonValue) -> Any:
         return None
     if data is None:
         return None
-    # Optional[X] / Union[X, None] — strip NoneType and decode via the first non-None arm.
-    if origin is Union:
+    # Optional[X] / Union[X, None] / X | None — strip NoneType and decode via
+    # the first non-None arm. PEP 604 ``X | None`` has origin ``types.UnionType``
+    # (distinct from ``typing.Union``); both arms must be handled identically.
+    if origin is Union or origin is types.UnionType:
         non_none_args = [a for a in args if a is not type(None)]
         if len(non_none_args) == 1:
             return decode_value(non_none_args[0], data)
@@ -197,6 +220,14 @@ def decode_value(field_type: Any, data: JsonValue) -> Any:
     if isinstance(field_type, type) and _is_pydantic_model_class(field_type):
         model_type = cast("type[BaseModel]", field_type)
         return model_type.model_validate(data)
+    # Stdlib @dataclass subclass — route through TypeAdapter (Stage 1 bridge).
+    if (
+        isinstance(field_type, type)
+        and dataclasses.is_dataclass(field_type)
+        and not _is_pydantic_model_class(field_type)
+    ):
+        adapter = _get_or_create_adapter(field_type)
+        return adapter.validate_python(data)
     # Enum subclass — call with the raw value.
     if isinstance(field_type, type) and issubclass(field_type, Enum):
         enum_factory = cast("Callable[[JsonValue], Any]", field_type)

@@ -19,7 +19,6 @@ import time
 from collections.abc import Mapping
 from enum import StrEnum
 
-import modex_agent.agents.react.codec  # noqa: F401 — registers channel codecs
 from modex_agent.agents.react.constants import ReActNode
 from modex_agent.agents.react.state import (
     ReActRuntimeStateCodec,
@@ -526,6 +525,146 @@ class TestCheckpointRoundTrip:
         assert restored.result is None
         assert restored.cancellation is None
 
+    def test_round_trip_preserves_pep604_union_with_value(self) -> None:
+        """PEP 604 union fields (``T | None``) round-trip with real values, not just ``None``.
+
+        Covers ``cancellation`` / ``llm_response`` / ``approval`` / ``result`` —
+        the case that was silently broken before ticket 01 fixed the per-channel
+        codec's PEP 604 handling.
+        """
+        from modex_agent.core.constants import StopReason
+        from modex_agent.core.emitter import AgentResult
+        from modex_agent.core.types import LLMResponse
+        from modex_agent.runtime.enums import CancellationSource
+        from modex_agent.runtime.models import CancellationState
+
+        state = _make_state()
+        state.cancellation = CancellationState(
+            reason="user stopped",
+            source=CancellationSource.USER_COMMAND,
+            operation_id="op-1",
+        )
+        state.llm_response = LLMResponse(
+            content="thinking...",
+            finish_reason="stop",
+        )
+        state.result = AgentResult(
+            content="done",
+            stop_reason=StopReason.COMPLETED,
+        )
+
+        restored = ReActTurnState.from_checkpoint(state.checkpoint())
+
+        assert restored.cancellation is not None
+        assert restored.cancellation.reason == "user stopped"
+        assert restored.cancellation.source is CancellationSource.USER_COMMAND
+        assert restored.cancellation.operation_id == "op-1"
+
+        assert restored.llm_response is not None
+        assert restored.llm_response.content == "thinking..."
+        assert restored.llm_response.finish_reason == "stop"
+
+        assert restored.approval is not None
+        assert restored.approval.approval_id == "ap-1"
+
+        assert restored.result is not None
+        assert restored.result.content == "done"
+        assert restored.result.stop_reason == StopReason.COMPLETED
+
+    def test_round_trip_preserves_nested_dataclass_with_basemodel(self) -> None:
+        """``TurnIdentity`` (frozen stdlib dataclass) nesting ``SessionInfo``
+        (Pydantic ``BaseModel``) round-trips with all nested fields preserved.
+        """
+        state = ReActTurnState(
+            identity=TurnIdentity(
+                agent_id="bot",
+                session=SessionInfo.from_str("ws1.agent1"),
+                turn_id="t-xyz",
+            ),
+            agent_kind=AgentKind.REACT,
+            phase=TurnPhase.CREATED,
+        )
+
+        restored = ReActTurnState.from_checkpoint(state.checkpoint())
+
+        assert restored.identity.agent_id == "bot"
+        assert restored.identity.turn_id == "t-xyz"
+        # SessionInfo is a Pydantic BaseModel nested inside a stdlib dataclass;
+        # the per-channel codec must reconstruct it as a SessionInfo, not a dict.
+        assert isinstance(restored.identity.session, SessionInfo)
+        assert restored.identity.session.session_id == "ws1.agent1"
+        assert restored.identity.session.agent_name == "agent1"
+        assert str(restored.identity.session) == "ws1.agent1"
+
+    def test_round_trip_preserves_list_of_dataclass(self) -> None:
+        """``message_delta`` / ``operations`` / ``tool_batches`` with multiple
+        complex entries round-trip — lists of stdlib dataclasses (some nesting
+        Pydantic ``BaseModel`` fields) survive the per-channel codec.
+        """
+        from modex_agent.core.message import ChatMessage
+        from modex_agent.runtime.enums import MessageDeltaSource
+        from modex_agent.runtime.models import MessageDelta
+
+        state = _make_state()
+
+        state.message_delta.append(
+            MessageDelta(
+                message=ChatMessage(role="user", content="hello"),
+                source=MessageDeltaSource.USER,
+            )
+        )
+        state.message_delta.append(
+            MessageDelta(
+                message=ChatMessage(role="assistant", content="hi there"),
+                source=MessageDeltaSource.ASSISTANT,
+                provider_payload={"model": "gpt-4"},
+            )
+        )
+
+        state.operations.append(
+            OperationState(
+                operation_id="op-2",
+                kind=OperationKind.LLM_CALL,
+                status=OperationStatus.WAITING,
+                subject_id="llm-1",
+            )
+        )
+
+        state.tool_batches.append(
+            ToolBatchState(
+                batch_id="batch-2",
+                iteration=2,
+                calls=[_make_tool_call("call-3")],
+                status=ToolBatchStatus.CREATED,
+            )
+        )
+
+        restored = ReActTurnState.from_checkpoint(state.checkpoint())
+
+        assert len(restored.message_delta) == 2
+        assert restored.message_delta[0].message.role == "user"
+        assert restored.message_delta[0].message.content == "hello"
+        assert restored.message_delta[0].source is MessageDeltaSource.USER
+        assert restored.message_delta[1].message.role == "assistant"
+        assert restored.message_delta[1].message.content == "hi there"
+        assert restored.message_delta[1].source is MessageDeltaSource.ASSISTANT
+        assert dict(restored.message_delta[1].provider_payload or {}) == {"model": "gpt-4"}
+
+        assert len(restored.operations) == 2
+        assert restored.operations[0].operation_id == "op-1"
+        assert restored.operations[0].kind is OperationKind.TOOL_BATCH
+        assert restored.operations[1].operation_id == "op-2"
+        assert restored.operations[1].kind is OperationKind.LLM_CALL
+        assert restored.operations[1].subject_id == "llm-1"
+
+        assert len(restored.tool_batches) == 2
+        assert restored.tool_batches[0].batch_id == "batch-1"
+        assert restored.tool_batches[1].batch_id == "batch-2"
+        assert restored.tool_batches[1].iteration == 2
+        assert restored.tool_batches[1].status is ToolBatchStatus.CREATED
+        assert len(restored.tool_batches[1].calls) == 1
+        assert restored.tool_batches[1].calls[0].call_id == "call-3"
+
 
 # ---------------------------------------------------------------------------
 # Tests: OLD vs NEW parity (semantic equivalence)
@@ -535,6 +674,12 @@ class TestCheckpointRoundTrip:
 class TestSnapshotParity:
     """OLD _build_payload / state_from_snapshot and NEW checkpoint / from_checkpoint
     both preserve the same resume-critical state data.
+
+    The NEW path uses the per-channel codec (``GraphState.checkpoint()`` /
+    ``from_checkpoint()``) after ADR-0034 D1 removed the ``model_dump`` override.
+    The parity assertion compares the OLD hand-written baseline against this
+    per-channel path, proving equivalence to both the baseline and the
+    ``model_dump`` override it replaces.
     """
 
     def test_old_round_trip_preserves_state(self) -> None:

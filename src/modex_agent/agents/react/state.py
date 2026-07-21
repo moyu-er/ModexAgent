@@ -20,6 +20,17 @@ from typing import Annotated, Any
 
 from pydantic import Field
 
+# ADR-0034 D1 bridge (Stage 1): the per-channel codec's TypeAdapter resolves
+# forward references using the dataclass's own module namespace. LLMResponse.error_info
+# references LLMErrorInfo (TYPE_CHECKING-only in core/types.py) and
+# MessageDelta.message references ChatMessage (TYPE_CHECKING-only in
+# runtime/models.py). Inject them at runtime so the TypeAdapter can serialize
+# these fields.
+# TODO(ADR-0034 D1 Stage 2): removed when the six dataclasses migrate to
+# BaseModel — at that point TypeAdapter is no longer used and forward-ref
+# resolution goes through model_rebuild() instead.
+import modex_agent.core.types as _core_types
+import modex_agent.runtime.models as _runtime_models
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.llm_struct import LLMErrorInfo  # noqa: F401 — needed for model_rebuild()
@@ -55,6 +66,10 @@ from modex_graph.state import GraphState
 
 from .constants import ReActNode
 
+_core_types.LLMErrorInfo = LLMErrorInfo  # type: ignore[attr-defined]
+_runtime_models.ChatMessage = ChatMessage  # type: ignore[attr-defined]
+
+
 # =========================================================================
 # ReActTurnState — GraphState(BaseModel) + TurnStateBase
 # =========================================================================
@@ -72,11 +87,9 @@ class ReActTurnState(GraphState, TurnStateBase):
     The new explicit ``result`` field replaces the old
     ``custom[TurnCustomKey.GRAPH_RESULT]`` pattern (ADR-0033 D9.3).
 
-    ``checkpoint()`` / ``from_checkpoint()`` are overridden to use Pydantic's
-    ``model_dump(mode='json')`` / ``model_validate()`` — this handles all
-    field types (BaseModels, dataclasses, enums, primitives, nested types)
-    without per-type codec registration for non-Pydantic types like
-    ``TurnIdentity`` / ``LLMResponse`` / ``AgentResult``.
+    Inherits ``GraphState.checkpoint()`` / ``from_checkpoint()`` (per-channel
+    codec path) — handles all field types via ``encode_value`` / ``decode_value``
+    (PEP 604 unions + stdlib dataclasses via TypeAdapter, per ADR-0034 D1).
     """
 
     # ---- TurnStateBase fields (re-declared for Pydantic compatibility) ----
@@ -111,44 +124,9 @@ class ReActTurnState(GraphState, TurnStateBase):
     # ReActAgent.run() after engine returns.
     result: Annotated[AgentResult | None, LastValue] = None
 
-    # ---- checkpoint / from_checkpoint (override GraphState per-channel
-    #      mechanism with Pydantic model_dump / model_validate) ----
-    #
-    # Pydantic's built-in serialization handles all field types correctly:
-    # - Pydantic BaseModels (ApprovalTransaction, ToolBatchState, etc.) via
-    #   model_dump / model_validate.
-    # - Dataclasses (TurnIdentity, LLMResponse, AgentResult, MessageDelta,
-    #   OperationState, CancellationState) via Pydantic's dataclass support.
-    # - Enums (ReActNode, AgentKind, TurnPhase, etc.) via value serialization.
-    # - Primitives (int, float, str, bool, None) pass through.
-    #
-    # The per-channel mechanism in GraphState.checkpoint() uses
-    # encode_value() / decode_value() which has a known limitation: PEP 604
-    # pipe unions (``T | None``) produce ``types.UnionType`` which
-    # ``decode_value`` doesn't handle (it only checks ``origin is Union`` from
-    # ``typing``). Using ``Optional[T]`` (typing.Optional) works around this
-    # for BaseModel fields with registered codecs, but dataclass types without
-    # codecs still fall through to the lossy ``str(value)`` fallback.
-    # ``model_dump`` / ``model_validate`` avoids all these issues.
-
-    def checkpoint(self) -> dict[str, JsonValue]:
-        """Serialize state to ``dict[str, JsonValue]`` via Pydantic model_dump.
-
-        Round-trips with ``from_checkpoint(data)``. The returned dict is
-        JSON-serializable and can be persisted directly as
-        ``TurnSnapshot.state_payload``.
-        """
-        return self.model_dump(mode="json")
-
-    @classmethod
-    def from_checkpoint(cls, data: dict[str, Any]) -> ReActTurnState:
-        """Reconstruct a state instance from a checkpoint dict.
-
-        Round-trips with ``checkpoint()``. Uses Pydantic's ``model_validate``
-        which handles all field types including nested dataclasses and
-        BaseModels.
-        """
-        return cls.model_validate(data)
+    # ADR-0034 D1: checkpoint() / from_checkpoint() overrides removed — the
+    # inherited GraphState per-channel path handles all field types (PEP 604
+    # unions + stdlib dataclasses via ticket 01's TypeAdapter branch).
 
     # ---- tool batch helpers ----
 

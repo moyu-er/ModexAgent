@@ -16,8 +16,7 @@ approval suspend/resume, and integration points for hooks, interceptors, and con
 | `graph.py` | `build_react_graph()` — builds `Graph[ReActTurnState]` (from `modex_graph`) with 4 nodes + 8 edges. |
 | `context.py` | `ReActGraphContext(GraphContext[ReActTurnState])` — type-safe accessors (`agent_ctx`, `tool_manager`, `context_manager`). |
 | `runtime.py` | `ReactGraphRuntime(GraphRuntime)` — AOP bridge mapping ReAct StrEnums to framework enums, bridging `GraphContext.user_data` → `AgentContext`. |
-| `codec.py` | Channel codec registrations for ReAct state types via `register_codec`. |
-| `state.py` | `ReActTurnState(GraphState)` with `Annotated[T, LastValue]` fields, `ReActSnapshotPolicy` (simplified via `state.checkpoint()`), `ReActRuntimeStateCodec`. |
+| `state.py` | `ReActTurnState(GraphState)` with `Annotated[T, LastValue]` fields, `ReActSnapshotPolicy` (simplified via `state.checkpoint()` per-channel path, ADR-0034 D1), `ReActRuntimeStateCodec`. |
 | `builder.py` | `ReActAgentBuilder` -- `build_agent()` + `build_emitter_factory()` from `AgentDescriptor`. |
 | `approval.py` | `ApprovalRuntime` + `TieredToolApprovalClassifier` (NORMAL/DANGEROUS path-based). |
 | `constants.py` | `ReActNode`, `ReActReason`, `ReActHookPoint`, `ReActScope`, `ReActEvent` StrEnums. |

@@ -23,7 +23,6 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import BaseModel, ValidationError
 
-import modex_agent.agents.react.codec  # noqa: F401 — registers channel codecs
 from modex_agent.approval.constants import ApprovalDecision, ApprovalStatus, ApprovalTier
 from modex_agent.runtime.enums import (
     ApprovalSubjectType,
@@ -304,88 +303,6 @@ class TestToolBatchStateMigration:
         assert restored.operation_id == "op-1"
         assert len(restored.calls) == 2
         assert restored.calls[0].call_id == "c1"
-
-
-class TestCodecRegistration:
-    def test_codec_round_trip_approval_transaction(self) -> None:
-        from modex_graph.channel import _find_codec
-
-        tx = _make_transaction()
-        tx.apply_decision("call-1", ApprovalDecision.ALLOWED)
-        codec = _find_codec(ApprovalTransaction)
-        assert codec is not None
-        encoded = codec.encode(tx)
-        decoded = codec.decode(encoded)
-        assert isinstance(decoded, ApprovalTransaction)
-        assert decoded.approval_id == tx.approval_id
-        assert decoded.decisions["call-1"] == ApprovalDecision.ALLOWED
-
-    def test_codec_round_trip_tool_arguments(self) -> None:
-        from modex_graph.channel import _find_codec
-
-        args = ToolArguments(values={"path": "a.txt", "count": 3})
-        codec = _find_codec(ToolArguments)
-        assert codec is not None
-        encoded = codec.encode(args)
-        decoded = codec.decode(encoded)
-        assert isinstance(decoded, ToolArguments)
-        assert decoded.values["path"] == "a.txt"
-        assert decoded.values["count"] == 3
-
-    def test_codec_round_trip_tool_batch_state(self) -> None:
-        from modex_graph.channel import _find_codec
-
-        batch = ToolBatchState(
-            batch_id="b1",
-            iteration=1,
-            calls=[_make_tool_call()],
-        )
-        codec = _find_codec(ToolBatchState)
-        assert codec is not None
-        encoded = codec.encode(batch)
-        decoded = codec.decode(encoded)
-        assert isinstance(decoded, ToolBatchState)
-        assert decoded.batch_id == "b1"
-        assert len(decoded.calls) == 1
-
-    def test_codec_round_trip_tool_call_state(self) -> None:
-        from modex_graph.channel import _find_codec
-
-        call = _make_tool_call()
-        call.decision = ApprovalDecision.DENIED
-        call.status = ToolCallStatus.DENIED
-        codec = _find_codec(ToolCallState)
-        assert codec is not None
-        encoded = codec.encode(call)
-        decoded = codec.decode(encoded)
-        assert isinstance(decoded, ToolCallState)
-        assert decoded.call_id == call.call_id
-        assert decoded.decision == ApprovalDecision.DENIED
-
-    def test_codec_round_trip_approval_request_state(self) -> None:
-        from modex_graph.channel import _find_codec
-
-        req = _make_request()
-        codec = _find_codec(ApprovalRequestState)
-        assert codec is not None
-        encoded = codec.encode(req)
-        decoded = codec.decode(encoded)
-        assert isinstance(decoded, ApprovalRequestState)
-        assert decoded.request_id == req.request_id
-        assert decoded.tier == ApprovalTier.DANGEROUS
-
-    def test_codec_module_import_registers_all_five(self) -> None:
-        import modex_agent.agents.react.codec as _codec_mod  # noqa: F401
-        from modex_graph.channel import _find_codec
-
-        for cls in (
-            ApprovalTransaction,
-            ApprovalRequestState,
-            ToolBatchState,
-            ToolCallState,
-            ToolArguments,
-        ):
-            assert _find_codec(cls) is not None, f"no codec registered for {cls.__name__}"
 
 
 class TestBackwardCompatibility:
