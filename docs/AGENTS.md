@@ -10,7 +10,7 @@ Documentation index for the ModexAgent project — ADRs, design docs, and agent 
 ```
 docs/
 ├── AGENTS.md              ← this file (docs index)
-├── adr/                   ← Architecture Decision Records (ADR-0001 ~ 0024)
+├── adr/                   ← Architecture Decision Records (ADR-0001 ~ 0034)
 │   └── AGENTS.md          ← ADR index + conventions
 ├── design/                ← Feature design docs (PRD + tickets per feature)
 │   ├── agent-observability/           (ADR-0024)
@@ -29,7 +29,7 @@ docs/
 
 | Document | Location | Description |
 |----------|----------|-------------|
-| ADR index | `adr/` | 24 Architecture Decision Records (ADR-0001 ~ 0024) — see `adr/AGENTS.md` for the full index |
+| ADR index | `adr/` | 34 Architecture Decision Records (ADR-0001 ~ 0034) — see `adr/AGENTS.md` for the full index |
 | Bot local setup | `bot-local-setup.md` | Step-by-step bot setup from source (prerequisites, venv, config, troubleshooting) |
 | Issue tracker | `agents/issue-tracker.md` | Issues live as local markdown under `docs/design/<feature>/` |
 | Triage labels | `agents/triage-labels.md` | Canonical triage label vocabulary |

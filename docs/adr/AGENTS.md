@@ -3,7 +3,7 @@
 
 # docs/adr
 
-Architecture Decision Records for the ModexAgent framework (ADR-0001 ~ 0032).
+Architecture Decision Records for the ModexAgent framework (ADR-0001 ~ 0034).
 
 ## Purpose
 
@@ -61,6 +61,7 @@ ADRs document significant architectural decisions, including the context driving
 | 0030 | Column projection SQLite adapter field extraction |
 | 0031 | Persistence schema simplification |
 | 0032 | Terminal backend async-safety and behavior convergence |
-| 0033 | Generalized Graph Engine (Phase a) |
+| 0033 | Generalized Graph Engine (Phase a) — D5.2 `around` scope and D14 dataclass codec refined by ADR-0034 |
+| 0034 | Graph Engine Phase c Preliminaries |
 
 <!-- MANUAL -->

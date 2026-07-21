@@ -2,6 +2,10 @@
 
 Status: proposed (2026-07-20) — design completed via `/grill-with-docs`;
 implementation pending. See D13 for the 5-stage migration plan.
+**Refinements:** D5.2 (`around` scope — `ITERATION` only, not all scopes)
+and D14 (dataclass codec — `TypeAdapter` transition, override removed)
+are refined by ADR-0034. D12 (Phase c deferred) stands; ADR-0034 clears
+Phase c prerequisites without starting Phase c.
 
 ## Context
 
