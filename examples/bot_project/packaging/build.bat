@@ -99,6 +99,12 @@ for /f "delims=" %%l in ('findstr /r "__version__" "%VERSION_FILE%"') do (
 )
 echo  Version: %VERSION%
 
+:: --- 1b. Sync version into package.json files ---
+echo  --- Step 0: Syncing version to package.json files ---
+"%PYTHON_EXE%" "%~dp0sync_versions.py"
+if errorlevel 1 goto :error
+echo.
+
 :: --- 2. Clean staging ---
 if exist "%STAGING%" rmdir /s /q "%STAGING%"
 mkdir "%STAGING%"

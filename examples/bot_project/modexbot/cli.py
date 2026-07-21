@@ -24,6 +24,7 @@ from typing import Any
 
 import typer
 
+from modex_agent._version import __version__
 from modexbot.config_model import check_model_config  # noqa: F401  # kept as a patch target for tests/webui/test_cli.py
 
 app = typer.Typer(
@@ -669,7 +670,7 @@ def main(
     Run ``modexbot <command> --help`` for command-specific usage.
     """
     if version:
-        typer.echo("modexbot 0.1.0")
+        typer.echo(f"modexbot {__version__}")
         raise typer.Exit(0)
 
 

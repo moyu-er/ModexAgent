@@ -1,7 +1,7 @@
 {
   "name": "ModexBot",
-  "version": "0.1.0",
-  "description": "ModexBot Desktop Client — Electron wrapper for the ModexAgent WebUI",
+  "version": "1.0.0",
+  "description": "ModexBot Desktop Client \u2014 Electron wrapper for the ModexAgent WebUI",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
