@@ -34,17 +34,21 @@ class TerminalGuardResult:
 _SUGGESTIONS: dict[TerminalCommandStatus, str] = {
     TerminalCommandStatus.EXECUTING: (
         "Use 'terminal current' to monitor progress, "
-        "or 'process interrupt' to stop the running command."
+        "or 'process interrupt' to stop the running command. "
+        "If output has stopped, the command may be waiting for input — "
+        "try 'process write' to provide it."
     ),
     TerminalCommandStatus.LONG_RUNNING: (
         "Command has been running for an extended period. "
         "Use 'terminal current' to check progress, "
-        "or 'process interrupt' to stop."
+        "or 'process interrupt' to stop. "
+        "If output has stopped, the command may be waiting for input."
     ),
     TerminalCommandStatus.STUCK: (
         "No output for an extended period. "
-        "Use 'process interrupt' to send Ctrl+C, "
-        "or 'terminal current' to check the screen."
+        "This is usually either a real hang or a silent input prompt — "
+        "try 'process write' to send input first, "
+        "and 'process interrupt' to send Ctrl+C if that does not help."
     ),
     TerminalCommandStatus.PAGINATED: (
         "Terminal is in a pager. Use 'process send_keys' with 'q' to quit, or Space to scroll."
@@ -54,7 +58,10 @@ _SUGGESTIONS: dict[TerminalCommandStatus, str] = {
 _MESSAGES: dict[TerminalCommandStatus, str] = {
     TerminalCommandStatus.EXECUTING: "Terminal is not ready: a command is still executing.",
     TerminalCommandStatus.LONG_RUNNING: "Terminal is not ready: a long-running command is still active.",
-    TerminalCommandStatus.STUCK: "Terminal is not ready: command appears stuck (no output).",
+    TerminalCommandStatus.STUCK: (
+        "Terminal is not ready: no output for an extended period "
+        "(could be stuck OR waiting for input)."
+    ),
     TerminalCommandStatus.PAGINATED: "Terminal is not ready: a pager is active.",
 }
 

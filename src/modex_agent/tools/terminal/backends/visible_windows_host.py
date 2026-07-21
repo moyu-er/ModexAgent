@@ -475,16 +475,25 @@ async def _socket_to_pty(
         except (OSError, ConnectionResetError):
             break
         if not data:
-            # Parent closed the connection — exit.
             break
 
         text = data.decode("utf-8", errors="replace")
         if _ctrl_c in text:
+            # Mixed payload: write each non-Ctrl-C chunk in a single call to
+            # avoid interleaving executor round-trips between characters
+            # (per-character writes can race with readline's state machine
+            # and break Ctrl-U / Tab sequences).
+            chunk: list[str] = []
             for ch in text:
                 if ch == _ctrl_c:
+                    if chunk:
+                        await loop.run_in_executor(None, proc.write, "".join(chunk))
+                        chunk.clear()
                     await loop.run_in_executor(None, proc.sendintr)  # type: ignore[attr-defined]
                 else:
-                    await loop.run_in_executor(None, proc.write, ch)
+                    chunk.append(ch)
+            if chunk:
+                await loop.run_in_executor(None, proc.write, "".join(chunk))
         else:
             await loop.run_in_executor(None, proc.write, text)
 

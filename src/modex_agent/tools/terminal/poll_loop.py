@@ -80,6 +80,14 @@ async def poll_until_settled(
             if is_waiting_for_input("".join(output_parts)):
                 return PollResult(PollOutcome.INPUT_WAIT, output_parts, elapsed_ms)
 
+        # 2b. Idle-based input wait — catches silent prompts (e.g. ``read -s``)
+        # that have no marker text for the content detector above. Uses the
+        # registry's tiered idle thresholds (initial/active_idle_threshold_ms).
+        if check_input_wait and output_received and await session.is_alive():
+            runtime = registry.running_runtime(proc_id)
+            if runtime is not None and runtime.waiting_for_input:
+                return PollResult(PollOutcome.INPUT_WAIT, output_parts, elapsed_ms)
+
         # 3. Pager detection — before prompt so pagers don't look like idle
         if output_received:
             segment = await session.current_segment()
@@ -98,10 +106,13 @@ async def poll_until_settled(
             else:
                 prompt_stable_since = None
 
-        # 5. No-output timeout → STUCK (replaces old 15s hardcoded check)
+        # 5. No-output timeout → STUCK only if NOT an idle-based input wait.
+        # Silent prompts (e.g. ``read -s``) would otherwise be misclassified.
         raw_idle_ms = int((time.monotonic() - session.last_byte_at) * 1000)
         if raw_idle_ms >= config.no_output_timeout_ms:
-            if not is_waiting_for_input("".join(output_parts)):
+            runtime = registry.running_runtime(proc_id)
+            is_input_wait = runtime is not None and runtime.waiting_for_input
+            if not is_input_wait and not is_waiting_for_input("".join(output_parts)):
                 return PollResult(PollOutcome.STUCK, output_parts, elapsed_ms)
 
         # 5.5 Long-running detection (before yield)

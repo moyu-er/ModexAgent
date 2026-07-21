@@ -56,6 +56,13 @@ logger = logging.getLogger(__name__)
 # back to the ``asyncio.start_server`` listener.
 _HOST_CONNECT_TIMEOUT = 10.0
 
+# Capped wait for ``Server.wait_closed()`` after ``close()``. Per the asyncio
+# contract, ``wait_closed()`` also waits for active connections to drop, but
+# the accepted host connection is held by ``self._writer`` for the lifetime
+# of the session — without this cap, ``start()`` hangs forever on Python 3.12+
+# (which enforces the "wait for active connections" clause that 3.11 ignored).
+_SERVER_CLOSE_TIMEOUT = 2.0
+
 
 class WinptyConsoleWindowBackend(WinptyBackend):
     """WinptyConsoleWindowBackend — Windows visible console window backend.
@@ -75,6 +82,13 @@ class WinptyConsoleWindowBackend(WinptyBackend):
         # process connects back to the ``asyncio.start_server`` listener.
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
+        # Serialises reads against the StreamReader. ``asyncio.wait_for``
+        # cancelling ``reader.read()`` on timeout leaves the stream's
+        # internal ``_wait_for_data`` future in a partially-waiting state,
+        # so a subsequent concurrent read raises
+        # ``RuntimeError: read() called while another coroutine is already
+        # waiting for incoming data``. The lock is the standard workaround.
+        self._read_lock: asyncio.Lock = asyncio.Lock()
         # Event set by ``_on_client_connected`` so ``start()`` can await
         # the host's connection without blocking the event loop.
         self._client_connected: asyncio.Event = asyncio.Event()
@@ -146,7 +160,15 @@ class WinptyConsoleWindowBackend(WinptyBackend):
             ) from None
         finally:
             server.close()
-            await server.wait_closed()
+            # The accepted host connection is held by self._writer for the
+            # session lifetime (it IS the IPC channel). Server.wait_closed()
+            # also waits for active connections to drop, so it would hang
+            # forever here. Cap the wait: server.close() already stops
+            # accepting new connections, which is all we need.
+            try:
+                await asyncio.wait_for(server.wait_closed(), timeout=_SERVER_CLOSE_TIMEOUT)
+            except TimeoutError:
+                pass
 
         logger.debug("Windows visible terminal started: %s", self._shell)
 
@@ -203,16 +225,22 @@ class WinptyConsoleWindowBackend(WinptyBackend):
         ``asyncio.wait_for`` wraps ``reader.read(n)`` in a ``Future``; the
         underlying transport's socket timeout is never mutated, so the
         ``settimeout`` leak (ADR-0032 root cause 2) cannot occur.
+
+        Reads are serialised by ``self._read_lock`` to avoid the
+        ``another coroutine is already waiting for incoming data`` race
+        that occurs when a previous ``wait_for`` times out and leaves
+        the reader's internal ``_wait_for_data`` future dangling.
         """
         if self._reader is None:
             return TerminalRead(stdout="", raw="")
-        try:
-            raw: bytes = await asyncio.wait_for(
-                self._reader.read(max_size),
-                timeout=timeout,
-            )
-        except TimeoutError:
-            return TerminalRead(stdout="", raw="")
+        async with self._read_lock:
+            try:
+                raw: bytes = await asyncio.wait_for(
+                    self._reader.read(max_size),
+                    timeout=timeout,
+                )
+            except TimeoutError:
+                return TerminalRead(stdout="", raw="")
         text = raw.decode("utf-8", errors="replace") if raw else ""
         if text:
             self._append_to_buffer(text)

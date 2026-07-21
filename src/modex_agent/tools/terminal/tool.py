@@ -23,13 +23,19 @@ def _visibility_text(visibility: TerminalVisibility | str) -> str:
 
 
 class TerminalAction(StrEnum):
-    """Actions supported by TerminalTool."""
+    """Actions supported by TerminalTool.
+
+    Note: a ``history`` action and the corresponding ``CommandRecord`` /
+    ``TerminalSession._history`` machinery were removed because the
+    implementation never actually populated the history list — CommandTool
+    never appended to it, so the surface returned ``No output for terminal``
+    for every tab. Use ``current`` (live snapshot) instead.
+    """
 
     OPEN = "open"
     CLOSE = "close"
     LIST = "list"
     SELECT = "select"
-    HISTORY = "history"
     INTERRUPT = "interrupt"
     CURRENT = "current"
 
@@ -82,11 +88,10 @@ class TerminalTool(Tool):
                         TerminalAction.CLOSE,
                         TerminalAction.LIST,
                         TerminalAction.SELECT,
-                        TerminalAction.HISTORY,
                         TerminalAction.INTERRUPT,
                         TerminalAction.CURRENT,
                     ],
-                    "description": "open | close | list | select | history | interrupt | current",
+                    "description": "open | close | list | select | interrupt | current",
                 },
                 "name": {
                     "type": "string",
@@ -150,7 +155,7 @@ class TerminalTool(Tool):
                         proc_attr = f' process="{xml_attr(running.command)}"'
                 lines.append(
                     f'  <tab name="{xml_attr(s.name)}" shell="{s.shell_type}" '
-                    f'created_at="{int(s.created_at)}" commands="{s.command_count}"{default_attr}{alive_attr}{proc_attr} />'
+                    f'created_at="{int(s.created_at)}"{default_attr}{alive_attr}{proc_attr} />'
                 )
             lines.append("</tabs>")
             lines.append("</terminal_result>")
@@ -164,20 +169,6 @@ class TerminalTool(Tool):
                 return f"Selected '{name}' as default terminal. All 'command' and 'process' tool calls now target this tab."
             except ValueError as e:
                 return f"Error: {e}"
-
-        if action_enum == TerminalAction.HISTORY:
-            if not name:
-                return "Error: 'name' is required for history action"
-            session = self._manager.get(name)
-            if session is None:
-                return f"Error: Terminal '{name}' not found."
-            records = session.get_history()
-            if not records:
-                return f"No output for terminal '{name}'."
-            last = records[-1]
-            lines = last.output.splitlines()
-            recent = "\n".join(lines[-20:])
-            return f"Recent output for '{name}':\n{recent}"
 
         if action_enum == TerminalAction.INTERRUPT:
             session = await self._manager.get_default_session()
@@ -245,16 +236,6 @@ class TerminalTool(Tool):
                 if running:
                     parts.append(f"<running_command>{xml_text(running.command)}</running_command>")
                     parts.append(f"<running_since>{int(running.started_at)}</running_since>")
-
-            # Command history
-            history = session.get_history()
-            if history:
-                parts.append("<history>")
-                for rec in history[-3:]:
-                    parts.append(
-                        f'  <record command="{xml_attr(rec.command)}" timestamp="{int(rec.timestamp)}" />'
-                    )
-                parts.append("</history>")
 
             if session.last_status:
                 parts.append(f"<last_status>{xml_text(session.last_status)}</last_status>")
