@@ -147,29 +147,15 @@ class ReactGraphRuntime(GraphRuntime):
     ) -> Any:
         """Wrap ``body`` in an interceptor chain for ``scope``.
 
-        Maps ``scope`` string (a ``ReActScope`` value) to the correct
-        ``InterceptorChain.around_*`` method and constructs the typed
-        interceptor context from ``ctx.user_data`` (AgentContext)
-        internally.
+        ``around`` routes ``ITERATION`` only. ``TOOL_CALL`` and
+        ``LLM_STREAM`` are node-local AOP invoked directly via
+        ``InterceptorChain`` because their typed contexts are not
+        constructible from ``GraphContext`` — see ADR-0034 D2.
+        ``LLM_CALL`` is a reserved scope with no wiring
+        (``InterceptorChain`` has no ``around_llm_call``).
 
         ``ITERATION`` scope is fully wired: constructs ``IterationContext``
         from the react state and calls ``around_iteration``.
-
-        ``TOOL_CALL`` / ``LLM_STREAM`` / ``LLM_CALL`` scopes are
-        pass-throughs in Stage 1:
-        - ``TOOL_CALL``: ``ToolCallContext`` requires ``tool_call`` /
-          ``tool_name`` / ``arguments`` which are not available from
-          ``AgentContext`` alone (they live in the node's local scope).
-          Stage 3 will provide these via the graph state or a subclassed
-          ``GraphContext``.
-        - ``LLM_STREAM``: ``around_llm_stream`` expects
-          ``LLMStreamNext = Callable[[], AsyncIterator[LLMStreamChunk]]``,
-          but ``body`` is ``Callable[[], Awaitable[Any]]`` (a coroutine,
-          not an async iterator). The streaming interceptor is wired
-          directly in the LLM client, not through the graph runtime.
-        - ``LLM_CALL``: ``InterceptorChain`` does not have an
-          ``around_llm_call`` method (``LLM_CALL`` scope is reserved but
-          not wired per ``interceptor/AGENTS.md``).
         """
         if self._interceptor_chain is None:
             return await body()
@@ -177,7 +163,8 @@ class ReactGraphRuntime(GraphRuntime):
         if scope == ReActScope.ITERATION:
             return await self._around_iteration(self._interceptor_chain, ctx, body)
 
-        # TOOL_CALL / LLM_STREAM / LLM_CALL: pass-through (see docstring).
+        # Unknown scope: defensive fallback. TOOL_CALL / LLM_STREAM /
+        # LLM_CALL are not routed through `around` — see ADR-0034 D2.
         return await body()
 
     async def _around_iteration(
