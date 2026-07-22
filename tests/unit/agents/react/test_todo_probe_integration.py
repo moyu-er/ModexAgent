@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from modex_agent.agents.react.constants import ReActNode
+from modex_agent.agents.react.constants import ReActNode, ReActReason
+from modex_agent.agents.react.context import ReActGraphContext
 from modex_agent.agents.react.injection_drainer import InjectionDrainer
 from modex_agent.agents.react.llm_client import ReactLlmClient
 from modex_agent.agents.react.nodes.llm import LLMNode
+from modex_agent.agents.react.runtime import ReactGraphRuntime
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.session_id import SessionInfo
@@ -55,23 +57,25 @@ async def test_probe_continues_loop_and_keeps_xml_out_of_stream(tmp_path, monkey
         [HookSpec(hook=TodoCompletionProbeHook(store=store, tool_manager=tm))]
     )
     runtime = AgentRuntime(services=services, state=state)
+    graph_runtime = ReactGraphRuntime(hook_runner=services.hooks)
 
-    ctx = AgentContext(
+    agent_ctx = AgentContext(
         system_prompt="", history=ListMessageHistory(), tool_manager=tm,
         identity=state.identity, runtime=runtime,
         session=SessionInfo.from_str("s1"),
     )
-    ctx.emitter = _RecordingEmitter()
+    agent_ctx.emitter = _RecordingEmitter()
+    ctx = ReActGraphContext(state=state, runtime=graph_runtime, user_data=agent_ctx)
 
     # Seed an unfinished todo for THIS session id, so gate 3 passes.
-    sid = ctx.session.session_id
+    sid = agent_ctx.session.session_id
     await store.save(sid, [TodoItem("ship feature", TodoStatus.PENDING)])
 
     # --- stub the LLM: stream "done." then return a plain (no-tool) response -
-    client = ReactLlmClient(provider=object())
+    client = ReactLlmClient(provider=object())  # type: ignore[arg-type]
 
     async def _fake_call(messages, ctx):
-        await ctx.emitter.emit_content("done.")   # user-facing stream (pre-hook)
+        await agent_ctx.emitter.emit_content("done.")   # user-facing stream (pre-hook)
         return LLMResponse(content="done.", tool_calls=[], finish_reason="stop")
 
     monkeypatch.setattr(client, "call", _fake_call)
@@ -79,15 +83,15 @@ async def test_probe_continues_loop_and_keeps_xml_out_of_stream(tmp_path, monkey
     node = LLMNode(llm_client=client, injection_drainer=InjectionDrainer())
 
     # --- act ----------------------------------------------------------------
-    transition = await node.execute(ctx)
+    result = await node.execute(ctx)
 
     # --- the loop continues (probe injected a tool call) --------------------
-    assert transition.target == ReActNode.TOOL
+    assert result.transition == ReActReason.HAS_TOOLS
 
     # --- memory: the persisted assistant message carries the probe ----------
     # ChatMessage.tool_calls is stored in OpenAI wire format:
     # [{"id": ..., "type": "function", "function": {"name": ..., "arguments": ...}}]
-    messages = await ctx.history.to_list()
+    messages = await agent_ctx.history.to_list()
     assistant = [m for m in messages if m.role == "assistant"][-1]
     assert any(
         (tc.get("function") or {}).get("name") == "todo_read"
@@ -96,5 +100,5 @@ async def test_probe_continues_loop_and_keeps_xml_out_of_stream(tmp_path, monkey
     assert "<system_note" in (assistant.content or "")
 
     # --- session: the user-facing stream saw the plain text but NOT the XML -
-    assert "done." in ctx.emitter.streamed
-    assert not any("<system_note" in s for s in ctx.emitter.streamed)
+    assert "done." in agent_ctx.emitter.streamed  # type: ignore[union-attr]
+    assert not any("<system_note" in s for s in agent_ctx.emitter.streamed)  # type: ignore[union-attr]

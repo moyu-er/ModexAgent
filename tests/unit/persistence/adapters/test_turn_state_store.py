@@ -10,8 +10,7 @@ import pytest
 
 from modex_agent.agents.react.state import (
     ReActRuntimeStateCodec,
-    ReActSnapshotPayloadKey,
-    ReActSnapshotPolicy,
+    ReActTurnState,
 )
 from modex_agent.approval.constants import ApprovalDecision, ApprovalTier
 from modex_agent.core.session_id import SessionInfo
@@ -89,14 +88,12 @@ def _make_snapshot(
         turn_id=turn_id,
     )
     state_payload: dict[str, Any] = {
-        ReActSnapshotPayloadKey.CURRENT_NODE.value: "tool",
-        ReActSnapshotPayloadKey.ITERATION.value: 1,
-        ReActSnapshotPayloadKey.TOOL_BATCHES.value: [],
+        "current_node": "tool",
+        "iteration": 1,
+        "tool_batches": [],
     }
     if approval is not None:
-        state_payload[ReActSnapshotPayloadKey.APPROVAL.value] = (
-            ReActSnapshotPolicy.serialize_approval(approval)
-        )
+        state_payload["approval"] = approval.model_dump(mode="json")
     return TurnSnapshot(
         identity=identity,
         agent_kind=AgentKind.REACT,
@@ -144,7 +141,7 @@ async def test_save_load_roundtrip_preserves_approval_transaction(
     loaded = await store.load_turn(snapshot.identity)
 
     assert loaded is not None
-    restored = ReActSnapshotPolicy.approval_from_snapshot(loaded)
+    restored = ReActTurnState.from_checkpoint(dict(loaded.state_payload)).approval
     assert restored is not None
     assert restored.approval_id == "appr1"
     assert restored.turn_id == "t1"
@@ -282,7 +279,7 @@ async def test_suspend_restart_resume_scenario(store: SqliteTurnStateStore) -> N
     assert found.identity.turn_id == "t1"
     assert found.phase == TurnPhase.SUSPENDED
 
-    restored_approval = ReActSnapshotPolicy.approval_from_snapshot(found)
+    restored_approval = ReActTurnState.from_checkpoint(dict(found.state_payload)).approval
     assert restored_approval is not None
     assert restored_approval.approval_id == "appr1"
 

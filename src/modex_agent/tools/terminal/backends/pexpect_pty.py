@@ -4,6 +4,15 @@ In-process PTY with no visible window.  Uses pexpect.spawn() for
 pseudo-terminal management.  Modeled on WinptyHiddenBackend (legacy alias:
 ``WindowsHiddenPtyBackend``) for behavioral consistency (both are hidden,
 in-process, third-party PTY).
+
+ADR-0032 D3: this backend implements the two blocking-IO hooks
+(``_write_blocking`` / ``_read_blocking``) plus the ``_shell_family`` hook.
+The base-class ``write`` / ``read_pending`` / ``read`` / ``current_segment`` /
+``clear_input_line`` / ``drain_startup`` template methods wrap the hooks in
+``loop.run_in_executor`` and provide the shared byte-stream behaviors. The
+six overrides and the ``_uses_readline`` private helper are deleted, which
+structurally eliminates the synchronous-write-blocks-event-loop defect on
+this path.
 """
 
 from __future__ import annotations
@@ -11,11 +20,15 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from modex_agent.tools.terminal.prompt import drain_windows_startup
-from modex_agent.tools.terminal.results import SlidingOutputBuffer, TerminalRead, TerminalSegment
-from modex_agent.tools.terminal.types import Platform, TerminalVisibility, _family_from_path
+from modex_agent.tools.terminal.results import SlidingOutputBuffer
+from modex_agent.tools.terminal.types import (
+    Platform,
+    ShellFamily,
+    TerminalVisibility,
+    _family_from_path,
+)
 
-from .base import TerminalBackend, extract_current_segment_from_buffer
+from .base import TerminalBackend
 
 logger = logging.getLogger(__name__)
 
@@ -69,59 +82,53 @@ class PexpectPtyBackend(TerminalBackend):
         logger.debug("pexpect PTY started: %s", self._shell)
 
     # ------------------------------------------------------------------
-    # I/O
+    # Async-safety contract hooks (ADR-0032 D1/D3)
     # ------------------------------------------------------------------
+    # The base-class ``write`` / ``read_pending`` templates wrap these hooks
+    # in ``loop.run_in_executor(None, ...)`` so blocking I/O is offloaded to
+    # a worker thread and the event loop is not stalled when the PTY input
+    # pipe is full (root cause 1, ADR-0032).
 
-    async def write(self, data: str) -> None:
+    def _write_blocking(self, data: str) -> None:
+        """Blocking write hook — wrapped in ``run_in_executor`` by base ``write``."""
         if self._proc is None:
             raise RuntimeError("PTY not started")
-        self._proc.send(data)  # type: ignore[union-attr]
+        self._proc.send(data)  # type: ignore[attr-defined]
 
-    async def read(self, timeout: float = 5.0, max_size: int = 65536) -> str:
-        """Read raw output without buffering.
+    def _read_blocking(self, timeout: float, max_size: int) -> str:
+        """Blocking read hook — wrapped in ``run_in_executor`` by base ``read_pending``.
 
-        drain_startup() calls read(), not read_pending(), so this keeps
-        startup output out of the sliding buffer.
+        ``proc.read_nonblocking`` blocks the calling thread until either
+        output arrives or the pexpect timeout fires (handled as ``""``).
+        The ``self._pexpect`` module is loaded by ``start()`` before any
+        read; the guard refuses pre-start reads rather than
+        ``AttributeError`` on ``None.exceptions``.
         """
-        if self._proc is None:
+        if self._proc is None or self._pexpect is None:
             raise RuntimeError("PTY not started")
-        loop = asyncio.get_running_loop()
-        pexpect_mod = self._pexpect  # loaded in start(), always set before read()
-
-        def _do_read() -> str:
-            try:
-                return self._proc.read_nonblocking(  # type: ignore[union-attr]
-                    max_size, timeout=timeout
-                )
-            except pexpect_mod.exceptions.TIMEOUT:  # type: ignore[union-attr]
-                return ""
-            except pexpect_mod.exceptions.EOF:  # type: ignore[union-attr]
-                return ""
-
+        pexpect_mod = self._pexpect
         try:
-            return await loop.run_in_executor(None, _do_read)
-        except Exception:
+            return self._proc.read_nonblocking(  # type: ignore[attr-defined,no-any-return]
+                max_size, timeout=timeout
+            )
+        except pexpect_mod.exceptions.TIMEOUT:  # type: ignore[attr-defined]
+            return ""
+        except pexpect_mod.exceptions.EOF:  # type: ignore[attr-defined]
             return ""
 
-    async def read_pending(self, timeout: float = 5.0, max_size: int = 65536) -> TerminalRead:
-        raw = await self.read(timeout=timeout, max_size=max_size)
-        if raw:
-            self._append_to_buffer(raw)
-        return TerminalRead(stdout=raw, raw=raw)
+    def _shell_family(self) -> ShellFamily:
+        """Return the shell family of the running shell (ADR-0032 D4.1)."""
+        return _family_from_path(self._shell or "")
 
     # ------------------------------------------------------------------
     # State queries
     # ------------------------------------------------------------------
 
-    async def current_segment(self) -> TerminalSegment:
-        assert self._output_buffer is not None
-        return extract_current_segment_from_buffer(self._output_buffer.text)
-
     async def is_alive(self) -> bool:
         if self._proc is None:
             return False
         try:
-            return self._proc.isalive()  # type: ignore[union-attr]
+            return self._proc.isalive()  # type: ignore[attr-defined,no-any-return]
         except Exception:
             return False
 
@@ -135,7 +142,7 @@ class PexpectPtyBackend(TerminalBackend):
     async def interrupt(self) -> None:
         if self._proc is None:
             raise RuntimeError("PTY not started")
-        self._proc.sendintr()  # type: ignore[union-attr]
+        self._proc.sendintr()  # type: ignore[attr-defined]
 
     async def terminate(self) -> None:
         if self._proc is not None:
@@ -160,26 +167,3 @@ class PexpectPtyBackend(TerminalBackend):
             except Exception as exc:
                 logger.debug("pexpect kill failed: %s", exc)
             self._proc = None
-
-    # ------------------------------------------------------------------
-    # Startup
-    # ------------------------------------------------------------------
-
-    def _uses_readline(self) -> bool:
-        if not self._shell:
-            return True
-        return _family_from_path(self._shell).uses_readline()
-
-    async def drain_startup(self) -> None:
-        """Consume startup output; reuse the generic PTY drain routine."""
-        await drain_windows_startup(
-            read_fn=self.read,
-            write_fn=self.write,
-            is_alive_fn=self.is_alive,
-            uses_readline=self._uses_readline(),
-        )
-
-    async def clear_input_line(self) -> None:
-        """Clear current input line for readline shells; no-op otherwise."""
-        if self._uses_readline():
-            await self.write("\x01\x0b")

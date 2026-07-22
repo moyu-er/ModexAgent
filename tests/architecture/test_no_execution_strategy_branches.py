@@ -6,15 +6,33 @@ assembly branches. The execution-strategy refactor (ADR-0025) replaced
 scattered if-else strategy branching with an ExecutionStrategy ABC + registry;
 this guard prevents regression.
 
-Allowed residual `execution_strategy ==` references in the framework:
+Allowed residual `execution_strategy ==` references in the framework
+(all are runtime per-target behaviour or runtime dispatch, NOT assembly
+branching — per ADR-0025 D5):
 - `peer_normal.py` — runtime per-target routing (which reply mechanism a
   *target* agent uses). This is runtime routing, not assembly branching.
 - `factory.py` — `_get_builder` runtime agent-construction dispatch (selects
   ExternalCodingAgentBuilder vs ReActAgentBuilder). This is runtime
   construction, not assembly branching.
+- `subagent_validator.py` — runtime subagent registration validation.
+- `pool_config/specs.py` — Pydantic `@model_validator` cross-field validation
+  (provider_kind set iff execution_strategy == EXTERNAL_CODING).
+- `template.py` — T5 subagent materialize dispatch (delegates to
+  `subagent_external_coding_builder.build()` when target strategy is
+  EXTERNAL_CODING). Same runtime construction-dispatch category as
+  `factory.py._get_builder`.
+- `communication/strategies/subagent_dispatch.py` — `SubagentDispatchStrategy.build_result`
+  selects ack field shape (output_path/trace_dir omitted for external targets)
+  based on `req.target.execution_strategy`. Same per-target runtime category
+  as `peer_normal.py`; added when ADR-0027 (external coding subagent) introduced
+  the external-result shape.
+- `message_xml.py` — `build_dispatch_xml` is the single convergence point for
+  the "target is external → peer format" rule (delegated to by
+  `SubagentDispatchStrategy` and `ParentReplyStrategy` so the branching lives
+  in one place). Same per-target runtime category as `peer_normal.py`; added
+  when ADR-0019 (cross-pool peer) introduced the peer XML format.
 
-Both are explicitly retained per ADR-0025 D5. Any other file containing
-`execution_strategy ==` is a regression.
+Any other file containing `execution_strategy ==` is a regression.
 
 Prior art: test_pipeline_god_object_gone.py (same AST/source-scan pattern).
 """
@@ -43,6 +61,14 @@ _PIPELINE = _FRAMEWORK_SRC / "pipeline" / "pipeline.py"
 #   deps.subagent_external_coding_builder.build() instead of
 #   agent_factory.create_agent(). Same runtime construction-dispatch category
 #   as factory.py._get_builder; the react path is byte-for-byte unchanged.
+# - communication/strategies/subagent_dispatch.py — build_result picks ack
+#   field shape (output_path/trace_dir omitted for external targets) based on
+#   req.target.execution_strategy. Same per-target runtime category as
+#   peer_normal.py; added with ADR-0027 (external coding subagent).
+# - message_xml.py — build_dispatch_xml is the single convergence point for
+#   the "target is external → peer format" rule (SubagentDispatchStrategy and
+#   ParentReplyStrategy both delegate here). Same per-target runtime category
+#   as peer_normal.py; added with ADR-0019 (cross-pool peer).
 _ALLOWED_EXECUTION_STRATEGY_FILES = {
     _FRAMEWORK_SRC / "multi_agent" / "communication" / "strategies" / "peer_normal.py",
     _FRAMEWORK_SRC / "multi_agent" / "factory.py",
@@ -50,6 +76,8 @@ _ALLOWED_EXECUTION_STRATEGY_FILES = {
     _FRAMEWORK_SRC / "multi_agent" / "execution_strategy.py",
     _FRAMEWORK_SRC / "multi_agent" / "pool_config" / "specs.py",
     _FRAMEWORK_SRC / "multi_agent" / "template.py",
+    _FRAMEWORK_SRC / "multi_agent" / "communication" / "strategies" / "subagent_dispatch.py",
+    _FRAMEWORK_SRC / "multi_agent" / "message_xml.py",
 }
 
 # Patterns that indicate strategy-specific assembly branching (forbidden).
@@ -122,14 +150,17 @@ def test_pipeline_init_has_no_strategy_branching() -> None:
 
 def test_execution_strategy_compare_only_in_allowed_files() -> None:
     """`execution_strategy ==` in src/modex_agent/ must appear only in the
-    explicitly-allowed files (peer_normal.py for runtime routing, factory.py
-    for runtime agent-construction dispatch). Any other file is a regression.
+    explicitly-allowed files (per ADR-0025 D5: runtime per-target routing,
+    runtime agent-construction dispatch, runtime validation, or docstring
+    text — NOT assembly branching). Any other file is a regression.
     """
     offenders = _files_with_execution_strategy_compare(_FRAMEWORK_SRC)
     unexpected = offenders - {p.resolve() for p in _ALLOWED_EXECUTION_STRATEGY_FILES}
     assert not unexpected, (
         f"`execution_strategy ==` found in unexpected framework files "
-        f"(ADR-0025 allows only peer_normal.py + factory.py):\n"
+        f"(ADR-0025 D5 allows only the runtime per-target / runtime dispatch / "
+        f"runtime validation / docstring sites listed in "
+        f"_ALLOWED_EXECUTION_STRATEGY_FILES):\n"
         + "\n".join(f"  {p.relative_to(_REPO_ROOT)}" for p in sorted(unexpected))
     )
 

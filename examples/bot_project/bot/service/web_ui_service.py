@@ -45,8 +45,6 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────
 
-_DEFAULT_PORT: int = 21800
-_DEFAULT_HOST: str = "0.0.0.0"
 _DEFAULT_AGENT_NAME: str = "main"
 
 
@@ -147,7 +145,7 @@ class WebUIService(BotService):
         self,
         config_dir: Path,
         *,
-        port: int = _DEFAULT_PORT,
+        port: int | None = None,
         static_dist: Path | None = None,
     ) -> None:
         from dotenv import load_dotenv
@@ -353,7 +351,15 @@ class WebUIService(BotService):
 
         from bot.adapters.register_websocket import get_ws_input as _ws_in
 
+        webui_cfg = raw_config.get("webui", {})
+        if not isinstance(webui_cfg, dict):
+            webui_cfg = {}
+        if port is None:
+            port = int(webui_cfg.get("port", 21800))
+        host = str(webui_cfg.get("host", "0.0.0.0"))
+
         self._port = port
+        self._host = host
         self._static_dist = static_dist
         self._session_gc = None
         self._web_runner: web.AppRunner | None = None
@@ -721,9 +727,9 @@ class WebUIService(BotService):
         # ── Start aiohttp server ────────────────────────────────────
         self._web_runner = web.AppRunner(self._server.app)
         await self._web_runner.setup()
-        site = web.TCPSite(self._web_runner, _DEFAULT_HOST, self._port)
+        site = web.TCPSite(self._web_runner, self._host, self._port)
         await site.start()
-        logger.info("WebUI server started on http://%s:%d/webui/", _DEFAULT_HOST, self._port)
+        logger.info("WebUI server started on http://%s:%d/webui/", self._host, self._port)
 
         await super().start()
 

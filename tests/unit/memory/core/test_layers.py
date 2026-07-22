@@ -6,7 +6,7 @@ import pytest
 
 from modex_agent.memory.core.layers import (
     ArchiveMemoryManager,
-    KnowledgeMemoryManager,
+    CoreMemoryManager,
     MemoryLayerSet,
     SessionMemoryManager,
 )
@@ -15,17 +15,17 @@ from modex_agent.memory.core.layers import (
 def test_layer_set_uses_typed_fields_and_replacement_helpers() -> None:
     session = _SessionManager()
     archive = _ArchiveManager()
-    knowledge = _KnowledgeManager()
+    knowledge = _CoreManager()
 
     layers = MemoryLayerSet(session=session, archive=archive)
-    replaced = layers.with_knowledge(knowledge)
+    replaced = layers.with_core(knowledge)
 
     assert layers.session is session
     assert layers.archive is archive
-    assert layers.knowledge is None
+    assert layers.core is None
     assert replaced.session is session
     assert replaced.archive is archive
-    assert replaced.knowledge is knowledge
+    assert replaced.core is knowledge
 
     with pytest.raises(AttributeError):
         replaced.session = _SessionManager()  # type: ignore[misc]
@@ -104,7 +104,7 @@ class _ArchiveManager(ArchiveMemoryManager):
         pass
 
 
-class _KnowledgeManager(KnowledgeMemoryManager):
+class _CoreManager(CoreMemoryManager):
     async def get_all(self, context: Any) -> Any:
         pass
 

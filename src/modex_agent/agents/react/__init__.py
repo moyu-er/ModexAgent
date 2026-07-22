@@ -5,9 +5,11 @@
 
 from .agent import ReActAgent, ReActEvent
 from .builder import ReActAgentBuilder
+from .runtime import ReactGraphRuntime
 
 __all__ = [
     "ReActAgent",
     "ReActEvent",
     "ReActAgentBuilder",
+    "ReactGraphRuntime",
 ]

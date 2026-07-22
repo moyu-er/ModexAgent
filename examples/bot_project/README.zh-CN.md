@@ -34,8 +34,8 @@
 | **LLM 对话** | 流式/非流式输出，支持 OpenAI 兼容接口的 100+ 模型 |
 | **ReAct 执行** | Thought → Action → Observation 图驱动循环，带循环检测——死循环时受控退出而非空烧 token |
 | **工具调用** | 内置文件/Shell 工具 + MCP 动态工具 + 自定义工具 |
-| **多级记忆** | Session / Archive / Knowledge / UserRetentionBuffer / Pruned / Experience — 支持 UserScope / GlobalScope / SessionScope 可配置隔离范围 |
-| **自学习系统** | ExperienceReviewAgent 将对话沉淀为 EXPERIENCE.md 知识；Dream Engine 定期整合 Archive 为长期记忆 |
+| **多级记忆** | Session / Archive / Core Memory / UserRetentionBuffer / Pruned / Experience — 支持 UserScope / GlobalScope / SessionScope 可配置隔离范围 |
+| **自学习系统** | ExperienceReviewAgent 将对话沉淀为 EXPERIENCE.md 知识；Dream Engine 定期整合 Archive 为 Core Memory（长期核心记忆） |
 | **上下文治理** | ToolChainRepair + Microcompact + TokenBudget 自动优化 |
 | **工具审批** | Agent 在改动项目外文件前会先征求同意；WebUI 点按钮或在聊天里 `/approve`。默认关闭，按 Agent 开启 |
 | **多 Agent 协作** | 池内星型（主 Agent + subagent，经 `send_to_agent`）+ 跨池主 Agent 间对等通信 |
@@ -367,21 +367,23 @@ Markdown、语法高亮代码、**Mermaid 图**、推理块都内联渲染。
 
 ```
 ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐
-│ Session   │  │  Archive  │  │ Knowledge │  │UserRetention│ │  Pruned   │  │Experience │
-│ 短期会话  │→ │ 历史归档  │→ │ SOUL.md   │  │  Buffer    │  │ 淘汰目录  │  │EXPERIENCE │
-│ (自动清理)│  │ (压缩存储) │  │ USER.md   │  │ (防过度压缩)│  │ (注入参考) │  │.md 文件   │
-└───────────┘  └───────────┘  └───────────┘  └───────────┘  └───────────┘  └───────────┘
+│ Session   │  │  Archive  │  │   Core    │  │UserRetention│ │  Pruned   │  │Experience │
+│ 短期会话  │→ │ 历史归档  │→ │ Memory    │  │  Buffer    │  │ 淘汰目录  │  │EXPERIENCE │
+│ (自动清理)│  │ (压缩存储) │  │ SOUL.md   │  │ (防过度压缩)│  │ (注入参考) │  │.md 文件   │
+└───────────┘  └───────────┘  │ USER.md   │  └───────────┘  └───────────┘  └───────────┘
+                              │ MEMORY.md │
+                              └───────────┘
 ```
 
 - **Session**：当前会话近期对话历史，超限后自动清理
 - **Archive**：压缩后的历史归档，同一用户跨会话共享
-- **Knowledge**：长期知识文件（SOUL.md / USER.md / MEMORY.md）
+- **Core Memory**：长期核心记忆文件（SOUL.md / USER.md / MEMORY.md；依 ADR-0035 由原 "Knowledge" 重命名）
 - **UserRetentionBuffer**：额外保留缓冲，防止治理压缩过度丢失关键上下文
 - **Pruned**：淘汰消息的目录索引，按会话存储用于注入
 - **Experience**：从历史对话中自学习提取的可复用参考知识（EXPERIENCE.md）
-- **Dream Engine**：离线定期将 Archive 整合为 Knowledge
+- **Dream Engine**：离线定期将 Archive 整合为 Core Memory
 - **ExperienceReviewAgent**：分析对话并创建/更新 EXPERIENCE.md 文件
-- **可配置范围**：SessionScope / UserScope / GlobalScope — Archive 和 Knowledge 可按用户隔离或全局共享
+- **可配置范围**：SessionScope / UserScope / GlobalScope — Archive 和 Core Memory 可按用户隔离或全局共享
 
 ### 自学习系统（Experience）
 

@@ -19,7 +19,7 @@ from modex_agent.memory.archive_models import (
 from modex_agent.memory.core.consolidation import MemoryUpdate
 from modex_agent.memory.core.models import (
     ArchiveEntry,
-    LongTermMemory,
+    CoreMemoryContents,
     StorageRevision,
     UnprocessedResult,
 )
@@ -187,7 +187,7 @@ class ArchiveMemoryManager(ABC):
         cursor_name: str,
         limit: int = 100,
         *,
-        channel: ArchiveChannel = ArchiveChannel.KNOWLEDGE,
+        channel: ArchiveChannel = ArchiveChannel.CORE,
     ) -> UnprocessedResult:
         pass
 
@@ -198,7 +198,7 @@ class ArchiveMemoryManager(ABC):
         cursor_name: str,
         cursor: int,
         *,
-        channel: ArchiveChannel = ArchiveChannel.KNOWLEDGE,
+        channel: ArchiveChannel = ArchiveChannel.CORE,
     ) -> None:
         pass
 
@@ -228,17 +228,17 @@ class ArchiveMemoryManager(ABC):
         return UserScope()
 
 
-class KnowledgeMemoryManager(ABC):
-    """Durable distilled knowledge memory layer capability."""
+class CoreMemoryManager(ABC):
+    """Durable distilled core memory layer capability."""
 
     @abstractmethod
-    async def get_all(self, context: MemoryContext) -> LongTermMemory:
+    async def get_all(self, context: MemoryContext) -> CoreMemoryContents:
         pass
 
-    async def retrieve(self, context: MemoryContext, query: str = "") -> LongTermMemory:
-        """Retrieve knowledge for injection.
+    async def retrieve(self, context: MemoryContext, query: str = "") -> CoreMemoryContents:
+        """Retrieve core memory for injection.
 
-        Default knowledge storage is small, curated profile/fact content, so
+        Default core memory storage is small, curated profile/fact content, so
         retrieval is intentionally all-content.  Query-aware retrieval remains
         an override point for custom managers.
         """
@@ -262,7 +262,7 @@ class KnowledgeMemoryManager(ABC):
         pass
 
     async def get_storage_path(self, context: MemoryContext) -> Path | None:
-        """Return the absolute path to knowledge storage, if file-backed."""
+        """Return the absolute path to core memory storage, if file-backed."""
         return None
 
     @abstractmethod
@@ -328,7 +328,7 @@ class MemoryLayerSet:
 
     session: SessionMemoryManager
     archive: ArchiveMemoryManager | None = None
-    knowledge: KnowledgeMemoryManager | None = None
+    core: CoreMemoryManager | None = None
     user_retention: UserRetentionBuffer | None = None
 
     def with_session(self, manager: SessionMemoryManager) -> MemoryLayerSet:
@@ -337,8 +337,8 @@ class MemoryLayerSet:
     def with_archive(self, manager: ArchiveMemoryManager | None) -> MemoryLayerSet:
         return replace(self, archive=manager)
 
-    def with_knowledge(self, manager: KnowledgeMemoryManager | None) -> MemoryLayerSet:
-        return replace(self, knowledge=manager)
+    def with_core(self, manager: CoreMemoryManager | None) -> MemoryLayerSet:
+        return replace(self, core=manager)
 
     def with_user_retention(
         self,

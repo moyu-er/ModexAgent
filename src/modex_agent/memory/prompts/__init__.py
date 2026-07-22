@@ -39,7 +39,7 @@ class PromptRegistry:
         """Set a runtime override for a prompt key.
 
         Args:
-            key: Prompt key (e.g., "knowledge/soul_update_system").
+            key: Prompt key (e.g., "core_memory/soul_update_system").
             content: Override content.
         """
         self._overrides[key] = content
@@ -48,7 +48,7 @@ class PromptRegistry:
         """Get system prompt with variable substitution.
 
         Args:
-            key: Prompt key (e.g., "knowledge/soul_update").
+            key: Prompt key (e.g., "core_memory/soul_update").
             **variables: Template variables to substitute.
 
         Returns:
@@ -62,7 +62,7 @@ class PromptRegistry:
         """Get user prompt with variable substitution.
 
         Args:
-            key: Prompt key (e.g., "knowledge/soul_update").
+            key: Prompt key (e.g., "core_memory/soul_update").
             **variables: Template variables to substitute.
 
         Returns:

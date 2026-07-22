@@ -1,7 +1,7 @@
 """Physical store metadata ABC — locking and filesystem path.
 
 Concrete store implementations (``DefaultScopedStorage``,
-``DirArchiveStorage``, ``MarkdownKnowledgeStorage``,
+``DirArchiveStorage``, ``MarkdownCoreMemoryStorage``,
 ``InMemoryScopedStorage``) inherit :class:`StoreMetadata` to expose two
 capabilities that sit outside the data-access ABCs
 (:class:`~modex_agent.memory.core.split_stores.MessageStore` etc.):

@@ -8,6 +8,15 @@ contract. All memory layer implementations depend on these contracts. The scope
 system lives in `modex_agent.core.scope` (see below); it was promoted out of
 this package during the hybrid-persistence refactor (T04/T05).
 
+> **Disambiguation (ADR-0035):** This directory is the memory subsystem's
+> *core ABCs* (`system.py`, `layers.py`, `models.py`, `split_stores.py`, etc.)
+> — distinct from `memory/layers/core.py`, which is the *Core Memory layer*
+> implementation (the agent-managed `SOUL.md` / `USER.md` / `MEMORY.md`
+> triple, formerly the "Knowledge layer"). The lexical collision is
+> intentional: "core" in `memory/core/` names the subsystem's foundational
+> ABCs, while "core" in `layers/core.py` names the domain layer renamed by
+> ADR-0035.
+
 ## Key Files
 
 | File | Description |
@@ -16,8 +25,8 @@ this package during the hybrid-persistence refactor (T04/T05).
 | `split_stores.py` | The four split store ABCs and `MemoryStoreBundle` (see below) |
 | `storage.py` | Empty placeholder. The legacy `MemoryStorage` god-interface was removed in T10; kept only so stale imports raise a clear `ImportError` |
 | `store_metadata.py` | `StoreMetadata` ABC, physical-store metadata (`get_lock()`, `base_path`) accessed via `isinstance` at the store-backend extension boundary |
-| `layers.py` | `SessionMemoryManager`, `ArchiveMemoryManager`, `KnowledgeMemoryManager`, `UserRetentionBuffer` ABCs |
-| `models.py` | `LongTermMemory`, `MemoryContextDict`, `StorageRevision`, `ArchiveEntry`, `UnprocessedResult` data models |
+| `layers.py` | `SessionMemoryManager`, `ArchiveMemoryManager`, `CoreMemoryManager`, `UserRetentionBuffer` ABCs |
+| `models.py` | `CoreMemoryContents` (renamed from `LongTermMemory` per ADR-0035), `MemoryContextDict`, `StorageRevision`, `ArchiveEntry`, `UnprocessedResult` data models |
 | `consolidation.py` | `MemoryUpdateMode` (StrEnum), `MemoryUpdate` dataclass, long-term memory update types |
 | `lock.py` | `StorageLock` ABC, `AioRWLock`, `NoOpStorageLock` concurrency control |
 | `__init__.py` | Re-exports the split store ABCs and `MemoryStoreBundle` |

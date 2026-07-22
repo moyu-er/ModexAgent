@@ -106,11 +106,11 @@ class TestArchiveStoreConformance:
 
     async def test_channels_are_isolated(self, archive_store: ArchiveStore) -> None:
         # The file backend only separates predefined ArchiveChannel values
-        # (context, knowledge); custom names share one file. Use the
+        # (context, core); custom names share one file. Use the
         # predefined names so both backends exhibit isolation.
         await archive_store.append_channel_log("context", {"summary": "ctx1", "archive_id": 1})
-        await archive_store.append_channel_log("knowledge", {"summary": "kno1", "archive_id": 1})
+        await archive_store.append_channel_log("core", {"summary": "cor1", "archive_id": 1})
         ctx_logs = await archive_store.read_channel_logs("context")
-        kno_logs = await archive_store.read_channel_logs("knowledge")
+        core_logs = await archive_store.read_channel_logs("core")
         assert [e["summary"] for e in ctx_logs] == ["ctx1"]
-        assert [e["summary"] for e in kno_logs] == ["kno1"]
+        assert [e["summary"] for e in core_logs] == ["cor1"]

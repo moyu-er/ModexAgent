@@ -118,7 +118,7 @@ Context propagates within the session group as designed behaviour.
 - `modex_agent.multi_agent.strategies` — `SendStrategy` ABC + concrete strategies
 - `modex_agent.multi_agent.tools` — `CommunicationTarget`, `CommunicationTargetStore`, `resolve_parent_name`
 - `modex_agent.multi_agent.envelope` — `AgentMessageEnvelope`
-- `modex_agent.multi_agent.message_xml` — `build_agent_message`, `build_peer_agent_message`
+- `modex_agent.multi_agent.message_xml` — `build_dispatch_xml`, `build_agent_message`, `build_peer_agent_message`
 - `modex_agent.multi_agent.bus` — `AgentMessageBus` (delivery target)
 - `modex_agent.multi_agent.address` — `AgentAddress`
 - `modex_agent.core.session_id` — `SessionIdFactory`, `SessionInfo`

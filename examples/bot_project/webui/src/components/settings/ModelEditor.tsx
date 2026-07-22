@@ -790,15 +790,16 @@ export function ModelEditor({ values, onChange }: Props) {
 
       {fetchTarget !== null && providers[fetchTarget] && (() => {
         const p = providers[fetchTarget]!;
-        const fetchRequest: FetchProviderModelsRequest = p.key
-          ? { provider_key: p.key }
-          : {
-              base_url: p.base_url || "",
-              api_key:
-                "value" in p.api_key ? p.api_key.value : "",
-              interface_format: p.interface_format || "openai_compatible",
-              models_url: p.models_url ?? null,
-            };
+        // masked key (saved) is unreadable on the client — omit and let the
+        // backend read it from model.yml via provider_key.
+        const inlineApiKey = "value" in p.api_key ? p.api_key.value : undefined;
+        const fetchRequest: FetchProviderModelsRequest = {
+          provider_key: p.key || undefined,
+          base_url: p.base_url || undefined,
+          api_key: inlineApiKey,
+          interface_format: p.interface_format || undefined,
+          models_url: p.models_url ?? undefined,
+        };
         return (
           <FetchModelsModal
             open

@@ -17,7 +17,10 @@ with five star-topology adjustments mandated by ADR-0027:
    ``modex_session_id`` and bounded across the process.
 2. **ExternalEnvSpec**: per-invocation, ``MODEX_TARGETS`` contains only the
    parent agent (star topology — subagents never talk to peers).
-   ``MODEX_AGENT_POOL_MAP`` carries only this subagent's own pool.
+   ``MODEX_AGENT_POOL_MAP`` carries this subagent's own pool plus the
+   parent's pool entry (both in the same pool — subagents are registered
+   into the parent's pool) so ``modexctl send --to <parent>`` can resolve
+   the target pool.
 3. **HookRunner**: carries :class:`SubagentAutoSendHook` (T7) with
    ``execution_strategy=EXTERNAL_CODING`` and the per-workdir
    ``external_outbox_path``. ``ExternalTurnRunner`` dispatches
@@ -38,7 +41,6 @@ from __future__ import annotations
 
 import logging
 import os
-import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -46,6 +48,7 @@ from modex_agent.agents.external_coding.backend_provider import (
     BackendFactory,
     CachingBackendProvider,
 )
+from modex_agent.agents.external_coding.cli_resolver import resolve_modexctl_bin_dir
 from modex_agent.agents.external_coding.builder import ExternalCodingAgentBuilder
 from modex_agent.agents.external_coding.contracts import ProviderEventParser
 from modex_agent.agents.external_coding.os_layer import register_signal_handlers
@@ -62,6 +65,7 @@ from modex_agent.agents.external_coding.subagent_builder import (
     SubagentExternalCodingBuilder,
 )
 from modex_agent.agents.external_coding.types import ExternalEnvSpec
+from modex_agent.core.agent import AgentCommKind
 from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.context import InMemoryContextManager
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
@@ -125,14 +129,17 @@ class BotBackendFactory(BackendFactory):
 def _modexctl_bin_dir() -> Path:
     """Resolve the ``modexctl`` binary directory for the spawn ``PATH``.
 
-    Mirrors :func:`bot.service.external_coding_strategy._modexctl_bin_dir`:
-    ``shutil.which`` first, falling back to ``.`` if not on PATH (logged).
+    Delegates to :func:`modex_agent.agents.external_coding.cli_resolver.resolve_modexctl_bin_dir`
+    — the single source of truth. The previous inline ``shutil.which`` +
+    ``Path(".")`` fallback (which never pointed at a real modexctl and
+    caused silent cross-pool messaging failures) is removed.
+
+    Raises:
+        ModexctlResolutionError: forwarded from the resolver when all four
+            resolution strategies fail. The bot surfaces this at pool
+            materialisation time rather than silently corrupting the spawn env.
     """
-    exe = shutil.which("modexctl")
-    if exe:
-        return Path(exe).parent
-    logger.warning("modexctl not found on PATH; falling back to '.' for modexctl_bin_dir")
-    return Path(".")
+    return resolve_modexctl_bin_dir()
 
 
 class BotSubagentExternalCodingBuilder(SubagentExternalCodingBuilder):
@@ -189,9 +196,8 @@ class BotSubagentExternalCodingBuilder(SubagentExternalCodingBuilder):
 
         # ── 0. Resolve per-invocation identity ───────────────────────────
         agent_name = spec.agent_name
-        parent_name = (
-            str(parent_session).split(".")[-1] if parent_session else ""
-        )
+        parent_session_str = str(parent_session) if parent_session else ""
+        parent_name = parent_session_str.split(".")[-1] if parent_session_str else ""
         session_id = f"{invocation_id or ''}.{agent_name}"
 
         # workspace_root / workdir / inbox_root come from the workspace
@@ -201,6 +207,35 @@ class BotSubagentExternalCodingBuilder(SubagentExternalCodingBuilder):
         inbox_root = self._resolve_inbox_root(deps, workspace_dir)
 
         # ── 1. ExternalEnvSpec (per-invocation, star-topology targets) ──
+        #
+        # Dynamism across three time scales:
+        #   • per-invocation — DYNAMIC. Each parent→child call rebuilds this
+        #     spec with the caller's parent_name.
+        #   • per-turn       — STATIC. ExternalCodingAgent._run_turn refreshes
+        #     only session_id + workdir via model_copy; agent_pool_map and
+        #     targets are frozen for the agent's lifetime. (spec.md claims a
+        #     per-turn refresh from CommunicationTargetStore — never
+        #     implemented; this is a known spec deviation.)
+        #   • runtime-config — STATIC. pool_spec.subagents/peers are read
+        #     from disk at bot boot; WebUI peer add/remove mutates only the
+        #     native CommunicationTargetStore, not this external snapshot.
+        #     A pool restart is required for changes to take effect here.
+        #
+        # comm_kind=SUBAGENT + parent_session_id: modexctl send uses the
+        # parent's full session_id verbatim as target_sid, bypassing
+        # ADR-0019 prefix-reuse (which would mint a phantom parent session
+        # because subagent session prefixes are invocation_ids, not
+        # conversation_ids). The main-agent-as-peer path uses comm_kind=NORMAL
+        # and relies on prefix-reuse — the two paths are fully separated
+        # in modexctl.
+        #
+        # agent_pool_map must include the parent so `modexctl send --to <parent>`
+        # can resolve the parent's pool. Subagents are registered into the
+        # parent's pool (AgentTemplate._materialize_external → pool.register_resident),
+        # so the parent's pool is self._pool_name.
+        agent_pool_map: dict[str, str] = {agent_name: self._pool_name}
+        if parent_name:
+            agent_pool_map[parent_name] = self._pool_name
         env_spec = ExternalEnvSpec(
             workspace_root=workspace_dir,
             inbox_root=inbox_root,
@@ -208,8 +243,10 @@ class BotSubagentExternalCodingBuilder(SubagentExternalCodingBuilder):
             session_id=session_id,
             agent_name=agent_name,
             provider_session_id="",  # fresh — session_store resolves/commits
-            agent_pool_map={agent_name: self._pool_name},
+            agent_pool_map=agent_pool_map,
             targets=[(parent_name, "")] if parent_name else [],
+            comm_kind=AgentCommKind.SUBAGENT,
+            parent_session_id=parent_session_str or None,
             modexctl_bin_dir=_modexctl_bin_dir(),
         )
 

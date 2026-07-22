@@ -1,0 +1,5 @@
+staging
+# Build outputs
+ModexBot-Setup-*.exe
+logo.ico
+tauri-target

@@ -37,7 +37,7 @@ from modex_agent.memory.injection import (
 )
 from modex_agent.memory.layers import (
     ArchiveMemoryConfig,
-    KnowledgeMemoryConfig,
+    CoreMemoryConfig,
     MemoryLayerConfigSet,
     MemoryLayerFactory,
     SessionMemoryConfig,
@@ -77,7 +77,7 @@ __all__ = [
     "MemoryLayerFactory",
     "SessionMemoryConfig",
     "ArchiveMemoryConfig",
-    "KnowledgeMemoryConfig",
+    "CoreMemoryConfig",
     # Pruned catalog
     "PrunedManager",
 ]

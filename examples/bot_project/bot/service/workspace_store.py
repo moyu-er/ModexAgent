@@ -193,6 +193,9 @@ class WorkspaceScopedTranscriptStore(TranscriptStore, WorkspaceIndex):
         self._workspace_stores: dict[Path, TranscriptStore] = {}
         self._inflight: dict[Path, asyncio.Task[TranscriptStore]] = {}
         self._generations: dict[Path, int] = {}
+        # In-memory partial streaming buffer: key = "sessions_dir|session_id".
+        # Single process-wide dict; cleared on turn_end, gone on crash.
+        self._partial_buffer: dict[str, list[ServerEvent]] = {}
 
     def set_store_resolver(self, resolver: WorkspaceTranscriptStoreResolver) -> None:
         """Configure the persistence-owned workspace adapter resolver."""
@@ -390,3 +393,36 @@ class WorkspaceScopedTranscriptStore(TranscriptStore, WorkspaceIndex):
             session_prefix, sessions_dir=sessions_dir, pool=pool
         )
         return _materialize_events(events)
+
+    # ------------------------------------------------------------------
+    # Partial streaming events — in-memory, cleared on turn_end, no crash leftover.
+    # ------------------------------------------------------------------
+
+    async def append_partial(
+        self,
+        session_id: str,
+        event: ServerEvent,
+        *,
+        sessions_dir: Path | None = None,
+    ) -> None:
+        resolved = self._resolve_dir(sessions_dir)
+        key = self._partial_key(resolved, session_id)
+        self._partial_buffer.setdefault(key, []).append(event)
+
+    async def load_partial(
+        self, session_id: str, sessions_dir: Path | None = None
+    ) -> list[ServerEvent]:
+        resolved = self._resolve_dir(sessions_dir)
+        key = self._partial_key(resolved, session_id)
+        return list(self._partial_buffer.get(key, ()))
+
+    async def clear_partial(
+        self, session_id: str, sessions_dir: Path | None = None
+    ) -> None:
+        resolved = self._resolve_dir(sessions_dir)
+        key = self._partial_key(resolved, session_id)
+        self._partial_buffer.pop(key, None)
+
+    @staticmethod
+    def _partial_key(sessions_dir: Path, session_id: str) -> str:
+        return f"{sessions_dir.resolve()}|{session_id}"

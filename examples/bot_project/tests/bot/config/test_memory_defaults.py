@@ -7,7 +7,7 @@ def test_subagent_memory_is_minimal_and_matches_session_only():
     m: MemoryConfig = subagent_memory()
     assert m.session is not None
     assert m.archive is None or m.archive.enabled is False
-    assert m.knowledge is None or m.knowledge.enabled is False
+    assert m.core is None or m.core.enabled is False
     assert m.pruned is not None and m.pruned.enabled is True
     assert m.governance is not None and m.governance.tool_chain_repair is True
 
@@ -17,7 +17,7 @@ def test_main_memory_rich_has_long_term_layers():
 
     m: MemoryConfig = main_agent_memory()
     assert m.archive is not None and m.archive.enabled is True
-    assert m.knowledge is not None and m.knowledge.enabled is True
+    assert m.core is not None and m.core.enabled is True
     assert m.pruned is not None and m.pruned.enabled is True
 
 

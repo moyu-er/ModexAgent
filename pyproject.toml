@@ -19,6 +19,12 @@ url = "https://pypi.tuna.tsinghua.edu.cn/simple"
 [tool.uv]
 link-mode = "copy"
 
+[tool.uv.sources]
+# ADR-0033: modex-graph is a local sibling package, not published to PyPI.
+# Path source tells uv to resolve from the local directory instead of the registry.
+# editable = true mirrors the -e flag on the root install — source changes are live.
+modex-graph = { path = "src/modex_graph", editable = true }
+
 [project]
 name = "ModexAgent"
 dynamic = ["version"]
@@ -38,6 +44,7 @@ classifiers = [
 
 dependencies = [
   "pydantic>=2.0.0,<3",
+  "modex-graph",  # ADR-0033 D11: sibling package, framework-agnostic graph engine.
   "filelock>=3.12.0",
   "httpx>=0.24.0",
   "pyyaml>=6.0.0",

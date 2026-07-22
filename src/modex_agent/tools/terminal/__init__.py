@@ -11,7 +11,7 @@ from modex_agent.tools.terminal.managers import (
 )
 from modex_agent.tools.terminal.process_registry import ProcessRegistry
 from modex_agent.tools.terminal.process_tool import ProcessTool
-from modex_agent.tools.terminal.session import CommandRecord, TerminalInfo, TerminalSession
+from modex_agent.tools.terminal.session import TerminalInfo, TerminalSession
 from modex_agent.tools.terminal.subprocess_tool import (
     ShellExecutor,
     SubprocessExecutor,
@@ -21,7 +21,6 @@ from modex_agent.tools.terminal.tool import TerminalAction, TerminalTool
 
 __all__ = [
     "BaseTerminalManager",
-    "CommandRecord",
     "CommandTool",
     "ProcessRegistry",
     "ProcessTool",

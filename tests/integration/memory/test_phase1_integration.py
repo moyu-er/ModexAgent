@@ -11,7 +11,7 @@ from modex_agent.ioc.configs.memory import (
 )
 from modex_agent.ioc.factories.memory import _build_memory_layer_config
 from modex_agent.core.scope import MemoryContext
-from modex_agent.memory.layers.knowledge import ScopedKnowledgeMemoryManager
+from modex_agent.memory.layers.core import ScopedCoreMemoryManager
 
 
 @pytest.mark.asyncio
@@ -41,8 +41,8 @@ async def test_phase1_config_to_template_initialization(tmp_path):
     layer_config = _build_memory_layer_config(cfg)
 
     # Verify config
-    assert layer_config.knowledge is not None
-    assert layer_config.knowledge.default_templates_dir == str(templates_dir)
+    assert layer_config.core is not None
+    assert layer_config.core.default_templates_dir == str(templates_dir)
 
     # Verify DreamEngineConfig values
     assert cfg.dream_engine.max_consume_per_run == 20
@@ -55,9 +55,9 @@ async def test_phase1_config_to_template_initialization(tmp_path):
     storage_factory = AsyncMock(return_value=storage)
 
     # Create knowledge manager
-    manager = ScopedKnowledgeMemoryManager(
+    manager = ScopedCoreMemoryManager(
         storage_factory=storage_factory,
-        config=layer_config.knowledge,
+        config=layer_config.core,
     )
 
     # Initialize

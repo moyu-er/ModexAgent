@@ -89,14 +89,14 @@ class FakeMemorySystem:
     async def get_history(self, context: Any) -> list[ChatMessage]:
         return self._messages
 
-    async def get_knowledge(self, context: Any) -> Any:
+    async def get_core_memory(self, context: Any) -> Any:
         if self._knowledge is not None:
             return self._knowledge
-        from modex_agent.memory.core.models import LongTermMemory
-        return LongTermMemory()
+        from modex_agent.memory.core.models import CoreMemoryContents
+        return CoreMemoryContents()
 
-    async def retrieve_knowledge(self, context: Any, query: str = "") -> Any:
-        return await self.get_knowledge(context)
+    async def retrieve_core_memory(self, context: Any, query: str = "") -> Any:
+        return await self.get_core_memory(context)
 
     async def get_history_entries(self, context: Any, **kwargs: Any) -> list[dict]:
         return []
@@ -107,7 +107,7 @@ class FakeMemorySystem:
     async def prefetch_memories(self, query: str, context: Any) -> str | None:
         return None
 
-    async def get_knowledge_directory(self, context: Any) -> Any:
+    async def get_core_memory_directory(self, context: Any) -> Any:
         return None
 
 
@@ -213,8 +213,8 @@ class TestPrioritySectionTrimming:
         memory_system = FakeMemorySystem(messages=[])
 
         # Mock knowledge to inject large sections
-        from modex_agent.memory.core.models import LongTermMemory
-        memory_system._knowledge = LongTermMemory(
+        from modex_agent.memory.core.models import CoreMemoryContents
+        memory_system._knowledge = CoreMemoryContents(
             soul="S" * 50,
             user="U" * 50,
             memory="M" * 300,  # This should be trimmed (priority=90)

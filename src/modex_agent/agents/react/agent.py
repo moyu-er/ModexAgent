@@ -18,13 +18,13 @@ from modex_agent.control.exceptions import (
 )
 from modex_agent.hook import HookPayload, HookPoint
 from modex_agent.runtime.enums import TurnCustomKey, TurnPhase
-from .message_builder import build_interrupted_assistant_message
 
 from ...core.agent import Agent, AgentContext, current_agent_context
 from ...core.constants import DefaultValues, StopReason
 from ...core.emitter import AgentResult, ContentEmitter
 from ...core.events import AgentEvent
 from ...core.provider import LLMProvider
+from .message_builder import build_interrupted_assistant_message
 
 logger = logging.getLogger(__name__)
 
@@ -129,9 +129,7 @@ async def _persist_interrupted_partial(ctx: AgentContext, reason: str) -> None:
     msg = build_interrupted_assistant_message(content, tool_names, reason)
     if ctx.history is not None:
         await ctx.history.append(msg)
-    state.message_delta.append(
-        MessageDelta(message=msg, source=MessageDeltaSource.ASSISTANT)
-    )
+    state.message_delta.append(MessageDelta(message=msg, source=MessageDeltaSource.ASSISTANT))
 
 
 class ReActAgent(Agent[ReActEvent]):
@@ -169,26 +167,17 @@ class ReActAgent(Agent[ReActEvent]):
         *,
         mode: Literal["clean", "full"] = "full",
     ) -> None:
-        from modex_agent.agents.react.graph import ReActGraph
         from modex_agent.agents.react.injection_drainer import InjectionDrainer
         from modex_agent.agents.react.llm_client import ReactLlmClient
         from modex_agent.agents.react.tool_executor import ToolExecutor
-        from modex_agent.core.graph.engine import GraphEngine
 
         self.provider = provider
         self._hook_timeout = hook_timeout
         self._tool_timeout = tool_timeout
-        self.mode = mode
+        self.mode: Literal["clean", "full"] = mode
         self._llm_client = ReactLlmClient(provider)
         self._injection_drainer = InjectionDrainer()
         self._tool_executor = ToolExecutor(default_tool_timeout=tool_timeout)
-        self.graph = ReActGraph(
-            llm_client=self._llm_client,
-            injection_drainer=self._injection_drainer,
-            tool_executor=self._tool_executor,
-            mode=mode,
-        )
-        self.engine = GraphEngine(self.graph)
 
     @property
     def name(self) -> str:
@@ -208,7 +197,7 @@ class ReActAgent(Agent[ReActEvent]):
         Returns:
             AgentResult: execution result
         """
-        from modex_agent.core.graph.interrupt import GraphInterrupt
+        from modex_graph.exceptions import GraphInterrupt
 
         # 每轮开始时清空 attachments，避免跨轮污染
         context.attachments = []
@@ -230,6 +219,29 @@ class ReActAgent(Agent[ReActEvent]):
             context.identity = state.identity
             context.runtime = AgentRuntime(services=AgentRuntimeServices(), state=state)
         runtime = context.runtime
+
+        # ADR-0033 D5 + D13 Stage 4: construct ``ReactGraphRuntime`` (AOP bridge)
+        # and pass it as ``GraphContext.runtime``. ``ReactGraphRuntime`` methods
+        # handle ``None`` services as no-ops, so clean mode (no services) is fine.
+        # ``runtime.graph_runtime`` is no longer set — the graph runtime lives
+        # on ``GraphContext.runtime`` for the duration of ``engine.run_async``.
+        from modex_agent.agents.react.context import ReActGraphContext
+        from modex_agent.agents.react.graph import build_react_graph
+        from modex_agent.agents.react.runtime import ReactGraphRuntime
+        from modex_agent.agents.react.state import ReActSnapshotPolicy
+        from modex_graph.engine import GraphEngine
+
+        graph_runtime = ReactGraphRuntime(
+            hook_runner=runtime.services.hooks,
+            interceptor_chain=runtime.services.interceptors,
+            governance=runtime.services.governance,
+            control_channel=runtime.services.control_channel,
+            snapshot_policy=ReActSnapshotPolicy(),
+            turn_state_store=runtime.services.turn_store,
+            emitter=emitter,
+        )
+        runtime.graph_runtime = graph_runtime
+
         ctx_token = current_agent_context.set(context)
 
         # ``result`` stays None on a GraphInterrupt (approval suspend) so the
@@ -253,13 +265,35 @@ class ReActAgent(Agent[ReActEvent]):
                     turn_uuid=context.runtime.turn_uuid,
                 )
 
-            result = await self.engine.run(context)
+            # ADR-0033 D13 Stage 4: construct the new ``modex_graph`` engine.
+            # ``compile(max_iterations=N)`` is the engine-level safety net
+            # (D9.3 layer 1) — N is larger than the business max
+            # (``context.max_iterations``) so the node-level check in
+            # ``LLMNode`` routes to END via a static edge before this fires.
+            graph = build_react_graph(
+                llm_client=self._llm_client,
+                injection_drainer=self._injection_drainer,
+                tool_executor=self._tool_executor,
+                mode=self.mode,
+            ).compile(max_iterations=context.max_iterations * 4 + 10)
+            engine = GraphEngine(graph)
             react_state = get_react_state(context)
-            if (
-                runtime.hooks
-                and react_state is not None
-                and react_state.iteration > 0
-            ):
+            assert react_state is not None  # constructed just above if previously None
+            graph_ctx = ReActGraphContext(
+                state=react_state,
+                runtime=graph_runtime,
+                user_data=context,
+            )
+            returned_state = await engine.run_async(graph_ctx)
+            # ADR-0033 D9.3: the terminal ``EndNode`` writes ``state.result``;
+            # ``engine.run_async`` returns the final state. Read the typed
+            # ``result`` field — the old ``custom[GRAPH_RESULT]`` dual-write is
+            # gone.
+            if returned_state is not None:
+                react_state = returned_state
+            if react_state.result is not None:
+                result = react_state.result
+            if runtime.hooks and react_state.iteration > 0:
                 await runtime.hooks.dispatch(HookPoint.AFTER_ITERATION, context)
             if runtime.hooks:
                 await runtime.hooks.dispatch(

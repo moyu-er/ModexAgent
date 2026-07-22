@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef, type FC } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
-import { SettingsView } from "./components/settings/SettingsView";
+import { SettingsModal } from "./components/settings/SettingsView";
 import { ToastProvider } from "./components/ToastContext";
 import { useWebUIStream } from "./hooks/useWebUIStream";
 import { useSessions } from "./hooks/useSessions";
@@ -13,7 +13,13 @@ import { storageGetInt, storageSet } from "./lib/storage";
 import type { OutgoingAttachmentRef } from "./types/attachments";
 import { useT } from "./i18n";
 import { LogoMarkIcon } from "./components/ui/icons";
-import { ViewCrossfade } from "./components/ui/ViewCrossfade";
+
+interface PendingHeroSend {
+  content: string;
+  attachments?: OutgoingAttachmentRef[];
+  providerName?: string;
+  modelName?: string;
+}
 
 const SIDEBAR_WIDTH_KEY = "modexbot_sidebar_width";
 const DEFAULT_SIDEBAR_WIDTH = 260;
@@ -50,6 +56,7 @@ const AppInner: FC = () => {
     onSessionCreated,
     selectSession,
     handleNew,
+    createDraftForSend,
     handleDelete,
     handleWorkspaceChanged,
     handleGoHome,
@@ -96,15 +103,17 @@ const AppInner: FC = () => {
     [selectedId, sessions],
   );
 
-  // Display name of the selected session's owning agent (main or a subagent).
-  // Sourced from the session list — no backend change. Undefined when no
-  // session is open, in which case the chat header shows no label. The "…"
-  // sentinel is the session-list placeholder for not-yet-resolved agent names
-  // (fresh drafts); treat it as unknown so it never leaks into the header.
+  // Three-tier fallback: session list → infer from id suffix → active pool.
+  // Keeps the header populated through the hero-send → attach window where
+  // the session is not yet in the sidebar list.
   const agentName = useMemo(() => {
+    if (!selectedId) return undefined;
     const s = sessions.find((x) => x.session_id === selectedId);
-    return s && s.agent_name !== "…" ? s.agent_name : undefined;
-  }, [sessions, selectedId]);
+    if (s && s.agent_name !== "…" && s.agent_name) return s.agent_name;
+    const parts = selectedId.split(".");
+    if (parts.length >= 2) return parts[1] || "main";
+    return activePool || "main";
+  }, [sessions, selectedId, activePool]);
 
   const handleSend = useCallback(
     (
@@ -119,7 +128,37 @@ const AppInner: FC = () => {
     [onSent, send, selectedId],
   );
 
-  const [view, setView] = useState<"chat" | "settings">("chat");
+  // Hero-send flow: when the user submits from the no-session hero composer,
+  // create a client-side draft (which useWebUIStream attaches to the backend)
+  // and stash the payload. The effect below fires send() as soon as
+  // selectedId becomes the uuid prefix — send() adds the optimistic message
+  // immediately and queues the ws send for the `attached` handler to flush
+  // with the real session id. This bridges the async gap between "user
+  // pressed send" and "backend attached + ready to receive".
+  const pendingHeroSendRef = useRef<PendingHeroSend | null>(null);
+
+  const handleHeroSend = useCallback(
+    (
+      content: string,
+      attachments?: OutgoingAttachmentRef[],
+      providerName?: string,
+      modelName?: string,
+    ): void => {
+      createDraftForSend(activePool);
+      pendingHeroSendRef.current = { content, attachments, providerName, modelName };
+    },
+    [createDraftForSend, activePool],
+  );
+
+  useEffect((): void => {
+    const pending = pendingHeroSendRef.current;
+    if (!pending || !selectedId) return;
+    pendingHeroSendRef.current = null;
+    onSent(selectedId);
+    send(pending.content, pending.attachments, pending.providerName, pending.modelName);
+  }, [selectedId, onSent, send]);
+
+  const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
 
   // ── Sidebar resize (refs keep the drag smooth without re-registering listeners)
   const [sidebarMobileOpen, setSidebarMobileOpen] = useState(false);
@@ -217,7 +256,7 @@ const AppInner: FC = () => {
           onGoHome={handleGoHome}
           onPoolChange={handlePoolChange}
           revealSessionId={revealSessionId}
-          onOpenSettings={() => setView("settings")}
+          onOpenSettings={() => setSettingsOpen(true)}
         />
 
         {/* Resize handle — desktop only */}
@@ -236,32 +275,30 @@ const AppInner: FC = () => {
         </div>
 
         <main className="flex flex-1 flex-col min-w-0">
-          {/* Chat↔settings crossfade (§8): ~200ms transform+opacity, both views
-           * keyed so each swap re-triggers the enter animation. No instant swap. */}
-          <ViewCrossfade viewKey={view}>
-            {view === "settings" ? (
-              <SettingsView onExit={() => setView("chat")} />
-            ) : (
-              <ChatView
-                messages={messages}
-                isStreaming={isStreaming}
-                isPending={isPending}
-                todos={todos}
-                pendingApprovals={pendingApprovals}
-                isApprovingBatch={isApprovingBatch}
-                submitApproval={submitApproval}
-                onApproveAll={onApproveAll}
-                sessionId={selectedId}
-                workspace={streamWs}
-                onSend={handleSend}
-                onPause={pause}
-                readOnly={isSelectedSubagent}
-                onOpenSidebar={() => setSidebarMobileOpen(true)}
-                agentName={agentName}
-              />
-            )}
-          </ViewCrossfade>
+          <ChatView
+            messages={messages}
+            isStreaming={isStreaming}
+            isPending={isPending}
+            todos={todos}
+            pendingApprovals={pendingApprovals}
+            isApprovingBatch={isApprovingBatch}
+            submitApproval={submitApproval}
+            onApproveAll={onApproveAll}
+            sessionId={selectedId}
+            workspace={streamWs}
+            onSend={handleSend}
+            onHeroSend={handleHeroSend}
+            onPause={pause}
+            readOnly={isSelectedSubagent}
+            onOpenSidebar={() => setSidebarMobileOpen(true)}
+            agentName={agentName}
+          />
         </main>
+
+        <SettingsModal
+          open={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+        />
 
         {sidebarMobileOpen && (
           <div

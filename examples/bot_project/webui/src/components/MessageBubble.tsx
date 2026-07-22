@@ -6,7 +6,6 @@ import { MarkdownRenderer } from "./MarkdownRenderer";
 import { ReasoningBlock } from "./ReasoningBlock";
 import { ToolTraceCard } from "./ToolTraceCard";
 import { AttachmentRenderer, type AttachmentView } from "./AttachmentRenderer";
-import { TypewriterText } from "../hooks/useTypewriter";
 import { formatClock } from "../lib/timezone";
 import { attachmentDownloadUrl } from "../lib/api";
 import { appendWsParam } from "../lib/url";
@@ -86,8 +85,9 @@ function renderBlock(
 
   if (isStreaming) {
     return (
-      <div key={`txt-${index}`} className="text-md leading-relaxed">
-        <TypewriterText text={block.text} isStreaming={isStreaming} />
+      <div key={`txt-${index}`} className="whitespace-pre-wrap break-words text-md leading-relaxed">
+        {block.text}
+        <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse rounded-sm bg-link align-text-bottom" aria-hidden="true" />
       </div>
     );
   }

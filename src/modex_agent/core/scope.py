@@ -35,11 +35,18 @@ class MemoryAgentRole(StrEnum):
 
 
 class MemoryLayerName(StrEnum):
-    """Canonical memory layer names used in metadata and config."""
+    """Canonical memory layer names used in metadata and config.
+
+    ``CORE`` names the Core Memory layer (per ADR-0035; formerly "knowledge").
+    The string value ``"core"`` is used as a dict key, a scope segment, and a
+    filesystem path segment (``<root>/core/<scope_key>/`` on disk). For
+    historical reasons the on-disk directory is ``core/`` rather than
+    ``core_memory/`` — they refer to the same concept.
+    """
 
     SESSION = "session"
     ARCHIVE = "archive"
-    KNOWLEDGE = "knowledge"
+    CORE = "core"
     PROVIDER = "provider"
     USER_RETENTION = "user_retention"
 

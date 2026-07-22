@@ -115,6 +115,23 @@ class TestBotBackendFactory:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _stub_modexctl_bin_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Provide a fake modexctl binary so resolve_modexctl_bin_dir() succeeds.
+
+    The builder calls resolve_modexctl_bin_dir() at build time to set the
+    spawn PATH for external agents. On CI / dev machines without modexctl
+    installed alongside the running Python, this raises. We point
+    MODEXBOT_BIN_DIR at a temp dir with a dummy modexctl shim so the
+    resolution strategy-1 (env override) succeeds.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    shim = bin_dir / ("modexctl.bat" if sys.platform == "win32" else "modexctl")
+    shim.write_text("@echo off\n")
+    monkeypatch.setenv("MODEXBOT_BIN_DIR", str(bin_dir))
+
+
 def _make_subagent_spec(
     *,
     agent_name: str = "coder",
@@ -296,12 +313,62 @@ async def test_build_env_spec_targets_only_parent_star_topology(
 
     spec_template: ExternalEnvSpec = _external_agent(instance)._spec_template
     assert spec_template.targets == [("main", "")]
-    # agent_pool_map contains ONLY this subagent's own pool entry.
-    assert spec_template.agent_pool_map == {"coder": "default"}
+    # Parent shares the subagent's pool (registered via pool.register_resident).
+    assert spec_template.agent_pool_map == {"coder": "default", "main": "default"}
     # session_id is invocation-prefixed.
     assert spec_template.session_id == "inv123.coder"
     # provider_session_id is empty — session_store resolves/commits it.
     assert spec_template.provider_session_id == ""
+    # comm_kind=SUBAGENT + parent_session_id: modexctl send routes to the
+    # parent's full session_id verbatim, not via prefix-reuse.
+    assert spec_template.comm_kind is AgentCommKind.SUBAGENT
+    assert spec_template.parent_session_id == "inv123.main"
+
+
+@pytest.mark.asyncio
+async def test_build_env_spec_agent_pool_map_includes_parent_for_modexctl_reply(
+    tmp_path: Path,
+) -> None:
+    """``MODEX_AGENT_POOL_MAP`` must include the parent so ``modexctl send`` can route.
+
+    Regression: external-coding subagent ``worker`` could not reply to parent
+    ``orchestrator`` — ``modexctl send --to orchestrator`` raised
+    ``target 'orchestrator' not in MODEX_AGENT_POOL_MAP (known: ['worker'])``
+    because ``agent_pool_map`` omitted the parent. Subagents are registered
+    into the parent's pool, so the parent's pool equals ``self._pool_name``.
+    """
+    builder = BotSubagentExternalCodingBuilder(
+        pool_name="default",
+        project_dir=tmp_path,
+        data_dir=tmp_path / ".modex",
+    )
+    spec = _make_subagent_spec(agent_name="worker")
+    descriptor = _make_descriptor(agent_name="worker")
+    deps = _make_deps(
+        broker=MagicMock(),
+        agent_bus=MagicMock(),
+        project_dir=tmp_path,
+    )
+
+    instance = await builder.build(
+        spec=spec,
+        descriptor=descriptor,
+        parent_session="inv123.orchestrator",
+        invocation_id="inv123",
+        deps=deps,
+    )
+
+    spec_template: ExternalEnvSpec = _external_agent(instance)._spec_template
+    assert "orchestrator" in spec_template.agent_pool_map
+    assert spec_template.agent_pool_map["orchestrator"] == "default"
+    assert spec_template.agent_pool_map["worker"] == "default"
+
+    env = ExternalEnvBuilder.build(spec_template, base_env={"PATH": "/usr/bin"})
+    from modexctl.main import _parse_pool_map, _resolve_target_pool
+
+    pool_map = _parse_pool_map(env["MODEX_AGENT_POOL_MAP"])
+    assert _resolve_target_pool(pool_map, "orchestrator") == "default"
+    assert _resolve_target_pool(pool_map, "worker") == "default"
 
 
 @pytest.mark.asyncio
@@ -332,6 +399,12 @@ async def test_build_env_spec_no_parent_yields_empty_targets(
 
     spec_template: ExternalEnvSpec = _external_agent(instance)._spec_template
     assert spec_template.targets == []
+    # comm_kind stays SUBAGENT even with no parent — the routing shape is
+    # determined by the builder path (subagent), not by parent presence.
+    # parent_session_id is None; modexctl send will error if invoked,
+    # which is correct (an orphan subagent has nowhere to reply).
+    assert spec_template.comm_kind is AgentCommKind.SUBAGENT
+    assert spec_template.parent_session_id is None
 
 
 @pytest.mark.asyncio
@@ -363,7 +436,7 @@ async def test_build_env_spec_passes_through_env_builder_for_modex_targets(
     spec_template: ExternalEnvSpec = _external_agent(instance)._spec_template
     env = ExternalEnvBuilder.build(spec_template, base_env={"PATH": "/usr/bin"})
     assert env["MODEX_TARGETS"] == "main="
-    assert env["MODEX_AGENT_POOL_MAP"] == "coder=default"
+    assert env["MODEX_AGENT_POOL_MAP"] == "coder=default;main=default"
     assert env["MODEX_SESSION_ID"] == "inv123.coder"
     assert env["MODEX_AGENT_NAME"] == "coder"
     assert env["MODEX_PROVIDER_SESSION_ID"] == ""

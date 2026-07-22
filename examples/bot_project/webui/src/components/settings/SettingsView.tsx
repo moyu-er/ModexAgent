@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import type { ConfigPayload, RegistrySection } from "../../types/config";
 import { ApiError, fetchConfig, saveConfig } from "../../lib/api";
 import { ConfigForm } from "./ConfigForm";
@@ -13,7 +14,8 @@ import { useToast } from "../ToastContext";
 import { restartToast } from "./restartToast";
 import { Button } from "../ui/Button";
 import { ActionBar } from "../ui/ActionBar";
-import { ChevronLeft } from "lucide-react";
+import { IconButton } from "../ui/IconButton";
+import { XIcon } from "../ui/icons";
 import { CATEGORY, type ViewKey } from "./categoryMeta";
 import { IM_BRAND_ICONS } from "./imBrands";
 import { useT, type MessageKey, type TFn } from "../../i18n";
@@ -25,7 +27,8 @@ import { validateModelValues } from "./modelValidation";
 export type { ViewKey };
 
 interface Props {
-  onExit: () => void;
+  open: boolean;
+  onClose: () => void;
 }
 
 // Sidebar groups. The Configuration group holds the persisted-config domains
@@ -118,7 +121,7 @@ function useDirty(form: ConfigPayload | null, original: ConfigPayload | null): b
   );
 }
 
-export function SettingsView({ onExit }: Props) {
+export function SettingsModal({ open, onClose }: Props) {
   const toast = useToast();
   const t = useT();
   const [view, setView] = useState<ViewKey>(readInitialTab);
@@ -127,10 +130,22 @@ export function SettingsView({ onExit }: Props) {
   const [error, setError] = useState<string>("");
   /** Open state for the discard-unsaved confirm when switching persisted views. */
   const [discardView, setDiscardView] = useState<ViewKey | null>(null);
+  /** Open state for the discard-unsaved confirm when closing the modal. */
+  const [discardForClose, setDiscardForClose] = useState<boolean>(false);
   const [saving, setSaving] = useState<boolean>(false);
 
   const isPersisted = PERSISTED_DOMAINS.has(view);
   const dirty = useDirty(form, original);
+
+  // Close the modal. If the current persisted view has unsaved edits, prompt
+  // for discard confirmation first; otherwise close immediately.
+  const requestClose = useCallback((): void => {
+    if (isPersisted && dirty) {
+      setDiscardForClose(true);
+    } else {
+      onClose();
+    }
+  }, [isPersisted, dirty, onClose]);
 
   // Sync tab → URL whenever the active view changes. replaceState (not push)
   // avoids polluting history on every navigation, and since the effect only
@@ -154,14 +169,32 @@ export function SettingsView({ onExit }: Props) {
     );
   }, [view, isPersisted, t]);
 
-  // Loading state only applies to persisted-config views.
-  if (isPersisted && (!form || !original)) {
-    return (
-      <div className="flex h-full items-center justify-center text-mute">
-        {error ? t("common.failedToLoad", { error }) : t("common.loading")}
-      </div>
-    );
-  }
+  // Esc closes the modal (with the same dirty guard as the X button). When
+  // the discard confirm is already open, let it handle its own Esc.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (discardView !== null || discardForClose) return;
+      e.stopPropagation();
+      requestClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, discardView, discardForClose, requestClose]);
+
+  // Lock body scroll while the modal is open.
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
+
+  // Closed modal renders nothing. All hooks above must run on every render.
+  if (!open) return null;
 
   const switchView = (next: ViewKey): void => {
     if (next === view) return;
@@ -218,98 +251,134 @@ export function SettingsView({ onExit }: Props) {
     setError("");
   };
 
-  return (
-    <div data-testid="settings-shell" className="flex h-full flex-col md:flex-row">
-      <aside
-        aria-label={t("settings.nav.settingsNavigation")}
-        className="w-full shrink-0 border-b border-hairline bg-canvas p-3 md:w-52 md:border-b-0 md:border-r"
+  return createPortal(
+    <div
+      className="modal-scrim-enter fixed inset-0 z-50 flex items-center justify-center bg-overlay p-6"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) requestClose();
+      }}
+    >
+      <div
+        className="modal-panel-enter flex h-[min(860px,92vh)] w-[min(1280px,95vw)] flex-col overflow-hidden rounded-lg border border-hairline bg-canvas-popover shadow-popover"
+        onClick={(e) => e.stopPropagation()}
       >
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onExit}
-          className="mb-5 w-full justify-start gap-2 px-3 text-base font-medium text-ink hover:bg-hairline-soft"
-        >
-          <ChevronLeft className="h-4 w-4" />
-          {t("settings.nav.back")}
-        </Button>
-        <div className="space-y-4">
-          <SidebarGroup
-            title={t("settings.nav.configuration")}
-            entries={CONFIG_GROUP}
-            active={view}
-            onSelect={switchView}
-            t={t}
-          />
-          <SidebarGroup
-            title={t("settings.nav.poolsAgents")}
-            entries={POOLS_GROUP}
-            active={view}
-            onSelect={switchView}
-            t={t}
-          />
-        </div>
-      </aside>
-
-      <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-canvas">
-        <div className="flex h-full flex-col">
-          <div className="flex-1 overflow-auto p-6">
-            {view === "mcp" ? (
-              <GlobalMcpView />
-            ) : view === "skills" ? (
-              <GlobalSkillsView />
-            ) : view === "pools" ? (
-              <PoolsView onNavigateToPrompts={() => setView("prompts")} />
-            ) : view === "prompts" ? (
-              <PromptsView />
-            ) : form && isPersisted ? (
-              <PersistedDomain
-                form={form}
-                error={error}
-                onChange={setForm}
-              />
-            ) : null}
+        <div className="flex flex-shrink-0 items-center gap-4 border-b border-hairline bg-canvas px-5 py-3.5">
+          <h2 className="text-lg font-bold leading-tight tracking-tight text-bright">
+            {t("settings.modal.title")}
+          </h2>
+          <div className="ml-auto flex items-center gap-2">
+            <IconButton
+              icon={<XIcon />}
+              label={t("settings.modal.close")}
+              variant="ghost"
+              size="sm"
+              onClick={requestClose}
+            />
           </div>
-          {isPersisted && form && (
-            <ActionBar dirty={dirty}>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={onCancel}
-                disabled={!dirty || saving}
-              >
-                {t("common.cancel")}
-              </Button>
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={onSave}
-                disabled={!dirty || saving}
-                loading={saving}
-              >
-                {t("common.save")}
-              </Button>
-            </ActionBar>
-          )}
         </div>
-      </section>
 
-      {discardView !== null ? (
-        <ConfirmDialog
-          title={t("settings.common.discardUnsavedTitle")}
-          message={t("settings.common.discardSwitchView")}
-          confirmLabel={t("settings.common.discard")}
-          tone="danger"
-          onConfirm={() => {
-            const next = discardView;
-            setDiscardView(null);
-            setView(next);
-            setError("");
-          }}
-          onCancel={() => setDiscardView(null)}
-        />
-      ) : null}
-    </div>
+        <div
+          data-testid="settings-shell"
+          className="flex min-h-0 flex-1 flex-row"
+        >
+          <aside
+            aria-label={t("settings.nav.settingsNavigation")}
+            className="w-52 shrink-0 border-r border-hairline bg-canvas p-3"
+          >
+            <div className="space-y-4">
+              <SidebarGroup
+                title={t("settings.nav.configuration")}
+                entries={CONFIG_GROUP}
+                active={view}
+                onSelect={switchView}
+                t={t}
+              />
+              <SidebarGroup
+                title={t("settings.nav.poolsAgents")}
+                entries={POOLS_GROUP}
+                active={view}
+                onSelect={switchView}
+                t={t}
+              />
+            </div>
+          </aside>
+
+          <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-canvas">
+            <div className="flex h-full flex-col">
+              <div className="flex-1 overflow-auto p-6">
+                {isPersisted && (!form || !original) ? (
+                  <div className="flex h-full items-center justify-center text-mute">
+                    {error
+                      ? t("common.failedToLoad", { error })
+                      : t("common.loading")}
+                  </div>
+                ) : view === "mcp" ? (
+                  <GlobalMcpView />
+                ) : view === "skills" ? (
+                  <GlobalSkillsView />
+                ) : view === "pools" ? (
+                  <PoolsView onNavigateToPrompts={() => setView("prompts")} />
+                ) : view === "prompts" ? (
+                  <PromptsView />
+                ) : form && isPersisted ? (
+                  <PersistedDomain
+                    form={form}
+                    error={error}
+                    onChange={setForm}
+                  />
+                ) : null}
+              </div>
+              {isPersisted && form && (
+                <ActionBar dirty={dirty}>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={onCancel}
+                    disabled={!dirty || saving}
+                  >
+                    {t("common.cancel")}
+                  </Button>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={onSave}
+                    disabled={!dirty || saving}
+                    loading={saving}
+                  >
+                    {t("common.save")}
+                  </Button>
+                </ActionBar>
+              )}
+            </div>
+          </section>
+        </div>
+
+        {discardView !== null || discardForClose ? (
+          <ConfirmDialog
+            title={t("settings.common.discardUnsavedTitle")}
+            message={t("settings.common.discardSwitchView")}
+            confirmLabel={t("settings.common.discard")}
+            tone="danger"
+            onConfirm={() => {
+              if (discardForClose) {
+                setDiscardForClose(false);
+                onClose();
+              } else if (discardView !== null) {
+                const next = discardView;
+                setDiscardView(null);
+                setView(next);
+              }
+              setError("");
+            }}
+            onCancel={() => {
+              setDiscardView(null);
+              setDiscardForClose(false);
+            }}
+          />
+        ) : null}
+      </div>
+    </div>,
+    document.body,
   );
 }
 

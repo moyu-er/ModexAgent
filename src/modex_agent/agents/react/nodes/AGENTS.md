@@ -5,41 +5,42 @@
 
 ## Purpose
 
-Graph node implementations for the ReAct agent execution loop. Each node is a single step in the 4-node directed graph: `START → LLM → TOOL → END`. Nodes are invoked by the graph runtime and return `NodeTransition` to determine the next node.
+Graph node implementations for the ReAct agent execution loop. Each node is a single step in the 4-node directed graph: `START → LLM → TOOL → END`. Nodes implement `modex_graph.Node[S]` and return `NodeResult` to determine the next node via transition reason.
 
 ## Key Files
 
 | File | Description |
 |------|-------------|
 | `start.py` | `StartNode` — entry point; routes to LLM for fresh turns or to the saved `current_node` for resumed (suspended) turns |
-| `llm.py` | `LLMNode` — assembles messages, calls the LLM provider (streaming or non-streaming), dispatches hooks/interceptors, emits iteration events |
-| `tool.py` | `ToolNode` — classifies tool calls for approval, suspends for approval when `PENDING`, batch-executes approved calls, routes back to LLM or END |
-| `end.py` | `EndNode` — assembles `AgentResult` (normal/error/cancelled/max-iterations), emits completion events, marks turn as completed |
+| `llm.py` | `LLMNode` — assembles messages, calls the LLM provider (streaming or non-streaming), dispatches hooks/interceptors via `ctx.runtime.*`, emits iteration events |
+| `tool.py` | `ToolNode` — classifies tool calls for approval, suspends for approval when `PENDING` via `ctx.interrupt(tx)`, batch-executes approved calls, routes back to LLM or END |
+| `end.py` | `EndNode` — assembles `AgentResult` (normal/error/cancelled/max-iterations), writes `ctx.state.result`, emits completion events |
 | `__init__.py` | Re-exports `StartNode`, `LLMNode`, `ToolNode`, `EndNode` |
 
 ## For AI Agents
 
 ### Working In This Directory
-- Each node extends `Node` and implements `async def execute(ctx: AgentContext) -> NodeTransition`
-- Nodes access ReAct-specific state via `get_react_state(ctx)` from `modex_agent/agents/react/state.py`
-- Node transitions use `ReActReason` enums (e.g. `NORMAL_START`, `HAS_TOOLS`, `NO_TOOLS`, `LLM_ERROR`, `DONE`)
+- Each node extends `modex_graph.Node[S]` and implements `def execute(ctx: GraphContext[ReActTurnState]) -> NodeResult` (declared as `def`, not `async def`; subclasses may override with `async def`)
+- Nodes access ReAct-specific state via `ctx.state` (a `ReActTurnState` — no longer via `get_react_state(ctx)` helper)
+- Node transitions use `ReActReason` enums (e.g. `NORMAL_START`, `HAS_TOOLS`, `NO_TOOLS`, `LLM_ERROR`, `TOOLS_DONE`)
+- AOP calls go through `ctx.runtime.*` (`ReactGraphRuntime`): `dispatch_hook`, `around`, `apply_governance`, `drain_control`, `capture_snapshot`, `emit`
 - `ToolNode` is the most complex node — it handles the full approval lifecycle (classify → suspend → resume → execute)
-- Approval suspension uses `interrupt()` from `modex_agent.core.graph.interrupt` which raises a `GraphInterrupt`
+- Approval suspension uses `ctx.interrupt(tx)` which raises a `GraphInterrupt` from `modex_graph.exceptions`
 
 ### Common Patterns
-- Read `state.phase` to detect `SUSPENDED` vs fresh turns
-- Use `ctx.emitter.emit(ReActEvent.xxx)` for event-driven observability
-- LLMNode drains injection queue + control channel at safe points
+- Read `ctx.state.phase` to detect `SUSPENDED` vs fresh turns
+- Use `ctx.runtime.emit(ReActEvent.xxx, data, ctx)` for event-driven observability
+- LLMNode drains control channel at safe points via `ctx.runtime.drain_control(ctx)`
 - ToolNode normalizes approval decisions via `_normalize_batch_decisions()` before execution
 
 ## Dependencies
 
 ### Internal
-- `modex_agent/agents/react/` — `agent.py` (ReActAgent, ReActEvent), `constants.py` (ReActNode, ReActReason), `state.py` (ReActTurnState)
-- `modex_agent/core/graph/` — `node.py` (Node, NodeTransition), `interrupt.py` (interrupt)
+- `modex_agent/agents/react/` — `agent.py` (ReActAgent, ReActEvent), `constants.py` (ReActNode, ReActReason, ReActHookPoint, ReActScope, ReActEvent), `state.py` (ReActTurnState), `runtime.py` (ReactGraphRuntime), `context.py` (ReActGraphContext)
+- `modex_graph` — `Node[S]`, `GraphContext[S]`, `NodeResult`, `GraphInterrupt` (ADR-0033)
 - `modex_agent/core/` — `AgentContext`, `LLMResponse`, `ToolCall`, emitter types
 - `modex_agent/runtime/` — `TurnPhase`, interceptors, dispatch deadline
-- `modex_agent/hook/` — HookPoint, HookPayload, control_drain
+- `modex_agent/hook/` — HookPoint, HookPayload
 - `modex_agent/approval/` — ApprovalDecision, ApprovalTier enums
 
 <!-- MANUAL -->

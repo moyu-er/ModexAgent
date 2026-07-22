@@ -1015,7 +1015,7 @@ class _MockArchiveAgent(ArchiveGenerator):
         return ArchiveGenerationResult(
             documents=ArchiveDocuments(
                 context="context summary",
-                knowledge="knowledge summary",
+                core="knowledge summary",
                 index="Test Archive Topic",
             )
         )

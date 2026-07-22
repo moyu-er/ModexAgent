@@ -73,6 +73,9 @@ INPUT_PROMPT_MARKERS: tuple[str, ...] = (
     "[Y/n]",
     "[yes/no]",
     "(yes/no)",
+    "(y/n)",
+    "[y/N]",
+    "(Y/n)",
     "pin:",
     "token:",
     "passcode",
@@ -88,9 +91,11 @@ INPUT_PROMPT_MARKERS: tuple[str, ...] = (
     "new password",
     "retype password",
     "repeat password",
-    "(y/n)",
-    "[y/N]",
-    "(Y/n)",
+    "continue?",
+    "proceed?",
+    "are you sure",
+    "do you want",
+    "select",
 )
 
 # Markers that can coincidentally appear in legitimate output
@@ -113,18 +118,22 @@ _PROMPT_ENDING_CHARS: tuple[str, ...] = (":", "?", "]", ")")
 
 
 def is_waiting_for_input(output: str) -> bool:
-    """Check if the last non-empty line of *output* contains an input prompt marker.
+    """Check if the last non-empty line of *output* looks like an input prompt.
 
     Strips ANSI escape sequences before checking.  Case-insensitive.
 
-    Handles ``\\r`` repaint lines (progress bars, download indicators) by
-    only inspecting the most-recently-painted segment — the text after the
-    last ``\\r``.  This prevents old progress states that happen to contain
-    a marker word from triggering a false positive.
+    Two detection layers (either triggers a positive):
+    1. **Marker match**: the last line contains a known input-prompt keyword
+       (password, passphrase, [y/n], confirm, etc.). Ambiguous markers
+       (e.g. "password") additionally require prompt-ending punctuation.
+    2. **Suffix match**: the last non-empty line ends with ``:``, ``?``,
+       ``]`` or ``)`` AND does NOT look like a shell prompt (``$``/``#``/
+       ``%``/``>`` suffix, or ``user@host`` form). This catches arbitrary
+       custom prompts like ``x:``, ``Continue?``, ``[A]llow?`` without
+       needing an exhaustive keyword list.
 
-    Ambiguous markers (words like "password" or "confirm" that can appear
-    in ordinary output) require the last line to end with prompt-ending
-    punctuation (``:``, ``?``, ``]``, ``)``).
+    Handles ``\\r`` repaint lines (progress bars, download indicators) by
+    only inspecting the most-recently-painted segment.
     """
     if not output:
         return False
@@ -135,26 +144,22 @@ def is_waiting_for_input(output: str) -> bool:
 
     last = lines[-1].lower()
 
-    # For \\r repaints, keep only text after the last \\r — the
-    # most-recently-painted screen line, which is what a user sees.
     if "\r" in last:
         last = last.rsplit("\r", 1)[-1]
 
     if not last.strip():
         return False
 
+    # Layer 1: known marker keywords
     for marker in INPUT_PROMPT_MARKERS:
         if marker not in last:
             continue
-        # Ambiguous markers need extra context: the line must look like
-        # an actual input prompt, not a progress / status message.
         if marker in _AMBIGUOUS_MARKERS:
             stripped = last.rstrip()
             if not stripped.endswith(_PROMPT_ENDING_CHARS) and stripped != marker:
                 continue
         return True
     return False
-
 
 PROMPT_SUFFIXES: tuple[str, ...] = (
     "$ ",
@@ -183,8 +188,6 @@ PROMPT_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"\S+@\S+[^#\n]*#\s*$"),
     # Colon-ending prompts
     re.compile(r"\S+@\S*[^:\n]*:\s*$"),
-    # ^ anchor required: prevents matching trailing "user: " inside "[sudo] password for user: "
-    re.compile(r"^\w+:\s*$"),
     # Python REPL (must be exactly 3 >, NOT PowerShell continuation >>)
     re.compile(r">>>\s*$"),
     # Single-char no-trailing-space (most permissive, last)

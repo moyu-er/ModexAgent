@@ -1,13 +1,13 @@
-"""Regression test for knowledge template init on workspace restore.
+"""Regression test for core memory template init on workspace restore.
 
 Root cause this locks down: ``create_pool`` previously never initialized
-knowledge defaults at pool-creation time. Knowledge files were created
-lazily on the first ``get_knowledge`` using the *relative*
+core memory defaults at pool-creation time. Core memory files were created
+lazily on the first ``get_core_memory`` using the *relative*
 ``default_templates_dir`` from config, which resolves against CWD. When the
 workspace is **restored at startup to a non-home dir** (e.g. E:\\download\\bot),
 restore runs before pool creation and before ``os.chdir`` lands the CWD on the
-restored dir — so the relative ``templates/knowledge`` path resolves against
-the restored workspace (where no templates exist) and EMPTY knowledge files
+restored dir — so the relative ``templates/core`` path resolves against
+the restored workspace (where no templates exist) and EMPTY core memory files
 get written.
 
 The fix: ``ensure_long_term_defaults`` resolves the template dir to an
@@ -33,7 +33,7 @@ from bot.service.pool_builder import ensure_long_term_defaults
 
 
 def _write_templates(project_dir: Path) -> Path:
-    templates = project_dir / "templates" / "knowledge"
+    templates = project_dir / "templates" / "core"
     templates.mkdir(parents=True, exist_ok=True)
     (templates / "SOUL.md").write_text("# Template SOUL\nidentity content\n", encoding="utf-8")
     (templates / "USER.md").write_text("# Template USER\nprofile content\n", encoding="utf-8")
@@ -43,12 +43,12 @@ def _write_templates(project_dir: Path) -> Path:
 
 def _cfg(scope: str = "global") -> MemoryConfig:
     return MemoryConfig(
-        knowledge={"enabled": True, "default_templates_dir": "templates/knowledge", "scope": scope},
+        core={"enabled": True, "default_templates_dir": "templates/core", "scope": scope},
     )
 
 
 @pytest.mark.asyncio
-async def test_knowledge_populated_even_when_cwd_is_not_project(tmp_path: Path) -> None:
+async def test_core_memory_populated_even_when_cwd_is_not_project(tmp_path: Path) -> None:
     """Templates resolve via project_dir, not CWD — restored workspaces get content."""
     project_dir = tmp_path / "project"
     _write_templates(project_dir)
@@ -67,7 +67,7 @@ async def test_knowledge_populated_even_when_cwd_is_not_project(tmp_path: Path) 
         os.chdir(original_cwd)
 
     ctx = MemoryContext(session_id="default", user_id="default")
-    km = await ms.get_knowledge(ctx)
+    km = await ms.get_core_memory(ctx)
     assert km.soul == "# Template SOUL\nidentity content\n", (
         f"SOUL must come from template via absolute path, got {km.soul!r}"
     )
@@ -90,7 +90,7 @@ async def test_does_not_overwrite_existing_nonempty(tmp_path: Path) -> None:
     from modex_agent.memory.core.consolidation import MemoryUpdate, MemoryUpdateMode
 
     ctx = MemoryContext(session_id="default", user_id="default")
-    await ms.knowledge_manager.apply_update(
+    await ms.core_memory_manager.apply_update(
         ctx,
         MemoryUpdate(
             file_name="SOUL.md",
@@ -101,23 +101,23 @@ async def test_does_not_overwrite_existing_nonempty(tmp_path: Path) -> None:
     )
 
     await ensure_long_term_defaults(project_dir, cfg, ms)
-    km = await ms.get_knowledge(ctx)
+    km = await ms.get_core_memory(ctx)
     assert km.soul == "# MY CUSTOM SOUL\n", "existing non-empty SOUL must not be overwritten"
 
 
 @pytest.mark.asyncio
-async def test_noop_when_knowledge_disabled(tmp_path: Path) -> None:
-    """knowledge disabled → helper is a no-op, no files written."""
+async def test_noop_when_core_memory_disabled(tmp_path: Path) -> None:
+    """core memory disabled → helper is a no-op, no files written."""
     project_dir = tmp_path / "project"
     _write_templates(project_dir)
 
     workspace = tmp_path / "ws"
-    cfg = MemoryConfig()  # knowledge disabled by default
+    cfg = MemoryConfig()  # core memory disabled by default
     ms = create_memory(cfg, None, workspace)  # type: ignore[arg-type]
     await ms.initialize()
     await ensure_long_term_defaults(project_dir, cfg, ms)
 
     ctx = MemoryContext(session_id="default", user_id="default")
-    km = await ms.get_knowledge(ctx)
-    # knowledge layer absent → empty LongTermMemory
+    km = await ms.get_core_memory(ctx)
+    # core memory layer absent → empty CoreMemoryContents
     assert km.soul == "" and km.user == "" and km.memory == ""

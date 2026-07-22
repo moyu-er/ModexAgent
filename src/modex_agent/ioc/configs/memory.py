@@ -55,7 +55,7 @@ class RetentionConfig(BaseModel):
 
 
 class LongTermConfig(BaseModel):
-    """Long-term knowledge files (SOUL.md / USER.md / MEMORY.md)."""
+    """Core memory files (SOUL.md / USER.md / MEMORY.md)."""
 
     enabled: bool = False
     init_defaults: bool = True
@@ -63,7 +63,7 @@ class LongTermConfig(BaseModel):
 
 
 class DreamEngineConfig(BaseModel):
-    """Offline archive-to-knowledge consolidation."""
+    """Offline archive-to-core-memory consolidation."""
 
     enabled: bool = False
     interval: int = 1200
@@ -110,7 +110,7 @@ class ArchiveConfig(BaseModel):
     enabled: bool = False
     max_entries: int = 1000
     retained_consumed_pairs: int = 3
-    max_archive_count: int = 10  # trigger knowledge update when this many undigested
+    max_archive_count: int = 10  # trigger core memory update when this many undigested
     max_archive_total: int = 20  # max archive dirs on disk (FIFO eviction)
     max_archive_inject: int = 3  # how many recent archives to inject into system prompt
     archive_inject_max_chars: int = 20_000
@@ -127,8 +127,8 @@ class ArchiveConfig(BaseModel):
         return v  # type: ignore[return-value]
 
 
-class KnowledgeConfig(BaseModel):
-    """Knowledge memory: persistent SOUL/USER/MEMORY files. Separate from ArchiveConfig."""
+class CoreMemoryConfig(BaseModel):
+    """Core memory: persistent SOUL/USER/MEMORY files. Separate from ArchiveConfig."""
 
     enabled: bool = False
     default_templates_dir: str | None = None
@@ -166,7 +166,7 @@ class SummarizerAgentConfig(BaseModel):
 
     enabled: bool = True
     context_max_chars: int = 20_000
-    knowledge_max_chars: int = 3000
+    core_max_chars: int = 3000
     index_max_chars: int = 200
     max_iterations: int = 50
 
@@ -178,14 +178,14 @@ class MemoryConfig(BaseModel):
     MemoryConfig() = enabled with all defaults:
       - session layer: on (token-budget compression triggers)
       - user retention layer: on (internal, transparent)
-      - archive/knowledge: off
+      - archive/core: off
       - governance/lossy: off
     """
 
     # New fields
     session: SessionConfig = Field(default_factory=SessionConfig)
     archive: ArchiveConfig | None = Field(default_factory=ArchiveConfig)
-    knowledge: KnowledgeConfig | None = None
+    core: CoreMemoryConfig | None = None
     dream_engine: DreamEngineConfig | None = None
 
     # Summarizer-agent wiring (new agent-based archive flow)
@@ -232,18 +232,18 @@ class MemoryConfig(BaseModel):
                     current["enabled"] = True
                     object.__setattr__(self, "archive", ArchiveConfig(**current))
 
-                if self.knowledge is None:
+                if self.core is None:
                     object.__setattr__(
                         self,
-                        "knowledge",
-                        KnowledgeConfig(
+                        "core",
+                        CoreMemoryConfig(
                             enabled=True,
                             default_templates_dir=self.long_term.default_templates_dir,
                         ),
                     )
                 else:
-                    current = self.knowledge.model_dump()
+                    current = self.core.model_dump()
                     current["enabled"] = True
                     if self.long_term.default_templates_dir:
                         current["default_templates_dir"] = self.long_term.default_templates_dir
-                    object.__setattr__(self, "knowledge", KnowledgeConfig(**current))
+                    object.__setattr__(self, "core", CoreMemoryConfig(**current))

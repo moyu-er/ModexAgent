@@ -168,9 +168,9 @@ class DirArchiveStorage(StoreMetadata, MessageStore, KVStore, CursorStore, Archi
     async def prune_to_max(self, max_entries: int, min_safe_id: int = 0) -> int:
         """Delete oldest archive dirs exceeding max_entries, but never below min_safe_id.
 
-        min_safe_id is typically knowledge_consumed_archive_id — archives at or below
+        min_safe_id is typically core_consumed_archive_id — archives at or below
         this ID are already consumed and safe to delete. Archives above it are preserved
-        for pending knowledge digestion.
+        for pending core memory digestion.
         """
         ids = await self.list_archives(limit=10_000)
         deletable = [aid for aid in ids if aid <= min_safe_id] if min_safe_id > 0 else []

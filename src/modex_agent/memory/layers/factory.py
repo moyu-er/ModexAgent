@@ -20,7 +20,7 @@ from modex_agent.memory.layers.config import (
     StorageFactory,
     UserRetentionBufferConfig,
 )
-from modex_agent.memory.layers.knowledge import ScopedKnowledgeMemoryManager
+from modex_agent.memory.layers.core import ScopedCoreMemoryManager
 from modex_agent.memory.layers.session import ScopedSessionMemoryManager
 from modex_agent.memory.layers.user_buffer import ScopedUserRetentionBuffer
 from modex_agent.memory.registry import MemoryStoreRegistry
@@ -45,8 +45,8 @@ class MemoryLayerFactory:
         archive_manager = MemoryLayerFactory._maybe_build(
             registry, config.archive, MemoryLayerName.ARCHIVE, ScopedArchiveMemoryManager
         )
-        knowledge_manager = MemoryLayerFactory._maybe_build(
-            registry, config.knowledge, MemoryLayerName.KNOWLEDGE, ScopedKnowledgeMemoryManager
+        core_memory_manager = MemoryLayerFactory._maybe_build(
+            registry, config.core, MemoryLayerName.CORE, ScopedCoreMemoryManager
         )
         user_retention_manager = (
             MemoryLayerFactory._maybe_build(
@@ -58,7 +58,7 @@ class MemoryLayerFactory:
         return MemoryLayerSet(
             session=session_manager,
             archive=archive_manager,
-            knowledge=knowledge_manager,
+            core=core_memory_manager,
             user_retention=user_retention_manager,
         )
 
@@ -97,7 +97,7 @@ class MemoryLayerFactory:
         effective_config = MemoryLayerConfigSet(
             session=config or SessionMemoryConfig(),
             archive=None,
-            knowledge=None,
+            core=None,
             user_retention=user_retention_config or UserRetentionBufferConfig(),
         )
         return MemoryLayerFactory.build(registry=registry, config=effective_config)
@@ -106,17 +106,17 @@ class MemoryLayerFactory:
     def subagent_session_isolated(
         registry: MemoryStoreRegistry,
     ) -> MemoryLayerSet:
-        """Subagent memory: session-scoped archive, no knowledge layer.
+        """Subagent memory: session-scoped archive, no core memory layer.
 
         All layers use SessionScope to ensure complete isolation:
         - Session: SessionScope (unchanged)
         - Archive: SessionScope (NOT UserScope — each task session isolated)
-        - Knowledge: disabled (None — no SOUL/USER/MEMORY.md access)
+        - Core memory: disabled (None — no SOUL/USER/MEMORY.md access)
         """
         effective_config = MemoryLayerConfigSet(
             session=SessionMemoryConfig(),
             archive=ArchiveMemoryConfig(scope=SessionScope()),
-            knowledge=None,
+            core=None,
             user_retention=UserRetentionBufferConfig(enabled=True),
         )
         return MemoryLayerFactory.build(registry=registry, config=effective_config)

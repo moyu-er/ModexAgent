@@ -68,17 +68,17 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
     ``archive_id`` at write time.  ``.archive_state.json`` is the sole
     source of truth::
 
-        {"next_archive_id": N, "knowledge_consumed_archive_id": K}
+        {"next_archive_id": N, "core_consumed_archive_id": K}
 
     CONTEXT injection reads ALL entries unconditionally
     (``since_archive_id=0``) — it does **not** depend on
-    ``knowledge_consumed_archive_id``.
+    ``core_consumed_archive_id``.
 
     KNOWLEDGE is consumed by DreamEngine via
     ``get_unprocessed(channel=KNOWLEDGE)`` which reads only entries with
-    ``archive_id > knowledge_consumed_archive_id``.  After Dream commits
+    ``archive_id > core_consumed_archive_id``.  After Dream commits
     the cursor, ``prune_consumed_pairs()`` removes entries from **both**
-    channels whose ``archive_id ≤ knowledge_consumed_archive_id −
+    channels whose ``archive_id ≤ core_consumed_archive_id −
     retained_consumed_archive_pairs`` (default retention: 3 consumed pairs).
 
     This means consumed KNOWLEDGE entries do NOT immediately remove the
@@ -113,11 +113,11 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
     async def _do_prune(self, archive: ArchiveStore) -> None:
         state = await self._load_state(archive)
         safe_delete = (
-            state.knowledge_consumed_archive_id - self._config.retained_consumed_archive_pairs
+            state.core_consumed_archive_id - self._config.retained_consumed_archive_pairs
         )
         if safe_delete <= 0:
             return
-        for channel in (ArchiveChannel.CONTEXT, ArchiveChannel.KNOWLEDGE):
+        for channel in (ArchiveChannel.CONTEXT, ArchiveChannel.CORE):
             entries = await self._read_channel_logs(archive, channel)
             kept = [entry for entry in entries if self._archive_id(entry) > safe_delete]
             if len(kept) != len(entries):
@@ -172,7 +172,7 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
                 archive,
                 ArchiveState(
                     next_archive_id=state.next_archive_id + 1,
-                    knowledge_consumed_archive_id=state.knowledge_consumed_archive_id,
+                    core_consumed_archive_id=state.core_consumed_archive_id,
                 ),
             )
             await self._do_prune(archive)
@@ -196,7 +196,7 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
             archive_dir.mkdir(parents=True, exist_ok=True)
             (archive_dir / "context.md").write_text(generation.documents.context, encoding="utf-8")
             (archive_dir / "knowledge.md").write_text(
-                generation.documents.knowledge,
+                generation.documents.core,
                 encoding="utf-8",
             )
             (archive_dir / "index.md").write_text(generation.documents.index, encoding="utf-8")
@@ -207,14 +207,14 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
         if isinstance(raw, Mapping):
             return ArchiveState(
                 next_archive_id=int(raw.get("next_archive_id", 1)),
-                knowledge_consumed_archive_id=int(raw.get("knowledge_consumed_archive_id", 0)),
+                core_consumed_archive_id=int(raw.get("core_consumed_archive_id", 0)),
             )
         return ArchiveState()
 
     async def _save_state(self, archive: ArchiveStore, state: ArchiveState) -> None:
         payload = {
             "next_archive_id": state.next_archive_id,
-            "knowledge_consumed_archive_id": state.knowledge_consumed_archive_id,
+            "core_consumed_archive_id": state.core_consumed_archive_id,
         }
         await archive.write_archive_state(payload)
 
@@ -351,12 +351,12 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
         cursor_name: str,
         limit: int = 100,
         *,
-        channel: ArchiveChannel = ArchiveChannel.KNOWLEDGE,
+        channel: ArchiveChannel = ArchiveChannel.CORE,
     ) -> UnprocessedResult:
         bundle = await self._storage_factory(context)
         archive = _require_archive(bundle)
         state = await self._load_state(archive)
-        since = state.knowledge_consumed_archive_id
+        since = state.core_consumed_archive_id
         channel_entries = await self._read_channel_logs(
             archive,
             channel,
@@ -375,7 +375,7 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
         cursor_name: str,
         cursor: int,
         *,
-        channel: ArchiveChannel = ArchiveChannel.KNOWLEDGE,
+        channel: ArchiveChannel = ArchiveChannel.CORE,
     ) -> None:
         bundle = await self._storage_factory(context)
         archive = _require_archive(bundle)
@@ -387,7 +387,7 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
                 archive,
                 ArchiveState(
                     next_archive_id=state.next_archive_id,
-                    knowledge_consumed_archive_id=cursor,
+                    core_consumed_archive_id=cursor,
                 ),
             )
 
@@ -411,7 +411,7 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
         bundle = await self._storage_factory(context)
         archive = _require_archive(bundle)
         await self._save_channel_logs(archive, ArchiveChannel.CONTEXT, [])
-        await self._save_channel_logs(archive, ArchiveChannel.KNOWLEDGE, [])
+        await self._save_channel_logs(archive, ArchiveChannel.CORE, [])
 
     def _entry_from_dict(self, entry: dict[str, object]) -> ArchiveEntry:
         created_at = entry.get("created_at")

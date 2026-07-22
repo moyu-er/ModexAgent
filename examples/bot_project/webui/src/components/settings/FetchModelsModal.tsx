@@ -25,10 +25,9 @@ type LoadState =
   | { kind: "error"; message: string }
   | { kind: "success"; models: FetchedModel[] };
 
-/** Label shown in the modal header — `provider_key` for Form A, `base_url` for Form B. */
+/** Label shown in the modal header — `provider_key` if present, else `base_url`. */
 function displayLabel(req: FetchProviderModelsRequest): string {
-  if ("provider_key" in req) return req.provider_key;
-  return req.base_url;
+  return req.provider_key || req.base_url || "";
 }
 
 function describeError(err: unknown, t: TFn): string {

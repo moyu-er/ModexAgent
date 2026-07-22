@@ -274,19 +274,38 @@ def _send(
     agent_name = os.environ["MODEX_AGENT_NAME"]
     inbox_root = Path(os.environ["MODEX_INBOX_ROOT"])
     pool_map = _parse_pool_map(os.environ["MODEX_AGENT_POOL_MAP"])
+    comm_kind = os.environ.get("MODEX_COMM_KIND", "normal")
 
     try:
         if to == agent_name:
             raise _SelfSendRejectedError(
                 f"target {to!r} is the calling agent itself (MODEX_AGENT_NAME)"
             )
-        prefix = _compute_target_session_id(session_id)
         target_pool = _resolve_target_pool(pool_map, to)
+        if comm_kind == "subagent":
+            # Subagent path: target_sid is the parent's full session_id,
+            # supplied verbatim by the harness. Subagent session prefixes
+            # are invocation_ids, not conversation_ids, so ADR-0019
+            # prefix-reuse would mint a phantom parent session.
+            parent_sid = os.environ.get("MODEX_PARENT_SESSION_ID", "")
+            if not parent_sid:
+                raise _RoutingError(
+                    "MODEX_PARENT_SESSION_ID is required when "
+                    "MODEX_COMM_KIND=subagent"
+                )
+            target_sid = parent_sid
+            invocation_id = session_id.split(".", 1)[0] if "." in session_id else session_id
+        else:
+            # Main-agent-as-peer path: ADR-0019 prefix-reuse. The sender's
+            # session prefix (conversation_id) is reused as the receiver's
+            # prefix, creating an implicit session group across pools.
+            prefix = _compute_target_session_id(session_id)
+            target_sid = f"{prefix}.{to}"
+            invocation_id = prefix
     except _RoutingError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(code=EXIT_ROUTING) from None
 
-    target_sid = f"{prefix}.{to}"
     xml_content = build_peer_agent_message(source=agent_name, content=content)
     message = InboxMessage(
         session_id=target_sid,
@@ -298,7 +317,7 @@ def _send(
         metadata={
             "agent_session_id": target_sid,
             "session_id": session_id,
-            "invocation_id": prefix,
+            "invocation_id": invocation_id,
             "parent_session_id": None,
         },
     )

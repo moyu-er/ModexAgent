@@ -24,12 +24,13 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from aiohttp import ClientSession, ClientTimeout, web
+from pydantic import ValidationError
 
 from bot.adapters.channels import set_conv_channel
 from bot.adapters.web_socket import WebSocketInputAdapter
 from bot.config.prompt_store import PromptExistsError
 from bot.service.config_controller import ConfigController, FieldValidationError
-from bot.service.model_config import BotModelConfig
+from bot.service.model_config import BotModelConfig, ProviderCfg
 from bot.service.pool_config_controller import (
     PoolConfigController,
     PoolNotEmptyError,
@@ -37,10 +38,11 @@ from bot.service.pool_config_controller import (
 )
 from bot.webui.events import (
     DeltaEnvelope,
+    ServerEvent,
     WebSocketAction,
     WebUIEventType,
 )
-from bot.webui.model_fetch import ModelFetchError, fetch_provider_models
+from bot.webui.model_fetch import FetchModelsReq, ModelFetchError, fetch_provider_models
 from bot.webui.transcript_store import TranscriptStore
 from modex_agent.core.constants import InterfaceFormat
 from modex_agent.core.session_id import (
@@ -224,6 +226,69 @@ def _entry_from_session(session: SessionInfo, pool: str) -> SessionListEntry:
 def _new_uuid_prefix() -> str:
     """Generate a new 12-char uuid prefix for a session_id."""
     return uuid4().hex[:12]
+
+
+def _materialize_partial_deltas(
+    events: list[ServerEvent], agent_name: str
+) -> dict[str, object] | None:
+    """Fold partial streaming delta events into a synthetic streaming assistant_turn.
+
+    Deltas are grouped by ``segment_id`` (empty string → anonymous segment)
+    and merged append-wise per group, preserving order of first appearance.
+    The result carries ``is_streaming=True`` so the frontend renders it as an
+    in-progress message and continues appending live WS deltas on top.
+    """
+    from bot.webui.events import ModelContentDelta, ModelReasoningDelta
+
+    segment_order: list[str] = []
+    segment_text: dict[str, str] = {}
+    segment_kind: dict[str, str] = {}
+    first_ts: int | None = None
+    turn_id: str = ""
+
+    for evt in events:
+        if first_ts is None or evt.timestamp < first_ts:
+            first_ts = evt.timestamp
+        if not turn_id:
+            tid = getattr(evt, "turn_id", "")
+            if tid:
+                turn_id = tid
+        if isinstance(evt, ModelContentDelta):
+            seg = evt.segment_id or "_text"
+        elif isinstance(evt, ModelReasoningDelta):
+            seg = evt.segment_id or "_reasoning"
+        else:
+            continue
+        kind = "reasoning" if isinstance(evt, ModelReasoningDelta) else "text"
+        if seg not in segment_text:
+            segment_text[seg] = ""
+            segment_kind[seg] = kind
+            segment_order.append(seg)
+        segment_text[seg] += evt.text
+
+    if not segment_order:
+        return None
+
+    blocks: list[dict[str, object]] = []
+    for seg in segment_order:
+        kind = segment_kind[seg]
+        text = segment_text[seg]
+        if text:
+            blocks.append({"kind": kind, "text": text})
+
+    if not blocks:
+        return None
+
+    return {
+        "event": "assistant_turn",
+        "session_id": "",
+        "agent_name": agent_name,
+        "timestamp": first_ts or 0,
+        "turn_id": turn_id,
+        "blocks": blocks,
+        "latency_ms": 0,
+        "is_streaming": True,
+    }
 
 
 # ── Workspace membership seam (owned by the consumer) ──────────────────────
@@ -893,27 +958,14 @@ class WebUIServer:
     async def _handle_fetch_provider_models(self, request: web.Request) -> web.Response:
         """POST /api/models/fetch -- fetch a provider's model list server-side.
 
-        Two mutually exclusive request forms, both converging on
-        :func:`fetch_provider_models`:
+        Unified schema (``FetchModelsReq``): ``{provider_key?, base_url?,
+        api_key?, interface_format?, models_url?}``. Inline fields take
+        priority; missing fields fall back to the saved provider looked up
+        by ``provider_key`` in ``model.yml``. After merge, ``api_key`` and
+        (``base_url`` or ``models_url``) must be non-empty.
 
-        **Form A** (read from saved config):
-            Body: ``{"provider_key": "<key>"}``. All connection info
-            (base_url, api_key, interface_format, models_url) is read
-            from the persisted model.yml. Returns 404 if the key is
-            unknown.
-
-        **Form B** (inline connection info, no persistence):
-            Body: ``{"base_url": "...", "api_key": "...",
-            "interface_format": "openai_compatible"|"anthropic",
-            "models_url": null | "..."}``. Connection info is read from
-            the request body and held in-memory only — never persisted,
-            never logged. ``interface_format`` defaults to
-            ``"openai_compatible"``, ``models_url`` defaults to ``None``.
-            Returns 422 if ``base_url`` or ``api_key`` is empty.
-
-        Returns ``{models: [{id, owned_by}]}``. The handler logs
-        ``provider_key`` (Form A) or ``base_url`` (Form B) for
-        diagnostics; ``api_key`` is never logged.
+        ``api_key`` is never logged; only ``provider_key`` and/or
+        ``base_url`` appear in diagnostics.
         """
         try:
             body = await request.json()
@@ -921,84 +973,56 @@ class WebUIServer:
             logger.warning("fetch_provider_models: bad JSON body: %s", exc)
             return web.json_response({"error": "invalid body"}, status=400)
 
-        if not isinstance(body, dict):
-            return web.json_response({"error": "invalid body"}, status=400)
+        try:
+            req = FetchModelsReq.model_validate(body)
+        except ValidationError as exc:
+            from bot.service.config_controller import _flatten_errors
 
-        provider_key = body.get("provider_key")
-        if isinstance(provider_key, str) and provider_key:
-            # Form A — read connection info from saved model.yml.
-            if self._model_config_loader is None:
-                return web.json_response(
-                    {"error": "model config not loaded"}, status=503
-                )
-            cfg = self._model_config_loader()
-            if cfg is None:
-                return web.json_response(
-                    {"error": "model config not loaded"}, status=503
-                )
+            return web.json_response(
+                {"error": "validation", "fields": _flatten_errors(exc)},
+                status=422,
+            )
 
-            provider = cfg.find_provider_by_key(provider_key)
-            if provider is None:
-                return web.json_response(
-                    {"error": f"provider not found: {provider_key}"},
-                    status=404,
-                )
+        saved: ProviderCfg | None = None
+        if req.provider_key:
+            if self._model_config_loader is not None:
+                cfg = self._model_config_loader()
+                if cfg is not None:
+                    saved = cfg.find_provider_by_key(req.provider_key)
+            # If saved is None (model.yml missing, unparseable, or key not
+            # yet saved), fall through to inline values below instead of
+            # erroring — the user may be fetching models for a brand-new
+            # provider that hasn't been saved yet.
 
-            if not provider.api_key:
-                return web.json_response({"error": "API key is required"}, status=400)
-            if not provider.base_url and not provider.models_url:
-                return web.json_response({"error": "Base URL is required"}, status=400)
+        base_url = req.base_url or (saved.base_url if saved else "") or ""
+        api_key = req.api_key or (saved.api_key if saved else "") or ""
+        interface_format = (
+            req.interface_format
+            or (saved.interface_format if saved else None)
+            or InterfaceFormat.OPENAI_COMPATIBLE
+        )
+        models_url = (
+            req.models_url
+            if req.models_url is not None
+            else (saved.models_url if saved else None)
+        )
 
-            base_url = provider.base_url
-            api_key = provider.api_key
-            interface_format = provider.interface_format
-            models_url = provider.models_url
-            log_label = f"provider_key={provider_key}"
-        else:
-            # Form B — read connection info inline from the request body.
-            base_url = body.get("base_url")
-            api_key = body.get("api_key")
-            if not isinstance(base_url, str) or not base_url:
-                return web.json_response(
-                    {"error": "validation", "fields": {"base_url": ["required"]}},
-                    status=422,
-                )
-            if not isinstance(api_key, str) or not api_key:
-                return web.json_response(
-                    {"error": "validation", "fields": {"api_key": ["required"]}},
-                    status=422,
-                )
+        if not api_key:
+            return web.json_response(
+                {"error": "validation", "fields": {"api_key": ["required"]}},
+                status=422,
+            )
+        if not base_url and not models_url:
+            return web.json_response(
+                {"error": "validation", "fields": {"base_url": ["required"]}},
+                status=422,
+            )
 
-            interface_raw = body.get("interface_format") or "openai_compatible"
-            try:
-                interface_format = InterfaceFormat(interface_raw)
-            except ValueError:
-                return web.json_response(
-                    {
-                        "error": "validation",
-                        "fields": {
-                            "interface_format": [
-                                "expected one of: "
-                                + ", ".join(f.value for f in InterfaceFormat)
-                            ]
-                        },
-                    },
-                    status=422,
-                )
-
-            models_url = body.get("models_url")
-            if models_url is not None and not isinstance(models_url, str):
-                return web.json_response(
-                    {
-                        "error": "validation",
-                        "fields": {"models_url": ["must be a string or null"]},
-                    },
-                    status=422,
-                )
-            log_label = f"base_url={base_url}"
-
-        # Diagnostics: log only provider_key (Form A) or base_url (Form B).
-        # api_key is never logged.
+        log_label = (
+            f"provider_key={req.provider_key}"
+            if req.provider_key
+            else f"base_url={base_url}"
+        )
         logger.info("fetch_provider_models: %s", log_label)
 
         session = await self._get_http_session()
@@ -1094,8 +1118,6 @@ class WebUIServer:
 
             tree = PoolSpec.model_validate(body)
         except Exception as exc:  # noqa: BLE001 - pydantic validation
-            from pydantic import ValidationError
-
             from bot.service.config_controller import _flatten_errors
 
             if isinstance(exc, ValidationError):
@@ -1904,6 +1926,16 @@ class WebUIServer:
 
         result = user_events + assistant_events
 
+        # Partial streaming events — in-memory buffer, queried separately
+        # from the main transcript. Attached as a synthetic streaming turn.
+        load_partial = getattr(self._store, "load_partial", None)
+        if load_partial is not None:
+            partial_events = await load_partial(session_id, sessions_dir=sessions_dir)
+            if partial_events:
+                partial_turn = _materialize_partial_deltas(partial_events, agent_name)
+                if partial_turn is not None:
+                    result.append(partial_turn)
+
         def _event_ts(event: dict[str, object]) -> int:
             ts = event.get("timestamp", 0)
             if ts is None:
@@ -2277,9 +2309,16 @@ class WebUIServer:
         ws_raw = request.query.get("ws", "")
         ws_root = self._ws_root_of(ws_raw)
         index_dir = self._index_dir_of_ws(ws_raw)
+        sessions_dir = self._sessions_dir_of_ws(ws_raw)
         resolved = await self._resolve_session(session_id, index_dir=index_dir)
         pool = self._pool_of_agent(resolved.agent_name)
         await self._session_gc.delete_session_tree(session_id, ws_root=ws_root, pool=pool)
+        clear_partial = getattr(self._store, "clear_partial", None)
+        if clear_partial is not None:
+            try:
+                await clear_partial(session_id, sessions_dir=sessions_dir)
+            except Exception as exc:
+                logger.warning("clear_partial failed during delete for %s: %s", session_id, exc)
         return web.json_response({"deleted": session_id})
 
     # ------------------------------------------------------------------

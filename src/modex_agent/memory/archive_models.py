@@ -13,14 +13,23 @@ from modex_agent.runtime.models import JsonValue
 ARCHIVE_SCHEMA = "archive"
 CONTEXT_ARCHIVE_FILE_KEY = "context_archive"
 CONTEXT_ARCHIVE_FILENAME = "context_archive.jsonl"
-KNOWLEDGE_ARCHIVE_FILE_KEY = "knowledge_archive"
-KNOWLEDGE_ARCHIVE_FILENAME = "knowledge_archive.jsonl"
+CORE_ARCHIVE_FILE_KEY = "core_archive"
+CORE_ARCHIVE_FILENAME = "core_archive.jsonl"
 DEFAULT_RETAINED_CONSUMED_ARCHIVE_PAIRS = 3
 
 
 class ArchiveChannel(StrEnum):
+    """Archive channel identifiers.
+
+    ``CORE`` is the Core Memory channel (per ADR-0035; formerly ``KNOWLEDGE``).
+    The string value ``"core"`` is serialized into ``*_archive.jsonl`` entries'
+    ``channel`` field — it refers to the same concept as
+    :attr:`modex_agent.core.scope.MemoryLayerName.CORE` (Core Memory); the
+    short name ``"core"`` is kept for brevity in persisted JSON.
+    """
+
     CONTEXT = "context"
-    KNOWLEDGE = "knowledge"
+    CORE = "core"
 
 
 @dataclass(frozen=True)
@@ -48,14 +57,14 @@ class ArchiveBundleResult:
 @dataclass(frozen=True)
 class ArchiveState:
     next_archive_id: int = 1
-    knowledge_consumed_archive_id: int = 0
+    core_consumed_archive_id: int = 0
 
 
 @dataclass(frozen=True)
 class ArchiveInputStats:
     input_messages: int
     context_messages: int
-    knowledge_messages: int
+    core_messages: int
     tool_chains: int
     dropped_messages: int
 
@@ -63,7 +72,7 @@ class ArchiveInputStats:
 @dataclass(frozen=True)
 class ArchiveGenerationInputs:
     context_transcript: str
-    knowledge_transcript: str
+    core_transcript: str
     stats: ArchiveInputStats
 
 
@@ -71,7 +80,7 @@ class ArchiveDocuments(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     context: str
-    knowledge: str
+    core: str
     index: str
 
     @property
@@ -94,8 +103,8 @@ class ArchiveGenerationResult(BaseModel):
                 metadata={"topic": self.documents.topic or ""},
             ),
             ArchiveWrite(
-                channel=ArchiveChannel.KNOWLEDGE,
-                summary=self.documents.knowledge,
+                channel=ArchiveChannel.CORE,
+                summary=self.documents.core,
             ),
         )
 
@@ -104,9 +113,9 @@ __all__ = [
     "ARCHIVE_SCHEMA",
     "CONTEXT_ARCHIVE_FILE_KEY",
     "CONTEXT_ARCHIVE_FILENAME",
+    "CORE_ARCHIVE_FILE_KEY",
+    "CORE_ARCHIVE_FILENAME",
     "DEFAULT_RETAINED_CONSUMED_ARCHIVE_PAIRS",
-    "KNOWLEDGE_ARCHIVE_FILE_KEY",
-    "KNOWLEDGE_ARCHIVE_FILENAME",
     "ArchiveBundleResult",
     "ArchiveChannel",
     "ArchiveDocuments",

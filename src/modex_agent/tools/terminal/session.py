@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.tools.terminal.prompt import (
@@ -34,16 +34,6 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class CommandRecord:
-    """A single command execution record."""
-
-    command: str
-    output: str
-    exit_code: int | None = None
-    timestamp: float = field(default_factory=time.time)
-
-
-@dataclass
 class TerminalInfo:
     """Metadata about a terminal session."""
 
@@ -51,13 +41,12 @@ class TerminalInfo:
     shell_type: str
     is_alive: bool
     last_active: float
-    command_count: int
     is_default: bool = False
     created_at: float = 0.0
 
 
 class TerminalSession:
-    """Wraps a TerminalBackend with history, auto-restart, and LRU tracking.
+    """Wraps a TerminalBackend with auto-restart, and LRU tracking.
 
     EXTENSION: Phase 2+ concurrent control:
       - Add _lock: asyncio.Lock for exclusive access
@@ -72,17 +61,12 @@ class TerminalSession:
         shell_info: ShellInfo,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
-        max_history: int = 5,
-        history_truncate: int = 200,
     ) -> None:
         self.name = name
         self._backend = backend
         self.shell_info = shell_info
         self._cwd = cwd
         self._env = env
-        self._max_history = max_history
-        self._history_truncate = history_truncate
-        self._history: list[CommandRecord] = []
         self.created_at = time.time()
         self.last_active = time.time()
         self._needs_restart = True
@@ -236,10 +220,6 @@ class TerminalSession:
 
         return build_full_env(self._env)
 
-    def get_history(self) -> list[CommandRecord]:
-        """Return command history (newest last)."""
-        return list(self._history)
-
     def get_state(self) -> dict[str, Any]:
         """Return serializable state for persistence."""
         return {
@@ -251,15 +231,6 @@ class TerminalSession:
             "visible": self.visible,
             "created_at": self.created_at,
             "last_active": self.last_active,
-            "history": [
-                {
-                    "command": rec.command,
-                    "output": rec.output,
-                    "exit_code": rec.exit_code,
-                    "timestamp": rec.timestamp,
-                }
-                for rec in self._history
-            ],
         }
 
     def restore_state(self, data: dict[str, Any]) -> None:
@@ -267,15 +238,6 @@ class TerminalSession:
         self.last_active = data.get("last_active", time.time())
         self.created_at = data.get("created_at", self.created_at)
         self._needs_restart = True
-        for rec_data in data.get("history", []):
-            self._history.append(
-                CommandRecord(
-                    command=rec_data["command"],
-                    output=rec_data["output"],
-                    exit_code=rec_data.get("exit_code"),
-                    timestamp=rec_data.get("timestamp", time.time()),
-                )
-            )
 
     async def to_info(self, is_default: bool = False) -> TerminalInfo:
         """Return metadata for list/inspection."""
@@ -285,7 +247,6 @@ class TerminalSession:
             shell_type=self.shell_info.name,
             is_alive=alive,
             last_active=self.last_active,
-            command_count=len(self._history),
             is_default=is_default,
             created_at=self.created_at,
         )
@@ -362,7 +323,14 @@ class TerminalSession:
         """Compute current terminal status using the detection priority rules.
 
         Priority: COMPLETED > UNKNOWN > WAITING_INPUT > IDLE > PAGINATED >
-                  STUCK > LONG_RUNNING > EXECUTING
+                  IDLE_INPUT_WAIT > STUCK > LONG_RUNNING > EXECUTING
+
+        ``IDLE_INPUT_WAIT`` is not a separate enum value — it surfaces as
+        ``WAITING_INPUT``. The naming here just makes the decision order
+        explicit: a session that produced output then fell silent past
+        ``input_wait_idle_ms`` is reported as ``WAITING_INPUT`` rather than
+        ``STUCK``, because the most common cause of "live process, no output"
+        is an unmarked prompt (e.g. ``read -s``).
         """
         from modex_agent.tools.terminal.config import TerminalRuntimeConfig as _Cfg
 
@@ -396,18 +364,29 @@ class TerminalSession:
         if detect_pager_entry(cursor):
             return TerminalCommandStatus.PAGINATED
 
-        # 6. No-output timeout → STUCK
+        # 6. Idle-based input wait — MUST be before STUCK. A live process
+        # that fell silent past input_wait_idle_ms is almost certainly
+        # waiting for input (silent prompts like ``read -s``). Gated on
+        # ``_command_started_at`` so a freshly-started long-running command
+        # that has not produced output yet is not misclassified.
         raw_idle_ms = (time.monotonic() - self._last_byte_at) * 1000
+        if (
+            self._command_started_at is not None
+            and raw_idle_ms >= cfg.input_wait_idle_ms
+        ):
+            return TerminalCommandStatus.WAITING_INPUT
+
+        # 7. No-output timeout → STUCK
         if raw_idle_ms >= cfg.no_output_timeout_ms:
             return TerminalCommandStatus.STUCK
 
-        # 7. Long-running detection
+        # 8. Long-running
         if self._command_started_at is not None:
             elapsed_ms = (time.monotonic() - self._command_started_at) * 1000
             if elapsed_ms >= cfg.long_running_threshold_ms:
                 return TerminalCommandStatus.LONG_RUNNING
 
-        # 8. Active output → EXECUTING
+        # 9. Active output → EXECUTING
         return TerminalCommandStatus.EXECUTING
 
     async def last_command_output(self) -> str:

@@ -31,10 +31,23 @@ from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 from modex_agent.runtime.store import InMemoryTurnStateStore
 
 
+def _agent_mock(name: str = "agent") -> Any:
+    """MagicMock whose ``.name`` attribute returns a real string.
+
+    ``MagicMock(name="agent")`` sets the mock's *repr* name, not its ``.name``
+    attribute — accessing ``.name`` auto-creates a child MagicMock. Pydantic
+    validation in ``TurnIdentity`` rejects the child mock, so we set ``.name``
+    explicitly to a string.
+    """
+    m = MagicMock(name=name)
+    m.name = name
+    return m
+
+
 def _make_builder(**overrides: Any) -> TurnContextBuilder:
     """Construct a builder with sane defaults; tests override what they exercise."""
     defaults: dict[str, Any] = dict(
-        agent=MagicMock(name="agent"),
+        agent=_agent_mock(),
         tool_manager=InMemoryToolManager(),
         sanitizer=None,
         command_processor=None,
@@ -390,7 +403,7 @@ async def test_build_runtime_and_context_emitter_factory_used_when_wired() -> No
     sentinel = MagicMock(name="emitter")
     emitter_factory = MagicMock(return_value=sentinel)
     builder = _make_builder(
-        agent=MagicMock(name="agent"),
+        agent=_agent_mock(),
         turn_store=InMemoryTurnStateStore(),
         emitter_factory=emitter_factory,
     )
@@ -419,7 +432,7 @@ async def test_build_runtime_and_context_propagates_model_capabilities() -> None
 
     caps = ModelCapabilities(modalities=frozenset({Modality.TEXT, Modality.IMAGE}))
     builder = _make_builder(
-        agent=MagicMock(name="agent"),
+        agent=_agent_mock(),
         turn_store=InMemoryTurnStateStore(),
         runtime_services=AgentRuntimeServices(model_capabilities=caps),
     )
@@ -469,7 +482,7 @@ async def test_build_runtime_and_context_carries_inline_image_attachments() -> N
     )
 
     builder = _make_builder(
-        agent=MagicMock(name="agent"),
+        agent=_agent_mock(),
         turn_store=InMemoryTurnStateStore(),
     )
 
@@ -498,7 +511,7 @@ async def test_build_runtime_and_context_inline_attachments_defaults_empty() -> 
     from modex_agent.runtime.enums import TurnCustomKey
 
     builder = _make_builder(
-        agent=MagicMock(name="agent"),
+        agent=_agent_mock(),
         turn_store=InMemoryTurnStateStore(),
     )
 

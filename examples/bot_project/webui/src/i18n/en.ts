@@ -29,17 +29,13 @@ export const en = {
     failedToLoad: "Failed to load: {error}",
   },
   boot: {
-    starting: "Starting backend…",
-    connecting: "Connecting to backend…",
+    starting: "Starting ModexBot…",
+    connecting: "Connecting to ModexBot…",
     stillStarting: "Still starting — this can take a few seconds on first launch.",
     takingLong: "Taking longer than usual. Check logs if this persists.",
-    errorHeading: "Backend is not responding",
+    errorHeading: "ModexBot is not responding",
   },
   chat: {
-    emptyHeadline: "Chat with your agents",
-    emptyHintSelect: "Select a conversation from the sidebar",
-    emptyHintNew: "Or start a new conversation to begin",
-    emptyHintComposer: "Enter sends · Shift+Enter adds a newline",
     denyBatchNotice: "Denying any one cancels the whole batch",
     approveAll: "Approve All",
     awaitingApproval: "awaiting approval",
@@ -180,6 +176,10 @@ export const en = {
       models: "Models",
       pools: "Pools",
       prompts: "Prompts",
+    },
+    modal: {
+      title: "Settings",
+      close: "Close settings",
     },
     common: {
       discardUnsavedTitle: "Discard unsaved changes?",

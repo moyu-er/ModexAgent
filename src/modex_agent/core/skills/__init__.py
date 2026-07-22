@@ -21,6 +21,7 @@ from .models import (
     SkillResource,
     SkillSummary,
 )
+from .provider import SkillProvider
 from .source import (
     CompositeSkillSource,
     FileSkillSource,
@@ -48,4 +49,5 @@ __all__ = [
     "SkillManager",
     "SkillCache",
     "DirectorySkillCache",
+    "SkillProvider",
 ]

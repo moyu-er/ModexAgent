@@ -534,8 +534,8 @@ ExternalCodingExecutionStrategy.validate_pool_spec".
   or adding a no-op override; the function's post-construction wiring
   (governance, runtime_services, user_interface) depends on resources not
   available at assemble() time. The architecture guard test allows
-  `factory.py` + `peer_normal.py` as the only files with
-  `execution_strategy ==` comparisons.
+  `factory.py` + `peer_normal.py` (+ the additional sites listed below) as
+  the only files with `execution_strategy ==` comparisons.
 - `pool_config/store.py` validation branches are **Retained at store level**
   as defense-in-depth (subagent stripping, provider_kind validation,
   native-field omission for non-react pools).
@@ -543,6 +543,37 @@ ExternalCodingExecutionStrategy.validate_pool_spec".
   assembly-time defense-in-depth. The store-level validation was
   temporarily deleted in ticket 6 but restored after code review found
   WebUI write-time tests depended on it.
+- `subagent_validator.py` is **Retained** — runtime subagent registration
+  validation (same per-target runtime category as `peer_normal.py`, not
+  assembly branching).
+- `pool_config/specs.py` is **Retained** — Pydantic `@model_validator`
+  cross-field validation (`provider_kind` set iff
+  `execution_strategy == EXTERNAL_CODING`); same validation category as
+  `subagent_validator.py`, not assembly branching.
+- `template.py` is **Retained** — T5 subagent materialize dispatch:
+  when the spec's `execution_strategy` is `EXTERNAL_CODING`, `materialize`
+  delegates to `deps.subagent_external_coding_builder.build()` instead of
+  `agent_factory.create_agent()`. Same runtime construction-dispatch
+  category as `factory.py._get_builder`; the react path is byte-for-byte
+  unchanged.
+- `communication/strategies/subagent_dispatch.py:75` is **Retained** —
+  `SubagentDispatchStrategy.build_result` selects ack field shape
+  (`output_path`/`trace_dir` omitted for external targets) based on
+  `req.target.execution_strategy`. Same per-target runtime category as
+  `peer_normal.py` (which reply-shape/field-set the *target* gets); not
+  assembly branching. Added when ADR-0027 (external coding subagent)
+  introduced the external-result shape.
+- `message_xml.py:119` is **Retained** — `build_dispatch_xml` is the single
+  convergence point for the "target is external → peer format" rule,
+  delegated to by `SubagentDispatchStrategy` and `ParentReplyStrategy` so
+  the branching lives in one place rather than duplicated across strategy
+  classes. Same per-target runtime category as `peer_normal.py`; not
+  assembly branching. Added when ADR-0019 (cross-pool peer) introduced
+  the peer XML format. Pushing this into the `ExecutionStrategy` ABC was
+  considered and rejected: D1 fixes the strategy as a stateless
+  assemble-once object (never touched at runtime), and `build_dispatch_xml`
+  is a pure function called per-message with no `self` state to read —
+  OOP dispatch would gain nothing while violating the D1 boundary.
 
 ### Additional achievement — external_coding bloat elimination
 

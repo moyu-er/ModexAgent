@@ -23,9 +23,9 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 
 | Module | Files | Subdirectories | Purpose |
 |--------|-------|----------------|---------|
-| `core/` | 25 py | `graph/`, `skills/`, `experience/` | ABCs — `Agent[E]`, `ContentEmitter[E]`, `Tool`, `ContextManager`, `SessionArtifactCleaner`/`SessionDatabaseCleaner`, graph engine, types (see `core/AGENTS.md`) |
-| `agents/` | 2 py | `react/`, `external_coding/`, `experience/`, `summarizer/` | Agent implementations — `ReActAgent`, `ExternalCodingAgent` (Pi/OpenCode CLI harness), `SummarizerAgent`, `ExperienceReviewAgent` (see `agents/AGENTS.md`) |
-| `memory/` | 17 py | `consolidation/`, `core/`, `injection/`, `layers/`, `pipeline/`, `prompts/`, `pruned/`, `registry/`, `stores/`, `tools/` | Three-layer memory — session/archive/knowledge, compaction, consolidation, governance, injection. Split store ABCs (`MessageStore`/`KVStore`/`CursorStore`/`ArchiveStore`) + `MemoryStoreBundle` (see `memory/AGENTS.md`) |
+| `core/` | 25 py | `skills/`, `experience/` | ABCs — `Agent[E]`, `ContentEmitter[E]`, `Tool`, `ContextManager`, `SessionArtifactCleaner`/`SessionDatabaseCleaner`, types (see `core/AGENTS.md`). The graph engine was extracted to `modex_graph` (ADR-0033). |
+| `agents/` | 2 py | `react/`, `external_coding/`, `experience/`, `summarizer/` | Agent implementations — `ReActAgent` (built on `modex_graph`), `ExternalCodingAgent` (Pi/OpenCode CLI harness), `ExperienceReviewAgent`. The deprecated `SummarizerAgent` was removed (ADR-0033 D10). (see `agents/AGENTS.md`) |
+| `memory/` | 17 py | `consolidation/`, `core/`, `injection/`, `layers/`, `pipeline/`, `prompts/`, `pruned/`, `registry/`, `stores/`, `tools/` | Three-layer memory — session/archive/core, compaction, consolidation, governance, injection. Split store ABCs (`MessageStore`/`KVStore`/`CursorStore`/`ArchiveStore`) + `MemoryStoreBundle` (see `memory/AGENTS.md`) |
 | `persistence/` | 26 py | `adapters/`, `managers/`, `migrations/` | Hybrid persistence layer (ADR-0023, ADR-0028~0031). `ConnectionManager` + `MigrationRunner` (per-workspace SQLite), `PersistenceBackend`/`PersistenceConfig`, `ColumnProjection` (ADR-0030), `SqliteSessionDatabaseCleaner`, SQLite adapters for the split store + runtime-state ABCs. All timestamps are INTEGER ms (ADR-0029) |
 | `multi_agent/` | 20 py | `inbox/` | Star-topology orchestration — `AgentPool`, inbox (`InboxMQ`), `AgentMessageBus` (see `multi_agent/AGENTS.md`) |
 | `tools/` | 8 py | `ast/`, `lsp/`, `mcp/`, `overflow/`, `standard/`, `terminal/`, `web/` | Tool subsystem — registry, executor, MCP, terminal (pexpect/tmux/winpty), overflow, standard tools (see `tools/AGENTS.md`) |
@@ -81,8 +81,8 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 ### Common Patterns
 - `Protocol` for contracts, `@dataclass` for data, `ABC` + `@abstractmethod` for abstract classes
 - `scopes: frozenset[InterceptorScope]` for declaring interceptor scope
-- Per-turn state in `runtime.state` (typed `ReActTurnState`), not instance attributes
-- `GraphInterrupt` for approval suspension — never catch and swallow it
+- Per-turn state in `ctx.state` (typed `ReActTurnState`, a `GraphState(BaseModel)`) for ReAct nodes, not instance attributes
+- `GraphInterrupt` (from `modex_graph.exceptions`) for approval suspension — never catch and swallow it
 - `TurnCustomKey` enum for per-turn custom state keys in `TurnStateBase.custom`
 
 ### Module Responsibilities

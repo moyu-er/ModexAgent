@@ -346,6 +346,125 @@ class TestSendCommand:
         )
         assert result.exit_code == EXIT_USAGE
 
+    def test_send_subagent_kind_routes_to_parent_session_id_directly(
+        self, runner: CliRunner, comm_env: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Subagent comm_kind: target_sid = MODEX_PARENT_SESSION_ID verbatim.
+
+        Regression: external-coding subagent (session ``inv123.coder``)
+        calling ``modexctl send --to orchestrator`` had its target_sid
+        computed as ``inv123.orchestrator`` via ADR-0019 prefix-reuse —
+        a non-existent session that created a phantom parent. The real
+        parent session is ``conv456.orchestrator`` (different conversation
+        id; subagent session prefixes are invocation_ids, not
+        conversation_ids).
+
+        Fix: when ``MODEX_COMM_KIND=subagent``, modexctl uses
+        ``MODEX_PARENT_SESSION_ID`` verbatim as target_sid — no prefix
+        derivation. Main-agent-as-peer path (``MODEX_COMM_KIND=normal``
+        or unset) keeps the prefix-reuse rule (ADR-0019) unchanged.
+        """
+        monkeypatch.setenv("MODEX_SESSION_ID", "inv123.coder")
+        monkeypatch.setenv("MODEX_AGENT_NAME", "coder")
+        monkeypatch.setenv("MODEX_AGENT_POOL_MAP", "coder=default;orchestrator=default")
+        monkeypatch.setenv("MODEX_TARGETS", "orchestrator=")
+        monkeypatch.setenv("MODEX_COMM_KIND", "subagent")
+        monkeypatch.setenv("MODEX_PARENT_SESSION_ID", "conv456.orchestrator")
+
+        result = runner.invoke(
+            build_app(),
+            ["send", "--to", "orchestrator", "--content", "subagent reply"],
+        )
+
+        assert result.exit_code == 0
+        db_path = tmp_path / "workspace" / ".modex" / "state.db"
+        conn = sqlite3.connect(str(db_path))
+        try:
+            real_parent = conn.execute(
+                "SELECT payload_json FROM inbox_messages WHERE session_id = ?",
+                ("conv456.orchestrator",),
+            ).fetchone()
+            phantom_parent = conn.execute(
+                "SELECT payload_json FROM inbox_messages WHERE session_id = ?",
+                ("inv123.orchestrator",),
+            ).fetchone()
+        finally:
+            conn.close()
+        assert real_parent is not None, "message must land on the real parent session"
+        assert phantom_parent is None, "message must NOT create a phantom prefix-derived session"
+
+    def test_send_subagent_kind_without_parent_session_id_errors(
+        self, runner: CliRunner, comm_env: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MODEX_AGENT_POOL_MAP", "coder=default;orchestrator=default")
+        monkeypatch.setenv("MODEX_TARGETS", "orchestrator=")
+        monkeypatch.setenv("MODEX_COMM_KIND", "subagent")
+        monkeypatch.delenv("MODEX_PARENT_SESSION_ID", raising=False)
+
+        result = runner.invoke(
+            build_app(),
+            ["send", "--to", "orchestrator", "--content", "orphan reply"],
+        )
+
+        assert result.exit_code != 0
+        assert "MODEX_PARENT_SESSION_ID" in result.output
+
+    def test_send_normal_kind_uses_prefix_reuse_regardless_of_parent_session_id(
+        self, runner: CliRunner, comm_env: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Main-agent-as-peer: prefix-reuse rule, ignores MODEX_PARENT_SESSION_ID even if set."""
+        monkeypatch.setenv("MODEX_SESSION_ID", "conv456.coder")
+        monkeypatch.setenv("MODEX_AGENT_NAME", "coder")
+        monkeypatch.setenv("MODEX_AGENT_POOL_MAP", "coder=pool_coder;analyst=pool_analyst")
+        monkeypatch.setenv("MODEX_TARGETS", "analyst=Reviews code")
+        monkeypatch.setenv("MODEX_COMM_KIND", "normal")
+        monkeypatch.setenv("MODEX_PARENT_SESSION_ID", "should-be-ignored")
+
+        result = runner.invoke(
+            build_app(),
+            ["send", "--to", "analyst", "--content", "peer message"],
+        )
+
+        assert result.exit_code == 0
+        db_path = tmp_path / "workspace" / ".modex" / "state.db"
+        conn = sqlite3.connect(str(db_path))
+        try:
+            prefix_reused = conn.execute(
+                "SELECT payload_json FROM inbox_messages WHERE session_id = ?",
+                ("conv456.analyst",),
+            ).fetchone()
+            ignored = conn.execute(
+                "SELECT payload_json FROM inbox_messages WHERE session_id = ?",
+                ("should-be-ignored",),
+            ).fetchone()
+        finally:
+            conn.close()
+        assert prefix_reused is not None
+        assert ignored is None
+
+    def test_send_unsent_comm_kind_defaults_to_prefix_reuse(
+        self, runner: CliRunner, comm_env: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Backward compat: no MODEX_COMM_KIND → main-agent prefix-reuse path."""
+        monkeypatch.delenv("MODEX_COMM_KIND", raising=False)
+
+        result = runner.invoke(
+            build_app(),
+            ["send", "--to", "analyst", "--content", "legacy main path"],
+        )
+
+        assert result.exit_code == 0
+        db_path = tmp_path / "workspace" / ".modex" / "state.db"
+        conn = sqlite3.connect(str(db_path))
+        try:
+            row = conn.execute(
+                "SELECT payload_json FROM inbox_messages WHERE session_id = ?",
+                ("abc.analyst",),
+            ).fetchone()
+        finally:
+            conn.close()
+        assert row is not None
+
 
 class TestParseTargets:
 

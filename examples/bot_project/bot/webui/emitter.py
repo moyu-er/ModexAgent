@@ -173,6 +173,53 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
         else:
             await self._transcript_store.append(self._session_id, event)
 
+    async def _persist_partial(self, event: ServerEvent) -> None:
+        """Append a streaming delta to the in-memory partial buffer.
+
+        Routed to ``WorkspaceScopedTranscriptStore.append_partial`` (in-memory
+        dict, not a file). Failure here must not break the turn — partial is
+        best-effort for refresh-mid-stream; the WS push still carries the delta.
+        """
+        if self._transcript_store is None:
+            return
+        append_partial = getattr(self._transcript_store, "append_partial", None)
+        if append_partial is None:
+            return
+        sessions_dir = (
+            self._sessions_dir_provider() if self._sessions_dir_provider else None
+        )
+        try:
+            if sessions_dir is not None:
+                await append_partial(self._session_id, event, sessions_dir=sessions_dir)
+            else:
+                await append_partial(self._session_id, event)
+        except Exception as exc:
+            logger.warning(
+                "partial persist failed for session %s: %s; refresh-mid-stream may lose this delta",
+                self._session_id,
+                exc,
+            )
+
+    async def _clear_partial(self) -> None:
+        """Drop the in-memory partial buffer for this session (turn ended)."""
+        if self._transcript_store is None:
+            return
+        clear_partial = getattr(self._transcript_store, "clear_partial", None)
+        if clear_partial is None:
+            return
+        sessions_dir = (
+            self._sessions_dir_provider() if self._sessions_dir_provider else None
+        )
+        try:
+            if sessions_dir is not None:
+                await clear_partial(self._session_id, sessions_dir=sessions_dir)
+            else:
+                await clear_partial(self._session_id)
+        except Exception as exc:
+            logger.warning(
+                "partial clear failed for session %s: %s", self._session_id, exc
+            )
+
     def _resolve_call_id(self, raw_call_id: str | None, tool_name: str) -> str:
         """Return a stable call_id, falling back to monotonic counter when None."""
         if raw_call_id is not None:
@@ -214,7 +261,9 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
             agent_name=self._agent_name,
             text=delta,
             turn_id=self._current_turn_id,
+            segment_id="_text",
         )
+        await self._persist_partial(evt)
         await self._send_event(evt)
 
     async def emit_stream_end(self, resuming: bool = False) -> None:
@@ -225,25 +274,27 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
     # ------------------------------------------------------------------
 
     async def emit_complete(self, result: AgentResult) -> None:
-        await self._flush_active_segment()
-        await super().emit_complete(result)
-        latency_ms: int = int((time.time() - self._turn_started_at) * 1000)
+        try:
+            await self._flush_active_segment()
+            await super().emit_complete(result)
+            latency_ms: int = int((time.time() - self._turn_started_at) * 1000)
 
-        ws_turn_end = TurnEndEvent(
-            session_id=self._session_id,
-            agent_name=self._agent_name,
-            turn_id=self._current_turn_id if self._turn_active else "",
-            latency_ms=latency_ms,
-        )
-        await self._send_event(ws_turn_end)
-
-        self._segments = {}
-        self._segment_kinds = {}
-        self._segment_order = []
-        self._pending_external_tools = {}
-        self._turn_active = False
-        self._turn_started_at = time.time()
-        self._turn_counter += 1
+            ws_turn_end = TurnEndEvent(
+                session_id=self._session_id,
+                agent_name=self._agent_name,
+                turn_id=self._current_turn_id if self._turn_active else "",
+                latency_ms=latency_ms,
+            )
+            await self._send_event(ws_turn_end)
+        finally:
+            await self._clear_partial()
+            self._segments = {}
+            self._segment_kinds = {}
+            self._segment_order = []
+            self._pending_external_tools = {}
+            self._turn_active = False
+            self._turn_started_at = time.time()
+            self._turn_counter += 1
 
     async def emit_error(self, error: str) -> None:
         """Notify that an error occurred, then delegate to parent."""
@@ -253,24 +304,29 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
         match event:
             case TurnTextEvent(text=text, part_id=part_id):
                 self._accumulate_segment(text, "text", part_id)
+                segment_id = part_id if part_id else "_text"
                 evt = ModelContentDelta(
                     session_id=self._session_id,
                     agent_name=self._agent_name,
                     text=text,
                     turn_id=self._current_turn_id,
+                    segment_id=segment_id,
                 )
+                await self._persist_partial(evt)
                 await self._send_event(evt)
             case TurnReasoningEvent(text=text, part_id=part_id):
                 self._ensure_turn_started()
                 self._accumulate_segment(text, "reasoning", part_id)
-                await self._send_event(
-                    ModelReasoningDelta(
-                        session_id=self._session_id,
-                        agent_name=self._agent_name,
-                        text=text,
-                        turn_id=self._current_turn_id,
-                    )
+                segment_id = part_id if part_id else "_reasoning"
+                delta_evt = ModelReasoningDelta(
+                    session_id=self._session_id,
+                    agent_name=self._agent_name,
+                    text=text,
+                    turn_id=self._current_turn_id,
+                    segment_id=segment_id,
                 )
+                await self._persist_partial(delta_evt)
+                await self._send_event(delta_evt)
             case TurnToolCallEvent(
                 tool_name=tool_name, call_id=call_id, arguments=arguments
             ):
@@ -346,7 +402,9 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
                 agent_name=self._agent_name,
                 text=text,
                 turn_id=self._current_turn_id,
+                segment_id="_reasoning",
             )
+            await self._persist_partial(evt)
             await self._send_event(evt)
             self._ensure_turn_started()
             self._accumulate_segment(text, "reasoning", None)

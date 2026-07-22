@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from pydantic import BaseModel, ConfigDict
+
 from .constants import DefaultValues, ReasoningEffort
 
 if TYPE_CHECKING:
@@ -34,9 +36,10 @@ class LLMErrorKind(StrEnum):
     UNKNOWN = "unknown"
 
 
-@dataclass(frozen=True)
-class LLMErrorInfo:
+class LLMErrorInfo(BaseModel):
     """结构化的 LLM 错误信息，附加在 LLMResponse 上供上层决策。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     kind: LLMErrorKind
     message: str
@@ -76,27 +79,27 @@ def classify_litellm_error(exc: Exception) -> LLMErrorInfo:
 
     if is_content_filter_text(text):
         return LLMErrorInfo(
-            LLMErrorKind.CONTENT_FILTER, message, "litellm", should_retry=False
+            kind=LLMErrorKind.CONTENT_FILTER, message=message, provider="litellm", should_retry=False
         )
 
     if "timeout" in text or "timeout" in cls_name or "timed out" in text:
-        return LLMErrorInfo(LLMErrorKind.TIMEOUT, message, "litellm", should_retry=True)
+        return LLMErrorInfo(kind=LLMErrorKind.TIMEOUT, message=message, provider="litellm", should_retry=True)
 
     if "rate" in text and "limit" in text:
         if any(m in text for m in ("quota", "billing", "insufficient")):
-            return LLMErrorInfo(LLMErrorKind.QUOTA, message, "litellm", should_retry=False)
-        return LLMErrorInfo(LLMErrorKind.RATE_LIMIT, message, "litellm", should_retry=True)
+            return LLMErrorInfo(kind=LLMErrorKind.QUOTA, message=message, provider="litellm", should_retry=False)
+        return LLMErrorInfo(kind=LLMErrorKind.RATE_LIMIT, message=message, provider="litellm", should_retry=True)
 
     if "auth" in text or "401" in text or "403" in text:
-        return LLMErrorInfo(LLMErrorKind.AUTH, message, "litellm", should_retry=False)
+        return LLMErrorInfo(kind=LLMErrorKind.AUTH, message=message, provider="litellm", should_retry=False)
 
     if any(code in text for code in ("500", "502", "503", "504")):
-        return LLMErrorInfo(LLMErrorKind.SERVER, message, "litellm", should_retry=True)
+        return LLMErrorInfo(kind=LLMErrorKind.SERVER, message=message, provider="litellm", should_retry=True)
 
     if "connection" in text or "connect" in cls_name:
-        return LLMErrorInfo(LLMErrorKind.CONNECTION, message, "litellm", should_retry=True)
+        return LLMErrorInfo(kind=LLMErrorKind.CONNECTION, message=message, provider="litellm", should_retry=True)
 
-    return LLMErrorInfo(LLMErrorKind.UNKNOWN, message, "litellm", should_retry=False)
+    return LLMErrorInfo(kind=LLMErrorKind.UNKNOWN, message=message, provider="litellm", should_retry=False)
 
 
 # ─── Provider 标识 ─────────────────────────────────────────────────────────────

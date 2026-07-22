@@ -24,11 +24,11 @@ async def test_append_bundle_writes_same_archive_id_to_both_channels(tmp_path: P
 
     result = await manager.append_bundle(ctx, (
         ArchiveWrite(channel=ArchiveChannel.CONTEXT, summary="context"),
-        ArchiveWrite(channel=ArchiveChannel.KNOWLEDGE, summary="knowledge"),
+        ArchiveWrite(channel=ArchiveChannel.CORE, summary="knowledge"),
     ))
 
     context_entries = await manager.get_recent(ctx, channel=ArchiveChannel.CONTEXT, limit=5)
-    knowledge_entries = await manager.get_recent(ctx, channel=ArchiveChannel.KNOWLEDGE, limit=5)
+    knowledge_entries = await manager.get_recent(ctx, channel=ArchiveChannel.CORE, limit=5)
 
     assert result.archive_id == 1
     assert context_entries[0].metadata["archive_id"] == 1
@@ -50,7 +50,7 @@ async def test_append_generation_materializes_documents_under_allocated_id(
         ArchiveGenerationResult(
             documents=ArchiveDocuments(
                 context="context 1",
-                knowledge="knowledge 1",
+                core="knowledge 1",
                 index="topic 1",
             )
         ),
@@ -60,7 +60,7 @@ async def test_append_generation_materializes_documents_under_allocated_id(
         ArchiveGenerationResult(
             documents=ArchiveDocuments(
                 context="context 2",
-                knowledge="knowledge 2",
+                core="knowledge 2",
                 index="topic 2",
             )
         ),
@@ -90,7 +90,7 @@ async def test_concurrent_append_generation_keeps_documents_with_allocated_ids(
             ArchiveGenerationResult(
                 documents=ArchiveDocuments(
                     context=f"context {label}",
-                    knowledge=f"knowledge {label}",
+                    core=f"knowledge {label}",
                     index=f"topic {label}",
                 )
             ),
@@ -117,7 +117,7 @@ async def test_append_empty_generation_allocates_archive_id(tmp_path: Path) -> N
     result = await manager.append_generation(
         ctx,
         ArchiveGenerationResult(
-            documents=ArchiveDocuments(context="", knowledge="", index="")
+            documents=ArchiveDocuments(context="", core="", index="")
         ),
     )
 
@@ -125,7 +125,7 @@ async def test_append_empty_generation_allocates_archive_id(tmp_path: Path) -> N
     assert result.archive_id == 1
     assert result.written_channels == (
         ArchiveChannel.CONTEXT,
-        ArchiveChannel.KNOWLEDGE,
+        ArchiveChannel.CORE,
     )
     assert (archive_dir / "context.md").read_text(encoding="utf-8") == ""
     assert (archive_dir / "knowledge.md").read_text(encoding="utf-8") == ""
@@ -140,28 +140,28 @@ async def test_knowledge_cursor_uses_archive_id(tmp_path: Path) -> None:
 
     await manager.append_bundle(ctx, (
         ArchiveWrite(channel=ArchiveChannel.CONTEXT, summary="context 1"),
-        ArchiveWrite(channel=ArchiveChannel.KNOWLEDGE, summary="knowledge 1"),
+        ArchiveWrite(channel=ArchiveChannel.CORE, summary="knowledge 1"),
     ))
     await manager.append_bundle(ctx, (
         ArchiveWrite(channel=ArchiveChannel.CONTEXT, summary="context 2"),
-        ArchiveWrite(channel=ArchiveChannel.KNOWLEDGE, summary="knowledge 2"),
+        ArchiveWrite(channel=ArchiveChannel.CORE, summary="knowledge 2"),
     ))
 
     first = await manager.get_unprocessed(
         ctx,
         cursor_name="dream",
-        channel=ArchiveChannel.KNOWLEDGE,
+        channel=ArchiveChannel.CORE,
     )
     await manager.commit_cursor(
         ctx,
         cursor_name="dream",
         cursor=1,
-        channel=ArchiveChannel.KNOWLEDGE,
+        channel=ArchiveChannel.CORE,
     )
     second = await manager.get_unprocessed(
         ctx,
         cursor_name="dream",
-        channel=ArchiveChannel.KNOWLEDGE,
+        channel=ArchiveChannel.CORE,
     )
 
     assert first.cursor == 2
@@ -181,19 +181,19 @@ async def test_prune_consumed_pairs_keeps_three_consumed_pairs(tmp_path: Path) -
     for index in range(1, 8):
         await manager.append_bundle(ctx, (
             ArchiveWrite(channel=ArchiveChannel.CONTEXT, summary=f"context {index}"),
-            ArchiveWrite(channel=ArchiveChannel.KNOWLEDGE, summary=f"knowledge {index}"),
+            ArchiveWrite(channel=ArchiveChannel.CORE, summary=f"knowledge {index}"),
         ))
 
     await manager.commit_cursor(
         ctx,
         cursor_name="dream",
         cursor=5,
-        channel=ArchiveChannel.KNOWLEDGE,
+        channel=ArchiveChannel.CORE,
     )
     await manager.prune_consumed_pairs(ctx)
 
     context_entries = await manager.get_recent(ctx, channel=ArchiveChannel.CONTEXT, limit=10)
-    knowledge_entries = await manager.get_recent(ctx, channel=ArchiveChannel.KNOWLEDGE, limit=10)
+    knowledge_entries = await manager.get_recent(ctx, channel=ArchiveChannel.CORE, limit=10)
 
     assert [entry.metadata["archive_id"] for entry in context_entries] == [3, 4, 5, 6, 7]
     assert [entry.metadata["archive_id"] for entry in knowledge_entries] == [3, 4, 5, 6, 7]
@@ -215,12 +215,12 @@ async def test_cursor_field_equals_archive_id_not_per_channel_counter(tmp_path: 
     # Bundle 1: full pair → CONTEXT cursor=1, KNOWLEDGE cursor=1 (matching archive_id=1)
     await manager.append_bundle(ctx, (
         ArchiveWrite(channel=ArchiveChannel.CONTEXT, summary="c1"),
-        ArchiveWrite(channel=ArchiveChannel.KNOWLEDGE, summary="k1"),
+        ArchiveWrite(channel=ArchiveChannel.CORE, summary="k1"),
     ))
     # Bundle 2: full pair → CONTEXT cursor=2, KNOWLEDGE cursor=2 (matching archive_id=2)
     await manager.append_bundle(ctx, (
         ArchiveWrite(channel=ArchiveChannel.CONTEXT, summary="c2"),
-        ArchiveWrite(channel=ArchiveChannel.KNOWLEDGE, summary="k2"),
+        ArchiveWrite(channel=ArchiveChannel.CORE, summary="k2"),
     ))
     # Bundle 3: CONTEXT only → CONTEXT cursor=3, KNOWLEDGE cursor=2 (but archive_id=3)
     await manager.append_bundle(ctx, (
@@ -230,10 +230,10 @@ async def test_cursor_field_equals_archive_id_not_per_channel_counter(tmp_path: 
     storage = await factory(ctx)
     assert storage.archive is not None
     if hasattr(storage.archive, "read_channel_logs"):
-        knowledge_raw = await storage.archive.read_channel_logs(ArchiveChannel.KNOWLEDGE.value)
+        knowledge_raw = await storage.archive.read_channel_logs(ArchiveChannel.CORE.value)
     else:
         knowledge_raw = await storage.archive.read_logs()
-        knowledge_raw = [e for e in knowledge_raw if e.get("channel") == ArchiveChannel.KNOWLEDGE.value]
+        knowledge_raw = [e for e in knowledge_raw if e.get("channel") == ArchiveChannel.CORE.value]
 
     # KNOWLEDGE has 2 entries (bundles 1 and 2), each with archive_id 1,2.
     # With per-channel cursor: cursor values are 1, 2 (happens to match archive_id here).
@@ -283,9 +283,9 @@ async def test_prune_consumed_pairs_does_not_lose_concurrent_appends(tmp_path: P
     for i in range(1, 7):
         await manager.append_bundle(ctx, (
             ArchiveWrite(channel=ArchiveChannel.CONTEXT, summary=f"c{i}"),
-            ArchiveWrite(channel=ArchiveChannel.KNOWLEDGE, summary=f"k{i}"),
+            ArchiveWrite(channel=ArchiveChannel.CORE, summary=f"k{i}"),
         ))
-    await manager.commit_cursor(ctx, "dream", 6, channel=ArchiveChannel.KNOWLEDGE)
+    await manager.commit_cursor(ctx, "dream", 6, channel=ArchiveChannel.CORE)
 
     # Run two concurrent append_bundle calls.  Each internally calls
     # prune_consumed_pairs outside the write lock.  With retained_pairs=0
@@ -295,7 +295,7 @@ async def test_prune_consumed_pairs_does_not_lose_concurrent_appends(tmp_path: P
     async def append(i: int) -> None:
         await manager.append_bundle(ctx, (
             ArchiveWrite(channel=ArchiveChannel.CONTEXT, summary=f"new-c{i}"),
-            ArchiveWrite(channel=ArchiveChannel.KNOWLEDGE, summary=f"new-k{i}"),
+            ArchiveWrite(channel=ArchiveChannel.CORE, summary=f"new-k{i}"),
         ))
 
     await asyncio.gather(append(7), append(8))

@@ -3,8 +3,17 @@
 Launched by WinptyConsoleWindowBackend (legacy alias:
 ``VisibleWindowsPtyBackend``) with CREATE_NEW_CONSOLE so it owns a
 visible console window.  Creates a winpty.PtyProcess and forwards I/O via
-TCP socket so the parent process and the visible window share the same data
-stream.
+a local TCP socket so the parent process and the visible window share the
+same data stream.
+
+ADR-0032 D2: the parent↔host IPC bridge is rewritten from raw
+``socket.socket`` + ``settimeout`` + ``sendall``/``recv`` to
+``asyncio.open_connection`` + ``StreamReader`` / ``StreamWriter``. The two
+forwarding threads (``pty_to_socket``, ``socket_to_pty``) become asyncio
+tasks running in a single event loop in the host process.
+``_stdin_to_pty`` (human keyboard) and ``_resize_monitor`` (console-size
+sync) remain threads — they don't touch the socket and their threading is
+correct.
 """
 
 # TODO(terminal-human-input): Detect human keyboard input in visible terminal
@@ -17,6 +26,8 @@ stream.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import os
 import socket
 import sys
@@ -24,9 +35,12 @@ import threading
 from abc import ABC, abstractmethod
 from typing import TextIO
 
-_READ_TIMEOUT = 0.5  # seconds for each socket recv()
+_READ_TIMEOUT = 0.5  # seconds for each PTY recv()
 _PTY_ROWS = 30
 _PTY_COLS = 120
+
+# Sentinel pywinpty emits spuriously on startup; skip it.
+_PTY_IGNORE_SENTINEL = b"0011Ignore"
 
 
 class WritablePty(ABC):
@@ -378,7 +392,114 @@ def _spawn_pty(
     return winpty.PtyProcess.spawn([shell], **kwargs)
 
 
-def main() -> None:
+# ── Asyncio forwarding tasks (ADR-0032 D2) ──
+
+
+async def _pty_to_socket(
+    proc: VisiblePtyProcess,
+    writer: asyncio.StreamWriter,
+) -> None:
+    """PTY output → socket (parent) + stdout (visible console).
+
+    ``proc.fileobj.recv`` is a blocking call on pywinpty's read-side socket;
+    pywinpty is not asyncio-native, so it is wrapped in ``run_in_executor``.
+    ``writer.write`` + ``await writer.drain()`` is native async.
+
+    The loop exits when the shell process dies (``proc.isalive()`` returns
+    False), so the parent's ``is_alive()`` reflects the actual shell state.
+    """
+    loop = asyncio.get_running_loop()
+
+    while True:
+        try:
+            # Exit when the shell process dies so the parent is_alive() is accurate.
+            if hasattr(proc, "isalive") and not proc.isalive():
+                break
+
+            def _read_pty() -> bytes:
+                proc.fileobj.settimeout(_READ_TIMEOUT)
+                return proc.fileobj.recv(65536)
+
+            raw = await loop.run_in_executor(None, _read_pty)
+        except (TimeoutError, OSError):
+            # pywinpty's settimeout raises TimeoutError on read timeout;
+            # keep polling — the isalive() check above handles actual death.
+            continue
+
+        if not raw:
+            # Empty read can happen when pywinpty recv is non-blocking
+            # (settimeout ineffective). Treat it like a timeout and keep
+            # polling — the isalive() check above handles actual death.
+            continue
+        if raw == _PTY_IGNORE_SENTINEL:
+            continue
+
+        text = raw.decode("utf-8", errors="replace")
+        # Normalize CRLF to LF before writing to stdout.
+        # Windows console auto-expands \n to \r\n; writing \r\n directly
+        # produces \r\r\n which renders as a blank line.
+        text = text.replace("\r\n", "\n")
+        # Always write to stdout (visible console) regardless of socket state
+        sys.stdout.write(text)
+        sys.stdout.flush()
+        # Try to forward to parent socket; keep running if parent disconnects
+        # so the visible terminal window stays usable independently.
+        try:
+            writer.write(text.encode("utf-8"))
+            await writer.drain()
+        except (OSError, ConnectionResetError):
+            pass
+
+
+async def _socket_to_pty(
+    proc: VisiblePtyProcess,
+    reader: asyncio.StreamReader,
+) -> None:
+    """Socket input (parent) → PTY.
+
+    ``reader.read(n)`` is native async. ``proc.write`` and
+    ``proc.sendintr`` are blocking pywinpty calls and are wrapped in
+    ``run_in_executor``.
+
+    ``\\x03`` (Ctrl+C) is routed to ``proc.sendintr()`` — the official
+    pywinpty API. Verified from source: ``sendintr()`` calls
+    ``pty.write('\\x03')`` internally — same byte-path as user keyboard
+    Ctrl+C (``_stdin_to_pty`` → ``proc.write``).
+    """
+    loop = asyncio.get_running_loop()
+    _ctrl_c = "\x03"
+
+    while True:
+        try:
+            data = await reader.read(65536)
+        except (OSError, ConnectionResetError):
+            break
+        if not data:
+            break
+
+        text = data.decode("utf-8", errors="replace")
+        if _ctrl_c in text:
+            # Mixed payload: write each non-Ctrl-C chunk in a single call to
+            # avoid interleaving executor round-trips between characters
+            # (per-character writes can race with readline's state machine
+            # and break Ctrl-U / Tab sequences).
+            chunk: list[str] = []
+            for ch in text:
+                if ch == _ctrl_c:
+                    if chunk:
+                        await loop.run_in_executor(None, proc.write, "".join(chunk))
+                        chunk.clear()
+                    await loop.run_in_executor(None, proc.sendintr)  # type: ignore[attr-defined]
+                else:
+                    chunk.append(ch)
+            if chunk:
+                await loop.run_in_executor(None, proc.write, "".join(chunk))
+        else:
+            await loop.run_in_executor(None, proc.write, text)
+
+
+async def _async_main() -> None:
+    """Host entry point — connect to parent, run forwarders as asyncio tasks."""
     shell = sys.argv[1] if len(sys.argv) > 1 else "cmd.exe"
     port = int(sys.argv[2]) if len(sys.argv) > 2 else 0
     cwd = sys.argv[3] if len(sys.argv) > 3 else None
@@ -389,86 +510,45 @@ def main() -> None:
 
     proc = _spawn_pty(shell, cwd=cwd, env=dict(os.environ))
 
-    # Connect back to the parent process
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.connect(("127.0.0.1", port))
-    sock.settimeout(None)
+    # Connect back to the parent via asyncio (ADR-0032 D2).
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
 
-    # PTY output  -> socket (parent) + stdout (visible console window)
-    def pty_to_socket() -> None:
-        while True:
-            try:
-                # Exit when the shell process dies so parent is_alive() is accurate.
-                if hasattr(proc, "isalive") and not proc.isalive():
-                    break
-                proc.fileobj.settimeout(_READ_TIMEOUT)  # type: ignore[union-attr]
-                raw = proc.fileobj.recv(65536)  # type: ignore[union-attr]
-            except TimeoutError:
-                continue
-            except (OSError, ConnectionResetError):
-                break
+    # Set TCP_NODELAY on the host-side socket so the parent's write of
+    # command + "\r" arrives as one TCP segment, not coalesced by Nagle.
+    sock: socket.socket | None = writer.get_extra_info("socket")
+    if sock is not None:
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
-            if not raw:
-                # Empty read can happen when pywinpty recv is non-blocking
-                # (settimeout ineffective). Treat it like a timeout and keep
-                # polling — the isalive() check above handles actual death.
-                continue
-            if raw == b"0011Ignore":
-                continue
-
-            text = raw.decode("utf-8", errors="replace")
-            # Normalize CRLF to LF before writing to stdout.
-            # Windows console auto-expands \n to \r\n; writing \r\n directly
-            # produces \r\r\n which renders as a blank line.
-            text = text.replace("\r\n", "\n")
-            # Always write to stdout (visible console) regardless of socket state
-            sys.stdout.write(text)
-            sys.stdout.flush()
-            # Try to forward to parent socket; keep running if parent disconnects
-            # so the visible terminal window stays usable independently.
-            try:
-                sock.sendall(text.encode("utf-8"))
-            except (OSError, ConnectionResetError):
-                pass
-
-    _CTRL_C = "\x03"  # matches pty_keys.CTRL_C
-
-    # socket input (parent) -> PTY
-    def socket_to_pty() -> None:
-        while True:
-            try:
-                data = sock.recv(65536)
-                if not data:
-                    break
-                text = data.decode("utf-8", errors="replace")
-                # \x03 (Ctrl+C) → proc.sendintr(), the official pywinpty
-                # API.  Verified from source: sendintr() calls
-                # pty.write('\\x03') internally — same byte-path as user
-                # keyboard Ctrl+C (_stdin_to_pty → proc.write).
-                if _CTRL_C in text:
-                    for ch in text:
-                        if ch == _CTRL_C:
-                            proc.sendintr()
-                        else:
-                            proc.write(ch)
-                else:
-                    proc.write(text)
-            except (OSError, ConnectionResetError):
-                break
-
-    t1 = threading.Thread(target=pty_to_socket, daemon=True)
-    t2 = threading.Thread(target=socket_to_pty, daemon=True)
-    t3 = threading.Thread(target=_stdin_to_pty, args=(proc, sys.stdin), daemon=True)
+    # _stdin_to_pty (human keyboard) and _resize_monitor (console-size sync)
+    # remain threads — they don't touch the socket and their threading is
+    # correct (ADR-0032 D2).
+    t_stdin = threading.Thread(target=_stdin_to_pty, args=(proc, sys.stdin), daemon=True)
     resize_stop = threading.Event()
-    t4 = threading.Thread(target=_resize_monitor, args=(proc, resize_stop), daemon=True)
-    t1.start()
-    t2.start()
-    t3.start()
-    t4.start()
-    t1.join()
-    t2.join()
+    t_resize = threading.Thread(target=_resize_monitor, args=(proc, resize_stop), daemon=True)
+    t_stdin.start()
+    t_resize.start()
+
+    # Run pty_to_socket and socket_to_pty as asyncio tasks in this loop.
+    pty_task = asyncio.create_task(_pty_to_socket(proc, writer))
+    sock_task = asyncio.create_task(_socket_to_pty(proc, reader))
+
+    # Wait for either to finish (shell died or parent disconnected).
+    done, pending = await asyncio.wait({pty_task, sock_task}, return_when=asyncio.FIRST_COMPLETED)
+    for task in pending:
+        task.cancel()
+        # Drain the cancellation so it doesn't surface as an unhandled warning.
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await task
+
     resize_stop.set()
-    sock.close()
+    writer.close()
+    with contextlib.suppress(Exception):
+        await writer.wait_closed()
+
+
+def main() -> None:
+    """Synchronous entry point — runs the async main via ``asyncio.run``."""
+    asyncio.run(_async_main())
 
 
 if __name__ == "__main__":

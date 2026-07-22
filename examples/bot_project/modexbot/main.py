@@ -12,7 +12,12 @@ import logging
 import signal as signal_mod
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from bot.service.core import BotService
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +28,7 @@ _STABLE_RUN_SECONDS: float = 30.0
 # ── Factory helpers ──────────────────────────────────────────────────────────
 
 
-def create_qq_service(config_dir: Path):
+def create_qq_service(config_dir: Path) -> "BotService":
     """Create a QQ Bot service instance."""
     from bot.logging import setup_logging
 
@@ -35,15 +40,18 @@ def create_qq_service(config_dir: Path):
 
 
 def create_webui_service(
-    config_dir: Path, *, port: int = 21800, static_dist: Path | None = None
-):
+    config_dir: Path, *, port: int | None = None, static_dist: Path | None = None
+) -> "BotService":
     """Create a WebUI Bot service instance."""
     from bot.logging import setup_logging
 
     setup_logging()
 
+    from bot.config.webui_config import load_webui_port
     from bot.service.web_ui_service import WebUIService
 
+    if port is None:
+        port = load_webui_port(config_dir)
     static_dist = static_dist or _detect_static_dist()
     return WebUIService(config_dir=config_dir, port=port, static_dist=static_dist)
 
@@ -66,7 +74,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 # ── Signal handling ──────────────────────────────────────────────────────────
 
 
-def _install_signal_handlers(service) -> None:
+def _install_signal_handlers(service: "BotService") -> None:
     """Register graceful-shutdown signal handlers (cross-platform).
 
     - Linux/macOS: ``loop.add_signal_handler`` (asyncio-native).
@@ -93,7 +101,7 @@ def _install_signal_handlers(service) -> None:
 
 
 def run_with_supervisor(
-    service_factory,
+    service_factory: Callable[[], "BotService"],
     argv: list[str] | None = None,
 ) -> None:
     """Process-level supervisor: auto-restart on crash, exit on user stop.

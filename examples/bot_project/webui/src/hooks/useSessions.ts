@@ -54,6 +54,12 @@ export interface UseSessionsResult {
   /** Select a session (also used as the sidebar onSelect target). */
   selectSession: (sessionId: string) => void;
   handleNew: (pool: string) => void;
+  /** Create a client-side draft session for the hero-send flow. Returns the
+   *  uuid prefix so the caller can correlate with onSessionReady. The draft
+   *  is NOT inserted into the sidebar list — it appears once
+   *  handleSessionReady inserts the promoted full session id (the backend
+   *  emits conversation_created only for subagents, not main-agent sessions). */
+  createDraftForSend: (pool: string) => string;
   handleDelete: (sessionId: string) => void;
   handleWorkspaceChanged: (cwd: string) => void;
   handleGoHome: () => Promise<void>;
@@ -121,19 +127,26 @@ export function useSessions(): UseSessionsResult {
       draftIdsRef.current.delete(uuidPrefix);
       draftIdsRef.current.set(fullSessionId, pool || "main");
       setSelectedId(fullSessionId);
-      setSessions((prev) =>
-        prev.map((s) =>
-          s.session_id === uuidPrefix
-            ? {
-                ...s,
-                session_id: fullSessionId,
-                agent_name:
-                  fullSessionId.split(".")[1] || "main",
-                updated_at: Date.now(),
-              }
-            : s,
-        ),
-      );
+      // The backend emits conversation_created only for subagents, not for
+      // main-agent sessions — so we must insert the new session into the
+      // sidebar list here for it to appear and highlight. A backend
+      // fetchSessions refresh will reconcile any missing fields.
+      setSessions((prev) => {
+        if (prev.some((s) => s.session_id === fullSessionId)) return prev;
+        const agentName = fullSessionId.split(".")[1] || "main";
+        const now = Date.now();
+        return [
+          ...prev,
+          {
+            session_id: fullSessionId,
+            agent_name: agentName,
+            pool: pool || "main",
+            parent_session_id: null,
+            created_at: now,
+            updated_at: now,
+          },
+        ];
+      });
     },
     [],
   );
@@ -315,55 +328,31 @@ export function useSessions(): UseSessionsResult {
 
   const handleNew = useCallback(
     (pool: string): void => {
-      // Reuse the existing empty draft for this pool if one already exists
-      // (bare uuid prefix or promoted session id).  Repeated clicks on
-      // "New Conversation" must not spawn a stack of unsaved sessions.
-      for (const [draftId, draftPool] of draftIdsRef.current) {
-        if (draftPool === pool) {
-          setSelectedId(draftId);
-          setSessions((prev) => {
-            if (prev.some((s) => s.session_id === draftId)) {
-              return prev;
-            }
-            const now = Date.now();
-            return [
-              ...prev,
-              {
-                session_id: draftId,
-                agent_name: "…",
-                pool,
-                parent_session_id: null,
-                created_at: now,
-                updated_at: now,
-              },
-            ];
-          });
-          return;
-        }
-      }
+      // New Conversation now means "return to the hero view" — no sidebar
+      // placeholder, no client-side draft. The real session is created only
+      // when the user actually sends a message from the hero composer
+      // (createDraftForSend below). Repeated clicks are idempotent because
+      // the hero view is the same regardless of how many times it's hit.
+      void pool;
+      setSelectedId(null);
+    },
+    [],
+  );
 
-      // No empty draft for this pool yet — create a client-side stub.
+  // Create a client-side draft session for the hero-send flow: generate a
+  // uuid prefix, register it in pendingRef/draftIdsRef so useWebUIStream
+  // attaches it to the backend, and select it. Deliberately does NOT insert
+  // a placeholder into `sessions` — the sidebar only shows the new
+  // conversation once handleSessionReady inserts it (the backend emits
+  // conversation_created only for subagents, not main-agent sessions).
+  // Returns the uuid prefix so the caller can correlate with onSessionReady.
+  const createDraftForSend = useCallback(
+    (pool: string): string => {
       const uuidPrefix = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
       pendingRef.current.set(uuidPrefix, pool);
       draftIdsRef.current.set(uuidPrefix, pool);
       setSelectedId(uuidPrefix);
-      const now = Date.now();
-      // Discard any stale "…" placeholders from a prior session (belt-and-
-      // suspenders — draftIdsRef tracking should prevent duplicates, but
-      // cleanup ensures we never show two "…" entries).
-      setSessions((prev) => [
-        ...prev.filter(
-          (s) => s.agent_name !== "…" || draftIdsRef.current.has(s.session_id),
-        ),
-        {
-          session_id: uuidPrefix,
-          agent_name: "…",
-          pool,
-          parent_session_id: null,
-          created_at: now,
-          updated_at: now,
-        },
-      ]);
+      return uuidPrefix;
     },
     [],
   );
@@ -512,6 +501,7 @@ export function useSessions(): UseSessionsResult {
     onSessionCreated,
     selectSession,
     handleNew,
+    createDraftForSend,
     handleDelete,
     handleWorkspaceChanged,
     handleGoHome,

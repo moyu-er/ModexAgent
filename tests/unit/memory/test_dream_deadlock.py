@@ -34,7 +34,7 @@ async def test_commit_cursor_race_with_append_bundle(tmp_path: Path):
     for i in range(5):
         await manager.append_bundle(ctx, (
             ArchiveWrite(channel=ArchiveChannel.CONTEXT, summary=f"ctx{i}"),
-            ArchiveWrite(channel=ArchiveChannel.KNOWLEDGE, summary=f"knl{i}"),
+            ArchiveWrite(channel=ArchiveChannel.CORE, summary=f"knl{i}"),
         ))
 
     unprocessed_before = await manager.get_unprocessed(ctx, "dream", limit=100)
@@ -43,14 +43,14 @@ async def test_commit_cursor_race_with_append_bundle(tmp_path: Path):
     # Simulate concurrent commit_cursor and append_bundle
     async def commit_task():
         for _ in range(20):
-            await manager.commit_cursor(ctx, "dream", 2, channel=ArchiveChannel.KNOWLEDGE)
+            await manager.commit_cursor(ctx, "dream", 2, channel=ArchiveChannel.CORE)
             await asyncio.sleep(0)
 
     async def append_task():
         for i in range(20):
             await manager.append_bundle(ctx, (
                 ArchiveWrite(channel=ArchiveChannel.CONTEXT, summary=f"race_ctx{i}"),
-                ArchiveWrite(channel=ArchiveChannel.KNOWLEDGE, summary=f"race_knl{i}"),
+                ArchiveWrite(channel=ArchiveChannel.CORE, summary=f"race_knl{i}"),
             ))
             await asyncio.sleep(0)
 
@@ -58,7 +58,7 @@ async def test_commit_cursor_race_with_append_bundle(tmp_path: Path):
 
     # Verify next_archive_id advanced correctly (5 initial + 20 appended = 25)
     # If commit_cursor() overwrote the state, next_archive_id would be wrong
-    recent = await manager.get_recent(ctx, limit=50, channel=ArchiveChannel.KNOWLEDGE)
+    recent = await manager.get_recent(ctx, limit=50, channel=ArchiveChannel.CORE)
     archive_ids = {e.entry_id for e in recent}
     # All 25 entries should have unique archive_ids
     assert len(recent) == 25, f"Expected 25 entries, got {len(recent)}"
@@ -76,13 +76,13 @@ async def test_commit_cursor_advances_monotonically_under_race(tmp_path: Path):
     for i in range(3):
         await manager.append_bundle(ctx, (
             ArchiveWrite(channel=ArchiveChannel.CONTEXT, summary=f"c{i}"),
-            ArchiveWrite(channel=ArchiveChannel.KNOWLEDGE, summary=f"k{i}"),
+            ArchiveWrite(channel=ArchiveChannel.CORE, summary=f"k{i}"),
         ))
 
     # Concurrent commit_cursor from different sources
     async def committer(name: str, cursor: int):
         for _ in range(10):
-            await manager.commit_cursor(ctx, name, cursor, channel=ArchiveChannel.KNOWLEDGE)
+            await manager.commit_cursor(ctx, name, cursor, channel=ArchiveChannel.CORE)
             await asyncio.sleep(0)
 
     await asyncio.gather(
@@ -117,11 +117,11 @@ async def test_prune_does_not_starve_concurrent_reads(tmp_path: Path):
     for i in range(50):
         await manager.append_bundle(ctx, (
             ArchiveWrite(channel=ArchiveChannel.CONTEXT, summary=f"c{i}" * 50),
-            ArchiveWrite(channel=ArchiveChannel.KNOWLEDGE, summary=f"k{i}" * 50),
+            ArchiveWrite(channel=ArchiveChannel.CORE, summary=f"k{i}" * 50),
         ))
 
     # Commit some cursors so pruning has work to do
-    await manager.commit_cursor(ctx, "dream", 40, channel=ArchiveChannel.KNOWLEDGE)
+    await manager.commit_cursor(ctx, "dream", 40, channel=ArchiveChannel.CORE)
 
     prune_started = asyncio.Event()
     prune_done = asyncio.Event()

@@ -142,9 +142,7 @@ class PeerCommunicationSystemPromptProvider(SystemPromptProvider):
 
         if not isinstance(tool, SendToAgentTool):
             return []
-        return sorted(
-            t.name for t in tool.list_targets() if t.bus_ref is not None
-        )
+        return sorted(t.name for t in tool.list_targets() if t.bus_ref is not None)
 
     async def _fetch_version(self) -> str:
         names = self._remote_target_names()
@@ -192,32 +190,24 @@ class RuntimeProvider(SystemPromptProvider):
         return "\n".join(lines)
 
 
-class KnowledgeProvider(SystemPromptProvider):
-    """Knowledge files (SOUL.md, USER.md, MEMORY.md). Never refreshes during react."""
+class CoreMemoryProvider(SystemPromptProvider):
+    """Core memory files (SOUL.md, USER.md, MEMORY.md). Never refreshes during react."""
 
-    def __init__(self, knowledge_xml: str) -> None:
+    def __init__(self, core_memory_xml: str) -> None:
         super().__init__()
-        self._knowledge_xml = knowledge_xml
+        self._core_memory_xml = core_memory_xml
 
     async def _fetch_version(self) -> str:
         return "static"
 
     async def _fetch_content(self) -> str:
-        return self._knowledge_xml
+        return self._core_memory_xml
 
 
-class SkillProvider(SystemPromptProvider):
-    """Skill metadata XML. Never refreshes during react."""
-
-    def __init__(self, skill_xml: str) -> None:
-        super().__init__()
-        self._skill_xml = skill_xml
-
-    async def _fetch_version(self) -> str:
-        return "static"
-
-    async def _fetch_content(self) -> str:
-        return self._skill_xml
+# Moved to ``core.skills.provider`` to avoid a ``core → memory`` reverse
+# import when ``SkillManager.build_provider()`` constructs it. Re-exported
+# here for callers that import all providers from this module.
+from modex_agent.core.skills.provider import SkillProvider  # noqa: E402,F401
 
 
 class ExperienceProvider(SystemPromptProvider):
@@ -450,7 +440,7 @@ class OutputMdProvider(SystemPromptProvider):
             "directories are read-only. The `write` or `edit` tool works for this file.\n"
             "\n"
             "**Workflow:** do your task → use `write` or `edit` to save OUTPUT.md → "
-            "say briefly \"done, see OUTPUT.md\" as your final message."
+            'say briefly "done, see OUTPUT.md" as your final message.'
         )
 
 
@@ -562,11 +552,8 @@ class ForkContextProvider(SystemPromptProvider):
                 "## Fork Context\n\n"
                 f"You are a subagent running from a fork of agent '{parent_name}'.\n"
                 "The context below is READ-ONLY reference. Do NOT continue the "
-                "prior conversation. Your task starts now.\n\n"
-                + str(fork_xml)
+                "prior conversation. Your task starts now.\n\n" + str(fork_xml)
             )
         except Exception:
-            logger.warning(
-                "ForkContextProvider: failed for %s", self._session_id, exc_info=True
-            )
+            logger.warning("ForkContextProvider: failed for %s", self._session_id, exc_info=True)
             return ""

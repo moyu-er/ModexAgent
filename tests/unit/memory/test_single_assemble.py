@@ -13,16 +13,16 @@ def _make_mock_system() -> MagicMock:
 
     load() now builds a pipeline-specific FullInjectionPolicy that calls
     assemble() internally, so the mock must support:
-    ensure_within_budget, retrieve_knowledge, get_knowledge_directory,
+    ensure_within_budget, retrieve_core_memory, get_core_memory_directory,
     get_storage_path, get_providers, prefetch_memories, get_history,
     create_message_history.
     """
     mock_system = MagicMock()
     mock_system.ensure_within_budget = AsyncMock()
-    mock_system.retrieve_knowledge = AsyncMock(
+    mock_system.retrieve_core_memory = AsyncMock(
         return_value=MagicMock(soul="", user="", memory=""),
     )
-    mock_system.get_knowledge_directory = AsyncMock(return_value=None)
+    mock_system.get_core_memory_directory = AsyncMock(return_value=None)
     mock_system.get_storage_path = AsyncMock(return_value=None)
     mock_system.get_history_entries = AsyncMock(
         return_value=[

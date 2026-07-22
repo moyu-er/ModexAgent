@@ -1,0 +1,18 @@
+{
+  "productName": "ModexBot",
+  "version": "1.0.0",
+  "identifier": "com.modexagent.modexbot",
+  "build": {
+    "frontendDist": "./po-dist"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false,
+    "icon": ["icons/icon.ico"]
+  }
+}

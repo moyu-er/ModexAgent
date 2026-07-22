@@ -11,7 +11,7 @@ from typing import Any
 from modex_agent.core.scope import MemoryLayerName
 from modex_agent.memory.archive_models import (
     CONTEXT_ARCHIVE_FILENAME,
-    KNOWLEDGE_ARCHIVE_FILENAME,
+    CORE_ARCHIVE_FILENAME,
     ArchiveChannel,
 )
 from modex_agent.memory.core.lock import AioRWLock, StorageLock
@@ -51,7 +51,7 @@ class DefaultScopedStorage(StoreMetadata, MessageStore, KVStore, CursorStore, Ar
       ``.checkpoint``, etc.). It is intentionally separate from
       ``messages.jsonl`` so growing tool-call content does **not** bloat
       the context or require full-file rewrites of conversation state.
-    - ``context_archive.jsonl`` / ``knowledge_archive.jsonl`` – archive channel logs.\n    - ``changelog.jsonl`` – layer-specific changelog.
+    - ``context_archive.jsonl`` / ``core_archive.jsonl`` – archive channel logs.\n    - ``changelog.jsonl`` – layer-specific changelog.
     - ``.cursor_*`` – cursor tracking files.
     """
 
@@ -99,7 +99,7 @@ class DefaultScopedStorage(StoreMetadata, MessageStore, KVStore, CursorStore, Ar
 
     @property
     def _log_path(self) -> Path:
-        if self.layer == MemoryLayerName.KNOWLEDGE:
+        if self.layer == MemoryLayerName.CORE:
             return self.directory / _CHANGELOG_FILE
         if self.layer == MemoryLayerName.ARCHIVE:
             return self.directory / CONTEXT_ARCHIVE_FILENAME
@@ -108,8 +108,8 @@ class DefaultScopedStorage(StoreMetadata, MessageStore, KVStore, CursorStore, Ar
     def _channel_log_path(self, channel: str) -> Path:
         if channel == ArchiveChannel.CONTEXT.value:
             return self.directory / CONTEXT_ARCHIVE_FILENAME
-        if channel == ArchiveChannel.KNOWLEDGE.value:
-            return self.directory / KNOWLEDGE_ARCHIVE_FILENAME
+        if channel == ArchiveChannel.CORE.value:
+            return self.directory / CORE_ARCHIVE_FILENAME
         return self._log_path
 
     @property

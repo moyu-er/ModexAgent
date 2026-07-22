@@ -33,7 +33,7 @@ from modex_agent.control.exceptions import AgentControlError
 from modex_agent.core.agent import Agent
 from modex_agent.core.agent_runtime_config import BusyInputMode
 from modex_agent.core.emitter import AgentResult
-from modex_agent.core.graph.interrupt import GraphInterrupt
+from modex_graph.exceptions import GraphInterrupt
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.types import InputMessage
 from modex_agent.memory.consolidation import DreamEngine

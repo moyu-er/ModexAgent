@@ -1,6 +1,6 @@
 """SummarizerTrajectoryEmitter — logs ReAct loop events and writes JSONL trace.
 
-Used by ArchiveSummarizer and KnowledgeConsolidator so their execution
+Used by ArchiveSummarizer and CoreMemoryConsolidator so their execution
 is observable even though they run silently in the background.
 """
 

@@ -185,7 +185,7 @@ def test_artifact_paths_all_ten_with_correct_naming(tmp_path):
 def test_artifact_paths_excludes_pool_shared(tmp_path):
     paths = _paths_for(tmp_path)
     ap = _session_artifact_paths("x.main", "main", paths)
-    # archive + knowledge are pool-shared, must NOT appear
+    # archive + knowledge (on-disk directory name for Core Memory, ADR-0035) are pool-shared, must NOT appear
     assert not any("archive" in str(p) for p in ap)
     assert not any("knowledge" in str(p) for p in ap)
     # commands leaf is unused, must NOT appear
@@ -533,6 +533,7 @@ def test_clean_session_preserves_pool_shared_and_siblings(tmp_path):
     archive = paths.memory_dir("coding") / "archive"
     archive.mkdir(parents=True)
     (archive / "state.json").write_text("{}", encoding="utf-8")
+    # On-disk directory is still named `knowledge/` (Core Memory layer per ADR-0035; the directory name is unchanged)
     knowledge = paths.memory_dir("coding") / "knowledge"
     knowledge.mkdir(parents=True)
     (knowledge / "MEMORY.md").write_text("kept", encoding="utf-8")

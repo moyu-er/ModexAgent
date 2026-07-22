@@ -149,13 +149,13 @@ Work the **frontier**: any ticket whose blockers are all done. For a purely line
 
 ## T09: File implementations refactor to implement split ABCs
 
-**What to build:** `DefaultScopedStorage` simultaneously implements `MessageStore` + `KVStore` + `CursorStore` + `ArchiveStore` (one class, four interfaces). `DirArchiveStorage` implements `KVStore` + `ArchiveStore` + `CursorStore`. `MarkdownKnowledgeStorage` implements `KVStore` + `CursorStore`. State machine methods in file impl: `prune_messages` removes from messages.jsonl + returns pruned content; `pin_message`/`unpin_message` mark `_pinned: true` in message metadata; `cleanup_expired` is no-op (immediate physical delete, no soft_deleted). `MemoryStoreRegistry.resolve()` returns `MemoryStoreBundle` (file impl: all 4 fields point to same instance).
+**What to build:** `DefaultScopedStorage` simultaneously implements `MessageStore` + `KVStore` + `CursorStore` + `ArchiveStore` (one class, four interfaces). `DirArchiveStorage` implements `KVStore` + `ArchiveStore` + `CursorStore`. `MarkdownKnowledgeStorage` (renamed to `MarkdownCoreMemoryStorage` per ADR-0035) implements `KVStore` + `CursorStore`. State machine methods in file impl: `prune_messages` removes from messages.jsonl + returns pruned content; `pin_message`/`unpin_message` mark `_pinned: true` in message metadata; `cleanup_expired` is no-op (immediate physical delete, no soft_deleted). `MemoryStoreRegistry.resolve()` returns `MemoryStoreBundle` (file impl: all 4 fields point to same instance).
 
 **Blocked by:** T08 (ABC definitions)
 
 - [ ] `DefaultScopedStorage` implements all 4 ABCs
 - [ ] `DirArchiveStorage` implements `KVStore` + `ArchiveStore` + `CursorStore`
-- [ ] `MarkdownKnowledgeStorage` implements `KVStore` + `CursorStore`
+- [ ] `MarkdownKnowledgeStorage` (now `MarkdownCoreMemoryStorage`, ADR-0035) implements `KVStore` + `CursorStore`
 - [ ] `prune_messages` returns `(count, pruned_messages_list)` in file impl
 - [ ] `pin_message`/`unpin_message` use message dict metadata `_pinned: true`
 - [ ] `cleanup_expired` is no-op in file impl
@@ -167,7 +167,7 @@ Work the **frontier**: any ticket whose blockers are all done. For a purely line
 
 ## T10: Migrate memory layer 60 call sites to `MemoryStoreBundle`
 
-**What to build:** Update all 60 call sites in `memory/layers/session.py`, `memory/layers/knowledge.py`, `memory/layers/archive.py`, `memory/layers/user_buffer.py`, `memory/lifecycle.py`, `memory/cleanup.py`, `memory/consolidation/dream_engine.py`, `memory/registry/` from `storage.xxx()` to `bundle.{messages|kv|cursors|archive}.xxx()`. Delete old `MemoryStorage` ABC. This is the contract phase — old ABC deleted, only split ABCs + bundle remain. CI green.
+**What to build:** Update all 60 call sites in `memory/layers/session.py`, `memory/layers/core.py` (renamed from `knowledge.py` per ADR-0035), `memory/layers/archive.py`, `memory/layers/user_buffer.py`, `memory/lifecycle.py`, `memory/cleanup.py`, `memory/consolidation/dream_engine.py`, `memory/registry/` from `storage.xxx()` to `bundle.{messages|kv|cursors|archive}.xxx()`. Delete old `MemoryStorage` ABC. This is the contract phase — old ABC deleted, only split ABCs + bundle remain. CI green.
 
 **Blocked by:** T09 (file implementations produce correct bundles), T03 (divergent InMemory subclass removed)
 
@@ -504,7 +504,8 @@ lifecycle).
 
 **Explicit exclusions:** no existing file-to-SQLite data migration, no dual
 write or shadow read, no database per pool, no new schema, and no conversion of
-intentional file stores (knowledge/archive Markdown, pruned history, media,
+intentional file stores (core memory/archive Markdown — core memory was renamed
+from "knowledge" per ADR-0035; the on-disk Markdown files are unchanged, pruned history, media,
 overflow chunks, experience trees, traces, transcripts, configuration, prompts,
 or skills).
 

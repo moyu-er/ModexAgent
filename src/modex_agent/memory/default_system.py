@@ -20,7 +20,7 @@ from modex_agent.memory.core.layers import (
     MemoryLayerSet,
     SessionMemoryManager,
 )
-from modex_agent.memory.core.models import LongTermMemory
+from modex_agent.memory.core.models import CoreMemoryContents
 from modex_agent.memory.core.system import (
     ContextManagedMemorySystem,
     MemorySystem,
@@ -29,7 +29,7 @@ from modex_agent.memory.history import MessageHistory
 from modex_agent.memory.token_estimator import CharTokenEstimator, TokenEstimator
 
 if TYPE_CHECKING:
-    from modex_agent.agents.summarizer.abc import ArchiveGenerator, KnowledgeConsolidatorBase
+    from modex_agent.agents.summarizer.abc import ArchiveGenerator, CoreMemoryConsolidatorBase
     from modex_agent.memory.stores.dir_archive import DirArchiveStorage
 from modex_agent.core.types import MessageRole
 from modex_agent.memory.pruned.manager import PrunedManager
@@ -227,7 +227,7 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
         pruned_manager: PrunedManager | None = None,
         archive_agent: ArchiveGenerator | None = None,
         archive_storage: DirArchiveStorage | None = None,
-        knowledge_consolidator: KnowledgeConsolidatorBase | None = None,
+        core_memory_consolidator: CoreMemoryConsolidatorBase | None = None,
         archive_trigger_callback: Callable[[MemoryContext], Awaitable[None]] | None = None,
         token_estimator: TokenEstimator | None = None,
     ) -> None:
@@ -238,7 +238,7 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
         self._pruned_manager: PrunedManager | None = pruned_manager
         self._archive_agent = archive_agent
         self._archive_storage = archive_storage
-        self._knowledge_consolidator = knowledge_consolidator
+        self._core_memory_consolidator = core_memory_consolidator
         self._archive_trigger_callback = archive_trigger_callback
         self._token_estimator: TokenEstimator = token_estimator or CharTokenEstimator()
         self._cleanup_listeners: list[MemoryCleanupListener] = []
@@ -356,8 +356,8 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
         await self._layers.session.clear(context)
         if self._layers.archive is not None:
             await self._layers.archive.clear(context)
-        if self._layers.knowledge is not None:
-            await self._layers.knowledge.clear(context)
+        if self._layers.core is not None:
+            await self._layers.core.clear(context)
         if self._layers.user_retention is not None:
             await self._layers.user_retention.clear(context)
 
@@ -429,32 +429,34 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
         """Expose archive manager for DreamEngine compatibility."""
         return self._layers.archive
 
-    # -- Knowledge convenience ------------------------------------------
+    # -- Core memory convenience ------------------------------------------
 
-    async def get_knowledge(self, context: MemoryContext) -> LongTermMemory:
-        knowledge = self._layers.knowledge
-        if knowledge is None:
-            return LongTermMemory()
-        return await knowledge.get_all(context)
+    async def get_core_memory(self, context: MemoryContext) -> CoreMemoryContents:
+        """Return all long-term core memory for the given context."""
+        core_memory = self._layers.core
+        if core_memory is None:
+            return CoreMemoryContents()
+        return await core_memory.get_all(context)
 
-    async def retrieve_knowledge(
+    async def retrieve_core_memory(
         self,
         context: MemoryContext,
         query: str = "",
-    ) -> LongTermMemory:
-        knowledge = self._layers.knowledge
-        if knowledge is None:
-            return LongTermMemory()
-        return await knowledge.retrieve(context, query=query)
+    ) -> CoreMemoryContents:
+        """Retrieve core memory relevant to a query."""
+        core_memory = self._layers.core
+        if core_memory is None:
+            return CoreMemoryContents()
+        return await core_memory.retrieve(context, query=query)
 
-    async def get_knowledge_directory(self, context: MemoryContext) -> Path | None:
-        """Return the absolute path to the knowledge storage directory."""
-        if self._layers.knowledge is None:
+    async def get_core_memory_directory(self, context: MemoryContext) -> Path | None:
+        """Return the absolute path to the core memory storage directory."""
+        if self._layers.core is None:
             return None
         try:
-            return await self._layers.knowledge.get_storage_path(context)
+            return await self._layers.core.get_storage_path(context)
         except Exception:
-            logger.debug("Failed to resolve knowledge directory", exc_info=True)
+            logger.debug("Failed to resolve core memory directory", exc_info=True)
             return None
 
     async def get_storage_path(self, context: MemoryContext) -> Path | None:
@@ -468,14 +470,14 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
             return None
 
     @property
-    def knowledge_manager(self) -> Any | None:
-        """Expose knowledge manager for DreamEngine compatibility."""
-        return self._layers.knowledge
+    def core_memory_manager(self) -> Any | None:
+        """Expose core memory manager for DreamEngine compatibility."""
+        return self._layers.core
 
     @property
-    def knowledge_consolidator(self) -> KnowledgeConsolidatorBase | None:
-        """Expose knowledge consolidator for DreamEngine wiring."""
-        return self._knowledge_consolidator
+    def core_memory_consolidator(self) -> CoreMemoryConsolidatorBase | None:
+        """Expose core memory consolidator for DreamEngine wiring."""
+        return self._core_memory_consolidator
 
     # -- Provider fan-out -----------------------------------------------
 

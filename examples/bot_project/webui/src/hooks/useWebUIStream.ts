@@ -67,6 +67,18 @@ export function useWebUIStream(
    * echoes it back via ``_request_id`` in the envelope metadata so the
    * reducer can deduplicate the echo regardless of content. */
   const pendingRequestRef = useRef<string | null>(null);
+  /** Stashed ws send for a draft (uuid-prefix) session. When the user sends
+   *  from a hero-composer flow, ``send()`` adds the optimistic message
+   *  immediately but cannot transmit until the backend assigns the real
+   *  session id via the ``attached`` event. This ref holds the payload so
+   *  the ``attached`` handler can flush it with the full session id. */
+  const pendingWsSendRef = useRef<{
+    content: string;
+    attachments?: OutgoingAttachmentRef[];
+    providerName?: string;
+    modelName?: string;
+    requestId: string;
+  } | null>(null);
   /** Non-selected sessions currently mid-turn. Used to notify the host exactly
    * once per turn (on the false→true streaming transition) so it can reorder
    * the sidebar — including a stale child becoming active again. */
@@ -100,6 +112,25 @@ export function useWebUIStream(
         getPoolForUuid?.(sessionId) !== undefined
       ) {
         onSessionReady?.(sessionId, event.session_id);
+        // Flush a queued ws send from a hero-composer draft send. The
+        // backend now has the real session id (event.session_id), so the
+        // send_message can finally be transmitted.
+        const pending = pendingWsSendRef.current;
+        if (pending) {
+          pendingWsSendRef.current = null;
+          const client = clientRef.current;
+          if (client?.connected) {
+            client.sendMessage(
+              event.session_id,
+              pending.content,
+              currentWsRef.current,
+              pending.requestId,
+              pending.attachments,
+              pending.providerName,
+              pending.modelName,
+            );
+          }
+        }
         return;
       }
       // Notify when a non-selected session starts a turn (first streaming
@@ -330,8 +361,15 @@ export function useWebUIStream(
     // buffer alone (as before) showed an incomplete view when the buffer was
     // itself incomplete (mid-stream reconnect / page reload).
     let cancelled = false;
+    // Keep an in-flight optimistic user message (hero-send draft just
+    // promoted to fullId) across this synchronous clear — otherwise the
+    // async fetchMessages below resolves to prev.messages=[] and the
+    // optimistic is lost until the backend echo arrives.
+    const optimisticId = pendingRequestRef.current;
     setState((prev) => ({
-      messages: [],
+      messages: optimisticId
+        ? prev.messages.filter((m) => m.id === optimisticId && m.role === "user")
+        : [],
       isStreaming: false,
       sessionMessages: prev.sessionMessages,
       sessionStreaming: prev.sessionStreaming,
@@ -356,12 +394,20 @@ export function useWebUIStream(
         setState((prev) => {
           const buf = prev.sessionMessages[sessionId] || [];
           const streaming = prev.sessionStreaming[sessionId] || false;
-          // Append only the unfinished turn from the buffer; completed turns
-          // are already covered (authoritatively) by the fetched history.
           const liveTail = streaming ? buf.filter((m) => m.isStreaming) : [];
+          // Carry through the optimistic message if fetchMessages resolved
+          // before the backend persisted the queued send_message.
+          const optimisticId = pendingRequestRef.current;
+          const optimisticMsg = optimisticId
+            ? prev.messages.find((m) => m.id === optimisticId && m.role === "user")
+            : undefined;
+          const optimisticTail =
+            optimisticMsg && !history.some((h) => h.id === optimisticId)
+              ? [optimisticMsg]
+              : [];
           return {
             ...prev,
-            messages: [...history, ...liveTail],
+            messages: [...history, ...optimisticTail, ...liveTail],
             isStreaming: streaming,
             todos: { ...prev.todos, [sessionId]: fetchedTodos },
             pendingApprovals: { ...prev.pendingApprovals, [sessionId]: fetchedApprovals },
@@ -396,10 +442,6 @@ export function useWebUIStream(
         console.warn("Cannot send message: no session selected");
         return;
       }
-      if (getPoolForUuid?.(sessionId) !== undefined) {
-        console.warn("Cannot send message: session not yet ready");
-        return;
-      }
       const requestId = crypto.randomUUID();
       pendingRequestRef.current = requestId;
       setState((prev) => ({
@@ -416,6 +458,15 @@ export function useWebUIStream(
           },
         ],
       }));
+
+      // Draft (uuid-prefix) session: the backend cannot accept send_message
+      // until it has assigned the real session id. Stash the payload; the
+      // `attached` event handler flushes it with the full session id once
+      // the backend responds. The optimistic message is already shown above.
+      if (getPoolForUuid?.(sessionId) !== undefined) {
+        pendingWsSendRef.current = { content, attachments, providerName, modelName, requestId };
+        return;
+      }
 
       const client = clientRef.current;
       if (!client || !client.connected) {

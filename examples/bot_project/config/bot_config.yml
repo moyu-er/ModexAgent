@@ -21,6 +21,14 @@ safety:
 paths:
   data_dir: "data"
 
+# ---- WebUI ----
+# Single source of truth for the HTTP/WS server address.
+# All launch paths (modexbot CLI, Tauri desktop shell, browser launcher,
+# installer shortcuts) read from here — no hardcoded port elsewhere.
+webui:
+  port: 21800
+  host: "0.0.0.0"
+
 # ---- Workspace (multi-live) ----
 workspace:
   enabled: true

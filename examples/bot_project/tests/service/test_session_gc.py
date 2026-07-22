@@ -80,9 +80,9 @@ def test_artifact_paths_all_nine_with_correct_naming(tmp_path):
 def test_artifact_paths_excludes_pool_shared(tmp_path):
     paths = _paths_for(tmp_path)
     ap = _session_artifact_paths("x.main", "main", paths)
-    # archive + knowledge are pool-shared, must NOT appear
+    # archive + core are pool-shared, must NOT appear
     assert not any("archive" in str(p) for p in ap)
-    assert not any("knowledge" in str(p) for p in ap)
+    assert not any("core" in str(p) for p in ap)
     # commands leaf is unused, must NOT appear
     assert not any("commands" in str(p) for p in ap)
 
@@ -543,9 +543,9 @@ def test_clean_session_preserves_pool_shared_and_siblings(tmp_path):
     archive = paths.memory_dir("coding") / "archive"
     archive.mkdir(parents=True)
     (archive / "state.json").write_text("{}", encoding="utf-8")
-    knowledge = paths.memory_dir("coding") / "knowledge"
-    knowledge.mkdir(parents=True)
-    (knowledge / "MEMORY.md").write_text("kept", encoding="utf-8")
+    core_mem = paths.memory_dir("coding") / "core"
+    core_mem.mkdir(parents=True)
+    (core_mem / "MEMORY.md").write_text("kept", encoding="utf-8")
 
     cleaner = _cleaner(paths)
     scope = BotRecordScope(session_id="aaa.coding", pool="coding")
@@ -555,7 +555,7 @@ def test_clean_session_preserves_pool_shared_and_siblings(tmp_path):
     assert (paths.session_index_dir / "coding" / "sib.coding.json").exists()
     # pool-shared untouched
     assert (archive / "state.json").exists()
-    assert (knowledge / "MEMORY.md").read_text(encoding="utf-8") == "kept"
+    assert (core_mem / "MEMORY.md").read_text(encoding="utf-8") == "kept"
 
 
 from bot.service.session_gc import _propagate_children

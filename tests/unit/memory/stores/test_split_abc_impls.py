@@ -1,7 +1,7 @@
 """Tests for T09: file storage implementations of the split store ABCs.
 
 Covers:
-- ``DefaultScopedStorage`` / ``DirArchiveStorage`` / ``MarkdownKnowledgeStorage``
+- ``DefaultScopedStorage`` / ``DirArchiveStorage`` / ``MarkdownCoreMemoryStorage``
   formally implement the four split ABCs (``MessageStore`` / ``KVStore`` /
   ``CursorStore`` / ``ArchiveStore``).
 - New ``MessageStore`` state machine methods on ``DefaultScopedStorage``
@@ -32,7 +32,7 @@ from modex_agent.memory.core.split_stores import (
 )
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry
 from modex_agent.memory.stores.dir_archive import DirArchiveStorage
-from modex_agent.memory.stores.markdown_knowledge import MarkdownKnowledgeStorage
+from modex_agent.memory.stores.markdown_core import MarkdownCoreMemoryStorage
 from modex_agent.memory.stores.scoped_file import DefaultScopedStorage
 
 
@@ -60,15 +60,15 @@ class TestSplitABCInheritance:
         assert isinstance(store, CursorStore)
         assert isinstance(store, MessageStore)
 
-    def test_markdown_knowledge_storage_implements_kv_and_cursor(self, tmp_path: Path) -> None:
-        store = MarkdownKnowledgeStorage(tmp_path, layer=MemoryLayerName.KNOWLEDGE)
+    def test_markdown_core_memory_storage_implements_kv_and_cursor(self, tmp_path: Path) -> None:
+        store = MarkdownCoreMemoryStorage(tmp_path, layer=MemoryLayerName.CORE)
         assert isinstance(store, KVStore)
         assert isinstance(store, CursorStore)
 
     def test_classes_are_not_abstract(self, tmp_path: Path) -> None:
         assert not DefaultScopedStorage.__abstractmethods__
         assert not DirArchiveStorage.__abstractmethods__
-        assert not MarkdownKnowledgeStorage.__abstractmethods__
+        assert not MarkdownCoreMemoryStorage.__abstractmethods__
 
 
 # ---------------------------------------------------------------------------

@@ -81,6 +81,10 @@ export interface AssistantTurnEvent extends ServerEvent {
   latency_ms: number;
   /** Outbound attachment records the agent produced this turn (SendFileToUserTool). */
   attachments?: AttachmentRecord[];
+  /** True when this turn was reconstructed from partial streaming deltas
+   * (the turn is still in progress). The frontend renders it as a streaming
+   * message and appends live WS deltas on top. */
+  is_streaming?: boolean;
 }
 
 export interface ConversationReadyEvent extends ServerEvent {
@@ -402,7 +406,7 @@ export function eventsToMessages(events: ServerEventUnion[]): UIMessage[] {
         role: "assistant",
         agent_name: ev.agent_name,
         blocks: mergeBlocks((ev.blocks ?? []).map(normalizeBlock)),
-        isStreaming: false,
+        isStreaming: ev.is_streaming ?? false,
         timestamp: ev.timestamp,
         attachments: ev.attachments,
       });

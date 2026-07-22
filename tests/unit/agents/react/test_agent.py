@@ -2,9 +2,7 @@
 import pytest
 
 from modex_agent.agents.react.agent import ReActAgent
-from modex_agent.agents.react.graph import ReActGraph
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.graph.engine import GraphEngine
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.hook import HookRunner
@@ -16,23 +14,22 @@ class _MockProvider:
 
 
 class TestReActAgent:
-    def test_creates_graph_and_engine(self):
-        agent = ReActAgent(_MockProvider(), mode="clean")
-        assert isinstance(agent.graph, ReActGraph)
-        assert isinstance(agent.engine, GraphEngine)
-
     def test_name(self):
-        agent = ReActAgent(_MockProvider())
+        agent = ReActAgent(_MockProvider())  # type: ignore[arg-type]
         assert agent.name == "ReActAgent"
 
+    def test_mode_stored(self):
+        agent = ReActAgent(_MockProvider(), mode="clean")  # type: ignore[arg-type]
+        assert agent.mode == "clean"
+
     def test_full_mode_default(self):
-        agent = ReActAgent(_MockProvider())
-        assert agent.graph.name == "react_full"
+        agent = ReActAgent(_MockProvider())  # type: ignore[arg-type]
+        assert agent.mode == "full"
 
     @pytest.mark.asyncio
     async def test_clean_mode_run_completes(self):
         """Clean mode should run start->llm->end without errors (mock provider fails but gracefully)."""
-        agent = ReActAgent(_MockProvider(), mode="clean")
+        agent = ReActAgent(_MockProvider(), mode="clean")  # type: ignore[arg-type]
 
         class _Emitter:
             def wants_streaming(self):
@@ -46,7 +43,7 @@ class TestReActAgent:
         )
         emitter = _Emitter()
         try:
-            result = await agent.run(ctx, emitter)
+            result = await agent.run(ctx, emitter)  # type: ignore[arg-type]
             # Clean mode should complete (LLMNode will error without real provider, caught by ReActAgent)
             assert result is not None
         except Exception:
@@ -59,7 +56,7 @@ class TestReActAgent:
 class TestReActAgentRuntime:
     @pytest.mark.asyncio
     async def test_clean_mode_sets_clean_runtime(self):
-        agent = ReActAgent(_MockProvider(), mode="clean")
+        agent = ReActAgent(_MockProvider(), mode="clean")  # type: ignore[arg-type]
 
         class _Emitter:
             def wants_streaming(self):
@@ -88,7 +85,7 @@ class TestReActAgentRuntime:
         )
         emitter = _Emitter()
         try:
-            await agent.run(ctx, emitter)
+            await agent.run(ctx, emitter)  # type: ignore[arg-type]
         except Exception:
             pass
         assert ctx.runtime is not None
@@ -96,7 +93,7 @@ class TestReActAgentRuntime:
 
     @pytest.mark.asyncio
     async def test_full_mode_preserves_hooks(self):
-        agent = ReActAgent(_MockProvider(), mode="full")
+        agent = ReActAgent(_MockProvider(), mode="full")  # type: ignore[arg-type]
 
         class _Emitter:
             def wants_streaming(self):
@@ -125,7 +122,7 @@ class TestReActAgentRuntime:
         )
         emitter = _Emitter()
         try:
-            await agent.run(ctx, emitter)
+            await agent.run(ctx, emitter)  # type: ignore[arg-type]
         except Exception:
             pass
         assert ctx.runtime is not None

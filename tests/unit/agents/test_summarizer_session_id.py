@@ -1,6 +1,6 @@
 """Regression: batch summarizers must build SessionInfo without warning spam.
 
-ArchiveSummarizer / KnowledgeConsolidator run as standalone one-shot agents
+ArchiveSummarizer / CoreMemoryConsolidator run as standalone one-shot agents
 with synthetic, human-readable session ids (``archive-summarizer-3``) that
 carry NO ``.`` separator.  These ids are correct (deterministic, trace-
 correlatable to archive_id) — but they must NOT flow through

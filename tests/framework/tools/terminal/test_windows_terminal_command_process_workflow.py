@@ -33,8 +33,8 @@ import pytest
 from modex_agent.tools.terminal.command_tool import CommandTool
 from modex_agent.tools.terminal.config import TerminalRuntimeConfig
 from modex_agent.tools.terminal.managers import create_terminal_manager
-from modex_agent.tools.terminal.process_tool import ProcessTool
 from modex_agent.tools.terminal.process_registry import ProcessRegistry
+from modex_agent.tools.terminal.process_tool import ProcessTool
 from modex_agent.tools.terminal.tool import TerminalTool
 from modex_agent.tools.terminal.types import Platform, ShellFamily, ShellInfo, TerminalVisibility
 
@@ -166,8 +166,12 @@ def _make_tools(visibility: TerminalVisibility, shell_path: str) -> tuple[Termin
     "visibility",
     [
         pytest.param(TerminalVisibility.HIDDEN, id="hidden"),
-        # VISIBLE mode is not parametrized — it opens a real console window
-        # whose PTY output capture timing is inherently flaky across shells.
+        # VISIBLE mode is un-skipped per ADR-0032 D2: the asyncio-streams
+        # rewrite of WinptyConsoleWindowBackend (asyncio.start_server +
+        # StreamWriter/StreamReader + TCP_NODELAY, no settimeout leak)
+        # structurally eliminates the partial-sendall / lost-Enter failure
+        # mode that previously made this parametrization flaky.
+        pytest.param(TerminalVisibility.VISIBLE, id="visible"),
     ],
 )
 @pytest.mark.asyncio

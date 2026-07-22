@@ -2,20 +2,31 @@
 
 Uses pywinpty.PtyProcess directly (no helper subprocess, no TCP socket, no
 CREATE_NEW_CONSOLE).  The PTY runs entirely headless.
+
+ADR-0032 D3: this backend implements the two blocking-IO hooks
+(``_write_blocking`` / ``_read_blocking``) plus the ``_shell_family`` hook.
+The base-class ``write`` / ``read_pending`` / ``read`` / ``current_segment`` /
+``clear_input_line`` / ``drain_startup`` template methods wrap the hooks in
+``loop.run_in_executor`` and provide the shared byte-stream behaviors. The
+six overrides and the ``_uses_readline`` private helper are deleted, which
+structurally eliminates the synchronous-write-blocks-event-loop defect on
+this path.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import shutil
 import sys
 
-from modex_agent.tools.terminal.prompt import drain_windows_startup
-from modex_agent.tools.terminal.results import SlidingOutputBuffer, TerminalRead, TerminalSegment
-from modex_agent.tools.terminal.types import Platform, TerminalVisibility, _family_from_path
+from modex_agent.tools.terminal.results import SlidingOutputBuffer
+from modex_agent.tools.terminal.types import (
+    Platform,
+    ShellFamily,
+    TerminalVisibility,
+    _family_from_path,
+)
 
-from .base import TerminalBackend, extract_current_segment_from_buffer
 from .winpty_transport import WinptyBackend
 
 logger = logging.getLogger(__name__)
@@ -68,67 +79,50 @@ class WinptyHiddenBackend(WinptyBackend):
         )
         logger.debug("Windows hidden PTY started: %s", shell)
 
-    async def write(self, data: str) -> None:
+    # ------------------------------------------------------------------
+    # Async-safety contract hooks (ADR-0032 D1/D3)
+    # ------------------------------------------------------------------
+    # The base-class ``write`` / ``read_pending`` templates wrap these hooks
+    # in ``loop.run_in_executor(None, ...)`` so blocking I/O is offloaded to
+    # a worker thread and the event loop is not stalled when the PTY input
+    # pipe is full (root cause 1, ADR-0032).
+
+    def _write_blocking(self, data: str) -> None:
+        """Blocking write hook — wrapped in ``run_in_executor`` by base ``write``."""
         if self._proc is None:
             raise RuntimeError("PTY not started")
-        self._proc.write(data)  # type: ignore[union-attr]
+        self._proc.write(data)  # type: ignore[attr-defined]
 
-    async def read(self, timeout: float = 5.0, max_size: int = 65536) -> str:
-        """Read raw output without buffering (matching WinptyConsoleWindowBackend).
+    def _read_blocking(self, timeout: float, max_size: int) -> str:
+        """Blocking read hook — wrapped in ``run_in_executor`` by base ``read_pending``.
 
-        drain_startup() / drain_windows_startup() call read(), not
-        read_pending(), so this keeps startup output out of the buffer.
+        ``settimeout`` mutates the pywinpty ``fileobj`` socket. Unlike the
+        visible-windows TCP socket (ADR-0032 root cause 2), pywinpty's
+        ``fileobj`` is a per-instance read-side socket — write goes through
+        a different handle — so the mutation does not leak into write paths.
         """
         if self._proc is None:
             raise RuntimeError("PTY not started")
-        loop = asyncio.get_running_loop()
-
-        def _do_read() -> str:
-            fobj = self._proc.fileobj  # type: ignore[union-attr]
-            fobj.settimeout(timeout)
-            try:
-                raw = fobj.recv(max_size)
-                return raw.decode("utf-8", errors="replace")
-            except (TimeoutError, OSError):
-                return ""
-
+        fobj = self._proc.fileobj  # type: ignore[attr-defined]
+        fobj.settimeout(timeout)
         try:
-            return await loop.run_in_executor(None, _do_read)
-        except Exception:
+            raw: bytes = fobj.recv(max_size)
+            return raw.decode("utf-8", errors="replace")
+        except (TimeoutError, OSError):
             return ""
 
-    async def read_pending(self, timeout: float = 5.0, max_size: int = 65536) -> TerminalRead:
-        if self._proc is None:
-            return TerminalRead(stdout="", raw="")
+    def _shell_family(self) -> ShellFamily:
+        """Return the shell family of the running shell (ADR-0032 D4.1)."""
+        return _family_from_path(self._shell or "")
 
-        loop = asyncio.get_running_loop()
-
-        def _do_read() -> str:
-            # fileobj is a socket.socket — use settimeout + recv for timed read
-            fobj = self._proc.fileobj  # type: ignore[union-attr]
-            fobj.settimeout(timeout)
-            try:
-                raw = fobj.recv(max_size)
-                return raw.decode("utf-8", errors="replace")
-            except (TimeoutError, OSError):
-                return ""
-
-        try:
-            raw = await loop.run_in_executor(None, _do_read)
-            if raw:
-                self._append_to_buffer(raw)
-            return TerminalRead(stdout=raw, raw=raw)
-        except Exception:
-            return TerminalRead(stdout="", raw="")
-
-    async def current_segment(self) -> TerminalSegment:
-        assert self._output_buffer is not None
-        return extract_current_segment_from_buffer(self._output_buffer.text)
+    # ------------------------------------------------------------------
+    # Lifecycle continued
+    # ------------------------------------------------------------------
 
     async def interrupt(self) -> None:
         if self._proc is None:
             raise RuntimeError("PTY not started")
-        self._proc.sendintr()  # type: ignore[union-attr]
+        self._proc.sendintr()  # type: ignore[attr-defined]
 
     def stdin_writable(self) -> bool:
         return self._proc is not None
@@ -137,14 +131,14 @@ class WinptyHiddenBackend(WinptyBackend):
         if self._proc is None:
             return False
         try:
-            return self._proc.isalive()  # type: ignore[union-attr]
+            return self._proc.isalive()  # type: ignore[attr-defined,no-any-return]
         except Exception:
             return False
 
     async def terminate(self) -> None:
         if self._proc is not None:
             try:
-                self._proc.terminate(force=False)  # type: ignore[union-attr]
+                self._proc.terminate(force=False)  # type: ignore[attr-defined]
             except Exception:
                 pass
             self._proc = None
@@ -152,26 +146,7 @@ class WinptyHiddenBackend(WinptyBackend):
     async def kill(self) -> None:
         if self._proc is not None:
             try:
-                self._proc.terminate(force=True)  # type: ignore[union-attr]
+                self._proc.terminate(force=True)  # type: ignore[attr-defined]
             except Exception:
                 pass
             self._proc = None
-
-    def _uses_readline(self) -> bool:
-        if not self._shell:
-            return True  # safe default for unknown shell
-        return _family_from_path(self._shell).uses_readline()
-
-    async def drain_startup(self) -> None:
-        """Consume startup output; clear readline line only for bash/zsh."""
-        await drain_windows_startup(
-            read_fn=self.read,
-            write_fn=self.write,
-            is_alive_fn=self.is_alive,
-            uses_readline=self._uses_readline(),
-        )
-
-    async def clear_input_line(self) -> None:
-        """Clear current input line for readline shells; no-op for cmd."""
-        if self._uses_readline():
-            await self.write("\x01\x0b")

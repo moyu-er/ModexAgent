@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { SettingsView } from "./SettingsView";
+import { SettingsModal } from "./SettingsView";
 import { ToastProvider } from "../ToastContext";
 
 function makeResponse(status: number, body: string): Response {
@@ -69,14 +69,24 @@ beforeEach(() => {
 
 afterEach(() => vi.unstubAllGlobals());
 
-describe("SettingsView", () => {
-  it("stacks settings navigation above Pools content on narrow screens", async () => {
+describe("SettingsModal", () => {
+  it("renders null when open is false", () => {
+    vi.stubGlobal("fetch", routeFetch());
+    const { container } = render(
+      <ToastProvider>
+        <SettingsModal open={false} onClose={() => {}} />
+      </ToastProvider>,
+    );
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("renders settings navigation beside content in the modal", async () => {
     window.history.replaceState(null, "", "/?tab=pools");
     vi.stubGlobal("fetch", routeFetch());
 
     render(
       <ToastProvider>
-        <SettingsView onExit={() => {}} />
+        <SettingsModal open={true} onClose={() => {}} />
       </ToastProvider>,
     );
 
@@ -84,9 +94,8 @@ describe("SettingsView", () => {
     const navigation = screen.getByRole("complementary", {
       name: "Settings navigation",
     });
-    expect(shell.className).toContain("flex-col");
-    expect(shell.className).toContain("md:flex-row");
-    expect(navigation.className).toContain("md:w-52");
+    expect(shell.className).toContain("flex-row");
+    expect(navigation.className).toContain("w-52");
     expect(screen.getByLabelText("Add pool")).toBeTruthy();
   });
 
@@ -94,7 +103,7 @@ describe("SettingsView", () => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(makeResponse(200, JSON.stringify(imPayload)))));
     render(
       <ToastProvider>
-        <SettingsView onExit={() => {}} />
+        <SettingsModal open={true} onClose={() => {}} />
       </ToastProvider>,
     );
     await waitFor(() => expect(screen.getByText("App ID")).toBeTruthy());
@@ -105,7 +114,7 @@ describe("SettingsView", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(
       <ToastProvider>
-        <SettingsView onExit={() => {}} />
+        <SettingsModal open={true} onClose={() => {}} />
       </ToastProvider>,
     );
     await waitFor(() => expect(screen.getByDisplayValue("A")).toBeTruthy());
@@ -132,7 +141,7 @@ describe("SettingsView", () => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(makeResponse(200, JSON.stringify(putResponse)))));
     render(
       <ToastProvider>
-        <SettingsView onExit={() => {}} />
+        <SettingsModal open={true} onClose={() => {}} />
       </ToastProvider>,
     );
     await waitFor(() => expect(screen.getByDisplayValue("A")).toBeTruthy());
@@ -153,7 +162,7 @@ describe("SettingsView", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(
       <ToastProvider>
-        <SettingsView onExit={() => {}} />
+        <SettingsModal open={true} onClose={() => {}} />
       </ToastProvider>,
     );
     await waitFor(() => expect(screen.getByDisplayValue("A")).toBeTruthy());
@@ -194,7 +203,7 @@ describe("SettingsView", () => {
     vi.stubGlobal("fetch", routeFetch());
     render(
       <ToastProvider>
-        <SettingsView onExit={() => {}} />
+        <SettingsModal open={true} onClose={() => {}} />
       </ToastProvider>,
     );
     // IM loads by default; wait for it to settle before switching.
@@ -208,7 +217,7 @@ describe("SettingsView", () => {
     vi.stubGlobal("fetch", routeFetch());
     render(
       <ToastProvider>
-        <SettingsView onExit={() => {}} />
+        <SettingsModal open={true} onClose={() => {}} />
       </ToastProvider>,
     );
     await waitFor(() => expect(screen.getByText("App ID")).toBeTruthy());
@@ -224,7 +233,7 @@ describe("SettingsView", () => {
     vi.stubGlobal("fetch", routeFetch());
     render(
       <ToastProvider>
-        <SettingsView onExit={() => {}} />
+        <SettingsModal open={true} onClose={() => {}} />
       </ToastProvider>,
     );
     await waitFor(() => expect(screen.getByText("App ID")).toBeTruthy());
@@ -250,7 +259,7 @@ describe("SettingsView", () => {
     }));
     render(
       <ToastProvider>
-        <SettingsView onExit={() => {}} />
+        <SettingsModal open={true} onClose={() => {}} />
       </ToastProvider>,
     );
     // Wait for IM to load first, then navigate to Skills.
@@ -285,7 +294,7 @@ describe("SettingsView", () => {
       window.history.replaceState(null, "", "/?tab=model");
       render(
         <ToastProvider>
-          <SettingsView onExit={() => {}} />
+          <SettingsModal open={true} onClose={() => {}} />
         </ToastProvider>,
       );
 
@@ -331,7 +340,7 @@ describe("SettingsView", () => {
       window.history.replaceState(null, "", "/?tab=model");
       render(
         <ToastProvider>
-          <SettingsView onExit={() => {}} />
+          <SettingsModal open={true} onClose={() => {}} />
         </ToastProvider>,
       );
 
@@ -371,7 +380,7 @@ describe("SettingsView", () => {
       window.history.replaceState(null, "", "/?tab=model");
       render(
         <ToastProvider>
-          <SettingsView onExit={() => {}} />
+          <SettingsModal open={true} onClose={() => {}} />
         </ToastProvider>,
       );
 

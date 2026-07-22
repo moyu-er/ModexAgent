@@ -8,7 +8,7 @@ from modex_agent.core.scope import SessionScope
 from modex_agent.memory.core.layers import MemoryLayerSet
 from modex_agent.memory.layers.config import (
     ArchiveMemoryConfig,
-    KnowledgeMemoryConfig,
+    CoreMemoryConfig,
     MemoryLayerConfigSet,
     SessionMemoryConfig,
     UserRetentionBufferConfig,
@@ -25,7 +25,7 @@ class TestBuildFullConfig:
         config = MemoryLayerConfigSet(
             session=SessionMemoryConfig(),
             archive=ArchiveMemoryConfig(),
-            knowledge=KnowledgeMemoryConfig(),
+            core=CoreMemoryConfig(),
             user_retention=UserRetentionBufferConfig(enabled=True),
         )
         layers = MemoryLayerFactory.build(registry=registry, config=config)
@@ -33,19 +33,19 @@ class TestBuildFullConfig:
         assert isinstance(layers, MemoryLayerSet)
         assert layers.session is not None
         assert layers.archive is not None
-        assert layers.knowledge is not None
+        assert layers.core is not None
         assert layers.user_retention is not None
 
 
 class TestBuildSessionOnly:
-    """Build with archive=None, knowledge=None."""
+    """Build with archive=None, core=None."""
 
     def test_build_session_only(self, tmp_path: Path) -> None:
         registry = DefaultMemoryStoreRegistry(tmp_path)
         config = MemoryLayerConfigSet(
             session=SessionMemoryConfig(),
             archive=None,
-            knowledge=None,
+            core=None,
             user_retention=UserRetentionBufferConfig(enabled=True),
         )
         layers = MemoryLayerFactory.build(registry=registry, config=config)
@@ -53,7 +53,7 @@ class TestBuildSessionOnly:
         assert isinstance(layers, MemoryLayerSet)
         assert layers.session is not None
         assert layers.archive is None
-        assert layers.knowledge is None
+        assert layers.core is None
         assert layers.user_retention is not None
 
 
@@ -65,7 +65,7 @@ class TestBuildSubagentSessionIsolated:
         config = MemoryLayerConfigSet(
             session=SessionMemoryConfig(),
             archive=ArchiveMemoryConfig(scope=SessionScope()),
-            knowledge=None,
+            core=None,
             user_retention=UserRetentionBufferConfig(enabled=True),
         )
         layers = MemoryLayerFactory.build(registry=registry, config=config)
@@ -73,7 +73,7 @@ class TestBuildSubagentSessionIsolated:
         assert isinstance(layers, MemoryLayerSet)
         assert layers.session is not None
         assert layers.archive is not None
-        assert layers.knowledge is None
+        assert layers.core is None
         assert layers.user_retention is not None
 
 
@@ -85,7 +85,7 @@ class TestBuildDisabledUserRetention:
         config = MemoryLayerConfigSet(
             session=SessionMemoryConfig(),
             archive=ArchiveMemoryConfig(),
-            knowledge=KnowledgeMemoryConfig(),
+            core=CoreMemoryConfig(),
             user_retention=UserRetentionBufferConfig(enabled=False),
         )
         layers = MemoryLayerFactory.build(registry=registry, config=config)

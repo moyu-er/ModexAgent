@@ -3,7 +3,7 @@
 
 # docs/adr
 
-Architecture Decision Records for the ModexAgent framework (ADR-0001 ~ 0027).
+Architecture Decision Records for the ModexAgent framework (ADR-0001 ~ 0035).
 
 ## Purpose
 
@@ -25,7 +25,7 @@ ADRs document significant architectural decisions, including the context driving
   `InboxPoller` / `Fold-in` / `Materialize` entries in `CONTEXT.md` for the
   current design.
 
-### ADR Index (0001–0027)
+### ADR Index (0001–0035)
 
 | ADR | Title |
 |-----|-------|
@@ -38,7 +38,7 @@ ADRs document significant architectural decisions, including the context driving
 | 0007 | Keep zero-usage deep modules with real seams |
 | 0008 | Approval main-only default-off converged |
 | 0009 | Token-based session compression |
-| 0010 | Terminal design axes: two visible, OS impl |
+| 0010 | Terminal design axes: two visible, OS impl (partially superseded by ADR-0032) |
 | 0011 | Approval batch atomicity and channel divergence |
 | 0012 | Input pipeline claim-consume and unified approval decision |
 | 0013 | Attachment system asymmetric transcript-indexed |
@@ -56,5 +56,13 @@ ADRs document significant architectural decisions, including the context driving
 | 0025 | Execution strategy abstraction and pipeline slimming |
 | 0026 | Agent role descriptors and role contract provider |
 | 0027 | External coding agent as subagent |
+| 0028 | RecordScope base/subclass split and pool removal |
+| 0029 | Epoch-millisecond timestamp unification |
+| 0030 | Column projection SQLite adapter field extraction |
+| 0031 | Persistence schema simplification |
+| 0032 | Terminal backend async-safety and behavior convergence |
+| 0033 | Generalized Graph Engine (Phase a) — D5.2 `around` scope and D14 dataclass codec refined by ADR-0034 |
+| 0034 | Graph Engine Phase c Preliminaries |
+| 0035 | Core Memory and KnowledgeBase terminology split |
 
 <!-- MANUAL -->

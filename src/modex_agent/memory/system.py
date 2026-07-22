@@ -13,7 +13,6 @@ from modex_agent.core.governance import ContextGovernance
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.core.scope import MemoryAgentRole, MemoryContext
-from modex_agent.core.skills import SkillManager
 from modex_agent.memory.core.system import (
     MemorySystem,  # noqa: F401 — re-export
 )
@@ -30,9 +29,10 @@ from modex_agent.memory.registry.file import DefaultMemoryStoreRegistry
 from modex_agent.memory.token_estimator import TokenEstimator
 
 if TYPE_CHECKING:
-    from modex_agent.agents.summarizer.abc import ArchiveGenerator, KnowledgeConsolidatorBase
+    from modex_agent.agents.summarizer.abc import ArchiveGenerator, CoreMemoryConsolidatorBase
     from modex_agent.core.experience import ExperienceManager
     from modex_agent.core.provider import LLMProvider
+    from modex_agent.core.skills import SkillManager
     from modex_agent.core.tool_manager import ToolManager
     from modex_agent.memory.prompt_pipeline.providers import ForkContextSpec
     from modex_agent.memory.stores.dir_archive import DirArchiveStorage
@@ -61,7 +61,7 @@ def create_memory_system(
     pruned_manager: PrunedManager | None = None,
     archive_agent: ArchiveGenerator | None = None,
     archive_storage: DirArchiveStorage | None = None,
-    knowledge_consolidator: KnowledgeConsolidatorBase | None = None,
+    core_memory_consolidator: CoreMemoryConsolidatorBase | None = None,
     archive_trigger_callback: Callable[[MemoryContext], Awaitable[None]] | None = None,
     token_estimator: TokenEstimator | None = None,
     store_registry: MemoryStoreRegistry | None = None,
@@ -72,7 +72,7 @@ def create_memory_system(
         workspace: Root directory for file-based storage.
         config: Optional layer configuration set.
         llm_provider: Optional LLM provider for compression/summarization.
-        session_only: If True, create session-only layers (subagent — no archive, no knowledge).
+        session_only: If True, create session-only layers (subagent — no archive, no core memory).
         store_registry: Optional registry override; defaults to local file storage.
     """
     registry = store_registry or DefaultMemoryStoreRegistry(workspace)
@@ -98,7 +98,7 @@ def create_memory_system(
         pruned_manager=pruned_manager,
         archive_agent=archive_agent,
         archive_storage=archive_storage,
-        knowledge_consolidator=knowledge_consolidator,
+        core_memory_consolidator=core_memory_consolidator,
         archive_trigger_callback=archive_trigger_callback,
         token_estimator=token_estimator,
     )
@@ -111,7 +111,7 @@ class MemorySystemContextManager(ContextManager):
       1. Runtime metadata (date, platform)
       2. Base system prompt (agent personality / system.md)
       3. Memory layers via ``injection_policy.assemble()`` — session, archive,
-         knowledge, user-retention (subject to budget & pruning)
+         core memory, user-retention (subject to budget & pruning)
       4. Experiences — persistent reference knowledge (NOT a memory layer)
       5. Skills — persistent reference knowledge (NOT a memory layer)
 
@@ -241,7 +241,7 @@ class MemorySystemContextManager(ContextManager):
         # ── Prompt assembly ────────────────────────────────────────────
         # Build SystemPromptPipeline with individual providers.
         # Archive and Pruned have dedicated refreshable providers.
-        # The injection_policy provides: disclaimer + knowledge + blocks + prefetch.
+        # The injection_policy provides: disclaimer + core memory + blocks + prefetch.
         # ────────────────────────────────────────────────────────────────
         from modex_agent.core.prompt import SystemPromptPipeline
         from modex_agent.memory.injection.full_injection import FullInjectionPolicy
@@ -250,13 +250,12 @@ class MemorySystemContextManager(ContextManager):
             ArchiveProvider,
             BasePromptProvider,
             ExperienceProvider,
-            KnowledgeProvider,
+            CoreMemoryProvider,
             PeerCommunicationSystemPromptProvider,
             ProviderBlocksProvider,
             ProviderPrefetchProvider,
             PrunedProvider,
             RuntimeProvider,
-            SkillProvider,
             TodoAwareSystemPromptProvider,
         )
 
@@ -295,9 +294,7 @@ class MemorySystemContextManager(ContextManager):
                 AppendParentPromptProvider,
             )
 
-            providers.append(
-                AppendParentPromptProvider(self._parent_prompt_lookup, parent_sid)
-            )
+            providers.append(AppendParentPromptProvider(self._parent_prompt_lookup, parent_sid))
 
         # 2. Base system prompt (static)
         if self.base_system_prompt:
@@ -327,9 +324,9 @@ class MemorySystemContextManager(ContextManager):
 
         providers.append(PeerCommunicationSystemPromptProvider(tool_manager))
 
-        # 3. Memory layers from injection policy (disclaimer + knowledge + blocks + prefetch)
+        # 3. Memory layers from injection policy (disclaimer + core memory + blocks + prefetch)
         if result.system_prompt:
-            providers.append(KnowledgeProvider(result.system_prompt))
+            providers.append(CoreMemoryProvider(result.system_prompt))
 
         # 4. Archive summaries (must refresh on cleanup)
         archive_config = policy.get_archive_injection_config()
@@ -378,13 +375,9 @@ class MemorySystemContextManager(ContextManager):
 
         # 9. Skills (static)
         if skill_manager is not None:
-            from modex_agent.core.skills import ResolutionContext
-
-            skill_prompt = await skill_manager.build_prompt(
-                ResolutionContext.from_runtime(tool_manager=tool_manager)
-            )
-            if skill_prompt:
-                providers.append(SkillProvider(skill_prompt))
+            provider = await skill_manager.build_provider(tool_manager)
+            if provider is not None:
+                providers.append(provider)
 
         # 10. Agent role contracts (after business providers; near end).
         if self._roles:
@@ -454,14 +447,12 @@ class MemorySystemContextManager(ContextManager):
     async def build_system_prompt(
         self,
         tool_manager: ToolManager | None,
-        skill_manager: SkillManager | None = None,
         runtime_info: dict[str, Any] | None = None,
     ) -> str:
         """Build system prompt by delegating to load() and resolving pipeline."""
         state = await self.load(
             session_id=self._last_session_id or "default",
             tool_manager=tool_manager,
-            skill_manager=skill_manager,
             runtime_info=runtime_info,
         )
         if state.system_prompt_pipeline is not None:

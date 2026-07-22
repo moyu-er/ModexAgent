@@ -10,6 +10,7 @@ const baseProps = {
   todos: [],
   submitApproval: vi.fn(),
   onSend: vi.fn(),
+  sessionId: "test-session.main",
 };
 
 const pending: ApprovalRequestView[] = [

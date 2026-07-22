@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING
 
 from modex_agent.agents.react.agent import ReActAgent
-from modex_agent.agents.react.state import ReActSnapshotPolicy
+from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
 from modex_agent.approval.constants import ApprovalDecision
 from modex_agent.approval.types import ApprovalAction
 from modex_agent.approval.views import ApprovalRequestView
@@ -114,7 +114,7 @@ class ApprovalRenderer:
             self._approval_pending.setdefault(session_id, []).append(input_msg)
             return True, pending_snapshot
 
-        approval = ReActSnapshotPolicy.approval_from_snapshot(pending_snapshot)
+        approval = ReActTurnState.from_checkpoint(dict(pending_snapshot.state_payload)).approval
         if approval is None:
             return True, pending_snapshot
 

@@ -3,14 +3,14 @@
 from modex_agent.memory.layers.archive import ScopedArchiveMemoryManager
 from modex_agent.memory.layers.config import (
     ArchiveMemoryConfig,
-    KnowledgeMemoryConfig,
+    CoreMemoryConfig,
     MemoryLayerConfigSet,
     SessionMemoryConfig,
     StorageFactory,
     UserRetentionBufferConfig,
 )
 from modex_agent.memory.layers.factory import MemoryLayerFactory
-from modex_agent.memory.layers.knowledge import ScopedKnowledgeMemoryManager
+from modex_agent.memory.layers.core import ScopedCoreMemoryManager
 from modex_agent.memory.layers.session import ScopedSessionMemoryManager
 from modex_agent.memory.layers.user_buffer import (
     ScopedUserRetentionBuffer,
@@ -19,11 +19,11 @@ from modex_agent.memory.layers.user_buffer import (
 
 __all__ = [
     "ArchiveMemoryConfig",
-    "KnowledgeMemoryConfig",
+    "CoreMemoryConfig",
     "MemoryLayerConfigSet",
     "MemoryLayerFactory",
     "ScopedArchiveMemoryManager",
-    "ScopedKnowledgeMemoryManager",
+    "ScopedCoreMemoryManager",
     "ScopedSessionMemoryManager",
     "ScopedUserRetentionBuffer",
     "SessionMemoryConfig",

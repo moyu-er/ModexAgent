@@ -156,9 +156,9 @@ def test_artifact_paths_correct_naming(tmp_path: Path) -> None:
 def test_artifact_paths_excludes_pool_shared(tmp_path: Path) -> None:
     paths = _paths_for(tmp_path)
     ap = session_artifact_paths("x.main", "main", paths)
-    # archive + knowledge are pool-shared, must NOT appear
+    # archive + core are pool-shared, must NOT appear
     assert not any("archive" in str(p) for p in ap)
-    assert not any("knowledge" in str(p) for p in ap)
+    assert not any("core" in str(p) for p in ap)
     # commands leaf is unused, must NOT appear
     assert not any("commands" in str(p) for p in ap)
 
@@ -235,9 +235,9 @@ def test_cleaner_preserves_pool_shared_and_siblings(tmp_path: Path) -> None:
     archive = paths.memory_dir(pool) / "archive"
     archive.mkdir(parents=True)
     (archive / "state.json").write_text("{}", encoding="utf-8")
-    knowledge = paths.memory_dir(pool) / "knowledge"
-    knowledge.mkdir(parents=True)
-    (knowledge / "MEMORY.md").write_text("kept", encoding="utf-8")
+    core = paths.memory_dir(pool) / "core"
+    core.mkdir(parents=True)
+    (core / "MEMORY.md").write_text("kept", encoding="utf-8")
 
     cleaner = DefaultSessionArtifactCleaner(paths=paths)
     scope = _PoolScopedRecordScope(session_id="aaa.coding", pool=pool)
@@ -247,7 +247,7 @@ def test_cleaner_preserves_pool_shared_and_siblings(tmp_path: Path) -> None:
     assert (paths.session_index_dir / pool / "sib.coding.json").exists()
     # pool-shared untouched
     assert (archive / "state.json").exists()
-    assert (knowledge / "MEMORY.md").read_text(encoding="utf-8") == "kept"
+    assert (core / "MEMORY.md").read_text(encoding="utf-8") == "kept"
 
 
 def test_cleaner_uses_default_pool_path_when_scope_has_no_pool(

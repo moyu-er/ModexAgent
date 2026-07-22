@@ -3,13 +3,13 @@
 
 # memory
 
-Multi-layer memory system with scope isolation and injection. Layers: Session (short-term), Archive (history), Knowledge (long-term), UserRetentionBuffer (pending context), Pruned (catalog of cleaned-up messages). Supports compaction, consolidation, governance, context injection, and XML truncation.
+Multi-layer memory system with scope isolation and injection. Layers: Session (short-term), Archive (history), Core (long-term, formerly "Knowledge"; renamed per ADR-0035), UserRetentionBuffer (pending context), Pruned (catalog of cleaned-up messages). Supports compaction, consolidation, governance, context injection, and XML truncation.
 
 Storage is backend-pluggable: the file backend (`DefaultScopedStorage`) ships as the framework default; the SQLite backend (`Sqlite*Store` adapters under `modex_agent.persistence`) is the bot's default (ADR-0023). Both implement the same split store ABCs.
 
 ## Purpose
 
-The `memory/` module provides a comprehensive memory system for agents. It manages message histories across multiple scopes (Session, User, Tenant, Agent, Channel, Chat, Composite, Global), handles compaction and consolidation (transforming session messages into archive files and knowledge summaries), governs context windows via injection policies, and provides agent-facing tools for experience and file operations.
+The `memory/` module provides a comprehensive memory system for agents. It manages message histories across multiple scopes (Session, User, Tenant, Agent, Channel, Chat, Composite, Global), handles compaction and consolidation (transforming session messages into archive files and core memory summaries), governs context windows via injection policies, and provides agent-facing tools for experience and file operations.
 
 ## Key Files
 
@@ -26,9 +26,9 @@ The `memory/` module provides a comprehensive memory system for agents. It manag
 | `recorder.py` | `MemoryAppendRecorder` — records what gets appended and from where |
 | `content_transform.py` | `ContentTransformer` ABC — transforms messages for injection |
 | `history_search.py` | `HistorySearchStrategy` ABC — search over message history |
-| `knowledge_search.py` | `KnowledgeSearchStrategy` ABC — search over knowledge base |
+| `core_memory_search.py` | `CoreMemorySearchStrategy` ABC (renamed from `knowledge_search.py` / `KnowledgeSearchStrategy` per ADR-0035) — search over core memory |
 | `user_buffer.py` | User retention buffer for pending messages |
-| `lifecycle.py` | `DefaultMemoryMaintenancePolicy` (concrete background-maintenance scan) and retention ABCs — `ArchiveRetentionPolicy`, `KnowledgeRetentionPolicy` — with per-scope thresholds called from `scan_once` |
+| `lifecycle.py` | `DefaultMemoryMaintenancePolicy` (concrete background-maintenance scan) and retention ABCs — `ArchiveRetentionPolicy`, `CoreMemoryRetentionPolicy` — with per-scope thresholds called from `scan_once` |
 | `xml_truncate.py` | XML-based content truncation for governance — ensures injected XML stays within token budget |
 | `utils.py` | Memory utility helpers |
 
@@ -37,14 +37,14 @@ The `memory/` module provides a comprehensive memory system for agents. It manag
 | Directory | Files | Purpose |
 |-----------|-------|---------|
 | `core/` | 9 py | ABCs — `MemorySystem`, split store ABCs (`MessageStore`/`KVStore`/`CursorStore`/`ArchiveStore`) + `MemoryStoreBundle`, `StoreMetadata`, layer managers, consolidation types, `StorageLock`. Scope system lives in `modex_agent.core.scope` (see `core/AGENTS.md`) |
-| `layers/` | 6 py | Concrete layer managers — `SessionMemoryManager`, `ArchiveMemoryManager`, `KnowledgeMemoryManager`, `UserRetentionBufferManager` + `MemoryLayerConfigSet` + `MemoryLayerFactory` |
-| `consolidation/` | 1 py | `DreamEngine` — offline background consolidation of session → archive → knowledge |
+| `layers/` | 6 py | Concrete layer managers — `SessionMemoryManager`, `ArchiveMemoryManager`, `CoreMemoryManager`, `UserRetentionBufferManager` + `MemoryLayerConfigSet` + `MemoryLayerFactory` |
+| `consolidation/` | 1 py | `DreamEngine` — offline background consolidation of session → archive → core memory |
 | `injection/` | 3 py | `MemoryInjectionPolicy` → `ContextState` assembly: `FullInjectionPolicy` (full context), `RestrictedInjectionPolicy` (session-only, limited context window). Both inject pruned catalog XML when available |
 | `pruned/` | 3 py | `PrunedManager` + `PrunedStorage` (ABC + `FilePrunedStorage`) + `PrunedIndexEntry` — catalog of cleaned-up session messages, session-scoped |
 | `registry/` | 3 py | `MemoryStoreRegistry` — storage provider registry. `resolve()` returns a `MemoryStoreBundle`. `BaseMemoryStoreRegistry` ABC + `DefaultMemoryStoreRegistry` (file-backed). The in-memory registry was removed in T03 |
 | `pipeline/` | 3 py | `SystemPromptPipeline` — ordered collection of versioned `SystemPromptProvider` (ABC + pipeline orchestrator + provider implementations) |
-| `prompts/` | 6 files | Prompt templates: `archive/` (agent_system.md, agent_user.md), `experience/` (review_system.md, review_user.md), `knowledge/` (consolidator_system.md, consolidator_user.md) |
-| `stores/` | 7 py | Storage backend implementations — `FileStorage`, `DefaultScopedStorage` (file, implements all four split ABCs), `InMemoryScopedStorage` (in-memory, implements all four split ABCs), `DirArchiveStorage`, `MarkdownKnowledgeStorage`, storage utilities. The standalone `InMemoryStorage` was removed in T03 |
+| `prompts/` | 6 files | Prompt templates: `archive/` (agent_system.md, agent_user.md), `experience/` (review_system.md, review_user.md), `core_memory/` (consolidator_system.md, consolidator_user.md — renamed from `knowledge/` per ADR-0035) |
+| `stores/` | 7 py | Storage backend implementations — `FileStorage`, `DefaultScopedStorage` (file, implements all four split ABCs), `InMemoryScopedStorage` (in-memory, implements all four split ABCs), `DirArchiveStorage`, `MarkdownCoreMemoryStorage` (renamed from `MarkdownKnowledgeStorage` per ADR-0035), storage utilities. The standalone `InMemoryStorage` was removed in T03 |
 | `tools/` | 7 py | Agent-facing tools — 6 experience tools (read/write/edit/list/rename/delete), scoped file tools (read/write/edit/list) for summarizer agents (see `tools/AGENTS.md`) |
 
 ### Memory Scope Hierarchy
@@ -94,7 +94,7 @@ Message appended
 ### Pruned Catalog
 - Independent of archive: works with archive off or failed
 - Topic falls back to time range when no CONTEXT archive available
-- Injection priority: 85 (between knowledge=100 and archive=70)
+- Injection priority: 85 (between core memory=100 and archive=70)
 - XML catalog points agent to per-session `pruned/{session_id}/` directory
 
 ### Memory Layers
@@ -103,7 +103,7 @@ Message appended
 |-------|---------|-------------|---------|
 | Session | `SessionMemoryManager` | `MemoryStoreBundle` | Short-term conversation messages |
 | Archive | `ArchiveMemoryManager` | `ArchiveStore` (file or SQLite), with optional markdown path capability | Historical context, automatically generated |
-| Knowledge | `KnowledgeMemoryManager` | File-based (markdown) | Long-term knowledge (SOUL.md, USER.md, MEMORY.md) |
+| Core | `CoreMemoryManager` | File-based (markdown) | Core memory (SOUL.md, USER.md, MEMORY.md) |
 | UserBuffer | `UserRetentionBufferManager` | In-memory | Pending user messages |
 | Pruned | `PrunedManager` + `PrunedStorage` | File-based (JSON) | Catalog of cleaned-up messages |
 
@@ -117,11 +117,11 @@ Message appended
 - Governance mutates only LLM input copy, never persisted session data
 - `archive=None` = session-only mode (standard for subagent)
 - `RestrictedInjectionPolicy` is default for subagents — limits session messages to prevent context overflow
-- Pruned injection priority: 85 (between knowledge=100 and archive=70)
+- Pruned injection priority: 85 (between core memory=100 and archive=70)
 
 ### Subagent Memory Lifecycle
 1. Each subagent gets its own `MemorySystemContextManager` with isolated workspace
-2. `MemoryAgentRole.SUBAGENT` scope — session-only by default, no knowledge layer
+2. `MemoryAgentRole.SUBAGENT` scope — session-only by default, no core memory layer
 3. `cleanup_session()` runs directly from `ScopedMessageHistory` after every message append
 4. `AgentPool` session eviction (TTL + LRU cap) triggers context cleanup
 5. `_cleanup_subagent_memory()` called on session end via explicit cleanup
@@ -145,7 +145,7 @@ Message appended
 - `modex_agent.core.events` — `AgentEvent`
 - `modex_agent.core.history` — `MessageHistory` ABC
 - `modex_agent.utils` — xml, helpers, sanitizer
-- `modex_agent.agents.summarizer` — `ArchiveSummarizer`, `KnowledgeConsolidator` (for consolidation pipeline)
+- `modex_agent.agents.summarizer` — `ArchiveSummarizer`, `CoreMemoryConsolidator` (for consolidation pipeline)
 
 ### External
 - `pydantic` — data models

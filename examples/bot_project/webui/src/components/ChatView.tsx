@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo, type FC, type FormEvent, type KeyboardEvent } from "react";
+import { useState, useRef, useEffect, useMemo, type FC, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { Bot, File, Menu, Paperclip, Pause, SendHorizonal, X } from "lucide-react";
 import type { ApprovalRequestView, TodoItemDTO, UIMessage } from "../types/events";
 import type { MediaConfigResponse, OutgoingAttachmentRef, UploadAttachmentResponse } from "../types/attachments";
@@ -9,7 +9,6 @@ import { ModelSelector } from "./ModelSelector";
 import { TodoPanel } from "./TodoPanel";
 import { Button } from "./ui/Button";
 import { IconButton } from "./ui/IconButton";
-import { LogoMarkIcon } from "./ui/icons";
 import { fetchMediaConfig, fetchModels, uploadAttachment, type ModelChoice } from "../lib/api";
 import { formatBytes } from "../lib/format";
 import { useT } from "../i18n";
@@ -38,6 +37,16 @@ export interface ChatViewProps {
     providerName?: string,
     modelName?: string,
   ) => void;
+  /** Send handler used when no session is selected (hero composer). The App
+   *  creates a client-side draft and calls send() immediately — send() adds
+   *  the optimistic message and queues the ws send for the `attached`
+   *  handler to flush with the real session id. */
+  onHeroSend?: (
+    content: string,
+    attachments?: OutgoingAttachmentRef[],
+    providerName?: string,
+    modelName?: string,
+  ) => void;
   /** Invoked when the user presses the pause control on a streaming session. */
   onPause?: () => void;
   readOnly?: boolean;
@@ -50,6 +59,7 @@ export interface ChatViewProps {
 // Input box starts as a single comfortable line and grows with content.
 const MAX_INPUT_HEIGHT = 320;
 const MIN_INPUT_HEIGHT = 56;
+const MIN_HERO_INPUT_HEIGHT = 96;
 
 // Chat column is capped at 1200px and centered; keep a reasonable floor
 // on desktop so the dialog doesn't collapse too narrowly.
@@ -67,6 +77,7 @@ export const ChatView: FC<ChatViewProps> = ({
   sessionId,
   workspace,
   onSend,
+  onHeroSend,
   onPause,
   readOnly = false,
   onOpenSidebar,
@@ -113,14 +124,38 @@ export const ChatView: FC<ChatViewProps> = ({
     { provider: "", model: "" },
   );
 
+  // Fetch models on mount. If the backend returns an empty list (config not
+  // loaded yet — common right after a restart), retry a few times with backoff
+  // so the selector populates once model.yml is available.
   useEffect(() => {
-    fetchModels()
-      .then((r) => {
-        setModels(r.choices);
-        const d = r.choices.find((c) => c.default) ?? r.choices[0];
-        if (d) setSelected({ provider: d.provider_name, model: d.model_name });
-      })
-      .catch(() => {});
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const delays = [0, 2000, 5000, 10000, 15000];
+
+    const attempt = (i: number): void => {
+      if (cancelled || i >= delays.length) return;
+      timer = setTimeout(() => {
+        if (cancelled) return;
+        fetchModels()
+          .then((r) => {
+            if (cancelled) return;
+            if (r.choices.length > 0) {
+              setModels(r.choices);
+              const d = r.choices.find((c) => c.default) ?? r.choices[0];
+              if (d) setSelected({ provider: d.provider_name, model: d.model_name });
+            } else {
+              attempt(i + 1);
+            }
+          })
+          .catch(() => attempt(i + 1));
+      }, delays[i]);
+    };
+
+    attempt(0);
+    return (): void => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, []);
 
   // Auto-scroll the message list to the bottom when messages change. We scroll
@@ -134,6 +169,9 @@ export const ChatView: FC<ChatViewProps> = ({
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
+  const isHero = sessionId == null;
+  const minInputHeight = isHero ? MIN_HERO_INPUT_HEIGHT : MIN_INPUT_HEIGHT;
+
   // Grow the textarea with its content up to a capped height; once the cap is
   // reached the textarea scrolls internally instead of growing the composer.
   const autosize = (): void => {
@@ -141,13 +179,14 @@ export const ChatView: FC<ChatViewProps> = ({
     if (!ta) return;
     ta.style.height = "auto";
     ta.style.height = `${Math.max(
-      MIN_INPUT_HEIGHT,
+      minInputHeight,
       Math.min(ta.scrollHeight, MAX_INPUT_HEIGHT),
     )}px`;
   };
   useEffect(() => {
     autosize();
-  }, [input]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [input, isHero]);
 
   // Right-margin navigation spine: one dot per user question, positioned
   // proportionally to the question's place in the scrollable content.
@@ -174,7 +213,9 @@ export const ChatView: FC<ChatViewProps> = ({
     if (readOnly || isBusy) return;
     const trimmed = input.trim();
     if (!trimmed && pendingUploads.length === 0) return;
-    onSend(
+    const send = isHero ? onHeroSend : onSend;
+    if (!send) return;
+    send(
       trimmed,
       pendingUploads.map((p) => p.ref),
       selected.provider,
@@ -211,7 +252,7 @@ export const ChatView: FC<ChatViewProps> = ({
     submit();
   };
 
-  // File selection → loose client-side pre-validation (size against the
+  // File selection — loose client-side pre-validation (size against the
   // fetched MediaConfig's generous cap = max of image/text-doc limits) → POST
   // to the upload endpoint → collect the returned ref as a pending upload chip.
   // The authoritative per-kind gate runs later in the ingest stage. ``ws``
@@ -267,8 +308,133 @@ export const ChatView: FC<ChatViewProps> = ({
     setPendingUploads((prev) => prev.filter((p) => p.ref.local_path !== localPath));
   };
 
+  const renderComposer = (hero: boolean): ReactNode => {
+    const formClassName = hero ? "hero-composer w-full" : "composer";
+    const textareaClassName = hero
+      ? "max-h-[320px] min-h-[96px] flex-1 resize-none overflow-y-auto bg-transparent py-5 text-md leading-relaxed text-ink outline-none placeholder:text-faint"
+      : "max-h-[320px] min-h-[56px] flex-1 resize-none overflow-y-auto bg-transparent py-3.5 text-md leading-relaxed text-ink outline-none placeholder:text-faint";
+    const placeholder = hero
+      ? t("chat.messagePlaceholder")
+      : isPending
+        ? t("chat.initializingSession")
+        : isStreaming
+          ? t("chat.assistantResponding")
+          : t("chat.messagePlaceholder");
+    const attachDisabled = hero || isBusy || isUploading || !sessionId;
+    return (
+      <>
+        {(pendingUploads.length > 0 || uploadError) && (
+          <div className="mb-2 flex flex-col gap-1.5">
+            {uploadError && (
+              <div className="rounded-md border border-danger bg-canvas-elevated px-2.5 py-1.5 text-xs text-danger">
+                {uploadError}
+              </div>
+            )}
+            {pendingUploads.map((p) => (
+              <div
+                key={p.ref.local_path}
+                className="flex items-center gap-2 rounded-md border border-hairline bg-canvas-elevated px-2.5 py-1.5 text-xs"
+              >
+                <File size={14} className="shrink-0 text-body" aria-hidden="true" />
+                <span className="min-w-0 flex-1 truncate text-ink">
+                  {p.name}
+                </span>
+                <span className="shrink-0 text-body">
+                  {formatBytes(p.size)}
+                </span>
+                <IconButton
+                  icon={<X size={14} />}
+                  label={t("chat.removeName", { name: p.name })}
+                  variant="ghost"
+                  size="sm"
+                  onClick={(): void => removePendingUpload(p.ref.local_path)}
+                />
+              </div>
+            ))}
+          </div>
+        )}
+        <form onSubmit={handleSubmit} className={formClassName}>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            onChange={handleFileSelect}
+            className="hidden"
+            aria-hidden="true"
+            tabIndex={-1}
+          />
+          <IconButton
+            icon={<Paperclip size={18} />}
+            label={t("chat.attachFile")}
+            variant="ghost"
+            size="md"
+            disabled={attachDisabled}
+            onClick={(): void => fileInputRef.current?.click()}
+          />
+          <textarea
+            ref={taRef}
+            value={input}
+            onChange={(e): void => setInput(e.target.value)}
+            onInput={autosize}
+            onKeyDown={handleKeyDown}
+            placeholder={placeholder}
+            rows={1}
+            className={textareaClassName}
+          />
+          {models.length > 0 && (
+            <ModelSelector
+              models={models}
+              value={selected}
+              onChange={setSelected}
+            />
+          )}
+          {isBusy ? (
+            <IconButton
+              icon={<Pause size={16} />}
+              label={t("chat.pause")}
+              variant="secondary"
+              size="md"
+              onClick={handleButton}
+            />
+          ) : canSend ? (
+            <IconButton
+              icon={<SendHorizonal size={18} />}
+              label={t("chat.send")}
+              variant="primary"
+              size="md"
+              onClick={handleButton}
+            />
+          ) : (
+            <IconButton
+              icon={<SendHorizonal size={18} />}
+              label={t("chat.send")}
+              variant="ghost"
+              size="md"
+              disabled
+              onClick={handleButton}
+            />
+          )}
+        </form>
+      </>
+    );
+  };
+
+  if (isHero) {
+    return (
+      <div
+        key="hero"
+        className="hero-view-enter flex h-full flex-col items-center justify-center gap-8 bg-canvas px-4"
+      >
+        <h1 className="hero-wordmark">ModexBot</h1>
+        <div className="w-full max-w-[720px]">
+          {renderComposer(true)}
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex h-full flex-col bg-canvas">
+    <div key="chat" className="hero-view-enter flex h-full flex-col bg-canvas">
       {/* Header */}
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-hairline px-4">
         <div className="flex items-center gap-3">
@@ -299,22 +465,6 @@ export const ChatView: FC<ChatViewProps> = ({
       <div className="relative flex-1 min-h-0">
         <div ref={scrollRef} className="absolute inset-0 overflow-y-auto">
           <div ref={contentRef} className={`${CONTENT_WIDTH} px-3 py-6 md:px-5`}>
-            {messages.length === 0 && (
-              <div className="flex h-[55vh] flex-col items-center justify-center gap-4 text-center">
-                <LogoMarkIcon
-                  data-logo-mark
-                  className="h-24 w-24 text-brand opacity-[0.08]"
-                />
-                <h2 className="font-display text-xl font-bold text-ink">
-                  {t("chat.emptyHeadline")}
-                </h2>
-                <div className="flex flex-col gap-1.5">
-                  <p className="eyebrow">{t("chat.emptyHintSelect")}</p>
-                  <p className="eyebrow">{t("chat.emptyHintNew")}</p>
-                  <p className="eyebrow">{t("chat.emptyHintComposer")}</p>
-                </div>
-              </div>
-            )}
             {messages.map((msg) => (
               <MessageBubble
                 key={msg.id}
@@ -384,106 +534,7 @@ export const ChatView: FC<ChatViewProps> = ({
               />
             </div>
           ) : (
-            <>
-              {(pendingUploads.length > 0 || uploadError) && (
-                <div className="mb-2 flex flex-col gap-1.5">
-                  {uploadError && (
-                    <div className="rounded-md border border-danger bg-canvas-elevated px-2.5 py-1.5 text-xs text-danger">
-                      {uploadError}
-                    </div>
-                  )}
-                  {pendingUploads.map((p) => (
-                    <div
-                      key={p.ref.local_path}
-                      className="flex items-center gap-2 rounded-md border border-hairline bg-canvas-elevated px-2.5 py-1.5 text-xs"
-                    >
-                      <File size={14} className="shrink-0 text-body" aria-hidden="true" />
-                      <span className="min-w-0 flex-1 truncate text-ink">
-                        {p.name}
-                      </span>
-                      <span className="shrink-0 text-body">
-                        {formatBytes(p.size)}
-                      </span>
-                      <IconButton
-                        icon={<X size={14} />}
-                        label={t("chat.removeName", { name: p.name })}
-                        variant="ghost"
-                        size="sm"
-                        onClick={(): void => removePendingUpload(p.ref.local_path)}
-                      />
-                    </div>
-                  ))}
-                </div>
-              )}
-              <form onSubmit={handleSubmit} className="composer">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  onChange={handleFileSelect}
-                  className="hidden"
-                  aria-hidden="true"
-                  tabIndex={-1}
-                />
-                <IconButton
-                  icon={<Paperclip size={18} />}
-                  label={t("chat.attachFile")}
-                  variant="ghost"
-                  size="md"
-                  disabled={isBusy || isUploading || !sessionId}
-                  onClick={(): void => fileInputRef.current?.click()}
-                />
-                <textarea
-                  ref={taRef}
-                  value={input}
-                  onChange={(e): void => setInput(e.target.value)}
-                  onInput={autosize}
-                  onKeyDown={handleKeyDown}
-                  placeholder={
-                    isPending
-                      ? t("chat.initializingSession")
-                      : isStreaming
-                        ? t("chat.assistantResponding")
-                        : t("chat.messagePlaceholder")
-                  }
-                  rows={1}
-                  className="max-h-[320px] min-h-[56px] flex-1 resize-none overflow-y-auto bg-transparent py-3.5 text-md leading-relaxed text-ink outline-none placeholder:text-faint"
-                />
-                {models.length > 0 && (
-                  <ModelSelector
-                    models={models}
-                    value={selected}
-                    onChange={setSelected}
-                  />
-                )}
-                {isBusy ? (
-                  <IconButton
-                    icon={<Pause size={16} />}
-                    label={t("chat.pause")}
-                    variant="secondary"
-                    size="md"
-                    onClick={handleButton}
-                  />
-                ) : canSend ? (
-                  <IconButton
-                    icon={<SendHorizonal size={18} />}
-                    label={t("chat.send")}
-                    variant="primary"
-                    size="md"
-                    onClick={handleButton}
-                  />
-                ) : (
-                  <IconButton
-                    icon={<SendHorizonal size={18} />}
-                    label={t("chat.send")}
-                    variant="ghost"
-                    size="md"
-                    disabled
-                    onClick={handleButton}
-                  />
-                )}
-              </form>
-            </>
+            renderComposer(false)
           )}
         </div>
       </div>

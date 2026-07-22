@@ -9,15 +9,15 @@ from __future__ import annotations
 from enum import StrEnum
 
 __all__ = [
-    "KnowledgeTag",
+    "CoreMemoryTag",
     "ArchiveTag",
     "PrunedTag",
     "UrbTag",
 ]
 
 
-class KnowledgeTag(StrEnum):
-    """XML element tag names for injected persistent knowledge."""
+class CoreMemoryTag(StrEnum):
+    """XML element tag names for injected persistent core memory."""
 
     YOUR_IDENTITY = "your_identity"
     USER_PROFILE = "user_profile"

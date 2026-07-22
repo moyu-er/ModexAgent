@@ -635,6 +635,77 @@
       var(--shadow-card);
   }
 
+  .hero-composer {
+    @apply flex items-end gap-3 rounded-lg border border-hairline bg-canvas-elevated px-5 py-4;
+    box-shadow:
+      0 0.5rem 2rem color-mix(in oklab, var(--color-brand) 10%, transparent),
+      var(--shadow-card);
+    transition:
+      border-color var(--dur-fast) var(--ease-out),
+      box-shadow var(--dur-fast) var(--ease-out);
+  }
+  .hero-composer:focus-within {
+    @apply border-brand;
+    box-shadow:
+      0 0 0 2px color-mix(in oklab, var(--color-brand) 55%, transparent),
+      0 0.75rem 2.25rem color-mix(in oklab, var(--color-brand) 18%, transparent),
+      var(--shadow-card);
+  }
+
+  /* ModexBot wordmark — Inter 700 (a loaded weight; 800 falls back to system
+     and looks heavy). Three-stop gradient + 8s shimmer reads as ambient
+     light, not decoration. Dual-layer glow echoes both ends of the gradient. */
+  .hero-wordmark {
+    font-family: theme("fontFamily.display");
+    font-weight: 700;
+    font-size: 64px;
+    letter-spacing: -0.015em;
+    line-height: 1;
+    background: linear-gradient(
+      120deg,
+      var(--color-brand-bright) 0%,
+      var(--color-brand) 38%,
+      var(--color-ember) 100%
+    );
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    text-shadow:
+      0 0.25rem 1.5rem color-mix(in oklab, var(--color-brand) 25%, transparent),
+      0 0.125rem 0.75rem color-mix(in oklab, var(--color-ember) 15%, transparent);
+    animation: hero-wordmark-shimmer 8s ease-in-out infinite;
+  }
+
+  @keyframes hero-wordmark-shimmer {
+    0%, 100% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+  }
+
+  /* Hero view entry — 200ms (under the 0.3s spec ceiling). */
+  @keyframes hero-view-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  .hero-view-enter {
+    animation: hero-view-in 200ms var(--ease-out) both;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .hero-view-enter {
+      animation: none;
+    }
+    .hero-wordmark {
+      animation: none;
+    }
+  }
+
   /* DropdownPanel open animation (DESIGN.md §5.3): 150ms fade + 4px slide
      from the trigger direction. Down-opening panels slide down (default
      shift); up-opening panels set --dropdown-shift: 4px. The global

@@ -409,9 +409,10 @@ old file-based data is not imported (out of scope per user decision).
     management + log methods), and `CursorStore`, so that the archive layer
     works through the bundle without a separate `MemoryStorage` type.
 
-70. As a framework developer, I want `MarkdownKnowledgeStorage` to implement
+70. As a framework developer, I want `MarkdownKnowledgeStorage` (renamed to
+    `MarkdownCoreMemoryStorage` per ADR-0035) to implement
     `KVStore` (filename=key, content=value) + `CursorStore`, so that the
-    knowledge layer works through the bundle.
+    core memory layer (formerly "knowledge") works through the bundle.
 
 71. As a framework developer, I want `InMemoryStorage`,
     `InMemoryStoreRegistry`, and `InMemoryRegistryStore` DELETED — they are
@@ -550,7 +551,7 @@ be refactored in the same change so both backends work:
   `CursorStore` + `ArchiveStore` (one class, four interfaces; bundle fields
   all point to same instance).
 - `DirArchiveStorage` → implements `KVStore` + `ArchiveStore` + `CursorStore`.
-- `MarkdownKnowledgeStorage` → implements `KVStore` + `CursorStore`.
+- `MarkdownKnowledgeStorage` (renamed to `MarkdownCoreMemoryStorage` per ADR-0035) → implements `KVStore` + `CursorStore`.
 - `InMemoryStorage` / `InMemoryStoreRegistry` / `InMemoryRegistryStore` →
   DELETED after their replacement file fixtures are available (test-only,
   signature mismatch). SQLite coverage arrives through conformance fixtures.

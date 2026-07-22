@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 
 from modex_agent.core.context import ContextManager
-from modex_agent.core.graph.interrupt import GraphInterrupt
+from modex_graph.exceptions import GraphInterrupt
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo, session_id_prefix_of
 from modex_agent.core.session_registry import SessionRegistry

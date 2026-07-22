@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
 from bot.scope import BotRecordScope
@@ -48,7 +50,14 @@ def test_build_inbox_keeps_file_backend(tmp_path: Path) -> None:
     assert isinstance(inbox, LocalFileInboxMQ)
 
 
-def test_external_coding_env_keeps_workspace_inbox_contract(tmp_path: Path) -> None:
+def test_external_coding_env_keeps_workspace_inbox_contract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / ("modexctl.bat" if sys.platform == "win32" else "modexctl")).write_text("@echo off\n")
+    monkeypatch.setenv("MODEXBOT_BIN_DIR", str(bin_dir))
+
     workspace_dir = tmp_path / "workspace"
     inbox_root = workspace_dir / ".modex" / "inbox"
     pool_spec = PoolSpec(
@@ -68,3 +77,42 @@ def test_external_coding_env_keeps_workspace_inbox_contract(tmp_path: Path) -> N
 
     assert env_spec.inbox_root == inbox_root
     assert env_spec.inbox_root.parent / "state.db" == workspace_dir / ".modex" / "state.db"
+
+
+def test_main_agent_env_spec_defaults_to_normal_comm_kind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Main-agent env spec MUST default to comm_kind=NORMAL + parent_session_id=None.
+
+    Regression guard: if a future change to build_external_coding_env_spec
+    accidentally sets comm_kind=SUBAGENT or a non-None parent_session_id,
+    every main-agent modexctl send would route via the subagent branch
+    (target_sid = MODEX_PARENT_SESSION_ID), which is either None (error)
+    or a wrong session — silently breaking all main-agent peer messaging.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / ("modexctl.bat" if sys.platform == "win32" else "modexctl")).write_text("@echo off\n")
+    monkeypatch.setenv("MODEXBOT_BIN_DIR", str(bin_dir))
+
+    from modex_agent.core.agent import AgentCommKind
+
+    workspace_dir = tmp_path / "workspace"
+    inbox_root = workspace_dir / ".modex" / "inbox"
+    pool_spec = PoolSpec(
+        name="pool_coder",
+        main_agent_name="coder",
+        main=MainAgentSpec(agent_name="coder"),
+    )
+
+    env_spec = build_external_coding_env_spec(
+        pool_name="pool_coder",
+        pool_spec=pool_spec,
+        project_dir=tmp_path,
+        inbox_dir=inbox_root / "pool_coder",
+        workspace_dir=workspace_dir,
+        main_agent_name="coder",
+    )
+
+    assert env_spec.comm_kind is AgentCommKind.NORMAL
+    assert env_spec.parent_session_id is None

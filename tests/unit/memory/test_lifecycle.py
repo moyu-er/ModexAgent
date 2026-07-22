@@ -23,15 +23,15 @@ from modex_agent.memory.core.layers import MemoryLayerSet
 from modex_agent.memory.layers.archive import ScopedArchiveMemoryManager
 from modex_agent.memory.layers.config import (
     ArchiveMemoryConfig,
-    KnowledgeMemoryConfig,
+    CoreMemoryConfig,
     SessionMemoryConfig,
 )
 from modex_agent.memory.layers.factory import MemoryLayerFactory
-from modex_agent.memory.layers.knowledge import ScopedKnowledgeMemoryManager
+from modex_agent.memory.layers.core import ScopedCoreMemoryManager
 from modex_agent.memory.layers.session import ScopedSessionMemoryManager
 from modex_agent.memory.lifecycle import (
     DefaultArchiveRetentionPolicy,
-    DefaultKnowledgeRetentionPolicy,
+    DefaultCoreMemoryRetentionPolicy,
     DefaultMemoryMaintenancePolicy,
     MaintenanceResult,
 )
@@ -56,15 +56,15 @@ def _make_layer_set(tmp_path: Path) -> MemoryLayerSet:
         ),
         ArchiveMemoryConfig(),
     )
-    knowledge = ScopedKnowledgeMemoryManager(
+    core = ScopedCoreMemoryManager(
         lambda ctx: asyncio.coroutine(lambda: None)() or registry.resolve(
-            layer=MemoryLayerName.KNOWLEDGE,
+            layer=MemoryLayerName.CORE,
             scope=MagicMock(extract=MagicMock(return_value=RecordScope(session_id="default"))),
             context=ctx,
         ),
-        KnowledgeMemoryConfig(),
+        CoreMemoryConfig(),
     )
-    return MemoryLayerSet(session=session, archive=archive, knowledge=knowledge)
+    return MemoryLayerSet(session=session, archive=archive, core=core)
 
 
 # ── Maintenance ───────────────────────────────────────────────────────────────
@@ -109,7 +109,7 @@ class TestDefaultMemoryMaintenancePolicy:
                 ctx,
                 (
                     ArchiveWrite(channel=ArchiveChannel.CONTEXT, summary=f"entry {i}"),
-                    ArchiveWrite(channel=ArchiveChannel.KNOWLEDGE, summary=f"knowledge {i}"),
+                    ArchiveWrite(channel=ArchiveChannel.CORE, summary=f"knowledge {i}"),
                 ),
             )
 
@@ -142,14 +142,14 @@ class TestDefaultMemoryMaintenancePolicy:
             ctx,
             (
                 ArchiveWrite(channel=ArchiveChannel.CONTEXT, summary="old entry"),
-                ArchiveWrite(channel=ArchiveChannel.KNOWLEDGE, summary="old knowledge"),
+                ArchiveWrite(channel=ArchiveChannel.CORE, summary="old knowledge"),
             ),
         )
         await layer_set.archive.append_bundle(
             ctx,
             (
                 ArchiveWrite(channel=ArchiveChannel.CONTEXT, summary="new entry"),
-                ArchiveWrite(channel=ArchiveChannel.KNOWLEDGE, summary="new knowledge"),
+                ArchiveWrite(channel=ArchiveChannel.CORE, summary="new knowledge"),
             ),
         )
 
@@ -188,65 +188,65 @@ class TestDefaultMemoryMaintenancePolicy:
         )
 
     @pytest.mark.asyncio
-    async def test_scan_once_knowledge_eviction_prunes_stale_files(self, tmp_path: Path):
+    async def test_scan_once_core_eviction_prunes_stale_files(self, tmp_path: Path):
         from datetime import UTC, timedelta
 
         registry = DefaultMemoryStoreRegistry(tmp_path)
         layer_set = MemoryLayerFactory.single_user(registry=registry)
         ctx = MemoryContext(session_id="s1", user_id="u1")
 
-        # Seed knowledge with permanent files + stale MEMORY.md
-        knowledge_bundle = await registry.resolve(
-            layer=MemoryLayerName.KNOWLEDGE,
+        # Seed core with permanent files + stale MEMORY.md
+        core_bundle = await registry.resolve(
+            layer=MemoryLayerName.CORE,
             scope=UserScope(),
             context=ctx,
         )
-        await knowledge_bundle.kv.set("SOUL.md", "soul content")
-        await knowledge_bundle.kv.set("USER.md", "user content")
-        await knowledge_bundle.kv.set("MEMORY.md", "memory content")
+        await core_bundle.kv.set("SOUL.md", "soul content")
+        await core_bundle.kv.set("USER.md", "user content")
+        await core_bundle.kv.set("MEMORY.md", "memory content")
 
         # Changelog with old timestamp for MEMORY.md (stale)
         old_time = (datetime.now(UTC) - timedelta(days=20)).isoformat()
-        assert knowledge_bundle.archive is not None
-        await knowledge_bundle.archive.append_log({
+        assert core_bundle.archive is not None
+        await core_bundle.archive.append_log({
             "file": "MEMORY.md",
             "mode": "append",
             "reason": "test",
             "created_at": old_time,
         })
 
-        retention = DefaultKnowledgeRetentionPolicy(stale_days=14)
-        policy = DefaultMemoryMaintenancePolicy(knowledge_retention_policy=retention)
+        retention = DefaultCoreMemoryRetentionPolicy(stale_days=14)
+        policy = DefaultMemoryMaintenancePolicy(core_retention_policy=retention)
 
         results = await policy.scan_once(registry=registry, layers=layer_set)
 
-        assert any(r.task == "knowledge_eviction" and r.success for r in results)
-        keys = await knowledge_bundle.kv.list_keys()
+        assert any(r.task == "core_memory_eviction" and r.success for r in results)
+        keys = await core_bundle.kv.list_keys()
         assert "SOUL.md" in keys
         assert "USER.md" in keys
         assert "MEMORY.md" not in keys
 
     @pytest.mark.asyncio
-    async def test_scan_once_knowledge_eviction_handles_failure(self):
+    async def test_scan_once_core_eviction_handles_failure(self):
         registry = AsyncMock(spec=MemoryStoreRegistry)
         registry.list_records = AsyncMock(return_value=[
             ScopeRecord(
                 scope_key="u1",
-                layer=MemoryLayerName.KNOWLEDGE,
+                layer=MemoryLayerName.CORE,
                 context=MemoryContext(session_id="s1", user_id="u1"),
-                storage_path="memory://knowledge/u1",
+                storage_path="memory://core/u1",
             )
         ])
         registry.resolve = AsyncMock(side_effect=RuntimeError("storage broken"))
 
-        retention = DefaultKnowledgeRetentionPolicy(stale_days=14)
-        policy = DefaultMemoryMaintenancePolicy(knowledge_retention_policy=retention)
-        layers = MemoryLayerSet(session=AsyncMock(), archive=AsyncMock(), knowledge=AsyncMock())
+        retention = DefaultCoreMemoryRetentionPolicy(stale_days=14)
+        policy = DefaultMemoryMaintenancePolicy(core_retention_policy=retention)
+        layers = MemoryLayerSet(session=AsyncMock(), archive=AsyncMock(), core=AsyncMock())
 
         results = await policy.scan_once(registry=registry, layers=layers)
 
         assert any(
-            r.task == "knowledge_eviction" and not r.success and "storage broken" in (r.detail or "")
+            r.task == "core_memory_eviction" and not r.success and "storage broken" in (r.detail or "")
             for r in results
         )
 
@@ -274,22 +274,22 @@ class TestArchiveRetentionPolicy:
         assert await policy.get_max_age_days(ctx) == 90
 
 
-class TestKnowledgeRetentionPolicy:
+class TestCoreMemoryRetentionPolicy:
     def test_soul_and_user_are_permanent(self):
-        policy = DefaultKnowledgeRetentionPolicy()
+        policy = DefaultCoreMemoryRetentionPolicy()
         assert policy.is_permanent_file("SOUL.md") is True
         assert policy.is_permanent_file("USER.md") is True
         assert policy.is_permanent_file("MEMORY.md") is False
         assert policy.is_permanent_file("custom.md") is False
 
     def test_memory_stale_threshold(self):
-        policy = DefaultKnowledgeRetentionPolicy(stale_days=14)
+        policy = DefaultCoreMemoryRetentionPolicy(stale_days=14)
         assert policy.get_stale_threshold_days("MEMORY.md") == 14
         assert policy.get_stale_threshold_days("SOUL.md") is None
         assert policy.get_stale_threshold_days("USER.md") is None
 
     def test_custom_stale_days(self):
-        policy = DefaultKnowledgeRetentionPolicy(stale_days=30)
+        policy = DefaultCoreMemoryRetentionPolicy(stale_days=30)
         assert policy.get_stale_threshold_days("MEMORY.md") == 30
 
 
@@ -335,7 +335,7 @@ class TestArchiveRetentionFifoEviction:
         # consumed=3 means archives 1,2,3 are safe to delete
         await storage.write_archive_state({
             "next_archive_id": 6,
-            "knowledge_consumed_archive_id": 3,
+            "core_consumed_archive_id": 3,
         })
 
         # Mock registry returns a bundle with a mock archive store
@@ -395,7 +395,7 @@ class TestArchiveRetentionFifoEviction:
         # consumed=0 means NONE are safe to delete
         await storage.write_archive_state({
             "next_archive_id": 6,
-            "knowledge_consumed_archive_id": 0,
+            "core_consumed_archive_id": 0,
         })
 
         registry = AsyncMock(spec=MemoryStoreRegistry)

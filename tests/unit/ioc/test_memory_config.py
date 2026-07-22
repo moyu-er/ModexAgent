@@ -12,7 +12,7 @@ from modex_agent.ioc.configs.memory import (
 
 class TestMemoryConfig:
     def test_defaults_minimal(self) -> None:
-        """MemoryConfig() = session on, archive/knowledge off."""
+        """MemoryConfig() = session on, archive/core off."""
         cfg = MemoryConfig()
         assert cfg.session.max_context_tokens == 200000
         assert cfg.long_term is None
@@ -57,7 +57,7 @@ class TestMemoryConfig:
     def test_summarizer_context_default_supports_archive_injection(self) -> None:
         cfg = SummarizerAgentConfig()
         assert cfg.context_max_chars == 20_000
-        assert cfg.knowledge_max_chars == 3000
+        assert cfg.core_max_chars == 3000
         assert cfg.index_max_chars == 200
 
     def test_session_max_token_ratio_clamp(self) -> None:

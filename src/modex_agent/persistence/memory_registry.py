@@ -47,7 +47,7 @@ class HybridMemoryStoreRegistry(MemoryStoreRegistry):
     ) -> MemoryStoreBundle:
         record_scope = self._base_scope.merge(scope.extract(context))
         match layer:
-            case MemoryLayerName.KNOWLEDGE | MemoryLayerName.PROVIDER:
+            case MemoryLayerName.CORE | MemoryLayerName.PROVIDER:
                 return await self._files.resolve(
                     layer=layer,
                     scope=scope,

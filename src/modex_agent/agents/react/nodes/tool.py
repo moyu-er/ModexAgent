@@ -6,18 +6,20 @@ import logging
 from typing import Any
 from uuid import uuid4
 
-from modex_agent.agents.react.agent import ReActEvent
-from modex_agent.agents.react.constants import ReActNode, ReActReason
+from modex_agent.agents.react.constants import ReActEvent as GraphReActEvent
+from modex_agent.agents.react.constants import (
+    ReActHookPoint,
+    ReActNode,
+    ReActReason,
+)
+from modex_agent.agents.react.context import get_agent_ctx
 from modex_agent.agents.react.message_builder import build_tool_message
-from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState, get_react_state
+from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.agents.react.tool_executor import ToolExecutor
 from modex_agent.approval.constants import ApprovalDecision, ApprovalTier
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.graph.interrupt import interrupt
-from modex_agent.core.graph.node import Node, NodeTransition
 from modex_agent.core.tool_manager import ToolResult
 from modex_agent.core.types import ToolCall
-from modex_agent.hook import HookPayload, HookPoint
 from modex_agent.runtime.enums import (
     ApprovalDenyPolicy,
     ApprovalSubjectType,
@@ -37,43 +39,48 @@ from modex_agent.runtime.models import (
     ToolBatchState,
     ToolCallState,
 )
+from modex_graph.context import GraphContext
+from modex_graph.node import Node
+from modex_graph.result import NodeResult
 
 logger = logging.getLogger(__name__)
 
 
-class ToolNode(Node):
+class ToolNode(Node[ReActTurnState]):
     """Two-phase tool node: classify all, persist approval state, batch execute."""
 
     def __init__(self, tool_executor: ToolExecutor) -> None:
-        super().__init__(ReActNode.TOOL)
+        self.name = ReActNode.TOOL
         self._tool_executor = tool_executor
 
-    async def execute(self, ctx: AgentContext) -> NodeTransition:
-        state = get_react_state(ctx)
-        if state is not None and state.phase == TurnPhase.SUSPENDED:
+    async def execute(self, ctx: GraphContext[ReActTurnState]) -> NodeResult:
+        state = ctx.state
+        if state.phase == TurnPhase.SUSPENDED:
             return await self._resume_suspended_batch(ctx)
-        if state is None or state.llm_response is None:
-            return NodeTransition(ReActNode.END, ReActReason.LLM_ERROR)
+        if state.llm_response is None:
+            return NodeResult(transition=ReActReason.LLM_ERROR)
 
         response = state.llm_response
         tool_calls: list[ToolCall] = response.tool_calls
         state.llm_response = None
         state.current_node = ReActNode.TOOL
 
+        agent_ctx = get_agent_ctx(ctx)
         max_tools = (
-            ctx.runtime.state.custom.get(TurnCustomKey.MAX_TOOLS_PER_TURN) if ctx.runtime else None
+            agent_ctx.runtime.state.custom.get(TurnCustomKey.MAX_TOOLS_PER_TURN)
+            if agent_ctx.runtime
+            else None
         )
         if max_tools is not None and len(tool_calls) > max_tools:
-            if ctx.emitter is not None:
-                await ctx.emitter.emit(
-                    ReActEvent.ERROR, f"Exceeded max_tools_per_turn ({max_tools})"
-                )
-            return NodeTransition(ReActNode.END, ReActReason.TURN_CANCELLED)
+            await ctx.runtime.emit(
+                GraphReActEvent.ERROR,
+                f"Exceeded max_tools_per_turn ({max_tools})",
+                ctx,
+            )
+            return NodeResult(transition=ReActReason.TURN_CANCELLED)
 
-        decisions = self._classify_all(tool_calls, ctx)
-        if ctx.emitter is not None:
-            for tc in tool_calls:
-                await ctx.emitter.emit(ReActEvent.TOOL_CALL_START, tc)
+        decisions = self._classify_all(tool_calls, agent_ctx)
+        await self._emit_batch(ctx, GraphReActEvent.TOOL_CALL_START, tool_calls)
         call_states = [
             ToolCallState(
                 call_id=tc.call_id or uuid4().hex,
@@ -99,14 +106,13 @@ class ToolNode(Node):
         batch: ToolBatchState,
         tool_calls: list[ToolCall],
         decisions: list[ApprovalDecision],
-        ctx: AgentContext,
-    ) -> NodeTransition:
-        react_state = get_react_state(ctx)
-        if react_state is None:
-            return NodeTransition(ReActNode.END, ReActReason.TURN_CANCELLED)
-        if ctx.runtime is None or ctx.runtime.turn_store is None:
+        ctx: GraphContext[ReActTurnState],
+    ) -> NodeResult:
+        state = ctx.state
+        agent_ctx = get_agent_ctx(ctx)
+        if agent_ctx.runtime is None or agent_ctx.runtime.turn_store is None:
             logger.error("ToolNode: approval required but no TurnStateStore configured")
-            return NodeTransition(ReActNode.END, ReActReason.TURN_CANCELLED)
+            return NodeResult(transition=ReActReason.TURN_CANCELLED)
 
         approval_id = uuid4().hex
         requests: list[ApprovalRequestState] = []
@@ -122,46 +128,46 @@ class ToolNode(Node):
                     tool_call_id=call_state.call_id,
                     tool_name=tc.tool_name,
                     arguments=ToolArguments(values=tc.arguments or {}),
-                    tier=self._get_tier(tc, ctx),
-                    iteration=react_state.iteration,
+                    tier=self._get_tier(tc, agent_ctx),
+                    iteration=state.iteration,
                 )
             )
 
         batch.approval_id = approval_id
         batch.status = ToolBatchStatus.SUSPENDED
-        react_state.approval = ApprovalTransaction(
+        state.approval = ApprovalTransaction(
             approval_id=approval_id,
-            turn_id=react_state.identity.turn_id,
+            turn_id=state.identity.turn_id,
             subject_type=ApprovalSubjectType.TOOL_BATCH,
             subject_ids=[batch.batch_id],
             requests=requests,
         )
-        react_state.phase = TurnPhase.SUSPENDED
-        react_state.current_node = ReActNode.TOOL
+        state.phase = TurnPhase.SUSPENDED
+        state.current_node = ReActNode.TOOL
 
-        snapshot = ReActSnapshotPolicy().capture(
-            react_state,
-            SnapshotReason.TOOL_APPROVAL_REQUIRED,
-        )
-        await ctx.runtime.turn_store.save_turn(snapshot)
-        return interrupt(requests)
+        # ADR-0033 D5 + D7: snapshot capture routes through ``ctx.runtime``
+        # (the ``ReactGraphRuntime``). ``ctx.interrupt`` raises the new
+        # ``modex_graph.GraphInterrupt`` (a ``GraphBubbleUp`` subclass) — the
+        # engine propagates it verbatim to the caller's ``run()``.
+        await ctx.runtime.capture_snapshot(ctx, SnapshotReason.TOOL_APPROVAL_REQUIRED.value)
+        ctx.interrupt(requests)
 
-    async def _resume_suspended_batch(self, ctx: AgentContext) -> NodeTransition:
-        react_state = get_react_state(ctx)
-        if react_state is None or react_state.approval is None:
-            return NodeTransition(ReActNode.END, ReActReason.TURN_CANCELLED)
-        batch = react_state.active_tool_batch()
+    async def _resume_suspended_batch(self, ctx: GraphContext[ReActTurnState]) -> NodeResult:
+        state = ctx.state
+        if state.approval is None:
+            return NodeResult(transition=ReActReason.TURN_CANCELLED)
+        batch = state.active_tool_batch()
         if batch is None:
-            return NodeTransition(ReActNode.END, ReActReason.TURN_CANCELLED)
+            return NodeResult(transition=ReActReason.TURN_CANCELLED)
 
         pending_requests = [
             req
-            for req in react_state.approval.requests
-            if react_state.approval.decisions.get(req.tool_call_id, ApprovalDecision.PENDING)
+            for req in state.approval.requests
+            if state.approval.decisions.get(req.tool_call_id, ApprovalDecision.PENDING)
             == ApprovalDecision.PENDING
         ]
         if pending_requests:
-            return interrupt(pending_requests)
+            ctx.interrupt(pending_requests)
 
         tool_calls = [
             ToolCall(
@@ -173,7 +179,7 @@ class ToolNode(Node):
         ]
         decisions = self._normalize_batch_decisions(
             [
-                react_state.approval.decisions.get(call.call_id, ApprovalDecision.ALLOWED)
+                state.approval.decisions.get(call.call_id, ApprovalDecision.ALLOWED)
                 for call in batch.calls
             ]
         )
@@ -182,13 +188,15 @@ class ToolNode(Node):
         pre_approved_ids = {
             call.call_id
             for call in batch.calls
-            if react_state.approval.decisions.get(call.call_id) == ApprovalDecision.ALLOWED
+            if state.approval.decisions.get(call.call_id) == ApprovalDecision.ALLOWED
         }
-        if pre_approved_ids and ctx.runtime and ctx.runtime.state:
-            ctx.runtime.state.custom[TurnCustomKey.PRE_APPROVED_TOOL_IDS] = pre_approved_ids
+        if pre_approved_ids:
+            agent_ctx = get_agent_ctx(ctx)
+            if agent_ctx.runtime is not None:
+                agent_ctx.runtime.state.custom[TurnCustomKey.PRE_APPROVED_TOOL_IDS] = pre_approved_ids
 
-        react_state.phase = TurnPhase.RUNNING
-        react_state.current_node = ReActNode.TOOL
+        state.phase = TurnPhase.RUNNING
+        state.current_node = ReActNode.TOOL
         return await self._execute_batch(tool_calls, decisions, ctx)
 
     def _classify_all(
@@ -244,38 +252,30 @@ class ToolNode(Node):
         self,
         tool_calls: list[ToolCall],
         decisions: list[ApprovalDecision],
-        ctx: AgentContext,
-    ) -> NodeTransition:
+        ctx: GraphContext[ReActTurnState],
+    ) -> NodeResult:
         decisions = self._normalize_batch_decisions(decisions)
-        state = get_react_state(ctx)
-        if ctx.emitter is not None:
-            await ctx.emitter.emit(
-                ReActEvent.PROGRESS,
-                {"hint": self._format_hint(tool_calls), "tool_hint": True},
-            )
-        if ctx.runtime and ctx.runtime.hooks:
-            await ctx.runtime.hooks.dispatch(
-                HookPoint.BEFORE_TOOL_EXECUTION,
-                ctx,
-                payload=HookPayload(data={"tool_calls": tool_calls}),
-            )
+        state = ctx.state
+        agent_ctx = get_agent_ctx(ctx)
 
-        # Drain control commands before tool execution
-        if ctx.runtime and ctx.runtime.control_channel:
-            from modex_agent.hook.builtin.control_drain import drain_control_channel
+        await ctx.runtime.emit(
+            GraphReActEvent.PROGRESS,
+            {"hint": self._format_hint(tool_calls), "tool_hint": True},
+            ctx,
+        )
+        await ctx.runtime.dispatch_hook(
+            ReActHookPoint.BEFORE_TOOL_EXECUTION,
+            ctx,
+            data={"tool_calls": tool_calls},
+        )
+        await ctx.runtime.drain_control(ctx)
 
-            await drain_control_channel(
-                ctx.runtime.control_channel,
-                ctx,
-                turn_uuid=ctx.runtime.turn_uuid,
-            )
-
-        batch = state.active_tool_batch() if state else None
+        batch = state.active_tool_batch()
         denied_encountered = False
         tool_results: list[Any] = []
         for tc, decision in zip(tool_calls, decisions, strict=False):
             if decision == ApprovalDecision.ALLOWED:
-                result = await self._tool_executor.execute(tc, ctx)
+                result = await self._tool_executor.execute(tc, agent_ctx)
             else:
                 result = ToolResult(
                     tool_name=tc.tool_name,
@@ -283,17 +283,15 @@ class ToolNode(Node):
                     error=self._denial_message(decision, tc, state),
                 )
 
-            if ctx.emitter is not None:
-                await ctx.emitter.emit(ReActEvent.TOOL_CALL_END, (tc, result))
+            await ctx.runtime.emit(GraphReActEvent.TOOL_CALL_END, (tc, result), ctx)
 
             tool_results.append(result)
 
             tool_msg = build_tool_message(result, tc.call_id)
-            await ctx.history.append(tool_msg)
-            if state is not None:
-                state.message_delta.append(
-                    MessageDelta(message=tool_msg, source=MessageDeltaSource.TOOL)
-                )
+            await agent_ctx.history.append(tool_msg)
+            state.message_delta.append(
+                MessageDelta(message=tool_msg, source=MessageDeltaSource.TOOL)
+            )
 
             if batch is not None:
                 for call_state in batch.calls:
@@ -308,25 +306,23 @@ class ToolNode(Node):
             if decision in (ApprovalDecision.DENIED, ApprovalDecision.PREEMPTED):
                 denied_encountered = True
 
-        if state is not None and batch is not None:
+        if batch is not None:
             if batch.operation_id:
                 state.update_operation(batch.operation_id, OperationStatus.COMPLETED)
             batch.status = (
                 ToolBatchStatus.FAILED if denied_encountered else ToolBatchStatus.COMPLETED
             )
 
-        if ctx.runtime and ctx.runtime.hooks:
-            await ctx.runtime.hooks.dispatch(
-                HookPoint.AFTER_TOOL_EXECUTION,
-                ctx,
-                payload=HookPayload(data={"results": tool_results}),
-            )
-
-        if ctx.emitter is not None:
-            await ctx.emitter.emit(
-                ReActEvent.ITERATION_END,
-                {"iteration": state.iteration if state else 0, "has_tool_calls": True},
-            )
+        await ctx.runtime.dispatch_hook(
+            ReActHookPoint.AFTER_TOOL_EXECUTION,
+            ctx,
+            data={"results": tool_results},
+        )
+        await ctx.runtime.emit(
+            GraphReActEvent.ITERATION_END,
+            {"iteration": state.iteration, "has_tool_calls": True},
+            ctx,
+        )
 
         if denied_encountered:
             # EXTENSION POINT: whether denial cancels the ReAct turn is
@@ -336,20 +332,19 @@ class ToolNode(Node):
             # To cancel the turn on any denied tool, set
             # ctx.runtime.approval.default_deny_policy to CANCEL_TURN.
             deny_policy: ApprovalDenyPolicy = ApprovalDenyPolicy.TOOL_RESULT_ONLY
-            if ctx.runtime and ctx.runtime.approval:
-                deny_policy = ctx.runtime.approval.default_deny_policy
+            if agent_ctx.runtime and agent_ctx.runtime.approval:
+                deny_policy = agent_ctx.runtime.approval.default_deny_policy
             if deny_policy == ApprovalDenyPolicy.CANCEL_TURN:
-                if state is not None:
-                    state.phase = TurnPhase.CANCELLED
-                return NodeTransition(ReActNode.END, ReActReason.TURN_CANCELLED)
+                state.phase = TurnPhase.CANCELLED
+                return NodeResult(transition=ReActReason.TURN_CANCELLED)
 
-        return NodeTransition(ReActNode.LLM, ReActReason.TOOLS_DONE)
+        return NodeResult(transition=ReActReason.TOOLS_DONE)
 
     @staticmethod
     def _denial_message(
         decision: ApprovalDecision,
         tc: ToolCall,
-        state: ReActTurnState | None,
+        state: ReActTurnState,
     ) -> str:
         """Clear, firm message for a denied/preempted tool call.
 
@@ -365,11 +360,7 @@ class ToolNode(Node):
         ``error`` is the bare message; ``ToolResult.to_message`` prepends a
         single ``"Error: "`` so the final history content reads cleanly.
         """
-        reason = (
-            state.approval.deny_reason
-            if state is not None and state.approval is not None
-            else None
-        )
+        reason = state.approval.deny_reason if state.approval is not None else None
         if decision == ApprovalDecision.PREEMPTED:
             return (
                 f"Skipped: this specific call to '{tc.tool_name}' was not "
@@ -394,3 +385,21 @@ class ToolNode(Node):
             return f"calling {tool_calls[0].tool_name}..."
         names = ", ".join(tc.tool_name for tc in tool_calls)
         return f"calling tools: {names}..."
+
+    @staticmethod
+    async def _emit_batch(
+        ctx: GraphContext[ReActTurnState],
+        event: GraphReActEvent,
+        items: list[ToolCall],
+    ) -> None:
+        """Emit ``event`` once per item in ``items`` through ``ctx.runtime.emit``.
+
+        Preserves the previous ``for tc in tool_calls: await ctx.emitter.emit(...)``
+        ordering — ``ctx.runtime.emit`` is async and awaited in a loop, so emit
+        order matches the prior direct-emitter path.
+        """
+        for item in items:
+            await ctx.runtime.emit(event, item, ctx)
+
+
+__all__ = ["ToolNode"]

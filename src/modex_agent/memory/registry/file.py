@@ -23,8 +23,8 @@ from modex_agent.core.scope import (
 from modex_agent.memory.archive_models import (
     CONTEXT_ARCHIVE_FILE_KEY,
     CONTEXT_ARCHIVE_FILENAME,
-    KNOWLEDGE_ARCHIVE_FILE_KEY,
-    KNOWLEDGE_ARCHIVE_FILENAME,
+    CORE_ARCHIVE_FILE_KEY,
+    CORE_ARCHIVE_FILENAME,
 )
 from modex_agent.memory.core.split_stores import (
     ArchiveStore,
@@ -152,12 +152,12 @@ class DefaultMemoryStoreRegistry(MemoryStoreRegistry):
             storage = self._stores.get(cache_key)
             if storage is None:
                 scope_dir = self._scope_dir(layer, scope_key)
-                if layer == MemoryLayerName.KNOWLEDGE:
-                    from modex_agent.memory.stores.markdown_knowledge import (
-                        MarkdownKnowledgeStorage,
+                if layer == MemoryLayerName.CORE:
+                    from modex_agent.memory.stores.markdown_core import (
+                        MarkdownCoreMemoryStorage,
                     )
 
-                    storage = MarkdownKnowledgeStorage(scope_dir, layer=layer)
+                    storage = MarkdownCoreMemoryStorage(scope_dir, layer=layer)
                 elif layer == MemoryLayerName.ARCHIVE:
                     storage = DirArchiveStorage(scope_dir)
                 else:
@@ -177,7 +177,7 @@ class DefaultMemoryStoreRegistry(MemoryStoreRegistry):
         """Build a ``MemoryStoreBundle`` from a single concrete store instance.
 
         Every file-impl storage (``DefaultScopedStorage`` /
-        ``DirArchiveStorage`` / ``MarkdownKnowledgeStorage``) implements all
+        ``DirArchiveStorage`` / ``MarkdownCoreMemoryStorage``) implements all
         four split ABCs, so the single resolved instance fills every bundle
         field.
         """
@@ -225,7 +225,7 @@ class DefaultMemoryStoreRegistry(MemoryStoreRegistry):
     def _has_file(self, scope_dir: Path, has_file: str) -> bool:
         file_map = {
             CONTEXT_ARCHIVE_FILE_KEY: CONTEXT_ARCHIVE_FILENAME,
-            KNOWLEDGE_ARCHIVE_FILE_KEY: KNOWLEDGE_ARCHIVE_FILENAME,
+            CORE_ARCHIVE_FILE_KEY: CORE_ARCHIVE_FILENAME,
             "messages": "messages.jsonl",
             "history": CONTEXT_ARCHIVE_FILENAME,
             "archive": CONTEXT_ARCHIVE_FILENAME,

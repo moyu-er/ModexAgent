@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     import asyncio
 
     from modex_agent.agents.react.approval import ApprovalRuntime
+    from modex_agent.agents.react.runtime import ReactGraphRuntime
     from modex_agent.control.channel import InMemoryControlChannel
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.runtime_context import RuntimeContextManager
@@ -60,11 +61,22 @@ class AgentRuntime:
     compatibility, but callers should prefer the operation methods below
     (snapshot_turn, drain_control) which concentrate the common patterns
     and handle the absent-subsystem case internally.
+
+    ``graph_runtime`` carries the ``ReactGraphRuntime`` adapter (ADR-0033 D5 +
+    ticket 04). Nodes call ``ctx.runtime.graph_runtime.dispatch_hook(...)`` /
+    ``around(...)`` / ``drain_control(...)`` / ``apply_governance(...)`` /
+    ``capture_snapshot(...)`` / ``emit(...)`` instead of reaching directly
+    into ``hooks`` / ``interceptors`` / ``governance`` / ``control_channel``
+    / ``turn_store`` / ``emitter``. ``ReActAgent.run()`` constructs and
+    assigns it once per turn; tests that bypass ``run()`` must assign it
+    themselves (or use the no-op default ``ReactGraphRuntime()``).
     """
 
     services: AgentRuntimeServices
     state: TurnStateBase
     _runtime_context: Any = field(default=None, repr=False)
+    # ADR-0033 D5 + ticket 04: graph-runtime AOP bridge. Set by ReActAgent.run().
+    graph_runtime: ReactGraphRuntime | None = None
 
     # ------------------------------------------------------------------
     # Field-access properties (backward compat)
@@ -136,7 +148,6 @@ class AgentRuntime:
             return False
         await store.save_turn(snapshot)
         return True
-
 
     async def drain_control(
         self,

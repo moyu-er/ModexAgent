@@ -36,6 +36,8 @@ class ToolExecutor:
             async def _actual() -> ToolResult:
                 return await self._execute_raw(tool_call, ctx)
 
+            # Canonical AOP path for TOOL_CALL. `ctx.runtime.around` is for
+            # ITERATION only — see ADR-0034 D2.
             return await interceptor_chain.around_tool_call(ctx, call_ctx, _actual)
 
         return await self._execute_raw(tool_call, ctx)

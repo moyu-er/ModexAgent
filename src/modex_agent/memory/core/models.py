@@ -112,8 +112,8 @@ class MemoryBudget:
 
 
 @dataclass(frozen=True)
-class KnowledgeBudget:
-    """Capacity governance for the knowledge (long-term) memory layer."""
+class CoreMemoryBudget:
+    """Capacity governance for the core memory (long-term) layer."""
 
     max_memory_chars: int = 8192
     max_custom_file_chars: int = 4096
@@ -130,7 +130,7 @@ class InjectionResult:
 
 
 @dataclass
-class LongTermMemory:
+class CoreMemoryContents:
     """Long-term memory content container — SOUL.md, USER.md, MEMORY.md."""
 
     soul: str = ""
@@ -164,9 +164,9 @@ __all__ = [
     "CompressionPlan",
     "CompressionReason",
     "CompressionTrigger",
-    "LongTermMemory",
+    "CoreMemoryContents",
     "InjectionResult",
-    "KnowledgeBudget",
+    "CoreMemoryBudget",
     "MemoryBudget",
     "MemoryUpdate",
     "MemoryUpdateMode",

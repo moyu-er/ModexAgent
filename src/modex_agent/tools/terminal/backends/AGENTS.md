@@ -9,14 +9,15 @@ Platform-specific terminal backend implementations that provide the OS-level PTY
 ## Key Files
 | File | Description |
 |------|-------------|
-| `__init__.py` | Package init |
-| `base.py` | `TerminalBackend` ABC — defines the interface for all PTY backends: `start()`, `write()`, `read()`, `resize()`, `close()`, plus `extract_current_segment_from_buffer()` utility for extracting terminal output segments |
-| `factory.py` | `create_pty_backend()` — platform-aware factory. Windows: `WinptyConsoleWindowBackend` (legacy alias `VisibleWindowsPtyBackend`). Linux/macOS: `PexpectPtyBackend` (preferred), `TmuxPtyBackend` (fallback) |
-| `pexpect_pty.py` | `PexpectPtyBackend` — Linux/macOS hidden PTY using pexpect in-process. No visible window. Modeled on `WinptyHiddenBackend` (legacy alias `WindowsHiddenPtyBackend`) for behavioral consistency |
-| `tmux_pty.py` | `TmuxPtyBackend` — unified Unix backend using tmux + libtmux. Supports both headless and visible modes (users attach via `tmux attach -t <session>`) |
-| `visible_windows.py` | `WinptyConsoleWindowBackend` (legacy alias `VisibleWindowsPtyBackend`) — Windows backend with visible console window. Launches a helper process (`visible_windows_host.py`) that owns a winpty and forwards I/O via TCP socket |
-| `visible_windows_host.py` | `WinptyConsoleWindowBackend` host process — runs in a visible console window, creates a winpty `PtyProcess`, and bridges I/O with the parent process over a local TCP socket |
-| `windows_hidden.py` | `WinptyHiddenBackend` (legacy alias `WindowsHiddenPtyBackend`) — Windows hidden terminal using pywinpty in-process. No visible console window. No helper subprocess or TCP bridge. Simpler than the visible backend |
+| `__init__.py` | Package init; re-exports deprecated aliases `VisibleWindowsPtyBackend` / `WindowsHiddenPtyBackend` |
+| `base.py` | `TerminalBackend` ABC — defines the interface for all PTY backends. Per ADR-0032: concrete `write`/`read_pending` template methods wrap opt-in `_write_blocking`/`_read_blocking` hooks in `run_in_executor`; concrete `current_segment`/`clear_input_line`/`drain_startup` byte-stream defaults; `@abstractmethod _shell_family() -> ShellFamily` gates readline-dependent behaviors |
+| `factory.py` | `create_pty_backend()` — platform-aware factory. Windows: `WinptyConsoleWindowBackend` (visible) / `WinptyHiddenBackend` (hidden). Linux/macOS: `PexpectPtyBackend` (hidden, preferred), `TmuxPtyBackend` (fallback, both visibilities). Raises `UnsupportedVisibilityForTransport` for invalid (transport, visibility) combos |
+| `pexpect_pty.py` | `PexpectPtyBackend` — Linux/macOS hidden PTY using pexpect. Implements `_write_blocking`/`_read_blocking`/`_shell_family` hooks; inherits `write`/`read_pending`/`current_segment`/`clear_input_line`/`drain_startup` from base (ADR-0032 D3) |
+| `tmux_pty.py` | `TmuxPtyBackend` — Unix tmux backend (snapshot backend, ADR-0032 D5). Overrides `write`/`read_pending`/`current_segment`/`drain_startup` directly (no hooks). `capture-pane -p -S -` + prefix-match diff (D5 Fix 1); `is_alive` 1s TTL cache (D5 Fix 2). Implements `_shell_family` |
+| `visible_windows.py` | `WinptyConsoleWindowBackend` (visible) — parent side. ADR-0032 D2: `asyncio.start_server` + `StreamReader`/`StreamWriter` (was: raw `socket.socket` + `settimeout` + `sendall`/`recv`). Overrides `write`/`read_pending` directly (native async, no hooks). `TCP_NODELAY` set. Implements `_shell_family` |
+| `visible_windows_host.py` | Host process for `WinptyConsoleWindowBackend` — runs in visible console window with `CREATE_NEW_CONSOLE`. ADR-0032 D2: `asyncio.open_connection`; `pty_to_socket`/`socket_to_pty` are asyncio tasks (blocking pywinpty calls wrapped in `run_in_executor`); `_stdin_to_pty`/`_resize_monitor` remain threads |
+| `windows_hidden.py` | `WinptyHiddenBackend` (hidden) — in-process pywinpty. Implements `_write_blocking`/`_read_blocking`/`_shell_family` hooks; inherits 5 behaviors from base (ADR-0032 D3) |
+| `winpty_transport.py` | `WinptyBackend` umbrella ABC for the Windows winpty transport (no I/O logic; exists for factory capability-table naming) |
 
 ## For AI Agents
 
@@ -29,10 +30,13 @@ Platform-specific terminal backend implementations that provide the OS-level PTY
 
 ### Common Patterns
 - Backend lifecycle: `start()` → `write()`/`read()` loop → `close()`
-- Each backend manages its own `SlidingOutputBuffer` for accumulating output between reads
+- **Async-safety contract (ADR-0032)**: every backend's `write`/`read_pending` is genuinely non-blocking. Three I/O shapes: blocking-IO hooks (hidden-windows, pexpect), native async (visible-windows), snapshot (tmux). See `base.py` docstrings.
+- Each backend manages its own `SlidingOutputBuffer` for accumulating output between reads (byte-stream backends only; tmux uses `_last_capture` diff)
 - ANSI/CSI control sequences are stripped before returning output text
 - Backend health is checked lazily (on use, not on idle)
-- Windows visible backend uses TCP socket communication with a helper process — the host process writes data to the socket, the parent reads from it
+- **Visible-windows IPC (ADR-0032 D2)**: asyncio streams (`asyncio.start_server`/`open_connection` + `StreamReader`/`StreamWriter`) with `TCP_NODELAY` — no raw socket, no `settimeout` leak, no partial `sendall`
+- **Tmux snapshot backend (ADR-0032 D5)**: `capture-pane -p -S -` (full scrollback) + prefix-match diff; `is_alive` 1s TTL cache
+- Shell detection via `_shell_family()` abstract hook (replaces 3 divergent pre-ADR-0032 heuristics)
 
 ## Dependencies
 

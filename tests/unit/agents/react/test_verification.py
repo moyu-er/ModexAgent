@@ -15,14 +15,13 @@ from modex_agent.agents.react.nodes.tool import ToolNode
 from modex_agent.agents.react.nodes.start import StartNode
 from modex_agent.agents.react.nodes.llm import LLMNode
 from modex_agent.agents.react.nodes.end import EndNode
-from modex_agent.agents.react.graph import ReActGraph
+from modex_agent.agents.react.graph import build_react_graph
 from modex_agent.agents.react.agent import ReActEvent
-from modex_agent.core.graph.node import NodeTransition
-from modex_agent.core.graph.graph import Graph, Edge
-from modex_agent.core.graph.engine import GraphEngine
-from modex_agent.core.graph.constants import GraphNode
 from modex_agent.core.agent import AgentContext
-from modex_agent.core.graph.interrupt import GraphInterrupt
+from modex_graph.engine import GraphEngine
+from modex_graph.graph import Graph
+from modex_graph.exceptions import GraphInterrupt
+from modex_graph.result import NodeResult
 
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import ToolCall
@@ -33,4 +32,3 @@ from modex_agent.memory.history import ListMessageHistory
 from modex_agent.hook import HookPoint
 from modex_agent.runtime.enums import ApprovalSubjectType
 from modex_agent.runtime.models import ApprovalRequestState, ApprovalTransaction, ToolArguments
-
