@@ -43,6 +43,10 @@ _STRIP_EXACT = [
     "modexctl",
     "modexbot",
     "bot",
+    # Stray runtime state that leaks into site-packages when the bot is
+    # accidentally started from within the venv. This is a data-leak risk
+    # (state.db, sessions, inbox) — must never ship to users.
+    ".modex",
 ]
 
 _STRIP_PATTERNS = [
@@ -57,38 +61,39 @@ _STRIP_PATTERNS = [
 # Development / packaging tooling that ships in .venv site-packages but is never
 # needed at runtime. Removing it shrinks the installer and the install footprint.
 _STRIP_DEV_DEPS = [
-    # type-checking
     "mypy",
     "mypyc",
     "mypy_extensions",
-    # testing
+    "ast_serialize",
+    "librt",
     "pytest",
     "pytest_asyncio",
     "pytest_cov",
     "_pytest",
-    "pluggy",  # pytest + mypy dependency; not needed without them
-    "iniconfig",  # pytest dependency
+    "pluggy",
+    "iniconfig",
     "coverage",
-    # linting (ruff is a single-binary, but its dist-info + cache remain)
     "ruff",
-    # packaging toolchain (the bundled runtime uses uv/pip on demand; the
-    # site-packages copy of pip/setuptools/wheel is dead weight at runtime)
     "pip",
     "setuptools",
     "wheel",
     "distutils",
-    "editables",  # editable-install machinery, unused in bundled layout
-    "trove_classifiers",  # hatchling/setuptools metadata helper
-    "pathspec",  # hatchling dependency
+    "editables",
+    "trove_classifiers",
+    "pathspec",
     "hatchling",
     "hatch",
 ]
 
-# litellm ships a full proxy server (admin UI + router) under litellm/proxy/.
-# The bot only uses litellm as an LLM client, but litellm's __init__ chain
-# transitively imports from litellm.proxy._types (via integrations like
-# gcs_bucket, custom_logger, prometheus — 50+ import sites), so the proxy
-# subtree CANNOT be removed without breaking `import litellm`. Left intact.
+_STRIP_RUNTIME_UNUSED = [
+    "primp",
+    "fake_useragent",
+    "e2b",
+    "e2b_code_interpreter",
+    "e2b_connect",
+    "docker",
+    "dockerfile_parse",
+]
 
 
 
@@ -226,6 +231,67 @@ def _strip_dev_deps(site_packages: Path) -> None:
     print(f"    Dev deps stripped: {removed_bytes / 1e6:.1f} MB total")
 
 
+def _strip_runtime_unused(site_packages: Path) -> None:
+    """Remove heavy packages not needed in the installed runtime."""
+    print("  [prepare_python] Stripping unused runtime packages...")
+    removed_bytes = 0
+    for name in _STRIP_RUNTIME_UNUSED:
+        candidates = [site_packages / name, *site_packages.glob(f"{name}-*.dist-info")]
+        for p in candidates:
+            if not p.exists():
+                continue
+            size = (
+                sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+                if p.is_dir()
+                else p.stat().st_size
+            )
+            removed_bytes += size
+            if p.is_dir():
+                shutil.rmtree(p)
+            else:
+                p.unlink()
+            print(f"    Removed: {p.name} ({size / 1e6:.1f} MB)")
+    print(f"    Runtime unused stripped: {removed_bytes / 1e6:.1f} MB total")
+
+
+def _strip_litellm(site_packages: Path) -> None:
+    """Prune litellm's tokenizer cache files (~123 MB of model cost/config JSON).
+
+    litellm bundles one tokenizer JSON per supported model under
+    litellm_core_utils/tokenizers/. The bot only needs
+    anthropic_tokenizer.json (required at import time via
+    importlib.resources); the other ~75 files are per-model token-counting
+    caches that litellm downloads on first use. The bot uses tiktoken for
+    token counting, so these caches are never read at runtime.
+
+    Verified safe: keeping only __init__.py + anthropic_tokenizer.json
+    does not break `import litellm`.
+    """
+    litellm = site_packages / "litellm"
+    if not litellm.is_dir():
+        return
+
+    tok_dir = litellm / "litellm_core_utils" / "tokenizers"
+    if not tok_dir.is_dir():
+        return
+
+    print("  [prepare_python] Pruning litellm tokenizer cache files...")
+    removed_bytes = 0
+    for f in tok_dir.iterdir():
+        if f.name in ("__init__.py", "anthropic_tokenizer.json"):
+            continue
+        size = f.stat().st_size if f.is_file() else sum(
+            x.stat().st_size for x in f.rglob("*") if x.is_file()
+        )
+        removed_bytes += size
+        if f.is_dir():
+            shutil.rmtree(f)
+        else:
+            f.unlink()
+
+    print(f"    litellm tokenizer cache pruned: {removed_bytes / 1e6:.1f} MB removed")
+
+
 def _strip_pycache(python_dir: Path) -> None:
     """Delete every __pycache__ directory under the bundled Python tree.
 
@@ -301,7 +367,10 @@ def main() -> None:
     python_dir = _copy_to_staging(src_python, args.staging_dir)
     _copy_site_packages(args.venv_dir, python_dir)
     _strip_project_code(python_dir)
-    _strip_dev_deps(python_dir / "Lib" / "site-packages")
+    sp = python_dir / "Lib" / "site-packages"
+    _strip_dev_deps(sp)
+    _strip_runtime_unused(sp)
+    _strip_litellm(sp)
     _strip_pycache(python_dir)
     _verify(python_dir)
 

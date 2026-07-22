@@ -80,8 +80,21 @@ UninstallDisplayName={#MyAppName}
 ; Bundled Python runtime (python-build-standalone + all third-party deps)
 Source: "staging\python\*"; DestDir: "{app}\python"; Flags: ignoreversion recursesubdirs createallsubdirs
 
-; Full app source (git archive — only tracked files, no secrets)
-Source: "staging\app\*"; DestDir: "{app}\app"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Full app source (git archive — only tracked files, no secrets).
+; config\ and .modex\ are excluded here and installed separately below so
+; that upgrading the install preserves the user's existing configuration
+; and runtime state.
+Source: "staging\app\*"; DestDir: "{app}\app"; \
+  Excludes: "\examples\bot_project\config\* \examples\bot_project\.modex\*"; \
+  Flags: ignoreversion recursesubdirs createallsubdirs
+
+; Default config files — only written if they don't already exist, so an
+; upgrade install never overwrites user-edited model.yml / bot_config.yml /
+; pool definitions. Inno Setup's onlyifdoesntexist skips the file if the
+; destination already exists.
+Source: "staging\app\examples\bot_project\config\*"; \
+  DestDir: "{app}\app\examples\bot_project\config"; \
+  Flags: onlyifdoesntexist recursesubdirs createallsubdirs
 
 ; Scripts
 Source: "postinstall.py"; DestDir: "{app}"; Flags: ignoreversion
@@ -219,8 +232,9 @@ Filename: "{app}\python\python.exe"; \
 Type: filesandordirs; Name: "{app}\tauri"
 #endif
 Type: filesandordirs; Name: "{app}\app\examples\bot_project\logs"
-Type: filesandordirs; Name: "{app}\app\examples\bot_project\data"
-Type: filesandordirs; Name: "{app}\app\examples\bot_project\.modex"
+; NOTE: .modex, config, and data are NOT deleted on uninstall — they hold
+; user configuration (model.yml, bot_config.yml), session history, and
+; runtime state that should survive reinstall/uninstall cycles.
 
 ; ============================================================================
 ; [Code] — Pascal script: register/unregister PATH + __pycache__ cleanup

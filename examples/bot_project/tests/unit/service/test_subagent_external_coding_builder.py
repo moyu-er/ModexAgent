@@ -115,6 +115,23 @@ class TestBotBackendFactory:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _stub_modexctl_bin_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Provide a fake modexctl binary so resolve_modexctl_bin_dir() succeeds.
+
+    The builder calls resolve_modexctl_bin_dir() at build time to set the
+    spawn PATH for external agents. On CI / dev machines without modexctl
+    installed alongside the running Python, this raises. We point
+    MODEXBOT_BIN_DIR at a temp dir with a dummy modexctl shim so the
+    resolution strategy-1 (env override) succeeds.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    shim = bin_dir / ("modexctl.bat" if sys.platform == "win32" else "modexctl")
+    shim.write_text("@echo off\n")
+    monkeypatch.setenv("MODEXBOT_BIN_DIR", str(bin_dir))
+
+
 def _make_subagent_spec(
     *,
     agent_name: str = "coder",
