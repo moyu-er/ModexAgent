@@ -1,12 +1,14 @@
-"""Runtime state governance models — typed dataclasses and Pydantic BaseModels for turn state, operations, approval, and snapshots.
+"""Runtime state governance models — Pydantic BaseModels and a few stdlib dataclasses for turn state, operations, approval, and snapshots.
 
-Per ADR-0033 D14: the 5 ReAct state types that participate in the approval
-state machine (``ApprovalTransaction`` / ``ApprovalRequestState`` /
-``ToolBatchState`` / ``ToolCallState`` / ``ToolArguments``) are migrated from
-``@dataclass`` to Pydantic ``BaseModel`` to enable the universal channel
-codec (``model_dump()`` / ``model_validate()``). Frozen vs mutable is decided
-per type based on whether the approval state machine mutates the object at
-runtime.
+Per ADR-0033 D14 + ADR-0034 D1 Stage 2: all value objects crossing module
+boundaries are Pydantic ``BaseModel`` so that ``model_dump()`` /
+``model_validate()`` serve as the universal channel codec. Frozen vs mutable
+is decided per type based on whether the approval state machine mutates the
+object at runtime (``TurnIdentity`` / ``LLMErrorInfo`` frozen; the rest
+mutable). A small number of stdlib ``@dataclass`` types remain for objects
+that never cross the serialization boundary (``TurnStateBase``,
+``TurnSnapshot``, ``ResumePoint``, ``ApprovalDenialContext``,
+``ControlMutation``, ``StateQueryScope``, ``TurnSummary``).
 """
 
 from __future__ import annotations
@@ -69,9 +71,10 @@ class ToolArguments(BaseModel):
     values: Mapping[str, JsonValue]
 
 
-@dataclass(frozen=True)
-class TurnIdentity:
+class TurnIdentity(BaseModel):
     """Stable identity for every turn."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     agent_id: str
     session: SessionInfo
@@ -83,18 +86,20 @@ class TurnIdentity:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class RuntimeErrorState:
+class RuntimeErrorState(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     error_type: str
     message: str
     retryable: bool
 
 
-@dataclass
-class CancellationState:
+class CancellationState(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     reason: str
     source: CancellationSource
-    requested_at: float = field(default_factory=time.time)
+    requested_at: float = Field(default_factory=time.time)
     operation_id: str | None = None
 
 
@@ -103,8 +108,9 @@ class CancellationState:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class MessageDelta:
+class MessageDelta(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     message: ChatMessage
     source: MessageDeltaSource
     provider_payload: Mapping[str, JsonValue] | None = None
@@ -115,14 +121,15 @@ class MessageDelta:
 # ---------------------------------------------------------------------------
 
 
-@dataclass
-class OperationState:
+class OperationState(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     operation_id: str
     kind: OperationKind
     status: OperationStatus
     subject_id: str | None
-    created_at: float = field(default_factory=time.time)
-    updated_at: float = field(default_factory=time.time)
+    created_at: float = Field(default_factory=time.time)
+    updated_at: float = Field(default_factory=time.time)
     error: RuntimeErrorState | None = None
 
 

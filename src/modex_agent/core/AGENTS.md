@@ -17,12 +17,12 @@ The `core/` module defines the foundational contracts (`Agent[E]`, `Tool`, `LLMP
 | `agent_runtime_config.py` | `BusyInputMode` — agent busy-input handling mode (the former `RuntimeControl`/`AgentRuntimeConfig` aggregates were dead and removed in ④b) |
 | `constants.py` | `DefaultValues`, `FinishReason` (StrEnum), `ToolCallType`, `ToolChoice`, `ErrorMessages`, `ToolSchemaConstants` |
 | `context.py` | `ContextState` (StrEnum: ACTIVE/PAUSED/STOPPED), `ContextManager` ABC, `InMemoryContextManager` |
-| `emitter.py` | `ContentEmitter[E]` ABC — event streaming contract. `AgentResult` dataclass (has_errors/error_summary/data). `StreamingAwareEmitter` ABC |
+| `emitter.py` | `ContentEmitter[E]` ABC — event streaming contract. `AgentResult` (Pydantic `BaseModel`, ADR-0034 D1 Stage 2). `StreamingAwareEmitter` ABC |
 | `events.py` | `AgentEvent` base class/Enum mixin, `EmitterConfig` (filters, truncation, max_events) |
 | `frontmatter.py` | Shared YAML frontmatter parsing (`parse_frontmatter()`) for markdown docs (skills, experiences) |
 | `governance.py` | `GovernanceResult` — context governance result type |
 | `history.py` | `MessageHistory` ABC — message append/filter/get |
-| `llm_struct.py` | `LLMErrorInfo`, `LLMErrorKind` (StrEnum), `ProviderKind` (StrEnum), `LLMTimeoutPolicy`, `TurnTimeoutPolicy`, `RuntimeSafetyPolicy`, `LLMProviderConfig` |
+| `llm_struct.py` | `LLMErrorInfo` (Pydantic `BaseModel(frozen=True)`, ADR-0034 D1 Stage 2), `LLMErrorKind` (StrEnum), `ProviderKind` (StrEnum), `LLMTimeoutPolicy`, `TurnTimeoutPolicy`, `RuntimeSafetyPolicy`, `LLMProviderConfig` |
 | `message.py` | ChatMessage and related message types for LLM communication |
 | `message_utils.py` | `normalize_agent_messages_for_llm()` — normalizes messages to LLM-compatible format |
 | `prompt.py` | Prompt building utilities |
@@ -35,7 +35,7 @@ The `core/` module defines the foundational contracts (`Agent[E]`, `Tool`, `LLMP
 | `tool.py` | `DynamicSchemaProvider` ABC — context-aware tool schema. **`Tool` class lives in `tool_manager.py`** |
 | `tool_call_accumulator.py` | `ToolCallChunk`, `AccumulatingToolCall`, `ToolCallAccumulator`, `parse_tool_call_chunks_from_delta()` — streaming tool-call accumulation |
 | `tool_manager.py` | `Tool` class (dual-mode: `__init__` args OR `@property` name/description/parameters), `ToolManager` ABC, `InMemoryToolManager`, `ToolResult`, `FunctionalTool`, `ToolConfig`, `ToolManagerConfig`, `ToolExecutionMode` |
-| `types.py` | `InputMessage`, `OutputMessage`, `LLMResponse`, `ToolCall` (dataclass), `MessageRole` (StrEnum: SYSTEM/USER/ASSISTANT/TOOL), `MessageType` (Enum) |
+| `types.py` | `InputMessage`, `OutputMessage` (dataclasses), `LLMResponse`, `ToolCall` (Pydantic `BaseModel`, ADR-0034 D1 Stage 2), `MessageRole` (StrEnum: SYSTEM/USER/ASSISTANT/TOOL), `MessageType` (Enum) |
 | `utils.py` | Core utility helpers |
 
 ## Subdirectories

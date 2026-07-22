@@ -168,23 +168,35 @@ remove the override.
    `StrEnum` fields, and `list[dataclass]` (`message_delta`,
    `operations`, `tool_batches`).
 
-**Stage 2 (deferred — tracked as a follow-up, not in this ADR's
-implementation scope):** migrate the six stdlib dataclass value objects
-(`CancellationState` → `OperationState` → `MessageDelta` →
-`LLMResponse` / `AgentResult` → `TurnIdentity`) to Pydantic `BaseModel`.
-This resolves the ADR-0033 D14 violation (`TurnIdentity` is a frozen
-`@dataclass` that crosses module boundaries and carries nested
-serialization — D14 restricts frozen `@dataclass` to single-module leaf
-value objects with no nested validation). Once all six are `BaseModel`
-subclasses, the `TypeAdapter` branch in `encode_value` / `decode_value`
-becomes dead and is deleted, leaving a single serialization path
-(`isinstance(value, BaseModel)` → `model_dump` / `model_validate`).
+**Stage 2 (completed — implemented in 3 batches):** migrated nine stdlib
+dataclass value objects to Pydantic `BaseModel`: the original six
+(`CancellationState`, `OperationState`, `MessageDelta`, `LLMResponse`,
+`AgentResult`, `TurnIdentity`) plus three dependency types
+(`RuntimeErrorState`, `ToolCall`, `LLMErrorInfo`) that were referenced by
+the original six as non-Pydantic field types. This resolves the ADR-0033
+D14 violation (`TurnIdentity` was a frozen `@dataclass` crossing module
+boundaries with nested serialization).
 
-Stage 2 is its own ADR because each migration touches high-blast-radius
-types (`TurnIdentity` has 203 callers) and must be validated
-independently. Stage 1 unblocks Phase c without waiting for Stage 2
-because the `TypeAdapter` transition makes the per-channel path correct
-for all current `ReActTurnState` field types.
+**Disposition (deviation from original Stage 2 plan):** the original plan
+called for deleting the `TypeAdapter` branch in `encode_value` /
+`decode_value` after migration. **The TypeAdapter bridge is retained as a
+public convenience facility** — `modex_graph` users may pass stdlib
+dataclasses that are not `BaseModel` subclasses, and the TypeAdapter branch
+handles them. The framework's own nine types now serialize through the
+`BaseModel` branch (`isinstance(value, BaseModel)` → `model_dump` /
+`model_validate`); the TypeAdapter branch is no longer exercised by
+framework code but remains available for third-party consumers.
+
+Frozen/mutable decisions: `TurnIdentity` and `LLMErrorInfo` are
+`BaseModel(frozen=True)`; the other seven are mutable `BaseModel`. The
+forward-ref injection hacks in `react/state.py` (lines 69-70) are replaced
+with `model_rebuild()` calls. `AgentResult.messages` gained a
+`field_validator` to coerce `dict` elements to `ChatMessage` (Pydantic
+union validation hazard). Migration executed in 3 batches:
+1. `CancellationState` + `RuntimeErrorState` + `OperationState` (low risk)
+2. `MessageDelta` + `TurnIdentity` + forward-ref cleanup (medium risk)
+3. `ToolCall` + `LLMErrorInfo` + `LLMResponse` + `AgentResult` + remaining
+   forward-ref cleanup (high risk — 640+ occurrences across 130+ files)
 
 **Rejected alternatives:**
 

@@ -571,9 +571,12 @@ class TestCheckpointRoundTrip:
         assert restored.result.content == "done"
         assert restored.result.stop_reason == StopReason.COMPLETED
 
-    def test_round_trip_preserves_nested_dataclass_with_basemodel(self) -> None:
-        """``TurnIdentity`` (frozen stdlib dataclass) nesting ``SessionInfo``
-        (Pydantic ``BaseModel``) round-trips with all nested fields preserved.
+    def test_round_trip_preserves_nested_basemodel(self) -> None:
+        """``TurnIdentity`` (frozen Pydantic ``BaseModel``) nesting ``SessionInfo``
+        (also Pydantic ``BaseModel``) round-trips with all nested fields preserved.
+
+        The per-channel codec must reconstruct ``SessionInfo`` as a ``SessionInfo``
+        instance, not a plain dict.
         """
         state = ReActTurnState(
             identity=TurnIdentity(

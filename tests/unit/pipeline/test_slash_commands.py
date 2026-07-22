@@ -187,7 +187,7 @@ class FakeAgent(Agent):
     ) -> AgentResult:
         self.runs += 1
         self.last_messages = await context.to_messages()
-        return AgentResult(content="ok", stop_reason="stop")
+        return AgentResult(content="ok", stop_reason="completed")
 
 
 class TestInputAdapter(InputAdapter):

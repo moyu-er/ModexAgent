@@ -76,7 +76,7 @@ class _OkAgent:
     name = "ok-agent"
 
     async def run(self, context: AgentContext, emitter: Any) -> AgentResult:
-        return AgentResult(content="ok", stop_reason="stop")
+        return AgentResult(content="ok", stop_reason="completed")
 
 
 class _FlushingCtxMgr(InMemoryContextManager):
@@ -204,7 +204,7 @@ async def test_execute_turn_returns_result_on_success() -> None:
     )
 
     assert result is not None
-    assert result.stop_reason == "stop"
+    assert result.stop_reason == "completed"
 
 
 async def test_execute_turn_finally_runs_on_session_end() -> None:
@@ -420,4 +420,4 @@ async def test_process_locked_runs_full_flow_and_returns_result() -> None:
     )
 
     assert result is not None
-    assert result.stop_reason == "stop"
+    assert result.stop_reason == "completed"

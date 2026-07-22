@@ -1,16 +1,17 @@
-"""ContentEmitter 抽象基类和实现
+"""ContentEmitter ABC and implementations.
 
-提供 AgentResult 数据类和 ContentEmitter 泛型抽象基类，
-以及 StreamingAwareEmitter 实现。
+Provides ``AgentResult`` (Pydantic ``BaseModel``), the ``ContentEmitter[E]``
+generic ABC, and the ``StreamingAwareEmitter`` ABC.
 """
 
 import asyncio
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ..adapters.platform import StreamingMode
 from modex_agent.core.message import ChatMessage
@@ -24,8 +25,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class AgentResult:
+class AgentResult(BaseModel):
     """Agent 执行结果
 
     包含最终输出内容和可选的推理/思考过程。
@@ -33,15 +33,24 @@ class AgentResult:
     messages 字段用于存储本次执行生成的所有历史消息（包括 assistant 的 tool_calls 和 tool 结果消息）。
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     content: str | None = None  # 最终输出内容
     reasoning: str | None = None  # 推理/思考过程（新增）
     stop_reason: StopReason = StopReason.COMPLETED
     error: str | None = None
-    messages: Sequence[ChatMessage | dict[str, Any]] = field(
+    messages: Sequence[ChatMessage | dict[str, Any]] = Field(
         default_factory=list
     )  # 本次执行生成的历史消息
     partial_content: str | None = None  # 取消时保留的部分内容
-    attachments: list[str] = field(default_factory=list)  # 要发送给用户的附件路径列表
+    attachments: list[str] = Field(default_factory=list)  # 要发送给用户的附件路径列表
+
+    @field_validator("messages", mode="before")
+    @classmethod
+    def _coerce_messages(cls, v: Any) -> Any:
+        if isinstance(v, list):
+            return [ChatMessage(**item) if isinstance(item, dict) else item for item in v]
+        return v
 
     def __repr__(self) -> str:
         if self.error:

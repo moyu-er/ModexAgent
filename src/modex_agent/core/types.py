@@ -8,13 +8,15 @@ from enum import Enum, StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from .constants import DefaultValues
+from .llm_struct import LLMErrorInfo
 from .session_id import SessionInfo
 
 from modex_agent.media.models import Attachment
 
 if TYPE_CHECKING:
-    from .llm_struct import LLMErrorInfo
     from modex_agent.approval.views import ApprovalDecisionInput
 
 
@@ -142,9 +144,10 @@ class OutputMessage:
     attachment_records: list[Attachment] = field(default_factory=list)
 
 
-@dataclass
-class ToolCall:
+class ToolCall(BaseModel):
     """工具调用请求"""
+
+    model_config = ConfigDict(extra="forbid")
 
     tool_name: str
     arguments: dict[str, Any]
@@ -155,18 +158,19 @@ class ToolCall:
 # Import from framework.core.tool_manager instead
 
 
-@dataclass
-class LLMResponse:
+class LLMResponse(BaseModel):
     """LLM 统一响应结构
 
     流式与非流式共享同一数据结构，Agent 解析逻辑只写一次。
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     content: str | None
-    tool_calls: list[ToolCall] = field(default_factory=list)
+    tool_calls: list[ToolCall] = Field(default_factory=list)
     reasoning_content: str | None = None
     finish_reason: str = "stop"
-    usage: dict[str, int] = field(default_factory=dict)
+    usage: dict[str, int] = Field(default_factory=dict)
     error: str | None = None
     error_info: LLMErrorInfo | None = None
 

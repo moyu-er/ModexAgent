@@ -122,8 +122,12 @@ def _is_pydantic_model_class(cls: type) -> bool:
     return isinstance(cls, type) and issubclass(cls, BaseModel) and cls is not BaseModel
 
 
-# Stage 1 transition bridge (ADR-0034 D1): deleted in Stage 2 once the six
-# value objects migrate to BaseModel. Cached to avoid repeated construction.
+# TypeAdapter bridge (ADR-0034 D1): a public convenience facility for
+# serializing stdlib @dataclass values that are NOT Pydantic BaseModel
+# subclasses. The framework's own types migrated to BaseModel (Stage 2
+# complete) and now serialize through the BaseModel branch above. This
+# branch remains for third-party modex_graph consumers who may pass
+# dataclass-based state field types.
 _TYPE_ADAPTERS: dict[type, TypeAdapter[Any]] = {}
 
 
