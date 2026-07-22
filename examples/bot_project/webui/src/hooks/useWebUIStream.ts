@@ -401,8 +401,28 @@ export function useWebUIStream(
           const optimisticMsg = optimisticId
             ? prev.messages.find((m) => m.id === optimisticId && m.role === "user")
             : undefined;
+          // After the reducer fix, an echo that raced ahead of the
+          // sessionId re-render leaves the ref uncleared so the
+          // sessionId-change effect can preserve the optimistic message.
+          // By the time fetchMessages resolves, the backend has usually
+          // persisted that same message — history's copy carries a
+          // different id (hist_<n>), so an id check would always miss it
+          // and render the message twice. Match on the first text block's
+          // content instead to drop the optimistic copy when history
+          // already contains an identical user message.
+          const optimisticFirst = optimisticMsg?.blocks[0];
+          const optimisticText =
+            optimisticFirst && optimisticFirst.kind === "text"
+              ? optimisticFirst.text
+              : undefined;
           const optimisticTail =
-            optimisticMsg && !history.some((h) => h.id === optimisticId)
+            optimisticMsg && optimisticText !== undefined &&
+            !history.some(
+              (h) =>
+                h.role === "user" &&
+                h.blocks[0]?.kind === "text" &&
+                h.blocks[0].text === optimisticText,
+            )
               ? [optimisticMsg]
               : [];
           return {
