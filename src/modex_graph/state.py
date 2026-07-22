@@ -162,13 +162,17 @@ class GraphState(BaseModel):
         folds per the channel's reducer: last-write-wins for `LastValue`,
         binary fold for `ReducerChannel`). Then sync channels → fields.
 
-        Unknown field names are silently ignored (defensive; nodes shouldn't
-        send unknown names, but the engine doesn't crash on it).
+        Unknown field names raise `KeyError` — consistent with `extra='forbid'`
+        on the model config.
         """
         for name, value in updates.items():
             channel = self._channels.get(name)
-            if channel is not None:
-                channel.update([value])
+            if channel is None:
+                raise KeyError(
+                    f"Unknown state field {name!r} in state_update. "
+                    f"Valid fields: {sorted(self._channels.keys())}"
+                )
+            channel.update([value])
         self._sync_channels_to_fields()
 
     def checkpoint(self) -> dict[str, Any]:

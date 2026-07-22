@@ -12,6 +12,7 @@ from modex_agent.agents.react.constants import (
     ReActNode,
     ReActReason,
 )
+from modex_agent.agents.react.context import get_agent_ctx
 from modex_agent.agents.react.message_builder import build_tool_message
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.agents.react.tool_executor import ToolExecutor
@@ -64,7 +65,7 @@ class ToolNode(Node[ReActTurnState]):
         state.llm_response = None
         state.current_node = ReActNode.TOOL
 
-        agent_ctx: AgentContext = ctx.user_data
+        agent_ctx = get_agent_ctx(ctx)
         max_tools = (
             agent_ctx.runtime.state.custom.get(TurnCustomKey.MAX_TOOLS_PER_TURN)
             if agent_ctx.runtime
@@ -108,7 +109,7 @@ class ToolNode(Node[ReActTurnState]):
         ctx: GraphContext[ReActTurnState],
     ) -> NodeResult:
         state = ctx.state
-        agent_ctx: AgentContext = ctx.user_data
+        agent_ctx = get_agent_ctx(ctx)
         if agent_ctx.runtime is None or agent_ctx.runtime.turn_store is None:
             logger.error("ToolNode: approval required but no TurnStateStore configured")
             return NodeResult(transition=ReActReason.TURN_CANCELLED)
@@ -190,7 +191,7 @@ class ToolNode(Node[ReActTurnState]):
             if state.approval.decisions.get(call.call_id) == ApprovalDecision.ALLOWED
         }
         if pre_approved_ids:
-            agent_ctx: AgentContext = ctx.user_data
+            agent_ctx = get_agent_ctx(ctx)
             if agent_ctx.runtime is not None:
                 agent_ctx.runtime.state.custom[TurnCustomKey.PRE_APPROVED_TOOL_IDS] = pre_approved_ids
 
@@ -255,7 +256,7 @@ class ToolNode(Node[ReActTurnState]):
     ) -> NodeResult:
         decisions = self._normalize_batch_decisions(decisions)
         state = ctx.state
-        agent_ctx: AgentContext = ctx.user_data
+        agent_ctx = get_agent_ctx(ctx)
 
         await ctx.runtime.emit(
             GraphReActEvent.PROGRESS,

@@ -39,13 +39,13 @@ from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, Any, cast
 
 from modex_agent.agents.react.constants import ReActHookPoint, ReActScope
+from modex_agent.agents.react.context import get_agent_ctx
 from modex_agent.hook.abc import HookPayload, HookPoint
 from modex_graph.runtime import GraphRuntime
 
 if TYPE_CHECKING:
     from modex_agent.agents.react.agent import ReActEvent
     from modex_agent.control.channel import InMemoryControlChannel
-    from modex_agent.core.agent import AgentContext
     from modex_agent.core.emitter import ContentEmitter
     from modex_agent.core.governance import ContextGovernance
     from modex_agent.hook import HookRunner
@@ -135,7 +135,7 @@ class ReactGraphRuntime(GraphRuntime):
         mapped = self.HOOK_POINT_MAP.get(hook_point)
         if mapped is None:
             return
-        agent_ctx: AgentContext = ctx.user_data
+        agent_ctx = get_agent_ctx(ctx)
         payload = HookPayload(data=data) if data else None
         await self._hook_runner.dispatch(mapped, agent_ctx, payload=payload)
 
@@ -179,7 +179,7 @@ class ReactGraphRuntime(GraphRuntime):
         from modex_agent.agents.react.state import get_react_state
         from modex_agent.interceptor.abc import IterationContext
 
-        agent_ctx: AgentContext = ctx.user_data
+        agent_ctx = get_agent_ctx(ctx)
         react_state = get_react_state(agent_ctx)
         iteration = react_state.iteration if react_state is not None else 0
         turn_state: TurnStateBase | None = (
@@ -219,7 +219,7 @@ class ReactGraphRuntime(GraphRuntime):
             return
         from modex_agent.hook.builtin.control_drain import drain_control_channel
 
-        agent_ctx: AgentContext = ctx.user_data
+        agent_ctx = get_agent_ctx(ctx)
         turn_uuid: str | None = None
         if agent_ctx.runtime is not None:
             turn_uuid = agent_ctx.runtime.turn_uuid
@@ -241,7 +241,7 @@ class ReactGraphRuntime(GraphRuntime):
             return
         from modex_agent.runtime.enums import SnapshotReason
 
-        agent_ctx: AgentContext = ctx.user_data
+        agent_ctx = get_agent_ctx(ctx)
         if agent_ctx.runtime is None:
             return
         state = agent_ctx.runtime.state

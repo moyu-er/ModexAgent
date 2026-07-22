@@ -16,7 +16,7 @@ from modex_agent.agents.react.constants import (
     ReActReason,
     ReActScope,
 )
-from modex_agent.agents.react.context import ReActGraphContext
+from modex_agent.agents.react.context import ReActGraphContext, get_agent_ctx
 from modex_agent.agents.react.injection_drainer import InjectionDrainer
 from modex_agent.agents.react.llm_client import ReactLlmClient
 from modex_agent.agents.react.message_builder import build_assistant_message
@@ -117,7 +117,7 @@ class LLMNode(Node[ReActTurnState]):
         # The ReAct engine always passes a ``ReActGraphContext`` — reach the
         # wrapped ``AgentContext`` via ``user_data`` (typed ``Any`` on the
         # engine-side ``GraphContext`` ABC; narrowed here to ``AgentContext``).
-        agent_ctx: AgentContext = ctx.user_data
+        agent_ctx = get_agent_ctx(ctx)
 
         state.iteration += 1
         state.current_node = ReActNode.LLM

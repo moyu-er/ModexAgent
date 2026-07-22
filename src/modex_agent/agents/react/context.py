@@ -13,7 +13,7 @@ in ``user_data`` and is reached via the ``agent_ctx`` property; the typed
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from modex_graph.context import GraphContext
 
@@ -54,4 +54,17 @@ class ReActGraphContext(GraphContext[ReActTurnState]):
         return runtime.services.runtime_context_manager if runtime is not None else None
 
 
-__all__ = ["ReActGraphContext"]
+def get_agent_ctx(ctx: GraphContext[Any]) -> AgentContext:
+    """Extract the ``AgentContext`` from a ``GraphContext``'s ``user_data``.
+
+    Centralizes the ``cast(AgentContext, ctx.user_data)`` pattern that was
+    repeated at 10+ call sites across nodes and runtime. The cast is
+    structurally necessary because ``Node.execute`` receives ``GraphContext[S]``
+    (base type), not ``ReActGraphContext`` — the ``.agent_ctx`` property on
+    the subclass is unreachable without an ``isinstance`` + ``cast`` that is
+    no safer than this helper.
+    """
+    return cast("AgentContext", ctx.user_data)
+
+
+__all__ = ["ReActGraphContext", "get_agent_ctx"]

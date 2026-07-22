@@ -6,8 +6,8 @@ from modex_agent.agents.react.constants import ReActEvent as GraphReActEvent
 from modex_agent.agents.react.constants import (
     ReActNode,
 )
+from modex_agent.agents.react.context import get_agent_ctx
 from modex_agent.agents.react.state import ReActTurnState
-from modex_agent.core.agent import AgentContext
 from modex_agent.core.constants import FinishReason, StopReason
 from modex_agent.core.emitter import AgentResult
 from modex_agent.runtime.enums import TurnPhase
@@ -24,7 +24,7 @@ class EndNode(Node[ReActTurnState]):
 
     async def execute(self, ctx: GraphContext[ReActTurnState]) -> NodeResult:
         state = ctx.state
-        agent_ctx: AgentContext = ctx.user_data
+        agent_ctx = get_agent_ctx(ctx)
         response = state.llm_response
         state.current_node = ReActNode.END
 
