@@ -124,14 +124,38 @@ export const ChatView: FC<ChatViewProps> = ({
     { provider: "", model: "" },
   );
 
+  // Fetch models on mount. If the backend returns an empty list (config not
+  // loaded yet — common right after a restart), retry a few times with backoff
+  // so the selector populates once model.yml is available.
   useEffect(() => {
-    fetchModels()
-      .then((r) => {
-        setModels(r.choices);
-        const d = r.choices.find((c) => c.default) ?? r.choices[0];
-        if (d) setSelected({ provider: d.provider_name, model: d.model_name });
-      })
-      .catch(() => {});
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const delays = [0, 2000, 5000, 10000, 15000];
+
+    const attempt = (i: number): void => {
+      if (cancelled || i >= delays.length) return;
+      timer = setTimeout(() => {
+        if (cancelled) return;
+        fetchModels()
+          .then((r) => {
+            if (cancelled) return;
+            if (r.choices.length > 0) {
+              setModels(r.choices);
+              const d = r.choices.find((c) => c.default) ?? r.choices[0];
+              if (d) setSelected({ provider: d.provider_name, model: d.model_name });
+            } else {
+              attempt(i + 1);
+            }
+          })
+          .catch(() => attempt(i + 1));
+      }, delays[i]);
+    };
+
+    attempt(0);
+    return (): void => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, []);
 
   // Auto-scroll the message list to the bottom when messages change. We scroll

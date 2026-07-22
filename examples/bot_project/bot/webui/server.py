@@ -985,21 +985,14 @@ class WebUIServer:
 
         saved: ProviderCfg | None = None
         if req.provider_key:
-            if self._model_config_loader is None:
-                return web.json_response(
-                    {"error": "model config not loaded"}, status=503
-                )
-            cfg = self._model_config_loader()
-            if cfg is None:
-                return web.json_response(
-                    {"error": "model config not loaded"}, status=503
-                )
-            saved = cfg.find_provider_by_key(req.provider_key)
-            if saved is None:
-                return web.json_response(
-                    {"error": f"provider not found: {req.provider_key}"},
-                    status=404,
-                )
+            if self._model_config_loader is not None:
+                cfg = self._model_config_loader()
+                if cfg is not None:
+                    saved = cfg.find_provider_by_key(req.provider_key)
+            # If saved is None (model.yml missing, unparseable, or key not
+            # yet saved), fall through to inline values below instead of
+            # erroring — the user may be fetching models for a brand-new
+            # provider that hasn't been saved yet.
 
         base_url = req.base_url or (saved.base_url if saved else "") or ""
         api_key = req.api_key or (saved.api_key if saved else "") or ""

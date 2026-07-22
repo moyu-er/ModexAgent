@@ -332,15 +332,80 @@ class TestFetchProviderModelsHandler:
     """
 
     @pytest.mark.asyncio
-    async def test_form_a_unknown_provider_key_returns_404(self, tmp_path: Path) -> None:
+    async def test_provider_key_not_found_falls_back_to_inline(
+        self, tmp_path: Path
+    ) -> None:
+        """When provider_key doesn't match any saved provider (e.g. a
+        brand-new provider the user hasn't saved yet), the handler must
+        fall back to inline values instead of returning 404/503.
+        """
         loader = MagicMock(return_value=_make_model_config())
         client = _make_fetch_client(tmp_path, loader=loader)
         await client.start_server()
         try:
-            resp = await client.post("/api/models/fetch", json={"provider_key": "unknown"})
-            assert resp.status == 404
-            data = await resp.json()
-            assert "provider not found" in data["error"]
+            fake_models = [FetchedModel(id="m1")]
+            with patch(_FETCH_MODELS_PATH, new=AsyncMock(return_value=fake_models)):
+                resp = await client.post(
+                    "/api/models/fetch",
+                    json={
+                        "provider_key": "brand-new-unsaved",
+                        "base_url": "https://api.x.com",
+                        "api_key": "sk-test",
+                        "interface_format": "openai_compatible",
+                    },
+                )
+                assert resp.status == 200, await resp.text()
+                data = await resp.json()
+                assert len(data["models"]) == 1
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_model_yml_missing_does_not_return_503(
+        self, tmp_path: Path
+    ) -> None:
+        """Fresh-install scenario: model.yml doesn't exist yet (loader
+        returns None). With inline base_url + api_key, the handler must
+        proceed instead of returning 503.
+        """
+        loader = MagicMock(return_value=None)
+        client = _make_fetch_client(tmp_path, loader=loader)
+        await client.start_server()
+        try:
+            fake_models = [FetchedModel(id="m1")]
+            with patch(_FETCH_MODELS_PATH, new=AsyncMock(return_value=fake_models)):
+                resp = await client.post(
+                    "/api/models/fetch",
+                    json={
+                        "provider_key": "anything",
+                        "base_url": "https://api.x.com",
+                        "api_key": "sk-test",
+                        "interface_format": "openai_compatible",
+                    },
+                )
+                assert resp.status == 200, await resp.text()
+        finally:
+            await client.close()
+
+    @pytest.mark.asyncio
+    async def test_no_loader_with_inline_values_succeeds(
+        self, tmp_path: Path
+    ) -> None:
+        """No loader set at all (edge case) — inline values still work."""
+        client = _make_fetch_client(tmp_path, loader=None)
+        await client.start_server()
+        try:
+            fake_models = [FetchedModel(id="m1")]
+            with patch(_FETCH_MODELS_PATH, new=AsyncMock(return_value=fake_models)):
+                resp = await client.post(
+                    "/api/models/fetch",
+                    json={
+                        "base_url": "https://api.x.com",
+                        "api_key": "sk-test",
+                        "interface_format": "openai_compatible",
+                    },
+                )
+                assert resp.status == 200, await resp.text()
         finally:
             await client.close()
 
