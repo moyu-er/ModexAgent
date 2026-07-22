@@ -10,23 +10,27 @@ pushd "%~dp0"
 ::  Prerequisites on the BUILD machine:
 ::    - Python 3.10+ (to run build scripts)
 ::    - Node.js + npm (for frontend build)
+::    - Rust toolchain (cargo + rustc, for Tauri desktop shell)
 ::    - Inno Setup 7 (ISCC.exe)
 ::    - git + uv on PATH
+::
+::  Note: This packaging chain is Windows-only (Tauri WebView2, Inno Setup,
+::        CREATE_NO_WINDOW, taskkill). The directory name reflects this.
 ::
 ::  Usage:
 ::    build.bat              — full build
 ::    build.bat --skip-fe    — skip frontend rebuild
-::    build.bat --skip-electron  — skip Electron packaging (browser-only)
+::    build.bat --skip-tauri — skip Tauri desktop shell (browser-only)
 :: ============================================================================
 
 set "STAGING=%~dp0staging"
 set "SKIP_FE=0"
-set "SKIP_ELECTRON=0"
+set "SKIP_TaurI=0"
 
 if /i "%~1"=="--skip-fe" set "SKIP_FE=1"
-if /i "%~1"=="--skip-electron" set "SKIP_ELECTRON=1"
+if /i "%~1"=="--skip-tauri" set "SKIP_TaurI=1"
 if /i "%~2"=="--skip-fe" set "SKIP_FE=1"
-if /i "%~2"=="--skip-electron" set "SKIP_ELECTRON=1"
+if /i "%~2"=="--skip-tauri" set "SKIP_TaurI=1"
 
 echo.
 echo  =============================================
@@ -36,7 +40,7 @@ echo.
 
 :: --- 0a. Locate Python (prefer repo .venv, fall back to PATH) ---
 set "PYTHON_EXE="
-set "REPO_ROOT=%~dp0..\..\.."
+set "REPO_ROOT=%~dp0..\..\..\.."
 if exist "%REPO_ROOT%\.venv\Scripts\python.exe" (
     set "PYTHON_EXE=%REPO_ROOT%\.venv\Scripts\python.exe"
 ) else (
@@ -88,7 +92,7 @@ if not defined ISCC_EXE (
 echo  Inno Setup: !ISCC_EXE!
 
 :: --- 1. Version ---
-set "VERSION_FILE=%~dp0..\..\..\src\modex_agent\_version.py"
+set "VERSION_FILE=%~dp0..\..\..\..\src\modex_agent\_version.py"
 set "VERSION=1.0.0"
 for /f "delims=" %%l in ('findstr /r "__version__" "%VERSION_FILE%"') do (
     for /f "tokens=2 delims== " %%v in ("%%l") do (
@@ -140,22 +144,21 @@ echo  --- Step 4/7: Preparing Python runtime ^(this takes a while^) ---
 if errorlevel 1 goto :error
 echo.
 
-:: --- 7. Package Electron desktop shell ---
-if "%SKIP_ELECTRON%"=="1" (
-    echo  --- Step 5/7: Skipping Electron packaging ^(--skip-electron^) ---
+:: --- 7. Build Tauri desktop shell ---
+if "%SKIP_TaurI%"=="1" (
+    echo  --- Step 5/7: Skipping Tauri desktop shell ^(--skip-tauri^) ---
 ) else (
-    echo  --- Step 5/7: Packaging Electron desktop shell ^(first run downloads ~200 MB^) ---
-    if not exist "%~dp0electron\node_modules" (
-        echo  Installing Electron dependencies...
-        pushd "%~dp0electron"
-        call npm install
-        popd
-        if errorlevel 1 goto :error
-    )
-    pushd "%~dp0electron"
-    call npm run pack -- --staging-dir "%STAGING%" --icon "%~dp0logo.ico"
+    echo  --- Step 5/7: Building Tauri desktop shell ^(cargo build --release^) ---
+    mkdir "%~dp0src-tauri\icons" 2>nul
+    copy /Y "%~dp0logo.ico" "%~dp0src-tauri\icons\icon.ico" >nul
+    pushd "%~dp0src-tauri"
+    cargo build --release
     popd
     if errorlevel 1 goto :error
+    mkdir "%STAGING%\tauri" 2>nul
+    copy /Y "%~dp0src-tauri\target\release\modexbot.exe" "%STAGING%\tauri\ModexBot.exe" >nul
+    if errorlevel 1 goto :error
+    echo  Tauri shell: !STAGING!\tauri\ModexBot.exe
 )
 echo.
 
@@ -174,7 +177,8 @@ echo   Build complete!
 echo  =============================================
 echo.
 for %%I in ("%OUTPUT%") do echo  Output: %%~fI
-for %%I in ("%OUTPUT%") do echo  Size:   %%~zI bytes ^([math]::Round(%%~zI/1MB, 1^) MB^)
+for %%I in ("%OUTPUT%") do echo  Size:   %%~zI bytes
+for /f %%S in ('powershell -NoProfile -Command "[math]::Round((Get-Item '%OUTPUT%').Length/1MB,1)"') do echo          %%S MB
 echo.
 echo  Test on a clean machine — no Python/uv/Node needed on the target.
 echo.

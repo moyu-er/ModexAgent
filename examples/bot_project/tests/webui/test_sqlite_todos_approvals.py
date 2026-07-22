@@ -157,7 +157,7 @@ class TestSqliteApprovalsEndpoint:
                             "approval_id": "appr-1",
                             "tool_call_id": "tc-1",
                             "tool_name": "bash",
-                            "arguments": {"command": "ls"},
+                            "arguments": {"values": {"command": "ls"}},
                             "tier": "normal",
                             "iteration": 1,
                             "created_at": 1000.0,

@@ -6,8 +6,7 @@ Output:          ``examples/bot_project/packaging/logo.ico``
 The same .ico feeds three consumers:
   - Inno Setup ``SetupIconFile``  -> installer exe icon
   - Inno Setup shortcut ``IconFilename`` -> desktop / start-menu icons
-  - Electron ``rcedit --set-icon`` -> embedded ModexBot.exe icon
-  - Electron ``BrowserWindow({ icon })`` -> window title-bar icon (left top)
+  - Tauri ``bundle.icon`` -> embedded ModexBot.exe icon + window title-bar icon
 
 Usage::
 
@@ -29,7 +28,7 @@ except ImportError:
     sys.exit(1)
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
-_DEFAULT_SOURCE = _SCRIPT_DIR.parent / "webui" / "public" / "logo.jpg"
+_DEFAULT_SOURCE = _SCRIPT_DIR.parents[1] / "webui" / "public" / "logo.jpg"
 _DEFAULT_OUTPUT = _SCRIPT_DIR / "logo.ico"
 
 _ICON_SIZES = [(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]

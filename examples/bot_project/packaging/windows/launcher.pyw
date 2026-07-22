@@ -20,8 +20,14 @@ _BOT_PROJECT: Path = _INSTALL_DIR / "app" / "examples" / "bot_project"
 _BUNDLED_PYTHON: Path = _INSTALL_DIR / "python" / "python.exe"
 _LOG_FILE: Path = _BOT_PROJECT / "logs" / "launcher.log"
 
-# Install build uses 21810 so it can run alongside the dev instance (21800).
-_WEBUI_PORT: int = 21810
+
+def _resolve_webui_port() -> int:
+    from bot.config.webui_config import load_webui_port
+
+    return load_webui_port(_BOT_PROJECT / "config")
+
+
+_WEBUI_PORT: int = _resolve_webui_port()
 _WEBUI_URL: str = f"http://localhost:{_WEBUI_PORT}/webui/"
 _POLL_INTERVAL: float = 1.0
 _MAX_WAIT: int = 90
@@ -39,7 +45,7 @@ def _is_server_up() -> bool:
 
 def _start_bot() -> None:
     exe = str(_BUNDLED_PYTHON)
-    args = ["-m", "modexbot", "start", "--port", str(_WEBUI_PORT)]
+    args = ["-m", "modexbot", "start"]
 
     _LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     log_stream = _LOG_FILE.open("a", encoding="utf-8", errors="replace")

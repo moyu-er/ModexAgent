@@ -7,9 +7,8 @@ Read by:
 - ``examples/bot_project/modexbot/cli.py`` (``modexbot --version``)
 - ``examples/bot_project/packaging/build.bat`` (Windows installer version)
 - ``examples/bot_project/packaging/sync_versions.py`` → ``webui/package.json``
-  + ``packaging/electron/package.json`` (npm package versions, synced at
-  build time so ``ModexBot@<version> pack`` and the WebUI build metadata
-  match the Python version)
+  (npm package version, synced at build time so the WebUI build metadata
+  matches the Python version)
 
 To change the version, edit ONLY this file. All other locations derive
 from it — Python packages via hatch, npm packages via ``sync_versions.py``,

@@ -25,7 +25,9 @@ from typing import Any
 import typer
 
 from modex_agent._version import __version__
-from modexbot.config_model import check_model_config  # noqa: F401  # kept as a patch target for tests/webui/test_cli.py
+from modexbot.config_model import (
+    check_model_config,  # noqa: F401  # kept as a patch target for tests/webui/test_cli.py
+)
 
 app = typer.Typer(
     name="modexbot",
@@ -64,11 +66,15 @@ def _resolve_venv_python() -> Path:
 _VENV_PYTHON: Path = _resolve_venv_python()
 _PID_FILE: Path = _PKG_ROOT / ".modex" / "bot.pid"
 _LOG_FILE: Path = _PKG_ROOT / "logs" / "bot.log"
-# Allow the install shim (modexbot.bat, which sets MODEXBOT_PORT=21810) to
-# default to a different port than the dev venv (no env → 21800). This lets
-# installed and dev instances run side-by-side without port conflicts.
-# Explicit `--port` always wins.
-_DEFAULT_PORT: int = int(os.environ.get("MODEXBOT_PORT", "21800"))
+
+
+def _resolve_default_port() -> int:
+    from bot.config.webui_config import load_webui_port
+
+    return load_webui_port(_PKG_ROOT / "config")
+
+
+_DEFAULT_PORT: int = _resolve_default_port()
 _DEFAULT_LOG_LINES: int = 50
 
 

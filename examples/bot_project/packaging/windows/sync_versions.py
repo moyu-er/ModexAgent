@@ -3,8 +3,10 @@
 The single source of truth for the version is ``src/modex_agent/_version.py``.
 Python packages derive from it via ``[tool.hatch.version]``; the Windows
 installer reads it via ``build.bat``. This script extends that chain to the
-two npm ``package.json`` files (``webui/`` and ``packaging/electron/``) so
-that ``ModexBot@<version> pack`` and the WebUI build metadata stay in lockstep.
+``webui/package.json`` so the WebUI build metadata stays in lockstep.
+
+The Tauri desktop shell (``src-tauri/Cargo.toml``) carries its own version
+field; update it manually when bumping the project version.
 
 Run manually or automatically from ``build.bat`` (Step 0).
 
@@ -26,7 +28,7 @@ from pathlib import Path
 def _read_version() -> str:
     """Read ``__version__`` from ``src/modex_agent/_version.py``."""
     here = Path(__file__).resolve().parent
-    version_file = here.parent.parent.parent / "src" / "modex_agent" / "_version.py"
+    version_file = here.parent.parent.parent.parent / "src" / "modex_agent" / "_version.py"
     tree = ast.parse(version_file.read_text(encoding="utf-8"))
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign) and len(node.targets) == 1:
@@ -56,11 +58,10 @@ def _sync_package_json(path: Path, version: str) -> bool:
 def sync(check_only: bool = False) -> int:
     version = _read_version()
     here = Path(__file__).resolve().parent
-    repo_root = here.parent.parent.parent
+    repo_root = here.parent.parent.parent.parent
 
     targets = [
         repo_root / "examples" / "bot_project" / "webui" / "package.json",
-        here / "electron" / "package.json",
     ]
 
     changed = False
@@ -84,7 +85,7 @@ def sync(check_only: bool = False) -> int:
         changed = True
 
     if check_only and changed:
-        print("\n  [sync_versions] Run `python packaging/sync_versions.py` to fix.")
+        print("\n  [sync_versions] Run `python packaging/windows/sync_versions.py` to fix.")
         return 1
 
     if not changed:

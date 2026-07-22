@@ -32,7 +32,7 @@ def _find_repo_root() -> Path:
     )
     if result.returncode == 0:
         return Path(result.stdout.strip())
-    return _SCRIPT_DIR.parents[2]
+    return _SCRIPT_DIR.parents[3]
 
 
 _REPO_ROOT = _find_repo_root()

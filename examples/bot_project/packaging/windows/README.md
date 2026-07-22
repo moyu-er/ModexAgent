@@ -2,7 +2,7 @@
 
 Produces a **self-contained Windows installer** (`ModexBot-Setup-x.x.x.exe`)
 that bundles a complete Python runtime, all dependencies, source code, a
-pre-built React frontend, and an optional Electron desktop shell — all
+pre-built React frontend, and an optional Tauri desktop shell — all
 pre-packaged at build time. **No network, no Python, no Node.js required on
 the user's machine.**
 
@@ -15,7 +15,7 @@ build.bat (7 steps)
   ├─ Step 2/7: (skipped — uv.exe no longer bundled)
   ├─ Step 3/7: build_archive.py → staging/app/               (git archive + frontend dist + prune tests/docs/assets)
   ├─ Step 4/7: prepare_python.py → staging/python/           (python-build-standalone + site-packages, strip dev deps + __pycache__)
-  ├─ Step 5/7: electron/pack.js → staging/electron/          (Electron shell + icon embedding)
+  ├─ Step 5/7: cargo build --release → staging/tauri/        (Tauri shell, ~3 MB exe)
   ├─ Step 6/7: ISCC modexbot.iss → ModexBot-Setup-x.x.x.exe  (lzma2/max, non-solid)
   └─ Step 7/7: Done
 ```
@@ -28,7 +28,7 @@ Inno Setup extracts files
 ```
 
 **After install**: double-click the desktop "ModexBot" icon →
-`ModexBot.exe` (Electron) → bot starts → WebUI loads in a desktop window.
+`ModexBot.exe` (Tauri) → bot starts → WebUI loads in a desktop window.
 Fallback: Start Menu → "ModexBot (Browser)" → `launcher.pyw` → system browser.
 
 ## What Gets Packaged (and what doesn't)
@@ -49,7 +49,7 @@ via `git archive HEAD`.
 
 ## Icon
 
-The installer icon, shortcut icons, Electron exe icon, and window title-bar
+The installer icon, shortcut icons, Tauri exe icon, and window title-bar
 icon all derive from a **single source**: `examples/bot_project/webui/public/logo.jpg`.
 
 `prepare_icon.py` converts it to a multi-size `logo.ico` (16/32/48/64/128/256)
@@ -60,37 +60,37 @@ by:
 |----------|-----|
 | Installer exe icon | `modexbot.iss` → `SetupIconFile=logo.ico` |
 | Desktop / Start Menu shortcuts | `modexbot.iss` → `IconFilename: {app}\logo.ico` |
-| Electron `ModexBot.exe` icon | `pack.js` → `rcedit --set-icon logo.ico` |
-| Electron window title-bar | `main.js` → `BrowserWindow({ icon: logo.ico })` |
+| Tauri `ModexBot.exe` icon | `tauri.conf.json` → `bundle.icon` (embedded at compile time via `tauri-build`) |
+| Tauri window title-bar | Same embedded icon (set via `tauri.conf.json`) |
 
 ## Prerequisites (Build Machine)
 
 | Tool | Purpose | Install |
 |------|---------|---------|
 | **Python 3.10+** | Run build scripts (needs Pillow) | [python.org](https://python.org) |
-| **Node.js + npm** | Build WebUI frontend + Electron packaging | [nodejs.org](https://nodejs.org) |
+| **Node.js + npm** | Build WebUI frontend | [nodejs.org](https://nodejs.org) |
+| **Rust toolchain** | Build Tauri desktop shell (`cargo build --release`) | [rustup.rs](https://rustup.rs) |
 | **Inno Setup 6/7** | Compile installer | `winget install JRSoftware.InnoSetup` |
 | **Git** | `git archive` (source export) | [git-scm.com](https://git-scm.com) |
 | **uv** | Python runtime for `prepare_python.py` | [astral.sh](https://docs.astral.sh/uv/) |
 | **Existing `.venv`** at repo root | Source of site-packages (`uv pip install -e ".[all,dev]"`) | — |
-| **Electron zip** (offline mode) | `electron-v33.4.11-win32-x64.zip` placed in `electron/` | [npmmirror](https://npmmirror.com/mirrors/electron/33.4.11/electron-v33.4.11-win32-x64.zip) |
 
 ## Build
 
 ```cmd
 cd examples\bot_project\packaging
 
-:: Full build (with Electron desktop shell)
+:: Full build (with Tauri desktop shell)
 build.bat
 
-:: Skip Electron (browser-only installer, ~115 MB)
-build.bat --skip-electron
+:: Skip Tauri (browser-only installer, ~115 MB)
+build.bat --skip-tauri
 
 :: Skip frontend rebuild (use existing dist/)
 build.bat --skip-fe
 
 :: Skip both
-build.bat --skip-fe --skip-electron
+build.bat --skip-fe --skip-tauri
 ```
 
 Output: `ModexBot-Setup-<version>.exe` (version from `pyproject.toml`).
@@ -102,12 +102,8 @@ Output: `ModexBot-Setup-<version>.exe` (version from `pyproject.toml`).
 ├── logo.ico                     ← installer/shortcut icon
 ├── launcher.pyw                 ← browser fallback launcher
 ├── postinstall.py               ← install-time script
-├── electron\                    ← Electron desktop shell (if packaged)
-│   ├── ModexBot.exe             ← desktop window (icon embedded via rcedit)
-│   └── resources\app\
-│       ├── main.js
-│       ├── package.json
-│       └── logo.ico             ← BrowserWindow icon
+├── tauri\                      ← Tauri desktop shell (if packaged)
+│   └── ModexBot.exe             ← desktop window (icon embedded at compile time, ~3 MB)
 ├── python\                      ← bundled CPython 3.12 + all third-party deps
 │   ├── python.exe
 │   ├── pythonw.exe
@@ -132,7 +128,7 @@ Output: `ModexBot-Setup-<version>.exe` (version from `pyproject.toml`).
 
 | Shortcut | Command | Icon |
 |----------|---------|------|
-| Desktop → ModexBot | `ModexBot.exe` (Electron) or `launcher.pyw` (browser) | `logo.ico` |
+| Desktop → ModexBot | `ModexBot.exe` (Tauri) or `launcher.pyw` (browser) | `logo.ico` |
 | Start Menu → ModexBot | same as above | `logo.ico` |
 | Start Menu → ModexBot (Browser) | `launcher.pyw` | `logo.ico` |
 | Start Menu → ModexBot Stop | `python.exe -m modexbot stop` | — |
@@ -156,7 +152,7 @@ no venv/pip needed):
 ## Uninstall
 
 Via Add/Remove Programs or `unins000.exe`. Cleans up:
-- `electron\`, `logs\`, `data\`, `.modex\`, `__pycache__\`
+- `tauri\`, `logs\`, `data\`, `.modex\`, `__pycache__\`
 - Removes `python\Scripts` from PATH
 
 Config files with secrets (`.env`, `model.yml`, `im.yml`) are **preserved**.
@@ -165,14 +161,18 @@ Config files with secrets (`.env`, `model.yml`, `im.yml`) are **preserved**.
 
 | File | Purpose |
 |------|---------|
-| `build.bat` | One-click build orchestrator (7 steps, `--skip-fe` / `--skip-electron`) |
+| `build.bat` | One-click build orchestrator (7 steps, `--skip-fe` / `--skip-tauri`) |
 | `prepare_icon.py` | Convert `logo.jpg` → `logo.ico` (Pillow, multi-size) |
 | `fetch_runtime.py` | Download `uv.exe` into staging (unused — uv no longer bundled; kept as a standalone utility) |
 | `build_archive.py` | `git archive HEAD` + frontend build + prune non-runtime dirs → `staging/app/` |
 | `prepare_python.py` | Copy python-build-standalone + site-packages from `.venv`; strip project code, dev deps, `__pycache__` |
 | `postinstall.py` | Install-time: `.pth` files, CLI shims, config init, import verification |
 | `launcher.pyw` | Browser fallback: starts bot + opens system browser |
-| `modexbot.iss` | Inno Setup script (`#ifexist` conditional for Electron/browser modes) |
-| `electron/main.js` | Electron main process: bot lifecycle + BrowserWindow management |
-| `electron/pack.js` | Electron packaging: local zip (offline) or `@electron/packager` (online) + icon embedding via rcedit |
-| `electron/package.json` | Electron 33.4.11 + `@electron/packager` dev dependency |
+| `modexbot.iss` | Inno Setup script (`#ifexist` conditional for Tauri/browser modes) |
+| `src-tauri/Cargo.toml` | Tauri 2.x + `tauri-plugin-single-instance` dependencies |
+| `src-tauri/tauri.conf.json` | Tauri config (window size, icon, bundle settings) |
+| `src-tauri/src/main.rs` | Tauri main: path resolution, state, lifecycle, bot startup sequence |
+| `src-tauri/src/bot.rs` | Bot process management: start/kill, TCP probe, server wait |
+| `src-tauri/src/window.rs` | Window creation, show/hide, navigation guard |
+| `src-tauri/src/tray.rs` | System tray: left-click show, right-click Show/Exit menu |
+| `src-tauri/src/monitor.rs` | Bot health monitor: polls every 5s, 3 failures → quit |

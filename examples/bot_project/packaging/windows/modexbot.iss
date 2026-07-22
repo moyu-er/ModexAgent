@@ -9,7 +9,7 @@
 ;    python\                    ← bundled CPython 3.12 + ALL third-party deps
 ;      postinstall.py             ← .pth creation + config init (NO NETWORK)
 ;      launcher.pyw               ← fallback launcher (starts bot + opens browser)
-;      electron\                  ← Electron desktop shell (if packaged)
+;      tauri\                     ← Tauri desktop shell (if packaged)
 ;        ModexBot.exe             ← desktop window (starts bot + shows WebUI)
 ;      app\                       ← git archive output (full repo source)
 ;        pyproject.toml
@@ -20,7 +20,7 @@
 ;          config\                ← writable (model.yml, pools/, ...)
 ;          .env, logs/, data/, .modex\  ← runtime data
 ;
-;  After install: double-click desktop icon → ModexBot.exe (Electron) →
+;  After install: double-click desktop icon → ModexBot.exe (Tauri) →
 ;  bot starts → WebUI opens in desktop window.
 ;  Fallback: Start Menu → "ModexBot (Browser)" → launcher.pyw → system browser.
 ;
@@ -39,10 +39,10 @@
   #define MyAppVersion "1.0.0"
 #endif
 
-; Detect whether Electron was packaged into staging (build.bat --skip-electron
+; Detect whether Tauri was packaged into staging (build.bat --skip-tauri
 ; omits it).  The same .iss produces a desktop or browser-only installer.
-#ifexist "staging\electron\ModexBot-win32-x64\ModexBot.exe"
-  #define HasElectron
+#ifexist "staging\tauri\ModexBot.exe"
+  #define HasTauri
 #endif
 
 [Setup]
@@ -65,8 +65,8 @@ WizardStyle=modern
 OutputDir=.
 OutputBaseFilename=ModexBot-Setup-{#MyAppVersion}
 SetupIconFile=logo.ico
-#ifdef HasElectron
-UninstallDisplayIcon={app}\electron\ModexBot.exe
+#ifdef HasTauri
+UninstallDisplayIcon={app}\tauri\ModexBot.exe
 #else
 UninstallDisplayIcon={app}\logo.ico
 #endif
@@ -88,9 +88,9 @@ Source: "postinstall.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "launcher.pyw"; DestDir: "{app}"; Flags: ignoreversion
 Source: "logo.ico"; DestDir: "{app}"; Flags: ignoreversion
 
-; Electron desktop shell (only if packaged — skipped with build.bat --skip-electron)
-#ifdef HasElectron
-Source: "staging\electron\ModexBot-win32-x64\*"; DestDir: "{app}\electron"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Tauri desktop shell (only if packaged — skipped with build.bat --skip-tauri)
+#ifdef HasTauri
+Source: "staging\tauri\*"; DestDir: "{app}\tauri"; Flags: ignoreversion recursesubdirs createallsubdirs
 #endif
 
 ; ============================================================================
@@ -127,10 +127,10 @@ Filename: "{app}\python\python.exe"; \
 [Icons]
 
 ; Start Menu — main launch
-#ifdef HasElectron
+#ifdef HasTauri
 Name: "{group}\ModexBot"; \
-  Filename: "{app}\electron\ModexBot.exe"; \
-  WorkingDir: "{app}\electron"; \
+  Filename: "{app}\tauri\ModexBot.exe"; \
+  WorkingDir: "{app}\tauri"; \
   Comment: "Start ModexBot (Desktop)"
 #else
 Name: "{group}\ModexBot"; \
@@ -142,7 +142,7 @@ Name: "{group}\ModexBot"; \
 #endif
 
 ; Start Menu — browser fallback (always available)
-#ifdef HasElectron
+#ifdef HasTauri
 Name: "{group}\ModexBot (Browser)"; \
   Filename: "{app}\python\pythonw.exe"; \
   Parameters: """{app}\launcher.pyw"""; \
@@ -154,14 +154,14 @@ Name: "{group}\ModexBot (Browser)"; \
 ; Start Menu — stop
 Name: "{group}\ModexBot Stop"; \
   Filename: "{app}\python\python.exe"; \
-  Parameters: "-m modexbot stop --port 21810"; \
+  Parameters: "-m modexbot stop"; \
   WorkingDir: "{app}\app\examples\bot_project"; \
   Comment: "Stop ModexBot"
 
 ; Start Menu — logs
 Name: "{group}\ModexBot Logs"; \
   Filename: "{app}\python\python.exe"; \
-  Parameters: "-m modexbot logs -f --port 21810"; \
+  Parameters: "-m modexbot logs -f"; \
   WorkingDir: "{app}\app\examples\bot_project"; \
   Comment: "View ModexBot logs"
 
@@ -185,10 +185,10 @@ Name: "{group}\ModexBot Logs Folder"; \
   Comment: "Open the logs folder"
 
 ; Desktop — main launch
-#ifdef HasElectron
+#ifdef HasTauri
 Name: "{userdesktop}\ModexBot"; \
-  Filename: "{app}\electron\ModexBot.exe"; \
-  WorkingDir: "{app}\electron"; \
+  Filename: "{app}\tauri\ModexBot.exe"; \
+  WorkingDir: "{app}\tauri"; \
   Comment: "Start ModexBot (Desktop)"; \
   Tasks: desktopicon
 #else
@@ -206,7 +206,7 @@ Name: "{userdesktop}\ModexBot"; \
 ; ============================================================================
 [UninstallRun]
 Filename: "{app}\python\python.exe"; \
-  Parameters: "-m modexbot stop --port 21810"; \
+  Parameters: "-m modexbot stop"; \
   WorkingDir: "{app}\app\examples\bot_project"; \
   Flags: runhidden; \
   RunOnceId: "StopBot"
@@ -215,8 +215,8 @@ Filename: "{app}\python\python.exe"; \
 ; [UninstallDelete]
 ; ============================================================================
 [UninstallDelete]
-#ifdef HasElectron
-Type: filesandordirs; Name: "{app}\electron"
+#ifdef HasTauri
+Type: filesandordirs; Name: "{app}\tauri"
 #endif
 Type: filesandordirs; Name: "{app}\app\examples\bot_project\logs"
 Type: filesandordirs; Name: "{app}\app\examples\bot_project\data"

@@ -103,11 +103,10 @@ def create_cli_shims(app_dir: Path) -> None:
     scripts_dir = app_dir / "python" / "Scripts"
     scripts_dir.mkdir(parents=True, exist_ok=True)
 
-    # MODEXBOT_PORT=21810 makes the installed modexbot default to a different
-    # port than the dev venv (21800), so both can run side-by-side. Explicit
-    # --port still wins.
+    # The port comes from config/bot_config.yml (webui.port) — no env override
+    # needed. MODEXBOT_PORT env still works as an optional escape hatch.
     shims = {
-        "modexbot.bat": f'@echo off\r\nset MODEXBOT_PORT=21810\r\n"{python_exe}" -m modexbot %*',
+        "modexbot.bat": f'@echo off\r\n"{python_exe}" -m modexbot %*',
         "modexctl.bat": f'@echo off\r\n"{python_exe}" -c "from modexctl.main import main; main()" %*',
     }
 
@@ -156,6 +155,16 @@ def verify_imports(app_dir: Path) -> None:
 
 def print_next_steps(app_dir: Path) -> None:
     python_exe = app_dir / "python" / "python.exe"
+    bot_project = app_dir / "app" / "examples" / "bot_project"
+
+    # Read the port from config so the printed URL always matches reality.
+    port_result = subprocess.run(
+        [str(python_exe), "-c",
+         "from bot.config.webui_config import load_webui_port; print(load_webui_port())"],
+        capture_output=True, text=True, cwd=str(bot_project),
+    )
+    port = port_result.stdout.strip() or "21800"
+
     print("\n" + "=" * 60)
     print("  ModexBot installation complete!")
     print("=" * 60)
@@ -174,7 +183,7 @@ def print_next_steps(app_dir: Path) -> None:
     print()
     print("    3. Open the WebUI in your browser:")
     print()
-    print("       http://localhost:21800/webui/")
+    print(f"       http://localhost:{port}/webui/")
     print()
     print("=" * 60)
 

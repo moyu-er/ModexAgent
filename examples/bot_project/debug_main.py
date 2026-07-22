@@ -4,7 +4,7 @@ Runs the bot in the current process (no detached subprocess).
 Writes the PID file so ``modexbot stop`` / ``modexbot status`` can
 discover the process through the standard PID-file layer.
 
-Defaults: config from ``config/``, port 21800, .env auto-loaded.
+Defaults: config from ``config/``, port from ``bot_config.yml``, .env auto-loaded.
 """
 
 if __name__ == "__main__":
@@ -16,7 +16,10 @@ if __name__ == "__main__":
 
     _here = Path(__file__).resolve().parent
     _config = _here / "config"
-    _port = 21800
+
+    from bot.config.webui_config import load_webui_port
+
+    _port = load_webui_port(_config)
 
     # Write PID file so the CLI can discover this process.
     _pid_dir = _here / ".modex"
