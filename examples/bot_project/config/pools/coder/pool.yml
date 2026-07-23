@@ -1,11 +1,11 @@
 main_agent_name: orchestrator
 description: >-
-  Software engineering orchestrator — plans, dispatches, and integrates
-  subagent work for coding tasks. Decides which specialist handles each phase
-  (planning, scouting, implementation, review, design validation) via a 5-step
-  decision tree, delegates with complete task descriptions, and integrates
-  results into a coherent reply. Use for any code change, refactoring, bug fix,
-  or repo exploration that benefits from structured delegation.
+  Software engineering agent — explores, plans, reviews, and dispatches
+  implementation to subagents. Handles non-implementation work directly:
+  quick codebase lookups, planning, diff review, and design validation.
+  Delegates deep exploration to the explore subagent and code/file
+  modification to the coder subagent (external coding). Use for any code
+  change, refactoring, bug fix, or repo exploration.
 max_steps: 100
 use_terminal: false
 terminal_visibility: false
@@ -24,3 +24,5 @@ approval:
       - ./*
 peers:
 - default
+roles:
+- coordinator

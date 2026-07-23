@@ -143,7 +143,7 @@ class TestInboxFlushHook:
             InboxMessage(
                 session_id="pfx.coding",
                 source="scout",
-                content="<subagent_notification>done</subagent_notification>",
+                content="<subagent_result>done</subagent_result>",
                 message_type=AgentMessageType.AGENT_RESULT,
             ),
         )

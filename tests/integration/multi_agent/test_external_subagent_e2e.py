@@ -273,14 +273,14 @@ async def test_external_subagent_e2e(tmp_path: Path) -> None:
             f"calls={[m.content for m in parent.calls]}"
         )
 
-        # --- Verify the <subagent_notification> reached the parent ---
+        # --- Verify the <subagent_result> reached the parent ---
         notification_msgs = [
             m
             for m in parent.calls
-            if m.content and "<subagent_notification>" in m.content
+            if m.content and "<subagent_result>" in m.content
         ]
         assert len(notification_msgs) >= 1, (
-            f"<subagent_notification> not delivered to parent; "
+            f"<subagent_result> not delivered to parent; "
             f"calls={[m.content for m in parent.calls]}"
         )
 
@@ -290,20 +290,14 @@ async def test_external_subagent_e2e(tmp_path: Path) -> None:
         assert _extract_xml_field(notification, "replied") == "true", (
             f"Expected <replied>true</replied>; notification:\n{notification}"
         )
-        # T7: uniform fields constructed identically for both kinds.
-        assert _extract_xml_field(notification, "status") == "completed", (
-            f"Expected <status>completed</status>; notification:\n{notification}"
+        # Uniform fields constructed identically for both kinds.
+        assert _extract_xml_field(notification, "success") == "true", (
+            f"Expected <success>true</success>; notification:\n{notification}"
         )
         assert _extract_xml_field(notification, "agent") == "coder", (
             f"Expected <agent>coder</agent>; notification:\n{notification}"
         )
-        assert _extract_xml_field(notification, "stop_reason") == "completed", (
-            f"Expected <stop_reason>completed</stop_reason>; notification:\n{notification}"
-        )
-        assert _extract_xml_field(notification, "is_normal") == "true", (
-            f"Expected <is_normal>true</is_normal>; notification:\n{notification}"
-        )
-        # T7: external branch has <replied> and lacks <trace>/<output>/<output_status>.
+        # External branch has <replied> and lacks <trace>/<output>/<output_status>.
         assert "<trace>" not in notification, (
             f"External notification must NOT contain <trace>; notification:\n{notification}"
         )

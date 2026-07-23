@@ -23,12 +23,17 @@ export interface TodoPanelProps {
 /**
  * Floating todo widget — pinned to the bottom-right of the chat view.
  *
- * Collapsed: a pill with count badge.  Expanded: a panel with progress bar,
- * paginated items, and status icons (spinner = in_progress, hollow ring =
- * pending).  Always visible — never scrolled away by streaming output.
+ * Collapsed: a compact bar with a task icon and active count.  Expanded: a
+ * panel with paginated items and status icons (spinner = in_progress, hollow
+ * ring = pending).  Always visible — never scrolled away by streaming output.
  *
- * Uses Inter surface tokens with a warm `warning` accent so the panel feels
- * neutral but not cold; light/dark flip via the CSS variables.
+ * The backend API only returns pending + in_progress todos (completed items
+ * are filtered server-side), so ``todos`` is always the current active set —
+ * no accumulated history, no inflating denominator.
+ *
+ * Uses a dedicated indigo ``task`` accent — distinct from the brand teal that
+ * saturates the rest of the UI, so the panel reads as its own micro-context
+ * without looking like a warning/error.  Light/dark flip via CSS variables.
  */
 export const TodoPanel: FC<TodoPanelProps> = ({ todos, sessionId }) => {
   const t = useT();
@@ -41,13 +46,9 @@ export const TodoPanel: FC<TodoPanelProps> = ({ todos, sessionId }) => {
     setOpen(false);
   }, [sessionId]);
 
-  const doneCount = useMemo(
-    () => todos.filter((t) => t.status === "completed").length,
+  const activeCount = useMemo(
+    () => todos.filter((t) => t.status === "in_progress").length,
     [todos],
-  );
-  const pct = useMemo(
-    () => Math.round((doneCount / todos.length) * 100),
-    [doneCount, todos.length],
   );
 
   if (todos.length === 0) return null;
@@ -77,8 +78,8 @@ export const TodoPanel: FC<TodoPanelProps> = ({ todos, sessionId }) => {
               <span className="text-base font-semibold text-ink">
                 {t("todo.tasks")}
               </span>
-              <span className="rounded-full bg-hairline px-2 py-0.5 text-xs font-medium text-body">
-                {doneCount}/{todos.length}
+              <span className="rounded-full bg-task-soft px-2 py-0.5 text-xs font-medium text-task">
+                {todos.length}
               </span>
             </div>
             <button
@@ -89,14 +90,6 @@ export const TodoPanel: FC<TodoPanelProps> = ({ todos, sessionId }) => {
             >
               <XIcon className="h-3.5 w-3.5" />
             </button>
-          </div>
-
-          {/* Progress bar */}
-          <div className="mx-4 h-1 overflow-hidden rounded-full bg-hairline">
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-ember to-warning transition-all duration-500 ease-out"
-              style={{ width: `${pct}%` }}
-            />
           </div>
 
           {/* Items */}
@@ -111,7 +104,11 @@ export const TodoPanel: FC<TodoPanelProps> = ({ todos, sessionId }) => {
                   >
                     {/* Status icon */}
                     <span className="mt-[3px]">
-                      {isActive ? <SpinnerIcon className="text-warning" /> : <CircleRingIcon className="text-mute" />}
+                      {isActive ? (
+                        <SpinnerIcon className="text-task" />
+                      ) : (
+                        <CircleRingIcon className="text-mute" />
+                      )}
                     </span>
                     <span
                       className={
@@ -137,7 +134,7 @@ export const TodoPanel: FC<TodoPanelProps> = ({ todos, sessionId }) => {
                 disabled={effectivePage === 0}
                 onClick={() => setPage((p) => Math.max(0, p - 1))}
                 aria-label={t("todo.previousPage")}
-                className="flex items-center gap-1 rounded-lg px-3 py-1 text-xs font-medium text-body transition-colors hover:bg-hairline-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning disabled:cursor-not-allowed disabled:opacity-45"
+                className="flex items-center gap-1 rounded-lg px-3 py-1 text-xs font-medium text-body transition-colors hover:bg-hairline-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-task disabled:cursor-not-allowed disabled:opacity-45"
               >
                 <ChevronLeftIcon className="h-3 w-3" />
                 {t("todo.prev")}
@@ -150,7 +147,7 @@ export const TodoPanel: FC<TodoPanelProps> = ({ todos, sessionId }) => {
                 disabled={effectivePage >= pageCount - 1}
                 onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
                 aria-label={t("todo.nextPage")}
-                className="flex items-center gap-1 rounded-lg px-3 py-1 text-xs font-medium text-body transition-colors hover:bg-hairline-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warning disabled:cursor-not-allowed disabled:opacity-45"
+                className="flex items-center gap-1 rounded-lg px-3 py-1 text-xs font-medium text-body transition-colors hover:bg-hairline-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-task disabled:cursor-not-allowed disabled:opacity-45"
               >
                 {t("todo.next")}
                 <ChevronRightIcon className="h-3 w-3" />
@@ -160,23 +157,33 @@ export const TodoPanel: FC<TodoPanelProps> = ({ todos, sessionId }) => {
         </div>
       </div>
 
-      {/* ── Collapsed pill ──────────────────────────────────────────── */}
+      {/* ── Collapsed bar ───────────────────────────────────────────── */}
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         className={
-          "fixed bottom-20 right-5 z-50 flex items-center gap-2 rounded-full border border-warning bg-canvas-elevated px-3.5 py-2 shadow-floating transition-all duration-300 ease-out" +
+          "fixed bottom-20 right-5 z-50 flex items-center gap-2.5 rounded-xl border border-hairline bg-canvas-elevated px-3.5 py-2 shadow-floating transition-all duration-300 ease-out hover:border-task hover:shadow-card-hover" +
           (open
             ? " translate-y-2 opacity-0 pointer-events-none"
             : " translate-y-0 opacity-100")
         }
         aria-label={t("todo.toggleTaskList")}
       >
-        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-warning text-xs font-bold text-canvas">
-          {todos.length}
+        {/* Status indicator: spinner when any task is in_progress, ring otherwise */}
+        <span className="flex h-5 w-5 items-center justify-center">
+          {activeCount > 0 ? (
+            <SpinnerIcon className="text-task" />
+          ) : (
+            <CircleRingIcon className="text-task" />
+          )}
         </span>
-        <span className="text-base font-medium text-ink">
-          {t("todo.tasks")}
+        <span className="flex items-center gap-1.5">
+          <span className="text-base font-medium text-ink">
+            {t("todo.tasks")}
+          </span>
+          <span className="text-xs tabular-nums text-mute">
+            {todos.length}
+          </span>
         </span>
         <ChevronDownIcon
           className={`h-3 w-3 text-mute transition-transform duration-300 ${open ? "rotate-180" : ""}`}

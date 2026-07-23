@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-06-13 -->
+<!-- Updated: 2026-07-23 -->
 
 # agents
 
@@ -9,16 +9,11 @@ Agent system prompt templates (Markdown). Each file defines the personality, cap
 
 | File | Description |
 |------|-------------|
-| `main.md` | Main agent system prompt — general-purpose assistant with tool access |
+| `orchestrator.md` | Coder pool main agent — explores, plans, reviews, delegates to explore + coder |
+| `coder.md` | Coder subagent — external coding (OpenCode) implementation execution |
+| `explore.md` | Explore subagent — fast read-only codebase exploration and reconnaissance |
+| `default.md` | Default pool main agent — general-purpose conversational assistant |
 | `office-expert.md` | Office expert subagent — document processing (Word/Excel/PPT/PDF) |
-| `orchestrator.md` | Coder pool main agent — software development orchestrator (dispatches planner/worker/reviewer/scout/oracle) |
-| `context-builder.md` | DEPRECATED — context builder subagent; no longer referenced by any pool.yml |
-| `delegate.md` | DEPRECATED — delegate subagent; no longer referenced by any pool.yml |
-| `oracle.md` | Oracle subagent — knowledge lookup and synthesis |
-| `planner.md` | Planner subagent — architectural planning |
-| `reviewer.md` | Reviewer subagent — code review |
-| `scout.md` | Scout subagent — exploratory search |
-| `worker.md` | Worker subagent — implementation execution |
 
 ## For AI Agents
 
@@ -26,4 +21,3 @@ Agent system prompt templates (Markdown). Each file defines the personality, cap
 - These files are loaded by `pool_builder.py` when constructing agent descriptors.
 - File names correspond to agent `address.name` in pool config yml files.
 - Editing these directly changes agent behavior — no code changes needed.
-- Keep prompts in Chinese/English bilingual style consistent with existing files.

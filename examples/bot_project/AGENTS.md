@@ -123,7 +123,7 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 ## Multi-Agent Setup
 
 - `default` pool: General-purpose assistant with file/shell tools, MCP tools (playwright), communication tools + subagents (office-expert).
-- `coder` pool: Main agent + subagents (planner, worker, reviewer, scout, oracle, delegate, context-builder).
+- `coder` pool: Main agent (orchestrator) + subagents (explore, coder). Orchestrator handles exploration/planning/review directly; delegates deep investigation to explore and code modification to coder (external_coding).
 - Communication: `send_to_agent` (async inbox-based).
 - `SubagentAutoSendHook` auto-forwards subagent output to parent.
 - Session ID format: `{conversation_id}.{agent_name}[.{invocation_id}]` (via `DefaultSessionIdStrategy`).

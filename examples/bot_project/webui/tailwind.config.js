@@ -35,6 +35,10 @@ export default {
         warning: v("warning"),
         error: v("error"),
 
+        // 任务面板独立强调色（indigo，区别于 brand teal）
+        task: v("task"),
+        "task-soft": v("task-soft"),
+
         // 审批严重级别（取色刻意降饱和，避免 dangerous/hardline 刺眼）
         severity: {
           normal: v("severity-normal"),

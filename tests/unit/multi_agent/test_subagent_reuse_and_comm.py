@@ -452,7 +452,7 @@ async def test_subagent_auto_send_hook_routes_through_same_bus():
         parent_session_id="abc123.main",
     )
     ctx = SimpleNamespace(session=session)
-    await hook._notify_parent(ctx, "inv1.scout", "<subagent_notification/>")
+    await hook._notify_parent(ctx, "inv1.scout", "<subagent_result/>")
     assert bus.send.await_count == 1
     inbox_key, envelope = bus.send.await_args.args
     assert inbox_key == "abc123.main"  # routed to parent's session inbox

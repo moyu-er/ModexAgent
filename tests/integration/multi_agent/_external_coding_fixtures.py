@@ -1,4 +1,4 @@
-﻿"""Shared fixtures for the T9 cross-pool external-coding integration tests.
+"""Shared fixtures for the T9 cross-pool external-coding integration tests.
 
 Underscore prefix keeps this module out of pytest collection. Every helper
 here is a building block for ``test_cross_pool_external_coding.py`` — none
@@ -595,7 +595,7 @@ class _ExternalSubagentBundle:
 
     The bundle's parent agent is a fake (``_FakePoolBundle`` pattern) so
     tests can assert the subagent's ``modexctl send`` reply lands in the
-    parent's inbox and that the ``<subagent_notification>`` (with
+    parent's inbox and that the ``<subagent_result>`` (with
     ``<replied>=true``) reaches the parent after the turn ends.
     """
 

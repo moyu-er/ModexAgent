@@ -7,23 +7,23 @@ def test_loop_detected_is_non_normal():
 
 
 def test_classify_loop_detected_hint():
-    is_normal, hint = SubagentAutoSendHook._classify_stop_native(
+    success, issue = SubagentAutoSendHook._classify(
         stop_reason="loop_detected",
-        output_status="missing",
         error=None,
         invocation_id="inv-1",
+        is_external=False,
     )
-    assert is_normal is False
-    assert "loop" in hint.lower()
-    assert "invocation_id=inv-1" in hint
+    assert success is False
+    assert "loop" in issue.lower()
+    assert "invocation_id=inv-1" in issue
 
 
 def test_classify_loop_detected_no_invocation_id():
-    is_normal, hint = SubagentAutoSendHook._classify_stop_native(
+    success, issue = SubagentAutoSendHook._classify(
         stop_reason="loop_detected",
-        output_status="written",
         error=None,
         invocation_id="",
+        is_external=False,
     )
-    assert is_normal is False
-    assert "loop" in hint.lower()
+    assert success is False
+    assert "loop" in issue.lower()

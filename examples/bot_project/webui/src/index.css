@@ -72,6 +72,11 @@
      instead of hardcoded #ffffff. */
   --color-on-brand: #ffffff;
 
+  /* Task accent — indigo, distinct from brand teal so the todo panel has its
+     own visual identity without reading as a warning/error. */
+  --color-task: #4F46E5;
+  --color-task-soft: color-mix(in srgb, var(--color-task) 12%, transparent);
+
   /* Status (§2.1): success = brand, warning = ember family */
   --color-success: #0D9488;
   --color-warning: #B45309;
@@ -214,6 +219,10 @@
   /* Text color on a brand fill/gradient (§5.1) — dark ink on the bright
      dark-theme gradient (see :root note). */
   --color-on-brand: var(--color-canvas);
+
+  /* Task accent — indigo, lifted for dark-surface contrast */
+  --color-task: #818CF8;
+  --color-task-soft: color-mix(in srgb, var(--color-task) 16%, transparent);
 
   /* Status (§2.1): success = brand teal, warning = amber family */
   --color-success: var(--color-brand);

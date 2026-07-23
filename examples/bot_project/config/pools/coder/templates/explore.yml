@@ -1,0 +1,13 @@
+agent_name: explore
+description: >-
+  Fast codebase exploration subagent — read-only reconnaissance. Searches,
+  reads, and analyzes code in parallel. Returns structured findings with
+  exact file paths and line numbers. Cannot modify files. Use for any
+  read-only investigation requiring more than a few searches, or when
+  parallel exploration of independent questions is valuable.
+max_steps: 60
+tool_preset: read_only
+context_mode: fresh
+system_prompt_mode: append
+roles:
+- scout
