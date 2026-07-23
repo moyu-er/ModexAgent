@@ -1,7 +1,7 @@
 # PRD: Graph Engine Phase c Preliminaries
 
 Status: ready-for-agent
-Parent ADR: ADR-0034 (Graph Engine Phase c Preliminaries)
+Parent ADR: ADR-0033 (Graph Engine Phase c Preliminaries)
 Supersedes: none. Refines ADR-0033 (D5.2 `around` scope; D14 dataclass codec).
 
 ## Problem Statement
@@ -83,7 +83,7 @@ starting Phase c itself:
 
 3. **Settle the `modex_graph` API-surface standard and exercise retained
    API with realistic compositions (Workstream C).** Document (in
-   ADR-0034 D3) that `modex_graph`'s public API is governed by coherence
+   ADR-0033 D15) that `modex_graph`'s public API is governed by coherence
    + tested + non-contradictory, not by ReAct usage. Add three pattern
    modules under `examples/graph_patterns/` (conditional, retry,
    map_reduce) with covering unit tests, proving the retained API
@@ -198,13 +198,13 @@ all current field types.
     they are not routed through `around`), so that the canonical AOP
     vocabulary is not lost.
 
-19. As a framework developer, I want ADR-0034 D3 to document that
+19. As a framework developer, I want ADR-0033 D15 to document that
     `modex_graph`'s public API is governed by coherence + tested +
     non-contradictory (not by ReAct usage), so that future contributors
     do not propose deleting retained-but-unused API elements as "dead
     code" under ADR-0007.
 
-20. As a framework developer, I want ADR-0034 D3 to explicitly list
+20. As a framework developer, I want ADR-0033 D15 to explicitly list
     which API elements are retained despite zero production usage
     (`Command.goto=list[Task]`, `Command.goto=list[str]`,
     `add_conditional_edges`, `CompiledGraph`-as-`Node`,
@@ -247,7 +247,7 @@ all current field types.
     primitives (existing), so that future `GraphState` subclasses get
     correct serialization by default.
 
-26. As a framework developer, I want ADR-0034's Status to move from
+26. As a framework developer, I want ADR-0033's Status to move from
     `proposed` to `accepted` once all three workstreams land, so that
     the architectural record reflects completion.
 
@@ -276,7 +276,7 @@ all current field types.
 
 ## Implementation Decisions
 
-### Architectural decisions (from ADR-0034)
+### Architectural decisions (from ADR-0033)
 
 - **D1 — Per-channel checkpoint repair, two stages.** Stage 1 (this
   spec's scope) uses `TypeAdapter` as a transition: `encode_value` /
@@ -315,7 +315,7 @@ all current field types.
   and `from_checkpoint()` overrides are deleted. The class now inherits
   `GraphState.checkpoint()` / `from_checkpoint()` (the per-channel path).
   The long docstring explaining why the override exists is replaced with
-  a note that the override was removed per ADR-0034 D1.
+  a note that the override was removed per ADR-0033 D14.
 
 - **`modex_agent.agents.react.codec`** — the entire file is deleted.
   Its five `register_codec` calls are unreachable (per D1) and
@@ -409,18 +409,18 @@ all current field types.
 ### Documentation to be updated
 
 - **ADR-0033** — Status line gains a Refinements note: D5.2 refined
-  by ADR-0034 D2 (`around` routes `ITERATION` only); D14 refined by
-  ADR-0034 D1 (`TypeAdapter` transition, override removed); D12 (Phase c
-  deferred) stands. *(Already applied during ADR-0034 writing.)*
+  by ADR-0033 D5 (`around` routes `ITERATION` only); D14 refined by
+  ADR-0033 D14 (`TypeAdapter` transition, override removed); D12 (Phase c
+  deferred) stands. *(Already applied during ADR-0033 writing.)*
 
-- **ADR-0034** — Status moves from `proposed` to `accepted` once all
+- **ADR-0033** — Status moves from `proposed` to `accepted` once all
   three workstreams land and the regression test suite passes.
 
 - **`CONTEXT.md`** — `GraphRuntime` entry updated to reflect `around`
   routes `ITERATION` only. *(Pending — applied as part of Stage B.)*
 
 - **`docs/adr/AGENTS.md`** and **`docs/AGENTS.md`** — ADR index updated
-  to include ADR-0034. *(Already applied during ADR-0034 writing.)*
+  to include ADR-0033. *(Already applied during ADR-0033 writing.)*
 
 ### Type-shape decisions (from prototypes / ADR-0033)
 
@@ -564,7 +564,7 @@ highest feasible point:
 - **Production code migration to the graph engine.** InputPipeline,
   Approval state machine, and AgentPipeline / OutputRenderer were
   evaluated as Phase c "second consumer" candidates and rejected (see
-  ADR-0034 "Rejected Phase c triggers"). This spec does not migrate any
+  ADR-0033 "Rejected Phase c triggers"). This spec does not migrate any
   production code to the graph engine.
 
 - **Multi-agent star topology replacement.** Subgraph nesting does not
@@ -574,7 +574,7 @@ highest feasible point:
 
 - **`ReactGraphRuntime.around` signature change.** Extending `around` to
   accept typed interceptor contexts (`ToolCallContext` /
-  `LLMStreamContext`) was rejected (ADR-0034 D2 Option A) because it
+  `LLMStreamContext`) was rejected (ADR-0033 D5 Option A) because it
   violates invariant 1. This spec does not change the `GraphRuntime` ABC
   signature.
 
@@ -603,8 +603,8 @@ are sequenced to keep the review surface small):
 2. **Stage B — TD#3 (AOP routing documentation).** ~0.5 days. No
    behavior change; safe to land immediately after Stage A.
 
-3. **Stage C — `examples/graph_patterns/` + ADR-0034 Status update.**
-   ~1–2 days. Three pattern modules with tests, then ADR-0034 Status
+3. **Stage C — `examples/graph_patterns/` + ADR-0033 Status update.**
+   ~1–2 days. Three pattern modules with tests, then ADR-0033 Status
    from `proposed` to `accepted`.
 
 ### Risk notes
@@ -631,11 +631,11 @@ are sequenced to keep the review surface small):
 
 ### References
 
-- ADR-0034 — Graph Engine Phase c Preliminaries (parent ADR).
+- ADR-0033 — Graph Engine Phase c Preliminaries (parent ADR).
 - ADR-0033 — Generalized Graph Engine (Phase a); D5.2, D14, D12.
 - ADR-0007 — Keep zero-usage deep modules with real seams (governs
   `modex_agent` internal seams; does not govern `modex_graph` public
-  API per ADR-0034 D3).
+  API per ADR-0033 D15).
 - ADR-0025 — Execution strategy abstraction and pipeline slimming
   (Non-goals reject further approval refactoring).
 - `docs/handoff/graph-engine-phase-a-handoff.md` — Phase a handoff;

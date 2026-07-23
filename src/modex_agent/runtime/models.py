@@ -1,6 +1,6 @@
 """Runtime state governance models — Pydantic BaseModels and a few stdlib dataclasses for turn state, operations, approval, and snapshots.
 
-Per ADR-0033 D14 + ADR-0034 D1 Stage 2: all value objects crossing module
+Per ADR-0033 D14 + ADR-0033 D14 Stage 2: all value objects crossing module
 boundaries are Pydantic ``BaseModel`` so that ``model_dump()`` /
 ``model_validate()`` serve as the universal channel codec. Frozen vs mutable
 is decided per type based on whether the approval state machine mutates the

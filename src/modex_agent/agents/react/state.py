@@ -20,7 +20,7 @@ from typing import Annotated, Any
 
 from pydantic import Field
 
-# ADR-0034 D1 bridge: LLMResponse, MessageDelta, and all referenced types
+# ADR-0033 D14 bridge: LLMResponse, MessageDelta, and all referenced types
 # are now Pydantic BaseModels (Batches 1-3). Forward-ref resolution for
 # LLMResponse.error_info → LLMErrorInfo and MessageDelta.message → ChatMessage
 # goes through model_rebuild() calls below — no module-namespace injection
@@ -83,7 +83,7 @@ class ReActTurnState(GraphState, TurnStateBase):
 
     Inherits ``GraphState.checkpoint()`` / ``from_checkpoint()`` (per-channel
     codec path) — handles all field types via ``encode_value`` / ``decode_value``
-    (PEP 604 unions + stdlib dataclasses via TypeAdapter, per ADR-0034 D1).
+    (PEP 604 unions + stdlib dataclasses via TypeAdapter, per ADR-0033 D14).
     """
 
     # ---- TurnStateBase fields (re-declared for Pydantic compatibility) ----
@@ -118,7 +118,7 @@ class ReActTurnState(GraphState, TurnStateBase):
     # ReActAgent.run() after engine returns.
     result: Annotated[AgentResult | None, LastValue] = None
 
-    # ADR-0034 D1: checkpoint() / from_checkpoint() overrides removed — the
+    # ADR-0033 D14: checkpoint() / from_checkpoint() overrides removed — the
     # inherited GraphState per-channel path handles all field types (PEP 604
     # unions + stdlib dataclasses via ticket 01's TypeAdapter branch).
 

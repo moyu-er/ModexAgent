@@ -141,7 +141,7 @@ class ReactLlmClient:
         interceptor_chain = context.runtime.interceptors if context.runtime else None
         try:
             # Canonical AOP path for LLM_STREAM. `ctx.runtime.around` is for
-            # ITERATION only — see ADR-0034 D2.
+            # ITERATION only — see ADR-0033 D5.
             async for chunk in interceptor_chain.around_llm_stream(
                 context,
                 stream_ctx,
