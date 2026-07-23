@@ -7,6 +7,7 @@ pool resolution + persistence (the WebUI entry no longer resolves inline).
 
 from __future__ import annotations
 
+import asyncio
 from enum import StrEnum
 
 from bot.input_pipeline.context import BotInputContext
@@ -112,7 +113,7 @@ class ResolvePoolStage(InputStage):
         # resolved from fallback. Without this, a session created in a non-main
         # pool silently defaults to "main" on every subsequent turn.
         session_prefix = conversation_session_prefix(envelope, ctx)
-        ctx.pool_session_store.set(session_prefix, pool)
+        await asyncio.to_thread(ctx.pool_session_store.set, session_prefix, pool)
         envelope.metadata[RoutingMeta.RESOLVED_POOL] = pool
         envelope.metadata[RoutingMeta.RESOLVED_AGENT] = agent
         envelope.metadata[RoutingMeta.FULL_SESSION_ID] = full_sid

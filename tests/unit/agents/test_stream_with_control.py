@@ -103,9 +103,13 @@ class TestStreamWithControlPreservesToolCalls:
         async def _fake_around_iteration(ctx, call, next_call):
             return await next_call()
 
+        async def _fake_around_tool_call(ctx, call, actual_call):
+            return await actual_call()
+
         fake_chain.has_scope = MagicMock(return_value=True)
         fake_chain.around_turn = _fake_around_turn
         fake_chain.around_iteration = _fake_around_iteration
+        fake_chain.around_tool_call = _fake_around_tool_call
         fake_chain.around_llm_stream = _fake_llm_stream
 
         # Arrange: mock streaming provider that returns tool_calls
@@ -137,12 +141,11 @@ class TestStreamWithControlPreservesToolCalls:
         # Act
         result = await agent.run(ctx, emitter)
 
-        # Assert: tool_calls MUST be in the result's messages
-        # The assistant message in all_new_messages should contain tool_calls
         assert result.messages is not None, "Result should contain messages"
-        assistant_msgs = [m for m in result.messages
-                          if isinstance(m, dict) and m.get("role") == "assistant"
-                          and m.get("tool_calls")]
+        assistant_msgs = [
+            m for m in result.messages
+            if getattr(m, "role", None) == "assistant" and getattr(m, "tool_calls", None)
+        ]
         assert len(assistant_msgs) > 0, (
             f"Expected assistant message with tool_calls, got: {result.messages}"
         )
@@ -169,9 +172,13 @@ class TestStreamWithControlPreservesToolCalls:
         async def _fake_around_iteration(ctx, call, next_call):
             return await next_call()
 
+        async def _fake_around_tool_call(ctx, call, actual_call):
+            return await actual_call()
+
         fake_chain.has_scope = MagicMock(return_value=True)
         fake_chain.around_turn = _fake_around_turn
         fake_chain.around_iteration = _fake_around_iteration
+        fake_chain.around_tool_call = _fake_around_tool_call
         fake_chain.around_llm_stream = _fake_llm_stream
 
         class StreamingProviderNoTools(StreamingLLMProvider):

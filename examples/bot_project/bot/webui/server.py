@@ -1802,7 +1802,7 @@ class WebUIServer:
             updated_at = None
         set_conv_channel(session_prefix, "websocket")
         if self._pool_switch_callback is not None:
-            self._pool_switch_callback(session_prefix, effective_pool)
+            await asyncio.to_thread(self._pool_switch_callback, session_prefix, effective_pool)
         return web.json_response(
             {
                 "session_id": session_id,
@@ -2516,7 +2516,7 @@ class WebUIServer:
         if not pool_name:
             pool_name = _DEFAULT_AGENT_NAME
         if self._pool_switch_callback is not None:
-            self._pool_switch_callback(session_prefix, pool_name)
+            await asyncio.to_thread(self._pool_switch_callback, session_prefix, pool_name)
         # Failsafe: if the callback is not wired (edge case during early
         # startup or test setups), write directly through the input context's
         # pool_session_store so the PoolRouter can still read the mapping.

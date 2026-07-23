@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from modex_agent.core.agent import AgentContext
+from modex_agent.core.constants import StopReason
 from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import TurnIdentity, TurnStateBase
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
@@ -86,7 +87,7 @@ class FakeAgent:
             tool_result = {"role": "tool", "tool_call_id": tc.call_id, "content": "ok"}
             await _call_hook_point("after_tool_execution", [tool_result])
 
-        result = AgentResult(content="Task done.", stop_reason="final")
+        result = AgentResult(content="Task done.", stop_reason=StopReason.COMPLETED)
         await _call_hook_point("after_turn", result)
         await _call_hook_point("finally_turn", result)
         return result
