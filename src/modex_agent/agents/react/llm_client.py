@@ -25,6 +25,7 @@ from modex_agent.interceptor.abc import (
     LLMStreamChunk,
     LLMStreamContext,
 )
+from modex_agent.runtime.dispatch import renew_dispatch_deadline
 from modex_agent.runtime.enums import TurnCustomKey
 
 logger = logging.getLogger(__name__)
@@ -63,7 +64,7 @@ class ReactLlmClient:
         messages: list[dict[str, Any]],
         context: AgentContext,
     ) -> LLMResponse:
-        """通过 InterceptorChain 包裹的 LLM 流式调用。"""
+        """LLM streaming call wrapped by the InterceptorChain."""
         assert isinstance(self._provider, StreamingLLMProvider)
         emitter = context.emitter
 
@@ -85,7 +86,7 @@ class ReactLlmClient:
         tool_calls_list: list[ToolCall] = []
 
         async def _actual_stream():
-            """实际调用 provider.chat_stream，将 chunk 转为 LLMStreamChunk。"""
+            """Call provider.chat_stream, converting the result to LLMStreamChunk."""
             nonlocal tool_calls_list
 
             async def _on_content_delta(delta: str) -> None:
@@ -102,6 +103,7 @@ class ReactLlmClient:
                         context,
                         turn_uuid=context.runtime.turn_uuid,
                     )
+                renew_dispatch_deadline()
                 if delta:
                     streamed_content += delta
                     await emitter.emit_delta(delta)
@@ -115,6 +117,7 @@ class ReactLlmClient:
                         context,
                         turn_uuid=context.runtime.turn_uuid,
                     )
+                renew_dispatch_deadline()
                 if delta:
                     await emitter.emit(ReActEvent.MODEL_REASONING, delta)
 
@@ -192,11 +195,13 @@ class ReactLlmClient:
         ctx: AgentContext,
     ) -> LLMResponse:
         async def _on_content(delta: str) -> None:
+            renew_dispatch_deadline()
             if delta and ctx.emitter is not None:
                 await ctx.emitter.emit_delta(delta)
                 await ctx.emitter.emit(ReActEvent.MODEL_OUTPUT, delta)
 
         async def _on_reasoning(delta: str) -> None:
+            renew_dispatch_deadline()
             if delta and ctx.emitter is not None:
                 await ctx.emitter.emit(ReActEvent.MODEL_REASONING, delta)
 

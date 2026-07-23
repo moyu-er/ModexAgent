@@ -458,7 +458,6 @@ class AgentPool(AgentRegistry):
             self._active_session_counts.get(agent_name, 0),
         )
         dispatch_timeout = self._safety.turn.dispatch_timeout_seconds
-        extension = self._safety.turn.agent_run_timeout_seconds
         deadline: DispatchDeadline | None = None
         watchdog_task: asyncio.Task[None] | None = None
         dispatch_task: asyncio.Task[None] | None = None
@@ -467,7 +466,6 @@ class AgentPool(AgentRegistry):
             if dispatch_timeout > 0:
                 deadline = DispatchDeadline(
                     initial_timeout=dispatch_timeout,
-                    extension=extension,
                 )
                 token = current_dispatch_deadline.set(deadline)
                 dispatch_task = asyncio.ensure_future(coro)

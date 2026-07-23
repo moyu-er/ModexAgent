@@ -26,7 +26,7 @@ from modex_agent.core.constants import FinishReason
 from modex_agent.core.types import MessageRole
 from modex_agent.ioc.configs.llm import Modality
 from modex_agent.media.media_utils import build_inline_image_block
-from modex_agent.runtime.dispatch import current_dispatch_deadline
+from modex_agent.runtime.dispatch import renew_dispatch_deadline
 from modex_agent.runtime.enums import (
     MessageDeltaSource,
     OperationKind,
@@ -37,12 +37,6 @@ from modex_agent.runtime.models import MessageDelta
 from modex_graph.context import GraphContext
 from modex_graph.node import Node
 from modex_graph.result import NodeResult
-
-
-def _renew_dispatch_deadline() -> None:
-    deadline = current_dispatch_deadline.get()
-    if deadline is not None:
-        deadline.renew()
 
 
 def enrich_inline_attachments(
@@ -207,7 +201,12 @@ class LLMNode(Node[ReActTurnState]):
         # ``if has_scope(ITERATION): around_iteration else: actual_iteration``.
         await ctx.runtime.around(ReActScope.ITERATION, ctx, actual_iteration)
 
-        _renew_dispatch_deadline()
+        _round_extension = (
+            agent_runtime.safety.turn.agent_run_timeout_seconds
+            if agent_runtime is not None
+            else 420.0
+        )
+        renew_dispatch_deadline(_round_extension)
 
         response = state.llm_response
         if response is not None and response.finish_reason == FinishReason.ERROR.value:
