@@ -204,7 +204,7 @@ class DirectorySkillCache(SkillCache):
         for skill in all_skills:
             if skill.location is None:
                 continue
-            loc = Path(skill.location).parent.resolve()
+            loc = Path(skill.location).parent
             for directory in self._directories:
                 try:
                     loc.relative_to(directory)
