@@ -7,12 +7,12 @@ import asyncio
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from pydantic import BaseModel, ConfigDict, field_serializer
+
+from modex_agent.core.message import ContentFormat
 from modex_agent.core.tool import DynamicSchemaProvider
-
-if TYPE_CHECKING:
-    from modex_agent.core.message import ContentFormat
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +125,7 @@ class Tool(DynamicSchemaProvider):
         return (None, None)
 
 
-class ToolResult:
+class ToolResult(BaseModel):
     """工具执行结果
 
     统一的工具执行结果类，兼容所有场景：
@@ -134,27 +134,22 @@ class ToolResult:
     - LLM message 格式转换
     """
 
-    def __init__(
-        self,
-        tool_name: str,
-        result: Any = None,
-        error: str | None = None,
-        execution_time: float = 0.0,
-        call_id: str | None = None,
-        overflow_processed: bool = False,
-        content_format: "ContentFormat | None" = None,
-        truncatable_paths: list[str] | None = None,
-    ) -> None:
-        self.tool_name = tool_name
-        self.result = result
-        self.error = error
-        self.execution_time = execution_time
-        self.call_id = call_id
-        # Internal flag — prevents double-processing by overflow interceptors.
-        # Not included in to_dict() / to_message() as it is ephemeral.
-        self.overflow_processed = overflow_processed
-        self.content_format = content_format
-        self.truncatable_paths = truncatable_paths
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    tool_name: str
+    result: Any = None
+    error: str | None = None
+    execution_time: float = 0.0
+    call_id: str | None = None
+    overflow_processed: bool = False
+    content_format: ContentFormat | None = None
+    truncatable_paths: list[str] | None = None
+
+    @field_serializer("result")
+    def _serialize_result(self, v: Any) -> Any:
+        if v is None or isinstance(v, str | int | float | bool | list | dict):
+            return v
+        return str(v)
 
     @property
     def success(self) -> bool:
