@@ -4,7 +4,7 @@ Status: ready-for-agent
 
 Related: ADR-0019 (`docs/adr/0019-cross-pool-peer-communication.md`), ADR-0019
 implementation blueprint
-(`docs/adr/0019-cross-pool-peer-communication-blueprint.md`);
+(archived at `docs/adr/history/002-cross-pool-peer-communication-blueprint.md`);
 `CONTEXT.md` → "Communication Target", "Peer Pool", "Session Group";
 ADR-0015 (unified inbox, partially superseded by store-lookup routing);
 `examples/bot_project/CONTEXT.md` → "Session Record".
@@ -560,7 +560,7 @@ result fields), not internal method call counts.
   (`PeerPoolRouter` ABC, pair-scoped prefix, per-message fresh
   invocation_id, `AgentCommKind.PEER` enum value) with rejection rationale.
 - **ADR-0019 blueprint**
-  (`docs/adr/0019-cross-pool-peer-communication-blueprint.md`) — the
+  (archived at `docs/adr/history/002-cross-pool-peer-communication-blueprint.md`) — the
   step-by-step implementation plan with framework/business layer split,
   implementation order, and verification points.
 - **ADR-0015** (unified inbox) — partially superseded: the

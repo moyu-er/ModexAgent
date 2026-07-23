@@ -1,7 +1,7 @@
 # Core Memory Rename — Exhaustive Inventory
 
 > **Status**: Planning — execute as a prerequisite task before KnowledgeBase implementation.
-> **Source ADR**: [0035-core-memory-and-knowledge-base-terminology-split.md](../../adr/0035-core-memory-and-knowledge-base-terminology-split.md)
+> **Source ADR**: [0035-core-memory-and-knowledge-base-terminology-split.md](../../adr/0034-core-memory-and-knowledge-base-terminology-split.md)
 > **Strategy**: PyCharm's structural Rename (Shift+F6) on each symbol below, then grep-verify for stragglers. YAML keys and string literals need manual edits.
 
 ## Execution checklist
@@ -123,7 +123,7 @@ PyCharm refactor will rename test symbols automatically. Manual review:
   - [ ] `docs/adr/0002-keep-per-scope-memory-retention-seams.md` — likely describes the layer; update terminology in prose
   - [ ] `docs/adr/0023-hybrid-persistence-sqlite-plus-file.md` — same
   - [ ] `docs/adr/0033-generalized-graph-engine.md` — incidentally mentions; add note pointing to ADR-0035
-  - [ ] `docs/adr/0034-graph-engine-phase-c-preliminaries.md` — verify
+  - [ ] `docs/adr/history/001-graph-engine-phase-c-preliminaries.md` — archived; verify no action needed
   - [ ] All ADRs written *after* ADR-0035 should use the new terminology
 - [ ] **`docs/design/`** — design docs that reference the layer
   - [ ] `docs/design/generalized-graph-engine/issues/06-summarizer-agent-removal.md` — update
