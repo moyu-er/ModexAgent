@@ -302,3 +302,104 @@ async def test_emit_complete_clears_partial_even_on_error() -> None:
     finally:
         import shutil
         shutil.rmtree(sessions_dir, ignore_errors=True)
+
+
+# ── Regression: flush clears partial buffer (prevents duplicate content) ────
+
+
+async def test_flush_active_segment_clears_partial_buffer() -> None:
+    """Regression: _flush_active_segment must clear the partial buffer.
+
+    Without this, the partial buffer retains ALL deltas for the entire turn
+    — including text already persisted as AssistantTextEvent — so
+    _materialize_partial_deltas produces a synthetic streaming turn whose
+    single concatenated text block duplicates the materialized transcript
+    turn's text. The user sees the same content twice on session re-select.
+    """
+    from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
+    from bot.webui.emitter import WebBotEmitter
+    from modex_agent.core.emitter import AgentResult, EmitterConfig
+    from modex_agent.core.tool_manager import ToolResult
+    from modex_agent.core.types import ToolCall
+    from modex_agent.agents.react.agent import ReActEvent
+
+    store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
+    store.set_agent_pool_map({"main": "main"})
+    sessions_dir = Path(__file__).parent / "_tmp_flush_clear"
+    sid = "abc.main"
+
+    input_adapter = WebSocketInputAdapter()
+    output_adapter = WebSocketOutputAdapter(input_adapter)
+    input_adapter.register_connection(sid, None)
+
+    emitter = WebBotEmitter(
+        output_adapter, sid,
+        config=EmitterConfig(),
+        transcript_store=store,
+    )
+    emitter.set_sessions_dir_provider(lambda: sessions_dir)
+
+    try:
+        await emitter.emit_delta("text before tool")
+        assert len(await store.load_partial(sid, sessions_dir=sessions_dir)) == 1
+
+        tc = ToolCall(tool_name="read_file", arguments={"path": "/x"}, call_id="c0")
+        result = ToolResult(tool_name="read_file", result="ok", error=None)
+        await emitter.emit(ReActEvent.TOOL_CALL_START, tc)
+        await emitter.emit(ReActEvent.TOOL_CALL_END, (tc, result))
+
+        partials = await store.load_partial(sid, sessions_dir=sessions_dir)
+        assert partials == [], (
+            "partial buffer must be empty after _flush_active_segment (tool call boundary); "
+            f"got {len(partials)} stale deltas"
+        )
+
+        await emitter.emit_delta("text after tool")
+        assert len(await store.load_partial(sid, sessions_dir=sessions_dir)) == 1
+
+        await emitter.emit_complete(AgentResult(content="done"))
+        assert await store.load_partial(sid, sessions_dir=sessions_dir) == []
+    finally:
+        import shutil
+        shutil.rmtree(sessions_dir, ignore_errors=True)
+
+
+async def test_flush_clears_partial_with_reasoning_then_text() -> None:
+    """Reasoning deltas followed by text deltas must also clear partial on flush."""
+    from bot.adapters.web_socket import WebSocketInputAdapter, WebSocketOutputAdapter
+    from bot.webui.emitter import WebBotEmitter
+    from modex_agent.core.emitter import AgentResult, EmitterConfig
+    from modex_agent.agents.react.agent import ReActEvent
+
+    store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
+    store.set_agent_pool_map({"main": "main"})
+    sessions_dir = Path(__file__).parent / "_tmp_flush_reasoning"
+    sid = "abc.main"
+
+    input_adapter = WebSocketInputAdapter()
+    output_adapter = WebSocketOutputAdapter(input_adapter)
+    input_adapter.register_connection(sid, None)
+
+    emitter = WebBotEmitter(
+        output_adapter, sid,
+        config=EmitterConfig(),
+        transcript_store=store,
+    )
+    emitter.set_sessions_dir_provider(lambda: sessions_dir)
+
+    try:
+        await emitter.emit(ReActEvent.MODEL_REASONING, "thinking")
+        assert len(await store.load_partial(sid, sessions_dir=sessions_dir)) == 1
+
+        await emitter.emit_stream_end(resuming=False)
+
+        partials = await store.load_partial(sid, sessions_dir=sessions_dir)
+        assert partials == [], (
+            "partial buffer must be empty after emit_stream_end flush; "
+            f"got {len(partials)} stale deltas"
+        )
+
+        await emitter.emit_complete(AgentResult(content="done"))
+    finally:
+        import shutil
+        shutil.rmtree(sessions_dir, ignore_errors=True)

@@ -413,6 +413,7 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
             tool_name: str = data.tool_name
             full_args: dict[str, object] = data.arguments or {}
 
+            await self._flush_active_segment()
             self._ensure_turn_started()
             # NOTE: the ToolCallEvent is persisted together with its
             # ToolResultEvent in the TOOL_CALL_END branch below -- NOT here.
@@ -432,6 +433,7 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
             await self._send_event(evt)
 
         elif event_value == _TOOL_CALL_END:
+            await self._flush_active_segment()
             tc, tool_result = data
             tool_name: str = tc.tool_name
             raw_result: str | None = tool_result.result
@@ -528,6 +530,14 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
         self._segments = {}
         self._segment_kinds = {}
         self._segment_order = []
+        # Clear the partial buffer here so it only holds deltas accumulated
+        # since the last flush boundary (tool call / stream end). Without
+        # this, the partial buffer retains ALL deltas for the entire turn —
+        # including text already persisted as AssistantTextEvent — and
+        # _materialize_partial_deltas produces a synthetic streaming turn
+        # whose single concatenated text block duplicates the materialized
+        # transcript turn's text.
+        await self._clear_partial()
 
     async def _send_event(self, event: ServerEvent) -> None:
         """Wrap *event* in a structured DeltaEnvelope and enqueue it."""
