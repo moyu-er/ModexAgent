@@ -9,9 +9,10 @@ from typing import Any
 
 import pytest
 
+from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import StreamingLLMProvider
 from modex_agent.core.tool_manager import Tool, ToolConfig, ToolManager, ToolResult
-from modex_agent.core.types import LLMResponse, ToolCall
+from modex_agent.core.types import LLMResponse, MessageRole, ToolCall
 from modex_agent.ioc.configs.observability import CassetteScope
 from modex_agent.trace.cassette import (
     CassetteCategory,
@@ -41,7 +42,7 @@ class _ScriptedStreamingProvider(StreamingLLMProvider):
 
     async def chat_stream(
         self,
-        messages: list[dict[str, Any]],
+        messages: list[ChatMessage],
         model: str | None = None,
         temperature: float = 0.7,
         max_output_tokens: int | None = None,
@@ -62,7 +63,7 @@ class _RaisingProvider(StreamingLLMProvider):
 
     async def chat_stream(
         self,
-        messages: list[dict[str, Any]],
+        messages: list[ChatMessage],
         model: str | None = None,
         temperature: float = 0.7,
         max_output_tokens: int | None = None,
@@ -140,7 +141,7 @@ class TestLLMRecordReplay:
         recorder = CassetteRecorder(tmp_path)
         wrapped = recorder.wrap_provider(recording_provider)
 
-        messages = [{"role": "user", "content": "hi"}]
+        messages = [ChatMessage(role=MessageRole.USER, content="hi")]
         result = await wrapped.chat(messages=messages, temperature=0.5)
 
         assert result.content == "hello world"
@@ -170,7 +171,7 @@ class TestLLMRecordReplay:
         recorder = CassetteRecorder(tmp_path)
         wrapped = recorder.wrap_provider(recording_provider)
 
-        messages = [{"role": "user", "content": "compute"}]
+        messages = [ChatMessage(role=MessageRole.USER, content="compute")]
         await wrapped.chat(messages=messages)
 
         cassette_dir = recorder.save("trace-tc-001")
@@ -195,7 +196,7 @@ class TestLLMRecordReplay:
         recorder = CassetteRecorder(tmp_path)
         wrapped = recorder.wrap_provider(recording_provider)
 
-        await wrapped.chat(messages=[{"role": "user", "content": "q1"}])
+        await wrapped.chat(messages=[ChatMessage(role=MessageRole.USER, content="q1")])
         cassette_dir = recorder.save("trace-miss-001")
 
         engine = CassetteReplayEngine(cassette_dir)
@@ -203,7 +204,7 @@ class TestLLMRecordReplay:
         replay_wrapped = engine.wrap_provider(_RaisingProvider())
 
         with pytest.raises(KeyError, match="Cassette miss"):
-            await replay_wrapped.chat(messages=[{"role": "user", "content": "q2"}])
+            await replay_wrapped.chat(messages=[ChatMessage(role=MessageRole.USER, content="q2")])
 
 
 # ------------------------------------------------------------------
@@ -297,7 +298,7 @@ class TestCassetteFileStructure:
         provider = _ScriptedStreamingProvider(response)
         recorder = CassetteRecorder(tmp_path)
         wrapped_provider = recorder.wrap_provider(provider)
-        await wrapped_provider.chat(messages=[{"role": "user", "content": "q"}])
+        await wrapped_provider.chat(messages=[ChatMessage(role=MessageRole.USER, content="q")])
 
         tool_result = ToolResult(tool_name="t", result=99)
         tm = _ScriptedToolManager(tool_result)
@@ -333,7 +334,7 @@ class TestCassetteFileStructure:
         recorder = CassetteRecorder(tmp_path)
         wrapped = recorder.wrap_provider(provider)
 
-        messages = [{"role": "user", "content": "dup"}]
+        messages = [ChatMessage(role=MessageRole.USER, content="dup")]
         await wrapped.chat(messages=messages)
         await wrapped.chat(messages=messages)
 
@@ -355,7 +356,7 @@ class TestCassetteFileStructure:
         provider = _ScriptedStreamingProvider(response)
         recorder = CassetteRecorder(tmp_path)
         wrapped = recorder.wrap_provider(provider)
-        await wrapped.chat(messages=[{"role": "user", "content": "r"}])
+        await wrapped.chat(messages=[ChatMessage(role=MessageRole.USER, content="r")])
 
         cassette_dir = recorder.save("trace-rt-001")
         engine = CassetteReplayEngine(cassette_dir)

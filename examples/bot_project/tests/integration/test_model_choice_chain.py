@@ -36,7 +36,8 @@ from bot.service.model_config import BotModelConfig
 from bot.service.model_provider import BotModelProvider
 
 from modex_agent.core.constants import FinishReason
-from modex_agent.core.types import LLMResponse
+from modex_agent.core.message import ChatMessage
+from modex_agent.core.types import LLMResponse, MessageRole
 
 _YML = """
 models:
@@ -123,7 +124,7 @@ async def test_chain_registry_to_hook_to_provider_uses_m2(tmp_path: Path) -> Non
     provider._cache[("a", "m1")] = fake_m1  # type: ignore[attr-defined]
     provider._cache[("a", "m2")] = fake_m2  # type: ignore[attr-defined]
 
-    resp = await provider.chat_stream(messages=[{"role": "user", "content": "hi"}])
+    resp = await provider.chat_stream(messages=[ChatMessage(role=MessageRole.USER, content="hi")])
 
     # M2's real provider served the turn; M1's never did.
     assert fake_m2.called, "M2 (the registered choice) was not routed to"
@@ -160,7 +161,7 @@ async def test_chain_unregistered_session_falls_back_to_default_m1(
     provider._cache[("a", "m1")] = fake_m1  # type: ignore[attr-defined]
     provider._cache[("a", "m2")] = fake_m2  # type: ignore[attr-defined]
 
-    resp = await provider.chat_stream(messages=[{"role": "user", "content": "hi"}])
+    resp = await provider.chat_stream(messages=[ChatMessage(role=MessageRole.USER, content="hi")])
 
     assert fake_m1.called, "default M1 was not used when no choice was registered"
     assert not fake_m2.called, "M2 was called even though no choice was registered"

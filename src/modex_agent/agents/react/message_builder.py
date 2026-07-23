@@ -7,12 +7,11 @@ building if required.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
-from modex_agent.core.tool_manager import ToolResult
-from modex_agent.core.types import ToolCall
 from modex_agent.core.message import ChatMessage, ContentFormat
+from modex_agent.core.tool_manager import ToolResult
+from modex_agent.core.types import MessageRole, ToolCall
 from modex_agent.utils.xml import xml_attr, xml_text
 
 
@@ -45,19 +44,9 @@ def build_assistant_message(
         extra["reasoning_content"] = reasoning_content
 
     if tool_calls:
-        extra["tool_calls"] = [
-            {
-                "id": tc.call_id or f"call_{i}",
-                "type": "function",
-                "function": {
-                    "name": tc.tool_name,
-                    "arguments": json.dumps(tc.arguments) if tc.arguments else "{}",
-                },
-            }
-            for i, tc in enumerate(tool_calls)
-        ]
+        extra["tool_calls"] = tool_calls
 
-    return ChatMessage(role="assistant", content=message_content, **extra)
+    return ChatMessage(role=MessageRole.ASSISTANT, content=message_content, **extra)
 
 
 def build_interrupted_assistant_message(
@@ -97,7 +86,7 @@ def build_interrupted_assistant_message(
     parts.append("</interrupted_response>")
 
     return ChatMessage(
-        role="assistant",
+        role=MessageRole.ASSISTANT,
         content="\n".join(parts),
         content_format=ContentFormat.XML,
         truncatable_paths=["content"],
@@ -139,7 +128,7 @@ def build_tool_message(result: ToolResult, call_id: str | None = None) -> ChatMe
         extra["truncatable_paths"] = msg_dict["truncatable_paths"]
 
     return ChatMessage(
-        role="tool",
+        role=MessageRole.TOOL,
         tool_call_id=call_id or result.tool_name,
         name=result.tool_name,
         content=content,

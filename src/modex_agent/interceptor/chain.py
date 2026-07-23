@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.control.exceptions import AgentControlError
+from modex_agent.core.constants import FinishReason, StreamControlAction
 from modex_agent.interceptor.abc import (
     Interceptor,
     InterceptorScope,
@@ -139,7 +140,7 @@ class InterceptorChain:
             raise
         except Exception as e:
             logger.exception("InterceptorChain llm_stream error: %s", e)
-            yield LLMStreamChunk(finish_reason="error", control_action="cancel")
+            yield LLMStreamChunk(finish_reason=FinishReason.ERROR, control_action=StreamControlAction.CANCEL)
 
     # -------------------------------------------------------------------
     # 链构建

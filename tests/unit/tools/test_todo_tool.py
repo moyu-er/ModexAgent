@@ -107,11 +107,11 @@ async def test_read_returns_active_only_in_order(tmp_path) -> None:
     await store.save(
         "s1",
         [
-            TodoItem("done", TodoStatus.COMPLETED),
-            TodoItem("first", TodoStatus.PENDING),
-            TodoItem("cur", TodoStatus.IN_PROGRESS),
-            TodoItem("skipped", TodoStatus.CANCELLED),
-            TodoItem("next", TodoStatus.PENDING),
+            TodoItem(content="done", status=TodoStatus.COMPLETED),
+            TodoItem(content="first", status=TodoStatus.PENDING),
+            TodoItem(content="cur", status=TodoStatus.IN_PROGRESS),
+            TodoItem(content="skipped", status=TodoStatus.CANCELLED),
+            TodoItem(content="next", status=TodoStatus.PENDING),
         ],
     )
     token = _set_ctx("s1")

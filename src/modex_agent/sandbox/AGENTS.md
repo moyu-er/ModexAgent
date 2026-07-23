@@ -12,7 +12,7 @@ Sandboxed code execution — isolates tool execution from the agent runtime via 
 | File | Description |
 |------|-------------|
 | `factory.py` | `SandboxFactory` — creates sandbox instances by configuration |
-| `config.py` | `SandboxConfig` — adapter selection, resource limits, and backend-specific options |
+| `config.py` | `SandboxConfig` — adapter selection, resource limits, and backend-specific options. Frozen Pydantic `BaseModel` (B4) |
 | `types.py` | Sandbox result and execution types — `SandboxResult`, `SandboxExecution`, `SandboxResourceLimits` |
 | `enums.py` | `SandboxBackend` enum + status enums |
 | `exceptions.py` | `SandboxError`, `SandboxTimeoutError`, `SandboxExecutionError`, `SandboxConnectionError` |

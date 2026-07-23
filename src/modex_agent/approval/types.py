@@ -5,13 +5,6 @@ from __future__ import annotations
 from enum import StrEnum
 
 
-class ApprovalTier(StrEnum):
-    HARDLINE = "hardline"
-    DANGEROUS = "dangerous"
-    SENSITIVE = "sensitive"
-    NORMAL = "normal"
-
-
 class ApprovalAction(StrEnum):
     ALLOW = "allow"
     DENY = "deny"

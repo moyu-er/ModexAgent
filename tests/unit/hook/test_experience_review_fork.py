@@ -16,6 +16,7 @@ from modex_agent.core.constants import StopReason
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.experience.meta import PerFileExperienceMetaStore
 from modex_agent.core.message import ChatMessage
+from modex_agent.core.types import ToolCall
 from modex_agent.hook.builtin.experience_review import ExperienceReviewHook
 from modex_agent.memory.history import ListMessageHistory
 
@@ -28,11 +29,7 @@ def _make_messages() -> list[ChatMessage]:
             role="assistant",
             content=None,
             tool_calls=[
-                {
-                    "id": "tc_1",
-                    "type": "function",
-                    "function": {"name": "read", "arguments": '{"path":"config.yml"}'},
-                }
+                ToolCall(tool_name="read", arguments={"path": "config.yml"}, call_id="tc_1"),
             ],
         ),
         ChatMessage(role="tool", tool_call_id="tc_1", content="memory: {enabled: true}"),

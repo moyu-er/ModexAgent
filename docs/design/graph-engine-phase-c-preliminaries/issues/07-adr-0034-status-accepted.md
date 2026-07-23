@@ -1,8 +1,8 @@
-# 07 — ADR-0034 Status accepted and final verification
+# 07 — ADR-0033 Status accepted and final verification
 
-**What to build:** ADR-0034's Status moves from `proposed` to `accepted` once all six implementation tickets (01–06) have landed. This is the closing ticket: it verifies the full regression suite passes, confirms the three workstreams delivered their promised outcomes, and updates the ADR's Consequences section if any deviation from the plan emerged during implementation.
+**What to build:** ADR-0033's Status moves from `proposed` to `accepted` once all six implementation tickets (01–06) have landed. This is the closing ticket: it verifies the full regression suite passes, confirms the three workstreams delivered their promised outcomes, and updates the ADR's Consequences section if any deviation from the plan emerged during implementation.
 
-This ticket exists because ADR-0034 was written `proposed` (design completed, implementation pending) — the `accepted` transition is the architectural record that the design was implemented as specified, or that any deviations are documented.
+This ticket exists because ADR-0033 was written `proposed` (design completed, implementation pending) — the `accepted` transition is the architectural record that the design was implemented as specified, or that any deviations are documented.
 
 Verification scope:
 
@@ -25,7 +25,7 @@ Verification scope:
    - `tests/unit/examples/graph_patterns/` has three test files, all passing.
    - The three patterns demonstrate non-ReAct graph compositions using the retained API.
 
-4. **ADR-0034 update.** Move Status from `proposed` to `accepted`. If any implementation deviation emerged (e.g. a `TypeAdapter` edge case required a workaround; a pattern's API shape changed during implementation), document it in the Consequences section. If no deviations, note "implemented as specified".
+4. **ADR-0033 update.** Move Status from `proposed` to `accepted`. If any implementation deviation emerged (e.g. a `TypeAdapter` edge case required a workaround; a pattern's API shape changed during implementation), document it in the Consequences section. If no deviations, note "implemented as specified".
 
 5. **Full regression run.** `pytest tests/unit/ -v` passes (this is the final gate — no individual ticket's tests substitute for the full suite, because the work touches shared infrastructure: `modex_graph.channel`, `ReActTurnState`, `ReactGraphRuntime`).
 
@@ -44,5 +44,5 @@ Verification scope:
 - [x] Stage A verification: `ReActTurnState` per-channel path confirmed (no override; `react/codec.py` deleted; extended `test_snapshot_round_trip.py` + `test_channels.py` pass)
 - [x] Stage B verification: `ReactGraphRuntime.around` routes `ITERATION` only; comments + `CONTEXT.md` updated; `ReActScope` enum values retained; existing ReAct suite passes
 - [x] Stage C verification: three `examples/graph_patterns/` modules + tests pass; `__init__.py` exports all 8 public pattern classes
-- [x] ADR-0034 Status moved from `proposed` to `accepted`
-- [x] ADR-0034 Consequences section: implemented as specified (no deviations); whole-effort reviewer APPROVED
+- [x] ADR-0033 Status moved from `proposed` to `accepted`
+- [x] ADR-0033 Consequences section: implemented as specified (no deviations); whole-effort reviewer APPROVED

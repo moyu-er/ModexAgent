@@ -78,13 +78,11 @@ async def test_loop_detected_sends_incomplete_notification(tmp_path: Path):
     msgs = await bus.consume("conv123.main")
     assert len(msgs) == 1
     xml = msgs[0].payload["content"]
-    assert "<subagent_notification>" in xml
-    assert _extract_xml_field(xml, "status") == "incomplete"
-    assert _extract_xml_field(xml, "is_normal") == "false"
-    assert _extract_xml_field(xml, "stop_reason") == StopReason.LOOP_DETECTED
-    hint = _extract_xml_field(xml, "hint")
-    assert "loop" in hint.lower()
-    assert "stuck" in hint.lower()
+    assert "<subagent_result>" in xml
+    assert _extract_xml_field(xml, "success") == "false"
+    issue = _extract_xml_field(xml, "issue")
+    assert "loop" in issue.lower()
+    assert "stuck" in issue.lower()
 
 
 @pytest.mark.asyncio
@@ -109,9 +107,9 @@ async def test_loop_detected_includes_invocation_id_in_hint(tmp_path: Path):
     await hook.finally_turn(ctx, result)
 
     xml = (await bus.consume("conv123.main"))[0].payload["content"]
-    hint = _extract_xml_field(xml, "hint")
+    issue = _extract_xml_field(xml, "issue")
     invocation_id = SessionInfo.from_str(session_id).session_id_prefix
-    assert f"invocation_id={invocation_id}" in hint
+    assert f"invocation_id={invocation_id}" in issue
 
 
 @pytest.mark.asyncio

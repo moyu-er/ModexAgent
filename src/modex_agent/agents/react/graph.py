@@ -30,6 +30,7 @@ from .nodes.llm import LLMNode
 from .nodes.start import StartNode
 from .nodes.tool import ToolNode
 from .state import ReActTurnState
+from .tool_dedup import ToolCallDeduplicator
 from .tool_executor import ToolExecutor
 
 
@@ -39,6 +40,7 @@ def build_react_graph(
     injection_drainer: InjectionDrainer,
     tool_executor: ToolExecutor,
     mode: Literal["clean", "full"] = "full",
+    deduplicator: ToolCallDeduplicator | None = None,
 ) -> Graph[ReActTurnState]:
     """Construct the ReAct 4-node graph topology on the new ``modex_graph`` engine.
 
@@ -48,11 +50,12 @@ def build_react_graph(
     net (larger than the business max); the business-level max is enforced
     by ``LLMNode`` returning ``transition=ReActReason.MAX_ITERATIONS``.
 
-    The 8 static edges preserve the existing ReAct topology 1:1:
+    The 7 static edges preserve the existing ReAct topology (resume routing
+    is now via `Command(goto=...)` from `state.resume_target`, not a static
+    edge):
 
     ```
     START --NORMAL_START--> LLM
-    START --RESUME_TOOLS--> TOOL
     LLM   --HAS_TOOLS--> TOOL
     LLM   --NO_TOOLS--> END
     LLM   --MAX_ITERATIONS--> END
@@ -72,16 +75,17 @@ def build_react_graph(
     # Nodes — registered under their ReActNode StrEnum names.
     g.add_node(ReActNode.START, StartNode())
     g.add_node(ReActNode.LLM, LLMNode(llm_client, injection_drainer))
-    g.add_node(ReActNode.TOOL, ToolNode(tool_executor))
+    g.add_node(ReActNode.TOOL, ToolNode(tool_executor, deduplicator))
     g.add_node(ReActNode.END, EndNode())
 
     # Entry edge — declares StartNode as the graph entry. Exactly one edge
     # from GraphNode.START is required by Graph.compile().
     g.add_edge(GraphNode.START, ReActNode.START)
 
-    # 8 static edges — keyed by ReActReason values (StrEnum satisfies str).
+    # Static edges — keyed by ReActReason values (StrEnum satisfies str).
+    # Resume routing uses Command(goto=...) from state.resume_target
+    # (priority-1 dynamic routing), not a static edge.
     g.add_edge(ReActNode.START, ReActNode.LLM, reason=ReActReason.NORMAL_START)
-    g.add_edge(ReActNode.START, ReActNode.TOOL, reason=ReActReason.RESUME_TOOLS)
     g.add_edge(ReActNode.LLM, ReActNode.TOOL, reason=ReActReason.HAS_TOOLS)
     g.add_edge(ReActNode.LLM, ReActNode.END, reason=ReActReason.NO_TOOLS)
     g.add_edge(ReActNode.LLM, ReActNode.END, reason=ReActReason.MAX_ITERATIONS)

@@ -177,7 +177,7 @@ class TestBridgeInputRetryLoop:
         adapter = _FailingAdapter("in1")
         service = BrokerBridgeService(
             broker=broker,
-            input_bindings={adapter: Address(kind="test", name="addr1")},
+            input_bindings={adapter: Address(kind="channel", name="addr1")},
             restart_on_failure=False,
         )
 
@@ -198,7 +198,7 @@ class TestBridgeInputRetryLoop:
         adapter = _RecoveringAdapter()
         service = BrokerBridgeService(
             broker=broker,
-            input_bindings={adapter: Address(kind="test", name="addr1")},
+            input_bindings={adapter: Address(kind="channel", name="addr1")},
             restart_on_failure=False,
         )
 
@@ -218,7 +218,7 @@ class TestBridgeInputRetryLoop:
         adapter = _ExhaustingThenBlockingAdapter("in1", message_count=2)
         service = BrokerBridgeService(
             broker=broker,
-            input_bindings={adapter: Address(kind="test", name="addr1")},
+            input_bindings={adapter: Address(kind="channel", name="addr1")},
             restart_on_failure=False,
         )
 
@@ -263,7 +263,7 @@ class TestBridgeInputRetryLoop:
         adapter = _CancellingAdapter()
         service = BrokerBridgeService(
             broker=broker,
-            input_bindings={adapter: Address(kind="test", name="addr1")},
+            input_bindings={adapter: Address(kind="channel", name="addr1")},
             restart_on_failure=False,
         )
 
@@ -286,7 +286,7 @@ class TestBridgeDoneCallbackDefenseInDepth:
         adapter = _ExhaustingThenBlockingAdapter("in1", message_count=1)
         service = BrokerBridgeService(
             broker=broker,
-            input_bindings={adapter: Address(kind="test", name="addr1")},
+            input_bindings={adapter: Address(kind="channel", name="addr1")},
             restart_on_failure=True,
             restart_max_retries=2,
             restart_backoff_seconds=0.001,

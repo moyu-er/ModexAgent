@@ -52,7 +52,7 @@ async def test_no_injection_when_response_already_has_tool_calls(tmp_path):
     hook = TodoCompletionProbeHook(store=store, tool_manager=_tm(True, store))
     ctx = _make_ctx(hook._tool_manager)
     sid = ctx.session.session_id
-    await store.save(sid, [TodoItem("a", TodoStatus.PENDING)])
+    await store.save(sid, [TodoItem(content="a", status=TodoStatus.PENDING)])
     resp = _response(tool_calls=[ToolCall(tool_name="other", call_id="x", arguments={})])
 
     await hook.after_llm_response(ctx, resp)
@@ -68,7 +68,7 @@ async def test_no_injection_when_todo_read_not_registered(tmp_path):
     hook = TodoCompletionProbeHook(store=store, tool_manager=_tm(False, store))
     ctx = _make_ctx(hook._tool_manager)
     sid = ctx.session.session_id
-    await store.save(sid, [TodoItem("a", TodoStatus.PENDING)])
+    await store.save(sid, [TodoItem(content="a", status=TodoStatus.PENDING)])
     resp = _response()
 
     await hook.after_llm_response(ctx, resp)
@@ -84,8 +84,8 @@ async def test_no_injection_when_active_list_empty(tmp_path):
     hook = TodoCompletionProbeHook(store=store, tool_manager=_tm(True, store))
     ctx = _make_ctx(hook._tool_manager)
     sid = ctx.session.session_id
-    await store.save(sid, [TodoItem("done", TodoStatus.COMPLETED),
-                           TodoItem("skipped", TodoStatus.CANCELLED)])
+    await store.save(sid, [TodoItem(content="done", status=TodoStatus.COMPLETED),
+                           TodoItem(content="skipped", status=TodoStatus.CANCELLED)])
     resp = _response()
 
     await hook.after_llm_response(ctx, resp)
@@ -101,8 +101,8 @@ async def test_first_ending_with_todos_injects_todo_read(tmp_path):
     hook = TodoCompletionProbeHook(store=store, tool_manager=_tm(True, store))
     ctx = _make_ctx(hook._tool_manager)
     sid = ctx.session.session_id
-    await store.save(sid, [TodoItem("a", TodoStatus.PENDING),
-                           TodoItem("b", TodoStatus.IN_PROGRESS)])
+    await store.save(sid, [TodoItem(content="a", status=TodoStatus.PENDING),
+                           TodoItem(content="b", status=TodoStatus.IN_PROGRESS)])
     resp = _response(content="I'm done.")
 
     await hook.after_llm_response(ctx, resp)
@@ -126,7 +126,7 @@ async def test_second_ending_same_todos_does_not_inject(tmp_path):
     hook = TodoCompletionProbeHook(store=store, tool_manager=_tm(True, store))
     ctx = _make_ctx(hook._tool_manager)
     sid = ctx.session.session_id
-    await store.save(sid, [TodoItem("a", TodoStatus.PENDING)])
+    await store.save(sid, [TodoItem(content="a", status=TodoStatus.PENDING)])
 
     await hook.after_llm_response(ctx, _response())          # 1st: inject
     resp2 = _response(content="still done.")
@@ -145,12 +145,12 @@ async def test_progress_then_end_again_re_injects(tmp_path):
     hook = TodoCompletionProbeHook(store=store, tool_manager=_tm(True, store))
     ctx = _make_ctx(hook._tool_manager)
     sid = ctx.session.session_id
-    await store.save(sid, [TodoItem("a", TodoStatus.PENDING),
-                           TodoItem("b", TodoStatus.PENDING)])
+    await store.save(sid, [TodoItem(content="a", status=TodoStatus.PENDING),
+                           TodoItem(content="b", status=TodoStatus.PENDING)])
     await hook.after_llm_response(ctx, _response())          # probe fp1
     # agent advanced 'a' to in_progress -> fingerprint changes
-    await store.save(sid, [TodoItem("a", TodoStatus.IN_PROGRESS),
-                           TodoItem("b", TodoStatus.PENDING)])
+    await store.save(sid, [TodoItem(content="a", status=TodoStatus.IN_PROGRESS),
+                           TodoItem(content="b", status=TodoStatus.PENDING)])
     resp2 = _response(content="more to do.")
     await hook.after_llm_response(ctx, resp2)                # new fp -> probe again
 
@@ -167,7 +167,7 @@ async def test_no_injection_on_llm_error(tmp_path):
 
     store = JsonFileTodoStore(tmp_path)
     sid = "s1"
-    await store.save(sid, [TodoItem("a", TodoStatus.PENDING)])
+    await store.save(sid, [TodoItem(content="a", status=TodoStatus.PENDING)])
     tm = _tm(True, store)
     ctx = _make_ctx(tm, session_id=sid)
     hook = TodoCompletionProbeHook(store=store, tool_manager=tm)
@@ -192,7 +192,7 @@ async def test_injection_is_in_memory_not_session(tmp_path):
     hook = TodoCompletionProbeHook(store=store, tool_manager=_tm(True, store))
     ctx = _make_ctx(hook._tool_manager)
     sid = ctx.session.session_id
-    await store.save(sid, [TodoItem("a", TodoStatus.PENDING)])
+    await store.save(sid, [TodoItem(content="a", status=TodoStatus.PENDING)])
     resp = _response(content="I'm done.")
 
     await hook.after_llm_response(ctx, resp)
@@ -227,7 +227,7 @@ async def test_no_injection_and_no_crash_when_runtime_is_none(tmp_path):
     access."""
     store = JsonFileTodoStore(tmp_path)
     sid = "s1"
-    await store.save(sid, [TodoItem("a", TodoStatus.PENDING)])
+    await store.save(sid, [TodoItem(content="a", status=TodoStatus.PENDING)])
     tm = _tm(True, store)
 
     class _CtxNoRuntime:

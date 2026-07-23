@@ -13,11 +13,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
 
 from modex_agent.agents.react.agent import ReActEvent
+from modex_agent.agents.react.error_recovery import (
+    ErrorRecoveryConfig,
+    attempt_recovery,
+    is_context_overflow_error,
+)
 from modex_agent.agents.react.state import get_react_state
 from modex_agent.core.agent import AgentContext
+from modex_agent.core.constants import FinishReason
+from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import LLMProvider, StreamingLLMProvider
 from modex_agent.core.types import LLMResponse, ToolCall
 from modex_agent.interceptor.abc import (
@@ -25,6 +31,7 @@ from modex_agent.interceptor.abc import (
     LLMStreamChunk,
     LLMStreamContext,
 )
+from modex_agent.runtime.dispatch import renew_dispatch_deadline
 from modex_agent.runtime.enums import TurnCustomKey
 
 logger = logging.getLogger(__name__)
@@ -41,35 +48,39 @@ class ReactLlmClient:
         messages: list[dict[str, object]],
         ctx: AgentContext,
     ) -> LLMResponse:
+        # B6 boundary: LLMNode._build_messages (and the to_messages /
+        # governance pipeline) still produces list[dict]; coerce to
+        # list[ChatMessage] so the provider ABC and LLMStreamContext
+        # receive typed structs.
+        typed_messages = [ChatMessage.coerce(m) for m in messages]
         emitter = ctx.emitter
-        use_streaming = False
-        if emitter is not None and emitter.wants_streaming():
-            try:
-                self._provider.chat_stream  # type: ignore[attr-defined]
-            except AttributeError:
-                pass
-            else:
-                use_streaming = True
+        use_streaming = (
+            emitter is not None
+            and emitter.wants_streaming()
+            and isinstance(self._provider, StreamingLLMProvider)
+        )
         if use_streaming:
             interceptor_chain = ctx.runtime.interceptors if ctx.runtime else None
-            if interceptor_chain is not None:
-                if interceptor_chain.has_scope(InterceptorScope.LLM_STREAM):
-                    return await self._stream_with_control(messages, ctx)
-            return await self._stream_plain(messages, ctx)
-        return await self._call_non_streaming(messages, ctx)
+            if (
+                interceptor_chain is not None
+                and interceptor_chain.has_scope(InterceptorScope.LLM_STREAM)
+            ):
+                return await self._stream_with_control(typed_messages, ctx)
+            return await self._stream_with_recovery(typed_messages, ctx)
+        return await self._call_non_streaming_with_recovery(typed_messages, ctx)
 
     async def _stream_with_control(
         self,
-        messages: list[dict[str, Any]],
+        messages: list[ChatMessage],
         context: AgentContext,
     ) -> LLMResponse:
-        """通过 InterceptorChain 包裹的 LLM 流式调用。"""
+        """LLM streaming call wrapped by the InterceptorChain."""
         assert isinstance(self._provider, StreamingLLMProvider)
         emitter = context.emitter
 
         stream_ctx = LLMStreamContext(
             messages=messages,
-            model=getattr(self._provider, "model", None),
+            model=self._provider.get_default_model(),
             session_id=str(context.session),
         )
 
@@ -81,11 +92,11 @@ class ReactLlmClient:
         # partial text when a cancel interrupts mid-stream (the final chunk
         # never arrives). Used to persist an interrupted assistant message.
         streamed_content = ""
-        finish_reason = "stop"
+        finish_reason: FinishReason = FinishReason.STOP
         tool_calls_list: list[ToolCall] = []
 
         async def _actual_stream():
-            """实际调用 provider.chat_stream，将 chunk 转为 LLMStreamChunk。"""
+            """Call provider.chat_stream, converting the result to LLMStreamChunk."""
             nonlocal tool_calls_list
 
             async def _on_content_delta(delta: str) -> None:
@@ -102,6 +113,7 @@ class ReactLlmClient:
                         context,
                         turn_uuid=context.runtime.turn_uuid,
                     )
+                renew_dispatch_deadline()
                 if delta:
                     streamed_content += delta
                     await emitter.emit_delta(delta)
@@ -115,14 +127,14 @@ class ReactLlmClient:
                         context,
                         turn_uuid=context.runtime.turn_uuid,
                     )
+                renew_dispatch_deadline()
                 if delta:
                     await emitter.emit(ReActEvent.MODEL_REASONING, delta)
 
             # TODO(model-config-convergence): 模型调用参数 temperature/max_output_tokens 应只由
             # LLMProvider 持有；此处经 descriptor/context 透传属冗余复制。待 ReactLlmClient
             # 不再传这两参后，本字段/参数可连同 AgentContext.temperature/max_output_tokens、
-            # AgentLLMConfig、AgentMaterializeDeps 的同名字段一并删除。收敛目标见
-            # docs/superpowers/plans/2026-07-03-bot-multi-model.md §框架配置收敛后续。
+            # AgentLLMConfig、AgentMaterializeDeps 的同名字段一并删除。
             response = await self._provider.chat_stream(
                 messages=messages,
                 tools=context.get_tool_descriptions() if context.tool_manager else None,
@@ -141,14 +153,14 @@ class ReactLlmClient:
         interceptor_chain = context.runtime.interceptors if context.runtime else None
         try:
             # Canonical AOP path for LLM_STREAM. `ctx.runtime.around` is for
-            # ITERATION only — see ADR-0034 D2.
+            # ITERATION only — see ADR-0033 D5.
             async for chunk in interceptor_chain.around_llm_stream(
                 context,
                 stream_ctx,
                 _actual_stream,
             ):
                 if chunk.control_action == "cancel":
-                    finish_reason = chunk.finish_reason or "cancelled"
+                    finish_reason = chunk.finish_reason or FinishReason.CANCELLED
                     logger.warning(
                         "LLM stream cancelled session=%s finish_reason=%s",
                         str(context.session),
@@ -186,25 +198,78 @@ class ReactLlmClient:
             tool_calls=tool_calls_list,
         )
 
+    async def _call_non_streaming_with_recovery(
+        self,
+        messages: list[ChatMessage],
+        ctx: AgentContext,
+    ) -> LLMResponse:
+        """Non-streaming path wrapped in a context-overflow recovery loop."""
+        config = ErrorRecoveryConfig()
+        current_messages: list[ChatMessage] = list(messages)
+        for attempt in range(config.max_context_overflow_retries + 1):
+            try:
+                return await self._call_non_streaming(current_messages, ctx)
+            except Exception as e:
+                if not is_context_overflow_error(e):
+                    raise
+                recovery = await attempt_recovery(current_messages, e, attempt, config)
+                if not recovery.should_retry:
+                    raise
+                logger.warning("LLM context overflow, retrying: %s", recovery.reason)
+                if recovery.trimmed_messages is not None:
+                    current_messages = recovery.trimmed_messages
+        # Should not reach here, but just in case
+        return await self._call_non_streaming(current_messages, ctx)
+
+    async def _stream_with_recovery(
+        self,
+        messages: list[ChatMessage],
+        ctx: AgentContext,
+    ) -> LLMResponse:
+        """Plain streaming path wrapped in a context-overflow recovery loop.
+
+        Only catches errors raised *before* any delta is emitted (which is when
+        413/context-overflow occurs — the initial request is too large).
+        """
+        config = ErrorRecoveryConfig()
+        current_messages: list[ChatMessage] = list(messages)
+        for attempt in range(config.max_context_overflow_retries + 1):
+            try:
+                return await self._stream_plain(current_messages, ctx)
+            except Exception as e:
+                if not is_context_overflow_error(e):
+                    raise
+                recovery = await attempt_recovery(current_messages, e, attempt, config)
+                if not recovery.should_retry:
+                    raise
+                logger.warning(
+                    "LLM context overflow during streaming, retrying: %s",
+                    recovery.reason,
+                )
+                if recovery.trimmed_messages is not None:
+                    current_messages = recovery.trimmed_messages
+        return await self._stream_plain(current_messages, ctx)
+
     async def _stream_plain(
         self,
-        messages: list[dict[str, object]],
+        messages: list[ChatMessage],
         ctx: AgentContext,
     ) -> LLMResponse:
         async def _on_content(delta: str) -> None:
+            renew_dispatch_deadline()
             if delta and ctx.emitter is not None:
                 await ctx.emitter.emit_delta(delta)
                 await ctx.emitter.emit(ReActEvent.MODEL_OUTPUT, delta)
 
         async def _on_reasoning(delta: str) -> None:
+            renew_dispatch_deadline()
             if delta and ctx.emitter is not None:
                 await ctx.emitter.emit(ReActEvent.MODEL_REASONING, delta)
 
         # TODO(model-config-convergence): 模型调用参数 temperature/max_output_tokens 应只由
         # LLMProvider 持有；此处经 descriptor/context 透传属冗余复制。待 ReactLlmClient
         # 不再传这两参后，本字段/参数可连同 AgentContext.temperature/max_output_tokens、
-        # AgentLLMConfig、AgentMaterializeDeps 的同名字段一并删除。收敛目标见
-        # docs/superpowers/plans/2026-07-03-bot-multi-model.md §框架配置收敛后续。
+        # AgentLLMConfig、AgentMaterializeDeps 的同名字段一并删除。
         response = await self._provider.chat_stream(
             messages=messages,
             tools=ctx.get_tool_descriptions() if ctx.tool_manager else None,
@@ -219,7 +284,7 @@ class ReactLlmClient:
 
     async def _call_non_streaming(
         self,
-        messages: list[dict[str, object]],
+        messages: list[ChatMessage],
         ctx: AgentContext,
     ) -> LLMResponse:
         # TODO(model-config-convergence): 模型调用参数 temperature/max_output_tokens 应只由

@@ -9,9 +9,9 @@
    Pydantic-first structured-data policy.)
 3. Function signatures must declare parameter and return types. Avoid bare `Any`,
    `list`, `dict`, `object`, and `list[Any]` in framework-facing APIs.
-4. Design abstractions before depending on implementations. Use ABCs or Protocols for
+4. Design abstractions before depending on implementations. Use ABCs for
    cross-cutting concerns and extension points, rather than directly binding framework
-   code to concrete implementations.
+   code to concrete implementations. Protocols are prohibited (rule 7).
 5. Keep framework code and example business code separated. `framework/` contains
    reusable framework behavior; `examples/` contains usage examples and business wiring.
    Do not hard-code example-specific configuration or business assumptions into the

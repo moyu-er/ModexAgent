@@ -38,7 +38,7 @@ def _render_skill_xml(skills: list[Skill]) -> str:
     _max_skill_desc_chars = 400
 
     for skill in skills:
-        dir_path = str(Path(skill.location).parent.resolve()) if skill.location else ""
+        dir_path = str(Path(skill.location).parent) if skill.location else ""
         parts.append(f'  <skill name="{xml_attr(skill.name)}" directory="{xml_attr(dir_path)}">')
         if skill.description:
             desc = skill.description

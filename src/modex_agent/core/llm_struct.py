@@ -5,13 +5,12 @@
 """
 
 import logging
-from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
-from .constants import DefaultValues, ReasoningEffort
+from .constants import DefaultValues, FinishReason, ReasoningEffort
 
 if TYPE_CHECKING:
     from .types import LLMResponse
@@ -116,9 +115,10 @@ class ProviderKind(StrEnum):
 # ─── 安全策略配置 ──────────────────────────────────────────────────────────────
 
 
-@dataclass(frozen=True)
-class LLMTimeoutPolicy:
+class LLMTimeoutPolicy(BaseModel):
     """单次 LLM 调用的超时与重试策略。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     request_timeout_seconds: float = 45.0
     stream_idle_timeout_seconds: float = 90.0
@@ -126,9 +126,10 @@ class LLMTimeoutPolicy:
     retry_backoff_seconds: tuple[float, ...] = (2.0, 8.0)
 
 
-@dataclass(frozen=True)
-class TurnTimeoutPolicy:
+class TurnTimeoutPolicy(BaseModel):
     """单个 Turn 各阶段超时配置。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     agent_run_timeout_seconds: float = 420.0
     dispatch_timeout_seconds: float = 300.0
@@ -138,21 +139,23 @@ class TurnTimeoutPolicy:
     tool_timeout_seconds: float = DefaultValues.TOOL_TIMEOUT_SECONDS
 
 
-@dataclass(frozen=True)
-class RuntimeSafetyPolicy:
+class RuntimeSafetyPolicy(BaseModel):
     """P0/P1 运行时安全策略聚合。
 
     注入路径：AgentPipeline.__init__ / AgentPool，放入 context metadata 或
     显式字段，供 ReActAgent / emitter / hook / memory 各层读取。
     """
 
-    llm: LLMTimeoutPolicy = field(default_factory=LLMTimeoutPolicy)
-    turn: TurnTimeoutPolicy = field(default_factory=TurnTimeoutPolicy)
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    llm: LLMTimeoutPolicy = Field(default_factory=LLMTimeoutPolicy)
+    turn: TurnTimeoutPolicy = Field(default_factory=TurnTimeoutPolicy)
 
 
-@dataclass(frozen=True)
-class LLMProviderConfig:
+class LLMProviderConfig(BaseModel):
     """LLM Provider 最小配置结构，用于工厂创建。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     provider: ProviderKind = ProviderKind.OPENAI
     model: str = ""
@@ -186,7 +189,7 @@ def build_timeout_response(
 
     return LLMResponse(
         content=partial_content or message,
-        finish_reason="error",
+        finish_reason=FinishReason.ERROR,
         error=message,
         error_info=LLMErrorInfo(
             kind=LLMErrorKind.TIMEOUT,

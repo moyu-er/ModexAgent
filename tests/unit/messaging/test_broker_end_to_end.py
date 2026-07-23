@@ -75,7 +75,7 @@ async def broker():
 
 async def test_concurrent_p2p_from_multiple_senders(broker):
     """多个发送方并发向同一 Address 发消息，消费端按 FIFO 接收。"""
-    addr = Address("agent", "target")
+    addr = Address(kind="agent", name="target")
     await broker.register_consumer(addr)
 
     async def _send_batch(start: int):
@@ -84,7 +84,7 @@ async def test_concurrent_p2p_from_multiple_senders(broker):
                 addr,
                 BrokerMessage(
                     payload={"i": start + i},
-                    sender=Address("user", f"u{start}"),
+                    sender=Address(kind="user", name=f"u{start}"),
                     recipient=addr,
                 ),
             )
@@ -106,7 +106,7 @@ async def test_concurrent_p2p_from_multiple_senders(broker):
 async def test_publish_race_with_new_subscriber(broker):
     """publish 期间新 subscriber 加入，不应收到旧消息（无回溯）。"""
     topic = "live:events"
-    addr_a = Address("agent", "a")
+    addr_a = Address(kind="agent", name="a")
     await broker.register_consumer(addr_a)
 
     # a 先订阅
@@ -116,14 +116,14 @@ async def test_publish_race_with_new_subscriber(broker):
 
     await broker.publish(
         topic,
-        BrokerMessage(payload={"n": 1}, sender=Address("system", "sys"), topic=topic),
+        BrokerMessage(payload={"n": 1}, sender=Address(kind="system", name="sys"), topic=topic),
     )
 
     got_a = await asyncio.wait_for(task_a, timeout=0.5)
     assert got_a[0].payload["n"] == 1
 
     # 新 subscriber b 后加入
-    addr_b = Address("agent", "b")
+    addr_b = Address(kind="agent", name="b")
     await broker.register_consumer(addr_b)
     sub_b = broker.subscribe([topic])
     task_b = asyncio.create_task(_collect_n(sub_b, 1))
@@ -132,7 +132,7 @@ async def test_publish_race_with_new_subscriber(broker):
     # 再发一条，只有 b 收到
     await broker.publish(
         topic,
-        BrokerMessage(payload={"n": 2}, sender=Address("system", "sys"), topic=topic),
+        BrokerMessage(payload={"n": 2}, sender=Address(kind="system", name="sys"), topic=topic),
     )
 
     got_b = await asyncio.wait_for(task_b, timeout=0.5)
@@ -144,10 +144,10 @@ async def test_publish_race_with_new_subscriber(broker):
 
 async def test_stop_does_not_inject_sentinel_as_normal_message(broker):
     """stop() 注入的 sentinel 不应被消费者当作正常 BrokerMessage 收到。"""
-    addr = Address("agent", "x")
+    addr = Address(kind="agent", name="x")
     await broker.register_consumer(addr)
 
-    normal = BrokerMessage(payload={"t": "normal"}, sender=Address("user", "u"), recipient=addr)
+    normal = BrokerMessage(payload={"t": "normal"}, sender=Address(kind="user", name="u"), recipient=addr)
     await broker.send_to(addr, normal)
 
     received = []
@@ -162,13 +162,13 @@ async def test_stop_does_not_inject_sentinel_as_normal_message(broker):
 
 async def test_stop_preserves_queued_messages(broker):
     """stop() 后 mailbox 中未消费的消息应保留，而不是被清空。"""
-    addr = Address("agent", "x")
+    addr = Address(kind="agent", name="x")
     await broker.register_consumer(addr)
 
     for i in range(3):
         await broker.send_to(
             addr,
-            BrokerMessage(payload={"i": i}, sender=Address("user", "u"), recipient=addr),
+            BrokerMessage(payload={"i": i}, sender=Address(kind="user", name="u"), recipient=addr),
         )
 
     await broker.stop()
@@ -190,7 +190,7 @@ async def test_stop_preserves_queued_messages(broker):
 async def test_subscribe_cleanup_quantified(broker):
     """subscribe 退出后，临时 Address 和 topic subscription 都应被清理。"""
     topic = "t:1"
-    addr = Address("agent", "permanent")
+    addr = Address(kind="agent", name="permanent")
     await broker.register_consumer(addr)
 
     async def _sub():
@@ -202,7 +202,7 @@ async def test_subscribe_cleanup_quantified(broker):
 
     task = asyncio.create_task(_sub())
     await asyncio.sleep(0.02)
-    await broker.publish(topic, BrokerMessage(payload={}, sender=Address("user", "u"), topic=topic))
+    await broker.publish(topic, BrokerMessage(payload={}, sender=Address(kind="user", name="u"), topic=topic))
     await asyncio.wait_for(task, timeout=0.5)
     await asyncio.sleep(0)  # yield control to let generator aclose finish
 
@@ -231,10 +231,10 @@ async def test_overlapping_subscribe_to_same_topic(broker):
     await asyncio.sleep(0.02)
 
     await broker.publish(
-        topic, BrokerMessage(payload={"n": 1}, sender=Address("user", "u"), topic=topic)
+        topic, BrokerMessage(payload={"n": 1}, sender=Address(kind="user", name="u"), topic=topic)
     )
     await broker.publish(
-        topic, BrokerMessage(payload={"n": 2}, sender=Address("user", "u"), topic=topic)
+        topic, BrokerMessage(payload={"n": 2}, sender=Address(kind="user", name="u"), topic=topic)
     )
 
     _, msgs_a = await asyncio.wait_for(t1, timeout=1.0)
@@ -249,20 +249,20 @@ async def test_overlapping_subscribe_to_same_topic(broker):
 
 async def test_broadcast_does_not_include_late_registrants(broker):
     """broadcast 使用注册时的 snapshot，不应包含之后注册的新消费者。"""
-    addr_a = Address("agent", "early")
+    addr_a = Address(kind="agent", name="early")
     await broker.register_consumer(addr_a)
 
     # broadcast 时 b 还未注册
     await broker.broadcast(
-        BrokerMessage(payload={"batch": 1}, sender=Address("system", "sys"), broadcast=True)
+        BrokerMessage(payload={"batch": 1}, sender=Address(kind="system", name="sys"), broadcast=True)
     )
 
-    addr_b = Address("agent", "late")
+    addr_b = Address(kind="agent", name="late")
     await broker.register_consumer(addr_b)
 
     # 再 broadcast 一次
     await broker.broadcast(
-        BrokerMessage(payload={"batch": 2}, sender=Address("system", "sys"), broadcast=True)
+        BrokerMessage(payload={"batch": 2}, sender=Address(kind="system", name="sys"), broadcast=True)
     )
 
     # a 收到 2 条
@@ -280,7 +280,7 @@ async def test_broker_output_adapter_correlation_id_set(broker):
     """BrokerOutputAdapter 发送的消息应携带 correlation_id=session_id。"""
     adapter = BrokerOutputAdapter(
         broker=broker,
-        sender=Address("agent", "react"),
+        sender=Address(kind="agent", name="react"),
         default_topic="out",
     )
     out = OutputMessage(content="c")
@@ -335,15 +335,15 @@ async def test_bridge_service_input_exception_isolation(broker):
     service = BrokerBridgeService(
         broker=broker,
         input_bindings={
-            CrashingInputAdapter(): Address("channel", "bad"),
-            healthy: Address("channel", "good"),
+            CrashingInputAdapter(): Address(kind="channel", name="bad"),
+            healthy: Address(kind="channel", name="good"),
         },
     )
     await service.start()
     await asyncio.sleep(0.05)
 
     # healthy 的消息仍然被桥接到 broker
-    got = await asyncio.wait_for(broker.consume(Address("channel", "good")), timeout=0.5)
+    got = await asyncio.wait_for(broker.consume(Address(kind="channel", name="good")), timeout=0.5)
     assert got.payload["content"] == "ok"
 
     await service.stop()
@@ -364,7 +364,7 @@ async def test_bridge_service_output_topic_multiple_messages(broker):
             "agent:out",
             BrokerMessage(
                 payload={"content": str(i), "session_id": f"s{i}"},
-                sender=Address("agent", "x"),
+                sender=Address(kind="agent", name="x"),
                 topic="agent:out",
             ),
         )
@@ -383,9 +383,9 @@ async def test_bridge_service_output_topic_multiple_messages(broker):
 
 async def test_empty_payload_message(broker):
     """空 payload 的消息应能正常收发，不抛异常。"""
-    addr = Address("agent", "empty")
+    addr = Address(kind="agent", name="empty")
     await broker.register_consumer(addr)
-    msg = BrokerMessage(payload={}, sender=Address("user", "u"), recipient=addr)
+    msg = BrokerMessage(payload={}, sender=Address(kind="user", name="u"), recipient=addr)
     await broker.send_to(addr, msg)
     got = await asyncio.wait_for(broker.consume(addr), timeout=0.5)
     assert got.payload == {}
@@ -394,11 +394,11 @@ async def test_empty_payload_message(broker):
 async def test_long_session_id_and_correlation_id(broker):
     """超长 session_id / correlation_id 应能原样传递。"""
     long_id = "x" * 4096
-    addr = Address("agent", "long")
+    addr = Address(kind="agent", name="long")
     await broker.register_consumer(addr)
     msg = BrokerMessage(
         payload={"k": 1},
-        sender=Address("user", "u"),
+        sender=Address(kind="user", name="u"),
         recipient=addr,
         correlation_id=long_id,
     )

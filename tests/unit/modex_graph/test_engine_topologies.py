@@ -11,6 +11,7 @@ from helpers import (
 )
 
 from modex_graph import (
+    Command,
     Graph,
     GraphContext,
     GraphEngine,
@@ -203,6 +204,44 @@ class TestHitlInterruptResume:
         # Resume: same engine, same entry_node. start detects count > 0 → after_resume.
         result = await GraphEngine(compiled).run_async(ctx)
         assert result.count == 101
+
+    async def test_resume_routes_via_resume_target_channel(self) -> None:
+        """Resume routing via state.resume_target + Command(goto=...)."""
+
+        class EntryNode(Node[CounterState]):
+            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+                if ctx.state.resume_target is not None:
+                    target = ctx.state.resume_target
+                    ctx.state.resume_target = None
+                    return NodeResult(command=Command(goto=target))
+                ctx.state.count += 1
+                return NodeResult(transition="initial")
+
+        class SuspendNode(Node[CounterState]):
+            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+                ctx.state.resume_target = "after_resume"
+                ctx.interrupt("paused")
+                return NodeResult()
+
+        g: Graph[CounterState] = Graph()
+        g.add_node("start", EntryNode())
+        g.add_node("suspend", SuspendNode())
+        g.add_node("after_resume", AddNode(amount=100))
+        g.add_edge(GraphNode.START, "start")
+        g.add_edge("start", "suspend", reason="initial")
+        g.add_edge("suspend", GraphNode.END)
+        g.add_edge("after_resume", GraphNode.END)
+        compiled = g.compile()
+
+        ctx = make_ctx(CounterState(count=0))
+        with pytest.raises(GraphInterrupt):
+            await GraphEngine(compiled).run_async(ctx)
+        assert ctx.state.count == 1
+        assert ctx.state.resume_target == "after_resume"
+
+        result = await GraphEngine(compiled).run_async(ctx)
+        assert result.count == 101
+        assert result.resume_target is None
 
 
 class TestSyncAsyncMixed:

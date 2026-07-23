@@ -155,7 +155,7 @@ class TestFullLifecycleNotification:
         assert len(envelopes) == 1
 
         content = envelopes[0].payload["content"]
-        assert "<subagent_notification>" in content
+        assert "<subagent_result>" in content
         assert "<agent>worker</agent>" in content
         assert "<output_status>written</output_status>" in content
 
@@ -189,10 +189,10 @@ class TestCrashSendsErrorNotification:
         assert len(envelopes) == 1
 
         content = envelopes[0].payload["content"]
-        assert "<subagent_notification>" in content
-        assert _extract_xml_field(content, "is_normal") == "false"
-        assert "crashed" in _extract_xml_field(content, "hint").lower()
-        assert _extract_xml_field(content, "error") == "something broke"
+        assert "<subagent_result>" in content
+        assert _extract_xml_field(content, "success") == "false"
+        assert "crashed" in _extract_xml_field(content, "issue").lower()
+        assert "something broke" in _extract_xml_field(content, "issue")
 
 
 # ---------------------------------------------------------------------------

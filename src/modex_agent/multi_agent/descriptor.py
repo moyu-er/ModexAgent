@@ -1,23 +1,26 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from modex_agent.core.constants import ExecutionStrategyKind, ReasoningEffort
+from modex_agent.core.context import ContextManager
+from modex_agent.core.llm_struct import RuntimeSafetyPolicy
+from modex_agent.ioc.configs.memory import MemoryConfig
+from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.comm_kind import AgentCommKind
 
 if TYPE_CHECKING:
     from modex_agent.agents.external_coding.paths import ProviderKind
-    from modex_agent.core.context import ContextManager
-    from modex_agent.core.llm_struct import RuntimeSafetyPolicy
-    from modex_agent.ioc.configs.memory import MemoryConfig
-    from modex_agent.multi_agent.address import AgentAddress
     from modex_agent.pipeline.pipeline import AgentPipeline
 
 
-@dataclass
-class AgentLLMConfig:
+class AgentLLMConfig(BaseModel):
     """Agent 的 LLM 配置子集。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     model: str | None = None
     # TODO(model-config-convergence): 模型调用参数 temperature/max_output_tokens 应只由
@@ -29,16 +32,17 @@ class AgentLLMConfig:
     max_output_tokens: int | None = None
     top_p: float = 1.0
     reasoning_effort: ReasoningEffort = ReasoningEffort.NONE
-    extra_params: dict[str, Any] = field(default_factory=dict)
+    extra_params: dict[str, Any] = Field(default_factory=dict)
 
 
-@dataclass
-class ContextGovernanceConfig:
+class ContextGovernanceConfig(BaseModel):
     """上下文治理策略配置。
 
     Tool chain repair (去孤儿/补全缺失 tool 结果) 已统一由
     framework/memory/context_governance.py 的 ToolChainRepairGovernance 处理。
     """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     enable_microcompact: bool = True
     enable_budget: bool = True
@@ -49,12 +53,17 @@ class ContextGovernanceConfig:
     max_message_chars: int | None = None
 
 
-@dataclass
-class AgentDescriptor:
+class AgentDescriptor(BaseModel):
     """Agent 的完整身份与能力描述符。"""
 
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        arbitrary_types_allowed=True,
+    )
+
     address: AgentAddress
-    llm_config: AgentLLMConfig = field(default_factory=AgentLLMConfig)
+    llm_config: AgentLLMConfig = Field(default_factory=AgentLLMConfig)
     system_prompt_template: str | None = None
     allowed_tools: list[str] | None = None
     denied_tools: list[str] | None = None
@@ -73,7 +82,7 @@ class AgentDescriptor:
     inbox_strategy: str = "drain_all"  # "drain_all" | "drain_limit" | "peek_latest"
     allowed_callers: list[str] | None = None
     role_description: str = ""
-    specialties: list[str] = field(default_factory=list)
+    specialties: list[str] = Field(default_factory=list)
     exposed_to_agents: bool = True
     safety_policy: RuntimeSafetyPolicy | None = None
     comm_kind: AgentCommKind = AgentCommKind.NORMAL
@@ -82,12 +91,23 @@ class AgentDescriptor:
     ContextGovernance chain (tool chain repair + final legality) for the
     subagent pipeline. None means the subagent gets no governance — the
     default in factory.create_agent."""
-    roles: list[str] = field(default_factory=list, compare=False)
+    roles: list[str] = Field(default_factory=list)
     """Agent role tags (T1 data layer). Plain strings — preset values are
     :class:`modex_agent.core.constants.AgentRole` members, custom strings
     are allowed. ``compare=False`` excludes this field from the auto-generated
     ``__eq__`` / ``__hash__`` because roles are metadata, not identity —
     pool registration dedup is unaffected by role changes."""
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, AgentDescriptor):
+            return NotImplemented
+        # Exclude ``roles`` from equality — they are metadata, not identity.
+        return self.model_dump(exclude={"roles"}) == other.model_dump(exclude={"roles"})
+
+    def __hash__(self) -> int:
+        # Hash must exclude ``roles`` to stay consistent with __eq__. JSON dump
+        # gives a hashable string regardless of nested dict/list field values.
+        return hash(self.model_dump_json(exclude={"roles"}))
 
 
 @dataclass
@@ -106,3 +126,12 @@ class AgentInstance:
             await self.pipeline.stop()
         finally:
             await self.pipeline.agent.stop()
+
+
+# ProviderKind lives behind external_coding.__init__ which imports modules that
+# import from multi_agent — a cycle we can only close once AgentDescriptor and
+# AgentInstance are defined above. Rebuild the schema now so the model is fully
+# resolved before any caller tries to instantiate it.
+from modex_agent.agents.external_coding.paths import ProviderKind  # noqa: E402, F401
+
+AgentDescriptor.model_rebuild()

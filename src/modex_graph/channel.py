@@ -122,7 +122,7 @@ def _is_pydantic_model_class(cls: type) -> bool:
     return isinstance(cls, type) and issubclass(cls, BaseModel) and cls is not BaseModel
 
 
-# TypeAdapter bridge (ADR-0034 D1): a public convenience facility for
+# TypeAdapter bridge (ADR-0033 D14): a public convenience facility for
 # serializing stdlib @dataclass values that are NOT Pydantic BaseModel
 # subclasses. The framework's own types migrated to BaseModel (Stage 2
 # complete) and now serialize through the BaseModel branch above. This

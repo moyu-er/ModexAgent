@@ -123,10 +123,11 @@ async def test_assemble_context_propagates_xml_format_from_input_msg() -> None:
 
     ctx_mgr = FakeContextManager()
     input_msg = InputMessage(
-        content="/weather", session=SessionInfo.from_str("s1", default_agent_name="main")
+        content="/weather",
+        session=SessionInfo.from_str("s1", default_agent_name="main"),
+        content_format=ContentFormat.XML,
+        truncatable_paths=["command_context", "user_input"],
     )
-    input_msg.content_format = ContentFormat.XML
-    input_msg.truncatable_paths = ["command_context", "user_input"]
 
     state = await assemble_context(
         "s1",

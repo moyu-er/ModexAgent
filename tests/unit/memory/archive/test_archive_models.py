@@ -64,3 +64,19 @@ def test_bundle_result_tracks_shared_archive_id() -> None:
         ArchiveChannel.CONTEXT,
         ArchiveChannel.CORE,
     )
+
+
+def test_archive_write_roundtrip() -> None:
+    write = ArchiveWrite(
+        channel=ArchiveChannel.CONTEXT,
+        summary="summary",
+        metadata={"reason": "message_count"},
+        raw_refs=("ref1", "ref2"),
+    )
+    dumped = write.model_dump()
+    restored = ArchiveWrite.model_validate(dumped)
+
+    assert restored.channel == write.channel
+    assert restored.summary == write.summary
+    assert restored.metadata == write.metadata
+    assert restored.raw_refs == write.raw_refs

@@ -35,7 +35,7 @@ from modex_agent.core.agent_runtime_config import BusyInputMode
 from modex_agent.core.emitter import AgentResult
 from modex_graph.exceptions import GraphInterrupt
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
-from modex_agent.core.types import InputMessage
+from modex_agent.core.types import InputMessage, OutputMessageType
 from modex_agent.memory.consolidation import DreamEngine
 from modex_agent.multi_agent.router import AgentMessageRouter
 from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter, OutputMessage
@@ -196,7 +196,7 @@ class AgentPipeline:
                         await self.output_adapter.send(
                             OutputMessage(
                                 content=f"Error: {str(e)}",
-                                message_type="error",
+                                message_type=OutputMessageType.ERROR,
                             ),
                             str(input_msg.session),
                         )
@@ -315,7 +315,7 @@ class AgentPipeline:
                             OutputMessage(
                                 content="Agent is currently processing. Please wait for the current turn to complete.",
                                 session_id=session_id,
-                                message_type="busy_notice",
+                                message_type=OutputMessageType.BUSY_NOTICE,
                             ),
                             session_id,
                         )

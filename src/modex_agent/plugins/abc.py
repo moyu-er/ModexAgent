@@ -4,11 +4,13 @@ The primary extension point is MemoryProvider — pluggable memory backends
 that integrate with the framework's four-layer memory system as an
 additive enhancement layer.
 """
+from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from modex_agent.core.message import ChatMessage
     from modex_agent.core.scope import MemoryContext
 
 
@@ -66,7 +68,7 @@ class MemoryProvider(ABC):
     @abstractmethod
     async def add(
         self,
-        messages: list[dict[str, Any]],
+        messages: list["ChatMessage"],
         context: "MemoryContext",
     ) -> dict[str, Any]:
         """Add messages to the memory backend.
@@ -74,7 +76,7 @@ class MemoryProvider(ABC):
         Called by MemorySystem after each turn (fan-out to all providers).
 
         Args:
-            messages: OpenAI-format message list [{"role": "user", "content": "..."}]
+            messages: ChatMessage 列表（结构化消息，B6 收敛自 list[dict]）
             context: MemoryContext (session_id, user_id, agent_id, etc.)
 
         Returns:
@@ -115,7 +117,7 @@ class MemoryProvider(ABC):
 
     async def on_pre_compress(  # noqa: ARG002
         self,
-        _messages: list[dict[str, Any]],
+        _messages: list["ChatMessage"],
         _context: "MemoryContext",
     ) -> None:
         """Called before context compression prunes messages.

@@ -17,7 +17,7 @@ import json
 import logging
 from collections.abc import Sequence
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias, Optional, Union
 
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.scope import MemoryAgentRole, MemoryContext
@@ -25,7 +25,7 @@ from modex_agent.core.scope import MemoryAgentRole, MemoryContext
 if TYPE_CHECKING:
     from modex_agent.plugins import MemoryProvider
 
-QueuedAppend: TypeAlias = tuple[list[ChatMessage | dict[str, Any]], MemoryContext] | None
+QueuedAppend: TypeAlias = Optional[tuple[list[Union[ChatMessage, dict[str, Any]]], MemoryContext]]
 
 logger = logging.getLogger(__name__)
 
@@ -169,10 +169,12 @@ class MemoryAppendRecorder:
         messages: list[ChatMessage | dict[str, Any]],
         context: MemoryContext,
     ) -> None:
-        dict_messages = [m.to_dict() if isinstance(m, ChatMessage) else dict(m) for m in messages]
+        # B6: MemoryProvider.add now takes list[ChatMessage]; coerce the
+        # mixed queued list (record() accepts ChatMessage | dict).
+        typed_messages = [ChatMessage.coerce(m) for m in messages]
         for provider in self._providers:
             try:
-                await provider.add(dict_messages, context)
+                await provider.add(typed_messages, context)
             except Exception as e:
                 logger.warning("Provider '%s' add failed: %s", provider.name, e)
 

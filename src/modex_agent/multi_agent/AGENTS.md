@@ -93,11 +93,11 @@ per invocation by pipeline providers, so reuse is safe.)
 | `workspace_paths.py` | `WorkspacePathResolver` — resolves `runtime_dir` / `memory_dir` / `output_path(session_id)` / `trace_dir(session_id)` / `pruned_manager` from the active workspace's pool_data. |
 | `router.py` | `DefaultMeshRouter` — session identity resolved via `InputMessage.session` (no string parsing). |
 | `envelope.py` | `AgentMessageEnvelope` — source, target, session id, agent_session_id, invocation id, message_type, payload. |
-| `descriptor.py` | `AgentDescriptor`, `AgentInstance`, `AgentLLMConfig` — agent metadata + `comm_kind`. |
+| `descriptor.py` | `AgentDescriptor`, `AgentInstance`, `AgentLLMConfig`, `ContextGovernanceConfig` — agent metadata + `comm_kind`. All are frozen Pydantic `BaseModel` (B5B). |
 | `factory.py` | Agent instance factory — assembles `AgentInstance` via `create_agent()`. `DefaultAgentFactory` builds react agents (provider + tools + skill + TurnContextBuilder + ApprovalResumer/ApprovalRenderer + ReActTurnRunner + hooks + pipeline). `ExternalCodingAwareFactory` (in `examples/bot_project/bot/service/external_coding_strategy.py`) overrides `create_agent` to build only 6 objects (ExternalCodingAgent + broker I/O + emitter + ExternalTurnRunner + pipeline, no hooks/provider/tools) — external_coding pools boot without `model.yml`. `_get_builder` dispatch (runtime agent-construction, not assembly branching) is retained per ADR-0025 D5 deviations. |
 | `subagent_validator.py` | Framework-layer star-topology enforcement at registration. |
 | `message_xml.py` | XML message builders — `build_agent_message` (subagent dispatch / parent reply), `build_peer_agent_message` (cross-pool peer with `<reply_contract>`), `build_agent_result` (hook-generated turn result), and `build_dispatch_xml` (single convergence point for the "target is external → peer format" rule, delegated to by `SubagentDispatchStrategy` and `ParentReplyStrategy`). The `target_execution_strategy == EXTERNAL_CODING` branch in `build_dispatch_xml` is a runtime per-target site retained per ADR-0025 D5 deviations, same category as `peer_normal.py`. |
-| `address.py` / `state.py` / `registry.py` | Agent addressing dataclasses, state enums, registry ABC. |
+| `address.py` / `state.py` / `registry.py` | Agent addressing types (`AgentAddress` is a Pydantic `BaseModel` subclass of `Address`, B5B), state enums, registry ABC. |
 
 ## Subdirectories
 

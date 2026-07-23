@@ -1,9 +1,7 @@
-"""ContentEmitter ABC and implementations.
-
+"""
 Provides ``AgentResult`` (Pydantic ``BaseModel``), the ``ContentEmitter[E]``
 generic ABC, and the ``StreamingAwareEmitter`` ABC.
 """
-
 import asyncio
 import logging
 from abc import ABC, abstractmethod
@@ -216,8 +214,7 @@ class StreamingAwareEmitter(ContentEmitter[E]):
         self._reasoning_buffer = ""
 
     def wants_streaming(self) -> bool:
-        streaming_mode = getattr(self.output_adapter, "streaming_mode", None)
-        return streaming_mode in (
+        return self.output_adapter.streaming_mode in (
             StreamingMode.NATIVE,
             StreamingMode.PSEUDO,
         )
@@ -225,7 +222,7 @@ class StreamingAwareEmitter(ContentEmitter[E]):
     @property
     def is_true_streaming(self) -> bool:
         """是否是真流式（Adapter 支持 NATIVE 模式）"""
-        return getattr(self.output_adapter, "streaming_mode", None) == StreamingMode.NATIVE
+        return self.output_adapter.streaming_mode == StreamingMode.NATIVE
 
     async def _safe_adapter_send(self, message: Any, log_label: str = "send") -> None:
         """通过 output_adapter 发送消息，带 timeout 保护。"""
@@ -240,7 +237,7 @@ class StreamingAwareEmitter(ContentEmitter[E]):
         except TimeoutError:
             logger.error(
                 "Output adapter %s timeout after %.1fs for session=%s (op=%s)",
-                getattr(self.output_adapter, "name", "unknown"),
+                self.output_adapter.name,
                 self._send_timeout,
                 self.session_id,
                 log_label,
@@ -248,7 +245,7 @@ class StreamingAwareEmitter(ContentEmitter[E]):
         except Exception:
             logger.exception(
                 "Output adapter %s failed for session=%s (op=%s)",
-                getattr(self.output_adapter, "name", "unknown"),
+                self.output_adapter.name,
                 self.session_id,
                 log_label,
             )

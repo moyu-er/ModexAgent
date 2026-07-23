@@ -82,8 +82,7 @@ async def test_loop_detected_renders_loop_result(monkeypatch):
         ChatMessage(
             role="assistant",
             content="I am stuck doing the same thing.",
-            tool_calls=[{"id": "c0", "type": "function",
-                         "function": {"name": "read", "arguments": '{"path": "/a"}'}}],
+            tool_calls=[ToolCall(tool_name="read", arguments={"path": "/a"}, call_id="c0")],
         )
     )
     ctx.runtime.services.hooks.add(

@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError
-
 import pytest
+from pydantic import ValidationError
 
 from modex_agent.media.models import Attachment, AttachmentLocator, Kind
 
@@ -74,7 +73,7 @@ class TestAttachment:
 
     def test_frozen(self) -> None:
         att = self._make()
-        with pytest.raises(FrozenInstanceError):
+        with pytest.raises(ValidationError):
             att.name = "tampered.png"  # type: ignore[misc]
 
     def test_equality_by_value(self) -> None:

@@ -79,8 +79,7 @@ class TestCollectRecentAssistants:
         return ChatMessage(role="assistant", content=content, tool_calls=tool_calls)
 
     def _tc(self, name="read", path="/a"):
-        return [{"id": "c", "type": "function",
-                 "function": {"name": name, "arguments": json.dumps({"path": path})}}]
+        return [ToolCall(tool_name=name, arguments={"path": path}, call_id="c")]
 
     def test_stops_at_user(self):
         msgs = [
@@ -117,7 +116,7 @@ class TestCollectRecentAssistants:
 
     def test_current_response_tool_calls_carried(self):
         msgs = [self._asst(None, [
-            {"id": "c1", "type": "function", "function": {"name": "read", "arguments": '{"path": "/a"}'}}
+            ToolCall(tool_name="read", arguments={"path": "/a"}, call_id="c1")
         ])]
         current = LLMResponse(
             content=None, finish_reason="tool_calls",
@@ -180,7 +179,7 @@ class TestLoopDetectionHookContent:
     @pytest.mark.asyncio
     async def test_content_and_tool_loop_raises(self):
         # A real loop: identical content AND the same tool call, N times.
-        tc = [{"id": "c", "type": "function", "function": {"name": "read", "arguments": '{"path": "/a"}'}}]
+        tc = [ToolCall(tool_name="read", arguments={"path": "/a"}, call_id="c")]
         msgs = [
             ChatMessage(role="assistant", content="I will check the file.", tool_calls=tc),
             ChatMessage(role="assistant", content="I will check the file.", tool_calls=tc),
@@ -259,8 +258,7 @@ class TestLoopDetectionHookTool:
     async def test_same_tool_but_different_content_no_raise(self):
         # Same tool/args repeated, but each step says something different —
         # the AND conjunction (content similarity) is unsatisfied.
-        tc = lambda i: [{"id": "c", "type": "function",
-                         "function": {"name": "read", "arguments": '{"path": "/a"}'}}]
+        tc = lambda i: [ToolCall(tool_name="read", arguments={"path": "/a"}, call_id="c")]
         msgs = [
             ChatMessage(role="assistant", content="looking at part one", tool_calls=tc(1)),
             ChatMessage(role="assistant", content="now checking section two", tool_calls=tc(2)),
@@ -279,9 +277,9 @@ class TestLoopDetectionHookTool:
     async def test_different_args_not_a_loop(self):
         msgs = [
             ChatMessage(role="assistant", content=None, tool_calls=[
-                {"id": "1", "type": "function", "function": {"name": "read", "arguments": '{"path": "/a"}'}}]),
+                ToolCall(tool_name="read", arguments={"path": "/a"}, call_id="1")]),
             ChatMessage(role="assistant", content=None, tool_calls=[
-                {"id": "2", "type": "function", "function": {"name": "read", "arguments": '{"path": "/b"}'}}]),
+                ToolCall(tool_name="read", arguments={"path": "/b"}, call_id="2")]),
         ]
         ctx = _ctx_with_history(msgs)
         hook = LoopDetectionHook(window_size=3)

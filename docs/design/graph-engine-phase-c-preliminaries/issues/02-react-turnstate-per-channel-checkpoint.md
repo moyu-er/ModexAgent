@@ -4,7 +4,7 @@
 
 Three coupled deletions land together because they form a single behavioral unit:
 
-1. **Override removal.** `ReActTurnState.checkpoint()` (which calls `model_dump(mode="json")`) and `ReActTurnState.from_checkpoint()` (which calls `model_validate`) are deleted. The class now uses `GraphState.checkpoint()` / `from_checkpoint()`. The long docstring explaining why the override existed is replaced with a note that the override was removed per ADR-0034 D1.
+1. **Override removal.** `ReActTurnState.checkpoint()` (which calls `model_dump(mode="json")`) and `ReActTurnState.from_checkpoint()` (which calls `model_validate`) are deleted. The class now uses `GraphState.checkpoint()` / `from_checkpoint()`. The long docstring explaining why the override existed is replaced with a note that the override was removed per ADR-0033 D14.
 
 2. **Dead codec file deletion.** `react/codec.py` (50 lines) is deleted. Its five `register_codec` calls for `BaseModel` types (`ApprovalTransaction`, `ApprovalRequestState`, `ToolBatchState`, `ToolCallState`, `ToolArguments`) are unreachable dead code — `encode_value` checks `isinstance(value, BaseModel)` *before* consulting `_find_codec`, so registered `BaseModel` codecs are never invoked. Once ticket 01's `TypeAdapter` branch handles the same types, the registrations are also unnecessary.
 

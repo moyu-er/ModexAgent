@@ -11,9 +11,10 @@ import logging
 import os
 import re
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict
 
 from modex_agent.core.types import TodoStatus
 from modex_agent.utils.file_io import read_json_robust
@@ -254,19 +255,20 @@ class JsonFileTurnStateStore(TurnStateStore):
 # ===========================================================================
 
 
-@dataclass(frozen=True)
-class TodoItem:
+class TodoItem(BaseModel):
     """A single task-list entry. Order is conveyed by list position (no id)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     content: str
     status: TodoStatus
 
-    def to_dict(self) -> dict[str, str]:
+    def to_dict(self) -> dict[str, Any]:
         return {"content": self.content, "status": self.status.value}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TodoItem:
-        return cls(content=str(data["content"]), status=TodoStatus(data["status"]))
+        return cls.model_validate(data)
 
 
 class TodoStore(ABC):
@@ -289,7 +291,7 @@ class JsonFileTodoStore(TodoStore):
     in tests). Atomic write via tmp + os.replace.
 
     ``_safe_segment`` only neutralizes characters that are genuinely unsafe on
-    common filesystems (``/``, ``\``, ``:``, ``*``, ``?``, ``"``, ``<``, ``>``,
+    common filesystems (``/``, ``\\``, ``:``, ``*``, ``?``, ``"``, ``<``, ``>``,
     ``|``). Session ids in this system are ``{prefix}.{agent}[.{invocation_id}]``,
     so the resulting filename is essentially the session id plus ``.json``.
     """

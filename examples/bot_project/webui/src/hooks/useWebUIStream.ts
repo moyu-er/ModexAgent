@@ -394,20 +394,61 @@ export function useWebUIStream(
         setState((prev) => {
           const buf = prev.sessionMessages[sessionId] || [];
           const streaming = prev.sessionStreaming[sessionId] || false;
-          const liveTail = streaming ? buf.filter((m) => m.isStreaming) : [];
-          // Carry through the optimistic message if fetchMessages resolved
-          // before the backend persisted the queued send_message.
+          // If history already contains a streaming turn (from the backend's
+          // partial delta materialization via load_partial), skip liveTail.
+          // The history's streaming message is the authoritative base for
+          // the in-progress turn, and new WS deltas will append to it via
+          // the reducer's _upsertStreamingBlock. Without this guard, both
+          // the history's streaming turn AND the buffered WS messages
+          // render, showing the same content twice.
+          const historyHasStreaming = history.some((m) => m.isStreaming);
+          const liveTail =
+            streaming && !historyHasStreaming
+              ? buf.filter((m) => m.isStreaming)
+              : [];
+          // Carry through any user messages from prev.messages that aren't
+          // in the fetched history. This covers two races:
+          // 1. The optimistic message hasn't been persisted yet (fetchMessages
+          //    raced ahead of the WS pipeline) and pendingRequestRef is still
+          //    set — the optimisticId path preserves it.
+          // 2. The echo arrived and cleared pendingRequestRef, but the backend
+          //    still hasn't persisted — without this fallback, the user message
+          //    would be dropped when messages is replaced with [...history, ...].
           const optimisticId = pendingRequestRef.current;
           const optimisticMsg = optimisticId
             ? prev.messages.find((m) => m.id === optimisticId && m.role === "user")
             : undefined;
+          const optimisticFirst = optimisticMsg?.blocks[0];
+          const optimisticText =
+            optimisticFirst && optimisticFirst.kind === "text"
+              ? optimisticFirst.text
+              : undefined;
           const optimisticTail =
-            optimisticMsg && !history.some((h) => h.id === optimisticId)
+            optimisticMsg && optimisticText !== undefined &&
+            !history.some(
+              (h) =>
+                h.role === "user" &&
+                h.blocks[0]?.kind === "text" &&
+                h.blocks[0].text === optimisticText,
+            )
               ? [optimisticMsg]
               : [];
+          const historyUserTexts = new Set(
+            history
+              .filter((h) => h.role === "user" && h.blocks[0]?.kind === "text")
+              .map((h) => (h.blocks[0] as { text: string }).text),
+          );
+          const echoedUserTail = prev.messages.filter(
+            (m) =>
+              m.role === "user" &&
+              !m.isStreaming &&
+              m.blocks[0]?.kind === "text" &&
+              !historyUserTexts.has((m.blocks[0] as { text: string }).text) &&
+              m.id !== optimisticId,
+          );
           return {
             ...prev,
-            messages: [...history, ...optimisticTail, ...liveTail],
+            messages: [...history, ...echoedUserTail, ...optimisticTail, ...liveTail],
             isStreaming: streaming,
             todos: { ...prev.todos, [sessionId]: fetchedTodos },
             pendingApprovals: { ...prev.pendingApprovals, [sessionId]: fetchedApprovals },

@@ -377,7 +377,7 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
         notifications = await bus.consume(parent_session_id, limit=10)
         assert notifications, "parent inbox reported pending but consume returned empty"
         notif_content = str(notifications[0].payload)
-        assert "subagent_notification" in notif_content or "output_status" in notif_content, (
+        assert "subagent_result" in notif_content or "success" in notif_content, (
             f"parent notification envelope has unexpected content: {notif_content[:200]}"
         )
     finally:

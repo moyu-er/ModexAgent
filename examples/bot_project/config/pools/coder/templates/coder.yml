@@ -1,4 +1,4 @@
-agent_name: worker
+agent_name: coder
 description: >-
   Executes delegated implementation tasks — writes and edits code with narrow,
   coherent changes, runs verification, and reports back with a summary of
@@ -7,3 +7,5 @@ description: >-
   review — hand it a task and it implements it.
 execution_strategy: external_coding
 provider_kind: opencode
+roles:
+- implementer

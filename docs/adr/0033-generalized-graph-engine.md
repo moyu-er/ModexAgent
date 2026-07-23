@@ -1,11 +1,24 @@
-# ADR-0033: Generalized Graph Engine (Phase a)
+# ADR-0033: Generalized Graph Engine
 
-Status: proposed (2026-07-20) — design completed via `/grill-with-docs`;
-implementation pending. See D13 for the 5-stage migration plan.
-**Refinements:** D5.2 (`around` scope — `ITERATION` only, not all scopes)
-and D14 (dataclass codec — `TypeAdapter` transition, override removed)
-are refined by ADR-0034. D12 (Phase c deferred) stands; ADR-0034 clears
-Phase c prerequisites without starting Phase c.
+Status: accepted (2026-07-20). Fully implemented — Phase a delivered,
+Phase c prerequisites cleared (per-channel checkpoint repair, AOP
+routing documentation, API surface governance), resume-target routing
+delivered. This ADR consolidates the original Phase a design and the
+Phase c prerequisite refinements (formerly ADR-0034, now archived at
+`docs/adr/history/001-graph-engine-phase-c-preliminaries.md`). Phase c
+itself (parallel fan-out, subgraph nesting, BSP) remains deferred per D12.
+
+## Historical context
+
+Prior to this ADR, the graph engine was a god-module embedded in
+`modex_agent/core/graph/` — topology definition, execution, and state
+management were entangled in a single `ReActGraph(Graph)` subclass.
+ReAct's logic lived in monolithic node methods that also inlined hook
+dispatch, control drain, governance, approval, and event emission. This
+ADR extracted the engine into the standalone `modex_graph` package,
+disassembled the god-module into focused primitives (`Graph[S]` /
+`Node[S]` / `GraphEngine` / `GraphContext` / `GraphRuntime`), and
+migrated ReAct to a 4-node topology on the new engine.
 
 ## Context
 
@@ -324,13 +337,17 @@ class GraphRuntime(ABC):
    engine stays framework-agnostic; the bridging is entirely in
    `modex_agent/agents/react/runtime.py`.
 
-4. **`around` constructs interceptor context internally.** Existing
-   interceptors like `around_iteration(ctx, iteration_ctx, body)` need
-   typed context objects (`IterationContext` / `LLMCallContext` /
-   `ToolCallContext` / `LLMStreamContext`). `ReactGraphRuntime.around(
-   scope, ctx, body)` maps `scope` to the correct interceptor method and
-   constructs the typed context from `ctx.user_data` (AgentContext)
-   internally. The `body` is a zero-arg awaitable closure.
+4. **`around` routes `ITERATION` only.** `TOOL_CALL` and `LLM_STREAM`
+   are node-local AOP invoked directly via `InterceptorChain`
+   (`tool_executor.py` / `llm_client.py`), not through `ctx.runtime.around`.
+   Their typed contexts (`ToolCallContext` / `LLMStreamContext`) carry
+   node-local data (`tool_call`, `tool_name`, `arguments`, async
+   iterators) that cannot be lifted to the graph-runtime layer without
+   violating invariant 1 (`modex_graph` has zero `modex_agent` imports)
+   or adding a pure forwarding shell that fails the ADR-0007 deletion
+   test. `around` constructs `IterationContext` internally from
+   `ctx.user_data` (AgentContext) — `IterationContext` is constructible
+   from graph-runtime-layer data, so it goes through `around`.
 
 5. **Hook / interceptor registration surfaces are untouched.** Plugin
    `register_hook()`, `HookRunner.add(HookSpec(...))`,
@@ -503,6 +520,22 @@ This avoids requiring node idempotency — a fragile constraint for nodes
 with side effects (LLM calls, tool invocations). This is ModexAgent's
 existing behavior, preserved through the migration.
 
+**Resume-target routing (D7 refinement — delivered):** The "resume
+logic is carried by graph topology" promise is delivered via a
+`resume_target` channel on `GraphState` + `Command.goto` dynamic
+routing, not via entry-node `if state.phase == SUSPENDED` hardcoding.
+A node that wants to suspend sets `state.resume_target = "NODE_NAME"`
+before capturing its snapshot, then calls `ctx.interrupt(value)`. On
+re-entry, the entry node reads `state.resume_target` and routes via
+`NodeResult(command=Command(goto=state.resume_target))` (priority-1
+dynamic routing per D6), then clears the field. Any node can suspend
+this way and the entry node routes to it generically — approval is no
+longer the only expressible suspend source. The `phase` field remains
+the node's own lifecycle marker (node-internal resume detection, e.g.
+`ToolNode` checking `state.phase == SUSPENDED` to call
+`_resume_suspended_batch`), distinct from `resume_target` (graph-level
+routing signal consumed by the entry node).
+
 ### D8 — Graph-is-a-Node (wired in Phase a, exercised in Phase c)
 
 `Graph[S]` is a subclass of `Node[S]`. Its `execute(ctx)` runs its own
@@ -638,9 +671,10 @@ the mapping lives in the business runtime implementation.
 **ReAct node names and transition reasons** also use `StrEnum`:
 `ReActNode` (START/LLM/TOOL/END) and `ReActReason` (NORMAL_START /
 HAS_TOOLS / NO_TOOLS / MAX_ITERATIONS / LLM_ERROR / TOOLS_DONE /
-TURN_CANCELLED / RESUME_TOOLS) already exist as enums — they are kept
-and used as `add_node(name=...)` / `add_edge(reason=...)` arguments.
-`StrEnum` values satisfy the engine's `str` parameters.
+TURN_CANCELLED) already exist as enums — they are kept and used as
+`add_node(name=...)` / `add_edge(reason=...)` arguments. `StrEnum` values
+satisfy the engine's `str` parameters. (Resume routing no longer uses a
+static edge — see D7 resume-target routing.)
 
 ### D9.3 — Exit mechanisms (all preserved) + graph result via state field
 
@@ -648,7 +682,7 @@ All current ReAct exit mechanisms are preserved through the migration:
 
 | Exit mechanism | Current | Migrated | Phase |
 |---|---|---|---|
-| Approval suspend (`GraphInterrupt`) | `raise GraphInterrupt(snapshot)` in ToolNode | `ctx.interrupt(tx)` (raises `GraphInterrupt`, a `GraphBubbleUp` subclass) | a ✅ |
+| Approval suspend (`GraphInterrupt`) | `raise GraphInterrupt(snapshot)` in ToolNode | `state.resume_target = TOOL; ctx.interrupt(tx)` (raises `GraphInterrupt`, a `GraphBubbleUp` subclass; `state.resume_target` channel drives re-entry routing per D7) | a ✅ |
 | `max_iterations` | LLMNode checks, returns `transition="max_iterations"` → static edge to END | Same; `max_iterations` configured at `compile()` time | a ✅ |
 | `turn_cancelled` | ToolNode checks, returns `transition="turn_cancelled"` → static edge to END | Same | a ✅ |
 | `llm_error` | LLMNode checks, returns `transition="llm_error"` → static edge to END | Same | a ✅ |
@@ -659,7 +693,11 @@ All current ReAct exit mechanisms are preserved through the migration:
 Node authors write linear code; already-applied state updates persist
 across the interrupt boundary; resume re-enters at the next iteration,
 NOT by re-running the node body. This is the existing ModexAgent
-behavior and is kept verbatim.
+behavior and is kept verbatim. Re-entry routing is driven by
+`state.resume_target` (set by `ctx.interrupt(value, resume_to=...)`
+per the D7 refinement): the entry node reads it and routes via
+`Command(goto=...)`, replacing the earlier `if state.phase == SUSPENDED`
+hardcoding.
 
 **Graph result return:**
 
@@ -878,7 +916,7 @@ together; Stage 5 is independent.
 - Delete any dead code uncovered by the migration.
 - Validation: full test suite green.
 
-### D14 — Channel codec: Pydantic `model_dump()` / `model_validate()`
+### D14 — Channel codec: per-channel checkpoint (delivered)
 
 State field types that are not plain primitives (`int`/`str`/`list`/
 `dict`) must serialize through a channel codec for
@@ -889,78 +927,78 @@ as the universal channel codec. Any state field type that is a Pydantic
 `BaseModel` subclass automatically round-trips through
 `model_dump()` → JSON-compatible dict → `model_validate()`.
 
-**Prerequisite:** all non-primitive ReAct state types must be Pydantic
-`BaseModel`. The following types are currently `@dataclass` and must be
-migrated to Pydantic `BaseModel` in Stage 1. **Frozen vs mutable is
-decided per type based on whether the approval state machine mutates
-the object at runtime:**
+**Delivered state:** the per-channel path is the **single serialization
+path** — `ReActTurnState` no longer overrides `checkpoint()` /
+`from_checkpoint()`. All non-primitive ReAct state types were migrated
+to Pydantic `BaseModel` (9 types total: `ApprovalTransaction`,
+`ApprovalRequestState`, `ToolBatchState`, `ToolCallState`,
+`ToolArguments`, plus `CancellationState`, `OperationState`,
+`MessageDelta`, `LLMResponse`, `AgentResult`, `TurnIdentity`,
+`ToolCall`, `LLMErrorInfo`).
 
-- `ApprovalTransaction` → `BaseModel` (**NOT frozen** — the approval
-  state machine mutates `decisions` dict externally: `apply_decision`
-  updates `approval.decisions[call_id]` from `PENDING` to
-  `ALLOWED`/`DENIED`, and `_normalize_batch_decisions` may rewrite
-  `ALLOWED` to `PREEMPTED` for atomicity per ADR-0011. Frozen would
-  break the state machine.)
-- `ApprovalRequestState` → `BaseModel` (**NOT frozen** — kept mutable
-  for consistency with `ApprovalTransaction`, though rarely mutated)
-- `ToolBatchState` → `BaseModel` (**NOT frozen** — `status` field
-  transitions `WAITING` → `COMPLETED`/`FAILED`/`CANCELLED` during
-  execution; `operation_id` may be set after construction)
-- `ToolCallState` → `BaseModel` (**NOT frozen** — `decision` field
-  transitions `PENDING` → `ALLOWED`/`DENIED`/`PREEMPTED`; `status`
-  transitions `PENDING` → `ALLOWED`/`DENIED` → `COMPLETED`/`FAILED`;
-  `result` is set after tool execution)
-- `ToolArguments` → `BaseModel(frozen=True)` (truly immutable — just a
-  typed wrapper around tool call arguments, never mutated after
-  construction)
+**Frozen vs mutable** is decided per type based on whether the approval
+state machine mutates the object at runtime:
+
+- `ApprovalTransaction` → mutable `BaseModel` (`apply_decision` mutates
+  `decisions` dict; `_normalize_batch_decisions` may rewrite `ALLOWED`
+  to `PREEMPTED` per ADR-0011)
+- `ApprovalRequestState` → mutable `BaseModel` (consistency)
+- `ToolBatchState` / `ToolCallState` → mutable `BaseModel` (`status` /
+  `decision` fields transition during execution)
+- `ToolArguments` → `BaseModel(frozen=True)` (leaf value-object)
+- `TurnIdentity` / `LLMErrorInfo` → `BaseModel(frozen=True)`
+- `AgentResult` / `LLMResponse` / `MessageDelta` / `OperationState` /
+  `CancellationState` / `ToolCall` → mutable `BaseModel`
 
 **Per rule 12:** "config/value objects use `BaseModel(frozen=True)`;
-runtime objects with state/connections are regular classes." These 5
-types are runtime state objects that participate in the approval state
-machine's mutable transitions — they fall under the "runtime objects"
-clause. `ToolArguments` is the exception (leaf value-object, no
-runtime mutation). The graph engine's `LastValue` channel does not
-enforce immutability — it accepts any type, frozen or mutable; the
-frozen decision is the agent layer's, not the graph engine's.
+runtime objects with state/connections are regular classes." Runtime
+state objects that participate in mutable transitions fall under the
+"runtime objects" clause.
 
-`TurnStateBase` (the framework base) and `ReActTurnState` migrate to
-`GraphState(BaseModel)` in Stage 2. `TurnSnapshot` remains a `@dataclass`
-(runtime-object container per rule 12, not a state field — it wraps the
-payload dict, not the other way around).
+`TurnStateBase` (the framework base) and `ReActTurnState` are
+`GraphState(BaseModel)` subclasses. `TurnSnapshot` remains a `@dataclass`
+(runtime-object container, not a state field).
 
-**Channel codec registration** (Stage 1):
-
-```python
-# modex_agent/agents/react/codec.py
-from modex_graph.channel import register_codec, Codec
-
-def _pydantic_codec(model_cls: type[BaseModel]) -> Codec:
-    return Codec(
-        encode=lambda v: v.model_dump(mode="json"),
-        decode=lambda d: model_cls.model_validate(d),
-    )
-
-# Register for each non-primitive ReAct state type
-register_codec(ApprovalTransaction, _pydantic_codec(ApprovalTransaction))
-register_codec(ApprovalRequestState, _pydantic_codec(ApprovalRequestState))
-register_codec(ToolBatchState, _pydantic_codec(ToolBatchState))
-register_codec(ToolCallState, _pydantic_codec(ToolCallState))
-# Primitives (int, str, list[ChatMessage] via reducer) don't need registration
-```
-
-`modex_graph` provides the `Codec` type + `register_codec()` API as
-part of its public surface; the actual registrations happen in
-`modex_agent` (business side). This keeps `modex_graph` free of
-`modex_agent` type imports.
+**TypeAdapter bridge:** `modex_graph`'s `encode_value` / `decode_value`
+retain a `TypeAdapter` branch for stdlib `@dataclass` types — framework
+code uses the `BaseModel` branch exclusively, but third-party consumers
+may pass stdlib dataclasses and the `TypeAdapter` branch handles them.
+The `react/codec.py` file with its five dead `register_codec` calls was
+deleted (the registrations were unreachable because `encode_value`
+checks `isinstance(value, BaseModel)` before consulting `_find_codec`).
 
 **Why Pydantic and not hand-written codecs:** Pydantic v2's
 `model_dump(mode="json")` produces JSON-compatible dicts with enum
 serialization, nested model expansion, and `Annotated` metadata
-respect — exactly what the current 230-line hand-written
-`_build_payload` does, but declaratively. The 80-line
-`approval_from_snapshot` reverse parse is replaced by
-`ApprovalTransaction.model_validate(payload_dict)`. Net code reduction
-is the primary benefit; type safety is the secondary benefit.
+respect — exactly what the former 230-line hand-written
+`_build_payload` did, but declaratively. `ReActSnapshotPolicy`
+collapsed from ~310 lines to ~50 lines.
+
+### D15 — `modex_graph` API surface governance
+
+`modex_graph`'s public API may include capabilities that no production
+consumer currently exercises, provided each capability:
+
+1. Forms part of a **coherent contract** — API elements compose sensibly
+   (e.g. `Command.goto=list[Task]` + `Task(state=...)` + `ctx.fork(state=...)`
+   + `ReducerChannel` form a complete fan-out/fan-in story).
+2. Is **unit-tested in isolation** — every public API element has a
+   covering test in `tests/unit/modex_graph/`.
+3. Is **not internally contradictory** — e.g. dead `register_codec` calls
+   that can never be invoked are defects to fix; unused but coherent API
+   elements are not.
+
+This **does not supersede ADR-0007**. ADR-0007 governs seams between
+sibling modules inside `modex_agent` — there, speculative abstraction
+creates real maintenance cost. `modex_graph` is a standalone package
+whose purpose is to be a reusable engine; its API surface is the
+contract with future consumers, not an internal seam.
+
+**Workstream (C) — `examples/graph_patterns/`:** three pattern modules
+(conditional, retry, map_reduce) exercise the retained API surface with
+realistic compositions and prove the engine expresses non-ReAct shapes.
+These are **examples, not framework modules** — they live under
+`examples/` per ADR-0007 rule 9.
 
 ## Consequences
 
@@ -1042,6 +1080,36 @@ is the primary benefit; type safety is the secondary benefit.
   force ReAct's `ctx.state.x = y` to become `ctx.update("x", y)` or
   `return NodeResult(state_update={"x": y})` at ~30 sites, all
   non-mechanical. Dual-mode preserves ReAct's existing style.
+
+### Rejected Phase c triggers
+
+Three candidate "second consumers" to justify starting Phase c were
+evaluated and rejected:
+
+1. **InputPipeline migration** — the pipeline is a 25-line linear
+   sequence with early-exit. Migrating to a graph replaces 25 simple
+   lines with `Graph` + `Node` + `GraphEngine` ceremony — net code
+   increase, no new capability.
+2. **Approval state machine migration** — approval already uses the
+   graph engine's `ctx.interrupt(tx)` → `GraphInterrupt` → resume path.
+   Further refactoring would re-touch the approval state machine with
+   no offsetting benefit — ReAct's turn stages are stable, not
+   dynamically composed.
+3. **AgentPipeline / OutputRenderer migration** — `AgentPipeline` is
+   imperative orchestration (async stream + per-session lock +
+   busy-input 3-mode handling + dedup). Its complexity comes from real
+   concurrency concerns that a graph engine does not simplify.
+
+A fourth candidate — multi-agent star topology as a subgraph-nesting
+target — was rejected as a category error: star topology is
+inter-agent communication (async, isolated state, cross-process);
+subgraph nesting is intra-turn control flow (sync, shared state, single
+`GraphEngine.run_async`). They are different problems.
+
+**Conclusion:** no real Phase c trigger exists today. Phase c remains
+deferred per D12; when a real trigger emerges, design starts from a
+clean foundation (per-channel checkpoint delivered, AOP routing
+documented, API surface governance in place).
 
 ## Relationships to prior ADRs
 

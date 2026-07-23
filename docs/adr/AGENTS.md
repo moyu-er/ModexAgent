@@ -3,7 +3,7 @@
 
 # docs/adr
 
-Architecture Decision Records for the ModexAgent framework (ADR-0001 ~ 0035).
+Architecture Decision Records for the ModexAgent framework (ADR-0001 ~ 0035; 0034 merged into 0033 and archived in `history/`).
 
 ## Purpose
 
@@ -16,19 +16,20 @@ ADRs document significant architectural decisions, including the context driving
 - Follow the standard ADR template: **Title** → **Context** → **Decision** → **Consequences**
 - Before making a significant architectural change, check if a related ADR already exists
 - After a major design decision, consider creating a new ADR to document the rationale
-- ADRs are historical records: when a later decision revises one, update the
-  older ADR's **Status** line and add a disposition section pointing to the
-  revising doc — do **not** rewrite the body. Example: **ADR-0015** is marked
-  "partially superseded" by the poll-driven inbox redesign (InboxPoller
-  replaced the per-session Drainer / `SessionInputQueue` / `_session_gates`
-  layers); its D1/D6/D9/D3 decisions are revised, D4/D5/D7/D8 stand. See the
-  `InboxPoller` / `Fold-in` / `Materialize` entries in `CONTEXT.md` for the
-  current design.
+- ADRs are living documents: when a later decision revises or refines an
+  earlier ADR, **merge the refinement into the original ADR** and move the
+  refining ADR to `history/`. Do NOT maintain parallel ADR versions. The
+  main `docs/adr/` directory contains only the current, authoritative
+  version of each decision. Historical versions (superseded, merged,
+  rejected) live in `docs/adr/history/` for traceability.
+- Do NOT create new ADRs for refinements to existing decisions. Update the
+  existing ADR in place. New ADRs are for genuinely new decisions, not
+  follow-up work on existing ones.
 
-### ADR Index (0001–0035)
+### ADR Index (0001–0033, excluding archived)
 
-| ADR | Title |
-|-----|-------|
+| ADR  | Title |
+|------|-------|
 | 0001 | Pool-only assembly |
 | 0002 | Keep per-scope memory retention seams |
 | 0003 | Rename to modex-agent, src layout |
@@ -61,8 +62,6 @@ ADRs document significant architectural decisions, including the context driving
 | 0030 | Column projection SQLite adapter field extraction |
 | 0031 | Persistence schema simplification |
 | 0032 | Terminal backend async-safety and behavior convergence |
-| 0033 | Generalized Graph Engine (Phase a) — D5.2 `around` scope and D14 dataclass codec refined by ADR-0034 |
-| 0034 | Graph Engine Phase c Preliminaries |
-| 0035 | Core Memory and KnowledgeBase terminology split |
+| 0033 | Generalized Graph Engine |
 
 <!-- MANUAL -->

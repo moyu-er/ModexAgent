@@ -20,7 +20,7 @@ from typing import Annotated, Any
 
 from pydantic import Field
 
-# ADR-0034 D1 bridge: LLMResponse, MessageDelta, and all referenced types
+# ADR-0033 D14 bridge: LLMResponse, MessageDelta, and all referenced types
 # are now Pydantic BaseModels (Batches 1-3). Forward-ref resolution for
 # LLMResponse.error_info → LLMErrorInfo and MessageDelta.message → ChatMessage
 # goes through model_rebuild() calls below — no module-namespace injection
@@ -30,7 +30,7 @@ from modex_agent.core.emitter import AgentResult
 from modex_agent.core.llm_struct import LLMErrorInfo  # noqa: F401 — needed for model_rebuild()
 from modex_agent.core.message import ChatMessage  # noqa: F401 — needed for model_rebuild()
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.types import LLMResponse
+from modex_agent.core.types import LLMResponse, MessageRole
 from modex_agent.runtime.codec import RuntimeStateCodec, RuntimeStateCodecConfig
 from modex_agent.runtime.enums import (
     AgentKind,
@@ -83,7 +83,7 @@ class ReActTurnState(GraphState, TurnStateBase):
 
     Inherits ``GraphState.checkpoint()`` / ``from_checkpoint()`` (per-channel
     codec path) — handles all field types via ``encode_value`` / ``decode_value``
-    (PEP 604 unions + stdlib dataclasses via TypeAdapter, per ADR-0034 D1).
+    (PEP 604 unions + stdlib dataclasses via TypeAdapter, per ADR-0033 D14).
     """
 
     # ---- TurnStateBase fields (re-declared for Pydantic compatibility) ----
@@ -118,7 +118,7 @@ class ReActTurnState(GraphState, TurnStateBase):
     # ReActAgent.run() after engine returns.
     result: Annotated[AgentResult | None, LastValue] = None
 
-    # ADR-0034 D1: checkpoint() / from_checkpoint() overrides removed — the
+    # ADR-0033 D14: checkpoint() / from_checkpoint() overrides removed — the
     # inherited GraphState per-channel path handles all field types (PEP 604
     # unions + stdlib dataclasses via ticket 01's TypeAdapter branch).
 
@@ -345,17 +345,28 @@ class ReActRuntimeStateCodec(RuntimeStateCodec):
             "content": msg.content,
             "source": md.source.value,
             "provider_payload": dict(md.provider_payload) if md.provider_payload else None,
-            "tool_calls": msg.tool_calls,
+            "tool_calls": [tc.model_dump(mode="json") for tc in msg.tool_calls] if msg.tool_calls else None,
             "tool_call_id": msg.tool_call_id,
             "name": msg.name,
         }
 
     def _decode_message_delta(self, data: Mapping[str, JsonValue]) -> MessageDelta:
+        raw_tool_calls = data.get("tool_calls")
+        tool_calls: Any = None
+        if isinstance(raw_tool_calls, list):
+            coerced: list[Any] = []
+            for tc in raw_tool_calls:
+                dump = getattr(tc, "model_dump", None)
+                if callable(dump):
+                    coerced.append(dump(mode="json"))
+                elif isinstance(tc, dict):
+                    coerced.append(tc)
+            tool_calls = coerced or None
         return MessageDelta(
             message=ChatMessage(
-                role=str(data.get("role", "")),
+                role=MessageRole(str(data.get("role", "assistant"))),
                 content=data.get("content"),  # type: ignore[arg-type]
-                tool_calls=data.get("tool_calls"),  # type: ignore[arg-type]
+                tool_calls=tool_calls,
                 tool_call_id=data.get("tool_call_id"),  # type: ignore[arg-type]
                 name=data.get("name"),  # type: ignore[arg-type]
             ),

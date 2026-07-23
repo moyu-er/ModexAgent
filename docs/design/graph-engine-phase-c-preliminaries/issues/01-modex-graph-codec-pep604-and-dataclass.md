@@ -16,7 +16,7 @@ All existing `test_channels.py` tests continue to pass. No `modex_agent` code is
 
 This is the foundation ticket: it makes the per-channel codec path correct for every `ReActTurnState` field type, unblocking ticket 02 (which removes the `ReActTurnState` override that bypasses the per-channel path).
 
-**Type-shape decision (from ADR-0034 D1 prototype):**
+**Type-shape decision (from ADR-0033 D14 prototype):**
 
 ```python
 # encode_value (conceptual — actual placement per channel.py structure)

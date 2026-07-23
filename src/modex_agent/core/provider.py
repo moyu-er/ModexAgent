@@ -7,7 +7,8 @@ from collections.abc import Callable
 from typing import Any
 
 from .constants import FinishReason
-from .types import LLMResponse
+from .message import ChatMessage
+from .types import LLMResponse, MessageRole
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +69,7 @@ class LLMProvider(ABC):
     @abstractmethod
     async def chat(
         self,
-        messages: list[dict[str, Any]],
+        messages: list[ChatMessage],
         model: str | None = None,
         temperature: float = 0.7,
         max_output_tokens: int | None = None,
@@ -79,7 +80,7 @@ class LLMProvider(ABC):
         非流式聊天完成。
 
         Args:
-            messages: 消息列表，格式为 [{"role": "user", "content": "..."}, ...]
+            messages: ChatMessage 列表（结构化消息，B6 收敛自 list[dict]）
             model: 模型名称，None则使用默认模型
             temperature: 温度参数
             max_output_tokens: 最大token数
@@ -110,12 +111,12 @@ class LLMProvider(ABC):
         Returns:
             LLM统一响应结构 LLMResponse
         """
-        messages = [{"role": "user", "content": prompt}]
+        messages = [ChatMessage(role=MessageRole.USER, content=prompt)]
         return await self.chat(messages, **kwargs)
 
     async def chat_with_retry(
         self,
-        messages: list[dict[str, Any]],
+        messages: list[ChatMessage],
         model: str | None = None,
         temperature: float = 0.7,
         max_output_tokens: int | None = None,
@@ -141,7 +142,7 @@ class LLMProvider(ABC):
         当 fn() 返回 LLMResponse(finish_reason=ERROR) 时按 error_info.should_retry
         决策是否重试；当 fn() 抛出异常时沿用原有 _is_transient 逻辑。
         """
-        backoff_delays = getattr(self, "_retry_backoff_seconds", (2.0, 8.0))
+        backoff_delays = self._retry_backoff_seconds
         last_response: LLMResponse | None = None
 
         for attempt in range(max_retries + 1):
@@ -164,7 +165,7 @@ class LLMProvider(ABC):
                 continue
 
             # 成功获取 response，检查是否为 error response
-            if response.finish_reason != FinishReason.ERROR.value:
+            if response.finish_reason != FinishReason.ERROR:
                 return response
 
             last_response = response
@@ -196,7 +197,7 @@ class LLMProvider(ABC):
 
         return last_response or LLMResponse(
             content=None,
-            finish_reason=FinishReason.ERROR.value,
+            finish_reason=FinishReason.ERROR,
             error="LLM retry failed without response",
         )
 
@@ -246,7 +247,7 @@ class StreamingLLMProvider(LLMProvider):
 
     async def chat(
         self,
-        messages: list[dict[str, Any]],
+        messages: list[ChatMessage],
         model: str | None = None,
         temperature: float = 0.7,
         max_output_tokens: int | None = None,
@@ -274,7 +275,7 @@ class StreamingLLMProvider(LLMProvider):
 
     async def chat_with_retry(
         self,
-        messages: list[dict[str, Any]],
+        messages: list[ChatMessage],
         model: str | None = None,
         temperature: float = 0.7,
         max_output_tokens: int | None = None,
@@ -304,7 +305,7 @@ class StreamingLLMProvider(LLMProvider):
     @abstractmethod
     async def chat_stream(
         self,
-        messages: list[dict[str, Any]],
+        messages: list[ChatMessage],
         model: str | None = None,
         temperature: float = 0.7,
         max_output_tokens: int | None = None,
@@ -317,7 +318,7 @@ class StreamingLLMProvider(LLMProvider):
         流式聊天完成。
 
         Args:
-            messages: 消息列表
+            messages: ChatMessage 列表（结构化消息，B6 收敛自 list[dict]）
             model: 模型名称
             temperature: 温度参数
             max_output_tokens: 最大token数
@@ -333,7 +334,7 @@ class StreamingLLMProvider(LLMProvider):
 
     async def chat_stream_with_retry(
         self,
-        messages: list[dict[str, Any]],
+        messages: list[ChatMessage],
         model: str | None = None,
         temperature: float = 0.7,
         max_output_tokens: int | None = None,

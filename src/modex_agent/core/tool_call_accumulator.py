@@ -7,6 +7,7 @@
 3. 需要支持多个工具调用
 4. 需要处理不同格式的输入（对象、字典、列表）
 """
+from __future__ import annotations
 
 import json
 from dataclasses import dataclass

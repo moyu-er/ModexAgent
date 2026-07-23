@@ -1,0 +1,179 @@
+"""Unit tests for ChatMessage to_dict/from_dict tool_calls serialization and
+ContentPart discriminated union validation.
+
+Covers the OpenAI wire-format tool_calls round-trip and the multimodal
+content part (TextPart / ImageUrlPart) discriminated union on ChatMessage.
+"""
+from __future__ import annotations
+
+import pytest
+from pydantic import ValidationError
+
+from modex_agent.core.message import (
+    ChatMessage,
+    ContentPartType,
+    ImageUrl,
+    ImageUrlPart,
+    TextPart,
+)
+from modex_agent.core.types import MessageRole, ToolCall
+
+
+# ---------------------------------------------------------------------------
+# #1 — ChatMessage.to_dict / from_dict tool_calls (OpenAI wire format)
+# ---------------------------------------------------------------------------
+
+
+def test_to_dict_tool_calls_openai_wire_format():
+    """to_dict serializes tool_calls into OpenAI wire format
+    (id / type / function{name, arguments-as-JSON-string})."""
+    msg = ChatMessage(
+        role=MessageRole.ASSISTANT,
+        tool_calls=[ToolCall(tool_name="search", arguments={"q": "x"}, call_id="c1")],
+    )
+    result = msg.to_dict()
+    assert result["tool_calls"] == [
+        {
+            "id": "c1",
+            "type": "function",
+            "function": {"name": "search", "arguments": '{"q": "x"}'},
+        }
+    ]
+
+
+def test_to_dict_tool_calls_empty_arguments():
+    """Empty arguments dict serializes to the literal string "{}"."""
+    msg = ChatMessage(
+        role=MessageRole.ASSISTANT,
+        tool_calls=[ToolCall(tool_name="t", arguments={})],
+    )
+    result = msg.to_dict()
+    assert result["tool_calls"][0]["function"]["arguments"] == "{}"
+
+
+def test_to_dict_tool_calls_none_call_id():
+    """When call_id is None, to_dict auto-generates an id as ``call_{index}``."""
+    msg = ChatMessage(
+        role=MessageRole.ASSISTANT,
+        tool_calls=[ToolCall(tool_name="t", arguments={}, call_id=None)],
+    )
+    result = msg.to_dict()
+    assert result["tool_calls"][0]["id"] == "call_0"
+
+
+def test_from_dict_openai_format_tool_calls():
+    """from_dict parses OpenAI wire-format tool_calls back into ToolCall."""
+    msg = ChatMessage.from_dict(
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "search", "arguments": '{"q": "x"}'},
+                }
+            ],
+        }
+    )
+    assert msg.tool_calls is not None
+    assert msg.tool_calls[0].tool_name == "search"
+    assert msg.tool_calls[0].arguments == {"q": "x"}
+    assert msg.tool_calls[0].call_id == "c1"
+
+
+def test_from_dict_tool_calls_arguments_as_dict():
+    """from_dict passes through arguments that are already a dict (no JSON parse)."""
+    msg = ChatMessage.from_dict(
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {"id": "c1", "type": "function", "function": {"name": "t", "arguments": {"a": 1}}}
+            ],
+        }
+    )
+    assert msg.tool_calls is not None
+    assert msg.tool_calls[0].arguments == {"a": 1}
+
+
+def test_from_dict_tool_calls_missing_id():
+    """from_dict sets call_id to None when the OpenAI id field is absent."""
+    msg = ChatMessage.from_dict(
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {"type": "function", "function": {"name": "t", "arguments": "{}"}}
+            ],
+        }
+    )
+    assert msg.tool_calls is not None
+    assert msg.tool_calls[0].call_id is None
+
+
+def test_from_dict_tool_calls_empty_string_arguments():
+    """from_dict converts an empty-string arguments to an empty dict."""
+    msg = ChatMessage.from_dict(
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {"id": "c1", "type": "function", "function": {"name": "t", "arguments": ""}}
+            ],
+        }
+    )
+    assert msg.tool_calls is not None
+    assert msg.tool_calls[0].arguments == {}
+
+
+def test_to_dict_excludes_reasoning_content():
+    """to_dict strips reasoning_content so chain-of-thought never reaches storage.
+
+    reasoning_content is an extra field (extra='allow'); inject it via
+    __pydantic_extra__ to simulate a provider setting it post-construction.
+    """
+    msg = ChatMessage(role=MessageRole.ASSISTANT, content="hi")
+    msg.__pydantic_extra__ = {"reasoning_content": "thinking"}
+    d = msg.to_dict()
+    assert "reasoning_content" not in d
+    assert d["content"] == "hi"
+
+
+# ---------------------------------------------------------------------------
+# #2 — ContentPart discriminated union (TextPart / ImageUrlPart)
+# ---------------------------------------------------------------------------
+
+
+def test_text_part_construction():
+    part = TextPart(text="hello")
+    assert part.type == ContentPartType.TEXT
+    assert part.text == "hello"
+
+
+def test_image_url_part_construction():
+    part = ImageUrlPart(image_url=ImageUrl(url="https://x", detail="high"))
+    assert part.type == ContentPartType.IMAGE_URL
+    assert part.image_url.url == "https://x"
+    assert part.image_url.detail == "high"
+
+
+def test_chatmessage_content_list_contentpart():
+    msg = ChatMessage(role=MessageRole.USER, content=[TextPart(text="a"), TextPart(text="b")])
+    assert isinstance(msg.content, list)
+    assert len(msg.content) == 2
+    assert all(isinstance(p, TextPart) for p in msg.content)
+
+
+def test_chatmessage_content_dict_validates_to_contentpart():
+    msg = ChatMessage(role=MessageRole.USER, content=[{"type": "text", "text": "hi"}])  # type: ignore[arg-type]
+    assert isinstance(msg.content, list)
+    assert isinstance(msg.content[0], TextPart)
+    assert msg.content[0].text == "hi"
+
+
+def test_chatmessage_invalid_contentpart_type_rejected():
+    with pytest.raises(ValidationError):
+        ChatMessage(role=MessageRole.USER, content=[{"type": "unknown"}])  # type: ignore[arg-type]
+
+
+def test_to_dict_content_list_contentpart():
+    msg = ChatMessage(role=MessageRole.USER, content=[TextPart(text="hi")])
+    result = msg.to_dict()
+    assert result["content"] == [{"type": "text", "text": "hi"}]

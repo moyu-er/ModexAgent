@@ -7,13 +7,15 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from modex_agent.core.tool_manager import ToolResult
 from modex_agent.hook.abc import AfterToolExecutionHook, BeforeToolExecutionHook, BeforeTurnHook
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
+    from modex_agent.core.types import ToolCall
 
 
 class RuntimeContextHook(BeforeTurnHook, BeforeToolExecutionHook, AfterToolExecutionHook):
@@ -30,31 +32,31 @@ class RuntimeContextHook(BeforeTurnHook, BeforeToolExecutionHook, AfterToolExecu
         if rt is None:
             return
         rt_mgr = rt.services.runtime_context_manager
-        if rt_mgr is not None and rt._runtime_context is None:
+        if rt_mgr is not None and rt.runtime_context is None:
             rt._runtime_context = await rt_mgr.get_context(ctx.session, None)
-        rc = rt._runtime_context
+        rc = rt.runtime_context
         if rc is not None:
             await rc.clear()
 
     async def before_tool_execution(
         self,
         ctx: AgentContext,
-        tool_calls: list[Any] | None = None,
+        tool_calls: Sequence[ToolCall] | None = None,
     ) -> None:
         if ctx.runtime is None:
             return
-        rc = ctx.runtime._runtime_context
+        rc = ctx.runtime.runtime_context
         if rc is not None and tool_calls:
             await rc.set(self._PENDING_KEY, list(tool_calls))
 
     async def after_tool_execution(
         self,
         ctx: AgentContext,
-        results: list[Any] | None = None,
+        results: Sequence[ToolResult] | None = None,
     ) -> None:
         if ctx.runtime is None:
             return
-        rc = ctx.runtime._runtime_context
+        rc = ctx.runtime.runtime_context
         if rc is None:
             return
         pending = await rc.get(self._PENDING_KEY, [])
@@ -70,9 +72,9 @@ class RuntimeContextHook(BeforeTurnHook, BeforeToolExecutionHook, AfterToolExecu
                     result_map[r.get("tool_call_id")] = r.get("content", "")
 
         for tool_call in pending:
-            call_id = getattr(tool_call, "call_id", None)
-            tool_name = getattr(tool_call, "tool_name", None)
-            arguments = getattr(tool_call, "arguments", None) or {}
+            call_id = tool_call.call_id
+            tool_name = tool_call.tool_name
+            arguments = tool_call.arguments or {}
             if tool_name:
                 await rc.record_tool_call(
                     tool_name=tool_name,

@@ -11,14 +11,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import LLMProvider, StreamingLLMProvider
-from modex_agent.core.types import LLMResponse
+from modex_agent.core.types import LLMResponse, MessageRole
 
 
 class MockProvider(LLMProvider):
     """Mock LLMProvider for retry tests."""
 
     def __init__(self):
+        super().__init__()
         self.chat_mock = AsyncMock()
 
     async def chat(self, messages, **kwargs):
@@ -32,6 +34,7 @@ class MockStreamingProvider(StreamingLLMProvider):
     """Mock StreamingLLMProvider for testing."""
 
     def __init__(self):
+        super().__init__()
         self.chat_mock = AsyncMock()
         self.chat_stream_mock = AsyncMock()
 
@@ -91,7 +94,7 @@ class TestChatWithRetry:
     async def test_success_first_attempt(self, provider):
         provider.chat_mock.return_value = LLMResponse(content="success")
 
-        result = await provider.chat_with_retry(messages=[{"role": "user", "content": "hi"}])
+        result = await provider.chat_with_retry(messages=[ChatMessage(role=MessageRole.USER, content="hi")])
 
         assert isinstance(result, LLMResponse)
         assert result.content == "success"
@@ -104,7 +107,7 @@ class TestChatWithRetry:
             LLMResponse(content="success"),
         ]
 
-        result = await provider.chat_with_retry(messages=[{"role": "user", "content": "hi"}])
+        result = await provider.chat_with_retry(messages=[ChatMessage(role=MessageRole.USER, content="hi")])
 
         assert isinstance(result, LLMResponse)
         assert result.content == "success"
@@ -121,7 +124,7 @@ class TestChatWithRetry:
 
         with pytest.raises(Exception, match="503 Service Unavailable"):
             await provider.chat_with_retry(
-                messages=[{"role": "user", "content": "hi"}],
+                messages=[ChatMessage(role=MessageRole.USER, content="hi")],
                 max_retries=3,
             )
 
@@ -132,7 +135,7 @@ class TestChatWithRetry:
         provider.chat_mock.side_effect = Exception("invalid api key")
 
         with pytest.raises(Exception, match="invalid api key"):
-            await provider.chat_with_retry(messages=[{"role": "user", "content": "hi"}])
+            await provider.chat_with_retry(messages=[ChatMessage(role=MessageRole.USER, content="hi")])
 
         assert provider.chat_mock.call_count == 1
 
@@ -159,7 +162,7 @@ class TestChatStreamWithRetry:
             deltas.append(d)
 
         result = await provider.chat_stream_with_retry(
-            messages=[{"role": "user", "content": "hi"}],
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
             on_content_delta=on_delta,
         )
 
@@ -190,7 +193,7 @@ class TestChatStreamWithRetry:
             deltas.append(d)
 
         result = await provider.chat_stream_with_retry(
-            messages=[{"role": "user", "content": "hi"}],
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
             max_retries=2,
             on_content_delta=on_delta,
         )
@@ -214,7 +217,7 @@ class TestChatStreamWithRetry:
 
         with pytest.raises(Exception, match="503 Service Unavailable"):
             await provider.chat_stream_with_retry(
-                messages=[{"role": "user", "content": "hi"}],
+                messages=[ChatMessage(role=MessageRole.USER, content="hi")],
                 max_retries=2,
                 on_content_delta=noop_delta,
             )
@@ -237,7 +240,7 @@ class TestLiteLLMProviderRetryRouting:
         provider._acompletion.side_effect = Exception("503 Service Unavailable")
 
         result = await provider.chat_with_retry(
-            messages=[{"role": "user", "content": "hi"}],
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
             max_retries=0,
         )
 
@@ -281,7 +284,7 @@ class TestLiteLLMProviderRetryRouting:
         provider._acompletion = mock_acompletion
 
         result = await provider.chat_with_retry(
-            messages=[{"role": "user", "content": "hi"}],
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
             max_retries=2,
         )
 
@@ -319,7 +322,7 @@ class TestLiteLLMProviderRetryRouting:
 
         deltas = []
         result = await provider.chat_stream(
-            messages=[{"role": "user", "content": "hi"}],
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
             on_content_delta=lambda d: deltas.append(d),
         )
 
@@ -365,7 +368,7 @@ class TestLiteLLMProviderRetryRouting:
 
         deltas = []
         result = await provider.chat_stream_with_retry(
-            messages=[{"role": "user", "content": "hi"}],
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
             max_retries=2,
             on_content_delta=lambda d: deltas.append(d),
         )

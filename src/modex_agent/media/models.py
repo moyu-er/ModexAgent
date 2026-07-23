@@ -6,8 +6,9 @@ See ADR-0013 §3/§8. Frozen value objects throughout.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from enum import StrEnum
+
+from pydantic import BaseModel, ConfigDict
 
 
 class Kind(StrEnum):
@@ -37,14 +38,15 @@ class AttachmentLocator(StrEnum):
     WORKSPACE = "workspace"
 
 
-@dataclass(frozen=True)
-class Attachment:
+class Attachment(BaseModel):
     """A file bound to a message, identified by an opaque id.
 
     Direction-agnostic for rendering; storage differs by ``locator``. This is
     the record persisted in the ServerEvent transcript (the id→path index,
     ADR-0013 §11) — never bytes, only references.
     """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: str
     kind: Kind
@@ -91,7 +93,7 @@ class Attachment:
             kind=Kind(str(data["kind"])),
             name=str(data["name"]),
             mime=(str(data["mime"]) if data.get("mime") is not None else None),
-            size=int(data["size"]),
+            size=int(data["size"]),  # type: ignore[arg-type]
             path=str(data["path"]),
             locator=AttachmentLocator(str(data["locator"])),
         )

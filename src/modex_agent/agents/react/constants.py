@@ -24,7 +24,6 @@ class ReActNode(StrEnum):
 
 class ReActReason(StrEnum):
     NORMAL_START = "normal_start"
-    RESUME_TOOLS = "resume_tools"
     HAS_TOOLS = "has_tools"
     NO_TOOLS = "no_tools"
     TOOLS_DONE = "tools_done"
@@ -33,6 +32,22 @@ class ReActReason(StrEnum):
     # Turn-ending reasons aligned with StopReason
     MAX_ITERATIONS = StopReason.MAX_ITERATIONS
     TURN_CANCELLED = StopReason.TURN_CANCELLED
+
+
+class InterruptReason(StrEnum):
+    """ReAct turn 中断原因枚举。
+
+    由 ``_interrupt_reason_from`` 将控制层异常映射为短小、不泄漏内部
+    细节的类别字符串，写入中断 assistant 消息的 XML 标记。``StrEnum``
+    在 f-string 中序列化为 ``value``，与原有字符串字面量保持兼容。
+    """
+
+    USER_STOP = "user_stop"
+    TIMEOUT = "timeout"
+    POLICY = "policy"
+    LOOP_DETECTED = "loop_detected"
+    CANCELLED = "cancelled"
+    ERROR = "error"
 
 
 class ReActHookPoint(StrEnum):

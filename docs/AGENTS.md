@@ -11,6 +11,7 @@ Documentation index for the ModexAgent project — ADRs, design docs, and agent 
 docs/
 ├── AGENTS.md              ← this file (docs index)
 ├── adr/                   ← Architecture Decision Records (ADR-0001 ~ 0035)
+│   ├── history/            ← Historical/superseded ADRs
 │   └── AGENTS.md          ← ADR index + conventions
 ├── design/                ← Feature design docs (PRD + tickets per feature)
 │   ├── agent-observability/           (ADR-0024)
@@ -29,7 +30,7 @@ docs/
 
 | Document | Location | Description |
 |----------|----------|-------------|
-| ADR index | `adr/` | 35 Architecture Decision Records (ADR-0001 ~ 0035) — see `adr/AGENTS.md` for the full index |
+| ADR index | `adr/` | 34 Architecture Decision Records (ADR-0001~0035, 0034 moved to history/) — see `adr/AGENTS.md` for the full index |
 | Bot local setup | `bot-local-setup.md` | Step-by-step bot setup from source (prerequisites, venv, config, troubleshooting) |
 | Issue tracker | `agents/issue-tracker.md` | Issues live as local markdown under `docs/design/<feature>/` |
 | Triage labels | `agents/triage-labels.md` | Canonical triage label vocabulary |
@@ -57,7 +58,7 @@ Each feature has a directory under `design/<feature-slug>/` containing:
 
 ## Conventions
 
-- **ADRs** are numbered `NNNN-title.md` (sequential). Follow the standard template: Title → Context → Decision → Consequences. When a later decision revises an ADR, update its Status line — do not rewrite the body.
+- **ADRs** are numbered `NNNN-title.md` (sequential). Follow the standard template: Title → Context → Decision → Consequences. ADRs are living documents — when a decision is revised, merge the refinement into the original ADR and move the refining ADR to `history/`. The main `docs/adr/` directory contains only the current authoritative version of each decision.
 - **Design docs** use one directory per feature. The PRD is `PRD.md`; issues are `tickets.md` (or `issues/NN-slug.md`).
 - **`handoff/`** is gitignored — working/transient docs that are not part of the tracked documentation tree.
 

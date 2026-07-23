@@ -14,6 +14,7 @@ from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
 
+from modex_agent.core.session_id import SessionInfo
 from modex_agent.input_pipeline.envelope import UserInputEnvelope
 
 _YML = """
@@ -27,7 +28,7 @@ models:
 
 def _ctx(registry: ModelChoiceRegistry, captured: list) -> MagicMock:
     ctx = MagicMock()
-    ctx.session_factory.create.return_value = MagicMock(
+    ctx.session_factory.create.return_value = SessionInfo(
         session_id="sess.main", agent_name="main"
     )
     ctx.model_choice_registry = registry

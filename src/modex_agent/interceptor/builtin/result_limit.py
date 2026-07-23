@@ -145,9 +145,9 @@ class ToolResultLimitInterceptor(ToolCallInterceptor):
         try:
             messages = await ctx.history.to_list()
             for msg in messages:
-                if getattr(msg, "role", None) != MessageRole.TOOL.value:
+                if msg.role != MessageRole.TOOL.value:
                     continue
-                tc_id = getattr(msg, "tool_call_id", None)
+                tc_id = msg.tool_call_id
                 if tc_id:
                     call_ids.add(tc_id)
         except Exception:

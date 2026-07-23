@@ -2,7 +2,7 @@
 
 One-line summary: framework capability (optional `bus_ref` on `CommunicationTarget`) + business-layer peer wiring that lets main agents of different pools message each other via `send_to_agent`.
 
-Reference: spec at `docs/design/cross-pool-peer-communication/PRD.md`; ADR-0019 (`docs/adr/0019-cross-pool-peer-communication.md`) + blueprint (`docs/adr/0019-cross-pool-peer-communication-blueprint.md`).
+Reference: spec at `docs/design/cross-pool-peer-communication/PRD.md`; ADR-0019 (`docs/adr/0019-cross-pool-peer-communication.md`) + blueprint (archived at `docs/adr/history/002-cross-pool-peer-communication-blueprint.md`).
 
 Work the **frontier**: any ticket whose blockers are all done. For a purely linear chain that means top to bottom.
 

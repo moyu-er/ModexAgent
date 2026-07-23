@@ -12,7 +12,7 @@ from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
 from modex_agent.approval.constants import ApprovalDecision
 from modex_agent.approval.types import ApprovalAction
 from modex_agent.approval.views import ApprovalRequestView
-from modex_agent.core.types import InputMessage, OutputMessage
+from modex_agent.core.types import InputMessage, OutputMessage, OutputMessageType
 from modex_agent.runtime.models import ToolArguments, TurnSnapshot
 
 if TYPE_CHECKING:
@@ -53,7 +53,7 @@ def approval_output_message(view: ApprovalRequestView) -> OutputMessage:
     """
     return OutputMessage(
         content=format_approval_prompt(view),
-        message_type="approval_request",
+        message_type=OutputMessageType.APPROVAL_REQUEST,
         metadata={"approval": view.to_dict()},
     )
 

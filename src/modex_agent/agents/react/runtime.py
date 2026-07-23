@@ -150,7 +150,7 @@ class ReactGraphRuntime(GraphRuntime):
         ``around`` routes ``ITERATION`` only. ``TOOL_CALL`` and
         ``LLM_STREAM`` are node-local AOP invoked directly via
         ``InterceptorChain`` because their typed contexts are not
-        constructible from ``GraphContext`` — see ADR-0034 D2.
+        constructible from ``GraphContext`` — see ADR-0033 D5.
         ``LLM_CALL`` is a reserved scope with no wiring
         (``InterceptorChain`` has no ``around_llm_call``).
 
@@ -164,7 +164,7 @@ class ReactGraphRuntime(GraphRuntime):
             return await self._around_iteration(self._interceptor_chain, ctx, body)
 
         # Unknown scope: defensive fallback. TOOL_CALL / LLM_STREAM /
-        # LLM_CALL are not routed through `around` — see ADR-0034 D2.
+        # LLM_CALL are not routed through `around` — see ADR-0033 D5.
         return await body()
 
     async def _around_iteration(

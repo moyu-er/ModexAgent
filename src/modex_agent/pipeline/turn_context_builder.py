@@ -54,6 +54,7 @@ from modex_agent.commands.models import CommandContext
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.emitter import StreamingAwareEmitter
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.types import OutputMessageType
 from modex_agent.media.models import Attachment
 from modex_agent.pipeline.adapters import OutputMessage
 from modex_agent.pipeline.context_assembler import assemble_context
@@ -278,7 +279,7 @@ class TurnContextBuilder:
                 OutputMessage(
                     content=result.notice,
                     session_id=session_id,
-                    message_type="command_response",
+                    message_type=OutputMessageType.COMMAND_RESPONSE,
                 ),
                 session_id,
             )

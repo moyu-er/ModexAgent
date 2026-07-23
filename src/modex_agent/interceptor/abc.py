@@ -15,7 +15,9 @@ from typing_extensions import TypeVar
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
+    from modex_agent.core.constants import FinishReason, StreamControlAction
     from modex_agent.core.emitter import AgentResult
+    from modex_agent.core.message import ChatMessage
     from modex_agent.core.tool_manager import ToolResult
     from modex_agent.core.types import ToolCall
     from modex_agent.runtime.models import TurnStateBase
@@ -46,7 +48,7 @@ class InterceptorScope(str, Enum):
 class LLMRequest:
     """Typed LLM request — replaces loosely assembled message/model dicts."""
 
-    messages: Sequence[dict[str, Any]]
+    messages: Sequence[ChatMessage]
     model: str | None = None
     stream: bool = False
     provider_options: Mapping[str, object] = field(default_factory=dict)
@@ -87,7 +89,7 @@ class IterationContext:
 class LLMCallContext:
     """LLM 调用上下文 — ``turn_state`` + ``request`` added."""
 
-    messages: Sequence[dict[str, Any]]
+    messages: Sequence[ChatMessage]
     model: str | None = None
     stream: bool = False
     turn_state: TurnStateBase | None = None
@@ -98,7 +100,7 @@ class LLMCallContext:
 class LLMStreamContext:
     """LLM 流式调用上下文 — ``turn_state`` + ``request`` added."""
 
-    messages: Sequence[dict[str, Any]]
+    messages: Sequence[ChatMessage]
     model: str | None = None
     session_id: str = ""
     turn_state: TurnStateBase | None = None
@@ -111,8 +113,8 @@ class LLMStreamChunk:
 
     content_delta: str | None = None
     reasoning_delta: str | None = None
-    finish_reason: str | None = None
-    control_action: str | None = None  # None | "cancel"
+    finish_reason: FinishReason | None = None
+    control_action: StreamControlAction | None = None
 
 
 LLMStreamNext = Callable[[], AsyncIterator[LLMStreamChunk]]

@@ -112,6 +112,13 @@ Unit tests under `tests/unit/` (mirrors `src/modex_agent/` structure), architect
 
 Architecture Decision Records (ADRs) in `docs/adr/` (ADR-0001 ~ 0035) and design docs in `docs/design/`. See `docs/AGENTS.md` for the docs index. Read relevant ADRs before making significant architectural changes.
 
+### ADR Governance Rules
+
+1. **ADRs are living documents, not append-only logs.** When a decision is revised or refined, merge the refinement into the original ADR in place. Do NOT create a new ADR for follow-up work on an existing decision.
+2. **No parallel versions.** The main `docs/adr/` directory contains only the current authoritative version of each decision. Superseded/merged/rejected ADRs are moved to `docs/adr/history/` for traceability.
+3. **Consolidate, don't proliferate.** Before creating a new ADR, check if an existing ADR covers the same decision area. If so, update the existing ADR rather than creating a new one.
+4. **New ADRs are for genuinely new decisions** — not for implementation tracking (use design docs + tickets), not for refinements (merge into the original), not for rejections (add to the original's "Rejected alternatives" section).
+
 ## Key Files
 
 | File | Location | Description |

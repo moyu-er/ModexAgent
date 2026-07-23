@@ -92,7 +92,19 @@ function _applyEventToMessages(
       // envelope's metadata (set by the frontend on send, echoed by server).
       const echoId = envelopeRequestId(event);
       if (echoId && echoId === pendingRequestRef.current) {
-        pendingRequestRef.current = null;
+        // Only clear the ref when the echo actually matched the optimistic
+        // message in THIS array. In the hero-send race the echo can be
+        // routed to the buffer branch (its session_id differs from the
+        // still-stale currentSessionId) — the optimistic message lives in
+        // state.messages, not in the buffer, so matching against the buffer
+        // would silently clear the ref and cause the sessionId-change
+        // effect to wipe the optimistic message from state.messages.
+        // Keeping the ref here lets that effect preserve the optimistic
+        // message until fetchMessages reconciles it with backend history.
+        const matched = messages.some((m) => m.id === echoId);
+        if (matched) {
+          pendingRequestRef.current = null;
+        }
         // Carry the echoed attachments (persisted records from the ingest
         // stage) onto the optimistic message so they render after echo.
         const echoAttachments = event.attachments ?? undefined;

@@ -322,8 +322,10 @@ async def test_tool_chains_intact_after_cascade(tmp_path: Path):
     for m in remaining:
         d = m.to_dict()
         for tc in d.get("tool_calls", []) or []:
-            if isinstance(tc, dict) and tc.get("id"):
-                kept_ids.add(tc["id"])
+            if isinstance(tc, dict):
+                cid = tc.get("id")
+                if cid:
+                    kept_ids.add(cid)
     for m in remaining:
         d = m.to_dict()
         if d.get("role") == str(MessageRole.TOOL):

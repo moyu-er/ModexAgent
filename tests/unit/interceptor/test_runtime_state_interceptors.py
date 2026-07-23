@@ -9,7 +9,8 @@ from modex_agent.interceptor.abc import (
     ToolCallContext,
     TurnContext,
 )
-from modex_agent.core.types import ToolCall
+from modex_agent.core.message import ChatMessage
+from modex_agent.core.types import MessageRole, ToolCall
 from modex_agent.runtime.enums import AgentKind, TurnPhase
 from modex_agent.runtime.models import TurnIdentity, TurnStateBase
 from modex_agent.core.session_id import SessionInfo
@@ -50,7 +51,7 @@ def test_all_interceptor_contexts_carry_turn_state() -> None:
 
 
 def test_llm_request_is_typed() -> None:
-    req = LLMRequest(messages=[{"role": "user", "content": "hi"}], model="gpt-4", stream=True, provider_options={"temperature": 0.5})
+    req = LLMRequest(messages=[ChatMessage(role=MessageRole.USER, content="hi")], model="gpt-4", stream=True, provider_options={"temperature": 0.5})
 
     assert req.model == "gpt-4"
     assert req.stream is True

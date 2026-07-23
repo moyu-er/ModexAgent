@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator
 import pytest
 from bot.adapters.fan_in import FanInInputAdapter
 
+from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import InputMessage
 from modex_agent.pipeline.adapters import InputAdapter
 
@@ -62,7 +63,7 @@ async def test_failing_source_does_not_abort_start_of_healthy_source() -> None:
     failing = _StubSource("failing_im", fail_start=True)
     healthy = _ProducingSource(
         "healthy_im",
-        InputMessage(content="hi", session=None, channel="healthy_im"),  # type: ignore[arg-type]
+        InputMessage(content="hi", session=SessionInfo.from_str("healthy_im.healthy"), channel="healthy_im"),
     )
     fan_in.add_source(failing)
     fan_in.add_source(healthy)

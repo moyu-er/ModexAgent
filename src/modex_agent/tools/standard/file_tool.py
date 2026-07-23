@@ -496,12 +496,16 @@ class EditFileTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Perform exact string replacements in files. "
+            "Perform exact string replacements in an existing file. "
+            "Read the file with the read tool before every edit — do NOT edit from memory, "
+            "stale context, or a guessed old_string, as the file may have changed since you last saw it.\n"
             "The edit will FAIL if old_string is not found in the file. "
             "Either provide a larger string with more surrounding context to make it unique, "
-            "or use replace_all=true to change every occurrence. "
-            "When editing text from read_file output, preserve the exact indentation "
+            "or use replace_all=true to change every occurrence.\n"
+            "When editing text from read output, preserve the exact indentation "
             "(tabs/spaces) as it appears in the file content — never include line-number prefixes. "
+            "Take old_string from the file content directly; if the match fails, re-read the file "
+            "and retry with the exact current content.\n"
             "To delete text, set new_string to an empty string. "
             "To create a new file, set old_string to an empty string on a nonexistent file."
         )
@@ -589,7 +593,12 @@ class EditFileTool(Tool):
                 preview = old_string[:200]
                 if len(old_string) > 200:
                     preview += "..."
-                return f"Error: String to replace not found in file.\nString: {preview}"
+                return (
+                    f"Error: old_string not found in {path}. "
+                    f"The file contents may be out of date — please use the read tool to "
+                    f"reload the file and retry with the exact current content.\n"
+                    f"String: {preview}"
+                )
 
             # 检查匹配次数
             matches = content.count(actual_old)

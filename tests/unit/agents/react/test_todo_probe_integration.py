@@ -12,6 +12,7 @@ from modex_agent.agents.react.nodes.llm import LLMNode
 from modex_agent.agents.react.runtime import ReactGraphRuntime
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
+from modex_agent.core.constants import FinishReason
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import LLMResponse, TodoStatus
@@ -69,14 +70,14 @@ async def test_probe_continues_loop_and_keeps_xml_out_of_stream(tmp_path, monkey
 
     # Seed an unfinished todo for THIS session id, so gate 3 passes.
     sid = agent_ctx.session.session_id
-    await store.save(sid, [TodoItem("ship feature", TodoStatus.PENDING)])
+    await store.save(sid, [TodoItem(content="ship feature", status=TodoStatus.PENDING)])
 
     # --- stub the LLM: stream "done." then return a plain (no-tool) response -
     client = ReactLlmClient(provider=object())  # type: ignore[arg-type]
 
     async def _fake_call(messages, ctx):
         await agent_ctx.emitter.emit_content("done.")   # user-facing stream (pre-hook)
-        return LLMResponse(content="done.", tool_calls=[], finish_reason="stop")
+        return LLMResponse(content="done.", tool_calls=[], finish_reason=FinishReason.STOP)
 
     monkeypatch.setattr(client, "call", _fake_call)
 
@@ -88,13 +89,10 @@ async def test_probe_continues_loop_and_keeps_xml_out_of_stream(tmp_path, monkey
     # --- the loop continues (probe injected a tool call) --------------------
     assert result.transition == ReActReason.HAS_TOOLS
 
-    # --- memory: the persisted assistant message carries the probe ----------
-    # ChatMessage.tool_calls is stored in OpenAI wire format:
-    # [{"id": ..., "type": "function", "function": {"name": ..., "arguments": ...}}]
     messages = await agent_ctx.history.to_list()
     assistant = [m for m in messages if m.role == "assistant"][-1]
     assert any(
-        (tc.get("function") or {}).get("name") == "todo_read"
+        tc.tool_name == "todo_read"
         for tc in (assistant.tool_calls or [])
     )
     assert "<system_note" in (assistant.content or "")
