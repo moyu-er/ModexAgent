@@ -11,28 +11,23 @@ from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.runtime.enums import TurnPhase
 from modex_graph.context import GraphContext
 from modex_graph.node import Node
-from modex_graph.result import NodeResult
+from modex_graph.result import Command, NodeResult
 
 
 class StartNode(Node[ReActTurnState]):
-    """Routes to LLM normally, or to resume target when turn is suspended."""
+    """Routes to LLM normally, or to ``state.resume_target`` when resuming."""
 
     def __init__(self) -> None:
-        # Name is also set by ``Graph.add_node(name, node)``; setting it here
-        # keeps the instance usable for direct-invocation tests that bypass
-        # the graph builder.
         self.name = ReActNode.START
 
     async def execute(self, ctx: GraphContext[ReActTurnState]) -> NodeResult:
         state = ctx.state
 
-        if state.phase == TurnPhase.SUSPENDED:
-            # Resume from suspended turn — route to the saved node (TOOL for
-            # approval resume). The static edge START --RESUME_TOOLS--> TOOL
-            # carries this transition; StartNode merely emits the reason.
-            return NodeResult(transition=ReActReason.RESUME_TOOLS)
+        if state.resume_target is not None:
+            target = state.resume_target
+            state.resume_target = None
+            return NodeResult(command=Command(goto=target))
 
-        # Fresh turn — initialize typed state.
         state.phase = TurnPhase.RUNNING
         state.current_node = ReActNode.START
         state.iteration = 0

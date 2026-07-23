@@ -24,7 +24,6 @@ class ReActNode(StrEnum):
 
 class ReActReason(StrEnum):
     NORMAL_START = "normal_start"
-    RESUME_TOOLS = "resume_tools"
     HAS_TOOLS = "has_tools"
     NO_TOOLS = "no_tools"
     TOOLS_DONE = "tools_done"

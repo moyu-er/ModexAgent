@@ -20,7 +20,7 @@ class TestReActReason:
     def test_expected_reasons(self):
         values = {r.value for r in ReActReason}
         expected = {
-            "normal_start", "resume_tools", "has_tools", "no_tools",
+            "normal_start", "has_tools", "no_tools",
             "max_iterations", "llm_error", "tools_done", "turn_cancelled", "done",
         }
         assert values == expected

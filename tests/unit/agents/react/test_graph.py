@@ -52,7 +52,6 @@ class TestBuildReActGraph:
         g = _make_graph("full")
         compiled = g.compile(max_iterations=100)
         assert compiled.next_node_by_transition(ReActNode.START, ReActReason.NORMAL_START) == ReActNode.LLM
-        assert compiled.next_node_by_transition(ReActNode.START, ReActReason.RESUME_TOOLS) == ReActNode.TOOL
         assert compiled.next_node_by_transition(ReActNode.LLM, ReActReason.HAS_TOOLS) == ReActNode.TOOL
         assert compiled.next_node_by_transition(ReActNode.LLM, ReActReason.NO_TOOLS) == ReActNode.END
         assert compiled.next_node_by_transition(ReActNode.LLM, ReActReason.MAX_ITERATIONS) == ReActNode.END

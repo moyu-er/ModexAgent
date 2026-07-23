@@ -39,7 +39,7 @@ This replaces ~230 lines of hand-written payload flattening (the old
 
 from __future__ import annotations
 
-from typing import Any, Self
+from typing import Annotated, Any, Self
 
 from pydantic import BaseModel, ConfigDict, PrivateAttr, model_validator
 
@@ -98,6 +98,11 @@ class GraphState(BaseModel):
         # serialization; Pydantic does not need to validate them.
         arbitrary_types_allowed=True,
     )
+
+    # Resume target set by ``ctx.interrupt(value, resume_to=...)``; the
+    # entry node routes via ``Command(goto=...)`` on re-entry, then clears
+    # it. Replaces entry-node phase hardcoding.
+    resume_target: Annotated[str | None, LastValue] = None
 
     # Per-instance channel bag. Populated by _setup_channels model_validator.
     # Named `_channels` (single underscore) because Pydantic v2 forbids dunder

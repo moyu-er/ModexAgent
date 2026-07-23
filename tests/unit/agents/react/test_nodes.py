@@ -126,23 +126,25 @@ class TestStartNode:
     async def test_resume_routes_to_tool(self):
         node = StartNode()
         runtime = _make_runtime()
-        runtime.state.phase = TurnPhase.SUSPENDED
-        runtime.state.current_node = ReActNode.TOOL
+        runtime.state.resume_target = ReActNode.TOOL
         ctx = _make_graph_ctx(runtime=runtime)
 
         result = await node.execute(ctx)
-        assert result.transition == ReActReason.RESUME_TOOLS
+        assert result.command is not None
+        assert result.command.goto == ReActNode.TOOL
+        assert ctx.state.resume_target is None
 
     @pytest.mark.asyncio
     async def test_resume_target_is_not_approval_specific(self):
         node = StartNode()
         runtime = _make_runtime()
-        runtime.state.phase = TurnPhase.SUSPENDED
-        runtime.state.current_node = ReActNode.LLM
+        runtime.state.resume_target = ReActNode.LLM
         ctx = _make_graph_ctx(runtime=runtime)
 
         result = await node.execute(ctx)
-        assert result.transition == ReActReason.RESUME_TOOLS
+        assert result.command is not None
+        assert result.command.goto == ReActNode.LLM
+        assert ctx.state.resume_target is None
 
 
 class TestEndNode:

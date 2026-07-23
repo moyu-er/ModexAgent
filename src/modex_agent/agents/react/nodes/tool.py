@@ -144,11 +144,13 @@ class ToolNode(Node[ReActTurnState]):
         )
         state.phase = TurnPhase.SUSPENDED
         state.current_node = ReActNode.TOOL
+        state.resume_target = ReActNode.TOOL
 
-        # ADR-0033 D5 + D7: snapshot capture routes through ``ctx.runtime``
-        # (the ``ReactGraphRuntime``). ``ctx.interrupt`` raises the new
-        # ``modex_graph.GraphInterrupt`` (a ``GraphBubbleUp`` subclass) — the
-        # engine propagates it verbatim to the caller's ``run()``.
+        # Snapshot capture routes through ``ctx.runtime``. ``ctx.interrupt``
+        # raises ``modex_graph.GraphInterrupt`` (a ``GraphBubbleUp`` subclass)
+        # — the engine propagates it verbatim to the caller's ``run()``.
+        # ``resume_target`` is set before the snapshot so it persists and
+        # ``StartNode`` routes back here on re-entry.
         await ctx.runtime.capture_snapshot(ctx, SnapshotReason.TOOL_APPROVAL_REQUIRED.value)
         ctx.interrupt(requests)
 

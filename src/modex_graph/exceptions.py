@@ -42,8 +42,8 @@ class GraphInterrupt(GraphBubbleUp):
     Suspend-without-re-execution model: already-applied state updates and
     side effects persist across the interrupt boundary. Resume re-enters
     the graph at the entry node; the interrupted node body is NOT re-run.
-    Resume logic is carried by graph topology (e.g. ReAct's StartNode
-    detects suspended state and routes to TOOL).
+    Re-entry routing is driven by `state.resume_target`: the entry node
+    reads it and routes via `Command(goto=...)`.
 
     The `value` carries the interrupt payload (e.g. an `ApprovalTransaction`
     awaiting human decision). The caller (e.g. `ReActAgent.run()`) inspects

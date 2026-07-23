@@ -122,11 +122,14 @@ class GraphContext[S: "GraphState"]:
     def interrupt(self, value: Any = None) -> NoReturn:
         """Raise `GraphInterrupt(value)` to suspend graph execution.
 
-        Suspend-without-re-execution semantics (ADR-0033 D7): already-applied
-        state updates and side effects persist across the interrupt boundary.
+        Suspend-without-re-execution semantics: already-applied state
+        updates and side effects persist across the interrupt boundary.
         Resume re-enters the graph at the entry node; the interrupted node
-        body is NOT re-run. Resume logic is carried by graph topology (e.g.
-        ReAct's StartNode detects suspended state and routes to TOOL).
+        body is NOT re-run.
+
+        The caller is responsible for setting `state.resume_target` before
+        calling this (typically before capturing a snapshot) so the entry
+        node can route to the resume target on re-entry.
 
         `value` is the interrupt payload (e.g. an `ApprovalTransaction`
         awaiting human decision). The caller inspects `value` to determine

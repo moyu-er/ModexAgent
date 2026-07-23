@@ -125,6 +125,29 @@ class TestPydanticModelCheckpoint:
         assert restored.inner.label == "world"
 
 
+class TestResumeTargetChannel:
+    """GraphState.resume_target is a framework-level LastValue channel."""
+
+    def test_resume_target_defaults_to_none(self) -> None:
+        state = SimpleState()
+        assert state.resume_target is None
+
+    def test_resume_target_round_trip(self) -> None:
+        state = SimpleState()
+        state.resume_target = "tool_node"
+        checkpoint = state.checkpoint()
+        assert checkpoint["resume_target"] == "tool_node"
+
+        restored = SimpleState.from_checkpoint(checkpoint)
+        assert restored.resume_target == "tool_node"
+
+    def test_resume_target_absent_in_old_checkpoint_defaults_to_none(self) -> None:
+        old_checkpoint = SimpleState().checkpoint()
+        del old_checkpoint["resume_target"]
+        restored = SimpleState.from_checkpoint(old_checkpoint)
+        assert restored.resume_target is None
+
+
 class TestCustomCodec:
     """register_codec for non-Pydantic types."""
 

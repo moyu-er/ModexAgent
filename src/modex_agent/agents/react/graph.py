@@ -48,11 +48,12 @@ def build_react_graph(
     net (larger than the business max); the business-level max is enforced
     by ``LLMNode`` returning ``transition=ReActReason.MAX_ITERATIONS``.
 
-    The 8 static edges preserve the existing ReAct topology 1:1:
+    The 7 static edges preserve the existing ReAct topology (resume routing
+    is now via `Command(goto=...)` from `state.resume_target`, not a static
+    edge):
 
     ```
     START --NORMAL_START--> LLM
-    START --RESUME_TOOLS--> TOOL
     LLM   --HAS_TOOLS--> TOOL
     LLM   --NO_TOOLS--> END
     LLM   --MAX_ITERATIONS--> END
@@ -79,9 +80,10 @@ def build_react_graph(
     # from GraphNode.START is required by Graph.compile().
     g.add_edge(GraphNode.START, ReActNode.START)
 
-    # 8 static edges — keyed by ReActReason values (StrEnum satisfies str).
+    # Static edges — keyed by ReActReason values (StrEnum satisfies str).
+    # Resume routing uses Command(goto=...) from state.resume_target
+    # (priority-1 dynamic routing), not a static edge.
     g.add_edge(ReActNode.START, ReActNode.LLM, reason=ReActReason.NORMAL_START)
-    g.add_edge(ReActNode.START, ReActNode.TOOL, reason=ReActReason.RESUME_TOOLS)
     g.add_edge(ReActNode.LLM, ReActNode.TOOL, reason=ReActReason.HAS_TOOLS)
     g.add_edge(ReActNode.LLM, ReActNode.END, reason=ReActReason.NO_TOOLS)
     g.add_edge(ReActNode.LLM, ReActNode.END, reason=ReActReason.MAX_ITERATIONS)

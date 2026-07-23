@@ -435,6 +435,7 @@ class TestCheckpointRoundTrip:
             "tool_batches",
             "approval",
             "result",
+            "resume_target",
         }
         assert set(payload.keys()) == expected_keys
 
@@ -473,6 +474,37 @@ class TestCheckpointRoundTrip:
         assert call2.tool_name == "write_file"
         assert call2.decision is ApprovalDecision.DENIED
         assert call2.status is ToolCallStatus.DENIED
+
+    def test_round_trip_with_executed_tool_result(self) -> None:
+        """ToolCallState.result (ToolResult) must survive checkpoint round-trip.
+
+        Regression: ADR-0034 D1 Stage 2 migrated ToolCallState to BaseModel,
+        but ToolResult was a plain class with arbitrary_types_allowed=True.
+        model_dump(mode="json") raised PydanticSerializationError on
+        ToolResult. Fix: ToolResult migrated to BaseModel with a
+        field_serializer for the result: Any field.
+        """
+        from modex_agent.core.tool_manager import ToolResult
+
+        state = _make_state()
+        batch = state.tool_batches[0]
+        batch.calls[0].result = ToolResult(
+            tool_name="read_file",
+            result="file contents here",
+            execution_time=0.05,
+            call_id="call-1",
+        )
+        batch.calls[0].status = ToolCallStatus.COMPLETED
+
+        restored = ReActTurnState.from_checkpoint(state.checkpoint())
+        r_batch = restored.tool_batches[0]
+        r_call = r_batch.calls[0]
+        assert r_call.result is not None
+        assert r_call.result.tool_name == "read_file"
+        assert r_call.result.result == "file contents here"
+        assert r_call.result.execution_time == 0.05
+        assert r_call.result.call_id == "call-1"
+        assert r_call.result.success is True
 
     def test_round_trip_preserves_approval(self) -> None:
         state = _make_state()
@@ -679,7 +711,7 @@ class TestSnapshotParity:
     both preserve the same resume-critical state data.
 
     The NEW path uses the per-channel codec (``GraphState.checkpoint()`` /
-    ``from_checkpoint()``) after ADR-0034 D1 removed the ``model_dump`` override.
+    ``from_checkpoint()``) after ADR-0033 D14 removed the ``model_dump`` override.
     The parity assertion compares the OLD hand-written baseline against this
     per-channel path, proving equivalence to both the baseline and the
     ``model_dump`` override it replaces.

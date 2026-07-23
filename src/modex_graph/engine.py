@@ -64,10 +64,11 @@ class GraphEngine[S: "GraphState"]:
         Returns `ctx.state` (the final state). The terminal node writes its
         result to a state field; the caller reads it after this returns.
 
-        Re-entry semantics (D9.3): always starts from `entry_node`. The
-        engine is stateless across `run_async` calls — no internal "resume
-        context". Resume logic is carried by graph topology (e.g. ReAct's
-        StartNode detects suspended state and routes to TOOL).
+        Re-entry semantics: always starts from `entry_node`. The engine
+        is stateless across `run_async` calls — no internal "resume
+        context". Resume routing is driven by `state.resume_target`
+        (set by `ctx.interrupt(value, resume_to=...)`): the entry node
+        reads it and routes via `Command(goto=...)`.
 
         `GraphBubbleUp` exceptions propagate to the caller. The engine does
         NOT catch them.
