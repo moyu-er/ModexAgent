@@ -30,6 +30,7 @@ from .nodes.llm import LLMNode
 from .nodes.start import StartNode
 from .nodes.tool import ToolNode
 from .state import ReActTurnState
+from .tool_dedup import ToolCallDeduplicator
 from .tool_executor import ToolExecutor
 
 
@@ -39,6 +40,7 @@ def build_react_graph(
     injection_drainer: InjectionDrainer,
     tool_executor: ToolExecutor,
     mode: Literal["clean", "full"] = "full",
+    deduplicator: ToolCallDeduplicator | None = None,
 ) -> Graph[ReActTurnState]:
     """Construct the ReAct 4-node graph topology on the new ``modex_graph`` engine.
 
@@ -73,7 +75,7 @@ def build_react_graph(
     # Nodes — registered under their ReActNode StrEnum names.
     g.add_node(ReActNode.START, StartNode())
     g.add_node(ReActNode.LLM, LLMNode(llm_client, injection_drainer))
-    g.add_node(ReActNode.TOOL, ToolNode(tool_executor))
+    g.add_node(ReActNode.TOOL, ToolNode(tool_executor, deduplicator))
     g.add_node(ReActNode.END, EndNode())
 
     # Entry edge — declares StartNode as the graph entry. Exactly one edge
