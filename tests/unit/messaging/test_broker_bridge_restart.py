@@ -84,7 +84,7 @@ class TestBridgeRestart:
         adapter = FakeInputAdapter("in1")
         service = BrokerBridgeService(
             broker=broker,
-            input_bindings={adapter: Address(kind="test", name="addr1")},
+            input_bindings={adapter: Address(kind="channel", name="addr1")},
             restart_on_failure=True,
             restart_max_retries=2,
             restart_backoff_seconds=0.05,
@@ -125,7 +125,7 @@ class TestBridgeRestart:
         adapter = FakeInputAdapter("in1")
         service = BrokerBridgeService(
             broker=broker,
-            input_bindings={adapter: Address(kind="test", name="addr1")},
+            input_bindings={adapter: Address(kind="channel", name="addr1")},
             restart_on_failure=True,
             restart_max_retries=1,
             restart_backoff_seconds=0.01,
@@ -185,7 +185,7 @@ class TestBridgeRestart:
         adapter = FakeInputAdapter("in1")
         service = BrokerBridgeService(
             broker=broker,
-            input_bindings={adapter: Address(kind="test", name="addr1")},
+            input_bindings={adapter: Address(kind="channel", name="addr1")},
             restart_on_failure=True,
             restart_max_retries=3,
             restart_backoff_seconds=0.01,

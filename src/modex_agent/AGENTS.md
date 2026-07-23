@@ -61,15 +61,15 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 ### Working In This Directory
 - `from __future__ import annotations` in all modules
 - Generic type bindings: `Agent[E]`, `ContentEmitter[E]` via `TypeVar("E", bound=AgentEvent)`
-- Enums/constants over raw strings, dataclasses over dicts for config
+- Enums/constants over raw strings, Pydantic BaseModels over dicts for config (rules 10-16)
 - Every cross-cutting concern needs an ABC or Protocol — prefer ABC per project rules
-- Frozen dataclasses for config/value objects; runtime objects hold state/connections
+- Frozen Pydantic BaseModels for config/value objects (rule 12); runtime objects hold state/connections
 
 ### Type Safety (from rules/type-safety.md)
 1. Enums/constants over raw strings — `MessageRole`, `MessageType`, `FinishReason`, `DefaultValues`
 2. Typed structures over loose dicts — `ChatMessage`, `ToolCall`, `LLMResponse`, `InputMessage`, `OutputMessage`
 3. Typed signatures — no bare `Any`, `list`, `dict`, `object` in framework-facing APIs
-4. ABCs/Protocols before implementations — no concrete dependency where pluggable contract exists
+4. ABCs before implementations (rule 7 — no Protocols) — no concrete dependency where pluggable contract exists
 5. Framework vs examples separation — no example-specific config in framework
 6. No dynamic access (`getattr`/`hasattr`) except at real extension boundaries
 
@@ -79,7 +79,7 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 - Mock `LLMProvider`, `ControlChannel` — never hit real APIs
 
 ### Common Patterns
-- `Protocol` for contracts, `@dataclass` for data, `ABC` + `@abstractmethod` for abstract classes
+- `ABC` + `@abstractmethod` for contracts (rule 7 — zero Protocols), Pydantic `BaseModel` for structured data (rules 10-16)
 - `scopes: frozenset[InterceptorScope]` for declaring interceptor scope
 - Per-turn state in `ctx.state` (typed `ReActTurnState`, a `GraphState(BaseModel)`) for ReAct nodes, not instance attributes
 - `GraphInterrupt` (from `modex_graph.exceptions`) for approval suspension — never catch and swallow it

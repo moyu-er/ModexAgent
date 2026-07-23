@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from modex_agent.runtime.models import JsonValue
 
@@ -32,14 +33,15 @@ class ArchiveChannel(StrEnum):
     CORE = "core"
 
 
-@dataclass(frozen=True)
-class ArchiveWrite:
+class ArchiveWrite(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
     channel: ArchiveChannel
     summary: str
-    metadata: Mapping[str, JsonValue] = field(default_factory=dict)
+    metadata: Mapping[str, JsonValue] = Field(default_factory=dict)
     raw_refs: tuple[str, ...] = ()
 
-    def __post_init__(self) -> None:
+    def model_post_init(self, __context: Any) -> None:
         normalized_metadata: Mapping[str, JsonValue] = {
             **self.metadata,
             "schema": ARCHIVE_SCHEMA,

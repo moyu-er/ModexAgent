@@ -95,8 +95,7 @@ async def test_subagent_loop_routes_to_parent_inbox():
         ChatMessage(
             role="assistant",
             content="I am stuck doing the same thing.",
-            tool_calls=[{"id": "c0", "type": "function",
-                         "function": {"name": "read", "arguments": '{"path": "/a"}'}}],
+            tool_calls=[ToolCall(tool_name="read", arguments={"path": "/a"}, call_id="c0")],
         )
     )
 
@@ -141,10 +140,9 @@ async def test_subagent_loop_routes_to_parent_inbox():
     assert key == "conv123.main"
     assert envelope.message_type == AgentMessageType.AGENT_RESULT
     xml = envelope.payload["content"]
-    assert "<subagent_notification>" in xml
-    assert "loop_detected" in xml
-    assert "incomplete" in xml
+    assert "<subagent_result>" in xml
     assert "loop" in xml.lower()
+    assert "<success>false</success>" in xml
 
 
 # Import ReActTurnState here to avoid a top-level import cycle in some test runners.

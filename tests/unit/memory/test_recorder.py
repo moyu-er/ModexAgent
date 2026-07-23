@@ -8,6 +8,7 @@ import pytest
 
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.scope import MemoryContext
+from modex_agent.core.types import MessageRole
 from modex_agent.memory.recorder import MemoryAppendRecorder
 
 
@@ -135,14 +136,17 @@ class TestMemoryAppendRecorderAddProvider:
 
 class TestMemoryAppendRecorderChatMessageCompat:
     @pytest.mark.asyncio
-    async def test_chat_message_converted_to_dict(self):
+    async def test_chat_message_passed_as_chatmessage(self):
         provider = FakeProvider()
         recorder = MemoryAppendRecorder([provider])
         ctx = make_context()
-        msg = ChatMessage(role="user", content="hello")
+        msg = ChatMessage(role=MessageRole.USER, content="hello")
         await recorder.record([msg], ctx)
         await recorder.flush()
         call_args = provider.add.call_args
         assert call_args is not None
         sent_messages = call_args[0][0]
-        assert all(isinstance(m, dict) for m in sent_messages)
+        # B6: MemoryProvider.add now receives list[ChatMessage] (recorder
+        # coerces the queued mixed list before fan-out).
+        assert all(isinstance(m, ChatMessage) for m in sent_messages)
+        assert sent_messages[0].content == "hello"

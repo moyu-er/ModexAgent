@@ -68,13 +68,13 @@ async def broker():
 
 
 async def test_broker_input_adapter_receives_messages(broker):
-    addr = Address("channel", "qq")
+    addr = Address(kind="channel", name="qq")
     adapter = BrokerInputAdapter(broker, addr)
     await adapter.start()
 
     msg = BrokerMessage(
         payload={"content": "hello", "session_id": "s1"},
-        sender=Address("user", "123"),
+        sender=Address(kind="user", name="123"),
         recipient=addr,
     )
     await broker.send_to(addr, msg)
@@ -93,12 +93,12 @@ async def test_broker_input_adapter_receives_messages(broker):
 
 
 async def test_broker_input_adapter_preserves_metadata(broker):
-    addr = Address("channel", "qq")
+    addr = Address(kind="channel", name="qq")
     adapter = BrokerInputAdapter(broker, addr)
 
     msg = BrokerMessage(
         payload={"content": "hi"},
-        sender=Address("user", "123456"),
+        sender=Address(kind="user", name="123456"),
         recipient=addr,
         headers={"channel": "qq", "chat_id": "789"},
     )
@@ -111,7 +111,7 @@ async def test_broker_input_adapter_preserves_metadata(broker):
 async def test_broker_output_adapter_sends_via_topic(broker):
     adapter = BrokerOutputAdapter(
         broker=broker,
-        sender=Address("agent", "react"),
+        sender=Address(kind="agent", name="react"),
         default_topic="agent:outgoing",
     )
     out = OutputMessage(content="reply", metadata={"k": "v"})
@@ -126,14 +126,14 @@ async def test_broker_output_adapter_sends_via_topic(broker):
     assert got is not None
     assert got.payload["content"] == "reply"
     assert got.payload["session_id"] == "session_42"
-    assert got.sender == Address("agent", "react")
+    assert got.sender == Address(kind="agent", name="react")
 
 
 async def test_broker_output_adapter_sends_via_recipient(broker):
-    recipient = Address("user", "999")
+    recipient = Address(kind="user", name="999")
     adapter = BrokerOutputAdapter(
         broker=broker,
-        sender=Address("agent", "sales"),
+        sender=Address(kind="agent", name="sales"),
         default_recipient=recipient,
     )
     out = OutputMessage(content="quote")
@@ -142,19 +142,19 @@ async def test_broker_output_adapter_sends_via_recipient(broker):
     await broker.register_consumer(recipient)
     got = await asyncio.wait_for(broker.consume(recipient), timeout=0.5)
     assert got.payload["content"] == "quote"
-    assert got.sender == Address("agent", "sales")
+    assert got.sender == Address(kind="agent", name="sales")
 
 
 async def test_broker_output_adapter_requires_sender():
     b = InMemoryMessageBroker()
     with pytest.raises(ValueError, match="Must provide default_recipient or default_topic"):
-        BrokerOutputAdapter(broker=b, sender=Address("agent", "x"))
+        BrokerOutputAdapter(broker=b, sender=Address(kind="agent", name="x"))
 
 
 async def test_bridge_service_input_binding(broker):
     mock_in = MockInputAdapter()
     await mock_in.start()
-    bound_addr = Address("channel", "qq")
+    bound_addr = Address(kind="channel", name="qq")
 
     service = BrokerBridgeService(
         broker=broker,
@@ -166,7 +166,7 @@ async def test_bridge_service_input_binding(broker):
 
     got = await asyncio.wait_for(broker.consume(bound_addr), timeout=0.5)
     assert got.payload["content"] == "from_qq"
-    assert got.sender == Address("channel", "qq")
+    assert got.sender == Address(kind="channel", name="qq")
 
     await service.stop()
 
@@ -184,7 +184,7 @@ async def test_bridge_service_output_topic_routing(broker):
         "agent:outgoing",
         BrokerMessage(
             payload={"content": " routed", "session_id": "s2", "metadata": {}},
-            sender=Address("agent", "react"),
+            sender=Address(kind="agent", name="react"),
             topic="agent:outgoing",
         ),
     )
@@ -203,7 +203,7 @@ async def test_bridge_service_stop_gracefully(broker):
 
     service = BrokerBridgeService(
         broker=broker,
-        input_bindings={mock_in: Address("channel", "qq")},
+        input_bindings={mock_in: Address(kind="channel", name="qq")},
         output_routes=[OutputRoute(adapter=mock_out, match_topic="t1")],
     )
     await service.start()

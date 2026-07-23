@@ -76,9 +76,11 @@ def _image_attachment() -> Attachment:
 
 
 def _input_with_resolved_image() -> InputMessage:
-    msg = InputMessage(content="look at this", session=SessionInfo.from_str("s:main"))
-    msg.attachments_resolved = [_image_attachment()]
-    return msg
+    return InputMessage(
+        content="look at this",
+        session=SessionInfo.from_str("s:main"),
+        attachments_resolved=[_image_attachment()],
+    )
 
 
 # Two capability variants a future mechanism-A renderer would key on. v1 must

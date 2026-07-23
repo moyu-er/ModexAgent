@@ -11,7 +11,8 @@ import pytest
 
 from modex_agent.core.constants import FinishReason
 from modex_agent.core.llm_struct import LLMErrorKind
-from modex_agent.core.types import LLMResponse
+from modex_agent.core.message import ChatMessage
+from modex_agent.core.types import LLMResponse, MessageRole
 
 
 def _make_stream_chunk(content=None, reasoning_content=None, finish_reason=None):
@@ -77,7 +78,7 @@ class TestChatErrorHandling:
         provider._acompletion.side_effect = Exception("Request timed out")
 
         result = await provider.chat_with_retry(
-            messages=[{"role": "user", "content": "hi"}],
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
             max_retries=0,
         )
 
@@ -93,7 +94,7 @@ class TestChatErrorHandling:
 
         with pytest.raises(asyncio.CancelledError):
             await provider.chat_with_retry(
-                messages=[{"role": "user", "content": "hi"}],
+                messages=[ChatMessage(role=MessageRole.USER, content="hi")],
                 max_retries=0,
             )
 
@@ -107,7 +108,7 @@ class TestChatErrorHandling:
         provider._acompletion = _make_stream(chunks)
 
         result = await provider.chat_with_retry(
-            messages=[{"role": "user", "content": "hi"}],
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
             max_retries=0,
         )
 
@@ -123,7 +124,7 @@ class TestChatErrorHandling:
         provider._acompletion = _make_stream(chunks)
 
         result = await provider.chat_with_retry(
-            messages=[{"role": "user", "content": "hi"}],
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
             max_retries=0,
         )
 
@@ -136,7 +137,7 @@ class TestChatErrorHandling:
         provider._acompletion.side_effect = Exception("401 unauthorized")
 
         result = await provider.chat_with_retry(
-            messages=[{"role": "user", "content": "hi"}],
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
             max_retries=2,
         )
 
@@ -165,7 +166,7 @@ class TestChatErrorHandling:
         provider._acompletion = mock_acompletion
 
         result = await provider.chat_with_retry(
-            messages=[{"role": "user", "content": "hi"}],
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
             max_retries=2,
         )
 
@@ -193,7 +194,7 @@ class TestChatStreamRawErrorHandling:
         provider._acompletion = AsyncMock(side_effect=Exception("connection reset"))
 
         result = await provider.chat_stream_with_retry(
-            messages=[{"role": "user", "content": "hi"}],
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
             max_retries=0,
         )
 
@@ -207,7 +208,7 @@ class TestChatStreamRawErrorHandling:
 
         with pytest.raises(asyncio.CancelledError):
             await provider.chat_stream_with_retry(
-                messages=[{"role": "user", "content": "hi"}],
+                messages=[ChatMessage(role=MessageRole.USER, content="hi")],
                 max_retries=0,
             )
 
@@ -238,7 +239,7 @@ class TestChatStreamRawErrorHandling:
         provider._acompletion = hanging_stream
 
         result = await provider.chat_stream_with_retry(
-            messages=[{"role": "user", "content": "hi"}],
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
             max_retries=0,
         )
 
@@ -281,7 +282,7 @@ class TestChatStreamRawErrorHandling:
 
         deltas = []
         result = await provider.chat_stream_with_retry(
-            messages=[{"role": "user", "content": "hi"}],
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
             max_retries=0,
             on_content_delta=lambda d: deltas.append(d),
         )
@@ -303,7 +304,7 @@ class TestChatStreamRawErrorHandling:
 
         deltas = []
         result = await provider.chat_stream_with_retry(
-            messages=[{"role": "user", "content": "hi"}],
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
             max_retries=0,
             on_content_delta=lambda d: deltas.append(d),
         )
@@ -343,6 +344,6 @@ class TestBuildRequestParams:
 
     def test_num_retries_not_in_params(self, provider):
         params = provider._build_request_params(
-            messages=[{"role": "user", "content": "hi"}],
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
         )
         assert "num_retries" not in params

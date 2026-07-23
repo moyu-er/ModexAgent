@@ -44,7 +44,7 @@ class ReasoningContentFilter(ContentFilter):
 
     async def apply(self, message: OutputMessage) -> OutputMessage:
         if self.mode == "strip":
-            message.reasoning = None
+            return message.model_copy(update={"reasoning": None})
         # "keep" mode: no-op
         return message
 
@@ -64,5 +64,4 @@ class WhitespaceFilter(ContentFilter):
             content = re.sub(r"\n{3,}", "\n\n", content)
         if self.strip_edges:
             content = content.strip()
-        message.content = content
-        return message
+        return message.model_copy(update={"content": content})

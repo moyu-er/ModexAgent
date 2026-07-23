@@ -20,7 +20,8 @@ Default session cleanup flow:
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from modex_agent.core.scope import MemoryContext, Scope, SessionScope, UserScope
 from modex_agent.memory.archive_models import DEFAULT_RETAINED_CONSUMED_ARCHIVE_PAIRS
@@ -29,23 +30,38 @@ from modex_agent.memory.core.split_stores import MemoryStoreBundle
 StorageFactory = Callable[[MemoryContext], Awaitable[MemoryStoreBundle]]
 
 
-@dataclass(frozen=True)
-class SessionMemoryConfig:
-    scope: Scope = field(default_factory=SessionScope)
+class SessionMemoryConfig(BaseModel):
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        arbitrary_types_allowed=True,
+    )
+
+    scope: Scope = Field(default_factory=SessionScope)
 
 
-@dataclass(frozen=True)
-class ArchiveMemoryConfig:
+class ArchiveMemoryConfig(BaseModel):
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        arbitrary_types_allowed=True,
+    )
+
     max_entries: int | None = 1000
     cursor_name: str = "default"
-    scope: Scope = field(default_factory=UserScope)
+    scope: Scope = Field(default_factory=UserScope)
     retained_consumed_archive_pairs: int = DEFAULT_RETAINED_CONSUMED_ARCHIVE_PAIRS
 
 
-@dataclass(frozen=True)
-class CoreMemoryConfig:
-    scope: Scope = field(default_factory=UserScope)
-    default_files: dict[str, str] = field(
+class CoreMemoryConfig(BaseModel):
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        arbitrary_types_allowed=True,
+    )
+
+    scope: Scope = Field(default_factory=UserScope)
+    default_files: dict[str, str] = Field(
         default_factory=lambda: {
             "soul": "SOUL.md",
             "user": "USER.md",
@@ -56,20 +72,30 @@ class CoreMemoryConfig:
     default_templates_dir: str | None = None
 
 
-@dataclass(frozen=True)
-class UserRetentionBufferConfig:
+class UserRetentionBufferConfig(BaseModel):
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        arbitrary_types_allowed=True,
+    )
+
     enabled: bool = True
     max_entries: int = 3
     max_user_chars: int = 4000
     max_assistant_chars: int = 4000
-    scope: Scope = field(default_factory=SessionScope)
+    scope: Scope = Field(default_factory=SessionScope)
 
 
-@dataclass(frozen=True)
-class MemoryLayerConfigSet:
-    session: SessionMemoryConfig = field(default_factory=SessionMemoryConfig)
-    archive: ArchiveMemoryConfig | None = field(default_factory=ArchiveMemoryConfig)
-    core: CoreMemoryConfig | None = field(default_factory=CoreMemoryConfig)
-    user_retention: UserRetentionBufferConfig | None = field(
+class MemoryLayerConfigSet(BaseModel):
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        arbitrary_types_allowed=True,
+    )
+
+    session: SessionMemoryConfig = Field(default_factory=SessionMemoryConfig)
+    archive: ArchiveMemoryConfig | None = Field(default_factory=ArchiveMemoryConfig)
+    core: CoreMemoryConfig | None = Field(default_factory=CoreMemoryConfig)
+    user_retention: UserRetentionBufferConfig | None = Field(
         default_factory=UserRetentionBufferConfig
     )

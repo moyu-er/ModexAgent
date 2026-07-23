@@ -8,6 +8,7 @@ import logging
 from enum import Enum
 from typing import Any, Literal
 
+from modex_agent.agents.react.constants import InterruptReason
 from modex_agent.agents.react.state import get_react_state
 from modex_agent.control.exceptions import (
     AgentCancelled,
@@ -25,6 +26,7 @@ from ...core.emitter import AgentResult, ContentEmitter
 from ...core.events import AgentEvent
 from ...core.provider import LLMProvider
 from .message_builder import build_interrupted_assistant_message
+from .tool_dedup import ToolCallDeduplicator
 
 logger = logging.getLogger(__name__)
 
@@ -88,19 +90,19 @@ def _get_turn_messages(ctx: AgentContext) -> list[dict[str, Any]]:
     return []
 
 
-def _interrupt_reason_from(exc: BaseException) -> str:
+def _interrupt_reason_from(exc: BaseException) -> InterruptReason:
     """Map a cancel/error exception to a short, non-leaky interrupt category."""
     if isinstance(exc, AgentCancelled):
-        return "user_stop"
+        return InterruptReason.USER_STOP
     if isinstance(exc, AgentTimeout):
-        return "timeout"
+        return InterruptReason.TIMEOUT
     if isinstance(exc, PolicyViolation):
-        return "policy"
+        return InterruptReason.POLICY
     if isinstance(exc, LoopDetectedError):
-        return "loop_detected"
+        return InterruptReason.LOOP_DETECTED
     if isinstance(exc, asyncio.CancelledError):
-        return "cancelled"
-    return "error"
+        return InterruptReason.CANCELLED
+    return InterruptReason.ERROR
 
 
 async def _persist_interrupted_partial(ctx: AgentContext, reason: str) -> None:
@@ -275,6 +277,7 @@ class ReActAgent(Agent[ReActEvent]):
                 injection_drainer=self._injection_drainer,
                 tool_executor=self._tool_executor,
                 mode=self.mode,
+                deduplicator=ToolCallDeduplicator(),
             ).compile(max_iterations=context.max_iterations * 4 + 10)
             engine = GraphEngine(graph)
             react_state = get_react_state(context)

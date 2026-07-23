@@ -123,7 +123,7 @@ class MaxIterationNotifyHook(AfterTurnHook):
             return
         if ctx.comm_kind != AgentCommKind.SUBAGENT:
             return
-        if getattr(result, "stop_reason", None) != "max_iterations":
+        if result.stop_reason != "max_iterations":
             return
 
         agent_name = ctx.session.agent_name if ctx.session else "unknown"

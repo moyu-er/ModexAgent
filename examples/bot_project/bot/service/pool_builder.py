@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import replace as _dc_replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -109,7 +108,7 @@ from modex_agent.trace.cassette import (
 )
 
 from .builders import build_inbox, resolve_system_prompt
-from ._assembly_helpers import _placeholder_model_config, _resolved_or_placeholder
+from ._assembly_helpers import _resolved_or_placeholder
 from .external_coding_strategy import (
     ExternalCodingAwareFactory,
     ProviderUnavailableError,
@@ -628,9 +627,8 @@ async def ensure_long_term_defaults(
         raw_template_dir = memory_cfg.long_term.default_templates_dir
     if raw_template_dir:
         abs_template_dir = str((project_dir / raw_template_dir).resolve())
-        lt_mgr._config = _dc_replace(
-            lt_mgr._config,
-            default_templates_dir=abs_template_dir,
+        lt_mgr._config = lt_mgr._config.model_copy(
+            update={"default_templates_dir": abs_template_dir}
         )
 
     defaults: dict[str, str] = {

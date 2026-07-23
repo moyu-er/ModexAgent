@@ -35,6 +35,7 @@ from modex_agent.utils.xml import xml_text
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
+    from modex_agent.core.message import ChatMessage
     from modex_agent.core.types import LLMResponse, ToolCall
 
 
@@ -70,7 +71,7 @@ def _canonical_args(arguments: Any) -> str:
 
 
 def _extract_tool_pairs(
-    tool_calls: list[Any] | None,
+    tool_calls: list[ToolCall | dict[str, Any]] | None,
 ) -> "Iterator[tuple[str, Any]]":
     """Yield ``(name, arguments)`` for each valid tool call, in order.
 
@@ -86,8 +87,8 @@ def _extract_tool_pairs(
             name = func.get("name") or ""
             args = func.get("arguments")
         else:
-            name = getattr(tc, "tool_name", "") or ""
-            args = getattr(tc, "arguments", None)
+            name = tc.tool_name or ""
+            args = tc.arguments
         if not name:
             continue
         yield name, args
@@ -119,13 +120,13 @@ class _AssistantView:
     tool_count: int  # number of tool calls (distinct from fingerprint size)
 
 
-def _view_from_message(msg: Any) -> _AssistantView:
-    content = getattr(msg, "content", None)
+def _view_from_message(msg: ChatMessage) -> _AssistantView:
+    content = msg.content
     if isinstance(content, list):  # multimodal content blocks
         content = " ".join(
             str(b.get("text", "")) for b in content if isinstance(b, dict)
         )
-    tcs = getattr(msg, "tool_calls", None)
+    tcs = msg.tool_calls
     return _AssistantView(
         content=content or "",
         tool_fp=_tool_calls_fingerprint(tcs),
@@ -142,7 +143,7 @@ def _view_from_response(response: "LLMResponse") -> _AssistantView:
 
 
 def _collect_recent_assistants(
-    history_messages: list[Any],
+    history_messages: list[ChatMessage],
     current_response: "LLMResponse",
 ) -> list[_AssistantView]:
     """Trailing run of consecutive tool-bearing assistant views of the current
@@ -157,7 +158,7 @@ def _collect_recent_assistants(
     """
     views: list[_AssistantView] = []
     for msg in reversed(history_messages):
-        role = getattr(msg, "role", None)
+        role = msg.role
         if role == "tool":
             continue
         if role == "user":

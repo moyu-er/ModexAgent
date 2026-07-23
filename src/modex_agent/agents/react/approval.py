@@ -22,7 +22,7 @@ class ApprovalClassifier(ABC):
     """Classify a tool call into an ``ApprovalTier`` value."""
 
     @abstractmethod
-    def classify(self, tool_call: ToolCall, ctx: AgentContext) -> str: ...
+    def classify(self, tool_call: ToolCall, ctx: AgentContext) -> ApprovalTier: ...
 
 
 @dataclass
@@ -38,7 +38,7 @@ class TieredToolApprovalClassifier(ApprovalClassifier):
     config: AgentApprovalConfig
     argument_matcher: ArgumentMatcher | None = None
 
-    def classify(self, tool_call: ToolCall, ctx: AgentContext) -> str:
+    def classify(self, tool_call: ToolCall, ctx: AgentContext) -> ApprovalTier:
         if not self.config.enabled:
             return ApprovalTier.NORMAL
 

@@ -13,6 +13,7 @@ import logging
 from typing import Any
 
 from modex_agent.core.constants import FinishReason
+from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import LLMProvider, StreamingLLMProvider
 from modex_agent.core.types import LLMResponse
 from modex_agent.ioc.factories.llm import create_llm_provider
@@ -55,7 +56,7 @@ class BotModelProvider(StreamingLLMProvider):
 
     async def chat_stream(
         self,
-        messages: list[dict[str, Any]],
+        messages: list[ChatMessage],
         # model/temperature/max_output_tokens 来自框架 ABC 签名，此处故意忽略——
         # 当前 turn 的模型及其参数由 current_model_choice ContextVar 决定（spec B1：
         # ReactLlmClient 不传 model，descriptor 的 temp/max_output_tokens 是冗余占位）。

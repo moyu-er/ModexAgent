@@ -172,6 +172,10 @@ class AgentRuntime:
             turn_uuid=turn_uuid or self.turn_uuid,
         )
 
+    @property
+    def runtime_context(self) -> Any:
+        return self._runtime_context
+
 
 def require_runtime_state(runtime: AgentRuntime, state_type: type[TState]) -> TState:
     """Validate and narrow runtime state to the expected mode-specific type."""

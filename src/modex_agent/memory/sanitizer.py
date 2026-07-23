@@ -277,8 +277,10 @@ class DefaultSessionToolChainSanitizer:
     def _call_ids(message: dict[str, Any]) -> list[str]:
         call_ids: list[str] = []
         for call in message.get("tool_calls") or []:
-            if isinstance(call, dict) and call.get("id") is not None:
-                call_ids.append(str(call["id"]))
+            if isinstance(call, dict):
+                cid = call.get("id")
+                if cid is not None:
+                    call_ids.append(str(cid))
         return call_ids
 
     @staticmethod

@@ -30,14 +30,14 @@ import platform
 import shutil
 import subprocess
 import tempfile
-from dataclasses import dataclass, field
 from pathlib import Path
+
+from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class FilesystemIsolationConfig:
+class FilesystemIsolationConfig(BaseModel):
     """Filesystem isolation configuration.
 
     Attributes:
@@ -47,14 +47,15 @@ class FilesystemIsolationConfig:
         deny_write: List of paths explicitly denied for writing
     """
 
-    allow_read: list[str] = field(default_factory=list)
-    allow_write: list[str] = field(default_factory=list)
-    deny_read: list[str] = field(default_factory=list)
-    deny_write: list[str] = field(default_factory=list)
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    allow_read: list[str] = Field(default_factory=list)
+    allow_write: list[str] = Field(default_factory=list)
+    deny_read: list[str] = Field(default_factory=list)
+    deny_write: list[str] = Field(default_factory=list)
 
 
-@dataclass
-class NetworkIsolationConfig:
+class NetworkIsolationConfig(BaseModel):
     """Network isolation configuration.
 
     Attributes:
@@ -63,13 +64,14 @@ class NetworkIsolationConfig:
         allow_all: Whether to allow all network access (default: False)
     """
 
-    allow_domains: list[str] = field(default_factory=list)
-    deny_domains: list[str] = field(default_factory=list)
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    allow_domains: list[str] = Field(default_factory=list)
+    deny_domains: list[str] = Field(default_factory=list)
     allow_all: bool = False
 
 
-@dataclass
-class ResourceLimits:
+class ResourceLimits(BaseModel):
     """Resource limits for sandboxed processes.
 
     Attributes:
@@ -79,14 +81,15 @@ class ResourceLimits:
         timeout_seconds: Maximum execution time
     """
 
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
     max_memory_mb: int | None = None
     max_cpu_percent: int | None = None
     max_processes: int | None = None
     timeout_seconds: int | None = None
 
 
-@dataclass
-class IsolationConfig:
+class IsolationConfig(BaseModel):
     """Complete isolation configuration.
 
     Attributes:
@@ -95,9 +98,11 @@ class IsolationConfig:
         resources: Resource limits
     """
 
-    filesystem: FilesystemIsolationConfig = field(default_factory=FilesystemIsolationConfig)
-    network: NetworkIsolationConfig = field(default_factory=NetworkIsolationConfig)
-    resources: ResourceLimits = field(default_factory=ResourceLimits)
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    filesystem: FilesystemIsolationConfig = Field(default_factory=FilesystemIsolationConfig)
+    network: NetworkIsolationConfig = Field(default_factory=NetworkIsolationConfig)
+    resources: ResourceLimits = Field(default_factory=ResourceLimits)
 
 
 class IsolationProvider(abc.ABC):

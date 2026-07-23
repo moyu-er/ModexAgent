@@ -125,11 +125,14 @@ def test_attachment_reference_uses_unknown_when_mime_missing() -> None:
 async def test_preprocess_injects_reference_for_resolved_attachments() -> None:
     """One reference line per resolved attachment; appended to sanitized content."""
     builder = _make_builder()
-    input_msg = InputMessage(content="look at this", session=SessionInfo.from_str("s:main"))
-    input_msg.attachments_resolved = [
-        _attachment(name="a.png"),
-        _attachment(name="b.txt", mime="text/plain", size=100, rel_path="media/uploads/s1/b"),
-    ]
+    input_msg = InputMessage(
+        content="look at this",
+        session=SessionInfo.from_str("s:main"),
+        attachments_resolved=[
+            _attachment(name="a.png"),
+            _attachment(name="b.txt", mime="text/plain", size=100, rel_path="media/uploads/s1/b"),
+        ],
+    )
 
     with TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -170,8 +173,11 @@ async def test_preprocess_no_injection_when_no_resolved_attachments() -> None:
 async def test_preprocess_injection_does_not_carry_attachment_id() -> None:
     """The transient reference carries name/mime/size/path but NEVER the id."""
     builder = _make_builder()
-    input_msg = InputMessage(content="hi", session=SessionInfo.from_str("s:main"))
-    input_msg.attachments_resolved = [_attachment()]
+    input_msg = InputMessage(
+        content="hi",
+        session=SessionInfo.from_str("s:main"),
+        attachments_resolved=[_attachment()],
+    )
 
     with TemporaryDirectory() as tmp:
         root = Path(tmp)

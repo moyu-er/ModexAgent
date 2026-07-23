@@ -16,7 +16,8 @@ from bot.service.model_config import BotModelConfig
 from bot.service.model_provider import BotModelProvider
 
 from modex_agent.core.constants import FinishReason
-from modex_agent.core.types import LLMResponse
+from modex_agent.core.message import ChatMessage
+from modex_agent.core.types import LLMResponse, MessageRole
 
 _YML = """
 models:
@@ -62,7 +63,7 @@ def test_default_model_used_when_ctxvar_unset(tmp_path: Path) -> None:
     prov._cache[("a", "m1")] = fake  # type: ignore[attr-defined]
 
     async def go() -> LLMResponse:
-        return await prov.chat_stream(messages=[{"role": "user", "content": "hi"}])
+        return await prov.chat_stream(messages=[ChatMessage(role=MessageRole.USER, content="hi")])
 
     resp = asyncio.run(go())
     assert resp.content == "ok"
@@ -87,7 +88,7 @@ def test_ctxvar_switches_model(tmp_path: Path) -> None:
     current_model_choice.set(m2)
 
     async def go() -> LLMResponse:
-        return await prov.chat_stream(messages=[{"role": "user", "content": "hi"}])
+        return await prov.chat_stream(messages=[ChatMessage(role=MessageRole.USER, content="hi")])
 
     asyncio.run(go())
     # The ContextVar-selected model M2 routes to M2's real provider, not M1's.
@@ -163,7 +164,7 @@ def test_provider_model_not_overridden_by_routing_prefix(tmp_path: Path) -> None
     prov._cache[("step", "step-3.7-flash")] = fake  # type: ignore[attr-defined]
 
     async def go() -> LLMResponse:
-        return await prov.chat_stream(messages=[{"role": "user", "content": "hi"}])
+        return await prov.chat_stream(messages=[ChatMessage(role=MessageRole.USER, content="hi")])
 
     asyncio.run(go())
     assert fake.received_model_kwarg != "openai/step-3.7-flash", (

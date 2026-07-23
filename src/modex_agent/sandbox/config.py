@@ -1,7 +1,10 @@
+from __future__ import annotations
+
 import os
 import tempfile
-from dataclasses import dataclass, field
 from pathlib import Path
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .env_builder import EnvPolicy
 from .guard import CommandPatternGuardConfig
@@ -18,15 +21,20 @@ def _get_default_workspace_dir() -> str:
     return os.path.join(tempfile.gettempdir(), "sandbox_workspace")
 
 
-@dataclass
-class SandboxConfig:
-    allowed_dirs: list[str] = field(default_factory=lambda: [_get_default_temp_dir()])
-    deny_dirs: list[str] = field(
+class SandboxConfig(BaseModel):
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        arbitrary_types_allowed=True,
+    )
+
+    allowed_dirs: list[str] = Field(default_factory=lambda: [_get_default_temp_dir()])
+    deny_dirs: list[str] = Field(
         default_factory=lambda: ["/home", "/root", "/etc", "/var"] if os.name != "nt" else []
     )
     max_file_size_mb: int = 100
     max_execution_time_seconds: int = 60
-    workspace_dir: str = field(default_factory=_get_default_workspace_dir)
+    workspace_dir: str = Field(default_factory=_get_default_workspace_dir)
     enable_network: bool = False
     memory_limit_mb: int | None = None
     cpu_limit: float | None = None
@@ -40,30 +48,46 @@ class SandboxConfig:
     workspace: WorkspacePolicyConfig | None = None
     env_policy: EnvPolicy = EnvPolicy.STANDARD
 
-    def __post_init__(self) -> None:
-        default_temp = _get_default_temp_dir()
-        if not self.allowed_dirs:
-            self.allowed_dirs = [default_temp]
-
-        for d in self.allowed_dirs:
+    @field_validator("allowed_dirs")
+    @classmethod
+    def _validate_allowed_dirs(cls, v: list[str]) -> list[str]:
+        if not v:
+            v = [_get_default_temp_dir()]
+        for d in v:
             p = Path(d)
             if not p.is_absolute():
                 raise ValueError(f"allowed_dirs must be absolute paths: {d}")
+        return v
 
-        if self.max_execution_time_seconds <= 0:
-            raise ValueError(
-                f"max_execution_time_seconds must be positive, got {self.max_execution_time_seconds}"
-            )
+    @field_validator("max_execution_time_seconds")
+    @classmethod
+    def _validate_max_execution_time_seconds(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError(f"max_execution_time_seconds must be positive, got {v}")
+        return v
 
-        if self.memory_limit_mb is not None and self.memory_limit_mb <= 0:
-            raise ValueError(
-                f"memory_limit_mb must be positive when specified, got {self.memory_limit_mb}"
-            )
+    @field_validator("memory_limit_mb")
+    @classmethod
+    def _validate_memory_limit_mb(cls, v: int | None) -> int | None:
+        if v is not None and v <= 0:
+            raise ValueError(f"memory_limit_mb must be positive when specified, got {v}")
+        return v
 
-        if self.cpu_limit is not None and self.cpu_limit <= 0:
-            raise ValueError(f"cpu_limit must be positive when specified, got {self.cpu_limit}")
+    @field_validator("cpu_limit")
+    @classmethod
+    def _validate_cpu_limit(cls, v: float | None) -> float | None:
+        if v is not None and v <= 0:
+            raise ValueError(f"cpu_limit must be positive when specified, got {v}")
+        return v
 
-        if self.artifact_max_size <= 0:
-            raise ValueError(f"artifact_max_size must be positive, got {self.artifact_max_size}")
+    @field_validator("artifact_max_size")
+    @classmethod
+    def _validate_artifact_max_size(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError(f"artifact_max_size must be positive, got {v}")
+        return v
 
-        self.workspace_dir = str(Path(self.workspace_dir).absolute())
+    @model_validator(mode="after")
+    def _normalize_workspace_dir(self) -> SandboxConfig:
+        object.__setattr__(self, "workspace_dir", str(Path(self.workspace_dir).absolute()))
+        return self

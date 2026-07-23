@@ -201,10 +201,7 @@ class ExperienceReviewAgent(ScopedFileAgent):
         seed: list[dict[str, Any]] = []
         if conversation_messages:
             for msg in conversation_messages:
-                if isinstance(msg, ChatMessage):
-                    seed.append(msg.model_dump())
-                elif isinstance(msg, dict):
-                    seed.append(dict(msg))
+                seed.append(msg.model_dump())
         seed.append({"role": MessageRole.USER, "content": user_msg})
         history = ListMessageHistory(seed)
 

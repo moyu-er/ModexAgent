@@ -31,6 +31,16 @@ class FinishReason(str, Enum):
     CANCELLED = "cancelled"
 
 
+class StreamControlAction(StrEnum):
+    """LLM 流式控制动作枚举。
+
+    用于 ``LLMStreamChunk.control_action``，标识流式过程中由控制层
+    注入的动作（如取消当前流）。``None`` 表示无控制动作。
+    """
+
+    CANCEL = "cancel"
+
+
 class StopReason(StrEnum):
     """Agent turn 结束原因枚举。
 

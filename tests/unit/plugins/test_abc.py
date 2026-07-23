@@ -2,6 +2,8 @@
 
 import pytest
 
+from modex_agent.core.message import ChatMessage
+from modex_agent.core.types import MessageRole
 from modex_agent.plugins.abc import MemoryProvider
 
 
@@ -59,7 +61,7 @@ class TestMemoryProvider:
     @pytest.mark.asyncio
     async def test_add_memory(self):
         provider = DummyProvider()
-        messages = [{"role": "user", "content": "hello"}]
+        messages = [ChatMessage(role=MessageRole.USER, content="hello")]
         result = await provider.add(messages, None)  # type: ignore[arg-type]
         assert len(provider.added_memories) == 1
         assert provider.added_memories[0]["messages"] == messages

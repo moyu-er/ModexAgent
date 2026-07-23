@@ -22,6 +22,7 @@ from modex_agent.core.llm_struct import (
     RuntimeSafetyPolicy,
     build_timeout_response,
 )
+from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import StreamingLLMProvider
 from modex_agent.core.tool_call_accumulator import ToolCallAccumulator
 from modex_agent.core.types import LLMResponse
@@ -44,7 +45,7 @@ class OpenAIProvider(StreamingLLMProvider):
 
     Example:
         provider = OpenAIProvider(model="gpt-4o", api_key="sk-...")
-        response = await provider.chat([{"role": "user", "content": "Hello"}])
+        response = await provider.chat([ChatMessage(role="user", content="Hello")])
     """
 
     def __init__(
@@ -91,7 +92,7 @@ class OpenAIProvider(StreamingLLMProvider):
 
     async def chat_stream(
         self,
-        messages: list[dict[str, Any]],
+        messages: list[ChatMessage],
         model: str | None = None,
         temperature: float = 0.7,
         max_output_tokens: int | None = None,
@@ -113,7 +114,7 @@ class OpenAIProvider(StreamingLLMProvider):
 
     async def chat_stream_with_retry(
         self,
-        messages: list[dict[str, Any]],
+        messages: list[ChatMessage],
         model: str | None = None,
         temperature: float = 0.7,
         max_output_tokens: int | None = None,
@@ -138,7 +139,7 @@ class OpenAIProvider(StreamingLLMProvider):
 
     async def _chat_stream_raw(
         self,
-        messages: list[dict[str, Any]],
+        messages: list[ChatMessage],
         model: str | None = None,
         temperature: float = 0.7,
         max_output_tokens: int | None = None,
@@ -174,7 +175,7 @@ class OpenAIProvider(StreamingLLMProvider):
             )
             return LLMResponse(
                 content=f"Error calling LLM: {error_info.message}",
-                finish_reason=FinishReason.ERROR.value,
+                finish_reason=FinishReason.ERROR,
                 error=error_info.message,
                 error_info=error_info,
             )
@@ -232,7 +233,7 @@ class OpenAIProvider(StreamingLLMProvider):
                 )
                 return LLMResponse(
                     content=partial_content,
-                    finish_reason=FinishReason.ERROR.value,
+                    finish_reason=FinishReason.ERROR,
                     error=error_info.message,
                     error_info=error_info,
                 )
@@ -297,7 +298,7 @@ class OpenAIProvider(StreamingLLMProvider):
             content="".join(content_parts),
             tool_calls=all_tool_calls,
             reasoning_content="".join(reasoning_parts) if reasoning_parts else None,
-            finish_reason=finish_reason or "stop",
+            finish_reason=FinishReason(finish_reason) if finish_reason else FinishReason.STOP,
             usage=usage,
         )
 
@@ -326,15 +327,25 @@ class OpenAIProvider(StreamingLLMProvider):
 
     @staticmethod
     def _sanitize_api_messages(
-        messages: list[dict[str, Any]],
+        messages: list[ChatMessage],
     ) -> list[dict[str, Any]]:
-        """Strip governance-internal fields from messages before API call."""
+        """Strip governance-internal fields from messages before API call.
+
+        Uses ``to_dict()`` (not ``model_dump()``) so that ``tool_calls``
+        serializes to the OpenAI wire format (``id``/``type``/``function``)
+        and ``arguments`` becomes a JSON string — ``model_dump()`` would
+        produce the internal ToolCall field names instead.
+        """
         allowed = OpenAIProvider._API_MSG_FIELDS
-        return [{k: v for k, v in msg.items() if k in allowed} for msg in messages]
+        result: list[dict[str, Any]] = []
+        for msg in messages:
+            raw = msg.to_dict()
+            result.append({k: v for k, v in raw.items() if k in allowed})
+        return result
 
     def _build_params(
         self,
-        messages: list[dict[str, Any]],
+        messages: list[ChatMessage],
         model: str | None = None,
         temperature: float = 0.7,
         max_output_tokens: int | None = None,

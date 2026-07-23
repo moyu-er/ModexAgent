@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from modex_agent.multi_agent.address import AgentAddress
 
@@ -22,7 +23,7 @@ class TestAgentAddress:
 
     def test_immutability(self) -> None:
         addr = AgentAddress(kind="agent", name="coder")
-        with pytest.raises(AttributeError):
+        with pytest.raises(ValidationError):
             addr.name = "reviewer"
 
     def test_str_with_role_and_capabilities(self) -> None:

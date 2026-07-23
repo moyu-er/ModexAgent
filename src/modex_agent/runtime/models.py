@@ -24,7 +24,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from modex_agent.approval.constants import ApprovalDecision, ApprovalStatus, ApprovalTier
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import ToolResult
-
 from .enums import (
     AgentKind,
     ApprovalSubjectType,
@@ -40,7 +39,6 @@ from .enums import (
 
 if TYPE_CHECKING:
     from modex_agent.core.message import ChatMessage
-    from modex_agent.core.tool_manager import ToolResult
 
 
 type JsonPrimitive = str | int | float | bool | None
@@ -66,7 +64,7 @@ class ToolArguments(BaseModel):
     channel codec (ADR-0033 D14).
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     values: Mapping[str, JsonValue]
 

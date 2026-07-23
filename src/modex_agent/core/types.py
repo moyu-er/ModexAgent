@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, StrEnum
 from pathlib import Path
@@ -10,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .constants import DefaultValues
+from .constants import DefaultValues, FinishReason
 from .llm_struct import LLMErrorInfo
 from .session_id import SessionInfo
 
@@ -18,6 +17,7 @@ from modex_agent.media.models import Attachment
 
 if TYPE_CHECKING:
     from modex_agent.approval.views import ApprovalDecisionInput
+    from modex_agent.core.message import ContentFormat
 
 
 class MessageType(Enum):
@@ -54,13 +54,38 @@ class TodoStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class OutputMessageType(StrEnum):
+    """输出消息类型枚举。
+
+    用于 ``OutputMessage.message_type``，替代硬编码的字符串
+    （text / image / file / error / approval_request / command_response / busy_notice）。
+    """
+
+    TEXT = "text"
+    IMAGE = "image"
+    FILE = "file"
+    ERROR = "error"
+    APPROVAL_REQUEST = "approval_request"
+    COMMAND_RESPONSE = "command_response"
+    BUSY_NOTICE = "busy_notice"
+
+
+class ToolCall(BaseModel):
+    """工具调用请求"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tool_name: str
+    arguments: dict[str, Any]
+    call_id: str | None = None
+
+
 # ============================================================================
 # 消息类型（V2 架构统一）
 # ============================================================================
 
 
-@dataclass
-class InputMessage:
+class InputMessage(BaseModel):
     """标准化的输入消息（V2 架构）
 
     用于 InputAdapter 接收的消息，替代旧的 InboundMessage。
@@ -87,25 +112,85 @@ class InputMessage:
       not listed (produced by SendFileToUserTool, not the input pipeline).
     """
 
+    # ContentFormat and ApprovalDecisionInput are under TYPE_CHECKING due to
+    # circular imports (core.message -> core.types -> core.message, and
+    # approval.__init__ -> approval.ui -> core.types -> approval.views).
+    # Pydantic creates this model with __pydantic_complete__=False; the forward
+    # references are resolved lazily via _ensure_complete() on first use, when
+    # all modules are fully loaded.
+    model_config = ConfigDict(frozen=True, extra="forbid", arbitrary_types_allowed=True)
+
     content: str  # 消息内容（唯一必填字段）
     session: SessionInfo
-    channel: str = field(default=DefaultValues.CHANNEL)
-    sender_id: str = field(default=DefaultValues.SENDER_ID)
-    chat_id: str = field(default=DefaultValues.CHAT_ID)
+    channel: str = DefaultValues.CHANNEL
+    sender_id: str = DefaultValues.SENDER_ID
+    chat_id: str = DefaultValues.CHAT_ID
     source: str = "unknown"  # 来源标识（与 channel 类似）
-    msg_type: MessageType = field(default=MessageType.TEXT)
-    metadata: dict[str, Any] = field(default_factory=dict)
-    attachments: list[str] = field(default_factory=list)
-    timestamp: datetime = field(default_factory=datetime.now)
-    content_format: Any | None = None
+    msg_type: MessageType = MessageType.TEXT
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    attachments: list[str] = Field(default_factory=list)
+    timestamp: datetime = Field(default_factory=datetime.now)
+    content_format: ContentFormat | None = None
     truncatable_paths: list[str] | None = None
     workspace: Path | None = None
     approval_decision: ApprovalDecisionInput | None = None
-    attachments_resolved: list[Attachment] = field(default_factory=list)
+    attachments_resolved: list[Attachment] = Field(default_factory=list)
+
+    @classmethod
+    def _ensure_complete(cls) -> None:
+        """Lazily resolve ContentFormat and ApprovalDecisionInput forward refs.
+
+        These types live in modules that import back from ``core.types``
+        (core.message imports ToolCall; approval.ui imports OutputMessage),
+        so they cannot be imported at module load time. At runtime — when the
+        first InputMessage is constructed — all modules are fully loaded and
+        the imports succeed. ``model_rebuild`` updates the schema in place;
+        subsequent calls are a no-op (``__pydantic_complete__`` is True).
+        """
+        if not cls.__pydantic_complete__:
+            from modex_agent.approval.views import ApprovalDecisionInput  # noqa: F401
+            from modex_agent.core.message import ContentFormat  # noqa: F401
+
+            g = globals()
+            g["ContentFormat"] = ContentFormat
+            g["ApprovalDecisionInput"] = ApprovalDecisionInput
+            cls.model_rebuild()
+
+    def __init__(self, /, **data: Any) -> None:
+        type(self)._ensure_complete()
+        super().__init__(**data)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a JSON-safe dict for cross-process transport.
+
+        ``workspace`` (Path) and ``approval_decision`` (frozen dataclass, not a
+        BaseModel) require custom serialization — Pydantic's ``model_dump`` does
+        not handle ``arbitrary_types_allowed`` fields in JSON mode. They are
+        excluded from the bulk dump and added manually.
+        """
+        type(self)._ensure_complete()
+        data = self.model_dump(mode="json", exclude={"workspace", "approval_decision"})
+        if self.workspace is not None:
+            data["workspace"] = str(self.workspace)
+        if self.approval_decision is not None:
+            data["approval_decision"] = self.approval_decision.to_dict()
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> InputMessage:
+        """Reconstruct from ``to_dict`` output."""
+        cls._ensure_complete()
+        data = dict(data)
+        if data.get("workspace") is not None:
+            data["workspace"] = Path(data["workspace"])
+        if data.get("approval_decision") is not None:
+            from modex_agent.approval.views import ApprovalDecisionInput
+
+            data["approval_decision"] = ApprovalDecisionInput.from_dict(data["approval_decision"])
+        return cls.model_validate(data)
 
 
-@dataclass
-class OutputMessage:
+class OutputMessage(BaseModel):
     """标准化的输出消息（V2 架构）
 
     用于 OutputAdapter 发送的消息，替代旧的 OutboundMessage。
@@ -130,28 +215,29 @@ class OutputMessage:
       from kind + whether the download succeeds.
     """
 
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
     content: str  # 消息内容（唯一必填字段）
     session_id: str = "default"
-    channel: str = field(default=DefaultValues.CHANNEL)
-    recipient_id: str = field(default=DefaultValues.RECIPIENT_ID)
-    chat_id: str = field(default=DefaultValues.CHAT_ID)
-    message_type: str = "text"  # text, image, file, error
-    msg_type: MessageType = field(default=MessageType.TEXT)
+    channel: str = DefaultValues.CHANNEL
+    recipient_id: str = DefaultValues.RECIPIENT_ID
+    chat_id: str = DefaultValues.CHAT_ID
+    message_type: OutputMessageType = OutputMessageType.TEXT  # text, image, file, error
+    msg_type: MessageType = MessageType.TEXT
     reasoning: str | None = None  # 推理/思考过程（DeepSeek R1, Kimi 等模型）
-    metadata: dict[str, Any] = field(default_factory=dict)
-    attachments: list[str] = field(default_factory=list)
-    timestamp: datetime = field(default_factory=datetime.now)
-    attachment_records: list[Attachment] = field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    attachments: list[str] = Field(default_factory=list)
+    timestamp: datetime = Field(default_factory=datetime.now)
+    attachment_records: list[Attachment] = Field(default_factory=list)
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a JSON-safe dict (Pydantic-native, all fields are BaseModel/enum/primitive)."""
+        return self.model_dump(mode="json")
 
-class ToolCall(BaseModel):
-    """工具调用请求"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    tool_name: str
-    arguments: dict[str, Any]
-    call_id: str | None = None
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> OutputMessage:
+        """Reconstruct from ``to_dict`` output."""
+        return cls.model_validate(data)
 
 
 # Note: ToolResult is now defined in tool_manager.py
@@ -169,7 +255,7 @@ class LLMResponse(BaseModel):
     content: str | None
     tool_calls: list[ToolCall] = Field(default_factory=list)
     reasoning_content: str | None = None
-    finish_reason: str = "stop"
+    finish_reason: FinishReason = FinishReason.STOP
     usage: dict[str, int] = Field(default_factory=dict)
     error: str | None = None
     error_info: LLMErrorInfo | None = None

@@ -55,12 +55,12 @@ class TestApplyRuntimeContextPrefix:
         msg = {"role": "user", "content": content}
         result = mgr._apply_runtime_context_prefix(msg, {"chat_id": "456"})
         assert isinstance(result["content"], list)
-        assert result["content"][0]["type"] == "text"
-        assert "[Runtime Context]" in result["content"][0]["text"]
-        assert "chat_id=456" in result["content"][0]["text"]
-        assert result["content"][1]["type"] == "image_url"
-        assert result["content"][2]["type"] == "text"
-        assert result["content"][2]["text"] == "描述这张图"
+        assert result["content"][0].type == "text"
+        assert "[Runtime Context]" in result["content"][0].text
+        assert "chat_id=456" in result["content"][0].text
+        assert result["content"][1].type == "image_url"
+        assert result["content"][2].type == "text"
+        assert result["content"][2].text == "描述这张图"
 
     def test_empty_list_returns_original(self):
         """空 list content 不注入 prefix，返回原对象。"""

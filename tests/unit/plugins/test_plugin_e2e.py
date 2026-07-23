@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from modex_agent.core.message import ChatMessage
 from modex_agent.plugins import PluginLoader, PluginManager
 from modex_agent.plugins.abc import MemoryProvider
 
@@ -12,7 +13,7 @@ class E2EProvider(MemoryProvider):
     """A simple provider for end-to-end testing."""
 
     def __init__(self):
-        self._memories: list[dict] = []
+        self._memories: list[ChatMessage] = []
         self._initialized = False
 
     @property
@@ -34,9 +35,9 @@ class E2EProvider(MemoryProvider):
 
     async def search(self, query, context, limit=5, filters=None):
         return [
-            {"memory": m["content"], "score": 1.0}
+            {"memory": m.content, "score": 1.0}
             for m in self._memories
-            if query.lower() in m.get("content", "").lower()
+            if query.lower() in str(m.content or "").lower()
         ][:limit]
 
 

@@ -18,7 +18,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Union
 
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.scope import MemoryContext
@@ -612,7 +612,7 @@ async def cleanup_session(
     )
 
 
-_MessageLike = dict[str, Any] | ChatMessage
+_MessageLike = Union[dict[str, Any], ChatMessage]
 
 _SYSTEM_ROLE = str(MessageRole.SYSTEM)
 
@@ -719,7 +719,10 @@ def _adjust_boundary_for_tool_chains(
         tool_call_id = first.get("tool_call_id")
         owner_pruned = any(
             messages[j].get("role") == MessageRole.ASSISTANT
-            and any(tc.get("id") == tool_call_id for tc in (messages[j].get("tool_calls") or []))
+            and any(
+                tc.get("id") == tool_call_id
+                for tc in (messages[j].get("tool_calls") or [])
+            )
             for j in range(boundary)
         )
         if owner_pruned:

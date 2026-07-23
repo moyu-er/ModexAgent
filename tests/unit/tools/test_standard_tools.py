@@ -219,6 +219,8 @@ class TestEditFileTool:
         tool = EditFileTool()
         result = await tool.execute(path=str(file_path), old_string="missing", new_string="x")
         assert "not found" in result.lower()
+        # B6-aligned: error message should suggest re-reading the file
+        assert "read tool" in result.lower()
 
     @pytest.mark.asyncio
     async def test_edit_ambiguous_old_string(self, tmp_workspace):

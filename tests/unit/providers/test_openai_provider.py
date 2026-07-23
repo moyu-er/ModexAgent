@@ -13,7 +13,8 @@ from modex_agent.core.llm_struct import (
     RuntimeSafetyPolicy,
     TurnTimeoutPolicy,
 )
-from modex_agent.core.types import LLMResponse
+from modex_agent.core.message import ChatMessage, ContentFormat
+from modex_agent.core.types import LLMResponse, MessageRole, ToolCall
 from modex_agent.providers.openai_provider import OpenAIProvider
 from modex_agent.providers.shared.constants import REASONING_EFFORT_PARAM
 
@@ -69,7 +70,7 @@ class TestOpenAIProviderChat:
             return_value=self._stream_chunks(chunks)
         )
 
-        result = await provider.chat(messages=[{"role": "user", "content": "hi"}])
+        result = await provider.chat(messages=[ChatMessage(role=MessageRole.USER, content="hi")])
 
         assert isinstance(result, LLMResponse)
         assert result.content == "Hello, world!"
@@ -104,7 +105,7 @@ class TestOpenAIProviderChat:
             return_value=self._stream_chunks([chunk])
         )
 
-        result = await provider.chat(messages=[{"role": "user", "content": "search"}])
+        result = await provider.chat(messages=[ChatMessage(role=MessageRole.USER, content="search")])
 
         assert result.has_tool_calls
         assert result.tool_calls[0].tool_name == "search"
@@ -121,7 +122,7 @@ class TestOpenAIProviderChat:
             return_value=self._stream_chunks(chunks)
         )
 
-        result = await provider.chat(messages=[{"role": "user", "content": "?"}])
+        result = await provider.chat(messages=[ChatMessage(role=MessageRole.USER, content="?")])
         assert result.reasoning_content == "step by step..."
 
     @pytest.mark.asyncio
@@ -130,7 +131,7 @@ class TestOpenAIProviderChat:
             side_effect=Exception("connection refused")
         )
 
-        result = await provider.chat(messages=[{"role": "user", "content": "hi"}])
+        result = await provider.chat(messages=[ChatMessage(role=MessageRole.USER, content="hi")])
 
         assert result.finish_reason == FinishReason.ERROR.value
         assert result.error_info is not None
@@ -144,7 +145,7 @@ class TestOpenAIProviderChat:
         )
 
         await provider.chat(
-            messages=[{"role": "user", "content": "hi"}],
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
             model="gpt-4o-mini",
             temperature=0.3,
             max_output_tokens=500,
@@ -207,7 +208,7 @@ class TestOpenAIProviderReasoningEffort:
         provider._client.chat.completions.create = AsyncMock(
             return_value=self._stream_chunks(chunks)
         )
-        await provider.chat(messages=[{"role": "user", "content": "hi"}])
+        await provider.chat(messages=[ChatMessage(role=MessageRole.USER, content="hi")])
         assert provider._client.chat.completions.create.call_args.kwargs[REASONING_EFFORT_PARAM] == ReasoningEffort.MEDIUM.value
 
     def test_reasoning_effort_omitted_when_none(self):
@@ -225,7 +226,7 @@ class TestOpenAIProviderReasoningEffort:
                 safety=safety,
             )
             p._client = mock_client
-            params = p._build_params(messages=[{"role": "user", "content": "hi"}])
+            params = p._build_params(messages=[ChatMessage(role=MessageRole.USER, content="hi")])
             assert REASONING_EFFORT_PARAM not in params
 
 
@@ -251,8 +252,13 @@ class TestBuildParamsStripsGovernanceFields:
 
     def test_strips_content_format_and_truncatable_paths(self, provider):
         messages = [
-            {"role": "system", "content": "sys", "content_format": "xml", "truncatable_paths": ["content"]},
-            {"role": "user", "content": "hi"},
+            ChatMessage(
+                role=MessageRole.SYSTEM,
+                content="sys",
+                content_format=ContentFormat.XML,
+                truncatable_paths=["content"],
+            ),
+            ChatMessage(role=MessageRole.USER, content="hi"),
         ]
         params = provider._build_params(messages=messages)
         api_msgs = params["messages"]
@@ -263,8 +269,19 @@ class TestBuildParamsStripsGovernanceFields:
         assert api_msgs[0]["content"] == "sys"
 
     def test_strips_metadata_and_lossy_fields(self, provider):
+        # Extras (metadata / meta_* governance fields) ride on ChatMessage
+        # via extra="allow"; _build_params must strip them before the API call.
         messages = [
-            {"role": "assistant", "content": "reply", "metadata": {"source": "urb"}, "meta_context_lossy": True, "meta_original_chars": 5000, "meta_context_reduction": "content_truncated"},
+            ChatMessage.from_dict(
+                {
+                    "role": "assistant",
+                    "content": "reply",
+                    "metadata": {"source": "urb"},
+                    "meta_context_lossy": True,
+                    "meta_original_chars": 5000,
+                    "meta_context_reduction": "content_truncated",
+                }
+            ),
         ]
         params = provider._build_params(messages=messages)
         api_msgs = params["messages"]
@@ -278,15 +295,24 @@ class TestBuildParamsStripsGovernanceFields:
 
     def test_preserves_standard_api_fields(self, provider):
         messages = [
-            {"role": "user", "content": "hi", "name": "user1"},
-            {"role": "assistant", "content": None, "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "t", "arguments": "{}"}}]},
-            {"role": "tool", "tool_call_id": "c1", "content": "result"},
+            ChatMessage(role=MessageRole.USER, content="hi", name="user1"),
+            ChatMessage(
+                role=MessageRole.ASSISTANT,
+                content=None,
+                tool_calls=[ToolCall(tool_name="t", arguments={}, call_id="c1")],
+            ),
+            ChatMessage(role=MessageRole.TOOL, tool_call_id="c1", content="result"),
         ]
         params = provider._build_params(messages=messages)
         api_msgs = params["messages"]
 
         assert api_msgs[0] == {"role": "user", "content": "hi", "name": "user1"}
         assert api_msgs[1]["tool_calls"] is not None
+        assert api_msgs[1]["tool_calls"][0] == {
+            "id": "c1",
+            "type": "function",
+            "function": {"name": "t", "arguments": "{}"},
+        }
         assert api_msgs[2]["tool_call_id"] == "c1"
 
 
@@ -339,7 +365,7 @@ class TestOpenAIProviderChatStream:
 
         deltas = []
         result = await provider.chat_stream(
-            messages=[{"role": "user", "content": "hi"}],
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
             on_content_delta=lambda d: deltas.append(d),
         )
 
@@ -359,7 +385,7 @@ class TestOpenAIProviderChatStream:
 
         reasoning_parts = []
         result = await provider.chat_stream(
-            messages=[{"role": "user", "content": "?"}],
+            messages=[ChatMessage(role=MessageRole.USER, content="?")],
             on_reasoning_delta=lambda d: reasoning_parts.append(d),
         )
 
@@ -396,7 +422,7 @@ class TestOpenAIProviderChatStream:
         )
 
         result = await provider.chat_stream(
-            messages=[{"role": "user", "content": "search"}],
+            messages=[ChatMessage(role=MessageRole.USER, content="search")],
         )
 
         assert result.has_tool_calls
@@ -417,7 +443,7 @@ class TestOpenAIProviderChatStream:
         )
 
         result = await provider.chat_stream(
-            messages=[{"role": "user", "content": "hi"}],
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
         )
 
         assert result.finish_reason == FinishReason.ERROR.value
@@ -436,7 +462,7 @@ class TestOpenAIProviderChatStream:
         )
 
         result = await provider.chat_stream(
-            messages=[{"role": "user", "content": "hi"}],
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
         )
 
         assert result.content == "data"
@@ -448,7 +474,7 @@ class TestOpenAIProviderChatStream:
         )
 
         result = await provider.chat_stream(
-            messages=[{"role": "user", "content": "hi"}],
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
         )
 
         assert result.finish_reason == FinishReason.ERROR.value
@@ -479,7 +505,7 @@ class TestOpenAIProviderChatStream:
 
         deltas = []
         result = await provider.chat_stream(
-            messages=[{"role": "user", "content": "hi"}],
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
             on_content_delta=lambda d: deltas.append(d),
         )
 

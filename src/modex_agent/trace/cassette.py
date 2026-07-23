@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import LLMProvider, StreamingLLMProvider
 from modex_agent.core.tool_manager import Tool, ToolConfig, ToolManager, ToolResult
 from modex_agent.core.types import LLMResponse, ToolCall
@@ -352,7 +353,7 @@ class _RecordingProvider(StreamingLLMProvider):
 
     async def chat_stream(
         self,
-        messages: list[dict[str, Any]],
+        messages: list[ChatMessage],
         model: str | None = None,
         temperature: float = 0.7,
         max_output_tokens: int | None = None,
@@ -361,8 +362,11 @@ class _RecordingProvider(StreamingLLMProvider):
         on_reasoning_delta: Callable[[str], Any] | None = None,
         **kwargs: object,
     ) -> LLMResponse:
+        # B6: messages are ChatMessage; serialize to dicts for content-
+        # addressing (llm_call_key / _record_llm json-serialize them).
+        dict_messages = [m.to_dict() for m in messages]
         key = llm_call_key(
-            messages, model, temperature, max_output_tokens, tools, kwargs
+            dict_messages, model, temperature, max_output_tokens, tools, kwargs
         )
         start = time.perf_counter()
         # Delegation: StreamingLLMProvider → chat_stream; plain LLMProvider →
@@ -391,7 +395,7 @@ class _RecordingProvider(StreamingLLMProvider):
         latency = time.perf_counter() - start
         self._recorder._record_llm(
             key,
-            messages,
+            dict_messages,
             model,
             temperature,
             max_output_tokens,
@@ -527,7 +531,7 @@ class _ReplayProvider(StreamingLLMProvider):
 
     async def chat_stream(
         self,
-        messages: list[dict[str, Any]],
+        messages: list[ChatMessage],
         model: str | None = None,
         temperature: float = 0.7,
         max_output_tokens: int | None = None,
@@ -536,8 +540,9 @@ class _ReplayProvider(StreamingLLMProvider):
         on_reasoning_delta: Callable[[str], Any] | None = None,
         **kwargs: object,
     ) -> LLMResponse:
+        dict_messages = [m.to_dict() for m in messages]
         key = llm_call_key(
-            messages, model, temperature, max_output_tokens, tools, kwargs
+            dict_messages, model, temperature, max_output_tokens, tools, kwargs
         )
         return self._engine._lookup_llm(key)
 

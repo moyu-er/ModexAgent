@@ -63,7 +63,7 @@ class TestAgentContextToMessages:
             system_prompt="Sys",
             history=ListMessageHistory([
                 {"role": "user", "content": "call tool"},
-                {"role": "assistant", "content": "ok", "tool_calls": [{"id": "1"}]},
+                {"role": "assistant", "content": "ok", "tool_calls": [{"tool_name": "t", "arguments": {}, "call_id": "1"}]},
                 {"role": "tool", "content": "result", "tool_call_id": "1"},
             ]),
             tool_manager=InMemoryToolManager(),

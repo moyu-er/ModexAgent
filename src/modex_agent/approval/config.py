@@ -1,12 +1,11 @@
-"""Approval configuration dataclasses."""
+"""Approval configuration models."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from pydantic import BaseModel, ConfigDict, Field
 
 
-@dataclass
-class ToolApprovalConfig:
+class ToolApprovalConfig(BaseModel):
     """Per-tool approval configuration.
 
     allowed_paths: list of path patterns that do NOT require approval.
@@ -14,11 +13,12 @@ class ToolApprovalConfig:
     ["*"] means NO paths require approval.
     """
 
-    allowed_paths: list[str] = field(default_factory=list)
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    allowed_paths: list[str] = Field(default_factory=list)
 
 
-@dataclass
-class AgentApprovalConfig:
+class AgentApprovalConfig(BaseModel):
     """Per-agent approval configuration.
 
     enabled: whether approval checking is active for this agent.
@@ -26,5 +26,7 @@ class AgentApprovalConfig:
         Tools not in this mapping are NOT subject to approval.
     """
 
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
     enabled: bool = False
-    tools: dict[str, ToolApprovalConfig] = field(default_factory=dict)
+    tools: dict[str, ToolApprovalConfig] = Field(default_factory=dict)

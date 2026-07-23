@@ -15,6 +15,7 @@ from modex_agent.agents.react.constants import (
 from modex_agent.agents.react.context import get_agent_ctx
 from modex_agent.agents.react.message_builder import build_tool_message
 from modex_agent.agents.react.state import ReActTurnState
+from modex_agent.agents.react.tool_dedup import StreakDecision, ToolCallDeduplicator
 from modex_agent.agents.react.tool_executor import ToolExecutor
 from modex_agent.approval.constants import ApprovalDecision, ApprovalTier
 from modex_agent.core.agent import AgentContext
@@ -49,9 +50,14 @@ logger = logging.getLogger(__name__)
 class ToolNode(Node[ReActTurnState]):
     """Two-phase tool node: classify all, persist approval state, batch execute."""
 
-    def __init__(self, tool_executor: ToolExecutor) -> None:
+    def __init__(
+        self,
+        tool_executor: ToolExecutor,
+        deduplicator: ToolCallDeduplicator | None = None,
+    ) -> None:
         self.name = ReActNode.TOOL
         self._tool_executor = tool_executor
+        self._deduplicator = deduplicator
 
     async def execute(self, ctx: GraphContext[ReActTurnState]) -> NodeResult:
         state = ctx.state
@@ -71,7 +77,7 @@ class ToolNode(Node[ReActTurnState]):
             if agent_ctx.runtime
             else None
         )
-        if max_tools is not None and len(tool_calls) > max_tools:
+        if max_tools is not None and isinstance(max_tools, (int, float)) and len(tool_calls) > max_tools:
             await ctx.runtime.emit(
                 GraphReActEvent.ERROR,
                 f"Exceeded max_tools_per_turn ({max_tools})",
@@ -260,6 +266,9 @@ class ToolNode(Node[ReActTurnState]):
         state = ctx.state
         agent_ctx = get_agent_ctx(ctx)
 
+        if self._deduplicator is not None:
+            self._deduplicator.begin_step()
+
         await ctx.runtime.emit(
             GraphReActEvent.PROGRESS,
             {"hint": self._format_hint(tool_calls), "tool_hint": True},
@@ -274,10 +283,13 @@ class ToolNode(Node[ReActTurnState]):
 
         batch = state.active_tool_batch()
         denied_encountered = False
+        dedup_stop = False
         tool_results: list[Any] = []
         for tc, decision in zip(tool_calls, decisions, strict=False):
             if decision == ApprovalDecision.ALLOWED:
-                result = await self._tool_executor.execute(tc, agent_ctx)
+                result, stop = await self._execute_single(tc, agent_ctx)
+                if stop:
+                    dedup_stop = True
             else:
                 result = ToolResult(
                     tool_name=tc.tool_name,
@@ -308,6 +320,9 @@ class ToolNode(Node[ReActTurnState]):
             if decision in (ApprovalDecision.DENIED, ApprovalDecision.PREEMPTED):
                 denied_encountered = True
 
+        if self._deduplicator is not None:
+            self._deduplicator.end_step()
+
         if batch is not None:
             if batch.operation_id:
                 state.update_operation(batch.operation_id, OperationStatus.COMPLETED)
@@ -326,6 +341,10 @@ class ToolNode(Node[ReActTurnState]):
             ctx,
         )
 
+        if dedup_stop:
+            state.phase = TurnPhase.CANCELLED
+            return NodeResult(transition=ReActReason.TURN_CANCELLED)
+
         if denied_encountered:
             # EXTENSION POINT: whether denial cancels the ReAct turn is
             # configurable per-agent or per-batch via ApprovalDenyPolicy.
@@ -341,6 +360,68 @@ class ToolNode(Node[ReActTurnState]):
                 return NodeResult(transition=ReActReason.TURN_CANCELLED)
 
         return NodeResult(transition=ReActReason.TOOLS_DONE)
+
+    async def _execute_single(
+        self,
+        tc: ToolCall,
+        agent_ctx: AgentContext,
+    ) -> tuple[ToolResult, bool]:
+        """Execute a single allowed tool call, applying dedup logic.
+
+        When a :class:`ToolCallDeduplicator` is configured:
+        1. Same-step dedup — if an identical call was already executed
+           in this step, reuse the cached result.
+        2. Cross-step streak — check the streak before executing. At
+           high streaks the call is skipped (synthetic result) or the
+           turn is stopped.
+
+        Returns:
+            A ``(ToolResult, should_stop)`` tuple. *should_stop* is
+            ``True`` only when the streak threshold for force-cancelling
+            the turn has been reached.
+        """
+        args = tc.arguments or {}
+        if self._deduplicator is not None:
+            cached = self._deduplicator.check_same_step(tc.tool_name, args)
+            if cached is not None:
+                return cached, False
+
+            streak_action = self._deduplicator.check_streak(tc.tool_name, args)
+
+            if streak_action.action == StreakDecision.STOP:
+                result = ToolResult(
+                    tool_name=tc.tool_name,
+                    result=streak_action.reminder,
+                    error=None,
+                )
+                self._deduplicator.register_result(tc.tool_name, args, result)
+                return result, True
+
+            if streak_action.action == StreakDecision.SKIP:
+                result = ToolResult(
+                    tool_name=tc.tool_name,
+                    result=streak_action.reminder,
+                    error=None,
+                )
+                self._deduplicator.register_result(tc.tool_name, args, result)
+                return result, False
+
+        # Execute the tool call
+        result = await self._tool_executor.execute(tc, agent_ctx)
+
+        if self._deduplicator is not None:
+            if streak_action.action == StreakDecision.REMIND:
+                existing = result.result
+                if isinstance(existing, str):
+                    appended = existing + "\n" + streak_action.reminder
+                elif existing is not None:
+                    appended = str(existing) + "\n" + streak_action.reminder
+                else:
+                    appended = streak_action.reminder
+                result = result.model_copy(update={"result": appended})
+            self._deduplicator.register_result(tc.tool_name, args, result)
+
+        return result, False
 
     @staticmethod
     def _denial_message(

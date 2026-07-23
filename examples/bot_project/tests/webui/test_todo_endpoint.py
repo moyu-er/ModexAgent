@@ -37,10 +37,10 @@ async def test_get_todos_returns_active_items_only() -> None:
         await todo_store.save(
             session_id,
             [
-                TodoItem("done", TodoStatus.COMPLETED),
-                TodoItem("current", TodoStatus.IN_PROGRESS),
-                TodoItem("next", TodoStatus.PENDING),
-                TodoItem("dropped", TodoStatus.CANCELLED),
+                TodoItem(content="done", status=TodoStatus.COMPLETED),
+                TodoItem(content="current", status=TodoStatus.IN_PROGRESS),
+                TodoItem(content="next", status=TodoStatus.PENDING),
+                TodoItem(content="dropped", status=TodoStatus.CANCELLED),
             ],
         )
 
@@ -105,8 +105,8 @@ async def test_get_todos_excludes_completed_and_cancelled() -> None:
         await todo_store.save(
             session_id,
             [
-                TodoItem("all done", TodoStatus.COMPLETED),
-                TodoItem("skipped", TodoStatus.CANCELLED),
+                TodoItem(content="all done", status=TodoStatus.COMPLETED),
+                TodoItem(content="skipped", status=TodoStatus.CANCELLED),
             ],
         )
 

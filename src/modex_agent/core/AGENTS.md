@@ -15,15 +15,15 @@ The `core/` module defines the foundational contracts (`Agent[E]`, `Tool`, `LLMP
 |------|-------------|
 | `agent.py` | `Agent[E]` generic ABC — `run()` entry point, `event_enum`, tool/skill registration. `AgentContext` (dataclass, runtime state + services). `current_agent_context` ContextVar |
 | `agent_runtime_config.py` | `BusyInputMode` — agent busy-input handling mode (the former `RuntimeControl`/`AgentRuntimeConfig` aggregates were dead and removed in ④b) |
-| `constants.py` | `DefaultValues`, `FinishReason` (StrEnum), `ToolCallType`, `ToolChoice`, `ErrorMessages`, `ToolSchemaConstants` |
+| `constants.py` | `DefaultValues`, `FinishReason` (`(str, Enum)` — pre-existing; new enums use `StrEnum`), `ToolCallType`, `ToolChoice`, `ErrorMessages`, `ToolSchemaConstants`, `StreamControlAction` (StrEnum, B1) |
 | `context.py` | `ContextState` (StrEnum: ACTIVE/PAUSED/STOPPED), `ContextManager` ABC, `InMemoryContextManager` |
 | `emitter.py` | `ContentEmitter[E]` ABC — event streaming contract. `AgentResult` (Pydantic `BaseModel`, ADR-0033 D14 Stage 2). `StreamingAwareEmitter` ABC |
 | `events.py` | `AgentEvent` base class/Enum mixin, `EmitterConfig` (filters, truncation, max_events) |
 | `frontmatter.py` | Shared YAML frontmatter parsing (`parse_frontmatter()`) for markdown docs (skills, experiences) |
 | `governance.py` | `GovernanceResult` — context governance result type |
 | `history.py` | `MessageHistory` ABC — message append/filter/get |
-| `llm_struct.py` | `LLMErrorInfo` (Pydantic `BaseModel(frozen=True)`, ADR-0033 D14 Stage 2), `LLMErrorKind` (StrEnum), `ProviderKind` (StrEnum), `LLMTimeoutPolicy`, `TurnTimeoutPolicy`, `RuntimeSafetyPolicy`, `LLMProviderConfig` |
-| `message.py` | ChatMessage and related message types for LLM communication |
+| `llm_struct.py` | `LLMErrorInfo` (Pydantic `BaseModel(frozen=True)`, ADR-0033 D14 Stage 2), `LLMErrorKind` (StrEnum), `ProviderKind` (StrEnum), `LLMTimeoutPolicy`, `TurnTimeoutPolicy`, `RuntimeSafetyPolicy`, `LLMProviderConfig` — all config/policy types are now frozen Pydantic `BaseModel` (B4) |
+| `message.py` | `ChatMessage` (BaseModel, `extra="allow"`) — `role: MessageRole`, `content: str | list[ContentPart] | None`, `tool_calls: list[ToolCall] | None`. `ContentFormat` (StrEnum), `ContentPart` discriminated union (`TextPart | ImageUrlPart`). `to_dict()` serializes `tool_calls` to OpenAI wire format |
 | `message_utils.py` | `normalize_agent_messages_for_llm()` — normalizes messages to LLM-compatible format |
 | `prompt.py` | Prompt building utilities |
 | `provider.py` | `LLMProvider` ABC — `complete()`, `complete_streaming()`. `StreamingLLMProvider` ABC — streaming-specific contract |
@@ -35,7 +35,7 @@ The `core/` module defines the foundational contracts (`Agent[E]`, `Tool`, `LLMP
 | `tool.py` | `DynamicSchemaProvider` ABC — context-aware tool schema. **`Tool` class lives in `tool_manager.py`** |
 | `tool_call_accumulator.py` | `ToolCallChunk`, `AccumulatingToolCall`, `ToolCallAccumulator`, `parse_tool_call_chunks_from_delta()` — streaming tool-call accumulation |
 | `tool_manager.py` | `Tool` class (dual-mode: `__init__` args OR `@property` name/description/parameters), `ToolManager` ABC, `InMemoryToolManager`, `ToolResult`, `FunctionalTool`, `ToolConfig`, `ToolManagerConfig`, `ToolExecutionMode` |
-| `types.py` | `InputMessage`, `OutputMessage` (dataclasses), `LLMResponse`, `ToolCall` (Pydantic `BaseModel`, ADR-0033 D14 Stage 2), `MessageRole` (StrEnum: SYSTEM/USER/ASSISTANT/TOOL), `MessageType` (Enum) |
+| `types.py` | `InputMessage`, `OutputMessage` (frozen Pydantic `BaseModel`, B5), `LLMResponse`, `ToolCall` (Pydantic `BaseModel`, ADR-0033 D14 Stage 2), `MessageRole` (StrEnum: SYSTEM/USER/ASSISTANT/TOOL/AGENT/PENDING), `MessageType` (Enum), `OutputMessageType` (StrEnum, B1) |
 | `utils.py` | Core utility helpers |
 
 ## Subdirectories

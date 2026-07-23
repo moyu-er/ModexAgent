@@ -37,7 +37,7 @@ class ContextState:
 
     def __post_init__(self) -> None:
         """构造时自动将 list 转换为 ListMessageHistory，确保类型一致性。"""
-        if not hasattr(self.history, "to_list"):
+        if not isinstance(self.history, MessageHistory):
             self.history = ListMessageHistory(list(self.history))
 
     async def to_messages(self) -> list[dict[str, Any]]:

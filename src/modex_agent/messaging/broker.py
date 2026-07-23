@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AddressKind(StrEnum):
@@ -21,11 +22,15 @@ class AddressKind(StrEnum):
     CHANNEL = "channel"
     SYSTEM = "system"
     GROUP = "group"
+    _TEMP = "_temp"
+    """Internal sentinel used by :meth:`InMemoryMessageBroker.subscribe` for
+    transient subscription mailboxes. Not a real address kind."""
 
 
-@dataclass(frozen=True, slots=True)
-class Address:
+class Address(BaseModel):
     """消息寻址实体。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     kind: AddressKind = AddressKind.AGENT
     name: str = ""
@@ -39,9 +44,15 @@ class Address:
         return cls(kind=AddressKind(kind), name=name)
 
 
-@dataclass
-class BrokerMessage:
-    """Broker 层传输的通用消息信封。"""
+class BrokerMessage(BaseModel):
+    """Broker 层传输的通用消息信封。
+
+    Mutable (runtime message that may be modified in flight). Cross-process
+    serialization goes through ``to_dict``/``from_dict`` facades that keep
+    the existing wire format (Address → "kind:name" string, timestamp → isoformat).
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     payload: dict[str, Any]
     """业务负载。典型内容：
@@ -63,13 +74,13 @@ class BrokerMessage:
     broadcast: bool = False
     """全局广播标志。为 True 时，Broker 投递给所有已注册消费者。"""
 
-    headers: dict[str, str] = field(default_factory=dict)
+    headers: dict[str, str] = Field(default_factory=dict)
     """元数据头，可携带 content_type、priority、retry_count 等。"""
 
     correlation_id: str | None = None
     """链路追踪 ID，用于 Handoff、请求-响应配对。"""
 
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = Field(default_factory=datetime.now)
 
     def to_dict(self) -> dict[str, Any]:
         return {

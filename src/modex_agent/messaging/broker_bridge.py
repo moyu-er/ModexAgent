@@ -23,15 +23,9 @@ logger = logging.getLogger(__name__)
 class BrokerInputAdapter(InputAdapter):
     """把 Broker 的某个 Address 包装为 InputAdapter。支持 AgentMessageEnvelope 识别与去重。"""
 
-    def __init__(
-        self,
-        broker: MessageBroker,
-        address: Address,
-        deduplicator: Any | None = None,
-        *,
-        session_factory: SessionIdFactory | None = None,
-        default_agent_name: str = "main",
-    ) -> None:
+    def __init__(self, broker: MessageBroker, address: Address, deduplicator: Any | None = None, *,
+                 session_factory: SessionIdFactory | None = None, default_agent_name: str = "main") -> None:
+        super().__init__()
         self.broker = broker
         self.address = address
         self._running = False
@@ -410,7 +404,7 @@ class BrokerBridgeService:
         await self.broker.start()
         for adapter, addr in self.input_bindings.items():
             await adapter.start()
-            bridge_name = f"input:{getattr(adapter, 'name', addr)}"
+            bridge_name = f"input:{adapter.name}"
             self._bridge_specs[bridge_name] = lambda a=adapter, ad=addr: self._bridge_input(a, ad)
             task = asyncio.create_task(self._bridge_specs[bridge_name]())
             task.add_done_callback(lambda t, n=bridge_name: self._bridge_done_callback(t, n))
@@ -450,7 +444,7 @@ class BrokerBridgeService:
             except Exception:
                 logger.exception(
                     "Bridge input error for adapter=%s addr=%s",
-                    getattr(adapter, "name", adapter),
+                    adapter.name,
                     addr,
                 )
                 await asyncio.sleep(1)

@@ -12,6 +12,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from modex_agent.core.constants import ReasoningEffort
+from modex_agent.core.message import ChatMessage
+from modex_agent.core.types import MessageRole
 from modex_agent.providers.litellm_provider import LiteLLMProvider
 from modex_agent.providers.shared.constants import REASONING_EFFORT_PARAM
 
@@ -264,12 +266,12 @@ class TestLiteLLMProviderReasoningEffort:
 
     def test_reasoning_effort_passed_when_set(self, provider):
         provider._reasoning_effort = ReasoningEffort.HIGH
-        params = provider._build_request_params(messages=[{"role": "user", "content": "hi"}])
+        params = provider._build_request_params(messages=[ChatMessage(role=MessageRole.USER, content="hi")])
         assert params.get(REASONING_EFFORT_PARAM) == ReasoningEffort.HIGH.value
 
     def test_reasoning_effort_omitted_when_none(self, provider):
         provider._reasoning_effort = ReasoningEffort.NONE
-        params = provider._build_request_params(messages=[{"role": "user", "content": "hi"}])
+        params = provider._build_request_params(messages=[ChatMessage(role=MessageRole.USER, content="hi")])
         assert REASONING_EFFORT_PARAM not in params
 
     def test_reasoning_effort_injected_via_constructor(self):
@@ -279,5 +281,5 @@ class TestLiteLLMProviderReasoningEffort:
                 api_key="test-key",
                 reasoning_effort=ReasoningEffort.LOW,
             )
-            params = p._build_request_params(messages=[{"role": "user", "content": "hi"}])
+            params = p._build_request_params(messages=[ChatMessage(role=MessageRole.USER, content="hi")])
             assert params.get(REASONING_EFFORT_PARAM) == ReasoningEffort.LOW.value

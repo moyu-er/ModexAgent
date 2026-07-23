@@ -21,6 +21,7 @@ LLM provider implementations — abstracts model invocation behind a common inte
 
 ## For AI Agents
 - Both providers expose a common LLM call interface; consumers should not depend on provider-specific types
+- Both providers accept `list[ChatMessage]` (not `list[dict]`) per B6 LLM-message convergence — providers convert `ChatMessage` to provider-native dicts internally via `to_dict()`
 - `shared/delta.py` normalizes streaming chunks across providers
 - `shared/errors.py` provides unified error classification and retry strategies
 

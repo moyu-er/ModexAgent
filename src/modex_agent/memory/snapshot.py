@@ -10,13 +10,16 @@ between ``ContextForkBuilder._messages_to_xml`` and
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from modex_agent.core.message import ChatMessage
 
 DEFAULT_SNAPSHOT_MAX_MESSAGES: int = 100
 DEFAULT_SNAPSHOT_MAX_CONTENT_LEN: int = 2000
 
 
-def _extract_role_content(m: Any) -> tuple[str, str, str | None]:
+def _extract_role_content(m: ChatMessage | dict[str, Any]) -> tuple[str, str, str | None]:
     if isinstance(m, dict):
         name = m.get("name")
         return (
@@ -24,10 +27,10 @@ def _extract_role_content(m: Any) -> tuple[str, str, str | None]:
             str(m.get("content", "") or ""),
             name if isinstance(name, str) else None,
         )
-    name = getattr(m, "name", None)
+    name = m.name
     return (
-        str(getattr(m, "role", "unknown")),
-        str(getattr(m, "content", "") or ""),
+        str(m.role),
+        str(m.content or ""),
         name if isinstance(name, str) else None,
     )
 
@@ -39,7 +42,7 @@ def _truncate_content(content: str, max_len: int) -> str:
 
 
 def format_snapshot_text(
-    messages: Sequence[Any],
+    messages: Sequence[ChatMessage | dict[str, Any]],
     *,
     max_messages: int = DEFAULT_SNAPSHOT_MAX_MESSAGES,
     max_content_len: int = DEFAULT_SNAPSHOT_MAX_CONTENT_LEN,

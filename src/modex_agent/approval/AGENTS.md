@@ -9,7 +9,7 @@ Tiered tool approval policies and command parsing. Approval persistence is NOT o
 ## Key Files
 | File | Description |
 |------|-------------|
-| `config.py` | `ToolApprovalConfig` (allowed_paths per tool), `AgentApprovalConfig` (enabled flag + tools map) |
+| `config.py` | `ToolApprovalConfig` (allowed_paths per tool), `AgentApprovalConfig` (enabled flag + tools map) — both frozen Pydantic `BaseModel` (B4) |
 | `constants.py` | `ApprovalDecision` (ALLOWED/DENIED/PENDING/PREEMPTED), `ApprovalTier` (NORMAL/SENSITIVE/DANGEROUS/HARDLINE), `ApprovalStatus` (PENDING/APPROVED/DENIED/PARTIAL) |
 | `types.py` | `ApprovalAction` (ALLOW/DENY), `ApprovalResolution` (ALLOWED/DENIED/TIMED_OUT/IGNORED/PREEMPTED), `DenyAction`, `TimeoutAction`, `ApprovalResultType`, `ApprovalDenyPolicy` |
 | `response.py` | `parse_input_command()` -- command-first parsing returning `ParsedInputCommand` or None; `parse_approval_action()` convenience wrapper. Recognizes /approve, /deny, /allow, /reject, /yes, /no, /ok, /cancel with and without slash prefix |
