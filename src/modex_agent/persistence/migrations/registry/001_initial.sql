@@ -6,7 +6,7 @@
 -- No transaction-control statements: the runner wraps the whole migration in a
 -- single BEGIN IMMEDIATE transaction.
 
-CREATE TABLE workspaces (
+CREATE TABLE IF NOT EXISTS workspaces (
     workspace_id     TEXT    PRIMARY KEY,
     target_path      TEXT    NOT NULL UNIQUE,
     display_name     TEXT,
@@ -16,19 +16,19 @@ CREATE TABLE workspaces (
     metadata_json    TEXT    NOT NULL DEFAULT '{}' CHECK (json_valid(metadata_json))
 );
 
-CREATE INDEX idx_workspaces_last_active ON workspaces (last_active);
-CREATE INDEX idx_workspaces_created_at  ON workspaces (created_at);
+CREATE INDEX IF NOT EXISTS idx_workspaces_last_active ON workspaces (last_active);
+CREATE INDEX IF NOT EXISTS idx_workspaces_created_at  ON workspaces (created_at);
 
-CREATE TABLE session_workspace_map (
+CREATE TABLE IF NOT EXISTS session_workspace_map (
     session_prefix   TEXT    PRIMARY KEY,
     workspace_id     TEXT    NOT NULL REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
     created_at       INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
     updated_at       INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
 );
 
-CREATE INDEX idx_session_ws_workspace ON session_workspace_map (workspace_id);
+CREATE INDEX IF NOT EXISTS idx_session_ws_workspace ON session_workspace_map (workspace_id);
 
-CREATE TRIGGER trg_session_workspace_map_auto_updated_at
+CREATE TRIGGER IF NOT EXISTS trg_session_workspace_map_auto_updated_at
 AFTER UPDATE ON session_workspace_map
 FOR EACH ROW
 WHEN NEW.updated_at IS OLD.updated_at

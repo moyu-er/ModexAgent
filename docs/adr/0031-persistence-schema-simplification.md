@@ -143,6 +143,15 @@ backend's `pending.jsonl` format (which always stored the full dict) —
 the two backends now have the same data shape, differing only in
 physical representation.
 
+**Supplement (2026-07-24): `memory_session_messages` generated-column cleanup.**
+The same redundant STORED generated columns that §5 removed from
+`inbox_messages` also existed on `memory_session_messages` (`session_id`,
+`user_id`, `agent_id` — three `GENERATED ALWAYS AS (json_extract(scope_key,
+'$.<dim>')) STORED` columns). They were materialized on every INSERT but
+never appeared in any `WHERE` clause or index — the adapter always filters
+by `scope_key` directly. All three are now removed, matching the
+`inbox_messages` precedent.
+
 The 5 removed business columns were reconstructed from `payload_json` on
 read anyway (`_row_to_message` in `inbox_mq.py:473-488` read
 `source_name`/`content` from columns and `metadata` from `payload_json`,
@@ -180,6 +189,13 @@ missing are added (e.g. `idx_messages_scope_state_seq` for the
 peek/consume hot path, `idx_messages_reap` for `reap_expired`,
 `idx_routing_pool_name` replacing `idx_routing_pool`). The full per-table
 index list is in the schema design document.
+
+**Supplement (2026-07-24): `idx_messages_owner_expired` removed.** This
+partial index filtered `WHERE state = 'expired'`, but `state = 'expired'`
+is never set in production code (only tests manually set it via raw SQL).
+The index maintained zero rows — pure write amplification on every
+`inbox_messages` INSERT/UPDATE. Removed alongside the
+`memory_session_messages` generated-column cleanup.
 
 ## Consequences
 

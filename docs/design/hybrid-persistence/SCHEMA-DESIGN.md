@@ -118,7 +118,6 @@ CREATE TABLE sessions (
     session_prefix     TEXT    GENERATED ALWAYS AS (json_extract(scope, '$.session_prefix')) STORED,
     invocation_id      TEXT    GENERATED ALWAYS AS (json_extract(scope, '$.invocation_id')) STORED,
     parent_session_id  TEXT    GENERATED ALWAYS AS (json_extract(scope, '$.parent_session_id')) STORED,
-    parent_session_pk  INTEGER REFERENCES sessions(session_pk) ON DELETE SET NULL,
     created_at         TEXT    NOT NULL DEFAULT (datetime('now')),
     updated_at         TEXT    NOT NULL DEFAULT (datetime('now')),
     metadata_json      TEXT    CHECK (metadata_json IS NULL OR json_valid(metadata_json))
@@ -408,9 +407,7 @@ CREATE TABLE memory_session_messages (
     created_at      REAL    NOT NULL,
     state           TEXT    NOT NULL DEFAULT 'normal'
                     CHECK (state IN ('normal', 'pinned', 'soft_deleted')),
-    deleted_at      REAL,
-    UNIQUE (scope_key, seq),
-    CHECK ((state = 'soft_deleted') = (deleted_at IS NOT NULL))
+    UNIQUE (scope_key, seq)
 );
 
 CREATE INDEX idx_memory_session_active
@@ -418,7 +415,7 @@ CREATE INDEX idx_memory_session_active
     WHERE state IN ('normal', 'pinned');
 
 CREATE INDEX idx_memory_session_ttl
-    ON memory_session_messages (deleted_at)
+    ON memory_session_messages (updated_at)
     WHERE state = 'soft_deleted';
 
 CREATE INDEX idx_memory_session_state
@@ -599,7 +596,7 @@ CREATE TABLE workspace_meta (
 | Store | Mechanism | Trigger | Implementation |
 |---|---|---|---|
 | Session messages | prune → soft_deleted | `cleanup_session()` | `UPDATE state='soft_deleted'` in same txn as content return |
-| Session messages | TTL physical delete | background job | `DELETE WHERE state='soft_deleted' AND deleted_at < ?` |
+| Session messages | TTL physical delete | background job | `DELETE WHERE state='soft_deleted' AND updated_at < ?` |
 | Archive entries | max_entries / max_age_days | `scan_once()` | `DELETE FROM memory_archive_entries WHERE ...` + delete Markdown dirs |
 | Core Memory | max_memory_chars | `scan_once()` | truncate file content (file system) |
 | Pruned | `prune_oldest(keep_count)` | explicit call | delete oldest JSONL + index entries (file system) |

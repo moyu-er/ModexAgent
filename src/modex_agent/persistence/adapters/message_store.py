@@ -5,9 +5,9 @@ Conversation message history with a per-row state machine:
 
 - ``normal`` / ``pinned`` rows are returned by :meth:`load_messages`.
 - :meth:`prune_messages` atomically soft-deletes (``state='soft_deleted'``,
-  ``deleted_at`` set) and returns the pruned content in one transaction.
+  ``updated_at`` auto-bumped by trigger) and returns the pruned content in one transaction.
 - :meth:`cleanup_expired` physically deletes soft-deleted rows whose
-  ``deleted_at`` is older than the configured TTL.
+  ``updated_at`` is older than the configured TTL.
 
 ColumnProjection (ADR-0030) extracts ``message_id`` / ``role`` /
 ``content``+``is_content_json`` / ``token_count`` into typed columns; the
@@ -277,18 +277,16 @@ class SqliteMessageStore(MessageStore):
                     keep_seqs.add(int(row[0]))
 
             pruned: list[dict[str, Any]] = []
-            now = now_ms()
             for row in rows:
                 seq = int(row[0])
                 if seq not in keep_seqs:
                     pruned.append(_assemble_message(row, offset=1))
                     await tx.execute(
                         "UPDATE memory_session_messages "
-                        "SET state = ?, deleted_at = ? "
+                        "SET state = ? "
                         "WHERE scope_key = ? AND seq = ?",
                         (
                             MessageRowState.SOFT_DELETED.value,
-                            now,
                             self._scope_json,
                             seq,
                         ),
@@ -342,7 +340,7 @@ class SqliteMessageStore(MessageStore):
             rows = await tx.query_all(
                 "SELECT COUNT(*) FROM memory_session_messages "
                 "WHERE scope_key = ? AND state = ? "
-                "AND deleted_at < ?",
+                "AND updated_at < ?",
                 (self._scope_json, sd, cutoff),
             )
             count = int(rows[0][0]) if rows else 0
@@ -350,7 +348,7 @@ class SqliteMessageStore(MessageStore):
                 await tx.execute(
                     "DELETE FROM memory_session_messages "
                     "WHERE scope_key = ? AND state = ? "
-                    "AND deleted_at < ?",
+                    "AND updated_at < ?",
                     (self._scope_json, sd, cutoff),
                 )
         return count
@@ -438,7 +436,6 @@ class SqliteMessageStore(MessageStore):
             )
 
             keep_sigs = {message_signature(m) for m in keep_messages}
-            now = now_ms()
             soft_deleted = 0
             for row in rows:
                 seq = int(row[0])
@@ -446,11 +443,10 @@ class SqliteMessageStore(MessageStore):
                 if message_signature(stored_msg) not in keep_sigs:
                     await tx.execute(
                         "UPDATE memory_session_messages "
-                        "SET state = ?, deleted_at = ? "
+                        "SET state = ? "
                         "WHERE scope_key = ? AND seq = ?",
                         (
                             MessageRowState.SOFT_DELETED.value,
-                            now,
                             self._scope_json,
                             seq,
                         ),

@@ -179,7 +179,7 @@ class TestCleanupExpired:
             await store.append_message(msg(f"m{i}"))
         await store.prune_messages(3)
 
-        # Give a tiny delay so time.time() advances past deleted_at.
+        # Give a tiny delay so time.time() advances past updated_at.
         time.sleep(0.01)
         removed = await store.cleanup_expired()
 
@@ -213,6 +213,33 @@ class TestCleanupExpired:
         removed = await store.cleanup_expired()
 
         assert removed == 0  # TTL not yet expired
+
+    async def test_prune_bumps_updated_at_via_trigger(
+        self, connection: ConnectionManager, scope: RecordScope
+    ) -> None:
+        """prune_messages SET state='soft_deleted' without touching updated_at;
+        the ADR-0029 trigger must bump updated_at. Uses a 1.1s sleep to cross
+        the strftime('%s','now') second boundary (trigger has second granularity)."""
+        store = SqliteMessageStore(connection, scope, ttl_seconds=0.0)
+        await store.append_message(msg("m0"))
+
+        pre_prune_updated_at = await connection.query_value(
+            "SELECT updated_at FROM memory_session_messages WHERE scope_key = ?",
+            int,
+            (scope.canonical(),),
+        )
+        time.sleep(1.1)
+        await store.prune_messages(0)
+
+        post_prune_updated_at = await connection.query_value(
+            "SELECT updated_at FROM memory_session_messages WHERE scope_key = ?",
+            int,
+            (scope.canonical(),),
+        )
+
+        assert post_prune_updated_at > pre_prune_updated_at, (
+            "trigger must bump updated_at when state is UPDATEd without explicit updated_at"
+        )
 
 
 class TestScopeIsolation:

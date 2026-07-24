@@ -427,11 +427,10 @@ All adapters: `scope` column references → `scope_key`; `time.time()` →
 
 For each table, the target columns (excluding PK/FK boilerplate):
 
-- `memory_session_messages` — `scope_key`, `session_id`/`user_id`/
-  `agent_id` (generated), `seq`, `message_id`, `role` (CHECK),
+- `memory_session_messages` — `scope_key`, `seq`, `message_id`, `role` (CHECK),
   `content`, `is_content_json`, `token_count`, `message_json`
-  (residual), `created_at`/`updated_at` (ms + trigger), `state` (CHECK),
-  `deleted_at`. Indexes: active partial, ttl partial, state, message_id
+  (residual), `created_at`/`updated_at` (ms + trigger), `state` (CHECK).
+  Indexes: active partial, ttl partial (on `updated_at`), state, message_id
   partial.
 - `inbox_messages` — `topic_id`, `owner_scope_key`, `scope_key`,
   `session_id`, `message_id`, `message_type` (CHECK),
@@ -451,7 +450,7 @@ For each table, the target columns (excluding PK/FK boilerplate):
   partial, created.
 - `sessions` — `session_pk`, `session_id`, `scope_key`,
   `session_prefix`/`agent_id`/`parent_session_id` (generated),
-  `parent_session_pk` (self-FK SET NULL), `created_at`/`updated_at` (ms
+  `created_at`/`updated_at` (ms
   + trigger), `metadata_json`. Indexes: prefix, parent.
 - `todos` — `session_id`, `scope_key`, `items_json`,
   `created_at`/`updated_at` (ms + trigger).
