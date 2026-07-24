@@ -247,26 +247,21 @@ export async function changeWorkspace(
   return resp.json() as Promise<ChangeWorkspaceResult>;
 }
 
-export interface BrowseEntry {
-  name: string;
-  path: string;
-  is_dir: boolean;
+export interface PickWorkspaceResult {
+  path: string | null;
+  success: boolean;
+  cwd?: string;
+  notice?: string;
 }
 
-export interface BrowseResult {
-  path: string;
-  parent: string;
-  entries: BrowseEntry[];
-  drives: BrowseEntry[];
-}
-
-export async function browseWorkspace(
-  path: string,
-): Promise<BrowseResult> {
-  const params = path ? `?path=${encodeURIComponent(path)}` : "";
-  const resp = await fetch(`${API_BASE}/workspace/browse${params}`);
+export async function pickWorkspace(): Promise<PickWorkspaceResult> {
+  const resp = await fetch(`${API_BASE}/workspace/pick`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
   await assertOk(resp);
-  return resp.json() as Promise<BrowseResult>;
+  return resp.json() as Promise<PickWorkspaceResult>;
 }
 
 // ── Attachments (ADR-0013) ──────────────────────────────────────────────────

@@ -108,6 +108,11 @@ export const en = {
     failedReadDir: "Failed to read directory",
     failedSwitch: "Failed to switch workspace",
     networkError: "Network error",
+    openFolder: "Open Folder",
+    openFolderHint: "Open the system folder picker",
+    openingPicker: "Opening picker…",
+    pickerUnavailable: "Folder picker is not available on this server. Contact your administrator.",
+    recentWorkspaces: "Recent",
   },
   approval: {
     eyebrow: "Approval",

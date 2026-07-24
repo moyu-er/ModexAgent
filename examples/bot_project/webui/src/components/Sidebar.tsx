@@ -2,7 +2,7 @@ import { useState, type FC, type CSSProperties } from "react";
 import { ChevronRight, Folder, FolderOpen, Home, Plus, Settings } from "lucide-react";
 import type { PoolInfo } from "../lib/api";
 import { changeWorkspace } from "../lib/api";
-import { WorkspaceBrowser } from "./WorkspaceBrowser";
+import { WorkspaceBrowser, type RecentWorkspace } from "./WorkspaceBrowser";
 import { SessionTree, type TreeNode } from "./SessionTree";
 import { ThemeToggle } from "./ThemeToggle";
 import { useToast } from "./ToastContext";
@@ -18,7 +18,7 @@ export interface SidebarProps {
   workspace: string;
   isHome: boolean;
   activePool: string;
-  recentWorkspaces: { path: string }[];
+  recentWorkspaces: RecentWorkspace[];
   isLoadingSessions?: boolean;
   mobileOpen: boolean;
   onCloseMobile: () => void;
@@ -166,6 +166,7 @@ export const Sidebar: FC<SidebarProps> = ({
           setBrowserOpen(false);
           onGoHome();
         }}
+        recentWorkspaces={recentFiltered}
       />
 
       {/* Header */}

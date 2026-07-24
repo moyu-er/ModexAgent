@@ -15,7 +15,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import shutil
+import sys
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
@@ -322,6 +324,35 @@ class WorkspaceIndex(ABC):
 
 
 # ── Server ─────────────────────────────────────────────────────────────────
+
+_PICKER_TIMEOUT_S = 600
+
+_PICKER_SCRIPT = """\
+import ctypes
+import platform
+import sys
+
+if platform.system() == "Windows":
+    try:
+        # 2 = PROCESS_PER_MONITOR_DPI_AWARE
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
+import tkinter as tk
+from tkinter import filedialog
+
+root = tk.Tk()
+root.withdraw()
+root.attributes("-topmost", True)
+path = filedialog.askdirectory(mustexist=True)
+if path:
+    sys.stdout.write(path)
+root.destroy()
+"""
 
 
 class WebUIServer:
@@ -792,8 +823,8 @@ class WebUIServer:
         # (a superset of the legacy {name} dict, so fetchPools() still works).
         self.app.router.add_get(_API_MODELS_PATH, self._handle_models)
         self.app.router.add_get("/api/workspace", self._handle_workspace)
-        self.app.router.add_get("/api/workspace/browse", self._handle_workspace_browse)
         self.app.router.add_post("/api/workspace/cd", self._handle_workspace_cd)
+        self.app.router.add_post("/api/workspace/pick", self._handle_workspace_pick)
         self.app.router.add_get("/api/workspace/recent", self._handle_workspace_recent)
         self.app.router.add_get(_API_SESSIONS_PATH, self._handle_sessions)
         self.app.router.add_post(_API_SESSIONS_PATH, self._handle_create_session)
@@ -1649,72 +1680,6 @@ class WebUIServer:
             {"home": home, "recent": recent, "timezone": str(get_user_timezone())}
         )
 
-    async def _handle_workspace_browse(self, request: web.Request) -> web.Response:
-        """GET /api/workspace/browse?path=<dir> -- list directory contents."""
-        raw = request.query.get("path", "")
-        target = Path(raw).expanduser() if raw else Path.home()
-
-        if not target.is_absolute():
-            target = resolve_workspace_root() / target
-        target = target.resolve(strict=False)
-        if not target.is_dir():
-            target = Path.home()
-
-        # The directory walk is pure synchronous I/O — run it off the event
-        # loop so one slow/large directory cannot block other requests.
-        def _walk(directory: Path) -> tuple[list[dict[str, object]], str, list[dict[str, object]]]:
-            entries: list[dict[str, object]] = []
-            try:
-                for child in sorted(directory.iterdir()):
-                    try:
-                        is_dir = child.is_dir()
-                    except OSError:
-                        continue
-                    if not is_dir and not child.is_file():
-                        continue
-                    entries.append(
-                        {
-                            "name": child.name,
-                            "path": str(child),
-                            "is_dir": is_dir,
-                        }
-                    )
-            except PermissionError:
-                pass
-            entries.sort(key=lambda e: (not bool(e["is_dir"]), str(e["name"]).lower()))
-            parent_path = str(directory.parent) if directory.parent != directory else ""
-
-            drives: list[dict[str, object]] = []
-            if directory == directory.parent:
-                import platform
-                import string
-
-                if platform.system() == "Windows":
-                    from pathlib import Path as _P
-
-                    for letter in string.ascii_uppercase:
-                        drive = _P(f"{letter}:\\")
-                        if drive.exists():
-                            drives.append(
-                                {
-                                    "name": f"{letter}:",
-                                    "path": str(drive),
-                                    "is_dir": True,
-                                }
-                            )
-            return entries, parent_path, drives
-
-        entries, parent_path, drives = await asyncio.to_thread(_walk, target)
-
-        return web.json_response(
-            {
-                "path": str(target),
-                "parent": parent_path,
-                "entries": entries,
-                "drives": drives,
-            }
-        )
-
     async def _handle_workspace_cd(self, request: web.Request) -> web.Response:
         """POST /api/workspace/cd -- change current workspace directory."""
         if self._workspace_control is None:
@@ -1741,6 +1706,82 @@ class WebUIServer:
             self._recent_workspaces.add(str(result.current_path))
         return web.json_response(
             {
+                "success": result.success,
+                "cwd": str(result.current_path),
+                "notice": result.notice,
+            }
+        )
+
+    async def _handle_workspace_pick(self, request: web.Request) -> web.Response:
+        """POST /api/workspace/pick -- open the OS-native folder picker and switch.
+
+        Combines folder selection and workspace switching into a single
+        request so the frontend doesn't pay two HTTP round-trips. Uses
+        ``asyncio.create_subprocess_exec`` (not ``to_thread + subprocess.run``)
+        to manage the picker subprocess directly in the event loop, avoiding
+        a redundant worker-thread hop.
+
+        Responses:
+        - ``200 {"path": "...", "success": true, "cwd": "..."}``  — picked + switched
+        - ``200 {"path": null, "success": false}``               — user cancelled
+        - ``503 {"error": "..."}``                                — picker unavailable
+        - ``504 {"error": "..."}``                                — picker timed out
+        """
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, "-c", _PICKER_SCRIPT,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                proc.communicate(), timeout=_PICKER_TIMEOUT_S
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            logger.info("Native directory picker timed out after %ds", _PICKER_TIMEOUT_S)
+            return web.json_response(
+                {"error": "Directory picker timed out."}, status=504
+            )
+        except Exception as exc:
+            logger.info("Native directory picker unavailable: %s", exc)
+            return web.json_response(
+                {"error": "Directory picker is not available in this environment."},
+                status=503,
+            )
+
+        if proc.returncode != 0:
+            err = stderr_bytes.decode(errors="replace").strip() if stderr_bytes else "picker failed"
+            logger.info("Native directory picker failed: %s", err)
+            return web.json_response(
+                {"error": "Directory picker is not available in this environment."},
+                status=503,
+            )
+
+        picked = stdout_bytes.decode(errors="replace").strip()
+
+        if not picked:
+            return web.json_response({"path": None, "success": False})
+
+        if self._workspace_control is None:
+            return web.json_response(
+                {"path": picked, "success": False, "notice": "Workspace not configured"},
+            )
+
+        try:
+            result = await self._workspace_control.open_workspace(picked)
+        except Exception as exc:
+            logger.warning("workspace/pick: open_workspace failed: %s", exc)
+            return web.json_response(
+                {"path": picked, "success": False, "notice": str(exc)},
+            )
+
+        if result.success and self._recent_workspaces is not None:
+            self._recent_workspaces.add(str(result.current_path))
+
+        return web.json_response(
+            {
+                "path": str(result.current_path),
                 "success": result.success,
                 "cwd": str(result.current_path),
                 "notice": result.notice,
