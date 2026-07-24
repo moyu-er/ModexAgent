@@ -9,7 +9,7 @@ from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from bot.input_pipeline.stages.skill_parse import ParsedSkill, SkillParseStage
 from modex_agent.approval.types import ApprovalAction
 from modex_agent.approval.views import ApprovalDecisionInput
-from modex_agent.input_pipeline.envelope import UserInputEnvelope
+from modex_agent.input_pipeline.envelope import CommandStatus, UserInputEnvelope
 
 
 class _FakeRegistry:
@@ -55,7 +55,7 @@ async def test_valid_skill_sets_xml_and_keeps_raw_content() -> None:
     assert env.content == "/office-expert make ppt"  # raw preserved for persistence
     assert env.metadata["skill_xml"].startswith("<skill")
     assert env.metadata["skill_name"] == "office-expert"
-    assert env.command_resolved is True
+    assert env.command_status is CommandStatus.RESOLVED
 
 
 @pytest.mark.asyncio
@@ -65,7 +65,7 @@ async def test_unknown_skill_passes_through_unresolved() -> None:
     result = await stage.process(env, _ctx())
     assert result.should_continue()  # no longer terminates here
     assert "skill_xml" not in env.metadata
-    assert env.command_resolved is False  # left for the terminal stage to reject
+    assert env.command_status is CommandStatus.UNRESOLVED  # left for the terminal stage to reject
 
 
 @pytest.mark.asyncio

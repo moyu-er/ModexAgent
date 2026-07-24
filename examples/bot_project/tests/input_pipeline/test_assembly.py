@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 from bot.input_pipeline.assembly import build_im_pipeline, build_webui_pipeline
 from bot.input_pipeline.stages.approval import ApprovalStage
 from bot.input_pipeline.stages.attachment_ingest import AttachmentIngestStage
+from bot.input_pipeline.stages.command import CommandDispatchStage
 from bot.input_pipeline.stages.model_choice import ModelChoiceStage
 from bot.input_pipeline.stages.resolve_workspace import ResolveWorkspaceStage
 from bot.input_pipeline.stages.skill_parse import SkillParseStage
@@ -29,29 +30,31 @@ def test_im_pipeline_order_and_count() -> None:
     pipe = build_im_pipeline(skill_registry=MagicMock(), known_pools={"main", "coding"})
     assert isinstance(pipe, UserInputPipeline)
     # SetChannel, ResolveWorkspace, EnvironmentControl, SessionControl,
-    # ResolvePool, AttachmentIngest, Approval, SkillParse, UnsupportedCommand,
-    # Persist, Enqueue.
-    assert len(pipe._stages) == 11
+    # ResolvePool, CommandDispatch, AttachmentIngest, Approval, SkillParse,
+    # UnsupportedCommand, Persist, Enqueue.
+    assert len(pipe._stages) == 12
     assert isinstance(pipe._stages[1], ResolveWorkspaceStage)
-    assert isinstance(pipe._stages[5], AttachmentIngestStage)
-    assert isinstance(pipe._stages[6], ApprovalStage)
-    assert isinstance(pipe._stages[7], SkillParseStage)
-    assert isinstance(pipe._stages[8], UnsupportedCommandStage)
+    assert isinstance(pipe._stages[5], CommandDispatchStage)
+    assert isinstance(pipe._stages[6], AttachmentIngestStage)
+    assert isinstance(pipe._stages[7], ApprovalStage)
+    assert isinstance(pipe._stages[8], SkillParseStage)
+    assert isinstance(pipe._stages[9], UnsupportedCommandStage)
 
 
 def test_webui_pipeline_order_and_count(tmp_path: Path) -> None:
     cfg = _write_cfg(tmp_path)
     pipe = build_webui_pipeline(skill_registry=MagicMock(), bot_model_config=cfg)
     assert isinstance(pipe, UserInputPipeline)
-    # SetChannel, ResolveWorkspace, ResolvePool, ModelChoice, AttachmentIngest,
-    # Approval, SkillParse, UnsupportedCommand, Persist, Enqueue.
-    assert len(pipe._stages) == 10
+    # SetChannel, ResolveWorkspace, ResolvePool, ModelChoice, CommandDispatch,
+    # AttachmentIngest, Approval, SkillParse, UnsupportedCommand, Persist, Enqueue.
+    assert len(pipe._stages) == 11
     assert isinstance(pipe._stages[1], ResolveWorkspaceStage)
     assert isinstance(pipe._stages[3], ModelChoiceStage)
-    assert isinstance(pipe._stages[4], AttachmentIngestStage)
-    assert isinstance(pipe._stages[5], ApprovalStage)
-    assert isinstance(pipe._stages[6], SkillParseStage)
-    assert isinstance(pipe._stages[7], UnsupportedCommandStage)
+    assert isinstance(pipe._stages[4], CommandDispatchStage)
+    assert isinstance(pipe._stages[5], AttachmentIngestStage)
+    assert isinstance(pipe._stages[6], ApprovalStage)
+    assert isinstance(pipe._stages[7], SkillParseStage)
+    assert isinstance(pipe._stages[8], UnsupportedCommandStage)
 
 
 def test_webui_pipeline_has_model_choice_stage(tmp_path: Path) -> None:

@@ -24,8 +24,11 @@ behalf of a downstream stage. Claiming has two shapes:
   approval decision). A claim-and-continue stage marks the envelope *resolved*.
 
 **Resolved** — the state of an envelope whose slash command has been claimed.
-Carried by `command_resolved`. It is the single signal the terminal stage reads;
-no stage needs to know *which* other stage claimed the command.
+Carried by `command_status` (a `CommandStatus` enum: `UNRESOLVED` / `RESOLVED` /
+`HANDLED`). It is the single signal the terminal stage reads; no stage needs to
+know *which* other stage claimed the command. `RESOLVED` means claimed and the
+pipeline continues normally (persist + enqueue); `HANDLED` means claimed and
+fully processed, so persist and enqueue are skipped.
 
 **Terminal unsupported-command stage** — the last command-resolution stage,
 sitting after every claiming stage but before persistence/enqueue. Its only

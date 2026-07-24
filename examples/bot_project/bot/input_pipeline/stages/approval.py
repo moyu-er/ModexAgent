@@ -16,7 +16,7 @@ from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from modex_agent.approval.response import parse_approval_action
 from modex_agent.approval.views import ApprovalDecisionInput
-from modex_agent.input_pipeline.envelope import UserInputEnvelope
+from modex_agent.input_pipeline.envelope import CommandStatus, UserInputEnvelope
 from modex_agent.input_pipeline.stage import Continue, InputStage, StageResult
 
 
@@ -27,7 +27,7 @@ class ApprovalStage(InputStage):
         # WebUI: the structured decision is already in metadata (built at the
         # approvals POST). Mark resolved so the terminal stage stays out of it.
         if RoutingMeta.APPROVAL_DECISION in envelope.metadata:
-            envelope.command_resolved = True
+            envelope.command_status = CommandStatus.RESOLVED
             return Continue(value=envelope)
 
         action = parse_approval_action(envelope.content or "")
@@ -37,6 +37,6 @@ class ApprovalStage(InputStage):
         envelope.metadata[RoutingMeta.APPROVAL_DECISION] = ApprovalDecisionInput(
             tool_call_id=None, action=action
         )
-        envelope.command_resolved = True
+        envelope.command_status = CommandStatus.RESOLVED
         envelope.content = ""
         return Continue(value=envelope)

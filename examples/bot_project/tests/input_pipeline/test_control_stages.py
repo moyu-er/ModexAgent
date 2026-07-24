@@ -143,17 +143,21 @@ async def test_stop_command_handled_by_session_stage() -> None:
 
 @pytest.mark.asyncio
 async def test_continue_command_enqueues_continue_signal() -> None:
-    """S2: /continue enqueues a continue InputMessage and terminates without persisting."""
+    """CommandDispatchStage: /continue enqueues a continue InputMessage and marks HANDLED."""
+    from bot.input_pipeline.stages.command import CommandDispatchStage
+    from bot.input_pipeline.stages.commands import SHARED_COMMANDS
+    from modex_agent.input_pipeline.envelope import CommandStatus
+
     enqueued: list[InputMessage] = []
     ctx = _ctx(store_get="main")
     ctx._enqueue_message = MagicMock(side_effect=enqueued.append)
     ctx.enqueue_message = MagicMock(side_effect=enqueued.append)  # type: ignore[method-assign]
     env = UserInputEnvelope(external_id="u1", content="/continue", channel="qq")
-    stage = EnvironmentControlStage()
+    stage = CommandDispatchStage(handlers=SHARED_COMMANDS)
     result = await stage.process(env, ctx)
 
-    assert result.should_continue() is False
-    assert result.response is None
+    assert result.should_continue() is True
+    assert env.command_status is CommandStatus.HANDLED
     assert len(enqueued) == 1
     assert enqueued[0].content == "/continue"
     assert enqueued[0].session.session_id.endswith(".main")

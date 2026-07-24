@@ -9,7 +9,7 @@ from bot.input_pipeline.stages.approval import ApprovalStage
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from modex_agent.approval.types import ApprovalAction
 from modex_agent.approval.views import ApprovalDecisionInput
-from modex_agent.input_pipeline.envelope import UserInputEnvelope
+from modex_agent.input_pipeline.envelope import CommandStatus, UserInputEnvelope
 
 
 def _ctx() -> BotInputContext:
@@ -21,7 +21,7 @@ async def test_approve_text_becomes_structured_decision() -> None:
     env = UserInputEnvelope(external_id="u1", content="/approve", channel="qq")
     result = await ApprovalStage().process(env, _ctx())
     assert result.should_continue()
-    assert env.command_resolved is True
+    assert env.command_status is CommandStatus.RESOLVED
     assert env.content == ""
     assert env.metadata[RoutingMeta.APPROVAL_DECISION] == ApprovalDecisionInput(
         tool_call_id=None, action=ApprovalAction.ALLOW
@@ -52,7 +52,7 @@ async def test_existing_decision_passes_and_is_marked_resolved() -> None:
     )
     result = await ApprovalStage().process(env, _ctx())
     assert result.should_continue()
-    assert env.command_resolved is True
+    assert env.command_status is CommandStatus.RESOLVED
 
 
 @pytest.mark.asyncio
@@ -60,6 +60,6 @@ async def test_non_approval_command_passes_through_untouched() -> None:
     env = UserInputEnvelope(external_id="u1", content="/office-expert go", channel="qq")
     result = await ApprovalStage().process(env, _ctx())
     assert result.should_continue()
-    assert env.command_resolved is False
+    assert env.command_status is CommandStatus.UNRESOLVED
     assert RoutingMeta.APPROVAL_DECISION not in env.metadata
     assert env.content == "/office-expert go"

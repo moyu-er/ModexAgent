@@ -3,10 +3,30 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from modex_agent.media.models import Attachment
+
+
+class CommandStatus(StrEnum):
+    """Lifecycle of a slash command as it flows through the pipeline.
+
+    UNRESOLVED — no stage has claimed the command yet. The terminal
+        UnsupportedCommandStage rejects any "/command" still in this state.
+    RESOLVED   — a stage claimed it and the pipeline should continue normally
+        (persist the user message, enqueue to the agent). Set by SkillParseStage
+        and ApprovalStage.
+    HANDLED    — a stage claimed it and fully handled it (e.g. enqueued a
+        continue signal, switched workspace). Downstream stages skip persist
+        and enqueue. Set by CommandDispatchStage, EnvironmentControlStage,
+        SessionControlStage.
+    """
+
+    UNRESOLVED = "unresolved"
+    RESOLVED = "resolved"
+    HANDLED = "handled"
 
 
 @dataclass
@@ -38,10 +58,14 @@ class UserInputEnvelope:
                  NOT re-encode external_id — preventing double
                  encoding. None for IM, where the pipeline resolves
                  once via SessionIdFactory.create(external_id=...).
-    command_resolved: set True by any stage that claims this envelope's
-                 slash command. The terminal UnsupportedCommandStage
-                 rejects a "/command" only when this is still False, so
-                 no stage needs to know which other stage claimed it.
+    command_status: lifecycle of this envelope's slash command, carried as
+                 a ``CommandStatus`` enum (UNRESOLVED / RESOLVED / HANDLED).
+                 Starts UNRESOLVED; a claiming stage sets it to RESOLVED
+                 (pipeline continues normally — persist + enqueue) or
+                 HANDLED (fully processed — persist + enqueue skipped).
+                 The terminal UnsupportedCommandStage rejects a "/command"
+                 only when this is still UNRESOLVED, so no stage needs to
+                 know which other stage claimed it.
     """
 
     external_id: str
@@ -51,7 +75,11 @@ class UserInputEnvelope:
     metadata: dict[str, Any] = field(default_factory=dict)
     attachments: list[AttachmentRef] = field(default_factory=list)
     pre_resolved_session: Any = None
-    command_resolved: bool = False
+    command_status: CommandStatus = CommandStatus.UNRESOLVED
+    """Lifecycle of the envelope's slash command. Set by claiming stages;
+    consumed by UnsupportedCommandStage (reject if UNRESOLVED),
+    PersistUserMessageStage (skip if HANDLED), and EnqueueStage (skip if
+    HANDLED). See ``CommandStatus`` for the state contract."""
     resolved_attachments: list[Attachment] = field(default_factory=list)
     """Gate-accepted, persisted inbound attachments for THIS turn, produced by
     the attachment ingest stage. Typed handoff to the transcript-write stage

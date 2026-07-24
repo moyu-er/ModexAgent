@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from modex_agent.core.skills.builder import build_skill_command_xml
-from modex_agent.input_pipeline.envelope import UserInputEnvelope
+from modex_agent.input_pipeline.envelope import CommandStatus, UserInputEnvelope
 from modex_agent.input_pipeline.stage import Continue, InputStage, StageResult
 from modex_agent.multi_agent.pool_instance import PoolInstance
 
@@ -99,5 +99,5 @@ class SkillParseStage(InputStage):
 
         envelope.metadata[RoutingMeta.SKILL_XML] = parsed.xml_form
         envelope.metadata[RoutingMeta.SKILL_NAME] = command_name
-        envelope.command_resolved = True
+        envelope.command_status = CommandStatus.RESOLVED
         return Continue(value=envelope)
