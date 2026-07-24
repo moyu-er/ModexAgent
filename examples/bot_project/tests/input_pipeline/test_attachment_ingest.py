@@ -94,7 +94,7 @@ async def test_accept_path_persists_attachment_with_ws_relative_path() -> None:
     """An accepted PNG produces an Attachment persisted under the media layout,
     with ``path`` relative to the workspace root (ADR §4) and locator=MEDIA."""
     with TemporaryDirectory() as tmp:
-        root = Path(tmp)
+        root = Path(tmp).resolve()
         uploads = root / "uploads"
         uploads.mkdir()
         png = _write_png(uploads)
