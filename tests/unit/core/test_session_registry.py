@@ -28,7 +28,7 @@ async def test_register_initializes_timestamps_for_from_str() -> None:
     from modex_agent.core.session_id import SessionInfo
 
     reg = InMemorySessionRegistry()
-    session = SessionInfo.from_str("abc123.main", default_agent_name="main")
+    session = SessionInfo.from_str("abc123.main")
     assert session.created_at is None
     assert session.updated_at is None
 

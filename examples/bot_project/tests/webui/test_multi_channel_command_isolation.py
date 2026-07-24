@@ -86,7 +86,7 @@ class _DummyInputAdapter(InputAdapter):
         self._queue.put_nowait(
             InputMessage(
                 content=content,
-                session=SessionInfo.from_str(session_id, default_agent_name="main"),
+                session=SessionInfo.from_str(session_id),
                 source=self._channel_name,
                 channel=self._channel_name,
                 metadata={"session_id": session_id},

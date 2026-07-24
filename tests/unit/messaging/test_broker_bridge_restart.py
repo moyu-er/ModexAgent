@@ -67,7 +67,7 @@ class FakeInputAdapter:
         async def _gen():
             while True:
                 await asyncio.sleep(999)
-                yield InputMessage(content="", session=SessionInfo.from_str("test", default_agent_name="main"), source="test")
+                yield InputMessage(content="", session=SessionInfo.from_str("test"), source="test")
         return _gen()
 
 

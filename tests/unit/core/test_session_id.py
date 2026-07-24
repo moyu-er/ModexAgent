@@ -63,20 +63,20 @@ def test_session_id_is_frozen():
 
 
 def test_from_str_with_separator():
-    session = SessionInfo.from_str("abc.reviewer", default_agent_name="main")
+    session = SessionInfo.from_str("abc.reviewer")
     assert session.session_id == "abc.reviewer"
     assert session.agent_name == "reviewer"
 
 
 def test_from_str_without_separator_warns():
     with pytest.warns(UserWarning):
-        session = SessionInfo.from_str("abc", default_agent_name="main")
-    assert session.agent_name == "main"
+        session = SessionInfo.from_str("abc")
+    assert session.agent_name == ""
 
 
 def test_from_str_empty_suffix_warns():
     with pytest.warns(UserWarning):
-        SessionInfo.from_str("abc.", default_agent_name="main")
+        SessionInfo.from_str("abc.")
 
 
 def test_factory_creates_main_session():

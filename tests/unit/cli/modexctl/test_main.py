@@ -57,6 +57,12 @@ _COMM_ENV_KEYS: tuple[str, ...] = (
     "MODEX_TARGETS",
 )
 
+_WORKFLOW_ENV_KEYS: tuple[str, ...] = (
+    "MODEX_WORKFLOW_ID",
+    "MODEX_TASK_ID",
+    "MODEX_NODE_ID",
+)
+
 
 @pytest.fixture()
 def comm_env(
@@ -68,6 +74,16 @@ def comm_env(
     monkeypatch.setenv("MODEX_INBOX_ROOT", str(inbox_root))
     monkeypatch.setenv("MODEX_AGENT_POOL_MAP", "analyst=pool_analyst")
     monkeypatch.setenv("MODEX_TARGETS", "analyst=Reviews code;reviewer=Approves PRs")
+
+
+@pytest.fixture()
+def workflow_env(
+    monkeypatch: pytest.MonkeyPatch, comm_env: None
+) -> None:
+    """Comm env + workflow env — both layers satisfied."""
+    monkeypatch.setenv("MODEX_WORKFLOW_ID", "wf-123")
+    monkeypatch.setenv("MODEX_TASK_ID", "task-456")
+    monkeypatch.setenv("MODEX_NODE_ID", "node-789")
 
 
 def _registered_names(app: typer.Typer) -> set[str | None]:
@@ -635,3 +651,57 @@ class TestStaleAppFailClosed:
         result = runner.invoke(app, args)
         assert result.exit_code == EXIT_USAGE
         assert var in result.output
+
+
+class TestWorkflowCommandGate:
+    """Workflow command gating — independent second layer on top of comm env.
+
+    Three-scenario gating (per docs/design/task-workflow/env-injection.md):
+    - comm ✅ + workflow ❌ → send/agents only
+    - comm ✅ + workflow ✅ → all 6 commands
+    - comm ❌ → empty command surface (existing TestUnifiedCommGate covers this)
+    """
+
+    def test_workflow_commands_absent_without_workflow_env(
+        self, runner: CliRunner, comm_env: None
+    ) -> None:
+        """Comm env set but workflow env missing → only send/agents in --help."""
+        app = build_app()
+        result = runner.invoke(app, ["--help"])
+        assert result.exit_code == 0
+        assert "send" in result.output
+        assert "agents" in result.output
+        assert "submit" not in result.output
+        assert "next-steps" not in result.output
+        assert "task" not in result.output
+        assert "workflow" not in result.output
+
+    def test_workflow_commands_present_with_workflow_env(
+        self, runner: CliRunner, workflow_env: None
+    ) -> None:
+        """Comm + workflow env both set → all 6 commands in --help."""
+        app = build_app()
+        result = runner.invoke(app, ["--help"])
+        assert result.exit_code == 0
+        assert "send" in result.output
+        assert "agents" in result.output
+        assert "submit" in result.output
+        assert "next-steps" in result.output
+        assert "task" in result.output
+        assert "workflow" in result.output
+
+    def test_stub_submit_returns_not_available(
+        self, runner: CliRunner, workflow_env: None
+    ) -> None:
+        """Stub submit command echoes 'workflow not available' and exits 0."""
+        result = runner.invoke(build_app(), ["submit"])
+        assert "workflow not available" in result.output
+        assert result.exit_code == 0
+
+    def test_stub_workflow_returns_not_available(
+        self, runner: CliRunner, workflow_env: None
+    ) -> None:
+        """Stub workflow command echoes 'workflow not available' and exits 0."""
+        result = runner.invoke(build_app(), ["workflow"])
+        assert "workflow not available" in result.output
+        assert result.exit_code == 0

@@ -113,7 +113,7 @@ async def test_fan_in_forwards_messages_from_single_source() -> None:
 
     await fan_in.start()
     try:
-        qq.enqueue(InputMessage(content="hello", session=SessionInfo.from_str("u1", default_agent_name="main"), source="qq"))
+        qq.enqueue(InputMessage(content="hello", session=SessionInfo.from_str("u1"), source="qq"))
 
         received: list[InputMessage] = []
         async for msg in fan_in.receive():
@@ -138,8 +138,8 @@ async def test_fan_in_forwards_from_multiple_sources() -> None:
 
     await fan_in.start()
     try:
-        qq.enqueue(InputMessage(content="QQ msg", session=SessionInfo.from_str("qq_1", default_agent_name="main"), source="qq"))
-        discord.enqueue(InputMessage(content="Discord msg", session=SessionInfo.from_str("dc_1", default_agent_name="main"), source="discord"))
+        qq.enqueue(InputMessage(content="QQ msg", session=SessionInfo.from_str("qq_1"), source="qq"))
+        discord.enqueue(InputMessage(content="Discord msg", session=SessionInfo.from_str("dc_1"), source="discord"))
 
         received: list[InputMessage] = []
         async for msg in fan_in.receive():
@@ -164,9 +164,9 @@ async def test_fan_in_forwards_sequential_messages() -> None:
 
     await fan_in.start()
     try:
-        qq.enqueue(InputMessage(content="first", session=SessionInfo.from_str("u1", default_agent_name="main"), source="qq"))
-        qq.enqueue(InputMessage(content="second", session=SessionInfo.from_str("u1", default_agent_name="main"), source="qq"))
-        qq.enqueue(InputMessage(content="third", session=SessionInfo.from_str("u1", default_agent_name="main"), source="qq"))
+        qq.enqueue(InputMessage(content="first", session=SessionInfo.from_str("u1"), source="qq"))
+        qq.enqueue(InputMessage(content="second", session=SessionInfo.from_str("u1"), source="qq"))
+        qq.enqueue(InputMessage(content="third", session=SessionInfo.from_str("u1"), source="qq"))
 
         received: list[InputMessage] = []
         async for msg in fan_in.receive():

@@ -160,7 +160,7 @@ class InputAdapter(ABC):
 
         ctx = CommandContext(
             session_id=session_id,
-            input_msg=InputMessage(content=text, session=SessionInfo.from_str(session_id, default_agent_name="main")),
+            input_msg=InputMessage(content=text, session=SessionInfo.from_str(session_id)),
             agent_name="main",
         )
 

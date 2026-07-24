@@ -53,15 +53,17 @@ class SubprocessExecutor(ShellExecutor):
         )
 
     async def execute(self, command: str, working_dir: str | None = None, timeout: int = 300) -> str:
+        from modex_agent.runtime.env_context import _modex_env
         from modex_agent.tools.terminal.env import build_full_env
 
+        overrides = _modex_env.get()
         cwd = working_dir or os.getcwd()
         process = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd,
-            env=build_full_env(),
+            env=build_full_env(overrides=overrides),
         )
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)

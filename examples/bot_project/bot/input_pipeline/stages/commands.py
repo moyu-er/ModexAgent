@@ -36,7 +36,7 @@ class BuiltinCommand(StrEnum):
 def handle_continue(c: CommandContext) -> None:
     msg = InputMessage(
         content=f"/{BuiltinCommand.CONTINUE.value}",
-        session=SessionInfo.from_str(c.full_session_id, default_agent_name="main"),
+        session=SessionInfo.from_str(c.full_session_id),
         channel=c.envelope.channel,
         source=c.envelope.channel,
         chat_id=c.envelope.metadata.get("chat_id", ""),

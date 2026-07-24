@@ -53,6 +53,9 @@ class _MockPool:
             async def submit_input(inner_self, sid: str, msg: InputMessage) -> None:
                 self.submitted.append((sid, msg))
 
+            def serves_agent(inner_self, name: str) -> bool:
+                return True
+
         self.pool = _Inner()
 
 

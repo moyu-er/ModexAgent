@@ -33,7 +33,7 @@ class FakeSkillManager:
 def _context(content: str) -> CommandContext:
     return CommandContext(
         session_id="s1",
-        input_msg=InputMessage(content=content, session=SessionInfo.from_str("s1", default_agent_name="main")),
+        input_msg=InputMessage(content=content, session=SessionInfo.from_str("s1")),
         agent_name="main",
         skill_manager=FakeSkillManager(),  # type: ignore[arg-type]
     )

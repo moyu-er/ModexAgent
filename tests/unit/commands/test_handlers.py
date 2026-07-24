@@ -22,7 +22,7 @@ from modex_agent.core.types import InputMessage
 def _context(content: str = "/continue", *, pending: object | None = None) -> CommandContext:
     return CommandContext(
         session_id="s1",
-        input_msg=InputMessage(content=content, session=SessionInfo.from_str("s1", default_agent_name="main")),
+        input_msg=InputMessage(content=content, session=SessionInfo.from_str("s1")),
         agent_name="main",
         pending_approval=pending,
     )

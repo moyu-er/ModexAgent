@@ -54,6 +54,20 @@ def _missing_comm_env_key() -> str | None:
     return None
 
 
+_REQUIRED_WORKFLOW_ENV_KEYS: tuple[str, ...] = (
+    "MODEX_WORKFLOW_ID",
+    "MODEX_TASK_ID",
+    "MODEX_NODE_ID",
+)
+
+
+def _missing_workflow_env_key() -> str | None:
+    for key in _REQUIRED_WORKFLOW_ENV_KEYS:
+        if not os.environ.get(key):
+            return key
+    return None
+
+
 _SAFE_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._")
 
 
@@ -353,6 +367,11 @@ def _noop_callback() -> None:
     pass
 
 
+def _stub_workflow_command() -> None:
+    """Workflow command not yet available."""
+    typer.echo("workflow not available")
+
+
 def build_app() -> typer.Typer:
     app = typer.Typer(
         name="modexctl",
@@ -370,6 +389,12 @@ def build_app() -> typer.Typer:
     if _missing_comm_env_key() is None:
         app.command(name="send")(_send)
         app.command(name="agents")(_agents)
+
+        if _missing_workflow_env_key() is None:
+            app.command(name="submit")(_stub_workflow_command)
+            app.command(name="next-steps")(_stub_workflow_command)
+            app.command(name="task")(_stub_workflow_command)
+            app.command(name="workflow")(_stub_workflow_command)
 
     return app
 

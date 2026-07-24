@@ -99,16 +99,15 @@ class SessionInfo(BaseModel):
         return self.model_copy(update={"updated_at": now_ms()})
 
     @classmethod
-    def from_str(
-        cls,
-        value: str,
-        *,
-        default_agent_name: str | None = None,
-    ) -> SessionInfo:
+    def from_str(cls, value: str) -> SessionInfo:
         """Recover a SessionInfo from a display string (last-resort fallback).
 
         Emits a UserWarning when the value has no separator or an empty
-        agent_name suffix. Callers should query the registry first.
+        agent_name suffix. A bare prefix (no separator) produces
+        ``agent_name=""`` — the session genuinely has no bound agent, and
+        callers (PoolRouter reconciler, etc.) must treat empty agent_name
+        as "trust the routing store" rather than inventing a fake default.
+        Callers that know the agent should construct SessionInfo directly.
         """
         if "." not in value:
             warnings.warn(
@@ -116,10 +115,10 @@ class SessionInfo(BaseModel):
                 UserWarning,
                 stacklevel=2,
             )
-            agent_name = default_agent_name or "unknown"
+            agent_name = ""
         else:
             _prefix, _, suffix = value.rpartition(".")
-            agent_name = suffix or default_agent_name or "unknown"
+            agent_name = suffix
             if not suffix:
                 warnings.warn(
                     f"SessionInfo {value!r} has empty agent_name suffix",

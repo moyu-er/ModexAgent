@@ -168,6 +168,27 @@ class ExternalEnvSpec(BaseModel):
             "ignored when comm_kind=NORMAL."
         ),
     )
+    workflow_id: str | None = Field(
+        default=None,
+        description=(
+            "Optional workflow context id surfaced as MODEX_WORKFLOW_ID. "
+            "None omits the var entirely (external agent sees no key)."
+        ),
+    )
+    task_id: str | None = Field(
+        default=None,
+        description=(
+            "Optional workflow task id surfaced as MODEX_TASK_ID. "
+            "None omits the var entirely (external agent sees no key)."
+        ),
+    )
+    node_id: str | None = Field(
+        default=None,
+        description=(
+            "Optional workflow node id surfaced as MODEX_NODE_ID. "
+            "None omits the var entirely (external agent sees no key)."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

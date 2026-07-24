@@ -31,7 +31,7 @@ class _InputAdapter(InputAdapter):
 
     async def receive(self) -> AsyncIterator[InputMessage]:
         if False:
-            yield InputMessage(content="", session=SessionInfo.from_str("s1", default_agent_name="main"))
+            yield InputMessage(content="", session=SessionInfo.from_str("s1"))
 
 
 def test_default_interceptor_chain_keeps_only_effective_defaults() -> None:

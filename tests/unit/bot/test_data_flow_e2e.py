@@ -90,7 +90,7 @@ class _FakePool:
 
 
 def _msg(content: str, session_id: str = "sess-1") -> InputMessage:
-    return InputMessage(content=content, session=SessionInfo.from_str(session_id, default_agent_name="main"), channel="qq")
+    return InputMessage(content=content, session=SessionInfo.from_str(session_id), channel="qq")
 
 
 # ── Flow 1: Normal message -> correct pool ──

@@ -238,13 +238,7 @@ class AgentPipeline:
     async def _process_message(self, input_msg: InputMessage) -> AgentResult | None:
         """处理单个消息（内部入口）"""
         if self.router is not None:
-            agent_descriptor = self._turn_runner.agent_descriptor
-            default_agent_name = (
-                agent_descriptor.address.name
-                if agent_descriptor is not None
-                else self.agent.name
-            )
-            route_result = self.router.route(input_msg, default_agent_name=default_agent_name)
+            route_result = self.router.route(input_msg)
             session = route_result.session
         else:
             route_result = None

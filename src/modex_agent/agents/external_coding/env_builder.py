@@ -76,6 +76,12 @@ class ExternalEnvBuilder:
         }
         if spec.comm_kind == AgentCommKind.SUBAGENT and spec.parent_session_id is not None:
             modex["MODEX_PARENT_SESSION_ID"] = spec.parent_session_id
+        if spec.workflow_id is not None:
+            modex["MODEX_WORKFLOW_ID"] = str(spec.workflow_id)
+        if spec.task_id is not None:
+            modex["MODEX_TASK_ID"] = str(spec.task_id)
+        if spec.node_id is not None:
+            modex["MODEX_NODE_ID"] = str(spec.node_id)
 
         base_path = base_env.get("PATH", "")
         new_path = (

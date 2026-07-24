@@ -70,7 +70,7 @@ class FakeInputAdapter:
         yield InputMessage(
             content="hi",
             source="test",
-            session=SessionInfo.from_str("test", default_agent_name="main"),
+            session=SessionInfo.from_str("test"),
         )
         await asyncio.sleep(10)  # block indefinitely after first message
 

@@ -78,7 +78,7 @@ async def test_assemble_context_can_skip_user_append_for_continue() -> None:
     state = await assemble_context(
         "s1",
         InputMessage(
-            content="/continue", session=SessionInfo.from_str("s1", default_agent_name="main")
+            content="/continue", session=SessionInfo.from_str("s1")
         ),
         {},
         None,
@@ -100,7 +100,7 @@ async def test_assemble_context_appends_transformed_skill_content() -> None:
         "s1",
         InputMessage(
             content="/weather tomorrow",
-            session=SessionInfo.from_str("s1", default_agent_name="main"),
+            session=SessionInfo.from_str("s1"),
         ),
         {},
         "<command_context>skill</command_context>",
@@ -124,7 +124,7 @@ async def test_assemble_context_propagates_xml_format_from_input_msg() -> None:
     ctx_mgr = FakeContextManager()
     input_msg = InputMessage(
         content="/weather",
-        session=SessionInfo.from_str("s1", default_agent_name="main"),
+        session=SessionInfo.from_str("s1"),
         content_format=ContentFormat.XML,
         truncatable_paths=["command_context", "user_input"],
     )
@@ -205,7 +205,7 @@ class TestInputAdapter(InputAdapter):
     async def receive(self) -> AsyncIterator[InputMessage]:  # type: ignore[override]
         if False:
             yield InputMessage(
-                content="", session=SessionInfo.from_str("unused", default_agent_name="main")
+                content="", session=SessionInfo.from_str("unused")
             )
 
 
@@ -252,7 +252,7 @@ async def test_pipeline_continue_runs_agent_without_appending_command() -> None:
     )
     await pipeline.process_message(
         InputMessage(
-            content="/continue", session=SessionInfo.from_str("s1", default_agent_name="main")
+            content="/continue", session=SessionInfo.from_str("s1")
         )
     )
     assert agent.runs == 1
@@ -286,7 +286,7 @@ async def test_pipeline_continue_during_pending_approval_returns_notice() -> Non
     )
     result = await pipeline.process_message(
         InputMessage(
-            content="/continue", session=SessionInfo.from_str("s1", default_agent_name="main")
+            content="/continue", session=SessionInfo.from_str("s1")
         )
     )
     assert result is None
@@ -333,7 +333,7 @@ async def test_pipeline_drops_slash_command_when_busy_in_queue_mode() -> None:
     try:
         result = await pipeline.process_message(
             InputMessage(
-                content="/continue", session=SessionInfo.from_str("s1", default_agent_name="main")
+                content="/continue", session=SessionInfo.from_str("s1")
             )
         )
         assert result is None
@@ -372,7 +372,7 @@ async def test_pipeline_skill_uses_transformed_user_content() -> None:
     )
     await pipeline.process_message(
         InputMessage(
-            content="/weather", session=SessionInfo.from_str("s1", default_agent_name="main")
+            content="/weather", session=SessionInfo.from_str("s1")
         )
     )
     assert agent.runs == 1
@@ -418,7 +418,7 @@ async def test_pipeline_skill_propagates_xml_format_to_agent_messages() -> None:
     await pipeline.process_message(
         InputMessage(
             content="/weather tomorrow",
-            session=SessionInfo.from_str("s1", default_agent_name="main"),
+            session=SessionInfo.from_str("s1"),
         )
     )
     assert agent.runs == 1
@@ -447,7 +447,7 @@ def test_command_processor_exposes_dispatch_policy_before_lock() -> None:
         CommandContext(
             session_id="s1",
             input_msg=InputMessage(
-                content="/approve", session=SessionInfo.from_str("s1", default_agent_name="main")
+                content="/approve", session=SessionInfo.from_str("s1")
             ),
             agent_name="main",
         ),
@@ -460,7 +460,7 @@ def test_command_processor_exposes_dispatch_policy_before_lock() -> None:
         CommandContext(
             session_id="s1",
             input_msg=InputMessage(
-                content="/approve", session=SessionInfo.from_str("s1", default_agent_name="main")
+                content="/approve", session=SessionInfo.from_str("s1")
             ),
             agent_name="main",
             pending_approval=TurnSnapshot(

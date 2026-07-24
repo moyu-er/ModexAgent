@@ -61,10 +61,14 @@ class _FakePoolInstance:
         self.main_agent_name = name
         self.submitted: list = []
         record = self.submitted
+        main_agent_name = name
 
         class _Inner:
             async def submit_input(self, sid, msg):  # noqa: ANN001
                 record.append((sid, msg))
+
+            def serves_agent(self, agent_name):  # noqa: ANN001
+                return agent_name == main_agent_name
 
         self.pool = _Inner()
 
@@ -239,7 +243,7 @@ class TestPoolRouterRouting:
         router._session_store.set_pool("sess-3", "nonexistent")
         msg = InputMessage(
             content="hello",
-            session=SessionInfo.from_str("sess-3", default_agent_name="main"),
+            session=SessionInfo.from_str("sess-3"),
             channel="test",
         )
         await router._route_to_pool(msg, pools["main"])
@@ -256,7 +260,7 @@ class TestPoolRouterRouting:
             input_adapter=_StubInput([
                 InputMessage(
                     content="hello",
-                    session=SessionInfo.from_str("sess-route", default_agent_name="main"),
+                    session=SessionInfo.from_str("sess-route"),
                     channel="test",
                 ),
             ]),
