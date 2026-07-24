@@ -18,7 +18,7 @@ Tool subsystem — registry, type definitions, filtering, metadata parsing, MCP 
 | `presets.py` | Tool preset definitions — named sets of tools for different agent configurations |
 | `mcp_adapter.py` | `MCPToolAdapter`, `MCPToolRegistry` — bridges MCP protocol tools to the framework `Tool` interface |
 | `mcp_loader.py` | `load_per_agent_mcp` — per-agent MCP server loading (relocated from `multi_agent/communication.py` per ADR-0019 T1). Resolves agent MCP server selection via `bot.config.mcp_registry`, builds `MCPClientManager` + initializes tools. Sole caller: `multi_agent/template.py` (subagent materialization path). |
-| `workspace_scoped.py` | Workspace-scoped tool wrappers — resolve relative paths against bound workspace root instead of process CWD (wraps read/write/edit/ls/find/search/bash) |
+| `workspace_scoped.py` | Workspace-scoped tool wrappers — resolve relative paths against bound workspace root instead of process CWD (wraps read/write/edit/ls/glob/grep/bash) |
 
 ## Subdirectories
 

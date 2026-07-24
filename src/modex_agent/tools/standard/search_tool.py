@@ -1,8 +1,9 @@
-"""Search tools: file content search and file discovery.
+"""File content search tool.
 
 Auto-detects the fastest available backend per platform:
   - grep (SearchFilesTool): ripgrep (rg) > git grep > Python re
-  - find  (FindFilesTool):  fd > Python pathlib.rglob
+
+File discovery (glob) lives in ``glob_tool.py``.
 """
 
 from __future__ import annotations
@@ -15,20 +16,9 @@ from pathlib import Path
 from typing import Any
 
 from ...core.tool_manager import Tool
+from ._fallback import DEFAULT_EXCLUDES, expand_braces, is_ignored, load_gitignore
 
-# Directories excluded from search by all backends.
-DEFAULT_EXCLUDES = [
-    ".git",
-    ".venv",
-    "venv",
-    "node_modules",
-    "__pycache__",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".idea",
-    ".vscode",
-]
+_MAX_FILE_SIZE = 10 * 1024 * 1024
 
 
 def _resolve_path(path: str) -> Path:
@@ -65,10 +55,19 @@ class SearchFilesTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Search file contents for a pattern (regex or literal text), like the grep/ripgrep tool. "
-            "Returns matching lines with file paths, line numbers, and context. "
-            "Uses ripgrep when available for performance, falls back to git grep or Python re. "
-            "Pattern: set regex=true for regex (default), regex=false for fixed string match."
+            "- Fast content search tool that works with any codebase size\n"
+            "- Searches file contents using regular expressions\n"
+            '- Supports full regex syntax (eg. "log.*Error", "function\\s+\\w+", etc.)\n'
+            '- Filter files by pattern with the include parameter (eg. "*.js", "*.{ts,tsx}")\n'
+            "- Returns matching lines with file paths and line numbers\n"
+            "- Use this tool when you need to find files containing specific patterns\n"
+            "- If you need to identify/count the number of matches within files, "
+            "use the Bash tool with rg directly if available. "
+            "Do NOT use grep for counting.\n"
+            "- When you are doing an open-ended search that may require multiple rounds "
+            "of globbing and grepping, consider delegating to a subagent instead\n"
+            "- You can call multiple tools in a single response — batch speculative "
+            "searches that are potentially useful"
         )
 
     @property
@@ -76,28 +75,40 @@ class SearchFilesTool(Tool):
         return {
             "type": "object",
             "properties": {
-                "query": {
+                "pattern": {
                     "type": "string",
-                    "description": "Search pattern (regex or literal text)",
+                    "description": "The regex pattern to search for in file contents",
                 },
                 "path": {
                     "type": "string",
-                    "description": "File or directory to search in (default: current directory)",
+                    "description": (
+                        "The directory or file to search in. "
+                        "Defaults to the current working directory."
+                    ),
                     "default": ".",
                 },
-                "file_pattern": {
+                "include": {
                     "type": "string",
-                    "description": "Glob filter for files, e.g. '*.py' (default: all files)",
+                    "description": (
+                        'File pattern to include in the search '
+                        '(e.g. "*.js", "*.{ts,tsx}"). Defaults to all files.'
+                    ),
                     "default": "*",
                 },
                 "regex": {
                     "type": "boolean",
-                    "description": "If true, query is a regex; if false, literal text match",
+                    "description": (
+                        "If true (default), pattern is a regex; "
+                        "if false, literal text match"
+                    ),
                     "default": True,
                 },
                 "max_results": {
                     "type": "integer",
-                    "description": f"Maximum matches to return (default: 50, hard cap: {self.ABSOLUTE_MAX_RESULTS})",
+                    "description": (
+                        f"Maximum matches to return "
+                        f"(default: 50, hard cap: {self.ABSOLUTE_MAX_RESULTS})"
+                    ),
                     "default": 50,
                     "minimum": 1,
                     "maximum": self.ABSOLUTE_MAX_RESULTS,
@@ -110,19 +121,30 @@ class SearchFilesTool(Tool):
                     "maximum": 10,
                 },
             },
-            "required": ["query"],
+            "required": ["pattern"],
         }
 
     async def execute(
         self,
-        query: str,
+        pattern: str,
         path: str = ".",
-        file_pattern: str = "*",
+        include: str = "*",
         regex: bool = True,
         max_results: int = 50,
         context_lines: int = 2,
         **kwargs: Any,
     ) -> str:
+        # Coerce string-typed params that LLM providers may send as strings
+        # (JSON numbers occasionally arrive as strings depending on the
+        # provider's function-calling implementation).  Without this,
+        # min("4", 200) raises TypeError on Python 3.
+        if isinstance(max_results, str):
+            max_results = int(max_results)
+        if isinstance(context_lines, str):
+            context_lines = int(context_lines)
+        if isinstance(regex, str):
+            regex = regex.lower() in ("true", "1", "yes")
+
         search_path = _resolve_path(path)
         if not search_path.exists():
             return f"Error: Path not found: {path}"
@@ -131,30 +153,27 @@ class SearchFilesTool(Tool):
 
         max_results = min(max_results, self.ABSOLUTE_MAX_RESULTS)
 
-        has_rg = shutil.which("rg") is not None
-        if has_rg:
+        if shutil.which("rg") is not None:
             result = await self._search_with_ripgrep(
-                query, search_path, file_pattern, regex, max_results, context_lines
+                pattern, search_path, include, regex, max_results, context_lines
             )
             if not result.startswith("Error:"):
                 return result
 
-        has_git = await self._is_git_repo(search_path)
-        if has_git:
+        if await self._is_git_repo(search_path):
             result = await self._search_with_git_grep(
-                query, search_path, file_pattern, regex, max_results, context_lines
+                pattern, search_path, include, regex, max_results, context_lines
             )
             if not result.startswith("Error:"):
                 return result
 
         return await self._search_with_python(
-            query, search_path, file_pattern, regex, max_results, context_lines
+            pattern, search_path, include, regex, max_results, context_lines
         )
 
     async def _is_git_repo(self, search_path: Path) -> bool:
         if shutil.which("git") is None:
             return False
-        # When given a file, check the directory that contains it.
         check_path = search_path if search_path.is_dir() else search_path.parent
         try:
             proc = await _async_subprocess_run(
@@ -168,14 +187,14 @@ class SearchFilesTool(Tool):
             return False
 
     # ------------------------------------------------------------------
-    # ripgrep backend — uses --vimgrep for simple line-based output
+    # ripgrep backend
     # ------------------------------------------------------------------
 
     async def _search_with_ripgrep(
         self,
-        query: str,
+        pattern: str,
         search_path: Path,
-        file_pattern: str,
+        include: str,
         regex: bool,
         max_results: int,
         context_lines: int,
@@ -183,27 +202,22 @@ class SearchFilesTool(Tool):
         is_file = search_path.is_file()
         cmd = [
             "rg",
+            "--no-config",
+            "--hidden",
             "--vimgrep",
             f"-C{context_lines}",
-            "--max-count",
-            str(max_results),
-            "--max-filesize",
-            "10M",
+            "--max-count", str(max_results),
+            "--max-filesize", "10M",
         ]
-        for d in DEFAULT_EXCLUDES:
-            cmd.extend(["--glob", f"!{d}"])
-        if not is_file and file_pattern != "*":
-            # ripgrep --glob matches against the full relative path.
-            # A pattern like "sub/*.py" does NOT match "search_root/sub/x.py"
-            # unless prefixed with "**/".  Python rglob("sub/*.py") *does* match
-            # nested "sub/*.py" paths, so we normalise to keep backends consistent.
-            rg_pattern = file_pattern
+        if not is_file and include != "*":
+            rg_pattern = include
             if "/" in rg_pattern and not rg_pattern.startswith("**/"):
                 rg_pattern = f"**/{rg_pattern}"
             cmd.extend(["--glob", rg_pattern])
+        cmd.extend(["--glob", "!**/.git/**"])
         if not regex:
             cmd.append("--fixed-strings")
-        cmd.extend([query, str(search_path)])
+        cmd.extend([pattern, str(search_path)])
 
         try:
             proc = await _async_subprocess_run(cmd, capture_output=True, text=True, timeout=30)
@@ -217,12 +231,9 @@ class SearchFilesTool(Tool):
         except Exception as e:
             return f"Error: ripgrep execution failed: {e}"
 
-    # Pre-compiled regex for vimgrep output: matches :lnum:col:text from the
-    # right so Windows absolute paths (e.g. F:\path\file.py) are handled.
     _VIMGREP_RE = re.compile(r":(\d+):(\d+):(.*)$")
 
     def _parse_vimgrep(self, line: str) -> tuple[str, int, str] | None:
-        """Parse one line of --vimgrep output: file:lnum:col:text"""
         m = self._VIMGREP_RE.search(line)
         if not m:
             return None
@@ -234,14 +245,6 @@ class SearchFilesTool(Tool):
         return file_path, lnum, m.group(3).rstrip("\n\r")
 
     def _parse_vimgrep_output(self, stdout: str, max_results: int) -> str:
-        """Parse --vimgrep output into grouped results.
-
-        vimgrep format: file:lnum:col:text  (one line per match)
-        With -C, context lines are also in vimgrep format but have '-' lnum prefix
-        or just plain file:lnum:col:text lines around matches.
-        We group consecutive lines from the same file into match blocks.
-        """
-        # Collect all parsed lines
         entries: list[tuple[str, int, str]] = []
         for raw_line in stdout.splitlines():
             parsed = self._parse_vimgrep(raw_line)
@@ -261,14 +264,13 @@ class SearchFilesTool(Tool):
         lines: list[str] = []
         shown = 0
 
-        # Group by file, preserving order
         current_file = ""
         for file_path, lnum, text in entries:
             if shown >= max_results:
                 break
             if file_path != current_file:
                 if current_file:
-                    lines.append("")  # blank line between files
+                    lines.append("")
                 current_file = file_path
                 lines.append(f"{file_path}:")
             lines.append(f"  {lnum:4d} | {text}")
@@ -286,14 +288,14 @@ class SearchFilesTool(Tool):
         return "\n".join(result_lines)
 
     # ------------------------------------------------------------------
-    # git grep backend — -C provides context lines natively
+    # git grep backend
     # ------------------------------------------------------------------
 
     async def _search_with_git_grep(
         self,
-        query: str,
+        pattern: str,
         search_path: Path,
-        file_pattern: str,
+        include: str,
         regex: bool,
         max_results: int,
         context_lines: int,
@@ -315,22 +317,17 @@ class SearchFilesTool(Tool):
                 git_file_pattern = str(search_path)
         else:
             git_dir = search_path
-            git_file_pattern = file_pattern
+            git_file_pattern = include
 
         cmd = [
-            "git",
-            "-C",
-            str(git_dir),
-            "grep",
-            "-n",
-            f"-C{context_lines}",
-            "--untracked",
+            "git", "-C", str(git_dir), "grep",
+            "-n", f"-C{context_lines}", "--untracked",
         ]
         if regex:
-            cmd.append("-E")  # Extended regex (| is alternation, not literal)
+            cmd.append("-E")
         else:
-            cmd.append("-F")  # Fixed string (literal match)
-        cmd.extend(["-e", query, "--", git_file_pattern])
+            cmd.append("-F")
+        cmd.extend(["-e", pattern, "--", git_file_pattern])
 
         try:
             proc = await _async_subprocess_run(cmd, capture_output=True, text=True, timeout=30)
@@ -342,21 +339,12 @@ class SearchFilesTool(Tool):
         except Exception as e:
             return f"Error: git grep execution failed: {e}"
 
-    def _parse_git_grep_output(
-        self,
-        stdout: str,
-        max_results: int,
-    ) -> str:
+    def _parse_git_grep_output(self, stdout: str, max_results: int) -> str:
         if not stdout.strip():
             return "No matches found."
 
-        # git grep -C output format:
-        #   file:lnum:text        (match line)
-        #   file-lnum-text        (context line, uses '-' separator)
         entries: list[tuple[str, int, str]] = []
-
         for raw_line in stdout.splitlines():
-            # Try match format first (file:lnum:text)
             parsed = self._parse_git_grep_line(raw_line)
             if parsed:
                 entries.append(parsed)
@@ -366,20 +354,10 @@ class SearchFilesTool(Tool):
 
         return self._format_vimgrep_entries(entries, max_results)
 
-    # Pre-compiled regex for git grep match lines: :lnum:text from the right.
     _GIT_GREP_RE = re.compile(r":(\d+):(.*)$")
 
     @staticmethod
     def _parse_git_grep_line(raw_line: str) -> tuple[str, int, str] | None:
-        """Parse git grep -C output line.
-
-        Match lines:  file:lnum:text
-        Context lines: file-lnum-text  (dash separator, negative lnum marker)
-
-        Uses regex so Windows absolute paths (e.g. ``F:\\path\\file.py:lnum:text``)
-        are parsed correctly and colons inside the text are preserved.
-        """
-        # Try match format first (file:lnum:text)
         m = SearchFilesTool._GIT_GREP_RE.search(raw_line)
         if m:
             try:
@@ -389,12 +367,9 @@ class SearchFilesTool(Tool):
             file_path = raw_line[: m.start()]
             return file_path, lnum, m.group(2).rstrip("\n\r")
 
-        # Context format: file-lnum-text  or  file--lnum-text (negative lnum)
         dash_idx = raw_line.find("-")
         if dash_idx < 0:
             return None
-        # Skip past the first dash; if the next char is also a dash it means
-        # a negative line number (context before the match) — skip that too.
         num_start = dash_idx + 1
         if num_start < len(raw_line) and raw_line[num_start] == "-":
             num_start += 1
@@ -410,40 +385,64 @@ class SearchFilesTool(Tool):
         return file_path, lnum, text.rstrip("\n\r")
 
     # ------------------------------------------------------------------
-    # Python re fallback — skips excluded directories
+    # Python re fallback
     # ------------------------------------------------------------------
 
     async def _search_with_python(
         self,
-        query: str,
+        pattern: str,
         search_path: Path,
-        file_pattern: str,
+        include: str,
         regex: bool,
         max_results: int,
         context_lines: int,
     ) -> str:
         try:
             if regex:
-                pattern = re.compile(query)
+                compiled = re.compile(pattern)
             else:
-                pattern = re.compile(re.escape(query))
+                compiled = re.compile(re.escape(pattern))
         except re.error as e:
             return f"Error: Invalid regex pattern: {e}"
 
+        include_patterns = expand_braces(include) if include != "*" else ["*"]
+        positive_gi, negative_gi = load_gitignore(
+            search_path if search_path.is_dir() else search_path.parent
+        )
         exclude_set = set(DEFAULT_EXCLUDES)
-        results: list[tuple[str, int, str, list[tuple[int, str]], list[tuple[int, str]]]] = []
 
         is_file = search_path.is_file()
-        rel_root = search_path.parent if is_file else search_path
-        files_to_search = [search_path] if is_file else search_path.rglob(file_pattern.lstrip("/"))
+
+        if is_file:
+            files_to_search: list[Path] = [search_path]
+        else:
+            files_to_search = []
+            seen_paths: set[Path] = set()
+            for inc in include_patterns:
+                inc = inc.lstrip("/")
+                for fp in search_path.rglob(inc):
+                    if fp.is_file() and fp not in seen_paths:
+                        seen_paths.add(fp)
+                        files_to_search.append(fp)
+
+        results: list[tuple[str, int, str, list[tuple[int, str]], list[tuple[int, str]]]] = []
 
         for file_path in files_to_search:
-            if not file_path.is_file():
-                continue
-            # Skip files inside excluded directories
             if exclude_set & set(file_path.parts):
                 continue
+            try:
+                rel = file_path.relative_to(search_path if not is_file else search_path.parent)
+            except ValueError:
+                rel = file_path
+            rel_str = str(rel).replace("\\", "/")
+            if is_ignored(rel_str, rel.parts, positive_gi, negative_gi):
+                continue
             if _is_binary(file_path):
+                continue
+            try:
+                if file_path.stat().st_size > _MAX_FILE_SIZE:
+                    continue
+            except OSError:
                 continue
 
             try:
@@ -453,7 +452,7 @@ class SearchFilesTool(Tool):
                 continue
 
             for i, (line_no, line_text) in enumerate(all_lines):
-                if pattern.search(line_text):
+                if compiled.search(line_text):
                     ctx_before = [
                         (ln, txt.rstrip("\n\r"))
                         for ln, txt in all_lines[max(0, i - context_lines) : i]
@@ -462,19 +461,14 @@ class SearchFilesTool(Tool):
                         (ln, txt.rstrip("\n\r"))
                         for ln, txt in all_lines[i + 1 : min(len(all_lines), i + 1 + context_lines)]
                     ]
-                    rel_path = str(
-                        file_path.relative_to(rel_root)
-                        if file_path.is_relative_to(rel_root)
-                        else file_path
-                    )
                     results.append(
-                        (rel_path, line_no, line_text.rstrip("\n\r"), ctx_before, ctx_after)
+                        (rel_str, line_no, line_text.rstrip("\n\r"), ctx_before, ctx_after)
                     )
                     if len(results) >= max_results:
                         return self._format_results(results, max_results)
 
         if not results:
-            return f"No matches found for '{query}' in {search_path}"
+            return "No matches found."
 
         return self._format_results(results, max_results)
 
@@ -489,144 +483,22 @@ class SearchFilesTool(Tool):
         lines.append(f"Found {total} match{'es' if total != 1 else ''}:")
         lines.append("")
 
+        current_file = ""
         for file_path, line_no, text, ctx_before, ctx_after in results[:max_results]:
-            lines.append(f"{file_path}:{line_no}")
+            if file_path != current_file:
+                if current_file:
+                    lines.append("")
+                current_file = file_path
+                lines.append(f"{file_path}:")
             for ctx_ln, ctx_txt in ctx_before:
                 lines.append(f"  {ctx_ln:4d} | {ctx_txt}")
-            lines.append(f"> {line_no:4d} | {text}")
+            lines.append(f"  {line_no:4d} | {text}")
             for ctx_ln, ctx_txt in ctx_after:
                 lines.append(f"  {ctx_ln:4d} | {ctx_txt}")
-            lines.append("")
 
         if total > max_results:
             lines.append(
                 f"[... {total - max_results} more matches not shown (limit: {max_results})]"
             )
 
-        return "\n".join(lines)
-
-
-class FindFilesTool(Tool):
-    ABSOLUTE_MAX_RESULTS = 500
-
-    def __init__(self) -> None:
-        super().__init__()
-
-    @property
-    def name(self) -> str:
-        return "find"
-
-    @property
-    def description(self) -> str:
-        return (
-            "Find files matching a glob pattern within a directory tree. "
-            "Uses 'fd' when available for performance, falls back to Python pathlib. "
-            "Pattern examples: '*.py', '**/*test*.py', '*.md'"
-        )
-
-    @property
-    def parameters(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "pattern": {
-                    "type": "string",
-                    "description": "Glob pattern to match file names, e.g. '*.py' or '**/*test*.py'",
-                },
-                "path": {
-                    "type": "string",
-                    "description": "Directory to search in (default: current directory)",
-                    "default": ".",
-                },
-                "max_results": {
-                    "type": "integer",
-                    "description": f"Maximum files to return (default: 100, hard cap: {self.ABSOLUTE_MAX_RESULTS})",
-                    "default": 100,
-                    "minimum": 1,
-                    "maximum": self.ABSOLUTE_MAX_RESULTS,
-                },
-            },
-            "required": ["pattern"],
-        }
-
-    async def execute(
-        self,
-        pattern: str,
-        path: str = ".",
-        max_results: int = 100,
-        **kwargs: Any,
-    ) -> str:
-        search_path = _resolve_path(path)
-        if not search_path.exists():
-            return f"Error: Directory not found: {path}"
-        if not search_path.is_dir():
-            return f"Error: Not a directory: {path}"
-
-        max_results = min(max_results, self.ABSOLUTE_MAX_RESULTS)
-
-        has_fd = shutil.which("fd") is not None
-        if has_fd:
-            result = await self._find_with_fd(pattern, search_path, max_results)
-            if not result.startswith("Error:"):
-                return result
-
-        return await self._find_with_python(pattern, search_path, max_results)
-
-    async def _find_with_fd(
-        self,
-        pattern: str,
-        search_path: Path,
-        max_results: int,
-    ) -> str:
-        cmd = ["fd", "--type", "f", "--max-results", str(max_results)]
-        for d in DEFAULT_EXCLUDES:
-            cmd.extend(["--exclude", d])
-        cmd.extend([pattern, str(search_path)])
-        try:
-            proc = await _async_subprocess_run(cmd, capture_output=True, text=True, timeout=30)
-            if proc.returncode != 0:
-                return f"Error: fd failed (exit {proc.returncode}): {proc.stderr[:200]}"
-            files = [ln.strip() for ln in proc.stdout.strip().splitlines() if ln.strip()]
-            return self._format_results(files, max_results, pattern)
-        except subprocess.TimeoutExpired:
-            return "Error: fd search timed out after 30 seconds"
-        except Exception as e:
-            return f"Error: fd execution failed: {e}"
-
-    async def _find_with_python(
-        self,
-        pattern: str,
-        search_path: Path,
-        max_results: int,
-    ) -> str:
-        exclude_set = set(DEFAULT_EXCLUDES)
-        files: list[str] = []
-        for file_path in search_path.rglob(pattern.lstrip("/")):
-            if file_path.is_file():
-                if exclude_set & set(file_path.parts):
-                    continue
-                rel_path = str(
-                    file_path.relative_to(search_path)
-                    if file_path.is_relative_to(search_path)
-                    else file_path
-                )
-                files.append(rel_path)
-                if len(files) >= max_results:
-                    break
-
-        if not files:
-            return f"No files matching '{pattern}' found in {search_path}"
-
-        return self._format_results(files, max_results, pattern)
-
-    def _format_results(self, files: list[str], max_results: int, pattern: str) -> str:
-        total = len(files)
-        lines: list[str] = [
-            f"Found {total} file{'s' if total != 1 else ''} matching '{pattern}':",
-            "",
-        ]
-        for f in files[:max_results]:
-            lines.append(f)
-        if total > max_results:
-            lines.append(f"[... {total - max_results} more files not shown (limit: {max_results})]")
         return "\n".join(lines)

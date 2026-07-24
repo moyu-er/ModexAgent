@@ -28,7 +28,7 @@ class TestGetPresetTools:
         assert "edit" in names
         assert "ls" in names
         assert "grep" in names
-        assert "find" in names
+        assert "glob" in names
 
     def test_read_only_preset_excludes_write(self) -> None:
         """READ_ONLY preset has no Write/Edit tools."""
@@ -57,7 +57,7 @@ class TestGetPresetTools:
         assert "read" in names
         assert "write" in names
         assert "edit" not in names
-        assert "find" not in names
+        assert "glob" not in names
 
     def test_bash_injected_for_full_preset(self) -> None:
         """FULL preset includes bash when factory provided."""
