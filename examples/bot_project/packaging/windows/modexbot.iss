@@ -80,6 +80,13 @@ UninstallDisplayName={#MyAppName}
 ; Bundled Python runtime (python-build-standalone + all third-party deps)
 Source: "staging\python\*"; DestDir: "{app}\python"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+; Bundled CLI tools (rg.exe) — bot-private, NOT on system PATH.
+; The bot process prepends <install>\bin\windows\ to its own PATH at
+; startup via modex_agent.runtime.bundled_bin.ensure_bundled_bin_on_path().
+#ifexist "staging\bin\windows\rg.exe"
+  Source: "staging\bin\windows\*"; DestDir: "{app}\bin\windows"; Flags: ignoreversion
+#endif
+
 ; Full app source (git archive — only tracked files, no secrets).
 ; config\ and .modex\ are excluded here and installed separately below so
 ; that upgrading the install preserves the user's existing configuration
@@ -116,6 +123,7 @@ Name: "{app}\app\examples\bot_project\data"
 Name: "{app}\app\examples\bot_project\.modex"
 Name: "{app}\app\examples\bot_project\bot\web\dist"
 Name: "{app}\python\Lib\site-packages"
+Name: "{app}\bin\windows"
 
 ; ============================================================================
 ; [Tasks]
@@ -232,6 +240,7 @@ Filename: "{app}\python\python.exe"; \
 Type: filesandordirs; Name: "{app}\tauri"
 #endif
 Type: filesandordirs; Name: "{app}\app\examples\bot_project\logs"
+Type: filesandordirs; Name: "{app}\bin"
 ; NOTE: .modex, config, and data are NOT deleted on uninstall — they hold
 ; user configuration (model.yml, bot_config.yml), session history, and
 ; runtime state that should survive reinstall/uninstall cycles.
@@ -286,78 +295,22 @@ begin
 end;
 
 // ============================================================================
-// Idempotent PATH registration (Layer 3 fix)
+// Uninstall-time PATH cleanup
 // ============================================================================
-// Previous EnvAddPath/EnvRemovePath matched the *exact* string of the path
-// being added. Reinstalling to a different directory left the old path
-// entry behind, accumulating stale entries across reinstalls. The new
-// implementation uses a marker substring ('\python\Scripts' under a ModexBot
-// install) to identify our entries, so:
+// Install-time PATH registration is done by postinstall.py via the shared
+// Python helper ``modex_agent.runtime.bundled_bin.register_public_path()``
+// (marker-based, idempotent — same algorithm as below).  Uninstall cannot
+// reliably run Python (the interpreter may be mid-deletion), so the Pascal
+// ``EnvRemovePath`` below uses the same marker (``\python\Scripts``) to
+// clean up the registry entry directly.
 //
-//   - EnvAddPath: removes ALL existing ModexBot marker entries first, then
-//     prepends the new one. Idempotent — reinstalling to the same or a
-//     different directory leaves exactly ONE entry, always the latest.
-//   - EnvRemovePath: removes ALL marker entries, not just one. Survives
-//     uninstall even if the install dir changed between install and uninstall.
-//
-// Marker choice: '\python\Scripts' (case-insensitive). This is specific
-// enough — only ModexBot's bundled python-build-standalone layout uses
-// 'python\Scripts' as a directory name on the user's PATH. Other apps
-// typically use '<AppName>\Scripts' or '<AppName>\bin'. Even if a false
-// positive occurred, the worst case is removing an unrelated stale entry,
-// not corrupting the user's PATH (we only touch HKCU\Environment\Path).
-//
-// Inno Setup 6.4+ provides StringSplit / StringJoin with this signature:
-//   function StringSplit(const S: String; const Separators: TArrayOfString;
-//                        const Typ: TSplitType): TArrayOfString;
-//   function StringJoin(const Separator: String;
-//                       const Values: TArrayOfString): String;
-// ============================================================================
+// The marker is product-specific (``\ModexBot\python\Scripts``) so it
+// only matches ModexBot's own entries, not other products that happen
+// to have a ``python\Scripts`` directory on PATH.
 
 function IsModexBotPathEntry(Entry: string): Boolean;
 begin
-  // Match our install layout: any path ending in '\python\Scripts' (case-
-  // insensitive). The ModexBot install dir is per-user (%LOCALAPPDATA%\
-  // Programs\ModexBot), so this is specific to our registration.
-  Result := Pos('\python\Scripts', LowerCase(Entry)) > 0;
-end;
-
-procedure EnvAddPath(Path: string);
-var
-  Paths: string;
-  RawEntries: TArrayOfString;
-  KeptEntries: TArrayOfString;
-  I: Integer;
-  KeptCount: Integer;
-begin
-  if not RegQueryStringValue(HKEY_CURRENT_USER, 'Environment', 'Path', Paths) then
-    Paths := '';
-
-  // stExcludeEmpty drops empty entries (no leading/trailing/duplicate ';'
-  // artefacts). Single-element Separators array per Inno Setup API.
-  RawEntries := StringSplit(Paths, [';'], stExcludeEmpty);
-
-  // First pass: count entries we'll keep so we can size the array once.
-  KeptCount := 0;
-  for I := 0 to GetArrayLength(RawEntries) - 1 do
-    if not IsModexBotPathEntry(RawEntries[I]) then
-      KeptCount := KeptCount + 1;
-
-  // Always reserve one slot for the new path we're prepending.
-  SetArrayLength(KeptEntries, KeptCount + 1);
-  KeptEntries[0] := Path;
-  KeptCount := 1;
-  for I := 0 to GetArrayLength(RawEntries) - 1 do
-  begin
-    if not IsModexBotPathEntry(RawEntries[I]) then
-    begin
-      KeptEntries[KeptCount] := RawEntries[I];
-      KeptCount := KeptCount + 1;
-    end;
-  end;
-
-  RegWriteStringValue(HKEY_CURRENT_USER, 'Environment', 'Path', StringJoin(';', KeptEntries));
-  BroadcastSettingChange();
+  Result := Pos('\modexbot\python\scripts', LowerCase(Entry)) > 0;
 end;
 
 procedure EnvRemovePath(Path: string);
@@ -373,7 +326,6 @@ begin
 
   RawEntries := StringSplit(Paths, [';'], stExcludeEmpty);
 
-  // Count survivors first.
   KeptCount := 0;
   for I := 0 to GetArrayLength(RawEntries) - 1 do
     if not IsModexBotPathEntry(RawEntries[I]) then
@@ -390,19 +342,11 @@ begin
     end;
   end;
 
-  // Only write + broadcast if something actually changed. Avoids spurious
-  // WM_SETTINGCHANGE broadcasts on uninstall when no marker was present.
   if StringJoin(';', KeptEntries) <> Paths then
   begin
     RegWriteStringValue(HKEY_CURRENT_USER, 'Environment', 'Path', StringJoin(';', KeptEntries));
     BroadcastSettingChange();
   end;
-end;
-
-procedure CurStepChanged(CurStep: TSetupStep);
-begin
-  if CurStep = ssPostInstall then
-    EnvAddPath(ModPathDir());
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

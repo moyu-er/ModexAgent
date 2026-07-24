@@ -21,6 +21,7 @@ import argparse
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -117,6 +118,29 @@ def create_cli_shims(app_dir: Path) -> None:
         print(f"  {shim_path}")
 
 
+def register_scripts_on_path(app_dir: Path) -> None:
+    """Register ``<install>/python/Scripts`` on ``HKCU\\Environment\\Path``.
+
+    Uses the shared ``modex_agent.runtime.bundled_bin.register_public_path``
+    helper with a product-specific marker so only ModexBot's own entries
+    are touched — other products' ``python\\Scripts`` PATH entries are
+    preserved.
+    """
+    src_dir = app_dir / "app" / "src"
+    if str(src_dir) not in sys.path:
+        sys.path.insert(0, str(src_dir))
+
+    from modex_agent.runtime.bundled_bin import register_public_path
+
+    scripts_dir = app_dir / "python" / "Scripts"
+    marker = "\\ModexBot\\python\\Scripts"
+    print("\n=== Registering public PATH ===")
+    if register_public_path(scripts_dir, marker):
+        print(f"  PATH registered: {scripts_dir}")
+    else:
+        print("  PATH registration skipped (not Windows or failed)")
+
+
 # ── Step 4: Verify ──────────────────────────────────────────────────────────
 
 
@@ -202,6 +226,7 @@ def main() -> None:
     create_pth_files(app_dir)
     create_runtime_dirs(app_dir)
     create_cli_shims(app_dir)
+    register_scripts_on_path(app_dir)
     init_config(app_dir)
     verify_imports(app_dir)
     print_next_steps(app_dir)
