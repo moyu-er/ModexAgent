@@ -67,6 +67,9 @@ export const en = {
     connected: "Connected",
     disconnected: "Disconnected",
     dragResizeSidebar: "Drag to resize sidebar",
+    skillSuggest: {
+      ariaLabel: "Skill suggestions",
+    },
   },
   composer: {
     model: "Model",

@@ -6,10 +6,12 @@ import { ApprovalCard } from "./ApprovalCard";
 import { ConversationSpine, type SpineAnchor } from "./ConversationSpine";
 import { MessageBubble } from "./MessageBubble";
 import { ModelSelector } from "./ModelSelector";
+import { CommandSuggest, activeQuery, filterSuggestions, buildInsertion, handleSuggestKey } from "./CommandSuggest";
 import { TodoPanel } from "./TodoPanel";
 import { Button } from "./ui/Button";
 import { IconButton } from "./ui/IconButton";
 import { fetchMediaConfig, fetchModels, uploadAttachment, type ModelChoice } from "../lib/api";
+import { useCommandSuggestions } from "../hooks/useCommandSuggestions";
 import { formatBytes } from "../lib/format";
 import { useT } from "../i18n";
 
@@ -54,6 +56,9 @@ export interface ChatViewProps {
   /** Display name of the selected session's agent (shown in the chat header).
    * Omitted/empty when no session is open → the header label is blank. */
   agentName?: string;
+  /** Pool of the selected session (existing session) or the active pool (hero).
+   *  Used to resolve the skill set for /skillName autocomplete. */
+  pool?: string;
 }
 
 // Input box starts as a single comfortable line and grows with content.
@@ -82,6 +87,7 @@ export const ChatView: FC<ChatViewProps> = ({
   readOnly = false,
   onOpenSidebar,
   agentName,
+  pool,
 }) => {
   const t = useT();
   const [input, setInput] = useState("");
@@ -158,6 +164,39 @@ export const ChatView: FC<ChatViewProps> = ({
     };
   }, []);
 
+  // Slash-command autocomplete: skills + built-in commands, merged by
+  // useCommandSuggestions. Warmup fills the skill cache; the read hook
+  // returns [] until the cache is populated.
+  const suggestions = useCommandSuggestions(pool, agentName);
+  const [caret, setCaret] = useState(0);
+  const [suggestActive, setSuggestActive] = useState(0);
+  const suggestQuery = activeQuery(input, caret);
+  const suggestMatches = useMemo(
+    () => (suggestQuery === null ? [] : filterSuggestions(suggestions, suggestQuery)),
+    [suggestions, suggestQuery],
+  );
+  const suggestOpen = suggestQuery !== null && suggestMatches.length > 0;
+  useEffect(() => {
+    setSuggestActive(0);
+  }, [suggestMatches]);
+  const applySuggestInsert = (newInput: string, newCaret: number): void => {
+    setInput(newInput);
+    setCaret(newCaret);
+    requestAnimationFrame(() => {
+      const ta = taRef.current;
+      if (ta) {
+        ta.focus();
+        ta.setSelectionRange(newCaret, newCaret);
+      }
+    });
+  };
+  const chooseSuggestion = (idx: number): void => {
+    const item = suggestMatches[idx];
+    if (!item) return;
+    const { input: newInput, caret: newCaret } = buildInsertion(input, caret, item.name);
+    applySuggestInsert(newInput, newCaret);
+  };
+
   // Auto-scroll the message list to the bottom when messages change. We scroll
   // the scroll container directly (setting scrollTop) rather than calling
   // scrollIntoView on a sentinel: scrollIntoView defaults to block:"start",
@@ -232,6 +271,23 @@ export const ChatView: FC<ChatViewProps> = ({
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>): void => {
+    // Skill autocomplete: when the menu is open, arrows/Enter/Tab/Escape
+    // navigate it instead of their normal composer behavior. Checked before
+    // the IME guard so Escape always closes the menu even mid-composition.
+    if (
+      handleSuggestKey(
+        e.key,
+        { open: suggestOpen, count: suggestMatches.length, active: suggestActive },
+        {
+          setActive: setSuggestActive,
+          choose: chooseSuggestion,
+          close: (): void => {},
+        },
+      )
+    ) {
+      e.preventDefault();
+      return;
+    }
     // Ignore Enter while an IME is composing (e.g. Chinese / Japanese / Korean
     // input on macOS).  Pressing Enter to confirm a composition candidate
     // fires a keydown with ``e.key === "Enter"`` — without this guard the
@@ -311,8 +367,8 @@ export const ChatView: FC<ChatViewProps> = ({
   const renderComposer = (hero: boolean): ReactNode => {
     const formClassName = hero ? "hero-composer w-full" : "composer";
     const textareaClassName = hero
-      ? "max-h-[320px] min-h-[96px] flex-1 resize-none overflow-y-auto bg-transparent py-5 text-md leading-relaxed text-ink outline-none placeholder:text-faint"
-      : "max-h-[320px] min-h-[56px] flex-1 resize-none overflow-y-auto bg-transparent py-3.5 text-md leading-relaxed text-ink outline-none placeholder:text-faint";
+      ? "max-h-[320px] min-h-[96px] w-full resize-none overflow-y-auto bg-transparent py-5 text-md leading-relaxed text-ink outline-none placeholder:text-faint"
+      : "max-h-[320px] min-h-[56px] w-full resize-none overflow-y-auto bg-transparent py-3.5 text-md leading-relaxed text-ink outline-none placeholder:text-faint";
     const placeholder = hero
       ? t("chat.messagePlaceholder")
       : isPending
@@ -371,16 +427,32 @@ export const ChatView: FC<ChatViewProps> = ({
             disabled={attachDisabled}
             onClick={(): void => fileInputRef.current?.click()}
           />
-          <textarea
-            ref={taRef}
-            value={input}
-            onChange={(e): void => setInput(e.target.value)}
-            onInput={autosize}
-            onKeyDown={handleKeyDown}
-            placeholder={placeholder}
-            rows={1}
-            className={textareaClassName}
-          />
+          <div className="relative min-w-0 flex-1">
+            <textarea
+              ref={taRef}
+              value={input}
+              onChange={(e): void => {
+                setInput(e.target.value);
+                setCaret(e.target.selectionStart);
+              }}
+              onKeyUp={(e): void => setCaret(e.currentTarget.selectionStart)}
+              onClick={(e): void => setCaret(e.currentTarget.selectionStart)}
+              onInput={autosize}
+              onKeyDown={handleKeyDown}
+              placeholder={placeholder}
+              rows={1}
+              className={textareaClassName}
+            />
+            {suggestOpen && (
+              <CommandSuggest
+                matches={suggestMatches}
+                active={suggestActive}
+                onActiveChange={setSuggestActive}
+                onChoose={chooseSuggestion}
+                direction={isHero ? "down" : "up"}
+              />
+            )}
+          </div>
           {models.length > 0 && (
             <ModelSelector
               models={models}
