@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from modex_agent.commands.constants import CommandAction, CommandDispatchPolicy, CommandParseStatus
@@ -60,7 +62,12 @@ async def test_skill_command_transforms_to_structured_user_content() -> None:
     assert result.trigger_agent is True
     assert result.append_user_message is True
     assert result.user_content is not None
-    assert '<command_context type="skill" name="weather">' in result.user_content
+    # Use Path to compute expected dir — separators differ across platforms.
+    expected_dir = str(Path("skills/main/weather/SKILL.md").parent)
+    assert (
+        f'<command_context type="skill" name="weather" directory="{expected_dir}">'
+        in result.user_content
+    )
     assert "<skill>\n# Weather\nUse weather APIs.\n</skill>" in result.user_content
     assert "<user_input>\ntomorrow\n</user_input>" in result.user_content
     assert "/weather tomorrow" not in result.user_content

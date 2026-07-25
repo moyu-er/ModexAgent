@@ -1,8 +1,10 @@
 """Unit tests for core/skills/builder.py."""
 
+from pathlib import Path
+
 import pytest
 
-from modex_agent.core.skills.builder import DefaultSkillBuilder
+from modex_agent.core.skills.builder import DefaultSkillBuilder, build_skill_command_xml
 from modex_agent.core.skills.models import Skill
 
 
@@ -15,7 +17,11 @@ class TestDefaultSkillBuilder:
     @pytest.mark.asyncio
     async def test_xml_metadata_only_no_body_content(self):
         """Only name, directory, and description — never body content."""
-        skills = [Skill(name="s1", description="d1", content="BODY_SHOULD_NOT_APPEAR", location="/tmp/s1.md")]
+        skills = [
+            Skill(
+                name="s1", description="d1", content="BODY_SHOULD_NOT_APPEAR", location="/tmp/s1.md"
+            )
+        ]
         b = DefaultSkillBuilder()
         out = await b.build(skills)
         assert "<available_skills>" in out
@@ -47,3 +53,54 @@ class TestDefaultSkillBuilder:
         out = await DefaultSkillBuilder().build(skills)
         # Description with special chars is wrapped in CDATA (not entity-escaped)
         assert "<![CDATA[\na & b < c\n]]>" in out
+
+
+class TestBuildSkillCommandXml:
+    def test_without_location_omits_directory_attribute(self) -> None:
+        out = build_skill_command_xml("weather", "Use weather APIs.", "tomorrow")
+        assert '<command_context type="skill" name="weather">\n' in out
+        assert "directory=" not in out
+        assert "<skill>\nUse weather APIs.\n</skill>" in out
+        assert "<user_input>\ntomorrow\n</user_input>" in out
+
+    def test_with_location_injects_directory_attribute(self) -> None:
+        location = "/skills/writing-great-skills/SKILL.md"
+        out = build_skill_command_xml(
+            "writing-great-skills",
+            "See [GLOSSARY.md](GLOSSARY.md).",
+            "review this",
+            skill_location=location,
+        )
+        expected_dir = str(Path(location).parent)
+        assert (
+            f'<command_context type="skill" name="writing-great-skills" directory="{expected_dir}">'
+            in out
+        )
+        assert "<skill>\nSee [GLOSSARY.md](GLOSSARY.md).\n</skill>" in out
+        assert "<user_input>\nreview this\n</user_input>" in out
+
+    def test_none_location_omits_directory(self) -> None:
+        out = build_skill_command_xml("s", "b", "a", skill_location=None)
+        assert "directory=" not in out
+
+    def test_empty_location_omits_directory(self) -> None:
+        out = build_skill_command_xml("s", "b", "a", skill_location="")
+        assert "directory=" not in out
+
+    def test_directory_is_parent_not_the_skill_file(self) -> None:
+        out = build_skill_command_xml("s", "b", "a", skill_location="/a/b/c/SKILL.md")
+        expected_dir = str(Path("/a/b/c/SKILL.md").parent)
+        assert f'directory="{expected_dir}"' in out
+        dir_value = out.split('directory="')[1].split('"')[0]
+        assert "SKILL.md" not in dir_value
+
+    def test_directory_path_escaped_as_xml_attribute(self) -> None:
+        out = build_skill_command_xml("s", "b", "a", skill_location="/tmp/a&b<c/SKILL.md")
+        expected_dir = str(Path("/tmp/a&b<c/SKILL.md").parent)
+        escaped = expected_dir.replace("&", "&amp;").replace("<", "&lt;")
+        assert f'directory="{escaped}"' in out
+
+    def test_relative_location_stays_relative(self) -> None:
+        out = build_skill_command_xml("s", "b", "a", skill_location="skills/main/s/SKILL.md")
+        expected_dir = str(Path("skills/main/s/SKILL.md").parent)
+        assert f'directory="{expected_dir}"' in out
