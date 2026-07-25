@@ -56,10 +56,14 @@ export const Sidebar: FC<SidebarProps> = ({
 }) => {
   const [browserOpen, setBrowserOpen] = useState(false);
   const [recentOpen, setRecentOpen] = useState(false);
+  const [iconPulseKey, setIconPulseKey] = useState(0);
   const { restart } = useToast();
   const t = useT();
 
   const handleNew = (): void => {
+    // Remount the icon with the pulse class so every click replays the breath,
+    // even when React sees no other state change (already on the hero view).
+    setIconPulseKey((k) => k + 1);
     onNew(activePool);
   };
 
@@ -238,7 +242,11 @@ export const Sidebar: FC<SidebarProps> = ({
           onClick={handleNew}
           className="h-auto w-full rounded-sm py-2.5 text-base"
         >
-          <Plus size={16} />
+          <Plus
+            key={iconPulseKey}
+            size={16}
+            className={iconPulseKey > 0 ? "newconv-icon-pulse" : undefined}
+          />
           {t("sidebar.newConversation")}
         </Button>
       </div>

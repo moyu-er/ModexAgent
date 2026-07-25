@@ -67,6 +67,9 @@ export const en = {
     connected: "Connected",
     disconnected: "Disconnected",
     dragResizeSidebar: "Drag to resize sidebar",
+    newConversationEyebrow: "New conversation",
+    newConversationEyebrowPool: "New conversation · {pool}",
+    newConversationAnnounce: "New conversation. Type a message to begin.",
     skillSuggest: {
       ariaLabel: "Skill suggestions",
     },

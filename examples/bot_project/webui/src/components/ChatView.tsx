@@ -59,6 +59,11 @@ export interface ChatViewProps {
   /** Pool of the selected session (existing session) or the active pool (hero).
    *  Used to resolve the skill set for /skillName autocomplete. */
   pool?: string;
+  /** Monotonic counter from useSessions.handleNew. Each bump means the user
+   *  clicked "New Conversation": focus the hero composer and replay the
+   *  acknowledgment pulse (the click is otherwise invisible when the hero
+   *  view is already showing). */
+  heroFocusNonce?: number;
 }
 
 // Input box starts as a single comfortable line and grows with content.
@@ -88,13 +93,16 @@ export const ChatView: FC<ChatViewProps> = ({
   onOpenSidebar,
   agentName,
   pool,
+  heroFocusNonce = 0,
 }) => {
   const t = useT();
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
+  const formRef = useRef<HTMLFormElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [announcement, setAnnouncement] = useState("");
 
   // Pending uploads collected in the composer before the message is sent.
   // Each entry is a successfully uploaded file (a backend ref the WS
@@ -226,6 +234,41 @@ export const ChatView: FC<ChatViewProps> = ({
     autosize();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [input, isHero]);
+
+  // "New Conversation" acknowledgment: focus the composer and replay the
+  // brand pulse so the click always produces visible feedback, even when the
+  // hero view was already on screen. Auto-focus is desktop-only — on touch
+  // devices it would pop the keyboard unprompted.
+  useEffect(() => {
+    if (!heroFocusNonce) return;
+    if (window.matchMedia("(pointer: fine)").matches) {
+      taRef.current?.focus();
+    }
+    let pulseTimer: number | undefined;
+    const form = formRef.current;
+    if (form) {
+      form.classList.remove("composer-pulse");
+      // Forced reflow — without it, re-adding the class mid-animation is a
+      // no-op and rapid repeated clicks never restart the pulse.
+      void form.offsetWidth;
+      form.classList.add("composer-pulse");
+      const remove = (): void => form.classList.remove("composer-pulse");
+      form.addEventListener("animationend", remove, { once: true });
+      // Fallback: environments that never fire animationend (e.g. happy-dom).
+      pulseTimer = window.setTimeout(remove, 800);
+    }
+    // Clear then re-set on the next tick so repeated clicks re-announce to
+    // screen readers (identical text in an aria-live region is not re-read).
+    setAnnouncement("");
+    const announceTimer = window.setTimeout(() => {
+      setAnnouncement(t("chat.newConversationAnnounce"));
+    }, 50);
+    return (): void => {
+      if (pulseTimer !== undefined) window.clearTimeout(pulseTimer);
+      window.clearTimeout(announceTimer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [heroFocusNonce]);
 
   // Right-margin navigation spine: one dot per user question, positioned
   // proportionally to the question's place in the scrollable content.
@@ -409,7 +452,7 @@ export const ChatView: FC<ChatViewProps> = ({
             ))}
           </div>
         )}
-        <form onSubmit={handleSubmit} className={formClassName}>
+        <form ref={formRef} onSubmit={handleSubmit} className={formClassName}>
           <input
             ref={fileInputRef}
             type="file"
@@ -497,10 +540,20 @@ export const ChatView: FC<ChatViewProps> = ({
         key="hero"
         className="hero-view-enter flex h-full flex-col items-center justify-center gap-8 bg-canvas px-4"
       >
-        <h1 className="hero-wordmark">ModexBot</h1>
+        <div className="flex flex-col items-center gap-3">
+          <h1 className="hero-wordmark">ModexBot</h1>
+          <p className="font-mono text-[11px] font-semibold uppercase tracking-eyebrow text-faint">
+            {pool
+              ? t("chat.newConversationEyebrowPool", { pool })
+              : t("chat.newConversationEyebrow")}
+          </p>
+        </div>
         <div className="w-full max-w-[720px]">
           {renderComposer(true)}
         </div>
+        <span aria-live="polite" className="sr-only">
+          {announcement}
+        </span>
       </div>
     );
   }

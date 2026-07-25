@@ -66,6 +66,9 @@ export interface UseSessionsResult {
   handlePoolChange: (pool: string) => void;
   /** Clear draft tracking + bump updated_at once the user sends a message. */
   onSent: (sessionId: string | null) => void;
+  /** Bumped on every "New Conversation" click; ChatView replays the hero
+   *  focus + pulse feedback on change. */
+  newConvNonce: number;
 }
 
 /**
@@ -92,6 +95,11 @@ export function useSessions(): UseSessionsResult {
   const [recentWorkspaces, setRecentWorkspaces] = useState<{ path: string }[]>([]);
   const [isLoadingSessions, setIsLoadingSessions] = useState<boolean>(false);
   const [workspaceVersion, setWorkspaceVersion] = useState<number>(0);
+  // Monotonic counter bumped on every "New Conversation" click. ChatView
+  // watches it to replay the hero composer focus + acknowledgment pulse even
+  // when selectedId was already null (a bare setSelectedId(null) is a React
+  // no-op in that case, so without the nonce the click would feel dead).
+  const [newConvNonce, setNewConvNonce] = useState<number>(0);
   // Monotonic counter incremented on every workspace/pool switch. Each
   // fetchSessions call captures the current value; its .then() compares it
   // to the latest — if they differ, the response is stale (the user has
@@ -335,6 +343,7 @@ export function useSessions(): UseSessionsResult {
       // the hero view is the same regardless of how many times it's hit.
       void pool;
       setSelectedId(null);
+      setNewConvNonce((n) => n + 1);
     },
     [],
   );
@@ -507,5 +516,6 @@ export function useSessions(): UseSessionsResult {
     handleGoHome,
     handlePoolChange,
     onSent,
+    newConvNonce,
   };
 }

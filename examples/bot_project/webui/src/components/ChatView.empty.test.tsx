@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { ChatView } from "./ChatView";
 import type { UIMessage } from "../types/events";
 
@@ -45,5 +45,31 @@ describe("ChatView hero view (no session selected)", () => {
     const { container } = render(<ChatView {...baseProps} sessionId={null} />);
     const attachBtn = container.querySelector("button[aria-label]");
     expect(attachBtn).toBeTruthy();
+  });
+
+  it("renders the new-conversation eyebrow with the target pool", () => {
+    render(<ChatView {...baseProps} sessionId={null} pool="main" />);
+    expect(screen.getByText("New conversation · main")).toBeTruthy();
+  });
+
+  it("pulses the composer when heroFocusNonce bumps", () => {
+    const { container, rerender } = render(
+      <ChatView {...baseProps} sessionId={null} heroFocusNonce={0} />,
+    );
+    rerender(<ChatView {...baseProps} sessionId={null} heroFocusNonce={1} />);
+    const form = container.querySelector("form.hero-composer");
+    expect(form?.classList.contains("composer-pulse")).toBe(true);
+  });
+
+  it("announces the new conversation to screen readers on bump", async () => {
+    const { rerender } = render(
+      <ChatView {...baseProps} sessionId={null} heroFocusNonce={0} />,
+    );
+    rerender(<ChatView {...baseProps} sessionId={null} heroFocusNonce={1} />);
+    await waitFor(() => {
+      expect(
+        screen.getByText("New conversation. Type a message to begin."),
+      ).toBeTruthy();
+    });
   });
 });

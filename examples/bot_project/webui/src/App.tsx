@@ -63,6 +63,7 @@ const AppInner: FC = () => {
     handleGoHome,
     handlePoolChange,
     onSent,
+    newConvNonce,
   } = useSessions();
 
   // Home is its own workspace partition; pass ws only for non-home so home
@@ -322,6 +323,7 @@ const AppInner: FC = () => {
             onOpenSidebar={() => setSidebarMobileOpen(true)}
             agentName={agentName}
             pool={chatPool}
+            heroFocusNonce={newConvNonce}
           />
         </main>
 
