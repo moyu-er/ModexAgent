@@ -1,7 +1,10 @@
-"""Routing tests: Command.goto str / list[str] / list[Task] + default edge."""
+"""Routing tests: Command.goto str / list[Task] + default edge + transition priority."""
 from __future__ import annotations
 
 from typing import Any
+
+import pytest
+from pydantic import ValidationError
 
 from helpers import CounterState, make_ctx
 
@@ -83,35 +86,40 @@ class TestCommandGotoStr:
         assert result.messages == ["real_target"]
 
 
-class TestCommandGotoListStr:
-    """Command(goto=["a", "b", "c"]) — sequential multi-target."""
+class TestCommandGotoRejectsListStr:
+    """Command(goto=["a", "b"]) — list[str] is no longer accepted.
 
-    async def test_list_str_visits_all_in_order(self) -> None:
-        g: Graph[CounterState] = Graph()
-        g.add_node("start", _CommandNode(goto=["a", "b", "c"]))
-        g.add_node("a", _RecordNameNode())
-        g.add_node("b", _RecordNameNode())
-        g.add_node("c", _RecordNameNode())
-        g.add_edge(GraphNode.START, "start")
-        g.add_edge("c", GraphNode.END)
-        compiled = g.compile()
-        ctx = make_ctx(CounterState())
-        result = await GraphEngine(compiled).run_async(ctx)
-        assert result.messages == ["a", "b", "c"]
+    The two-layer routing model removed `list[str]` sequential multi-target.
+    `Command.goto` now accepts only `str | list[Task] | None`. Passing a
+    list of strings raises Pydantic `ValidationError` at construction time.
+    """
 
-    async def test_list_str_after_last_uses_normal_routing(self) -> None:
-        """After the last node in list[str], normal routing applies from that node."""
-        g: Graph[CounterState] = Graph()
-        g.add_node("start", _CommandNode(goto=["a"]))
-        g.add_node("a", _RecordNameNode())
-        g.add_node("b", _RecordNameNode())
-        g.add_edge(GraphNode.START, "start")
-        g.add_edge("a", "b", reason=None)  # default edge from "a"
-        g.add_edge("b", GraphNode.END)
-        compiled = g.compile()
-        ctx = make_ctx(CounterState())
-        result = await GraphEngine(compiled).run_async(ctx)
-        assert result.messages == ["a", "b"]
+    def test_list_str_rejected_at_construction(self) -> None:
+        with pytest.raises(ValidationError, match="goto"):
+            Command(goto=["a", "b", "c"])
+
+    def test_single_element_list_str_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="goto"):
+            Command(goto=["a"])
+
+    def test_list_str_rejected_even_when_empty_then_str(self) -> None:
+        with pytest.raises(ValidationError, match="goto"):
+            Command(goto=["a", "b"])
+
+    def test_list_task_still_accepted(self) -> None:
+        """list[Task] fan-out must still work after the type change."""
+        cmd = Command(goto=[Task(node="worker")])
+        assert cmd.goto is not None
+        assert isinstance(cmd.goto, list)
+        assert len(cmd.goto) == 1
+
+    def test_str_still_accepted(self) -> None:
+        cmd = Command(goto="target")
+        assert cmd.goto == "target"
+
+    def test_none_still_accepted(self) -> None:
+        cmd = Command(goto=None)
+        assert cmd.goto is None
 
 
 class TestCommandGotoListTask:
@@ -194,9 +202,9 @@ class TestDefaultEdgeFallback:
 
 
 class TestRoutingPriority:
-    """Strict priority: Command.goto > transition > conditional > default."""
+    """Strict priority: Command.goto > transition > default."""
 
-    async def test_transition_beats_conditional_and_default(self) -> None:
+    async def test_transition_beats_default(self) -> None:
         class TransitionNode(Node[CounterState]):
             def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
                 return NodeResult(transition="explicit")
@@ -204,21 +212,34 @@ class TestRoutingPriority:
         g: Graph[CounterState] = Graph()
         g.add_node("start", TransitionNode())
         g.add_node("explicit_target", _RecordNameNode())
-        g.add_node("cond_target", _RecordNameNode())
         g.add_node("default_target", _RecordNameNode())
         g.add_edge(GraphNode.START, "start")
         g.add_edge("start", "explicit_target", reason="explicit")
         g.add_edge("start", "default_target", reason=None)
-
-        def route(state: CounterState) -> str:
-            return "cond_target"
-
-        g.add_conditional_edges("start", route)
         g.add_edge("explicit_target", GraphNode.END)
-        g.add_edge("cond_target", GraphNode.END)
         g.add_edge("default_target", GraphNode.END)
         compiled = g.compile()
         ctx = make_ctx(CounterState())
         result = await GraphEngine(compiled).run_async(ctx)
-        # transition beat conditional + default
+        # transition beat default
         assert result.messages == ["explicit_target"]
+
+    async def test_command_goto_beats_transition(self) -> None:
+        class GotoAndTransitionNode(Node[CounterState]):
+            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+                return NodeResult(
+                    transition="ignored", command=Command(goto="real_target")
+                )
+
+        g: Graph[CounterState] = Graph()
+        g.add_node("start", GotoAndTransitionNode())
+        g.add_node("wrong", _RecordNameNode())
+        g.add_node("real_target", _RecordNameNode())
+        g.add_edge(GraphNode.START, "start")
+        g.add_edge("start", "wrong", reason="ignored")
+        g.add_edge("real_target", GraphNode.END)
+        g.add_edge("wrong", GraphNode.END)
+        compiled = g.compile()
+        ctx = make_ctx(CounterState())
+        result = await GraphEngine(compiled).run_async(ctx)
+        assert result.messages == ["real_target"]

@@ -52,42 +52,60 @@ class TestLinearChain:
         assert result.count == 5
 
 
-class TestConditionalBranch:
-    """Conditional branch: route_fn(state) selects the next node."""
+class TestTransitionBranch:
+    """Transition-based branch: NodeResult(transition=...) + static edges.
 
-    async def test_conditional_direct_mode(self) -> None:
-        """destinations=None: route_fn return value IS the node name."""
+    Replaces the former route_fn conditional-edge mechanism. The node inspects
+    state and returns a transition key; the graph topology (declared via
+    `add_edge(source, target, reason=key)`) routes to the matching branch.
+    """
+
+    async def test_transition_direct_routes_to_matched_edge(self) -> None:
+        """Node returns transition="high"/"low"; static edge routes accordingly."""
         g: Graph[CounterState] = Graph()
-        g.add_node("decide", AddNode(amount=0))
+
+        class DecideNode(Node[CounterState]):
+            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+                return NodeResult(
+                    transition="high" if ctx.state.count > 5 else "low"
+                )
+
+        g.add_node("decide", DecideNode())
         g.add_node("high", AddNode(amount=10))
         g.add_node("low", AddNode(amount=1))
         g.add_edge(GraphNode.START, "decide")
-
-        def route(state: CounterState) -> str:
-            return "high" if state.count > 5 else "low"
-
-        g.add_conditional_edges("decide", route)
+        g.add_edge("decide", "high", reason="high")
+        g.add_edge("decide", "low", reason="low")
         g.add_edge("high", GraphNode.END)
         g.add_edge("low", GraphNode.END)
 
         compiled = g.compile()
         ctx = make_ctx(CounterState(count=0))
         result = await GraphEngine(compiled).run_async(ctx)
-        # count starts at 0, decide adds 0, route returns "low", low adds 1 → 1
+        # count starts at 0, decide returns "low", low adds 1 → 1
         assert result.count == 1
 
-    async def test_conditional_key_mapped_mode(self) -> None:
-        """destinations={"key": "node"}: route_fn returns a key."""
+    async def test_transition_key_mapped_routes_via_static_edge(self) -> None:
+        """Transition key "A"/"B" routes to path_a/path_b via static edges.
+
+        This replaces the former destinations={"A": "path_a"} key-mapping mode:
+        the mapping is now declared in the graph topology via `reason=`,
+        decoupling routing logic from node names.
+        """
         g: Graph[CounterState] = Graph()
-        g.add_node("decide", AddNode(amount=0))
+
+        class DecideNode(Node[CounterState]):
+            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+                return NodeResult(
+                    transition="A" if ctx.state.count == 0 else "B"
+                )
+
+        g.add_node("decide", DecideNode())
         g.add_node("path_a", AddNode(amount=100))
         g.add_node("path_b", AddNode(amount=200))
         g.add_edge(GraphNode.START, "decide")
-
-        def route(state: CounterState) -> str:
-            return "A" if state.count == 0 else "B"
-
-        g.add_conditional_edges("decide", route, destinations={"A": "path_a", "B": "path_b"})
+        g.add_edge("decide", "path_a", reason="A")
+        g.add_edge("decide", "path_b", reason="B")
         g.add_edge("path_a", GraphNode.END)
         g.add_edge("path_b", GraphNode.END)
 
@@ -95,6 +113,22 @@ class TestConditionalBranch:
         ctx = make_ctx(CounterState(count=0))
         result = await GraphEngine(compiled).run_async(ctx)
         assert result.count == 100
+
+    async def test_transition_routes_to_end(self) -> None:
+        """A transition can route directly to GraphNode.END via a static edge."""
+        g: Graph[CounterState] = Graph()
+
+        class DecideNode(Node[CounterState]):
+            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+                return NodeResult(transition="done")
+
+        g.add_node("decide", DecideNode())
+        g.add_edge(GraphNode.START, "decide")
+        g.add_edge("decide", GraphNode.END, reason="done")
+        compiled = g.compile()
+        ctx = make_ctx(CounterState(count=0))
+        result = await GraphEngine(compiled).run_async(ctx)
+        assert result.count == 0
 
 
 class TestLoopWithCycleGuard:

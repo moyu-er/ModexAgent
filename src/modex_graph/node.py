@@ -22,6 +22,8 @@ from typing import TYPE_CHECKING
 
 from typing_extensions import TypeVar
 
+from .constants import NodeTrigger
+
 if TYPE_CHECKING:
     from .context import GraphContext
     from .result import NodeResult
@@ -41,9 +43,14 @@ class Node[S: "GraphState"](ABC):
     Convention: each `Node` instance has a `name` attribute matching its
     registration key in the `Graph`. The `Graph.add_node(name, node)` call
     sets it; subclasses may also set it in `__init__`.
+
+    `trigger` (Task 06) is the per-node trigger mode under
+    `ParallelScheduler`. `None` means "use the compiled graph's
+    `default_trigger`". Subclasses may override to force a mode.
     """
 
     name: str = ""
+    trigger: NodeTrigger | None = None
 
     @abstractmethod
     def execute(self, ctx: GraphContext[S]) -> NodeResult | Awaitable[NodeResult]:

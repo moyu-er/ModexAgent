@@ -12,9 +12,11 @@ Public surface (ADR-0033 acceptance criteria):
 - **Context + runtime:** `GraphContext`, `GraphRuntime`.
 - **State + channels:** `GraphState`, `BaseChannel`, `LastValue`,
   `ReducerChannel`, `Codec`, `register_codec`.
-- **Result types:** `NodeResult`, `Command`, `Task`.
+- **Result types:** `NodeResult`, `Command`, `Task`, `DispatchEvent`.
+- **Scheduler:** `Scheduler` (ABC), `LinearScheduler`, `ParallelScheduler`,
+  `SchedulerKind`, `NodeInstanceStatus`, `NodeInstance`, `NodeTrigger`.
 - **Exceptions:** `GraphBubbleUp`, `GraphInterrupt`, `GraphDrained`,
-  `ParentCommand`, `RoutingError`, `GraphRecursionError`.
+  `ParentCommand`, `InvalidUpdateError`, `RoutingError`, `GraphRecursionError`.
 
 See `docs/adr/0033-generalized-graph-engine.md` for the authoritative design.
 """
@@ -29,22 +31,37 @@ from .channel import (
     ReducerChannel,
     register_codec,
 )
+from .checkpoint_store import (
+    CheckpointData,
+    CheckpointStore,
+    InstanceRecord,
+    MemoryCheckpointStore,
+    SqliteCheckpointStore,
+)
 from .compiled_graph import CompiledGraph
-from .constants import GraphNode
+from .conflict_detector import GenerationWriteTracker, WriteConflictDetector
+from .constants import GraphNode, NodeInstanceStatus, NodeTrigger, SchedulerKind
 from .context import GraphContext
+from .dispatch_store import (
+    DispatchStore,
+    InMemoryDispatchStore,
+    SqliteDispatchStore,
+)
 from .engine import GraphEngine
 from .exceptions import (
     GraphBubbleUp,
     GraphDrained,
     GraphInterrupt,
     GraphRecursionError,
+    InvalidUpdateError,
     ParentCommand,
     RoutingError,
 )
-from .graph import ConditionalEdge, Edge, Graph
+from .graph import Edge, Graph
 from .node import Node
-from .result import Command, NodeResult, Task
+from .result import Command, DispatchEvent, NodeResult, Task
 from .runtime import GraphRuntime
+from .scheduler import LinearScheduler, NodeInstance, ParallelScheduler, Scheduler
 from .state import GraphState
 
 __all__ = [
@@ -55,7 +72,6 @@ __all__ = [
     "GraphEngine",
     "GraphNode",
     "Edge",
-    "ConditionalEdge",
     # Context + runtime
     "GraphContext",
     "GraphRuntime",
@@ -71,11 +87,34 @@ __all__ = [
     "NodeResult",
     "Command",
     "Task",
+    "DispatchEvent",
+    # Dispatch persistence
+    "DispatchStore",
+    "InMemoryDispatchStore",
+    "SqliteDispatchStore",
+    # Conflict detection
+    "WriteConflictDetector",
+    "GenerationWriteTracker",
+    # Checkpoint persistence
+    "CheckpointStore",
+    "CheckpointData",
+    "InstanceRecord",
+    "MemoryCheckpointStore",
+    "SqliteCheckpointStore",
+    # Scheduler
+    "Scheduler",
+    "LinearScheduler",
+    "ParallelScheduler",
+    "SchedulerKind",
+    "NodeInstanceStatus",
+    "NodeInstance",
+    "NodeTrigger",
     # Exceptions
     "GraphBubbleUp",
     "GraphInterrupt",
     "GraphDrained",
     "ParentCommand",
+    "InvalidUpdateError",
     "RoutingError",
     "GraphRecursionError",
 ]

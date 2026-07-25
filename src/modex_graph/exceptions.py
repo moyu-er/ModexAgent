@@ -10,14 +10,17 @@ Two layers:
       Suspend-without-re-execution semantics: already-applied state updates
       persist; resume re-enters from the entry node, NOT by re-running the
       interrupted node body.
-    - `GraphDrained` — cooperative shutdown at superstep boundary.
-      Phase-a: class exists, never raised.
-    - `ParentCommand` — subgraph→parent routing. Phase-a: class exists,
-      never raised.
+    - `GraphDrained` — cooperative shutdown. Class exists but is never
+      raised; wiring is deferred (ADR-0034 D10 termination does not use it).
+    - `ParentCommand` — subgraph→parent routing. Class exists but is never
+      raised; wiring is deferred (ADR-0033 D12 Phase c item 2).
+    - `InvalidUpdateError` — multiple concurrent writes to the same
+      `LastValue` channel in one generation. Raised by `LastValue.update`
+      when `len(values) > 1`. See ADR-0033 D4.
 
 - Routing / recursion errors:
     - `RoutingError` — raised when the engine cannot resolve a next node
-      (no matching edge, conditional, or default).
+      (no matching `Command.goto`, transition, or default edge).
     - `GraphRecursionError` — raised when the engine-level `max_iterations`
       safety net is exceeded (abnormal exit, prevents infinite loops).
 """
@@ -30,9 +33,9 @@ from typing import Any
 class GraphBubbleUp(Exception):  # noqa: N818
     """Base class for cooperative-control exceptions the engine never swallows.
 
-    Subclasses: `GraphInterrupt`, `GraphDrained`, `ParentCommand`.
-    The engine propagates these to the caller verbatim — never caught and
-    silenced. See ADR-0033 D7.
+    Subclasses: `GraphInterrupt`, `GraphDrained`, `ParentCommand`,
+    `InvalidUpdateError`. The engine propagates these to the caller verbatim
+    — never caught and silenced. See ADR-0033 D7.
     """
 
 
@@ -57,29 +60,54 @@ class GraphInterrupt(GraphBubbleUp):
 
 
 class GraphDrained(GraphBubbleUp):
-    """Cooperative shutdown at superstep boundary.
+    """Cooperative shutdown signal.
 
-    Phase-a: the class exists but is never raised. Phase-c wires it at
-    superstep boundaries to support SIGTERM-style cooperative shutdown
-    with checkpoint preservation. See ADR-0033 D7 + D1 (Phase c deferred).
+    The class exists but is never raised. ADR-0034 realized Phase c via
+    continuous scheduling (not BSP supersteps), so there are no superstep
+    boundaries to wire this at. Termination is driven by the ready/active
+    sets being empty (ADR-0034 D10). Cooperative shutdown wiring (e.g.
+    SIGTERM-style graceful drain with checkpoint preservation) remains
+    deferred. See ADR-0033 D7 + D1.
     """
 
 
 class ParentCommand(GraphBubbleUp):
     """Subgraph→parent routing.
 
-    Phase-a: the class exists but is never raised. Phase-c wires it for
-    cross-graph routing when a subgraph needs to redirect its parent.
-    See ADR-0033 D7 + D1 (Phase c deferred).
+    The class exists but is never raised. Wiring is deferred to the
+    graph-of-graphs / subroutine exercise (ADR-0033 D12 Phase c item 2,
+    ADR-0034 Out of Scope). When exercised, a subgraph's `execute` raises
+    this to redirect its parent graph. See ADR-0033 D7 + D1.
+    """
+
+
+class InvalidUpdateError(GraphBubbleUp):
+    """Raised when multiple concurrent writes target the same `LastValue` channel.
+
+    Per ADR-0033 D4: `LastValue` enforces single-writer semantics. When ≥2
+    concurrent instances write the same `LastValue` field in one generation,
+    `LastValue.update(values)` with `len(values) > 1` raises this error.
+    Callers should use `ReducerChannel` for fan-in, or restructure the graph
+    so only one instance writes each `LastValue` field per generation.
+
+    This is a `GraphBubbleUp` subclass: the engine propagates it to the
+    caller verbatim (never caught and silenced). The caller can catch it as
+    `InvalidUpdateError`, `GraphBubbleUp`, or `Exception`.
+
+    Raised by:
+    - `WriteConflictDetector.commit()` when two same-generation instances
+      write the same field.
+    - `LastValue.update(values)` when `len(values) > 1` (the batch merge
+      path, still used by `GraphState.apply_concurrent_updates`).
     """
 
 
 class RoutingError(Exception):
     """Raised when the engine cannot resolve the next node.
 
-    The four routing mechanisms (Command.goto > transition > conditional
-    edge > default edge) are tried in strict priority order. If none
-    matches, `RoutingError` is raised. See ADR-0033 D6.
+    Two-layer routing model (ADR-0034 D12): `Command.goto` (dynamic layer)
+    is tried first, then `transition` matched against static edges, then the
+    default edge (`reason=None`). If none matches, `RoutingError` is raised.
     """
 
 
