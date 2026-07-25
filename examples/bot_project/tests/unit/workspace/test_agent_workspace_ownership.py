@@ -73,7 +73,7 @@ def test_get_preset_tools_with_provider_wraps_file_tools(tmp_path: Path) -> None
     tools = get_preset_tools(ToolPreset.FULL, root_provider=provider)
     assert len(tools) == 6
 
-    file_tools = [t for t in tools if t.name in {"read", "write", "edit", "ls", "find", "grep"}]
+    file_tools = [t for t in tools if t.name in {"read", "write", "edit", "ls", "glob", "grep"}]
     assert len(file_tools) == 6
     for t in file_tools:
         assert isinstance(t, WorkspaceScopedFileTool)

@@ -10,7 +10,7 @@ class TestBuildMainAgentToolNames:
         """FULL preset + ast_grep + send_to_agent covers the core tool set."""
         names = build_main_agent_tool_names("full", ["ast_grep"], use_terminal=False)
         # Core file/search tools from FULL preset.
-        assert {"read", "write", "edit", "ls", "grep", "find"} <= names
+        assert {"read", "write", "edit", "ls", "grep", "glob"} <= names
         # ast_grep supplement.
         assert {"ast_grep_search", "ast_grep_replace"} <= names
         # send_to_agent always present.
