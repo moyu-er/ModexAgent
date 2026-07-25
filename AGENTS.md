@@ -110,7 +110,7 @@ Unit tests under `tests/unit/` (mirrors `src/modex_agent/` structure), architect
 
 ## Documentation
 
-Architecture Decision Records (ADRs) in `docs/adr/` (ADR-0001 ~ 0035) and design docs in `docs/design/`. See `docs/AGENTS.md` for the docs index. Read relevant ADRs before making significant architectural changes.
+Architecture Decision Records (ADRs) in `docs/adr/` (ADR-0001 ~ 0034) and design docs in `docs/design/`. See `docs/AGENTS.md` for the docs index. Read relevant ADRs before making significant architectural changes.
 
 ### ADR Governance Rules
 
