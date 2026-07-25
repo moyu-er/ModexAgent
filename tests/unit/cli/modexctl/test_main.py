@@ -32,8 +32,9 @@ from modexctl.main import (
 
 
 # Reuse the production _PoolScopedRecordScope so canonical() stamps match
-# (ADR-0028: __scope_type__ uses fully-qualified class name; a test-local
-# subclass with the same short name would produce a different stamp).
+# (ADR-0028: __scope_type__ is content-based — sorted comma-joined extra
+# field names, not class name; a test-local subclass with the same `pool`
+# field produces an identical stamp).
 from modexctl.main import _PoolScopedRecordScope
 
 
@@ -480,6 +481,70 @@ class TestSendCommand:
         finally:
             conn.close()
         assert row is not None
+
+    def test_send_same_pool_uses_subagent_dispatch(
+        self, runner: CliRunner, comm_env: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Same-pool normal send: SubagentDispatch path (TASK_REQUEST + invocation_id)."""
+        monkeypatch.setenv("MODEX_SESSION_ID", "conv1.coder")
+        monkeypatch.setenv("MODEX_AGENT_NAME", "coder")
+        monkeypatch.setenv("MODEX_AGENT_POOL_MAP", "coder=default;analyst=default")
+        monkeypatch.setenv("MODEX_TARGETS", "analyst=Reviews code")
+        monkeypatch.setenv("MODEX_COMM_KIND", "normal")
+
+        result = runner.invoke(
+            build_app(),
+            ["send", "--to", "analyst", "--content", "do this task"],
+        )
+
+        assert result.exit_code == 0
+        db_path = tmp_path / "workspace" / ".modex" / "state.db"
+        conn = sqlite3.connect(str(db_path))
+        try:
+            rows = conn.execute(
+                "SELECT session_id, message_type, payload_json FROM inbox_messages",
+            ).fetchall()
+        finally:
+            conn.close()
+        assert len(rows) == 1
+        session_id, msg_type, payload_json = rows[0]
+        assert msg_type == "task_request"
+        assert session_id.startswith("conv1.") is False
+        prefix = session_id.split(".", 1)[0]
+        assert len(prefix) == 8
+        assert session_id.endswith(".analyst")
+        payload = json.loads(payload_json)
+        assert payload["metadata"]["parent_session_id"] == "conv1.coder"
+        assert payload["metadata"]["invocation_id"] == prefix
+        assert "invocation_id" in payload["content"]
+
+    def test_send_same_pool_mints_unique_invocation_id(
+        self, runner: CliRunner, comm_env: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Two same-pool sends mint different invocation_ids (no session collision)."""
+        monkeypatch.setenv("MODEX_SESSION_ID", "conv1.coder")
+        monkeypatch.setenv("MODEX_AGENT_NAME", "coder")
+        monkeypatch.setenv("MODEX_AGENT_POOL_MAP", "coder=default;analyst=default")
+        monkeypatch.setenv("MODEX_TARGETS", "analyst=")
+        monkeypatch.setenv("MODEX_COMM_KIND", "normal")
+
+        for _ in range(2):
+            result = runner.invoke(
+                build_app(),
+                ["send", "--to", "analyst", "--content", "task"],
+            )
+            assert result.exit_code == 0
+
+        db_path = tmp_path / "workspace" / ".modex" / "state.db"
+        conn = sqlite3.connect(str(db_path))
+        try:
+            rows = conn.execute(
+                "SELECT session_id FROM inbox_messages ORDER BY seq",
+            ).fetchall()
+        finally:
+            conn.close()
+        assert len(rows) == 2
+        assert rows[0][0] != rows[1][0]
 
 
 class TestParseTargets:

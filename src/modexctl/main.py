@@ -12,10 +12,11 @@ import typer
 from filelock import FileLock
 
 from modex_agent.agents.external_coding.types import OutboxLine, OutboxMetadata
+from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.scope import RecordScope
 from modex_agent.multi_agent.inbox.types import InboxMessage
 from modex_agent.multi_agent.message_type import AgentMessageType
-from modex_agent.multi_agent.message_xml import build_peer_agent_message
+from modex_agent.multi_agent.message_xml import build_dispatch_xml, build_peer_agent_message
 from modex_agent.persistence.adapters import SqliteInboxMQ
 
 
@@ -296,11 +297,13 @@ def _send(
                 f"target {to!r} is the calling agent itself (MODEX_AGENT_NAME)"
             )
         target_pool = _resolve_target_pool(pool_map, to)
+
+        sender_pool = pool_map.get(agent_name)
+        is_same_pool = sender_pool is not None and sender_pool == target_pool
+
         if comm_kind == "subagent":
-            # Subagent path: target_sid is the parent's full session_id,
-            # supplied verbatim by the harness. Subagent session prefixes
-            # are invocation_ids, not conversation_ids, so ADR-0019
-            # prefix-reuse would mint a phantom parent session.
+            # ParentReply: subagent → parent. target_sid is the parent's
+            # full session_id (MODEX_PARENT_SESSION_ID), supplied verbatim.
             parent_sid = os.environ.get("MODEX_PARENT_SESSION_ID", "")
             if not parent_sid:
                 raise _RoutingError(
@@ -309,30 +312,55 @@ def _send(
                 )
             target_sid = parent_sid
             invocation_id = session_id.split(".", 1)[0] if "." in session_id else session_id
+            xml_content = build_peer_agent_message(source=agent_name, content=content)
+            message_type = AgentMessageType.AGENT_MESSAGE.value
+            metadata_parent_sid: str | None = None
+        elif is_same_pool:
+            # SubagentDispatch: main → subagent (same pool). Mint a fresh
+            # invocation_id, create a task-scoped subagent session, and use
+            # TASK_REQUEST + build_dispatch_xml — matching
+            # SubagentDispatchStrategy in the framework's send_to_agent path.
+            invocation_id = uuid4().hex[:8]
+            target_sid = f"{invocation_id}.{to}"
+            # REACT is hardcoded because MODEX_TARGETS carries only
+            # name=description — no execution_strategy. If the target is an
+            # external_coding subagent, the dispatch XML will lack the
+            # <reply_contract> it needs to know to reply via modexctl.
+            # The primary send_to_agent path resolves the real strategy;
+            # modexctl same-pool dispatch to external_coding subagents is a
+            # known degraded edge case.
+            xml_content = build_dispatch_xml(
+                source=agent_name,
+                invocation_id=invocation_id,
+                content=content,
+                target_execution_strategy=ExecutionStrategyKind.REACT,
+            )
+            message_type = AgentMessageType.TASK_REQUEST.value
+            metadata_parent_sid = session_id
         else:
-            # Main-agent-as-peer path: ADR-0019 prefix-reuse. The sender's
-            # session prefix (conversation_id) is reused as the receiver's
-            # prefix, creating an implicit session group across pools.
+            # PeerNormal: main → peer main (cross-pool). ADR-0019 prefix-reuse.
             prefix = _compute_target_session_id(session_id)
             target_sid = f"{prefix}.{to}"
             invocation_id = prefix
+            xml_content = build_peer_agent_message(source=agent_name, content=content)
+            message_type = AgentMessageType.AGENT_MESSAGE.value
+            metadata_parent_sid = None
     except _RoutingError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(code=EXIT_ROUTING) from None
 
-    xml_content = build_peer_agent_message(source=agent_name, content=content)
     message = InboxMessage(
         session_id=target_sid,
         source=agent_name,
         content=xml_content,
-        message_type=AgentMessageType.AGENT_MESSAGE.value,
+        message_type=message_type,
         message_id=uuid4().hex,
         timestamp=datetime.now(UTC),
         metadata={
             "agent_session_id": target_sid,
             "session_id": session_id,
             "invocation_id": invocation_id,
-            "parent_session_id": None,
+            "parent_session_id": metadata_parent_sid,
         },
     )
     db_path = inbox_root.parent / "state.db"

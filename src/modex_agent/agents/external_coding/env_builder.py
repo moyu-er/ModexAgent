@@ -43,25 +43,18 @@ class ExternalEnvBuilder:
     """
 
     @staticmethod
-    def build(spec: ExternalEnvSpec, base_env: dict[str, str]) -> dict[str, str]:
-        """Build the spawn env from an ``ExternalEnvSpec`` and a base env.
+    def build_modex_vars(spec: ExternalEnvSpec) -> dict[str, str]:
+        """Build only the ``MODEX_*`` env vars from an ``ExternalEnvSpec``.
 
-        The returned dict is a **new** ``dict[str, str]`` — the input
-        ``base_env`` is not mutated. ``PATH`` is recreated by
-        ``modexctl_bin_dir + os.pathsep + base_env["PATH"]``; missing
-        ``PATH`` on POSIX is treated as empty (Windows shells always
-        provide one).
+        This is the single extraction point for MODEX_ var construction
+        (ADR-0022 D6). Both :meth:`build` (external coding spawn) and
+        :class:`modex_agent.hook.builtin.env_injection.NativeEnvInjectionHook`
+        (native agent contextvar injection) call this method so the two
+        paths never diverge.
 
-        Args:
-            spec: Source values for the ``MODEX_*`` fields.
-            base_env: Base environment to merge with (typically
-                ``os.environ``). Only ``PATH`` is read from it; the
-                result is a fresh dict the caller can mutate freely.
-
-        Returns:
-            New ``dict[str, str]`` containing the ``MODEX_*`` string
-            vars plus a recreated ``PATH`` with the modexctl directory
-            prepended.
+        Returns a new ``dict[str, str]`` containing only ``MODEX_*`` keys.
+        No ``PATH`` reconstruction or base-env merge happens here — callers
+        that need a full spawn env use :meth:`build`.
         """
         modex: dict[str, str] = {
             "MODEX_WORKSPACE_ROOT": str(spec.workspace_root),
@@ -82,6 +75,30 @@ class ExternalEnvBuilder:
             modex["MODEX_TASK_ID"] = str(spec.task_id)
         if spec.node_id is not None:
             modex["MODEX_NODE_ID"] = str(spec.node_id)
+        return modex
+
+    @staticmethod
+    def build(spec: ExternalEnvSpec, base_env: dict[str, str]) -> dict[str, str]:
+        """Build the spawn env from an ``ExternalEnvSpec`` and a base env.
+
+        The returned dict is a **new** ``dict[str, str]`` — the input
+        ``base_env`` is not mutated. ``PATH`` is recreated by
+        ``modexctl_bin_dir + os.pathsep + base_env["PATH"]``; missing
+        ``PATH`` on POSIX is treated as empty (Windows shells always
+        provide one).
+
+        Args:
+            spec: Source values for the ``MODEX_*`` fields.
+            base_env: Base environment to merge with (typically
+                ``os.environ``). Only ``PATH`` is read from it; the
+                result is a fresh dict the caller can mutate freely.
+
+        Returns:
+            New ``dict[str, str]`` containing the ``MODEX_*`` string
+            vars plus a recreated ``PATH`` with the modexctl directory
+            prepended.
+        """
+        modex = ExternalEnvBuilder.build_modex_vars(spec)
 
         base_path = base_env.get("PATH", "")
         new_path = (

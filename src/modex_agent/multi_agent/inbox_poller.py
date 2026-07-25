@@ -41,6 +41,7 @@ class InboxPoller:
         self._interval = interval
         self._session_registry = session_registry or pool.session_registry
         self._inflight: dict[str, asyncio.Task[None]] = {}
+        self._orphan_logged: set[str] = set()
         self._task: asyncio.Task[None] | None = None
 
     def start(self) -> None:
@@ -89,13 +90,22 @@ class InboxPoller:
             return  # busy → fold-in hook handles mid-turn
         info = SessionInfo.from_str(sid)
         agent = info.agent_name
-        if not agent or agent == "unknown":
+        if not agent:
             return
         instance = self._pool.get(agent)
         if instance is None or instance.pipeline is None:
             template = self._pool.get_template(agent)
             if template is None:
-                logger.error("InboxPoller: no template for %s; skipping", agent)
+                if sid not in self._orphan_logged:
+                    logger.error(
+                        "InboxPoller: no template for %s; skipping session %s "
+                        "(message stays pending — no silent drop per ADR-0015). "
+                        "This usually means the message's agent_name does not "
+                        "belong to this pool; check PoolRouter routing.",
+                        agent,
+                        sid,
+                    )
+                    self._orphan_logged.add(sid)
                 return
             self._inflight[sid] = asyncio.create_task(self._materialize_then_turn(sid, template))
         else:
@@ -121,31 +131,45 @@ class InboxPoller:
         finally:
             self._inflight.pop(sid, None)
 
-    async def _ensure_session_registered(self, sid: str) -> None:
+    async def _ensure_session_registered(
+        self, sid: str, *, parent_session_id: str | None = None
+    ) -> None:
         """Register a session that is in the inbox but not yet in the registry.
 
-        Generic helper: when a message arrives for a session id the local
-        registry has never seen, create the session record before dispatching.
-        The agent instance is expected to be already registered (eager main
-        agents); this only ensures the session metadata exists.
+        Called from ``_materialize_then_turn`` (subagent lazy-materialization)
+        and ``_run_turn`` (main agent, parent_session_id=None). Creates the
+        session record before dispatching.
+
+        ``parent_session_id`` is threaded in from the peeked envelope so the
+        session is registered with the correct parent link in ONE step —
+        eliminating the parentless window the WebUI could observe between
+        a parent-less first registration and a parent-merge re-registration.
         """
         if self._session_registry is None:
             return
         existing = await self._session_registry.get(sid)
         if existing is None:
             info = SessionInfo.from_str(sid)
+            if parent_session_id is not None:
+                info = info.model_copy(update={"parent_session_id": parent_session_id})
             await self._session_registry.register(info)
 
     async def _materialize_then_turn(self, sid: str, template: AgentTemplate) -> None:
         try:
-            await self._ensure_session_registered(sid)
             # Peek (non-destructive) the first pending envelope to read the
-            # authoritative parent link — every envelope in a subagent inbox is
-            # from the same parent. The batch is consumed only AFTER a
-            # successful materialize, so a materialize failure still leaves the
-            # messages in the inbox.
+            # authoritative parent link BEFORE registering — every envelope in a
+            # subagent inbox is from the same parent. The batch is consumed only
+            # AFTER a successful materialize, so a materialize failure still
+            # leaves the messages in the inbox.
+            #
+            # Registering with the parent in ONE step eliminates the parentless
+            # window where the WebUI could read the session with
+            # parent_session_id = None (making a subagent appear as a main
+            # agent). The old code registered without parent first, then
+            # re-registered with parent — a race the WebUI could observe.
             peeked = await self._pool.peek_inbox(sid, limit=1)
             parent_sid = peeked[0].parent_session_id if peeked else None
+            await self._ensure_session_registered(sid, parent_session_id=parent_sid)
             instance = await self._pool.materialize_agent(
                 sid, template, parent_session_id=parent_sid
             )

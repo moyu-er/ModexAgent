@@ -20,7 +20,7 @@ from modex_agent.ioc.configs.approval import ApprovalConfig
 from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.ioc.configs.memory import MemoryConfig
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-from modex_agent.multi_agent.pool_config.specs import MainAgentSpec
+from modex_agent.multi_agent.pool_config.specs import MainAgentSpec, PoolSpec
 from modex_agent.pipeline.approval_renderer import ApprovalRenderer
 from modex_agent.pipeline.approval_resumer import ApprovalResumer
 from modex_agent.pipeline.pipeline import AgentPipeline
@@ -134,6 +134,7 @@ def test_wire_main_pipeline_adds_model_choice_hook(tmp_path: Path) -> None:
         command_processor=None,
         pool_name="main",
         tool_manager=InMemoryToolManager(),
+        pool_spec=PoolSpec(name="main", main_agent_name="main", main=main_spec),
         bot_model_config=cfg,
         model_choice_registry=reg,
     )

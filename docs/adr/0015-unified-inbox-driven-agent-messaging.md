@@ -242,6 +242,16 @@ the only difference is the **timing** at which the pool calls it:
 - **Failed materialize** (MCP server hang, missing template): the message
   **stays in the inbox**; the existing backoff/retry path handles it
   centrally. No silent drop.
+- **Orphan messages** (agent_name not served by this pool): the `InboxPoller`
+  logs ERROR **once** per orphan session (tracked via `_orphan_logged` set to
+  prevent log spam) and leaves the message **pending** — no silent drop. This
+  covers the residual case where a stale routing-store entry or a pool-switch
+  window leaves a message in the wrong pool's inbox. The `PoolRouter`'s
+  `_reconcile_pool_for_agent` prevents new orphans by re-routing messages
+  whose `agent_name` is not served by the target pool to the pool that does
+  serve it. The routing store is NOT self-healed by the router (per ADR-0019
+  the store is the routing authority, maintained by the pool-switch write
+  path); the router only corrects the per-message routing decision.
 
 The Drainer's drain cycle order is fixed:
 **`materialize-if-needed → consume inbox → run_one_turn`**. On materialize
