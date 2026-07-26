@@ -30,7 +30,7 @@ docs/
 
 | Document | Location | Description |
 |----------|----------|-------------|
-| ADR index | `adr/` | 34 Architecture Decision Records (ADR-0001~0034) — see `adr/AGENTS.md` for the full index |
+| ADR index | `adr/` | 35 Architecture Decision Records (ADR-0001~0035) — see `adr/AGENTS.md` for the full index |
 | Bot local setup | `bot-local-setup.md` | Step-by-step bot setup from source (prerequisites, venv, config, troubleshooting) |
 | Issue tracker | `agents/issue-tracker.md` | Issues live as local markdown under `docs/design/<feature>/` |
 | Triage labels | `agents/triage-labels.md` | Canonical triage label vocabulary |
@@ -45,6 +45,7 @@ Each feature has a directory under `design/<feature-slug>/` containing:
 
 | Feature | ADR | Key files |
 |---------|-----|-----------|
+| modexctl Control Plane | ADR-0035 | PRD.md, contract.md, decisions.md, glossary.md, issues/ |
 | Parallel scheduling engine | ADR-0034 | PRD.md |
 | Phase 1 persistence schema optimization | ADR-0028, ADR-0029, ADR-0030, ADR-0031 | PRD.md, tickets.md |
 | External coding subagent | ADR-0027 | PRD.md, tickets.md |

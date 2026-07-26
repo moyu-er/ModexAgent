@@ -3,7 +3,7 @@
 
 # docs/adr
 
-Architecture Decision Records for the ModexAgent framework (ADR-0001 ~ 0034; the historical ADR-0034 phase-c-preliminaries was merged into ADR-0033 and archived in `history/001-`).
+Architecture Decision Records for the ModexAgent framework (ADR-0001 ~ 0035; the historical ADR-0034 phase-c-preliminaries was merged into ADR-0033 and archived in `history/001-`; the original ADR-0035 direct-CLI design was superseded by the current ADR-0035 control-plane design and archived in `history/`).
 
 ## Purpose
 
@@ -26,7 +26,7 @@ ADRs document significant architectural decisions, including the context driving
   existing ADR in place. New ADRs are for genuinely new decisions, not
   follow-up work on existing ones.
 
-### ADR Index (0001–0033, excluding archived)
+### ADR Index (0001–0035, excluding archived)
 
 | ADR  | Title |
 |------|-------|
@@ -64,5 +64,6 @@ ADRs document significant architectural decisions, including the context driving
 | 0032 | Terminal backend async-safety and behavior convergence |
 | 0033 | Generalized Graph Engine |
 | 0034 | Parallel Scheduling Engine |
+| 0035 | modexctl Control Plane |
 
 <!-- MANUAL -->
