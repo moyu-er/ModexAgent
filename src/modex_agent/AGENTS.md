@@ -3,7 +3,7 @@
 
 # modex_agent
 
-Core multi-agent framework package (336+ Python files across 26 modules). All abstractions, implementations, and the three-layer runtime model (Hook / Interceptor / Control) plus Approval, Experience, and Media.
+Core multi-agent framework package (334+ Python files across 25 modules). All abstractions, implementations, and the three-layer runtime model (Hook / Interceptor / Control) plus Approval, Experience, and Media.
 
 > [!NOTE]
 > "Hook / Interceptor / Control" names three packages, but they are not peers
@@ -47,7 +47,6 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 | `utils/` | 11 py | — | tokenizer, context_builder, deduplicator, sanitizer, helpers, `time` (`now_ms`/`now_s` — ADR-0029 single source of truth) |
 | `adapters/` | 2 py | — | `PlatformAdapter` ABC, `AdapterRegistry`, `StreamingMode` |
 | `media/` | 6 py | — | Attachment/media handling (ADR-0013) — `MediaStore` ABC, MIME classification, security gate, storage routing (`LocalFileMediaStore`) |
-| `cli/` | 2 py | `modexbot/` | Framework-side CLI shim — `modexbot`/`modexctl` facade for external coding agent peer messaging (the registered `modexctl` console script lives in `src/modexctl/`) |
 | `registry/` | 1 py | — | Shared registry utilities |
 
 ## Key Files
