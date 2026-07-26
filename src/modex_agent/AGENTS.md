@@ -35,7 +35,7 @@ The `src/modex_agent/` directory is the reusable agent framework. It provides AB
 | `commands/` | 7 py | — | Slash command processor — parse, two-stage dispatch, approval/continue/transform actions (see `commands/AGENTS.md`) |
 | `control/` | 6 py | — | Control transport — `InMemoryControlChannel` (the live `/stop` + pause mechanism), `ControlCommand`, `AgentControlError` exceptions (see `control/AGENTS.md`) |
 | `hook/` | 4 py | `builtin/` | Lifecycle hooks — `HookRunner`, `HookPoint`, 7 builtin hooks (see `hook/AGENTS.md`) |
-| `interceptor/` | 3 py | `builtin/` | AOP interceptor chain — `InterceptorChain`, 2 builtin interceptors (see `interceptor/AGENTS.md`) |
+| `interceptor/` | 4 py | `builtin/` | AOP interceptor chain — `InterceptorChain`, 3 builtin interceptors (see `interceptor/AGENTS.md`) |
 | `ioc/` | 2 py | `configs/`, `factories/` | `AppConfig` (Pydantic), 13 typed configs, 8 factory modules (see `ioc/AGENTS.md`) |
 | `approval/` | 6 py | — | Tiered tool approval — tiers, decisions, response parsing (see `approval/AGENTS.md`) |
 | `messaging/` | 4 py | — | `MessageBroker`, `BrokerBridgeService` (see `messaging/AGENTS.md`) |

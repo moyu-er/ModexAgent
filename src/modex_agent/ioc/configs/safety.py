@@ -17,10 +17,7 @@ class TurnSafetyConfig(BaseModel):
 
     agent_run_timeout: float = 420.0
     hook_timeout: float = 10.0
-    tool_timeout: float = 360.0  # Must exceed SubprocessTool.timeout (300s) so outer
-    # interceptors never cancel the coroutine before
-    # SubprocessTool's own timeout handling can return
-    # partial output.
+    tool_timeout: float = 120.0
 
 
 class SafetyConfig(BaseModel):

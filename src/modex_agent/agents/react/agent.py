@@ -21,7 +21,7 @@ from modex_agent.hook import HookPayload, HookPoint
 from modex_agent.runtime.enums import TurnCustomKey, TurnPhase
 
 from ...core.agent import Agent, AgentContext, current_agent_context
-from ...core.constants import DefaultValues, StopReason
+from ...core.constants import StopReason
 from ...core.emitter import AgentResult, ContentEmitter
 from ...core.events import AgentEvent
 from ...core.provider import LLMProvider
@@ -32,7 +32,6 @@ logger = logging.getLogger(__name__)
 
 # P0-a: 合理默认值
 _HOOK_TIMEOUT = 10.0
-_TOOL_TIMEOUT = DefaultValues.TOOL_TIMEOUT_SECONDS
 
 
 class ReActEvent(AgentEvent, Enum):
@@ -165,7 +164,6 @@ class ReActAgent(Agent[ReActEvent]):
         self,
         provider: LLMProvider,
         hook_timeout: float = _HOOK_TIMEOUT,
-        tool_timeout: float = _TOOL_TIMEOUT,
         *,
         mode: Literal["clean", "full"] = "full",
     ) -> None:
@@ -175,11 +173,10 @@ class ReActAgent(Agent[ReActEvent]):
 
         self.provider = provider
         self._hook_timeout = hook_timeout
-        self._tool_timeout = tool_timeout
         self.mode: Literal["clean", "full"] = mode
         self._llm_client = ReactLlmClient(provider)
         self._injection_drainer = InjectionDrainer()
-        self._tool_executor = ToolExecutor(default_tool_timeout=tool_timeout)
+        self._tool_executor = ToolExecutor()
 
     @property
     def name(self) -> str:

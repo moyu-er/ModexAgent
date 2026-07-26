@@ -156,6 +156,22 @@ class ToolResult(BaseModel):
         """执行是否成功"""
         return self.error is None
 
+    def message_content(self) -> str:
+        """Unified LLM-facing content rendering.
+
+        Structured XML failures (content_format=XML with a non-None result)
+        are emitted verbatim so the LLM receives a pure XML document.
+        Plain errors are prefixed with "Error: ". Successful results are
+        rendered as strings.
+        """
+        if self.content_format is ContentFormat.XML and self.result is not None:
+            return str(self.result)
+        if self.error is not None:
+            return f"Error: {self.error}"
+        if self.result is None:
+            return ""
+        return str(self.result)
+
     def __repr__(self) -> str:
         status = "error" if self.error else "success"
         return f"ToolResult({self.tool_name}, {status}, {self.execution_time:.2f}s)"
@@ -179,12 +195,11 @@ class ToolResult(BaseModel):
         """
         from .types import MessageRole
 
-        content = self.result if self.success else f"Error: {self.error}"
         msg: dict[str, Any] = {
             "role": MessageRole.TOOL.value,
             "tool_call_id": self.call_id or "",
             "name": self.tool_name,
-            "content": str(content) if content is not None else "",
+            "content": self.message_content(),
         }
         if self.content_format is not None and self.truncatable_paths is not None:
             msg["content_format"] = self.content_format.value

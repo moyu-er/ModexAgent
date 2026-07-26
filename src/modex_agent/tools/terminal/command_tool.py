@@ -83,7 +83,6 @@ class CommandTool(Tool):
         self._manager = manager
         self._registry = registry
         self._config = config or TerminalRuntimeConfig()
-        self.config.timeout = self._config.command_tool_outer_timeout_seconds
 
     @property
     def name(self) -> str:

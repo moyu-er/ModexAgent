@@ -16,7 +16,7 @@ AOP onion-chain layer wrapping call boundaries. Interceptors form recursive clos
 ## Subdirectories
 | Directory | Purpose |
 |-----------|---------|
-| `builtin/` | 2 interceptors + 1 classification helper -- result-limit, tool_approval |
+| `builtin/` | 3 interceptors + 1 classification helper -- tool_timeout, result-limit, tool_approval |
 
 ## Active Scopes
 | Scope | Method | Chain method | Purpose |

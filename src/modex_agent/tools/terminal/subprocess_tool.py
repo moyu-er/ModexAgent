@@ -113,9 +113,6 @@ class SubprocessTool(Tool):
         super().__init__()
         self._executor = executor or SubprocessExecutor()
         self.timeout = timeout
-        # Ensure ToolManager's outer asyncio.wait_for never preempts our own
-        # timeout handling (which returns partial output + timeout marker).
-        self.config.timeout = timeout + 10
 
     @property
     def name(self) -> str:
