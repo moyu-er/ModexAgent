@@ -649,6 +649,7 @@ def build_app() -> typer.Typer:
             typer.echo("No history found.", err=True)
             return
 
+        typer.echo("# History below is ordered newest-first (top = most recent).")
         for line in _format_jsonl(result.items):
             typer.echo(line)
 
@@ -671,6 +672,15 @@ def build_app() -> typer.Typer:
 
 
 def main() -> None:
+    import io
+    from typing import cast
+
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            cast("io.TextIOWrapper", stream).reconfigure(
+                encoding="utf-8", errors="replace"
+            )
+
     app = build_app()
     app()
 

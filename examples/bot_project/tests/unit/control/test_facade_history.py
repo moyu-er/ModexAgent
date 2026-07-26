@@ -248,6 +248,11 @@ def _make_facade(
     mock_pool_instance.main_execution_strategy = effective_pool_spec.main.execution_strategy
     mock_pool_instance.main_agent_name = effective_pool_spec.main_agent_name
     mock_pool_instance.target_store.list = MagicMock(return_value=[])
+    mock_pool_instance.target_store.get = MagicMock(
+        return_value=MagicMock(
+            execution_strategy=effective_pool_spec.main.execution_strategy
+        )
+    )
 
     mock_resources = MagicMock()
     mock_resources.session_index_store = mock_session_store
