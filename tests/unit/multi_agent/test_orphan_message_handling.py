@@ -24,6 +24,7 @@ from uuid import uuid4
 
 import pytest
 
+from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.scope import RecordScope
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import InputMessage
@@ -276,6 +277,7 @@ class TestPoolRouterSelfHealsStaleRouting:
                 name="default", media=MagicMock(), subagent_count=0, pool=default_pool,
                 broker_bridge=MagicMock(), tool_manager=MagicMock(), skill_manager=None,
                 mcp_manager=None, terminal_manager=None, main_agent_name="default",
+                main_execution_strategy=ExecutionStrategyKind.REACT,
                 provider=MagicMock(), notification_service=MagicMock(),
                 communication_service=MagicMock(), agent_bus=MagicMock(),
                 target_store=MagicMock(),
@@ -284,6 +286,7 @@ class TestPoolRouterSelfHealsStaleRouting:
                 name="coder", media=MagicMock(), subagent_count=0, pool=coder_pool,
                 broker_bridge=MagicMock(), tool_manager=MagicMock(), skill_manager=None,
                 mcp_manager=None, terminal_manager=None, main_agent_name="orchestrator",
+                main_execution_strategy=ExecutionStrategyKind.REACT,
                 provider=MagicMock(), notification_service=MagicMock(),
                 communication_service=MagicMock(), agent_bus=MagicMock(),
                 target_store=MagicMock(),
@@ -331,6 +334,7 @@ class TestPoolRouterSelfHealsStaleRouting:
                 name="default", media=MagicMock(), subagent_count=0, pool=default_pool,
                 broker_bridge=MagicMock(), tool_manager=MagicMock(), skill_manager=None,
                 mcp_manager=None, terminal_manager=None, main_agent_name="default",
+                main_execution_strategy=ExecutionStrategyKind.REACT,
                 provider=MagicMock(), notification_service=MagicMock(),
                 communication_service=MagicMock(), agent_bus=MagicMock(),
                 target_store=MagicMock(),
@@ -381,6 +385,7 @@ class TestPoolRouterSelfHealsStaleRouting:
                 name="default", media=MagicMock(), subagent_count=0, pool=default_pool,
                 broker_bridge=MagicMock(), tool_manager=MagicMock(), skill_manager=None,
                 mcp_manager=None, terminal_manager=None, main_agent_name="default",
+                main_execution_strategy=ExecutionStrategyKind.REACT,
                 provider=MagicMock(), notification_service=MagicMock(),
                 communication_service=MagicMock(), agent_bus=MagicMock(),
                 target_store=MagicMock(),

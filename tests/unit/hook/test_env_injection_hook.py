@@ -30,6 +30,7 @@ def _make_template(
     parent_session_id: str | None = None,
     session_id: str = "__pending__.main",
     agent_name: str = "main",
+    control_origin: str = "",
 ) -> ExternalEnvSpec:
     return ExternalEnvSpec(
         workspace_root=Path("/tmp/ws"),
@@ -43,6 +44,7 @@ def _make_template(
         modexctl_bin_dir=Path("/tmp/bin"),
         comm_kind=comm_kind,
         parent_session_id=parent_session_id,
+        control_origin=control_origin,
     )
 
 
@@ -281,3 +283,23 @@ class TestNativeEnvInjectionHook:
         assert env is not None
         assert "PATH" in env
         assert str(template.modexctl_bin_dir) in env["PATH"]
+
+    async def test_control_origin_propagates_to_modex_env(self) -> None:
+        """control_origin from the spec template must reach MODEX_CONTROL_ORIGIN.
+
+        Regression test for the native subagent ``modexctl send`` failure
+        (``error: bot context not fully configured (MODEX_CONTROL_ORIGIN)``).
+        AgentTemplate.materialize builds the subagent env spec WITHOUT setting
+        control_origin, so it defaulted to empty string — the subagent's
+        bash tools then inherited an empty MODEX_CONTROL_ORIGIN and modexctl
+        could not locate the bot's HTTP listener.
+        """
+        template = _make_template(control_origin="http://127.0.0.1:21800")
+        hook = NativeEnvInjectionHook(env_spec_template=template)
+        ctx = _make_context(session_id="inv1.explore", agent_name="explore")
+
+        await hook.before_turn(ctx)
+
+        env = _modex_env.get()
+        assert env is not None
+        assert env["MODEX_CONTROL_ORIGIN"] == "http://127.0.0.1:21800"

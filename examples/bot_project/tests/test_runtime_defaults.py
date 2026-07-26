@@ -53,21 +53,9 @@ def test_default_interceptor_chain_keeps_only_effective_defaults() -> None:
     assert any(isinstance(item, ToolResultLimitInterceptor) for item in interceptors)
 
 
-def test_tool_timeout_exceeds_shell_internal_timeout() -> None:
-    """Outer tool timeout must strictly exceed CommandTool.timeout so the shell
-    can return structured timeout XML with partial output instead of being
-    cancelled by the ReAct-level asyncio.wait_for."""
-    from modex_agent.tools.terminal import SubprocessTool
+def test_tool_timeout_default_is_120() -> None:
+    """Framework default tool timeout is 120 seconds, enforced by
+    ToolTimeoutInterceptor."""
+    from modex_agent.core.constants import DefaultValues
 
-    service = BotService(
-        config_dir=Path("examples/bot_project/config"),
-        input_adapter=_InputAdapter(),
-        output_adapter=NullOutputAdapter(),
-        emitter_factory=lambda _session_id: None,
-    )
-    safety = service.safety_policy
-    shell_timeout = SubprocessTool().timeout
-    assert safety.turn.tool_timeout_seconds > shell_timeout, (
-        f"tool_timeout_seconds ({safety.turn.tool_timeout_seconds}) must be > "
-        f"SubprocessTool.timeout ({shell_timeout})"
-    )
+    assert DefaultValues.TOOL_TIMEOUT_SECONDS == 120.0

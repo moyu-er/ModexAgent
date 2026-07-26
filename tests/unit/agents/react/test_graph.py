@@ -18,7 +18,7 @@ def _make_graph(mode: Literal["clean", "full"]) -> Graph:
     return build_react_graph(
         llm_client=ReactLlmClient(provider=object()),  # type: ignore[arg-type] — provider unused
         injection_drainer=InjectionDrainer(),
-        tool_executor=ToolExecutor(default_tool_timeout=30.0),
+        tool_executor=ToolExecutor(),
         mode=mode,
     )
 
