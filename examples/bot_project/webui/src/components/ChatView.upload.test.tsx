@@ -108,4 +108,37 @@ describe("ChatView attachment upload pre-validation", () => {
       },
     ]);
   });
+
+  it("hero mode: file is held client-side (no upload) and passed to onHeroSend as File", async () => {
+    fetchMediaConfigMock.mockResolvedValue({
+      max_image_bytes: 1_000_000,
+      max_text_doc_bytes: 1_000_000,
+      session_budget_bytes: 10_000_000,
+      max_outbound_bytes: 10_000_000,
+    });
+    const onHeroSend = vi.fn();
+
+    render(<ChatView {...defaultProps} sessionId={null} onHeroSend={onHeroSend} />);
+
+    const input = document.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    expect(input).toBeTruthy();
+
+    const file = new File([new Uint8Array(512)], "pic.png", { type: "image/png" });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(screen.getByText("pic.png")).toBeTruthy();
+    });
+
+    expect(uploadAttachmentMock).not.toHaveBeenCalled();
+
+    const sendBtn = screen.getByRole("button", { name: /Send/i });
+    fireEvent.click(sendBtn);
+
+    expect(onHeroSend).toHaveBeenCalledTimes(1);
+    const [, files] = onHeroSend.mock.calls[0]!;
+    expect(files).toEqual([file]);
+  });
 });

@@ -55,7 +55,6 @@ export const en = {
     assistantResponding: "Assistant is responding…",
     pause: "Pause",
     send: "Send",
-    selectConversationFirst: "Select a conversation before attaching a file.",
     fileTooLarge: '"{name}" is too large ({size}). Limit is {limit}.',
     uploadFailed: "Upload failed.",
     removeName: "Remove {name}",

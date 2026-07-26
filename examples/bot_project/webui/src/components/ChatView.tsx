@@ -45,7 +45,7 @@ export interface ChatViewProps {
    *  handler to flush with the real session id. */
   onHeroSend?: (
     content: string,
-    attachments?: OutgoingAttachmentRef[],
+    files?: File[],
     providerName?: string,
     modelName?: string,
   ) => void;
@@ -105,13 +105,15 @@ export const ChatView: FC<ChatViewProps> = ({
   const [announcement, setAnnouncement] = useState("");
 
   // Pending uploads collected in the composer before the message is sent.
-  // Each entry is a successfully uploaded file (a backend ref the WS
-  // send_message will carry as an attachment). ``error`` surfaces the most
-  // recent pre-validation / upload failure to the user as a notice.
+  // Unified pending-upload entry. ``ref`` is non-null in normal mode (file
+  // already uploaded to the backend's temp dir); null in hero mode (file is
+  // held client-side and uploaded lazily in the `attached` handler once the
+  // real session id is known). Chip rendering and removal are identical for
+  // both modes — only submit diverges (pass File[] vs ref[]).
   interface PendingUpload {
-    ref: OutgoingAttachmentRef;
-    name: string;
-    size: number;
+    id: string;
+    file: File;
+    ref: OutgoingAttachmentRef | null;
   }
   const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -295,14 +297,19 @@ export const ChatView: FC<ChatViewProps> = ({
     if (readOnly || isBusy) return;
     const trimmed = input.trim();
     if (!trimmed && pendingUploads.length === 0) return;
-    const send = isHero ? onHeroSend : onSend;
-    if (!send) return;
-    send(
-      trimmed,
-      pendingUploads.map((p) => p.ref),
-      selected.provider,
-      selected.model,
-    );
+    if (isHero) {
+      onHeroSend?.(
+        trimmed,
+        pendingUploads.map((p) => p.file),
+        selected.provider,
+        selected.model,
+      );
+    } else {
+      const refs = pendingUploads
+        .map((p) => p.ref)
+        .filter((r): r is OutgoingAttachmentRef => r != null);
+      onSend?.(trimmed, refs, selected.provider, selected.model);
+    }
     setInput("");
     setPendingUploads([]);
     setUploadError(null);
@@ -357,10 +364,6 @@ export const ChatView: FC<ChatViewProps> = ({
   // The authoritative per-kind gate runs later in the ingest stage. ``ws``
   // scopes the temp file to the active workspace; home (empty) omits it.
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
-    if (!sessionId) {
-      setUploadError(t("chat.selectConversationFirst"));
-      return;
-    }
     const files = e.target.files;
     if (!files || files.length === 0) return;
     setUploadError(null);
@@ -376,20 +379,24 @@ export const ChatView: FC<ChatViewProps> = ({
           );
           continue;
         }
-        const uploaded: UploadAttachmentResponse = await uploadAttachment(
-          sessionId,
-          file,
-          workspace || undefined,
-        );
-        accepted.push({
-          ref: {
-            local_path: uploaded.local_path,
-            filename: uploaded.filename,
-            mime: uploaded.mime ?? undefined,
-          },
-          name: uploaded.filename,
-          size: uploaded.size,
-        });
+        if (isHero) {
+          accepted.push({ id: crypto.randomUUID(), file, ref: null });
+        } else {
+          const uploaded: UploadAttachmentResponse = await uploadAttachment(
+            sessionId!,
+            file,
+            workspace || undefined,
+          );
+          accepted.push({
+            id: crypto.randomUUID(),
+            file,
+            ref: {
+              local_path: uploaded.local_path,
+              filename: uploaded.filename,
+              mime: uploaded.mime ?? undefined,
+            },
+          });
+        }
       }
       if (accepted.length > 0) {
         setPendingUploads((prev) => [...prev, ...accepted]);
@@ -403,8 +410,8 @@ export const ChatView: FC<ChatViewProps> = ({
     }
   };
 
-  const removePendingUpload = (localPath: string): void => {
-    setPendingUploads((prev) => prev.filter((p) => p.ref.local_path !== localPath));
+  const removePendingUpload = (id: string): void => {
+    setPendingUploads((prev) => prev.filter((p) => p.id !== id));
   };
 
   const renderComposer = (hero: boolean): ReactNode => {
@@ -419,7 +426,7 @@ export const ChatView: FC<ChatViewProps> = ({
         : isStreaming
           ? t("chat.assistantResponding")
           : t("chat.messagePlaceholder");
-    const attachDisabled = hero || isBusy || isUploading || !sessionId;
+    const attachDisabled = isBusy || isUploading;
     return (
       <>
         {(pendingUploads.length > 0 || uploadError) && (
@@ -431,22 +438,22 @@ export const ChatView: FC<ChatViewProps> = ({
             )}
             {pendingUploads.map((p) => (
               <div
-                key={p.ref.local_path}
+                key={p.id}
                 className="flex items-center gap-2 rounded-md border border-hairline bg-canvas-elevated px-2.5 py-1.5 text-xs"
               >
                 <File size={14} className="shrink-0 text-body" aria-hidden="true" />
                 <span className="min-w-0 flex-1 truncate text-ink">
-                  {p.name}
+                  {p.file.name}
                 </span>
                 <span className="shrink-0 text-body">
-                  {formatBytes(p.size)}
+                  {formatBytes(p.file.size)}
                 </span>
                 <IconButton
                   icon={<X size={14} />}
-                  label={t("chat.removeName", { name: p.name })}
+                  label={t("chat.removeName", { name: p.file.name })}
                   variant="ghost"
                   size="sm"
-                  onClick={(): void => removePendingUpload(p.ref.local_path)}
+                  onClick={(): void => removePendingUpload(p.id)}
                 />
               </div>
             ))}
