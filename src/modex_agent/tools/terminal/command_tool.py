@@ -83,7 +83,6 @@ class CommandTool(Tool):
         self._manager = manager
         self._registry = registry
         self._config = config or TerminalRuntimeConfig()
-        self.config.timeout = self._config.command_tool_outer_timeout_seconds
 
     @property
     def name(self) -> str:
@@ -131,7 +130,15 @@ class CommandTool(Tool):
         command: str,
         **_kwargs: object,
     ) -> str:
-        session = await self._manager.get_default()
+        from modex_agent.runtime.env_context import _current_session_id, _modex_env
+        from modex_agent.tools.terminal.env import build_full_env
+
+        sid = _current_session_id.get()
+        overrides = _modex_env.get()
+        if sid is not None:
+            session = await self._manager.get_or_create(sid)
+        else:
+            session = await self._manager.get_default()
         terminal_name = session.name
         is_new_tab = not session.backend_started
 
@@ -141,7 +148,7 @@ class CommandTool(Tool):
             return self._format_rejected(guard_result, terminal=terminal_name)
 
         session.set_expected_state(TerminalCommandStatus.EXECUTING)
-        await session.ensure_started()
+        await session.ensure_started(env=build_full_env(overrides) if overrides else None)
 
         proc = self._registry.create(
             command=command,

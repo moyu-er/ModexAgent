@@ -10,6 +10,7 @@ import BootScreen from "./components/BootScreen";
 import { DISPERSE_MS } from "./lib/particles";
 import { buildTree } from "./lib/sessionTree";
 import { storageGetInt, storageSet } from "./lib/storage";
+import { listPools } from "./lib/poolApi";
 import type { OutgoingAttachmentRef } from "./types/attachments";
 import { useT } from "./i18n";
 import { LogoMarkIcon } from "./components/ui/icons";
@@ -62,6 +63,7 @@ const AppInner: FC = () => {
     handleGoHome,
     handlePoolChange,
     onSent,
+    newConvNonce,
   } = useSessions();
 
   // Home is its own workspace partition; pass ws only for non-home so home
@@ -103,16 +105,44 @@ const AppInner: FC = () => {
     [selectedId, sessions],
   );
 
-  // Three-tier fallback: session list → infer from id suffix → active pool.
-  // Keeps the header populated through the hero-send → attach window where
-  // the session is not yet in the sidebar list.
+  // Pool → main_agent_name map, fetched once so the hero view (no session
+  // selected) can still resolve the main agent for skill autocomplete.
+  const [poolAgentMap, setPoolAgentMap] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let cancelled = false;
+    listPools()
+      .then((pools) => {
+        if (cancelled) return;
+        const m: Record<string, string> = {};
+        for (const p of pools) m[p.name] = p.main_agent_name;
+        setPoolAgentMap(m);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Three-tier fallback: session list → infer from id suffix → active pool's
+  // main agent (via poolAgentMap). Keeps the header populated through the
+  // hero-send → attach window and gives the hero view a real agent name for
+  // skill autocomplete.
   const agentName = useMemo(() => {
-    if (!selectedId) return undefined;
+    if (!selectedId) {
+      return (activePool && poolAgentMap[activePool]) || undefined;
+    }
     const s = sessions.find((x) => x.session_id === selectedId);
     if (s && s.agent_name !== "…" && s.agent_name) return s.agent_name;
     const parts = selectedId.split(".");
     if (parts.length >= 2) return parts[1] || "main";
     return activePool || "main";
+  }, [sessions, selectedId, activePool, poolAgentMap]);
+
+  // Pool for the active session (or the hero view's active pool). Used to
+  // resolve the skill set for /skillName autocomplete.
+  const chatPool = useMemo(() => {
+    if (!selectedId) return activePool;
+    return sessions.find((x) => x.session_id === selectedId)?.pool ?? activePool;
   }, [sessions, selectedId, activePool]);
 
   const handleSend = useCallback(
@@ -292,6 +322,8 @@ const AppInner: FC = () => {
             readOnly={isSelectedSubagent}
             onOpenSidebar={() => setSidebarMobileOpen(true)}
             agentName={agentName}
+            pool={chatPool}
+            heroFocusNonce={newConvNonce}
           />
         </main>
 

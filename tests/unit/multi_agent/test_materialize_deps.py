@@ -155,3 +155,22 @@ def test_subagent_external_coding_builder_defaults_none_and_settable() -> None:
         subagent_external_coding_builder=builder,  # type: ignore[arg-type]
     )
     assert deps_set.subagent_external_coding_builder is builder
+
+
+def test_control_origin_defaults_empty_and_settable() -> None:
+    deps_default = AgentMaterializeDeps(
+        agent_factory=MagicMock(),
+        pool=MagicMock(),
+        session_factory=SessionIdFactory(),
+        broker=MagicMock(),
+    )
+    assert deps_default.control_origin == ""
+
+    deps_set = AgentMaterializeDeps(
+        agent_factory=MagicMock(),
+        pool=MagicMock(),
+        session_factory=SessionIdFactory(),
+        broker=MagicMock(),
+        control_origin="http://127.0.0.1:21800",
+    )
+    assert deps_set.control_origin == "http://127.0.0.1:21800"

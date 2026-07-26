@@ -129,7 +129,7 @@ async def test_qq_attachment_ref_flows_through_im_pipeline_to_persisted_record()
     the real IM pipeline ingest stage and becomes a persisted ``Attachment``
     under the standard media layout, readable via the resolver."""
     with TemporaryDirectory() as tmp:
-        root = Path(tmp)
+        root = Path(tmp).resolve()
         staging = root / "staging"
         staging.mkdir()
         png = staging / "photo.png"

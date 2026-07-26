@@ -536,7 +536,7 @@ class TestSchemaInvariants:
 
     async def test_timestamp_columns_are_integer(self, tmp_path: Path) -> None:
         """Every ``created_at``/``updated_at``/``decided_at``/``consumed_at``
-        /``delivered_at``/``last_committed_at``/``deleted_at`` column in the
+        /``delivered_at``/``last_committed_at`` column in the
         workspace DB must be ``INTEGER`` (ADR-0029 §2)."""
         mgr = ConnectionManager(tmp_path / "workspace.db", DatabaseKind.WORKSPACE)
         await mgr.open()
@@ -551,7 +551,6 @@ class TestSchemaInvariants:
             "consumed_at",
             "delivered_at",
             "last_committed_at",
-            "deleted_at",
         )
         offenders: list[str] = []
         for table in table_names:

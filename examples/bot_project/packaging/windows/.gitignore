@@ -3,3 +3,5 @@ staging
 ModexBot-Setup-*.exe
 logo.ico
 tauri-target
+# Cached bundled binaries (downloaded once, reused across builds)
+bin

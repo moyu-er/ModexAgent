@@ -1027,6 +1027,9 @@ async def test_pool_router_forwards_agent_session_id() -> None:
                 async def submit_input(inner_self, sid: str, msg: InputMessage) -> None:
                     self.submitted.append((sid, msg))
 
+                def serves_agent(inner_self, name: str) -> bool:
+                    return True
+
             self.pool = _Inner()
 
     pool = _MockPool()

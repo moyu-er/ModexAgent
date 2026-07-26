@@ -16,6 +16,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from modex_agent.runtime.bundled_bin import ensure_bundled_bin_on_path
+
 if TYPE_CHECKING:
     from bot.service.core import BotService
 
@@ -132,6 +134,8 @@ def run_with_supervisor(
             await service.stop()
 
     consecutive_failures = 0
+
+    ensure_bundled_bin_on_path()
 
     while True:
         start_time = time.monotonic()

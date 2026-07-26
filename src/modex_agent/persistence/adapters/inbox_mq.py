@@ -72,6 +72,12 @@ _INBOX_PROJECTION = ColumnProjection(
     json_column="payload_json",
 )
 
+_TOPIC_UPSERT_SQL = (
+    "INSERT INTO inbox_topics "
+    "(owner_scope_key, scope_key) "
+    "VALUES (?, ?) ON CONFLICT(scope_key) DO NOTHING"
+)
+
 
 class SqliteInboxMQ(InboxMQ):
     """SQLite-backed ``InboxMQ`` using ``ConnectionManager`` + workspace schema.
@@ -121,7 +127,7 @@ class SqliteInboxMQ(InboxMQ):
             if delivered is not None:
                 return False
 
-            await self._ensure_topic(tx, session_id, scope_key)
+            await self._ensure_topic(tx, scope_key)
             inserted = await self._insert_message(tx, session_id, scope_key, message)
             return inserted
 
@@ -259,10 +265,8 @@ class SqliteInboxMQ(InboxMQ):
 
             # Upsert topic (insert-once; timestamps via DEFAULT).
             conn.execute(
-                "INSERT INTO inbox_topics "
-                "(owner_scope_key, scope_key, session_id) "
-                "VALUES (?, ?, ?) ON CONFLICT(scope_key) DO NOTHING",
-                (self._owner_scope_key, scope_key, session_id),
+                _TOPIC_UPSERT_SQL,
+                (self._owner_scope_key, scope_key),
             )
             topic_id = conn.execute(
                 "SELECT topic_id FROM inbox_topics WHERE scope_key = ?",
@@ -403,14 +407,11 @@ class SqliteInboxMQ(InboxMQ):
     async def _ensure_topic(
         self,
         tx: Transaction,
-        session_id: str,
         scope_key: str,
     ) -> None:
         await tx.execute(
-            "INSERT INTO inbox_topics "
-            "(owner_scope_key, scope_key, session_id) "
-            "VALUES (?, ?, ?) ON CONFLICT(scope_key) DO NOTHING",
-            (self._owner_scope_key, scope_key, session_id),
+            _TOPIC_UPSERT_SQL,
+            (self._owner_scope_key, scope_key),
         )
 
     async def _insert_message(

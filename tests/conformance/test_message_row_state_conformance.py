@@ -24,9 +24,9 @@ _MIGRATION = (
 
 def test_migration_state_check_matches_enum() -> None:
     sql = _MIGRATION.read_text(encoding="utf-8")
-    table_start = sql.find("CREATE TABLE memory_session_messages")
-    assert table_start != -1, "memory_session_messages table not found in migration"
-    section = sql[table_start:]
+    offset = sql.find("memory_session_messages")
+    assert offset != -1, "memory_session_messages table not found in migration"
+    section = sql[offset:]
     match = re.search(r"CHECK\s*\(\s*state\s+IN\s*\(([^)]+)\)\s*\)", section)
     assert match is not None, "state CHECK IN constraint not found in migration"
     sql_values = {s.strip().strip("'\"") for s in match.group(1).split(",")}

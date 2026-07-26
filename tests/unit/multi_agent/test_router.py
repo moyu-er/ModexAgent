@@ -12,26 +12,26 @@ class TestDefaultMeshRouter:
         result = router.route(
             InputMessage(
                 content="hello",
-                session=SessionInfo.from_str("chat-1", default_agent_name="main"),
+                session=SessionInfo.from_str("chat-1"),
             )
         )
 
         assert str(result.session) == "chat-1"
-        assert result.session.agent_name == "main"
+        assert result.session.agent_name == ""
         assert result.session.session_id_prefix == "chat-1"
 
-    def test_default_agent_name_used_when_session_has_no_agent(self) -> None:
+    def test_bare_prefix_session_has_empty_agent_name(self) -> None:
         router = DefaultMeshRouter()
 
         result = router.route(
             InputMessage(
                 content="hello",
-                session=SessionInfo.from_str("chat-1", default_agent_name="office-expert"),
+                session=SessionInfo.from_str("chat-1"),
             )
         )
 
         assert str(result.session) == "chat-1"
-        assert result.session.agent_name == "office-expert"
+        assert result.session.agent_name == ""
 
     def test_trusts_input_session_not_metadata(self) -> None:
         """Router uses input_msg.session directly; metadata agent_session_id is ignored."""
@@ -40,7 +40,7 @@ class TestDefaultMeshRouter:
         result = router.route(
             InputMessage(
                 content="task",
-                session=SessionInfo.from_str("chat-1.main", default_agent_name="main"),
+                session=SessionInfo.from_str("chat-1.main"),
                 metadata={"agent_session_id": "chat-1.office-expert.task-42"},
             )
         )
@@ -55,14 +55,14 @@ class TestDefaultMeshRouter:
             InputMessage(
                 content="task",
                 session=SessionInfo.from_str(
-                    "transport-session", default_agent_name="main"
+                    "transport-session"
                 ),
                 metadata={"agent_session_id": "chat-1.office-expert.task-42"},
             )
         )
 
         assert str(result.session) == "transport-session"
-        assert result.session.agent_name == "main"
+        assert result.session.agent_name == ""
 
     def test_envelope_detection_from_metadata(self) -> None:
         router = DefaultMeshRouter()
@@ -70,7 +70,7 @@ class TestDefaultMeshRouter:
         result = router.route(
             InputMessage(
                 content="task",
-                session=SessionInfo.from_str("chat-1.main", default_agent_name="main"),
+                session=SessionInfo.from_str("chat-1.main"),
                 metadata={
                     "agent_session_id": "chat-1.office-expert.task-42",
                     "message_type": "subagent_result",
@@ -89,7 +89,7 @@ class TestDefaultMeshRouter:
         result = router.route(
             InputMessage(
                 content="hi",
-                session=SessionInfo.from_str("chat-1.main", default_agent_name="main"),
+                session=SessionInfo.from_str("chat-1.main"),
                 metadata={"message_type": "agent_message"},
             )
         )

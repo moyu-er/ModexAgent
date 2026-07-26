@@ -147,7 +147,7 @@ def _snapshot(
 ) -> TurnSnapshot:
     identity = TurnIdentity(
         agent_id="agent",
-        session=SessionInfo.from_str(session_id, default_agent_name="main"),
+        session=SessionInfo.from_str(session_id),
         turn_id="t1",
     )
     requests = approval_requests if approval_requests is not None else [

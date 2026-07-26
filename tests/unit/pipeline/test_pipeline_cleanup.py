@@ -48,7 +48,7 @@ class _MinimalInputAdapter:
             self._sent = True
             from modex_agent.core.session_id import SessionInfo
             from modex_agent.core.types import InputMessage
-            yield InputMessage(content="test", session=SessionInfo.from_str("s1", default_agent_name="main"))
+            yield InputMessage(content="test", session=SessionInfo.from_str("s1"))
 
 
 class _MinimalOutputAdapter:

@@ -180,6 +180,40 @@ class GraphState(BaseModel):
             channel.update([value])
         self._sync_channels_to_fields()
 
+    def apply_concurrent_updates(self, updates: list[dict[str, Any]]) -> None:
+        """Apply multiple concurrent `state_update` dicts in one merge pass.
+
+        Groups all values by field name across the provided `updates` list,
+        then calls `channel.update(all_values_for_field)` once per field —
+        passing the full list so that:
+
+        - `LastValue` raises `InvalidUpdateError` when ≥2 instances wrote
+          the same field (single-writer violation).
+        - `ReducerChannel` folds all contributions in execution order.
+
+        This is the merge path used by `ParallelScheduler` when multiple
+        instances complete concurrently and their updates are merged in one
+        pass. The fast path (single instance) uses `apply_state_update`
+        instead — it passes `len(values) == 1` per field, so multi-write
+        detection never triggers there.
+
+        Unknown field names raise `KeyError` — consistent with
+        `apply_state_update`.
+        """
+        grouped: dict[str, list[Any]] = {}
+        for update in updates:
+            for name, value in update.items():
+                grouped.setdefault(name, []).append(value)
+        for name, values in grouped.items():
+            channel = self._channels.get(name)
+            if channel is None:
+                raise KeyError(
+                    f"Unknown state field {name!r} in concurrent state_update. "
+                    f"Valid fields: {sorted(self._channels.keys())}"
+                )
+            channel.update(values)
+        self._sync_channels_to_fields()
+
     def checkpoint(self) -> dict[str, Any]:
         """Serialize state to a `dict[str, JsonValue]` via per-field channels.
 

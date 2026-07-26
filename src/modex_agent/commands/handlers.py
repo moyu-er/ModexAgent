@@ -275,7 +275,9 @@ class SkillCommandHandler(CommandHandler):
                 notice=NOTICE_SKILL_NOT_FOUND.format(command=invocation.command),
                 invocation=invocation,
             )
-        content = build_skill_command_xml(skill.name, skill.content, invocation.args)
+        content = build_skill_command_xml(
+            skill.name, skill.content, invocation.args, skill.location
+        )
         logger.info("Resolved slash skill command: /%s", invocation.command)
         return CommandHandlingResult(
             action=CommandAction.TRANSFORM_TO_USER_INPUT,

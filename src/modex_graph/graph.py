@@ -1,32 +1,28 @@
-"""`Graph[S]` builder — node registry + edges + conditional edges + `compile()`.
+"""`Graph[S]` builder — node registry + edges + `compile()`.
 
 Per ADR-0033 D6 + D9.1: a mutable builder that collects nodes and edges,
 then validates and freezes them via `compile() -> CompiledGraph`.
 
-Four routing mechanisms coexist (strict priority, resolved by the engine):
+Two-layer routing (strict priority, resolved by the engine):
 
-1. `Command(goto=...)` — runtime dynamic routing (highest priority).
-2. `transition: str` — static edge lookup via `add_edge(src, dst, reason=)`.
-3. `add_conditional_edges(src, route_fn, destinations)` — multi-candidate.
-4. Default edge (`add_edge(src, dst, reason=None)`) — fallback (lowest).
+1. Dynamic layer — `Command(goto=...)`: runtime routing (highest priority).
+2. Static layer — `transition: str` matched against edges added via
+   `add_edge(src, dst, reason=...)`, falling back to the default edge
+   (`add_edge(src, dst, reason=None)`, lowest priority).
 
-`add_conditional_edges` supports two modes:
-
-- `destinations=None`: `route_fn(state)` return value is used directly as
-  the next node name.
-- `destinations={"key": "node_name"}`: `route_fn(state)` returns a key, and
-  the mapped node name is used. Decouples routing logic from node names.
+The former conditional-edge mechanism (callable-based routing) was removed
+in the two-layer routing cleanup (paving the way for ParallelScheduler).
+Branching is now expressed via `NodeResult(transition=...)` + static edges.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from typing_extensions import TypeVar
 
-from .constants import GraphNode
+from .constants import GraphNode, NodeTrigger, SchedulerKind
 from .node import Node
 
 if TYPE_CHECKING:
@@ -42,25 +38,12 @@ class Edge:
 
     Per ADR-0033 D6: edges are matched by exact `reason` first, then by
     `reason=None` (fallback). The engine tries `transition` (static edge
-    lookup) before conditional edges before default edges.
+    lookup) before default edges.
     """
 
     source: str
     target: str
     reason: str | None = None
-
-
-@dataclass(frozen=True)
-class ConditionalEdge:
-    """Conditional edge: `route_fn(state) -> str` selects the next node.
-
-    `destinations=None`: route_fn return value is the node name directly.
-    `destinations={"key": "node"}`: route_fn returns a key, mapped to a node.
-    """
-
-    source: str
-    route_fn: Callable[[Any], str]
-    destinations: dict[str, str] | None = None
 
 
 class Graph[S: "GraphState"]:
@@ -82,15 +65,15 @@ class Graph[S: "GraphState"]:
     ```
 
     The graph is ALSO a `Node` (Graph-is-a-Node, D8): `CompiledGraph`
-    subclasses `Node`, enabling subgraph nesting. Phase a wires the type
-    relationship; Phase c exercises it.
+    subclasses `Node`, enabling subgraph nesting. The type relationship is
+    wired (ADR-0033 D8); exercising it with real subgraph patterns is
+    deferred (ADR-0033 D12 Phase c item 5).
     """
 
     def __init__(self, name: str = "graph") -> None:
         self.name: str = name
         self._nodes: dict[str, Node[S]] = {}
         self._edges: list[Edge] = []
-        self._conditional_edges: list[ConditionalEdge] = []
 
     # ── Node registry ──────────────────────────────────────────────────
 
@@ -121,35 +104,10 @@ class Graph[S: "GraphState"]:
         """
         self._edges.append(Edge(source=source, target=target, reason=reason))
 
-    def add_conditional_edges(
-        self,
-        source: str,
-        route_fn: Callable[[Any], str],
-        destinations: dict[str, str] | None = None,
-    ) -> None:
-        """Add a conditional edge.
-
-        `route_fn(state) -> str` is called by the engine when:
-        - The current node's `NodeResult.transition` is None, AND
-        - No `Command.goto` is set.
-
-        `destinations=None`: route_fn return value is the node name directly.
-        `destinations={"key": "node"}`: route_fn returns a key, mapped to a node.
-        This decouples routing logic from concrete node names.
-        """
-        self._conditional_edges.append(
-            ConditionalEdge(source=source, route_fn=route_fn, destinations=destinations)
-        )
-
     @property
     def edges(self) -> list[Edge]:
         """Read-only view of edges."""
         return list(self._edges)
-
-    @property
-    def conditional_edges(self) -> list[ConditionalEdge]:
-        """Read-only view of conditional edges."""
-        return list(self._conditional_edges)
 
     # ── Compile ────────────────────────────────────────────────────────
 
@@ -158,6 +116,8 @@ class Graph[S: "GraphState"]:
         max_iterations: int = 100,
         *,
         cycle_detection: str = "warn",
+        scheduler: SchedulerKind = SchedulerKind.LINEAR,
+        default_trigger: NodeTrigger = NodeTrigger.ON_ALL_PREDS,
     ) -> CompiledGraph[S]:
         """Validate and freeze this graph into a `CompiledGraph`.
 
@@ -173,6 +133,14 @@ class Graph[S: "GraphState"]:
         `max_iterations` is the engine-level safety net (ADR-0033 D9.3):
         exceeding it raises `GraphRecursionError` (abnormal exit). Should be
         larger than the business-level max (e.g. business 25, compile 100).
+
+        `scheduler` selects the execution strategy (`SchedulerKind`).
+        Defaults to `LINEAR` (sequential execution — the original behaviour).
+        `PARALLEL` is reserved for the forthcoming `ParallelScheduler`.
+
+        `default_trigger` (Task 06) is the graph-level default trigger mode
+        under `ParallelScheduler`. A per-node `Node.trigger` overrides it
+        for that node. Ignored under `LINEAR`.
         """
         from .compiled_graph import CompiledGraph
 
@@ -206,21 +174,7 @@ class Graph[S: "GraphState"]:
                     f"(edge: {edge.source!r} → {edge.target!r})."
                 )
 
-        # 3. Conditional edge sources exist; destinations map to real nodes.
-        for cond in self._conditional_edges:
-            if cond.source not in self._nodes:
-                raise RoutingError(
-                    f"Conditional edge source {cond.source!r} is not a registered node."
-                )
-            if cond.destinations is not None:
-                for key, target in cond.destinations.items():
-                    if target != GraphNode.END and target not in self._nodes:
-                        raise RoutingError(
-                            f"Conditional edge destination for key {key!r} "
-                            f"points to unregistered node {target!r}."
-                        )
-
-        # 4. Node names unique — enforced by dict semantics. Sanity check:
+        # 3. Node names unique — enforced by dict semantics. Sanity check:
         # the name attribute on each node matches its registration key.
         for name, node in self._nodes.items():
             if node.name != name:
@@ -228,7 +182,7 @@ class Graph[S: "GraphState"]:
                 # registered under two different names. Defensive check.
                 raise RoutingError(f"Node registered as {name!r} has name attribute {node.name!r}.")
 
-        # 5. Cycle detection (optional, warn default).
+        # 4. Cycle detection (optional, warn default).
         cycles = self._detect_cycles(entry_node)
         if cycles:
             msg = f"Graph contains cycles: {cycles}"
@@ -240,13 +194,22 @@ class Graph[S: "GraphState"]:
 
                 warnings.warn(msg, stacklevel=2)
 
+        # 5. START/END reachability validation (PARALLEL only, Task 07).
+        # Under PARALLEL, every registered node must be reachable from the
+        # entry node (forward BFS) and must be able to reach GraphNode.END
+        # (reverse BFS from END). LINEAR skips both checks — it follows a
+        # single path and unreachable nodes are simply never visited.
+        if scheduler == SchedulerKind.PARALLEL:
+            self._validate_reachability(entry_node)
+
         return CompiledGraph(
             name=self.name,
             nodes=dict(self._nodes),
             edges=list(self._edges),
-            conditional_edges=list(self._conditional_edges),
             entry_node=entry_node,
             max_iterations=max_iterations,
+            scheduler=scheduler,
+            default_trigger=default_trigger,
         )
 
     def _detect_cycles(self, entry_node: str) -> list[list[str]]:
@@ -260,15 +223,6 @@ class Graph[S: "GraphState"]:
         for edge in self._edges:
             if edge.source in adj and edge.target in self._nodes:
                 adj[edge.source].append(edge.target)
-        for cond in self._conditional_edges:
-            if cond.source in adj:
-                if cond.destinations:
-                    adj[cond.source].extend(
-                        t for t in cond.destinations.values() if t in self._nodes
-                    )
-                else:
-                    # Can't statically know destinations; assume all nodes reachable.
-                    adj[cond.source].extend(self._nodes.keys())
 
         cycles: list[list[str]] = []
         visited: set[str] = set()
@@ -294,9 +248,67 @@ class Graph[S: "GraphState"]:
         dfs(entry_node)
         return cycles
 
+    def _validate_reachability(self, entry_node: str) -> None:
+        """Validate START/END reachability for PARALLEL scheduler (Task 07).
+
+        - START reachability: forward BFS from `entry_node` along declared
+          outgoing edges. Every registered node must be visited.
+        - END reachability: reverse BFS from `GraphNode.END` along incoming
+          edges. Every registered node must be visited (i.e., can reach END).
+
+        `GraphNode.START` and `GraphNode.END` are sentinels, not registered
+        nodes — they're excluded from the visited set but used as BFS
+        start points.
+        """
+        forward_adj: dict[str, set[str]] = {n: set() for n in self._nodes}
+        for edge in self._edges:
+            if edge.source in forward_adj and edge.target in self._nodes:
+                forward_adj[edge.source].add(edge.target)
+
+        visited_from_start: set[str] = set()
+        queue: list[str] = [entry_node]
+        while queue:
+            current = queue.pop(0)
+            if current in visited_from_start:
+                continue
+            visited_from_start.add(current)
+            for neighbor in forward_adj[current]:
+                if neighbor not in visited_from_start:
+                    queue.append(neighbor)
+
+        unreachable = set(self._nodes) - visited_from_start
+        if unreachable:
+            raise RoutingError(
+                f"Nodes unreachable from entry node {entry_node!r}: "
+                f"{sorted(unreachable)}. Under PARALLEL scheduler, all "
+                f"registered nodes must be reachable from the entry node "
+                f"via declared edges."
+            )
+
+        reverse_adj: dict[str, set[str]] = {}
+        for edge in self._edges:
+            reverse_adj.setdefault(edge.target, set()).add(edge.source)
+
+        visited_to_end: set[str] = set()
+        queue = [GraphNode.END]
+        while queue:
+            current = queue.pop(0)
+            for predecessor in reverse_adj.get(current, ()):
+                if predecessor in self._nodes and predecessor not in visited_to_end:
+                    visited_to_end.add(predecessor)
+                    queue.append(predecessor)
+
+        cant_reach_end = set(self._nodes) - visited_to_end
+        if cant_reach_end:
+            raise RoutingError(
+                f"Nodes that cannot reach {GraphNode.END!r}: "
+                f"{sorted(cant_reach_end)}. Under PARALLEL scheduler, all "
+                f"registered nodes must have a path to END via declared edges."
+            )
+
 
 # Imported here to avoid a circular import at module load — RoutingError is
 # used in compile() validation and is defined in .exceptions.
 from .exceptions import RoutingError  # noqa: E402
 
-__all__ = ["ConditionalEdge", "Edge", "Graph"]
+__all__ = ["Edge", "Graph"]

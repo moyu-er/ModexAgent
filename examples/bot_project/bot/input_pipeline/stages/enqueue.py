@@ -12,7 +12,7 @@ from pathlib import Path
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from modex_agent.core.types import InputMessage
-from modex_agent.input_pipeline.envelope import UserInputEnvelope
+from modex_agent.input_pipeline.envelope import CommandStatus, UserInputEnvelope
 from modex_agent.input_pipeline.stage import Continue, InputStage, StageResult
 
 
@@ -20,6 +20,8 @@ class EnqueueStage(InputStage):
     async def process(
         self, envelope: UserInputEnvelope, ctx: BotInputContext
     ) -> StageResult:
+        if envelope.command_status == CommandStatus.HANDLED:
+            return Continue(value=envelope)
         llm_content = envelope.metadata.get(RoutingMeta.SKILL_XML) or envelope.content
         attachments = [a.local_path for a in envelope.attachments if a.local_path]
         # Reuse the session resolved by S5 (already encoded once) instead of

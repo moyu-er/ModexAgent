@@ -15,7 +15,6 @@ vi.mock("./lib/api", () => ({
   fetchModels: vi.fn().mockResolvedValue({ choices: [] }),
   deleteConversation: vi.fn(),
   changeWorkspace: vi.fn(),
-  browseWorkspace: vi.fn(),
 }));
 
 vi.mock("./lib/timezone", () => ({

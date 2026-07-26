@@ -107,3 +107,41 @@ async def test_poller_reconciles_leaked_done_task():
     await asyncio.sleep(0.01)  # let it finish
     poller._reconcile()
     assert "stale.main" not in poller._inflight
+
+
+@pytest.mark.asyncio
+async def test_materialize_registers_parent_session_id_from_envelope():
+    """Poller must register parent_session_id from peeked envelope into SessionRegistry.
+
+    Regression: modexctl send (same-pool SubagentDispatch path) writes
+    InboxMessage with parent_session_id in metadata. The poller peeks the
+    envelope and passes parent_sid to materialize_agent, but never registered
+    it in SessionRegistry — so the session appeared parentless in session
+    management. send_to_agent avoids this because SubagentDispatchStrategy
+    registers the session WITH parent at send time; modexctl skips that step.
+    """
+    from modex_agent.core.session_registry import InMemorySessionRegistry
+
+    registry = InMemorySessionRegistry()
+
+    class _T:
+        async def materialize(self, parent, inv, deps):
+            inst = MagicMock(); inst.pipeline = MagicMock(); inst.pipeline.process_message = AsyncMock()
+            pool._instances["scout"] = inst
+            return inst
+
+    pool = _FakePool({"inv1.scout"}, {}, templates={"scout": _T()})
+    pool.session_registry = registry
+
+    async def peek_with_parent(sid, limit=1):
+        return [MagicMock(parent_session_id="conv123.main")]
+    pool.peek_inbox = peek_with_parent
+
+    poller = InboxPoller(pool, interval=0.02)
+    poller.start()
+    await asyncio.sleep(0.1)
+    await poller.stop()
+
+    session = await registry.get("inv1.scout")
+    assert session is not None, "session must be registered"
+    assert session.parent_session_id == "conv123.main"

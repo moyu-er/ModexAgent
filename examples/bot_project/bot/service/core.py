@@ -588,7 +588,6 @@ class BotService(AgentBuilderMixin):
                 turn=TurnTimeoutPolicy(
                     agent_run_timeout_seconds=420.0,
                     hook_timeout_seconds=10.0,
-                    tool_timeout_seconds=360.0,
                 ),
             )
         self._safety_policy_cache = policy

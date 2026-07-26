@@ -210,7 +210,11 @@ class TestReActAgentToolTimeout:
         tool = SlowTool()
         ctx = _make_ctx()
         ctx.tool_manager = FakeToolManager(tool)
-        agent = ReActAgent(provider=provider, tool_timeout=0.01)
+        from modex_agent.core.llm_struct import RuntimeSafetyPolicy, TurnTimeoutPolicy
+        ctx.runtime.services.safety = RuntimeSafetyPolicy(
+            turn=TurnTimeoutPolicy(tool_timeout_seconds=0.01),
+        )
+        agent = ReActAgent(provider=provider)
         emitter = _FakeEmitter()
         result = await agent.run(ctx, emitter)
         assert result is not None

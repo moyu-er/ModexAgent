@@ -24,14 +24,13 @@ class BrokerInputAdapter(InputAdapter):
     """把 Broker 的某个 Address 包装为 InputAdapter。支持 AgentMessageEnvelope 识别与去重。"""
 
     def __init__(self, broker: MessageBroker, address: Address, deduplicator: Any | None = None, *,
-                 session_factory: SessionIdFactory | None = None, default_agent_name: str = "main") -> None:
+                 session_factory: SessionIdFactory | None = None) -> None:
         super().__init__()
         self.broker = broker
         self.address = address
         self._running = False
         self._deduplicator = deduplicator
         self._session_factory = session_factory
-        self._default_agent_name = default_agent_name
 
     @property
     def name(self) -> str:
@@ -53,7 +52,6 @@ class BrokerInputAdapter(InputAdapter):
                 msg = _broker_msg_to_input_message(
                     broker_msg,
                     session_factory=self._session_factory,
-                    default_agent_name=self._default_agent_name,
                 )
                 # 去重检查
                 message_id = broker_msg.headers.get("message_id") or broker_msg.payload.get(
@@ -74,7 +72,6 @@ def _broker_msg_to_input_message(
     msg: BrokerMessage,
     *,
     session_factory: SessionIdFactory | None = None,
-    default_agent_name: str = "main",
 ) -> InputMessage:
     payload = msg.payload
     sender = msg.sender
@@ -115,14 +112,14 @@ def _broker_msg_to_input_message(
             orphan_key = f"orphan:{sender.name}:{uuid.uuid4().hex[:8]}"
             if session_factory is not None:
                 session = session_factory.create(
-                    agent_name=default_agent_name,
+                    agent_name=sender.name,
                     external_id=orphan_key,
                 )
             else:
-                session = SessionInfo.from_str(orphan_key, default_agent_name=default_agent_name)
+                session = SessionInfo(session_id=orphan_key, agent_name=sender.name)
 
     if session is None:
-        session = SessionInfo.from_str(raw_session, default_agent_name=default_agent_name)
+        session = SessionInfo.from_str(raw_session)
 
     return InputMessage(
         content=payload.get("content", ""),

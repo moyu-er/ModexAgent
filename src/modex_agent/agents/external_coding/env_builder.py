@@ -1,7 +1,7 @@
 ﻿"""External env builder — the single convergence point for ``MODEX_*`` vars.
 
 `ExternalEnvBuilder.build(spec, base_env)` is the only place in the
-codebase that constructs the 9 ``MODEX_*`` environment variables and the
+codebase that constructs the ``MODEX_*`` environment variables and the
 PATH-prepend for ``modexctl``. Per ADR-0022 D6, no other site is
 permitted to construct them.
 """
@@ -43,6 +43,42 @@ class ExternalEnvBuilder:
     """
 
     @staticmethod
+    def build_modex_vars(spec: ExternalEnvSpec) -> dict[str, str]:
+        """Build only the ``MODEX_*`` env vars from an ``ExternalEnvSpec``.
+
+        This is the single extraction point for MODEX_ var construction
+        (ADR-0022 D6). Both :meth:`build` (external coding spawn) and
+        :class:`modex_agent.hook.builtin.env_injection.NativeEnvInjectionHook`
+        (native agent contextvar injection) call this method so the two
+        paths never diverge.
+
+        Returns a new ``dict[str, str]`` containing only ``MODEX_*`` keys.
+        No ``PATH`` reconstruction or base-env merge happens here — callers
+        that need a full spawn env use :meth:`build`.
+        """
+        modex: dict[str, str] = {
+            "MODEX_WORKSPACE_ROOT": str(spec.workspace_root),
+            "MODEX_INBOX_ROOT": str(spec.inbox_root),
+            "MODEX_WORKDIR": str(spec.workdir),
+            "MODEX_SESSION_ID": spec.session_id,
+            "MODEX_AGENT_NAME": spec.agent_name,
+            "MODEX_PROVIDER_SESSION_ID": spec.provider_session_id,
+            "MODEX_AGENT_POOL_MAP": _format_pool_map(spec.agent_pool_map),
+            "MODEX_TARGETS": _format_targets(spec.targets),
+            "MODEX_COMM_KIND": spec.comm_kind.value,
+            "MODEX_CONTROL_ORIGIN": spec.control_origin,
+        }
+        if spec.comm_kind == AgentCommKind.SUBAGENT and spec.parent_session_id is not None:
+            modex["MODEX_PARENT_SESSION_ID"] = spec.parent_session_id
+        if spec.workflow_id is not None:
+            modex["MODEX_WORKFLOW_ID"] = str(spec.workflow_id)
+        if spec.task_id is not None:
+            modex["MODEX_TASK_ID"] = str(spec.task_id)
+        if spec.node_id is not None:
+            modex["MODEX_NODE_ID"] = str(spec.node_id)
+        return modex
+
+    @staticmethod
     def build(spec: ExternalEnvSpec, base_env: dict[str, str]) -> dict[str, str]:
         """Build the spawn env from an ``ExternalEnvSpec`` and a base env.
 
@@ -63,19 +99,7 @@ class ExternalEnvBuilder:
             vars plus a recreated ``PATH`` with the modexctl directory
             prepended.
         """
-        modex: dict[str, str] = {
-            "MODEX_WORKSPACE_ROOT": str(spec.workspace_root),
-            "MODEX_INBOX_ROOT": str(spec.inbox_root),
-            "MODEX_WORKDIR": str(spec.workdir),
-            "MODEX_SESSION_ID": spec.session_id,
-            "MODEX_AGENT_NAME": spec.agent_name,
-            "MODEX_PROVIDER_SESSION_ID": spec.provider_session_id,
-            "MODEX_AGENT_POOL_MAP": _format_pool_map(spec.agent_pool_map),
-            "MODEX_TARGETS": _format_targets(spec.targets),
-            "MODEX_COMM_KIND": spec.comm_kind.value,
-        }
-        if spec.comm_kind == AgentCommKind.SUBAGENT and spec.parent_session_id is not None:
-            modex["MODEX_PARENT_SESSION_ID"] = spec.parent_session_id
+        modex = ExternalEnvBuilder.build_modex_vars(spec)
 
         base_path = base_env.get("PATH", "")
         new_path = (

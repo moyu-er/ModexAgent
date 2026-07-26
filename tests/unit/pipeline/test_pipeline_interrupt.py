@@ -59,7 +59,7 @@ class TestPipelineRunInterrupt:
         Before fix: caught by ``except Exception`` → logged and loop continued.
         After fix: re-raised unchanged.
         """
-        msg = InputMessage(content="trigger approval", session=SessionInfo.from_str("s1", default_agent_name="main"))
+        msg = InputMessage(content="trigger approval", session=SessionInfo.from_str("s1"))
         pipeline.input_adapter = _FakeInputAdapter([msg])
 
         with patch.object(
@@ -71,7 +71,7 @@ class TestPipelineRunInterrupt:
     @pytest.mark.asyncio
     async def test_run_handles_regular_exception(self, pipeline):
         """Regular exceptions should still be caught and logged."""
-        msg = InputMessage(content="trigger error", session=SessionInfo.from_str("s1", default_agent_name="main"))
+        msg = InputMessage(content="trigger error", session=SessionInfo.from_str("s1"))
         pipeline.input_adapter = _FakeInputAdapter([msg])
 
         with patch.object(

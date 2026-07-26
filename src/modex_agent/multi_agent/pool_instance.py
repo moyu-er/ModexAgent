@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.messaging.broker import AddressKind
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.bus import AgentMessageBus
@@ -39,6 +40,7 @@ class PoolInstance:
     mcp_manager: Any | None
     terminal_manager: TerminalManagerBase | None
     main_agent_name: str
+    main_execution_strategy: ExecutionStrategyKind
     provider: Any
     notification_service: Any  # AgentNotificationService
     communication_service: Any  # AgentCommunicationService — resolves paths from workspace at runtime

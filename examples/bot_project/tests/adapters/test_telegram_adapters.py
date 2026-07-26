@@ -37,7 +37,7 @@ async def test_receive_yields_input_message_after_put() -> None:
 
     inp = TelegramInputAdapter(token="t", allow_from=["*"], proxy=None)
     await inp.start()
-    session = SessionInfo.from_str("42.main", default_agent_name="main")
+    session = SessionInfo.from_str("42.main")
     # S8 EnqueueStage path: a fully-built InputMessage is pushed via
     # put_input_message and drained by receive().
     inp.put_input_message(

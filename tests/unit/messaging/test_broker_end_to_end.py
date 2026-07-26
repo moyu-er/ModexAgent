@@ -330,7 +330,7 @@ async def test_bridge_service_input_exception_isolation(broker):
 
     healthy = _MockInputAdapter()
     await healthy.start()
-    healthy.inject(InputMessage(content="ok", session=SessionInfo.from_str("s1", default_agent_name="main")))
+    healthy.inject(InputMessage(content="ok", session=SessionInfo.from_str("s1")))
 
     service = BrokerBridgeService(
         broker=broker,

@@ -44,13 +44,14 @@ from modex_agent.agents.external_coding.scripted_backend import (
     ScriptedStep,
 )
 from modex_agent.agents.external_coding.types import ExecOptions, ExternalEnvSpec
-from modex_agent.cli.modexbot.errors import SelfSendRejectedError, UnknownTargetError
 from modex_agent.core.agent import AgentCommKind
 from modex_agent.core.constants import StopReason
 from modex_agent.core.types import InputMessage
 from modex_agent.multi_agent.tools import CommunicationTarget
 
 from ._external_coding_fixtures import (
+    SelfSendRejectedError,
+    UnknownTargetError,
     _build_external_agent,
     _ExternalPoolBundle,
     _FakePoolBundle,

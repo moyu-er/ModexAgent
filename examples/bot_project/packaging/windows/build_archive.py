@@ -83,6 +83,20 @@ _ARCHIVE_EXCLUDES = {
     "scripts",
 }
 
+# Nested paths (relative to app/) excluded from the installer source archive.
+# These are runtime-irrelevant subtrees inside otherwise-shipped directories:
+#   - examples/bot_project/tests/ : bot unit/integration tests (build-machine only)
+#   - examples/bot_project/webui/ : frontend source (the pre-built dist/ is shipped
+#                                    in bot/web/dist/; Node.js/npm are not expected
+#                                    on the install target)
+#   - examples/graph_patterns/    : modex_graph teaching examples (ADR-0007 rule 9
+#                                    — example code, not framework; zero bot refs)
+_NESTED_EXCLUDES = [
+    "examples/bot_project/tests",
+    "examples/bot_project/webui",
+    "examples/graph_patterns",
+]
+
 
 def _prune_excluded(app_dir: Path) -> None:
     """Delete excluded top-level directories from the extracted archive."""
@@ -96,6 +110,14 @@ def _prune_excluded(app_dir: Path) -> None:
         removed_bytes += size
         shutil.rmtree(p)
         print(f"    Removed: {name}/ ({size / 1e6:.1f} MB)")
+    for rel in _NESTED_EXCLUDES:
+        p = app_dir / rel
+        if not p.exists():
+            continue
+        size = sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
+        removed_bytes += size
+        shutil.rmtree(p)
+        print(f"    Removed: {rel}/ ({size / 1e6:.1f} MB)")
     print(f"    Pruned: {removed_bytes / 1e6:.1f} MB total")
 
 
@@ -115,10 +137,14 @@ def _overlay_working_tree(repo_root: Path, app_dir: Path) -> None:
         capture_output=True, text=True, check=True,
     )
     tracked = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    nested_excludes = {p.replace("\\", "/") for p in _NESTED_EXCLUDES}
     copied = 0
     for rel in tracked:
-        top = rel.replace("\\", "/").split("/", 1)[0]
+        rel_fwd = rel.replace("\\", "/")
+        top = rel_fwd.split("/", 1)[0]
         if top in _ARCHIVE_EXCLUDES:
+            continue
+        if any(rel_fwd.startswith(ne + "/") for ne in nested_excludes):
             continue
         src = repo_root / rel
         if not src.is_file():

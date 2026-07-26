@@ -54,7 +54,7 @@ def _pending_snapshot(session_id: str = "s1") -> TurnSnapshot:
 class TestDrain:
     def test_no_callback_warns(self, caplog: pytest.LogCaptureFixture) -> None:
         renderer = ApprovalRenderer()
-        renderer._approval_pending["s1"] = [InputMessage(content="x", session=SessionInfo.from_str("s1", default_agent_name="main"))]
+        renderer._approval_pending["s1"] = [InputMessage(content="x", session=SessionInfo.from_str("s1"))]
         with caplog.at_level("WARNING"):
             asyncio.run(renderer.drain("s1"))
         assert "_on_drain is None" in caplog.text
@@ -69,8 +69,8 @@ class TestDrain:
 
         renderer._on_drain = _mock
         renderer._approval_pending["s1"] = [
-            InputMessage(content="a", session=SessionInfo.from_str("s1", default_agent_name="main")),
-            InputMessage(content="b", session=SessionInfo.from_str("s1", default_agent_name="main")),
+            InputMessage(content="a", session=SessionInfo.from_str("s1")),
+            InputMessage(content="b", session=SessionInfo.from_str("s1")),
         ]
         asyncio.run(renderer.drain("s1"))
 
@@ -84,7 +84,7 @@ class TestDrain:
 class TestDetect:
     def test_no_pending_snapshot_returns_false(self) -> None:
         renderer = ApprovalRenderer()
-        msg = InputMessage(content="hello", session=SessionInfo.from_str("s1", default_agent_name="main"))
+        msg = InputMessage(content="hello", session=SessionInfo.from_str("s1"))
         is_cmd, state = asyncio.run(
             renderer.detect(msg, "s1", {}, pending_snapshot=None)
         )
@@ -94,7 +94,7 @@ class TestDetect:
     def test_approval_command_detected(self) -> None:
         renderer = ApprovalRenderer()
         snapshot = _pending_snapshot()
-        msg = InputMessage(content="/approve", session=SessionInfo.from_str("s1", default_agent_name="main"))
+        msg = InputMessage(content="/approve", session=SessionInfo.from_str("s1"))
         is_cmd, state = asyncio.run(
             renderer.detect(
                 msg,
@@ -110,7 +110,7 @@ class TestDetect:
     def test_unrelated_input_auto_denies(self) -> None:
         renderer = ApprovalRenderer()
         snapshot = _pending_snapshot()
-        msg = InputMessage(content="random chat", session=SessionInfo.from_str("s1", default_agent_name="main"))
+        msg = InputMessage(content="random chat", session=SessionInfo.from_str("s1"))
         is_cmd, state = asyncio.run(
             renderer.detect(msg, "s1", {}, pending_snapshot=snapshot)
         )
@@ -126,7 +126,7 @@ class TestDetect:
         snapshot = _pending_snapshot()
         msg = InputMessage(
             content="subagent update",
-            session=SessionInfo.from_str("s1", default_agent_name="main"),
+            session=SessionInfo.from_str("s1"),
             metadata={"source_agent": "subagent-a"},
         )
         is_cmd, state = asyncio.run(
@@ -152,7 +152,7 @@ class TestCleanup:
 
     def test_removes_pending(self) -> None:
         renderer = ApprovalRenderer()
-        renderer._approval_pending["s1"] = [InputMessage(content="x", session=SessionInfo.from_str("s1", default_agent_name="main"))]
+        renderer._approval_pending["s1"] = [InputMessage(content="x", session=SessionInfo.from_str("s1"))]
         renderer.cleanup_session("s1")
         assert "s1" not in renderer._approval_pending
 

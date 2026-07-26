@@ -108,13 +108,22 @@ INBOX_MESSAGES_DEAD_COLUMNS: frozenset[str] = frozenset(
     }
 )
 
+# Columns removed from memory_session_messages (ADR-0031 supplement + this cleanup).
+MEMORY_SESSION_MESSAGES_DEAD_COLUMNS: frozenset[str] = frozenset(
+    {
+        "deleted_at",
+        "session_id",
+        "user_id",
+        "agent_id",
+    }
+)
+
 # `inbox_topics` minimal column set per ADR-0031 §4.
 INBOX_TOPICS_COLUMNS: frozenset[str] = frozenset(
     {
         "topic_id",
         "owner_scope_key",
         "scope_key",
-        "session_id",
         "created_at",
         "updated_at",
     }
@@ -267,6 +276,16 @@ async def test_no_pool_column_on_any_table(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_memory_session_messages_has_no_dead_columns(tmp_path: Path) -> None:
+    manager = await _open_workspace(tmp_path)
+    cols = set(await _table_columns(manager, "memory_session_messages"))
+    await manager.close()
+
+    leftover = MEMORY_SESSION_MESSAGES_DEAD_COLUMNS & cols
+    assert not leftover, f"memory_session_messages still carries dead columns: {sorted(leftover)}"
+
+
+@pytest.mark.asyncio
 async def test_inbox_topics_has_only_minimal_columns(tmp_path: Path) -> None:
     manager = await _open_workspace(tmp_path)
     cols = set(await _table_columns(manager, "inbox_topics"))
@@ -316,7 +335,6 @@ async def test_all_timestamp_columns_are_integer(tmp_path: Path) -> None:
         "decided_at",
         "delivered_at",
         "consumed_at",
-        "deleted_at",
         "last_committed_at",
         "last_active",
     }
@@ -453,7 +471,6 @@ async def test_indexes_match_target_design(tmp_path: Path) -> None:
         # inbox_messages
         "idx_messages_scope_state_seq",
         "idx_messages_owner_pending",
-        "idx_messages_owner_expired",
         # inbox_delivered_ids
         "idx_delivered_owner",
         # turn_snapshots
@@ -535,57 +552,13 @@ async def test_memory_session_messages_state_check(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_memory_session_messages_deleted_at_consistency(tmp_path: Path) -> None:
-    """(state = 'soft_deleted') must equal (deleted_at IS NOT NULL)."""
-    manager = await _open_workspace(tmp_path)
-    scope_key_a = _scope_key(session_id="s1")
-    scope_key_b = RecordScope(session_id="s2").canonical()
-    base_insert = (
-        "INSERT INTO memory_session_messages "
-        "(scope_key, seq, message_id, role, content, message_json, state, deleted_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-    )
-
-    # 'normal' with non-null deleted_at must be rejected.
-    with pytest.raises(sqlite3.IntegrityError):
-        await manager.execute(
-            base_insert, (scope_key_a, 1, "m1", "user", "hi", "{}", "normal", 1_700_000_000_000)
-        )
-
-    # 'soft_deleted' with null deleted_at must be rejected.
-    with pytest.raises(sqlite3.IntegrityError):
-        await manager.execute(
-            base_insert, (scope_key_b, 1, "m1", "user", "hi", "{}", "soft_deleted", None)
-        )
-
-    # Valid: 'normal' with NULL deleted_at.
-    await manager.execute(
-        "INSERT INTO memory_session_messages "
-        "(scope_key, seq, message_id, role, content, message_json) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (scope_key_a, 1, "m1", "user", "hi", "{}"),
-    )
-
-    # Valid: 'soft_deleted' with non-null deleted_at.
-    await manager.execute(
-        base_insert,
-        (scope_key_b, 1, "m1", "user", "hi", "{}", "soft_deleted", 1_700_000_000_000),
-    )
-
-    count = await manager.query_value("SELECT COUNT(*) FROM memory_session_messages", int)
-    await manager.close()
-
-    assert count == 2
-
-
-@pytest.mark.asyncio
 async def test_inbox_messages_message_type_check(tmp_path: Path) -> None:
     manager = await _open_workspace(tmp_path)
     owner = RecordScope(workspace_id="ws-a").canonical()
     scope_key = RecordScope(workspace_id="ws-a", session_id="s1").canonical()
     await manager.execute(
-        "INSERT INTO inbox_topics (owner_scope_key, scope_key, session_id) VALUES (?, ?, ?)",
-        (owner, scope_key, "s1"),
+        "INSERT INTO inbox_topics (owner_scope_key, scope_key) VALUES (?, ?)",
+        (owner, scope_key),
     )
     topic_id = await manager.query_value("SELECT topic_id FROM inbox_topics", int)
 
@@ -613,8 +586,8 @@ async def test_inbox_messages_state_check(tmp_path: Path) -> None:
     owner = RecordScope(workspace_id="ws-a").canonical()
     scope_key = RecordScope(workspace_id="ws-a", session_id="s1").canonical()
     await manager.execute(
-        "INSERT INTO inbox_topics (owner_scope_key, scope_key, session_id) VALUES (?, ?, ?)",
-        (owner, scope_key, "s1"),
+        "INSERT INTO inbox_topics (owner_scope_key, scope_key) VALUES (?, ?)",
+        (owner, scope_key),
     )
     topic_id = await manager.query_value("SELECT topic_id FROM inbox_topics", int)
 
@@ -754,8 +727,8 @@ async def test_inbox_messages_fk_to_inbox_topics(tmp_path: Path) -> None:
     owner = RecordScope(workspace_id="ws-a").canonical()
     scope_key = RecordScope(workspace_id="ws-a", session_id="s1").canonical()
     await manager.execute(
-        "INSERT INTO inbox_topics (owner_scope_key, scope_key, session_id) VALUES (?, ?, ?)",
-        (owner, scope_key, "s1"),
+        "INSERT INTO inbox_topics (owner_scope_key, scope_key) VALUES (?, ?)",
+        (owner, scope_key),
     )
     topic_id = await manager.query_value("SELECT topic_id FROM inbox_topics", int)
 
@@ -779,8 +752,8 @@ async def test_inbox_delivered_ids_fk_to_inbox_topics_scope_key(tmp_path: Path) 
     owner = RecordScope(workspace_id="ws-a").canonical()
     scope_key = RecordScope(workspace_id="ws-a", session_id="s1").canonical()
     await manager.execute(
-        "INSERT INTO inbox_topics (owner_scope_key, scope_key, session_id) VALUES (?, ?, ?)",
-        (owner, scope_key, "s1"),
+        "INSERT INTO inbox_topics (owner_scope_key, scope_key) VALUES (?, ?)",
+        (owner, scope_key),
     )
 
     # FK violation: owner does not match any topic's scope_key.
@@ -843,6 +816,17 @@ async def test_sessions_generated_columns_derived_from_scope_key(tmp_path: Path)
 
 
 @pytest.mark.asyncio
+async def test_sessions_has_no_parent_session_pk(tmp_path: Path) -> None:
+    manager = await _open_workspace(tmp_path)
+    cols = set(await _table_columns(manager, "sessions"))
+    await manager.close()
+
+    assert "parent_session_pk" not in cols, (
+        "sessions.parent_session_pk was removed — string parent_session_id is the sole association"
+    )
+
+
+@pytest.mark.asyncio
 async def test_sessions_no_pool_session_prefix_pool_index(tmp_path: Path) -> None:
     """idx_sessions_pool_prefix and idx_sessions_pool_agent must be gone."""
     manager = await _open_workspace(tmp_path)
@@ -869,6 +853,7 @@ async def test_sessions_no_pool_session_prefix_pool_index(tmp_path: Path) -> Non
         "idx_messages_owner_session",
         "idx_messages_scope_session",
         "idx_messages_parent",
+        "idx_messages_owner_expired",
     }
     found: list[str] = []
     for index_name in dead_indexes:
@@ -903,3 +888,49 @@ async def test_created_at_default_fires_when_omitted(tmp_path: Path) -> None:
     # Both must be positive int-ms epochs (no exact value asserted — race-free).
     assert isinstance(created_at, int) and created_at > 0
     assert isinstance(updated_at, int) and updated_at > 0
+
+
+# ---------------------------------------------------------------------------
+# IF NOT EXISTS idempotency — re-executing the DDL must not error or drift
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ddl_if_not_exists_produces_identical_schema_on_rerun(
+    tmp_path: Path,
+) -> None:
+    """All CREATE TABLE/INDEX/TRIGGER use IF NOT EXISTS.
+
+    If the schema_migrations guard fails and run_pending() re-executes 001,
+    the DDL must be a no-op — sqlite_master must be byte-identical."""
+    manager = await _open_workspace(tmp_path)
+    first_snapshot = await manager.query_all(
+        "SELECT name, type, sql FROM sqlite_master "
+        "WHERE type IN ('table','index','trigger') AND name NOT LIKE 'sqlite_%' "
+        "ORDER BY name"
+    )
+    migration_sql = (
+        Path(__file__).resolve().parents[3]
+        / "src"
+        / "modex_agent"
+        / "persistence"
+        / "migrations"
+        / "workspace"
+        / "001_initial.sql"
+    ).read_text(encoding="utf-8")
+    import sqlite3 as _sqlite3
+
+    conn = _sqlite3.connect(str(tmp_path / "workspace.db"))
+    conn.executescript(migration_sql)
+    conn.close()
+
+    second_snapshot = await manager.query_all(
+        "SELECT name, type, sql FROM sqlite_master "
+        "WHERE type IN ('table','index','trigger') AND name NOT LIKE 'sqlite_%' "
+        "ORDER BY name"
+    )
+    await manager.close()
+
+    assert first_snapshot == second_snapshot, (
+        "Re-executing 001_initial.sql changed sqlite_master — IF NOT EXISTS is not effective"
+    )

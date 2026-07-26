@@ -62,7 +62,7 @@ def _make_server(workspace_root: Path, *, media_config: MediaConfig | None = Non
 async def test_media_config_returns_default_numbers() -> None:
     """With no override, the endpoint returns the frozen MediaConfig() defaults."""
     with tempfile.TemporaryDirectory() as tmp:
-        workspace_root = Path(tmp)
+        workspace_root = Path(tmp).resolve()
         server, _ = _make_server(workspace_root)
         client = TestClient(TestServer(server.app))
         await client.start_server()
@@ -89,7 +89,7 @@ async def test_media_config_returns_configured_numbers() -> None:
         max_outbound_bytes=444,
     )
     with tempfile.TemporaryDirectory() as tmp:
-        workspace_root = Path(tmp)
+        workspace_root = Path(tmp).resolve()
         server, _ = _make_server(workspace_root, media_config=custom)
         client = TestClient(TestServer(server.app))
         await client.start_server()
@@ -109,7 +109,7 @@ async def test_media_config_returns_configured_numbers() -> None:
 async def test_media_config_falls_back_when_no_input_context() -> None:
     """When no input context is wired (minimal server), defaults are returned."""
     with tempfile.TemporaryDirectory() as tmp:
-        workspace_root = Path(tmp)
+        workspace_root = Path(tmp).resolve()
         input_adapter = WebSocketInputAdapter()
         store = WorkspaceScopedTranscriptStore(data_dir_name=".modex")
         home_sessions_dir = WorkspacePaths(root=workspace_root / ".modex").sessions_dir
@@ -137,7 +137,7 @@ async def test_upload_saves_temp_file_and_returns_ref() -> None:
     response carries local_path/filename/size the frontend passes back as an
     AttachmentRef."""
     with tempfile.TemporaryDirectory() as tmp:
-        workspace_root = Path(tmp)
+        workspace_root = Path(tmp).resolve()
         server, _ = _make_server(workspace_root)
         client = TestClient(TestServer(server.app))
         await client.start_server()
@@ -173,7 +173,7 @@ async def test_upload_saves_temp_file_and_returns_ref() -> None:
 async def test_upload_rejects_missing_file_part() -> None:
     """A request without the 'file' part is rejected with 400."""
     with tempfile.TemporaryDirectory() as tmp:
-        workspace_root = Path(tmp)
+        workspace_root = Path(tmp).resolve()
         server, _ = _make_server(workspace_root)
         client = TestClient(TestServer(server.app))
         await client.start_server()
@@ -200,7 +200,7 @@ async def test_upload_rejects_oversize_with_413() -> None:
         max_outbound_bytes=100,
     )
     with tempfile.TemporaryDirectory() as tmp:
-        workspace_root = Path(tmp)
+        workspace_root = Path(tmp).resolve()
         server, _ = _make_server(workspace_root, media_config=tiny_cap)
         client = TestClient(TestServer(server.app))
         await client.start_server()
@@ -226,7 +226,7 @@ def test_sweep_media_tmp_orphans_clears_stale_only() -> None:
     """The startup sweep removes leftover ``_tmp`` uploads but leaves accepted
     files (``uploads/``) and the ``_tmp`` dir itself intact (ADR-0013 §13)."""
     with tempfile.TemporaryDirectory() as tmp:
-        workspace_root = Path(tmp)
+        workspace_root = Path(tmp).resolve()
         server, _ = _make_server(workspace_root)
 
         media_main = workspace_root / ".modex" / "media" / "main"

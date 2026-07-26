@@ -110,7 +110,7 @@ class TestDeleteSkill:
         store.upload_skill("alpha", {"SKILL.md": "y"})
         assert (tmp_path / "skills" / "coding" / "scout" / "alpha" / "SKILL.md").read_text() == "y"
         assert store.list_agent_skills("coding", "scout") == [
-            SkillEntry(name="alpha", source=SkillSource.GLOBAL, origin=SkillOrigin.REPO)
+            SkillEntry(name="alpha", source=SkillSource.GLOBAL, origin=SkillOrigin.REPO, description="y")
         ]
 
 
@@ -180,7 +180,7 @@ class TestListAgentSkills:
         store.upload_skill("alpha", {"SKILL.md": "x"})
         store.assign_skill_to_agent("coding", "scout", "alpha")
         skills = store.list_agent_skills("coding", "scout")
-        assert skills == [SkillEntry(name="alpha", source=SkillSource.GLOBAL, origin=SkillOrigin.REPO)]
+        assert skills == [SkillEntry(name="alpha", source=SkillSource.GLOBAL, origin=SkillOrigin.REPO, description="x")]
 
     def test_local_skill_marked_local(self, store: SkillsStore, tmp_path: Path) -> None:
         # Manually place a skill dir not present in global.
@@ -188,7 +188,7 @@ class TestListAgentSkills:
         (local / "SKILL.md").parent.mkdir(parents=True)
         local.joinpath("SKILL.md").write_text("manual", encoding="utf-8")
         skills = store.list_agent_skills("coding", "scout")
-        assert skills == [SkillEntry(name="handmade", source=SkillSource.LOCAL)]
+        assert skills == [SkillEntry(name="handmade", source=SkillSource.LOCAL, description="manual")]
 
     def test_empty_when_no_dir(self, store: SkillsStore) -> None:
         assert store.list_agent_skills("coding", "scout") == []
@@ -426,7 +426,7 @@ class TestUserGlobalSource:
         assert dst.joinpath("SKILL.md").read_text(encoding="utf-8") == "u"
         # Listed as global-backed (resolves to the user source).
         skills = store.list_agent_skills("coding", "scout")
-        assert skills == [SkillEntry(name="extra", source=SkillSource.GLOBAL, origin=SkillOrigin.USER)]
+        assert skills == [SkillEntry(name="extra", source=SkillSource.GLOBAL, origin=SkillOrigin.USER, description="u")]
 
     def test_user_skill_itself_a_symlink_is_resolved(
         self, store: SkillsStore, tmp_path: Path

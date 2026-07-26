@@ -199,6 +199,7 @@ class AgentTemplate:
             parent_prompt_lookup=parent_prompt_lookup,
             fork_context_spec=fork_context_spec,
             roles=list(self.spec.roles),
+            store_registry=deps.memory_store_registry,
         )
 
         tool_manager = await self._build_tool_manager(deps, name, runtime_dir)
@@ -234,6 +235,55 @@ class AgentTemplate:
                     notification_service=deps.notification_service,
                 )
             )
+
+        # NativeEnvInjectionHook — populate _modex_env / _current_session_id
+        # at BEFORE_TURN so native subagent subprocess tools receive
+        # MODEX_* env vars (parity with main-agent wiring in pool_builder.
+        # _wire_main_pipeline). The subagent's pool_map carries itself +
+        # its parent so ``modexctl send --to <parent>`` routes correctly;
+        # targets is the parent only (the subagent's sole routable peer
+        # per star topology). session_id / agent_name / parent_session_id
+        # are placeholders overridden per-turn from ctx.session inside the
+        # hook. workspace_root mirrors subagent_external_coding_builder.
+        # _resolve_workspace_dir: prefer deps.project_dir, else climb
+        # three levels from resolver.runtime_dir()
+        # (<workspace>/.modex/runtime_state/<pool>).
+        from modex_agent.agents.external_coding.cli_resolver import resolve_modexctl_bin_dir
+        from modex_agent.agents.external_coding.types import ExternalEnvSpec
+        from modex_agent.hook.builtin import NativeEnvInjectionHook
+
+        subagent_workspace_root: Path
+        if deps.project_dir is not None:
+            subagent_workspace_root = deps.project_dir
+        elif runtime_dir is not None and len(runtime_dir.parents) >= 3:
+            subagent_workspace_root = runtime_dir.parents[2]
+        elif runtime_dir is not None:
+            subagent_workspace_root = runtime_dir
+        else:
+            subagent_workspace_root = Path(".")
+
+        subagent_pool_name = _pool_name(deps)
+        subagent_pool_map: dict[str, str] = {name: subagent_pool_name}
+        if parent_name:
+            subagent_pool_map[parent_name] = subagent_pool_name
+        subagent_targets: list[tuple[str, str]] = (
+            [(parent_name, "")] if parent_name else []
+        )
+        subagent_env_spec = ExternalEnvSpec(
+            workspace_root=subagent_workspace_root,
+            inbox_root=subagent_workspace_root / ".modex" / "inbox",
+            workdir=subagent_workspace_root,
+            session_id=f"__pending__.{name}",
+            agent_name=name,
+            provider_session_id="",
+            agent_pool_map=subagent_pool_map,
+            targets=subagent_targets,
+            modexctl_bin_dir=resolve_modexctl_bin_dir(),
+            comm_kind=AgentCommKind.SUBAGENT,
+            parent_session_id=None,
+            control_origin=deps.control_origin,
+        )
+        hooks.append(NativeEnvInjectionHook(env_spec_template=subagent_env_spec))
 
         # ── Descriptor ──
         descriptor = AgentDescriptor(

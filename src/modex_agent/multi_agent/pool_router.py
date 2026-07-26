@@ -167,8 +167,52 @@ class PoolRouter:
                 target,
             )
             return
+        target = self._reconcile_pool_for_agent(target, msg)
         pool = self._pools[target]
         await self._route_to_pool(msg, pool)
+
+    def _reconcile_pool_for_agent(self, target: str, msg: InputMessage) -> str:
+        """Reconcile the routed pool with the message's agent_name.
+
+        ``session_id`` encodes an agent_name (e.g. ``conv1.orchestrator``).
+        When a user switches pools via WebUI the routing store updates to the
+        new pool, but a message already carrying the old pool's agent_name
+        would land in the wrong pool — creating an orphan that the poller
+        can never consume (``no template for X; skipping`` forever).
+
+        If the target pool does not serve ``msg.session.agent_name``, search
+        all pools for one that does and re-route there. The routing store is
+        NOT mutated — per ADR-0019 the store is the routing authority,
+        maintained by the pool-switch write path; the router only corrects
+        the per-message routing decision.
+        """
+        agent_name = msg.session.agent_name
+        if not agent_name:
+            return target
+        if self._pools[target].pool.serves_agent(agent_name):
+            return target
+        for name, instance in self._pools.items():
+            if name == target:
+                continue
+            if instance.pool.serves_agent(agent_name):
+                logger.warning(
+                    "Re-routing session %s from pool '%s' to pool '%s' "
+                    "(agent '%s' is not served by '%s').",
+                    msg.session.session_id_prefix,
+                    target,
+                    name,
+                    agent_name,
+                    target,
+                )
+                return name
+        logger.error(
+            "No pool serves agent '%s' for session %s; routing to '%s' "
+            "will produce an orphan message.",
+            agent_name,
+            msg.session.session_id_prefix,
+            target,
+        )
+        return target
 
     def set_pool(self, session_id: str, pool_name: str) -> None:
         """Set pool routing for a session without sending a notification.

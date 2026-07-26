@@ -8,7 +8,7 @@ from pathlib import Path
 from bot.input_pipeline.context import BotInputContext
 from bot.input_pipeline.stages.resolve_pool import RoutingMeta
 from bot.webui.events import UserMessageEvent
-from modex_agent.input_pipeline.envelope import UserInputEnvelope
+from modex_agent.input_pipeline.envelope import CommandStatus, UserInputEnvelope
 from modex_agent.input_pipeline.stage import Continue, InputStage, StageResult
 from modex_agent.workspace.runtime import bind_workspace_root
 
@@ -29,10 +29,12 @@ class PersistUserMessageStage(InputStage):
         content = envelope.content.strip()
         # Defense-in-depth: a valid skill invocation legitimately starts with
         # "/" and carries skill_xml (set by S6) — it must be persisted as the
-        # raw text.  Only a "/" command WITHOUT skill_xml is a control command
-        # that leaked past S2/S3/S6; skip persisting those.
-        if content.startswith("/") and not envelope.command_resolved:
-            logger.warning("Unresolved command reached persistence: %s", content)
+        # raw text.  Only a "/" command that is UNRESOLVED (no stage claimed
+        # it) or HANDLED (a stage fully processed it, e.g. /continue) should
+        # skip persisting.
+        if content.startswith("/") and envelope.command_status != CommandStatus.RESOLVED:
+            if envelope.command_status == CommandStatus.UNRESOLVED:
+                logger.warning("Unresolved command reached persistence: %s", content)
             return Continue(value=envelope)
 
         full_sid = envelope.metadata[RoutingMeta.FULL_SESSION_ID]

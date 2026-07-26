@@ -15,8 +15,8 @@ Covers every T5 acceptance criterion:
   ``finally``).
 - Stale-session recovery: backend raises → invalidate → single fresh
   retry.
-- Outbound send intent exercised in-process via T2's
-  ``_build_inbox_line`` routing function (same code path the CLI uses).
+- Outbound send intent exercised in-process by constructing the same
+  ``OutboxLine`` shape the agent emits when it calls ``modexctl send``.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -54,6 +55,8 @@ from modex_agent.agents.external_coding.types import (
     Emission,
     ExecOptions,
     ExternalEnvSpec,
+    OutboxLine,
+    OutboxMetadata,
 )
 from modex_agent.core.agent import AgentContext, current_agent_context
 from modex_agent.core.constants import StopReason
@@ -68,6 +71,8 @@ from modex_agent.core.turn_events import (
     TurnToolCallEvent,
     TurnToolResultEvent,
 )
+from modex_agent.multi_agent.message_type import AgentMessageType
+from modex_agent.multi_agent.message_xml import build_peer_agent_message
 
 _MODEX_ENV_KEYS = (
     "MODEX_WORKSPACE_ROOT",
@@ -761,14 +766,28 @@ class TestStaleSessionRecovery:
 class TestOutboundSendViaRouting:
     @pytest.mark.asyncio
     async def test_side_effect_calls_t2_build_inbox_line(self, tmp_path: Path) -> None:
-        from modex_agent.cli.modexbot.routing import _build_inbox_line
-
         spec = _make_spec(tmp_path, session_id="pool1.agent1")
         built: list[str] = []
 
         async def side_effect(_opts: ExecOptions) -> None:
-            line = _build_inbox_line(spec, "pool1.helper", "hello from agent1")
-            built.append(line)
+            xml_content = build_peer_agent_message(
+                source=spec.agent_name,
+                content="hello from agent1",
+            )
+            line = OutboxLine(
+                message_id="test-id",
+                source=spec.agent_name,
+                content=xml_content,
+                message_type=AgentMessageType.AGENT_MESSAGE.value,
+                timestamp=datetime.now(UTC),
+                metadata=OutboxMetadata(
+                    agent_session_id="pool1.helper",
+                    session_id=spec.session_id,
+                    invocation_id="pool1",
+                    parent_session_id=None,
+                ),
+            )
+            built.append(line.model_dump_json())
 
         steps = (
             _pi_text_step("sending a message"),

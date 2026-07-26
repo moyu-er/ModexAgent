@@ -4,7 +4,10 @@
 
 Accepted. Refines ADR-0011 Decision 3 (approval channel divergence) and reworks
 the bot input-pipeline command-resolution model. Supersedes no decision; narrows
-0011's divergence to a single field.
+0011's divergence to a single field. The command-resolution signal was later
+refined from a boolean `command_resolved` to a three-state `CommandStatus` enum
+(UNRESOLVED / RESOLVED / HANDLED) with a shared `CommandDispatchStage` for
+cross-channel commands — see Decisions 3 and 6.
 
 ## Context
 
@@ -47,25 +50,38 @@ different way to fill one field.
 
 2. **A single terminal stage rejects unsupported commands.** A new
    `UnsupportedCommandStage` runs after every claiming stage but **before**
-   persistence and enqueue. It reads one signal — `command_resolved` — and
+   persistence and enqueue. It reads one signal — `command_status` — and
    rejects any envelope whose content is still a slash command that no stage
-   claimed, with one generic notice (`NOTICE_UNKNOWN_COMMAND`). It is present in
-   both the IM and WebUI pipelines. The existing terminate→response feedback
-   mechanism is unchanged.
+   claimed (still `UNRESOLVED`), with one generic notice
+   (`NOTICE_UNKNOWN_COMMAND`). It is present in both the IM and WebUI
+   pipelines. The existing terminate→response feedback mechanism is unchanged.
 
-3. **`command_resolved` carries the claim.** `UserInputEnvelope` gains a typed
-   `command_resolved: bool` field. A claim-and-continue stage sets it. The
-   terminal stage is fully generic — it does not know about skills or approval,
-   only whether *some* stage claimed the command. Adding a new command type means
-   adding a claiming stage that sets the flag; the terminal stage never changes.
+3. **`command_status` carries the claim — as a three-state enum.**
+   `UserInputEnvelope` carries a typed `command_status: CommandStatus` field
+   (`UNRESOLVED` / `RESOLVED` / `HANDLED`), starting at `UNRESOLVED`. A
+   claim-and-continue stage sets it:
+
+   - `RESOLVED` — claimed; the pipeline continues normally (persist the user
+     message, enqueue to the agent). Set by `SkillParseStage` and
+     `ApprovalStage`.
+   - `HANDLED` — claimed and fully processed by the stage itself (e.g. the
+     stage enqueued a continue signal, switched workspace). Downstream stages
+     skip persist and enqueue. Set by `CommandDispatchStage` and the IM-only
+     `EnvironmentControlStage` / `SessionControlStage`.
+
+   The terminal stage is fully generic — it does not know about skills or
+   approval, only whether *some* stage claimed the command. Adding a new
+   command type means adding a claiming stage that sets the status; the
+   terminal stage never changes.
 
 4. **Approval is one structured decision across channels.** A new `ApprovalStage`
    (in both pipelines) interprets a typed `/approve` / `/deny` into an
-   `ApprovalDecisionInput` on the envelope, sets `command_resolved`, and clears
-   the content. WebUI already builds the same DTO at its approvals endpoint. Both
-   channels therefore reach the single structured resume branch in
-   `build_turn_request`; the bot no longer relies on the command processor's
-   `ApprovalCommandHandler` for approval.
+   `ApprovalDecisionInput` on the envelope, sets
+   `command_status = CommandStatus.RESOLVED`, and clears the content. WebUI
+   already builds the same DTO at its approvals endpoint. Both channels
+   therefore reach the single structured resume branch in `build_turn_request`;
+   the bot no longer relies on the command processor's `ApprovalCommandHandler`
+   for approval.
 
 5. **The IM/WebUI approval seam narrows to one field.** `ApprovalDecisionInput.
    tool_call_id` is relaxed to `str | None`. IM fills `None` (decide-next-pending,
@@ -73,6 +89,17 @@ different way to fill one field.
    Decision 3's invariant — `None` → decide next, id → target that one — is
    preserved; only the input path is unified. `from_dict` is made None-safe so
    the field survives broker serialization without becoming the string `"None"`.
+
+6. **Cross-channel commands share one dispatch stage.** A `CommandDispatchStage`
+   (in both pipelines) dispatches built-in slash commands via a caller-supplied
+   handler map; each pipeline declares exactly which commands it supports. It
+   sits after `ResolvePoolStage` (needs the resolved pool/session) and before
+   attachment ingest. A handled command sets `command_status = HANDLED` so
+   persistence and enqueue are skipped. `/continue` lives here — moved out of
+   the IM-only `EnvironmentControlStage` (S2) so cross-channel commands have one
+   home. Channel-specific commands that need pre-`ResolvePool` positional
+   constraints (IM `/cd`, `/pool`, `/exit`, `/pwd`, `/stop`) stay in S2/S3.
+   Command names are centralised in a `BuiltinCommand` enum (no raw strings).
 
 ## Considered Options
 
@@ -99,7 +126,10 @@ different way to fill one field.
 4. **Consume claimed commands by clearing `content` uniformly (rejected).**
    Approval can clear content, but a skill's raw text must survive to
    persistence, so "content no longer looks like a command" cannot be the claim
-   signal. An explicit `command_resolved` flag handles both uniformly.
+   signal. An explicit `command_status` field handles both uniformly — and the
+   three-state enum additionally distinguishes "claimed, continue normally"
+   (RESOLVED) from "claimed, fully handled" (HANDLED), which a boolean could
+   not express.
 
 ## Consequences
 
@@ -117,18 +147,25 @@ different way to fill one field.
   earlier and bypasses it.
 - `ApprovalDecisionInput.tool_call_id` is now nullable; broker transport
   (`broker_bridge`, `multi_agent/pool`) and `from_dict` must tolerate `None`.
-- The S7 persistence guard (`content.startswith("/") and SKILL_XML not in
-  metadata`) collapses to a `command_resolved` check, or is dropped, since
-  unsupported commands now terminate before S7.
+- The S7 persistence guard checks `command_status != RESOLVED` (skip persist for
+  both UNRESOLVED leaked commands and HANDLED commands), with a warning logged
+  only for the UNRESOLVED case. `EnqueueStage` likewise skips when `HANDLED`.
+  The original `SKILL_XML not in metadata` heuristic is replaced by the typed
+  status check.
+- `/continue` no longer terminates the pipeline; it is handled by the shared
+  `CommandDispatchStage`, which enqueues the continue signal itself and marks
+  the envelope `HANDLED`, so S7/S8 skip — net behaviour is unchanged (one
+  enqueued control message, no persisted user message).
 
 ## Verification
 
 - IM integration: `/approve` and `/deny` flow through the IM pipeline, enqueue a
   structured decision, and resolve the next pending request; a denied request
   cascades per `_normalize_batch_decisions`.
-- Terminal stage: `/foobar`, and WebUI-typed `/cd` / `/pool` / `/continue`, each
-  terminate with the single generic notice and are neither persisted nor
-  enqueued.
+- Terminal stage: `/foobar`, and WebUI-typed `/cd` / `/pool`, each terminate
+  with the single generic notice and are neither persisted nor enqueued.
+  (`/continue` is no longer rejected in WebUI — it is handled by the shared
+  `CommandDispatchStage` per Decision 6.)
 - WebUI regression: button approve/deny still resolves precisely by
   `tool_call_id`; `Approve All` / `Deny All` invariants from ADR-0011 hold.
 - `ApprovalDecisionInput` round-trips through `to_dict`/`from_dict` and the

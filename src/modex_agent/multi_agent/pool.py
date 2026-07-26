@@ -391,7 +391,7 @@ class AgentPool(AgentRegistry):
         independent of the active workspace. A TASK_REQUEST without a parent
         link is logged: result passback will be degraded.
         """
-        session = SessionInfo.from_str(sid, default_agent_name=agent_name)
+        session = SessionInfo(session_id=sid, agent_name=agent_name)
         if envelope.parent_session_id:
             return session.model_copy(
                 update={"parent_session_id": envelope.parent_session_id}
@@ -560,6 +560,14 @@ class AgentPool(AgentRegistry):
     def get(self, name: str) -> AgentInstance | None:
         return self._agents.get(name)
 
+    def serves_agent(self, name: str) -> bool:
+        """True if ``name`` is a registered main agent or a subagent template."""
+        if self._agents.get(name) is not None:
+            return True
+        if self._template_registry is not None and self._pool_name is not None:
+            return self._template_registry.get_template(self._pool_name, name) is not None
+        return False
+
     def get_descriptor(self, name: str) -> AgentDescriptor | None:
         instance = self._agents.get(name)
         return instance.descriptor if instance else None
@@ -598,7 +606,7 @@ class AgentPool(AgentRegistry):
             # Use from_str to recover the SessionInfo without re-encoding.
             # factory.create(external_id=session_id) would double-encode the
             # already-encoded prefix and produce a different session_id.
-            session = SessionInfo.from_str(session_id, default_agent_name=agent_name)
+            session = SessionInfo(session_id=session_id, agent_name=agent_name)
             self._schedule_registry_register(session)
 
     def _touch_session(self, session_id: str) -> None:

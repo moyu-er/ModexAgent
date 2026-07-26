@@ -296,7 +296,7 @@ class TestToolNode:
     async def test_execute_batch_all_allowed(self):
         executed: list[str] = []
 
-        tool_executor = ToolExecutor(default_tool_timeout=30.0)
+        tool_executor = ToolExecutor()
 
         async def _mock_execute(tc, ctx):
             executed.append(tc.tool_name)
@@ -326,7 +326,7 @@ class TestToolNode:
     async def test_denied_tool_cascades_and_cancels(self):
         executed: list[str] = []
 
-        tool_executor = ToolExecutor(default_tool_timeout=30.0)
+        tool_executor = ToolExecutor()
 
         async def _mock_execute(tc, ctx):
             executed.append(tc.tool_name)
@@ -368,7 +368,7 @@ class TestToolNode:
     async def test_denied_tool_cancel_path_uses_real_tool_executor(self):
         # DENIED decisions never reach the executor, so a real ToolExecutor
         # with an unused provider is sufficient to exercise the cancel path.
-        tool_executor = ToolExecutor(default_tool_timeout=30.0)
+        tool_executor = ToolExecutor()
         node = ToolNode(tool_executor)
 
         tc = ToolCall(tool_name="write", arguments={"path": "/tmp/x"}, call_id="c1")
@@ -391,7 +391,7 @@ class TestToolNode:
 
     @pytest.mark.asyncio
     async def test_exceeds_max_tools_routes_to_end(self):
-        tool_executor = ToolExecutor(default_tool_timeout=30.0)
+        tool_executor = ToolExecutor()
         node = ToolNode(tool_executor)
 
         tc_list = [ToolCall(tool_name=f"t{i}", arguments={}, call_id=f"c{i}") for i in range(5)]
@@ -409,7 +409,7 @@ class TestToolNode:
 
     @pytest.mark.asyncio
     async def test_classify_all_returns_allowed_for_normal_tools(self):
-        tool_executor = ToolExecutor(default_tool_timeout=30.0)
+        tool_executor = ToolExecutor()
         node = ToolNode(tool_executor)
 
         tool_calls = [

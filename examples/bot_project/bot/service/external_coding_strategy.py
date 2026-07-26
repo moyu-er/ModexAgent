@@ -73,6 +73,7 @@ from modex_agent.multi_agent.factory import DefaultAgentFactory
 from modex_agent.multi_agent.pool_config import PoolStore
 from modex_agent.multi_agent.pool_config.specs import PoolSpec
 
+from bot.config.webui_config import build_control_origin
 from ._assembly_helpers import _PoolAssemblyMixin
 
 logger = logging.getLogger(__name__)
@@ -397,6 +398,7 @@ def build_external_coding_env_spec(
         agent_pool_map=_build_agent_pool_map(pool_name, pool_spec, project_dir),
         targets=_build_targets(pool_name, pool_spec, project_dir),
         modexctl_bin_dir=_modexctl_bin_dir(),
+        control_origin=build_control_origin(project_dir / "config"),
     )
 
 

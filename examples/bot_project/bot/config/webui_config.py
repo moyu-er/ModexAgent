@@ -57,3 +57,19 @@ def load_webui_port(config_dir: Path | None = None) -> int:
 def load_webui_host(config_dir: Path | None = None) -> str:
     section = _load_webui_section(config_dir)
     return str(section.get("host", DEFAULT_WEBUI_HOST))
+
+
+def build_control_origin(config_dir: Path | None = None) -> str:
+    """Build the ``MODEX_CONTROL_ORIGIN`` origin string from webui host/port.
+
+    ADR-0036 D6: the bot's HTTP listener origin (e.g.
+    ``http://127.0.0.1:21800``) is injected into agent processes so the
+    HTTP-based CLI can locate the bot. ``0.0.0.0`` is normalized to
+    ``127.0.0.1`` — agents always reach the bot over loopback, even when
+    the bot listens on all interfaces.
+    """
+    host = load_webui_host(config_dir)
+    if host == "0.0.0.0":
+        host = "127.0.0.1"
+    port = load_webui_port(config_dir)
+    return f"http://{host}:{port}"

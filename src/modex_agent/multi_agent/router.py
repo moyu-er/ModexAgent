@@ -29,7 +29,6 @@ class AgentMessageRouter(ABC):
     def route(
         self,
         input_msg: InputMessage,
-        default_agent_name: str = "main",
     ) -> RouteResult:
         """Route an input message and return the complete agent session id."""
         ...
@@ -52,7 +51,6 @@ class DefaultMeshRouter(AgentMessageRouter):
     def route(
         self,
         input_msg: InputMessage,
-        default_agent_name: str = "main",
     ) -> RouteResult:
         metadata = input_msg.metadata or {}
         session = input_msg.session

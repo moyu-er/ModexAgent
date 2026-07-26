@@ -2,7 +2,7 @@ import { useState, type FC, type CSSProperties } from "react";
 import { ChevronRight, Folder, FolderOpen, Home, Plus, Settings } from "lucide-react";
 import type { PoolInfo } from "../lib/api";
 import { changeWorkspace } from "../lib/api";
-import { WorkspaceBrowser } from "./WorkspaceBrowser";
+import { WorkspaceBrowser, type RecentWorkspace } from "./WorkspaceBrowser";
 import { SessionTree, type TreeNode } from "./SessionTree";
 import { ThemeToggle } from "./ThemeToggle";
 import { useToast } from "./ToastContext";
@@ -18,7 +18,7 @@ export interface SidebarProps {
   workspace: string;
   isHome: boolean;
   activePool: string;
-  recentWorkspaces: { path: string }[];
+  recentWorkspaces: RecentWorkspace[];
   isLoadingSessions?: boolean;
   mobileOpen: boolean;
   onCloseMobile: () => void;
@@ -56,10 +56,14 @@ export const Sidebar: FC<SidebarProps> = ({
 }) => {
   const [browserOpen, setBrowserOpen] = useState(false);
   const [recentOpen, setRecentOpen] = useState(false);
+  const [iconPulseKey, setIconPulseKey] = useState(0);
   const { restart } = useToast();
   const t = useT();
 
   const handleNew = (): void => {
+    // Remount the icon with the pulse class so every click replays the breath,
+    // even when React sees no other state change (already on the hero view).
+    setIconPulseKey((k) => k + 1);
     onNew(activePool);
   };
 
@@ -166,6 +170,7 @@ export const Sidebar: FC<SidebarProps> = ({
           setBrowserOpen(false);
           onGoHome();
         }}
+        recentWorkspaces={recentFiltered}
       />
 
       {/* Header */}
@@ -237,7 +242,11 @@ export const Sidebar: FC<SidebarProps> = ({
           onClick={handleNew}
           className="h-auto w-full rounded-sm py-2.5 text-base"
         >
-          <Plus size={16} />
+          <Plus
+            key={iconPulseKey}
+            size={16}
+            className={iconPulseKey > 0 ? "newconv-icon-pulse" : undefined}
+          />
           {t("sidebar.newConversation")}
         </Button>
       </div>

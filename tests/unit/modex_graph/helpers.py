@@ -14,6 +14,35 @@ from modex_graph import (
 )
 
 
+class TrackingRuntime(GraphRuntime):
+    """Runtime that records ``before_node`` / ``after_node`` / ``emit`` calls.
+
+    Used by Task 08 tests to verify concurrent hook invocation is safe
+    (no crash, no race). The lists use ``list.append`` which is GIL-atomic
+    in CPython, so concurrent ``asyncio.gather`` tasks can append safely
+    without an explicit lock — the append runs in a synchronous section
+    between await points.
+    """
+
+    def __init__(self) -> None:
+        self.before_calls: list[str] = []
+        self.after_calls: list[str] = []
+        self.emit_calls: list[tuple[str, Any]] = []
+
+    async def before_node(self, ctx: GraphContext[Any], node_name: str) -> None:
+        self.before_calls.append(node_name)
+
+    async def after_node(
+        self, ctx: GraphContext[Any], node_name: str, result: Any
+    ) -> None:
+        self.after_calls.append(node_name)
+
+    async def emit(
+        self, event_type: str, data: Any, ctx: GraphContext[Any]
+    ) -> None:
+        self.emit_calls.append((event_type, data))
+
+
 class CounterState(GraphState):
     """Simple state with a counter + message list for testing."""
 

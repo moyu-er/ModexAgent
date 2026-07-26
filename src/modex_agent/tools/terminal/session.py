@@ -135,13 +135,23 @@ class TerminalSession:
         }
         return (self._expected_state, actual) in unexpected
 
-    async def ensure_started(self) -> None:
+    async def ensure_started(self, env: dict[str, str] | None = None) -> None:
         """Start the backend immediately if not already started.
 
         Used by TerminalTool.open so the visible window appears right away
         instead of waiting for the first execute() call.
+
+        When ``env`` is provided and the session is not yet started,
+        ``self._env`` is mutated to ``env`` BEFORE the start path runs, so
+        ``_startup_env()`` (called below) and ``_ensure_backend_alive()``
+        (called by ``write()`` when the PTY dies and restarts) both see the
+        injected env. When the session is already alive and needs no
+        restart, env is silently ignored — env is injected once at start
+        time.
         """
         if not await self._backend.is_alive() or self._needs_restart:
+            if env is not None:
+                self._env = env
             await self._backend.start(
                 shell=self.shell_info.path,
                 cwd=self._cwd,

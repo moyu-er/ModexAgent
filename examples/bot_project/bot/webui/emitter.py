@@ -436,14 +436,8 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
             await self._flush_active_segment()
             tc, tool_result = data
             tool_name: str = tc.tool_name
-            raw_result: str | None = tool_result.result
             raw_error: str | None = tool_result.error
-            if raw_error:
-                full_result: str = f"Error: {raw_error}"
-            elif raw_result is not None:
-                full_result = str(raw_result)
-            else:
-                full_result = ""
+            full_result: str = tool_result.message_content()
 
             if self._transcript_store is not None:
                 self._ensure_turn_started()

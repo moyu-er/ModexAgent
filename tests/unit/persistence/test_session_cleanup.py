@@ -74,9 +74,9 @@ async def _seed_exact_scope_rows(
             (session_id, scope_key),
         )
     await connection.execute(
-        "INSERT INTO inbox_topics (owner_scope_key, scope_key, session_id) "
-        "VALUES (?, ?, ?)",
-        (owner_scope_key, scope_key, session_id),
+        "INSERT INTO inbox_topics (owner_scope_key, scope_key) "
+        "VALUES (?, ?)",
+        (owner_scope_key, scope_key),
     )
     topic_id = await connection.query_value(
         "SELECT topic_id FROM inbox_topics WHERE scope_key = ?",

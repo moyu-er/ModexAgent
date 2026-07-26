@@ -21,6 +21,7 @@ import argparse
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -37,7 +38,7 @@ def _copy_if_missing(src: Path, dst: Path) -> bool:
 def create_pth_files(app_dir: Path) -> None:
     """Create .pth files in the bundled Python's site-packages.
 
-    These make ``import modex_agent``, ``import modexctl``, ``import bot``,
+    These make ``import modex_agent``, ``import bot``,
     and ``import modexbot`` resolve to the source directories on disk —
     giving users an editable-code experience without a venv or pip install.
     """
@@ -107,7 +108,7 @@ def create_cli_shims(app_dir: Path) -> None:
     # needed. MODEXBOT_PORT env still works as an optional escape hatch.
     shims = {
         "modexbot.bat": f'@echo off\r\n"{python_exe}" -m modexbot %*',
-        "modexctl.bat": f'@echo off\r\n"{python_exe}" -c "from modexctl.main import main; main()" %*',
+        "modexctl.bat": f'@echo off\r\n"{python_exe}" -m bot.cli.modexctl %*',
     }
 
     print("\n=== Creating CLI shims ===")
@@ -115,6 +116,29 @@ def create_cli_shims(app_dir: Path) -> None:
         shim_path = scripts_dir / name
         shim_path.write_text(content, encoding="ascii")
         print(f"  {shim_path}")
+
+
+def register_scripts_on_path(app_dir: Path) -> None:
+    """Register ``<install>/python/Scripts`` on ``HKCU\\Environment\\Path``.
+
+    Uses the shared ``modex_agent.runtime.bundled_bin.register_public_path``
+    helper with a product-specific marker so only ModexBot's own entries
+    are touched — other products' ``python\\Scripts`` PATH entries are
+    preserved.
+    """
+    src_dir = app_dir / "app" / "src"
+    if str(src_dir) not in sys.path:
+        sys.path.insert(0, str(src_dir))
+
+    from modex_agent.runtime.bundled_bin import register_public_path
+
+    scripts_dir = app_dir / "python" / "Scripts"
+    marker = "\\ModexBot\\python\\Scripts"
+    print("\n=== Registering public PATH ===")
+    if register_public_path(scripts_dir, marker):
+        print(f"  PATH registered: {scripts_dir}")
+    else:
+        print("  PATH registration skipped (not Windows or failed)")
 
 
 # ── Step 4: Verify ──────────────────────────────────────────────────────────
@@ -130,7 +154,7 @@ def verify_imports(app_dir: Path) -> None:
 
     checks = [
         "import modex_agent; print('  modex_agent OK')",
-        "import modexctl; print('  modexctl OK')",
+        "import bot.cli.modexctl; print('  bot.cli.modexctl OK')",
         "import modexbot; print('  modexbot OK')",
         "import bot; print('  bot OK')",
         "import aiosqlite; print('  aiosqlite OK')",
@@ -202,6 +226,7 @@ def main() -> None:
     create_pth_files(app_dir)
     create_runtime_dirs(app_dir)
     create_cli_shims(app_dir)
+    register_scripts_on_path(app_dir)
     init_config(app_dir)
     verify_imports(app_dir)
     print_next_steps(app_dir)

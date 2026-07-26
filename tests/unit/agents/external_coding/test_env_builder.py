@@ -21,6 +21,10 @@ def _spec(
     targets: list[tuple[str, str]] | None = None,
     comm_kind: AgentCommKind = AgentCommKind.NORMAL,
     parent_session_id: str | None = None,
+    workflow_id: str | None = None,
+    task_id: str | None = None,
+    node_id: str | None = None,
+    control_origin: str = "",
 ) -> ExternalEnvSpec:
     return ExternalEnvSpec(
         workspace_root=tmp_path / "ws",
@@ -36,16 +40,23 @@ def _spec(
         modexctl_bin_dir=tmp_path / "bin",
         comm_kind=comm_kind,
         parent_session_id=parent_session_id,
+        workflow_id=workflow_id,
+        task_id=task_id,
+        node_id=node_id,
+        control_origin=control_origin,
     )
 
 
 class TestExternalEnvBuilder:
-    """The 9 ``MODEX_*`` vars + PATH-prepend contract."""
+    """The ``MODEX_*`` vars + PATH-prepend contract."""
 
     def test_produces_all_eight_str_modex_vars(self, tmp_path: Path) -> None:
         spec = _spec(tmp_path)
         out = ExternalEnvBuilder.build(spec, base_env={})
-        # Eight vars total per ADR-0022 D6 (PATH is the 9th, modified separately).
+        # Original 8 str vars per ADR-0022 D6 (PATH is modified separately).
+        # Additional vars (MODEX_COMM_KIND, MODEX_CONTROL_ORIGIN) are covered
+        # by dedicated test classes below; this is a lower-bound regression
+        # guard for the original contract.
         assert set(out) >= {
             "MODEX_WORKSPACE_ROOT",
             "MODEX_INBOX_ROOT",
@@ -163,6 +174,43 @@ class TestExternalEnvBuilder:
             assert dict(p.split("=", 1) for p in pairs) == agent_pool_map
 
 
+class TestWorkflowVars:
+    """MODEX_WORKFLOW_ID / MODEX_TASK_ID / MODEX_NODE_ID injection — the
+    optional workflow-context vars surfaced to external coding agents.
+
+    Regression guard: external agents that don't set these fields must see
+    the same env shape as before (no new keys), and agents that do set
+    them must see ``str(value)`` outputs — never empty-string placeholders
+    for ``None`` (which would obscure "unset" from the consumer).
+    """
+
+    def test_workflow_vars_absent_when_none(self, tmp_path: Path) -> None:
+        spec = _spec(tmp_path)
+        out = ExternalEnvBuilder.build(spec, base_env={})
+        assert "MODEX_WORKFLOW_ID" not in out
+        assert "MODEX_TASK_ID" not in out
+        assert "MODEX_NODE_ID" not in out
+
+    def test_workflow_vars_present_when_set(self, tmp_path: Path) -> None:
+        spec = _spec(
+            tmp_path,
+            workflow_id="wf-1",
+            task_id="task-1",
+            node_id="node-1",
+        )
+        out = ExternalEnvBuilder.build(spec, base_env={})
+        assert out["MODEX_WORKFLOW_ID"] == "wf-1"
+        assert out["MODEX_TASK_ID"] == "task-1"
+        assert out["MODEX_NODE_ID"] == "node-1"
+
+    def test_workflow_vars_partial(self, tmp_path: Path) -> None:
+        spec = _spec(tmp_path, workflow_id="wf-1")
+        out = ExternalEnvBuilder.build(spec, base_env={})
+        assert out["MODEX_WORKFLOW_ID"] == "wf-1"
+        assert "MODEX_TASK_ID" not in out
+        assert "MODEX_NODE_ID" not in out
+
+
 class TestCommKindAndParentSessionId:
     """MODEX_COMM_KIND + MODEX_PARENT_SESSION_ID injection — the two
     routing-branch selectors modexctl reads to pick subagent vs main path.
@@ -254,3 +302,50 @@ class TestCommKindAndParentSessionId:
         out = ExternalEnvBuilder.build(spec, base_env={})
         assert out["MODEX_COMM_KIND"] == "normal"
         assert "MODEX_PARENT_SESSION_ID" not in out
+
+
+class TestControlOrigin:
+    """MODEX_CONTROL_ORIGIN injection — the bot's HTTP listener origin.
+
+    ADR-0036 D6: the bot's loopback origin (e.g.
+    ``http://127.0.0.1:21800``) is carried on ``ExternalEnvSpec.control_origin``
+    and emitted verbatim as ``MODEX_CONTROL_ORIGIN`` through the single
+    extraction point (``build_modex_vars``). Both the external agent spawn
+    path and the native agent contextvar path receive the value from this
+    one field.
+
+    Regression guard: dropping the var, or sourcing it from anywhere other
+    than ``spec.control_origin``, would silently break the HTTP-based CLI's
+    ability to locate the bot.
+    """
+
+    def test_control_origin_emitted_verbatim_from_spec(
+        self, tmp_path: Path
+    ) -> None:
+        spec = _spec(tmp_path, control_origin="http://127.0.0.1:21800")
+        out = ExternalEnvBuilder.build_modex_vars(spec)
+        assert out["MODEX_CONTROL_ORIGIN"] == "http://127.0.0.1:21800"
+
+    def test_control_origin_present_in_full_build(
+        self, tmp_path: Path
+    ) -> None:
+        spec = _spec(tmp_path, control_origin="http://127.0.0.1:21800")
+        out = ExternalEnvBuilder.build(spec, base_env={})
+        assert out["MODEX_CONTROL_ORIGIN"] == "http://127.0.0.1:21800"
+
+    def test_control_origin_defaults_to_empty_string(
+        self, tmp_path: Path
+    ) -> None:
+        """Specs constructed without control_origin (framework tests,
+        non-bot callers) emit an empty string — the field is only populated
+        by ``examples/bot_project`` at pool construction time."""
+        spec = _spec(tmp_path)
+        assert spec.control_origin == ""
+        out = ExternalEnvBuilder.build_modex_vars(spec)
+        assert out["MODEX_CONTROL_ORIGIN"] == ""
+
+    def test_control_origin_loopback_value(self, tmp_path: Path) -> None:
+        """The canonical loopback origin shape the HTTP-based CLI expects."""
+        spec = _spec(tmp_path, control_origin="http://127.0.0.1:21800")
+        out = ExternalEnvBuilder.build_modex_vars(spec)
+        assert out["MODEX_CONTROL_ORIGIN"].startswith("http://127.0.0.1:")

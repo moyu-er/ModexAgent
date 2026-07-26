@@ -90,6 +90,15 @@ that degrade to scan+filter on multi-dimension queries. New dimensions are
 added via `ALTER TABLE ADD COLUMN ... GENERATED ALWAYS AS ...` with no
 application write-path change.
 
+**Supplement (2026-07-24): `parent_session_pk` removed.** The `sessions`
+table originally carried a `parent_session_pk INTEGER REFERENCES
+sessions(session_pk) ON DELETE SET NULL` FK column for parent-child session
+linkage. This column was never written (the adapter uses the string
+`parent_session_id` generated from `scope_key` for association) and never
+read. The FK `ON DELETE SET NULL` never fired because the column was always
+NULL. The column is removed; `parent_session_id` (a STORED generated column
+from `scope_key`) is the sole parent-child association mechanism.
+
 This replaces the existing `CompositeScope` string-join pattern, which is
 irreversible, prefix-only, and compile-time-hardcoded. The existing
 `CompositeScope` remains for file-backed stores where a flat path segment is
@@ -154,6 +163,10 @@ soft_deleted ──TTL──► physical DELETE
 - `normal` + `pinned` are visible in active queries.
 - `pinned` is exempt from automatic prune.
 - `soft_deleted` is invisible to active queries but retained until TTL expiry.
+  The soft-delete timestamp is carried by `updated_at` (auto-bumped by the
+  ADR-0029 trigger on the `state` UPDATE) — no separate `deleted_at` column
+  is needed. `cleanup_expired` filters `WHERE state = 'soft_deleted' AND
+  updated_at < ?`.
 - A background job physically deletes `soft_deleted` rows past their retention
   window.
 

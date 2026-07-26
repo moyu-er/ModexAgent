@@ -95,7 +95,7 @@ def _pending_snapshot(session_id: str, agent_name: str, tool_call_id: str) -> Tu
     """Build a SUSPENDED approval snapshot with one PENDING request."""
     identity = TurnIdentity(
         agent_id=agent_name,
-        session=SessionInfo.from_str(session_id, default_agent_name="main"),
+        session=SessionInfo.from_str(session_id),
         turn_id="t1",
     )
     request = ApprovalRequestState(
@@ -140,7 +140,7 @@ def _mixed_snapshot(
     """
     identity = TurnIdentity(
         agent_id=agent_name,
-        session=SessionInfo.from_str(session_id, default_agent_name="main"),
+        session=SessionInfo.from_str(session_id),
         turn_id="t1",
     )
     requests = [

@@ -1,6 +1,6 @@
 """Workspace-scoped tool wrappers.
 
-The default standard tools (``read``/``write``/``edit``/``ls``/``find``/
+The default standard tools (``read``/``write``/``edit``/``ls``/``glob``/
 ``search``/``bash``) resolve relative paths — including ``.`` — against the
 **process CWD** (``os.getcwd()``). They are intentionally path-agnostic at
 the framework level (see spec §5 "路径不可感知原则"): they must *consume* a
@@ -103,8 +103,8 @@ class WorkspaceScopedTool(Tool):
 
 
 class WorkspaceScopedFileTool(WorkspaceScopedTool):
-    """Wraps file/search tools (``read``/``write``/``edit``/``ls``/``find``/
-    ``search``) whose path argument is ``path``.
+    """Wraps file/search tools (``read``/``write``/``edit``/``ls``/``glob``/
+    ``grep``) whose path argument is ``path``.
 
     Rewrite rule for ``path``:
       - missing / ``None`` / empty / ``"."`` → the workspace root
@@ -116,6 +116,7 @@ class WorkspaceScopedFileTool(WorkspaceScopedTool):
 
     def _scoped_args(self, arguments: dict[str, Any]) -> dict[str, Any]:
         if self._PATH_ARG not in arguments:
+            arguments[self._PATH_ARG] = str(self._root_provider.current())
             return arguments
         raw = arguments[self._PATH_ARG]
         if raw is None:
@@ -150,9 +151,9 @@ class WorkspaceScopedShellTool(WorkspaceScopedTool):
 
 
 # Names whose ``path`` argument should be scoped as a file/search root.
-# (``SearchFilesTool`` exposes itself as ``grep`` and ``FindFilesTool`` as
-# ``find`` — both take a ``path`` that defaults to ``.``.)
-_FILE_TOOL_NAMES = frozenset({"read", "write", "edit", "ls", "find", "grep"})
+# (``SearchFilesTool`` exposes itself as ``grep`` and ``GlobTool`` as
+# ``glob`` — both take a ``path`` that defaults to ``.``.)
+_FILE_TOOL_NAMES = frozenset({"read", "write", "edit", "ls", "glob", "grep"})
 
 
 def _declares_working_dir(tool: Tool) -> bool:
@@ -174,7 +175,7 @@ def wrap_standard_tools(
     """Wrap each standard tool that resolves paths against the process CWD.
 
     Routing:
-      - file/search tools (``read``/``write``/``edit``/``ls``/``find``/
+      - file/search tools (``read``/``write``/``edit``/``ls``/``glob``/
         ``grep``) → ``WorkspaceScopedFileTool`` (rewrites ``path``);
       - any tool declaring a ``working_dir`` argument (``SubprocessTool``)
         → ``WorkspaceScopedShellTool``;

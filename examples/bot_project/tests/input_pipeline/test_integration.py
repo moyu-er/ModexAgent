@@ -166,7 +166,7 @@ async def test_im_continue_command_not_persisted_but_enqueued() -> None:
             pipe = build_im_pipeline(skill_registry=_NoSkill(), known_pools={"main"})
             env = UserInputEnvelope(external_id="u1", content="/continue", channel="qq")
             result = await pipe.handle(env, ctx)
-            assert not result.should_continue(), "/continue must terminate"
+            assert result.should_continue(), "/continue passes through as HANDLED"
             assert await store.load(_sid("main", "u1")) == []
             assert len(enqueued) == 1, "/continue must be enqueued as a control signal"
             assert enqueued[0].content == "/continue"
@@ -174,8 +174,8 @@ async def test_im_continue_command_not_persisted_but_enqueued() -> None:
 
 
 @pytest.mark.asyncio
-async def test_webui_continue_command_rejected() -> None:
-    """WebUI /continue: rejected by the terminal UnsupportedCommandStage."""
+async def test_webui_continue_command_handled() -> None:
+    """WebUI /continue: handled by CommandDispatchStage, enqueues continue signal."""
     with TemporaryDirectory() as tmp:
         root = Path(tmp)
         with bind_workspace_root(root):
@@ -193,11 +193,9 @@ async def test_webui_continue_command_rejected() -> None:
                 explicit_pool="main",
             )
             result = await pipe.handle(env, ctx)
-            assert not result.should_continue(), "/continue must be rejected in WebUI"
-            response = getattr(result, "response", None)
-            assert response is not None
-            assert "unknown command" in str(response.get("message", "")).lower()
-            assert enqueued == []
+            assert result.should_continue(), "/continue passes through as HANDLED"
+            assert len(enqueued) == 1, "/continue must enqueue exactly one message (handler's own)"
+            assert enqueued[0].content == "/continue"
 
 
 # ── Missing E2E tests (added per spec §9 review) ───────────────────────

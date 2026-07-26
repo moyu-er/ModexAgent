@@ -15,8 +15,9 @@ Design:
   ``AgentContext`` from the delivered ``InputMessage`` and calls
   ``agent.run(ctx, emitter)`` — exercising the real harness lifecycle.
 - ``_make_modexbot_send_side_effect`` returns the async callable registered
-  on ``ScriptedStreamingAdapter``: it calls T2's routing functions + writer
-  in-process, mirroring exactly what ``modexctl send`` does at runtime.
+  on ``ScriptedStreamingAdapter``: it calls the routing + writer helpers
+  in-process, mirroring exactly what ``modexctl send`` does at runtime
+  over the HTTP control plane (here simulated via direct file writes).
 """
 
 from __future__ import annotations
@@ -50,14 +51,9 @@ from modex_agent.agents.external_coding.types import (
     Emission,
     ExecOptions,
     ExternalEnvSpec,
+    OutboxLine,
+    OutboxMetadata,
 )
-from modex_agent.cli.modexbot.errors import SelfSendRejectedError
-from modex_agent.cli.modexbot.routing import (
-    _build_inbox_line,
-    _compute_target_session_id,
-    _resolve_target_pool,
-)
-from modex_agent.cli.modexbot.writer import _write_line
 from modex_agent.core.agent import AgentCommKind, AgentContext
 from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.emitter import AgentResult, ContentEmitter
@@ -77,9 +73,88 @@ from modex_agent.multi_agent.inbox.consumer import InboxConsumer
 from modex_agent.multi_agent.inbox.producer import InboxProducer
 from modex_agent.multi_agent.inbox.server_local import LocalFileInboxServer
 from modex_agent.multi_agent.inbox_poller import InboxPoller
+from modex_agent.multi_agent.message_type import AgentMessageType
+from modex_agent.multi_agent.message_xml import build_peer_agent_message
 from modex_agent.multi_agent.pool import AgentPool
 from modex_agent.multi_agent.state import AgentState
 from modex_agent.multi_agent.tools import CommunicationTargetStore
+
+
+class SelfSendRejectedError(Exception):
+    pass
+
+
+class UnknownTargetError(Exception):
+    pass
+
+
+def _compute_target_session_id(env: ExternalEnvSpec) -> str:
+    session_id = env.session_id
+    if "." not in session_id:
+        raise ValueError(
+            f"MODEX_SESSION_ID {session_id!r} has no '.'; cannot derive prefix"
+        )
+    return session_id.split(".", 1)[0]
+
+
+def _resolve_target_pool(env: ExternalEnvSpec, target_name: str) -> str:
+    pool_map = env.agent_pool_map
+    pool = pool_map.get(target_name)
+    if pool is None:
+        raise UnknownTargetError(
+            f"target {target_name!r} not in MODEX_AGENT_POOL_MAP (known: {sorted(pool_map)})"
+        )
+    return pool
+
+
+def _build_inbox_line(
+    env: ExternalEnvSpec,
+    target_sid: str,
+    content: str,
+) -> str:
+    from datetime import UTC, datetime
+    from uuid import uuid4
+
+    xml_content = build_peer_agent_message(
+        source=env.agent_name,
+        content=content,
+    )
+    line = OutboxLine(
+        message_id=uuid4().hex,
+        source=env.agent_name,
+        content=xml_content,
+        message_type=AgentMessageType.AGENT_MESSAGE.value,
+        timestamp=datetime.now(UTC),
+        metadata=OutboxMetadata(
+            agent_session_id=target_sid,
+            session_id=env.session_id,
+            invocation_id=_compute_target_session_id(env),
+            parent_session_id=None,
+        ),
+    )
+    return line.model_dump_json()
+
+
+_SAFE_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._")
+
+
+def _safe_dir_name(session_id: str) -> str:
+    return "".join(c if c in _SAFE_CHARS else "_" for c in session_id)
+
+
+def _write_line(
+    target_pool_dir: Path,
+    target_sid: str,
+    line: str,
+) -> None:
+    from filelock import FileLock
+
+    session_dir = target_pool_dir / _safe_dir_name(target_sid)
+    pending_path = session_dir / "pending.jsonl"
+    lock_path = session_dir / ".lock"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    with FileLock(str(lock_path)), open(pending_path, "a", encoding="utf-8") as f:
+        f.write(line + "\n")
 
 # ---------------------------------------------------------------------------
 # Recording emitter

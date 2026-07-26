@@ -44,8 +44,11 @@ if TYPE_CHECKING:
     from modex_agent.tools.mcp.registry import McpConnectionRegistry
 
 from bot.config.memory_defaults import subagent_memory
+from bot.config.webui_config import build_control_origin
 from bot.service.model_choice import ModelChoiceBindHook, ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
+from modex_agent.agents.external_coding.cli_resolver import resolve_modexctl_bin_dir
+from modex_agent.agents.external_coding.types import ExternalEnvSpec
 from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.emitter import ContentEmitter
@@ -56,6 +59,7 @@ from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.core.session_store import SessionStore
 from modex_agent.core.tool_manager import ToolManager
 from modex_agent.hook import HookErrorPolicy, HookRunner, HookSpec
+from modex_agent.hook.builtin import NativeEnvInjectionHook
 from modex_agent.hook.notification import (
     AgentNotificationService,
     MaxIterationNotifyHook,
@@ -112,6 +116,8 @@ from ._assembly_helpers import _resolved_or_placeholder
 from .external_coding_strategy import (
     ExternalCodingAwareFactory,
     ProviderUnavailableError,
+    _build_agent_pool_map,
+    _build_targets,
 )
 
 logger = logging.getLogger(__name__)
@@ -327,6 +333,14 @@ async def create_pool(
         persistence=persistence,
     )
 
+    subagent_store_registry = None
+    if pool_data is not None:
+        ms = pool_data.context_manager.memory_system
+        if ms is not None:
+            subagent_store_registry = ms.store_registry
+
+    control_origin = build_control_origin(project_dir / "config")
+
     deps = AgentMaterializeDeps(
         agent_factory=factory, pool=pool, session_factory=session_factory,
         broker=broker, safety=safety,
@@ -344,6 +358,8 @@ async def create_pool(
         todo_store=todo_store, trace_enabled=_resolve_trace_enabled(app_config),
         subagent_external_coding_builder=subagent_external_coding_builder,
         emitter_factory=emitter_factory,
+        control_origin=control_origin,
+        memory_store_registry=subagent_store_registry,
     )
     pool.materialize_deps = deps
     pool.template_registry = template_registry
@@ -354,7 +370,6 @@ async def create_pool(
 
     poller = InboxPoller(pool, interval=0.2)
     pool.attach_poller(poller)
-    pool.start_poller()
 
     if provider_available:
         await _register_main_agent(
@@ -364,6 +379,11 @@ async def create_pool(
         )
     else:
         logger.warning("Pool '%s': main agent registration skipped", pool_name)
+
+    # Start the poller AFTER main agent registration to eliminate the startup
+    # race where pending messages from a previous run are dispatched before
+    # the main agent is ready — causing "no template for X; skipping".
+    pool.start_poller()
 
     if pool_data is not None:
         memory_system = pool_data.context_manager.memory_system
@@ -391,9 +411,11 @@ async def create_pool(
             pool, main_agent_name, inbox_consumer, notification_service,
             shared_interceptor_chain, im_ui, main_spec, assembly_deps, project_dir,
             command_processor, pool_name, tool_manager=tool_manager,
+            pool_spec=pool_spec,
             root_provider=root_provider, bot_model_config=bot_model_config,
             model_choice_registry=model_choice_registry,
             cassette_recorder=cassette_recorder,
+            control_origin=control_origin,
         )
     else:
         # external_coding path: the external agent has no tool surface and
@@ -423,7 +445,9 @@ async def create_pool(
         subagent_count=len(pool_spec.subagents), pool=pool, broker_bridge=bridge,
         tool_manager=tool_manager, skill_manager=skill_manager,
         mcp_manager=mcp_manager, terminal_manager=terminal_manager,
-        main_agent_name=main_agent_name, provider=provider,
+        main_agent_name=main_agent_name,
+        main_execution_strategy=pool_spec.main.execution_strategy,
+        provider=provider,
         notification_service=notification_service, communication_service=main_service,
         agent_bus=agent_bus, target_store=main_store,
     )
@@ -1043,11 +1067,13 @@ def _wire_main_pipeline(
     command_processor,
     pool_name: str,
     tool_manager: ToolManager,
+    pool_spec: PoolSpec,
     *,
     root_provider: WorkspaceRootProvider | None = None,
     bot_model_config: BotModelConfig | None,
     model_choice_registry: ModelChoiceRegistry,
     cassette_recorder: CassetteRecorder | None = None,
+    control_origin: str = "",
 ) -> None:
     """Wire hooks, interceptors, governance, and command processor on main pipeline.
 
@@ -1093,6 +1119,34 @@ def _wire_main_pipeline(
     )
     if cassette_recorder is not None:
         _add_hook(pipeline, CassetteFlushHook(cassette_recorder))
+
+    # NativeEnvInjectionHook — populate _modex_env / _current_session_id
+    # contextvars at BEFORE_TURN so native agent subprocess tools receive
+    # MODEX_* env vars. Only the main-agent pipeline reaches here; the
+    # external_coding branch in create_pool skips _wire_main_pipeline.
+    # The template's session_id / agent_name are placeholders overridden
+    # per-turn from ctx.session inside the hook.
+    #
+    # pool_map/targets are shared with external_coding_strategy via
+    # _build_agent_pool_map / _build_targets (same business layer, same
+    # PoolSpec source) so a peer-read bug fix lands in one place.
+    agent_pool_map = _build_agent_pool_map(pool_name, pool_spec, project_dir)
+    targets = _build_targets(pool_name, pool_spec, project_dir)
+
+    env_spec_template = ExternalEnvSpec(
+        workspace_root=project_dir,
+        inbox_root=project_dir / ".modex" / "inbox",
+        workdir=project_dir,
+        session_id=f"__pending__.{main_agent_name}",
+        agent_name=main_agent_name,
+        provider_session_id="",
+        agent_pool_map=agent_pool_map,
+        targets=targets,
+        modexctl_bin_dir=resolve_modexctl_bin_dir(),
+        comm_kind=AgentCommKind.NORMAL,
+        control_origin=control_origin,
+    )
+    _add_hook(pipeline, NativeEnvInjectionHook(env_spec_template=env_spec_template))
 
     # ExternalTurnRunner has no builder/approval_renderer, so access them
     # through the ABC's typed read-only properties (None for external_coding).

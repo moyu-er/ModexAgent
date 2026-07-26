@@ -456,6 +456,7 @@ class SkillsStore:
                     name=entry.name,
                     source=SkillSource.GLOBAL if is_global else SkillSource.LOCAL,
                     origin=self._origin_for_source(src),
+                    description=_read_skill_description(entry),
                 )
             )
         return out

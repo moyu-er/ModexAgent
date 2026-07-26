@@ -50,7 +50,12 @@ def _render_skill_xml(skills: list[Skill]) -> str:
     return "\n".join(parts)
 
 
-def build_skill_command_xml(skill_name: str, skill_content: str, user_args: str) -> str:
+def build_skill_command_xml(
+    skill_name: str,
+    skill_content: str,
+    user_args: str,
+    skill_location: str | None = None,
+) -> str:
     """Render a ``/skillName args`` invocation as XML user-content.
 
     Single source of truth for the command-invocation skill format.  Used by
@@ -58,10 +63,20 @@ def build_skill_command_xml(skill_name: str, skill_content: str, user_args: str)
     input-pipeline skill stage so the two paths produce identical output.
 
     The skill body is inlined verbatim (escaped) under ``<skill>``; the user's
-    arguments follow under ``<user_input>``.
+    arguments follow under ``<user_input>``.  When *skill_location* is given
+    (the on-disk path to the ``SKILL.md`` file), a ``directory`` attribute is
+    added pointing at the skill's parent directory — the same convention the
+    system-prompt ``<available_skills>`` block uses, so the LLM can resolve
+    relative file references (e.g. a sibling ``GLOSSARY.md``) inside the body.
+    Omitted when *skill_location* is ``None`` (in-memory / runtime-override
+    skills with no on-disk files to reference).
     """
+    dir_attr = ""
+    if skill_location:
+        dir_path = str(Path(skill_location).parent)
+        dir_attr = f' directory="{xml_attr(dir_path)}"'
     return (
-        f'<command_context type="skill" name="{xml_attr(skill_name)}">\n'
+        f'<command_context type="skill" name="{xml_attr(skill_name)}"{dir_attr}>\n'
         f"<skill>\n{xml_text(skill_content)}\n</skill>\n"
         f"</command_context>\n\n"
         f"<user_input>\n{xml_text(user_args)}\n</user_input>"

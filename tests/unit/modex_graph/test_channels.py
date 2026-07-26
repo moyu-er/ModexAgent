@@ -5,12 +5,14 @@ from __future__ import annotations
 import dataclasses
 from typing import Annotated, Any
 
+import pytest
 from pydantic import BaseModel
 
 from modex_graph import (
     BaseChannel,
     Codec,
     GraphState,
+    InvalidUpdateError,
     LastValue,
     ReducerChannel,
     register_codec,
@@ -373,3 +375,61 @@ class TestBaseChannelABC:
         assert checkpoint["items"] == ["a", "b"]
         restored = StateWithAppend.from_checkpoint(checkpoint)
         assert restored.items == ["a", "b"]
+
+
+class TestLastValueMultiWriteDetection:
+    """LastValue.update raises InvalidUpdateError on multi-write (Task 05).
+
+    Per ADR-0033 D4: LastValue enforces single-writer semantics. When ≥2
+    concurrent writes happen in one superstep, `LastValue.update(values)`
+    with `len(values) > 1` raises `InvalidUpdateError`. The single-write
+    path (`len(values) == 1`) is unchanged — last-write-wins.
+    """
+
+    def test_single_value_update_keeps_last_write_wins(self) -> None:
+        """Single-element values list: last-write-wins, no error."""
+        ch = LastValue()._fresh(int)
+        ch.update([42])
+        assert ch.get() == 42
+
+    def test_empty_values_list_is_noop(self) -> None:
+        ch = LastValue()._fresh(int)
+        ch.set(7)
+        ch.update([])
+        assert ch.get() == 7
+
+    def test_two_concurrent_writes_raises_invalidupdateerror(self) -> None:
+        """Two values in one update call → InvalidUpdateError."""
+        ch = LastValue()._fresh(int)
+        with pytest.raises(InvalidUpdateError):
+            ch.update([1, 2])
+
+    def test_three_concurrent_writes_raises(self) -> None:
+        ch = LastValue()._fresh(int)
+        with pytest.raises(InvalidUpdateError):
+            ch.update([1, 2, 3])
+
+    def test_error_message_mentions_count(self) -> None:
+        ch = LastValue()._fresh(int)
+        with pytest.raises(InvalidUpdateError, match="2"):
+            ch.update([1, 2])
+
+    def test_reducer_channel_does_not_raise_on_multi_write(self) -> None:
+        """ReducerChannel is the intended fan-in channel — multi-write folds."""
+        ch = ReducerChannel(reducer=lambda a, b: a + b)._fresh(list)
+        ch.set([])
+        ch.update([["a"], ["b"], ["c"]])
+        assert ch.get() == ["a", "b", "c"]
+
+    def test_apply_state_update_still_single_write(self) -> None:
+        """The existing apply_state_update path passes one value at a time.
+
+        This is the LinearScheduler / fast-path path: each call passes a
+        single-element list to channel.update, so no multi-write detection
+        triggers. Multiple sequential apply_state_update calls each pass
+        len-1 lists — last-write-wins per call.
+        """
+        state = SimpleState(count=0)
+        state.apply_state_update({"count": 1})
+        state.apply_state_update({"count": 2})
+        assert state.count == 2

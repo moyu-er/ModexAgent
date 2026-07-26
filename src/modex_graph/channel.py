@@ -306,15 +306,34 @@ class BaseChannel(ABC, Generic[T]):
 class LastValue(BaseChannel[T]):
     """Last-write-wins channel. The default for fields without a ChannelSpec.
 
-    Phase-a does NOT enforce single-writer semantics (no parallel execution).
-    Phase-c will raise `InvalidUpdateError` when ≥2 writes happen in one
-    superstep. See ADR-0033 D4.
+    Single-writer semantics: `update(values)` raises `InvalidUpdateError`
+    when `len(values) > 1` (multiple concurrent writes in one generation).
+    This enforces that at most one instance writes to a `LastValue` field
+    per generation. Use `ReducerChannel` for fan-in. See ADR-0033 D4.
+
+    The single-write path (`len(values) == 1`) is unchanged: last-write-wins.
+    The fast path (single-node, no fork) uses `apply_state_update` which
+    passes `len(values) == 1`. Under continuous scheduling, the
+    `WriteConflictDetector` (ADR-0034 D18) detects same-generation
+    `LastValue` field collisions before `apply_state_update` is called.
     """
 
     def __init__(self) -> None:
         self._value: T | None = None
 
     def update(self, values: list[T]) -> None:
+        # Multi-write detection: ≥2 concurrent writes to the same LastValue
+        # field in one generation is a single-writer violation. Raise
+        # InvalidUpdateError (a GraphBubbleUp) so the engine propagates it.
+        if len(values) > 1:
+            from .exceptions import InvalidUpdateError
+
+            raise InvalidUpdateError(
+                f"LastValue channel received {len(values)} concurrent writes. "
+                f"LastValue enforces single-writer semantics — use "
+                f"ReducerChannel for fan-in, or ensure only one instance "
+                f"writes this field per generation."
+            )
         if values:
             self._value = values[-1]
 
@@ -347,7 +366,7 @@ class ReducerChannel(BaseChannel[T]):
 
     `reducer(left, right) -> combined`. The reducer is NOT required to be
     commutative; documentation states that order-sensitive reducers used with
-    parallel fan-out (Phase c) produce order-dependent results.
+    parallel fan-out (`ParallelScheduler`, ADR-0034) produce order-dependent results.
 
     Example: `ReducerChannel(reducer=operator.add)` for `list` concatenation,
     `ReducerChannel(reducer=lambda a, b: a | b)` for `set` union.

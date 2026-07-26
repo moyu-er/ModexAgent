@@ -67,6 +67,12 @@ export const en = {
     connected: "Connected",
     disconnected: "Disconnected",
     dragResizeSidebar: "Drag to resize sidebar",
+    newConversationEyebrow: "New conversation",
+    newConversationEyebrowPool: "New conversation · {pool}",
+    newConversationAnnounce: "New conversation. Type a message to begin.",
+    skillSuggest: {
+      ariaLabel: "Skill suggestions",
+    },
   },
   composer: {
     model: "Model",
@@ -105,6 +111,11 @@ export const en = {
     failedReadDir: "Failed to read directory",
     failedSwitch: "Failed to switch workspace",
     networkError: "Network error",
+    openFolder: "Open Folder",
+    openFolderHint: "Open the system folder picker",
+    openingPicker: "Opening picker…",
+    pickerUnavailable: "Folder picker is not available on this server. Contact your administrator.",
+    recentWorkspaces: "Recent",
   },
   approval: {
     eyebrow: "Approval",

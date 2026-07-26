@@ -52,7 +52,7 @@ async def test_pipeline_turns_attachment_ref_into_persisted_attachment() -> None
     pipeline and produces exactly one resolved Attachment, persisted under the
     media layout and readable via the resolver."""
     with TemporaryDirectory() as tmp:
-        root = Path(tmp)
+        root = Path(tmp).resolve()
         uploads = root / "uploads"
         uploads.mkdir()
         png = uploads / "photo.png"

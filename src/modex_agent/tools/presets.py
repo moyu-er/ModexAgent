@@ -10,16 +10,16 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from modex_agent.runtime.store import TodoStore
 
-from modex_agent.tools.workspace_scoped import WorkspaceRootProvider, wrap_standard_tools
 from modex_agent.core.tool_manager import Tool
 from modex_agent.tools.standard import (
     EditFileTool,
-    FindFilesTool,
+    GlobTool,
     ListDirTool,
     ReadFileTool,
     SearchFilesTool,
     WriteFileTool,
 )
+from modex_agent.tools.workspace_scoped import WorkspaceRootProvider, wrap_standard_tools
 
 
 class ToolPreset(str, Enum):
@@ -29,8 +29,8 @@ class ToolPreset(str, Enum):
     """
 
     FULL = "full"  # all tools + bash + terminal
-    READ_WRITE = "read_write"  # read + write + edit + grep/find + bash (review & fix)
-    READ_ONLY = "read_only"  # read + grep/find + bash (prompt-constrained read-only)
+    READ_WRITE = "read_write"  # read + write + edit + grep/glob + bash (review & fix)
+    READ_ONLY = "read_only"  # read + grep/glob + bash (prompt-constrained read-only)
     MINIMAL = "minimal"  # read + write + list + grep (no edit, no bash)
     NONE = "none"  # no standard tools — communication tools only (MCP still loaded)
     WEB = "web"  # web search + web reader (opt-in, not included in FULL)
@@ -67,7 +67,7 @@ MAX_FORK_MAX_MESSAGES: int = 100
 
 def _make_standard_read() -> list[Tool]:
     """Create read-only standard tools."""
-    return [ReadFileTool(), ListDirTool(), SearchFilesTool(), FindFilesTool()]
+    return [ReadFileTool(), ListDirTool(), SearchFilesTool(), GlobTool()]
 
 
 def _make_standard_read_write() -> list[Tool]:
@@ -78,7 +78,7 @@ def _make_standard_read_write() -> list[Tool]:
         EditFileTool(),
         ListDirTool(),
         SearchFilesTool(),
-        FindFilesTool(),
+        GlobTool(),
     ]
 
 
@@ -90,7 +90,7 @@ def _make_standard_full() -> list[Tool]:
         EditFileTool(),
         ListDirTool(),
         SearchFilesTool(),
-        FindFilesTool(),
+        GlobTool(),
     ]
 
 

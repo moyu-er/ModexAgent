@@ -14,6 +14,7 @@ pipeline layer.
 ## Files
 | File | Class | Scope(s) | Description |
 |------|-------|----------|-------------|
+| `tool_timeout.py` | `ToolTimeoutInterceptor` | TOOL_CALL | Mandatory per-invocation tool deadline (default 120s). Composed by `ToolExecutor` as the innermost interceptor so the deadline measures only `ToolManager.execute()` time. On expiry, cancels the tool coroutine and returns a `<tool_timeout>` XML `ToolResult` (with `error` set so `success=False`); the ReAct loop continues. External `CancelledError`/`AgentCancelled` propagate naturally. |
 | `result_limit.py` | `ToolResultLimitInterceptor` | TOOL_CALL | Truncates tool results via a `ToolResultOverflowHandler` (default `max_chars=50000`); overflow spilled to `OverflowStore`. |
 | `tool_approval.py` | `ArgumentMatcher` | (helper, not interceptor) | Path-based tool argument classification, used by `ApprovalRuntime.classifier`. |
 
@@ -35,6 +36,13 @@ Assembled in `examples/bot_project/bot/workspace/wiring.py::_build_workspace_int
 2. ControlDrainInterceptor      (TOOL_CALL)      -- cancel check before tools
 3. LlmCancelInterceptor         (LLM_STREAM)     -- cancel check during streaming
 ```
+
+`ToolTimeoutInterceptor` is **not** in this application-level chain — it is
+composed by `ToolExecutor` as a mandatory innermost interceptor, wrapping
+`ToolManager.execute()` directly. This ensures every ReAct path (clean, full,
+main, subagent) has a per-invocation tool deadline without relying on
+application wiring. The timeout measures only actual tool execution time,
+excluding the interceptors above.
 
 ## Design Notes
 - `ArgumentMatcher` is a pure classification helper used by `ApprovalRuntime.classifier`, NOT an interceptor.

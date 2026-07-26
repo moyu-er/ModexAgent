@@ -57,7 +57,7 @@ def test_approve_is_command_only_when_pending_snapshot_exists() -> None:
     assert parsed.approval_action == ApprovalAction.ALLOW
 
     renderer = ApprovalRenderer()
-    msg = InputMessage(content="/approve", session=SessionInfo.from_str("s1", default_agent_name="main"))
+    msg = InputMessage(content="/approve", session=SessionInfo.from_str("s1"))
     is_cmd, state = asyncio.run(
         renderer.detect(msg, "s1", {}, pending_snapshot=None, approval_action=parsed.approval_action)
     )
@@ -71,7 +71,7 @@ def test_approve_detected_against_pending_snapshot() -> None:
     snapshot = _snapshot_with_requests()
     is_cmd, state = asyncio.run(
         renderer.detect(
-            InputMessage(content="/approve", session=SessionInfo.from_str("s1", default_agent_name="main")),
+            InputMessage(content="/approve", session=SessionInfo.from_str("s1")),
             "s1",
             {},
             pending_snapshot=snapshot,
@@ -99,7 +99,7 @@ def test_unrelated_input_denies_first_and_preempts_rest() -> None:
     snapshot = _snapshot_with_requests(count=3)
     _, state = asyncio.run(
         renderer.detect(
-            InputMessage(content="random chatter", session=SessionInfo.from_str("s1", default_agent_name="main")),
+            InputMessage(content="random chatter", session=SessionInfo.from_str("s1")),
             "s1",
             {},
             pending_snapshot=snapshot,

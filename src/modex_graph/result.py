@@ -1,40 +1,53 @@
-"""Structured node return values: `NodeResult` + `Command` + `Task`.
+# ruff: noqa: ANN401
+"""Structured node return values: `NodeResult` + `Command` + `Task` + `DispatchEvent`.
 
 A node's `execute(ctx)` returns a `NodeResult` — a frozen Pydantic value
 object carrying:
 
 - `transition: str | None` — static edge lookup key. The engine finds the
   next node via `add_edge(source, target, reason=transition)`. `None` means
-  no static transition; the engine falls through to conditional/default edges.
+  no static transition; the engine falls through to the default edge.
 - `state_update: dict[str, Any] | None` — declarative state mutation. The
   engine calls `channel.update([value])` for each entry, then syncs back to
   the Pydantic field. Bypassed when None.
 - `command: Command | None` — dynamic routing / fan-out. Highest priority.
 
-`Command.goto` accepts four forms (per ADR-0033 D6):
+`Command.goto` accepts three forms (two-layer routing model):
 
-- `None` — no goto; fall through to transition / conditional / default.
+- `None` — no goto; fall through to transition / default.
 - `str` — dynamic routing to one node.
-- `list[str]` — sequential multi-target (visit each in order).
-- `list[Task]` — sequential fan-out (Phase a) / parallel fan-out (Phase c).
+- `list[Task]` — fan-out. `LinearScheduler` executes tasks sequentially;
+  `ParallelScheduler` executes them concurrently (ADR-0034).
 
-`Task(node, state)` carries an independent state for fan-out. Phase-a
-executes tasks sequentially; Phase-c will execute them in parallel.
+`list[str]` sequential multi-target was removed in the two-layer cleanup;
+use `list[Task]` for fan-out or `str` for single-target routing.
+
+`Task(node, state)` carries an independent state for fan-out.
+`LinearScheduler` executes tasks sequentially; `ParallelScheduler`
+executes them concurrently (ADR-0034 D2/D7).
+
+`DispatchEvent` is the immutable record of a single `ctx.dispatch()` call
+under `ParallelScheduler`. It is a frozen Pydantic value object (per rules
+10–16) carrying the source instance ID, the target node name (or
+`GraphNode.END`), and an optional payload. The `ParallelScheduler` appends
+one `DispatchEvent` per dispatch call to its `dispatch_log` and uses them
+for audit / debugging.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class Task(BaseModel):
     """A single fan-out task — execute `node` with `state`.
 
-    Phase-a: sequential execution. Phase-c: parallel execution.
-    The Phase-c upgrade is engine-only — node code returning
-    `Command(goto=[Task(...)])` runs in parallel automatically.
+    `LinearScheduler` executes tasks sequentially; `ParallelScheduler`
+    executes them concurrently (ADR-0034). The upgrade is engine-only —
+    node code returning `Command(goto=[Task(...)])` runs in parallel
+    automatically under `ParallelScheduler`.
 
     `state=None` means share the parent state (mutations propagate directly).
     A non-None `state` means independent state (imperative mutations do NOT
@@ -57,18 +70,28 @@ class Command(BaseModel):
     """Dynamic routing / fan-out instruction. Highest-priority routing mechanism.
 
     `goto` accepts:
-    - `None` — no goto; fall through to transition / conditional / default.
+    - `None` — no goto; fall through to transition / default.
     - `str` — jump to one node.
-    - `list[str]` — sequential multi-target.
     - `list[Task]` — fan-out with independent state per task.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    goto: str | list[str] | list[Task] | None = Field(
+    goto: str | list[Task] | None = Field(
         default=None,
         description="Dynamic routing target(s). See class docstring for forms.",
     )
+
+    @field_validator("goto", mode="before")
+    @classmethod
+    def _reject_str_list(cls, v: Any) -> Any:
+        if isinstance(v, list) and len(v) > 0 and isinstance(v[0], str):
+            raise ValueError(
+                "Command.goto no longer accepts list[str] (removed in the "
+                "two-layer routing cleanup). Use str for single-target "
+                "routing or list[Task] for fan-out."
+            )
+        return v
 
 
 class NodeResult(BaseModel):
@@ -78,9 +101,8 @@ class NodeResult(BaseModel):
 
     1. `command` (if not None and `command.goto` is not None) → use goto.
     2. `transition` (if not None) → static edge lookup.
-    3. conditional edge (`route_fn(state)`) if defined for the current node.
-    4. default edge (reason=None) if defined.
-    5. else raise `RoutingError`.
+    3. default edge (reason=None) if defined.
+    4. else raise `RoutingError`.
 
     `state_update` is applied regardless of routing — it merges into the
     channels before routing is resolved.
@@ -93,7 +115,7 @@ class NodeResult(BaseModel):
         description=(
             "Static edge lookup key. The engine finds the next node via "
             "`add_edge(current, target, reason=transition)`. None = no "
-            "static transition; fall through to conditional/default."
+            "static transition; fall through to default."
         ),
     )
     state_update: dict[str, Any] | None = Field(
@@ -110,4 +132,46 @@ class NodeResult(BaseModel):
     )
 
 
-__all__ = ["Command", "NodeResult", "Task"]
+class DispatchEvent(BaseModel):
+    """Immutable record of a single `ctx.dispatch()` call under `ParallelScheduler`.
+
+    Created by the `ParallelScheduler`'s dispatch handler when a node calls
+    `ctx.dispatch(target, state_update)`. The `state_update` dict becomes the
+    `payload` of this event. Each dispatch appends one `DispatchEvent` to the
+    scheduler's `dispatch_log`.
+
+    Frozen Pydantic model per rules 10–16: cross-module internal data
+    structures MUST be `BaseModel`. The event is immutable so it can be safely
+    shared across logs and audit trails.
+
+    Fields:
+
+    - `source_instance: str` — the `NodeInstance.instance_id` that issued the
+      dispatch (e.g. `"llm#0"`). Format: `{node_name}#{seq}`.
+    - `target: str` — the target node name, or `GraphNode.END` for the
+      terminal signal.
+    - `payload: dict[str, Any] | None` — the `state_update` passed to
+      `ctx.dispatch()`. Carries data to be applied to the target instance's
+      state (in future fork-isolation phases). `None` means no payload.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    source_instance: str = Field(
+        description=(
+            "The `NodeInstance.instance_id` that issued the dispatch. Format: `{node_name}#{seq}`."
+        ),
+    )
+    target: str = Field(
+        description=("The target node name, or `GraphNode.END` for the terminal signal."),
+    )
+    payload: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "The `state_update` passed to `ctx.dispatch()`. Carries data "
+            "for the target instance. None means no payload."
+        ),
+    )
+
+
+__all__ = ["Command", "NodeResult", "Task", "DispatchEvent"]

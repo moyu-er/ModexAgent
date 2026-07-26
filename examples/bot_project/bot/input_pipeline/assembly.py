@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from bot.input_pipeline.stages.approval import ApprovalStage
 from bot.input_pipeline.stages.attachment_ingest import AttachmentIngestStage
+from bot.input_pipeline.stages.command import CommandDispatchStage
+from bot.input_pipeline.stages.commands import SHARED_COMMANDS
 from bot.input_pipeline.stages.enqueue import EnqueueStage
 from bot.input_pipeline.stages.environment_control import EnvironmentControlStage
 from bot.input_pipeline.stages.model_choice import ModelChoiceStage
@@ -24,14 +26,11 @@ def build_im_pipeline(
     known_pools: set[str],
     workspace_controller: WorkspaceController | None = None,
 ) -> UserInputPipeline:
-    """IM pipeline: SetChannel→ResolveWs→S2→S3→S5→Ingest→Approval→Skill→Unsupported→Persist→Enqueue.
+    """IM pipeline: S4→S2→S3→S5→CommandDispatch→Ingest→Approval→Skill→Unsupported→Persist→Enqueue.
 
-    SetChannel runs first so command-notice responses route to the right
-    per-channel output adapter. Attachment ingest runs after S5 (needs the
-    resolved pool/session/workspace) and before Persist so accepted Attachment
-    records are ready for the transcript-write stage. Approval claims
-    /approve·/deny; Skill resolves /skillName; the terminal Unsupported stage
-    rejects whatever no stage claimed.
+    S2 (EnvironmentControlStage) handles IM-only commands (/cd, /pool, /exit,
+    /pwd). S3 (SessionControlStage) handles /stop. CommandDispatchStage handles
+    cross-channel commands (/continue) shared with WebUI.
     """
     return UserInputPipeline([
         SetChannelStage(),
@@ -39,6 +38,7 @@ def build_im_pipeline(
         EnvironmentControlStage(known_pools=known_pools, workspace_controller=workspace_controller),
         SessionControlStage(),
         ResolvePoolStage(),
+        CommandDispatchStage(handlers=SHARED_COMMANDS),
         AttachmentIngestStage(),
         ApprovalStage(),
         SkillParseStage(skill_registry),
@@ -51,13 +51,11 @@ def build_im_pipeline(
 def build_webui_pipeline(
     *, skill_registry: SkillRegistry, bot_model_config: BotModelConfig | None
 ) -> UserInputPipeline:
-    """WebUI pipeline: SetChannel→ResolveWs→ResolvePool→ModelChoice→Ingest→Approval→
-    Skill→Unsupported→Persist→Enqueue.
+    """WebUI pipeline: S4→S5→ModelChoice→CommandDispatch→Ingest→Approval→Skill→Unsupported→Persist→Enqueue.
 
-    No S2/S3: the WebUI has GUI controls for workspace/pool/session. Attachment
-    ingest runs after ResolvePool and before Persist (same rationale as the IM
-    pipeline). Pool-switch shortcuts typed into the chat box reach the terminal
-    Unsupported stage.
+    No S2/S3: the WebUI has GUI controls for workspace/pool/session. CommandDispatchStage
+    handles cross-channel commands (/continue) shared with IM. Pool-switch
+    shortcuts typed into the chat box reach the terminal Unsupported stage.
 
     ModelChoiceStage 仅在此 pipeline 注册：把 WebUI 选中的 provider/model 解析为
     ResolvedModel 写入 envelope.metadata，由 EnqueueStage 注册到 registry。IM
@@ -68,6 +66,7 @@ def build_webui_pipeline(
         ResolveWorkspaceStage(),
         ResolvePoolStage(),
         ModelChoiceStage(bot_model_config),
+        CommandDispatchStage(handlers=SHARED_COMMANDS),
         AttachmentIngestStage(),
         ApprovalStage(),
         SkillParseStage(skill_registry),

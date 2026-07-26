@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from modex_agent.core.session_id import SessionIdFactory
     from modex_agent.core.session_registry import SessionRegistry
     from modex_agent.hook.notification import AgentNotificationService
+    from modex_agent.memory.registry import MemoryStoreRegistry
     from modex_agent.messaging.broker import MessageBroker
     from modex_agent.multi_agent.bus import AgentMessageBus
     from modex_agent.multi_agent.context_fork import ContextForkBuilder
@@ -67,14 +68,12 @@ class AgentMaterializeDeps:
     todo_store: TodoStore | None = None
     trace_enabled: bool = True
     subagent_external_coding_builder: SubagentExternalCodingBuilder | None = None
-    """Optional seam for ``EXTERNAL_CODING`` subagent materialization (T5).
-    Injected only by pools that declare at least one external_coding subagent;
-    react-only pools leave it ``None``. ``AgentTemplate.materialize`` checks
-    the spec's ``execution_strategy`` and dispatches to ``builder.build(...)``
-    instead of ``agent_factory.create_agent(...)`` when it is
-    ``EXTERNAL_CODING``; the dispatch ends with the same
-    ``pool.register_resident`` + ``on_subagent_created`` calls the react path
-    makes."""
+    memory_store_registry: MemoryStoreRegistry | None = None
+    """Main agent's ``MemoryStoreRegistry``, threaded to native subagent
+    ``build_session_only_memory`` so subagents share the workspace's SQLite
+    backend (or file backend) instead of defaulting to a separate
+    ``DefaultMemoryStoreRegistry``. ``None`` for framework tests / non-bot
+    callers — falls back to file-based per-workspace registry."""
     emitter_factory: Callable[[str], ContentEmitter] | None = None
     """WebUI (or other channel) emitter factory for transcript persistence.
 
@@ -88,3 +87,11 @@ class AgentMaterializeDeps:
     the default ``StreamingAwareEmitter``+``BrokerOutputAdapter`` and never
     writes transcript events (ADR-0027 regression: external subagent turns
     were invisible in the WebUI history)."""
+    control_origin: str = ""
+    """Bot HTTP listener origin (e.g. ``http://127.0.0.1:21800``).
+
+    Surfaced as ``MODEX_CONTROL_ORIGIN`` in the native subagent env spec so
+    ``modexctl`` can locate the bot's control API. Injected by the business
+    layer (``build_control_origin`` in ``bot.config.webui_config``) via
+    ``create_pool``; empty string when not configured (framework tests,
+    non-bot callers)."""

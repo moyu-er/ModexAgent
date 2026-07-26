@@ -126,7 +126,7 @@ def _session_to_session_id(session_id: str) -> str:
     Handles both canonical ``{prefix}.{agent}`` IDs and raw prefixes.
     """
     try:
-        session = SessionInfo.from_str(session_id, default_agent_name="main")
+        session = SessionInfo.from_str(session_id)
     except Exception:
         return session_id
     return session.session_id_prefix

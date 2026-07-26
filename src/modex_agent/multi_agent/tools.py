@@ -376,14 +376,22 @@ class SendToAgentTool(Tool):
         else:
             invocation_id: str | None = str(invocation_id_value)
 
+        context = self._get_context()
+        if context is None:
+            return "Error: no agent context available"
+
+        caller_name = context.session.agent_name
+        if caller_name and target_agent == caller_name:
+            return (
+                f"Error: You are {caller_name!r} — you cannot send a message "
+                f"to yourself. Choose a different target."
+            )
+
         target = self._store.get(target_agent)
         if target is None:
             available = ", ".join(t.name for t in self.list_targets())
             return f"Error: '{target_agent}' is not a valid communication target. Available: {available}"
 
-        context = self._get_context()
-        if context is None:
-            return "Error: no agent context available"
         return await self._service.send_async(
             target=target,
             content=content,

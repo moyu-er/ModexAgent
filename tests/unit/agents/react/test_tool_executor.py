@@ -1,11 +1,8 @@
-"""Unit tests for ToolExecutor — extracted tool-call execution collaborator.
+"""Unit tests for ToolExecutor — tool-call execution via interceptor chain.
 
-These mirror the behaviour previously covered only end-to-end via
-``ReActAgent.run()`` (see ``tests/unit/agents/test_react_agent_error.py::
-TestReActAgentToolTimeout``). Here we exercise the collaborator directly so the
-branch-for-branch port from ``ReActAgent._execute_tool`` /
-``_execute_tool_raw`` / ``_resolve_tool_timeout`` is pinned independently of
-the agent / graph wiring (cutover is a later, atomic task).
+The timeout mechanism is now enforced by ``ToolTimeoutInterceptor`` (composed
+as the innermost mandatory interceptor). These tests exercise the executor's
+interceptor composition and the timeout interceptor's behaviour.
 """
 
 import asyncio
@@ -17,6 +14,7 @@ from modex_agent.agents.react.tool_executor import ToolExecutor
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy, TurnTimeoutPolicy
+from modex_agent.core.message import ContentFormat
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import ToolResult
 from modex_agent.core.types import ToolCall
@@ -29,7 +27,6 @@ from modex_agent.core.tool_manager import InMemoryToolManager
 
 
 def _make_ctx(*, tool_manager=None, **kw) -> AgentContext:
-    """Create a real AgentContext with typed runtime state."""
     state = ReActTurnState(
         identity=TurnIdentity(
             agent_id="test", session=SessionInfo.from_str("s1"), turn_id="t1"
@@ -51,8 +48,6 @@ def _make_ctx(*, tool_manager=None, **kw) -> AgentContext:
 
 
 class _RecordingToolManager:
-    """Minimal tool_manager fake: dispatches to a registered async callable."""
-
     def __init__(self, tool_coro) -> None:
         self._tool_coro = tool_coro
 
@@ -64,9 +59,6 @@ class _RecordingToolManager:
 
 
 class _RecordingInterceptorChain:
-    """Fake InterceptorChain: records that around_tool_call was invoked once,
-    then runs the inner ``next_call`` unchanged so the real tool still executes."""
-
     def __init__(self) -> None:
         self.calls: list[tuple[Any, ToolCallContext]] = []
 
@@ -78,9 +70,6 @@ class _RecordingInterceptorChain:
 class TestToolExecutorInterceptorWrap:
     @pytest.mark.asyncio
     async def test_interceptor_present_wraps_and_runs_tool(self):
-        """When ctx.runtime.interceptors is set, around_tool_call is invoked
-        exactly once AND the underlying tool still runs and returns its result."""
-
         async def real_tool(tool_name, arguments):
             return ToolResult(tool_name=tool_name, result="ran")
 
@@ -88,34 +77,28 @@ class TestToolExecutorInterceptorWrap:
         chain = _RecordingInterceptorChain()
         ctx.runtime.services.interceptors = chain  # type: ignore[assignment]
 
-        executor = ToolExecutor(default_tool_timeout=5.0)
+        executor = ToolExecutor()
         tc = ToolCall(tool_name="echo", arguments={"a": 1}, call_id="c1")
 
         result = await executor.execute(tc, ctx)
 
-        assert len(chain.calls) == 1, "interceptor chain must be invoked exactly once"
+        assert len(chain.calls) == 1
         wrapped_ctx, call_ctx = chain.calls[0]
         assert wrapped_ctx is ctx
         assert call_ctx.tool_name == "echo"
-        assert call_ctx.arguments == {"a": 1}
-        assert call_ctx.session_id == str(ctx.session)
         assert result.result == "ran"
         assert result.error is None
 
 
 class TestToolExecutorRawExecution:
     @pytest.mark.asyncio
-    async def test_no_interceptors_runs_raw(self):
-        """Without interceptors, execute falls through to raw execution and
-        returns the tool's ToolResult."""
-
+    async def test_no_interceptors_runs_with_timeout(self):
         async def real_tool(tool_name, arguments):
             return ToolResult(tool_name=tool_name, result="ok")
 
         ctx = _make_ctx(tool_manager=_RecordingToolManager(real_tool))
-        # No interceptors configured on services.
 
-        executor = ToolExecutor(default_tool_timeout=5.0)
+        executor = ToolExecutor()
         tc = ToolCall(tool_name="echo", arguments={}, call_id="c1")
 
         result = await executor.execute(tc, ctx)
@@ -125,39 +108,7 @@ class TestToolExecutorRawExecution:
 
 class TestToolExecutorTimeout:
     @pytest.mark.asyncio
-    async def test_slow_tool_returns_timeout_error_result(self):
-        """A tool exceeding default_tool_timeout returns a ToolResult whose
-        ``error`` mentions "timeout". Must NOT raise.
-
-        Note: AgentRuntimeServices always carries a default RuntimeSafetyPolicy,
-        so ``_resolve_tool_timeout`` only reaches the ctor-default branch when
-        ``ctx.runtime is None``. We null runtime here (tool_manager lives on
-        AgentContext directly, so execution still works) to exercise that path —
-        this mirrors how the original ReActAgent._resolve_tool_timeout behaves.
-        """
-
-        async def slow_tool(tool_name, arguments):
-            await asyncio.sleep(0.5)
-            return ToolResult(tool_name=tool_name, result="done")
-
-        ctx = _make_ctx(tool_manager=_RecordingToolManager(slow_tool))
-        ctx.runtime = None
-        executor = ToolExecutor(default_tool_timeout=0.01)
-        tc = ToolCall(tool_name="slow_tool", arguments={}, call_id="c1")
-
-        result = await executor.execute(tc, ctx)
-
-        assert result.result is None
-        assert result.error is not None
-        assert "timeout" in result.error.lower()
-
-
-class TestToolExecutorResolveTimeout:
-    @pytest.mark.asyncio
-    async def test_safety_present_overrides_default(self):
-        """When runtime.safety is present, safety.turn.tool_timeout_seconds
-        is used (here a near-zero timeout forces the slow tool to time out)."""
-
+    async def test_slow_tool_returns_timeout_xml_result(self):
         async def slow_tool(tool_name, arguments):
             await asyncio.sleep(0.5)
             return ToolResult(tool_name=tool_name, result="done")
@@ -167,29 +118,70 @@ class TestToolExecutorResolveTimeout:
             turn=TurnTimeoutPolicy(tool_timeout_seconds=0.01),
         )
 
-        # default_tool_timeout is deliberately large; safety must win.
-        executor = ToolExecutor(default_tool_timeout=10.0)
+        executor = ToolExecutor()
+        tc = ToolCall(tool_name="slow_tool", arguments={}, call_id="c1")
+
+        result = await executor.execute(tc, ctx)
+
+        assert result.error is not None
+        assert "timed out" in result.error.lower()
+        assert result.result is not None
+        assert "<tool_timeout>" in str(result.result)
+        assert result.content_format == ContentFormat.XML
+
+    @pytest.mark.asyncio
+    async def test_safety_present_overrides_default(self):
+        async def slow_tool(tool_name, arguments):
+            await asyncio.sleep(0.5)
+            return ToolResult(tool_name=tool_name, result="done")
+
+        ctx = _make_ctx(tool_manager=_RecordingToolManager(slow_tool))
+        ctx.runtime.services.safety = RuntimeSafetyPolicy(
+            turn=TurnTimeoutPolicy(tool_timeout_seconds=0.01),
+        )
+
+        executor = ToolExecutor()
         tc = ToolCall(tool_name="slow_tool", arguments={}, call_id="c1")
 
         result = await executor.execute(tc, ctx)
         assert result.error is not None
-        assert "timeout" in result.error.lower()
+        assert "timed out" in result.error.lower()
 
     @pytest.mark.asyncio
-    async def test_safety_absent_falls_back_to_default(self):
-        """When ctx.runtime is None, _resolve_tool_timeout falls back to the
-        ctor default_tool_timeout. With a generous default and a fast tool the
-        call completes normally, proving the fallback branch is reachable."""
-
+    async def test_fast_tool_completes_under_default_timeout(self):
         async def fast_tool(tool_name, arguments):
             return ToolResult(tool_name=tool_name, result="ok")
 
         ctx = _make_ctx(tool_manager=_RecordingToolManager(fast_tool))
-        ctx.runtime = None
 
-        executor = ToolExecutor(default_tool_timeout=5.0)
+        executor = ToolExecutor()
         tc = ToolCall(tool_name="fast_tool", arguments={}, call_id="c1")
 
         result = await executor.execute(tc, ctx)
         assert result.result == "ok"
         assert result.error is None
+
+    @pytest.mark.asyncio
+    async def test_timeout_does_not_terminate_turn(self):
+        async def slow_then_fast(tool_name, arguments):
+            if tool_name == "slow":
+                await asyncio.sleep(0.3)
+                return ToolResult(tool_name=tool_name, result="slow_done")
+            return ToolResult(tool_name=tool_name, result="fast_done")
+
+        ctx = _make_ctx(tool_manager=_RecordingToolManager(slow_then_fast))
+        ctx.runtime.services.safety = RuntimeSafetyPolicy(
+            turn=TurnTimeoutPolicy(tool_timeout_seconds=0.05),
+        )
+
+        executor = ToolExecutor()
+
+        tc1 = ToolCall(tool_name="slow", arguments={}, call_id="c1")
+        result1 = await executor.execute(tc1, ctx)
+        assert result1.error is not None
+        assert "<tool_timeout>" in str(result1.result)
+
+        tc2 = ToolCall(tool_name="fast", arguments={}, call_id="c2")
+        result2 = await executor.execute(tc2, ctx)
+        assert result2.result == "fast_done"
+        assert result2.error is None

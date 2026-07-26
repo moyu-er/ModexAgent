@@ -86,7 +86,7 @@ async def test_factory_passes_skill_manager_to_pipeline() -> None:
             invocation = SlashCommandInvocation(command="test-skill", args="", raw="/test-skill")
             context = CommandContext(
                 session_id="s1",
-                input_msg=InputMessage(content="/test-skill", session=SessionInfo.from_str("s1", default_agent_name="main")),
+                input_msg=InputMessage(content="/test-skill", session=SessionInfo.from_str("s1")),
                 agent_name="main",
                 skill_manager=pipeline.skill_manager,
             )
@@ -138,7 +138,7 @@ async def test_pool_skill_manager_end_to_end() -> None:
 
             context = CommandContext(
                 session_id="s1",
-                input_msg=InputMessage(content="/test-skill", session=SessionInfo.from_str("s1", default_agent_name="main")),
+                input_msg=InputMessage(content="/test-skill", session=SessionInfo.from_str("s1")),
                 agent_name="main",
                 skill_manager=pipeline.skill_manager,
             )

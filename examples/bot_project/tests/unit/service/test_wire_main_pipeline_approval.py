@@ -33,7 +33,7 @@ from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
 from modex_agent.ioc.configs.llm import LLMConfig
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
-from modex_agent.multi_agent.pool_config.specs import MainAgentSpec
+from modex_agent.multi_agent.pool_config.specs import MainAgentSpec, PoolSpec
 from modex_agent.pipeline.approval_renderer import ApprovalRenderer
 from modex_agent.pipeline.approval_resumer import ApprovalResumer
 from modex_agent.pipeline.pipeline import AgentPipeline
@@ -169,6 +169,7 @@ def _make_main_spec(*, approval: ApprovalConfig | None) -> MainAgentSpec:
 def _wire(*, approval: ApprovalConfig | None) -> AgentPipeline:
     pipeline = _make_pipeline()
     pool = _StandInPool("main", pipeline)
+    main_spec = _make_main_spec(approval=approval)
     _wire_main_pipeline(
         pool=pool,
         main_agent_name="main",
@@ -176,12 +177,13 @@ def _wire(*, approval: ApprovalConfig | None) -> AgentPipeline:
         notification_service=MagicMock(name="notification_service"),
         shared_interceptor_chain=MagicMock(name="interceptor_chain"),
         im_ui=MagicMock(name="im_ui"),
-        main_spec=_make_main_spec(approval=approval),
+        main_spec=main_spec,
         assembly_deps=PoolAssemblyDeps(),
         project_dir=Path("/proj"),
         command_processor=None,
         pool_name="main",
         tool_manager=InMemoryToolManager(),
+        pool_spec=PoolSpec(name="main", main_agent_name="main", main=main_spec),
         bot_model_config=_BOT_CFG,
         model_choice_registry=_REGISTRY,
     )
@@ -251,6 +253,12 @@ def test_wired_classifier_anchors_to_live_workspace_root() -> None:
 
     pipeline = _make_pipeline()
     pool = _StandInPool("main", pipeline)
+    main_spec = _make_main_spec(
+        approval=ApprovalConfig(
+            enabled=True,
+            tools={"write": ToolApprovalEntry(allowed_paths=["./*"])},
+        )
+    )
     _wire_main_pipeline(
         pool=pool,
         main_agent_name="main",
@@ -258,17 +266,13 @@ def test_wired_classifier_anchors_to_live_workspace_root() -> None:
         notification_service=MagicMock(name="notification_service"),
         shared_interceptor_chain=MagicMock(name="interceptor_chain"),
         im_ui=MagicMock(name="im_ui"),
-        main_spec=_make_main_spec(
-            approval=ApprovalConfig(
-                enabled=True,
-                tools={"write": ToolApprovalEntry(allowed_paths=["./*"])},
-            )
-        ),
+        main_spec=main_spec,
         assembly_deps=PoolAssemblyDeps(),
         project_dir=project_dir,
         command_processor=None,
         pool_name="main",
         tool_manager=InMemoryToolManager(),
+        pool_spec=PoolSpec(name="main", main_agent_name="main", main=main_spec),
         root_provider=_Provider(),
         bot_model_config=_BOT_CFG,
         model_choice_registry=_REGISTRY,

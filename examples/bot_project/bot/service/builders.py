@@ -65,9 +65,9 @@ def _make_shell_tool(
 
 
 def _make_search_tools() -> list[Tool]:
-    from modex_agent.tools.standard import FindFilesTool, SearchFilesTool
+    from modex_agent.tools.standard import GlobTool, SearchFilesTool
 
-    return [SearchFilesTool(), FindFilesTool()]
+    return [SearchFilesTool(), GlobTool()]
 
 
 # ── MCP tool helpers ──

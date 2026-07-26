@@ -222,17 +222,10 @@ class TestLlmCancelInterceptor:
 class TestCanonicalSessionId:
     """Verify SessionInfo.from_str() recovers agent_name from display strings."""
 
-    def test_raw_user_id_defaults_agent_name(self):
+    def test_raw_user_id_has_empty_agent_name(self):
         session = SessionInfo.from_str("30932BC02F825E64D069B1E67347C8FF")
         assert session.session_id == "30932BC02F825E64D069B1E67347C8FF"
-        assert session.agent_name == "unknown"
-
-    def test_raw_user_id_with_default_agent_name(self):
-        session = SessionInfo.from_str(
-            "30932BC02F825E64D069B1E67347C8FF", default_agent_name="main"
-        )
-        assert session.session_id == "30932BC02F825E64D069B1E67347C8FF"
-        assert session.agent_name == "main"
+        assert session.agent_name == ""
 
     def test_canonical_parses_agent_name(self):
         session = SessionInfo.from_str("user.main")

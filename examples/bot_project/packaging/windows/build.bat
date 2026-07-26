@@ -121,11 +121,10 @@ echo  --- Step 1/7: Generating installer icon ---
 if errorlevel 1 goto :error
 echo.
 
-:: --- 4. Fetch uv ---
-:: (Skipped — uv.exe is no longer bundled. The installer is self-contained
-::  without it; users who need to add Python deps post-install can install
-::  uv/pip themselves. This saves ~58 MB of install footprint.)
-echo  --- Step 2/7: Skipping uv.exe fetch (no longer bundled) ---
+:: --- 4. Fetch bundled CLI tools (rg.exe) ---
+echo  --- Step 2/7: Fetching bundled CLI tools (rg) ---
+"%PYTHON_EXE%" "%~dp0prepare_bundled_bin.py" --staging-dir "%STAGING%"
+if errorlevel 1 goto :error
 echo.
 
 :: --- 5. Build source archive ---

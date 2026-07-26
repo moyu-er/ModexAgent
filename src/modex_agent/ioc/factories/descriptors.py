@@ -25,6 +25,7 @@ from modex_agent.memory.layers.config import (
     SessionMemoryConfig,
     UserRetentionBufferConfig,
 )
+from modex_agent.memory.registry import MemoryStoreRegistry
 from modex_agent.memory.system import MemorySystemContextManager, create_memory_system
 
 
@@ -39,6 +40,7 @@ def build_session_only_memory(
     parent_prompt_lookup: Callable[[str], Awaitable[str | None]] | None = None,
     fork_context_spec: ForkContextSpec | None = None,
     roles: list[str] | None = None,
+    store_registry: MemoryStoreRegistry | None = None,
 ) -> MemorySystemContextManager:
     """Create a session-only memory system for a subagent.
 
@@ -70,6 +72,7 @@ def build_session_only_memory(
         session_only=True,
         cleanup_config=cleanup_config,
         pruned_manager=pruned_manager,
+        store_registry=store_registry,
     )
 
     return MemorySystemContextManager(

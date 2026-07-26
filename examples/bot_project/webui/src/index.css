@@ -661,6 +661,51 @@
       var(--shadow-card);
   }
 
+  /* "New Conversation" acknowledgment pulse: the focus glow arrives as a
+   * 650ms bloom and settles into the persistent :focus-within ring (the 100%
+   * frame matches that ring exactly, so the handoff is seamless). Removed on
+   * animationend; the global prefers-reduced-motion guard zeroes it. */
+  @keyframes composer-pulse {
+    0% {
+      box-shadow:
+        0 0 0 0 color-mix(in oklab, var(--color-brand) 0%, transparent),
+        0 0.5rem 2rem color-mix(in oklab, var(--color-brand) 10%, transparent),
+        var(--shadow-card);
+    }
+    40% {
+      box-shadow:
+        0 0 0 7px color-mix(in oklab, var(--color-brand) 30%, transparent),
+        0 0.75rem 2.5rem color-mix(in oklab, var(--color-brand) 32%, transparent),
+        var(--shadow-card);
+    }
+    100% {
+      box-shadow:
+        0 0 0 2px color-mix(in oklab, var(--color-brand) 55%, transparent),
+        0 0.75rem 2.25rem color-mix(in oklab, var(--color-brand) 18%, transparent),
+        var(--shadow-card);
+    }
+  }
+  .hero-composer.composer-pulse {
+    animation: composer-pulse 650ms var(--ease-out);
+  }
+
+  /* Sidebar "New Conversation" icon breath — the button's half of the same
+   * beat: it fires on click, the composer pulse catches it. */
+  @keyframes newconv-icon-pulse {
+    0% {
+      transform: scale(1);
+    }
+    45% {
+      transform: scale(1.25);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+  .newconv-icon-pulse {
+    animation: newconv-icon-pulse var(--dur-fast) var(--ease-out);
+  }
+
   /* ModexBot wordmark — Inter 700 (a loaded weight; 800 falls back to system
      and looks heavy). Three-stop gradient + 8s shimmer reads as ambient
      light, not decoration. Dual-layer glow echoes both ends of the gradient. */

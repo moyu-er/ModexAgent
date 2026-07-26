@@ -6,7 +6,9 @@ routing documentation, API surface governance), resume-target routing
 delivered. This ADR consolidates the original Phase a design and the
 Phase c prerequisite refinements (formerly ADR-0034, now archived at
 `docs/adr/history/001-graph-engine-phase-c-preliminaries.md`). Phase c
-itself (parallel fan-out, subgraph nesting, BSP) remains deferred per D12.
+(parallel scheduling) is designed in **ADR-0034 (Parallel Scheduling
+Engine)** — `LinearScheduler` (Phase a behavior) remains the default;
+`ParallelScheduler` is opt-in via `Graph.compile(scheduler="parallel")`.
 
 ## Historical context
 
@@ -110,15 +112,16 @@ The graph engine has three structural defects that block generalization:
 
 **Phase c (deferred, recorded as future work — NOT part of this ADR):**
 
-1. **True parallel fan-out via `Task`.** Phase a accepts `Command(goto=list[Task])` as a return value but executes targets sequentially in declared order. Phase c introduces parallel scheduling (`asyncio.gather` over all tasks), per-channel multi-write detection (`LastValue` raises `InvalidUpdateError` when ≥2 writes happen in one superstep; reducer channels fold), and a BSP-style barrier between supersteps. **Node code is unchanged** — Phase a code that returns `Command(goto=[Task(...)])` runs in parallel automatically once the engine is upgraded.
+1. **True parallel fan-out via `Task`.** Phase a accepts `Command(goto=list[Task])` as a return value but executes targets sequentially in declared order. Phase c introduces continuous parallel scheduling (`asyncio.create_task` + `asyncio.wait(FIRST_COMPLETED)`, no batch barrier), generation-based multi-write detection (`LastValue` raises `InvalidUpdateError` when two same-generation instances write the same field; `ReducerChannel` folds), and fork-based state isolation. See ADR-0034. **Node code is unchanged** — Phase a code that returns `Command(goto=[Task(...)])` runs in parallel automatically once the engine is upgraded.
 2. **Graph-is-a-Node exercised.** `Graph` is-a `Node` is wired in Phase a
    but no consumer uses it. Phase c introduces nested subgraph patterns:
    outer turn graph embeds inner agent graph; `Command(goto=..., graph=...)`
    cross-graph routing; `ParentCommand` exception for subgraph→parent
    routing.
-3. **`GraphDrained` cooperative shutdown.** The exception class exists in
-   Phase a but is not raised. Phase c wires it at superstep boundaries to
-   support SIGTERM-style cooperative shutdown with checkpoint preservation.
+3. **`GraphDrained` cooperative shutdown.** The exception class exists but
+   is not raised. ADR-0034 realized Phase c via continuous scheduling (no
+   superstep boundaries), so `GraphDrained` wiring is deferred until a
+   SIGTERM-style cooperative shutdown requirement materializes.
 4. **Additional channel types.** Only `LastValue` + `ReducerChannel` ship
    in Phase a. Phase c adds channels when real second use cases appear:
    `Topic` (PubSub with dedup, for `Task` fan-out), `EphemeralValue`
@@ -129,12 +132,11 @@ The graph engine has three structural defects that block generalization:
    Phase c migrates InputPipeline / Approval state machine / OutputRenderer
    to graph topologies (the "graph-of-graphs" / "图套图" target). Each
    migration is its own ADR.
-6. **BSP superstep loop.** Phase a is sequential execution. Phase c, if
-   adopted, replaces the sequential loop with a superstep driver that
-   runs all targets of a fan-out concurrently within a barrier-bounded
-   step. This is a non-trivial change to `GraphEngine.run_async`. The
-   decision (BSP vs keep sequential + opt-in parallel) is deferred to
-   Phase c.
+6. **Parallel scheduling.** Phase a is sequential execution. Phase c
+   (ADR-0034) introduces a `ParallelScheduler` with continuous scheduling
+   (not BSP supersteps) as an opt-in alternative to `LinearScheduler`.
+   The decision: keep sequential as default, parallel as opt-in via
+   `Graph.compile(scheduler="parallel")`.
 
 ### D2 — Node interface: single-method `execute` with structured `NodeResult`
 
@@ -262,9 +264,11 @@ Ephemeral / Barrier / etc.) deferred to Phase c per ADR-0007.
   dict ↔ JSON bytes)
 - SQLite schema — unchanged
 
-**Multi-write detection: deferred to Phase c.** Sequential execution in
-Phase a has no multi-write scenarios. Phase c adds `LastValue` raising
-`InvalidUpdateError` on ≥2 writes per superstep.
+**Multi-write detection: realized in Phase c (ADR-0034).** Sequential
+execution in Phase a has no multi-write scenarios. ADR-0034 adds
+generation-based `WriteConflictDetector` — `LastValue` raises
+`InvalidUpdateError` when two same-generation instances write the same
+field; `ReducerChannel` folds all concurrent writes.
 
 ### D5 — `GraphRuntime` ABC: AOP concerns out of the node body
 
@@ -501,8 +505,8 @@ class GraphInterrupt(GraphBubbleUp):
     at the next iteration, NOT by re-running the node body."""
 
 class GraphDrained(GraphBubbleUp):
-    """Cooperative shutdown at superstep boundary. Phase c only — class
-    exists in Phase a but is never raised."""
+    """Cooperative shutdown. Class exists but is never raised; wiring
+    deferred (ADR-0034 uses continuous scheduling, not supersteps)."""
 
 class ParentCommand(GraphBubbleUp):
     """Subgraph→parent routing. Phase c only — class exists in Phase a
@@ -686,7 +690,7 @@ All current ReAct exit mechanisms are preserved through the migration:
 | `max_iterations` | LLMNode checks, returns `transition="max_iterations"` → static edge to END | Same; `max_iterations` configured at `compile()` time | a ✅ |
 | `turn_cancelled` | ToolNode checks, returns `transition="turn_cancelled"` → static edge to END | Same | a ✅ |
 | `llm_error` | LLMNode checks, returns `transition="llm_error"` → static edge to END | Same | a ✅ |
-| `GraphDrained` (cooperative shutdown) | N/A | `GraphBubbleUp` subclass, raised at superstep boundary | c |
+| `GraphDrained` (cooperative shutdown) | N/A | `GraphBubbleUp` subclass; class exists, never raised (wiring deferred) | c (deferred) |
 | `ParentCommand` (subgraph→parent routing) | N/A | `GraphBubbleUp` subclass | c |
 
 **`GraphInterrupt` suspend-without-re-execution model is preserved.**
@@ -804,12 +808,12 @@ end-to-end example is NOT required for Phase-a merge.
 | ReAct (START→LLM→TOOL→END with iteration loop) | all of the above | a ✅ |
 | Plan-Execute (Plan→Exec→Reflect→Plan or done) | conditional branch + loop | a ✅ |
 | Workflow (DAG with conditional branches) | conditional edges + multiple ENDs | a ✅ |
-| MapReduce (fan-out → fan-in) | `Task` accepted but **sequential** in Phase a; reducer channel for fan-in | a (sequential) / c (parallel) |
+| MapReduce (fan-out → fan-in) | `Task` accepted but **sequential** in Phase a; reducer channel for fan-in | a (sequential) ✅ / c (parallel) → [ADR-0034](0034-parallel-scheduling-engine.md) |
 | Subroutine (call subgraph as a node) | Graph-is-a-Node type wiring | a (wired) / c (exercised) |
 | Graph-of-graphs (outer turn graph embeds inner agent graph) | Graph-is-a-Node + `Command(goto=..., graph=...)` | c |
 | HITL suspend/resume (approval) | `GraphInterrupt` + `Command(resume=...)` | a ✅ |
-| Cooperative shutdown (SIGTERM) | `GraphDrained` at superstep boundary | c |
-| Parallel fan-out with multi-write detection | `Task` parallel + `LastValue` multi-write guard | c |
+| Cooperative shutdown (SIGTERM) | `GraphDrained` (class exists, wiring deferred) | c (deferred) |
+| Parallel fan-out with multi-write detection | `Task` parallel + `LastValue` multi-write guard | c → [ADR-0034](0034-parallel-scheduling-engine.md) |
 
 **Phase-a validation criterion**: the engine API must be capable of
 expressing the Phase-a rows above without engine forks (verified by unit
@@ -1070,9 +1074,11 @@ These are **examples, not framework modules** — they live under
 - **Large channel type zoo (9+ channels).** Rejected per ADR-0007 —
   only 2 ship in Phase a, additional channels deferred to Phase c when
   real use cases appear.
-- **BSP supersteps as the default execution model.** Deferred to Phase c
-  — adds latency tax for the common sequential-agent case. Phase a is
-  sequential; Phase c decides BSP vs keep-sequential + opt-in parallel.
+- **BSP supersteps as the default execution model.** Rejected —
+  ADR-0034 chose continuous scheduling (not BSP) as the opt-in parallel
+  model. `LinearScheduler` (sequential) remains the default; BSP's
+  barrier-bounded superstep imposes head-of-line blocking unsuitable for
+  the common sequential-agent case.
 - **Two ABCs (`SyncNode` + `AsyncNode`).** Rejected — duplicates engine
   loop, splits node library, forces adapters at every sync↔async
   boundary.

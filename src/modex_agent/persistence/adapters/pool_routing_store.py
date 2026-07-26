@@ -34,8 +34,8 @@ class SqlitePoolRoutingStore(PoolRoutingStore):
     """Session-prefix → pool routing backed by the ``pool_routing`` table.
 
     The ``scope_key`` column is populated from a minimal
-    ``{"pool": <pool_name>}`` JSON (matching the previous ``scope`` column's
-    contents) so the cascade cleaner (T11) can still locate rows by scope.
+    ``{"pool": <pool_name>}`` JSON, maintained for scoped-table pattern
+    consistency (all scoped workspace-DB tables carry ``scope_key``).
     ``created_at``/``updated_at`` are owned by the schema DEFAULT + the
     ``trg_pool_routing_auto_updated_at`` trigger (ADR-0029), so the adapter
     does not write them explicitly.

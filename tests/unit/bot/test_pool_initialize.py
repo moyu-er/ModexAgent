@@ -30,7 +30,7 @@ class _StubInput(InputAdapter):
 
     async def receive(self) -> AsyncIterator[InputMessage]:
         if False:
-            yield InputMessage(content="", session=SessionInfo.from_str("", default_agent_name="main"))
+            yield InputMessage(content="", session=SessionInfo.from_str(""))
 
     async def send_reply(self, msg: OutputMessage, session_id: str) -> None:
         pass

@@ -38,7 +38,11 @@ from modex_agent.pipeline.adapters import InputAdapter, OutputAdapter
 
 if TYPE_CHECKING:
     from bot.input_pipeline.context import BotInputContext
+    from bot.scope import BotRecordScope
     from bot.webui.transcript_store import TranscriptStore
+    from bot.workspace.handle import PoolWorkspaceResources
+    from modex_agent.memory.core.split_stores import MessageStore
+    from modex_agent.multi_agent.communication.service import AgentCommunicationService
     from modex_agent.persistence.managers import WorkspacePersistenceManager
 
 logger = logging.getLogger(__name__)
@@ -723,6 +727,112 @@ class WebUIService(BotService):
 
         # ── Reclaim leftover upload temp files before serving ────────
         self._server.sweep_media_tmp_orphans()
+
+        # ── Control facade (T04–T08 production wiring) ───────────────
+        # BotControlFacade orchestrates POST /api/control/{history,send}.
+        # Constructed with production provider callbacks that navigate the
+        # materialized PoolWorkspaceResources to reach the per-session
+        # MessageStore (native react path), the workspace TranscriptStore
+        # (external_coding path), and the per-pool AgentCommunicationService
+        # (send path). Without this injection app["control_facade"] stays
+        # None and the control routes return 503.
+        from bot.control.facade import BotControlFacade, ControlFacadeError
+        from bot.control.models import ControlError
+        from modex_agent.core.scope import MemoryContext, MemoryLayerName, SessionScope
+
+        async def _resolve_workspace_for_control(
+            root: Path,
+        ) -> PoolWorkspaceResources:
+            return await self._materialize_workspace(root)
+
+        async def _provide_message_store(
+            scope: BotRecordScope, resources: PoolWorkspaceResources,
+        ) -> MessageStore:
+            pool_name = scope.pool
+            if pool_name is None:
+                raise ControlFacadeError(
+                    400,
+                    ControlError(
+                        code="invalid_scope",
+                        message="BotRecordScope.pool is None",
+                    ),
+                )
+            pool_data = resources.pool_data.get(pool_name)
+            if pool_data is None:
+                raise ControlFacadeError(
+                    404,
+                    ControlError(
+                        code="pool_not_found",
+                        message=(
+                            f"Pool {pool_name!r} is not materialized in "
+                            f"workspace {resources.target!s}"
+                        ),
+                    ),
+                )
+            memory_system = pool_data.context_manager.memory_system
+            if memory_system is None:
+                raise ControlFacadeError(
+                    500,
+                    ControlError(
+                        code="memory_system_unavailable",
+                        message=(
+                            f"Memory system is not configured for pool "
+                            f"{pool_name!r}"
+                        ),
+                    ),
+                )
+            ctx = MemoryContext(session_id=scope.session_id)
+            bundle = await memory_system.store_registry.resolve(
+                layer=MemoryLayerName.SESSION,
+                scope=SessionScope(),
+                context=ctx,
+            )
+            return bundle.messages
+
+        async def _provide_transcript_store(
+            resources: PoolWorkspaceResources,
+        ) -> TranscriptStore:
+            store = resources.workspace_transcript_store
+            if store is None:
+                raise ControlFacadeError(
+                    422,
+                    ControlError(
+                        code="transcript_store_unavailable",
+                        message=(
+                            "Transcript store is not configured for this "
+                            "workspace"
+                        ),
+                    ),
+                )
+            return store
+
+        async def _provide_communication_service(
+            resources: PoolWorkspaceResources, pool_name: str,
+        ) -> AgentCommunicationService:
+            pool_instance = resources.pools.get(pool_name)
+            if pool_instance is None:
+                raise ControlFacadeError(
+                    404,
+                    ControlError(
+                        code="pool_not_found",
+                        message=(
+                            f"Pool {pool_name!r} is not materialized in "
+                            f"workspace {resources.target!s}"
+                        ),
+                    ),
+                )
+            return pool_instance.communication_service
+
+        control_facade = BotControlFacade(
+            workspace_resolver=_resolve_workspace_for_control,
+            agent_pool_map=agent_pool_map,
+            message_store_provider=_provide_message_store,
+            transcript_store_provider=_provide_transcript_store,
+            communication_service_provider=_provide_communication_service,
+            home_root=self._project_dir,
+            relative_base=self._project_dir,
+        )
+        self._server.set_control_facade(control_facade)
 
         # ── Start aiohttp server ────────────────────────────────────
         self._web_runner = web.AppRunner(self._server.app)

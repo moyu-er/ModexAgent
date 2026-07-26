@@ -14,7 +14,8 @@ from pathlib import Path
 import pytest
 
 from modex_agent.tools.standard.file_tool import ListDirTool, ReadFileTool, WriteFileTool
-from modex_agent.tools.standard.search_tool import FindFilesTool, SearchFilesTool
+from modex_agent.tools.standard.glob_tool import GlobTool
+from modex_agent.tools.standard.search_tool import SearchFilesTool
 from modex_agent.tools.terminal import SubprocessTool
 from modex_agent.tools.workspace_scoped import (
     WorkspaceRootProvider,
@@ -143,17 +144,17 @@ async def test_wrapped_write_relative_writes_under_workspace(
 async def test_wrapped_search_default_root_is_workspace(
     home_and_ws: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """search/find default path ``.`` must scope to the workspace."""
+    """search/glob default path ``.`` must scope to the workspace."""
     home, ws = home_and_ws
     monkeypatch.chdir(home)
 
-    for tool_cls in (SearchFilesTool, FindFilesTool):
+    for tool_cls in (SearchFilesTool, GlobTool):
         wrapped = WorkspaceScopedFileTool(tool_cls(), _StaticProvider(ws))
         # Both accept path="." default; assert the rewrite targets the ws.
         rewritten = wrapped._scoped_args({"path": "."})
         assert rewritten["path"] == str(ws)
-        # Names: SearchFilesTool→grep, FindFilesTool→find, both routed as file.
-        assert wrapped.name in ("grep", "find")
+        # Names: SearchFilesTool→grep, GlobTool→glob, both routed as file.
+        assert wrapped.name in ("grep", "glob")
 
 
 @pytest.mark.asyncio
@@ -188,6 +189,7 @@ def test_wrap_standard_tools_routes_by_name() -> None:
         ReadFileTool(),
         SubprocessTool(timeout=10),
         SearchFilesTool(),
+        GlobTool(),
     ]
     wrapped = wrap_standard_tools(tools, provider)
 
@@ -195,6 +197,7 @@ def test_wrap_standard_tools_routes_by_name() -> None:
     assert isinstance(by_name["ls"], WorkspaceScopedFileTool)
     assert isinstance(by_name["read"], WorkspaceScopedFileTool)
     assert isinstance(by_name["grep"], WorkspaceScopedFileTool)
+    assert isinstance(by_name["glob"], WorkspaceScopedFileTool)
     assert isinstance(by_name["bash"], WorkspaceScopedShellTool)
 
 
@@ -219,3 +222,118 @@ def test_wrapped_tool_delegates_schema_surface() -> None:
     assert wrapped.get_dynamic_schema() == inner.get_dynamic_schema()
     assert wrapped.config is inner.config
     assert isinstance(wrapped, WorkspaceScopedTool)
+
+
+# ---------------------------------------------------------------------------
+# Regression: LLM omits ``path`` — workspace root must be injected
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_wrapped_glob_omitted_path_searches_workspace(
+    home_and_ws: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """glob called WITHOUT ``path`` arg must search workspace, not process CWD."""
+    home, ws = home_and_ws
+    monkeypatch.chdir(home)  # process CWD is home, not ws
+
+    # Create files ONLY in ws, not in home
+    (ws / "ws_only.py").write_text("x", encoding="utf-8")
+    (home / "home_only.py").write_text("x", encoding="utf-8")
+
+    wrapped = WorkspaceScopedFileTool(GlobTool(), _StaticProvider(ws))
+    # LLM calls glob(pattern="*.py") — no path key at all
+    result = await wrapped.execute(pattern="*.py")
+
+    assert "ws_only.py" in result
+    assert "home_only.py" not in result
+
+
+@pytest.mark.asyncio
+async def test_wrapped_grep_omitted_path_searches_workspace(
+    home_and_ws: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """grep called WITHOUT ``path`` arg must search workspace, not process CWD."""
+    home, ws = home_and_ws
+    monkeypatch.chdir(home)
+
+    (ws / "ws_file.py").write_text("TARGET_MARKER\n", encoding="utf-8")
+    (home / "home_file.py").write_text("TARGET_MARKER\n", encoding="utf-8")
+
+    wrapped = WorkspaceScopedFileTool(SearchFilesTool(), _StaticProvider(ws))
+    # LLM calls grep(pattern="TARGET_MARKER") — no path key at all
+    result = await wrapped.execute(pattern="TARGET_MARKER", regex=False)
+
+    assert "ws_file.py" in result
+    assert "home_file.py" not in result
+
+
+@pytest.mark.asyncio
+async def test_wrapped_ls_omitted_path_searches_workspace(
+    home_and_ws: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ls called WITHOUT ``path`` arg must list workspace, not process CWD."""
+    home, ws = home_and_ws
+    monkeypatch.chdir(home)
+
+    (ws / "ws_dir_file.py").write_text("x", encoding="utf-8")
+    (home / "home_dir_file.py").write_text("x", encoding="utf-8")
+
+    wrapped = WorkspaceScopedFileTool(ListDirTool(), _StaticProvider(ws))
+    # LLM calls ls() — no path key at all
+    result = await wrapped.execute()
+
+    assert "ws_dir_file.py" in result
+    assert "home_dir_file.py" not in result
+
+
+# ---------------------------------------------------------------------------
+# Regression: workspace switch — same tool instance targets new workspace
+# ---------------------------------------------------------------------------
+
+
+class _MutableProvider(WorkspaceRootProvider):
+    """Provider whose root can be swapped at runtime — simulates /cd switch."""
+
+    def __init__(self) -> None:
+        self._root: Path | None = None
+
+    def set_root(self, root: Path) -> None:
+        self._root = root
+
+    def current(self) -> Path:
+        if self._root is None:
+            raise RuntimeError("root not set")
+        return self._root
+
+
+@pytest.mark.asyncio
+async def test_wrapped_glob_workspace_switch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After workspace switch, same tool must search the NEW workspace."""
+    home = tmp_path / "home"
+    ws_a = tmp_path / "ws_a"
+    ws_b = tmp_path / "ws_b"
+    home.mkdir()
+    ws_a.mkdir()
+    ws_b.mkdir()
+    monkeypatch.chdir(home)
+
+    (ws_a / "file_a.py").write_text("x", encoding="utf-8")
+    (ws_b / "file_b.py").write_text("x", encoding="utf-8")
+
+    provider = _MutableProvider()
+    provider.set_root(ws_a)
+    wrapped = WorkspaceScopedFileTool(GlobTool(), provider)
+
+    # Phase 1: workspace A — path omitted
+    result_a = await wrapped.execute(pattern="*.py")
+    assert "file_a.py" in result_a
+    assert "file_b.py" not in result_a
+
+    # Phase 2: switch to workspace B — same tool instance, path still omitted
+    provider.set_root(ws_b)
+    result_b = await wrapped.execute(pattern="*.py")
+    assert "file_b.py" in result_b
+    assert "file_a.py" not in result_b
