@@ -96,3 +96,120 @@ artifacts from disk state alone and enqueues `clean_session` for them. It is the
 sole retry authority: any deletion interrupted by a crash or a transient failure
 is eventually completed by it, because its authority is disk, not in-memory state.
 _Avoid_: cleanup cron, janitor.
+
+## Bot control domain language
+
+**Control Client** — the bot-owned command-line participant through which an
+agent discovers and invokes the bot's externally supported capabilities. It
+translates process context and command arguments into control requests; it does
+not independently reproduce the bot's routing, session, persistence, or runtime
+semantics.
+_Avoid_: second runtime, database client.
+
+**Bot Control Interface** — the single bot-owned interface for externally
+supported messaging and history behavior. Web and command-line transports adapt
+this same interface; neither transport owns a separate interpretation of the
+behavior. Additional runtime-control operations are not implied.
+_Avoid_: CLI API when referring to the shared capability surface.
+
+**Control Transport** — a delivery adapter that parses an external request,
+invokes the Bot Control Interface, and maps the result to its wire format. A
+transport does not contain bot behavior.
+_Avoid_: control service when referring only to HTTP routing.
+
+**Bootstrap Context** — the `MODEX_*` values injected into an agent process so
+the Control Client can locate the bot and describe the caller's current agent,
+session, workspace, and topology context. The Control Client validates their
+structure before constructing a request. Bootstrap Context is invocation data,
+not a durable bot configuration contract.
+_Avoid_: bot configuration, query-string state.
+
+**Control Origin** — the scheme, loopback host, and port of the bot's shared
+HTTP listener, injected as Bootstrap Context without an API path. WebUI and
+Control Transports share this origin; operation paths are fixed internal
+protocol constants rather than environment configuration.
+_Avoid_: control URL when it includes an operation path.
+
+**Control Workspace** — the explicit workspace root carried by each online
+Control Client operation. It selects one multi-live workspace's independent
+resource bundle, including its pools, router, broker, inboxes, and stores.
+Session, pool, and agent identifiers are not globally meaningful without this
+workspace dimension.
+_Avoid_: inferred workspace, active workspace.
+
+**Legacy Reference Implementation** — source retained temporarily as behavioral
+and test evidence while the Control Client is built. Retention does not make it
+an installed alternative and does not promise compatibility with the new
+control contract.
+_Avoid_: fallback client, compatibility backend.
+
+**Runtime Fallback** — automatic execution of a second implementation after the
+primary control path fails. The new Control Client has no Runtime Fallback to
+the Legacy Reference Implementation or to direct persistence access: failure of
+the bot control path is reported as failure.
+_Avoid_: legacy mode when referring only to retained source.
+
+**Invocation Continuation** — a `send` operation that supplies an existing
+subagent invocation id so work continues in that invocation's task-scoped
+session. This is messaging behavior, not pausing or resuming an agent runtime.
+_Avoid_: runtime resume.
+
+**History Session Address** — the complete session id queried by the history
+application interface. The current CLI derives it from its
+`--invocation-id` and `--agent` arguments using the canonical session-id
+strategy before calling the bot. Invocation id is not a history-domain field.
+_Avoid_: history invocation query.
+
+**Dispatch Outcome** — the closed result of resolving an optional Invocation
+Continuation request: a fresh task was requested, an existing invocation was
+continued, or the requested invocation was absent and a different fresh task
+was created. It is a bot-owned fact represented by an enum, not inferred from
+CLI text or a boolean.
+_Avoid_: created-new flag, status string.
+
+**CLI Compatibility Surface** — the existing command availability rules,
+arguments, options, exit codes, output shapes, and observable routing outcomes
+that callers rely on. Moving behavior behind the Bot Control Interface must not
+silently change this surface.
+_Avoid_: command list when the output and error contracts also matter.
+
+**Domain Route Package** — a bot package that keeps one externally exposed
+domain's request models, application interface, and thin HTTP route adapter
+together while depending on existing bot capabilities rather than on the
+monolithic WebUI server. Domain Route Packages are composed by the server and
+form the incremental path toward fully decomposing it.
+_Avoid_: CLI route package when the domain is shared by other callers.
+
+**Server Projection** — the typed, filtered representation that the bot exposes
+through a Control Transport. It protects bot internals and defines the HTTP
+contract independently of any particular client's rendering needs.
+_Avoid_: CLI whitelist.
+
+**Observable History** — the bot-side, provider-neutral record that can be
+reconstructed for inspection. Native agents derive it from their MessageStore;
+external coding agents derive it from materialized canonical turn events.
+Observable History is not necessarily the same data an agent uses as its own
+continuation memory.
+_Avoid_: provider memory when referring to a transcript projection.
+
+**Source Fidelity** — the rule that a history projection reports only facts
+present in its selected source. Missing user messages, ids, timestamps, tool
+metadata, or content remain absent rather than being reconstructed from another
+store or fabricated.
+_Avoid_: best-effort enrichment.
+
+**Client Output Projection** — the Control Client's independent selection and
+serialization of response fields for agent consumption. It does not
+automatically expose fields added to the Server Projection.
+_Avoid_: server response model.
+
+**Public Command Directory** — the platform/install-mode-specific directory
+whose entries are product-owned commands intended for users and agent child
+processes. Packaged Windows uses `<install>/commands`; standard Python installs
+use the environment's normal `Scripts` or `bin` directory.
+_Avoid_: bundled tool directory.
+
+**Private Tool Directory** — the platform-specific directory of bundled helper
+binaries used by the bot and its child processes but not registered as public
+user commands, such as packaged ripgrep.
+_Avoid_: public command directory.
