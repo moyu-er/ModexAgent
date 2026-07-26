@@ -15,7 +15,6 @@ safety:
   turn:
     agent_run_timeout: 180.0
     hook_timeout: 10.0
-    tool_timeout: 120.0
 
 # ---- Paths ----
 paths:

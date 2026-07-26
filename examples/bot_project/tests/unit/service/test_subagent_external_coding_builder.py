@@ -364,11 +364,20 @@ async def test_build_env_spec_agent_pool_map_includes_parent_for_modexctl_reply(
     assert spec_template.agent_pool_map["worker"] == "default"
 
     env = ExternalEnvBuilder.build(spec_template, base_env={"PATH": "/usr/bin"})
-    from modexctl.main import _parse_pool_map, _resolve_target_pool
+    raw_pool_map = env["MODEX_AGENT_POOL_MAP"]
+    pool_map: dict[str, str] = {}
+    for pair in raw_pool_map.split(";"):
+        pair = pair.strip()
+        if not pair or "=" not in pair:
+            continue
+        name, pool = pair.split("=", 1)
+        name = name.strip()
+        pool = pool.strip().removesuffix("|external").rstrip()
+        if name and pool:
+            pool_map[name] = pool
 
-    pool_map = _parse_pool_map(env["MODEX_AGENT_POOL_MAP"])
-    assert _resolve_target_pool(pool_map, "orchestrator") == "default"
-    assert _resolve_target_pool(pool_map, "worker") == "default"
+    assert pool_map["orchestrator"] == "default"
+    assert pool_map["worker"] == "default"
 
 
 @pytest.mark.asyncio

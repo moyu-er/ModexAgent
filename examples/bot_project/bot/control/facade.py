@@ -263,8 +263,9 @@ class BotControlFacade:
                 ControlError(
                     code="self_send_rejected",
                     message=(
-                        f"Target agent {request.target_agent!r} is the calling "
-                        f"agent itself; self-send is not allowed"
+                        f"You are {caller.agent_name!r}, so you cannot send a "
+                        f"message to yourself. Run 'modexctl agents' to see "
+                        f"the agents you can reach."
                     ),
                 ),
             )

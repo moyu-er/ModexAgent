@@ -249,6 +249,65 @@ class TestSendToAgentToolTargetValidation:
         assert result == "ok"
 
 
+class TestSelfSendGuard:
+    """Self-send (target_agent == caller's own agent_name) must be rejected
+    with a message that names the caller, so an agent that does not know its
+    own identity understands *why* the target it picked is itself."""
+
+    @pytest.mark.asyncio
+    async def test_self_send_rejected_with_caller_name(self) -> None:
+        service = _RecordingService()
+        tool = SendToAgentTool(
+            store=_store_with_target(),
+            source=AgentAddress(name="agent"),
+            broker=object(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            agent_bus=object(),  # type: ignore[arg-type]
+            service=service,  # type: ignore[arg-type]
+        )
+        token = current_agent_context.set(_context())
+        try:
+            result = await tool.execute(
+                target_agent="agent",
+                content="hello self",
+                invocation_id=None,
+            )
+        finally:
+            current_agent_context.reset(token)
+
+        assert result.startswith("Error: You are 'agent'")
+        assert "cannot send a message to yourself" in result
+        assert service.last_target is None
+
+    @pytest.mark.asyncio
+    async def test_self_send_checked_before_target_lookup(self) -> None:
+        store = CommunicationTargetStore()
+        store.add(CommunicationTarget(
+            name="agent", kind=AgentCommKind.NORMAL,
+        ))
+        service = _RecordingService()
+        tool = SendToAgentTool(
+            store=store,
+            source=AgentAddress(name="agent"),
+            broker=object(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            agent_bus=object(),  # type: ignore[arg-type]
+            service=service,  # type: ignore[arg-type]
+        )
+        token = current_agent_context.set(_context())
+        try:
+            result = await tool.execute(
+                target_agent="agent",
+                content="hello self",
+                invocation_id=None,
+            )
+        finally:
+            current_agent_context.reset(token)
+
+        assert "cannot send a message to yourself" in result
+        assert service.last_target is None
+
+
 class TestToolManagerIntegration:
     """ToolManager.get_tool_descriptions() MUST use get_dynamic_schema().
 

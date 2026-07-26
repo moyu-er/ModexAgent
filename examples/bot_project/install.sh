@@ -342,8 +342,27 @@ fi
 pip_install() {
     # $1 = extra uv flags (e.g. --reinstall) for the self-healing recovery path.
     local extra="${1:-}"
+    # When --reinstall is requested, explicitly uninstall the editable packages
+    # first. uv's --reinstall alone can leave stale physical copies in
+    # site-packages when the previous install was interrupted or files were
+    # locked — the stale bot/ directory then shadows the .pth source path and
+    # the CLI imports outdated code (the modexctl ModuleNotFoundError bug).
+    if [ "$extra" = "--reinstall" ]; then
+        "$UV_EXE" pip uninstall --python "$VENV_PYTHON" modex-bot-project ModexAgent >/dev/null 2>&1 || true
+    fi
     "$UV_EXE" pip install $extra --python "$VENV_PYTHON" -e "../../.[all,dev]"
     "$UV_EXE" pip install $extra --python "$VENV_PYTHON" -e ".[webui,dev]"
+    # Editable install guard: a stale physical bot/ directory in any
+    # site-packages entry shadows the .pth source path. getsitepackages() can
+    # return multiple paths, so check each one.
+    "$VENV_PYTHON" -c "
+import site, os, shutil
+for sp in site.getsitepackages():
+    p = os.path.join(sp, 'bot')
+    if os.path.isdir(p):
+        print(f'  [INFO] Removing stale {p}/ (shadows editable source)...')
+        shutil.rmtree(p, ignore_errors=True)
+" 2>/dev/null || true
 }
 
 # Fingerprint BOTH pyproject files: most framework deps live in the root project

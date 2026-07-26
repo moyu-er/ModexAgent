@@ -522,8 +522,23 @@ exit /b 0
 :: ==========================================================================
 :pip_install
 set "_PIP_EXTRA=%~1"
-"%UV_EXE%" pip install %_PIP_EXTRA% --python "%VENV_PYTHON%" -e "..\..\.[all,dev]"
+:: When --reinstall is requested (self-healing path), explicitly uninstall the
+:: editable packages first. uv's --reinstall alone can leave stale physical
+:: copies in site-packages when the previous install was interrupted or files
+:: were locked — the stale bot\ directory then shadows the .pth source path
+:: and the CLI imports outdated code (the modexctl ModuleNotFoundError bug).
+if "!_PIP_EXTRA!"=="--reinstall" (
+    "%UV_EXE%" pip uninstall --python "%VENV_PYTHON%" modex-bot-project ModexAgent >nul 2>&1
+)
+"%UV_EXE%" pip install !_PIP_EXTRA! --python "%VENV_PYTHON%" -e "..\..\.[all,dev]"
 if errorlevel 1 exit /b 1
-"%UV_EXE%" pip install %_PIP_EXTRA% --python "%VENV_PYTHON%" -e ".[webui,dev]"
+"%UV_EXE%" pip install !_PIP_EXTRA! --python "%VENV_PYTHON%" -e ".[webui,dev]"
 if errorlevel 1 exit /b 1
+:: Editable install guard: a stale physical bot\ directory in any site-packages
+:: entry shadows the .pth source path. getsitepackages() can return multiple
+:: paths (.venv, .venv\Lib\site-packages), so check each one.
+for /f "delims=" %%p in ('"%VENV_PYTHON%" -c "import site,os;[print(sp) for sp in site.getsitepackages() if os.path.isdir(os.path.join(sp,'bot'))]" 2^>nul') do (
+    echo   [INFO] Removing stale %%p\bot\ ^(shadows editable source^)...
+    rmdir /s /q "%%p\bot" 2>nul
+)
 exit /b 0

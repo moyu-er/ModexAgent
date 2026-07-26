@@ -25,9 +25,10 @@ dev = [
 
 [project.scripts]
 modexbot = "modexbot.cli:app"
+modexctl = "bot.cli.modexctl:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["modexbot"]
+packages = ["bot", "modexbot"]
 
 [tool.hatch.build]
 include = [

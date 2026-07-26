@@ -184,6 +184,9 @@ class TestSelfSendRejected:
             await facade.send(_make_request(target_agent=_AGENT_NAME))
         assert exc_info.value.status == 422
         assert exc_info.value.error.code == "self_send_rejected"
+        message = exc_info.value.error.message
+        assert f"You are {_AGENT_NAME!r}" in message
+        assert "cannot send a message to yourself" in message
         mock_service._send.assert_not_awaited()
 
     @pytest.mark.asyncio

@@ -72,6 +72,8 @@ from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.hook import HookErrorPolicy, HookRunner, HookSpec
 from modex_agent.hook.builtin.subagent_auto_send import SubagentAutoSendHook
 
+from bot.config.webui_config import build_control_origin
+
 if TYPE_CHECKING:
     from modex_agent.agents.external_coding.agent import StreamingProviderBackend
     from modex_agent.core.session_id import SessionInfo
@@ -248,6 +250,7 @@ class BotSubagentExternalCodingBuilder(SubagentExternalCodingBuilder):
             comm_kind=AgentCommKind.SUBAGENT,
             parent_session_id=parent_session_str or None,
             modexctl_bin_dir=_modexctl_bin_dir(),
+            control_origin=deps.control_origin or build_control_origin(self._project_dir / "config"),
         )
 
         # ── 2. ExternalSessionMapStore (FILE or SQLite per PersistenceConfig)

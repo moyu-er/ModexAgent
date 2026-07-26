@@ -38,7 +38,7 @@ def _copy_if_missing(src: Path, dst: Path) -> bool:
 def create_pth_files(app_dir: Path) -> None:
     """Create .pth files in the bundled Python's site-packages.
 
-    These make ``import modex_agent``, ``import modexctl``, ``import bot``,
+    These make ``import modex_agent``, ``import bot``,
     and ``import modexbot`` resolve to the source directories on disk —
     giving users an editable-code experience without a venv or pip install.
     """
@@ -108,7 +108,7 @@ def create_cli_shims(app_dir: Path) -> None:
     # needed. MODEXBOT_PORT env still works as an optional escape hatch.
     shims = {
         "modexbot.bat": f'@echo off\r\n"{python_exe}" -m modexbot %*',
-        "modexctl.bat": f'@echo off\r\n"{python_exe}" -c "from modexctl.main import main; main()" %*',
+        "modexctl.bat": f'@echo off\r\n"{python_exe}" -m bot.cli.modexctl %*',
     }
 
     print("\n=== Creating CLI shims ===")
@@ -154,7 +154,7 @@ def verify_imports(app_dir: Path) -> None:
 
     checks = [
         "import modex_agent; print('  modex_agent OK')",
-        "import modexctl; print('  modexctl OK')",
+        "import bot.cli.modexctl; print('  bot.cli.modexctl OK')",
         "import modexbot; print('  modexbot OK')",
         "import bot; print('  bot OK')",
         "import aiosqlite; print('  aiosqlite OK')",
