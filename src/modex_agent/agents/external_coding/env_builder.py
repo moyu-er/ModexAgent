@@ -1,7 +1,7 @@
 ﻿"""External env builder — the single convergence point for ``MODEX_*`` vars.
 
 `ExternalEnvBuilder.build(spec, base_env)` is the only place in the
-codebase that constructs the 9 ``MODEX_*`` environment variables and the
+codebase that constructs the ``MODEX_*`` environment variables and the
 PATH-prepend for ``modexctl``. Per ADR-0022 D6, no other site is
 permitted to construct them.
 """
@@ -66,6 +66,7 @@ class ExternalEnvBuilder:
             "MODEX_AGENT_POOL_MAP": _format_pool_map(spec.agent_pool_map),
             "MODEX_TARGETS": _format_targets(spec.targets),
             "MODEX_COMM_KIND": spec.comm_kind.value,
+            "MODEX_CONTROL_ORIGIN": spec.control_origin,
         }
         if spec.comm_kind == AgentCommKind.SUBAGENT and spec.parent_session_id is not None:
             modex["MODEX_PARENT_SESSION_ID"] = spec.parent_session_id

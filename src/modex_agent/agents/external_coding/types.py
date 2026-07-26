@@ -189,6 +189,18 @@ class ExternalEnvSpec(BaseModel):
             "None omits the var entirely (external agent sees no key)."
         ),
     )
+    control_origin: str = Field(
+        default="",
+        description=(
+            "Bot HTTP listener origin (e.g. ``http://127.0.0.1:21800``) "
+            "surfaced as MODEX_CONTROL_ORIGIN. ADR-0036 D6: the value is "
+            "sourced from ``bot_config.yml``'s ``webui.host``/``webui.port`` "
+            "at bot startup, with ``0.0.0.0`` normalized to ``127.0.0.1`` so "
+            "the injected host is always loopback. Empty string when the "
+            "spec is constructed outside ``examples/bot_project`` (framework "
+            "tests, non-bot callers) — the var is still emitted, just empty."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -199,6 +199,7 @@ class AgentTemplate:
             parent_prompt_lookup=parent_prompt_lookup,
             fork_context_spec=fork_context_spec,
             roles=list(self.spec.roles),
+            store_registry=deps.memory_store_registry,
         )
 
         tool_manager = await self._build_tool_manager(deps, name, runtime_dir)
@@ -280,6 +281,7 @@ class AgentTemplate:
             modexctl_bin_dir=resolve_modexctl_bin_dir(),
             comm_kind=AgentCommKind.SUBAGENT,
             parent_session_id=None,
+            control_origin=deps.control_origin,
         )
         hooks.append(NativeEnvInjectionHook(env_spec_template=subagent_env_spec))
 
