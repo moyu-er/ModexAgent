@@ -51,10 +51,23 @@ observability:
   # Trace Path (A) — OTel span format (default: file).
   # "file" writes spans.jsonl (OTel-compatible spans).
   # "off" disables all trace emission. "otel_http" requires [observability] extra.
-  trace_backend: "file"
-  # otel_endpoint: null             # OTLP HTTP endpoint, e.g. http://localhost:4318/v1/traces
-  # otel_service_name: "modex_agent"
+  trace_backend: "${OTEL_FORMAT:-file}"
+  otel_endpoint: "${LANGFUSE_HOST:-http://localhost:3000}/api/public/otel/v1/traces"
+  otel_service_name: "modex-bot"
+  otel_headers:
+    Authorization: "Basic ${LANGFUSE_BASIC_AUTH:-}"
+    x-langfuse-ingestion-version: "4"
   retain_reasoning_content: true
+  # Prompt capture scope for G2 (ADR-0024 IN11):
+  # "summary" (default) — last N messages, system prompt hashed only.
+  prompt_capture: "summary"
+  #
+  # Langfuse integration (self-hosted, OTLP-native, MIT-licensed):
+  # 1. Deploy Langfuse via Docker Compose (see docs/langfuse-deployment.md).
+  # 2. Uncomment the following lines to send traces to Langfuse:
+  # trace_backend: "otel_http"
+  # otel_endpoint: "http://localhost:3000/api/public/otel"
+  # otel_service_name: "modex-bot"
   # Repro Path (B1/B2):
   # checkpoint_per_iteration: true
   # cassette_enabled: false
