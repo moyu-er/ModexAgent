@@ -18,6 +18,7 @@ from modex_agent.approval.constants import ApprovalDecision
 from modex_agent.approval.types import ApprovalAction
 from modex_agent.approval.views import view_from_request
 from modex_agent.core.agent import AgentContext
+from modex_agent.hook.abc import HookPayload, HookPoint
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
 from modex_agent.runtime.approval_decision import (
     ApprovalAuditDecision,
@@ -195,4 +196,15 @@ class ApprovalResumer:
         state = ReActSnapshotPolicy.state_from_snapshot(snapshot)
         agent_context.identity = snapshot.identity
         agent_context.runtime.state = state
+
+        # AFTER_APPROVAL dispatched directly via runtime.hooks (NOT through
+        # ReActHookPoint) — approval resume is a pipeline-layer concern.
+        hooks = agent_context.runtime.hooks
+        if hooks is not None:
+            await hooks.dispatch(
+                HookPoint.AFTER_APPROVAL,
+                agent_context,
+                HookPayload(data={"transaction": approval}),
+            )
+
         return turn_store

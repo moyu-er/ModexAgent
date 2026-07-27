@@ -69,6 +69,7 @@ class ReActHookPoint(StrEnum):
     BEFORE_TOOL_EXECUTION = "before_tool_execution"
     AFTER_TOOL_EXECUTION = "after_tool_execution"
     FINALIZE_CONTENT = "finalize_content"
+    BEFORE_LLM = "before_llm"
 
 
 class ReActScope(StrEnum):

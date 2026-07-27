@@ -23,6 +23,7 @@ from modex_agent.agents.react.message_builder import build_assistant_message
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.constants import FinishReason
+from modex_agent.core.message import ChatMessage
 from modex_agent.core.types import MessageRole
 from modex_agent.ioc.configs.llm import Modality
 from modex_agent.media.media_utils import build_inline_image_block
@@ -160,6 +161,15 @@ class LLMNode(Node[ReActTurnState]):
                 await self._injection_drainer.drain(agent_ctx)
 
             messages = await self._build_messages(agent_ctx)
+
+            # Coerce to ChatMessage for a typed BEFORE_LLM hook payload (T10
+            # prompt capture); ReactLlmClient.call coerces again internally.
+            await ctx.runtime.dispatch_hook(
+                ReActHookPoint.BEFORE_LLM,
+                ctx,
+                data={"request": [ChatMessage.coerce(m) for m in messages]},
+            )
+
             response = await self._llm_client.call(messages, agent_ctx)
 
             await ctx.runtime.dispatch_hook(

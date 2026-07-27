@@ -14,8 +14,10 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.emitter import AgentResult
+    from modex_agent.core.message import ChatMessage
     from modex_agent.core.tool_manager import ToolResult
     from modex_agent.core.types import LLMResponse, ToolCall
+    from modex_agent.runtime.models import ApprovalTransaction
 
 
 class HookPoint(str, Enum):
@@ -34,6 +36,8 @@ class HookPoint(str, Enum):
     AFTER_LLM_RESPONSE = "after_llm_response"
     FINALIZE_CONTENT = "finalize_content"
     FINALLY_TURN = "finally_turn"
+    BEFORE_LLM = "before_llm"
+    AFTER_APPROVAL = "after_approval"
 
 
 class HookErrorPolicy(str, Enum):
@@ -166,3 +170,32 @@ class FinallyTurnHook(Hook):
 
     @abstractmethod
     async def finally_turn(self, ctx: AgentContext, result: AgentResult | None) -> None: ...
+
+
+class BeforeLLMHook(Hook):
+    """Pre-LLM-call observation hook.
+
+    Fires before the LLM provider is called within the ReAct LLM node.
+    The ``request`` payload carries the typed messages being sent to the
+    provider, enabling prompt capture (G2) and LLM-call duration timing (G1).
+    Observation-only — does NOT veto or modify the request.
+    """
+
+    _hook_point = HookPoint.BEFORE_LLM
+
+    @abstractmethod
+    async def before_llm(self, ctx: AgentContext, request: Sequence[ChatMessage]) -> None: ...
+
+
+class AfterApprovalHook(Hook):
+    """Post-approval-decision observation hook.
+
+    Fires after the approval decision is applied to ``ApprovalTransaction``
+    and before the graph resumes execution. Enables approval-span measurement
+    (G3). Observation-only — does NOT veto or modify the decision.
+    """
+
+    _hook_point = HookPoint.AFTER_APPROVAL
+
+    @abstractmethod
+    async def after_approval(self, ctx: AgentContext, transaction: ApprovalTransaction) -> None: ...

@@ -12,11 +12,13 @@ from typing import TYPE_CHECKING, Any, TypedDict, Unpack
 
 from modex_agent.control.exceptions import AgentControlError
 from modex_agent.hook.abc import (
+    AfterApprovalHook,
     AfterIterationHook,
     AfterLLMResponseHook,
     AfterToolExecutionHook,
     AfterTurnHook,
     BeforeIterationHook,
+    BeforeLLMHook,
     BeforeToolExecutionHook,
     BeforeTurnHook,
     FinalizeContentHook,
@@ -31,8 +33,10 @@ from modex_agent.hook.abc import (
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.emitter import AgentResult
+    from modex_agent.core.message import ChatMessage
     from modex_agent.core.tool_manager import ToolResult
     from modex_agent.core.types import LLMResponse, ToolCall
+    from modex_agent.runtime.models import ApprovalTransaction
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +75,14 @@ class _FinalizeContentPayload(TypedDict, total=False):
 
 class _FinallyTurnPayload(TypedDict, total=False):
     result: AgentResult | None
+
+
+class _BeforeLLMPayload(TypedDict, total=False):
+    request: Sequence[ChatMessage] | None
+
+
+class _AfterApprovalPayload(TypedDict, total=False):
+    transaction: ApprovalTransaction | None
 
 
 # ---------------------------------------------------------------------------
@@ -132,6 +144,18 @@ async def _call_finally_turn(
     await hook.finally_turn(ctx, kw.get("result"))
 
 
+async def _call_before_llm(
+    hook: BeforeLLMHook, ctx: AgentContext, **kw: Unpack[_BeforeLLMPayload]
+) -> None:
+    await hook.before_llm(ctx, kw.get("request"))  # type: ignore[arg-type]
+
+
+async def _call_after_approval(
+    hook: AfterApprovalHook, ctx: AgentContext, **kw: Unpack[_AfterApprovalPayload]
+) -> None:
+    await hook.after_approval(ctx, kw.get("transaction"))  # type: ignore[arg-type]
+
+
 _HOOK_DISPATCH: dict[HookPoint, tuple[type, Callable[..., Any]]] = {
     HookPoint.BEFORE_TURN: (BeforeTurnHook, _call_before_turn),
     HookPoint.AFTER_TURN: (AfterTurnHook, _call_after_turn),
@@ -142,6 +166,8 @@ _HOOK_DISPATCH: dict[HookPoint, tuple[type, Callable[..., Any]]] = {
     HookPoint.AFTER_LLM_RESPONSE: (AfterLLMResponseHook, _call_after_llm_response),
     HookPoint.FINALIZE_CONTENT: (FinalizeContentHook, _call_finalize_content),
     HookPoint.FINALLY_TURN: (FinallyTurnHook, _call_finally_turn),
+    HookPoint.BEFORE_LLM: (BeforeLLMHook, _call_before_llm),
+    HookPoint.AFTER_APPROVAL: (AfterApprovalHook, _call_after_approval),
 }
 
 

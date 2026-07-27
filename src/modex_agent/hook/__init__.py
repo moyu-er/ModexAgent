@@ -7,11 +7,13 @@
 """
 
 from modex_agent.hook.abc import (
+    AfterApprovalHook,
     AfterIterationHook,
     AfterLLMResponseHook,
     AfterToolExecutionHook,
     AfterTurnHook,
     BeforeIterationHook,
+    BeforeLLMHook,
     BeforeToolExecutionHook,
     BeforeTurnHook,
     FinalizeContentHook,
@@ -26,11 +28,13 @@ from modex_agent.hook.abc import (
 from modex_agent.hook.runner import HookRunner
 
 __all__ = [
+    "AfterApprovalHook",
     "AfterIterationHook",
     "AfterLLMResponseHook",
     "AfterToolExecutionHook",
     "AfterTurnHook",
     "BeforeIterationHook",
+    "BeforeLLMHook",
     "BeforeToolExecutionHook",
     "BeforeTurnHook",
     "FinalizeContentHook",

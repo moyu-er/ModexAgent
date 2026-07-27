@@ -253,7 +253,7 @@ Wave 3:  T12 (handoff + G11 fix)  ← after T10
 Wave 4:  T13 (Langfuse docs)  ← after T10/T11/T12 (needs all spans working)
 ```
 
-## T9 — New hook ABCs: BeforeLLMHook + AfterApprovalHook [PLANNED]
+## T9 — New hook ABCs: BeforeLLMHook + AfterApprovalHook [COMPLETED]
 
 **What to build:** Add two new hook ABCs to `src/modex_agent/hook/abc.py`:
 `BeforeLLMHook` (abstract method `before_llm(ctx, request)`) and
@@ -272,13 +272,13 @@ provides the reference hook taxonomy: `pre_llm_call` / `post_llm_call` /
 `pre_approval_request` / `post_approval_response` / `subagent_start` /
 `subagent_stop`. ModexAgent maps these to its ABC-first hook system.
 
-- [ ] `BeforeLLMHook(Hook)` ABC in `hook/abc.py` with `before_llm(ctx, request)` abstract method
-- [ ] `AfterApprovalHook(Hook)` ABC in `hook/abc.py` with `after_approval(ctx, transaction)` abstract method
-- [ ] `HookPoint.BEFORE_LLM` + `HookPoint.AFTER_APPROVAL` enum values
-- [ ] `_HOOK_DISPATCH` entries for both new points
-- [ ] Dispatch call sites: `ReactLlmClient.call()` emits `BEFORE_LLM`; `ApprovalRuntime` emits `AFTER_APPROVAL` after decision
-- [ ] `HookRunner.dispatch` handles new points
-- [ ] Unit test: a no-op hook implementing each new ABC is dispatched correctly
+- [x] `BeforeLLMHook(Hook)` ABC in `hook/abc.py` with `before_llm(ctx, request)` abstract method
+- [x] `AfterApprovalHook(Hook)` ABC in `hook/abc.py` with `after_approval(ctx, transaction)` abstract method
+- [x] `HookPoint.BEFORE_LLM` + `HookPoint.AFTER_APPROVAL` enum values
+- [x] `_HOOK_DISPATCH` entries for both new points
+- [x] Dispatch call sites: `BEFORE_LLM` emitted in `LLMNode.execute()` before `ReactLlmClient.call()`; `AFTER_APPROVAL` emitted in `ApprovalResumer.apply_resume()` after decision applied
+- [x] `HookRunner.dispatch` handles new points
+- [x] Unit test: a no-op hook implementing each new ABC is dispatched correctly
 
 ## T10 — TraceCollectorHook: implement gaps G1/G2/G3/G5 + attributes [PLANNED]
 

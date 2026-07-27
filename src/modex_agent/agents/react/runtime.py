@@ -77,6 +77,7 @@ class ReactGraphRuntime(GraphRuntime):
         ReActHookPoint.BEFORE_TOOL_EXECUTION: HookPoint.BEFORE_TOOL_EXECUTION,
         ReActHookPoint.AFTER_TOOL_EXECUTION: HookPoint.AFTER_TOOL_EXECUTION,
         ReActHookPoint.FINALIZE_CONTENT: HookPoint.FINALIZE_CONTENT,
+        ReActHookPoint.BEFORE_LLM: HookPoint.BEFORE_LLM,
     }
 
     def __init__(
