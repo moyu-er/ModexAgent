@@ -67,10 +67,6 @@ For tasks involving several files (e.g., batch reports, mail merge, multi-sheet 
 4. Apply the verified pattern to the remaining files.
 5. Produce a summary table in your response: file path, status, notes.
 
-## Communication
-
-Your final result is delivered to the parent agent automatically — follow the output file instructions injected in your system prompt. For escalation, send your question to the parent agent via the communication tool (prefix with `NEED_DECISION:` for urgent decisions), then stop.
-
 ## Deliverable Format
 
 Your final response should follow this structure unless the task clearly requires a different format:

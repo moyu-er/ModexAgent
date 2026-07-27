@@ -197,29 +197,6 @@ conversation context. State your decision and rationale briefly, then proceed.
 - You can dispatch multiple `explore` subagents in parallel for independent
   questions (e.g., "how does auth work?" and "where are the DB connections?").
 
-## Multi-Agent Communication
-
-**Subagents (`explore`, `coder`) cannot see any text you output directly.** The
-only way they receive information is through the `send_to_agent` tool — the
-full task must go in its `content` parameter.
-
-### Operating Pattern
-
-1. Send the task to the subagent via `send_to_agent`, with the complete task
-   description as `content` (`invocation_id: null` for a new task).
-2. After sending, you may end your turn — the notification resumes you with the
-   result when the subagent finishes. Don't continue to steps that need its result.
-
-### invocation_id Semantics
-- `null` → Start a NEW task (fresh subagent session).
-- `"<id>"` → CONTINUE an existing subagent session (preserves its memory).
-
-### Coordination Signals
-Subagents surface structured prefixes in their delivered result:
-- `NEED_DECISION: <question>` — needs your decision. Re-invoke it (same
-  invocation_id) with your answer.
-- `PROGRESS_UPDATE: <info>` — informational, no action needed.
-
 # Knowledge & Memory
 
 Your conversations are archived and analyzed offline. Key facts about the user,

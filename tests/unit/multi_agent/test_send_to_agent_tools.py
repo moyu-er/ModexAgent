@@ -779,3 +779,28 @@ class TestSubagentWiringSelectsSubagentMode:
         params = send_tools[0]["function"]["parameters"]
         assert "invocation_id" not in params.get("properties", {})
         assert "invocation_id" not in params.get("required", [])
+
+
+# -- Empty-store gating (pool_builder.create_pool skip condition) --
+
+
+def test_empty_store_list_is_falsy():
+    """An empty CommunicationTargetStore.list() is falsy.
+
+    pool_builder.create_pool gates SendToAgentTool registration on
+    ``if main_store.list():`` — an empty list (no subagents, no peers)
+    must be falsy so the tool is not registered for solo agents.
+    """
+    store = CommunicationTargetStore()
+    assert store.list() == []
+    assert not store.list()
+
+
+def test_nonempty_store_list_is_truthy():
+    """A CommunicationTargetStore with at least one target is truthy."""
+    store = CommunicationTargetStore()
+    store.add(CommunicationTarget(
+        name="explore", kind=AgentCommKind.SUBAGENT,
+    ))
+    assert store.list()
+    assert len(store.list()) == 1

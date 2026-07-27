@@ -399,13 +399,16 @@ async def create_pool(
     main_service._target_store = main_store
 
     if strategy.requires_main_agent_tools:
-        tool_manager.register(
-            SendToAgentTool(
-                store=main_store, source=AgentAddress(name=main_agent_name),
-                broker=broker, registry=pool, agent_bus=agent_bus, service=main_service,
+        if main_store.list():
+            tool_manager.register(
+                SendToAgentTool(
+                    store=main_store, source=AgentAddress(name=main_agent_name),
+                    broker=broker, registry=pool, agent_bus=agent_bus, service=main_service,
+                )
             )
-        )
-        logger.info("Pool '%s': communication tool registered", pool_name)
+            logger.info("Pool '%s': communication tool registered", pool_name)
+        else:
+            logger.info("Pool '%s': no communication targets — skipped send_to_agent", pool_name)
 
         _wire_main_pipeline(
             pool, main_agent_name, inbox_consumer, notification_service,
