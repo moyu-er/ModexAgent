@@ -790,6 +790,42 @@ hook points a loop detector needs). Not `BeforeToolExecutionHook` —
 detection happens after execution, intervention happens at the next
 iteration boundary.
 
+### IN16 — Phase 3 direction: harness intelligence via trace-driven decisions
+
+**Status: FUTURE** — not yet planned for implementation. Recorded here to
+preserve direction; detailed design will be written when Phase 2 data is
+available to calibrate strategies.
+
+**Current state after Phase 2:** Traces are complete enough for both human
+analysis (Langfuse via OTLP) and agent self-read (local `spans.jsonl` via
+`TraceQuery`). The `TraceDrivenLoopDetectorHook` placeholder exists (IN13).
+No trace-consuming harness logic exists yet.
+
+**Four directions** (reference: hermes-agent cross-reference):
+
+1. **Loop/stuck detection** — implement `TraceDrivenLoopDetectorHook`
+   consuming `spans.jsonl`: tool fingerprint hashing, output similarity,
+   oscillation, stale-call circuit breaker. Hermes #58962 incident (494
+   consecutive failures, 3+ days) shows the cost of not having this.
+
+2. **Error recovery taxonomy** — replace overflow-only `error_recovery.py`
+   with classification-driven recovery (rate limit / billing / content
+   policy / network / overflow / SSL / thinking-signature). Hermes
+   `error_classifier.py` 27-reason taxonomy is the reference.
+
+3. **Truth enforcement** — verification gate in `EndNode`: intercept "code
+   edit without verification", force test/lint/build. Hermes
+   `verification_stop.py` + `verification_evidence.py` SQLite ledger is the
+   reference. Highest-ROI intelligence boost.
+
+4. **Experience review upgrade** — upgrade `ExperienceReviewAgent` to
+   hermes `background_review.py` pattern: fork-daemon with prefix cache
+   inheritance, tool whitelist, trace-driven context.
+
+**Prerequisite:** Phase 2 must run in production to observe real agent
+behavior patterns. Strategies must be calibrated against data, not
+implemented blind. This is why Phase 3 is FUTURE, not PLANNED.
+
 ### IN14 — trace_backend tier refinement deferred
 
 **Decision**: The existing three tiers (`off` / `file` / `otel_http`) are
@@ -835,3 +871,36 @@ endpoint works).
 does not consume its own trace for analysis — that is Langfuse's job. The
 framework's self-read path (D6 `spans.jsonl`) is reserved for Phase 3
 harness runtime decisions (IN13), not analysis.
+
+### IN17 — OTel GenAI semconv compliance
+
+**Decision**: All trace attributes follow the
+[OpenTelemetry GenAI semantic conventions](https://github.com/open-telemetry/semantic-conventions-genai).
+Attribute names use the standard `gen_ai.*` namespace with correct
+hierarchy (e.g. `gen_ai.usage.cache_read.input_tokens`, not
+`gen_ai.usage.cache_read_input_tokens`). Required attributes
+(`gen_ai.operation.name`, `gen_ai.provider.name`) are emitted on every
+span. Message content uses the OTel parts-based format
+(`{role, parts: [{type, content}]}`).
+
+**Dual emission for Langfuse compatibility**: Langfuse maps `input`/`output`
+from `gen_ai.prompt` / `gen_ai.completion` (legacy names), not from the
+current OTel standard `gen_ai.input.messages` / `gen_ai.output.messages`.
+Both are emitted:
+- `gen_ai.input.messages` (OTel standard, parts-based) — for standards-compliant OTLP consumers
+- `gen_ai.prompt` (Langfuse legacy, JSON string) — for Langfuse `input` field
+- `gen_ai.output.messages` (OTel standard, parts-based) — for standards-compliant OTLP consumers
+- `gen_ai.completion` (Langfuse legacy, string) — for Langfuse `output` field
+
+Langfuse trace-level fields mapped via `langfuse.*` namespace:
+- `langfuse.session.id` — full session ID (subagents are independent sessions)
+- `langfuse.user.id` — from `metadata['user_id']`, falls back to `"default"` (temporary, framework has no first-class user concept)
+- `langfuse.observation.type` — `"generation"` on LLM spans
+
+**OTLP trace tree**: `_emit_span_via_otel_sdk` injects `SpanContext` with
+the framework's `trace_id` and `parent_span_id` via `NonRecordingSpan` +
+`set_span_in_context`, so the OTel SDK exports linked trace trees. Span IDs
+are truncated to 16 hex chars (OTel 64-bit; framework uses 32-char UUID hex).
+
+**Reference docs**: `docs/otel/README.md` (attribute audit),
+`docs/langfuse/README.md` (Langfuse OTLP mapping).

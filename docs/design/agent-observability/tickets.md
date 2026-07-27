@@ -280,7 +280,7 @@ provides the reference hook taxonomy: `pre_llm_call` / `post_llm_call` /
 - [x] `HookRunner.dispatch` handles new points
 - [x] Unit test: a no-op hook implementing each new ABC is dispatched correctly
 
-## T10 — TraceCollectorHook: implement gaps G1/G2/G3/G5 + attributes [PLANNED]
+## T10 — TraceCollectorHook: implement gaps G1/G2/G3/G5 + attributes [COMPLETED]
 
 **What to build:** Extend `TraceCollectorHook` to implement `BeforeLLMHook`
 + `AfterApprovalHook` + `AfterIterationHook` (existing ABC, not yet
@@ -296,19 +296,19 @@ implemented by this hook). Emit: LLM duration (G1), request prompt via
 **Why:** These are the 5 blocking gaps from IN10. All are ADR-0024
 designed-but-not-emitted work, not new design.
 
-- [ ] `TraceCollectorHook` implements `BeforeLLMHook`: pre-LLM timestamp + `PromptCaptureStrategy.capture()` → `chat` span attributes
-- [ ] `TraceCollectorHook` implements `AfterApprovalHook`: emit `human.review` span with `decision` + `deny_reason` + `tool_name` + `tool_call_id`
-- [ ] `TraceCollectorHook` implements `AfterIterationHook`: emit `iteration.start`/`iteration.end` boundary spans with `iteration_number`
-- [ ] `chat` span gains `gen_ai.request.model`, `gen_ai.usage.cache_read_input_tokens`, `gen_ai.usage.cache_creation_input_tokens`, `api_duration_s`, `start_time`, `end_time`
-- [ ] `execute_tool` span gains `success`/`fail`/`error_type` attributes (derive from `ToolResult.error`)
-- [ ] `execute_tool_batch` span gains `end_time`
-- [ ] `PromptCaptureStrategy` ABC + `SummaryPromptCapture` impl in `src/modex_agent/trace/prompt_capture.py`
-- [ ] `ObservabilityConfig.prompt_capture: str = "summary"` field
-- [ ] Factory: `prompt_capture` config → `PromptCaptureStrategy` instance → `TraceCollectorHook`
-- [ ] Unit tests: each new span/attribute verified in `spans.jsonl`
-- [ ] Unit test: `PromptCaptureStrategy` ABC subclass replaces capture logic without hook code change
+- [x] `TraceCollectorHook` implements `BeforeLLMHook`: pre-LLM timestamp + `PromptCaptureStrategy.capture()` → `chat` span attributes
+- [x] `TraceCollectorHook` implements `AfterApprovalHook`: emit `human.review` span with `decision` + `deny_reason` + `tool_name` + `tool_call_id`
+- [x] `TraceCollectorHook` implements `AfterIterationHook`: emit `iteration.start`/`iteration.end` boundary spans with `iteration_number`
+- [x] `chat` span gains `gen_ai.request.model`, `gen_ai.usage.cache_read_input_tokens`, `gen_ai.usage.cache_creation_input_tokens`, `api_duration_s`, `start_time`, `end_time`
+- [x] `execute_tool` span gains `success`/`fail`/`error_type` attributes (derive from `ToolResult.error`)
+- [x] `execute_tool_batch` span gains `end_time`
+- [x] `PromptCaptureStrategy` ABC + `SummaryPromptCapture` impl in `src/modex_agent/trace/prompt_capture.py`
+- [x] `ObservabilityConfig.prompt_capture: str = "summary"` field
+- [x] Factory: `prompt_capture` config → `PromptCaptureStrategy` instance → `TraceCollectorHook`
+- [x] Unit tests: each new span/attribute verified in `spans.jsonl`
+- [x] Unit test: `PromptCaptureStrategy` ABC subclass replaces capture logic without hook code change
 
-## T11 — Multi-agent handoff span (G10) [PLANNED]
+## T11 — Multi-agent handoff span (G10) [COMPLETED]
 
 **What to build:** Emit `agent.handoff` span at the `send_to_agent`
 dispatch point, linking parent turn's `invoke_agent` root span to the
@@ -322,14 +322,14 @@ this ticket adds the connecting link span.
 `send_to_agent` propagates `traceparent` (D8) but emits no span, so the
 child's root span has no parent link in the trace.
 
-- [ ] `SpanName.AGENT_HANDOFF` in `semconv.py`
-- [ ] Emit `agent.handoff` span in `AgentCommunicationService._send()` (or `send_to_agent` tool executor)
-- [ ] Span attributes: `target_agent`, `message_type`, `parent_turn_id`, `child_turn_id`
-- [ ] `parent_span_id` = current turn's `invoke_agent` span_id; child's `invoke_agent` span inherits via traceparent
-- [ ] Unit test: multi-agent dispatch produces trace tree with `agent.handoff` linking parent → child
-- [ ] Integration test: Langfuse receives linked trace tree (manual verify)
+- [x] `SpanName.AGENT_HANDOFF` in `semconv.py`
+- [x] Emit `agent.handoff` span in `AgentCommunicationService._send()` (or `send_to_agent` tool executor)
+- [x] Span attributes: `target_agent`, `message_type`, `parent_turn_id`, `child_turn_id`
+- [x] `parent_span_id` = current turn's `invoke_agent` span_id; child's `invoke_agent` span inherits via traceparent
+- [x] Unit test: multi-agent dispatch produces trace tree with `agent.handoff` linking parent → child
+- [x] Integration test: Langfuse receives linked trace tree (manual verify)
 
-## T12 — G11 fix: set_tracer_provider + external coding agent span export [PLANNED]
+## T12 — G11 fix: set_tracer_provider + external coding agent span export [COMPLETED]
 
 **What to build:** Fix `otel_store._build_otlp_tracer()` to call
 `trace.set_tracer_provider()` so the local `TracerProvider` is registered
@@ -343,13 +343,13 @@ no-op default provider, and external coding agent CLIENT spans never export.
 global tracer, not the `OtelSpanTraceStore`'s local tracer) silently
 fail to export. This is a one-line fix but needs regression testing.
 
-- [ ] `trace.set_tracer_provider(provider)` call in `_build_otlp_tracer()`
-- [ ] Verify existing `spans.jsonl` + OTLP dual-path unaffected
-- [ ] Verify external coding agent `invoke_agent` CLIENT span now exports via OTLP
-- [ ] Unit test: external coding agent turn produces exportable span
-- [ ] Regression: all existing trace tests pass
+- [x] `trace.set_tracer_provider(provider)` call in `_build_otlp_tracer()`
+- [x] Verify existing `spans.jsonl` + OTLP dual-path unaffected
+- [x] Verify external coding agent `invoke_agent` CLIENT span now exports via OTLP
+- [x] Unit test: external coding agent turn produces exportable span
+- [x] Regression: all existing trace tests pass
 
-## T13 — Langfuse deployment docs + bot config example [PLANNED]
+## T13 — Langfuse deployment docs + bot config example [COMPLETED]
 
 **What to build:** Langfuse deployment reference (Docker Compose) +
 teaching documentation in `examples/bot_project/`. `bot_config.yml`
@@ -363,8 +363,48 @@ complete analysis surface)
 framework code. The bot project is the end-to-end reference implementation,
 so deployment docs live there.
 
-- [ ] `examples/bot_project/docs/langfuse-deployment.md` — Docker Compose reference + config + dashboard setup
-- [ ] `examples/bot_project/config/bot_config.yml` observability section: Langfuse `otel_endpoint` example (commented out, opt-in)
-- [ ] Teaching doc: how to read trace tree in Langfuse (turn → iteration → LLM → tool, `agent.handoff` for multi-agent)
-- [ ] Teaching doc: cache hit rate / tool correctness rate / trajectory analysis workflows (per IN15)
-- [ ] Teaching doc: flagged-trace → dataset → eval workflow (Phase 3+ preview)
+- [x] `examples/bot_project/docs/langfuse-deployment.md` — Docker Compose reference + config + dashboard setup
+- [x] `examples/bot_project/config/bot_config.yml` observability section: Langfuse `otel_endpoint` example (commented out, opt-in)
+- [x] Teaching doc: how to read trace tree in Langfuse (turn → iteration → LLM → tool, `agent.handoff` for multi-agent)
+- [x] Teaching doc: cache hit rate / tool correctness rate / trajectory analysis workflows (per IN15)
+- [x] Teaching doc: flagged-trace → dataset → eval workflow (Phase 3+ preview)
+
+---
+
+# Phase 3: Harness intelligence via trace-driven decisions (FUTURE)
+
+**Status: FUTURE** — not yet planned for implementation. Outlined here to
+preserve direction; detailed tickets will be written when Phase 2 data is
+available to calibrate strategies.
+
+**Current state:** Phase 2 made traces complete enough for both human analysis
+(Langfuse) and agent self-read (`spans.jsonl`). The `TraceDrivenLoopDetectorHook`
+placeholder exists (ADR-0024 IN13, class+docstring, not registered). No
+trace-consuming harness logic exists yet — `ToolCallDeduplicator` is streak-
+based in-memory, `error_recovery.py` is overflow-only, `EndNode` has no task-
+completion verification, `ExperienceReviewAgent` reviews conversations not
+traces.
+
+**Direction (reference: hermes-agent cross-reference in ADR-0024):**
+
+1. **Loop/stuck detection** — implement `TraceDrivenLoopDetectorHook` consuming
+   `spans.jsonl`: tool fingerprint hashing, output similarity, oscillation,
+   stale-call circuit breaker. Reference: hermes `chat_completion_helpers.py`
+   #58962 (494 consecutive failures, 3+ days).
+
+2. **Error recovery taxonomy** — replace overflow-only `error_recovery.py`
+   with classification-driven recovery (rate limit backoff / billing credential
+   rotation / content-policy fallback / network retry / overflow compress).
+   Reference: hermes `error_classifier.py` 27-reason taxonomy.
+
+3. **Truth enforcement** — verification gate in `EndNode`: intercept "code edit
+   without verification", force test/lint/build. File-mutation validator +
+   SQLite evidence ledger. Reference: hermes `verification_stop.py`.
+
+4. **Experience review upgrade** — upgrade `ExperienceReviewAgent` to
+   `background_review.py` pattern: fork-daemon with prefix cache inheritance,
+   tool whitelist, trace-driven context. Reference: hermes `background_review.py`.
+
+**Prerequisite:** Phase 2 must run in production long enough to observe real
+agent behavior patterns in Langfuse. Strategies must be calibrated against
+data, not implemented blind.
