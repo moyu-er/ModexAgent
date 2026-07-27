@@ -619,8 +619,8 @@ class TestOutputMdInjection:
         assert str(output_path) in built, (
             f"Built prompt must contain the absolute OUTPUT.md path: {output_path}"
         )
-        assert "CRITICAL" in built
-        assert "`write` tool" in built
+        assert "work is lost" in built
+        assert "`write`" in built
 
 
 class TestSubagentToolInstanceIsolation:

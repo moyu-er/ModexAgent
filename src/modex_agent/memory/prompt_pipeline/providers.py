@@ -9,12 +9,14 @@ from __future__ import annotations
 import hashlib
 import logging
 import sys
+from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from modex_agent.core.agent import AgentCommKind
 from modex_agent.core.constants import AgentRole
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.core.scope import MemoryContext
@@ -108,28 +110,40 @@ class TodoAwareSystemPromptProvider(SystemPromptProvider):
         return _TODO_TASK_DISCIPLINE_PROMPT if self._has_todo_tools() else ""
 
 
-class PeerCommunicationSystemPromptProvider(SystemPromptProvider):
-    """Injects the remote-agent reply contract.
+class _CommSubProvider(ABC):
+    """Internal strategy object for ``AgentCommunicationSystemPromptProvider``.
 
-    Fires only when the agent owns ``send_to_agent`` AND at least one of its
-    targets is a remote agent (a ``CommunicationTarget`` whose ``bus_ref`` is
-    set — the target does not share this agent's bus, so there is no implicit
-    reply path). For those targets the agent's ordinary output is invisible
-    and a reply is only possible via ``send_to_agent``.
+    Each sub-module contributes one communication-context section. Sub-modules
+    are NOT independent ``SystemPromptProvider`` instances — the composite
+    provider owns the version/cache contract and delegates content/version
+    computation to its sub-modules.
+    """
 
-    The contract makes this unmissable without ever naming the underlying
-    topology (the agent stays unaware of pools, main-vs-subagent roles, or any
-    routing machinery): it only knows some reachable agents require explicit
-    sends to receive anything back.
+    @abstractmethod
+    def applies(self) -> bool:
+        """Return True if this sub-module's section should be emitted."""
 
-    Replies are OPTIONAL — forcing them would create infinite ping-pong.
+    @abstractmethod
+    def version_part(self) -> str:
+        """Return the version fragment for this sub-module."""
 
-    Version is derived from the sorted remote target names so the cache
-    invalidates exactly when the reachable set changes.
+    @abstractmethod
+    def content(self) -> str:
+        """Return the prompt section content (empty if N/A)."""
+
+
+class _PeerCommSubProvider(_CommSubProvider):
+    """Remote-agent reply contract — moved from the deleted
+    ``PeerCommunicationSystemPromptProvider``.
+
+    Fires when the agent owns ``send_to_agent`` AND at least one target is a
+    remote agent (a ``CommunicationTarget`` whose ``bus_ref`` is set — the
+    target does not share this agent's bus, so there is no implicit reply
+    path). For those targets the agent's ordinary output is invisible and a
+    reply is only possible via ``send_to_agent``.
     """
 
     def __init__(self, tool_manager: ToolManager | None) -> None:
-        super().__init__()
         self._tool_manager = tool_manager
 
     def _remote_target_names(self) -> list[str]:
@@ -144,11 +158,14 @@ class PeerCommunicationSystemPromptProvider(SystemPromptProvider):
             return []
         return sorted(t.name for t in tool.list_targets() if t.bus_ref is not None)
 
-    async def _fetch_version(self) -> str:
-        names = self._remote_target_names()
-        return "remote-comm:" + ",".join(names) if names else "no-remote-comm"
+    def applies(self) -> bool:
+        return bool(self._remote_target_names())
 
-    async def _fetch_content(self) -> str:
+    def version_part(self) -> str:
+        names = self._remote_target_names()
+        return "peer:" + ",".join(names)
+
+    def content(self) -> str:
         names = self._remote_target_names()
         if not names:
             return ""
@@ -166,6 +183,145 @@ class PeerCommunicationSystemPromptProvider(SystemPromptProvider):
             "and do NOT ping-pong. If the incoming message does not require action "
             "from you, end your turn without replying.\n"
         )
+
+
+class _SubagentDispatchSubProvider(_CommSubProvider):
+    """Main-agent subagent dispatch contract.
+
+    Fires when the agent is NOT a subagent (``comm_kind`` is ``None`` or
+    ``NORMAL``) AND the agent owns ``send_to_agent`` AND at least one target
+    is a subagent (``kind == SUBAGENT``). Main agents are constructed with
+    ``comm_kind=None`` (the default), so the check uses ``== SUBAGENT``
+    rather than ``!= NORMAL`` to treat ``None`` as main/normal.
+    """
+
+    def __init__(
+        self,
+        tool_manager: ToolManager | None,
+        comm_kind: AgentCommKind | None,
+    ) -> None:
+        self._tool_manager = tool_manager
+        self._comm_kind = comm_kind
+
+    def _subagent_target_names(self) -> list[str]:
+        if self._tool_manager is None:
+            return []
+        tool = self._tool_manager.get_tool("send_to_agent")
+        if tool is None:
+            return []
+        from modex_agent.multi_agent.tools import SendToAgentTool
+
+        if not isinstance(tool, SendToAgentTool):
+            return []
+        return sorted(
+            t.name for t in tool.list_targets() if t.kind == AgentCommKind.SUBAGENT
+        )
+
+    def applies(self) -> bool:
+        if self._comm_kind == AgentCommKind.SUBAGENT:
+            return False
+        return bool(self._subagent_target_names())
+
+    def version_part(self) -> str:
+        names = self._subagent_target_names()
+        return "dispatch:" + ",".join(names)
+
+    def content(self) -> str:
+        return (
+            "## Dispatching Subagents\n\n"
+            "Subagents cannot see anything you output directly. The only way to\n"
+            "assign them a task is `send_to_agent` — the full task goes in its\n"
+            "`content` parameter.\n\n"
+            "- `invocation_id: null` → start a NEW subagent task (fresh session).\n"
+            "- `invocation_id: \"<id>\"` → CONTINUE an existing subagent session\n"
+            "  (preserves its memory).\n\n"
+            "After sending, end your turn — the notification resumes you with the\n"
+            "result when the subagent finishes. Don't continue to steps that need\n"
+            "its result.\n\n"
+            "Subagents surface structured prefixes in their delivered result:\n"
+            "- `NEED_DECISION: <question>` — needs your decision. Re-invoke it\n"
+            "  (same invocation_id) with your answer.\n"
+            "- `PROGRESS_UPDATE: <info>` — informational, no action needed.\n"
+        )
+
+
+class _SubagentConsultationSubProvider(_CommSubProvider):
+    """SUBAGENT consultation contract — ask parent for input via
+    ``send_to_agent``.
+
+    Fires when ``comm_kind == SUBAGENT``.
+    """
+
+    def __init__(
+        self,
+        tool_manager: ToolManager | None,
+        comm_kind: AgentCommKind | None,
+    ) -> None:
+        self._tool_manager = tool_manager
+        self._comm_kind = comm_kind
+
+    def applies(self) -> bool:
+        return self._comm_kind == AgentCommKind.SUBAGENT
+
+    def version_part(self) -> str:
+        return "consult"
+
+    def content(self) -> str:
+        return (
+            "## Consulting Your Parent\n\n"
+            "Your deliverable goes to OUTPUT.md (path shown elsewhere in this\n"
+            "prompt) — NOT to `send_to_agent`. That tool is for consultation only:\n"
+            "ask your parent a question or request a decision when you cannot\n"
+            "proceed without input.\n\n"
+            "- `content`: `\"QUESTION: ...\"` or `\"NEED_DECISION: ...\"`.\n"
+            "- After sending, stop and wait — the reply comes back as another\n"
+            "  message to you.\n\n"
+            "Do not use `send_to_agent` to report results or progress; that path\n"
+            "is automatic via OUTPUT.md.\n"
+        )
+
+
+class AgentCommunicationSystemPromptProvider(SystemPromptProvider):
+    """Composite provider for agent-communication context.
+
+    Replaces the deleted ``PeerCommunicationSystemPromptProvider`` with a
+    three-part contract whose applicability depends on the agent's topology
+    (``comm_kind``) and the shape of its ``send_to_agent`` target set:
+
+    - ``_PeerCommSubProvider`` — remote-agent reply contract (peer targets
+      whose ``bus_ref`` is set).
+    - ``_SubagentDispatchSubProvider`` — NORMAL agent's subagent dispatch
+      contract (subagent targets).
+    - ``_SubagentConsultationSubProvider`` — SUBAGENT consultation contract
+      (ask parent for input via ``send_to_agent``).
+
+    The composite provider owns the version/cache contract; sub-modules are
+    internal strategy objects that contribute version fragments and content
+    sections. Version is ``"comm:"`` + ``|``-joined fragments of all applying
+    sub-modules (``"comm:none"`` if none apply); content is ``\\n\\n``-joined
+    sections of all applying sub-modules, empty strings skipped (``""`` if
+    none apply).
+    """
+
+    def __init__(
+        self,
+        tool_manager: ToolManager | None,
+        comm_kind: AgentCommKind | None,
+    ) -> None:
+        super().__init__()
+        self._sub_providers: list[_CommSubProvider] = [
+            _PeerCommSubProvider(tool_manager),
+            _SubagentDispatchSubProvider(tool_manager, comm_kind),
+            _SubagentConsultationSubProvider(tool_manager, comm_kind),
+        ]
+
+    async def _fetch_version(self) -> str:
+        parts = [sub.version_part() for sub in self._sub_providers if sub.applies()]
+        return "comm:" + "|".join(parts) if parts else "comm:none"
+
+    async def _fetch_content(self) -> str:
+        sections = [sub.content() for sub in self._sub_providers if sub.applies()]
+        return "\n\n".join(s for s in sections if s)
 
 
 class RuntimeProvider(SystemPromptProvider):
@@ -424,23 +580,11 @@ class OutputMdProvider(SystemPromptProvider):
     async def _fetch_content(self) -> str:
         output_path = self._output_base_dir / self._session_id / "OUTPUT.md"
         return (
-            "## CRITICAL: Your Output File (OUTPUT.md)\n\n"
-            "You MUST write your final deliverable to this exact file "
-            "using the `write` tool:\n\n"
-            f"  {output_path}\n\n"
-            "**Rules — failure to follow these means your work is lost:**\n\n"
-            "1. **Write to OUTPUT.md before your final message.** "
-            "Use the `write` or `edit` tool with the path above.\n"
-            "2. **What you say in conversation is NOT your deliverable.** "
-            "Only the content of OUTPUT.md reaches your caller.\n"
-            "3. **Do NOT summarise in conversation and skip OUTPUT.md.** "
-            "Your caller reads OUTPUT.md, not your chat messages.\n"
-            "4. **Write the COMPLETE result** — full analysis, code, or report.\n"
-            "5. **You have write access to this path** even if other "
-            "directories are read-only. The `write` or `edit` tool works for this file.\n"
-            "\n"
-            "**Workflow:** do your task → use `write` or `edit` to save OUTPUT.md → "
-            'say briefly "done, see OUTPUT.md" as your final message.'
+            "## Output\n\n"
+            f"Write your final deliverable to `{output_path}` using the `write` or `edit` tool. "
+            "Your caller reads OUTPUT.md, not your conversation messages — "
+            "if it isn't written there, your work is lost. "
+            'After writing, say briefly "done, see OUTPUT.md".'
         )
 
 

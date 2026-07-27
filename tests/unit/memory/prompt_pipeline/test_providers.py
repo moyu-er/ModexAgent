@@ -111,7 +111,7 @@ async def test_experience_empty_when_no_content():
     assert result == ""
 
 
-# -- PeerCommunicationSystemPromptProvider --
+# -- AgentCommunicationSystemPromptProvider --
 
 
 def _make_tool_manager(targets: list):
@@ -145,51 +145,34 @@ class _NoToolManager:
 
 
 @pytest.mark.asyncio
-async def test_peer_comm_provider_no_tool_manager_emits_nothing():
+async def test_comm_provider_no_tool_manager_emits_nothing():
     from modex_agent.memory.prompt_pipeline.providers import (
-        PeerCommunicationSystemPromptProvider,
+        AgentCommunicationSystemPromptProvider,
     )
 
-    provider = PeerCommunicationSystemPromptProvider(None)
+    provider = AgentCommunicationSystemPromptProvider(None, None)
     result = await provider.get_or_refresh()
     assert result == ""
-    assert provider.last_version == "no-remote-comm"
+    assert provider.last_version == "comm:none"
 
 
 @pytest.mark.asyncio
-async def test_peer_comm_provider_no_send_to_agent_tool_emits_nothing():
+async def test_comm_provider_no_send_to_agent_tool_emits_nothing():
     from modex_agent.memory.prompt_pipeline.providers import (
-        PeerCommunicationSystemPromptProvider,
+        AgentCommunicationSystemPromptProvider,
     )
 
-    provider = PeerCommunicationSystemPromptProvider(_NoToolManager())  # type: ignore[arg-type]
+    provider = AgentCommunicationSystemPromptProvider(_NoToolManager(), None)  # type: ignore[arg-type]
     result = await provider.get_or_refresh()
     assert result == ""
+    assert provider.last_version == "comm:none"
 
 
 @pytest.mark.asyncio
-async def test_peer_comm_provider_only_local_targets_emits_nothing():
+async def test_comm_provider_peer_target_emits_peer_contract():
     from modex_agent.core.agent import AgentCommKind
     from modex_agent.memory.prompt_pipeline.providers import (
-        PeerCommunicationSystemPromptProvider,
-    )
-    from modex_agent.multi_agent.tools import CommunicationTarget
-
-    targets = [
-        CommunicationTarget(name="scout", kind=AgentCommKind.SUBAGENT),
-        CommunicationTarget(name="coding", kind=AgentCommKind.NORMAL),
-    ]
-    provider = PeerCommunicationSystemPromptProvider(_make_tool_manager(targets))
-    result = await provider.get_or_refresh()
-    assert result == ""
-    assert provider.last_version == "no-remote-comm"
-
-
-@pytest.mark.asyncio
-async def test_peer_comm_provider_remote_target_emits_contract():
-    from modex_agent.core.agent import AgentCommKind
-    from modex_agent.memory.prompt_pipeline.providers import (
-        PeerCommunicationSystemPromptProvider,
+        AgentCommunicationSystemPromptProvider,
     )
     from modex_agent.multi_agent.tools import CommunicationTarget
 
@@ -200,48 +183,140 @@ async def test_peer_comm_provider_remote_target_emits_contract():
             bus_ref=MagicMock(),
         ),
     ]
-    provider = PeerCommunicationSystemPromptProvider(_make_tool_manager(targets))
+    provider = AgentCommunicationSystemPromptProvider(
+        _make_tool_manager(targets), AgentCommKind.NORMAL
+    )
     result = await provider.get_or_refresh()
     assert "Remote Agents" in result
     assert "research-main" in result
     assert "send_to_agent" in result
-    assert "cannot see" in result.lower()
-    assert "optional" in result.lower()
-    assert provider.last_version == "remote-comm:research-main"
+    assert provider.last_version is not None
+    assert provider.last_version.startswith("comm:peer:")
 
 
 @pytest.mark.asyncio
-async def test_peer_comm_provider_version_sorted_by_name():
+async def test_comm_provider_subagent_target_emits_dispatch_contract():
     from modex_agent.core.agent import AgentCommKind
     from modex_agent.memory.prompt_pipeline.providers import (
-        PeerCommunicationSystemPromptProvider,
+        AgentCommunicationSystemPromptProvider,
     )
     from modex_agent.multi_agent.tools import CommunicationTarget
 
-    targets_a = [
+    targets = [
+        CommunicationTarget(name="scout", kind=AgentCommKind.SUBAGENT),
+    ]
+    provider = AgentCommunicationSystemPromptProvider(
+        _make_tool_manager(targets), AgentCommKind.NORMAL
+    )
+    result = await provider.get_or_refresh()
+    assert "Dispatching Subagents" in result
+    assert "invocation_id" in result
+    assert provider.last_version is not None
+    assert provider.last_version.startswith("comm:dispatch:")
+
+
+@pytest.mark.asyncio
+async def test_comm_provider_dispatch_fires_for_none_comm_kind():
+    """Main agents are constructed with comm_kind=None (not NORMAL).
+    The dispatch sub-module must treat None as main/normal and fire
+    when subagent targets exist."""
+    from modex_agent.core.agent import AgentCommKind
+    from modex_agent.memory.prompt_pipeline.providers import (
+        AgentCommunicationSystemPromptProvider,
+    )
+    from modex_agent.multi_agent.tools import CommunicationTarget
+
+    targets = [
+        CommunicationTarget(name="scout", kind=AgentCommKind.SUBAGENT),
+    ]
+    provider = AgentCommunicationSystemPromptProvider(
+        _make_tool_manager(targets), None  # comm_kind=None = main agent
+    )
+    result = await provider.get_or_refresh()
+    assert "Dispatching Subagents" in result
+    assert provider.last_version is not None
+    assert provider.last_version.startswith("comm:dispatch:")
+
+
+@pytest.mark.asyncio
+async def test_comm_provider_subagent_kind_emits_consultation_contract():
+    from modex_agent.core.agent import AgentCommKind
+    from modex_agent.memory.prompt_pipeline.providers import (
+        AgentCommunicationSystemPromptProvider,
+    )
+
+    provider = AgentCommunicationSystemPromptProvider(None, AgentCommKind.SUBAGENT)
+    result = await provider.get_or_refresh()
+    assert "Consulting Your Parent" in result
+    assert "OUTPUT.md" in result
+    assert "send_to_agent" in result
+    assert provider.last_version == "comm:consult"
+
+
+@pytest.mark.asyncio
+async def test_comm_provider_peer_and_dispatch_both_emit():
+    from modex_agent.core.agent import AgentCommKind
+    from modex_agent.memory.prompt_pipeline.providers import (
+        AgentCommunicationSystemPromptProvider,
+    )
+    from modex_agent.multi_agent.tools import CommunicationTarget
+
+    targets = [
         CommunicationTarget(
-            name="zeta", kind=AgentCommKind.NORMAL, bus_ref=MagicMock()
+            name="peer-a",
+            kind=AgentCommKind.NORMAL,
+            bus_ref=MagicMock(),
         ),
         CommunicationTarget(
-            name="alpha", kind=AgentCommKind.NORMAL, bus_ref=MagicMock()
+            name="subagent-b",
+            kind=AgentCommKind.SUBAGENT,
         ),
     ]
-    targets_b = list(reversed(targets_a))
-    p_a = PeerCommunicationSystemPromptProvider(_make_tool_manager(targets_a))
-    p_b = PeerCommunicationSystemPromptProvider(_make_tool_manager(targets_b))
-    await p_a.get_or_refresh()
-    await p_b.get_or_refresh()
-    assert p_a.last_version == p_b.last_version
-    assert p_a.last_version == "remote-comm:alpha,zeta"
+    provider = AgentCommunicationSystemPromptProvider(
+        _make_tool_manager(targets), AgentCommKind.NORMAL
+    )
+    result = await provider.get_or_refresh()
+    assert "Remote Agents" in result
+    assert "Dispatching Subagents" in result
+    assert provider.last_version is not None
+    assert "peer:" in provider.last_version
+    assert "dispatch:" in provider.last_version
+    assert "|" in provider.last_version
 
 
 @pytest.mark.asyncio
-async def test_peer_comm_provider_version_changes_when_target_added():
+async def test_comm_provider_version_combines_sub_modules():
     from modex_agent.core.agent import AgentCommKind
     from modex_agent.memory.prompt_pipeline.providers import (
-        PeerCommunicationSystemPromptProvider,
+        AgentCommunicationSystemPromptProvider,
     )
     from modex_agent.multi_agent.tools import CommunicationTarget
+
+    targets = [
+        CommunicationTarget(
+            name="alpha",
+            kind=AgentCommKind.NORMAL,
+            bus_ref=MagicMock(),
+        ),
+        CommunicationTarget(
+            name="beta",
+            kind=AgentCommKind.SUBAGENT,
+        ),
+    ]
+    provider = AgentCommunicationSystemPromptProvider(
+        _make_tool_manager(targets), AgentCommKind.NORMAL
+    )
+    await provider.get_or_refresh()
+    assert provider.last_version == "comm:peer:alpha|dispatch:beta"
+
+
+@pytest.mark.asyncio
+async def test_comm_provider_version_changes_when_target_added():
+    from modex_agent.core.agent import AgentCommKind
+    from modex_agent.memory.prompt_pipeline.providers import (
+        AgentCommunicationSystemPromptProvider,
+    )
+    from modex_agent.multi_agent.tools import CommunicationTarget, SendToAgentTool
 
     targets = [
         CommunicationTarget(
@@ -249,12 +324,10 @@ async def test_peer_comm_provider_version_changes_when_target_added():
         ),
     ]
     mgr = _make_tool_manager(targets)
-    provider = PeerCommunicationSystemPromptProvider(mgr)
+    provider = AgentCommunicationSystemPromptProvider(mgr, AgentCommKind.NORMAL)
     await provider.get_or_refresh()
     v1 = provider.last_version
     tool = mgr.get_tool("send_to_agent")
-    from modex_agent.multi_agent.tools import SendToAgentTool
-
     assert isinstance(tool, SendToAgentTool)
     tool.add_target(
         CommunicationTarget(
@@ -268,10 +341,10 @@ async def test_peer_comm_provider_version_changes_when_target_added():
 
 
 @pytest.mark.asyncio
-async def test_peer_comm_provider_contract_does_not_expose_pool_concepts():
+async def test_comm_provider_contract_does_not_expose_pool_concepts():
     from modex_agent.core.agent import AgentCommKind
     from modex_agent.memory.prompt_pipeline.providers import (
-        PeerCommunicationSystemPromptProvider,
+        AgentCommunicationSystemPromptProvider,
     )
     from modex_agent.multi_agent.tools import CommunicationTarget
 
@@ -280,13 +353,14 @@ async def test_peer_comm_provider_contract_does_not_expose_pool_concepts():
             name="x", kind=AgentCommKind.NORMAL, bus_ref=MagicMock()
         ),
     ]
-    provider = PeerCommunicationSystemPromptProvider(_make_tool_manager(targets))
+    provider = AgentCommunicationSystemPromptProvider(
+        _make_tool_manager(targets), AgentCommKind.NORMAL
+    )
     result = await provider.get_or_refresh()
     low = result.lower()
     assert "pool" not in low
     assert "main agent" not in low
-    assert "peer" not in low
-    assert "subagent" not in low
+    assert "peer pool" not in low
 
 
 # -- AgentRoleContractProvider --

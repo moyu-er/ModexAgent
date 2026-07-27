@@ -27,7 +27,7 @@ System prompt pipeline — an ordered, versioned collection of `SystemPromptProv
 | `ProviderBlocksProvider` | blocks hash | Provider blocks configured | Custom prompt blocks |
 | `ProviderPrefetchProvider` | prefetch hash | Prefetch configured | Prefetched context |
 | `TodoAwareSystemPromptProvider` | `todo-enabled` / `no-todo` | Agent owns `todo_read` + `todo_write` tools | Task-discipline reminder |
-| `PeerCommunicationSystemPromptProvider` | `remote-comm:<names>` / `no-remote-comm` | `send_to_agent` tool has targets with `bus_ref is not None` | Remote-agent reply contract: tells the agent that some reachable agents cannot see its normal output, and the only way to reach them is `send_to_agent`. Replies are OPTIONAL (no forced ping-pong). Contract text is free of pool/main/peer vocabulary — the agent stays topology-unaware. Version is derived from sorted remote target names so the cache invalidates when the reachable set changes. |
+| `AgentCommunicationSystemPromptProvider` | `comm:<fragments>` / `comm:none` | `send_to_agent` tool has targets matching sub-module conditions | Composite provider with 3 internal sub-modules: peer reply contract (targets with `bus_ref`), subagent dispatch contract (NON-subagent + SUBAGENT targets), subagent consultation contract (SUBAGENT kind). Version is `"comm:"` + `|`-joined sub-module fragments; content joins applying sections. Replaces the deleted `PeerCommunicationSystemPromptProvider`. |
 
 ## For AI Agents
 
@@ -37,7 +37,7 @@ System prompt pipeline — an ordered, versioned collection of `SystemPromptProv
 - Providers are ordered by their position in the pipeline list (not by priority)
 - `BasePromptProvider` is static (version="static") — never refreshes
 - `RuntimeProvider` refreshes hourly based on the current datetime hour
-- Gated providers (Todo, PeerCommunication) emit empty content when their
+- Gated providers (Todo, AgentCommunication) emit empty content when their
   condition is unmet — no-op for agents that don't own the relevant tools
 
 ### Common Patterns

@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from modex_agent.core.agent import AgentCommKind
 from modex_agent.core.context import ContextManager, ContextState
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.governance import ContextGovernance
@@ -136,6 +137,7 @@ class MemorySystemContextManager(ContextManager):
         fork_context_spec: ForkContextSpec | None = None,
         archive_injection_config: ArchiveInjectionConfig | None = None,
         roles: list[str] | None = None,
+        comm_kind: AgentCommKind | None = None,
     ) -> None:
         from modex_agent.memory.injection import FullInjectionPolicy
 
@@ -161,6 +163,7 @@ class MemorySystemContextManager(ContextManager):
         self._parent_prompt_lookup = parent_prompt_lookup
         self._fork_context_spec = fork_context_spec
         self._roles: list[str] = list(roles) if roles else []
+        self._comm_kind: AgentCommKind | None = comm_kind
 
     def wrap_governance(
         self,
@@ -246,12 +249,12 @@ class MemorySystemContextManager(ContextManager):
         from modex_agent.core.prompt import SystemPromptPipeline
         from modex_agent.memory.injection.full_injection import FullInjectionPolicy
         from modex_agent.memory.prompt_pipeline.providers import (
+            AgentCommunicationSystemPromptProvider,
             AgentRoleContractProvider,
             ArchiveProvider,
             BasePromptProvider,
-            ExperienceProvider,
             CoreMemoryProvider,
-            PeerCommunicationSystemPromptProvider,
+            ExperienceProvider,
             ProviderBlocksProvider,
             ProviderPrefetchProvider,
             PrunedProvider,
@@ -322,7 +325,9 @@ class MemorySystemContextManager(ContextManager):
         # 2c. Todo task discipline — gated on tool presence inside the provider
         providers.append(TodoAwareSystemPromptProvider(tool_manager))
 
-        providers.append(PeerCommunicationSystemPromptProvider(tool_manager))
+        providers.append(
+            AgentCommunicationSystemPromptProvider(tool_manager, self._comm_kind)
+        )
 
         # 3. Memory layers from injection policy (disclaimer + core memory + blocks + prefetch)
         if result.system_prompt:

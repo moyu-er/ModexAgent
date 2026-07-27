@@ -200,6 +200,7 @@ class AgentTemplate:
             fork_context_spec=fork_context_spec,
             roles=list(self.spec.roles),
             store_registry=deps.memory_store_registry,
+            comm_kind=AgentCommKind.SUBAGENT,
         )
 
         tool_manager = await self._build_tool_manager(deps, name, runtime_dir)
