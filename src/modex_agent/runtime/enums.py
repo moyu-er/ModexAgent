@@ -136,6 +136,10 @@ class TurnCustomKey(StrEnum):
     TURN_UUID = "_turn_uuid"
     INJECTION_CYCLE_COUNT = "_injection_cycle_count"
     TRACE_ID = "_trace_id"
+    # Root invoke_agent span_id for the current turn (G10 multi-agent handoff).
+    # Set by TraceCollectorHook.before_turn; read by AgentCommunicationService
+    # to link the agent.handoff span's parent_span_id to the turn's root span.
+    ROOT_SPAN_ID = "_root_span_id"
     # Resolved image-kind Attachment records for the current turn (ADR-0014 §3 /
     # OpenSpec native-multimodal-inline unit 3). Path-only VOs (path/mime/kind/
     # name/size) — never bytes. Read by the inline renderer (unit 4) to bind

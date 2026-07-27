@@ -8,7 +8,10 @@ instances — subagent materialization is owned by ``AgentTemplate.materialize``
 
 from __future__ import annotations
 
+import logging
 import os
+import time
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -32,15 +35,21 @@ from modex_agent.multi_agent.communication.strategies.subagent_dispatch import (
 )
 from modex_agent.multi_agent.communication.topology import TopologyPolicy
 from modex_agent.multi_agent.envelope import AgentMessageEnvelope
+from modex_agent.multi_agent.message_type import AgentMessageType
 from modex_agent.multi_agent.registry import AgentRegistry
 from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 from modex_agent.multi_agent.tools import CommunicationTarget, CommunicationTargetStore
 from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
+from modex_agent.runtime.enums import TurnCustomKey
+from modex_agent.trace.semconv import GenAiAttr, SpanKind, SpanName, SpanStatusCode
+from modex_agent.trace.store import SpanModel, SpanStatus
 
 if TYPE_CHECKING:
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.session_id import SessionInfo
     from modex_agent.multi_agent.pool import AgentPool
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_current_traceparent() -> str | None:
@@ -174,6 +183,8 @@ class AgentCommunicationService:
         else:
             strategy = self._strategies[SendStrategyKind.PARENT_REPLY]
 
+        await self._emit_handoff_span(context, target)
+
         req = SendRequest(
             target=target,
             content=content,
@@ -181,3 +192,59 @@ class AgentCommunicationService:
             context=context,
         )
         return await strategy.execute(req)
+
+    async def _emit_handoff_span(
+        self,
+        context: AgentContext,
+        target: CommunicationTarget,
+    ) -> None:
+        """Emit an ``agent.handoff`` span linking parent → child trace trees (G10).
+
+        Fail-open: any error is logged and swallowed so tracing never blocks
+        communication. The child's turn_id is unknown at send time, so
+        ``child_turn_id`` is left ``None``; the child's ``invoke_agent`` span
+        links back via the shared ``trace_id``.
+        """
+        try:
+            runtime = context.runtime
+            if runtime is None:
+                return
+            trace_store = runtime.services.trace_store
+            if trace_store is None:
+                return
+            trace_id = runtime.state.custom.get(TurnCustomKey.TRACE_ID)
+            if trace_id is None:
+                return
+            root_span_id = runtime.state.custom.get(TurnCustomKey.ROOT_SPAN_ID)
+            message_type = (
+                AgentMessageType.TASK_REQUEST
+                if target.kind == AgentCommKind.SUBAGENT
+                else AgentMessageType.AGENT_MESSAGE
+            )
+            now = time.time()
+            span = SpanModel(
+                trace_id=str(trace_id),
+                span_id=uuid.uuid4().hex,
+                parent_span_id=str(root_span_id) if root_span_id is not None else None,
+                name=SpanName.AGENT_HANDOFF.value,
+                kind=SpanKind.INTERNAL.value,
+                start_time=now,
+                end_time=now,
+                attributes={
+                    GenAiAttr.AGENT_NAME: self._source.name,
+                    GenAiAttr.CONVERSATION_ID: str(context.session),
+                    GenAiAttr.HANDOFF_TARGET_AGENT: target.name,
+                    GenAiAttr.HANDOFF_TARGET_KIND: str(target.kind),
+                    GenAiAttr.HANDOFF_MESSAGE_TYPE: str(message_type),
+                    GenAiAttr.HANDOFF_PARENT_TURN_ID: (
+                        context.identity.turn_id if context.identity is not None else None
+                    ),
+                    GenAiAttr.HANDOFF_CHILD_TURN_ID: None,
+                },
+                status=SpanStatus(code=SpanStatusCode.OK),
+            )
+            await trace_store.save_span(span)
+        except Exception:
+            logger.warning(
+                "agent.handoff span emission failed for target=%s", target.name, exc_info=True
+            )

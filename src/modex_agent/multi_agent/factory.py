@@ -369,7 +369,7 @@ class DefaultAgentFactory(AgentFactory):
         from modex_agent.hook.builtin import LoopDetectionHook
         from modex_agent.hook.builtin.checkpoint import CheckpointHook
         from modex_agent.hook.builtin.training_data import TrainingDataHook
-        from modex_agent.trace import TraceCollectorHook
+        from modex_agent.trace import TraceCollectorHook, build_prompt_capture
 
         obs = self._observability_config
         checkpoint_per_iteration = obs.checkpoint_per_iteration if obs is not None else True
@@ -377,8 +377,18 @@ class DefaultAgentFactory(AgentFactory):
         training_max_iterations = obs.training_max_iterations if obs is not None else 20
         training_max_tokens = obs.training_max_tokens if obs is not None else 100_000
 
+        prompt_capture_strategy = (
+            build_prompt_capture(obs.prompt_capture) if obs is not None else None
+        )
+        model_name = (
+            descriptor.llm_config.model if descriptor.llm_config is not None else None
+        )
+
         live_hooks: list[Any] = [
-            TraceCollectorHook(),
+            TraceCollectorHook(
+                prompt_capture=prompt_capture_strategy,
+                model=model_name,
+            ),
             LoopDetectionHook(),
         ]
         if checkpoint_per_iteration:

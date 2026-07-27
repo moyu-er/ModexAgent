@@ -37,8 +37,14 @@ class ObservabilityConfig(BaseModel):
     otel_endpoint: str | None = Field(
         default=None, description="OTLP HTTP endpoint for remote trace export."
     )
-    otel_service_name: str = Field(
-        default="modex_agent", description="OpenTelemetry service name."
+    otel_service_name: str = Field(default="modex_agent", description="OpenTelemetry service name.")
+    otel_headers: dict[str, str] | None = Field(
+        default=None,
+        description=(
+            "Optional HTTP headers for OTLP export (e.g. Langfuse auth). "
+            'For Langfuse: {"Authorization": "Basic <base64(pk:sk)>"} or '
+            '{"x-langfuse-public-key": "pk-...", "x-langfuse-secret-key": "sk-..."}.'
+        ),
     )
     retain_reasoning_content: bool = Field(
         default=True, description="Retain reasoning_content in trace records."
@@ -66,4 +72,8 @@ class ObservabilityConfig(BaseModel):
     training_max_tokens: int = Field(
         default=100000,
         description="Maximum token budget for training-relevant sessions.",
+    )
+    prompt_capture: str = Field(
+        default="summary",
+        description="Prompt capture strategy for trace spans. Currently: 'summary'.",
     )

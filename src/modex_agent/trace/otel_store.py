@@ -90,7 +90,7 @@ class OtelSpanTraceStore(TraceQuery):
             stripped = {k: v for k, v in span.attributes.items() if k != GenAiAttr.OUTPUT_REASONING_CONTENT}
             span_to_write = span.model_copy(update={"attributes": stripped})
 
-        session_id = str(span_to_write.attributes.get("gen_ai.session.id", "unknown"))
+        session_id = str(span_to_write.attributes.get(GenAiAttr.CONVERSATION_ID.value, "unknown"))
         path = self._session_path(session_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         line = json.dumps(span_to_write.model_dump(mode="json"), ensure_ascii=False)
@@ -175,9 +175,46 @@ def build_trace_stores(
     )
     tracer: OtelTracer | None = None
     if needs_otlp_extra:
-        _require_observability_extra(config)
-        if config.otel_endpoint is not None:
-            tracer = _build_otlp_tracer(config)
+        try:
+            _require_observability_extra(config)
+            if config.otel_endpoint is not None:
+                # Drop empty header values (e.g. env var not set) so Langfuse
+                # doesn't receive empty auth keys. If all auth headers are
+                # empty, skip OTLP export entirely (file-only fallback).
+                headers = config.otel_headers
+                if headers is not None:
+                    headers = {k: v for k, v in headers.items() if v}
+                    if not headers:
+                        headers = None
+                if headers is None and config.otel_headers is not None:
+                    import logging
+
+                    logging.getLogger(__name__).warning(
+                        "OTLP export disabled (otel_headers configured but all "
+                        "values are empty — check LANGFUSE_* env vars). "
+                        "Falling back to file-only trace backend."
+                    )
+                else:
+                    config = config.model_copy(update={"otel_headers": headers})
+                    tracer = _build_otlp_tracer(config)
+        except ImportError as exc:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "OTLP export disabled (observability extra missing): %s. "
+                "Falling back to file-only trace backend.",
+                exc,
+            )
+        except Exception as exc:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "OTLP export disabled (tracer build failed): %s. "
+                "Falling back to file-only trace backend. Bot will continue "
+                "without remote trace export.",
+                exc,
+                exc_info=True,
+            )
 
     return OtelSpanTraceStore(
         base_dir=base_dir,
@@ -220,6 +257,13 @@ def _build_otlp_tracer(config: ObservabilityConfig) -> OtelTracer:
     and a single ``BatchSpanProcessor`` wrapping an ``OTLPSpanExporter``
     pointed at ``config.otel_endpoint``.  Spans created via the returned
     tracer are batched and exported asynchronously by the SDK.
+
+    The provider is also registered globally via ``trace.set_tracer_provider``
+    so that ``trace.get_tracer()`` calls in other modules (e.g.
+    ``external_coding/agent.py`` for subprocess CLIENT spans) use the same
+    provider and export via the same OTLP endpoint.  ``set_tracer_provider``
+    is idempotent — the first call wins; subsequent calls log a warning and
+    are no-ops, so multi-pool builds sharing one endpoint are safe.
     """
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import (  # type: ignore[import-not-found]
         OTLPSpanExporter,
@@ -230,20 +274,70 @@ def _build_otlp_tracer(config: ObservabilityConfig) -> OtelTracer:
 
     resource = Resource.create({"service.name": config.otel_service_name})
     provider = TracerProvider(resource=resource)
-    exporter = OTLPSpanExporter(endpoint=config.otel_endpoint)
+    exporter = OTLPSpanExporter(
+        endpoint=config.otel_endpoint,
+        headers=config.otel_headers,
+    )
     processor = BatchSpanProcessor(exporter)
     provider.add_span_processor(processor)
+    # G11 fix: register globally so external_coding/agent.py's trace.get_tracer()
+    # returns a tracer from this provider, not the no-op default. Best-effort —
+    # some OTel versions/configs don't expose set_tracer_provider; the tracer
+    # still works for OtelSpanTraceStore, just not for global get_tracer() calls.
+    try:
+        from opentelemetry.trace import set_tracer_provider
+
+        set_tracer_provider(provider)
+    except (ImportError, AttributeError):
+        pass
     return provider.get_tracer("modex_agent")
+
+
+def _sanitize_attrs_for_otel(attrs: dict[str, object]) -> dict[str, object]:
+    """Convert attributes to OTel SDK-compatible types.
+
+    OTel span attributes accept only scalars (bool/str/bytes/int/float) or
+    sequences of scalars. Nested dicts/lists-of-dicts (e.g.
+    ``gen_ai.input.messages``) are JSON-serialized to strings. ``None``
+    values are dropped (OTel SDK rejects them).
+    """
+    import json
+
+    sanitized: dict[str, object] = {}
+    for key, value in attrs.items():
+        if value is None:
+            continue
+        if isinstance(value, (bool, str, bytes, int, float)):
+            sanitized[key] = value
+        elif isinstance(value, (list, tuple)):
+            if all(isinstance(v, (bool, str, bytes, int, float)) for v in value):
+                sanitized[key] = list(value)
+            else:
+                sanitized[key] = json.dumps(value, ensure_ascii=False, default=str)
+        elif isinstance(value, dict):
+            sanitized[key] = json.dumps(value, ensure_ascii=False, default=str)
+        else:
+            sanitized[key] = json.dumps(value, ensure_ascii=False, default=str)
+    return sanitized
 
 
 def _emit_span_via_otel_sdk(tracer: OtelTracer, span: SpanModel) -> None:
     """Emit a span via the OTel SDK for OTLP export.
 
-    Maps the :class:`SpanModel` to an OTel SDK span (``tracer.start_span``
-    → ``set_status`` → ``end``).  The SDK's ``SpanProcessor`` chain handles
-    batching and export.  All imports are lazy so the module loads without
-    the ``[observability]`` extra.
+    Maps the :class:`SpanModel` to an OTel SDK span. When ``parent_span_id``
+    is set, a synthetic parent :class:`SpanContext` is created so the OTel
+    SDK links this span to the correct trace tree — without this, each span
+    becomes an independent root trace in the backend.
     """
+    from opentelemetry.trace import (
+        NonRecordingSpan,
+    )
+    from opentelemetry.trace import (
+        Span as OtelSpan,
+    )
+    from opentelemetry.trace import (
+        SpanContext as OtelSpanContext,
+    )
     from opentelemetry.trace import (
         SpanKind as OtelSpanKind,
     )
@@ -252,6 +346,12 @@ def _emit_span_via_otel_sdk(tracer: OtelTracer, span: SpanModel) -> None:
     )
     from opentelemetry.trace import (
         StatusCode as OtelStatusCode,
+    )
+    from opentelemetry.trace import (
+        TraceFlags,
+    )
+    from opentelemetry.trace import (
+        set_span_in_context,
     )
 
     otel_kind = OtelSpanKind.CLIENT if span.kind == SpanKind.CLIENT.value else OtelSpanKind.INTERNAL
@@ -267,10 +367,42 @@ def _emit_span_via_otel_sdk(tracer: OtelTracer, span: SpanModel) -> None:
 
     start_time_ns = int(span.start_time * 1_000_000_000)
 
+    otel_attrs = _sanitize_attrs_for_otel(span.attributes)
+
+    parent_context = None
+    try:
+        otel_trace_id = int(span.trace_id[:32], 16)
+    except ValueError:
+        otel_trace_id = None
+    if span.parent_span_id is not None and otel_trace_id is not None:
+        try:
+            otel_parent_span_id = int(span.parent_span_id[:16], 16)
+        except ValueError:
+            otel_parent_span_id = 0
+        if otel_parent_span_id:
+            parent_ctx = OtelSpanContext(
+                trace_id=otel_trace_id,
+                span_id=otel_parent_span_id,
+                is_remote=False,
+                trace_flags=TraceFlags(TraceFlags.SAMPLED),
+            )
+            parent_span = NonRecordingSpan(parent_ctx)
+            parent_context = set_span_in_context(parent_span)
+    elif otel_trace_id is not None:
+        # Root span: inject our trace_id so child spans inherit it.
+        root_ctx = OtelSpanContext(
+            trace_id=otel_trace_id,
+            span_id=0,
+            is_remote=False,
+            trace_flags=TraceFlags(TraceFlags.SAMPLED),
+        )
+        parent_context = set_span_in_context(NonRecordingSpan(root_ctx))
+
     otel_span = tracer.start_span(
         span.name,
+        context=parent_context,
         kind=otel_kind,
-        attributes=span.attributes,
+        attributes=otel_attrs,
         start_time=start_time_ns,
     )
     otel_span.set_status(otel_status)

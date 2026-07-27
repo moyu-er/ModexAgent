@@ -243,7 +243,7 @@ def _is_training_relevant(spans: list[SpanModel]) -> bool:
 def _extract_session_id(spans: list[SpanModel]) -> str:
     """Extract the session_id from the first span that carries one."""
     for span in spans:
-        sid = span.attributes.get(GenAiAttr.SESSION_ID.value)
+        sid = span.attributes.get(GenAiAttr.CONVERSATION_ID.value)
         if isinstance(sid, str) and sid:
             return sid
     return ""
@@ -323,6 +323,35 @@ def _build_tool_calls(
     return result
 
 
+def _extract_output_text(attrs: dict[str, Any]) -> str | None:
+    """Extract assistant response text from ``gen_ai.output.messages``.
+
+    The attribute is a list of message dicts in parts-based format::
+
+        [{"role": "assistant", "parts": [{"type": "text", "content": "..."}]}]
+
+    Returns the first part's ``content`` of the first message, or ``None``
+    if the attribute is missing or malformed. Span attributes cross a
+    serialization boundary, so ``isinstance`` is the correct guard (rules 6/9).
+    """
+    messages = attrs.get(GenAiAttr.OUTPUT_MESSAGES.value)
+    if not isinstance(messages, list) or not messages:
+        return None
+    first = messages[0]
+    if not isinstance(first, dict):
+        return None
+    parts = first.get("parts")
+    if not isinstance(parts, list) or not parts:
+        return None
+    first_part = parts[0]
+    if not isinstance(first_part, dict):
+        return None
+    content = first_part.get("content")
+    if isinstance(content, str):
+        return content
+    return None
+
+
 def _trajectory_to_messages(spans: list[SpanModel]) -> list[dict[str, Any]]:
     """Convert a trajectory (list of spans) into OpenAI messages.
 
@@ -362,12 +391,7 @@ def _trajectory_to_messages(spans: list[SpanModel]) -> list[dict[str, Any]]:
 
     for idx, chat_span in enumerate(chat_spans):
         attrs = chat_span.attributes
-        raw_content = attrs.get(GenAiAttr.OUTPUT_CONTENT.value)
-        content = (
-            str(raw_content)
-            if isinstance(raw_content, str) and raw_content
-            else ""
-        )
+        content = _extract_output_text(attrs) or ""
         raw_reasoning = attrs.get(GenAiAttr.OUTPUT_REASONING_CONTENT.value)
         reasoning = (
             str(raw_reasoning)
@@ -518,7 +542,7 @@ def _get_approval_decision(spans: list[SpanModel]) -> bool | None:
 def _extract_final_response(spans: list[SpanModel]) -> str:
     """Extract the final assistant response from a trajectory.
 
-    Uses the last ``chat`` span's ``gen_ai.output.content`` (the one without
+    Uses the last ``chat`` span's ``gen_ai.output.messages`` (the one without
     tool_calls).  Falls back to the last ``chat`` span's content.
     """
     chat_spans = [s for s in spans if s.name == SpanName.CHAT.value]
@@ -527,13 +551,13 @@ def _extract_final_response(spans: list[SpanModel]) -> str:
         tc = s.attributes.get(GenAiAttr.OUTPUT_TOOL_CALLS.value)
         if isinstance(tc, list) and len(tc) > 0:
             continue
-        content = s.attributes.get(GenAiAttr.OUTPUT_CONTENT.value)
-        if isinstance(content, str) and content:
+        content = _extract_output_text(s.attributes)
+        if content:
             return content
     # Fallback: last chat span content of any kind.
     for s in reversed(chat_spans):
-        content = s.attributes.get(GenAiAttr.OUTPUT_CONTENT.value)
-        if isinstance(content, str) and content:
+        content = _extract_output_text(s.attributes)
+        if content:
             return content
     return ""
 
