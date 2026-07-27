@@ -144,7 +144,7 @@ class TestFullLifecycleNotification:
             (s for s in spans if s.name == SpanName.INVOKE_AGENT.value), None,
         )
         assert turn_start is not None
-        assert turn_start.attributes[GenAiAttr.SESSION_ID] == session_id
+        assert turn_start.attributes[GenAiAttr.CONVERSATION_ID] == session_id
         assert turn_start.attributes[GenAiAttr.AGENT_NAME] == "worker"
         assert turn_start.status.code == SpanStatusCode.OK
 

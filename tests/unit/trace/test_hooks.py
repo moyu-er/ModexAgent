@@ -25,7 +25,9 @@ from modex_agent.trace.semconv import GenAiAttr, SpanName, SpanStatusCode
 
 def _make_trace_context(session_id: str, store: OtelSpanTraceStore | None = None) -> AgentContext:
     state = ReActTurnState(
-        identity=TurnIdentity(agent_id="test", session=SessionInfo.from_str(session_id), turn_id="t1"),
+        identity=TurnIdentity(
+            agent_id="test", session=SessionInfo.from_str(session_id), turn_id="t1"
+        ),
         agent_kind=AgentKind.REACT,
         phase=TurnPhase.CREATED,
     )
@@ -74,7 +76,7 @@ async def test_before_turn_records_turn_start(tmp_path: Path) -> None:
     assert span.parent_span_id is None
     assert span.kind == "INTERNAL"
     assert span.attributes[GenAiAttr.OPERATION_NAME] == "invoke_agent"
-    assert span.attributes[GenAiAttr.SESSION_ID] == "s1"
+    assert span.attributes[GenAiAttr.CONVERSATION_ID] == "s1"
     assert span.status.code == SpanStatusCode.OK
     assert span.end_time is not None
     # trace_id should be stored in turn state
@@ -106,7 +108,7 @@ async def test_after_llm_response_records_llm_call(tmp_path: Path) -> None:
     assert len(spans) == 2
     llm_span = next(s for s in spans if s.name == SpanName.CHAT.value)
     assert llm_span.kind == "CLIENT"
-    assert llm_span.attributes[GenAiAttr.OUTPUT_CONTENT] == "hello"
+    assert llm_span.attributes[GenAiAttr.OUTPUT_MESSAGES][0]["parts"][0]["content"] == "hello"
     assert llm_span.attributes[GenAiAttr.OUTPUT_TOOL_CALLS] == [
         {"tool_name": "search", "arguments": '{"q": "test"}'},
     ]
@@ -129,6 +131,7 @@ async def test_before_tool_execution_records_tool_batch(tmp_path: Path) -> None:
         ToolCall(call_id="c2", tool_name="read", arguments={"path": "/tmp"}),
     ]
     await hook.before_tool_execution(ctx, tool_calls)
+    await hook.after_tool_execution(ctx, [])
 
     spans = await _collect_spans(store, "s3")
     span = spans[-1]
@@ -183,7 +186,7 @@ async def test_finally_turn_writes_root_span(tmp_path: Path) -> None:
     assert root.name == SpanName.INVOKE_AGENT.value
     assert root.end_time is not None
     assert root.attributes["stop_reason"] == "completed"
-    assert root.attributes[GenAiAttr.OUTPUT_CONTENT] == "done"
+    assert root.attributes[GenAiAttr.OUTPUT_MESSAGES][0]["parts"][0]["content"] == "done"
 
 
 @pytest.mark.asyncio
@@ -225,7 +228,7 @@ async def test_llm_response_captures_tool_call_arguments(tmp_path: Path) -> None
     spans = await _collect_spans(store, "s_tc")
     span = spans[-1]
     assert span.name == SpanName.CHAT.value
-    assert span.attributes[GenAiAttr.OUTPUT_CONTENT] == "Let me search and read."
+    assert span.attributes[GenAiAttr.OUTPUT_MESSAGES][0]["parts"][0]["content"] == "Let me search and read."
     tool_calls = span.attributes[GenAiAttr.OUTPUT_TOOL_CALLS]
     assert len(tool_calls) == 2
     assert tool_calls[0]["tool_name"] == "search"
@@ -291,9 +294,12 @@ async def test_before_tool_execution_captures_full_arguments(tmp_path: Path) -> 
 
     await hook.before_turn(ctx)
     tool_calls = [
-        ToolCall(call_id="c1", tool_name="write", arguments={"path": "/out/OUTPUT.md", "content": "done"}),
+        ToolCall(
+            call_id="c1", tool_name="write", arguments={"path": "/out/OUTPUT.md", "content": "done"}
+        ),
     ]
     await hook.before_tool_execution(ctx, tool_calls)
+    await hook.after_tool_execution(ctx, [])
 
     spans = await _collect_spans(store, "s_args")
     span = spans[-1]

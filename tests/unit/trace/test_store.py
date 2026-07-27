@@ -25,7 +25,7 @@ def _make_span(
         "start_time": 1000.0,
         "attributes": {
             GenAiAttr.AGENT_NAME: agent_name,
-            GenAiAttr.SESSION_ID: session_id,
+            GenAiAttr.CONVERSATION_ID: session_id,
         },
     }
     defaults.update(overrides)
@@ -61,7 +61,7 @@ class TestJsonlSpanQuery:
         got = results[0]
         assert got.trace_id == "t1"
         assert got.name == "invoke_agent"
-        assert got.attributes[GenAiAttr.SESSION_ID] == "s1"
+        assert got.attributes[GenAiAttr.CONVERSATION_ID] == "s1"
 
     async def test_list_by_session_empty_when_no_file(
         self, tmp_query: JsonlSpanQuery
@@ -93,7 +93,7 @@ class TestJsonlSpanQuery:
 
         results = await query.list_by_trace_id("shared")
         assert len(results) == 2
-        session_ids = {r.attributes[GenAiAttr.SESSION_ID] for r in results}
+        session_ids = {r.attributes[GenAiAttr.CONVERSATION_ID] for r in results}
         assert session_ids == {"s1", "s2"}
 
     async def test_list_by_trace_id_empty_when_no_base_dir(

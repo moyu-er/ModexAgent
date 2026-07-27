@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from modex_agent.trace.semconv import SpanName, SpanStatusCode
+from modex_agent.trace.semconv import GenAiAttr, SpanName, SpanStatusCode
 from modex_agent.trace.store import SpanModel, SpanStatus, TraceQuery
 from modex_agent.trace.training_exporter import (
     DPOPair,
@@ -47,7 +47,11 @@ class InMemoryTraceStore(TraceQuery):
         self._spans: list[SpanModel] = []
 
     async def list_by_session(self, session_id: str) -> list[SpanModel]:
-        return [s for s in self._spans if s.attributes.get("gen_ai.session.id") == session_id]
+        return [
+            s
+            for s in self._spans
+            if s.attributes.get(GenAiAttr.CONVERSATION_ID.value) == session_id
+        ]
 
     async def list_by_trace_id(self, trace_id: str) -> list[SpanModel]:
         return [s for s in self._spans if s.trace_id == trace_id]
@@ -68,8 +72,8 @@ def _make_span(
 ) -> SpanModel:
     """Build a minimal SpanModel with common attributes pre-filled."""
     attrs: dict[str, Any] = {
-        "gen_ai.agent.name": agent_name,
-        "gen_ai.session.id": session_id,
+        GenAiAttr.AGENT_NAME.value: agent_name,
+        GenAiAttr.CONVERSATION_ID.value: session_id,
     }
     if attributes:
         attrs.update(attributes)
@@ -131,14 +135,16 @@ def _make_trajectory(
                 name="chat",
                 start_time=ts,
                 attributes={
-                    "gen_ai.output.content": "",
+                    GenAiAttr.OUTPUT_MESSAGES.value: [
+                        {"role": "assistant", "parts": [{"type": "text", "content": ""}]}
+                    ],
                     "has_tool_calls": True,
-                    "finish_reason": "tool_calls",
-                    "gen_ai.output.tool_calls": [
+                    GenAiAttr.RESPONSE_FINISH_REASONS.value: ["tool_calls"],
+                    GenAiAttr.OUTPUT_TOOL_CALLS.value: [
                         {"tool_name": "calculator", "arguments": '{"expr": "2+2"}'}
                     ],
-                    "gen_ai.usage.input_tokens": 10,
-                    "gen_ai.usage.output_tokens": 5,
+                    GenAiAttr.USAGE_INPUT_TOKENS.value: 10,
+                    GenAiAttr.USAGE_OUTPUT_TOKENS.value: 5,
                 },
             )
         )
@@ -153,8 +159,8 @@ def _make_trajectory(
                 name="execute_tool",
                 start_time=ts,
                 attributes={
-                    "gen_ai.tool.name": "calculator",
-                    "gen_ai.tool.result": "4",
+                    GenAiAttr.TOOL_NAME.value: "calculator",
+                    GenAiAttr.TOOL_RESULT.value: "4",
                 },
                 status_code=SpanStatusCode.OK
                 if tool_success
@@ -165,20 +171,22 @@ def _make_trajectory(
 
     # Final chat span (no tool_calls)
     final_attrs: dict[str, Any] = {
-        "gen_ai.output.content": final_content,
+        GenAiAttr.OUTPUT_MESSAGES.value: [
+            {"role": "assistant", "parts": [{"type": "text", "content": final_content}]}
+        ],
         "has_tool_calls": False,
-        "finish_reason": "stop",
-        "gen_ai.usage.input_tokens": 20,
-        "gen_ai.usage.output_tokens": 10,
+        GenAiAttr.RESPONSE_FINISH_REASONS.value: ["stop"],
+        GenAiAttr.USAGE_INPUT_TOKENS.value: 20,
+        GenAiAttr.USAGE_OUTPUT_TOKENS.value: 10,
     }
     if with_reasoning:
-        final_attrs["gen_ai.output.reasoning_content"] = reasoning
-        final_attrs["gen_ai.usage.reasoning_tokens"] = 15
+        final_attrs[GenAiAttr.OUTPUT_REASONING_CONTENT.value] = reasoning
+        final_attrs[GenAiAttr.USAGE_REASONING_TOKENS.value] = 15
     if usage:
-        final_attrs["gen_ai.usage.input_tokens"] = usage.get("input_tokens", 20)
-        final_attrs["gen_ai.usage.output_tokens"] = usage.get("output_tokens", 10)
+        final_attrs[GenAiAttr.USAGE_INPUT_TOKENS.value] = usage.get("input_tokens", 20)
+        final_attrs[GenAiAttr.USAGE_OUTPUT_TOKENS.value] = usage.get("output_tokens", 10)
         if "reasoning_tokens" in usage:
-            final_attrs["gen_ai.usage.reasoning_tokens"] = usage["reasoning_tokens"]
+            final_attrs[GenAiAttr.USAGE_REASONING_TOKENS.value] = usage["reasoning_tokens"]
     spans.append(
         _make_span(
             trace_id=trace_id,
