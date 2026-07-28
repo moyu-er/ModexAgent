@@ -4,11 +4,12 @@
 
 from __future__ import annotations
 
+import difflib
 import logging
 from pathlib import Path
 from typing import Any
 
-from ...core.tool_manager import Tool
+from ...core.tool_manager import Tool, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -385,6 +386,36 @@ def _paginate_file(
     return "\n".join(parts)
 
 
+# -- diff 生成 ---------------------------------------------------------------
+
+
+_DIFF_LINE_CAP = 2000
+
+
+def _build_unified_diff(old: str, new: str, path: str) -> str:
+    """Build a unified diff string between old and new content.
+
+    Truncates to _DIFF_LINE_CAP lines (appending a truncation notice) so
+    LLM-visible diffs stay bounded. Returns an empty string when there are
+    no changes.
+    """
+    diff_lines = list(
+        difflib.unified_diff(
+            old.splitlines(),
+            new.splitlines(),
+            fromfile=path,
+            tofile=path,
+            lineterm="",
+        )
+    )
+    if not diff_lines:
+        return ""
+    if len(diff_lines) > _DIFF_LINE_CAP:
+        diff_lines = diff_lines[:_DIFF_LINE_CAP]
+        diff_lines.append("... (diff truncated)")
+    return "\n".join(diff_lines)
+
+
 # -- 工具类 -----------------------------------------------------------------
 
 
@@ -402,8 +433,19 @@ class ReadFileTool(Tool):
     def description(self) -> str:
         return (
             "Read the contents of a file at the given path. "
-            f"By default reads up to {_DEFAULT_LIMIT} lines from the beginning. "
-            "Use offset to skip lines and limit to control how many lines to read."
+            f"Returns up to {_DEFAULT_LIMIT} lines from the beginning by default; "
+            "use offset to skip lines and limit to control how many lines to read.\n"
+            "Usage:\n"
+            "- Use this tool even if you have read the file before — file contents "
+            "may have changed since your last read.\n"
+            "- For large files, read in chunks (offset + limit) rather than tiny "
+            "30-line slices. If you need more context, read a larger window.\n"
+            "- Prefer grep/glob when searching for content or files — read is for "
+            "examining a specific known file.\n"
+            "- You can call multiple read tools in a single response — batch "
+            "speculative reads that are potentially useful.\n"
+            "- This tool reads text files only (UTF-8). Images, PDFs, and binary "
+            "files are not supported."
         )
 
     @property
@@ -428,17 +470,20 @@ class ReadFileTool(Tool):
 
     async def execute(
         self, path: str, offset: int = 0, limit: int = _DEFAULT_LIMIT, **kwargs: Any
-    ) -> str:
+    ) -> str | ToolResult:
         try:
             file_path = _resolve_path(path)
             if not file_path.exists():
-                return f"Error: File not found: {path}"
+                return ToolResult(tool_name=self.name, error=f"File not found: {path}")
             if not file_path.is_file():
-                return f"Error: Not a file: {path}"
+                return ToolResult(tool_name=self.name, error=f"Not a file: {path}")
 
-            return _paginate_file(file_path, offset=offset, limit=limit)
+            result = _paginate_file(file_path, offset=offset, limit=limit)
+            if result.startswith("Error: "):
+                return ToolResult(tool_name=self.name, error=result[len("Error: ") :])
+            return result
         except Exception as e:
-            return f"Error reading file: {str(e)}"
+            return ToolResult(tool_name=self.name, error=f"Failed to read file: {e}")
 
 
 class WriteFileTool(Tool):
@@ -453,7 +498,20 @@ class WriteFileTool(Tool):
 
     @property
     def description(self) -> str:
-        return "Write content to a file at the given path. Creates parent directories if needed."
+        return (
+            "Write content to a file at the given path. "
+            "Creates parent directories if needed. Overwrites existing files.\n"
+            "Usage:\n"
+            "- If editing an existing file, prefer the edit tool over write — "
+            "write replaces the entire file and is more error-prone for large files.\n"
+            "- You MUST use the read tool first before writing to an existing file. "
+            "(recommended, not enforced)\n"
+            "- ALWAYS prefer editing existing files in the codebase. "
+            "NEVER write new files unless explicitly required.\n"
+            "- NEVER proactively create documentation files (*.md, README) "
+            "unless explicitly requested.\n"
+            "- Only use emojis if the user explicitly requests it."
+        )
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -466,14 +524,27 @@ class WriteFileTool(Tool):
             "required": ["path", "content"],
         }
 
-    async def execute(self, path: str, content: str, **kwargs: Any) -> str:
+    async def execute(self, path: str, content: str, **kwargs: Any) -> str | ToolResult:
         try:
             file_path = _resolve_path(path)
             file_path.parent.mkdir(parents=True, exist_ok=True)
+
+            if file_path.exists() and file_path.is_file():
+                diff = ""
+                try:
+                    old_content = file_path.read_text(encoding="utf-8")
+                    diff = _build_unified_diff(old_content, content, path)
+                except (UnicodeDecodeError, OSError):
+                    pass
+                file_path.write_text(content, encoding="utf-8")
+                if diff:
+                    return f"Wrote {len(content)} bytes to {path}.\n\n```diff\n{diff}\n```"
+                return f"Wrote {len(content)} bytes to {path}."
+
             file_path.write_text(content, encoding="utf-8")
-            return f"Successfully wrote {len(content)} bytes to {path}"
+            return f"Created {path} with {len(content)} bytes."
         except Exception as e:
-            return f"Error writing file: {str(e)}"
+            return ToolResult(tool_name=self.name, error=f"Failed to write file: {e}")
 
 
 class EditFileTool(Tool):
@@ -547,13 +618,16 @@ class EditFileTool(Tool):
         new_string: str,
         replace_all: bool = False,
         **kwargs: Any,
-    ) -> str:
+    ) -> str | ToolResult:
         try:
             file_path = _resolve_path(path)
 
             # 无变化检查
             if old_string == new_string:
-                return "Error: No changes to make — old_string and new_string are identical."
+                return ToolResult(
+                    tool_name=self.name,
+                    error="No changes to make — old_string and new_string are identical.",
+                )
 
             # 读取或初始化文件
             if file_path.exists():
@@ -567,18 +641,21 @@ class EditFileTool(Tool):
             if old_string == "":
                 if not file_exists:
                     _write_file(file_path, new_string, encoding, line_endings)
-                    return f"Successfully created {path} with {len(new_string)} bytes."
+                    return f"Created {path} with {len(new_string)} bytes."
                 if content.strip() == "":
                     _write_file(file_path, new_string, encoding, line_endings)
-                    return f"Successfully wrote {len(new_string)} bytes to {path}."
-                return (
-                    "Error: Cannot create new file — file already exists and is not empty. "
-                    "Use write_file to overwrite, or provide old_string to edit."
+                    return f"Wrote {len(new_string)} bytes to {path}."
+                return ToolResult(
+                    tool_name=self.name,
+                    error=(
+                        "Cannot create new file — file already exists and is not empty. "
+                        "Use write_file to overwrite, or provide old_string to edit."
+                    ),
                 )
 
             # 非空 old_string 且文件不存在
             if not file_exists:
-                return f"Error: File not found: {path}"
+                return ToolResult(tool_name=self.name, error=f"File not found: {path}")
 
             # 查找实际匹配字符串（四级模糊匹配）
             actual_old = _find_actual_string(content, old_string)
@@ -593,11 +670,14 @@ class EditFileTool(Tool):
                 preview = old_string[:200]
                 if len(old_string) > 200:
                     preview += "..."
-                return (
-                    f"Error: old_string not found in {path}. "
-                    f"The file contents may be out of date — please use the read tool to "
-                    f"reload the file and retry with the exact current content.\n"
-                    f"String: {preview}"
+                return ToolResult(
+                    tool_name=self.name,
+                    error=(
+                        f"old_string not found in {path}. "
+                        f"The file contents may be out of date — please use the read tool to "
+                        f"reload the file and retry with the exact current content.\n"
+                        f"String: {preview}"
+                    ),
                 )
 
             # 检查匹配次数
@@ -606,11 +686,15 @@ class EditFileTool(Tool):
                 preview = old_string[:200]
                 if len(old_string) > 200:
                     preview += "..."
-                return (
-                    f"Error: Found {matches} matches of the string to replace, "
-                    f"but replace_all is false. To replace all occurrences, set replace_all=true. "
-                    f"To replace only one occurrence, provide more context to uniquely identify the instance.\n"
-                    f"String: {preview}"
+                return ToolResult(
+                    tool_name=self.name,
+                    error=(
+                        f"Found {matches} matches of the string to replace, "
+                        f"but replace_all is false. To replace all occurrences, set replace_all=true. "
+                        f"To replace only one occurrence, provide more context to uniquely identify "
+                        f"the instance.\n"
+                        f"String: {preview}"
+                    ),
                 )
 
             # 引号风格保留
@@ -625,18 +709,25 @@ class EditFileTool(Tool):
 
             # 验证替换确实发生了
             if updated == content:
-                return "Error: Edit produced no changes."
+                return ToolResult(
+                    tool_name=self.name,
+                    error="Edit produced no changes.",
+                )
 
             # 写入文件
             _write_file(file_path, updated, encoding, line_endings)
 
+            diff = _build_unified_diff(content, updated, path)
             if replace_all:
-                return f"Successfully edited {path}. All {matches} occurrences replaced."
-            return f"Successfully edited {path}."
+                return (
+                    f"Edit applied successfully. All {matches} occurrences replaced.\n\n"
+                    f"```diff\n{diff}\n```"
+                )
+            return f"Edit applied successfully.\n\n```diff\n{diff}\n```"
 
         except Exception as e:
             logger.exception("EditFileTool error")
-            return f"Error editing file: {str(e)}"
+            return ToolResult(tool_name=self.name, error=f"Failed to edit file: {e}")
 
 
 class ListDirTool(Tool):

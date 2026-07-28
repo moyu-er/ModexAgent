@@ -203,7 +203,7 @@ async def test_write_experience_md_success(exp_dir: Path, meta_store: Experience
     content = "---\nname: new-exp\ndescription: A new one\n---\n\n# New\n\nBody."
     result = await tool.execute(name="new-exp", content=content)
     # Valid → raw WriteFileTool output (no XML wrapper)
-    assert "Successfully wrote" in result
+    assert "Wrote" in result or "Created" in result
     assert (exp_dir / "new-exp" / "EXPERIENCE.md").exists()
 
 
@@ -239,7 +239,7 @@ async def test_write_sub_file_raw_output(exp_dir: Path, meta_store: ExperienceMe
         path="references/error-trace.txt",
     )
     # Raw WriteFileTool output — no XML wrapping
-    assert "Successfully wrote" in result
+    assert "Wrote" in result or "Created" in result
     assert (exp_dir / "test-exp" / "references" / "error-trace.txt").exists()
 
 
@@ -267,7 +267,7 @@ async def test_write_sub_file_no_validation(exp_dir: Path, meta_store: Experienc
         path="references/notes.txt",
     )
     # Sub-file → raw output, no validation XML
-    assert "Successfully wrote" in result
+    assert "Wrote" in result or "Created" in result
     assert "validation" not in result.lower()
 
 
@@ -301,7 +301,7 @@ async def test_edit_experience_md_success(exp_dir: Path, meta_store: ExperienceM
         new_string="New desc",
     )
     # Valid → raw EditFileTool output
-    assert "Successfully edited" in result
+    assert "Edit applied successfully" in result
     text = (exp_dir / "test-exp" / "EXPERIENCE.md").read_text()
     assert "New desc" in text
 
@@ -352,7 +352,7 @@ async def test_edit_sub_file_raw_output(exp_dir: Path, meta_store: ExperienceMet
         path="references/ref.txt",
     )
     # Raw EditFileTool output
-    assert "Successfully edited" in result
+    assert "Edit applied successfully" in result
     assert sub_file.read_text(encoding="utf-8") == "new content\n"
 
 
@@ -482,7 +482,7 @@ async def test_experience_tool_write(exp_dir: Path, meta_store: ExperienceMetaSt
         name="new-exp",
         content="---\nname: new-exp\ndescription: x\n---\n\nBody.",
     )
-    assert "Successfully wrote" in result
+    assert "Wrote" in result or "Created" in result
     assert (exp_dir / "new-exp" / "EXPERIENCE.md").exists()
 
 
@@ -496,7 +496,7 @@ async def test_experience_tool_edit(exp_dir: Path, meta_store: ExperienceMetaSto
         old_string="Old",
         new_string="New",
     )
-    assert "Successfully edited" in result
+    assert "Edit applied successfully" in result
 
 
 @pytest.mark.asyncio
@@ -521,7 +521,7 @@ async def test_experience_tool_write_with_path(exp_dir: Path, meta_store: Experi
         content="sub content",
         path="references/ref.txt",
     )
-    assert "Successfully wrote" in result
+    assert "Wrote" in result or "Created" in result
     assert (exp_dir / "test-exp" / "references" / "ref.txt").exists()
 
 
@@ -539,7 +539,7 @@ async def test_experience_tool_edit_with_path(exp_dir: Path, meta_store: Experie
         new_string="new content",
         path="references/ref.txt",
     )
-    assert "Successfully edited" in result
+    assert "Edit applied successfully" in result
     assert sub_file.read_text(encoding="utf-8") == "new content"
 
 

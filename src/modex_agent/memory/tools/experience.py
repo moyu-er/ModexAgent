@@ -21,7 +21,7 @@ from modex_agent.core.experience import (
     sanitize_name,
     validate_experience_md,
 )
-from modex_agent.core.tool_manager import Tool, ToolConfig
+from modex_agent.core.tool_manager import Tool, ToolConfig, ToolResult
 from modex_agent.tools.standard.file_tool import (
     EditFileTool,
     ListDirTool,
@@ -213,6 +213,9 @@ class ExperienceReadTool(Tool):
             return "<result><status>error</status><error>Path resolution failed.</error></result>"
 
         result = await self._reader.execute(path=str(resolved))
+        # Delegated file tool returns str | ToolResult (error) — dispatch by type.
+        if isinstance(result, ToolResult):
+            return f"<result><status>error</status><error>{xml_text(result.error or 'Read failed')}</error></result>"
         if _is_experience_md(resolved):
             self._meta_store.bump_use(name)
             self._meta_store.bump_view(name)
@@ -277,6 +280,9 @@ class ExperienceWriteTool(Tool):
             return "<result><status>error</status><error>Path resolution failed.</error></result>"
 
         result = await self._writer.execute(path=str(resolved), content=content)
+        # Delegated file tool returns str | ToolResult (error) — dispatch by type.
+        if isinstance(result, ToolResult):
+            return f"<result><status>error</status><error>{xml_text(result.error or 'Write failed')}</error></result>"
 
         if not _is_experience_md(resolved):
             return result
@@ -359,6 +365,9 @@ class ExperienceEditTool(Tool):
             new_string=new_string,
             replace_all=kwargs.get("replace_all", False),
         )
+        # Delegated file tool returns str | ToolResult (error) — dispatch by type.
+        if isinstance(result, ToolResult):
+            return f"<result><status>error</status><error>{xml_text(result.error or 'Edit failed')}</error></result>"
 
         if not _is_experience_md(resolved):
             return result
@@ -366,7 +375,7 @@ class ExperienceEditTool(Tool):
         self._meta_store.bump_use(name)
         self._meta_store.touch(name)
 
-        if not result.startswith("Error:"):
+        if isinstance(result, str):
             try:
                 new_text = resolved.read_text(encoding="utf-8")
             except Exception as exc:
