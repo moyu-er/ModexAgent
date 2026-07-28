@@ -59,7 +59,7 @@ from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.core.session_store import SessionStore
 from modex_agent.core.tool_manager import ToolManager
 from modex_agent.hook import HookErrorPolicy, HookRunner, HookSpec
-from modex_agent.hook.builtin import NativeEnvInjectionHook
+from modex_agent.hook.builtin import CompactionReminderHook, NativeEnvInjectionHook
 from modex_agent.hook.notification import (
     AgentNotificationService,
     MaxIterationNotifyHook,
@@ -98,6 +98,7 @@ from modex_agent.multi_agent.tools import (
 from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
 from modex_agent.pipeline.adapters import OutputAdapter
 from modex_agent.pipeline.snapshot import PoolDataSnapshot
+from modex_agent.runtime.store import TodoStore
 from modex_agent.tools.presets import (
     ToolPreset,
     ToolSupplement,
@@ -111,8 +112,8 @@ from modex_agent.trace.cassette import (
     CassetteRecorder,
 )
 
-from .builders import build_inbox, resolve_system_prompt
 from ._assembly_helpers import _resolved_or_placeholder
+from .builders import build_inbox, resolve_system_prompt
 from .external_coding_strategy import (
     ExternalCodingAwareFactory,
     ProviderUnavailableError,
@@ -419,6 +420,7 @@ async def create_pool(
             model_choice_registry=model_choice_registry,
             cassette_recorder=cassette_recorder,
             control_origin=control_origin,
+            todo_store=todo_store,
         )
     else:
         # external_coding path: the external agent has no tool surface and
@@ -1077,6 +1079,7 @@ def _wire_main_pipeline(
     model_choice_registry: ModelChoiceRegistry,
     cassette_recorder: CassetteRecorder | None = None,
     control_origin: str = "",
+    todo_store: TodoStore | None = None,
 ) -> None:
     """Wire hooks, interceptors, governance, and command processor on main pipeline.
 
@@ -1150,6 +1153,23 @@ def _wire_main_pipeline(
         control_origin=control_origin,
     )
     _add_hook(pipeline, NativeEnvInjectionHook(env_spec_template=env_spec_template))
+
+    has_todo_tool = tool_manager.is_registered("todo_read")
+    memory_cfg = assembly_deps.memory
+    has_archive = (
+        memory_cfg is not None
+        and memory_cfg.archive is not None
+        and memory_cfg.archive.enabled
+        and memory_cfg.archive.max_archive_inject > 0
+    )
+    _add_hook(
+        pipeline,
+        CompactionReminderHook(
+            todo_store=todo_store,
+            has_todo_tool=has_todo_tool,
+            has_archive=has_archive,
+        ),
+    )
 
     # ExternalTurnRunner has no builder/approval_renderer, so access them
     # through the ABC's typed read-only properties (None for external_coding).

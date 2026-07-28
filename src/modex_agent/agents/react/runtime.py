@@ -28,9 +28,11 @@ CRITICAL design rules (ADR-0033 D5):
 4. ``around`` constructs interceptor context internally from
    ``ctx.user_data`` (AgentContext).
 
-Stage 1 status: this class exists but is NOT referenced by ReAct runtime
-code yet. ReAct still uses the old ``core/graph/`` engine. Stage 3 wires
-this class into the ReAct graph nodes.
+Migration status (ADR-0033 D13): COMPLETE. The old
+``modex_agent.core.graph`` directory is deleted; ``ReactGraphRuntime`` is
+instantiated by ``ReActAgent.run`` and passed as ``GraphContext.runtime``
+to the new ``modex_graph.GraphEngine`` (see ``react/agent.py``). Methods
+treat ``None`` services as no-ops, so clean mode (no services) still works.
 """
 
 from __future__ import annotations

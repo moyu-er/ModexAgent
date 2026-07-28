@@ -1,15 +1,15 @@
 """ReAct typed turn state, snapshot policy, and runtime state codec.
 
-Per ADR-0033 Stage 2 (ticket 03): ``ReActTurnState`` migrates from a plain
-``TurnStateBase`` dataclass subclass to a ``GraphState(BaseModel)`` subclass
-with per-field ``Annotated[T, LastValue]`` channel declarations.
+Per ADR-0033 Stage 2: ``ReActTurnState`` is a ``GraphState(BaseModel)``
+subclass with per-field ``Annotated[T, LastValue]`` channel declarations.
 ``ReActSnapshotPolicy`` is simplified from ~310 lines of hand-written payload
 flattening to ~50 lines calling ``state.checkpoint()`` /
 ``state.from_checkpoint()``.
 
-ReAct still uses the old ``core/graph/`` engine for execution — only the state
-type and snapshot path changed. Ticket 04 will switch to the new
-``modex_graph`` engine and disassemble the god nodes.
+Migration status (ADR-0033 D13): COMPLETE. ``ReActTurnState`` is now executed
+by the new ``modex_graph.GraphEngine`` — the old ``modex_agent.core.graph``
+directory is deleted (guarded by
+``tests/architecture/test_no_modex_agent_core_graph_imports.py``).
 """
 
 from __future__ import annotations

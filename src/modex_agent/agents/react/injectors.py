@@ -65,7 +65,11 @@ _MAX_TRACKED_HISTORIES = 128
 
 
 class TodoListReminderInjector(BeforeIterationHook):
-    """Inject a reminder to update the todo list if it hasn't been touched recently.
+    """[DEPRECATED] Inject a reminder to update the todo list if it hasn't been touched recently.
+
+    Superseded by ``CompactionReminderHook`` (``modex_agent.hook.builtin``).
+    This injector was never wired in production and uses a redundant dual-role
+    design. Do not register in new code.
 
     Runs as a ``BeforeIterationHook``. Every ``reminder_interval`` iterations,
     if the todo store has active (pending/in_progress) items, a
@@ -129,9 +133,7 @@ class TodoListReminderInjector(BeforeIterationHook):
             "Never mention this reminder to the user."
             "</system-reminder>"
         )
-        await ctx.history.append(
-            ChatMessage(role=MessageRole.USER, content=reminder)
-        )
+        await ctx.history.append(ChatMessage(role=MessageRole.USER, content=reminder))
 
         # Update per-turn bookkeeping.
         reminder_state["last_reminder_iteration"] = iteration
@@ -140,7 +142,12 @@ class TodoListReminderInjector(BeforeIterationHook):
 
 
 class PostCompactionRefreshInjector(BeforeTurnHook, MemoryCleanupListener):
-    """Inject a re-orientation reminder after context compaction.
+    """[DEPRECATED] Inject a re-orientation reminder after context compaction.
+
+    Superseded by ``CompactionReminderHook`` (``modex_agent.hook.builtin``).
+    This injector was never wired in production and uses a redundant dual-role
+    design (BeforeTurnHook + MemoryCleanupListener) with contextvar hacks.
+    Do not register in new code.
 
     Dual-role component:
 
@@ -193,15 +200,11 @@ class PostCompactionRefreshInjector(BeforeTurnHook, MemoryCleanupListener):
     # MemoryCleanupListener
     # ------------------------------------------------------------------
 
-    async def on_cleanup_triggered(
-        self, context: MemoryContext, reason: CompressionReason
-    ) -> None:
+    async def on_cleanup_triggered(self, context: MemoryContext, reason: CompressionReason) -> None:
         """Pre-archive notification — not used for injection."""
         pass
 
-    async def on_cleanup_finished(
-        self, context: MemoryContext, result: CleanupResult
-    ) -> None:
+    async def on_cleanup_finished(self, context: MemoryContext, result: CleanupResult) -> None:
         """Post-cleanup injection of re-orientation reminder."""
         if not result.triggered or result.messages_pruned == 0:
             return
@@ -235,13 +238,10 @@ class PostCompactionRefreshInjector(BeforeTurnHook, MemoryCleanupListener):
             try:
                 items: list[TodoItem] = await self._todo_store.get(session_id)
                 active = [
-                    t for t in items
-                    if t.status in (TodoStatus.PENDING, TodoStatus.IN_PROGRESS)
+                    t for t in items if t.status in (TodoStatus.PENDING, TodoStatus.IN_PROGRESS)
                 ]
                 if active:
-                    todo_lines = [
-                        f"  - [{t.status.value}] {t.content}" for t in active
-                    ]
+                    todo_lines = [f"  - [{t.status.value}] {t.content}" for t in active]
                     parts.append(
                         "Your current active todos (injected from todo store):\n"
                         + "\n".join(todo_lines)
@@ -259,8 +259,6 @@ class PostCompactionRefreshInjector(BeforeTurnHook, MemoryCleanupListener):
 
         self._injecting = True
         try:
-            await ctx.history.append(
-                ChatMessage(role=MessageRole.USER, content=reminder)
-            )
+            await ctx.history.append(ChatMessage(role=MessageRole.USER, content=reminder))
         finally:
             self._injecting = False
