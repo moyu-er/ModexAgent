@@ -49,6 +49,7 @@ def _build_memory_layer_config(cfg: MemoryConfig) -> MemoryLayerConfigSet:
         archive_config = ArchiveMemoryConfig(
             max_entries=cfg.archive.max_entries,
             retained_consumed_archive_pairs=cfg.archive.retained_consumed_pairs,
+            max_archive_total=cfg.archive.max_archive_total,
             scope=build_scope(cfg.archive.scope),
         )
 

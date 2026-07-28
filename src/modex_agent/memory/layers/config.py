@@ -51,6 +51,16 @@ class ArchiveMemoryConfig(BaseModel):
     cursor_name: str = "default"
     scope: Scope = Field(default_factory=UserScope)
     retained_consumed_archive_pairs: int = DEFAULT_RETAINED_CONSUMED_ARCHIVE_PAIRS
+    max_archive_total: int | None = Field(
+        default=None,
+        description=(
+            "Maximum number of archive directories on disk. When set, "
+            "append_bundle FIFO-evicts oldest consumed archive entries "
+            "(archive_id <= core_consumed_archive_id) once the count "
+            "exceeds this cap. Unconsumed archives are never deleted. "
+            "Mirrors DefaultMemoryMaintenancePolicy.scan_once semantics."
+        ),
+    )
 
 
 class CoreMemoryConfig(BaseModel):

@@ -308,3 +308,81 @@ async def test_prune_consumed_pairs_does_not_lose_concurrent_appends(tmp_path: P
     # Both concurrent bundles must survive
     assert 7 in archive_ids, f"archive_id 7 lost during concurrent prune. IDs: {sorted(archive_ids)}"
     assert 8 in archive_ids, f"archive_id 8 lost during concurrent prune. IDs: {sorted(archive_ids)}"
+
+
+async def test_append_bundle_fifo_evicts_oldest_consumed_when_exceeding_max_archive_total(
+    tmp_path: Path,
+) -> None:
+    """append_bundle FIFO-evicts oldest consumed archive dirs once count > cap.
+
+    Sequence (max_archive_total=2, default retained_consumed_archive_pairs=3):
+
+    - 6 bundles → dirs 1..6, none consumed (core_consumed_archive_id=0).
+    - commit_cursor(5) → marks 1..5 consumed; 6 stays unconsumed.
+    - 7th append fires the FIFO check inside _do_append:
+        * _do_prune first (safe_delete = 5 - 3 = 2) deletes dirs 1,2.
+        * FIFO then sees deletable consumed = [3,4,5], count 3 > cap 2,
+          deletes the oldest one beyond the cap → dir 3.
+        * Consumed [4,5] preserved (within cap); unconsumed [6,7] never touched.
+    """
+    registry = DefaultMemoryStoreRegistry(tmp_path)
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.ARCHIVE)
+    manager = ScopedArchiveMemoryManager(
+        factory,
+        ArchiveMemoryConfig(max_archive_total=2),
+    )
+    ctx = MemoryContext(session_id="s1", user_id="u1")
+
+    for i in range(1, 7):
+        await manager.append_bundle(ctx, (
+            ArchiveWrite(channel=ArchiveChannel.CONTEXT, summary=f"context {i}"),
+            ArchiveWrite(channel=ArchiveChannel.CORE, summary=f"core {i}"),
+        ))
+
+    await manager.commit_cursor(ctx, "dream", 5, channel=ArchiveChannel.CORE)
+
+    await manager.append_bundle(ctx, (
+        ArchiveWrite(channel=ArchiveChannel.CONTEXT, summary="context 7"),
+        ArchiveWrite(channel=ArchiveChannel.CORE, summary="core 7"),
+    ))
+
+    archive_root = tmp_path / "archive" / "u1"
+    remaining = sorted(
+        int(child.name)
+        for child in archive_root.iterdir()
+        if child.is_dir() and child.name.isdigit()
+    )
+    assert remaining == [4, 5, 6, 7]
+
+
+async def test_append_bundle_fifo_never_deletes_unconsumed_archives(
+    tmp_path: Path,
+) -> None:
+    """Unconsumed archives (aid > core_consumed_archive_id) are never FIFO-evicted.
+
+    With core_consumed_archive_id=0, prune_to_max's deletable set is empty
+    (dir_archive.py:176: ``deletable = [aid for aid in ids if aid <= min_safe_id]
+    if min_safe_id > 0 else []``), so even with count > max_archive_total no
+    dir is removed.
+    """
+    registry = DefaultMemoryStoreRegistry(tmp_path)
+    factory = MemoryLayerFactory._storage_factory(registry, MemoryLayerName.ARCHIVE)
+    manager = ScopedArchiveMemoryManager(
+        factory,
+        ArchiveMemoryConfig(max_archive_total=2),
+    )
+    ctx = MemoryContext(session_id="s1", user_id="u1")
+
+    for i in range(1, 5):
+        await manager.append_bundle(ctx, (
+            ArchiveWrite(channel=ArchiveChannel.CONTEXT, summary=f"context {i}"),
+            ArchiveWrite(channel=ArchiveChannel.CORE, summary=f"core {i}"),
+        ))
+
+    archive_root = tmp_path / "archive" / "u1"
+    remaining = sorted(
+        int(child.name)
+        for child in archive_root.iterdir()
+        if child.is_dir() and child.name.isdigit()
+    )
+    assert remaining == [1, 2, 3, 4]
