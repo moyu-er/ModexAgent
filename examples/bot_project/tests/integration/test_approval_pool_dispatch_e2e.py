@@ -365,7 +365,7 @@ async def _build_stack(
     inbox_server = InMemoryInboxServer()
     inbox_producer = InboxProducer(server=inbox_server)
     inbox_consumer = InboxConsumer(server=inbox_server)
-    agent_bus = LocalAgentMessageBus(producer=inbox_producer, consumer=inbox_consumer, broker=broker)
+    agent_bus = LocalAgentMessageBus(producer=inbox_producer, consumer=inbox_consumer)
     pool = AgentPool(
         broker=broker,
         agent_factory=_StaticFactory(instance),

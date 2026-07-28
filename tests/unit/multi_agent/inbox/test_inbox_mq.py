@@ -2,14 +2,16 @@
 
 Covers:
 
-- The 10 abstract methods (``receive``/``consume``/``peek``/``count``/
-  ``clear``/``sessions_with_pending``/``deliver``/``wakeup``/``wait_wakeup``/
-  ``reap_expired``).
+- The 8 abstract methods (``receive``/``consume``/``peek``/``count``/
+  ``clear``/``sessions_with_pending``/``deliver``/``reap_expired``).
 - Sync ``deliver()`` contract — idempotent, works without an event loop.
-- ``wakeup`` / ``wait_wakeup`` — in-process event semantics + timeout.
 - ``reap_expired`` — no-op for file/in-memory backends.
 - Deprecated aliases (``InboxServer``, ``LocalFileInboxServer``) still work.
 - Topic lifecycle documentation on the ABC.
+
+Between-turn wakeup is driven by the ``InboxPoller``'s pool-level ``Event``
+(signalled from ``LocalAgentMessageBus.send``); the MQ no longer exposes a
+per-session wakeup surface.
 """
 
 from __future__ import annotations
@@ -43,7 +45,7 @@ def _msg(mid: str = "m1", session: str = "s1") -> InboxMessage:
 
 class TestInboxMQABC:
     def test_cannot_instantiate_abc(self):
-        """InboxMQ is abstract — all 10 methods must be implemented."""
+        """InboxMQ is abstract — all 8 methods must be implemented."""
         with pytest.raises(TypeError, match="abstract"):
             InboxMQ()  # type: ignore[abstract]
 
@@ -52,7 +54,7 @@ class TestInboxMQABC:
         assert InboxServer is InboxMQ
 
     def test_all_abstract_methods_present(self):
-        """The ABC declares exactly the 10 required abstract methods."""
+        """The ABC declares exactly the 8 required abstract methods."""
         expected = {
             "receive",
             "consume",
@@ -61,8 +63,6 @@ class TestInboxMQABC:
             "clear",
             "sessions_with_pending",
             "deliver",
-            "wakeup",
-            "wait_wakeup",
             "reap_expired",
         }
         assert expected <= InboxMQ.__abstractmethods__
@@ -168,59 +168,6 @@ class TestDeliverLocalFile:
         assert pending.exists()
         text = pending.read_text(encoding="utf-8")
         assert '"message_id": "m1"' in text
-
-
-# --------------------------------------------------------------------------- #
-# wakeup() / wait_wakeup()
-# --------------------------------------------------------------------------- #
-
-
-class TestWakeupInMemory:
-    async def test_wakeup_wakes_waiter(self):
-        s = InMemoryInboxServer()
-        await s.wakeup("s1")
-        assert await s.wait_wakeup("s1", timeout=0.1) is True
-
-    async def test_wait_wakeup_timeout_no_signal(self):
-        s = InMemoryInboxServer()
-        assert await s.wait_wakeup("s2", timeout=0.05) is False
-
-    async def test_wakeup_clears_after_wait(self):
-        """After a successful wait, the event is cleared (next wait blocks)."""
-        s = InMemoryInboxServer()
-        await s.wakeup("s1")
-        assert await s.wait_wakeup("s1", timeout=0.1) is True
-        # Event should be cleared — next wait times out
-        assert await s.wait_wakeup("s1", timeout=0.05) is False
-
-    async def test_concurrent_wait_and_wakeup(self):
-        s = InMemoryInboxServer()
-
-        async def waiter():
-            return await s.wait_wakeup("s1", timeout=1.0)
-
-        task = asyncio.create_task(waiter())
-        await asyncio.sleep(0.05)  # let the waiter start
-        await s.wakeup("s1")
-        result = await task
-        assert result is True
-
-
-class TestWakeupLocalFile:
-    async def test_wakeup_wakes_waiter(self, tmp_path: Path):
-        s = LocalFileInboxMQ(workspace=tmp_path)
-        await s.wakeup("s1")
-        assert await s.wait_wakeup("s1", timeout=0.1) is True
-
-    async def test_wait_wakeup_timeout_no_signal(self, tmp_path: Path):
-        s = LocalFileInboxMQ(workspace=tmp_path)
-        assert await s.wait_wakeup("s2", timeout=0.05) is False
-
-    async def test_wakeup_clears_after_wait(self, tmp_path: Path):
-        s = LocalFileInboxMQ(workspace=tmp_path)
-        await s.wakeup("s1")
-        assert await s.wait_wakeup("s1", timeout=0.1) is True
-        assert await s.wait_wakeup("s1", timeout=0.05) is False
 
 
 # --------------------------------------------------------------------------- #

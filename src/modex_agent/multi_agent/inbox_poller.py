@@ -1,9 +1,31 @@
 """InboxPoller — the sole between-turn driver for one pool (ADR-spec P3/P5).
 
-Ticks every ``interval`` seconds; for each session with pending inbox input,
-starts one drain cycle. Single-flight via ``inflight`` dict + try/finally pop +
-per-tick reconcile. Lazy-materializes subagent instances on first turn. The
-fold-in hook handles mid-turn consumption (P4).
+Event-driven with tick fallback. The main loop awaits a pool-level wakeup
+``Event`` (``signal_wakeup``) with a ``timeout == interval`` so an unsignalled
+poller still ticks as a defensive fallback. Wakeup is wired at the single
+convergence point of all inbox writers — ``LocalAgentMessageBus.send`` — so
+every path (user input, agent-to-agent, CLI ``modexctl send``, external-coding
+peer reply) reaches the poller in-process with ~zero latency.
+
+Concurrency invariants (verified by ``test_inbox_poller_events.py``):
+
+1. **Per-session single-flight, cross-session concurrency.** ``_maybe_start``
+   skips a session whose turn is still in-flight (``_inflight[sid]``); other
+   sessions keep starting turns. Mid-turn messages for the busy session are
+   consumed by the fold-in hook (``InboxFlushHook``), not by a second turn.
+2. **Wakeup is a coarse "please scan" signal, not a per-message channel.**
+   ``_tick`` re-scans the whole pool via ``sessions_with_pending()`` every
+   time, so a wakeup that races with an in-progress tick is simply absorbed —
+   the next tick sees whatever is pending. Messages are never lost.
+3. **A turn finishing re-signals wakeup.** ``_run_turn`` /
+   ``_materialize_then_turn`` call ``signal_wakeup`` in their ``finally``
+   block so a message that arrived during the busy window is picked up
+   immediately when the turn ends, instead of waiting up to one ``interval``.
+   This closes the only behavioural gap between polling and event-driven modes.
+4. **No busy-loop.** ``signal_wakeup`` only ``set``s a level-triggered
+   ``Event``; the loop ``clear``s it once *before* each ``_tick`` so a signal
+   set during the tick survives to wake the next wait, and N rapid sets still
+   collapse into one rescan (a boolean can't accumulate).
 
 Per-envelope turn execution (session tracking, InputMessage reconstruction,
 ``process_message``, session caps) is delegated to ``pool.dispatch_envelope``
@@ -37,12 +59,34 @@ class InboxPoller:
         interval: float = 0.2,
         session_registry: SessionRegistry | None = None,
     ) -> None:
+        # ``interval`` is the FALLBACK tick cadence, not the steady-state
+        # latency. Under the event-driven path the poller wakes within
+        # milliseconds of a ``bus.send``; this timer only covers writers that
+        # bypass the bus (direct server writes, the pre-wiring window, future
+        # out-of-process MQ backends). 0.2s bounds the worst-case latency for
+        # those paths at a negligible cost (5 idle scans/s on an empty pool).
+        # Tighten only if profiling shows the fallback is never needed; loosen
+        # (e.g. 1-2s) if idle-scan cost ever matters.
         self._pool = pool
         self._interval = interval
         self._session_registry = session_registry or pool.session_registry
         self._inflight: dict[str, asyncio.Task[None]] = {}
         self._orphan_logged: set[str] = set()
         self._task: asyncio.Task[None] | None = None
+        # Pool-level wakeup signal. Set by ``signal_wakeup`` (bus writers,
+        # turn-completion finally), awaited in ``_loop``. Cleared once before
+        # each ``_tick`` so a signal set DURING the tick survives to wake the
+        # next wait (see ``_loop`` for the race rationale).
+        self._wakeup_event: asyncio.Event = asyncio.Event()
+
+    def signal_wakeup(self) -> None:
+        """Signal that new inbox work may be pending.
+
+        Called by ``LocalAgentMessageBus.send`` after a successful persist and
+        by each turn's ``finally`` block. Idempotent: setting an already-set
+        ``Event`` is a no-op. Safe to call from any coroutine in the loop.
+        """
+        self._wakeup_event.set()
 
     def start(self) -> None:
         if self._task is None or self._task.done():
@@ -60,13 +104,26 @@ class InboxPoller:
 
     async def _loop(self) -> None:
         while True:
+            # Clear BEFORE the tick: any wakeup set DURING this tick (e.g. a
+            # message arriving for a different session while _tick is spawning
+            # a turn) must survive and wake the next wait immediately. Clearing
+            # after the tick would swallow such in-flight signals, degrading to
+            # the ``interval`` fallback latency.
+            self._wakeup_event.clear()
             try:
                 await self._tick()
             except asyncio.CancelledError:
                 raise
             except Exception:
                 logger.exception("InboxPoller tick crashed")
-            await asyncio.sleep(self._interval)
+            # ``timeout=interval`` is the defensive fallback: an unsignalled
+            # poller still rescans every ``interval`` (covering writers that
+            # bypass the bus). A timeout is the expected fallback path, not an
+            # error — suppress it and loop into the next tick.
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(
+                    self._wakeup_event.wait(), timeout=self._interval
+                )
 
     async def _tick(self) -> None:
         self._reconcile()
@@ -116,9 +173,23 @@ class InboxPoller:
     ) -> None:
         """Consume one batch and dispatch each envelope as its own turn.
 
-        Per the agreed model: every envelope is a separate agent turn
-        (between-turn dispatch is per-envelope); the fold-in hook does the
-        mid-turn batch pull.
+        The two inbox consumers divide labour by session state, NOT by message
+        type:
+
+        - **Poller (this path)** owns an *idle* session's entire pending batch:
+          ``consume_inbox`` pulls all types (no ``only_types`` filter) and each
+          envelope becomes its own between-turn. So a fold-eligible message
+          (e.g. ``AGENT_MESSAGE``) reaching an idle session is delivered as a
+          fresh turn here.
+        - **InboxFlushHook (fold-in)** owns a *busy* session: it pulls only
+          ``fold_eligible`` types (``EXTERNAL_INPUT`` excluded) into the running
+          turn's history. It only fires while a turn is in-flight, so it never
+          races this path — single-flight guarantees the poller skips a busy
+          session before it could consume.
+
+        Because ``consume`` is destructive and the two paths are mutually
+        exclusive in time (idle vs busy), a given message is consumed exactly
+        once by exactly one of them.
         """
         batch = await self._pool.consume_inbox(sid)
         for envelope in batch:
@@ -130,6 +201,10 @@ class InboxPoller:
             await self._dispatch_batch(sid, instance)
         finally:
             self._inflight.pop(sid, None)
+            # Re-signal so a message that arrived during this busy turn (and
+            # was therefore skipped by single-flight) is scanned immediately
+            # rather than waiting up to one ``interval``.
+            self.signal_wakeup()
 
     async def _ensure_session_registered(
         self, sid: str, *, parent_session_id: str | None = None
@@ -178,3 +253,6 @@ class InboxPoller:
             logger.exception("Materialize/turn failed for %s; message stays in inbox", sid)
         finally:
             self._inflight.pop(sid, None)
+            # Same re-signal as ``_run_turn``: on materialize failure the
+            # message stays pending and must be retried promptly.
+            self.signal_wakeup()

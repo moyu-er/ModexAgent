@@ -1,8 +1,7 @@
 """In-memory ``InboxMQ`` implementation — for tests (T11).
 
 Implements the full :class:`InboxMQ` contract including the sync
-:meth:`deliver`, :meth:`wakeup`/:meth:`wait_wakeup` (in-process
-``asyncio.Event`` per session), and :meth:`reap_expired` (no-op).
+:meth:`deliver` and :meth:`reap_expired` (no-op).
 
 The class name :class:`InMemoryInboxServer` is retained for backwards
 compatibility; it now subclasses :class:`InboxMQ` (which :class:`InboxServer`
@@ -24,10 +23,6 @@ class InMemoryInboxServer(InboxMQ):
         self._pending: dict[str, list[InboxMessage]] = {}
         self._delivered_ids: dict[str, set[str]] = {}
         self._lock = asyncio.Lock()
-        self._wakeup_events: dict[str, asyncio.Event] = {}
-
-    def _get_wakeup_event(self, session_id: str) -> asyncio.Event:
-        return self._wakeup_events.setdefault(session_id, asyncio.Event())
 
     # ------------------------------------------------------------------ #
     # Async MQ surface
@@ -114,32 +109,6 @@ class InMemoryInboxServer(InboxMQ):
             return False
         pending.append(message)
         return True
-
-    # ------------------------------------------------------------------ #
-    # Wakeup surface (poller latency reduction)
-    # ------------------------------------------------------------------ #
-
-    async def wakeup(self, session_id: str) -> None:
-        """Set the in-process wakeup event for ``session_id``."""
-        self._get_wakeup_event(session_id).set()
-
-    async def wait_wakeup(
-        self,
-        session_id: str,
-        timeout: float | None = None,
-    ) -> bool:
-        """Wait for the in-process wakeup event.
-
-        Returns ``True`` if woken, ``False`` on timeout. The event is cleared
-        after a successful wait.
-        """
-        event = self._get_wakeup_event(session_id)
-        try:
-            await asyncio.wait_for(event.wait(), timeout=timeout)
-            event.clear()
-            return True
-        except TimeoutError:
-            return False
 
     # ------------------------------------------------------------------ #
     # Lifecycle maintenance

@@ -12,8 +12,6 @@ users. It implements the full :class:`InboxMQ` contract:
   ``asyncio.Lock`` per session for single-process safety.
 - Sync :meth:`deliver`: writes directly to ``pending.jsonl`` (best-effort;
   cross-process atomicity is a known gap the SQLite backend closes).
-- :meth:`wakeup` / :meth:`wait_wakeup`: in-process ``asyncio.Event`` per
-  session (no cross-process wakeup — the poller ticks as fallback).
 - :meth:`reap_expired`: no-op (the file backend has no TTL; returns ``0``).
 
 Delivered-id tracking is internal: the optional ``tracker`` parameter is
@@ -82,14 +80,10 @@ class LocalFileInboxMQ(InboxMQ):
         self._workspace = Path(workspace)
         self._workspace.mkdir(parents=True, exist_ok=True)
         self._locks: dict[str, asyncio.Lock] = {}
-        self._wakeup_events: dict[str, asyncio.Event] = {}
         self._tracker = tracker or FileDeliveredIdTracker(workspace)
 
     def _get_lock(self, session_id: str) -> asyncio.Lock:
         return self._locks.setdefault(session_id, asyncio.Lock())
-
-    def _get_wakeup_event(self, session_id: str) -> asyncio.Event:
-        return self._wakeup_events.setdefault(session_id, asyncio.Event())
 
     def _session_dir(self, session_id: str) -> Path:
         return self._workspace / _safe_dir_name(session_id)
@@ -329,35 +323,6 @@ class LocalFileInboxMQ(InboxMQ):
         with open(pending_path, "a", encoding="utf-8") as f:
             f.write(line + "\n")
         return True
-
-    # ------------------------------------------------------------------ #
-    # Wakeup surface (poller latency reduction)
-    # ------------------------------------------------------------------ #
-
-    async def wakeup(self, session_id: str) -> None:
-        """Set the in-process wakeup event for ``session_id``.
-
-        No cross-process wakeup — the poller ticks as a fallback.
-        """
-        self._get_wakeup_event(session_id).set()
-
-    async def wait_wakeup(
-        self,
-        session_id: str,
-        timeout: float | None = None,
-    ) -> bool:
-        """Wait for the in-process wakeup event.
-
-        Returns ``True`` if woken, ``False`` on timeout. The event is cleared
-        after a successful wait so subsequent calls block again.
-        """
-        event = self._get_wakeup_event(session_id)
-        try:
-            await asyncio.wait_for(event.wait(), timeout=timeout)
-            event.clear()
-            return True
-        except TimeoutError:
-            return False
 
     # ------------------------------------------------------------------ #
     # Lifecycle maintenance

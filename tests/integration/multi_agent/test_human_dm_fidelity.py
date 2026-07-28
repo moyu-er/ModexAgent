@@ -70,7 +70,7 @@ async def test_human_dm_round_trips_approval_and_attachments() -> None:
     server = InMemoryInboxServer()
     producer = InboxProducer(server=server)
     consumer = InboxConsumer(server=server)
-    bus = LocalAgentMessageBus(producer=producer, consumer=consumer, broker=broker)
+    bus = LocalAgentMessageBus(producer=producer, consumer=consumer)
 
     factory = MagicMock()
     factory.create_agent = AsyncMock()

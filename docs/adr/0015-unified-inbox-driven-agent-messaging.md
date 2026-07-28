@@ -782,10 +782,13 @@ Three defenses, in order:
   Before ADR-0015, `_dispatch_raw_broker_message` also ferried human DMs; per
   D9, human DMs now go through `AgentPool.submit_external_input` straight into
   the `SessionInputQueue`, and the broker no longer mixes DM payloads. The
-  broker remains usable for cross-process inter-agent wakeup
-  (`LocalAgentMessageBus.send` still sends an `_inbox_wakeup` broker message as
-  a cross-process signal); within one process the `SessionInputQueue` is taken
-  directly.
+  broker's former `_inbox_wakeup` signal (emitted from
+  `LocalAgentMessageBus.send`) was **removed** in the event-driven poller
+  refactor: between-turn wakeup is now an in-process `asyncio.Event` on
+  `InboxPoller`, signalled directly from `LocalAgentMessageBus.send` (the single
+  convergence point of all inbox writers). The broker retains only its
+  cross-pool peer-routing role (ADR-0019 `bus_ref`); within one process the
+  `SessionInputQueue` is taken directly.
 
 #### Drainer-spawner materialize-on-drain protocol (D3 details)
 

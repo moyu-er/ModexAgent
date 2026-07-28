@@ -2,7 +2,7 @@
 
 Covers:
 
-- ABC conformance (all 10 abstract methods implemented).
+- ABC conformance (all 8 abstract methods implemented).
 - ``receive()`` idempotency via ``UNIQUE(session_id, message_id)``.
 - ``consume()`` atomicity — state transition + delivered-id recording in one
   transaction; FIFO ordering; ``only_types`` filtering.
@@ -10,10 +10,13 @@ Covers:
   short-lived connection, never reuses the async connection.
 - ``deliver()`` / ``receive()`` / ``consume()`` share the same dedup store.
 - ``peek()``, ``count()``, ``clear()``, ``sessions_with_pending()``.
-- ``wakeup()`` / ``wait_wakeup()`` — in-process event semantics + timeout.
 - ``reap_expired()`` — TTL-based cleanup.
 - ``deliver()`` works without a running event loop.
 - ``deliver()`` works without a ``ConnectionManager`` (CLI mode).
+
+Between-turn wakeup is driven by the ``InboxPoller``'s pool-level ``Event``
+(signalled from ``LocalAgentMessageBus.send``); the MQ no longer exposes a
+per-session wakeup surface.
 """
 
 from __future__ import annotations
@@ -358,34 +361,6 @@ class TestSessionsWithPending:
         await mq.consume("s1")
         sessions = await mq.sessions_with_pending()
         assert sessions == ["s2"]
-
-
-# --------------------------------------------------------------------------- #
-# wakeup() / wait_wakeup()
-# --------------------------------------------------------------------------- #
-
-
-class TestWakeup:
-    async def test_wakeup_wakes_waiter(self, mq: SqliteInboxMQ) -> None:
-        await mq.wakeup("s1")
-        assert await mq.wait_wakeup("s1", timeout=0.1) is True
-
-    async def test_wait_wakeup_timeout_no_signal(self, mq: SqliteInboxMQ) -> None:
-        assert await mq.wait_wakeup("s2", timeout=0.05) is False
-
-    async def test_wakeup_clears_after_wait(self, mq: SqliteInboxMQ) -> None:
-        await mq.wakeup("s1")
-        assert await mq.wait_wakeup("s1", timeout=0.1) is True
-        assert await mq.wait_wakeup("s1", timeout=0.05) is False
-
-    async def test_concurrent_wait_and_wakeup(self, mq: SqliteInboxMQ) -> None:
-        async def waiter() -> bool:
-            return await mq.wait_wakeup("s1", timeout=1.0)
-
-        task = asyncio.create_task(waiter())
-        await asyncio.sleep(0.05)
-        await mq.wakeup("s1")
-        assert await task is True
 
 
 # --------------------------------------------------------------------------- #

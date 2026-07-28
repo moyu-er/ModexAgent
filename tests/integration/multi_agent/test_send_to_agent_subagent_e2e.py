@@ -214,7 +214,7 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
     inbox_server = InMemoryInboxServer()
     producer = InboxProducer(server=inbox_server)
     consumer = InboxConsumer(server=inbox_server)
-    bus = LocalAgentMessageBus(producer=producer, consumer=consumer, broker=broker)
+    bus = LocalAgentMessageBus(producer=producer, consumer=consumer)
 
     provider = _ScriptedProvider()
 

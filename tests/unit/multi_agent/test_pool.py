@@ -30,7 +30,7 @@ async def pool_with_bus():
     server = InMemoryInboxServer()
     producer = InboxProducer(server=server)
     consumer = InboxConsumer(server=server)
-    bus = LocalAgentMessageBus(producer=producer, consumer=consumer, broker=None)
+    bus = LocalAgentMessageBus(producer=producer, consumer=consumer)
     p = AgentPool(
         broker=_FakeBroker(),
         agent_factory=MagicMock(),

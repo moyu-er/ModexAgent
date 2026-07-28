@@ -24,7 +24,7 @@ separate turn).
 
 | File | Description |
 |------|-------------|
-| `server.py` | `InboxMQ` ABC — the inbox contract: `receive()` (idempotent), `consume(session_id, limit, *, only_types=None)` (atomic FIFO; filtered-out messages stay pending), `peek()`, `count()`, `clear()`, `sessions_with_pending()` (poller enumeration), `list_sessions()`, `deliver()` (sync, cross-process CLI), `wakeup()`/`wait_wakeup()`, `reap_expired()`. `InboxServer` is kept as a deprecated alias |
+| `server.py` | `InboxMQ` ABC — the inbox contract: `receive()` (idempotent), `consume(session_id, limit, *, only_types=None)` (atomic FIFO; filtered-out messages stay pending), `peek()`, `count()`, `clear()`, `sessions_with_pending()` (poller enumeration), `list_sessions()`, `deliver()` (sync, cross-process CLI), `reap_expired()`. `InboxServer` is kept as a deprecated alias. (The former `wakeup()`/`wait_wakeup()` per-session methods were removed — between-turn wakeup is now a pool-level `asyncio.Event` on `InboxPoller`, signalled from `LocalAgentMessageBus.send`.) |
 | `server_local.py` | `LocalFileInboxMQ` — file-based implementation: `pending.jsonl` per session + `FileDeliveredIdTracker` (internal); one `asyncio.Lock` per session for single-process safety; `sessions_with_pending` reads the original `session_id` back from the first pending record's `agent_session_id` metadata. `LocalFileInboxServer` is kept as a deprecated alias |
 | `server_memory.py` | `InMemoryInboxServer` — in-memory implementation for tests (extends `InboxMQ`) |
 | `producer.py` | `InboxProducer` — local-cache dedup (`OrderedDict`, LRU); converts `AgentMessageEnvelope` to `InboxMessage` and persists via `receive()`; stores `source_kind`/`source_name` in metadata so `consume` can rebuild the original `AgentAddress` (preserving the channel/human origin of `external_input`) |
@@ -39,10 +39,12 @@ The SQLite backend adapter is `SqliteInboxMQ` in `modex_agent.persistence.adapte
 
 ### Working In This Directory
 - The inbox is pure MQ — it does NOT drive turns or touch the broker. Between-
-  turn driving is the `InboxPoller` (`multi_agent/inbox_poller.py`); mid-turn
-  fold-in is `InboxFlushHook` (`hook/builtin/`); cross-process wakeup is
-  `LocalAgentMessageBus.send`'s broker `_inbox_wakeup`. The inbox only
-  persists + consumes.
+  turn driving is the `InboxPoller` (`multi_agent/inbox_poller.py`, event-driven
+  via a pool-level `asyncio.Event` with a tick fallback); mid-turn fold-in is
+  `InboxFlushHook` (`hook/builtin/`). Wakeup is signalled from
+  `LocalAgentMessageBus.send` (the single convergence point of all inbox
+  writers) directly to the poller — no broker `_inbox_wakeup` anymore. The
+  inbox only persists + consumes.
 - `InboxMQ` is the primary ABC name. `InboxServer` is a deprecated alias kept
   during the transition (T11). New code should use `InboxMQ`.
 - `deliver()` is a sync method for cross-process CLI use (`modexctl send`

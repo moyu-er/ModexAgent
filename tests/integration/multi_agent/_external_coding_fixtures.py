@@ -406,7 +406,7 @@ class _FakePoolBundle:
         self.producer = InboxProducer(server=self.server)
         self.consumer = InboxConsumer(server=self.server)
         self.bus = LocalAgentMessageBus(
-            producer=self.producer, consumer=self.consumer, broker=self.broker
+            producer=self.producer, consumer=self.consumer,
         )
         self.session_factory = SessionIdFactory()
         self.session_registry = InMemorySessionRegistry()
@@ -493,7 +493,7 @@ class _ExternalPoolBundle:
         self.producer = InboxProducer(server=self.server)
         self.consumer = InboxConsumer(server=self.server)
         self.bus = LocalAgentMessageBus(
-            producer=self.producer, consumer=self.consumer, broker=self.broker
+            producer=self.producer, consumer=self.consumer,
         )
         self.session_factory = SessionIdFactory()
         self.session_registry = InMemorySessionRegistry()
@@ -695,7 +695,7 @@ class _ExternalSubagentBundle:
         self.producer = InboxProducer(server=self.server)
         self.consumer = InboxConsumer(server=self.server)
         self.bus = LocalAgentMessageBus(
-            producer=self.producer, consumer=self.consumer, broker=self.broker
+            producer=self.producer, consumer=self.consumer,
         )
         self.session_factory = SessionIdFactory()
         self.session_registry = InMemorySessionRegistry()

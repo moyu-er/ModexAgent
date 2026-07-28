@@ -182,7 +182,7 @@ async def create_pool(
     inbox_producer = InboxProducer(server=inbox_server)
     inbox_consumer = InboxConsumer(server=inbox_server)
     agent_bus = LocalAgentMessageBus(
-        producer=inbox_producer, consumer=inbox_consumer, broker=broker
+        producer=inbox_producer, consumer=inbox_consumer
     )
 
     registry = strategy_registry
@@ -371,6 +371,10 @@ async def create_pool(
 
     poller = InboxPoller(pool, interval=0.2)
     pool.attach_poller(poller)
+    # Wire bus → poller so every ``bus.send`` (user input, agent-to-agent,
+    # CLI modexctl send, external-coding peer reply) wakes the poller for
+    # ~zero-latency between-turn delivery instead of waiting up to ``interval``.
+    agent_bus.set_poller(poller)
 
     if provider_available:
         await _register_main_agent(

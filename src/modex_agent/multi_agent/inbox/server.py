@@ -1,19 +1,26 @@
 """InboxMQ ABC — the agent inbox message-queue contract (T11).
 
-Evolved from the legacy :class:`InboxServer` ABC. The new contract formalizes
+Evolved from the legacy :class:`InboxServer` ABC. The contract formalizes
 the topic lifecycle (``pending → active → idle → expired``) per PRD story 44
-and adds three new surfaces:
+and adds two surfaces:
 
 - :meth:`InboxMQ.deliver` — **sync** cross-process delivery for CLI use
   (SQLite ``deliver()`` owns a DB path and opens its own short-lived stdlib
   ``sqlite3`` connection; it never reuses the server's async connection).
-  The FILE backend writes directly to the pending file.
-- :meth:`InboxMQ.wakeup` / :meth:`InboxMQ.wait_wakeup` — poller latency
-  reduction (optional; the poller still ticks as a fallback).
+  The FILE backend writes directly to the pending file. NOTE: the production
+  CLI (``modexctl send``) currently enters the bot process via HTTP and
+  converges on ``LocalAgentMessageBus.send`` → :meth:`receive`, so
+  :meth:`deliver` is retained as the ABC contract for direct-CLI backends
+  but is not on the hot path of the reference bot.
 - :meth:`InboxMQ.reap_expired` — TTL cleanup of expired messages and
   delivered-id records.
 
-Delivered-id tracking is now **internal** to the MQ transaction (PRD story 23):
+Between-turn delivery latency is driven by the ``InboxPoller``, which is
+event-driven via a pool-level ``Event`` signalled from
+``LocalAgentMessageBus.send`` (the single convergence point of all inbox
+writers); the poller still ticks as a defensive fallback.
+
+Delivered-id tracking is **internal** to the MQ transaction (PRD story 23):
 the standalone :class:`~modex_agent.multi_agent.inbox.tracker.DeliveredIdTracker`
 ABC is deprecated; concrete MQ implementations own their dedup store.
 
@@ -122,36 +129,6 @@ class InboxMQ(ABC):
 
         Same idempotency semantics as :meth:`receive`: returns ``True`` if the
         message is new, ``False`` if duplicate.
-        """
-        ...
-
-    # ------------------------------------------------------------------ #
-    # Wakeup surface (poller latency reduction)
-    # ------------------------------------------------------------------ #
-
-    @abstractmethod
-    async def wakeup(self, session_id: str) -> None:
-        """Signal that ``session_id`` has pending work.
-
-        Wakes any coroutine blocked in :meth:`wait_wakeup` for the same
-        session. Implementations that do not support cross-process wakeup
-        (e.g. the FILE backend) may make this a no-op — the poller ticks as a
-        fallback.
-        """
-        ...
-
-    @abstractmethod
-    async def wait_wakeup(
-        self,
-        session_id: str,
-        timeout: float | None = None,
-    ) -> bool:
-        """Wait for a :meth:`wakeup` signal on ``session_id``.
-
-        Returns ``True`` if woken within ``timeout`` seconds, ``False`` on
-        timeout. ``timeout=None`` waits indefinitely. Implementations without
-        a real wakeup mechanism should return ``False`` immediately (or after
-        a short tick) so the poller falls back to its own tick cadence.
         """
         ...
 

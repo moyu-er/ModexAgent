@@ -29,12 +29,12 @@ There is exactly **one** consumer per session at a time, enforced structurally
 (not by a lock):
 
 ```
-writer (agent / human DM / approval)
-   └─ bus.send(session_id, envelope)            # PERSISTS only — no in-process wakeup
+writer (agent / human DM / approval / CLI modexctl send / external-coding reply)
+   └─ bus.send(session_id, envelope)            # PERSISTS + signal_wakeup() → poller Event
         ↓
    inbox[session_id]  (per-pool, on-disk, FIFO + dedup)
         ↓
-InboxPoller tick (~200ms, sole between-turn driver)
+InboxPoller (event-driven: Event.wait with ~interval tick fallback)
    ├─ session busy (inflight[sid] not done)?   → skip; fold-in handles mid-turn
    ├─ instance live?                           → _run_turn(sid, instance)
    └─ instance missing + template exists?      → _materialize_then_turn(sid, tmpl)
@@ -81,8 +81,8 @@ per invocation by pipeline providers, so reuse is safe.)
 | File | Description |
 |------|-------------|
 | `pool.py` | `AgentPool` — resident-agent registry, the poll-driven inbox surface (`submit_input`, `consume_inbox`, `sessions_with_pending`, `dispatch_envelope`, `recover_parent_session`), session/task eviction. `input_message_from_dispatch_envelope` reconstructs the full `InputMessage` (content + `approval_decision` + `attachments_resolved`) from a broker envelope. |
-| `inbox_poller.py` | `InboxPoller` — the sole between-turn driver (one per pool, ~200ms tick). Owns `inflight: dict[sid, Task]` single-flight + `reconcile_inflight`; delegates per-envelope turn execution to `pool.dispatch_envelope`. |
-| `bus.py` | `AgentMessageBus` ABC + `LocalAgentMessageBus` — persist + (cross-process only) broker `_inbox_wakeup`. `consume(only_types=)` for fold-in filtering; `sessions_with_pending()` for poller enumeration. No in-process signal/event. |
+| `inbox_poller.py` | `InboxPoller` — the sole between-turn driver (one per pool). Event-driven via a pool-level `asyncio.Event` signalled from `LocalAgentMessageBus.send` (the single convergence point of all inbox writers), with an `interval`-cadence tick as a defensive fallback for writers that bypass the bus. Owns `inflight: dict[sid, Task]` single-flight + `reconcile_inflight`; delegates per-envelope turn execution to `pool.dispatch_envelope`. |
+| `bus.py` | `AgentMessageBus` ABC + `LocalAgentMessageBus` — persist + signal the pool's `InboxPoller` via `signal_wakeup()` (in-process `Event.set`, the single convergence point for every inbox writer: user input, agent-to-agent, CLI `modexctl send`, external-coding peer reply). `consume(only_types=)` for fold-in filtering; `sessions_with_pending()` for poller enumeration. The poller is wired post-construction via `set_poller()`; until then `send` is persist-only and the poller's tick fallback covers delivery. |
 | `communication/` (package) | `AgentCommunicationService` — pure router. Strategy-dispatched (ADR-0019): `_send` resolves target → `TopologyPolicy.check` → one of three `SendStrategy` subclasses (`SubagentDispatchStrategy`, `ParentReplyStrategy`, `PeerNormalStrategy`) handles the full vertical slice (session construction, invocation_id semantics, envelope shape, delivery, result). See `communication/AGENTS.md` for the strategy contract. |
 | `comm_kind.py` | `AgentCommKind` — `NORMAL` / `SUBAGENT` topology kind. |
 | `tools.py` | `SendToAgentTool` (the single LLM-facing comm tool), `CommunicationTargetStore`, `CommunicationTarget` (carries `pool_name` + `bus_ref` for cross-pool routing per ADR-0019). |
@@ -154,9 +154,11 @@ removed. Do not add compatibility wrappers.
 
 Each pool owns its own `InboxMQ` (own storage dir
 `<workspace_data>/inbox/<pool_name>/`), `LocalAgentMessageBus`, and
-`InboxPoller`. The `MessageBroker` stays workspace/bot-level as the
-cross-process `_inbox_wakeup` fallback (single-process deployments are
-poller-only). `session_id` is unique within a pool, so the inbox keys by bare
+`InboxPoller`. The `MessageBroker` stays workspace/bot-level for cross-pool
+peer routing (ADR-0019 `bus_ref`); it no longer carries an `_inbox_wakeup`
+signal — between-turn wakeup is now an in-process `asyncio.Event` on the
+poller, signalled from `LocalAgentMessageBus.send`.
+`session_id` is unique within a pool, so the inbox keys by bare
 `session_id`; `(workspace, pool)` isolation is structural (a pool belongs to
 exactly one workspace).
 
