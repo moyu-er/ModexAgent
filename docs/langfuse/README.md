@@ -88,3 +88,33 @@ Go to `metadata.resourceAttributes.*`:
   path segment are silently dropped (prototype pollution prevention)
 - `gen_ai.input.messages` / `gen_ai.output.messages` / `gen_ai.system_instructions`
   may contain PII — mark as opt-in in instrumentation
+
+## ModexAgent Implementation
+
+### Observation Type Mapping
+
+| Span name | `langfuse.observation.type` | Langfuse type |
+|-----------|----------------------------|---------------|
+| `invoke_agent` | `agent` | AGENT |
+| `chat` | `generation` | GENERATION |
+| `execute_tool` | `tool` | TOOL |
+| `iteration` | `span` | SPAN |
+| `human_review` | `event` | EVENT |
+| `agent.handoff` | `span` | SPAN |
+
+### Trace Name
+
+`langfuse.trace.name` = `{session_id}.{turn_id}` — set on all spans so the
+trace name is populated regardless of which span arrives first at Langfuse.
+
+### Root Span Emission
+
+`invoke_agent` is emitted twice with the same `span_id`:
+1. `before_turn`: start + input (trigger message) + `as_root=true`
+2. `finally_turn`: output (final reply) + end_time + aggregated usage
+
+Langfuse merges both by `span_id` — first emission's input + second's output.
+
+### Export Path
+
+Direct JSON OTLP HTTP POST (bypasses OTel SDK). See `docs/otel/README.md`.

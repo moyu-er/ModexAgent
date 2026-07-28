@@ -464,15 +464,22 @@ class TestOtlpExport:
         assert store._tracer is None
         assert len(fake_otel.exporters) == 0
 
-    async def test_save_span_emits_span_via_otel_sdk(
+    async def test_save_span_emits_span_via_json_otlp(
         self, tmp_path: Path, fake_otel: types.SimpleNamespace
     ) -> None:
         config = ObservabilityConfig(
             trace_backend=TraceBackend.FILE,
             otel_endpoint="http://collector:4318/v1/traces",
+            otel_headers={"Authorization": "Basic dGVzdDp0ZXN0"},
         )
         store = build_trace_stores(config, tmp_path)
         assert store is not None
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = "{}"
+        store._otlp_client = MagicMock()
+        store._otlp_client.post = MagicMock(return_value=mock_response)
 
         span = _make_span(name=SpanName.INVOKE_AGENT.value)
         await store.save_span(span)
@@ -480,21 +487,36 @@ class TestOtlpExport:
         spans = read_jsonl_robust(tmp_path / "sess-001" / "spans.jsonl")
         assert len(spans) == 1
 
-        assert len(fake_otel.spans) == 1
-        otel_span = fake_otel.spans[0]
-        assert otel_span.name == SpanName.INVOKE_AGENT.value  # type: ignore[attr-defined]
-        assert otel_span.attributes[GenAiAttr.AGENT_NAME] == "react_main"  # type: ignore[attr-defined]
-        assert otel_span.attributes[GenAiAttr.CONVERSATION_ID] == "sess-001"  # type: ignore[attr-defined]
+        assert store._otlp_client.post.called
+        call_kwargs = store._otlp_client.post.call_args
+        payload = call_kwargs[1]["json"] if "json" in call_kwargs[1] else call_kwargs[0][1]
+        rs = payload["resourceSpans"][0]
+        assert "resource" in rs
+        res_attrs = {a["key"]: a["value"] for a in rs["resource"]["attributes"]}
+        assert res_attrs["service.name"]["stringValue"] == "modex_agent"
+        otlp_span = rs["scopeSpans"][0]["spans"][0]
+        assert "resource" not in otlp_span
+        assert otlp_span["name"] == SpanName.INVOKE_AGENT.value
+        attrs_dict = {a["key"]: a["value"] for a in otlp_span["attributes"]}
+        assert attrs_dict[GenAiAttr.AGENT_NAME]["stringValue"] == "react_main"
+        assert attrs_dict[GenAiAttr.CONVERSATION_ID]["stringValue"] == "sess-001"
 
-    async def test_save_span_emits_error_span_status_via_otel_sdk(
+    async def test_save_span_emits_error_span_status_via_json_otlp(
         self, tmp_path: Path, fake_otel: types.SimpleNamespace
     ) -> None:
         config = ObservabilityConfig(
             trace_backend=TraceBackend.FILE,
             otel_endpoint="http://collector:4318/v1/traces",
+            otel_headers={"Authorization": "Basic dGVzdDp0ZXN0"},
         )
         store = build_trace_stores(config, tmp_path)
         assert store is not None
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = "{}"
+        store._otlp_client = MagicMock()
+        store._otlp_client.post = MagicMock(return_value=mock_response)
 
         await store.save_span(_make_span(name=SpanName.INVOKE_AGENT.value, span_id="s1"))
         error_span = _make_span(
@@ -504,10 +526,12 @@ class TestOtlpExport:
         )
         await store.save_span(error_span)
 
-        assert len(fake_otel.spans) == 2
-        otel_error_span = fake_otel.spans[1]
-        assert otel_error_span.status.code == "ERROR"  # type: ignore[attr-defined]
-        assert otel_error_span.status.description == "boom"  # type: ignore[attr-defined]
+        assert store._otlp_client.post.call_count == 2
+        call_kwargs = store._otlp_client.post.call_args[1]
+        payload = call_kwargs["json"] if "json" in call_kwargs else call_kwargs[0][1]
+        otlp_span = payload["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+        assert otlp_span["status"]["code"] == "STATUS_CODE_ERROR"
+        assert otlp_span["status"]["message"] == "boom"
 
 
 # ── format_send_ack single-path ──────────────────────────────────────

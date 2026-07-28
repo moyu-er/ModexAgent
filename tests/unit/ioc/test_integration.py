@@ -57,7 +57,7 @@ class TestSafetyConfigDefaults:
         cfg = SafetyConfig()
         assert cfg.llm.request_timeout == 45.0
         assert cfg.llm.max_retries == 1
-        assert cfg.turn.tool_timeout == 360.0  # updated default
+        assert cfg.turn.tool_timeout == 120.0
 
     def test_safety_partial_llm_override(self) -> None:
         from modex_agent.ioc.configs.safety import LLMSafetyConfig
@@ -67,4 +67,4 @@ class TestSafetyConfigDefaults:
         )
         assert cfg.llm.request_timeout == 30.0
         assert cfg.llm.max_retries == 1  # default preserved
-        assert cfg.turn.tool_timeout == 360.0  # updated default  # default preserved
+        assert cfg.turn.tool_timeout == 120.0  # default preserved

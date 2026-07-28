@@ -219,6 +219,5 @@ class TestTraceCollectorRecordsErrorTurnEnd:
         )
 
         spans = await store.list_by_session(session_id)
-        # Only the TURN_START span — TURN_END produces no span in OTel format.
-        assert len(spans) == 1
-        assert spans[0].name == SpanName.INVOKE_AGENT.value
+        assert len(spans) == 2
+        assert all(s.name == SpanName.INVOKE_AGENT.value for s in spans)

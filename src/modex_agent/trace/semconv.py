@@ -18,13 +18,22 @@ class GenAiAttr(StrEnum):
 
     # ── Operation / agent identification ──────────────────────────────
     OPERATION_NAME = "gen_ai.operation.name"
-    PROVIDER_NAME = "gen_ai.provider.name"
+    PROVIDER_NAME = "gen_ai.provider.name"  # Required (replaces deprecated gen_ai.system)
     AGENT_NAME = "gen_ai.agent.name"
+    AGENT_ID = "gen_ai.agent.id"
+    AGENT_DESCRIPTION = "gen_ai.agent.description"
+    AGENT_VERSION = "gen_ai.agent.version"
     CONVERSATION_ID = "gen_ai.conversation.id"
     INVOCATION_ID = "gen_ai.invocation.id"  # custom (not in OTel spec)
 
     # ── Request ───────────────────────────────────────────────────────
     REQUEST_MODEL = "gen_ai.request.model"
+    REQUEST_TEMPERATURE = "gen_ai.request.temperature"
+    REQUEST_MAX_TOKENS = "gen_ai.request.max_tokens"
+    REQUEST_TOP_P = "gen_ai.request.top_p"
+    REQUEST_FREQUENCY_PENALTY = "gen_ai.request.frequency_penalty"
+    REQUEST_PRESENCE_PENALTY = "gen_ai.request.presence_penalty"
+    REQUEST_STREAM = "gen_ai.request.stream"
     INPUT_MESSAGES = "gen_ai.input.messages"
     SYSTEM_INSTRUCTIONS = "gen_ai.system_instructions"  # opt-in
     SYSTEM_PROMPT_HASH = "gen_ai.system.prompt_hash"  # custom
@@ -80,10 +89,12 @@ class GenAiAttr(StrEnum):
 
     # ── Langfuse trace-level mapping (langfuse.* namespace) ───────────
     # These map directly to Langfuse trace fields (Sessions/Users pages).
-    # See https://langfuse.com/docs/opentelemetry/get-started#property-mapping
+    # See https://langfuse.com/integrations/native/opentelemetry#property-mapping
     LANGFUSE_SESSION_ID = "langfuse.session.id"
     LANGFUSE_USER_ID = "langfuse.user.id"
     LANGFUSE_TRACE_NAME = "langfuse.trace.name"
+    LANGFUSE_TRACE_INPUT = "langfuse.trace.input"
+    LANGFUSE_TRACE_OUTPUT = "langfuse.trace.output"
 
     # ── Langfuse observation-level mapping ────────────────────────────
     # Langfuse maps these to the observation's input/output/model/type fields.
@@ -93,6 +104,12 @@ class GenAiAttr(StrEnum):
     GEN_AI_PROMPT = "gen_ai.prompt"
     GEN_AI_COMPLETION = "gen_ai.completion"
     LANGFUSE_OBSERVATION_TYPE = "langfuse.observation.type"
+    LANGFUSE_OBSERVATION_INPUT = "langfuse.observation.input"
+    LANGFUSE_OBSERVATION_OUTPUT = "langfuse.observation.output"
+    LANGFUSE_OBSERVATION_LEVEL = "langfuse.observation.level"
+
+    # ── Langfuse internal (root marking) ──────────────────────────────
+    LANGFUSE_INTERNAL_AS_ROOT = "langfuse.internal.as_root"
 
 
 class SpanName(StrEnum):
@@ -108,6 +125,7 @@ class SpanName(StrEnum):
     TRAINING_TAG = "training_tag"
     ITERATION_START = "iteration.start"
     ITERATION_END = "iteration.end"
+    ITERATION = "iteration"
     AGENT_HANDOFF = "agent.handoff"
 
 
@@ -124,6 +142,35 @@ class SpanStatusCode(StrEnum):
     OK = "OK"
     ERROR = "ERROR"
     UNSET = "UNSET"
+
+
+class LangfuseObservationType(StrEnum):
+    """Langfuse observation type values for ``langfuse.observation.type``.
+
+    Accepted by Langfuse OTLP ingestion (priority 1 mapper — always wins
+    over heuristic ``gen_ai.*`` mappers). Values are lowercase strings.
+    See: langfuse/packages/shared/src/server/otel/ObservationTypeMapper.ts
+    """
+
+    SPAN = "span"
+    GENERATION = "generation"
+    EVENT = "event"
+    AGENT = "agent"
+    TOOL = "tool"
+    CHAIN = "chain"
+
+
+class LangfuseObservationLevel(StrEnum):
+    """Langfuse observation level values for ``langfuse.observation.level``.
+
+    See: langfuse/packages/shared/src/server/otel/attributes.ts
+    (``OBSERVATION_LEVEL`` — validated against ObservationLevelDomain).
+    """
+
+    DEBUG = "DEBUG"
+    DEFAULT = "DEFAULT"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
 
 
 # ── OperationKind → SpanName mapping ─────────────────────────────────

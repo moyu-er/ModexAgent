@@ -384,10 +384,27 @@ class DefaultAgentFactory(AgentFactory):
             descriptor.llm_config.model if descriptor.llm_config is not None else None
         )
 
+        llm_cfg = descriptor.llm_config
+        provider_name = (
+            model_name.split("/")[0]
+            if model_name is not None and "/" in model_name
+            else None
+        )
+        request_params = (
+            {
+                "temperature": llm_cfg.temperature,
+                "max_tokens": llm_cfg.max_output_tokens,
+            }
+            if llm_cfg is not None
+            else None
+        )
+
         live_hooks: list[Any] = [
             TraceCollectorHook(
                 prompt_capture=prompt_capture_strategy,
                 model=model_name,
+                provider_name=provider_name,
+                request_params=request_params,
             ),
             LoopDetectionHook(),
         ]

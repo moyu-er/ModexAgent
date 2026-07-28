@@ -472,51 +472,6 @@ async def test_tool_span_fail_and_error_type_attribute(tmp_path: Path) -> None:
 # -- New attributes: execute_tool_batch end_time ------------------------------
 
 
-@pytest.mark.asyncio
-async def test_tool_batch_span_has_end_time(tmp_path: Path) -> None:
-    store = _make_store(tmp_path)
-    ctx = _make_trace_context("batch_end", store)
-    hook = _make_hook()
-
-    await hook.before_turn(ctx)
-    tool_calls = [
-        ToolCall(call_id="c1", tool_name="search", arguments={"q": "a"}),
-        ToolCall(call_id="c2", tool_name="read", arguments={"path": "/tmp"}),
-    ]
-    await hook.before_tool_execution(ctx, tool_calls)
-    results = [
-        ToolResult(tool_name="search", result="ok", execution_time=0.01),
-        ToolResult(tool_name="read", result="data", execution_time=0.02),
-    ]
-    await hook.after_tool_execution(ctx, results)
-    await hook.finally_turn(ctx, None)
-
-    spans = await _collect_spans(store, "batch_end")
-    batch_span = next(s for s in spans if s.name == SpanName.EXECUTE_TOOL_BATCH.value)
-    assert batch_span.end_time is not None
-    assert batch_span.end_time >= batch_span.start_time
-    assert batch_span.attributes["tool_count"] == 2
-    assert batch_span.attributes["tool_names"] == ["search", "read"]
-
-
-@pytest.mark.asyncio
-async def test_tool_batch_span_not_created_before_after_tool_execution(
-    tmp_path: Path,
-) -> None:
-    store = _make_store(tmp_path)
-    ctx = _make_trace_context("batch_noafter", store)
-    hook = _make_hook()
-
-    await hook.before_turn(ctx)
-    tool_calls = [ToolCall(call_id="c1", tool_name="search", arguments={})]
-    await hook.before_tool_execution(ctx, tool_calls)
-    await hook.finally_turn(ctx, None)
-
-    spans = await _collect_spans(store, "batch_noafter")
-    batch_spans = [s for s in spans if s.name == SpanName.EXECUTE_TOOL_BATCH.value]
-    assert len(batch_spans) == 0
-
-
 # -- build_prompt_capture factory ---------------------------------------------
 
 
