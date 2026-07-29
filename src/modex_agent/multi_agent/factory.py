@@ -15,7 +15,7 @@ from modex_agent.core.context import ContextManager, InMemoryContextManager
 from modex_agent.core.runtime_context import RuntimeContextManager
 from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.core.tool_manager import InMemoryToolManager
-from modex_agent.ioc.configs.observability import ObservabilityConfig
+from modex_agent.ioc.configs.observability import ObservabilityConfig, TraceBackend
 
 try:
     from modex_agent.providers import LiteLLMProvider
@@ -399,12 +399,39 @@ class DefaultAgentFactory(AgentFactory):
             else None
         )
 
+        # L2 score injection (Layer 1 eval)
+        score_injector = None
+        if (
+            obs is not None
+            and obs.eval_score_injection
+            and obs.trace_backend == TraceBackend.OTEL_HTTP
+            and obs.otel_endpoint
+        ):
+            try:
+                from urllib.parse import urlparse
+
+                from modex_agent.trace.score_injector import L2ScoreInjector
+
+                parsed = urlparse(obs.otel_endpoint)
+                ingestion_url = f"{parsed.scheme}://{parsed.netloc}/api/public/ingestion"
+                headers = obs.otel_headers or {}
+                score_injector = L2ScoreInjector(
+                    ingestion_url=ingestion_url,
+                    headers=headers,
+                )
+            except Exception:
+                logger.warning(
+                    "L2ScoreInjector creation failed; score injection disabled.",
+                    exc_info=True,
+                )
+
         live_hooks: list[Any] = [
             TraceCollectorHook(
                 prompt_capture=prompt_capture_strategy,
                 model=model_name,
                 provider_name=provider_name,
                 request_params=request_params,
+                score_injector=score_injector,
             ),
             LoopDetectionHook(),
         ]

@@ -108,6 +108,7 @@ class GenAiAttr(StrEnum):
     LANGFUSE_OBSERVATION_INPUT = "langfuse.observation.input"
     LANGFUSE_OBSERVATION_OUTPUT = "langfuse.observation.output"
     LANGFUSE_OBSERVATION_LEVEL = "langfuse.observation.level"
+    LANGFUSE_OBSERVATION_COMPLETION_START_TIME = "langfuse.observation.completion_start_time"
 
     # ── Langfuse internal (root marking) ──────────────────────────────
     LANGFUSE_INTERNAL_AS_ROOT = "langfuse.internal.as_root"

@@ -117,6 +117,60 @@ async def test_after_llm_response_records_llm_call(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_after_llm_response_records_cache_tokens_and_ttft(tmp_path: Path) -> None:
+    """Verify cache tokens + completion_start_time are emitted on chat spans."""
+    store = _make_store(tmp_path)
+    ctx = _make_trace_context("s_cache", store)
+    hook = _make_hook()
+
+    await hook.before_turn(ctx)
+
+    response = LLMResponse(
+        content="hello",
+        usage={
+            "prompt_tokens": 1000,
+            "completion_tokens": 500,
+            "total_tokens": 1500,
+            "cache_read_input_tokens": 800,
+            "cache_creation_input_tokens": 100,
+            "reasoning_tokens": 50,
+        },
+        completion_start_time="2026-07-29T16:00:00.123456+00:00",
+    )
+    await hook.after_llm_response(ctx, response)
+    await hook.finally_turn(ctx, None)
+
+    spans = await _collect_spans(store, "s_cache")
+    llm_span = next(s for s in spans if s.name == SpanName.CHAT.value)
+    assert llm_span.attributes[GenAiAttr.USAGE_INPUT_TOKENS] == 1000
+    assert llm_span.attributes[GenAiAttr.USAGE_OUTPUT_TOKENS] == 500
+    assert llm_span.attributes[GenAiAttr.USAGE_CACHE_READ_INPUT_TOKENS] == 800
+    assert llm_span.attributes[GenAiAttr.USAGE_CACHE_CREATION_INPUT_TOKENS] == 100
+    assert llm_span.attributes[GenAiAttr.USAGE_REASONING_TOKENS] == 50
+    assert llm_span.attributes[GenAiAttr.LANGFUSE_OBSERVATION_COMPLETION_START_TIME] == (
+        "2026-07-29T16:00:00.123456+00:00"
+    )
+
+
+@pytest.mark.asyncio
+async def test_after_llm_response_no_ttft_when_none(tmp_path: Path) -> None:
+    """completion_start_time attr absent when LLMResponse.completion_start_time is None."""
+    store = _make_store(tmp_path)
+    ctx = _make_trace_context("s_no_ttft", store)
+    hook = _make_hook()
+
+    await hook.before_turn(ctx)
+
+    response = LLMResponse(content="hello", usage={"prompt_tokens": 5})
+    await hook.after_llm_response(ctx, response)
+    await hook.finally_turn(ctx, None)
+
+    spans = await _collect_spans(store, "s_no_ttft")
+    llm_span = next(s for s in spans if s.name == SpanName.CHAT.value)
+    assert GenAiAttr.LANGFUSE_OBSERVATION_COMPLETION_START_TIME not in llm_span.attributes
+
+
+@pytest.mark.asyncio
 @pytest.mark.asyncio
 async def test_after_tool_execution_records_per_tool(tmp_path: Path) -> None:
     store = _make_store(tmp_path)

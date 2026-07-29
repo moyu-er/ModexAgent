@@ -42,8 +42,8 @@ class ObservabilityConfig(BaseModel):
         default=None,
         description=(
             "Optional HTTP headers for OTLP export (e.g. Langfuse auth). "
-            'For Langfuse: {"Authorization": "Basic <base64(pk:sk)>"} or '
-            '{"x-langfuse-public-key": "pk-...", "x-langfuse-secret-key": "sk-..."}.'
+            'For Langfuse: {"Authorization": "Basic <base64(pk:sk)>", '
+            '"x-langfuse-ingestion-version": "4"}.'
         ),
     )
     retain_reasoning_content: bool = Field(
@@ -76,4 +76,12 @@ class ObservabilityConfig(BaseModel):
     prompt_capture: str = Field(
         default="summary",
         description="Prompt capture strategy for trace spans. Currently: 'summary'.",
+    )
+    eval_score_injection: bool = Field(
+        default=False,
+        description=(
+            "Inject L2 heuristic scores (tool_success_rate, reasoning_depth, "
+            "trajectory_compactness, overall) to Langfuse on each turn finish. "
+            "Requires trace_backend=otel_http and a reachable Langfuse instance."
+        ),
     )

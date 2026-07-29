@@ -21,18 +21,20 @@ from pydantic import ValidationError
 
 from modex_agent.trace.semconv import GenAiAttr, SpanName, SpanStatusCode
 from modex_agent.trace.store import SpanModel, SpanStatus, TraceQuery
+from modex_agent.trace.scoring import (
+    TrajectoryScore,
+    compute_score,
+    overall_score,
+)
 from modex_agent.trace.training_exporter import (
     DPOPair,
     ExportResult,
     SFTExample,
     TrainingDataExporter,
-    TrajectoryScore,
-    _compute_score,
     _edit_distance_ratio,
     _jaccard_similarity,
     _levenshtein,
     _ngram_set,
-    _overall_score,
     _tenant_of,
     _wrap_reasoning,
 )
@@ -585,7 +587,7 @@ class TestDeduplication:
 class TestL2Scoring:
     def test_compute_score_all_success(self) -> None:
         spans = _make_trajectory(tool_success=True, with_reasoning=True)
-        score = _compute_score(spans)
+        score = compute_score(spans)
         assert isinstance(score, TrajectoryScore)
         assert score.tool_success_rate == 1.0
         assert score.reasoning_depth == 15
@@ -595,19 +597,19 @@ class TestL2Scoring:
 
     def test_compute_score_failed_tool(self) -> None:
         spans = _make_trajectory(tool_success=False, with_reasoning=True)
-        score = _compute_score(spans)
+        score = compute_score(spans)
         assert score.tool_success_rate == 0.0
         assert score.reasoning_depth == 15
 
     def test_compute_score_no_tools(self) -> None:
         spans = _make_trajectory(with_tool_calls=False, with_reasoning=True)
-        score = _compute_score(spans)
+        score = compute_score(spans)
         # No tools → tool_success_rate defaults to 1.0
         assert score.tool_success_rate == 1.0
 
     def test_compute_score_no_reasoning(self) -> None:
         spans = _make_trajectory(with_reasoning=False)
-        score = _compute_score(spans)
+        score = compute_score(spans)
         assert score.reasoning_depth == 0
 
     def test_overall_score_combines_metrics(self) -> None:
@@ -616,7 +618,7 @@ class TestL2Scoring:
             reasoning_depth=500,
             trajectory_compactness=0.3,
         )
-        overall = _overall_score(score)
+        overall = overall_score(score)
         # 0.5*1.0 + 0.3*(500/1000) + 0.2*0.3 = 0.5 + 0.15 + 0.06 = 0.71
         assert overall == pytest.approx(0.71, rel=1e-3)
 
@@ -626,7 +628,7 @@ class TestL2Scoring:
             reasoning_depth=10000,
             trajectory_compactness=2.0,
         )
-        overall = _overall_score(score)
+        overall = overall_score(score)
         assert overall <= 1.0
         # 0.5*1 + 0.3*1 + 0.2*1 = 1.0
         assert overall == pytest.approx(1.0, rel=1e-3)

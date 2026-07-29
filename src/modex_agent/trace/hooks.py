@@ -38,6 +38,7 @@ from modex_agent.hook.abc import (
 from modex_agent.runtime.enums import OperationKind, TurnCustomKey
 from modex_agent.trace.otel_store import OtelSpanTraceStore
 from modex_agent.trace.prompt_capture import PromptCaptureStrategy
+from modex_agent.trace.scoring import compute_score
 from modex_agent.trace.semconv import (
     GenAiAttr,
     LangfuseObservationLevel,
@@ -57,6 +58,7 @@ if TYPE_CHECKING:
     from modex_agent.core.tool_manager import ToolResult
     from modex_agent.core.types import LLMResponse, ToolCall
     from modex_agent.runtime.models import ApprovalTransaction
+    from modex_agent.trace.score_injector import L2ScoreInjector
 
 logger = logging.getLogger(__name__)
 
@@ -96,12 +98,14 @@ class TraceCollectorHook(
         model: str | None = None,
         provider_name: str | None = None,
         request_params: dict[str, object] | None = None,
+        score_injector: L2ScoreInjector | None = None,
     ) -> None:
         self._enabled = enabled
         self._prompt_capture = prompt_capture
         self._model = model
         self._provider_name = provider_name
         self._request_params = request_params
+        self._score_injector = score_injector
         self._root_span_info: dict[str, tuple[str, float]] = {}
         self._llm_start_times: dict[str, float] = {}
         self._llm_request_attrs: dict[str, dict[str, object]] = {}
@@ -247,6 +251,11 @@ class TraceCollectorHook(
         full_attrs: dict[str, object] = self._build_base_attrs(ctx, op_name or "")
         if attrs is not None:
             full_attrs.update(attrs)
+
+        if error is not None and GenAiAttr.LANGFUSE_OBSERVATION_LEVEL not in full_attrs:
+            full_attrs[GenAiAttr.LANGFUSE_OBSERVATION_LEVEL] = (
+                LangfuseObservationLevel.ERROR.value
+            )
 
         # ── Span kind ─────────────────────────────────────────────────
         span_kind = (
@@ -469,6 +478,10 @@ class TraceCollectorHook(
                 turn_usage["cache_read_input_tokens"] += usage["cache_read_input_tokens"]
             if "cache_creation_input_tokens" in usage:
                 turn_usage["cache_creation_input_tokens"] += usage["cache_creation_input_tokens"]
+        if response.completion_start_time is not None:
+            attrs[GenAiAttr.LANGFUSE_OBSERVATION_COMPLETION_START_TIME] = (
+                response.completion_start_time
+            )
         if response.tool_calls:
             attrs[GenAiAttr.OUTPUT_TOOL_CALLS] = [
                 {
@@ -845,6 +858,14 @@ class TraceCollectorHook(
             if error is not None
             else SpanStatus(code=SpanStatusCode.OK)
         )
+        root_attrs: dict[str, object] = {
+            **self._build_base_attrs(ctx, "invoke_agent"),
+            **attrs,
+        }
+        if error is not None:
+            root_attrs[GenAiAttr.LANGFUSE_OBSERVATION_LEVEL] = (
+                LangfuseObservationLevel.ERROR.value
+            )
         span = SpanModel(
             trace_id=trace_id,
             span_id=root_span_id,
@@ -853,10 +874,39 @@ class TraceCollectorHook(
             kind=SpanKind.INTERNAL.value,
             start_time=start_time,
             end_time=end_time,
-            attributes={
-                **self._build_base_attrs(ctx, "invoke_agent"),
-                **attrs,
-            },
+            attributes=root_attrs,
             status=status,
         )
         await self._save_span(span, ctx)
+
+        # L2 score injection (Layer 1 eval)
+        if self._score_injector is not None:
+            await self._inject_l2_scores(ctx, trace_id, root_span_id)
+
+    async def _inject_l2_scores(
+        self, ctx: AgentContext, trace_id: str, root_span_id: str
+    ) -> None:
+        """Compute L2 heuristic scores and inject to Langfuse.
+
+        Fire-and-forget: any failure is logged and swallowed. Never raises.
+        """
+        injector = self._score_injector
+        try:
+            runtime_store = (
+                ctx.runtime.services.trace_store if ctx.runtime is not None else None
+            )
+            if runtime_store is None or injector is None:
+                return
+            spans = await runtime_store.list_by_trace_id(trace_id)
+            if not spans:
+                return
+            scores = compute_score(spans)
+            await injector.inject_scores(
+                trace_id, scores, observation_id=root_span_id
+            )
+        except Exception:
+            logger.warning(
+                "TraceCollectorHook: L2 score injection failed (trace_id=%s)",
+                trace_id,
+                exc_info=True,
+            )

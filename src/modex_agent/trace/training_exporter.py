@@ -27,8 +27,16 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from modex_agent.trace.semconv import GenAiAttr, SpanName, SpanStatusCode
-from modex_agent.trace.store import SpanModel, SpanStatus, TraceQuery
+from modex_agent.trace.scoring import (
+    TrajectoryScore,
+    compute_score,
+    extract_final_response,
+    extract_output_text,
+    overall_score,
+    score_to_rating,
+)
+from modex_agent.trace.semconv import GenAiAttr, SpanName
+from modex_agent.trace.store import SpanModel, TraceQuery
 
 logger = logging.getLogger(__name__)
 
@@ -78,16 +86,6 @@ class ExportFormat(StrEnum):
 # ── Data models (frozen Pydantic BaseModel, extra="forbid") ────────────
 
 
-class TrajectoryScore(BaseModel):
-    """L2 heuristic scores for one trajectory."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    tool_success_rate: float
-    reasoning_depth: int
-    trajectory_compactness: float
-
-
 class SFTExample(BaseModel):
     """One SFT training example in OpenAI messages format.
 
@@ -129,21 +127,6 @@ class ExportResult(BaseModel):
 
 
 # ── Scalar helpers ─────────────────────────────────────────────────────
-
-
-def _as_int(value: object) -> int:
-    """Coerce a span-attribute token value to int; non-numeric → 0.
-
-    ``bool`` is rejected (subclasses ``int`` in Python) so a stray ``True``
-    does not silently count as 1.
-    """
-    if isinstance(value, bool):
-        return 0
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value)
-    return 0
 
 
 def _ngram_set(text: str, n: int = _NGRAM_SIZE) -> frozenset[str]:
@@ -215,11 +198,6 @@ def _wrap_reasoning(reasoning: str, content: str) -> str:
     if content:
         return f"{think_block}\n{content}"
     return think_block
-
-
-def _span_status_is_error(span: SpanModel) -> bool:
-    """Check if a span's status code indicates an error."""
-    return span.status.code == SpanStatusCode.ERROR
 
 
 # ── Trajectory aggregation ─────────────────────────────────────────────
@@ -323,35 +301,6 @@ def _build_tool_calls(
     return result
 
 
-def _extract_output_text(attrs: dict[str, Any]) -> str | None:
-    """Extract assistant response text from ``gen_ai.output.messages``.
-
-    The attribute is a list of message dicts in parts-based format::
-
-        [{"role": "assistant", "parts": [{"type": "text", "content": "..."}]}]
-
-    Returns the first part's ``content`` of the first message, or ``None``
-    if the attribute is missing or malformed. Span attributes cross a
-    serialization boundary, so ``isinstance`` is the correct guard (rules 6/9).
-    """
-    messages = attrs.get(GenAiAttr.OUTPUT_MESSAGES.value)
-    if not isinstance(messages, list) or not messages:
-        return None
-    first = messages[0]
-    if not isinstance(first, dict):
-        return None
-    parts = first.get("parts")
-    if not isinstance(parts, list) or not parts:
-        return None
-    first_part = parts[0]
-    if not isinstance(first_part, dict):
-        return None
-    content = first_part.get("content")
-    if isinstance(content, str):
-        return content
-    return None
-
-
 def _trajectory_to_messages(spans: list[SpanModel]) -> list[dict[str, Any]]:
     """Convert a trajectory (list of spans) into OpenAI messages.
 
@@ -378,9 +327,7 @@ def _trajectory_to_messages(spans: list[SpanModel]) -> list[dict[str, Any]]:
 
     # Partition chat and execute_tool spans (already sorted).
     chat_spans = [s for s in sorted_spans if s.name == SpanName.CHAT.value]
-    tool_spans = [
-        s for s in sorted_spans if s.name == SpanName.EXECUTE_TOOL.value
-    ]
+    tool_spans = [s for s in sorted_spans if s.name == SpanName.EXECUTE_TOOL.value]
 
     if not chat_spans:
         return messages
@@ -391,17 +338,11 @@ def _trajectory_to_messages(spans: list[SpanModel]) -> list[dict[str, Any]]:
 
     for idx, chat_span in enumerate(chat_spans):
         attrs = chat_span.attributes
-        content = _extract_output_text(attrs) or ""
+        content = extract_output_text(attrs) or ""
         raw_reasoning = attrs.get(GenAiAttr.OUTPUT_REASONING_CONTENT.value)
-        reasoning = (
-            str(raw_reasoning)
-            if isinstance(raw_reasoning, str) and raw_reasoning
-            else ""
-        )
+        reasoning = str(raw_reasoning) if isinstance(raw_reasoning, str) and raw_reasoning else ""
         tool_calls_attr = attrs.get(GenAiAttr.OUTPUT_TOOL_CALLS.value)
-        has_tool_calls = (
-            isinstance(tool_calls_attr, list) and len(tool_calls_attr) > 0
-        )
+        has_tool_calls = isinstance(tool_calls_attr, list) and len(tool_calls_attr) > 0
 
         if has_tool_calls:
             # Assistant message with tool_calls
@@ -421,9 +362,7 @@ def _trajectory_to_messages(spans: list[SpanModel]) -> list[dict[str, Any]]:
                 if tool_result_idx + i < len(tool_spans):
                     ts = tool_spans[tool_result_idx + i]
                     raw_result = ts.attributes.get(GenAiAttr.TOOL_RESULT.value)
-                    result_content = (
-                        str(raw_result) if raw_result is not None else ""
-                    )
+                    result_content = str(raw_result) if raw_result is not None else ""
                     messages.append(
                         {
                             "role": MessageRole.TOOL.value,
@@ -455,67 +394,6 @@ def _trajectory_to_messages(spans: list[SpanModel]) -> list[dict[str, Any]]:
     return messages
 
 
-def _compute_score(spans: list[SpanModel]) -> TrajectoryScore:
-    """Compute L2 heuristic scores for a trajectory.
-
-    - ``tool_success_rate``: non-error ``execute_tool`` spans / total
-    - ``reasoning_depth``: sum of ``reasoning_tokens`` from ``chat`` spans
-    - ``trajectory_compactness``: final response length / total tokens
-    """
-    tool_spans = [s for s in spans if s.name == SpanName.EXECUTE_TOOL.value]
-    total_tools = len(tool_spans)
-    successful_tools = sum(1 for s in tool_spans if not _span_status_is_error(s))
-    tool_success_rate = (
-        successful_tools / total_tools if total_tools > 0 else 1.0
-    )
-
-    chat_spans = [s for s in spans if s.name == SpanName.CHAT.value]
-    reasoning_depth = 0
-    total_tokens = 0
-    for s in chat_spans:
-        attrs = s.attributes
-        reasoning_depth += _as_int(attrs.get(GenAiAttr.USAGE_REASONING_TOKENS.value))
-        total_tokens += _as_int(
-            attrs.get(GenAiAttr.USAGE_INPUT_TOKENS.value)
-        ) + _as_int(attrs.get(GenAiAttr.USAGE_OUTPUT_TOKENS.value))
-
-    final_content = _extract_final_response(spans)
-    final_len = len(final_content)
-    trajectory_compactness = (
-        final_len / total_tokens if total_tokens > 0 else 0.0
-    )
-
-    return TrajectoryScore(
-        tool_success_rate=tool_success_rate,
-        reasoning_depth=reasoning_depth,
-        trajectory_compactness=trajectory_compactness,
-    )
-
-
-def _overall_score(score: TrajectoryScore) -> float:
-    """Combine L2 heuristics into a single 0.0–1.0 score for DPO gap filtering."""
-    normalized_reasoning = min(score.reasoning_depth / 1000.0, 1.0)
-    normalized_compactness = min(max(score.trajectory_compactness, 0.0), 1.0)
-    return (
-        0.5 * max(0.0, min(score.tool_success_rate, 1.0))
-        + 0.3 * normalized_reasoning
-        + 0.2 * normalized_compactness
-    )
-
-
-def _score_to_rating(score: float) -> int:
-    """Map a 0.0–1.0 overall score to a 1–5 rating."""
-    if score >= 0.8:
-        return 5
-    if score >= 0.6:
-        return 4
-    if score >= 0.4:
-        return 3
-    if score >= 0.2:
-        return 2
-    return 1
-
-
 def _get_approval_decision(spans: list[SpanModel]) -> bool | None:
     """Return True if approved, False if denied, None if no approval data.
 
@@ -537,29 +415,6 @@ def _get_approval_decision(spans: list[SpanModel]) -> bool | None:
             if lower in ("denied", "reject", "rejected", "no", "deny"):
                 return False
     return None
-
-
-def _extract_final_response(spans: list[SpanModel]) -> str:
-    """Extract the final assistant response from a trajectory.
-
-    Uses the last ``chat`` span's ``gen_ai.output.messages`` (the one without
-    tool_calls).  Falls back to the last ``chat`` span's content.
-    """
-    chat_spans = [s for s in spans if s.name == SpanName.CHAT.value]
-    # Prefer the last chat span without tool_calls (the final answer).
-    for s in reversed(chat_spans):
-        tc = s.attributes.get(GenAiAttr.OUTPUT_TOOL_CALLS.value)
-        if isinstance(tc, list) and len(tc) > 0:
-            continue
-        content = _extract_output_text(s.attributes)
-        if content:
-            return content
-    # Fallback: last chat span content of any kind.
-    for s in reversed(chat_spans):
-        content = _extract_output_text(s.attributes)
-        if content:
-            return content
-    return ""
 
 
 def _trajectory_timestamp(spans: list[SpanModel]) -> float:
@@ -632,9 +487,7 @@ class TrainingDataExporter:
         if not session_ids:
             return self._empty_result(ExportFormat.SFT)
 
-        trajectories = await self._collect_trajectories(
-            session_ids, since=since, until=until
-        )
+        trajectories = await self._collect_trajectories(session_ids, since=since, until=until)
         if not trajectories:
             return self._empty_result(ExportFormat.SFT)
 
@@ -649,7 +502,7 @@ class TrainingDataExporter:
             if len(messages) < 2:
                 # Need at least user + assistant.
                 continue
-            score = _compute_score(spans)
+            score = compute_score(spans)
             candidates.append((messages, score))
 
         accepted, deduped_count = self._dedup_sft(candidates)
@@ -701,9 +554,7 @@ class TrainingDataExporter:
         if not session_ids:
             return self._empty_result(ExportFormat.DPO)
 
-        trajectories = await self._collect_trajectories(
-            session_ids, since=since, until=until
-        )
+        trajectories = await self._collect_trajectories(session_ids, since=since, until=until)
         if not trajectories:
             return self._empty_result(ExportFormat.DPO)
 
@@ -719,20 +570,20 @@ class TrainingDataExporter:
             if not user_msg:
                 continue
             bucket_key = "approved" if decision else "denied"
-            task_groups.setdefault(user_msg, {"approved": [], "denied": []})[
-                bucket_key
-            ].append(spans)
+            task_groups.setdefault(user_msg, {"approved": [], "denied": []})[bucket_key].append(
+                spans
+            )
 
         # Build DPO pairs.
         raw_pairs: list[DPOPair] = []
         for task_msg, groups in task_groups.items():
             for chosen_spans in groups["approved"]:
-                chosen_score = _overall_score(_compute_score(chosen_spans))
-                chosen_response = _extract_final_response(chosen_spans)
+                chosen_score = overall_score(compute_score(chosen_spans))
+                chosen_response = extract_final_response(chosen_spans)
                 chosen_agent = _extract_agent_name(chosen_spans)
                 for rejected_spans in groups["denied"]:
-                    rejected_score = _overall_score(_compute_score(rejected_spans))
-                    rejected_response = _extract_final_response(rejected_spans)
+                    rejected_score = overall_score(compute_score(rejected_spans))
+                    rejected_response = extract_final_response(rejected_spans)
                     rejected_agent = _extract_agent_name(rejected_spans)
 
                     # Filter: min score gap.
@@ -753,10 +604,10 @@ class TrainingDataExporter:
                             prompt=task_msg,
                             chosen=chosen_response,
                             chosen_model=chosen_agent,
-                            chosen_rating=_score_to_rating(chosen_score),
+                            chosen_rating=score_to_rating(chosen_score),
                             rejected=rejected_response,
                             rejected_model=rejected_agent,
-                            rejected_rating=_score_to_rating(rejected_score),
+                            rejected_rating=score_to_rating(rejected_score),
                         )
                     )
 
@@ -866,8 +717,7 @@ class TrainingDataExporter:
             # Tier 2: n-gram Jaccard.
             ngrams = _ngram_set(_messages_fingerprint(messages))
             is_near_dup = any(
-                _jaccard_similarity(ngrams, existing)
-                >= _NGRAM_SIMILARITY_THRESHOLD
+                _jaccard_similarity(ngrams, existing) >= _NGRAM_SIMILARITY_THRESHOLD
                 for existing in seen_ngrams
             )
             if is_near_dup:
