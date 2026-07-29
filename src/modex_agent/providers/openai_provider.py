@@ -187,6 +187,7 @@ class OpenAIProvider(StreamingLLMProvider):
         usage: dict[str, int] = {}
         has_native_reasoning = False
         think_extractor = ThinkTagExtractor() if self._parse_think_tags else None
+        first_token_time: float | None = None
 
         iterator = stream.__aiter__()
         while True:
@@ -238,6 +239,23 @@ class OpenAIProvider(StreamingLLMProvider):
                     error_info=error_info,
                 )
 
+            if chunk.usage is not None:
+                usage = {
+                    "prompt_tokens": chunk.usage.prompt_tokens,
+                    "completion_tokens": chunk.usage.completion_tokens,
+                    "total_tokens": chunk.usage.total_tokens,
+                }
+                prompt_details = getattr(chunk.usage, "prompt_tokens_details", None)
+                if prompt_details is not None:
+                    cached = getattr(prompt_details, "cached_tokens", None)
+                    if cached is not None:
+                        usage["cache_read_input_tokens"] = cached
+                completion_details = getattr(chunk.usage, "completion_tokens_details", None)
+                if completion_details is not None:
+                    reasoning = getattr(completion_details, "reasoning_tokens", None)
+                    if reasoning is not None:
+                        usage["reasoning_tokens"] = reasoning
+
             if not chunk.choices:
                 continue
 
@@ -248,11 +266,15 @@ class OpenAIProvider(StreamingLLMProvider):
                 finish_reason = chunk_finish
 
             if delta.reasoning_content:
+                if first_token_time is None:
+                    first_token_time = time.time()
                 has_native_reasoning = True
                 reasoning_parts.append(delta.reasoning_content)
                 await self._invoke_callback(on_reasoning_delta, delta.reasoning_content)
 
             if delta.content:
+                if first_token_time is None:
+                    first_token_time = time.time()
                 if think_extractor and not has_native_reasoning:
                     clean_delta, extracted_reasoning = think_extractor.feed(delta.content)
                     if extracted_reasoning:
@@ -268,13 +290,6 @@ class OpenAIProvider(StreamingLLMProvider):
             if delta.tool_call_chunks:
                 for tc_chunk in delta.tool_call_chunks:
                     accumulator.add_chunk(tc_chunk)
-
-            if chunk.usage is not None:
-                usage = {
-                    "prompt_tokens": chunk.usage.prompt_tokens,
-                    "completion_tokens": chunk.usage.completion_tokens,
-                    "total_tokens": chunk.usage.total_tokens,
-                }
 
         pending_tools = accumulator.flush_pending()
         all_tool_calls = accumulator.get_completed() + pending_tools
@@ -294,12 +309,20 @@ class OpenAIProvider(StreamingLLMProvider):
             elapsed_ms,
         )
 
+        completion_start_time: str | None = None
+        if first_token_time is not None:
+            from datetime import datetime, timezone
+            completion_start_time = datetime.fromtimestamp(
+                first_token_time, tz=timezone.utc
+            ).isoformat()
+
         return LLMResponse(
             content="".join(content_parts),
             tool_calls=all_tool_calls,
             reasoning_content="".join(reasoning_parts) if reasoning_parts else None,
             finish_reason=FinishReason(finish_reason) if finish_reason else FinishReason.STOP,
             usage=usage,
+            completion_start_time=completion_start_time,
         )
 
     @staticmethod
@@ -367,8 +390,8 @@ class OpenAIProvider(StreamingLLMProvider):
             params["tools"] = tools
             params["tool_choice"] = "auto"
 
-        # stream_options not set by default — third-party endpoints
-        # (MiniMax, DeepSeek, etc.) may reject it. Pass via **kwargs if needed.
+        if stream:
+            params["stream_options"] = {"include_usage": True}
 
         if self._extra_headers:
             params["extra_headers"] = self._extra_headers

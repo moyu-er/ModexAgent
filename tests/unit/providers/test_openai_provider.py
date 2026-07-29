@@ -75,7 +75,51 @@ class TestOpenAIProviderChat:
         assert isinstance(result, LLMResponse)
         assert result.content == "Hello, world!"
         assert result.finish_reason == "stop"
-        assert result.usage == {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150}
+        assert result.usage == {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150,
+                                 "cache_read_input_tokens": 1, "reasoning_tokens": 1}
+
+    @pytest.mark.asyncio
+    async def test_chat_extracts_cache_from_final_usage_chunk(self, provider):
+        """The final chunk (empty choices) carries correct cache tokens.
+
+        Some providers (e.g. stepfun) send usage on EVERY chunk with
+        cached_tokens=0, then the final chunk (choices=[]) has the
+        correct cached_tokens value. The provider must not skip it.
+        """
+        # Chunks with choices + usage (cached=0, like stepfun)
+        content_chunks = [
+            self._make_chunk(content="hi", usage=MagicMock(
+                prompt_tokens=1000, completion_tokens=50, total_tokens=1050,
+                prompt_tokens_details=MagicMock(cached_tokens=0),
+                completion_tokens_details=MagicMock(reasoning_tokens=0),
+            )),
+            self._make_chunk(content=" there", finish_reason="stop", usage=MagicMock(
+                prompt_tokens=1000, completion_tokens=50, total_tokens=1050,
+                prompt_tokens_details=MagicMock(cached_tokens=0),
+                completion_tokens_details=MagicMock(reasoning_tokens=0),
+            )),
+        ]
+        # Final chunk: NO choices, but usage with correct cache tokens
+        final_chunk = MagicMock()
+        final_chunk.choices = []
+        final_chunk.usage = MagicMock(
+            prompt_tokens=1000, completion_tokens=50, total_tokens=1050,
+            prompt_tokens_details=MagicMock(cached_tokens=800),
+            completion_tokens_details=MagicMock(reasoning_tokens=30),
+        )
+
+        all_chunks = content_chunks + [final_chunk]
+        provider._client.chat.completions.create = AsyncMock(
+            return_value=self._stream_chunks(all_chunks)
+        )
+
+        result = await provider.chat(messages=[ChatMessage(role=MessageRole.USER, content="hi")])
+
+        assert result.usage.get("cache_read_input_tokens") == 800, (
+            f"Expected 800, got {result.usage.get('cache_read_input_tokens')} — "
+            "final usage chunk with empty choices was skipped"
+        )
+        assert result.usage.get("reasoning_tokens") == 30
 
     @pytest.mark.asyncio
     async def test_chat_with_tool_calls(self, provider):
