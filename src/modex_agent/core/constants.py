@@ -165,3 +165,16 @@ class ToolSchemaConstants:
 
     TYPE_FUNCTION = "function"
     PARAM_TYPE_OBJECT = "object"
+
+
+class RuntimeInfoKey(StrEnum):
+    """Canonical keys for the ``runtime_info`` dict passed to ``ContextManager.load``."""
+
+    CALLER_CONTEXT = "caller_context"
+    MESSAGE = "message"
+    PARENT_SESSION_ID = "parent_session_id"
+    MODEL_INFO = "model_info"
+    USER_ID = "user_id"
+    TENANT_ID = "tenant_id"
+    CHANNEL = "channel"
+    CHAT_ID = "chat_id"

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.agent import AgentCommKind
+from modex_agent.core.constants import RuntimeInfoKey
 from modex_agent.core.context import ContextManager, ContextState
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.governance import ContextGovernance
@@ -157,7 +158,7 @@ class MemorySystemContextManager(ContextManager):
         # Subagent per-invocation context (APPEND parent prompt + FORK context).
         # None for normal agents → providers are skipped, so load() is unchanged
         # for every non-subagent caller. The parent *value* arrives per turn via
-        # runtime_info["parent_session_id"] (set by dispatch_envelope from the
+        # runtime_info[RuntimeInfoKey.PARENT_SESSION_ID] (set by dispatch_envelope from the
         # envelope); the lookup closure only resolves the parent's prompt from
         # the in-memory pool, never from a session store.
         self._parent_prompt_lookup = parent_prompt_lookup
@@ -238,8 +239,8 @@ class MemorySystemContextManager(ContextManager):
 
         # Extract query from runtime_info for provider prefetch
         query = ""
-        if runtime_info and "message" in runtime_info:
-            query = str(runtime_info["message"])
+        if runtime_info and RuntimeInfoKey.MESSAGE in runtime_info:
+            query = str(runtime_info[RuntimeInfoKey.MESSAGE])
 
         # ── Prompt assembly ────────────────────────────────────────────
         # Build SystemPromptPipeline with individual providers.
@@ -255,6 +256,7 @@ class MemorySystemContextManager(ContextManager):
             BasePromptProvider,
             CoreMemoryProvider,
             ExperienceProvider,
+            ModelInfoProvider,
             ProviderBlocksProvider,
             ProviderPrefetchProvider,
             PrunedProvider,
@@ -285,13 +287,16 @@ class MemorySystemContextManager(ContextManager):
         # 1. Runtime metadata (refreshes daily)
         if runtime_info:
             providers.append(RuntimeProvider())
+            providers.append(
+                ModelInfoProvider(runtime_info.get(RuntimeInfoKey.MODEL_INFO))
+            )
 
         # 1b. APPEND parent prompt — per-invocation (subagents only). Sits BEFORE
         # the base prompt so the agent's own prompt follows its parent's, mirroring
         # the pre-refactor "[parent] --- [base]" ordering. The parent arrives via
         # runtime_info (threaded from the envelope by dispatch_envelope), not by
         # recovering it from a session store.
-        parent_sid = (runtime_info or {}).get("parent_session_id") if runtime_info else None
+        parent_sid = (runtime_info or {}).get(RuntimeInfoKey.PARENT_SESSION_ID) if runtime_info else None
         if self._parent_prompt_lookup is not None and parent_sid:
             from modex_agent.memory.prompt_pipeline.providers import (
                 AppendParentPromptProvider,
@@ -486,12 +491,12 @@ class MemorySystemContextManager(ContextManager):
                 return str(value) if value is not None else None
             return None
 
-        user_id = _extract("user_id") or self.default_user_id
+        user_id = _extract(RuntimeInfoKey.USER_ID) or self.default_user_id
         agent_id = _extract("agent_id") or self.default_agent_id
         agent_role = _extract("agent_role") or self.default_agent_role
-        tenant_id = _extract("tenant_id")
-        channel = _extract("channel")
-        chat_id = _extract("chat_id")
+        tenant_id = _extract(RuntimeInfoKey.TENANT_ID)
+        channel = _extract(RuntimeInfoKey.CHANNEL)
+        chat_id = _extract(RuntimeInfoKey.CHAT_ID)
         sender_agent = _extract("sender_agent") or _extract("source_agent")
         receiver_agent = _extract("receiver_agent")
 
@@ -527,10 +532,10 @@ class MemorySystemContextManager(ContextManager):
         if not input_metadata:
             return user_message
         runtime_lines: list[str] = []
-        if "channel" in input_metadata:
-            runtime_lines.append(f"channel={input_metadata['channel']}")
-        if "chat_id" in input_metadata:
-            runtime_lines.append(f"chat_id={input_metadata['chat_id']}")
+        if RuntimeInfoKey.CHANNEL in input_metadata:
+            runtime_lines.append(f"channel={input_metadata[RuntimeInfoKey.CHANNEL]}")
+        if RuntimeInfoKey.CHAT_ID in input_metadata:
+            runtime_lines.append(f"chat_id={input_metadata[RuntimeInfoKey.CHAT_ID]}")
         if not runtime_lines:
             return user_message
 

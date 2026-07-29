@@ -22,6 +22,7 @@ from .message_utils import normalize_agent_messages_for_llm
 from .tool_manager import ToolManager
 
 if TYPE_CHECKING:
+    from modex_agent.core.capabilities import ModelCapabilities
     from modex_agent.core.prompt import SystemPromptPipeline
     from modex_agent.pipeline.snapshot import PoolDataSnapshot
     from modex_agent.runtime.models import TurnIdentity
@@ -126,7 +127,12 @@ class AgentContext:
         return [_strip_none(msg) for msg in non_system]
 
     def get_tool_descriptions(self) -> list[dict[str, Any]]:
-        return self.tool_manager.get_tool_descriptions()
+        caps: ModelCapabilities | None = (
+            self.runtime.model_info.capabilities
+            if self.runtime is not None and self.runtime.model_info is not None
+            else None
+        )
+        return self.tool_manager.get_tool_descriptions(caps)
 
     def add_attachment(self, path: str) -> None:
         self.attachments.append(path)

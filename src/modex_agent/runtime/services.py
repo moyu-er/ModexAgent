@@ -9,7 +9,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from modex_agent.core.capabilities import ModelCapabilities
+from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 
 from .enums import TurnCustomKey
@@ -49,7 +49,7 @@ class AgentRuntimeServices:
     safety: RuntimeSafetyPolicy = field(default_factory=RuntimeSafetyPolicy)
     runtime_context_manager: RuntimeContextManager | None = None
     control_channel: InMemoryControlChannel | None = None
-    model_capabilities: ModelCapabilities | None = None
+    model_info: ModelInfo | None = None
 
 
 @dataclass
@@ -98,8 +98,8 @@ class AgentRuntime:
         return self.services.governance
 
     @property
-    def model_capabilities(self) -> ModelCapabilities | None:
-        return self.services.model_capabilities
+    def model_info(self) -> ModelInfo | None:
+        return self.services.model_info
 
     @property
     def turn_store(self) -> TurnStateStore | None:

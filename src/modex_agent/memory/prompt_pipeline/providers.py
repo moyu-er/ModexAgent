@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.agent import AgentCommKind
+from modex_agent.core.capabilities import Modality, ModelInfo
 from modex_agent.core.constants import AgentRole
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.core.scope import MemoryContext
@@ -344,6 +345,45 @@ class RuntimeProvider(SystemPromptProvider):
             f"Platform: {platform_name}",
         ]
         return "\n".join(lines)
+
+
+class ModelInfoProvider(SystemPromptProvider):
+    """Declares the active model's perceptual capabilities to the agent.
+
+    ``ModelInfo`` is supplied at construction (per-turn, threaded from
+    ``runtime_info[RuntimeInfoKey.MODEL_INFO]`` via ``assemble_context`` →
+    ``load``). Content is a generic capability declaration; tools that
+    behave differently per modality (e.g. ``read`` returning image content)
+    are mentioned as examples, not bound. Emits nothing when ``model_info``
+    is ``None``.
+    """
+
+    def __init__(self, model_info: ModelInfo | None) -> None:
+        super().__init__()
+        self._model_info = model_info
+
+    async def _fetch_version(self) -> str:
+        if self._model_info is None:
+            return "model:none"
+        modalities = ",".join(sorted(m.value for m in self._model_info.capabilities.modalities))
+        return f"model:{self._model_info.model_name}:{modalities}"
+
+    async def _fetch_content(self) -> str:
+        if self._model_info is None:
+            return ""
+        caps = self._model_info.capabilities
+        if caps.supports(Modality.IMAGE):
+            return (
+                "## Your Capabilities\n\n"
+                "You can perceive images. Tools that return image content "
+                "(e.g. `read` on an image file) deliver it directly to you."
+            )
+        return (
+            "## Your Capabilities\n\n"
+            "You cannot perceive images. Tools that would return image "
+            "content (e.g. `read` on an image file) will instead return a "
+            "text notice."
+        )
 
 
 class CoreMemoryProvider(SystemPromptProvider):

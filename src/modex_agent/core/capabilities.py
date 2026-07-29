@@ -1,4 +1,4 @@
-"""Model capability types — modality enum and capabilities value object.
+"""Model capability types — modality enum, capabilities, and model info.
 
 These are core types (no ioc/config dependency). They live here so that
 ``core.tool_manager.ToolExecutionContext`` and ``runtime.services`` can
@@ -8,8 +8,9 @@ reference them without an upward import into ``ioc.configs``. The
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from enum import StrEnum
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Modality(StrEnum):
@@ -26,8 +27,7 @@ class Modality(StrEnum):
     AUDIO = "audio"
 
 
-@dataclass(frozen=True)
-class ModelCapabilities:
+class ModelCapabilities(BaseModel):
     """Frozen value object exposing the modalities a model can consume.
 
     Read from per-pool config (``LLMConfig.capabilities``) and gates image
@@ -36,8 +36,27 @@ class ModelCapabilities:
     path. Defaults to TEXT-only.
     """
 
-    modalities: frozenset[Modality] = field(default_factory=lambda: frozenset({Modality.TEXT}))
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    modalities: frozenset[Modality] = Field(
+        default_factory=lambda: frozenset({Modality.TEXT})
+    )
 
     def supports(self, modality: Modality) -> bool:
         """True if ``modality`` is among this model's capabilities."""
         return modality in self.modalities
+
+
+class ModelInfo(BaseModel):
+    """Frozen value object describing the active model for the current turn.
+
+    Carried in ``runtime_info`` (key ``RuntimeInfoKey.MODEL_INFO``) from
+    ``TurnContextBuilder.assemble`` through ``load`` into the prompt
+    pipeline's ``ModelInfoProvider``. Tools read it via
+    ``ToolExecutionContext.model_info``.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    model_name: str = ""
+    capabilities: ModelCapabilities = Field(default_factory=ModelCapabilities)

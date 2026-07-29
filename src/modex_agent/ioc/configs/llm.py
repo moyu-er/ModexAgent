@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from modex_agent.core.capabilities import Modality, ModelCapabilities
+from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
 from modex_agent.core.constants import InterfaceFormat, ReasoningEffort
 
-__all__ = ["Modality", "ModelCapabilities", "LLMConfig"]
+__all__ = ["Modality", "ModelCapabilities", "ModelInfo", "LLMConfig"]
 
 
 class LLMConfig(BaseModel):

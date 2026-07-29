@@ -6,11 +6,12 @@ from .agent import (
     AgentContext,
     current_agent_context,
 )
-from .capabilities import Modality, ModelCapabilities
+from .capabilities import Modality, ModelCapabilities, ModelInfo
 from .constants import (
     DefaultValues,
     ErrorMessages,
     FinishReason,
+    RuntimeInfoKey,
     ToolCallType,
     ToolChoice,
     ToolSchemaConstants,
@@ -97,6 +98,7 @@ __all__ = [
     "ErrorMessages",
     "DefaultValues",
     "ToolSchemaConstants",
+    "RuntimeInfoKey",
     # 类型
     "MessageType",
     "InputMessage",
@@ -124,6 +126,7 @@ __all__ = [
     "get_tool_execution_context",
     "Modality",
     "ModelCapabilities",
+    "ModelInfo",
     # V2 新架构 - Agent
     "Agent",
     "AgentCommKind",

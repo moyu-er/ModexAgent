@@ -6,7 +6,7 @@ from modex_agent.runtime.models import TurnIdentity, TurnStateBase
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices, require_runtime_state
 from modex_agent.runtime.store import NoOpTurnStateStore
-from modex_agent.ioc.configs.llm import Modality, ModelCapabilities
+from modex_agent.ioc.configs.llm import Modality, ModelCapabilities, ModelInfo
 
 
 def _make_state() -> TurnStateBase:
@@ -33,18 +33,18 @@ def test_require_runtime_state_returns_expected_type() -> None:
     assert require_runtime_state(runtime, TurnStateBase) is runtime.state
 
 
-def test_model_capabilities_field_defaults_to_none() -> None:
-    """The field is optional — absence (no pool config / pre-v1 pools) is None."""
-    assert AgentRuntimeServices().model_capabilities is None
+def test_model_info_field_defaults_to_none() -> None:
+    assert AgentRuntimeServices().model_info is None
 
 
-def test_model_capabilities_property_threads_to_runtime() -> None:
-    """AgentRuntime.model_capabilities mirrors services.model_capabilities,
-    parallel to the governance property (ADR-0013 §2)."""
-    caps = ModelCapabilities(modalities=frozenset({Modality.TEXT, Modality.IMAGE}))
-    services = AgentRuntimeServices(model_capabilities=caps)
+def test_model_info_property_threads_to_runtime() -> None:
+    info = ModelInfo(
+        model_name="test",
+        capabilities=ModelCapabilities(modalities=frozenset({Modality.TEXT, Modality.IMAGE})),
+    )
+    services = AgentRuntimeServices(model_info=info)
     runtime = AgentRuntime(services=services, state=_make_state())
 
-    assert runtime.model_capabilities is caps
-    assert runtime.model_capabilities.supports(Modality.IMAGE)
-    assert not runtime.model_capabilities.supports(Modality.AUDIO)
+    assert runtime.model_info is info
+    assert runtime.model_info.capabilities.supports(Modality.IMAGE)
+    assert not runtime.model_info.capabilities.supports(Modality.AUDIO)

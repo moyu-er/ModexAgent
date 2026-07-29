@@ -419,22 +419,18 @@ async def test_build_runtime_and_context_emitter_factory_used_when_wired() -> No
 
 
 @pytest.mark.asyncio
-async def test_build_runtime_and_context_propagates_model_capabilities() -> None:
-    """Pool-level base_services.model_capabilities reaches the per-turn runtime.
-
-    ADR-0013 §2: capabilities are threaded pool → base AgentRuntimeServices →
-    per-turn AgentRuntimeServices so the inline renderer can bind to
-    ``ctx.runtime.model_capabilities``. This mirrors how governance/approval
-    propagate through build_runtime_and_context.
-    """
-    from modex_agent.ioc.configs.llm import Modality, ModelCapabilities
+async def test_build_runtime_and_context_propagates_model_info() -> None:
+    from modex_agent.ioc.configs.llm import Modality, ModelCapabilities, ModelInfo
     from modex_agent.runtime.services import AgentRuntimeServices
 
-    caps = ModelCapabilities(modalities=frozenset({Modality.TEXT, Modality.IMAGE}))
+    info = ModelInfo(
+        model_name="test",
+        capabilities=ModelCapabilities(modalities=frozenset({Modality.TEXT, Modality.IMAGE})),
+    )
     builder = _make_builder(
         agent=_agent_mock(),
         turn_store=InMemoryTurnStateStore(),
-        runtime_services=AgentRuntimeServices(model_capabilities=caps),
+        runtime_services=AgentRuntimeServices(model_info=info),
     )
 
     ctx, _emitter = builder.build_runtime_and_context(
@@ -444,8 +440,8 @@ async def test_build_runtime_and_context_propagates_model_capabilities() -> None
     )
 
     assert ctx.runtime is not None
-    assert ctx.runtime.model_capabilities is caps
-    assert ctx.runtime.model_capabilities.supports(Modality.IMAGE)
+    assert ctx.runtime.model_info is info
+    assert ctx.runtime.model_info.capabilities.supports(Modality.IMAGE)
 
 
 @pytest.mark.asyncio

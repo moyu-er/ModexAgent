@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from modex_agent.core.constants import RuntimeInfoKey
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.types import InputMessage, MessageRole
 from modex_agent.memory.history import (
@@ -16,6 +17,7 @@ from modex_agent.memory.history import (
 from modex_agent.multi_agent.message_type import AgentMessageType
 
 if TYPE_CHECKING:
+    from modex_agent.core.capabilities import ModelInfo
     from modex_agent.core.skills import SkillManager
     from modex_agent.core.tool_manager import ToolManager
     from modex_agent.multi_agent import AgentDescriptor
@@ -38,6 +40,7 @@ async def assemble_context(
     skill_manager: SkillManager | None = None,
     context_builder: MultiAgentContextBuilder | None = None,
     append_user_message: bool = True,
+    model_info: ModelInfo | None = None,
 ) -> Any:
     """Assemble context state: load context, write user message,
     and run multi-agent context builder.
@@ -77,18 +80,17 @@ async def assemble_context(
         user_message["truncatable_paths"] = input_msg.truncatable_paths
 
     agent_name = agent_descriptor.address.name if agent_descriptor else "main"
-    runtime_info: dict[str, Any] = {"caller_context": {"agent_name": agent_name}}
+
+    runtime_info: dict[str, Any] = {RuntimeInfoKey.CALLER_CONTEXT: {"agent_name": agent_name}}
     if input_metadata:
-        for key in ("user_id", "tenant_id", "channel", "chat_id"):
+        for key in (RuntimeInfoKey.USER_ID, RuntimeInfoKey.TENANT_ID, RuntimeInfoKey.CHANNEL, RuntimeInfoKey.CHAT_ID):
             if key in input_metadata:
                 runtime_info[key] = input_metadata[key]
-    # Thread the authoritative parent link (stamped on the session by
-    # dispatch_envelope from the envelope) into the prompt providers, so
-    # APPEND/FORK read it from the turn instead of recovering it from a
-    # workspace-partitioned session store.
     parent_sid = input_msg.session.parent_session_id if input_msg.session else None
     if parent_sid:
-        runtime_info["parent_session_id"] = parent_sid
+        runtime_info[RuntimeInfoKey.PARENT_SESSION_ID] = parent_sid
+    if model_info is not None:
+        runtime_info[RuntimeInfoKey.MODEL_INFO] = model_info
     context_state = await ctx_mgr.load(
         session_id,
         tool_manager=tool_manager,

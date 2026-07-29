@@ -383,6 +383,11 @@ class TurnContextBuilder:
         append_user_message: bool = True,
     ) -> ContextState:
         """Assemble context state via context_assembler module."""
+        caps = (
+            self._runtime_services.model_info
+            if self._runtime_services is not None
+            else None
+        )
         return await assemble_context(
             session_id,
             input_msg,
@@ -398,6 +403,7 @@ class TurnContextBuilder:
             skill_manager=self._skill_manager,
             context_builder=self._context_builder,
             append_user_message=append_user_message,
+            model_info=caps,
         )
 
     def build_runtime_and_context(
@@ -504,8 +510,8 @@ class TurnContextBuilder:
                 ),
                 control_channel=self._control_channel
                 or (base_services.control_channel if base_services is not None else None),
-                model_capabilities=(
-                    base_services.model_capabilities if base_services is not None else None
+                model_info=(
+                    base_services.model_info if base_services is not None else None
                 ),
             )
             agent_context.runtime = AgentRuntime(services=services, state=react_state)
@@ -523,8 +529,8 @@ class TurnContextBuilder:
                     trace_store=snapshot_trace_store,
                     control_channel=self._control_channel
                     or (base_services.control_channel if base_services is not None else None),
-                    model_capabilities=(
-                        base_services.model_capabilities
+                    model_info=(
+                        base_services.model_info
                         if base_services is not None
                         else None
                     ),

@@ -18,6 +18,7 @@ System prompt pipeline — an ordered, versioned collection of `SystemPromptProv
 |----------|-------------|------------|---------|
 | `BasePromptProvider` | `static` | Always | Static base prompt from `agents/<name>.md` (never refreshes) |
 | `RuntimeProvider` | hourly | Always | Current date/hour + platform info |
+| `ModelInfoProvider` | `model:{name}:{modalities}` / `model:none` | `runtime_info` present (main-agent turn) | Declares the agent's perceptual capabilities (e.g. image perception). `ModelInfo` supplied at construction from `runtime_info[RuntimeInfoKey.MODEL_INFO]` (threaded by `assemble_context` from `runtime_services.model_info`). Tools that behave differently per modality (e.g. `read`) are mentioned as examples, not bound. Emits nothing when `model_info` is `None`. |
 | `SkillProvider` | skill-set hash | Skills assigned | Active skill summaries |
 | `ExperienceProvider` | experience hash | Experience files exist | Relevant experience entries |
 | `CoreMemoryProvider` | core memory hash | Core Memory files exist | SOUL.md / USER.md / MEMORY.md content (provider renamed from `KnowledgeProvider` per ADR-0035) |
