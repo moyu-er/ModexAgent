@@ -94,10 +94,11 @@ class ReactLlmClient:
         streamed_content = ""
         finish_reason: FinishReason = FinishReason.STOP
         tool_calls_list: list[ToolCall] = []
+        provider_response: LLMResponse | None = None
 
         async def _actual_stream():
             """Call provider.chat_stream, converting the result to LLMStreamChunk."""
-            nonlocal tool_calls_list
+            nonlocal tool_calls_list, provider_response
 
             async def _on_content_delta(delta: str) -> None:
                 nonlocal streamed_content
@@ -143,6 +144,7 @@ class ReactLlmClient:
                 on_content_delta=_on_content_delta,
                 on_reasoning_delta=_on_reasoning_delta,
             )
+            provider_response = response
             tool_calls_list = list(response.tool_calls or [])
             yield LLMStreamChunk(
                 content_delta=response.content,
@@ -196,6 +198,12 @@ class ReactLlmClient:
             reasoning_content=accumulated_reasoning or None,
             finish_reason=finish_reason,
             tool_calls=tool_calls_list,
+            usage=provider_response.usage if provider_response is not None else {},
+            completion_start_time=(
+                provider_response.completion_start_time
+                if provider_response is not None
+                else None
+            ),
         )
 
     async def _call_non_streaming_with_recovery(

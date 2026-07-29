@@ -257,6 +257,7 @@ class LLMResponse(BaseModel):
     reasoning_content: str | None = None
     finish_reason: FinishReason = FinishReason.STOP
     usage: dict[str, int] = Field(default_factory=dict)
+    completion_start_time: str | None = None
     error: str | None = None
     error_info: LLMErrorInfo | None = None
 
