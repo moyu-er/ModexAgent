@@ -151,6 +151,13 @@ class TurnCustomKey(StrEnum):
     # image_url block list, so base64 is encoded once per turn and reused
     # across ReAct iterations. Lives only in turn state — never persisted.
     INLINE_IMAGE_CACHE = "_inline_image_cache"
+    # Per-turn cache of image content blocks produced by TOOLS (e.g. ReadFileTool
+    # reading an image file), keyed by tool_call_id. Mirrors INLINE_IMAGE_CACHE
+    # (which is keyed by attachment id for user-uploaded attachments). Value:
+    # dict[str, list[dict]] mapping call_id -> image_url block list. Lives only
+    # in turn state — never persisted. Read by enrich_inline_media to promote
+    # tool-produced images into the LLM call's user message (provider-agnostic).
+    TOOL_MEDIA_CACHE = "_tool_media_cache"
     # Probe state machine for TodoCompletionProbeHook: {"fp": str, "count": int}.
     # Transient ("_"-prefix ⇒ never persisted in snapshots); reclaimed when the
     # turn's ReActTurnState is rebuilt. Tracks the last-probed active-todo
