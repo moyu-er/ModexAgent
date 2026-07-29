@@ -300,7 +300,7 @@ class TestToolNode:
 
         async def _mock_execute(tc, ctx):
             executed.append(tc.tool_name)
-            return ToolResult(tool_name=tc.tool_name, result=f"ok_{tc.tool_name}")
+            return ToolResult.from_text(tc.tool_name, f"ok_{tc.tool_name}")
 
         tool_executor.execute = _mock_execute  # type: ignore[method-assign]
         node = ToolNode(tool_executor)
@@ -330,7 +330,7 @@ class TestToolNode:
 
         async def _mock_execute(tc, ctx):
             executed.append(tc.tool_name)
-            return ToolResult(tool_name=tc.tool_name, result="ok")
+            return ToolResult.from_text(tc.tool_name, "ok")
 
         tool_executor.execute = _mock_execute  # type: ignore[method-assign]
         node = ToolNode(tool_executor)

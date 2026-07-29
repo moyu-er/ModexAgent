@@ -20,7 +20,7 @@ from modex_agent.agents.react.runtime import ReactGraphRuntime
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.core.capabilities import Modality, ModelCapabilities
+from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
 from modex_agent.media.models import Attachment, AttachmentLocator, Kind
 from modex_agent.memory.default_system import ScopedMessageHistory
 from modex_agent.memory.layers.factory import MemoryLayerFactory
@@ -64,7 +64,7 @@ def _make_runtime(capabilities: ModelCapabilities | None) -> AgentRuntime:
         phase=TurnPhase.CREATED,
     )
     services = AgentRuntimeServices()
-    services.model_capabilities = capabilities
+    services.model_info = ModelInfo(model_name="test", capabilities=capabilities) if capabilities else None
     runtime = AgentRuntime(services=services, state=state)
     # Ticket 04: nodes route AOP through ``runtime.graph_runtime``. Tests that
     # bypass ``ReActAgent.run()`` must set it themselves.

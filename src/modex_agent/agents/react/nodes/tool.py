@@ -19,6 +19,7 @@ from modex_agent.agents.react.tool_dedup import StreakDecision, ToolCallDeduplic
 from modex_agent.agents.react.tool_executor import ToolExecutor
 from modex_agent.approval.constants import ApprovalDecision, ApprovalTier
 from modex_agent.core.agent import AgentContext
+from modex_agent.core.message import TextPart
 from modex_agent.core.tool_manager import ToolResult
 from modex_agent.core.types import ToolCall
 from modex_agent.runtime.enums import (
@@ -293,7 +294,6 @@ class ToolNode(Node[ReActTurnState]):
             else:
                 result = ToolResult(
                     tool_name=tc.tool_name,
-                    result=None,
                     error=self._denial_message(decision, tc, state),
                 )
 
@@ -308,8 +308,14 @@ class ToolNode(Node[ReActTurnState]):
             )
 
             if result.content_blocks and agent_ctx.runtime is not None:
+                from modex_agent.media.tool_media import ToolMediaEntry
+
                 media_cache = state.custom.setdefault(TurnCustomKey.TOOL_MEDIA_CACHE, {})
-                media_cache[tc.call_id or ""] = result.content_blocks
+                media_cache[tc.call_id or ""] = ToolMediaEntry(
+                    call_id=tc.call_id or "",
+                    tool_name=tc.tool_name,
+                    image_blocks=result.content_blocks,
+                )
 
             if batch is not None:
                 for call_state in batch.calls:
@@ -393,20 +399,12 @@ class ToolNode(Node[ReActTurnState]):
             streak_action = self._deduplicator.check_streak(tc.tool_name, args)
 
             if streak_action.action == StreakDecision.STOP:
-                result = ToolResult(
-                    tool_name=tc.tool_name,
-                    result=streak_action.reminder,
-                    error=None,
-                )
+                result = ToolResult.from_text(tc.tool_name, streak_action.reminder)
                 self._deduplicator.register_result(tc.tool_name, args, result)
                 return result, True
 
             if streak_action.action == StreakDecision.SKIP:
-                result = ToolResult(
-                    tool_name=tc.tool_name,
-                    result=streak_action.reminder,
-                    error=None,
-                )
+                result = ToolResult.from_text(tc.tool_name, streak_action.reminder)
                 self._deduplicator.register_result(tc.tool_name, args, result)
                 return result, False
 
@@ -415,14 +413,13 @@ class ToolNode(Node[ReActTurnState]):
 
         if self._deduplicator is not None:
             if streak_action.action == StreakDecision.REMIND:
-                existing = result.result
-                if isinstance(existing, str):
-                    appended = existing + "\n" + streak_action.reminder
-                elif existing is not None:
-                    appended = str(existing) + "\n" + streak_action.reminder
-                else:
-                    appended = streak_action.reminder
-                result = result.model_copy(update={"result": appended})
+                existing = result.message_content()
+                appended = (
+                    f"{existing}\n{streak_action.reminder}"
+                    if existing
+                    else streak_action.reminder
+                )
+                result = result.model_copy(update={"content": [TextPart(text=appended)]})
             self._deduplicator.register_result(tc.tool_name, args, result)
 
         return result, False

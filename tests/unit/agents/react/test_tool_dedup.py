@@ -11,7 +11,7 @@ from modex_agent.core.tool_manager import ToolResult
 
 
 def _result(content: str = "ok") -> ToolResult:
-    return ToolResult(tool_name="test_tool", result=content, error=None)
+    return ToolResult.from_text("test_tool", content)
 
 
 def _simulate_consecutive_steps(

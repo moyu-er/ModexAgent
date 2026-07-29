@@ -27,6 +27,11 @@ from modex_agent.core.constants import FinishReason
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.types import MessageRole
 from modex_agent.media.media_utils import build_inline_image_block
+from modex_agent.media.tool_media import (
+    SyntheticUserMessageStrategy,
+    ToolMediaEntry,
+    ToolResultMediaStrategy,
+)
 from modex_agent.runtime.dispatch import renew_dispatch_deadline
 from modex_agent.runtime.enums import (
     MessageDeltaSource,
@@ -39,30 +44,37 @@ from modex_graph.context import GraphContext
 from modex_graph.node import Node
 from modex_graph.result import NodeResult
 
+_default_tool_media_strategy = SyntheticUserMessageStrategy()
+
 
 def enrich_inline_media(
     messages: list[dict[str, object]],
     ctx: AgentContext,
+    strategy: ToolResultMediaStrategy | None = None,
 ) -> list[dict[str, object]]:
-    """Inject this turn's image blocks into the LLM call's user message.
+    """Inject this turn's image blocks into the LLM call's message stream.
 
-    Two sources share one gate + injection path:
-      - user attachments (INLINE_ATTACHMENTS → build_inline_image_block →
-        INLINE_IMAGE_CACHE[att_id])
-      - tool-produced images (TOOL_MEDIA_CACHE[call_id] → already
-        image_url blocks)
+    Two sources, two injection paths, one shared gate:
 
-    Both are gated on ``Modality.IMAGE``; both append to the last user
-    message's content; both are transient (only the LLM call copy is
+    - **User attachments** (``INLINE_ATTACHMENTS`` → ``build_inline_image_block``
+      → ``INLINE_IMAGE_CACHE[att_id]``): injected INTO the last user message's
+      content.  The user sent these images; they belong on the user's message.
+
+    - **Tool-produced images** (``TOOL_MEDIA_CACHE[call_id]`` →
+      :class:`ToolMediaEntry`): injected via ``strategy`` (default
+      :class:`SyntheticUserMessageStrategy` — Path B) as a *new* user message
+      appended after tool results, with per-call attribution.  This is
+      separate from user attachments because the image originates from a
+      tool call, not the user, and must be attributed to the tool call.
+
+    Both sources are gated on ``Modality.IMAGE``; both use the same
+    ``image_url`` wire format; both are transient (only the LLM call copy is
     mutated — persisted history keeps text-only tool results / path
-    references). Runs AFTER governance so governance only sees text.
+    references).  Runs AFTER governance so governance only sees text.
     """
     runtime = ctx.runtime
-    if (
-        runtime is None
-        or not runtime.model_capabilities
-        or not runtime.model_capabilities.supports(Modality.IMAGE)
-    ):
+    caps = runtime.model_info.capabilities if runtime is not None and runtime.model_info is not None else None
+    if caps is None or not caps.supports(Modality.IMAGE):
         return messages
 
     from modex_agent.agents.react.state import get_react_state
@@ -71,7 +83,8 @@ def enrich_inline_media(
     if state is None:
         return messages
 
-    all_blocks: list[dict[str, object]] = []
+    # --- Path 1: user attachments → inject into last user message ---
+    attachment_blocks: list[dict[str, object]] = []
 
     attachments = state.custom.get(TurnCustomKey.INLINE_ATTACHMENTS)
     if attachments:
@@ -81,14 +94,28 @@ def enrich_inline_media(
             if blocks is None:
                 blocks = build_inline_image_block(att)
                 cache[att.id] = blocks
-            all_blocks.extend(blocks)
+            attachment_blocks.extend(blocks)
 
+    result = messages
+    if attachment_blocks:
+        result = _inject_into_last_user_message(result, attachment_blocks)
+
+    # --- Path 2: tool media → strategy (default: synthetic user message) ---
     tool_cache = state.custom.get(TurnCustomKey.TOOL_MEDIA_CACHE)
     if tool_cache:
-        for blocks in tool_cache.values():
-            all_blocks.extend(blocks)
+        entries: list[ToolMediaEntry] = list(tool_cache.values())
+        strat = strategy or _default_tool_media_strategy
+        result = strat.inject_tool_media(result, entries)
 
-    if not all_blocks:
+    return result
+
+
+def _inject_into_last_user_message(
+    messages: list[dict[str, object]],
+    image_blocks: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Inject image blocks into the last user message's content (user attachments)."""
+    if not image_blocks:
         return messages
 
     user_idx = -1
@@ -97,11 +124,11 @@ def enrich_inline_media(
             user_idx = i
             break
     if user_idx < 0:
-        return [*messages, {"role": str(MessageRole.USER), "content": all_blocks}]
+        return [*messages, {"role": str(MessageRole.USER), "content": image_blocks}]
 
     target = messages[user_idx]
     text = target.get("content") or ""
-    new_content: list[dict[str, object]] = [{"type": "text", "text": text}, *all_blocks]
+    new_content: list[dict[str, object]] = [{"type": "text", "text": text}, *image_blocks]
     enriched = {**target, "content": new_content}
     return [*messages[:user_idx], enriched, *messages[user_idx + 1 :]]
 
@@ -271,6 +298,8 @@ class LLMNode(Node[ReActTurnState]):
         return enrich_inline_media(messages, ctx)
 
 
+# Deprecated alias — use enrich_inline_media. Retained for callers that have
+# not migrated; remove once all imports switch to the new name.
 enrich_inline_attachments = enrich_inline_media
 
 __all__ = ["LLMNode", "enrich_inline_media", "enrich_inline_attachments"]

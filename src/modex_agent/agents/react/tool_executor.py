@@ -34,14 +34,10 @@ class ToolExecutor:
             session_id=str(ctx.session),
         )
 
-        caps = (
-            ctx.runtime.model_capabilities
-            if ctx.runtime is not None
-            else None
-        )
+        model_info = ctx.runtime.model_info if ctx.runtime is not None else None
         ws_root = resolve_workspace_root()
         tool_exec_ctx = ToolExecutionContext(
-            model_capabilities=caps,
+            model_info=model_info,
             workspace_root=ws_root,
             tool_call_id=tool_call.call_id,
             session_id=str(ctx.session),

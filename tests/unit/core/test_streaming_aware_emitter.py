@@ -239,7 +239,7 @@ class TestStreamingAwareEmitter:
     async def test_on_event_tool_call_end(self, emitter):
         """Test _on_event with TOOL_CALL_END default implementation (does nothing to adapter)."""
         tool_call = ToolCall(tool_name="test_tool", arguments={})
-        result = ToolResult(tool_name="test_tool", result="success")
+        result = ToolResult.from_text("test_tool", "success")
         # Should not raise, default implementation does nothing to adapter
         await emitter.emit(ReActEvent.TOOL_CALL_END, (tool_call, result))
 

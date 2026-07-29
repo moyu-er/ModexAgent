@@ -1,7 +1,9 @@
 """Tests for ReActAgent error response and cancellation handling (P0-a)."""
 
+from __future__ import annotations
+
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -17,6 +19,9 @@ from modex_agent.runtime.enums import AgentKind, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+
+if TYPE_CHECKING:
+    from modex_agent.core.capabilities import ModelCapabilities
 
 
 def _make_ctx(**kw):
@@ -199,13 +204,13 @@ class TestReActAgentToolTimeout:
         class SlowTool:
             async def execute(self, tool_name, arguments):
                 await asyncio.sleep(0.5)
-                return ToolResult(tool_name=tool_name, result="done")
+                return ToolResult.from_text(tool_name, "done")
         class FakeToolManager:
             def __init__(self, tool):
                 self._tool = tool
             async def execute(self, tool_name, arguments):
                 return await self._tool.execute(tool_name, arguments)
-            def get_tool_descriptions(self):
+            def get_tool_descriptions(self, caps: ModelCapabilities | None = None):
                 return []
         tool = SlowTool()
         ctx = _make_ctx()

@@ -222,7 +222,7 @@ class TestReActAgentUnifiedLoop:
                 return LLMResponse(content="Sunny in Beijing")
 
         streaming_provider.chat_stream = mock_chat_stream
-        context.tool_manager.execute = AsyncMock(return_value=ToolResult(tool_name="weather", result="Sunny, 25C"))
+        context.tool_manager.execute = AsyncMock(return_value=ToolResult.from_text("weather", "Sunny, 25C"))
         agent = ReActAgent(provider=streaming_provider)
 
         result = await agent.run(context, streaming_emitter)
@@ -298,7 +298,7 @@ class TestReActAgentUnifiedLoop:
             return LLMResponse(content="", tool_calls=[tool_call])
 
         streaming_provider.chat_stream = mock_chat_stream
-        context.tool_manager.execute = AsyncMock(return_value=ToolResult(tool_name="dummy", result="done"))
+        context.tool_manager.execute = AsyncMock(return_value=ToolResult.from_text("dummy", "done"))
         agent = ReActAgent(provider=streaming_provider)
 
         result = await agent.run(context, streaming_emitter)
@@ -413,7 +413,7 @@ class TestReActAgentUnifiedLoop:
                 return LLMResponse(content="It's sunny in Beijing")
 
         non_streaming_provider.chat = mock_chat
-        context.tool_manager.execute = AsyncMock(return_value=ToolResult(tool_name="weather", result="Sunny, 25C"))
+        context.tool_manager.execute = AsyncMock(return_value=ToolResult.from_text("weather", "Sunny, 25C"))
         agent = ReActAgent(provider=non_streaming_provider)
 
         result = await agent.run(context, emitter)
@@ -458,7 +458,7 @@ class TestReActAgentUnifiedLoop:
             )
 
         non_streaming_provider.chat = mock_chat
-        context.tool_manager.execute = AsyncMock(return_value=ToolResult(tool_name="dummy", result="done"))
+        context.tool_manager.execute = AsyncMock(return_value=ToolResult.from_text("dummy", "done"))
         agent = ReActAgent(provider=non_streaming_provider)
 
         result = await agent.run(context, emitter)
@@ -524,7 +524,7 @@ class TestReActAgentRegression:
             return LLMResponse(content="Let me check...", tool_calls=[tool_call])
 
         streaming_provider.chat_stream = mock_chat_stream
-        context.tool_manager.execute = AsyncMock(return_value=ToolResult(tool_name="weather", result="Sunny"))
+        context.tool_manager.execute = AsyncMock(return_value=ToolResult.from_text("weather", "Sunny"))
 
         class MockAdapter:
             streaming_mode = StreamingMode.PSEUDO
@@ -615,7 +615,7 @@ class TestReActAgentRegression:
                 return LLMResponse(content="Sunny in Beijing")
 
         streaming_provider.chat_stream = mock_chat_stream
-        context.tool_manager.execute = AsyncMock(return_value=ToolResult(tool_name="weather", result="Sunny, 25C"))
+        context.tool_manager.execute = AsyncMock(return_value=ToolResult.from_text("weather", "Sunny, 25C"))
 
         agent = ReActAgent(provider=streaming_provider)
         emitter = StreamingEmitter()
@@ -678,7 +678,7 @@ class TestReActAgentCheckpoint:
                 return LLMResponse(content="Sunny in Beijing")
 
         streaming_provider.chat_stream = mock_chat_stream
-        context.tool_manager.execute = AsyncMock(return_value=ToolResult(tool_name="weather", result="Sunny, 25C"))
+        context.tool_manager.execute = AsyncMock(return_value=ToolResult.from_text("weather", "Sunny, 25C"))
 
         agent = ReActAgent(provider=streaming_provider)
         streaming_emitter = StreamingEmitter()
@@ -746,7 +746,7 @@ class TestReActAgentCheckpoint:
                 return LLMResponse(content="Sunny in Beijing")
 
         streaming_provider.chat_stream = mock_chat_stream
-        context.tool_manager.execute = AsyncMock(return_value=ToolResult(tool_name="weather", result="Sunny, 25C"))
+        context.tool_manager.execute = AsyncMock(return_value=ToolResult.from_text("weather", "Sunny, 25C"))
 
         emitter = StreamingEmitter()
         agent = ReActAgent(provider=streaming_provider)
