@@ -178,11 +178,14 @@ def build_trace_stores(
     """Build the appropriate trace store based on ``config``.
 
     - ``OFF``: returns ``None`` (no trace store, zero overhead).
-    - ``FILE`` (default) / ``OTEL_HTTP``: returns an
-      :class:`OtelSpanTraceStore`.  When ``otel_endpoint`` is set, the store
-      also receives an OTel SDK ``Tracer`` wired to a ``BatchSpanProcessor``
-      → ``OTLPSpanExporter`` for remote OTLP export.  Requires the
-      ``[observability]`` extra when OTLP export is active.
+    - ``FILE`` (default): returns an :class:`OtelSpanTraceStore` that writes
+      local JSONL only — no network traffic, regardless of ``otel_endpoint``
+      / ``otel_headers``. Those fields are ignored in this mode.
+    - ``OTEL_HTTP``: returns an :class:`OtelSpanTraceStore` that writes local
+      JSONL AND exports via OTLP when ``otel_endpoint`` + ``otel_headers`` are
+      both set. Requires the ``[observability]`` extra when OTLP export is
+      active; falls back to file-only if the extra is missing or headers are
+      empty.
 
     Args:
         config: The observability configuration.
@@ -195,9 +198,12 @@ def build_trace_stores(
     if config.trace_backend == TraceBackend.OFF:
         return None
 
-    needs_otlp_extra = (
-        config.trace_backend == TraceBackend.OTEL_HTTP or config.otel_endpoint is not None
-    )
+    # OTLP export is gated SOLELY on trace_backend==OTEL_HTTP. FILE must never
+    # touch the network, even when otel_endpoint/otel_headers are set (they are
+    # ignored). Previously this OR'd with ``otel_endpoint is not None``, which
+    # leaked OTLP export into FILE mode whenever an endpoint was configured —
+    # and bot_config.yml's default makes otel_endpoint always non-null.
+    needs_otlp_extra = config.trace_backend == TraceBackend.OTEL_HTTP
     tracer: OtelTracer | None = None
     otlp_headers: dict[str, str] | None = None
     if needs_otlp_extra:

@@ -417,12 +417,35 @@ class TestOtlpExport:
         assert isinstance(store, OtelSpanTraceStore)
         assert store._tracer is None
 
+    def test_file_mode_ignores_endpoint_and_headers_no_otlp(
+        self, tmp_path: Path, fake_otel: types.SimpleNamespace
+    ) -> None:
+        """FILE mode must never export via OTLP, even with endpoint+headers set.
+
+        Regression: bot_config.yml defaults otel_endpoint to a non-null
+        ${LANGFUSE_HOST:-http://localhost:3000}/... URL. Previously the gate
+        OR'd ``otel_endpoint is not None`` into the OTLP decision, so FILE
+        mode leaked spans to Langfuse whenever LANGFUSE_BASIC_AUTH was set.
+        """
+        config = ObservabilityConfig(
+            trace_backend=TraceBackend.FILE,
+            otel_endpoint="http://localhost:3000/api/public/otel/v1/traces",
+            otel_headers={"Authorization": "Basic cGstbGYtNzQx"},
+        )
+        store = build_trace_stores(config, tmp_path)
+        assert store is not None
+        assert isinstance(store, OtelSpanTraceStore)
+        assert store._tracer is None
+        assert store._otlp_endpoint is None
+        assert store._otlp_client is None
+        assert len(fake_otel.exporters) == 0
+
     def test_otel_endpoint_set_with_extra_builds_otlp_tracer(
         self, tmp_path: Path, fake_otel: types.SimpleNamespace
     ) -> None:
         endpoint = "http://collector:4318/v1/traces"
         config = ObservabilityConfig(
-            trace_backend=TraceBackend.FILE,
+            trace_backend=TraceBackend.OTEL_HTTP,
             otel_endpoint=endpoint,
             otel_service_name="test-service",
         )
@@ -468,7 +491,7 @@ class TestOtlpExport:
         self, tmp_path: Path, fake_otel: types.SimpleNamespace
     ) -> None:
         config = ObservabilityConfig(
-            trace_backend=TraceBackend.FILE,
+            trace_backend=TraceBackend.OTEL_HTTP,
             otel_endpoint="http://collector:4318/v1/traces",
             otel_headers={"Authorization": "Basic dGVzdDp0ZXN0"},
         )
@@ -505,7 +528,7 @@ class TestOtlpExport:
         self, tmp_path: Path, fake_otel: types.SimpleNamespace
     ) -> None:
         config = ObservabilityConfig(
-            trace_backend=TraceBackend.FILE,
+            trace_backend=TraceBackend.OTEL_HTTP,
             otel_endpoint="http://collector:4318/v1/traces",
             otel_headers={"Authorization": "Basic dGVzdDp0ZXN0"},
         )

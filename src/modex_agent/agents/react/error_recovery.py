@@ -16,17 +16,13 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict
 
 from modex_agent.core.governance import ContextGovernance
+from modex_agent.core.llm_struct import is_context_overflow_text
 from modex_agent.core.message import ChatMessage
 
-# Markers that indicate a context-length / payload-too-large error.
-_OVERFLOW_MARKERS: tuple[str, ...] = (
-    "413",
-    "context_length",
-    "maximum context",
-    "too long",
-    "payload too large",
-    "token limit",
-)
+
+def is_context_overflow_error(exc: Exception) -> bool:
+    """Return *True* if *exc* indicates a context-length / payload-too-large error."""
+    return is_context_overflow_text(str(exc).lower())
 
 
 class ErrorRecoveryConfig(BaseModel):
@@ -79,11 +75,6 @@ class EmergencyCompactionGovernance(ContextGovernance):
 
         return system_msgs + trimmed
 
-
-def is_context_overflow_error(exc: Exception) -> bool:
-    """Return *True* if *exc* indicates a context-length / payload-too-large error."""
-    text = str(exc).lower()
-    return any(marker in text for marker in _OVERFLOW_MARKERS)
 
 
 class RecoveryAttempt(BaseModel):

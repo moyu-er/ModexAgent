@@ -56,6 +56,40 @@ _CONTENT_FILTER_MARKERS = (
     "sensitive",  # GLM/Zhipu moderation code, e.g. "new_sensitive (1027)"
 )
 
+# Context-overflow errors: the prompt exceeds the model's context window.
+# NEVER retry — re-sending the same oversized payload loops forever, burning
+# tokens. Must be matched before the generic SERVER/timeout checks so that a
+# 400-status "context length exceeded" response is not misclassified as
+# retryable. The recovery path is session compaction, not retry.
+_CONTEXT_OVERFLOW_MARKERS = (
+    "413",
+    "context length",
+    "context_length",
+    "maximum context",
+    "payload too large",
+    "too long",
+    "token limit",
+    "reduce the length",
+    "prompt is too long",
+    "exceeds.*token",
+    "input.*too long",
+)
+
+
+def is_context_overflow_text(text: str) -> bool:
+    """Return True if a lowercased error text indicates a context-window overflow.
+
+    Shared by ``classify_litellm_error`` and ``error_recovery.is_context_overflow_error``
+    so the marker vocabulary stays in one place. Context-overflow errors are never
+    retryable — the fix is compaction, not re-sending the same payload.
+    """
+    import re
+
+    return any(
+        re.search(marker, text) if ".*" in marker else marker in text
+        for marker in _CONTEXT_OVERFLOW_MARKERS
+    )
+
 
 def is_content_filter_text(text: str) -> bool:
     """Return True if a lowercased error text indicates content moderation.
@@ -79,6 +113,14 @@ def classify_litellm_error(exc: Exception) -> LLMErrorInfo:
     if is_content_filter_text(text):
         return LLMErrorInfo(
             kind=LLMErrorKind.CONTENT_FILTER, message=message, provider="litellm", should_retry=False
+        )
+
+    if is_context_overflow_text(text):
+        return LLMErrorInfo(
+            kind=LLMErrorKind.INVALID_REQUEST,
+            message=message,
+            provider="litellm",
+            should_retry=False,
         )
 
     if "timeout" in text or "timeout" in cls_name or "timed out" in text:

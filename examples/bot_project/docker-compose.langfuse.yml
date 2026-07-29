@@ -1,6 +1,6 @@
 services:
   langfuse-web:
-    image: docker.xuanyuan.run/langfuse/langfuse:latest
+    image: docker.xuanyuan.run/langfuse/langfuse:4.0.0-rc.3
     container_name: modex-langfuse-web
     ports:
       - "3000:3000"
@@ -47,7 +47,7 @@ services:
     restart: unless-stopped
 
   langfuse-worker:
-    image: docker.xuanyuan.run/langfuse/langfuse-worker:3
+    image: docker.xuanyuan.run/langfuse/langfuse-worker:4.0.0-rc.3
     container_name: modex-langfuse-worker
     environment:
       NEXTAUTH_URL: "http://localhost:3000"
@@ -126,7 +126,7 @@ services:
     restart: unless-stopped
 
   minio:
-    image: docker.xuanyuan.run/minio/minio
+    image: docker.xuanyuan.run/minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: modex-langfuse-minio
     entrypoint: sh
     command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'

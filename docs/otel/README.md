@@ -169,7 +169,7 @@ previous hardcoded `_emit_handoff_span` in `AgentCommunicationService`.
 `build_trace_stores()` factory: `off` returns `None` (hook's `_save_span`
 no-ops when `trace_store is None`). `file` and `otel_http` both write local
 JSONL; `otel_http` additionally POSTs OTLP JSON. JSON OTLP path is decoupled
-from the OTel SDK tracer — only needs `requests.Session`, not the SDK.
+from the OTel SDK tracer — only needs `httpx.Client`, not the SDK.
 
 ## Message Format
 
@@ -217,4 +217,4 @@ Verified against:
 
 All Langfuse-mappable fields are correctly set. OTel GenAI Required + Recommended
 attributes fully covered. The `otel_http` backend decoupled from SDK tracer —
-JSON OTLP works independently via `requests.Session`.
+JSON OTLP works independently via `httpx.Client`.
