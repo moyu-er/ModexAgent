@@ -9,12 +9,11 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from modex_agent.core.capabilities import ModelCapabilities
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
-from modex_agent.control.types import ControlCommand, ControlScope
-from modex_agent.ioc.configs.llm import ModelCapabilities
 
-from .enums import SnapshotReason, TurnCustomKey
-from .models import TurnStateBase, TurnSnapshot
+from .enums import TurnCustomKey
+from .models import TurnSnapshot, TurnStateBase
 
 if TYPE_CHECKING:
     import asyncio
@@ -27,9 +26,9 @@ if TYPE_CHECKING:
     from modex_agent.hook import HookRunner
     from modex_agent.interceptor.chain import InterceptorChain
     from modex_agent.memory.context_governance import ContextGovernance
+    from modex_agent.trace.otel_store import OtelSpanTraceStore
 
     from .store import TurnStateStore
-    from modex_agent.trace.otel_store import OtelSpanTraceStore
 
 logger = logging.getLogger(__name__)
 

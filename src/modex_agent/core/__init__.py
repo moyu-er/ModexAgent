@@ -6,6 +6,7 @@ from .agent import (
     AgentContext,
     current_agent_context,
 )
+from .capabilities import Modality, ModelCapabilities
 from .constants import (
     DefaultValues,
     ErrorMessages,
@@ -38,9 +39,11 @@ from .tool_manager import (
     InMemoryToolManager,
     Tool,
     ToolConfig,
+    ToolExecutionContext,
     ToolManager,
     ToolManagerConfig,
     ToolResult,
+    get_tool_execution_context,
 )
 from .types import (
     InputMessage,
@@ -116,7 +119,11 @@ __all__ = [
     "InMemoryToolManager",
     "Tool",
     "ToolConfig",
+    "ToolExecutionContext",
     "ToolManagerConfig",
+    "get_tool_execution_context",
+    "Modality",
+    "ModelCapabilities",
     # V2 新架构 - Agent
     "Agent",
     "AgentCommKind",
