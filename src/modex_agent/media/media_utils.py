@@ -40,6 +40,17 @@ try:
 except ImportError:
     _Presentation = None
 
+try:
+    from PIL import Image as _PILImage
+except ImportError:
+    _PILImage = None
+
+try:
+    from PIL import Image as _PILImageForResampling
+    _PILResampling = _PILImageForResampling.Resampling
+except (ImportError, AttributeError):
+    _PILResampling = None
+
 # 图片扩展名集合
 _IMAGE_EXTS = {
     ".png",
@@ -199,6 +210,79 @@ def _build_image_url_block(
     if with_meta:
         block["_meta"] = {"path": path}
     return block
+
+
+_MAX_IMAGE_DIM = 2000
+_MAX_IMAGE_BYTES = 5 * 1024 * 1024
+_JPEG_QUALITIES = [85, 70, 55, 40]
+
+
+def _build_image_url_block_from_b64(b64: str, mime: str) -> dict[str, Any]:
+    block: dict[str, Any] = {
+        "type": "image_url",
+        "image_url": {"url": f"data:{mime};base64,{b64}"},
+    }
+    return block
+
+
+def build_image_url_block_compressed(
+    raw: bytes, mime: str, path: str = ""
+) -> dict[str, Any]:
+    """Build an ``image_url`` block with Pillow compression (for read tool).
+
+    Downscales images exceeding ``_MAX_IMAGE_DIM`` (2000px) on the long edge
+    using LANCZOS resampling, then re-encodes trying the original format
+    first and JPEG at progressively lower qualities [85,70,55,40] until the
+    base64 payload fits ``_MAX_IMAGE_BYTES`` (5MB). If Pillow is unavailable
+    or decoding fails, degrades to the original bytes (no crash).
+
+    TODO: make thresholds configurable (align with opencode
+    ``attachments.image.{max_width,max_height,max_base64_bytes}``).
+    The user-attachment path (``build_inline_image_block``) does not compress
+    yet; unify by routing it through this function once thresholds are
+    configurable.
+    """
+    if _PILImage is None or _PILResampling is None:
+        return _build_image_url_block(raw, mime, path, with_meta=False)
+
+    import io
+
+    try:
+        img = _PILImage.open(io.BytesIO(raw))
+        img.load()
+    except Exception:
+        return _build_image_url_block(raw, mime, path, with_meta=False)
+
+    if img.width > _MAX_IMAGE_DIM or img.height > _MAX_IMAGE_DIM:
+        img.thumbnail((_MAX_IMAGE_DIM, _MAX_IMAGE_DIM), _PILResampling.LANCZOS)
+
+    candidates: list[tuple[str, bytes]] = []
+    buf = io.BytesIO()
+    save_mime = mime if mime in ("image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp") else "image/png"
+    try:
+        img.save(buf, format=save_mime.split("/")[1].upper())
+        candidates.append((save_mime, buf.getvalue()))
+    except Exception:
+        pass
+    for q in _JPEG_QUALITIES:
+        buf = io.BytesIO()
+        try:
+            img.save(buf, format="JPEG", quality=q)
+            candidates.append(("image/jpeg", buf.getvalue()))
+        except Exception:
+            continue
+
+    if not candidates:
+        return _build_image_url_block(raw, mime, path, with_meta=False)
+
+    for c_mime, encoded in candidates:
+        b64 = base64.b64encode(encoded).decode()
+        if len(b64) <= _MAX_IMAGE_BYTES:
+            return _build_image_url_block_from_b64(b64, c_mime)
+
+    c_mime, encoded = candidates[-1]
+    b64 = base64.b64encode(encoded).decode()
+    return _build_image_url_block_from_b64(b64, c_mime)
 
 
 class ImageHandler(MediaHandler):
