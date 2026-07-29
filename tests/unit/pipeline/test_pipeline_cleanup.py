@@ -1,10 +1,16 @@
 """Tests for AgentPipeline session resource cleanup (P0-2r2)."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from tests.unit.pipeline._helpers import _make_react_pipeline
+
+if TYPE_CHECKING:
+    from modex_agent.core.capabilities import ModelCapabilities
 
 
 class _MinimalAgent:
@@ -27,9 +33,9 @@ class _MinimalToolManager:
 
     async def execute(self, *args, **kwargs):
         from modex_agent.core.tool_manager import ToolResult
-        return ToolResult(tool_name="test", result="ok")
+        return ToolResult.from_text("test", "ok")
 
-    def get_tool_descriptions(self, caller_context=None):
+    def get_tool_descriptions(self, caps: ModelCapabilities | None = None):
         return []
 
 

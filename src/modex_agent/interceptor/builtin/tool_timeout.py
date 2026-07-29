@@ -18,7 +18,7 @@ import time
 from typing import TYPE_CHECKING
 
 from modex_agent.core.constants import DefaultValues
-from modex_agent.core.message import ContentFormat
+from modex_agent.core.message import ContentFormat, TextPart
 from modex_agent.core.tool_manager import ToolResult
 from modex_agent.interceptor.abc import (
     ToolCallContext,
@@ -94,7 +94,7 @@ def _build_tool_timeout_result(
     )
     return ToolResult(
         tool_name=tool_name,
-        result=xml,
+        content=[TextPart(text=xml)],
         error=f"Tool execution timed out after {timeout_seconds:.0f} seconds",
         execution_time=elapsed_seconds,
         call_id=call_id,

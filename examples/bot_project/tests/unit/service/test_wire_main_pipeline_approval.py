@@ -3,8 +3,8 @@
 Pins that ``bot.service.pool_builder._wire_main_pipeline`` installs an
 ``ApprovalRuntime`` on the main agent's pipeline when the main agent's
 ``ApprovalConfig`` is enabled + gates tools, and leaves approval unwired
-otherwise (default-off). The capability carrier
-(``model_capabilities``) is threaded in both branches so the deferred
+otherwise (default-off). The model info carrier
+(``model_info``) is threaded in both branches so the deferred
 inline renderer (ADR-0013 §10) can bind to it per turn.
 
 Main-only coverage is structural: ``_wire_main_pipeline`` only ever touches
@@ -211,10 +211,7 @@ def test_wires_approval_runtime_when_enabled_and_tools_gated() -> None:
     assert services.safety is pipeline.safety
 
 
-def test_leaves_approval_untouched_but_threads_capabilities_when_disabled() -> None:
-    """Default-off: ApprovalConfig.enabled=False must not wire approval, but
-    the capability carrier is still threaded so the inline renderer
-    (ADR-0013 §10) can bind to ``ctx.runtime.model_capabilities`` per turn."""
+def test_leaves_approval_untouched_but_threads_model_info_when_disabled() -> None:
     from modex_agent.ioc.configs.llm import Modality
 
     pipeline = _wire(
@@ -228,10 +225,9 @@ def test_leaves_approval_untouched_but_threads_capabilities_when_disabled() -> N
     assert builder is not None
     services = builder.runtime_services
     assert isinstance(services, AgentRuntimeServices)
-    assert services.approval is None  # approval stays default-off
-    # Capabilities threaded from the default resolved model (default TEXT-only).
-    assert services.model_capabilities is not None
-    assert services.model_capabilities.supports(Modality.TEXT)
+    assert services.approval is None
+    assert services.model_info is not None
+    assert services.model_info.capabilities.supports(Modality.TEXT)
 
 
 def test_wired_classifier_anchors_to_live_workspace_root() -> None:

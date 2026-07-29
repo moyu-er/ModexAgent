@@ -91,10 +91,10 @@ async def test_hook_falls_back_to_default_when_absent(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_hook_overrides_model_capabilities(tmp_path: Path) -> None:
+async def test_hook_overrides_model_info(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
     reg = ModelChoiceRegistry()
-    services = SimpleNamespace(model_capabilities=None)
+    services = SimpleNamespace(model_info=None)
     hook = ModelChoiceBindHook(cfg, reg)
     await hook.before_turn(_ctx("s", services=services))
-    assert services.model_capabilities is not None
+    assert services.model_info is not None

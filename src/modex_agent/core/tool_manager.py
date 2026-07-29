@@ -32,7 +32,7 @@ class ToolExecutionContext(BaseModel):
 
     Frozen BaseModel (rule 10/12). 字段默认全 None → 现有 tool 零改动。
     需要感知模型多模态能力的 tool 通过 :func:`get_tool_execution_context` 读取，
-    并用 :meth:`supports` 做声明式能力检查（参考 ADR-0036）。
+    并用 :meth:`supports` 做声明式能力检查（参考 ADR-0014）。
 
     声明式能力模型: tool 通过 ``required_modalities`` / ``produced_modalities``
     frozenset 声明所需/所产出的模态；运行时由 :meth:`Tool.is_available` 与

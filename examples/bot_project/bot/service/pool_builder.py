@@ -50,6 +50,7 @@ from bot.service.model_config import BotModelConfig
 from modex_agent.agents.external_coding.cli_resolver import resolve_modexctl_bin_dir
 from modex_agent.agents.external_coding.types import ExternalEnvSpec
 from modex_agent.control.channel import InMemoryControlChannel
+from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.emitter import ContentEmitter
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
@@ -1194,9 +1195,13 @@ def _wire_main_pipeline(
     )
     resolved_cfg = _resolved_or_placeholder(bot_model_config)
     default_resolved = resolved_cfg.default_resolved()
+
     services_kwargs: dict[str, Any] = dict(
         safety=pipeline.safety,
-        model_capabilities=default_resolved.capabilities,
+        model_info=ModelInfo(
+            model_name=default_resolved.model.model,
+            capabilities=default_resolved.capabilities,
+        ),
     )
     if approval_runtime is not None:
         services_kwargs["approval"] = approval_runtime

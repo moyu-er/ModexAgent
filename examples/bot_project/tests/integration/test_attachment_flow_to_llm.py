@@ -312,6 +312,7 @@ def _build_ctx(
     inline_attachments: list[Attachment],
 ) -> AgentContext:
     """A minimal-but-real AgentContext exercising enrich_inline_attachments."""
+    from modex_agent.core.capabilities import ModelInfo
     session = SessionInfo(session_id="s1", agent_name="main")
     identity = TurnIdentity(agent_id="main", session=session, turn_id="t1")
     state = ReActTurnState(
@@ -319,7 +320,7 @@ def _build_ctx(
     )
     if inline_attachments:
         state.custom[TurnCustomKey.INLINE_ATTACHMENTS] = inline_attachments
-    services = AgentRuntimeServices(model_capabilities=capabilities)
+    services = AgentRuntimeServices(model_info=ModelInfo(model_name="test", capabilities=capabilities))
     runtime = AgentRuntime(services=services, state=state)
     return AgentContext(
         system_prompt="sys",

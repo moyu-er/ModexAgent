@@ -185,7 +185,7 @@ async def test_tool_call_events_persisted_incrementally() -> None:
         emitter = WebBotEmitter(output_adapter, "conv1.main", config=EmitterConfig(), transcript_store=store)
         input_adapter.register_connection("conv1.main", None)
         tc = ToolCall(tool_name="read_file", arguments={"path": "/x"}, call_id="call_0")
-        result = ToolResult(tool_name="read_file", result="content", error=None)
+        result = ToolResult.from_text("read_file", "content")
         await emitter.emit(ReActEvent.TOOL_CALL_START, tc)
         await emitter.emit(ReActEvent.TOOL_CALL_END, (tc, result))
         events = await store.load("conv1.main")

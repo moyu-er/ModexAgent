@@ -99,7 +99,7 @@ class TestQQBotEmitter:
     async def test_tool_call_end_ignored(self, mock_adapter, emitter):
         """Test that tool_call_end is ignored (not sent to user)."""
         tool_call = ToolCall(tool_name="weather", arguments={})
-        result = ToolResult(tool_name="weather", result="Sunny, 25C")
+        result = ToolResult.from_text("weather", "Sunny, 25C")
 
         # Should not raise or send anything
         await emitter.emit(ReActEvent.TOOL_CALL_END, (tool_call, result))

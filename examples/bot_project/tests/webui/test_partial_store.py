@@ -344,7 +344,7 @@ async def test_flush_active_segment_clears_partial_buffer() -> None:
         assert len(await store.load_partial(sid, sessions_dir=sessions_dir)) == 1
 
         tc = ToolCall(tool_name="read_file", arguments={"path": "/x"}, call_id="c0")
-        result = ToolResult(tool_name="read_file", result="ok", error=None)
+        result = ToolResult.from_text("read_file", "ok")
         await emitter.emit(ReActEvent.TOOL_CALL_START, tc)
         await emitter.emit(ReActEvent.TOOL_CALL_END, (tc, result))
 

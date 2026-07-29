@@ -408,7 +408,7 @@ async def test_react_reasoning_and_tool_projection_unchanged() -> None:
         await emitter.emit(ReActEvent.TOOL_CALL_START, tc)
         await emitter.emit(
             ReActEvent.TOOL_CALL_END,
-            (tc, ToolResult(tool_name="read_file", result="content")),
+            (tc, ToolResult.from_text("read_file", "content")),
         )
         await emitter.emit_complete(AgentResult(content="done"))
 

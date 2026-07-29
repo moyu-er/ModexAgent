@@ -1,4 +1,4 @@
-"""Declarative tool-capability awareness tests (ADR-0036).
+"""Declarative tool-capability awareness tests (ADR-0014 §4).
 
 Covers ``Tool.required_modalities`` / ``produced_modalities`` class attrs,
 ``Tool.is_available``, ``ToolExecutionContext.supports``, the caps-aware
@@ -81,7 +81,7 @@ class _StaticRootProvider(WorkspaceRootProvider):
 
 
 class TestDeclarativeToolCapability:
-    """ADR-0036: tools declare modality needs; the runtime filters/adjusts."""
+    """ADR-0014: tools declare modality needs; the runtime filters/adjusts."""
 
     # -- Tool.is_available ----------------------------------------------------
 

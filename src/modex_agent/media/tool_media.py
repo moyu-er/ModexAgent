@@ -1,4 +1,4 @@
-"""Tool-produced media injection strategy (ADR-0036 supplement).
+"""Tool-produced media injection strategy (ADR-0014 §3).
 
 When a tool returns image content (e.g. ``ReadFileTool`` reading a PNG), the
 image must reach the LLM.  Different provider APIs handle this differently:
