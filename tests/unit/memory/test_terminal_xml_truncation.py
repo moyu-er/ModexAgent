@@ -181,7 +181,7 @@ def test_tool_result_to_message_carries_declared_overflow_metadata() -> None:
     the ToolResult. The overflow layer constructs ToolResults for
     ``<tool_result_overflow>`` output and passes the metadata explicitly.
     """
-    from modex_agent.core.message import ContentFormat
+    from modex_agent.core.message import ContentFormat, TextPart
     from modex_agent.core.tool_manager import ToolResult
 
     xml = (
@@ -192,7 +192,7 @@ def test_tool_result_to_message_carries_declared_overflow_metadata() -> None:
     )
     result = ToolResult(
         tool_name="read_file",
-        result=xml,
+        content=[TextPart(text=xml)],
         call_id="tc_1",
         content_format=ContentFormat.XML,
         truncatable_paths=["chunk", "instruction"],
@@ -205,11 +205,12 @@ def test_tool_result_to_message_carries_declared_overflow_metadata() -> None:
 
 def test_tool_result_to_message_no_metadata_when_undeclared() -> None:
     """A bare ToolResult with no declared metadata attaches none (ADR-0006)."""
+    from modex_agent.core.message import TextPart
     from modex_agent.core.tool_manager import ToolResult
 
     result = ToolResult(
         tool_name="read_file",
-        result="<command_result><output>x</output></command_result>",
+        content=[TextPart(text="<command_result><output>x</output></command_result>")],
         call_id="tc_1",
     )
     msg = result.to_message()

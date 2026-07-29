@@ -49,9 +49,6 @@ class ScopedWriteFileTool(Tool):
         try:
             resolved.parent.mkdir(parents=True, exist_ok=True)
             resolved.write_text(content, encoding="utf-8")
-            return ToolResult(
-                tool_name=self.name,
-                result=f"Successfully wrote to {resolved}",
-            )
+            return ToolResult.from_text(self.name, f"Successfully wrote to {resolved}")
         except Exception as exc:
             return ToolResult(tool_name=self.name, error=str(exc))

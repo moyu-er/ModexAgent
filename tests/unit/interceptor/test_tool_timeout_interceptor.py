@@ -61,7 +61,7 @@ class TestToolTimeoutInterceptorTimeout:
     async def test_timeout_returns_xml_result(self):
         async def slow_tool():
             await asyncio.sleep(0.5)
-            return ToolResult(tool_name="slow", result="done")
+            return ToolResult.from_text("slow", "done")
 
         safety = RuntimeSafetyPolicy(
             turn=TurnTimeoutPolicy(tool_timeout_seconds=0.01),
@@ -73,10 +73,10 @@ class TestToolTimeoutInterceptorTimeout:
 
         assert result.error is not None
         assert "timed out" in result.error.lower()
-        assert result.result is not None
-        assert "<tool_timeout>" in str(result.result)
-        assert "</tool_timeout>" in str(result.result)
-        assert "timed_out" in str(result.result)
+        assert result.message_content()
+        assert "<tool_timeout>" in result.message_content()
+        assert "</tool_timeout>" in result.message_content()
+        assert "timed_out" in result.message_content()
         assert result.content_format == ContentFormat.XML
         assert result.truncatable_paths == []
 
@@ -84,7 +84,7 @@ class TestToolTimeoutInterceptorTimeout:
     async def test_timeout_result_is_failed(self):
         async def slow_tool():
             await asyncio.sleep(0.5)
-            return ToolResult(tool_name="slow", result="done")
+            return ToolResult.from_text("slow", "done")
 
         safety = RuntimeSafetyPolicy(
             turn=TurnTimeoutPolicy(tool_timeout_seconds=0.01),
@@ -99,7 +99,7 @@ class TestToolTimeoutInterceptorTimeout:
     @pytest.mark.asyncio
     async def test_fast_tool_completes(self):
         async def fast_tool():
-            return ToolResult(tool_name="fast", result="ok")
+            return ToolResult.from_text("fast", "ok")
 
         safety = RuntimeSafetyPolicy(
             turn=TurnTimeoutPolicy(tool_timeout_seconds=10.0),
@@ -109,7 +109,7 @@ class TestToolTimeoutInterceptorTimeout:
 
         result = await interceptor.around_tool_call(ctx, _call_ctx(), fast_tool)
 
-        assert result.result == "ok"
+        assert result.message_content() == "ok"
         assert result.error is None
 
 
@@ -132,7 +132,7 @@ class TestToolTimeoutInterceptorCancellation:
     async def test_external_task_cancel_propagates(self):
         async def slow_tool():
             await asyncio.sleep(10.0)
-            return ToolResult(tool_name="slow", result="done")
+            return ToolResult.from_text("slow", "done")
 
         safety = RuntimeSafetyPolicy(
             turn=TurnTimeoutPolicy(tool_timeout_seconds=30.0),
@@ -155,7 +155,7 @@ class TestToolTimeoutInterceptorResolution:
     async def test_safety_present_used(self):
         async def slow_tool():
             await asyncio.sleep(0.5)
-            return ToolResult(tool_name="slow", result="done")
+            return ToolResult.from_text("slow", "done")
 
         safety = RuntimeSafetyPolicy(
             turn=TurnTimeoutPolicy(tool_timeout_seconds=0.01),
@@ -171,7 +171,7 @@ class TestToolTimeoutInterceptorResolution:
     @pytest.mark.asyncio
     async def test_no_runtime_falls_back_to_default(self):
         async def fast_tool():
-            return ToolResult(tool_name="fast", result="ok")
+            return ToolResult.from_text("fast", "ok")
 
         ctx = _make_ctx()
         ctx.runtime = None
@@ -179,5 +179,5 @@ class TestToolTimeoutInterceptorResolution:
 
         result = await interceptor.around_tool_call(ctx, _call_ctx(), fast_tool)
 
-        assert result.result == "ok"
+        assert result.message_content() == "ok"
         assert result.error is None

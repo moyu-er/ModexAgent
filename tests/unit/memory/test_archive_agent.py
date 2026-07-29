@@ -351,7 +351,7 @@ class TestSummarizerTrajectoryEmitter:
             await emitter.emit(ReActEvent.TOOL_CALL_START, ToolCall(tool_name="write", arguments={"path": "/tmp/f.txt"}))
             await emitter.emit(
                 ReActEvent.TOOL_CALL_END,
-                (ToolCall(tool_name="write", arguments={}), ToolResult(tool_name="write", result="ok")),
+                (ToolCall(tool_name="write", arguments={}), ToolResult.from_text("write", "ok")),
             )
             from modex_agent.core.emitter import AgentResult
             await emitter.emit_complete(AgentResult(content="done", stop_reason="completed"))

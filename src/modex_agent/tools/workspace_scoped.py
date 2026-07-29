@@ -21,9 +21,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.tool_manager import Tool
+
+if TYPE_CHECKING:
+    from modex_agent.core.capabilities import ModelCapabilities
 
 
 class WorkspaceRootProvider(ABC):
@@ -88,6 +91,17 @@ class WorkspaceScopedTool(Tool):
 
     def get_dynamic_schema(self) -> dict[str, Any]:
         return self._inner.get_dynamic_schema()
+
+    def get_dynamic_schema_for(
+        self, caps: ModelCapabilities | None = None
+    ) -> dict[str, Any]:
+        """Delegate to the inner tool's caps-aware override.
+
+        Without this, a workspace-wrapped ``ReadFileTool`` would hit the
+        default ``get_dynamic_schema_for`` (→ ``get_dynamic_schema`` → static
+        schema), bypassing the caps-aware description the inner tool provides.
+        """
+        return self._inner.get_dynamic_schema_for(caps)
 
     # -- the only behaviour we change ------------------------------------
 

@@ -19,8 +19,8 @@ async def test_read_file_success(tmp_path: Path, tool: ScopedReadFileTool) -> No
 
     result = await tool.execute(path=str(f))
     assert result.success
-    assert "hello world" in result.result
-    assert "read_status: complete" in result.result
+    assert "hello world" in result.message_content()
+    assert "read_status: complete" in result.message_content()
     assert result.error is None
 
 
@@ -33,7 +33,7 @@ async def test_read_nested_file(tmp_path: Path, tool: ScopedReadFileTool) -> Non
 
     result = await tool.execute(path=str(f))
     assert result.success
-    assert "nested content" in result.result
+    assert "nested content" in result.message_content()
 
 
 @pytest.mark.asyncio
@@ -43,10 +43,10 @@ async def test_read_with_offset_and_limit(tmp_path: Path, tool: ScopedReadFileTo
 
     result = await tool.execute(path=str(f), offset=1, limit=2)
     assert result.success
-    assert "b" in result.result
-    assert "c" in result.result
+    assert "b" in result.message_content()
+    assert "c" in result.message_content()
     # "a" 不在内容行中（metadata 的 total_lines 包含 'a' 但那是后缀，不影响）
-    content_lines = result.result.split("\n\n")[0].splitlines()
+    content_lines = result.message_content().split("\n\n")[0].splitlines()
     assert content_lines == ["b", "c"]
 
 
@@ -67,8 +67,8 @@ async def test_read_empty_file(tmp_path: Path, tool: ScopedReadFileTool) -> None
 
     result = await tool.execute(path=str(f))
     assert result.success
-    assert "(empty file)" in result.result
-    assert "read_status: empty" in result.result
+    assert "(empty file)" in result.message_content()
+    assert "read_status: empty" in result.message_content()
 
 
 @pytest.mark.asyncio

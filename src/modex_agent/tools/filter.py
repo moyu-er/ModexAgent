@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 from modex_agent.core.tool_manager import ToolExecutionContext, ToolManager, ToolResult
 
 if TYPE_CHECKING:
+    from modex_agent.core.capabilities import ModelCapabilities
     from modex_agent.core.tool_manager import Tool
 
 
@@ -41,10 +42,12 @@ class FilteredToolManager(ToolManager):
     def is_registered(self, tool_name: str) -> bool:
         return self._base.is_registered(tool_name) and self._is_allowed(tool_name)
 
-    def get_tool_descriptions(self) -> list[dict[str, Any]]:
+    def get_tool_descriptions(
+        self, caps: ModelCapabilities | None = None
+    ) -> list[dict[str, Any]]:
         return [
             d
-            for d in self._base.get_tool_descriptions()
+            for d in self._base.get_tool_descriptions(caps)
             if self._is_allowed(d.get("function", {}).get("name"))
         ]
 

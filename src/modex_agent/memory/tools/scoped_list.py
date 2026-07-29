@@ -57,6 +57,6 @@ class ScopedListTool(Tool):
                 kind = "dir" if child.is_dir() else "file"
                 entries.append(f"  {kind}  {child.name}")
             result = "\n".join(entries) if entries else "(empty directory)"
-            return ToolResult(tool_name=self.name, result=result)
+            return ToolResult.from_text(self.name, result)
         except Exception as exc:
             return ToolResult(tool_name=self.name, error=str(exc))

@@ -10,7 +10,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from ...core.capabilities import Modality
+from ...core.capabilities import Modality, ModelCapabilities
+from ...core.message import ImageUrl, ImageUrlPart, TextPart
 from ...core.tool_manager import Tool, ToolResult, get_tool_execution_context
 from ...media.media_utils import build_image_url_block_compressed
 from ...media.mime import classify_kind, sniff_mime
@@ -428,41 +429,44 @@ async def _read_image_as_multimodal(
     file_path: Path,
     mime: str,
 ) -> ToolResult:
-    """Read an image file → compress → return ToolResult with content_blocks.
+    """Read an image file → compress → return ToolResult with image content.
 
     Capability gate: when the current model lacks ``Modality.IMAGE``, returns
-    a text notice instead of loading image bytes (non-silent degradation,
-    matching opencode's behavior). The capability context is read via
-    :func:`get_tool_execution_context` (set by ``ToolManager.execute``).
+    a brief text result stating the file is an image but visual content is not
+    available.  The capability limitation itself is surfaced via the tool
+    description (``get_dynamic_schema_for`` adjusts it for text-only models);
+    the tool result only states the objective fact — no system diagnosis or
+    action advice — so the agent can decide how to proceed.
 
-    The ``result`` field carries a text hint for the session; ``content_blocks``
-    carries the image_url block (transient — promoted to the LLM call's user
-    message by ``enrich_inline_media``, never persisted).
+    When the model is image-capable, the text hint is carried as a
+    :class:`TextPart` in ``content`` and the image as an
+    :class:`ImageUrlPart` (transient — promoted to a synthetic user message
+    by ``enrich_inline_media`` via :class:`SyntheticUserMessageStrategy`,
+    never persisted).
     """
     ctx = get_tool_execution_context()
-    caps = ctx.model_capabilities if ctx is not None else None
-    if caps is None or not caps.supports(Modality.IMAGE):
-        try:
-            size = file_path.stat().st_size
-        except OSError:
-            size = 0
-        return ToolResult(
-            tool_name="read",
-            result=(
-                f"[Image detected: {file_path.name} ({mime}, {size} bytes). "
-                "Current model lacks IMAGE capability — content not loaded. "
-                "Use a vision-capable model to read images.]"
-            ),
-        )
+    if ctx is None or not ctx.supports(Modality.IMAGE):
+        # Tool results are the agent's observations — not a system log channel.
+        # The capability limitation is already surfaced via the tool description
+        # (get_dynamic_schema_for adjusts it for text-only models).  The result
+        # should only state the objective fact and let the agent decide what to
+        # do next (skip, ask the user, infer from filename, etc.).  Do NOT put
+        # system diagnosis ("model lacks IMAGE capability"), file sizes, or
+        # action advice ("use a vision-capable model") here — the agent may
+        # have called read autonomously, not at the user's request.
+        degradation_text = f"Image file: {file_path} ({mime}). Visual content not available."
+        return ToolResult.from_text("read", degradation_text)
 
     try:
         raw = await asyncio.to_thread(file_path.read_bytes)
         block = build_image_url_block_compressed(raw, mime, str(file_path))
-        text_hint = f"[Image read: {file_path.name} ({mime})]"
+        text_hint = f"[Image read: {file_path} ({mime})]"
         return ToolResult(
             tool_name="read",
-            result=text_hint,
-            content_blocks=[block],
+            content=[
+                TextPart(text=text_hint),
+                ImageUrlPart(image_url=ImageUrl(url=block["image_url"]["url"])),
+            ],
         )
     except Exception as exc:
         return ToolResult(
@@ -476,6 +480,12 @@ async def _read_image_as_multimodal(
 
 class ReadFileTool(Tool):
     """读取文件内容的工具."""
+
+    produced_modalities: frozenset[Modality] = frozenset({Modality.IMAGE})
+    """ReadFileTool may produce an image_url block when the file is an image
+    and the active model supports IMAGE. Declared as produced (not required)
+    so the tool stays visible to text-only models — it degrades at runtime
+    via :func:`_read_image_as_multimodal` instead."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -499,9 +509,9 @@ class ReadFileTool(Tool):
             "examining a specific known file.\n"
             "- You can call multiple read tools in a single response — batch "
             "speculative reads that are potentially useful.\n"
-            "- Reads UTF-8 text files. Images (PNG/JPEG/GIF/WEBP/BMP) are read as "
-            "multimodal content when the model supports IMAGE capability; "
-            "otherwise a text notice is returned. Other binary files are unsupported."
+            "- Typically reads text files (UTF-8). Image files may also be "
+            "read as visual content, depending on your capabilities. Other "
+            "binary files are not supported."
         )
 
     @property
@@ -523,6 +533,25 @@ class ReadFileTool(Tool):
             },
             "required": ["path"],
         }
+
+    def get_dynamic_schema_for(
+        self, caps: ModelCapabilities | None = None
+    ) -> dict[str, Any]:
+        """Adapt the description to the active model's IMAGE capability.
+
+        Keeps the base schema intact and only rewrites the image sentence
+        when the model is text-only. When ``caps is None`` (unknown model)
+        the optimistic original description is preserved.
+        """
+        schema = super().get_dynamic_schema_for(caps)
+        if caps is None or caps.supports(Modality.IMAGE):
+            return schema
+        function = schema["function"]
+        function["description"] = function["description"].replace(
+            "Image files may also be read as visual content, depending on your capabilities.",
+            "Image files cannot be read as visual content by the current model.",
+        )
+        return schema
 
     async def execute(
         self, path: str, offset: int = 0, limit: int = _DEFAULT_LIMIT, **kwargs: Any

@@ -88,7 +88,7 @@ class _FailingTool(Tool):
 class TestToolResult:
     @pytest.mark.asyncio
     async def test_success_property(self):
-        tr = ToolResult(tool_name="t", result="ok")
+        tr = ToolResult.from_text("t", "ok")
         assert tr.success is True
         assert tr.error is None
 
@@ -99,17 +99,18 @@ class TestToolResult:
 
     @pytest.mark.asyncio
     async def test_to_dict_roundtrip(self):
-        tr = ToolResult(tool_name="t", result="ok", execution_time=1.5, call_id="c1")
+        tr = ToolResult.from_text("t", "ok", execution_time=1.5, call_id="c1")
         d = tr.to_dict()
         assert d["tool_name"] == "t"
-        assert d["result"] == "ok"
+        assert d["error"] is None
         assert d["execution_time"] == 1.5
         assert d["call_id"] == "c1"
         assert d["success"] is True
+        assert d["content"] == [{"type": "text", "text": "ok"}]
 
     @pytest.mark.asyncio
     async def test_to_message_format(self):
-        tr = ToolResult(tool_name="t", result="ok", call_id="c1")
+        tr = ToolResult.from_text("t", "ok", call_id="c1")
         msg = tr.to_message()
         assert msg["role"] == "tool"
         assert msg["tool_call_id"] == "c1"
@@ -194,7 +195,7 @@ class TestInMemoryToolManagerExecution:
         tm.register(_DummyTool())
         result = await tm.execute("dummy", {"value": 5})
         assert result.success is True
-        assert result.result == 10
+        assert result.message_content() == "10"
 
     @pytest.mark.asyncio
     async def test_execute_tool_not_found(self, tm):

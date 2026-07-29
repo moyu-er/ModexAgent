@@ -70,9 +70,6 @@ class ScopedEditFileTool(Tool):
                 )
             updated = content.replace(old_text, new_text, 1)
             resolved.write_text(updated, encoding="utf-8")
-            return ToolResult(
-                tool_name=self.name,
-                result=f"Successfully edited {resolved}",
-            )
+            return ToolResult.from_text(self.name, f"Successfully edited {resolved}")
         except Exception as exc:
             return ToolResult(tool_name=self.name, error=str(exc))
