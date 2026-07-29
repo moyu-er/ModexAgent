@@ -3,18 +3,59 @@
 提供 ToolManager 抽象层，支持工具注册和执行调度。
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from abc import ABC, abstractmethod
+from contextvars import ContextVar
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, field_serializer
 
+from modex_agent.core.capabilities import ModelCapabilities
 from modex_agent.core.message import ContentFormat
 from modex_agent.core.tool import DynamicSchemaProvider
 
 logger = logging.getLogger(__name__)
+
+
+# ctx is delivered via contextvar (not as an execute parameter) because MCP
+# tools forward **kwargs to the MCP server (tool.py:108 params=kwargs);
+# mixing ctx into kwargs would pollute external calls.
+
+
+class ToolExecutionContext(BaseModel):
+    """tool 执行时的只读上下文。
+
+    Frozen BaseModel (rule 10/12). 字段默认全 None → 现有 tool 零改动。
+    需要感知模型多模态能力的 tool 通过 :func:`get_tool_execution_context` 读取。
+
+    TODO Step 2: 加 ``required_modalities`` 声明式能力感知。
+    TODO Step 3: 迁移到 ``ToolResult.content`` 统一 ``list[ContentBlock]``。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid", arbitrary_types_allowed=True)
+
+    model_capabilities: ModelCapabilities | None = None
+    workspace_root: Path | None = None
+    tool_call_id: str | None = None
+    session_id: str | None = None
+
+
+_tool_execution_ctx: ContextVar[ToolExecutionContext | None] = ContextVar(
+    "tool_execution_ctx", default=None
+)
+
+
+def get_tool_execution_context() -> ToolExecutionContext | None:
+    """Get the current tool execution context, if any.
+
+    Returns ``None`` outside a ``ToolManager.execute`` call.
+    """
+    return _tool_execution_ctx.get()
 
 
 @dataclass
@@ -144,6 +185,11 @@ class ToolResult(BaseModel):
     overflow_processed: bool = False
     content_format: ContentFormat | None = None
     truncatable_paths: list[str] | None = None
+    # OpenAI content-part wire format (e.g. {"type":"image_url","image_url":{"url":"data:..."}}).
+    # Typed as dict rather than ContentPart BaseModel because it crosses the LLM serialization
+    # boundary as wire-format dicts consumed directly by LiteLLM provider. None for text-only tools.
+    # TODO Step 3: unify to list[ContentPart] when ToolResult.content migration lands.
+    content_blocks: list[dict[str, Any]] | None = None
 
     @field_serializer("result")
     def _serialize_result(self, v: Any) -> Any:
@@ -269,12 +315,14 @@ class ToolManager(ABC):
         self,
         tool_name: str,
         arguments: dict[str, Any],
+        ctx: ToolExecutionContext | None = None,
     ) -> ToolResult:
         """执行单个工具
 
         Args:
             tool_name: 工具名称
             arguments: 工具参数
+            ctx: 工具执行上下文（模型能力等），通过 contextvar 交付给工具
 
         Returns:
             ToolResult: 执行结果
@@ -297,12 +345,10 @@ class ToolManager(ABC):
             )
 
         start_time = asyncio.get_event_loop().time()
+        token = _tool_execution_ctx.set(ctx)
         try:
             result = await tool.execute(**arguments)
             execution_time = asyncio.get_event_loop().time() - start_time
-            # If the tool already returned a ToolResult (e.g. scoped tools
-            # that validate paths and return errors), pass it through so
-            # error information reaches the model intact.
             if type(result) is ToolResult:
                 content_format, truncatable_paths = tool.result_metadata(result.result)
                 return ToolResult(
@@ -313,6 +359,7 @@ class ToolManager(ABC):
                     call_id=result.call_id,
                     content_format=content_format,
                     truncatable_paths=truncatable_paths,
+                    content_blocks=result.content_blocks,
                 )
             content_format, truncatable_paths = tool.result_metadata(result)
             return ToolResult(
@@ -329,6 +376,8 @@ class ToolManager(ABC):
                 error=f"Tool '{tool_name}' execution failed: {str(e)}",
                 execution_time=execution_time,
             )
+        finally:
+            _tool_execution_ctx.reset(token)
 
     # ---- 工具描述生成 ----
 
