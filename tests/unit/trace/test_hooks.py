@@ -132,7 +132,7 @@ async def test_after_tool_execution_records_per_tool(tmp_path: Path) -> None:
     await hook.before_tool_execution(ctx, tool_calls)
 
     results = [
-        ToolResult(tool_name="search", result="found", execution_time=0.05),
+        ToolResult.from_text("search", "found", execution_time=0.05),
         ToolResult(tool_name="read", error="file not found", execution_time=0.01),
     ]
     await hook.after_tool_execution(ctx, results)
@@ -191,7 +191,7 @@ async def test_disabled_hook_records_nothing(tmp_path: Path) -> None:
     await hook.before_turn(ctx)
     await hook.after_llm_response(ctx, LLMResponse(content="x"))
     await hook.before_tool_execution(ctx, [ToolCall(call_id="c1", tool_name="t", arguments={})])
-    await hook.after_tool_execution(ctx, [ToolResult(tool_name="t", result="ok")])
+    await hook.after_tool_execution(ctx, [ToolResult.from_text("t", "ok")])
     await hook.finally_turn(ctx, AgentResult(content="done"))
 
     spans = await _collect_spans(store, "s7")
@@ -252,7 +252,7 @@ async def test_tool_execution_captures_result_content(tmp_path: Path) -> None:
     hook = _make_hook()
 
     await hook.before_turn(ctx)
-    results = [ToolResult(tool_name="read", result="file contents here", execution_time=0.02)]
+    results = [ToolResult.from_text("read", "file contents here", execution_time=0.02)]
     await hook.after_tool_execution(ctx, results)
 
     spans = await _collect_spans(store, "s_result")
@@ -270,7 +270,7 @@ async def test_tool_execution_result_truncated(tmp_path: Path) -> None:
 
     await hook.before_turn(ctx)
     long_result = "x" * 5000
-    results = [ToolResult(tool_name="read", result=long_result)]
+    results = [ToolResult.from_text("read", long_result)]
     await hook.after_tool_execution(ctx, results)
 
     spans = await _collect_spans(store, "s_trunc")
@@ -291,7 +291,7 @@ async def test_before_tool_execution_captures_full_arguments(tmp_path: Path) -> 
         ),
     ]
     await hook.before_tool_execution(ctx, tool_calls)
-    results = [ToolResult(tool_name="write", result="ok", execution_time=0.01, call_id="c1")]
+    results = [ToolResult.from_text("write", "ok", execution_time=0.01, call_id="c1")]
     await hook.after_tool_execution(ctx, results)
 
     spans = await _collect_spans(store, "s_args")
@@ -345,7 +345,7 @@ async def test_send_to_agent_emits_handoff_span(tmp_path: Path) -> None:
     await hook.before_tool_execution(ctx, tool_calls)
 
     results = [
-        ToolResult(tool_name="send_to_agent", result="ack: sent to coder", execution_time=0.02),
+        ToolResult.from_text("send_to_agent", "ack: sent to coder", execution_time=0.02),
     ]
     await hook.after_tool_execution(ctx, results)
 

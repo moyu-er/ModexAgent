@@ -67,6 +67,7 @@ class GenAiAttr(StrEnum):
     TOOL_SUCCESS = "gen_ai.tool.success"  # custom
     TOOL_FAIL = "gen_ai.tool.fail"  # custom
     TOOL_ERROR_TYPE = "error.type"  # OTel standard (error.* namespace)
+    TOOL_IMAGE_COUNT = "gen_ai.tool.image_count"  # custom — multimodal observability
 
     # ── Approval (G3) ─────────────────────────────────────────────────
     APPROVAL_DECISION = "gen_ai.approval.decision"  # custom

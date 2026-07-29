@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.message import ChatMessage, ImageUrl, ImageUrlPart, TextPart
 from modex_agent.core.provider import StreamingLLMProvider
 from modex_agent.core.tool_manager import Tool, ToolConfig, ToolManager, ToolResult
 from modex_agent.core.types import LLMResponse, MessageRole, ToolCall
@@ -224,12 +224,7 @@ class TestLLMRecordReplay:
 
 class TestToolRecordReplay:
     async def test_record_then_replay_bit_identical(self, tmp_path: Path) -> None:
-        result = ToolResult(
-            tool_name="calculator",
-            result=42,
-            execution_time=0.1,
-            call_id="call-1",
-        )
+        result = ToolResult.from_text("calculator", "42", execution_time=0.1, call_id="call-1")
         recording_tm = _ScriptedToolManager(result)
         recorder = CassetteRecorder(tmp_path)
         wrapped = recorder.wrap_tool_executor(recording_tm)
@@ -237,7 +232,7 @@ class TestToolRecordReplay:
         arguments = {"x": 1, "y": 2}
         got = await wrapped.execute("calculator", arguments)
 
-        assert got.result == 42
+        assert got.message_content() == "42"
         assert got.tool_name == "calculator"
         assert got.call_id == "call-1"
         assert recording_tm.call_count == 1
@@ -250,14 +245,13 @@ class TestToolRecordReplay:
 
         replayed = await replay_wrapped.execute("calculator", arguments)
 
-        assert replayed.result == 42
+        assert replayed.message_content() == "42"
         assert replayed.tool_name == "calculator"
         assert replayed.call_id == "call-1"
 
     async def test_replay_preserves_error(self, tmp_path: Path) -> None:
         result = ToolResult(
             tool_name="failing_tool",
-            result=None,
             error="something broke",
             execution_time=0.05,
         )
@@ -275,11 +269,11 @@ class TestToolRecordReplay:
         replayed = await replay_wrapped.execute("failing_tool", {"arg": 1})
 
         assert replayed.error == "something broke"
-        assert replayed.result is None
+        assert replayed.message_content() == "Error: something broke"
         assert replayed.success is False
 
     async def test_replay_miss_raises_keyerror(self, tmp_path: Path) -> None:
-        result = ToolResult(tool_name="t", result="ok")
+        result = ToolResult.from_text("t", "ok")
         recording_tm = _ScriptedToolManager(result)
         recorder = CassetteRecorder(tmp_path)
         wrapped = recorder.wrap_tool_executor(recording_tm)
@@ -293,6 +287,59 @@ class TestToolRecordReplay:
 
         with pytest.raises(KeyError, match="Cassette miss"):
             await replay_wrapped.execute("t", {"a": 2})
+
+    async def test_multimodal_result_round_trips_with_image_blocks(
+        self, tmp_path: Path
+    ) -> None:
+        """A ToolResult carrying ImageUrlPart must survive record→save→load→replay.
+
+        The cassette promises bit-identical reproducibility (module docstring).
+        Multimodal tool results (e.g. ReadFileTool reading an image) store the
+        image as an ImageUrlPart in ``content``; ``content_blocks`` is a
+        @computed_field derived from those parts. If serialization only stores
+        ``message_content()`` (the text hint), the replayed result loses the
+        image, ``content_blocks`` returns None, TOOL_MEDIA_CACHE is never
+        populated, and the downstream LLM call key diverges from the recording
+        → KeyError on the next LLM replay. This test locks the invariant.
+        """
+        image_url = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"
+        result = ToolResult(
+            tool_name="read",
+            content=[
+                TextPart(text="[Image read: photo.png (image/png)]"),
+                ImageUrlPart(image_url=ImageUrl(url=image_url)),
+            ],
+            execution_time=0.12,
+            call_id="img-call-1",
+        )
+        recording_tm = _ScriptedToolManager(result)
+        recorder = CassetteRecorder(tmp_path)
+        wrapped = recorder.wrap_tool_executor(recording_tm)
+
+        arguments = {"path": "photo.png"}
+        recorded = await wrapped.execute("read", arguments)
+
+        assert len(recorded.image_blocks) == 1
+        assert recorded.image_blocks[0].image_url.url == image_url
+        assert recorded.content_blocks is not None
+        assert len(recorded.content_blocks) == 1
+
+        cassette_dir = recorder.save("trace-img-001")
+
+        engine = CassetteReplayEngine(cassette_dir)
+        engine.load()
+        replay_wrapped = engine.wrap_tool_executor(_RaisingToolManager())
+
+        replayed = await replay_wrapped.execute("read", arguments)
+
+        assert replayed.tool_name == "read"
+        assert replayed.call_id == "img-call-1"
+        assert len(replayed.image_blocks) == 1
+        assert replayed.image_blocks[0].image_url.url == image_url
+        assert replayed.content_blocks is not None
+        assert len(replayed.content_blocks) == 1
+        assert replayed.content_blocks[0]["image_url"]["url"] == image_url
+        assert replayed.message_content() == "[Image read: photo.png (image/png)]"
 
 
 # ------------------------------------------------------------------
@@ -310,7 +357,7 @@ class TestCassetteFileStructure:
         wrapped_provider = recorder.wrap_provider(provider)
         await wrapped_provider.chat(messages=[ChatMessage(role=MessageRole.USER, content="q")])
 
-        tool_result = ToolResult(tool_name="t", result=99)
+        tool_result = ToolResult.from_text("t", "99")
         tm = _ScriptedToolManager(tool_result)
         wrapped_tm = recorder.wrap_tool_executor(tm)
         await wrapped_tm.execute("t", {"a": 1})
@@ -396,7 +443,7 @@ class TestCassetteScope:
 class TestApplyCassetteWrapping:
     def test_disabled_returns_originals(self, tmp_path: Path) -> None:
         provider = _ScriptedStreamingProvider(LLMResponse(content="x"))
-        tm = _ScriptedToolManager(ToolResult(tool_name="t", result=None))
+        tm = _ScriptedToolManager(ToolResult(tool_name="t"))
 
         wrapped_provider, wrapped_tm, recorder = apply_cassette_wrapping(
             provider,
@@ -412,7 +459,7 @@ class TestApplyCassetteWrapping:
 
     def test_enabled_returns_wrappers(self, tmp_path: Path) -> None:
         provider = _ScriptedStreamingProvider(LLMResponse(content="x"))
-        tm = _ScriptedToolManager(ToolResult(tool_name="t", result=None))
+        tm = _ScriptedToolManager(ToolResult(tool_name="t"))
 
         wrapped_provider, wrapped_tm, recorder = apply_cassette_wrapping(
             provider,

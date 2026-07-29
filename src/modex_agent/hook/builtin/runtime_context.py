@@ -67,7 +67,7 @@ class RuntimeContextHook(BeforeTurnHook, BeforeToolExecutionHook, AfterToolExecu
         if results:
             for r in results:
                 if isinstance(r, ToolResult):
-                    result_map[r.call_id] = f"Error: {r.error}" if r.error else str(r.result)
+                    result_map[r.call_id] = f"Error: {r.error}" if r.error else r.message_content()
                 elif isinstance(r, dict) and r.get("role") == "tool":
                     result_map[r.get("tool_call_id")] = r.get("content", "")
 

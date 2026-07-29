@@ -226,7 +226,7 @@ class TestHandoffSpanEmission:
             ToolCall(tool_name="send_to_agent", arguments={"target_agent": "worker", "content": "do the thing"}),
         ]
         results = [
-            ToolResult(tool_name="send_to_agent", result="ack: sent to worker", execution_time=0.01),
+            ToolResult.from_text("send_to_agent", "ack: sent to worker", execution_time=0.01),
         ]
         await hook.before_tool_execution(ctx, tool_calls)
         await hook.after_tool_execution(ctx, results)
@@ -265,7 +265,7 @@ class TestHandoffSpanEmission:
             ToolCall(tool_name="send_to_agent", arguments={"target_agent": "reviewer", "content": "hello"}),
         ]
         results = [
-            ToolResult(tool_name="send_to_agent", result="ack", execution_time=0.01),
+            ToolResult.from_text("send_to_agent", "ack", execution_time=0.01),
         ]
         await hook.before_tool_execution(ctx, tool_calls)
         await hook.after_tool_execution(ctx, results)

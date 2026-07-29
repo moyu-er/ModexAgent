@@ -439,7 +439,7 @@ async def test_tool_span_success_attribute(tmp_path: Path) -> None:
     await hook.before_turn(ctx)
     tool_calls = [ToolCall(call_id="c1", tool_name="search", arguments={"q": "x"})]
     await hook.before_tool_execution(ctx, tool_calls)
-    results = [ToolResult(tool_name="search", result="found", execution_time=0.01)]
+    results = [ToolResult.from_text("search", "found", execution_time=0.01)]
     await hook.after_tool_execution(ctx, results)
     await hook.finally_turn(ctx, None)
 

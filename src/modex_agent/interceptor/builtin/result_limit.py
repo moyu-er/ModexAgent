@@ -65,12 +65,12 @@ class ToolResultLimitInterceptor(ToolCallInterceptor):
     ) -> ToolResult:
         result: ToolResult = await next_call()  # type: ignore[misc]
 
-        # 1. Skip if already processed, has error, or no result
-        if result.error or result.result is None or result.overflow_processed:
+        # 1. Skip if already processed, has error, or no content
+        if result.error or not result.content or result.overflow_processed:
             return result
 
         # 2. Short result — pass through
-        result_str = str(result.result)
+        result_str = result.message_content()
         if len(result_str) <= self._max_chars:
             return result
 
@@ -79,12 +79,11 @@ class ToolResultLimitInterceptor(ToolCallInterceptor):
             truncated = result_str[: self._max_chars] + (
                 f"\n... (truncated, {len(result_str)} chars total)"
             )
-            return ToolResult(
-                tool_name=result.tool_name,
-                result=truncated,
-                error=result.error,
-                execution_time=result.execution_time,
+            return ToolResult.from_text(
+                result.tool_name,
+                truncated,
                 call_id=result.call_id,
+                execution_time=result.execution_time,
                 overflow_processed=False,
             )
 
@@ -102,9 +101,9 @@ class ToolResultLimitInterceptor(ToolCallInterceptor):
             )
         except Exception:
             logger.exception("Overflow store failed for %s/%s", session_id, tool_call_id)
-            return ToolResult(
-                tool_name=result.tool_name,
-                result=result_str[: self._max_chars],
+            return ToolResult.from_text(
+                result.tool_name,
+                result_str[: self._max_chars],
                 call_id=result.call_id,
                 overflow_processed=False,
             )
@@ -126,9 +125,9 @@ class ToolResultLimitInterceptor(ToolCallInterceptor):
         from modex_agent.tools.terminal.types import terminal_result_metadata
 
         content_format, truncatable_paths = terminal_result_metadata(chunk_1_content)
-        return ToolResult(
-            tool_name=result.tool_name,
-            result=chunk_1_content,
+        return ToolResult.from_text(
+            result.tool_name,
+            chunk_1_content,
             call_id=result.call_id,
             overflow_processed=True,
             content_format=content_format,

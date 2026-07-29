@@ -543,15 +543,19 @@ class TraceCollectorHook(
                 ensure_ascii=False,
                 default=str,
             )
-            if result.result is not None:
-                attrs[GenAiAttr.TOOL_RESULT] = str(result.result)
+            result_text = result.message_content()
+            if result_text:
+                attrs[GenAiAttr.TOOL_RESULT] = result_text
                 attrs[GenAiAttr.LANGFUSE_OBSERVATION_OUTPUT] = json.dumps(
-                    {"result": str(result.result)},
+                    {"result": result_text},
                     ensure_ascii=False,
                     default=str,
                 )
             if result.error is not None:
                 attrs[GenAiAttr.TOOL_ERROR_TYPE] = result.error
+            image_count = len(result.image_blocks)
+            if image_count > 0:
+                attrs[GenAiAttr.TOOL_IMAGE_COUNT] = image_count
             duration_ms: int | None = None
             if result.execution_time is not None and result.execution_time > 0:
                 duration_ms = int(result.execution_time * 1000)
@@ -611,7 +615,7 @@ class TraceCollectorHook(
                     default=str,
                 ),
                 GenAiAttr.LANGFUSE_OBSERVATION_OUTPUT: json.dumps(
-                    {"result": str(result.result) if result.result is not None else None, "success": result.success},
+                    {"result": result.message_content() or None, "success": result.success},
                     ensure_ascii=False,
                     default=str,
                 ),

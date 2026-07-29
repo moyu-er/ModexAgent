@@ -114,7 +114,7 @@ class RunLoggingHook(AfterLLMResponseHook, BeforeToolExecutionHook, AfterToolExe
                 result.call_id,
                 error is None,
                 self._format_value(
-                    result.result if error is None else {"error": error},
+                    result.message_content() if error is None else {"error": error},
                     self._max_result_chars,
                 ),
             )

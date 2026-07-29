@@ -52,10 +52,9 @@ references
 !.github
 uv.lock
 bun.lock
-trace
+/trace
 nul
 
-/trace
 /output
 node_modules
 

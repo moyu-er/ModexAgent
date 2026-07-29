@@ -27,9 +27,9 @@ from enum import IntEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-from modex_agent.core.message import ChatMessage
+from modex_agent.core.message import ChatMessage, ContentPart, TextPart
 from modex_agent.core.provider import LLMProvider, StreamingLLMProvider
 from modex_agent.core.tool_manager import (
     Tool,
@@ -144,10 +144,14 @@ def _llm_response_from_dict(d: dict[str, Any]) -> LLMResponse:
     )
 
 
+_CONTENT_PART_ADAPTER: TypeAdapter[ContentPart] = TypeAdapter(ContentPart)
+
+
 def _tool_result_to_dict(result: ToolResult) -> dict[str, Any]:
     return {
         "tool_name": result.tool_name,
-        "result": result.result,
+        "result": result.message_content(),
+        "content": [p.model_dump(mode="json") for p in result.content],
         "error": result.error,
         "execution_time": result.execution_time,
         "call_id": result.call_id,
@@ -155,12 +159,20 @@ def _tool_result_to_dict(result: ToolResult) -> dict[str, Any]:
 
 
 def _tool_result_from_dict(d: dict[str, Any]) -> ToolResult:
+    raw_content = d.get("content")
+    if raw_content:
+        content: list[ContentPart] = [
+            _CONTENT_PART_ADAPTER.validate_python(p) for p in raw_content
+        ]
+    else:
+        text = d.get("result")
+        content = [TextPart(text=text)] if text is not None else []
     return ToolResult(
         tool_name=d["tool_name"],
-        result=d.get("result"),
         error=d.get("error"),
         execution_time=float(d.get("execution_time") or 0.0),
         call_id=d.get("call_id"),
+        content=content,
     )
 
 
