@@ -22,6 +22,9 @@ dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
 ]
+eval = [
+    "langfuse>=4.0.0",
+]
 
 [project.scripts]
 modexbot = "modexbot.cli:app"

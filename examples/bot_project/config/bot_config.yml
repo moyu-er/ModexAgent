@@ -61,13 +61,14 @@ observability:
   # Prompt capture scope for G2 (ADR-0024 IN11):
   # "summary" (default) — last N messages, system prompt hashed only.
   prompt_capture: "summary"
+  # Layer 1 eval: inject L2 heuristic scores to Langfuse on each turn finish.
+  # Requires trace_backend=otel_http + reachable Langfuse. Default: false.
+  eval_score_injection: false
   #
-  # Langfuse integration (self-hosted, OTLP-native, MIT-licensed):
+  # Langfuse integration (self-hosted v4, OTLP-native):
   # 1. Deploy Langfuse via Docker Compose (see docs/langfuse-deployment.md).
-  # 2. Uncomment the following lines to send traces to Langfuse:
-  # trace_backend: "otel_http"
-  # otel_endpoint: "http://localhost:3000/api/public/otel"
-  # otel_service_name: "modex-bot"
+  # 2. Set env: OTEL_FORMAT=otel_http LANGFUSE_HOST=http://localhost:3000
+  #    LANGFUSE_BASIC_AUTH=base64(pk:sk) — see .env.example
   # Repro Path (B1/B2):
   # checkpoint_per_iteration: true
   # cassette_enabled: false
@@ -76,3 +77,11 @@ observability:
   # training_relevant: false
   # training_max_iterations: 20
   # training_max_tokens: 100000
+
+# ---- Eval Harness (Layer 2, opt-in via [eval] extra) ----
+# Run via: python -m bot.eval.cli <curate|run|compare>
+# Requires langfuse (pip install -e ".[eval]") + a model provider extra (e.g. [llm]).
+# eval:
+#   dataset_name: "react-baseline"
+#   max_concurrency: 5
+#   evaluators: [accuracy, completion, response_length]
