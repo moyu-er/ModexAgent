@@ -4,12 +4,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import difflib
 import logging
 from pathlib import Path
 from typing import Any
 
-from ...core.tool_manager import Tool, ToolResult
+from ...core.capabilities import Modality
+from ...core.tool_manager import Tool, ToolResult, get_tool_execution_context
+from ...media.media_utils import build_image_url_block_compressed
+from ...media.mime import classify_kind, sniff_mime
+from ...media.models import Kind
 
 logger = logging.getLogger(__name__)
 
@@ -416,6 +421,56 @@ def _build_unified_diff(old: str, new: str, path: str) -> str:
     return "\n".join(diff_lines)
 
 
+# -- 多模态文件读取 ---------------------------------------------------------
+
+
+async def _read_image_as_multimodal(
+    file_path: Path,
+    mime: str,
+) -> ToolResult:
+    """Read an image file → compress → return ToolResult with content_blocks.
+
+    Capability gate: when the current model lacks ``Modality.IMAGE``, returns
+    a text notice instead of loading image bytes (non-silent degradation,
+    matching opencode's behavior). The capability context is read via
+    :func:`get_tool_execution_context` (set by ``ToolManager.execute``).
+
+    The ``result`` field carries a text hint for the session; ``content_blocks``
+    carries the image_url block (transient — promoted to the LLM call's user
+    message by ``enrich_inline_media``, never persisted).
+    """
+    ctx = get_tool_execution_context()
+    caps = ctx.model_capabilities if ctx is not None else None
+    if caps is None or not caps.supports(Modality.IMAGE):
+        try:
+            size = file_path.stat().st_size
+        except OSError:
+            size = 0
+        return ToolResult(
+            tool_name="read",
+            result=(
+                f"[Image detected: {file_path.name} ({mime}, {size} bytes). "
+                "Current model lacks IMAGE capability — content not loaded. "
+                "Use a vision-capable model to read images.]"
+            ),
+        )
+
+    try:
+        raw = await asyncio.to_thread(file_path.read_bytes)
+        block = build_image_url_block_compressed(raw, mime, str(file_path))
+        text_hint = f"[Image read: {file_path.name} ({mime})]"
+        return ToolResult(
+            tool_name="read",
+            result=text_hint,
+            content_blocks=[block],
+        )
+    except Exception as exc:
+        return ToolResult(
+            tool_name="read",
+            error=f"Failed to read image {file_path.name}: {exc}",
+        )
+
+
 # -- 工具类 -----------------------------------------------------------------
 
 
@@ -444,8 +499,9 @@ class ReadFileTool(Tool):
             "examining a specific known file.\n"
             "- You can call multiple read tools in a single response — batch "
             "speculative reads that are potentially useful.\n"
-            "- This tool reads text files only (UTF-8). Images, PDFs, and binary "
-            "files are not supported."
+            "- Reads UTF-8 text files. Images (PNG/JPEG/GIF/WEBP/BMP) are read as "
+            "multimodal content when the model supports IMAGE capability; "
+            "otherwise a text notice is returned. Other binary files are unsupported."
         )
 
     @property
@@ -477,6 +533,14 @@ class ReadFileTool(Tool):
                 return ToolResult(tool_name=self.name, error=f"File not found: {path}")
             if not file_path.is_file():
                 return ToolResult(tool_name=self.name, error=f"Not a file: {path}")
+
+            with open(file_path, "rb") as f:
+                header = f.read(16)
+            mime = sniff_mime(header, file_path.name)
+            kind = classify_kind(mime) if mime else Kind.OTHER
+
+            if kind is Kind.IMAGE:
+                return await _read_image_as_multimodal(file_path, mime or "image/png")
 
             result = _paginate_file(file_path, offset=offset, limit=limit)
             if result.startswith("Error: "):
