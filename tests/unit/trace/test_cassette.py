@@ -98,7 +98,12 @@ class _ScriptedToolManager(ToolManager):
     def is_registered(self, tool_name: str) -> bool:
         return False
 
-    async def execute(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+    async def execute(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        ctx: Any = None,
+    ) -> ToolResult:
         self.call_count += 1
         return self._result
 
@@ -121,7 +126,12 @@ class _RaisingToolManager(ToolManager):
     def is_registered(self, tool_name: str) -> bool:
         return False
 
-    async def execute(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+    async def execute(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        ctx: Any = None,
+    ) -> ToolResult:
         raise AssertionError("Replay must not call the wrapped tool manager")
 
 

@@ -31,7 +31,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import LLMProvider, StreamingLLMProvider
-from modex_agent.core.tool_manager import Tool, ToolConfig, ToolManager, ToolResult
+from modex_agent.core.tool_manager import (
+    Tool,
+    ToolConfig,
+    ToolExecutionContext,
+    ToolManager,
+    ToolResult,
+)
 from modex_agent.core.types import LLMResponse, ToolCall
 from modex_agent.hook.abc import FinallyTurnHook
 from modex_agent.ioc.configs.observability import CassetteScope
@@ -431,11 +437,14 @@ class _RecordingToolManager(ToolManager):
         return self._wrapped.is_registered(tool_name)
 
     async def execute(
-        self, tool_name: str, arguments: dict[str, Any]
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        ctx: ToolExecutionContext | None = None,
     ) -> ToolResult:
         key = tool_call_key(tool_name, arguments)
         start = time.perf_counter()
-        result = await self._wrapped.execute(tool_name, arguments)
+        result = await self._wrapped.execute(tool_name, arguments, ctx=ctx)
         latency = time.perf_counter() - start
         self._recorder._record_tool(key, tool_name, arguments, result, latency)
         return result
@@ -571,7 +580,10 @@ class _ReplayToolManager(ToolManager):
         return self._wrapped.is_registered(tool_name)
 
     async def execute(
-        self, tool_name: str, arguments: dict[str, Any]
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        ctx: ToolExecutionContext | None = None,
     ) -> ToolResult:
         key = tool_call_key(tool_name, arguments)
         return self._engine._lookup_tool(key)
