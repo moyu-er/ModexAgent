@@ -9,7 +9,7 @@
 
 from enum import Enum
 from typing import Any, TypeVar
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 
@@ -227,7 +227,7 @@ class TestReActAgentUnifiedLoop:
 
         result = await agent.run(context, streaming_emitter)
 
-        context.tool_manager.execute.assert_called_once_with("weather", {"city": "Beijing"})
+        context.tool_manager.execute.assert_called_once_with("weather", {"city": "Beijing"}, ctx=ANY)
         assert "Sunny in Beijing" in result.content
         assert len(result.messages) == 3
 
@@ -418,7 +418,7 @@ class TestReActAgentUnifiedLoop:
 
         result = await agent.run(context, emitter)
 
-        context.tool_manager.execute.assert_called_once_with("weather", {"city": "Beijing"})
+        context.tool_manager.execute.assert_called_once_with("weather", {"city": "Beijing"}, ctx=ANY)
         assert "sunny in Beijing" in result.content
         assert len(result.messages) == 3
 

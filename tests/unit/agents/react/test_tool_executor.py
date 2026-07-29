@@ -51,7 +51,12 @@ class _RecordingToolManager:
     def __init__(self, tool_coro) -> None:
         self._tool_coro = tool_coro
 
-    async def execute(self, tool_name: str, arguments: dict[str, Any]) -> ToolResult:
+    async def execute(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        ctx: Any = None,
+    ) -> ToolResult:
         return await self._tool_coro(tool_name, arguments)
 
     def get_tool_descriptions(self) -> list[str]:

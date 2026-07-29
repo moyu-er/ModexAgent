@@ -307,6 +307,10 @@ class ToolNode(Node[ReActTurnState]):
                 MessageDelta(message=tool_msg, source=MessageDeltaSource.TOOL)
             )
 
+            if result.content_blocks and agent_ctx.runtime is not None:
+                media_cache = state.custom.setdefault(TurnCustomKey.TOOL_MEDIA_CACHE, {})
+                media_cache[tc.call_id or ""] = result.content_blocks
+
             if batch is not None:
                 for call_state in batch.calls:
                     if call_state.call_id == tc.call_id:

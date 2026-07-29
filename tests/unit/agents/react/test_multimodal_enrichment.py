@@ -20,7 +20,7 @@ from modex_agent.agents.react.runtime import ReactGraphRuntime
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.session_id import SessionInfo
-from modex_agent.ioc.configs.llm import Modality, ModelCapabilities
+from modex_agent.core.capabilities import Modality, ModelCapabilities
 from modex_agent.media.models import Attachment, AttachmentLocator, Kind
 from modex_agent.memory.default_system import ScopedMessageHistory
 from modex_agent.memory.layers.factory import MemoryLayerFactory
