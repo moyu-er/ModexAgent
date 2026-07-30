@@ -186,16 +186,34 @@ class ToolSupplement(str, Enum):
     """Additive tool group layered on top of a base ToolPreset.
 
     Unlike ToolPreset (one-of), supplements are multi-select and combine.
+    The ACI supplement is special: it produces an ``AciEditTool`` with the
+    same name (``"edit"``) as the standard ``EditFileTool``. When
+    registered after the preset tools, ``ToolManager.register`` overwrites
+    the preset's EditFileTool by name — a drop-in upgrade, not an addition.
     """
 
     AST_GREP = "ast_grep"  # ast_grep_search + ast_grep_replace
     TODO = "todo"  # todo_read + todo_write
+    ACI = "aci"  # replaces edit with AciEditTool (post-edit lint feedback)
 
 
 def _make_ast_grep_tools() -> list[Tool]:
     from modex_agent.tools.ast import AstGrepReplaceTool, AstGrepSearchTool
 
     return [AstGrepSearchTool(), AstGrepReplaceTool()]
+
+
+def _make_aci_tools() -> list[Tool]:
+    """Create ACI-enhanced edit tool that replaces the standard EditFileTool.
+
+    Produces a single ``AciEditTool`` (name=``"edit"``) with post-edit lint
+    feedback. When registered after preset tools, ``ToolManager.register``
+    overwrites the preset's ``EditFileTool`` by name — drop-in upgrade.
+    """
+    from modex_agent.tools.aci.edit_tool import AciEditTool
+    from modex_agent.tools.lint import default_lint_registry
+
+    return [AciEditTool(default_lint_registry)]
 
 
 def _make_todo_tools(todo_store: "TodoStore") -> list[Tool]:
@@ -206,6 +224,7 @@ def _make_todo_tools(todo_store: "TodoStore") -> list[Tool]:
 
 SUPPLEMENT_FACTORIES: dict[ToolSupplement, Callable[[], list[Tool]]] = {
     ToolSupplement.AST_GREP: _make_ast_grep_tools,
+    ToolSupplement.ACI: _make_aci_tools,
 }
 
 
