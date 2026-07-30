@@ -14,6 +14,17 @@ OpenCode emits these event types on stdout (one JSONL line per event):
 The provider-minted session id is captured from the first event that
 carries one and exposed via ``captured_session_id`` so the harness can
 commit it to the session store after the first turn.
+
+.. note::
+
+   ``opencode run --format json`` stdout only outputs **main session**
+   events. Subagent (``task`` tool) events are filtered out by the
+   ``run.ts`` non-interactive loop (``part.sessionID !== sessionID``
+   continue at line 717). Child-session capture is therefore
+   **SSE-only** — the :class:`OpenCodeSSEParser` reading the global
+   ``GET /event`` stream is the only path that sees child-session
+   events and populates ``Emission.source_session_id``. This parser
+   always produces emissions with ``source_session_id = None``.
 """
 
 from __future__ import annotations

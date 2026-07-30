@@ -150,36 +150,6 @@ IDs, so child sessions are invisible under `opencode run --format json`
 and Pi's JSONL output. Only the warm `opencode serve` SSE backend
 surfaces child events.
 
-### Asynchronous child sessions (background task tool)
-
-opencode's `task` tool can run subagents in the background — the main
-session goes idle while child sessions are still running, and the
-child's result is injected back into the main session later (triggering
-a new main-session busy→idle cycle). `_consume_sse` handles this by
-tracking three signals:
-
-- `main_idle` — main session has reported idle (but may be woken by inject)
-- `active_children` — child sessionIDs currently in busy state
-- `pending_background` — a `task` tool_result containing
-  "Background task launched" was seen, and the main session has not
-  yet produced text after the inject (i.e. the background result has
-  not been consumed)
-
-Break condition: `main_idle and not active_children and not pending_background`.
-
-- Child `session.status busy` → add to `active_children`
-- Child `session.status idle` → remove from `active_children`
-- Main `session.status idle` → set `main_idle` (do NOT break yet)
-- Main `session.status busy` → clear `main_idle` (inject woke it)
-- Main-session `TEXT_DELTA` after `pending_background` → clear
-  `pending_background` (inject consumed, main resumed reasoning)
-
-No timeout: ModexAgent's `asyncio.wait_for(timeout=turn_timeout)` is
-the sole safety net. The `pending_background` flag ensures the SSE
-consumer stays alive through the idle gap between background task
-launch and inject, so the main session's post-inject reasoning and
-output are fully captured.
-
 ### Parent-Child Session Relationships
 
 Parent-child relationships for external subagent sessions live **only** in

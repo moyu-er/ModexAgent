@@ -47,3 +47,16 @@
     Approval state belongs in `ApprovalTransaction` inside `ReActTurnState`.
 14. Centralize domain constants, enums and typed constants replace raw
     strings.
+15. **Converge, don't patch.** When multiple existing paths serve the
+    same concern (e.g. native vs external subagent wiring, main-agent vs
+    subagent emitter injection), do NOT add a third branch or an if-else
+    special case. Find the shared path and make ALL existing paths flow
+    through it. The fix is correct only when every caller uses the same
+    mechanism — no provider-specific or path-specific branches. If
+    convergence requires touching more files than a minimal patch, that
+    is the cost of correctness in a high-complexity codebase; a minimal
+    patch that leaves divergent paths alive guarantees the next change
+    will diverge further. Do NOT add backward-compatibility shims,
+    deprecation aliases, or "fall back to old behavior if X is None"
+    guards for code you just wrote — if the old path is wrong, remove it;
+    if it's right, converge to it.
