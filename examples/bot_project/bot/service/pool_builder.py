@@ -350,6 +350,10 @@ async def create_pool(
         llm_temperature=default_resolved.model.temperature,
         llm_max_output_tokens=default_resolved.model.max_output_tokens,
         llm_reasoning_effort=default_resolved.model.reasoning_effort,
+        llm_model_info=ModelInfo(
+            model_name=default_resolved.model.model,
+            capabilities=default_resolved.capabilities,
+        ),
         project_dir=project_dir, notification_service=notification_service,
         inbox_consumer=inbox_consumer, agent_bus=agent_bus,
         output_adapter_factory=output_adapter_factory,
@@ -934,6 +938,10 @@ async def _register_main_agent(
             temperature=default_resolved.model.temperature,
             max_output_tokens=default_resolved.model.max_output_tokens,
             reasoning_effort=default_resolved.model.reasoning_effort,
+            model_info=ModelInfo(
+                model_name=default_resolved.model.model,
+                capabilities=default_resolved.capabilities,
+            ),
         ),
         system_prompt_template=system_prompt,
         max_iterations=main_spec.max_steps,

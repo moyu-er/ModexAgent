@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from modex_agent.tools.mcp.registry import McpConnectionRegistry
     from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 
+from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.constants import ReasoningEffort
 from modex_agent.core.emitter import ContentEmitter
 from modex_agent.runtime.store import TodoStore
@@ -54,6 +55,7 @@ class AgentMaterializeDeps:
     llm_temperature: float = 0.7
     llm_max_output_tokens: int | None = None
     llm_reasoning_effort: ReasoningEffort = ReasoningEffort.NONE
+    llm_model_info: ModelInfo | None = None
     project_dir: Path | None = None
     notification_service: AgentNotificationService | None = None
     inbox_consumer: InboxConsumer | None = None

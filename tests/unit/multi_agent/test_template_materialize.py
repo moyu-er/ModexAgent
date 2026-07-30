@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -16,6 +16,8 @@ from modex_agent.multi_agent.materialize_deps import AgentMaterializeDeps
 from modex_agent.multi_agent.pool_config.specs import SubagentSpec
 from modex_agent.multi_agent.template import AgentTemplate
 from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
+
+from pathlib import Path
 
 
 def _make_deps() -> tuple[AgentMaterializeDeps, MagicMock]:
@@ -93,6 +95,36 @@ async def test_materialize_subagent_inherits_reasoning_effort() -> None:
     call_kwargs = factory.create_agent.call_args.kwargs
     descriptor = call_kwargs.get("descriptor") or factory.create_agent.call_args.args[0]
     assert descriptor.llm_config.reasoning_effort == ReasoningEffort.HIGH
+
+
+@pytest.mark.asyncio
+async def test_materialize_subagent_inherits_llm_model_info() -> None:
+    """AgentLLMConfig on the subagent descriptor receives llm_model_info from deps.
+
+    Without this threading, the factory gets a descriptor with model_info=None,
+    so runtime_services.model_info is None and tools (e.g. ReadFileTool image
+    path) degrade to text-only even when the LLM supports IMAGE.
+    """
+    from modex_agent.core.capabilities import ModelCapabilities, ModelInfo, Modality
+
+    vision_info = ModelInfo(
+        model_name="test-vision",
+        capabilities=ModelCapabilities(modalities=frozenset({Modality.TEXT, Modality.IMAGE})),
+    )
+    deps, factory = _make_deps()
+    deps = dataclasses.replace(deps, llm_model_info=vision_info)
+    template = AgentTemplate(spec=SubagentSpec(agent_name="scout"))
+    parent = SessionIdFactory().create(agent_name="main")
+    with patch(
+        "modex_agent.agents.external_coding.cli_resolver.resolve_modexctl_bin_dir",
+        return_value=Path("/fake/bin"),
+    ):
+        await template.materialize(parent_session=parent, invocation_id="inv1", deps=deps)
+    call_kwargs = factory.create_agent.call_args.kwargs
+    descriptor = call_kwargs.get("descriptor") or factory.create_agent.call_args.args[0]
+    assert descriptor.llm_config.model_info is not None
+    assert descriptor.llm_config.model_info is vision_info
+    assert descriptor.llm_config.model_info.capabilities.supports(Modality.IMAGE)
 
 
 @pytest.mark.asyncio

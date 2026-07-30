@@ -184,9 +184,16 @@ class DefaultAgentFactory(AgentFactory):
         from modex_agent.pipeline.approval_resumer import ApprovalResumer
         from modex_agent.pipeline.turn_context_builder import TurnContextBuilder
         from modex_agent.pipeline.turn_runner import ReActTurnRunner
+        from modex_agent.runtime.services import AgentRuntimeServices
         from modex_agent.utils.sanitizer import ContentSanitizer
 
         sanitizer = ContentSanitizer.sanitize
+        descriptor_model_info = descriptor.llm_config.model_info if descriptor.llm_config is not None else None
+        runtime_services = (
+            AgentRuntimeServices(model_info=descriptor_model_info)
+            if descriptor_model_info is not None
+            else None
+        )
         turn_context_builder = TurnContextBuilder(
             agent=agent,
             tool_manager=filtered_tools,
@@ -197,7 +204,7 @@ class DefaultAgentFactory(AgentFactory):
             agent_descriptor=descriptor,
             max_iterations=descriptor.max_iterations,
             safety=safety,
-            runtime_services=None,
+            runtime_services=runtime_services,
             runtime_context_manager=runtime_context_manager,
             governance=subagent_governance,
             hook_runner=hook_runner,

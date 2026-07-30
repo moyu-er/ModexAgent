@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.constants import ExecutionStrategyKind, ReasoningEffort
 from modex_agent.core.context import ContextManager
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
@@ -33,6 +34,13 @@ class AgentLLMConfig(BaseModel):
     top_p: float = 1.0
     reasoning_effort: ReasoningEffort = ReasoningEffort.NONE
     extra_params: dict[str, Any] = Field(default_factory=dict)
+    model_info: ModelInfo | None = None
+    """Active model's identity + capabilities (ADR-0014). Threaded from
+    ``AgentMaterializeDeps.llm_model_info`` → ``AgentTemplate.materialize``
+    → ``descriptor.llm_config.model_info`` → ``DefaultAgentFactory._build_turn_runner``
+    → ``runtime_services.model_info`` so tools (e.g. ReadFileTool image path)
+    can gate multimodal behaviour. ``None`` for framework tests / callers
+    that don't configure capabilities — tools degrade to text-only."""
 
 
 class ContextGovernanceConfig(BaseModel):

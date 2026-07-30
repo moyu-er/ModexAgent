@@ -72,7 +72,6 @@ async def _make_pool(tmp_path: Path) -> tuple[AgentPool, LocalAgentMessageBus, I
     bus = LocalAgentMessageBus(
         producer=InboxProducer(server=server),
         consumer=InboxConsumer(server=server),
-        broker=broker,
     )
     registry = InMemorySessionRegistry()
     pool = AgentPool(
