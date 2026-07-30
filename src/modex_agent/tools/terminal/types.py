@@ -114,7 +114,7 @@ class TerminalCommandStatus(StrEnum):
 _TERMINAL_XML_TRUNCATABLE: dict[str, list[str]] = {
     "command_result": ["output", "tui_screen", "cursor_line"],
     "process_result": ["output"],
-    "terminal_result": ["output", "cursor"],
+    "terminal_result": ["output"],
     "tool_result_overflow": ["chunk", "instruction"],
 }
 

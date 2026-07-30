@@ -43,6 +43,15 @@ class TerminalRuntimeConfig:
     no_output_timeout_ms: int = 30_000
     # LONG_RUNNING: elapsed time threshold for long-running detection
     long_running_threshold_ms: int = 300_000
+    # No-output whitelist: commands that are expected to produce no output
+    # for extended periods (e.g. ``sleep 60``). When the command matches a
+    # pattern in this list, the STUCK (no-output timeout) check is skipped
+    # entirely — the poll loop relies on the hard timeout instead. Patterns
+    # are matched against the raw command string with ``re.search``.
+    no_output_whitelist: tuple[str, ...] = (
+        r"^\s*sleep\s+\d",
+        r"^\s*sleep\s+-",
+    )
 
 
 def resolve_yield_ms(value: int | None, config: TerminalRuntimeConfig) -> int:

@@ -36,10 +36,7 @@ def _build_command_xml(
     status: CommandResultStatus,
     elapsed_ms: int,
     *,
-    terminal: str | None = None,
-    idle_ms: int | None = None,
-    pages_scrolled: int | None = None,
-    truncated: bool | None = None,
+    no_output_ms: int | None = None,
     message: str | None = None,
     hint: str | None = None,
 ) -> str:
@@ -47,23 +44,17 @@ def _build_command_xml(
     parts: list[str] = [
         "<command_result>",
     ]
-    if terminal is not None:
-        parts.append(f"<terminal>{xml_text(terminal)}</terminal>")
     if hint is not None:
         parts.append(f"<hint>{xml_text(hint)}</hint>")
     parts.extend(
         [
             f"<output>{xml_text(output)}</output>",
             f"<status>{status.value}</status>",
-            f"<elapsed_ms>{elapsed_ms}</elapsed_ms>",
+            f"<duration_ms>{elapsed_ms}</duration_ms>",
         ]
     )
-    if idle_ms is not None:
-        parts.append(f"<idle_ms>{idle_ms}</idle_ms>")
-    if pages_scrolled is not None:
-        parts.append(f"<pages_scrolled>{pages_scrolled}</pages_scrolled>")
-    if truncated is not None:
-        parts.append(f"<truncated>{str(truncated).lower()}</truncated>")
+    if no_output_ms is not None:
+        parts.append(f"<no_output_ms>{no_output_ms}</no_output_ms>")
     if message is not None:
         parts.append(f"<message>{xml_text(message)}</message>")
     parts.append("</command_result>")
@@ -145,7 +136,7 @@ class CommandTool(Tool):
         # Guard: check terminal is writable before proceeding
         guard_result = await check_command_writable(session, config=self._config)
         if guard_result is not None:
-            return self._format_rejected(guard_result, terminal=terminal_name)
+            return self._format_rejected(guard_result)
 
         session.set_expected_state(TerminalCommandStatus.EXECUTING)
         await session.ensure_started(env=build_full_env(overrides) if overrides else None)
@@ -172,6 +163,7 @@ class CommandTool(Tool):
             yield_ms=yield_window_ms,
             timeout_seconds=timeout_seconds,
             check_input_wait=True,
+            command=command,
         )
 
         def _inject_hint(xml: str) -> str:
@@ -194,7 +186,7 @@ class CommandTool(Tool):
                 session.apply_outcome(result)
                 return _inject_hint(
                     self._format_completed(
-                        result.output_parts, result.elapsed_ms, terminal=terminal_name
+                        result.output_parts, result.elapsed_ms
                     )
                 )
             case PollOutcome.PROMPT_DETECTED:
@@ -208,7 +200,7 @@ class CommandTool(Tool):
                 session.apply_outcome(result)
                 return _inject_hint(
                     self._format_completed(
-                        result.output_parts, result.elapsed_ms, terminal=terminal_name
+                        result.output_parts, result.elapsed_ms
                     )
                 )
             case PollOutcome.INPUT_WAIT:
@@ -222,7 +214,6 @@ class CommandTool(Tool):
                         runtime,
                         result.elapsed_ms,
                         detected_input_wait=True,
-                        terminal=terminal_name,
                     )
                 )
             case PollOutcome.LONG_RUNNING:
@@ -235,7 +226,6 @@ class CommandTool(Tool):
                         result.output_parts,
                         runtime,
                         result.elapsed_ms,
-                        terminal=terminal_name,
                     )
                 )
             case PollOutcome.STUCK:
@@ -244,7 +234,7 @@ class CommandTool(Tool):
                 session.apply_outcome(result)
                 return _inject_hint(
                     self._format_stuck(
-                        result.output_parts, raw_idle_ms, result.elapsed_ms, terminal=terminal_name
+                        result.output_parts, raw_idle_ms, result.elapsed_ms
                     )
                 )
             case PollOutcome.PAGINATED:
@@ -252,7 +242,7 @@ class CommandTool(Tool):
                 session.apply_outcome(result)
                 return _inject_hint(
                     self._format_paginated(
-                        result.output_parts, result.elapsed_ms, terminal=terminal_name
+                        result.output_parts, result.elapsed_ms
                     )
                 )
             case PollOutcome.YIELDED:
@@ -264,7 +254,6 @@ class CommandTool(Tool):
                         result.output_parts,
                         None,
                         result.elapsed_ms,
-                        terminal=terminal_name,
                     )
                 )
             case PollOutcome.TIMED_OUT:
@@ -283,7 +272,6 @@ class CommandTool(Tool):
                         result.output_parts,
                         timeout_seconds,
                         result.elapsed_ms,
-                        terminal=terminal_name,
                     )
                 )
 
@@ -293,7 +281,7 @@ class CommandTool(Tool):
 
     @staticmethod
     def _format_completed(
-        output_parts: list[str], elapsed_ms: int, *, terminal: str | None = None
+        output_parts: list[str], elapsed_ms: int
     ) -> str:
         raw = "".join(output_parts)
         output = sanitize_terminal_output(raw).rstrip()
@@ -301,7 +289,6 @@ class CommandTool(Tool):
             output or "(no output)",
             CommandResultStatus.COMPLETED,
             elapsed_ms,
-            terminal=terminal,
         )
 
     @staticmethod
@@ -312,7 +299,6 @@ class CommandTool(Tool):
         elapsed_ms: int,
         *,
         detected_input_wait: bool = False,
-        terminal: str | None = None,
     ) -> str:
         raw = "".join(output_parts)
         output = sanitize_terminal_output(raw).rstrip()
@@ -329,8 +315,7 @@ class CommandTool(Tool):
                 output,
                 CommandResultStatus.WAITING_INPUT,
                 elapsed_ms,
-                terminal=terminal,
-                idle_ms=idle_ms,
+                no_output_ms=idle_ms,
                 message=message,
             )
 
@@ -342,8 +327,7 @@ class CommandTool(Tool):
             output,
             CommandResultStatus.EXECUTING,
             elapsed_ms,
-            terminal=terminal,
-            idle_ms=idle_ms,
+            no_output_ms=idle_ms,
             message=message,
         )
 
@@ -371,8 +355,6 @@ class CommandTool(Tool):
     def _format_paginated(
         output_parts: list[str],
         elapsed_ms: int,
-        *,
-        terminal: str | None = None,
     ) -> str:
         raw = "".join(output_parts)
         output = sanitize_terminal_output(raw).rstrip()
@@ -385,7 +367,6 @@ class CommandTool(Tool):
             output,
             CommandResultStatus.PAGINATED,
             elapsed_ms,
-            terminal=terminal,
             message=message,
         )
 
@@ -394,8 +375,6 @@ class CommandTool(Tool):
         output_parts: list[str],
         raw_idle_ms: int,
         elapsed_ms: int,
-        *,
-        terminal: str | None = None,
     ) -> str:
         raw = "".join(output_parts)
         output = sanitize_terminal_output(raw).rstrip()
@@ -408,8 +387,7 @@ class CommandTool(Tool):
             output,
             CommandResultStatus.STUCK,
             elapsed_ms,
-            terminal=terminal,
-            idle_ms=raw_idle_ms,
+            no_output_ms=raw_idle_ms,
             message=message,
         )
 
@@ -418,8 +396,6 @@ class CommandTool(Tool):
         output_parts: list[str],
         timeout_seconds: int,
         elapsed_ms: int,
-        *,
-        terminal: str | None = None,
     ) -> str:
         raw = "".join(output_parts)
         output = sanitize_terminal_output(raw).rstrip()
@@ -431,15 +407,12 @@ class CommandTool(Tool):
             output,
             CommandResultStatus.TIMED_OUT,
             elapsed_ms,
-            terminal=terminal,
             message=message,
         )
 
     @staticmethod
     def _format_rejected(
         guard_result: TerminalGuardResult,
-        *,
-        terminal: str | None = None,
     ) -> str:
         snap = guard_result.snapshot
         parts = [
@@ -447,23 +420,7 @@ class CommandTool(Tool):
             "<status>rejected</status>",
             f"<message>{xml_text(guard_result.message)}</message>",
         ]
-        if terminal is not None:
-            parts.append(f"<terminal>{xml_text(terminal)}</terminal>")
-        parts.extend(
-            [
-                "<diagnostic>",
-                f"<status>{snap.status.value}</status>",
-                f"<idle_ms>{snap.idle_ms}</idle_ms>",
-            ]
-        )
-        if snap.elapsed_ms is not None:
-            parts.append(f"<elapsed_ms>{snap.elapsed_ms}</elapsed_ms>")
-        if snap.cursor_line:
-            parts.append(f"<cursor>{xml_text(snap.cursor_line)}</cursor>")
-        if snap.last_output:
-            parts.append(f"<last_output>{xml_text(snap.last_output)}</last_output>")
         if snap.suggestion:
             parts.append(f"<suggestion>{xml_text(snap.suggestion)}</suggestion>")
-        parts.append("</diagnostic>")
         parts.append("</command_result>")
         return "\n".join(parts)

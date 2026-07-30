@@ -114,17 +114,19 @@ class TmuxPtyBackend(TerminalBackend):
         self._session_name = f"agent_{os.getpid()}_{id(self)}"
 
         loop = asyncio.get_running_loop()
-        self._session = await loop.run_in_executor(
-            None,
-            lambda: self._server.new_session(
+
+        def _create_session():
+            self._server.set_option("history-limit", 5000)
+            return self._server.new_session(
                 session_name=self._session_name,
                 attach=False,
                 window_name="main",
                 window_command=self._shell,
                 environment=env or {},
                 start_directory=cwd,
-            ),
-        )
+            )
+
+        self._session = await loop.run_in_executor(None, _create_session)
         window = self._session.windows[0]
         self._pane = window.panes[0]
 

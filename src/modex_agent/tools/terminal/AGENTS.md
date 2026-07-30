@@ -83,7 +83,8 @@ The **session registry** owning all named tabs (ADR-0010 two-axis: `shell_info`
 × `visibility`). The legacy OS-named managers and the second `TerminalManager`
 class have been folded inward into this single implementation; capability
 behaviours (LRU, persistence, memory-pressure buffer clearing) are flag-guarded
-private methods, default-off:
+private methods. Memory-pressure defaults to on (global 1M cross-tab ceiling);
+LRU and persistence remain opt-in:
 
 - **Named collection** — `name -> TerminalSession` map
 - **Default terminal** — the tab `ShellTool` uses when no name is specified
@@ -95,9 +96,9 @@ Key methods:
 - `get_or_create(name)` — get existing or create new, with LRU eviction
 - `get_default_session()` — return the default tab (or None)
 - `select_default(name)` — switch default tab
-- `list_sessions()` — list all tabs with metadata; distinguishes between
-  "unstarted" (backend never launched — kept alive) and "dead" (backend
-  started then died — purged from registry)
+- `list_sessions()` — list all tabs with metadata; dead tabs (backend started
+  then died) are filtered out by `TerminalTool list` so the agent only sees
+  active tabs
 - `close(name)` / `close_all()` — terminate sessions
 - `save_state()` / `load_state()` — persist/restore
 
@@ -112,10 +113,10 @@ Actions:
 |--------|---------|-----------------|
 | `open` | Create a new named tab | `name` (optional, auto-generated) |
 | `close` | Terminate a tab | `name` |
-| `list` | Show all tabs with metadata | — |
+| `list` | Show all active tabs (dead tabs filtered out) | — |
 | `select` | Switch default tab | `name` |
-| `history` | Show recent output of a tab | `name` |
 | `interrupt` | Send Ctrl+C to **default** tab | — |
+| `current` | Show current default tab status and output | — |
 
 **Important**: `terminal` does NOT execute commands — use `shell` for that.
 The agent generally does NOT need to `open` a terminal before using `shell`.

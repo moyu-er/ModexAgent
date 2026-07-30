@@ -235,20 +235,24 @@ class TerminalSession:
         return build_full_env(self._env)
 
     def _prompt_override_command(self) -> str | None:
-        """Shell command that forces a detectable prompt.
+        """Shell command that forces a detectable prompt, or None if not needed.
 
-        User shell configs (oh-my-zsh, Powerlevel10k, Starship) set
+        Only zsh needs this: oh-my-zsh / Powerlevel10k / Starship set
         prompts with non-ASCII glyphs (``❯``, ``➜``) that
-        ``is_prompt_ready`` cannot match.  This returns a command that
-        overrides the prompt AFTER the shell's rc files have loaded,
-        so the poll loop can reliably detect prompt-ready state.
+        ``is_prompt_ready`` cannot match.  The override runs AFTER the
+        shell's rc files have loaded, so the poll loop can reliably
+        detect prompt-ready state.
 
-        Returns ``None`` for non-readline shells (cmd/powershell).
+        bash and sh do NOT need an override — their default PS1
+        (``user@host:path$`` on WSL/Linux, ``hostname:dir user$`` on
+        macOS) is already matched by ``is_prompt_ready``'s user@host
+        pattern.  Injecting ``export PS1=...`` on bash pollutes the
+        output buffer with the command echo, leaking into
+        ``terminal current`` and the first command's output.
+
+        Returns ``None`` for bash, sh, cmd, and powershell.
         """
-        family = self.shell_info.family
-        if family in (ShellFamily.BASH, ShellFamily.SH):
-            return r'export PS1="\u@\h:\w\$ "'
-        if family is ShellFamily.ZSH:
+        if self.shell_info.family is ShellFamily.ZSH:
             return 'export PROMPT="%n@%m:%~ %# "; export PS1="%n@%m:%~ $ "'
         return None
 
