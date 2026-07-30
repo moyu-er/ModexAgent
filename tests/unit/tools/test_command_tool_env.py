@@ -11,8 +11,8 @@ Verifies the six acceptance criteria from the C3 spec:
    the recovery path (``_ensure_backend_alive``) re-starts with the same
    env.
 5. ``test_command_tool_injects_env_from_contextvar`` -- CommandTool reads
-   ``_modex_env`` + ``_current_session_id`` and passes env to
-   ``ensure_started``.
+   ``_modex_env`` and passes env to ``ensure_started``. Always uses
+   ``get_default()`` for tab selection (not ``_current_session_id``).
 6. ``test_command_tool_fallback_no_contextvar`` -- without contextvars,
    CommandTool falls back to ``get_default()`` + ``ensure_started(env=None)``.
 
@@ -280,11 +280,10 @@ async def test_ensure_backend_alive_uses_mutated_env(
 async def test_command_tool_injects_env_from_contextvar(
     _clean_contextvars: None,
 ) -> None:
-    """CommandTool reads ``_modex_env`` + ``_current_session_id`` and injects env.
+    """CommandTool reads ``_modex_env`` and injects env, always uses get_default().
 
-    With ``_modex_env={"MODEX_TASK_ID": "t1"}`` and
-    ``_current_session_id="sid-1"``:
-      - session comes from ``get_or_create("sid-1")`` (name == "sid-1")
+    With ``_modex_env={"MODEX_TASK_ID": "t1"}``:
+      - session comes from ``get_default()`` (name == "default")
       - ``ensure_started`` receives ``build_full_env({"MODEX_TASK_ID": "t1"})``
       - backend ``start()`` env contains ``MODEX_TASK_ID``
     """
@@ -294,7 +293,6 @@ async def test_command_tool_injects_env_from_contextvar(
     tool = CommandTool(manager=manager, registry=registry, config=_make_config())
 
     token_env = _modex_env.set({"MODEX_TASK_ID": "t1"})
-    token_sid = _current_session_id.set("sid-1")
     try:
         fake_result = PollResult(
             outcome=PollOutcome.PROMPT_DETECTED,
@@ -308,15 +306,12 @@ async def test_command_tool_injects_env_from_contextvar(
             await tool.execute(command="echo hi")
     finally:
         _modex_env.reset(token_env)
-        _current_session_id.reset(token_sid)
 
-    # Session was created via get_or_create("sid-1").
     assert backend.start_calls, "expected start() to be called"
-    session = manager.get("sid-1")
+    session = manager.get("default")
     assert session is not None
-    assert session.name == "sid-1"
+    assert session.name == "default"
 
-    # Env was injected via build_full_env({"MODEX_TASK_ID": "t1"}).
     assert backend.start_calls[0].env is not None
     assert backend.start_calls[0].env["MODEX_TASK_ID"] == "t1"
 

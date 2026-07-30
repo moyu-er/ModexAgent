@@ -56,7 +56,7 @@ class TerminalTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Manage persistent terminal tabs for the 'command' and 'process' tools. "
+            "Manage persistent terminal tabs for the 'bash' and 'process' tools. "
             "Every command runs in the CURRENTLY SELECTED tab — use 'open' or 'select' "
             "to switch context before running commands.\n\n"
             "Actions:\n"
@@ -125,7 +125,7 @@ class TerminalTool(Tool):
             await session.ensure_started()
             return (
                 f"Opened terminal tab '{target_name}'. "
-                f"It is now the default — 'command' and 'process' tools will use it."
+                f"It is now the default — 'bash' and 'process' tools will use it."
             )
 
         if action_enum == TerminalAction.CLOSE:
@@ -175,7 +175,7 @@ class TerminalTool(Tool):
             cursor = sanitize_terminal_output(resolve_cursor_line(segment)).strip()
             return (
                 "<terminal_result>\n"
-                f"<output>{xml_text(cursor or '(interrupted)')}</output>\n"
+                f"<output>\n{xml_text(cursor or '(interrupted)')}\n</output>\n"
                 "</terminal_result>"
             )
 
@@ -205,15 +205,14 @@ class TerminalTool(Tool):
             if no_output_ms_str:
                 parts.append(f"<no_output_ms>{no_output_ms_str}</no_output_ms>")
 
+            parts.append(f"<tab_name>{xml_text(session.name)}</tab_name>")
+
             if self._registry:
                 running = self._registry.get_running_by_terminal(session.name)
                 if running:
                     parts.append(f"<running_command>{xml_text(running.command)}</running_command>")
 
-            if session.window_title:
-                parts.append(f"<tab_title>{xml_text(session.window_title)}</tab_title>")
-
-            parts.append(f"<output>{xml_text(sanitize_terminal_output(output) or '(no output yet)')}</output>")
+            parts.append(f"<output>\n{xml_text(sanitize_terminal_output(output) or '(no output yet)')}\n</output>")
 
             # Interference detection for visible terminals
             if session.detect_interference(status):

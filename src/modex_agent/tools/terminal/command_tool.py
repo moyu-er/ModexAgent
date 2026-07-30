@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 from modex_agent.core.tool_manager import Tool
 from modex_agent.tools.terminal.config import TerminalRuntimeConfig
-from modex_agent.tools.terminal.guard import check_command_writable
+from modex_agent.tools.terminal.guard import check_command_writable, TerminalGuardResult
 from modex_agent.tools.terminal.managers import TerminalManagerBase
 from modex_agent.tools.terminal.process_registry import ProcessRegistry, RunningSessionRuntime
 from modex_agent.tools.terminal.prompt import (
@@ -48,7 +48,7 @@ def _build_command_xml(
         parts.append(f"<hint>{xml_text(hint)}</hint>")
     parts.extend(
         [
-            f"<output>{xml_text(output)}</output>",
+            f"<output>\n{xml_text(output)}\n</output>",
             f"<status>{status.value}</status>",
             f"<duration_ms>{elapsed_ms}</duration_ms>",
         ]
@@ -121,15 +121,11 @@ class CommandTool(Tool):
         command: str,
         **_kwargs: object,
     ) -> str:
-        from modex_agent.runtime.env_context import _current_session_id, _modex_env
+        from modex_agent.runtime.env_context import _modex_env
         from modex_agent.tools.terminal.env import build_full_env
 
-        sid = _current_session_id.get()
         overrides = _modex_env.get()
-        if sid is not None:
-            session = await self._manager.get_or_create(sid)
-        else:
-            session = await self._manager.get_default()
+        session = await self._manager.get_default()
         terminal_name = session.name
         is_new_tab = not session.backend_started
 
@@ -337,7 +333,7 @@ class CommandTool(Tool):
                 tui_text = sanitize_terminal_output(segment.text).rstrip()
                 xml = xml.replace(
                     "</command_result>",
-                    f"\n<tui_screen>{xml_text(tui_text)}</tui_screen>\n</command_result>",
+                    f"\n<tui_screen>\n{xml_text(tui_text)}\n</tui_screen>\n</command_result>",
                 )
         else:
             segment = await terminal_session.current_segment()
@@ -346,7 +342,7 @@ class CommandTool(Tool):
                 cursor_text = sanitize_terminal_output(cursor).rstrip()
                 xml = xml.replace(
                     "</command_result>",
-                    f"\n<cursor_line>{xml_text(cursor_text)}</cursor_line>\n</command_result>",
+                    f"\n<cursor_line>\n{xml_text(cursor_text)}\n</cursor_line>\n</command_result>",
                 )
 
         return xml

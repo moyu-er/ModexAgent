@@ -98,7 +98,7 @@ def _build_process_xml(
 ) -> str:
     parts = [
         "<process_result>",
-        f"<output>{xml_text(output)}</output>",
+        f"<output>\n{xml_text(output)}\n</output>",
     ]
     if status is not None:
         parts.append(f"<status>{xml_text(status)}</status>")
