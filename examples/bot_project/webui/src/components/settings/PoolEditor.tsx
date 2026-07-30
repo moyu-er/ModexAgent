@@ -119,7 +119,7 @@ const SYSTEM_PROMPT_MODE_HINT_KEY: Record<SystemPromptMode, MessageKey> = {
 };
 const FORK_MAX_DEFAULT = 80;
 const FORK_MAX_MAX = 100;
-const SUPPLEMENTS = ["ast_grep", "todo"] as const;
+const SUPPLEMENTS = ["ast_grep", "todo", "aci"] as const;
 
 // Seven preset AgentRole values (mirror modex_agent.core.constants.AgentRole).
 // Custom strings are also allowed — the backend stores list[str] verbatim.

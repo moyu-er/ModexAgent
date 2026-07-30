@@ -8,4 +8,5 @@ max_steps: 100
 tool_preset: read_write
 tool_supplements:
 - todo
+- aci
 context_mode: fresh

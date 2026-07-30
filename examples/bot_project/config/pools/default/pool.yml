@@ -5,9 +5,11 @@ description: >-
   from delegation; otherwise answers directly. Use as the default for
   ambiguous or cross-domain requests.
 max_steps: 50
-use_terminal: false
-terminal_visibility: false
+use_terminal: true
+terminal_visibility: true
 tool_preset: full
+tool_supplements:
+- aci
 approval:
   enabled: true
   tools:

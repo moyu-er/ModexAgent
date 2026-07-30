@@ -13,6 +13,7 @@ tool_preset: full
 tool_supplements:
 - ast_grep
 - todo
+- aci
 approval:
   enabled: true
   tools:
