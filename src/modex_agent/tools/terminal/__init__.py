@@ -13,15 +13,20 @@ from modex_agent.tools.terminal.process_registry import ProcessRegistry
 from modex_agent.tools.terminal.process_tool import ProcessTool
 from modex_agent.tools.terminal.session import TerminalInfo, TerminalSession
 from modex_agent.tools.terminal.subprocess_tool import (
+    CmdSubprocessExecutor,
+    PosixSubprocessExecutor,
     ShellExecutor,
     SubprocessExecutor,
     SubprocessTool,
+    create_subprocess_executor,
 )
 from modex_agent.tools.terminal.tool import TerminalAction, TerminalTool
 
 __all__ = [
     "BaseTerminalManager",
+    "CmdSubprocessExecutor",
     "CommandTool",
+    "PosixSubprocessExecutor",
     "ProcessRegistry",
     "ProcessTool",
     "ShellExecutor",
@@ -33,5 +38,6 @@ __all__ = [
     "TerminalManagerBase",
     "TerminalSession",
     "TerminalTool",
+    "create_subprocess_executor",
     "create_terminal_manager",
 ]

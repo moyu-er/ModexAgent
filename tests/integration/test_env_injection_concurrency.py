@@ -65,7 +65,7 @@ from modex_agent.tools.terminal.managers import BaseTerminalManager
 from modex_agent.tools.terminal.poll_loop import PollOutcome, PollResult
 from modex_agent.tools.terminal.process_registry import ProcessRegistry
 from modex_agent.tools.terminal.results import TerminalRead, TerminalSegment
-from modex_agent.tools.terminal.subprocess_tool import SubprocessExecutor
+from modex_agent.tools.terminal.subprocess_tool import create_subprocess_executor
 from modex_agent.tools.terminal.types import (
     Platform,
     ShellFamily,
@@ -237,7 +237,7 @@ async def test_subprocess_executor_concurrent_isolation(
         token = _modex_env.set({"MODEX_TASK_ID": "task-a"})
         await asyncio.sleep(0)
         try:
-            executor = SubprocessExecutor()
+            executor = create_subprocess_executor()
             await executor.execute("dummy-a")
         finally:
             _modex_env.reset(token)
@@ -246,13 +246,13 @@ async def test_subprocess_executor_concurrent_isolation(
         token = _modex_env.set({"MODEX_TASK_ID": "task-b"})
         await asyncio.sleep(0)
         try:
-            executor = SubprocessExecutor()
+            executor = create_subprocess_executor()
             await executor.execute("dummy-b")
         finally:
             _modex_env.reset(token)
 
     with patch(
-        "modex_agent.tools.terminal.subprocess_tool.asyncio.create_subprocess_shell",
+        "modex_agent.tools.terminal.subprocess_tool.asyncio.create_subprocess_exec",
         new=mock_create,
     ):
         await asyncio.gather(task_a(), task_b())
@@ -386,15 +386,17 @@ async def test_subprocess_executor_fallback_no_contextvar(
     mock_create = AsyncMock(return_value=fake_process)
 
     with patch(
-        "modex_agent.tools.terminal.subprocess_tool.asyncio.create_subprocess_shell",
+        "modex_agent.tools.terminal.subprocess_tool.asyncio.create_subprocess_exec",
         new=mock_create,
     ):
-        executor = SubprocessExecutor()
+        executor = create_subprocess_executor()
         await executor.execute("echo hi")
 
     assert mock_create.await_count == 1
     env_passed = mock_create.call_args.kwargs["env"]
-    assert env_passed == build_full_env()
+    expected = build_full_env()
+    expected["NO_COLOR"] = "1"
+    assert env_passed == expected
     assert not any(k.startswith("MODEX_") for k in env_passed)
 
 

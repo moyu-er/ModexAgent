@@ -56,7 +56,7 @@ from modex_agent.tools.presets import (
     get_preset_tools,
     get_supplement_tools,
 )
-from modex_agent.tools.terminal import SubprocessExecutor, SubprocessTool
+from modex_agent.tools.terminal import SubprocessTool, create_subprocess_executor
 from modex_agent.tools.terminal.backends.factory import (
     UnsupportedVisibilityForTransport,
 )
@@ -281,7 +281,7 @@ class _PoolAssemblyMixin:
         # workspace-scoped SubprocessTool; the terminal manager (when present)
         # registers the richer Command/Process/Terminal tools below.
         def _make_bash() -> Tool:
-            sub = SubprocessTool(executor=SubprocessExecutor(), timeout=300)
+            sub = SubprocessTool(executor=create_subprocess_executor(), timeout=90)
             if root_provider is not None:
                 wrapped = wrap_standard_tools([sub], root_provider)
                 return wrapped[0]

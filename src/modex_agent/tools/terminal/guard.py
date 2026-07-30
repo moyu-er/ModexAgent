@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass
 
 from modex_agent.tools.terminal.config import TerminalRuntimeConfig
+from modex_agent.tools.terminal.process_registry import ProcessRegistry
 from modex_agent.tools.terminal.session import TerminalSession
 from modex_agent.tools.terminal.types import TerminalCommandStatus
 
@@ -86,6 +87,37 @@ _PROCESS_ALLOWED: frozenset[TerminalCommandStatus] = frozenset(
 )
 
 
+async def check_process_writable(
+    session: TerminalSession,
+    config: TerminalRuntimeConfig | None = None,
+    registry: ProcessRegistry | None = None,
+) -> TerminalGuardResult | None:
+    """Guard for ProcessTool: allow interaction with running processes.
+
+    WAITING_INPUT is allowed — ProcessTool is used to type passwords.
+    PAGINATED is allowed — ProcessTool can send 'q' or Space to control the pager.
+    EXECUTING is allowed when the running process has not produced any
+    output — this covers silent stdin consumers like ``cat > file`` that
+    never print a prompt but are waiting for input.
+    EXECUTING with prior output (e.g. build output) is still rejected
+    to avoid injecting data into a command that isn't expecting it.
+    LONG_RUNNING and STUCK are still rejected.
+    """
+    cfg = config or TerminalRuntimeConfig()
+    result = await _check_writable(session, _PROCESS_ALLOWED, cfg)
+    if result is None:
+        return None
+
+    if result.status == TerminalCommandStatus.EXECUTING and registry is not None:
+        running = registry.get_running_by_terminal(session.name)
+        if running is not None:
+            runtime = registry.running_runtime(running.id)
+            if runtime is not None and runtime.idle_ms >= 1000:
+                return None
+
+    return result
+
+
 async def _check_writable(
     session: TerminalSession,
     allowed: frozenset[TerminalCommandStatus],
@@ -138,20 +170,6 @@ async def check_command_writable(
     PAGINATED is rejected — a new command would be swallowed by the pager.
     """
     return await _check_writable(session, _COMMAND_ALLOWED, config)
-
-
-async def check_process_writable(
-    session: TerminalSession,
-    config: TerminalRuntimeConfig | None = None,
-) -> TerminalGuardResult | None:
-    """Guard for ProcessTool: allow interaction with running processes.
-
-    WAITING_INPUT is allowed — ProcessTool is used to type passwords.
-    PAGINATED is allowed — ProcessTool can send 'q' or Space to control the pager.
-    EXECUTING/LONG_RUNNING/STUCK are still rejected to avoid injecting data
-    into a command that isn't expecting it (e.g. during build output).
-    """
-    return await _check_writable(session, _PROCESS_ALLOWED, config)
 
 
 # Backward-compatible alias

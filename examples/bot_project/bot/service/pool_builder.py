@@ -106,7 +106,7 @@ from modex_agent.tools.presets import (
     get_preset_tools,
     get_supplement_tools,
 )
-from modex_agent.tools.terminal import SubprocessExecutor, SubprocessTool
+from modex_agent.tools.terminal import SubprocessTool, create_subprocess_executor
 from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 from modex_agent.trace.cassette import (
     CassetteFlushHook,
@@ -713,7 +713,7 @@ def build_main_agent_tool_names(
     preset = ToolPreset(tool_preset)
 
     def _make_bash() -> Any:
-        return SubprocessTool(executor=SubprocessExecutor(), timeout=300)
+        return SubprocessTool(executor=create_subprocess_executor(), timeout=90)
 
     # File/search/bash tool names per preset. The factory mirrors
     # _build_tools' _make_bash so the bash name surfaces for

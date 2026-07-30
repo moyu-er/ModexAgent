@@ -3,11 +3,29 @@
 ADR-0010: backend selection uses an explicit (transport, visibility) capability
 table. Unsupported combinations raise ``UnsupportedVisibilityForTransport``
 rather than silently falling back.
+
+Transport × Visibility matrix:
+
+  Windows (winpty transport):
+    HIDDEN  → WinptyHiddenBackend (in-process)
+    VISIBLE → WinptyConsoleWindowBackend (host process + CREATE_NEW_CONSOLE)
+
+  POSIX (pty transport — native PTY via pexpect):
+    HIDDEN  → PexpectPtyBackend (in-process pty.spawn)
+
+  POSIX (tmux transport — Unix-only control protocol):
+    HIDDEN  → TmuxPtyBackend(HIDDEN) (detached session)
+    VISIBLE → TmuxPtyBackend(VISIBLE) (detached session + terminal window attach)
+
+Factory priority on POSIX:
+  HIDDEN:  pty transport (pexpect, no external binary) preferred → tmux fallback.
+  VISIBLE: tmux transport (detached + terminal window attach).
 """
 
 from __future__ import annotations
 
 import logging
+import shutil
 import sys
 
 from modex_agent.tools.terminal.backends.base import TerminalBackend
@@ -16,13 +34,8 @@ from modex_agent.tools.terminal.types import TerminalVisibility
 logger = logging.getLogger(__name__)
 
 
-class UnsupportedVisibilityForTransport(Exception):  # noqa: N818 — ADR-0010 mandates this exception name
-    """The requested (transport, visibility) combination cannot be served.
-
-    Raised by ``create_pty_backend`` when the platform-preferred transport
-    cannot realise the requested visibility and no alternative transport is
-    available. Per ADR-0010 the factory must reject rather than fall back.
-    """
+class UnsupportedVisibilityForTransport(Exception):  # noqa: N818
+    """The requested (transport, visibility) combination cannot be served."""
 
 
 def _is_pexpect_available() -> bool:
@@ -37,10 +50,9 @@ def _is_pexpect_available() -> bool:
 def _is_libtmux_available() -> bool:
     try:
         import libtmux  # noqa: F401
-
-        return True
     except ImportError:
         return False
+    return shutil.which("tmux") is not None
 
 
 def _create_pexpect_backend() -> TerminalBackend:
@@ -72,50 +84,22 @@ def _create_winpty_visible_backend() -> TerminalBackend:
 def create_pty_backend(
     visibility: TerminalVisibility = TerminalVisibility.HIDDEN,
 ) -> TerminalBackend:
-    """Create a PTY backend for the current platform with the requested visibility.
-
-    ADR-0010 selection rule:
-
-    - Windows: winpty transport serves both visibilities (two distinct subclasses
-      today; structural visibility difference — see ADR-0010 Decision 4).
-    - Linux/macOS with HIDDEN: pexpect (preferred), tmux (fallback).
-    - Linux/macOS with VISIBLE: tmux (only).
-    - The factory rejects unsupported combinations explicitly.
-
-    Backwards-compat: on Linux/macOS the default ``visibility=HIDDEN`` is
-    equivalent to the old 0-arg call (pexpect preferred, tmux fallback).
-    On Windows the old 0-arg call returned ``WinptyConsoleWindowBackend``
-    (legacy alias: ``VisibleWindowsPtyBackend``);
-    the new default returns ``WinptyHiddenBackend`` (legacy alias:
-    ``WindowsHiddenPtyBackend``) — **known Windows default-flip behaviour
-    change**. No production caller uses the 0-arg factory on Windows
-    (the Windows managers bypass the factory by passing
-    ``backend_factory=WinptyHiddenBackend`` / ``WinptyConsoleWindowBackend``
-    directly), but ``manager.py:TerminalManager`` (deprecated, deleted in
-    Phase 3 Task 9) wires ``self._backend_factory = create_pty_backend``,
-    so the e2e verification tests ``tests/verify_terminal_e2e_*.py`` that
-    instantiate ``TerminalManager(...)`` directly will silently start
-    receiving ``WinptyHiddenBackend`` sessions on Windows post-Phase-1.
-    That migration is finalised by Phase 6 Task 13 (deferred). Until then:
-    document the change, do NOT silently re-tune verify tests to fake
-    VISIBLE — the folded-in ``BaseTerminalManager(visibility=...)``
-    parameter is the right surface.
-    """
+    """Create a PTY backend for the current platform with the requested visibility."""
     if sys.platform == "win32":
         if visibility == TerminalVisibility.VISIBLE:
             return _create_winpty_visible_backend()
         return _create_winpty_hidden_backend()
 
-    # Linux / macOS
+    # POSIX (Linux / macOS)
     if visibility == TerminalVisibility.VISIBLE:
         if not _is_libtmux_available():
             raise UnsupportedVisibilityForTransport(
                 "No transport available for VISIBLE on this platform: "
-                "libtmux is required (pexpect cannot serve VISIBLE — see ADR-0010 Decision 5)."
+                "libtmux + tmux binary required (tmux detached + terminal window attach)."
             )
         return _create_tmux_backend(visibility=TerminalVisibility.VISIBLE)
 
-    # HIDDEN on Linux/macOS
+    # HIDDEN on POSIX
     if _is_pexpect_available():
         return _create_pexpect_backend()
     if _is_libtmux_available():

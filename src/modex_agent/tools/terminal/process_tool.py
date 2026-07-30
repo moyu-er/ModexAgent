@@ -228,7 +228,7 @@ class ProcessTool(Tool):
             "required": ["action"],
         }
 
-    def result_metadata(self, result: Any) -> tuple["ContentFormat | None", list[str] | None]:
+    def result_metadata(self, result: Any) -> tuple[ContentFormat | None, list[str] | None]:
         """Declare XML truncation metadata for <process_result> output."""
         from modex_agent.tools.terminal.types import terminal_result_metadata
 
@@ -348,7 +348,9 @@ class ProcessTool(Tool):
                 _A.WRITE.value, "[Error] No running process session found for default terminal"
             )
 
-        guard_result = await check_process_writable(terminal_session, config=self._config)
+        guard_result = await check_process_writable(
+            terminal_session, config=self._config, registry=self._registry
+        )
         if guard_result is not None:
             return self._format_write_rejected(guard_result, terminal_name=terminal_session.name)
 

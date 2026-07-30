@@ -57,11 +57,11 @@ def _make_file_tools() -> list[Tool]:
 
 def _make_shell_tool(
     terminal_manager: Any | None = None,
-    timeout: int = 300,
+    timeout: int = 90,
 ) -> Tool:
-    from modex_agent.tools.terminal import SubprocessExecutor, SubprocessTool
+    from modex_agent.tools.terminal import SubprocessTool, create_subprocess_executor
 
-    return SubprocessTool(executor=SubprocessExecutor(), timeout=timeout)
+    return SubprocessTool(executor=create_subprocess_executor(), timeout=timeout)
 
 
 def _make_search_tools() -> list[Tool]:

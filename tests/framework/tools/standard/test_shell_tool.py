@@ -1,59 +1,65 @@
-"""Tests for SubprocessTool."""
+"""Tests for SubprocessTool timeout invariants.
+
+Verifies the timeout layering invariant: the outer ToolTimeoutInterceptor
+deadline (``TurnTimeoutPolicy.tool_timeout_seconds``, default 120s) must
+exceed SubprocessTool's own timeout (default 90s) so that SubprocessTool's
+internal timeout fires first — returning partial output — rather than
+being cancelled by the interceptor (which would lose all output).
+
+The invariant lives across two layers:
+- Inner: ``SubprocessTool.timeout`` — asyncio.wait_for inside execute()
+- Outer: ``ToolTimeoutInterceptor`` — ``asyncio.timeout(safety.turn.tool_timeout_seconds)``
+"""
+
+from __future__ import annotations
+
+from modex_agent.core.constants import DefaultValues
+from modex_agent.core.llm_struct import RuntimeSafetyPolicy, TurnTimeoutPolicy
+from modex_agent.tools.terminal.subprocess_tool import SubprocessTool, create_subprocess_executor
 
 
-from modex_agent.ioc.configs.safety import SafetyConfig
-from modex_agent.tools.terminal.subprocess_tool import SubprocessExecutor, SubprocessTool
+class TestSubprocessToolTimeoutDefaults:
+    def test_default_timeout_is_90(self) -> None:
+        """Default timeout is 90s — short enough for interactive use,
+        leaving 30s margin under the 120s interceptor deadline."""
+        tool = SubprocessTool(executor=create_subprocess_executor())
+        assert tool.timeout == 90
+
+    def test_explicit_timeout_respected(self) -> None:
+        """Explicit timeout override is honoured."""
+        tool = SubprocessTool(executor=create_subprocess_executor(), timeout=60)
+        assert tool.timeout == 60
 
 
-class TestSubprocessToolConfig:
-    def test_config_timeout_matches_tool_timeout(self) -> None:
-        """SubprocessTool.config.timeout must be >= self.timeout so that
-        InMemoryToolManager's outer asyncio.wait_for never preempts
-        SubprocessTool's own timeout handling (which returns partial output).
-        """
-        tool = SubprocessTool(executor=SubprocessExecutor(), timeout=300)
-        assert tool.config.timeout >= tool.timeout, (
-            f"ToolManager timeout ({tool.config.timeout}s) must not be less than "
-            f"SubprocessTool timeout ({tool.timeout}s) or partial output on timeout is lost"
+class TestTimeoutInvariant:
+    """The outer interceptor deadline must exceed the inner tool timeout."""
+
+    def test_interceptor_exceeds_subprocess_default(self) -> None:
+        """``TurnTimeoutPolicy.tool_timeout_seconds`` (120s) >
+        ``SubprocessTool.timeout`` (90s) so the tool's own timeout fires
+        first and returns partial output."""
+        safety = RuntimeSafetyPolicy()
+        shell = SubprocessTool(executor=create_subprocess_executor())
+        assert safety.turn.tool_timeout_seconds > shell.timeout, (
+            f"TurnTimeoutPolicy.tool_timeout_seconds ({safety.turn.tool_timeout_seconds}s) "
+            f"must be greater than SubprocessTool.timeout ({shell.timeout}s) or the "
+            f"interceptor cancels the tool before it can return partial output."
         )
 
-    def test_config_timeout_has_margin(self) -> None:
-        """There should be a safety margin between the two timeouts."""
-        tool = SubprocessTool(executor=SubprocessExecutor(), timeout=300)
-        assert tool.config.timeout >= tool.timeout + 10, (
-            f"Expected at least 10s margin, got {tool.config.timeout - tool.timeout}s"
+    def test_interceptor_margin(self) -> None:
+        """At least 30s margin between interceptor and tool timeout to
+        account for scheduling jitter."""
+        safety = RuntimeSafetyPolicy()
+        shell = SubprocessTool(executor=create_subprocess_executor())
+        margin = safety.turn.tool_timeout_seconds - shell.timeout
+        assert margin >= 30, (
+            f"Expected at least 30s margin, got {margin}s — "
+            f"interceptor ({safety.turn.tool_timeout_seconds}s) too close to "
+            f"tool ({shell.timeout}s)."
         )
 
-    def test_default_timeout_values(self) -> None:
-        """Default timeout should be 300s with ToolManager margin applied."""
-        tool = SubprocessTool(executor=SubprocessExecutor())
-        assert tool.timeout == 300
-        assert tool.config.timeout >= 310
-
-
-class TestSafetyTimeoutNotTruncatesShell:
-    def test_safety_tool_timeout_exceeds_shell_timeout(self) -> None:
-        """SafetyConfig.turn.tool_timeout must exceed SubprocessTool.timeout so that
-        outer ReActAgent/Interceptor timeout never preempts SubprocessTool's own
-        timeout handling.  When outer fires first, tool coroutine is cancelled
-        and partial output is lost -- tool has no chance to return anything.
-        """
-        safety = SafetyConfig()
-        shell = SubprocessTool(executor=SubprocessExecutor(), timeout=300)
-        assert safety.turn.tool_timeout > shell.timeout, (
-            f"Safety turn.tool_timeout ({safety.turn.tool_timeout}s) must be "
-            f"greater than SubprocessTool.timeout ({shell.timeout}s) or outer "
-            f"interceptor cancels the tool coroutine before it can return "
-            f"partial output."
-        )
-
-    def test_safety_tool_timeout_has_margin(self) -> None:
-        """There should be a comfortable margin between safety timeout and
-        shell timeout to account for scheduling jitter.
-        """
-        safety = SafetyConfig()
-        shell = SubprocessTool(executor=SubprocessExecutor(), timeout=300)
-        assert safety.turn.tool_timeout >= shell.timeout + 30, (
-            f"Expected at least 30s margin, got "
-            f"{safety.turn.tool_timeout - shell.timeout}s"
-        )
+    def test_default_tool_timeout_matches_constants(self) -> None:
+        """``TurnTimeoutPolicy.tool_timeout_seconds`` default equals
+        ``DefaultValues.TOOL_TIMEOUT_SECONDS``."""
+        policy = TurnTimeoutPolicy()
+        assert policy.tool_timeout_seconds == DefaultValues.TOOL_TIMEOUT_SECONDS
