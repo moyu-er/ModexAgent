@@ -151,6 +151,7 @@ class TestTranscriptPersistence:
             tr = MagicMock()
             tr.result = "contents"
             tr.error = None
+            tr.message_content = MagicMock(return_value="contents")
 
             with bind_workspace_root(root):
                 await emitter.emit(ReActEvent.TOOL_CALL_START, tc)

@@ -41,11 +41,16 @@ from typing import Any
 
 import yaml
 
+from bot.config.webui_config import build_control_origin
 from modex_agent.agents.external_coding.agent import StreamingProviderBackend
 from modex_agent.agents.external_coding.backend_provider import PoolScopedBackendProvider
 from modex_agent.agents.external_coding.builder import ExternalCodingAgentBuilder
+from modex_agent.agents.external_coding.child_discovery import (
+    ExternalChildSessionDiscoverySink,
+)
 from modex_agent.agents.external_coding.cli_resolver import resolve_modexctl_bin_dir
 from modex_agent.agents.external_coding.contracts import ProviderEventParser
+from modex_agent.agents.external_coding.events import ExternalCodingEvent
 from modex_agent.agents.external_coding.paths import ProviderKind
 from modex_agent.agents.external_coding.providers.opencode_backend import OpenCodeBackend
 from modex_agent.agents.external_coding.providers.opencode_server_backend import (
@@ -55,12 +60,16 @@ from modex_agent.agents.external_coding.providers.opencode_server_backend import
 from modex_agent.agents.external_coding.providers.opencode_sse_parser import OpenCodeSSEParser
 from modex_agent.agents.external_coding.providers.pi_backend import PiBackend
 from modex_agent.agents.external_coding.providers.pi_parser import PiEventParser
+from modex_agent.agents.external_coding.session_store import ExternalSessionMapStore
 from modex_agent.agents.external_coding.types import (
     BackendResult,
     Emission,
     ExecOptions,
     ExternalEnvSpec,
 )
+from modex_agent.core.emitter import ContentEmitter
+from modex_agent.core.session_id import SessionIdFactory
+from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.multi_agent.descriptor import AgentDescriptor, AgentInstance
 from modex_agent.multi_agent.execution_strategy import (
     ExecutionStrategy as ExecutionStrategyABC,
@@ -72,8 +81,8 @@ from modex_agent.multi_agent.execution_strategy import (
 from modex_agent.multi_agent.factory import DefaultAgentFactory
 from modex_agent.multi_agent.pool_config import PoolStore
 from modex_agent.multi_agent.pool_config.specs import PoolSpec
+from modex_agent.pipeline.adapters import OutputAdapter
 
-from bot.config.webui_config import build_control_origin
 from ._assembly_helpers import _PoolAssemblyMixin
 
 logger = logging.getLogger(__name__)
@@ -159,6 +168,35 @@ class _OpenCodeFallbackBackend(StreamingProviderBackend):
             raise first_error
 
 
+def _build_child_discovery_collaborators(
+    *,
+    session_registry: SessionRegistry | None,
+    session_map_store: ExternalSessionMapStore,
+    provider_kind: ProviderKind,
+    session_factory: SessionIdFactory,
+) -> tuple[ExternalChildSessionDiscoverySink | None, Callable[[str], ContentEmitter[ExternalCodingEvent]] | None]:
+    """Build child-session discovery sink + emitter factory.
+
+    Shared by the main-agent path (``ExternalCodingAwareFactory.create_agent``)
+    and the subagent path (``BotSubagentExternalCodingBuilder.build``) so both
+    get identical child-capture wiring.
+
+    Returns ``(sink, emitter_factory)``. ``sink`` is ``None`` when
+    ``session_registry`` is unavailable. ``emitter_factory`` is ``None`` —
+    the WebUI-injected emitter factory is set later via ``set_emitter_factory``
+    which propagates to ``set_child_emitter_factory`` on the agent.
+    """
+    sink: ExternalChildSessionDiscoverySink | None = None
+    if session_registry is not None:
+        sink = ExternalChildSessionDiscoverySink(
+            session_factory=session_factory,
+            session_registry=session_registry,
+            session_map_store=session_map_store,
+            provider_kind=provider_kind,
+        )
+    return sink, None
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Factory (moved from _external_coding_wiring.py)
 # ═══════════════════════════════════════════════════════════════════════════
@@ -237,9 +275,13 @@ class ExternalCodingAwareFactory(DefaultAgentFactory):
         The external agent communicates via ``modexctl send`` CLI, not
         ``send_to_agent``.
         """
+        from modex_agent.agents.external_coding.child_discovery import (
+            ExternalChildSessionDiscoverySink,
+        )
         from modex_agent.agents.external_coding.turn_runner import ExternalTurnRunner
         from modex_agent.core.context import InMemoryContextManager
         from modex_agent.core.llm_struct import RuntimeSafetyPolicy
+        from modex_agent.core.session_id import SessionIdFactory
         from modex_agent.messaging.broker_bridge import (
             BrokerInputAdapter,
             BrokerOutputAdapter,
@@ -265,6 +307,15 @@ class ExternalCodingAwareFactory(DefaultAgentFactory):
                 f"ExternalCodingAwareFactory missing external_coding deps: {', '.join(missing)}"
             )
         backend_provider = PoolScopedBackendProvider(deps["backend"])
+
+        session_id_factory = SessionIdFactory()
+        child_discovery_sink, child_emitter_factory = _build_child_discovery_collaborators(
+            session_registry=self._session_registry,
+            session_map_store=deps["session_store"],
+            provider_kind=deps["provider_kind"],
+            session_factory=session_id_factory,
+        )
+
         agent = ExternalCodingAgentBuilder.build_agent(
             descriptor,
             provider=None,
@@ -274,6 +325,10 @@ class ExternalCodingAwareFactory(DefaultAgentFactory):
             provider_kind=deps["provider_kind"],
             spec=deps["spec"],
             base_env=deps.get("base_env"),
+            child_discovery_sink=child_discovery_sink,
+            session_registry=self._session_registry,
+            session_id_factory=session_id_factory,
+            child_emitter_factory=child_emitter_factory,
         )
 
         # 2. Assemble pipeline via shared helper (converged with subagent path).

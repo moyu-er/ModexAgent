@@ -173,6 +173,41 @@ async def derive_sessions_from_transcripts(
     return derived
 
 
+async def _resolve_pool(
+    server: WebUIServer,
+    session: SessionInfo,
+    store: SessionStore | None,
+    pool_cache: dict[str, str | None],
+) -> str | None:
+    """Resolve the pool a session belongs to.
+
+    Unified derivation chain (no provider-specific branches):
+    1. Direct agent→pool mapping (registered agents + template types).
+    2. Parent inheritance — if the agent is not registered but the
+       session has a registered parent, inherit the parent's pool.
+    3. None — the session is an orphan with no known pool.
+    """
+    pool = server._pool_for_agent_name(session.agent_name)
+    if pool is not None:
+        return pool
+    parent_id = session.parent_session_id
+    if parent_id is None:
+        return None
+    cached = pool_cache.get(parent_id)
+    if cached is not None:
+        return cached
+    if parent_id in pool_cache:
+        return None
+    if store is not None:
+        parent = await store.get(parent_id)
+        if parent is not None:
+            parent_pool = server._pool_for_agent_name(parent.agent_name)
+            pool_cache[parent_id] = parent_pool
+            return parent_pool
+    pool_cache[parent_id] = None
+    return None
+
+
 # ── Handlers ────────────────────────────────────────────────────────────────
 
 
@@ -260,39 +295,32 @@ async def handle_sessions(request: web.Request) -> web.Response:
     seen_session_ids: set[str] = set()
 
     store = await session_store_for(server, index_dir)
+    pool_cache: dict[str, str | None] = {}
     if store is not None:
         for session in await store.list_sessions():
             session_id = session.session_id
-            # The store reads recursively, so a record may exist in both a
-            # legacy flat layout and a pool subdirectory.  De-dup by id so
-            # each conversation appears exactly once.
             if session_id in seen_session_ids:
                 continue
-            agent_name = session.agent_name
-            # Show sessions for any agent that maps to a known pool
-            # (main agents, resident subagents, and dynamic subagent types).
-            pool = server._pool_for_agent_name(agent_name)
+            pool = await _resolve_pool(server, session, store, pool_cache)
             if pool is None:
                 continue
             if pool_filter and pool != pool_filter:
                 continue
             seen_session_ids.add(session_id)
+            pool_cache[session_id] = pool
             session_list.append(_entry_from_session(session, pool))
 
-    # Fallback: derive any sessions that have transcripts but are not yet
-    # indexed.  This covers legacy data created before the SessionInfo index
-    # existed and lets the user interact with them immediately.
     for session in await derive_sessions_from_transcripts(server, sessions_dir):
         session_id = session.session_id
         if session_id in seen_session_ids:
             continue
-        agent_name = session.agent_name
-        pool = server._pool_for_agent_name(agent_name)
+        pool = await _resolve_pool(server, session, store, pool_cache)
         if pool is None:
             continue
         if pool_filter and pool != pool_filter:
             continue
         seen_session_ids.add(session_id)
+        pool_cache[session_id] = pool
         session_list.append(_entry_from_session(session, pool))
 
     session_list.sort(key=lambda s: s.updated_at or 0, reverse=True)

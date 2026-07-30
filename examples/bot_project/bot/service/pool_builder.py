@@ -288,6 +288,7 @@ async def create_pool(
         workspace_resolver, pool_name, emitter_factory,
         external_coding_deps=external_coding_deps,
         observability_config=app_config.observability if app_config is not None else None,
+        session_registry=session_registry,
     )
     session_factory = SessionIdFactory()
 
@@ -386,6 +387,7 @@ async def create_pool(
             pool, main_spec, assembly_deps, system_prompt, safety, pool_name,
             factory=factory, broker=broker, context_manager=context_manager,
             bot_model_config=bot_model_config,
+            output_adapter=output_adapter,
         )
     else:
         logger.warning("Pool '%s': main agent registration skipped", pool_name)
@@ -806,6 +808,7 @@ def _build_agent_factory(
     *,
     external_coding_deps: dict[str, Any] | None = None,
     observability_config: ObservabilityConfig | None = None,
+    session_registry: SessionRegistry | None = None,
 ) -> DefaultAgentFactory:
     if external_coding_deps is not None:
         factory: DefaultAgentFactory = ExternalCodingAwareFactory(
@@ -819,6 +822,7 @@ def _build_agent_factory(
             control_channel=control_channel,
             external_coding_deps=external_coding_deps,
             observability_config=observability_config,
+            session_registry=session_registry,
         )
     else:
         factory = DefaultAgentFactory(
@@ -917,6 +921,7 @@ async def _register_main_agent(
     broker: MessageBroker,
     context_manager: Any,
     bot_model_config: BotModelConfig | None,
+    output_adapter: Any | None = None,
 ) -> None:
     """Register the main (NORMAL) agent with factory defaults (Design B).
 
@@ -959,6 +964,7 @@ async def _register_main_agent(
         skill_manager=None,
         context_manager=context_manager,
         hooks=[],
+        output_adapter=output_adapter,
     )
     await pool.register_resident(descriptor, instance)
     logger.info(

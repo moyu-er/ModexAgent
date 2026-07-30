@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Updated: 2026-07-15 -->
+<!-- Updated: 2026-07-30 -->
 
 # external_coding
 
@@ -30,6 +30,7 @@ models, and owns provider resources through one lifecycle interface.
 | `contracts.py` | Provider backend/parser ABCs |
 | `builder.py` | Explicit collaborator assembly for pool registration |
 | `session_store.py` | `ExternalSessionMapStore` ABC and local-file adapter |
+| `child_discovery.py` | `ChildSessionDiscoverySink` ABC + `ExternalChildSessionDiscoverySink` concrete sink |
 | `env_builder.py` | Per-turn `MODEX_*` environment construction |
 | `runtime_config.py` | Idempotent provider-visible AGENTS.md marker block |
 | `system_prompt.py` | Dynamic peer list and `modexctl send` instructions |
@@ -76,6 +77,125 @@ Lifecycle invariants:
   workdir-contained JSONL path; OpenCode resumes a provider-minted id.
 - Provider-native session data is the context source of truth. ModexAgent's
   transcript is a UI projection and is not fed back as provider memory.
+
+## Child Session Capture
+
+External coding providers (opencode, future Claude Code) fork internal
+subagent sessions at runtime — invisible to the harness under the original
+ADR-0022 design. The child-session capture pipeline makes those forks
+first-class ModexAgent sessions: discovered, registered, routed, and
+rendered in the WebUI session tree alongside every other session.
+
+### Discovery sink
+
+`ChildSessionDiscoverySink` (ABC, `child_discovery.py`) isolates the
+discovery mechanism so the harness and persistence layer stay
+provider-neutral. Two methods split by side-effect:
+
+- `resolve_child_modex_session_id(provider_child_sid) -> str` — **sync**,
+  side-effect-free. Deterministically derives the modex session_id via
+  `encode_snowflake` so the routing mapping and child emitter can be
+  populated *before* the first child emission is handled. No await race
+  window.
+- `on_child_discovered(provider_child_sid, parent_modex_sid,
+  provider_agent_type?) -> str` — **async**. Fires
+  `SessionRegistry.register` + `ExternalSessionMapStore.commit` as a
+  fire-and-forget background task gathered in `_run_turn`'s finally block.
+
+`ExternalChildSessionDiscoverySink` is the concrete implementation wired
+to `SessionIdFactory` + `SessionRegistry` + `ExternalSessionMapStore`.
+Both ABC methods feed the same `provider_child_sid` + fixed agent name
+(`"external-subagent"`) through `SessionIdFactory.create`, so they
+observe the same deterministic modex session_id.
+
+### Routing in `_handle_emission`
+
+When `Emission.source_session_id` is set (non-None), the emission
+originates from a provider-discovered child session. The first time a
+child is seen, discovery runs synchronously in the same call:
+
+1. `resolve_child_modex_session_id` → deterministic modex session_id
+2. Populate `_child_sid_to_modex_sid[provider_child_sid] = modex_sid`
+3. Create child emitter via `child_emitter_factory(modex_sid)`
+4. Schedule `on_child_discovered` as a tracked background task
+
+Steps 1–3 are sync so the first child emission is routed to the newly
+created child emitter in the same call — no drop. Step 4 is async
+fire-and-forget; the task reference is retained and gathered in
+`_run_turn`'s finally block so registration completes within the turn
+boundary.
+
+Per-turn child routing state (`_child_sid_to_modex_sid`,
+`_child_emitters`, `_child_accumulators`, `_pending_child_tasks`) is
+reinitialized at the top of each `_run_turn` and cleared in the finally
+block. Never cross-turn.
+
+### Deterministic session IDs
+
+`encode_snowflake` (in `core/session_id.py`) hashes
+`provider_child_sid` through SHA-256 → base58, producing a compact,
+filesystem-safe, deterministic prefix. The same `provider_child_sid`
+always maps to the same modex session_id across turns, so cross-turn
+resume reuses the same `SessionInfo` and `SessionMapEntry` without
+duplication. `SessionRegistry.register` merges (updates `updated_at`,
+metadata) rather than creating a new record on the second turn.
+
+### SSE-only limitation
+
+Child session discovery relies on `Emission.source_session_id`, which
+is set by `OpenCodeSSEParser` from the SSE event's `sessionID` field
+when it differs from the main session. The JSONL stdout parsers
+(`OpenCodeEventParser`, `PiEventParser`) do not carry per-event session
+IDs, so child sessions are invisible under `opencode run --format json`
+and Pi's JSONL output. Only the warm `opencode serve` SSE backend
+surfaces child events.
+
+### Asynchronous child sessions (background task tool)
+
+opencode's `task` tool can run subagents in the background — the main
+session goes idle while child sessions are still running, and the
+child's result is injected back into the main session later (triggering
+a new main-session busy→idle cycle). `_consume_sse` handles this by
+tracking three signals:
+
+- `main_idle` — main session has reported idle (but may be woken by inject)
+- `active_children` — child sessionIDs currently in busy state
+- `pending_background` — a `task` tool_result containing
+  "Background task launched" was seen, and the main session has not
+  yet produced text after the inject (i.e. the background result has
+  not been consumed)
+
+Break condition: `main_idle and not active_children and not pending_background`.
+
+- Child `session.status busy` → add to `active_children`
+- Child `session.status idle` → remove from `active_children`
+- Main `session.status idle` → set `main_idle` (do NOT break yet)
+- Main `session.status busy` → clear `main_idle` (inject woke it)
+- Main-session `TEXT_DELTA` after `pending_background` → clear
+  `pending_background` (inject consumed, main resumed reasoning)
+
+No timeout: ModexAgent's `asyncio.wait_for(timeout=turn_timeout)` is
+the sole safety net. The `pending_background` flag ensures the SSE
+consumer stays alive through the idle gap between background task
+launch and inject, so the main session's post-inject reasoning and
+output are fully captured.
+
+### Parent-Child Session Relationships
+
+Parent-child relationships for external subagent sessions live **only** in
+`SessionInfo.parent_session_id`, persisted via `SessionStore` (the `sessions`
+table / JSON files). `SessionStore.get_children(parent_modex_sid)` returns
+child `SessionInfo` records by filtering on `parent_session_id`.
+
+`ExternalSessionMapStore` keeps its original flat modex↔provider mapping
+(`modex_session_id` ↔ `provider_session_id`) and does **not** store
+parent-child linkage — that is the `SessionStore`'s responsibility, identical
+to how native subagent sessions work.
+
+The WebUI's `buildTree()` pure function (`sessionTree.ts`) groups the
+flat session list into a parent→children tree by matching
+`parent_session_id` to `session_id`, so child sessions appear nested
+under their parent in the sidebar with no WebUI code change.
 
 ## Testing
 

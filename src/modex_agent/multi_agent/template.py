@@ -384,6 +384,7 @@ class AgentTemplate:
             comm_kind=AgentCommKind.SUBAGENT,
             max_iterations=self.spec.max_steps,
             system_prompt_template="",
+            safety_policy=deps.safety,
             roles=list(self.spec.roles),
         )
 

@@ -39,7 +39,7 @@ import socket
 import weakref
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import override
+from typing import TYPE_CHECKING, Any, override
 
 import aiohttp
 
@@ -50,6 +50,7 @@ from ..os_layer import (
     spawn_process_group,
     terminate_process_group,
 )
+from ..events import ExternalCodingEvent
 from ..types import BackendResult, BackendStatus, Emission, ExecOptions
 from .opencode_sse_parser import OpenCodeSSEParser, SSEEventType
 
@@ -331,6 +332,9 @@ class OpenCodeServerBackend(StreamingProviderBackend):
 
             async def _consume_sse() -> None:
                 nonlocal turn_active
+                main_idle = False
+                active_children: set[str] = set()
+                pending_background = False
                 async for raw_line in sse_resp.content:
                     line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
                     if not line.startswith("data:"):
@@ -362,23 +366,37 @@ class OpenCodeServerBackend(StreamingProviderBackend):
                         if not isinstance(status_obj, dict):
                             continue
                         status_type = status_obj.get("type")
+                        sid = props.get("sessionID", "")
+
                         if status_type == "busy":
                             turn_active = True
+                            if sid and sid != session_id:
+                                active_children.add(sid)
+                            elif sid == session_id:
+                                main_idle = False
                             continue
-                        if status_type == "idle" and turn_active:
-                            if props.get("sessionID") == session_id:
-                                break
-                        continue
 
-                    if evt_type == SSEEventType.SESSION_ERROR:
-                        if props.get("sessionID") == session_id:
-                            for emission in parser.parse_line(json_str):
-                                await on_emission(emission)
-                            break
+                        if status_type == "idle" and turn_active:
+                            if sid == session_id:
+                                main_idle = True
+                            elif sid:
+                                active_children.discard(sid)
+                            if main_idle and not active_children and not pending_background:
+                                break
+                            continue
                         continue
 
                     for emission in parser.parse_line(json_str):
-                        turn_active = True
+                        if (
+                            emission.event == ExternalCodingEvent.TOOL_RESULT
+                            and emission.tool_name == "task"
+                            and emission.output
+                            and "Background task launched" in emission.output
+                        ):
+                            pending_background = True
+                        if emission.event == ExternalCodingEvent.TEXT_DELTA:
+                            if emission.source_session_id is None and pending_background:
+                                pending_background = False
                         await on_emission(emission)
 
             await asyncio.wait_for(_consume_sse(), timeout=timeout)

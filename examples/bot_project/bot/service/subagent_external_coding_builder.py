@@ -267,7 +267,19 @@ class BotSubagentExternalCodingBuilder(SubagentExternalCodingBuilder):
         # ── 4. CachingBackendProvider (per-invocation; closes on agent.stop)
         backend_provider = CachingBackendProvider(BotBackendFactory())
 
-        # ── 5. ExternalCodingAgent ────────────────────────────────────────
+        # ── 5. Child-session discovery collaborators ────────────────────
+        from bot.service.external_coding_strategy import (
+            _build_child_discovery_collaborators,
+        )
+
+        child_sink, child_emitter_factory = _build_child_discovery_collaborators(
+            session_registry=deps.session_registry,
+            session_map_store=session_store,
+            provider_kind=spec.provider_kind or ProviderKind.OPENCODE,
+            session_factory=deps.session_factory,
+        )
+
+        # ── 6. ExternalCodingAgent ────────────────────────────────────────
         agent = ExternalCodingAgentBuilder.build_agent(
             descriptor,
             provider=None,
@@ -277,6 +289,10 @@ class BotSubagentExternalCodingBuilder(SubagentExternalCodingBuilder):
             provider_kind=spec.provider_kind,  # type: ignore[arg-type]
             spec=env_spec,
             base_env=dict(os.environ),
+            child_discovery_sink=child_sink,
+            session_registry=deps.session_registry,
+            session_id_factory=deps.session_factory,
+            child_emitter_factory=child_emitter_factory,
         )
 
         # ── 6. HookRunner carrying SubagentAutoSendHook (T7) ─────────────
