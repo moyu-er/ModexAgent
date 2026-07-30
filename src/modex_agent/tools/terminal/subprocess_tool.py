@@ -145,7 +145,7 @@ class PosixSubprocessExecutor(SubprocessExecutor):
 
 
 class CmdSubprocessExecutor(SubprocessExecutor):
-    """cmd.exe / powershell: ``create_subprocess_shell`` (shell=True).
+    """cmd.exe: ``create_subprocess_shell`` (shell=True).
 
     ``shell=True`` lets CPython add the correct ``/c`` flag via
     ``COMSPEC``.  ``executable`` is left unset to avoid ``/c``
@@ -164,16 +164,44 @@ class CmdSubprocessExecutor(SubprocessExecutor):
         )
 
 
+class PowerShellSubprocessExecutor(SubprocessExecutor):
+    """pwsh / powershell: ``create_subprocess_exec(path, "-NoProfile", "-Command", command)``.
+
+    Explicitly invokes the PowerShell executable with ``-NoProfile`` to
+    skip profile loading (deterministic, fast) and ``-Command`` to pass
+    the command string.  This avoids ``shell=True`` which would route
+    through ``COMSPEC`` (cmd.exe) and misinterpret PowerShell syntax.
+    """
+
+    async def _spawn(
+        self, command: str, cwd: str, env: dict[str, str]
+    ) -> asyncio.subprocess.Process:
+        return await asyncio.create_subprocess_exec(
+            self._shell_info.path,
+            "-NoProfile",
+            "-Command",
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=cwd,
+            env=env,
+        )
+
+
 def create_subprocess_executor(shell_info: ShellInfo | None = None) -> SubprocessExecutor:
     """Factory: pick the executor subclass by shell family.
 
-    bash/zsh/sh → ``PosixSubprocessExecutor``; cmd/powershell →
-    ``CmdSubprocessExecutor``.  Callers should use this instead of
-    instantiating ``SubprocessExecutor`` subclasses directly.
+    bash/zsh/sh → ``PosixSubprocessExecutor``;
+    powershell → ``PowerShellSubprocessExecutor``;
+    cmd → ``CmdSubprocessExecutor``.
+    Callers should use this instead of instantiating ``SubprocessExecutor``
+    subclasses directly.
     """
     resolved = shell_info or detect_platform_shell() or _default_fallback_shell()
     if resolved.family in (ShellFamily.BASH, ShellFamily.ZSH, ShellFamily.SH):
         return PosixSubprocessExecutor(shell_info=resolved)
+    if resolved.family is ShellFamily.POWERSHELL:
+        return PowerShellSubprocessExecutor(shell_info=resolved)
     return CmdSubprocessExecutor(shell_info=resolved)
 
 

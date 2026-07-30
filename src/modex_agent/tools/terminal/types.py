@@ -166,6 +166,10 @@ def _family_from_path(shell_path: str) -> ShellFamily:
         "sh": ShellFamily.SH,
         "cmd": ShellFamily.CMD,
         "cmd.exe": ShellFamily.CMD,
+        "powershell": ShellFamily.POWERSHELL,
+        "powershell.exe": ShellFamily.POWERSHELL,
+        "pwsh": ShellFamily.POWERSHELL,
+        "pwsh.exe": ShellFamily.POWERSHELL,
     }
     return mapping.get(name, ShellFamily.SH)
 
@@ -207,13 +211,29 @@ def _verify_wsl(wsl_path: str) -> bool:
 
 
 def detect_git_bash() -> ShellInfo | None:
-    """Detect Git Bash by locating git.exe, then searching sibling directories for bash.exe."""
+    """Detect Git Bash by locating git.exe, then searching for the real bash.exe.
+
+    Git installations place bash.exe in multiple locations:
+
+    - ``<Git>\\bin\\bash.exe`` — the real MSYS2 bash (used by Git Bash shortcut)
+    - ``<Git>\\usr\\bin\\bash.exe`` — the real MSYS2 bash (alternative path)
+    - ``<Git>\\bash.exe`` — a **mintty launcher**, NOT a real bash. It opens
+      a new mintty window and exits immediately. If winpty spawns this, the
+      PTY shell never starts — the host python process is left alone in the
+      console window (title shows "python xxx"), and I/O stalls because no
+      shell is reading the input pipe.
+
+    We search ``bin`` and ``usr\\bin`` first; the root ``bash.exe`` is
+    intentionally skipped to avoid the mintty launcher.
+    """
     git_path = shutil.which("git")
     if not git_path:
         return None
 
     git_dir = Path(git_path).resolve().parent
-    for candidate_dir in [git_dir, git_dir.parent / "bin", git_dir.parent / "usr" / "bin"]:
+    git_root = git_dir if git_dir.name.lower() != "bin" else git_dir.parent
+
+    for candidate_dir in [git_root / "bin", git_root / "usr" / "bin"]:
         bash_candidate = candidate_dir / "bash.exe"
         if bash_candidate.is_file():
             info = _verify_bash(str(bash_candidate))
@@ -226,13 +246,21 @@ def detect_git_bash() -> ShellInfo | None:
 def detect_platform_shell() -> ShellInfo | None:
     """Detect the best available shell for the current platform.
 
-    Windows priority: WSL bash > Git bash / MSYS2.
-    Linux priority: bash > sh
-    macOS priority: bash > zsh > sh
+    Priority:
+
+    Windows: Git Bash > WSL bash > PowerShell > cmd.exe (COMSPEC)
+    Linux:   $SHELL > bash > sh
+    macOS:   $SHELL > /bin/zsh > bash > sh
     """
     plat = _parse_platform(_platform.system().lower())
 
     if plat is Platform.WINDOWS:
+        # 1. Git Bash — POSIX-compatible, readline, consistent with macOS/Linux
+        git_bash = detect_git_bash()
+        if git_bash is not None:
+            return git_bash
+
+        # 2. WSL bash — full Linux environment, good readline support
         wsl_path = shutil.which("wsl")
         if wsl_path and _verify_wsl(wsl_path):
             for candidate in [
@@ -244,30 +272,40 @@ def detect_platform_shell() -> ShellInfo | None:
                     if info is not None:
                         return info
 
-        git_bash = detect_git_bash()
-        if git_bash is not None:
-            return git_bash
+        # 3. PowerShell (pwsh or powershell.exe)
+        pwsh_path = shutil.which("pwsh")
+        if pwsh_path:
+            return ShellInfo(family=ShellFamily.POWERSHELL, path=pwsh_path, platform=plat)
+        ps_path = shutil.which("powershell") or str(
+            Path(os.environ.get("SystemRoot", r"C:\Windows"))
+            / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+        )
+        if Path(ps_path).is_file():
+            return ShellInfo(family=ShellFamily.POWERSHELL, path=ps_path, platform=plat)
 
-        # Fallback: try bash directly (same as Linux/macOS path).
-        bash_path = shutil.which("bash")
-        if bash_path and _verify_bash(bash_path):
-            return ShellInfo(family=ShellFamily.BASH, path=bash_path, platform=plat)
+        # 4. cmd.exe (COMSPEC)
+        cmd_path = os.environ.get("COMSPEC", r"C:\Windows\System32\cmd.exe")
+        if Path(cmd_path).is_file():
+            return ShellInfo(family=ShellFamily.CMD, path=cmd_path, platform=plat)
 
         return None
 
+    # POSIX: respect $SHELL first
     env_shell = os.environ.get("SHELL", "")
     if env_shell and shutil.which(env_shell):
         family = _family_from_path(env_shell)
         return ShellInfo(family=family, path=env_shell, platform=plat)
 
+    # macOS: zsh is the default since Catalina — prefer it over bash
+    # (macOS ships bash 3.2, zsh is the recommended modern shell)
+    if plat is Platform.DARWIN:
+        zsh_path = shutil.which("zsh") or "/bin/zsh"
+        if Path(zsh_path).is_file():
+            return ShellInfo(family=ShellFamily.ZSH, path=zsh_path, platform=plat)
+
     bash_path = shutil.which("bash")
     if bash_path:
         return ShellInfo(family=ShellFamily.BASH, path=bash_path, platform=plat)
-
-    if plat is Platform.DARWIN:
-        zsh_path = shutil.which("zsh")
-        if zsh_path:
-            return ShellInfo(family=ShellFamily.ZSH, path=zsh_path, platform=plat)
 
     sh_path = shutil.which("sh") or "/bin/sh"
     return ShellInfo(family=ShellFamily.SH, path=sh_path, platform=plat)

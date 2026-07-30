@@ -26,6 +26,7 @@ from modex_agent.tools.terminal.env import build_full_env
 from modex_agent.tools.terminal.subprocess_tool import (
     CmdSubprocessExecutor,
     PosixSubprocessExecutor,
+    PowerShellSubprocessExecutor,
     create_subprocess_executor,
 )
 from modex_agent.tools.terminal.types import Platform, ShellFamily, ShellInfo
@@ -47,6 +48,7 @@ _BASH = ShellInfo(family=ShellFamily.BASH, path="/bin/bash", platform=Platform.L
 _ZSH = ShellInfo(family=ShellFamily.ZSH, path="/bin/zsh", platform=Platform.DARWIN)
 _SH = ShellInfo(family=ShellFamily.SH, path="/bin/sh", platform=Platform.LINUX)
 _CMD = ShellInfo(family=ShellFamily.CMD, path="cmd.exe", platform=Platform.WINDOWS)
+_PS = ShellInfo(family=ShellFamily.POWERSHELL, path="pwsh", platform=Platform.WINDOWS)
 
 
 @pytest.fixture
@@ -191,6 +193,23 @@ class TestShellFamilyRouting:
         assert exec_mock.await_count == 0
         assert "executable" not in shell_mock.call_args.kwargs
 
+    async def test_powershell_uses_exec_with_no_profile_command(
+        self,
+        patched_subprocess: tuple[AsyncMock, AsyncMock],
+    ) -> None:
+        """POWERSHELL family → create_subprocess_exec(path, '-NoProfile', '-Command', command)."""
+        exec_mock, shell_mock = patched_subprocess
+        executor = create_subprocess_executor(_PS)
+        await executor.execute("Write-Output hi")
+
+        assert exec_mock.await_count == 1
+        assert shell_mock.await_count == 0
+        args = exec_mock.call_args.args
+        assert args[0] == "pwsh"
+        assert args[1] == "-NoProfile"
+        assert args[2] == "-Command"
+        assert args[3] == "Write-Output hi"
+
 
 class TestFactoryRouting:
     """Verify create_subprocess_executor picks the right subclass."""
@@ -206,6 +225,9 @@ class TestFactoryRouting:
 
     def test_cmd_returns_cmd_executor(self) -> None:
         assert isinstance(create_subprocess_executor(_CMD), CmdSubprocessExecutor)
+
+    def test_powershell_returns_powershell_executor(self) -> None:
+        assert isinstance(create_subprocess_executor(_PS), PowerShellSubprocessExecutor)
 
 
 class TestAnsiSanitization:
