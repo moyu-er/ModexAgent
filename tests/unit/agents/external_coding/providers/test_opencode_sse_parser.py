@@ -243,9 +243,9 @@ class TestOpenCodeSSEParserChildSession:
         assert "ses_child" in parser.child_session_ids
 
     def test_child_session_delta_still_emitted(self) -> None:
-        """Child session deltas are dropped — they belong to subagent sessions
-        spawned by the ``task`` tool, not the main agent's output stream.
-        Only the main session's text/reasoning deltas are emitted."""
+        """Child session deltas are emitted with source_session_id set —
+        they belong to subagent sessions spawned by the ``task`` tool and
+        are tagged with the child session ID for routing by the agent harness."""
         parser = OpenCodeSSEParser()
         parser.set_main_session("ses_main")
         out = _emissions(parser, {
@@ -253,4 +253,6 @@ class TestOpenCodeSSEParserChildSession:
             "type": SSEEventType.MESSAGE_PART_DELTA,
             "properties": {"sessionID": "ses_child", "field": "text", "delta": "child text"},
         })
-        assert len(out) == 0
+        assert len(out) == 1
+        assert out[0].source_session_id == "ses_child"
+        assert out[0].text == "child text"

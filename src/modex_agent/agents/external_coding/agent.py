@@ -51,7 +51,7 @@ import os
 import uuid
 from abc import abstractmethod
 from collections.abc import Awaitable, Callable, Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
@@ -76,6 +76,12 @@ from .runtime_config import default_runtime_block, read_runtime_block, write_run
 from .scripted_backend import ScriptedProviderBackend
 from .session_store import ExternalSessionMapStore
 from .types import BackendResult, BackendStatus, Emission, ExecOptions, ExternalEnvSpec
+
+if TYPE_CHECKING:
+    from modex_agent.core.session_id import SessionIdFactory
+    from modex_agent.core.session_registry import SessionRegistry
+
+    from .child_discovery import ChildSessionDiscoverySink
 
 logger = logging.getLogger(__name__)
 
@@ -342,6 +348,10 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
         model: str | None = None,
         thinking_level: str | None = None,
         timeout: float | None = None,
+        child_discovery_sink: ChildSessionDiscoverySink | None = None,
+        session_registry: SessionRegistry | None = None,
+        session_id_factory: SessionIdFactory | None = None,
+        child_emitter_factory: Callable[[str], ContentEmitter[ExternalCodingEvent]] | None = None,
     ) -> None:
         self._backend_provider = backend_provider
         self._session_store = session_store
@@ -354,6 +364,36 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
         self._timeout = timeout
         self._stopped = False
         self._stop_task: asyncio.Task[None] | None = None
+        # Child session discovery collaborators (all optional — None means
+        # no child capture, behavior unchanged). Discovery is driven
+        # entirely in _handle_emission; no backend callback or
+        # execute_streaming signature change.
+        self._child_discovery_sink = child_discovery_sink
+        self._session_registry = session_registry
+        self._session_id_factory = session_id_factory
+        self._child_emitter_factory = child_emitter_factory
+        # Per-turn child routing state — reinitialized at the top of each
+        # _run_turn and cleared in the finally block. Never cross-turn.
+        self._current_modex_sid: str | None = None
+        self._child_sid_to_modex_sid: dict[str, str] = {}
+        self._child_emitters: dict[str, ContentEmitter[ExternalCodingEvent]] = {}
+        self._child_accumulators: dict[str, _EmissionAccumulator] = {}
+        self._pending_child_tasks: set[asyncio.Task[str]] = set()
+
+    def set_child_emitter_factory(
+        self,
+        factory: Callable[[str], ContentEmitter[ExternalCodingEvent]] | None,
+    ) -> None:
+        """Override the child emitter factory.
+
+        Called by ``ExternalTurnRunner.set_emitter_factory`` so the WebUI-
+        injected emitter factory (which creates ``WebBotEmitter`` with
+        transcript persistence) is used for child sessions too, not just
+        the main session. Without this, child emissions would only reach
+        the WebSocket (via ``StreamingAwareEmitter``) but never persist
+        to the transcript store.
+        """
+        self._child_emitter_factory = factory
 
     @property
     def name(self) -> str:
@@ -409,6 +449,7 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
         emitter: ContentEmitter[ExternalCodingEvent],
     ) -> AgentResult:
         modex_sid = self._modex_session_id(ctx)
+        self._current_modex_sid = modex_sid
 
         if is_workspace_root_bound():
             current_workdir = resolve_workspace_root()
@@ -446,6 +487,12 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
             timeout=self._timeout,
         )
 
+        # Per-turn child routing state — fresh containers each turn.
+        self._child_sid_to_modex_sid = {}
+        self._child_emitters = {}
+        self._child_accumulators = {}
+        self._pending_child_tasks = set()
+
         accumulator = _EmissionAccumulator()
 
         async def on_emission(emission: Emission) -> None:
@@ -455,9 +502,7 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
         # the same instance every turn; CachingBackendProvider (T6) may swap
         # it. Release happens in `finally` so a turn that raises still
         # returns the backend (and lets the provider observe turn_failed).
-        turn_context = TurnContext(
-            provider_kind=self._provider_kind, workdir=current_workdir
-        )
+        turn_context = TurnContext(provider_kind=self._provider_kind, workdir=current_workdir)
         backend = await self._backend_provider.acquire(modex_sid, turn_context)
         turn_failed = False
         try:
@@ -475,6 +520,23 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
             turn_failed = True
             raise
         finally:
+            # Await pending child discovery side-effects so registration
+            # completes within the turn boundary. Tasks that already
+            # completed were discarded from the set by add_done_callback;
+            # remaining tasks are gathered here with return_exceptions
+            # so a failing side-effect does not mask the turn result.
+            if self._pending_child_tasks:
+                results = await asyncio.gather(*self._pending_child_tasks, return_exceptions=True)
+                for r in results:
+                    if isinstance(r, BaseException):
+                        logger.warning("Child discovery side-effect failed: %s", r)
+            # ContentEmitter ABC defines no close/aclose — clearing the
+            # dict drops references; underlying resources are owned
+            # elsewhere (backend, output adapter).
+            self._child_emitters.clear()
+            self._child_sid_to_modex_sid.clear()
+            self._child_accumulators.clear()
+            self._pending_child_tasks.clear()
             await self._backend_provider.release(backend, turn_failed=turn_failed)
 
     async def _execute_with_retry(
@@ -502,9 +564,7 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
         traced_env = _inject_traceparent_into_env(env)
         with _otel_invoke_agent_span(str(self._provider_kind)):
             try:
-                result = await backend.execute_streaming(
-                    opts, traced_env, on_emission
-                )
+                result = await backend.execute_streaming(opts, traced_env, on_emission)
             except StaleSessionError:
                 logger.info(
                     "Stale provider session for %s; invalidating and retrying fresh",
@@ -512,9 +572,7 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
                 )
                 await self._session_store.invalidate(modex_sid)
                 retry_opts = opts.model_copy(update={"resume_session_id": None})
-                result = await backend.execute_streaming(
-                    retry_opts, traced_env, on_emission
-                )
+                result = await backend.execute_streaming(retry_opts, traced_env, on_emission)
             return result
 
     async def _handle_emission(
@@ -525,32 +583,75 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
     ) -> None:
         """Route one parsed emission through the emitter and text buffer.
 
-        The whole typed ``Emission`` is forwarded as the event payload so the
-        WebUI projection (and any emitter) reads typed fields rather than
-        loose dicts. ERROR is emitted exactly once via ``emit_error``.
+        When ``emission.source_session_id`` is set, the emission comes
+        from a provider-discovered child session. The first time a child
+        is seen, discovery runs synchronously (resolve + map + emitter
+        creation) before the emission is routed — no await race window.
+        The async registration side-effect fires as a tracked background
+        task gathered in ``_run_turn``'s finally block.
+
+        The whole typed ``Emission`` is forwarded as the event payload so
+        the WebUI projection (and any emitter) reads typed fields rather
+        than loose dicts. ERROR is emitted exactly once via
+        ``emit_error``.
         """
+        provider_child_sid = emission.source_session_id
+        if provider_child_sid is not None:
+            child_modex_sid = self._child_sid_to_modex_sid.get(provider_child_sid)
+            if child_modex_sid is None:
+                if self._child_discovery_sink is None or self._child_emitter_factory is None:
+                    logger.warning(
+                        "Child emission from provider session %s dropped — "
+                        "no discovery collaborators configured",
+                        provider_child_sid,
+                    )
+                    return
+                # Steps 1-3 are sync so the first child emission is
+                # routed in the same call — no await race window.
+                child_modex_sid = self._child_discovery_sink.resolve_child_modex_session_id(
+                    provider_child_sid
+                )
+                self._child_sid_to_modex_sid[provider_child_sid] = child_modex_sid
+                self._child_emitters[child_modex_sid] = self._child_emitter_factory(child_modex_sid)
+                # Step 4: async fire-and-forget. The task reference is
+                # retained so it is not GC'd mid-flight; _run_turn's
+                # finally block gathers remaining tasks.
+                parent_sid = self._current_modex_sid or ""
+                task = asyncio.create_task(
+                    self._child_discovery_sink.on_child_discovered(provider_child_sid, parent_sid)
+                )
+                self._pending_child_tasks.add(task)
+                task.add_done_callback(self._pending_child_tasks.discard)
+            target_emitter = self._child_emitters[child_modex_sid]
+            target_accumulator = self._child_accumulators.setdefault(
+                child_modex_sid, _EmissionAccumulator()
+            )
+        else:
+            target_emitter = emitter
+            target_accumulator = accumulator
+
         match emission.event:
             case ExternalCodingEvent.TEXT_DELTA:
                 if emission.text:
-                    accumulator.text.append(emission.text)
-                    await emitter.emit_turn_event(
+                    target_accumulator.text.append(emission.text)
+                    await target_emitter.emit_turn_event(
                         TurnTextEvent(text=emission.text, part_id=emission.part_id)
                     )
             case ExternalCodingEvent.THINKING:
                 if emission.text:
-                    await emitter.emit_turn_event(
+                    await target_emitter.emit_turn_event(
                         TurnReasoningEvent(text=emission.text, part_id=emission.part_id)
                     )
             case ExternalCodingEvent.TOOL_USE:
                 if emission.tool_name and emission.call_id:
-                    accumulator.tool_names[emission.call_id] = emission.tool_name
+                    target_accumulator.tool_names[emission.call_id] = emission.tool_name
                     raw_arguments = emission.tool_input or "{}"
                     arguments: dict[str, JsonValue]
                     try:
                         arguments = _TOOL_ARGUMENTS_ADAPTER.validate_json(raw_arguments)
                     except ValidationError:
                         arguments = {"input": raw_arguments}
-                    await emitter.emit_turn_event(
+                    await target_emitter.emit_turn_event(
                         TurnToolCallEvent(
                             tool_name=emission.tool_name,
                             call_id=emission.call_id,
@@ -560,9 +661,9 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
                     )
             case ExternalCodingEvent.TOOL_RESULT:
                 if emission.call_id:
-                    tool_name = accumulator.tool_names.pop(emission.call_id, None)
+                    tool_name = target_accumulator.tool_names.pop(emission.call_id, None)
                     if tool_name:
-                        await emitter.emit_turn_event(
+                        await target_emitter.emit_turn_event(
                             TurnToolResultEvent(
                                 tool_name=tool_name,
                                 call_id=emission.call_id,
@@ -576,7 +677,7 @@ class ExternalCodingAgent(Agent[ExternalCodingEvent]):
                             emission.call_id,
                         )
             case ExternalCodingEvent.ERROR:
-                await emitter.emit_error(emission.message or "")
+                await target_emitter.emit_error(emission.message or "")
 
     # ------------------------------------------------------------------
     # Helpers

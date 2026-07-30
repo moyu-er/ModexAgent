@@ -1,4 +1,4 @@
-﻿"""Frozen Pydantic models for the external coding agent integration.
+"""Frozen Pydantic models for the external coding agent integration.
 
 Every cross-module data structure used by `ExternalCodingAgent`,
 `modexbot`, and the per-provider backends lives here. All models obey
@@ -294,6 +294,8 @@ class Emission(BaseModel):
     output: str | None = None
     # ERROR
     message: str | None = None
+    # Child session routing: None = main session, str = provider child session ID
+    source_session_id: str | None = None
 
 
 __all__ = [

@@ -30,8 +30,12 @@ from .types import ExternalEnvSpec
 if TYPE_CHECKING:
     from ...core.emitter import ContentEmitter
     from ...core.provider import LLMProvider
+    from ...core.session_id import SessionIdFactory
+    from ...core.session_registry import SessionRegistry
     from ...multi_agent.descriptor import AgentDescriptor
     from ...pipeline.adapters import OutputAdapter
+    from .child_discovery import ChildSessionDiscoverySink
+    from .events import ExternalCodingEvent
     from .session_store import ExternalSessionMapStore
 
 __all__ = ["ExternalCodingAgentBuilder"]
@@ -63,6 +67,14 @@ class ExternalCodingAgentBuilder:
         self._model: str | None = None
         self._thinking_level: str | None = None
         self._timeout: float | None = None
+        # Child-session discovery collaborators (all optional — None means
+        # no child capture, behavior unchanged; see ExternalCodingAgent).
+        self._child_discovery_sink: ChildSessionDiscoverySink | None = None
+        self._session_registry: SessionRegistry | None = None
+        self._session_id_factory: SessionIdFactory | None = None
+        self._child_emitter_factory: (
+            Callable[[str], ContentEmitter[ExternalCodingEvent]] | None
+        ) = None
 
     def with_backend_provider(
         self, backend_provider: BackendProvider
@@ -102,6 +114,30 @@ class ExternalCodingAgentBuilder:
         self._timeout = timeout
         return self
 
+    def with_child_discovery_sink(
+        self, sink: ChildSessionDiscoverySink
+    ) -> ExternalCodingAgentBuilder:
+        self._child_discovery_sink = sink
+        return self
+
+    def with_session_registry(
+        self, registry: SessionRegistry
+    ) -> ExternalCodingAgentBuilder:
+        self._session_registry = registry
+        return self
+
+    def with_session_id_factory(
+        self, factory: SessionIdFactory
+    ) -> ExternalCodingAgentBuilder:
+        self._session_id_factory = factory
+        return self
+
+    def with_child_emitter_factory(
+        self, factory: Callable[[str], ContentEmitter[ExternalCodingEvent]]
+    ) -> ExternalCodingAgentBuilder:
+        self._child_emitter_factory = factory
+        return self
+
     def build(self) -> ExternalCodingAgent:
         missing = [
             name
@@ -134,6 +170,10 @@ class ExternalCodingAgentBuilder:
             model=self._model,
             thinking_level=self._thinking_level,
             timeout=self._timeout,
+            child_discovery_sink=self._child_discovery_sink,
+            session_registry=self._session_registry,
+            session_id_factory=self._session_id_factory,
+            child_emitter_factory=self._child_emitter_factory,
         )
 
     @staticmethod
@@ -147,13 +187,20 @@ class ExternalCodingAgentBuilder:
         provider_kind: ProviderKind | None = None,
         spec: ExternalEnvSpec | None = None,
         base_env: dict[str, str] | None = None,
+        child_discovery_sink: ChildSessionDiscoverySink | None = None,
+        session_registry: SessionRegistry | None = None,
+        session_id_factory: SessionIdFactory | None = None,
+        child_emitter_factory: Callable[[str], ContentEmitter[ExternalCodingEvent]]
+        | None = None,
     ) -> ExternalCodingAgent:
         """Pool-registration entry point mirroring ReActAgentBuilder.
 
         The factory passes ``descriptor`` and ``provider``; the pool
         builder supplies the runtime collaborators via keyword-only
         arguments.  All required collaborators must be provided or
-        :class:`ValueError` is raised.
+        :class:`ValueError` is raised.  The four ``child_*`` / ``session_*``
+        collaborators are optional — ``None`` preserves pre-child-discovery
+        behavior.
         """
         missing = [
             name
@@ -187,6 +234,10 @@ class ExternalCodingAgentBuilder:
             model=None,
             thinking_level=None,
             timeout=None,
+            child_discovery_sink=child_discovery_sink,
+            session_registry=session_registry,
+            session_id_factory=session_id_factory,
+            child_emitter_factory=child_emitter_factory,
         )
 
     @staticmethod

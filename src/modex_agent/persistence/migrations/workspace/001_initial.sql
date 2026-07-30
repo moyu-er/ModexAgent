@@ -346,14 +346,14 @@ END;
 -- 14. external_session_map
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS external_session_map (
-    modex_session_id    TEXT    PRIMARY KEY,
-    scope_key           TEXT    NOT NULL,
-    provider_session_id TEXT    NOT NULL,
-    provider_kind       TEXT    NOT NULL CHECK (provider_kind IN ('pi', 'opencode')),
-    last_committed_at   INTEGER NOT NULL,
-    invalidated         INTEGER NOT NULL DEFAULT 0 CHECK (invalidated IN (0, 1)),
-    created_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
-    updated_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
+    modex_session_id       TEXT    PRIMARY KEY,
+    scope_key              TEXT    NOT NULL,
+    provider_session_id    TEXT    NOT NULL,
+    provider_kind          TEXT    NOT NULL CHECK (provider_kind IN ('pi', 'opencode')),
+    last_committed_at      INTEGER NOT NULL,
+    invalidated            INTEGER NOT NULL DEFAULT 0 CHECK (invalidated IN (0, 1)),
+    created_at             INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
+    updated_at             INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
 );
 
 CREATE TRIGGER IF NOT EXISTS trg_external_session_map_auto_updated_at

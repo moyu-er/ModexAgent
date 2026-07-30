@@ -114,7 +114,6 @@ class SqliteExternalSessionMapStore(ExternalSessionMapStore):
         No-op if no entry exists for ``modex_session_id``.
         """
         await self._connection.execute(
-            "UPDATE external_session_map SET invalidated = 1 "
-            "WHERE modex_session_id = ?",
+            "UPDATE external_session_map SET invalidated = 1 WHERE modex_session_id = ?",
             (modex_session_id,),
         )

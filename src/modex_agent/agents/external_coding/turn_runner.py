@@ -105,6 +105,10 @@ class ExternalTurnRunner(TurnRunner):
         self, emitter_factory: Callable[..., ContentEmitter[Any]] | None
     ) -> None:
         self._emitter_factory = emitter_factory
+        from modex_agent.agents.external_coding.agent import ExternalCodingAgent
+
+        if isinstance(self._agent, ExternalCodingAgent):
+            self._agent.set_child_emitter_factory(emitter_factory)
 
     async def process_locked(
         self,

@@ -99,23 +99,27 @@ class OpenCodeSSEParser(ProviderEventParser):
             return iter(())
 
         sid = properties.get("sessionID")
+        is_child_session = False
         if isinstance(sid, str) and sid:
             if self._captured_session_id is None:
                 self._captured_session_id = sid
             if self._main_session_id is not None and sid != self._main_session_id:
                 self._child_session_ids.add(sid)
-                return iter(())
+                is_child_session = True
 
         event_type = payload.get("type")
         match event_type:
             case SSEEventType.MESSAGE_PART_DELTA:
-                return iter(self._handle_delta(properties))
+                emissions = self._handle_delta(properties)
             case SSEEventType.MESSAGE_PART_UPDATED:
-                return iter(self._handle_part_updated(properties))
+                emissions = self._handle_part_updated(properties)
             case SSEEventType.SESSION_ERROR:
-                return iter(self._handle_error(properties))
+                emissions = self._handle_error(properties)
             case _:
-                return iter(())
+                emissions = []
+        if is_child_session and isinstance(sid, str):
+            emissions = [e.model_copy(update={"source_session_id": sid}) for e in emissions]
+        return iter(emissions)
 
     def _handle_delta(self, properties: dict[str, Any]) -> list[Emission]:
         delta = properties.get("delta")
