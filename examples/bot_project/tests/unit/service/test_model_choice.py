@@ -63,9 +63,7 @@ def test_current_model_choice_default_none() -> None:
 
 def _ctx(session_id: str, services: SimpleNamespace | None = None) -> SimpleNamespace:
     runtime = SimpleNamespace(services=services) if services is not None else None
-    return SimpleNamespace(
-        session=SimpleNamespace(session_id=session_id), runtime=runtime
-    )
+    return SimpleNamespace(session=SimpleNamespace(session_id=session_id), runtime=runtime)
 
 
 @pytest.mark.asyncio

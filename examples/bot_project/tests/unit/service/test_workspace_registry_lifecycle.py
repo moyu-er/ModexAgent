@@ -146,9 +146,7 @@ async def test_stop_retains_shared_resources_until_eviction_retry_completes() ->
     service._router_task = None
     order: list[str] = []
     service.workspace_stack = MagicMock()
-    service.workspace_stack.registry.evict_all = AsyncMock(
-        side_effect=[False, True]
-    )
+    service.workspace_stack.registry.evict_all = AsyncMock(side_effect=[False, True])
     service._mcp_registry = MagicMock()
     service._mcp_registry.shutdown = AsyncMock(side_effect=lambda: order.append("mcp"))
     service.input_adapter = MagicMock()
@@ -260,8 +258,7 @@ async def test_initialize_preserves_shared_dependencies_when_eviction_is_incompl
     # Then
     assert raised.value is initialization_error
     assert any(
-        "workspace eviction incomplete" in note
-        for note in getattr(raised.value, "__notes__", ())
+        "workspace eviction incomplete" in note for note in getattr(raised.value, "__notes__", ())
     )
     registry.evict_all.assert_awaited_once()
     routing_store.close.assert_not_called()

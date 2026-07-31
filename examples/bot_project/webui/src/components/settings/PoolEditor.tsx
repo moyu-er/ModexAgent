@@ -86,13 +86,13 @@ const clone = <T,>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
 const normalizeTree = (tree: PoolTree): PoolTree => {
   let changed = false;
   // Normalize main
-  const mainNormalized = tree.main.execution_strategy === "external_coding"
+  const mainNormalized = tree.main.execution_strategy === "external"
     ? selectProvider(tree.main.provider_kind)
     : tree.main.provider_kind;
   if (mainNormalized !== tree.main.provider_kind) changed = true;
   // Normalize subagents
   const subagents = tree.subagents.map((s) => {
-    if (s.execution_strategy !== "external_coding") return s;
+    if (s.execution_strategy !== "external") return s;
     const normalized = selectProvider(s.provider_kind);
     if (normalized === s.provider_kind) return s;
     changed = true;
@@ -355,9 +355,9 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel, onNavigateTo
     return found?.main_agent_name ?? name;
   };
 
-  const isExternal = form.main.execution_strategy === "external_coding";
+  const isExternal = form.main.execution_strategy === "external";
   const effectiveStrategy: ImplementationChoice = isExternal
-    ? "external_coding"
+    ? "external"
     : "react";
   const IMPLEMENTATION_OPTIONS = IMPLEMENTATION_DEFS.map((d) => ({
     value: d.value,
@@ -374,7 +374,7 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel, onNavigateTo
             ...prev,
             main: {
               ...prev.main,
-              execution_strategy: "external_coding",
+              execution_strategy: "external",
               provider_kind: DEFAULT_EXTERNAL_PROVIDER,
             },
             subagents: [],
@@ -399,7 +399,7 @@ export function PoolEditor({ pool, onDirtyChange, onSave, onCancel, onNavigateTo
   };
 
   const onImplementationChange = (next: ImplementationChoice): void => {
-    if (next === "external_coding") {
+    if (next === "external") {
       if (isExternal) return;
       setConfirmSwitch(true);
       return;
@@ -1165,9 +1165,9 @@ function SubagentCard({
   onNavigateToPrompts: () => void;
 }) {
   const t = useT();
-  const isExternal = node.execution_strategy === "external_coding";
+  const isExternal = node.execution_strategy === "external";
   const effectiveStrategy: ImplementationChoice = isExternal
-    ? "external_coding"
+    ? "external"
     : "react";
   const descriptor = descriptorFor(node.provider_kind);
   const IMPLEMENTATION_OPTIONS = IMPLEMENTATION_DEFS.map((d) => ({
@@ -1179,10 +1179,10 @@ function SubagentCard({
   // stay in form state (hidden, not cleared) so toggling back restores them.
   // No confirm dialog — the switch only affects this subagent.
   const onSubagentImplementationChange = (next: ImplementationChoice): void => {
-    if (next === "external_coding") {
+    if (next === "external") {
       if (isExternal) return;
       onPatch({
-        execution_strategy: "external_coding",
+        execution_strategy: "external",
         provider_kind: DEFAULT_EXTERNAL_PROVIDER,
       });
       return;

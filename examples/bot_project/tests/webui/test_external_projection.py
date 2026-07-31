@@ -1,4 +1,4 @@
-"""WebBotEmitter projection of ExternalCodingEvent -> ServerEvent (Scheme C).
+"""WebBotEmitter projection of ExternalEvent -> ServerEvent (Scheme C).
 
 External coding agents (OpenCode now, Pi-compatible) stream and persist
 basic semantic events through the existing WebUI DeltaEnvelope / ServerEvent
@@ -301,7 +301,7 @@ async def test_external_tool_result_without_use_persists_result_only() -> None:
 
 # ---------------------------------------------------------------------------
 # Text ordering: text emitted before non-text events must appear before them
-# in the transcript (ExternalCodingAgent does NOT call emit_stream_end between
+# in the transcript (ExternalAgent does NOT call emit_stream_end between
 # text and tool events — the emitter must flush text in-order itself).
 # ---------------------------------------------------------------------------
 
@@ -311,7 +311,7 @@ async def test_text_before_tool_call_preserves_order_in_transcript() -> None:
     """Text emitted via TurnTextEvent (without an intervening emit_stream_end)
     must appear BEFORE the subsequent tool_call in the persisted transcript.
 
-    This simulates the real ExternalCodingAgent._handle_emission flow: it
+    This simulates the real ExternalAgent._handle_emission flow: it
     emits TurnTextEvent then TurnToolCallEvent with no emit_stream_end call
     between them.  The emitter must flush its text buffer before persisting
     the tool event so chronological order is preserved.

@@ -16,15 +16,11 @@ from modex_agent.persistence.config import PersistenceBackend
 
 async def test_sqlite_access_returns_materialized_workspace_store(tmp_path: Path) -> None:
     service = WebUIService.__new__(WebUIService)
-    service._app_config = AppConfig.model_validate(
-        {"persistence": {"backend": "sqlite"}}
-    )
+    service._app_config = AppConfig.model_validate({"persistence": {"backend": "sqlite"}})
     expected = LocalFileSessionStore(tmp_path / "sentinel")
     registry = SimpleNamespace(
         get_or_open=AsyncMock(return_value=object()),
-        materialize=AsyncMock(
-            return_value=SimpleNamespace(session_index_store=expected)
-        ),
+        materialize=AsyncMock(return_value=SimpleNamespace(session_index_store=expected)),
     )
     service.workspace_stack = SimpleNamespace(registry=registry)
 
@@ -37,9 +33,7 @@ async def test_sqlite_access_returns_materialized_workspace_store(tmp_path: Path
 
 async def test_file_access_reconstructs_workspace_file_store(tmp_path: Path) -> None:
     service = WebUIService.__new__(WebUIService)
-    service._app_config = AppConfig.model_validate(
-        {"persistence": {"backend": "file"}}
-    )
+    service._app_config = AppConfig.model_validate({"persistence": {"backend": "file"}})
     service._data_dir_name = ".modex"
     service._pool_for_agent = lambda agent_name: agent_name
 

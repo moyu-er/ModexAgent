@@ -11,6 +11,7 @@ Mirrors the inline construction in ``_wire_main_pipeline`` (ADR-0022 D6:
 ``NativeEnvInjectionHook`` is the single native-agent site that constructs
 ``MODEX_*`` vars; the pool_map/targets must be complete at wiring time).
 """
+
 from __future__ import annotations
 
 import sys
@@ -253,7 +254,7 @@ def test_wire_main_pipeline_skips_missing_peer_pool_with_warning(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A missing peer pool is logged and skipped — the rest of the
-    pool_map/targets are still wired (matches external_coding_strategy.
+    pool_map/targets are still wired (matches external_strategy.
     _build_agent_pool_map / _build_targets try/except pattern)."""
     import logging
 

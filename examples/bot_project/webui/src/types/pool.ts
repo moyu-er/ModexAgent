@@ -56,7 +56,7 @@ export interface McpServerEntry {
 
 // ─── Pool tree ───────────────────────────────────────────────────────────────
 
-export type ExecutionStrategy = "react" | "single_turn" | "pipeline" | "external_coding";
+export type ExecutionStrategy = "react" | "single_turn" | "pipeline" | "external";
 export type ProviderKind = "pi" | "opencode";
 
 export interface MainAgentNode {
@@ -71,7 +71,7 @@ export interface MainAgentNode {
   mcp: string[];
   /** Execution strategy; backend default is "react". Present on read; omit on write to use the default. */
   execution_strategy?: ExecutionStrategy;
-  /** External coding provider; null when the agent is native (execution_strategy !== "external_coding"). */
+  /** External coding provider; null when the agent is native (execution_strategy !== "external"). */
   provider_kind?: ProviderKind | null;
   /** Agent role tags (T1 data layer). Plain strings — preset AgentRole values or custom strings. */
   roles?: string[];

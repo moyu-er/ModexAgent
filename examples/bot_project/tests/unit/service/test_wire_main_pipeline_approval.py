@@ -12,6 +12,7 @@ Main-only coverage is structural: ``_wire_main_pipeline`` only ever touches
 A full subagent-pool fixture is therefore unnecessary to pin the main-only
 contract; the function has no role-based branching to regress.
 """
+
 from __future__ import annotations
 
 import sys
@@ -287,10 +288,18 @@ def test_wired_classifier_anchors_to_live_workspace_root() -> None:
         session=SessionInfo.from_str("test.main"),
     )
     assert (
-        classifier.classify(ToolCall(tool_name="write", arguments={"path": str(workspace / "f.txt")}, call_id="c1"), ctx)
+        classifier.classify(
+            ToolCall(tool_name="write", arguments={"path": str(workspace / "f.txt")}, call_id="c1"),
+            ctx,
+        )
         == ApprovalTier.NORMAL
     )
     assert (
-        classifier.classify(ToolCall(tool_name="write", arguments={"path": str(project_dir / "f.txt")}, call_id="c2"), ctx)
+        classifier.classify(
+            ToolCall(
+                tool_name="write", arguments={"path": str(project_dir / "f.txt")}, call_id="c2"
+            ),
+            ctx,
+        )
         == ApprovalTier.DANGEROUS
     )

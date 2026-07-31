@@ -21,8 +21,8 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
-from modex_agent.agents.external_coding.env_builder import ExternalEnvBuilder
-from modex_agent.agents.external_coding.types import ExternalEnvSpec
+from modex_agent.agents.external.env_builder import ExternalEnvBuilder
+from modex_agent.agents.external.types import ExternalEnvSpec
 from modex_agent.core.agent import AgentCommKind
 
 # ---------------------------------------------------------------------------

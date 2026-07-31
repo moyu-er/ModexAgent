@@ -545,7 +545,7 @@ def _sample_transcript_result(limit: int = 3) -> HistoryResult:
         session_id="inv456.coder",
         agent_name="coder",
         pool="default",
-        execution_strategy="external_coding",
+        execution_strategy="external",
         items=[
             HistoryMessage(
                 role="assistant",
@@ -643,7 +643,7 @@ class TestTranscriptHistoryCLI:
             session_id="inv456.coder",
             agent_name="coder",
             pool="default",
-            execution_strategy="external_coding",
+            execution_strategy="external",
             items=[],
             effective_limit=3,
         )

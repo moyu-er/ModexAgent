@@ -90,13 +90,13 @@ def _seed_external_main_pool(
     main_agent: str,
     provider_kind: str = "opencode",
 ) -> Path:
-    """Write a minimal pool.yml for an external_coding main agent."""
+    """Write a minimal pool.yml for an external main agent."""
     pool_dir = base / "config" / "pools" / pool
     pool_dir.mkdir(parents=True, exist_ok=True)
     (pool_dir / "templates").mkdir(exist_ok=True)
     data = {
         "main_agent_name": main_agent,
-        "execution_strategy": "external_coding",
+        "execution_strategy": "external",
         "provider_kind": provider_kind,
     }
     p = pool_dir / "pool.yml"
@@ -109,7 +109,7 @@ def _seed_subagent_template(
     pool: str,
     agent: str,
     *,
-    external_coding: bool = False,
+    external: bool = False,
     provider_kind: str = "opencode",
 ) -> Path:
     """Write a minimal subagent template YAML."""
@@ -120,8 +120,8 @@ def _seed_subagent_template(
         "description": "",
         "max_steps": 80,
     }
-    if external_coding:
-        payload["execution_strategy"] = "external_coding"
+    if external:
+        payload["execution_strategy"] = "external"
         payload["provider_kind"] = provider_kind
     p = tdir / f"{agent}.yml"
     p.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
@@ -133,8 +133,8 @@ def _build_pool_store_with_mixed_pools(base: Path) -> PoolStore:
 
     Pools created:
     - ``native_main``: react main + 2 react subagents
-    - ``external_main``: external_coding main (opencode), no subagents
-    - ``mixed``: react main + 1 react subagent + 1 external_coding subagent
+    - ``external_main``: external main (opencode), no subagents
+    - ``mixed``: react main + 1 react subagent + 1 external subagent
     """
     _seed_native_main_pool(base, "native_main", main_agent="orchestrator")
     _seed_subagent_template(base, "native_main", "planner")
@@ -144,7 +144,7 @@ def _build_pool_store_with_mixed_pools(base: Path) -> PoolStore:
 
     _seed_native_main_pool(base, "mixed", main_agent="lead")
     _seed_subagent_template(base, "mixed", "researcher")
-    _seed_subagent_template(base, "mixed", "external_worker", external_coding=True)
+    _seed_subagent_template(base, "mixed", "external_worker", external=True)
 
     return PoolStore(base_dir=base)
 
@@ -415,27 +415,27 @@ class TestSubagentTemplateMemoryInjection:
             store, default_subagent_memory=subagent_memory(),
         )
 
-        # Find the external_coding subagent template
+        # Find the external subagent template
         external_template = None
         for t in registry.list_templates("mixed"):
-            if t.spec.execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING:
+            if t.spec.execution_strategy == ExecutionStrategyKind.EXTERNAL:
                 external_template = t
                 break
 
         assert external_template is not None, (
-            "Test setup must include an external_coding subagent"
+            "Test setup must include an external subagent"
         )
         # The template DOES carry memory (harmless — it's never consumed)
         assert external_template.memory is not None
-        # But execution_strategy is EXTERNAL_CODING → materialize will skip
-        assert external_template.spec.execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING
+        # But execution_strategy is EXTERNAL → materialize will skip
+        assert external_template.spec.execution_strategy == ExecutionStrategyKind.EXTERNAL
 
 
 # ─── Test 4: External main agent structural skip at wiring ───────────────────
 
 
 class TestExternalMainAgentSkip:
-    """Verify external_coding main agents are skipped at wiring time.
+    """Verify external main agents are skipped at wiring time.
 
     External pools have a pipeline (ExternalTurnRunner) but NO BotModelProvider
     (they use their own provider backend). ExperienceReviewAgent uses the
@@ -703,7 +703,7 @@ class TestEndToEndWithSynthesizedPools:
         1. PoolStore loads them correctly
         2. _build_assembly_deps_for_pools injects uniform config
         3. AgentTemplateRegistry injects subagent_memory to all templates
-        4. External subagent is correctly marked EXTERNAL_CODING
+        4. External subagent is correctly marked EXTERNAL
         """
         from bot.config.memory_defaults import subagent_memory
         from bot.workspace.wiring import _build_assembly_deps_for_pools
@@ -723,8 +723,8 @@ class TestEndToEndWithSynthesizedPools:
         for sub in specs["native_main"].subagents:
             assert sub.execution_strategy == ExecutionStrategyKind.REACT
 
-        # external_main: external_coding main, no subs
-        assert specs["external_main"].main.execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING
+        # external_main: external main, no subs
+        assert specs["external_main"].main.execution_strategy == ExecutionStrategyKind.EXTERNAL
         assert specs["external_main"].main.provider_kind == ProviderKind.OPENCODE
         assert len(specs["external_main"].subagents) == 0
 
@@ -733,7 +733,7 @@ class TestEndToEndWithSynthesizedPools:
         assert len(specs["mixed"].subagents) == 2
         sub_strategies = {s.agent_name: s.execution_strategy for s in specs["mixed"].subagents}
         assert sub_strategies["researcher"] == ExecutionStrategyKind.REACT
-        assert sub_strategies["external_worker"] == ExecutionStrategyKind.EXTERNAL_CODING
+        assert sub_strategies["external_worker"] == ExecutionStrategyKind.EXTERNAL
 
         # 3. Verify uniform assembly deps injection
         deps_map = _build_assembly_deps_for_pools(
@@ -773,7 +773,7 @@ class TestExperienceReviewerUsesDefaultProvider:
     - no model.yml: default_provider is None, experience review is skipped
       with a warning (bot boots normally)
 
-    If this contract breaks, external_coding pools crash with
+    If this contract breaks, external pools crash with
     ``TypeError: provider must be LLMProvider, got NoneType``.
     """
 
@@ -913,7 +913,7 @@ class TestExperienceReviewerUsesDefaultProvider:
         pool_instance = MagicMock()
         pool_instance.pool = pool
         pool_instance.main_agent_name = "opencode"
-        pool_instance.provider = None  # external_coding: no BotModelProvider
+        pool_instance.provider = None  # external: no BotModelProvider
 
         pool_data = MagicMock()
         pool_data.experience_dir = tmp_path / "exp_opencode"

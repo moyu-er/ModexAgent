@@ -60,9 +60,7 @@ def test_build_llm_provider_returns_bot_model_provider(tmp_path: Path) -> None:
 def test_wire_main_pipeline_adds_model_choice_hook(tmp_path: Path) -> None:
     cfg = _cfg(tmp_path)
     reg = ModelChoiceRegistry()
-    main_spec = MainAgentSpec(
-        agent_name="main", approval=ApprovalConfig(enabled=False)
-    )
+    main_spec = MainAgentSpec(agent_name="main", approval=ApprovalConfig(enabled=False))
     assembly_deps = PoolAssemblyDeps(memory=MemoryConfig())
 
     agent = _Agent()

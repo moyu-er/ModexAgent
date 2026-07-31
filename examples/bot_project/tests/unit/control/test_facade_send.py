@@ -378,7 +378,7 @@ class TestExternalSubagentDispatch:
     async def test_external_target_derived_from_execution_strategy(self) -> None:
         target = _make_target(
             kind=AgentCommKind.SUBAGENT,
-            execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+            execution_strategy=ExecutionStrategyKind.EXTERNAL,
         )
         result = _make_send_result(
             target_kind=AgentCommKind.SUBAGENT,
@@ -598,7 +598,7 @@ class TestInvocationIdExistence:
     async def test_external_subagent_with_invocation_id_still_checks(self) -> None:
         target = _make_target(
             kind=AgentCommKind.SUBAGENT,
-            execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+            execution_strategy=ExecutionStrategyKind.EXTERNAL,
         )
         result = _make_send_result(
             target_kind=AgentCommKind.SUBAGENT,

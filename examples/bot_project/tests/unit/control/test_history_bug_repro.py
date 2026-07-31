@@ -2,10 +2,10 @@
 
 Simulates the REAL coder pool configuration:
   - main agent: orchestrator (react)
-  - subagent: coder (external_coding, opencode)
+  - subagent: coder (external, opencode)
 
 When orchestrator dispatches a task to coder and then queries coder's history,
-the facade must read from TranscriptStore (external_coding path), not
+the facade must read from TranscriptStore (external path), not
 MessageStore (native path). Guards against the regression where the facade used
 ``main_execution_strategy`` instead of the subagent's ``execution_strategy``.
 """
@@ -64,7 +64,7 @@ def _make_facade_mixed_pool(
     """Build a facade simulating the real coder pool.
 
     - main agent: orchestrator (react) — no native messages for the subagent session
-    - subagent: coder (external_coding) — transcript has events
+    - subagent: coder (external) — transcript has events
 
     The mock MessageStore returns empty (external subagent has no native memory).
     The mock TranscriptStore returns the sample events.
@@ -87,11 +87,11 @@ def _make_facade_mixed_pool(
         name=_SUBAGENT,
         kind=AgentCommKind.SUBAGENT,
         pool_name=_POOL,
-        execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+        execution_strategy=ExecutionStrategyKind.EXTERNAL,
         description="external coding subagent",
     ))
 
-    # Mock PoolInstance: main=react (orchestrator), subagent=coder(external_coding)
+    # Mock PoolInstance: main=react (orchestrator), subagent=coder(external)
     mock_pool_instance = MagicMock()
     mock_pool_instance.main_execution_strategy = ExecutionStrategyKind.REACT  # orchestrator is react
     mock_pool_instance.main_agent_name = _MAIN_AGENT
@@ -122,11 +122,11 @@ def _make_facade_mixed_pool(
 
 
 class TestMixedPoolExternalSubagentHistory:
-    """The bug: main=react, subagent=external_coding → wrong path selected."""
+    """The bug: main=react, subagent=external → wrong path selected."""
 
     @pytest.mark.asyncio
     async def test_external_subagent_uses_transcript_not_messagestore(self) -> None:
-        """Querying an external_coding subagent's history must read from
+        """Querying an external subagent's history must read from
         TranscriptStore, not MessageStore."""
         facade, mock_message_store, mock_transcript_store = _make_facade_mixed_pool()
 
@@ -143,7 +143,7 @@ class TestMixedPoolExternalSubagentHistory:
 
         # The source MUST be OBSERVABLE_TRANSCRIPT, not MESSAGE_STORE.
         assert result.source == HistorySource.OBSERVABLE_TRANSCRIPT, (
-            f"Expected OBSERVABLE_TRANSCRIPT for external_coding subagent, "
+            f"Expected OBSERVABLE_TRANSCRIPT for external subagent, "
             f"got {result.source}. The facade used main_execution_strategy "
             f"instead of the subagent's execution_strategy."
         )
@@ -177,7 +177,7 @@ class TestMixedPoolExternalSubagentHistory:
 
     @pytest.mark.asyncio
     async def test_execution_strategy_reflects_subagent_not_main(self) -> None:
-        """The result's execution_strategy field must be 'external_coding',
+        """The result's execution_strategy field must be 'external',
         not 'react' (which is the main agent's strategy)."""
         facade, _, _ = _make_facade_mixed_pool()
 
@@ -192,8 +192,8 @@ class TestMixedPoolExternalSubagentHistory:
         )
         result = await facade.history(request)
 
-        assert result.execution_strategy == "external_coding", (
-            f"Expected 'external_coding' (subagent's strategy), "
+        assert result.execution_strategy == "external", (
+            f"Expected 'external' (subagent's strategy), "
             f"got {result.execution_strategy!r} (main agent's strategy)."
         )
 
@@ -274,7 +274,7 @@ class TestExternalMainAgentSelfHistory:
     """External coding main agent (e.g. opencode pool) querying its own history.
 
     This is the opencode pool configuration:
-      main agent: opencode (external_coding)
+      main agent: opencode (external)
 
     The main agent's own session has NO MessageStore records (external agents
     skip native memory assembly). Its history lives in TranscriptStore. The
@@ -295,7 +295,7 @@ class TestExternalMainAgentSelfHistory:
         )
 
         mock_pool_instance = MagicMock()
-        mock_pool_instance.main_execution_strategy = ExecutionStrategyKind.EXTERNAL_CODING
+        mock_pool_instance.main_execution_strategy = ExecutionStrategyKind.EXTERNAL
         mock_pool_instance.main_agent_name = "opencode"
         mock_pool_instance.target_store.list = MagicMock(return_value=[])
         mock_pool_instance.target_store.get = MagicMock(return_value=None)
@@ -334,7 +334,7 @@ class TestExternalMainAgentSelfHistory:
         result = await facade.history(request)
 
         assert result.source == HistorySource.OBSERVABLE_TRANSCRIPT
-        assert result.execution_strategy == "external_coding"
+        assert result.execution_strategy == "external"
         assert len(result.items) > 0
         mock_transcript_store.load.assert_awaited_once_with("conv1.opencode")
         mock_message_store.load_all_messages.assert_not_awaited()
@@ -362,7 +362,7 @@ class TestSubagentCannotReadMainAgentHistory:
             name=_SUBAGENT,
             kind=AgentCommKind.SUBAGENT,
             pool_name=_POOL,
-            execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+            execution_strategy=ExecutionStrategyKind.EXTERNAL,
             description="external coding subagent",
         ))
 

@@ -37,7 +37,7 @@ const externalTree = (name: string) => ({
   ...tree(name),
   main: {
     ...tree(name).main,
-    execution_strategy: "external_coding",
+    execution_strategy: "external",
     provider_kind: "opencode",
   },
 });

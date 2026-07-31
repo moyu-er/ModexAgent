@@ -554,7 +554,7 @@ describe("PoolEditor", () => {
 
   // ─── External pool mode ───────────────────────────────────────────────
   //
-  // External (external_coding) pools run their main agent in a provider CLI
+  // External (external) pools run their main agent in a provider CLI
   // (OpenCode). The editor groups Implementation + Provider into one
   // runtime-first panel, hides native-only config in external mode, preserves
   // peers, and confirms the native→external switch because it clears draft
@@ -564,7 +564,7 @@ describe("PoolEditor", () => {
     ...tree,
     main: {
       ...tree.main,
-      execution_strategy: "external_coding",
+      execution_strategy: "external",
       provider_kind: "opencode",
     },
     subagents: [],
@@ -751,7 +751,7 @@ describe("PoolEditor", () => {
       main?: { execution_strategy?: string; provider_kind?: string };
       subagents?: unknown[];
     };
-    expect(putBody.main?.execution_strategy).toBe("external_coding");
+    expect(putBody.main?.execution_strategy).toBe("external");
     expect(putBody.main?.provider_kind).toBe(DEFAULT_EXTERNAL_PROVIDER);
     expect(putBody.subagents).toEqual([]);
   });
@@ -761,7 +761,7 @@ describe("PoolEditor", () => {
       ...tree,
       main: {
         ...tree.main,
-        execution_strategy: "external_coding" as const,
+        execution_strategy: "external" as const,
         provider_kind: "pi" as const,
       },
       subagents: [],
