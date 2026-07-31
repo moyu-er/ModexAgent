@@ -133,7 +133,7 @@ class SubagentAutoSendHook(FinallyTurnHook):
         invocation_id = ctx.session.session_id_prefix
         session_id = str(ctx.session)
 
-        if self._execution_strategy is ExecutionStrategyKind.EXTERNAL_CODING:
+        if self._execution_strategy is ExecutionStrategyKind.EXTERNAL:
             xml = self._build_external_xml(result, invocation_id)
         else:
             xml = self._build_native_xml(result, invocation_id, session_id)

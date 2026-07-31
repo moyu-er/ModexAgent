@@ -169,9 +169,7 @@ class AgentCommunicationService:
         subclasses based on the target's routing kind."""
         err = TopologyPolicy.check(context.comm_kind, target, context)
         if err is not None:
-            return AgentSendResult.with_error(
-                target.name, target.kind, err
-            )
+            return AgentSendResult.with_error(target.name, target.kind, err)
 
         if target.bus_ref is not None:
             strategy = self._strategies[SendStrategyKind.PEER_NORMAL]

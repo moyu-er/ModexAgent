@@ -1,4 +1,4 @@
-"""SQLite-backed :class:`~modex_agent.agents.external_coding.session_store.ExternalSessionMapStore`.
+"""SQLite-backed :class:`~modex_agent.agents.external.session_store.ExternalSessionMapStore`.
 
 Stores the Modex→provider session mapping in the ``external_session_map``
 table. ``resolve`` is sync per the ABC contract — it opens a short-lived
@@ -9,7 +9,7 @@ pattern established by :class:`~modex_agent.persistence.adapters.inbox_mq.Sqlite
 
 The ``invalidated`` column (INTEGER CHECK 0/1) implements soft-delete
 (matching
-:class:`~modex_agent.agents.external_coding.session_store.LocalFileExternalSessionMapStore`):
+:class:`~modex_agent.agents.external.session_store.LocalFileExternalSessionMapStore`):
 ``invalidate`` sets ``invalidated = 1``; ``resolve`` treats invalidated
 entries as absent — returning ``(None, False)``. ``last_committed_at`` is
 stored as integer milliseconds (ADR-0029 §2); ``created_at``/``updated_at``
@@ -22,8 +22,8 @@ from __future__ import annotations
 import sqlite3
 from typing import TYPE_CHECKING
 
-from modex_agent.agents.external_coding.paths import ProviderKind
-from modex_agent.agents.external_coding.session_store import ExternalSessionMapStore
+from modex_agent.agents.external.paths import ProviderKind
+from modex_agent.agents.external.session_store import ExternalSessionMapStore
 from modex_agent.utils.time import now_ms
 
 if TYPE_CHECKING:

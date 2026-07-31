@@ -43,8 +43,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from modex_agent.agents.external_coding.agent import StreamingProviderBackend
-    from modex_agent.agents.external_coding.session_store import ExternalSessionMapStore
+    from modex_agent.agents.external.agent import StreamingProviderBackend
+    from modex_agent.agents.external.session_store import ExternalSessionMapStore
     from modex_agent.commands.models import CommandProcessor
     from modex_agent.control.channel import InMemoryControlChannel
     from modex_agent.core.agent import Agent
@@ -102,17 +102,17 @@ class ExecutionStrategy(ABC):
 
     Subclasses declare:
 
-    - ``name``: unique registry key (e.g. ``"react"``, ``"external_coding"``).
+    - ``name``: unique registry key (e.g. ``"react"``, ``"external"``).
     - ``supports_subagents``: whether this shape permits subagent templates
-      (default ``True``; ``external_coding`` overrides to ``False``).
+      (default ``True``; ``external`` overrides to ``False``).
     - ``requires_main_agent_tools``: whether the pool builder must register
       the ``send_to_agent`` communication tool on the main agent (default
-      ``True``; ``external_coding`` overrides to ``False`` since its main
+      ``True``; ``external`` overrides to ``False`` since its main
       agent has no tool surface).
     - :meth:`assemble`: construct all runtime components this strategy needs
       and return a :class:`StrategyAssembly`.
     - :meth:`validate_pool_spec`: fail-fast at startup if the pool spec is
-      incompatible with this strategy (e.g. ``external_coding`` rejects
+      incompatible with this strategy (e.g. ``external`` rejects
       subagents and requires ``provider_kind``).
     """
 
@@ -130,7 +130,7 @@ class ExecutionStrategy(ABC):
     @property
     def requires_main_agent_tools(self) -> bool:
         """Whether the pool builder registers ``send_to_agent`` on the main
-        agent (default ``True``). ``external_coding`` overrides to ``False``
+        agent (default ``True``). ``external`` overrides to ``False``
         — its main agent has no tool surface.
         """
         return True
@@ -231,7 +231,7 @@ class StrategyAssembly:
 
     Carries everything the pool builder and pipeline need from the strategy:
     the ``Agent``, the :class:`TurnRunner`, common services, react-only
-    collaborators (``None`` for external_coding), external-only collaborators
+    collaborators (``None`` for external), external-only collaborators
     (``None`` for react), and ``extra_cleanup`` hooks.
 
     Runtime-object container per rule 12 — NOT Pydantic ``BaseModel``. ``None``
@@ -255,9 +255,9 @@ class StrategyAssembly:
     without re-running the build helpers. Ticket 6 moves the helpers into the
     strategy and these fields leave the assembly contract.
 
-    The external-only transitional field ``external_coding_deps`` carries the
-    deps dict that ``ExternalCodingAwareFactory`` reads to build an
-    ``ExternalCodingAgent``. ``ExternalCodingExecutionStrategy.assemble()``
+    The external-only transitional field ``external_deps`` carries the
+    deps dict that ``ExternalAwareFactory`` reads to build an
+    ``ExternalAgent``. ``ExternalExecutionStrategy.assemble()``
     fills it; ``None`` for react. Ticket 6 eliminates this field when
     strategies build agents directly (the factory dispatch branch is deleted
     and the strategy owns agent construction).
@@ -285,14 +285,14 @@ class StrategyAssembly:
     session_map_store: ExternalSessionMapStore | None = None
 
     # Transitional react-only side products (see class docstring). Filled by
-    # ``ReactExecutionStrategy.assemble()``; ``None`` for external_coding.
+    # ``ReactExecutionStrategy.assemble()``; ``None`` for external.
     cassette_recorder: CassetteRecorder | None = None
     todo_store: JsonFileTodoStore | None = None
     root_provider: WorkspaceRootProvider | None = None
 
     # Transitional external-only deps dict (see class docstring). Filled by
-    # ``ExternalCodingExecutionStrategy.assemble()``; ``None`` for react.
-    external_coding_deps: dict[str, Any] | None = None
+    # ``ExternalExecutionStrategy.assemble()``; ``None`` for react.
+    external_deps: dict[str, Any] | None = None
 
     extra_cleanup: tuple[Callable[[], Awaitable[None]], ...] = ()
 
@@ -301,7 +301,7 @@ class ExecutionStrategyRegistry:
     """Process-scoped, write-once-read-many registry of :class:`ExecutionStrategy`.
 
     ``BotService.initialize()`` registers shipped strategies (``react``,
-    ``external_coding``) before any pool is created. The framework ships a
+    ``external``) before any pool is created. The framework ships a
     :func:`default_strategy_registry` factory that returns an empty registry;
     shipped strategies register themselves in their own tickets (3 and 4).
     """
@@ -319,8 +319,7 @@ class ExecutionStrategyRegistry:
         """Resolve a strategy by name. Raises ``ValueError`` on unknown name."""
         if name not in self._strategies:
             raise ValueError(
-                f"Unknown execution strategy: {name!r}. "
-                f"Registered: {sorted(self._strategies)}"
+                f"Unknown execution strategy: {name!r}. Registered: {sorted(self._strategies)}"
             )
         return self._strategies[name]
 
@@ -332,7 +331,7 @@ class ExecutionStrategyRegistry:
 def default_strategy_registry() -> ExecutionStrategyRegistry:
     """Return an empty registry.
 
-    Shipped strategies (``react``, ``external_coding``) register themselves in
+    Shipped strategies (``react``, ``external``) register themselves in
     later tickets once their classes exist. This factory is the framework-only
     entry point; business layers may override by constructing their own
     registry and registering a custom strategy set.

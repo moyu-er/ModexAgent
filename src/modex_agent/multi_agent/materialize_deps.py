@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from modex_agent.agents.external_coding.subagent_builder import SubagentExternalCodingBuilder
+    from modex_agent.agents.external.subagent_builder import SubagentExternalBuilder
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy
     from modex_agent.core.session_id import SessionIdFactory
     from modex_agent.core.session_registry import SessionRegistry
@@ -69,7 +69,7 @@ class AgentMaterializeDeps:
     mcp_registry: McpConnectionRegistry | None = None
     todo_store: TodoStore | None = None
     trace_enabled: bool = True
-    subagent_external_coding_builder: SubagentExternalCodingBuilder | None = None
+    subagent_external_builder: SubagentExternalBuilder | None = None
     memory_store_registry: MemoryStoreRegistry | None = None
     """Main agent's ``MemoryStoreRegistry``, threaded to native subagent
     ``build_session_only_memory`` so subagents share the workspace's SQLite
@@ -79,16 +79,12 @@ class AgentMaterializeDeps:
     emitter_factory: Callable[[str], ContentEmitter] | None = None
     """WebUI (or other channel) emitter factory for transcript persistence.
 
-    React subagents receive this via the ``_create_with_emitter`` wrapper in
-    ``pool_builder._build_agent_factory`` (which calls
-    ``turn_runner.set_emitter_factory`` after ``factory.create_agent``
-    returns). External-coding subagents bypass that wrapper because
-    ``BotSubagentExternalCodingBuilder.build`` calls ``assemble_pipeline``
-    directly — so the builder MUST call ``set_emitter_factory`` itself when
-    this field is set, otherwise the subagent's ``ExternalTurnRunner`` keeps
-    the default ``StreamingAwareEmitter``+``BrokerOutputAdapter`` and never
-    writes transcript events (ADR-0027 regression: external subagent turns
-    were invisible in the WebUI history)."""
+    Injected post-build via ``turn_runner.set_emitter_factory``. The
+    ``_create_with_emitter`` wrapper in ``pool_builder`` handles main agents
+    and react subagents; ``AgentTemplate._materialize_external`` calls the
+    shared ``_inject_emitter_and_pool_context`` helper for external
+    subagents (which bypass the wrapper). Both paths converge on the same
+    ``set_emitter_factory`` ABC method (architecture rule 15)."""
     control_origin: str = ""
     """Bot HTTP listener origin (e.g. ``http://127.0.0.1:21800``).
 

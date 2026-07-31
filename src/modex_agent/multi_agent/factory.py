@@ -122,13 +122,11 @@ class DefaultAgentFactory(AgentFactory):
             reasoning_effort=cfg.reasoning_effort,
         )
 
-    def _get_builder(
-        self, execution_strategy: ExecutionStrategyKind
-    ) -> type[Any] | None:
-        if execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING:
-            from modex_agent.agents.external_coding.builder import ExternalCodingAgentBuilder
+    def _get_builder(self, execution_strategy: ExecutionStrategyKind) -> type[Any] | None:
+        if execution_strategy == ExecutionStrategyKind.EXTERNAL:
+            from modex_agent.agents.external.builder import ExternalAgentBuilder
 
-            return ExternalCodingAgentBuilder
+            return ExternalAgentBuilder
         if execution_strategy in (ExecutionStrategyKind.REACT, ExecutionStrategyKind.PIPELINE):
             from modex_agent.agents.react.builder import ReActAgentBuilder
 
@@ -188,7 +186,9 @@ class DefaultAgentFactory(AgentFactory):
         from modex_agent.utils.sanitizer import ContentSanitizer
 
         sanitizer = ContentSanitizer.sanitize
-        descriptor_model_info = descriptor.llm_config.model_info if descriptor.llm_config is not None else None
+        descriptor_model_info = (
+            descriptor.llm_config.model_info if descriptor.llm_config is not None else None
+        )
         runtime_services = (
             AgentRuntimeServices(model_info=descriptor_model_info)
             if descriptor_model_info is not None
@@ -387,15 +387,11 @@ class DefaultAgentFactory(AgentFactory):
         prompt_capture_strategy = (
             build_prompt_capture(obs.prompt_capture) if obs is not None else None
         )
-        model_name = (
-            descriptor.llm_config.model if descriptor.llm_config is not None else None
-        )
+        model_name = descriptor.llm_config.model if descriptor.llm_config is not None else None
 
         llm_cfg = descriptor.llm_config
         provider_name = (
-            model_name.split("/")[0]
-            if model_name is not None and "/" in model_name
-            else None
+            model_name.split("/")[0] if model_name is not None and "/" in model_name else None
         )
         request_params = (
             {

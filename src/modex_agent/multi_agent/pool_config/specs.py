@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from modex_agent.agents.external_coding.paths import ProviderKind
+from modex_agent.agents.external.paths import ProviderKind
 from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.ioc.configs.approval import ApprovalConfig
 from modex_agent.tools.presets import (
@@ -21,23 +21,21 @@ def _validate_execution_provider_pair(
     execution_strategy: ExecutionStrategyKind,
     provider_kind: ProviderKind | None,
 ) -> None:
-    """Enforce ``provider_kind`` set iff ``execution_strategy == EXTERNAL_CODING``.
+    """Enforce ``provider_kind`` set iff ``execution_strategy == EXTERNAL``.
 
     Shared cross-field rule for :class:`MainAgentSpec` and :class:`SubagentSpec`.
-    A non-EXTERNAL_CODING strategy must not carry a ``provider_kind`` (the
-    field is meaningless without an external backend), and an EXTERNAL_CODING
+    A non-EXTERNAL strategy must not carry a ``provider_kind`` (the
+    field is meaningless without an external backend), and an EXTERNAL
     strategy must declare one (the harness needs to know which CLI to spawn).
     Raising ``ValueError`` lets pydantic surface it as a ``ValidationError``.
     """
-    if execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING:
+    if execution_strategy == ExecutionStrategyKind.EXTERNAL:
         if provider_kind is None:
-            raise ValueError(
-                "provider_kind must be set when execution_strategy='external_coding'"
-            )
+            raise ValueError("provider_kind must be set when execution_strategy='external'")
     elif provider_kind is not None:
         raise ValueError(
             "provider_kind must be None when execution_strategy="
-            f"{execution_strategy!r} (only 'external_coding' uses a provider)"
+            f"{execution_strategy!r} (only 'external' uses a provider)"
         )
 
 

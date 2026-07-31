@@ -17,8 +17,8 @@ from __future__ import annotations
 
 import os
 
-from modex_agent.agents.external_coding.env_builder import ExternalEnvBuilder
-from modex_agent.agents.external_coding.types import ExternalEnvSpec
+from modex_agent.agents.external.env_builder import ExternalEnvBuilder
+from modex_agent.agents.external.types import ExternalEnvSpec
 from modex_agent.core.agent import AgentCommKind, AgentContext
 from modex_agent.hook.abc import BeforeTurnHook
 from modex_agent.runtime.env_context import _current_session_id, _modex_env

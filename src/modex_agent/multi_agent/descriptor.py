@@ -14,7 +14,7 @@ from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.comm_kind import AgentCommKind
 
 if TYPE_CHECKING:
-    from modex_agent.agents.external_coding.paths import ProviderKind
+    from modex_agent.agents.external.paths import ProviderKind
     from modex_agent.pipeline.pipeline import AgentPipeline
 
 
@@ -77,11 +77,13 @@ class AgentDescriptor(BaseModel):
     denied_tools: list[str] | None = None
     allowed_skills: list[str] | None = None
     max_iterations: int = 15
-    execution_strategy: ExecutionStrategyKind = ExecutionStrategyKind.REACT  # ExecutionStrategyKind member
+    execution_strategy: ExecutionStrategyKind = (
+        ExecutionStrategyKind.REACT
+    )  # ExecutionStrategyKind member
     provider_kind: ProviderKind | None = None
     """External-coding provider discriminator — symmetric with
     ``execution_strategy``. Set iff ``execution_strategy`` is
-    ``EXTERNAL_CODING``; ``None`` for every react/pipeline/single-turn agent.
+    ``EXTERNAL``; ``None`` for every react/pipeline/single-turn agent.
     Mirrors :attr:`modex_agent.multi_agent.pool_config.specs.SubagentSpec.provider_kind`
     and :attr:`MainAgentSpec.provider_kind`; the spec's value is forwarded
     verbatim by ``AgentTemplate.materialize``."""
@@ -136,10 +138,10 @@ class AgentInstance:
             await self.pipeline.agent.stop()
 
 
-# ProviderKind lives behind external_coding.__init__ which imports modules that
+# ProviderKind lives behind external.__init__ which imports modules that
 # import from multi_agent — a cycle we can only close once AgentDescriptor and
 # AgentInstance are defined above. Rebuild the schema now so the model is fully
 # resolved before any caller tries to instantiate it.
-from modex_agent.agents.external_coding.paths import ProviderKind  # noqa: E402, F401
+from modex_agent.agents.external.paths import ProviderKind  # noqa: E402, F401
 
 AgentDescriptor.model_rebuild()

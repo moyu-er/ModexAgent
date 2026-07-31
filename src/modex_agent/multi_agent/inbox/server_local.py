@@ -244,9 +244,7 @@ class LocalFileInboxMQ(InboxMQ):
                 text = pending_path.read_text(encoding="utf-8")
             except OSError:
                 text = ""
-            sessions.append(
-                self._session_id_from_text(text) or self._unsafe_dir_name(item.name)
-            )
+            sessions.append(self._session_id_from_text(text) or self._unsafe_dir_name(item.name))
         return sessions
 
     async def sessions_with_pending(self) -> list[str]:
@@ -261,9 +259,7 @@ class LocalFileInboxMQ(InboxMQ):
             text = pending_path.read_text(encoding="utf-8")
             if not any(line.strip() for line in text.split("\n")):
                 continue
-            sessions.append(
-                self._session_id_from_text(text) or self._unsafe_dir_name(item.name)
-            )
+            sessions.append(self._session_id_from_text(text) or self._unsafe_dir_name(item.name))
         return sessions
 
     # ------------------------------------------------------------------ #

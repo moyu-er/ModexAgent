@@ -260,8 +260,7 @@ class CommunicationTargetStore:
     def _build_subagent(self) -> str:
         parent = self._parent_target()
         lines = [
-            "Ask the agent that assigned you this task a clarifying question or "
-            "for a decision.",
+            "Ask the agent that assigned you this task a clarifying question or for a decision.",
             "",
             "Your task arrived as:",
             '  <agent_message source="<PARENT_NAME>" invocation_id="...">',
@@ -278,16 +277,12 @@ class CommunicationTargetStore:
         lines.extend(
             [
                 "",
-                "Use this tool ONLY to consult your parent when you cannot proceed "
-                "without input:",
+                "Use this tool ONLY to consult your parent when you cannot proceed without input:",
                 '  content: "QUESTION: ..." or "NEED_DECISION: ...".',
-                "Then stop and wait — the reply comes back to you as another "
-                "<agent_message>.",
+                "Then stop and wait — the reply comes back to you as another <agent_message>.",
                 "",
-                "This tool is for consultation, not for returning your result. "
-                "Your deliverable",
-                "still goes to OUTPUT.md (write it there as instructed); nothing "
-                "you send here",
+                "This tool is for consultation, not for returning your result. Your deliverable",
+                "still goes to OUTPUT.md (write it there as instructed); nothing you send here",
                 "counts as your answer.",
             ]
         )

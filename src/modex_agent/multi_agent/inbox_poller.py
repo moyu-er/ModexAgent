@@ -4,7 +4,7 @@ Event-driven with tick fallback. The main loop awaits a pool-level wakeup
 ``Event`` (``signal_wakeup``) with a ``timeout == interval`` so an unsignalled
 poller still ticks as a defensive fallback. Wakeup is wired at the single
 convergence point of all inbox writers — ``LocalAgentMessageBus.send`` — so
-every path (user input, agent-to-agent, CLI ``modexctl send``, external-coding
+every path (user input, agent-to-agent, CLI ``modexctl send``, external
 peer reply) reaches the poller in-process with ~zero latency.
 
 Concurrency invariants (verified by ``test_inbox_poller_events.py``):
@@ -31,6 +31,7 @@ Per-envelope turn execution (session tracking, InputMessage reconstruction,
 ``process_message``, session caps) is delegated to ``pool.dispatch_envelope``
 so the poller stays thin and session/metadata locality stays on the pool.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -121,9 +122,7 @@ class InboxPoller:
             # bypass the bus). A timeout is the expected fallback path, not an
             # error — suppress it and loop into the next tick.
             with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(
-                    self._wakeup_event.wait(), timeout=self._interval
-                )
+                await asyncio.wait_for(self._wakeup_event.wait(), timeout=self._interval)
 
     async def _tick(self) -> None:
         self._reconcile()
@@ -168,9 +167,7 @@ class InboxPoller:
         else:
             self._inflight[sid] = asyncio.create_task(self._run_turn(sid, instance))
 
-    async def _dispatch_batch(
-        self, sid: str, instance: AgentInstance
-    ) -> None:
+    async def _dispatch_batch(self, sid: str, instance: AgentInstance) -> None:
         """Consume one batch and dispatch each envelope as its own turn.
 
         The two inbox consumers divide labour by session state, NOT by message

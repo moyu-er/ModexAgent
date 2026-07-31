@@ -292,7 +292,7 @@ def _build_otlp_tracer(config: ObservabilityConfig) -> OtelTracer:
 
     The provider is also registered globally via ``trace.set_tracer_provider``
     so that ``trace.get_tracer()`` calls in other modules (e.g.
-    ``external_coding/agent.py`` for subprocess CLIENT spans) use the same
+    ``external/agent.py`` for subprocess CLIENT spans) use the same
     provider and export via the same OTLP endpoint.  ``set_tracer_provider``
     is idempotent — the first call wins; subsequent calls log a warning and
     are no-ops, so multi-pool builds sharing one endpoint are safe.
@@ -312,7 +312,7 @@ def _build_otlp_tracer(config: ObservabilityConfig) -> OtelTracer:
     )
     processor = BatchSpanProcessor(exporter)
     provider.add_span_processor(processor)
-    # G11 fix: register globally so external_coding/agent.py's trace.get_tracer()
+    # G11 fix: register globally so external/agent.py's trace.get_tracer()
     # returns a tracer from this provider, not the no-op default. Best-effort —
     # set_tracer_provider can only be called once per process; subsequent calls
     # are no-ops (logged as warnings by the OTel SDK). This is fine because all

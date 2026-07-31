@@ -367,8 +367,7 @@ class PoolStore:
             and tree.main.provider_kind is None
         ):
             raise PoolValidationError(
-                f"Pool {pool_name!r}: execution_strategy 'external_coding' "
-                f"requires a provider_kind"
+                f"Pool {pool_name!r}: execution_strategy 'external' requires a provider_kind"
             )
         all_names = [tree.main.agent_name]
         for sub in tree.subagents:

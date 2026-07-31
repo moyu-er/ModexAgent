@@ -117,6 +117,4 @@ class FileDeliveredIdTracker(DeliveredIdTracker):
     async def clear(self, session_id: str) -> None:
         delivered_path = self._delivered_path(self._session_dir(session_id))
         if delivered_path.exists():
-            delivered_path.write_text(
-                json.dumps({"ids": []}, ensure_ascii=False), encoding="utf-8"
-            )
+            delivered_path.write_text(json.dumps({"ids": []}, ensure_ascii=False), encoding="utf-8")

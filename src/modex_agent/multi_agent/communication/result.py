@@ -58,13 +58,15 @@ def format_send_ack(result: AgentSendResult) -> str:
 
 
 def _format_peer_ack(result: AgentSendResult) -> str:
-    return "\n".join([
-        f"Message sent to peer agent '{result.target_agent}'.",
-        "",
-        "The peer agent will process your message asynchronously. If a "
-        "reply is needed, the peer agent will send it back via "
-        "send_to_agent.",
-    ])
+    return "\n".join(
+        [
+            f"Message sent to peer agent '{result.target_agent}'.",
+            "",
+            "The peer agent will process your message asynchronously. If a "
+            "reply is needed, the peer agent will send it back via "
+            "send_to_agent.",
+        ]
+    )
 
 
 def _format_native_subagent_ack(result: AgentSendResult) -> str:
@@ -87,12 +89,14 @@ def _format_native_subagent_ack(result: AgentSendResult) -> str:
             "Output (final deliverable, empty/absent until the subagent "
             f"completes): {result.output_path}"
         )
-    lines.extend([
-        "",
-        "You may tail the Trace file at any time to follow progress. Wait for",
-        "the notification before reading the Output file. If the notification",
-        "says the task is incomplete, use the invocation_id above to resume.",
-    ])
+    lines.extend(
+        [
+            "",
+            "You may tail the Trace file at any time to follow progress. Wait for",
+            "the notification before reading the Output file. If the notification",
+            "says the task is incomplete, use the invocation_id above to resume.",
+        ]
+    )
     return "\n".join(lines)
 
 
@@ -106,10 +110,12 @@ def _format_external_subagent_ack(result: AgentSendResult) -> str:
     ]
     if result.invocation_id:
         lines.append(f"invocation_id: {result.invocation_id}")
-    lines.extend([
-        "",
-        "The subagent will reply via modexctl send. Wait for the inbox",
-        "notification before continuing. If the notification says the task",
-        "is incomplete, use the invocation_id above to resume.",
-    ])
+    lines.extend(
+        [
+            "",
+            "The subagent will reply via modexctl send. Wait for the inbox",
+            "notification before continuing. If the notification says the task",
+            "is incomplete, use the invocation_id above to resume.",
+        ]
+    )
     return "\n".join(lines)

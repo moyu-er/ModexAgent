@@ -91,13 +91,13 @@ class AgentTemplate:
         tool_manager, skill_manager, and session-scoped memory; only the three
         parent-dependent features above are skipped.
 
-        ``EXTERNAL_CODING`` subagents dispatch early to
+        ``EXTERNAL`` subagents dispatch early to
         :meth:`_materialize_external`, skipping react-specific assembly
         (memory, tool_manager, skill_manager, hooks) — the external builder
         owns that assembly. React/pipeline/single-turn subagents take the
         existing path below.
         """
-        if self.spec.execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING:
+        if self.spec.execution_strategy == ExecutionStrategyKind.EXTERNAL:
             return await self._materialize_external(parent_session, invocation_id, deps)
 
         from modex_agent.multi_agent.address import AgentAddress
@@ -245,12 +245,12 @@ class AgentTemplate:
         # targets is the parent only (the subagent's sole routable peer
         # per star topology). session_id / agent_name / parent_session_id
         # are placeholders overridden per-turn from ctx.session inside the
-        # hook. workspace_root mirrors subagent_external_coding_builder.
+        # hook. workspace_root mirrors subagent_external_builder.
         # _resolve_workspace_dir: prefer deps.project_dir, else climb
         # three levels from resolver.runtime_dir()
         # (<workspace>/.modex/runtime_state/<pool>).
-        from modex_agent.agents.external_coding.cli_resolver import resolve_modexctl_bin_dir
-        from modex_agent.agents.external_coding.types import ExternalEnvSpec
+        from modex_agent.agents.external.cli_resolver import resolve_modexctl_bin_dir
+        from modex_agent.agents.external.types import ExternalEnvSpec
         from modex_agent.hook.builtin import NativeEnvInjectionHook
 
         subagent_workspace_root: Path
@@ -267,9 +267,7 @@ class AgentTemplate:
         subagent_pool_map: dict[str, str] = {name: subagent_pool_name}
         if parent_name:
             subagent_pool_map[parent_name] = subagent_pool_name
-        subagent_targets: list[tuple[str, str]] = (
-            [(parent_name, "")] if parent_name else []
-        )
+        subagent_targets: list[tuple[str, str]] = [(parent_name, "")] if parent_name else []
         subagent_env_spec = ExternalEnvSpec(
             workspace_root=subagent_workspace_root,
             inbox_root=subagent_workspace_root / ".modex" / "inbox",
@@ -356,23 +354,23 @@ class AgentTemplate:
 
         Delegates the full subagent assembly (provider backend, parser,
         session store, env builder, harness, pipeline) to
-        :attr:`AgentMaterializeDeps.subagent_external_coding_builder`. The
+        :attr:`AgentMaterializeDeps.subagent_external_builder`. The
         dispatch ends with the same ``pool.register_resident`` +
         ``on_subagent_created`` calls the react path makes, so parent-child
         wiring is uniform across execution strategies.
 
         Raises ``ValueError`` if no builder is wired — react-only pools do
-        not inject one, and an ``EXTERNAL_CODING`` subagent without a builder
+        not inject one, and an ``EXTERNAL`` subagent without a builder
         is a configuration error the framework cannot recover from.
         """
         from modex_agent.multi_agent.address import AgentAddress
         from modex_agent.multi_agent.comm_kind import AgentCommKind
         from modex_agent.multi_agent.descriptor import AgentDescriptor
 
-        if deps.subagent_external_coding_builder is None:
+        if deps.subagent_external_builder is None:
             raise ValueError(
-                f"Subagent {self.spec.agent_name!r} requires external_coding "
-                "execution_strategy but no subagent_external_coding_builder is "
+                f"Subagent {self.spec.agent_name!r} requires external "
+                "execution_strategy but no subagent_external_builder is "
                 "wired in AgentMaterializeDeps"
             )
 
@@ -388,7 +386,7 @@ class AgentTemplate:
             roles=list(self.spec.roles),
         )
 
-        instance = await deps.subagent_external_coding_builder.build(
+        instance = await deps.subagent_external_builder.build(
             spec=self.spec,
             descriptor=descriptor,
             parent_session=parent_session,
@@ -397,16 +395,10 @@ class AgentTemplate:
         )
 
         # External subagents bypass pool_builder's ``_create_with_emitter``
-        # wrapper, so the framework must inject the emitter factory here.
-        # ``ExternalTurnRunner`` inherits the no-op ``set_pool_context``
-        # default, so only emitter wiring is needed.
-        if (
-            instance.pipeline is not None
-            and deps.emitter_factory is not None
-        ):
-            instance.pipeline._turn_runner.set_emitter_factory(
-                deps.emitter_factory
-            )
+        # wrapper, so the framework injects the emitter factory here via the
+        # shared ``_inject_emitter_and_pool_context`` helper — the same
+        # function ``_create_with_emitter`` calls (architecture rule 15).
+        _inject_emitter_and_pool_context(instance, deps)
 
         await deps.pool.register_resident(descriptor, instance)
 
@@ -593,3 +585,23 @@ class AgentTemplate:
         )
         builder = DefaultSkillBuilder(base_path=deps.project_dir)
         return SkillManager(source=skill_source, builder=builder)
+
+
+def _inject_emitter_and_pool_context(
+    instance: AgentInstance,
+    deps: AgentMaterializeDeps,
+) -> None:
+    """Inject emitter factory + pool context into a turn runner post-build.
+
+    Shared convergence point for emitter injection (architecture rule 15).
+    The ``_create_with_emitter`` wrapper in ``pool_builder`` calls the same
+    ``set_emitter_factory`` / ``set_pool_context`` methods on the turn runner;
+    external subagents bypass that wrapper (they go through
+    ``BotSubagentExternalBuilder.build`` → ``assemble_pipeline`` directly), so
+    ``_materialize_external`` calls this function instead.
+    """
+    if instance.pipeline is None:
+        return
+    turn_runner = instance.pipeline._turn_runner
+    if deps.emitter_factory is not None:
+        turn_runner.set_emitter_factory(deps.emitter_factory)

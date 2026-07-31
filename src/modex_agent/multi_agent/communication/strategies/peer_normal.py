@@ -51,7 +51,7 @@ class PeerNormalStrategy(SendStrategy):
             content=req.content,
             receiver_implementation=(
                 AgentImplementation.EXTERNAL
-                if req.target.execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING
+                if req.target.execution_strategy == ExecutionStrategyKind.EXTERNAL
                 else AgentImplementation.NATIVE
             ),
         )
@@ -65,9 +65,7 @@ class PeerNormalStrategy(SendStrategy):
             invocation_id=envelope_invocation_id,
         )
 
-    async def deliver(
-        self, env: AgentMessageEnvelope, target: CommunicationTarget
-    ) -> str | None:
+    async def deliver(self, env: AgentMessageEnvelope, target: CommunicationTarget) -> str | None:
         """Deliver to the target's bus, falling back to the local bus."""
         bus = target.bus_ref or self._deps.agent_bus
         if bus is None:

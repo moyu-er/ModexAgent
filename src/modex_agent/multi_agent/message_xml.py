@@ -116,7 +116,7 @@ def build_dispatch_xml(
     SubagentAutoSendHook delivers the reply automatically, so the
     contract is unnecessary token overhead).
     """
-    if target_execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING:
+    if target_execution_strategy == ExecutionStrategyKind.EXTERNAL:
         return build_peer_agent_message(
             source=source,
             content=content,

@@ -110,9 +110,7 @@ class LocalFilePoolRoutingStore(PoolRoutingStore):
         count = 0
         for file in self._dir.glob("*.json"):
             try:
-                record = _PoolRoutingRecord.model_validate_json(
-                    file.read_text(encoding="utf-8")
-                )
+                record = _PoolRoutingRecord.model_validate_json(file.read_text(encoding="utf-8"))
             except (OSError, ValidationError):
                 continue
             if record.pool == pool_name:

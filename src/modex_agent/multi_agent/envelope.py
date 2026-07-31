@@ -121,9 +121,7 @@ class AgentMessageEnvelope:
             in_reply_to=headers.get("in_reply_to") or None,
             correlation_id=msg.correlation_id,
             timestamp=msg.timestamp,
-            metadata={
-                k: v for k, v in headers.items() if k not in _ROUTING_HEADERS
-            },
+            metadata={k: v for k, v in headers.items() if k not in _ROUTING_HEADERS},
         )
 
     def to_input_metadata(self) -> dict[str, Any]:

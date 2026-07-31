@@ -200,7 +200,7 @@ class Agent(ABC, Generic[E]):
         """释放 Agent 持有的资源（子进程、网络连接等）。
 
         默认实现是空操作。持有外部资源的子类（如
-        :class:`ExternalCodingAgent` 管理 ``opencode serve`` 子进程）
+        :class:`ExternalAgent` 管理 ``opencode serve`` 子进程）
         应覆盖此方法。Pool shutdown 时通过
         :meth:`AgentInstance.stop` → ``pipeline.agent.stop()`` 调用。
         """

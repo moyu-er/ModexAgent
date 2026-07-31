@@ -67,14 +67,14 @@ class ExecutionStrategyKind(StrEnum):
 
     Renamed from ``ExecutionStrategy`` so the bare name refers exclusively to
     the ABC in ``modex_agent.multi_agent.execution_strategy`` (ADR-0025).
-    Pool.yml string values (``react`` / ``external_coding`` / ...) are
+    Pool.yml string values (``react`` / ``external`` / ...) are
     unchanged — this is a Python-symbol-only rename.
     """
 
     REACT = "react"
     SINGLE_TURN = "single_turn"
     PIPELINE = "pipeline"
-    EXTERNAL_CODING = "external_coding"
+    EXTERNAL = "external"
 
 
 class ReasoningEffort(StrEnum):

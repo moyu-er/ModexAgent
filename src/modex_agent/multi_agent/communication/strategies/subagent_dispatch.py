@@ -72,7 +72,7 @@ class SubagentDispatchStrategy(SendStrategy):
         """Add trace/output paths for subagent ack."""
         from modex_agent.core.constants import ExecutionStrategyKind
 
-        if req.target.execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING:
+        if req.target.execution_strategy == ExecutionStrategyKind.EXTERNAL:
             return self._build_external_result(req, session, invocation_id)
         return self._build_native_result(req, session, invocation_id)
 

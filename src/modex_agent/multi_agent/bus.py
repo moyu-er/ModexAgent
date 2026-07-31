@@ -74,7 +74,7 @@ class LocalAgentMessageBus(AgentMessageBus):
     1. Persist messages via the InboxProducer.
     2. Signal the pool's ``InboxPoller`` after a successful persist so it
        rescans immediately (single convergence point for every inbox writer:
-       user input, agent-to-agent, CLI ``modexctl send``, external-coding peer
+       user input, agent-to-agent, CLI ``modexctl send``, external peer
        reply). The poller still ticks every ``interval`` as a defensive
        fallback for writers that bypass this bus.
 
@@ -121,9 +121,7 @@ class LocalAgentMessageBus(AgentMessageBus):
         only_types: set[str] | None = None,
     ) -> list[AgentMessageEnvelope]:
         """Return up to ``limit`` pending envelopes for ``session_id`` (non-blocking)."""
-        messages = await self._consumer.consume(
-            session_id, limit, only_types=only_types
-        )
+        messages = await self._consumer.consume(session_id, limit, only_types=only_types)
         return [self._reconstruct(msg, session_id) for msg in messages]
 
     async def peek(self, session_id: str, limit: int = 1) -> list[AgentMessageEnvelope]:
@@ -153,9 +151,7 @@ class LocalAgentMessageBus(AgentMessageBus):
             message_type=msg.message_type,
             session_id=msg.metadata.get("session_id", session_id),
             agent_session_id=msg.metadata.get("agent_session_id", session_id),
-            parent_session_id=msg.metadata.get("parent_session_id")
-            if msg.metadata
-            else None,
+            parent_session_id=msg.metadata.get("parent_session_id") if msg.metadata else None,
             invocation_id=msg.metadata.get("invocation_id") if msg.metadata else None,
             message_id=msg.message_id,
             timestamp=msg.timestamp,

@@ -103,9 +103,7 @@ class SendStrategy(ABC):
         self, req: SendRequest, session: SessionInfo, invocation_id: str
     ) -> AgentMessageEnvelope: ...
 
-    async def deliver(
-        self, env: AgentMessageEnvelope, target: CommunicationTarget
-    ) -> str | None:
+    async def deliver(self, env: AgentMessageEnvelope, target: CommunicationTarget) -> str | None:
         """Default delivery: local agent bus or broker fallback.
 
         Subclasses with a different delivery target (e.g. peer-pool bus)
