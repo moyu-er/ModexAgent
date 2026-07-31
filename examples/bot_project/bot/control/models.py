@@ -85,7 +85,7 @@ class HistoryResult(BaseModel):
 
     ``effective_limit`` echoes the validated limit so the CLI can detect
     server-side clamping (defence-in-depth). ``execution_strategy`` is the
-    pool's main-agent strategy string (``react`` / ``external_coding`` / ...).
+    pool's main-agent strategy string (``react`` / ``external`` / ...).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

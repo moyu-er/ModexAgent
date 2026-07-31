@@ -8,7 +8,7 @@ Converged configuration surface for all native agents:
 - **subagent**: ``subagent_memory()`` (session + pruned + governance only —
   no archive/core/dream/experience)
 
-External (external_coding) main agents and subagents are skipped structurally
+External (external) main agents and subagents are skipped structurally
 (template.py early-dispatch + pool_builder external branch + wiring
 ``pipeline is None`` guard) — these presets never reach them.
 
@@ -79,7 +79,7 @@ def main_agent_experience() -> ExperienceConfig:
     Every native main agent gets ``ExperienceReviewHook`` registered with
     these defaults. The reviewer uses the bot-global default LLM provider
     (``service._default_provider`` from ``model.yml``), NOT per-pool
-    provider — so external_coding pools are not special-cased.
+    provider — so external pools are not special-cased.
     """
     return ExperienceConfig(enabled=True)
 

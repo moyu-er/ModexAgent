@@ -470,9 +470,7 @@ class WebUIService(BotService):
         stores). The registry caches materialized resources, so repeated
         calls for the same workspace are cheap.
         """
-        workspace_context = await self.workspace_stack.registry.get_or_open(
-            ws_root
-        )
+        workspace_context = await self.workspace_stack.registry.get_or_open(ws_root)
         return await self.workspace_stack.registry.materialize(workspace_context)
 
     async def _session_store_for_index(self, index_dir: Path) -> SessionStore:
@@ -487,9 +485,7 @@ class WebUIService(BotService):
         resources = await self._materialize_workspace(index_dir.parent.parent)
         return resources.session_index_store
 
-    async def _resolve_runtime_stores(
-        self, ws_root: Path, pool: str
-    ) -> RuntimeStores:
+    async def _resolve_runtime_stores(self, ws_root: Path, pool: str) -> RuntimeStores:
         """Resolve backend-aware runtime stores for the WebUI endpoints.
 
         Returns a :class:`RuntimeStores` from the materialized workspace
@@ -516,9 +512,7 @@ class WebUIService(BotService):
             from bot.scope import BotRecordScope
             from modex_agent.persistence.adapters.todo_store import SqliteTodoStore
 
-            todo_store = SqliteTodoStore(
-                persistence.connection, BotRecordScope(pool=pool)
-            )
+            todo_store = SqliteTodoStore(persistence.connection, BotRecordScope(pool=pool))
         return RuntimeStores(todo_store=todo_store, turn_store=turn_store)
 
     async def _workspace_transcript_store_for_sessions(
@@ -586,9 +580,7 @@ class WebUIService(BotService):
             ),
             transcript_store=self._transcript_store,
             session_store_resolver=self._session_store_for_index,
-            session_pool_resolver=lambda session: self._pool_for_agent(
-                session.agent_name
-            ),
+            session_pool_resolver=lambda session: self._pool_for_agent(session.agent_name),
         )
         self._server.set_session_gc(self._session_gc)
         await self._session_gc.start()
@@ -733,7 +725,7 @@ class WebUIService(BotService):
         # Constructed with production provider callbacks that navigate the
         # materialized PoolWorkspaceResources to reach the per-session
         # MessageStore (native react path), the workspace TranscriptStore
-        # (external_coding path), and the per-pool AgentCommunicationService
+        # (external path), and the per-pool AgentCommunicationService
         # (send path). Without this injection app["control_facade"] stays
         # None and the control routes return 503.
         from bot.control.facade import BotControlFacade, ControlFacadeError
@@ -746,7 +738,8 @@ class WebUIService(BotService):
             return await self._materialize_workspace(root)
 
         async def _provide_message_store(
-            scope: BotRecordScope, resources: PoolWorkspaceResources,
+            scope: BotRecordScope,
+            resources: PoolWorkspaceResources,
         ) -> MessageStore:
             pool_name = scope.pool
             if pool_name is None:
@@ -775,10 +768,7 @@ class WebUIService(BotService):
                     500,
                     ControlError(
                         code="memory_system_unavailable",
-                        message=(
-                            f"Memory system is not configured for pool "
-                            f"{pool_name!r}"
-                        ),
+                        message=(f"Memory system is not configured for pool {pool_name!r}"),
                     ),
                 )
             ctx = MemoryContext(session_id=scope.session_id)
@@ -798,16 +788,14 @@ class WebUIService(BotService):
                     422,
                     ControlError(
                         code="transcript_store_unavailable",
-                        message=(
-                            "Transcript store is not configured for this "
-                            "workspace"
-                        ),
+                        message=("Transcript store is not configured for this workspace"),
                     ),
                 )
             return store
 
         async def _provide_communication_service(
-            resources: PoolWorkspaceResources, pool_name: str,
+            resources: PoolWorkspaceResources,
+            pool_name: str,
         ) -> AgentCommunicationService:
             pool_instance = resources.pools.get(pool_name)
             if pool_instance is None:

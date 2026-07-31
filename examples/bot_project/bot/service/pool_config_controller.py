@@ -69,9 +69,7 @@ class PoolNotEmptyError(Exception):
     def __init__(self, pool_name: str, busy_agents: list[str]) -> None:
         self.pool_name = pool_name
         self.busy_agents = busy_agents
-        super().__init__(
-            f"Pool {pool_name!r} has active sessions in agents: {busy_agents}"
-        )
+        super().__init__(f"Pool {pool_name!r} has active sessions in agents: {busy_agents}")
 
 
 class PromptInUseError(Exception):
@@ -86,9 +84,7 @@ class PromptInUseError(Exception):
     def __init__(self, prompt_name: str, usages: list[PromptUsage]) -> None:
         self.prompt_name = prompt_name
         self.usages = usages
-        super().__init__(
-            f"Prompt {prompt_name!r} is referenced by {len(usages)} agent(s)"
-        )
+        super().__init__(f"Prompt {prompt_name!r} is referenced by {len(usages)} agent(s)")
 
 
 # Subdirectories under <workspace>/.modex/ that hold per-pool artifacts.
@@ -166,7 +162,7 @@ class PoolConfigController:
     def write_pool(self, name: str, tree: PoolSpec) -> PoolSpec:
         """Write a pool tree; stale MCP references are dropped before save.
 
-        For ``external_coding`` pools, all per-pool skill assignments are
+        For ``external`` pools, all per-pool skill assignments are
         removed after PoolStore commits: external pools have no subagents and
         no per-agent skill roots, so any leftover ``skills/<pool>/`` tree is
         orphaned. The cleanup runs before the dirty marker (so
@@ -178,7 +174,7 @@ class PoolConfigController:
             self._pools.write_pool(name, tree)
         except PoolValidationError as exc:
             raise FieldValidationError({"pool": [str(exc)]}) from exc
-        if tree.main.execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING:
+        if tree.main.execution_strategy == ExecutionStrategyKind.EXTERNAL:
             self._skills.clear_pool_skills(name)
         self._mark("pool")
         return self.read_pool(name)
@@ -335,7 +331,9 @@ class PoolConfigController:
             ):
                 usages.append(
                     PromptUsage(
-                        pool=pool_name, agent_kind="main", agent_name=main.agent_name,
+                        pool=pool_name,
+                        agent_kind="main",
+                        agent_name=main.agent_name,
                     )
                 )
             for sub in tree.subagents:
@@ -372,7 +370,6 @@ class PoolConfigController:
             self._prompts.delete_prompt(name)
         except PromptValidationError as exc:
             raise FieldValidationError({"name": [str(exc)]}) from exc
-
 
     # ------------------------------------------------------------------ #
     # MCP registry

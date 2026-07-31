@@ -95,9 +95,7 @@ class ReactExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategy):
         system_prompt = resolve_system_prompt(main_agent_name, project_dir)
 
         provider = self._build_llm_provider(pool_name, bot_model_config)
-        terminal_manager = self._build_terminal_manager(
-            main_spec, pool_name, workspace_handle
-        )
+        terminal_manager = self._build_terminal_manager(main_spec, pool_name, workspace_handle)
 
         if pool_data is not None:
             context_manager = pool_data.context_manager

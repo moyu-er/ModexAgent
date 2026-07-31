@@ -123,20 +123,20 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 ## Multi-Agent Setup
 
 - `default` pool: General-purpose assistant with file/shell tools, MCP tools (playwright), communication tools + subagents (office-expert).
-- `coder` pool: Main agent (orchestrator) + subagents (explore, coder). Orchestrator handles exploration/planning/review directly; delegates deep investigation to explore and code modification to coder (external_coding).
+- `coder` pool: Main agent (orchestrator) + subagents (explore, coder). Orchestrator handles exploration/planning/review directly; delegates deep investigation to explore and code modification to coder (external).
 - Communication: `send_to_agent` (async inbox-based).
 - `SubagentAutoSendHook` auto-forwards subagent output to parent.
 - Session ID format: `{conversation_id}.{agent_name}[.{invocation_id}]` (via `DefaultSessionIdStrategy`).
 
 ### External coding agent pools (Pi, OpenCode)
 
-External CLI coding agents (Pi, OpenCode) can be registered as NORMAL main agents of their own dedicated pools. A framework-side harness (`ExternalCodingAgent`) executes them through provider backends, and they communicate back through the `modexctl send` CLI. The CLI sends XML-wrapped `<agent_message>` content through the target workspace's `InboxMQ.deliver()` implementation; `modexbot` is a backward-compatible facade over `modexctl`.
+External CLI coding agents (Pi, OpenCode) can be registered as NORMAL main agents of their own dedicated pools. A framework-side harness (`ExternalAgent`) executes them through provider backends, and they communicate back through the `modexctl send` CLI. The CLI sends XML-wrapped `<agent_message>` content through the target workspace's `InboxMQ.deliver()` implementation; `modexbot` is a backward-compatible facade over `modexctl`.
 
 **Pool configuration** (`config/pools/<name>/pool.yml`):
 
 ```yaml
 main_agent_name: opencode
-execution_strategy: external_coding   # opt-in; default is "react"
+execution_strategy: external   # opt-in; default is "react"
 provider_kind: opencode               # "pi" or "opencode"
 peers:
   - default                           # explicit peer declaration required
@@ -157,9 +157,9 @@ is unavailable. Pi remains per-turn. Cancellation, failed startup, pool
 shutdown, and workspace eviction terminate and reap complete provider process
 trees; normal OpenCode turns retain the warm server for reuse.
 
-**WebUI:** external_coding sessions appear in the WebUI session list with their `.pi` / `.opencode` suffix, alongside every other session. Streaming output (text, reasoning, tool calls/results, errors) is rendered through the canonical `TurnEvent` seam → `WebBotEmitter` projection into existing `ServerEvent`/transcript types. The `PoolEditor` settings view supports configuring external coding provider pools.
+**WebUI:** external sessions appear in the WebUI session list with their `.pi` / `.opencode` suffix, alongside every other session. Streaming output (text, reasoning, tool calls/results, errors) is rendered through the canonical `TurnEvent` seam → `WebBotEmitter` projection into existing `ServerEvent`/transcript types. The `PoolEditor` settings view supports configuring external coding provider pools.
 
-See ADR-0022 and `docs/design/external-coding-agent-integration/` for the full design.
+See ADR-0022 and `docs/design/external-agent-integration/` for the full design.
 
 ## Memory + Experience Presets (Target State)
 
@@ -207,13 +207,13 @@ pool_builder.create_pool()
             └─ resolver.pruned_manager()               → reuses the parent pool's PrunedManager
 ```
 
-### External (external_coding) exclusion — structural, not config-based
+### External (external) exclusion — structural, not config-based
 
 External main agents and subagents are excluded at **three** independent
 points, so the presets never reach them regardless of config:
 
 1. **Subagent**: `AgentTemplate.materialize` (`template.py:100`) early-dispatches
-   to `_materialize_external` when `execution_strategy == EXTERNAL_CODING` —
+   to `_materialize_external` when `execution_strategy == EXTERNAL` —
    skips native memory/tool/skill/hooks assembly entirely.
 2. **Main agent pipeline**: `pool_builder.create_pool` (`pool_builder.py:389`)
    takes the external branch, skipping `_wire_main_pipeline` (no governance,

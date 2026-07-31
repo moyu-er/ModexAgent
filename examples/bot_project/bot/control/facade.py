@@ -64,7 +64,7 @@ MessageStoreProvider = Callable[
 ]
 
 #: Resolve ``PoolWorkspaceResources`` to its ``TranscriptStore`` for
-#: external-coding session history (T05). The production provider reads
+#: external session history (T05). The production provider reads
 #: ``resources.workspace_transcript_store`` and raises
 #: :class:`ControlFacadeError` (422, ``transcript_store_unavailable``) when
 #: the store is ``None`` (database transcript persistence not configured).
@@ -181,7 +181,7 @@ class BotControlFacade:
             execution_strategy = target.execution_strategy
 
         # 5. Branch on execution_strategy.
-        if execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING:
+        if execution_strategy == ExecutionStrategyKind.EXTERNAL:
             return await self._history_from_transcript(
                 request, resources, execution_strategy
             )
@@ -418,7 +418,7 @@ class BotControlFacade:
         target's ``execution_strategy``, never from environment variables.
         """
         is_external = (
-            target.execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING
+            target.execution_strategy == ExecutionStrategyKind.EXTERNAL
         )
 
         return SendResult(

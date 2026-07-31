@@ -451,11 +451,7 @@ class SessionGarbageCollector:
         if isinstance(scope, BotRecordScope):
             bot_scope = scope
         else:
-            pool = (
-                pool_map.get(scope.canonical(), "default")
-                if pool_map is not None
-                else "default"
-            )
+            pool = pool_map.get(scope.canonical(), "default") if pool_map is not None else "default"
             # scope may already carry a `pool` extra field (e.g. when
             # from_canonical returned a different subclass with the same
             # extra-field signature). Override it with the pool_map result.

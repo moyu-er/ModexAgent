@@ -9,11 +9,11 @@ Ticket 6 (ADR-0025): the strategy-specific ``_build_*`` helpers
 ``_build_skill_manager``, ``_resolve_cassette_config``,
 ``_fallback_context_manager``, ``_cell_sessions_dir``) moved into the shared
 :class:`bot.service._assembly_helpers._PoolAssemblyMixin`, inherited by both
-:class:`ReactExecutionStrategy` and :class:`ExternalCodingExecutionStrategy`.
+:class:`ReactExecutionStrategy` and :class:`ExternalExecutionStrategy`.
 ``create_pool`` is now strategy-agnostic: it resolves the strategy, calls
 ``strategy.assemble(ctx)``, and runs the common post-assembly wiring
 (register main agent, communication, pipeline construction via factory).
-Both react and external_coding pools follow the same code path here.
+Both react and external pools follow the same code path here.
 """
 
 from __future__ import annotations
@@ -47,8 +47,8 @@ from bot.config.memory_defaults import subagent_memory
 from bot.config.webui_config import build_control_origin
 from bot.service.model_choice import ModelChoiceBindHook, ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
-from modex_agent.agents.external_coding.cli_resolver import resolve_modexctl_bin_dir
-from modex_agent.agents.external_coding.types import ExternalEnvSpec
+from modex_agent.agents.external.cli_resolver import resolve_modexctl_bin_dir
+from modex_agent.agents.external.types import ExternalEnvSpec
 from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.constants import ExecutionStrategyKind
@@ -115,8 +115,8 @@ from modex_agent.trace.cassette import (
 
 from ._assembly_helpers import _resolved_or_placeholder
 from .builders import build_inbox, resolve_system_prompt
-from .external_coding_strategy import (
-    ExternalCodingAwareFactory,
+from .external_strategy import (
+    ExternalAwareFactory,
     ProviderUnavailableError,
     _build_agent_pool_map,
     _build_targets,
@@ -178,13 +178,15 @@ async def create_pool(
     inbox_dir = data_dir / "inbox" / pool_name
     inbox_db_path = data_dir / "state.db"
     inbox_server = build_inbox(
-        app_config, persistence, inbox_dir, inbox_db_path, pool_name,
+        app_config,
+        persistence,
+        inbox_dir,
+        inbox_db_path,
+        pool_name,
     )
     inbox_producer = InboxProducer(server=inbox_server)
     inbox_consumer = InboxConsumer(server=inbox_server)
-    agent_bus = LocalAgentMessageBus(
-        producer=inbox_producer, consumer=inbox_consumer
-    )
+    agent_bus = LocalAgentMessageBus(producer=inbox_producer, consumer=inbox_consumer)
 
     registry = strategy_registry
     if registry is None:
@@ -192,7 +194,7 @@ async def create_pool(
     strategy_name = (
         main_spec.execution_strategy.value
         if main_spec.execution_strategy
-        in (ExecutionStrategyKind.REACT, ExecutionStrategyKind.EXTERNAL_CODING)
+        in (ExecutionStrategyKind.REACT, ExecutionStrategyKind.EXTERNAL)
         else "react"
     )
     strategy = registry.resolve(strategy_name)
@@ -235,14 +237,14 @@ async def create_pool(
         )
 
     provider_available = True
-    external_coding_deps: dict[str, Any] | None = None
+    external_deps: dict[str, Any] | None = None
     try:
         assembly = await strategy.assemble(ctx)
     except ProviderUnavailableError as exc:
         logger.warning(
-            "Pool '%s': external_coding provider %r not found on PATH; "
-            "skipping pool registration",
-            pool_name, exc.executable,
+            "Pool '%s': external provider %r not found on PATH; skipping pool registration",
+            pool_name,
+            exc.executable,
         )
         provider_available = False
         assembly = None
@@ -257,8 +259,8 @@ async def create_pool(
         context_manager = assembly.context_manager
         cassette_recorder = assembly.cassette_recorder
         root_provider = assembly.root_provider
-        if assembly.external_coding_deps is not None:
-            external_coding_deps = assembly.external_coding_deps
+        if assembly.external_deps is not None:
+            external_deps = assembly.external_deps
     else:
         provider = None
         terminal_manager = None
@@ -274,7 +276,7 @@ async def create_pool(
 
     # Wrap before _build_agent_factory AND AgentMaterializeDeps so both the
     # main-agent _create_with_emitter path and the external-subagent
-    # BotSubagentExternalCodingBuilder path receive the same wrapped factory.
+    # BotSubagentExternalBuilder path receive the same wrapped factory.
     if emitter_factory is not None and workspace_resolver is not None:
         emitter_factory = _WorkspaceEmitterFactory(
             emitter_factory,
@@ -282,11 +284,18 @@ async def create_pool(
         )
 
     factory = _build_agent_factory(
-        provider, tool_manager, skill_manager,
-        inbox_server, shared_hooks, shared_hook_runner,
-        shared_interceptor_chain, control_channel,
-        workspace_resolver, pool_name, emitter_factory,
-        external_coding_deps=external_coding_deps,
+        provider,
+        tool_manager,
+        skill_manager,
+        inbox_server,
+        shared_hooks,
+        shared_hook_runner,
+        shared_interceptor_chain,
+        control_channel,
+        workspace_resolver,
+        pool_name,
+        emitter_factory,
+        external_deps=external_deps,
         observability_config=app_config.observability if app_config is not None else None,
         session_registry=session_registry,
     )
@@ -295,26 +304,37 @@ async def create_pool(
     if context_manager is None:
         context_manager = _fallback_context_manager(main_spec, system_prompt)
     pool = _build_agent_pool(
-        broker, factory, context_manager, agent_bus,
-        inbox_consumer, session_factory, safety, retention, pool_name,
-        session_registry=session_registry, session_store=session_store,
+        broker,
+        factory,
+        context_manager,
+        agent_bus,
+        inbox_consumer,
+        session_factory,
+        safety,
+        retention,
+        pool_name,
+        session_registry=session_registry,
+        session_store=session_store,
     )
 
     template_registry = AgentTemplateRegistry(
-        PoolStore(base_dir=project_dir), default_subagent_memory=subagent_memory(),
+        PoolStore(base_dir=project_dir),
+        default_subagent_memory=subagent_memory(),
     )
     templates = template_registry.list_templates(pool_name)
     logger.info("Pool '%s': %d subagent templates available", pool_name, len(templates))
     fallback_runtime_dir = data_dir / "runtime_state" / pool_name
     fallback_runtime_dir.mkdir(parents=True, exist_ok=True)
     path_resolver = WorkspacePathResolver(
-        workspace_manager=workspace_resolver, pool_name=pool_name,
+        workspace_manager=workspace_resolver,
+        pool_name=pool_name,
         fallback_runtime_dir=fallback_runtime_dir,
     )
     context_fork_builder = ContextForkBuilder()
 
     notification_service = AgentNotificationService(
-        output_adapter=output_adapter, agent_bus=agent_bus,
+        output_adapter=output_adapter,
+        agent_bus=agent_bus,
         parent_agent_name=main_agent_name,
     )
 
@@ -323,11 +343,11 @@ async def create_pool(
 
         tool_manager = InMemoryToolManager(config=ToolManagerConfig())
 
-    # ADR-0027 T8: inject a SubagentExternalCodingBuilder iff this pool
-    # declares at least one external_coding subagent. React-only pools
+    # ADR-0027 T8: inject a SubagentExternalBuilder iff this pool
+    # declares at least one external subagent. React-only pools
     # leave it None — AgentTemplate._materialize_external raises only when
-    # an EXTERNAL_CODING subagent is dispatched without a builder.
-    subagent_external_coding_builder = _maybe_build_external_subagent_builder(
+    # an EXTERNAL subagent is dispatched without a builder.
+    subagent_external_builder = _maybe_build_external_subagent_builder(
         pool_spec=pool_spec,
         pool_name=pool_name,
         project_dir=project_dir,
@@ -345,8 +365,11 @@ async def create_pool(
     control_origin = build_control_origin(project_dir / "config")
 
     deps = AgentMaterializeDeps(
-        agent_factory=factory, pool=pool, session_factory=session_factory,
-        broker=broker, safety=safety,
+        agent_factory=factory,
+        pool=pool,
+        session_factory=session_factory,
+        broker=broker,
+        safety=safety,
         llm_model=default_resolved.model.model,
         llm_temperature=default_resolved.model.temperature,
         llm_max_output_tokens=default_resolved.model.max_output_tokens,
@@ -355,15 +378,20 @@ async def create_pool(
             model_name=default_resolved.model.model,
             capabilities=default_resolved.capabilities,
         ),
-        project_dir=project_dir, notification_service=notification_service,
-        inbox_consumer=inbox_consumer, agent_bus=agent_bus,
+        project_dir=project_dir,
+        notification_service=notification_service,
+        inbox_consumer=inbox_consumer,
+        agent_bus=agent_bus,
         output_adapter_factory=output_adapter_factory,
-        root_provider=root_provider, session_registry=session_registry,
+        root_provider=root_provider,
+        session_registry=session_registry,
         on_subagent_created=on_subagent_created,
         context_fork_builder=context_fork_builder,
-        workspace_path_resolver=path_resolver, mcp_registry=mcp_registry,
-        todo_store=todo_store, trace_enabled=_resolve_trace_enabled(app_config),
-        subagent_external_coding_builder=subagent_external_coding_builder,
+        workspace_path_resolver=path_resolver,
+        mcp_registry=mcp_registry,
+        todo_store=todo_store,
+        trace_enabled=_resolve_trace_enabled(app_config),
+        subagent_external_builder=subagent_external_builder,
         emitter_factory=emitter_factory,
         control_origin=control_origin,
         memory_store_registry=subagent_store_registry,
@@ -378,14 +406,21 @@ async def create_pool(
     poller = InboxPoller(pool, interval=0.2)
     pool.attach_poller(poller)
     # Wire bus → poller so every ``bus.send`` (user input, agent-to-agent,
-    # CLI modexctl send, external-coding peer reply) wakes the poller for
+    # CLI modexctl send, external peer reply) wakes the poller for
     # ~zero-latency between-turn delivery instead of waiting up to ``interval``.
     agent_bus.set_poller(poller)
 
     if provider_available:
         await _register_main_agent(
-            pool, main_spec, assembly_deps, system_prompt, safety, pool_name,
-            factory=factory, broker=broker, context_manager=context_manager,
+            pool,
+            main_spec,
+            assembly_deps,
+            system_prompt,
+            safety,
+            pool_name,
+            factory=factory,
+            broker=broker,
+            context_manager=context_manager,
             bot_model_config=bot_model_config,
             output_adapter=output_adapter,
         )
@@ -403,9 +438,16 @@ async def create_pool(
             memory_system.add_cleanup_listener(UserNoticeCleanupListener(notification_service))
 
     main_service, main_store = _build_communication(
-        pool, main_agent_name, broker, agent_bus,
-        project_dir, pool_name, templates, template_registry,
-        session_registry=session_registry, workspace_path_resolver=path_resolver,
+        pool,
+        main_agent_name,
+        broker,
+        agent_bus,
+        project_dir,
+        pool_name,
+        templates,
+        template_registry,
+        session_registry=session_registry,
+        workspace_path_resolver=path_resolver,
         trace_enabled=_resolve_trace_enabled(app_config),
     )
     main_service._target_store = main_store
@@ -414,8 +456,12 @@ async def create_pool(
         if main_store.list():
             tool_manager.register(
                 SendToAgentTool(
-                    store=main_store, source=AgentAddress(name=main_agent_name),
-                    broker=broker, registry=pool, agent_bus=agent_bus, service=main_service,
+                    store=main_store,
+                    source=AgentAddress(name=main_agent_name),
+                    broker=broker,
+                    registry=pool,
+                    agent_bus=agent_bus,
+                    service=main_service,
                 )
             )
             logger.info("Pool '%s': communication tool registered", pool_name)
@@ -423,18 +469,28 @@ async def create_pool(
             logger.info("Pool '%s': no communication targets — skipped send_to_agent", pool_name)
 
         _wire_main_pipeline(
-            pool, main_agent_name, inbox_consumer, notification_service,
-            shared_interceptor_chain, im_ui, main_spec, assembly_deps, project_dir,
-            command_processor, pool_name, tool_manager=tool_manager,
+            pool,
+            main_agent_name,
+            inbox_consumer,
+            notification_service,
+            shared_interceptor_chain,
+            im_ui,
+            main_spec,
+            assembly_deps,
+            project_dir,
+            command_processor,
+            pool_name,
+            tool_manager=tool_manager,
             pool_spec=pool_spec,
-            root_provider=root_provider, bot_model_config=bot_model_config,
+            root_provider=root_provider,
+            bot_model_config=bot_model_config,
             model_choice_registry=model_choice_registry,
             cassette_recorder=cassette_recorder,
             control_origin=control_origin,
             todo_store=todo_store,
         )
     else:
-        # external_coding path: the external agent has no tool surface and
+        # external path: the external agent has no tool surface and
         # communicates via ``modexctl send`` CLI (not ``send_to_agent``), so
         # skip SendToAgentTool registration and the react-only
         # ``_wire_main_pipeline`` (governance/approval/hooks). Only set
@@ -445,27 +501,35 @@ async def create_pool(
             if main_instance is not None and main_instance.pipeline is not None:
                 main_instance.pipeline.command_processor = command_processor
         logger.info(
-            "Pool '%s': external_coding — skipped send_to_agent + _wire_main_pipeline",
+            "Pool '%s': external — skipped send_to_agent + _wire_main_pipeline",
             pool_name,
         )
 
     bridge = BrokerBridgeService(
-        broker=broker, input_bindings={},
+        broker=broker,
+        input_bindings={},
         output_routes=[
             OutputRoute(adapter=output_adapter, match_topic=f"agent:{main_agent_name}:out"),
         ],
     )
 
     return PoolInstance(
-        name=pool_name, media=assembly_deps.media,
-        subagent_count=len(pool_spec.subagents), pool=pool, broker_bridge=bridge,
-        tool_manager=tool_manager, skill_manager=skill_manager,
-        mcp_manager=mcp_manager, terminal_manager=terminal_manager,
+        name=pool_name,
+        media=assembly_deps.media,
+        subagent_count=len(pool_spec.subagents),
+        pool=pool,
+        broker_bridge=bridge,
+        tool_manager=tool_manager,
+        skill_manager=skill_manager,
+        mcp_manager=mcp_manager,
+        terminal_manager=terminal_manager,
         main_agent_name=main_agent_name,
         main_execution_strategy=pool_spec.main.execution_strategy,
         provider=provider,
-        notification_service=notification_service, communication_service=main_service,
-        agent_bus=agent_bus, target_store=main_store,
+        notification_service=notification_service,
+        communication_service=main_service,
+        agent_bus=agent_bus,
+        target_store=main_store,
     )
 
 
@@ -574,27 +638,26 @@ def _maybe_build_external_subagent_builder(
     app_config: Any | None,
     persistence: Any | None,
 ) -> Any | None:
-    """Construct a ``BotSubagentExternalCodingBuilder`` iff this pool has external subagents.
+    """Construct a ``BotSubagentExternalBuilder`` iff this pool has external subagents.
 
     Returns ``None`` for react-only pools so ``AgentMaterializeDeps``
-    leaves ``subagent_external_coding_builder=None`` (zero overhead —
+    leaves ``subagent_external_builder=None`` (zero overhead —
     ``AgentTemplate.materialize`` never touches the field on the react
     path). When at least one subagent declares
-    ``execution_strategy=EXTERNAL_CODING``, returns a pool-scoped builder
-    that per-invocation assembles a fully-wired ``ExternalCodingAgent``
+    ``execution_strategy=EXTERNAL``, returns a pool-scoped builder
+    that per-invocation assembles a fully-wired ``ExternalAgent``
     subagent (T8).
     """
     has_external = any(
-        sub.execution_strategy == ExecutionStrategyKind.EXTERNAL_CODING
-        for sub in pool_spec.subagents
+        sub.execution_strategy == ExecutionStrategyKind.EXTERNAL for sub in pool_spec.subagents
     )
     if not has_external:
         return None
-    from bot.service.subagent_external_coding_builder import (
-        BotSubagentExternalCodingBuilder,
+    from bot.service.subagent_external_builder import (
+        BotSubagentExternalBuilder,
     )
 
-    return BotSubagentExternalCodingBuilder(
+    return BotSubagentExternalBuilder(
         pool_name=pool_name,
         project_dir=project_dir,
         data_dir=data_dir,
@@ -611,8 +674,8 @@ def _default_strategy_registry() -> ExecutionStrategyRegistry:
     goes through ``BotService.initialize()`` which builds its own registry
     with the same strategies and threads it through ``wiring.py``.
     """
-    from bot.service.external_coding_strategy import (
-        ExternalCodingExecutionStrategy,
+    from bot.service.external_strategy import (
+        ExternalExecutionStrategy,
     )
     from bot.service.react_strategy import ReactExecutionStrategy
     from modex_agent.multi_agent.execution_strategy import (
@@ -621,7 +684,7 @@ def _default_strategy_registry() -> ExecutionStrategyRegistry:
 
     registry = ExecutionStrategyRegistry()
     registry.register(ReactExecutionStrategy())
-    registry.register(ExternalCodingExecutionStrategy())
+    registry.register(ExternalExecutionStrategy())
     return registry
 
 
@@ -679,15 +742,9 @@ async def ensure_long_term_defaults(
             "- 不确定的事情如实说明，不编造\n"
         ),
         "user": (
-            "## 用户画像\n"
-            "- 首次使用，暂无特定偏好记录\n"
-            "- 后续对话中会逐渐积累用户习惯和偏好\n"
+            "## 用户画像\n- 首次使用，暂无特定偏好记录\n- 后续对话中会逐渐积累用户习惯和偏好\n"
         ),
-        "memory": (
-            "## 相关知识\n"
-            "- 暂无特定领域知识记录\n"
-            "- 长期对话中会自动整理和更新\n"
-        ),
+        "memory": ("## 相关知识\n- 暂无特定领域知识记录\n- 长期对话中会自动整理和更新\n"),
     }
 
     ctx = MemoryContext(session_id="default", user_id="default")
@@ -806,12 +863,12 @@ def _build_agent_factory(
     pool_name: str,
     emitter_factory: Callable | None,
     *,
-    external_coding_deps: dict[str, Any] | None = None,
+    external_deps: dict[str, Any] | None = None,
     observability_config: ObservabilityConfig | None = None,
     session_registry: SessionRegistry | None = None,
 ) -> DefaultAgentFactory:
-    if external_coding_deps is not None:
-        factory: DefaultAgentFactory = ExternalCodingAwareFactory(
+    if external_deps is not None:
+        factory: DefaultAgentFactory = ExternalAwareFactory(
             default_llm_provider=provider,
             default_tool_manager=tool_manager,
             skill_manager=skill_manager,
@@ -820,7 +877,7 @@ def _build_agent_factory(
             default_hook_runner=shared_hook_runner,
             default_interceptor_chain=shared_interceptor_chain,
             control_channel=control_channel,
-            external_coding_deps=external_coding_deps,
+            external_deps=external_deps,
             observability_config=observability_config,
             session_registry=session_registry,
         )
@@ -837,16 +894,6 @@ def _build_agent_factory(
             observability_config=observability_config,
         )
 
-    # Wrap create_agent -> inject emitter for ALL agents (resident + subagent)
-    # AND wire each pipeline's workspace_manager + pool_name so turns resolve
-    # their per-turn stores from this workspace. ``workspace_resolver`` is the
-    # late-binding cell build_resources fills with the PoolWorkspaceResources
-    # (R) once the workspace is assembled; R.resolve_workspace().pool_data[pool]
-    # is what the pipeline reads per turn.
-    #
-    # ``emitter_factory`` arrives pre-wrapped by ``create_pool`` so both
-    # this wrapper and ``AgentMaterializeDeps.emitter_factory`` see the same
-    # factory (external subagents bypass this wrapper).
     _orig_create = factory.create_agent
 
     async def _create_with_emitter(*args: Any, **kwargs: Any) -> Any:
@@ -854,10 +901,6 @@ def _build_agent_factory(
         if instance.pipeline is not None:
             turn_runner = instance.pipeline._turn_runner
             if emitter_factory is not None:
-                # ADR-0025 D4: post-construction wiring targets the runner's
-                # sub-objects directly. ReActTurnRunner delegates to its
-                # TurnContextBuilder.emitter_factory setter; ExternalTurnRunner
-                # stores it directly.
                 turn_runner.set_emitter_factory(emitter_factory)
             if workspace_resolver is not None:
                 turn_runner.set_pool_context(
@@ -969,7 +1012,8 @@ async def _register_main_agent(
     await pool.register_resident(descriptor, instance)
     logger.info(
         "Pool '%s': main agent '%s' registered (factory defaults)",
-        pool_name, main_spec.agent_name,
+        pool_name,
+        main_spec.agent_name,
     )
 
 
@@ -1060,17 +1104,13 @@ class UserNoticeCleanupListener(MemoryCleanupListener):
     def __init__(self, notification_service: AgentNotificationService) -> None:
         self._svc = notification_service
 
-    async def on_cleanup_triggered(
-        self, context: MemoryContext, reason: CompressionReason
-    ) -> None:
+    async def on_cleanup_triggered(self, context: MemoryContext, reason: CompressionReason) -> None:
         session_id = context.session_id
         if session_id is None:
             return
         await self._svc.send_notice(session_id, self._START_NOTICE)
 
-    async def on_cleanup_finished(
-        self, context: MemoryContext, result: CleanupResult
-    ) -> None:
+    async def on_cleanup_finished(self, context: MemoryContext, result: CleanupResult) -> None:
         # ScopedMessageHistory only calls this when result.triggered.
         session_id = context.session_id
         if session_id is None:
@@ -1148,11 +1188,11 @@ def _wire_main_pipeline(
     # NativeEnvInjectionHook — populate _modex_env / _current_session_id
     # contextvars at BEFORE_TURN so native agent subprocess tools receive
     # MODEX_* env vars. Only the main-agent pipeline reaches here; the
-    # external_coding branch in create_pool skips _wire_main_pipeline.
+    # external branch in create_pool skips _wire_main_pipeline.
     # The template's session_id / agent_name are placeholders overridden
     # per-turn from ctx.session inside the hook.
     #
-    # pool_map/targets are shared with external_coding_strategy via
+    # pool_map/targets are shared with external_strategy via
     # _build_agent_pool_map / _build_targets (same business layer, same
     # PoolSpec source) so a peer-read bug fix lands in one place.
     agent_pool_map = _build_agent_pool_map(pool_name, pool_spec, project_dir)
@@ -1191,7 +1231,7 @@ def _wire_main_pipeline(
     )
 
     # ExternalTurnRunner has no builder/approval_renderer, so access them
-    # through the ABC's typed read-only properties (None for external_coding).
+    # through the ABC's typed read-only properties (None for external).
     turn_runner = pipeline._turn_runner
     builder = turn_runner.turn_context_builder
     approval = turn_runner.approval_renderer

@@ -6,7 +6,7 @@ description: >-
   pools, executes them end-to-end, and replies with results. Use for heavy
   coding work that benefits from a dedicated, self-directed coding context
   rather than orchestrated subtask delegation.
-execution_strategy: external_coding
+execution_strategy: external
 provider_kind: opencode
 peers:
   - default

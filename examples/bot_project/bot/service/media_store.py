@@ -69,9 +69,7 @@ class WorkspaceScopedMediaStore:
             return media_dir
         return self._ctxvar_media_dir(pool)
 
-    def media_dir_for_pool(
-        self, pool: str, *, media_dir: Path | None = None
-    ) -> Path:
+    def media_dir_for_pool(self, pool: str, *, media_dir: Path | None = None) -> Path:
         """Return the resolved media directory for *pool*.
 
         Uses the ctxvar root when ``media_dir`` is omitted (in-turn callers).
@@ -99,9 +97,7 @@ class WorkspaceScopedMediaStore:
         """
         return LocalFileMediaStore(media_dir)
 
-    def store_for(
-        self, pool: str, *, media_dir: Path | None = None
-    ) -> MediaStore:
+    def store_for(self, pool: str, *, media_dir: Path | None = None) -> MediaStore:
         """Return the framework store for the resolved (ws,pool) media dir.
 
         With no ``media_dir``: routes by ctxvar root (in-turn writers). With

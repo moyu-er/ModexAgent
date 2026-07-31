@@ -41,6 +41,9 @@ from bot.workspace.wiring import build_single_workspace_stack, build_workspace_s
 from modex_agent import (
     LLMProvider,
 )
+from modex_agent.agents.external.providers.opencode.server_manager import (
+    OpenCodeServerManager,
+)
 from modex_agent.control.channel import InMemoryControlChannel
 from modex_agent.core.emitter import ContentEmitter
 from modex_agent.core.llm_struct import (
@@ -147,7 +150,7 @@ class BotService(AgentBuilderMixin):
 
         # Execution-strategy registry (ADR-0025, ticket 3). Built in
         # initialize() with the shipped strategies (react in ticket 3;
-        # external_coding added in ticket 4). Threaded through wiring.py into
+        # external added in ticket 4). Threaded through wiring.py into
         # create_pool so react pools are assembled via
         # ReactExecutionStrategy.assemble() instead of inline _build_* calls.
         self._strategy_registry: Any = None
@@ -158,7 +161,6 @@ class BotService(AgentBuilderMixin):
         # backend is FILE or initialize() hasn't run yet.
         self._registry_persistence: RegistryPersistenceManager | None = None
         self._home_persistence: WorkspacePersistenceManager | None = None
-
 
         # Maintenance
         self._maintenance_task: asyncio.Task | None = None
@@ -301,7 +303,7 @@ class BotService(AgentBuilderMixin):
         # ADR-0027 T8: register cooperative SIGTERM/SIGINT handlers that
         # run atexit cleanup (killing any live ``opencode serve``
         # subprocesses) before exit. Idempotent — safe to call every boot.
-        from modex_agent.agents.external_coding.os_layer import (
+        from modex_agent.agents.external.os_layer import (
             register_signal_handlers,
         )
 
@@ -343,9 +345,7 @@ class BotService(AgentBuilderMixin):
                     injector=JsonFileMCPTransportInjector(),
                 )
                 self._mcp_registry.start_connecting(list(servers.keys()))
-                print(
-                    f"[OK] Shared MCP registry: {len(servers)} server(s) connecting concurrently"
-                )
+                print(f"[OK] Shared MCP registry: {len(servers)} server(s) connecting concurrently")
             else:
                 self._mcp_registry = None
         else:
@@ -394,11 +394,11 @@ class BotService(AgentBuilderMixin):
             # the shipped react strategy. Threaded through wiring.py into
             # create_pool so react pools are assembled via
             # ReactExecutionStrategy.assemble() instead of inline _build_*.
-            # ADR-0025 ticket 4: register ExternalCodingExecutionStrategy so
-            # external_coding pools are assembled via strategy.assemble()
-            # (provider-availability gate + external_coding_deps build).
-            from bot.service.external_coding_strategy import (
-                ExternalCodingExecutionStrategy,
+            # ADR-0025 ticket 4: register ExternalExecutionStrategy so
+            # external pools are assembled via strategy.assemble()
+            # (provider-availability gate + external_deps build).
+            from bot.service.external_strategy import (
+                ExternalExecutionStrategy,
             )
             from bot.service.react_strategy import ReactExecutionStrategy
             from modex_agent.multi_agent.execution_strategy import (
@@ -407,7 +407,7 @@ class BotService(AgentBuilderMixin):
 
             self._strategy_registry = ExecutionStrategyRegistry()
             self._strategy_registry.register(ReactExecutionStrategy())
-            self._strategy_registry.register(ExternalCodingExecutionStrategy())
+            self._strategy_registry.register(ExternalExecutionStrategy())
 
             # T26: open the registry DB BEFORE workspace materialization so the
             # registry store is ready when workspaces start using it. The
@@ -428,9 +428,7 @@ class BotService(AgentBuilderMixin):
                 await self._registry_persistence.open()
 
                 home_db_path = (
-                    self._project_dir
-                    / self._app_config.paths.data_dir_name
-                    / WORKSPACE_STATE_DB
+                    self._project_dir / self._app_config.paths.data_dir_name / WORKSPACE_STATE_DB
                 )
                 self._home_persistence = WorkspacePersistenceManager(home_db_path)
                 await self._home_persistence.open()
@@ -547,9 +545,7 @@ class BotService(AgentBuilderMixin):
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _close_terminal(
-        self, mgr: Any, name: str, *, suppress_errors: bool
-    ) -> None:
+    async def _close_terminal(self, mgr: Any, name: str, *, suppress_errors: bool) -> None:
         """Close a single terminal session, optionally swallowing errors."""
         try:
             await mgr.close(name)
@@ -693,23 +689,26 @@ class BotService(AgentBuilderMixin):
         # materializes — home and non-home alike, so every switched-to /
         # newly-created workspace is fully wired (not just home).
 
-        # Wire the shared control filter BEFORE the input adapter starts so
-        # IM /stop (and the WebUI pause button, which reuses /stop) actually
-        # push CANCEL_TURN through InMemoryControlChannel. Idempotent if a
-        # subclass (e.g. WebUIService) already wired it earlier.
-        self.input_adapter.configure_control_filter(
-            control_channel=self.control_channel,
-            command_processor=self.command_processor,
-            output_adapter=self.output_adapter,
-            session_checker=self._is_session_active,
-            turn_uuid_getter=self._get_active_turn_uuid,
-        )
+        # The shared ``opencode serve`` singleton is bound to this bot's
+        # lifetime — ``async with`` is the sole shutdown trigger.
+        async with OpenCodeServerManager.lifecycle():
+            # Wire the shared control filter BEFORE the input adapter starts so
+            # IM /stop (and the WebUI pause button, which reuses /stop) actually
+            # push CANCEL_TURN through InMemoryControlChannel. Idempotent if a
+            # subclass (e.g. WebUIService) already wired it earlier.
+            self.input_adapter.configure_control_filter(
+                control_channel=self.control_channel,
+                command_processor=self.command_processor,
+                output_adapter=self.output_adapter,
+                session_checker=self._is_session_active,
+                turn_uuid_getter=self._get_active_turn_uuid,
+            )
 
-        await self.input_adapter.start()
+            await self.input_adapter.start()
 
-        self._router_task = asyncio.create_task(self.workspace_stack.dispatcher.run())
-        print(f"[OK] WorkspaceDispatcher running, {len(self._pools)} pools active")
-        await self._shutdown_event.wait()
+            self._router_task = asyncio.create_task(self.workspace_stack.dispatcher.run())
+            print(f"[OK] WorkspaceDispatcher running, {len(self._pools)} pools active")
+            await self._shutdown_event.wait()
 
     async def stop(self) -> None:
         logger.info(
@@ -728,10 +727,7 @@ class BotService(AgentBuilderMixin):
         # Stop EVERY materialized workspace's resources (background + pools +
         # broker + terminals) — not just home, so multi-live workspaces don't
         # leak background tasks/brokers on shutdown.
-        if (
-            self.workspace_stack is not None
-            and not await self.workspace_stack.registry.evict_all()
-        ):
+        if self.workspace_stack is not None and not await self.workspace_stack.registry.evict_all():
             raise BotServiceShutdownIncompleteError(
                 "workspace shutdown incomplete; shared resources retained for retry"
             )

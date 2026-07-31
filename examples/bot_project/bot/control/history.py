@@ -117,7 +117,7 @@ def project_transcript_history(
     """Project materialized transcript turns to :class:`HistoryMessage`.
 
     Used by :meth:`BotControlFacade.history` when
-    ``execution_strategy == EXTERNAL_CODING`` (T05). The transcript path
+    ``execution_strategy == EXTERNAL`` (T05). The transcript path
     reuses :func:`bot.webui.transcript_store._materialize_events` for
     grouping/coalescing/pairing, then projects each materialized block to
     a logical :class:`HistoryMessage` record following Source Fidelity (D21):

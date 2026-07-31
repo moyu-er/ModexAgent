@@ -128,9 +128,11 @@ class _FileWorkspaceTranscriptStore(TranscriptStore):
         *,
         pool: str | None = None,
     ) -> list[ServerEvent]:
-        stores = [self._store_for(pool)] if pool is not None else [
-            self._store_for(name) for name in self._pools()
-        ]
+        stores = (
+            [self._store_for(pool)]
+            if pool is not None
+            else [self._store_for(name) for name in self._pools()]
+        )
         events = [
             event
             for store in stores
@@ -148,9 +150,7 @@ class _FileWorkspaceTranscriptStore(TranscriptStore):
     async def list_sessions_by_prefix(self, session_prefix: str) -> set[str]:
         sessions: set[str] = set()
         for pool in self._pools():
-            sessions.update(
-                await self._store_for(pool).list_sessions_by_prefix(session_prefix)
-            )
+            sessions.update(await self._store_for(pool).list_sessions_by_prefix(session_prefix))
         return sessions
 
     async def delete_session(self, session_id: str) -> None:
@@ -319,18 +319,14 @@ class WorkspaceScopedTranscriptStore(TranscriptStore, WorkspaceIndex):
                     resolve_workspace_root(),
                 )
             resolved = self._ctxvar_sessions_dir()
-        pool_key = pool if pool != _DEFAULT_POOL else self._pool_for_agent(
-            _agent_of(session_id)
-        )
+        pool_key = pool if pool != _DEFAULT_POOL else self._pool_for_agent(_agent_of(session_id))
         await (await self._workspace_store(resolved)).append(
             session_id,
             event,
             pool=_pool_sanitized(pool_key),
         )
 
-    async def load(
-        self, session_id: str, sessions_dir: Path | None = None
-    ) -> list[ServerEvent]:
+    async def load(self, session_id: str, sessions_dir: Path | None = None) -> list[ServerEvent]:
         resolved = self._resolve_dir(sessions_dir)
         return await (await self._workspace_store(resolved)).load(session_id)
 
@@ -355,13 +351,9 @@ class WorkspaceScopedTranscriptStore(TranscriptStore, WorkspaceIndex):
         self, session_prefix: str, sessions_dir: Path | None = None
     ) -> set[str]:
         resolved = self._resolve_dir(sessions_dir)
-        return await (
-            await self._workspace_store(resolved)
-        ).list_sessions_by_prefix(session_prefix)
+        return await (await self._workspace_store(resolved)).list_sessions_by_prefix(session_prefix)
 
-    async def delete_session(
-        self, session_id: str, sessions_dir: Path | None = None
-    ) -> None:
+    async def delete_session(self, session_id: str, sessions_dir: Path | None = None) -> None:
         resolved = self._resolve_dir(sessions_dir)
         await (await self._workspace_store(resolved)).delete_session(session_id)
 
@@ -369,13 +361,9 @@ class WorkspaceScopedTranscriptStore(TranscriptStore, WorkspaceIndex):
         self, session_prefix: str, sessions_dir: Path | None = None
     ) -> None:
         resolved = self._resolve_dir(sessions_dir)
-        await (await self._workspace_store(resolved)).delete_sessions_by_prefix(
-            session_prefix
-        )
+        await (await self._workspace_store(resolved)).delete_sessions_by_prefix(session_prefix)
 
-    async def last_updated(
-        self, session_id: str, sessions_dir: Path | None = None
-    ) -> int | None:
+    async def last_updated(self, session_id: str, sessions_dir: Path | None = None) -> int | None:
         resolved = self._resolve_dir(sessions_dir)
         return await (await self._workspace_store(resolved)).last_updated(session_id)
 
@@ -416,9 +404,7 @@ class WorkspaceScopedTranscriptStore(TranscriptStore, WorkspaceIndex):
         key = self._partial_key(resolved, session_id)
         return list(self._partial_buffer.get(key, ()))
 
-    async def clear_partial(
-        self, session_id: str, sessions_dir: Path | None = None
-    ) -> None:
+    async def clear_partial(self, session_id: str, sessions_dir: Path | None = None) -> None:
         resolved = self._resolve_dir(sessions_dir)
         key = self._partial_key(resolved, session_id)
         self._partial_buffer.pop(key, None)

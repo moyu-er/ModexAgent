@@ -1,31 +1,31 @@
-"""ExternalCodingExecutionStrategy - assembles external_coding pools (ADR-0025, ticket 4).
+"""ExternalExecutionStrategy - assembles external pools (ADR-0025, ticket 4).
 
 Transitional home: lives in ``examples/bot_project/bot/service/`` (NOT in
-``src/modex_agent/agents/external_coding/``) because ``assemble()`` calls the
+``src/modex_agent/agents/external/``) because ``assemble()`` calls the
 bot-side wiring helpers (now inlined here from the deleted
-``_external_coding_wiring.py``) which use bot-layer types (``PoolSpec``,
+``_external_wiring.py``) which use bot-layer types (``PoolSpec``,
 ``AppConfig``, persistence manager). A future ticket may relocate this class
-to ``src/modex_agent/agents/external_coding/strategy.py`` once the bot-layer
+to ``src/modex_agent/agents/external/strategy.py`` once the bot-layer
 dependencies are abstracted away.
 
 The strategy is stateless: ``assemble()`` is called once per pool at build
 time. It performs the provider-availability gate (``shutil.which``) and
-builds the ``external_coding_deps`` dict that ``ExternalCodingAwareFactory``
-reads to construct an ``ExternalCodingAgent``. The dict is returned in a
-:class:`StrategyAssembly`'s transitional ``external_coding_deps`` field.
+builds the ``external_deps`` dict that ``ExternalAwareFactory``
+reads to construct an ``ExternalAgent``. The dict is returned in a
+:class:`StrategyAssembly`'s transitional ``external_deps`` field.
 
-Ticket 6: the ``_external_coding_wiring.py`` file is deleted; its content
-(``build_external_coding_deps``, ``read_provider_kind``,
-``provider_executable_for``, ``build_external_coding_backend``,
-``build_external_coding_parser``, ``build_external_coding_env_spec``,
-``ExternalCodingAwareFactory``, ``_OpenCodeFallbackBackend``) lives here as
-private methods/classes. The strategy also inherits
+Ticket 6: the ``_external_wiring.py`` file is deleted; its content
+(``build_external_deps``, ``read_provider_kind``,
+``provider_executable_for``, ``build_external_backend``,
+``build_external_parser``, ``build_external_env_spec``,
+``ExternalAwareFactory``) lives here as private methods/classes. The
+strategy also inherits
 :class:`_PoolAssemblyMixin` so it can build the placeholder
-provider/terminal/tools/skill_manager that ``ExternalCodingAwareFactory``
+provider/terminal/tools/skill_manager that ``ExternalAwareFactory``
 still requires as constructor args (behavior preservation per ticket 6; a
 future ticket will eliminate this unnecessary building).
 
-``agent`` and ``turn_runner`` are ``None`` - the ``ExternalCodingAgent``
+``agent`` and ``turn_runner`` are ``None`` - the ``ExternalAgent``
 instance + ``ExternalTurnRunner`` are created downstream by the factory +
 pipeline.
 """
@@ -35,36 +35,31 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from bot.config.webui_config import build_control_origin
-from modex_agent.agents.external_coding.agent import StreamingProviderBackend
-from modex_agent.agents.external_coding.backend_provider import PoolScopedBackendProvider
-from modex_agent.agents.external_coding.builder import ExternalCodingAgentBuilder
-from modex_agent.agents.external_coding.child_discovery import (
+from modex_agent.agents.external.agent import StreamingProviderBackend
+from modex_agent.agents.external.backend_provider import PoolScopedBackendProvider
+from modex_agent.agents.external.builder import ExternalAgentBuilder
+from modex_agent.agents.external.child_discovery import (
     ExternalChildSessionDiscoverySink,
 )
-from modex_agent.agents.external_coding.cli_resolver import resolve_modexctl_bin_dir
-from modex_agent.agents.external_coding.contracts import ProviderEventParser
-from modex_agent.agents.external_coding.events import ExternalCodingEvent
-from modex_agent.agents.external_coding.paths import ProviderKind
-from modex_agent.agents.external_coding.providers.opencode_backend import OpenCodeBackend
-from modex_agent.agents.external_coding.providers.opencode_server_backend import (
+from modex_agent.agents.external.cli_resolver import resolve_modexctl_bin_dir
+from modex_agent.agents.external.contracts import ProviderEventParser
+from modex_agent.agents.external.events import ExternalEvent
+from modex_agent.agents.external.paths import ProviderKind
+from modex_agent.agents.external.providers.opencode.server_backend import (
     OpenCodeServerBackend,
-    SSEUnavailableError,
 )
-from modex_agent.agents.external_coding.providers.opencode_sse_parser import OpenCodeSSEParser
-from modex_agent.agents.external_coding.providers.pi_backend import PiBackend
-from modex_agent.agents.external_coding.providers.pi_parser import PiEventParser
-from modex_agent.agents.external_coding.session_store import ExternalSessionMapStore
-from modex_agent.agents.external_coding.types import (
-    BackendResult,
-    Emission,
-    ExecOptions,
+from modex_agent.agents.external.providers.opencode.v2_parser import (
+    OpenCodeV2EventParser,
+)
+from modex_agent.agents.external.session_store import ExternalSessionMapStore
+from modex_agent.agents.external.types import (
     ExternalEnvSpec,
 )
 from modex_agent.core.emitter import ContentEmitter
@@ -81,22 +76,21 @@ from modex_agent.multi_agent.execution_strategy import (
 from modex_agent.multi_agent.factory import DefaultAgentFactory
 from modex_agent.multi_agent.pool_config import PoolStore
 from modex_agent.multi_agent.pool_config.specs import PoolSpec
-from modex_agent.pipeline.adapters import OutputAdapter
 
 from ._assembly_helpers import _PoolAssemblyMixin
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "ExternalCodingAwareFactory",
-    "ExternalCodingExecutionStrategy",
+    "ExternalAwareFactory",
+    "ExternalExecutionStrategy",
     "ProviderUnavailableError",
-    "build_external_coding_env_spec",
+    "build_external_env_spec",
 ]
 
 
 class ProviderUnavailableError(Exception):
-    """Raised by :meth:`ExternalCodingExecutionStrategy.assemble` when the
+    """Raised by :meth:`ExternalExecutionStrategy.assemble` when the
     provider CLI is not on ``PATH``.
 
     ``pool_builder.create_pool`` catches this to skip main-agent registration
@@ -114,58 +108,8 @@ class ProviderUnavailableError(Exception):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Backend (moved from _external_coding_wiring.py)
+# Backend (moved from _external_wiring.py)
 # ═══════════════════════════════════════════════════════════════════════════
-
-
-class _OpenCodeFallbackBackend(StreamingProviderBackend):
-    """SSE-first backend with automatic subprocess fallback.
-
-    OpenCode SSE (``opencode serve``) is the hardcoded default. If the
-    SSE server fails to start, each turn falls back to subprocess
-    (``opencode run``). The fallback is sticky - once SSE fails, all
-    subsequent turns use subprocess to avoid repeated startup failures.
-    """
-
-    def __init__(self) -> None:
-        self._sse_backend = OpenCodeServerBackend()
-        self._subprocess_backend = OpenCodeBackend()
-        self._fallback_active = False
-
-    async def execute_streaming(
-        self,
-        opts: ExecOptions,
-        env: dict[str, str],
-        on_emission: Callable[[Emission], Awaitable[None]],
-    ) -> BackendResult:
-        if not self._fallback_active:
-            try:
-                return await self._sse_backend.execute_streaming(
-                    opts, env, on_emission
-                )
-            except SSEUnavailableError as exc:
-                logger.warning(
-                    "OpenCode SSE backend unavailable, falling back to subprocess: %s",
-                    exc,
-                )
-                self._fallback_active = True
-        return await self._subprocess_backend.execute_streaming(
-            opts, env, on_emission
-        )
-
-    async def close(self) -> None:
-        first_error: BaseException | None = None
-        try:
-            await self._sse_backend.close()
-        except BaseException as exc:
-            first_error = exc
-        try:
-            await self._subprocess_backend.close()
-        except BaseException as exc:
-            if first_error is None:
-                first_error = exc
-        if first_error is not None:
-            raise first_error
 
 
 def _build_child_discovery_collaborators(
@@ -174,11 +118,14 @@ def _build_child_discovery_collaborators(
     session_map_store: ExternalSessionMapStore,
     provider_kind: ProviderKind,
     session_factory: SessionIdFactory,
-) -> tuple[ExternalChildSessionDiscoverySink | None, Callable[[str], ContentEmitter[ExternalCodingEvent]] | None]:
+) -> tuple[
+    ExternalChildSessionDiscoverySink | None,
+    Callable[[str], ContentEmitter[ExternalEvent]] | None,
+]:
     """Build child-session discovery sink + emitter factory.
 
-    Shared by the main-agent path (``ExternalCodingAwareFactory.create_agent``)
-    and the subagent path (``BotSubagentExternalCodingBuilder.build``) so both
+    Shared by the main-agent path (``ExternalAwareFactory.create_agent``)
+    and the subagent path (``BotSubagentExternalBuilder.build``) so both
     get identical child-capture wiring.
 
     Returns ``(sink, emitter_factory)``. ``sink`` is ``None`` when
@@ -198,12 +145,12 @@ def _build_child_discovery_collaborators(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Factory (moved from _external_coding_wiring.py)
+# Factory (moved from _external_wiring.py)
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-class ExternalCodingAwareFactory(DefaultAgentFactory):
-    """``DefaultAgentFactory`` subclass that builds ``ExternalCodingAgent`` instances.
+class ExternalAwareFactory(DefaultAgentFactory):
+    """``DefaultAgentFactory`` subclass that builds ``ExternalAgent`` instances.
 
     Fully overrides :meth:`create_agent` to skip ALL react-only construction:
     no ``BotModelProvider``, no ``FilteredToolManager``, no ``SkillManager``,
@@ -222,13 +169,13 @@ class ExternalCodingAwareFactory(DefaultAgentFactory):
     def __init__(
         self,
         *args: Any,
-        external_coding_deps: dict[str, Any] | None = None,
+        external_deps: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
         # Do NOT call super().__init__() — it builds react-only defaults
         # (RuntimeContextManager, InboxProducer/Consumer, etc.) that
         # ExternalTurnRunner never uses.
-        self._external_coding_deps: dict[str, Any] = external_coding_deps or {}
+        self._external_deps: dict[str, Any] = external_deps or {}
         self._control_channel = kwargs.get("control_channel")
         self._session_registry = kwargs.get("session_registry")
         self._observability_config = kwargs.get("observability_config")
@@ -266,7 +213,7 @@ class ExternalCodingAwareFactory(DefaultAgentFactory):
         output_adapter: Any | None = None,
         context_manager_factory: Any | None = None,  # ignored
     ) -> AgentInstance:
-        """Build an ExternalCodingAgent + ExternalTurnRunner + minimal pipeline.
+        """Build an ExternalAgent + ExternalTurnRunner + minimal pipeline.
 
         Overrides :meth:`DefaultAgentFactory.create_agent` to skip ALL
         react-only construction. ``ExternalTurnRunner`` doesn't use any of
@@ -275,37 +222,22 @@ class ExternalCodingAwareFactory(DefaultAgentFactory):
         The external agent communicates via ``modexctl send`` CLI, not
         ``send_to_agent``.
         """
-        from modex_agent.agents.external_coding.child_discovery import (
-            ExternalChildSessionDiscoverySink,
-        )
-        from modex_agent.agents.external_coding.turn_runner import ExternalTurnRunner
-        from modex_agent.core.context import InMemoryContextManager
         from modex_agent.core.llm_struct import RuntimeSafetyPolicy
         from modex_agent.core.session_id import SessionIdFactory
-        from modex_agent.messaging.broker_bridge import (
-            BrokerInputAdapter,
-            BrokerOutputAdapter,
-        )
-        from modex_agent.messaging.broker_memory import InMemoryMessageBroker
-        from modex_agent.multi_agent.router import DefaultMeshRouter
         from modex_agent.pipeline.adapters import OutputAdapter
-        from modex_agent.pipeline.pipeline import AgentPipeline
-        from modex_agent.pipeline.turn_session_registry import TurnSessionRegistry
 
-        # 1. Agent — provider=None (ExternalCodingAgentBuilder ignores it;
+        # 1. Agent — provider=None (ExternalAgentBuilder ignores it;
         #    the external CLI owns its own model configuration). ADR-0027:
         #    wrap the pool-scoped backend in a BackendProvider so the agent
         #    borrows it per turn instead of holding a fixed reference.
-        deps = self._external_coding_deps
+        deps = self._external_deps
         missing = [
             name
             for name in ("backend", "session_store", "parser", "provider_kind", "spec")
             if deps.get(name) is None
         ]
         if missing:
-            raise ValueError(
-                f"ExternalCodingAwareFactory missing external_coding deps: {', '.join(missing)}"
-            )
+            raise ValueError(f"ExternalAwareFactory missing external deps: {', '.join(missing)}")
         backend_provider = PoolScopedBackendProvider(deps["backend"])
 
         session_id_factory = SessionIdFactory()
@@ -316,7 +248,7 @@ class ExternalCodingAwareFactory(DefaultAgentFactory):
             session_factory=session_id_factory,
         )
 
-        agent = ExternalCodingAgentBuilder.build_agent(
+        agent = ExternalAgentBuilder.build_agent(
             descriptor,
             provider=None,
             backend_provider=backend_provider,
@@ -333,7 +265,7 @@ class ExternalCodingAwareFactory(DefaultAgentFactory):
 
         # 2. Assemble pipeline via shared helper (converged with subagent path).
         safety: RuntimeSafetyPolicy = descriptor.safety_policy or RuntimeSafetyPolicy()
-        return ExternalCodingAgentBuilder.assemble_pipeline(
+        return ExternalAgentBuilder.assemble_pipeline(
             descriptor,
             agent,
             broker=broker,
@@ -347,9 +279,9 @@ class ExternalCodingAwareFactory(DefaultAgentFactory):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Module-level wiring helpers (moved from _external_coding_wiring.py).
+# Module-level wiring helpers (moved from _external_wiring.py).
 # Kept module-level (not methods) because:
-#  - ``build_external_coding_env_spec`` is imported by tests directly.
+#  - ``build_external_env_spec`` is imported by tests directly.
 #  - The helpers are pure functions with no strategy state; making them
 #    methods would be a forced OOP wrapper.
 # ═══════════════════════════════════════════════════════════════════════════
@@ -358,7 +290,7 @@ class ExternalCodingAwareFactory(DefaultAgentFactory):
 def _modexctl_bin_dir() -> Path:
     """Resolve the ``modexctl`` binary directory for the spawn ``PATH``.
 
-    Delegates to :func:`modex_agent.agents.external_coding.cli_resolver.resolve_modexctl_bin_dir`
+    Delegates to :func:`modex_agent.agents.external.cli_resolver.resolve_modexctl_bin_dir`
     — the single source of truth. The previous inline ``shutil.which`` +
     ``Path(".")`` fallback (which never pointed at a real modexctl and
     caused silent cross-pool messaging failures when the bot was launched
@@ -371,9 +303,7 @@ def _modexctl_bin_dir() -> Path:
     return resolve_modexctl_bin_dir()
 
 
-def _build_agent_pool_map(
-    pool_name: str, pool_spec: PoolSpec, project_dir: Path
-) -> dict[str, str]:
+def _build_agent_pool_map(pool_name: str, pool_spec: PoolSpec, project_dir: Path) -> dict[str, str]:
     pool_map: dict[str, str] = {pool_spec.main.agent_name: pool_name}
     for sub in pool_spec.subagents:
         pool_map[sub.agent_name] = pool_name
@@ -384,16 +314,16 @@ def _build_agent_pool_map(
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "Pool '%s': cannot read peer pool %r for agent_pool_map: %s",
-                pool_name, peer, exc,
+                pool_name,
+                peer,
+                exc,
             )
             continue
         pool_map[peer_spec.main.agent_name] = peer
     return pool_map
 
 
-def _build_targets(
-    pool_name: str, pool_spec: PoolSpec, project_dir: Path
-) -> list[tuple[str, str]]:
+def _build_targets(pool_name: str, pool_spec: PoolSpec, project_dir: Path) -> list[tuple[str, str]]:
     targets: list[tuple[str, str]] = []
     for sub in pool_spec.subagents:
         targets.append((sub.agent_name, sub.description or f"{sub.agent_name} subagent"))
@@ -404,7 +334,9 @@ def _build_targets(
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "Pool '%s': cannot read peer pool %r for targets: %s",
-                pool_name, peer, exc,
+                pool_name,
+                peer,
+                exc,
             )
             continue
         desc = peer_spec.main.description or f"Peer pool {peer}'s main agent"
@@ -412,7 +344,7 @@ def _build_targets(
     return targets
 
 
-def build_external_coding_env_spec(
+def build_external_env_spec(
     pool_name: str,
     pool_spec: PoolSpec,
     project_dir: Path,
@@ -420,14 +352,14 @@ def build_external_coding_env_spec(
     workspace_dir: Path,
     main_agent_name: str,
 ) -> ExternalEnvSpec:
-    """Build the ``ExternalEnvSpec`` for an external_coding pool.
+    """Build the ``ExternalEnvSpec`` for an external pool.
 
     Kept as a module-level function because tests import it directly
     (``test_builders_inbox.py``).
 
     Dynamism across two time scales (no per-invocation dimension — main
     agents are assembled once at boot):
-      • per-turn       — STATIC. ``ExternalCodingAgent._run_turn`` refreshes
+      • per-turn       — STATIC. ``ExternalAgent._run_turn`` refreshes
         only session_id + workdir via model_copy; agent_pool_map and
         targets are frozen for the agent's lifetime. (spec.md claims a
         per-turn refresh from CommunicationTargetStore — never implemented;
@@ -462,18 +394,18 @@ def build_external_coding_env_spec(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-class ExternalCodingExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
-    """Assemble external_coding pools (Pi / OpenCode CLI harness).
+class ExternalExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
+    """Assemble external pools (Pi / OpenCode CLI harness).
 
     Inherits the shared ``_build_*`` helpers from :class:`_PoolAssemblyMixin`
     so ``assemble()`` can build the placeholder provider/terminal/tools/skill
-    that ``ExternalCodingAwareFactory`` still requires as constructor args
+    that ``ExternalAwareFactory`` still requires as constructor args
     (behavior preservation per ticket 6).
     """
 
     @property
     def name(self) -> str:
-        return "external_coding"
+        return "external"
 
     @property
     def supports_subagents(self) -> bool:
@@ -484,15 +416,15 @@ class ExternalCodingExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
         return False
 
     def validate_pool_spec(self, spec: PoolSpec) -> None:
-        """Reject pools incompatible with the external_coding shape.
+        """Reject pools incompatible with the external shape.
 
         Two invariants (mirrors the validation branches that lived in
         ``pool_config/store.py`` before ticket 6 - those branches are deleted
         in ticket 6; this method is the single enforcement point):
 
-        * **No subagents** - external_coding main agents have no tool surface
+        * **No subagents** - external main agents have no tool surface
           and cannot dispatch subagent tasks. Subagent templates on an
-          external_coding pool are a configuration error.
+          external pool are a configuration error.
         * **``provider_kind`` required** - the CLI kind (``pi`` / ``opencode``)
           must be set so the strategy knows which backend + parser to build.
 
@@ -502,51 +434,49 @@ class ExternalCodingExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
         """
         if spec.subagents:
             raise ValueError(
-                f"Pool {spec.name!r}: execution_strategy 'external_coding' "
-                f"does not support subagents"
+                f"Pool {spec.name!r}: execution_strategy 'external' does not support subagents"
             )
         if spec.main.provider_kind is None:
             raise ValueError(
-                f"Pool {spec.name!r}: execution_strategy 'external_coding' "
-                f"requires a provider_kind"
+                f"Pool {spec.name!r}: execution_strategy 'external' requires a provider_kind"
             )
 
     # ── Provider-kind / backend / parser resolution ──────────────────────
-    # (moved from _external_coding_wiring.py as private methods)
+    # (moved from _external_wiring.py as private methods)
 
     def _read_provider_kind(self, pool_spec: PoolSpec, project_dir: Path) -> ProviderKind:
         if pool_spec.main.provider_kind is not None:
             return pool_spec.main.provider_kind
         pool_yml = project_dir / "config" / "pools" / pool_spec.name / "pool.yml"
         if not pool_yml.exists():
-            return ProviderKind.PI
+            return ProviderKind.OPENCODE
         data: Any = yaml.safe_load(pool_yml.read_text(encoding="utf-8")) or {}
-        kind = data.get("provider_kind", "pi")
+        kind = data.get("provider_kind", "opencode")
         if not isinstance(kind, str):
-            return ProviderKind.PI
+            return ProviderKind.OPENCODE
         return self._provider_kind_from_str(kind)
 
     @staticmethod
     def _provider_kind_from_str(value: str) -> ProviderKind:
         if value == ProviderKind.OPENCODE.value:
             return ProviderKind.OPENCODE
-        return ProviderKind.PI
+        raise ValueError(f"Unsupported provider_kind: {value!r} (only 'opencode' is supported)")
 
     @staticmethod
     def _provider_executable_for(kind: ProviderKind) -> str:
         return kind.value
 
-    def _build_external_coding_backend(self, kind: ProviderKind) -> StreamingProviderBackend:
-        if kind == ProviderKind.OPENCODE:
-            return _OpenCodeFallbackBackend()
-        return PiBackend(provider=None)
+    def _build_external_backend(self, kind: ProviderKind) -> StreamingProviderBackend:
+        if kind != ProviderKind.OPENCODE:
+            raise ValueError(f"Unsupported provider_kind: {kind!r}")
+        return OpenCodeServerBackend()
 
-    def _build_external_coding_parser(self, kind: ProviderKind) -> ProviderEventParser:
-        if kind == ProviderKind.OPENCODE:
-            return OpenCodeSSEParser()
-        return PiEventParser()
+    def _build_external_parser(self, kind: ProviderKind) -> ProviderEventParser:
+        if kind != ProviderKind.OPENCODE:
+            raise ValueError(f"Unsupported provider_kind: {kind!r}")
+        return OpenCodeV2EventParser()
 
-    def _build_external_coding_deps(
+    def _build_external_deps(
         self,
         *,
         pool_name: str,
@@ -560,8 +490,8 @@ class ExternalCodingExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
         persistence: Any | None = None,
     ) -> dict[str, Any]:
         provider_kind = self._read_provider_kind(pool_spec, project_dir)
-        backend = self._build_external_coding_backend(provider_kind)
-        parser = self._build_external_coding_parser(provider_kind)
+        backend = self._build_external_backend(provider_kind)
+        parser = self._build_external_parser(provider_kind)
         from bot.scope import BotRecordScope
         from bot.service.builders import build_external_session_map_store
 
@@ -571,7 +501,7 @@ class ExternalCodingExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
             workspace_dir,
             BotRecordScope(pool=pool_name),
         )
-        spec = build_external_coding_env_spec(
+        spec = build_external_env_spec(
             pool_name, pool_spec, project_dir, inbox_dir, workspace_dir, main_agent_name
         )
         return {
@@ -586,20 +516,20 @@ class ExternalCodingExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
     # ── Assemble ─────────────────────────────────────────────────────────
 
     async def assemble(self, ctx: PoolAssemblyContext) -> StrategyAssembly:
-        """Build external_coding deps only; all react-only fields are ``None``.
+        """Build external deps only; all react-only fields are ``None``.
 
         Performs the provider-availability gate (``shutil.which`` -> raises
         :class:`ProviderUnavailableError` when the CLI is missing) and builds
-        the ``external_coding_deps`` dict that
-        :meth:`ExternalCodingAwareFactory.create_agent` reads to construct an
-        ``ExternalCodingAgent`` + ``ExternalTurnRunner`` + minimal pipeline.
+        the ``external_deps`` dict that
+        :meth:`ExternalAwareFactory.create_agent` reads to construct an
+        ``ExternalAgent`` + ``ExternalTurnRunner`` + minimal pipeline.
 
         Does NOT build provider/terminal_manager/tools/skill_manager/
         context_manager/cassette_recorder/root_provider or any other
         react-only collaborator — ``ExternalTurnRunner`` doesn't use any of
-        those. ``ExternalCodingAwareFactory.create_agent`` constructs the
+        those. ``ExternalAwareFactory.create_agent`` constructs the
         agent + turn_runner + pipeline directly from
-        ``external_coding_deps``.
+        ``external_deps``.
         """
         pool_name = ctx.pool_name
         pool_spec = ctx.pool_spec
@@ -616,13 +546,11 @@ class ExternalCodingExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
         # 2. External deps (backend/session_store/parser/env_spec).
         #    ``inbox_dir`` mirrors the path ``pool_builder.create_pool``
         #    computes (``data_dir / "inbox" / pool_name``) — the
-        #    external_coding env spec resolves inbox-relative paths from
+        #    external env spec resolves inbox-relative paths from
         #    ``inbox_dir.parent``.
-        workspace_dir = (
-            workspace_handle.current if workspace_handle is not None else project_dir
-        )
+        workspace_dir = workspace_handle.current if workspace_handle is not None else project_dir
         inbox_dir = data_dir / "inbox" / pool_name
-        external_coding_deps = self._build_external_coding_deps(
+        external_deps = self._build_external_deps(
             pool_name=pool_name,
             pool_spec=pool_spec,
             project_dir=project_dir,
@@ -634,12 +562,12 @@ class ExternalCodingExecutionStrategy(_PoolAssemblyMixin, ExecutionStrategyABC):
             persistence=ctx.persistence,
         )
 
-        # 3. Return assembly with ONLY ``external_coding_deps`` populated.
+        # 3. Return assembly with ONLY ``external_deps`` populated.
         #    All react-only fields default to ``None`` (built by the factory,
         #    not the strategy).
         return StrategyAssembly(
             agent=None,
             turn_runner=None,
-            external_coding_deps=external_coding_deps,
+            external_deps=external_deps,
             extra_cleanup=(),
         )

@@ -551,7 +551,7 @@ def _wire_pool_to_resources(
     ``default_provider`` is the bot-global default LLM provider (from
     ``model.yml`` via ``BotService._default_provider``). ExperienceReviewAgent
     uses it to run ReAct — experience review is a background task that should
-    NOT depend on any pool's own provider (external_coding pools have none).
+    NOT depend on any pool's own provider (external pools have none).
     When ``default_provider`` is None (model.yml unconfigured), experience
     review is skipped with a warning; the bot itself boots and runs normally.
     """
