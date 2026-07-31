@@ -368,7 +368,7 @@ and `api_key`). A config with providers but no default is saveable.
    behaviour.)
 3. **Skills cascade.** `SkillsStore.clear_pool_skills(name)` removes
    `skills/{name}/`. (Existing method, currently only called from
-   `write_pool` for external_coding; now also called from `delete_pool`.)
+   `write_pool` for external; now also called from `delete_pool`.)
 4. **Routing cascade.** `PoolRoutingStore.delete_pool_routes(name)` — a
    new ABC method, symmetric to the existing `rename_pool`. File
    implementation: iterate `pool_sessions/*.json`, delete any whose
@@ -643,7 +643,7 @@ Assertions:
 - **MCP server lazy cleanup.** Deleting a global MCP server still
   leaves stale references in pools until restart. Separate effort.
 - **External-coding pool subagent draft preservation.** Toggling
-  `external_coding` still clears subagent drafts. Separate effort.
+  `external` still clears subagent drafts. Separate effort.
 - **Inline validation feedback.** Form errors still surface only on
   Save, not as the user types. Separate UX effort.
 - **Workspace-switch dirty guard.** Editing a pool and switching

@@ -128,7 +128,7 @@ Wave 3:       T6 ✅  T8 ✅ ← parallel (T6 after T5; T8 after T1+T5+T7)
 - [x] If the child process is not OTel-instrumented, the parent's `invoke_agent` CLIENT span still records duration and exit code (the trace is not broken, just shallow)
 - [x] External CLI agent subprocess spans are marked `repro.incomplete=true` (L4 cassette incompleteness signal)
 - [x] No `bot_config.yml` change required — propagation is automatic when `trace_backend != off`
-- [x] `examples/bot_project` external coding agent wiring (`_external_coding_wiring.py`) passes through the injected env
+- [x] `examples/bot_project` external coding agent wiring (`_external_wiring.py`) passes through the injected env
 - [x] Seam 1 test: dispatching to an external CLI agent sets `TRACEPARENT` in the subprocess environment
 - [x] Seam 1 test: the parent's `invoke_agent` CLIENT span appears in `spans.jsonl` with `SpanKind.CLIENT`
 
@@ -334,7 +334,7 @@ child's root span has no parent link in the trace.
 **What to build:** Fix `otel_store._build_otlp_tracer()` to call
 `trace.set_tracer_provider()` so the local `TracerProvider` is registered
 globally. Currently a local provider is created but never set, so
-`external_coding/agent.py`'s `trace.get_tracer(__name__)` returns the
+`external/agent.py`'s `trace.get_tracer(__name__)` returns the
 no-op default provider, and external coding agent CLIENT spans never export.
 
 **Blocked by:** T10 (verify no regression in existing OTLP export)

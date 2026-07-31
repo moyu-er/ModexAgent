@@ -16,7 +16,7 @@ docs/
 ├── design/                ← Feature design docs (PRD + tickets per feature)
 │   ├── agent-observability/           (ADR-0024)
 │   ├── hybrid-persistence/            (ADR-0023)
-│   ├── external-coding-agent-integration/  (ADR-0022)
+│   ├── external-agent-integration/  (ADR-0022)
 │   ├── model-reasoning-effort/        (ADR-0021)
 │   ├── pool-config-convergence/       (ADR-0020)
 │   ├── cross-pool-peer-communication/ (ADR-0019)

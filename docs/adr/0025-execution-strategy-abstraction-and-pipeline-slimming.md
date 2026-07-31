@@ -8,7 +8,7 @@ Status: accepted (2026-07-18) — implemented with documented deviations (see Di
 branching across four sites, and `AgentPipeline` has grown to 569 lines with a
 33-parameter constructor and five mutable property mirrors. The root cause is
 that "which pool shape" (ReAct graph loop vs external CLI harness) is decided
-with `if execution_strategy == EXTERNAL_CODING` checks scattered across
+with `if execution_strategy == EXTERNAL` checks scattered across
 assembly and pipeline construction, rather than by an explicit strategy object
 that owns its own shape.
 
@@ -17,8 +17,8 @@ that owns its own shape.
 1. **`pool_builder.create_pool` (440 lines)** unconditionally assembles
    ReAct-only resources — `BotModelProvider`, `terminal_manager`, full
    `_build_tools`, `_build_skill_manager`, `_wire_main_pipeline` — and only
-   later short-circuits with `if execution_strategy == EXTERNAL_CODING` to swap
-   in external-coding deps. An external_coding pool that needs none of these
+   later short-circuits with `if execution_strategy == EXTERNAL` to swap
+   in external deps. An external pool that needs none of these
    still pays for their construction (or worse, gets a `_placeholder_model_config`
    stub when no `model.yml` is configured, even though the external CLI provides
    its own model).
@@ -37,7 +37,7 @@ that owns its own shape.
    either `TurnRunner` or `TurnContextBuilder`. This is fragile: a new
    collaborator means a new mirror.
 
-4. **Four `if execution_strategy == EXTERNAL_CODING` sites** exist today:
+4. **Four `if execution_strategy == EXTERNAL` sites** exist today:
    `pipeline.py:207` (runner selection), `peer_normal.py:54` (reply contract),
    `pool_config/store.py:264,335,429` (validation), `factory.py:125`
    (descriptor → builder dispatch). Adding a third strategy (RAG-only,
@@ -61,8 +61,8 @@ that owns its own shape.
   boundaries. This ADR prepares the seam; a future split can ride it.
 - **External pool bypassing `AgentPool`.** External_coding pools still use
   `AgentPool` — it provides `InboxPoller` integration, session lock, and
-  TTL/LRU eviction that external_coding also needs. The subagent-related
-  `AgentPool` fields are simply empty for external_coding.
+  TTL/LRU eviction that external also needs. The subagent-related
+  `AgentPool` fields are simply empty for external.
 
 ## Decision
 
@@ -97,14 +97,14 @@ Runtime state lives in the assembly's `TurnRunner`, not in the strategy.
 
 `ExecutionStrategyRegistry` is a process-scoped, write-once-read-many
 registry. `BotService.initialize()` registers the two shipped strategies
-(`react`, `external_coding`) before any pool is created. The framework ships a
+(`react`, `external`) before any pool is created. The framework ships a
 `default_strategy_registry()` factory that pre-registers both, so a
 framework-only consumer gets them for free; business layers may override.
 
 The existing `ExecutionStrategy` enum (`core/constants.py`) is renamed
 `ExecutionStrategyKind` — a closed string set used only for pool.yml lookup
 and `registry.resolve(name)` dispatch. The name `ExecutionStrategy` now refers
-exclusively to the ABC. Pool.yml values (`react`, `external_coding`) are
+exclusively to the ABC. Pool.yml values (`react`, `external`) are
 unchanged; only the Python symbol moves.
 
 Rejected alternatives:
@@ -137,7 +137,7 @@ Two new types in `execution_strategy.py`:
   Carries the `Agent`, the `TurnRunner`, common services
   (`AgentNotificationService` / `AgentCommunicationService` /
   `CommunicationTargetStore`), react-only collaborators (all `None` for
-  external_coding), external-only collaborators (all `None` for react), and
+  external), external-only collaborators (all `None` for react), and
   `extra_cleanup` hooks.
 
 **Why frozen `@dataclass`, not Pydantic `BaseModel`.** Rule 12 distinguishes
@@ -178,7 +178,7 @@ One method. No `update_emitter_factory` — see D4 for why it is gone.
 
 The existing concrete `TurnRunner` class (`pipeline/turn_runner.py`) is
 renamed **`ReActTurnRunner`** and inherits the ABC. `ExternalTurnRunner`
-(`agents/external_coding/turn_runner.py`) inherits the ABC unchanged.
+(`agents/external/turn_runner.py`) inherits the ABC unchanged.
 `AgentPipeline` holds a `TurnRunner` (ABC) reference, never a concrete
 subclass.
 
@@ -218,7 +218,7 @@ class AgentPipeline:
         deduplicator: MessageDeduplicator | None = None,
         busy_input_mode: BusyInputMode = BusyInputMode.QUEUE,
         control_channel: InMemoryControlChannel | None = None,
-        # react-only optional (external_coding passes None)
+        # react-only optional (external passes None)
         dream_engine: DreamEngine | None = None,
         dream_interval: float | None = None,
     ) -> None: ...
@@ -228,7 +228,7 @@ class AgentPipeline:
 
 | Removed | Reason |
 |---|---|
-| `context_manager`, `tool_manager`, `skill_manager`, `runtime_context_manager`, `governance`, `hook_runner`, `interceptor_chain`, `turn_store`, `runtime_services`, `agent_descriptor`, `context_builder`, `sanitizer`, `context_manager_factory`, `max_iterations`, `user_interface` | Strategy-specific; now live inside the `TurnRunner` (react) or are unused (external_coding). Pipeline never touches them. |
+| `context_manager`, `tool_manager`, `skill_manager`, `runtime_context_manager`, `governance`, `hook_runner`, `interceptor_chain`, `turn_store`, `runtime_services`, `agent_descriptor`, `context_builder`, `sanitizer`, `context_manager_factory`, `max_iterations`, `user_interface` | Strategy-specific; now live inside the `TurnRunner` (react) or are unused (external). Pipeline never touches them. |
 | `ApprovalRenderer`, `ApprovalResumer`, `TurnContextBuilder` construction in `__init__` | Strategy-specific; moved into `ReactExecutionStrategy.assemble()`. |
 | `if is_external` runner-selection branch | Replaced by `turn_runner: TurnRunner` parameter. |
 | Five mutable property mirrors (`workspace_manager`, `pool_name`, `runtime_services`, `governance`, `emitter_factory`) | Eliminated — strategy.assemble() configures the turn_runner once, post-construction wiring is gone. |
@@ -303,28 +303,28 @@ async def create_pool(...) -> PoolInstance:
 ```
 
 The existing `_build_llm_provider` / `_build_terminal_manager` / `_build_tools`
-/ `_build_skill_manager` / `_build_external_coding_deps` functions **move into**
+/ `_build_skill_manager` / `_build_external_deps` functions **move into**
 the corresponding strategy's `assemble()` method. `pool_builder` keeps only
 `_build_common_assembly` and the post-assembly wiring.
 
 > **Deferred:** `_wire_main_pipeline` remains in `pool_builder` because it is
-> called for both react and external_coding pools (with `getattr` guards for
+> called for both react and external pools (with `getattr` guards for
 > the external path). Moving it into `ReactExecutionStrategy.assemble()` would
 > require splitting the function or adding a no-op override on
-> `ExternalCodingExecutionStrategy`. The function's post-construction wiring
+> `ExternalExecutionStrategy`. The function's post-construction wiring
 > (governance, runtime_services, user_interface) is genuine pool-level wiring
 > that depends on resources not available at `assemble()` time. Kept in
 > `pool_builder` as a common post-assembly step.
 
-The four existing `if execution_strategy == EXTERNAL_CODING` sites are
+The four existing `if execution_strategy == EXTERNAL` sites are
 collapsed:
 
 | Site | Old behaviour | New behaviour |
 |---|---|---|
 | `pipeline.py:207` (runner selection) | `if is_external` → `ExternalTurnRunner` else `TurnRunner` | Removed — `turn_runner` is a constructor parameter |
-| `peer_normal.py:54` (reply contract) | `if external_coding` → `modexctl send` else `send_to_agent` | Stays — this is per-target runtime behaviour, read off `AgentDescriptor.execution_strategy`. Not assembly branching. |
-| `pool_config/store.py:264,335,429` (validation) | `if external_coding` → forbid subagents, require provider_kind | Retained at store level + `ExternalCodingExecutionStrategy.validate_pool_spec` as defense-in-depth. The store is the single pool.yml write path (WebUI pool write endpoint relies on store-level validation to return HTTP 400 on bad input). Store checks use `!= REACT` (not `== EXTERNAL_CODING`) to stay within the arch-guard allowlist. |
-| `factory.py:125` (descriptor → builder) | `if external_coding` → `ExternalCodingAgentBuilder` else `ReActAgentBuilder` | Retained — runtime agent-construction dispatch (selects `ExternalCodingAgentBuilder` vs `ReActAgentBuilder`). This is runtime construction, not assembly branching — the factory is already strategy-aware via `ExternalCodingAwareFactory._build_turn_runner`. Kept as a legitimate runtime dispatch site. |
+| `peer_normal.py:54` (reply contract) | `if external` → `modexctl send` else `send_to_agent` | Stays — this is per-target runtime behaviour, read off `AgentDescriptor.execution_strategy`. Not assembly branching. |
+| `pool_config/store.py:264,335,429` (validation) | `if external` → forbid subagents, require provider_kind | Retained at store level + `ExternalExecutionStrategy.validate_pool_spec` as defense-in-depth. The store is the single pool.yml write path (WebUI pool write endpoint relies on store-level validation to return HTTP 400 on bad input). Store checks use `!= REACT` (not `== EXTERNAL`) to stay within the arch-guard allowlist. |
+| `factory.py:125` (descriptor → builder) | `if external` → `ExternalAgentBuilder` else `ReActAgentBuilder` | Retained — runtime agent-construction dispatch (selects `ExternalAgentBuilder` vs `ReActAgentBuilder`). This is runtime construction, not assembly branching — the factory is already strategy-aware via `ExternalAwareFactory._build_turn_runner`. Kept as a legitimate runtime dispatch site. |
 
 `peer_normal.py:54` stays because it is a runtime per-message routing
 decision (which reply mechanism a *target* agent uses), not an assembly-time
@@ -353,12 +353,12 @@ Add `agents/react/strategy.py`. `assemble()` internally calls the existing
 for now — code moves in Stage 3). `pool_builder.create_pool` react path
 calls `strategy.assemble()` to get the assembly, then continues the old way
 (using `assembly.agent` / `assembly.turn_runner` to construct the pipeline).
-The four `if execution_strategy == EXTERNAL_CODING` branches stay (they
-still work; external_coding is handled by the old path). Tests: react pool
+The four `if execution_strategy == EXTERNAL` branches stay (they
+still work; external is handled by the old path). Tests: react pool
 full regression.
 
-**Stage 2 — `ExternalCodingExecutionStrategy.assemble()` (behaviour unchanged).**
-Add `agents/external_coding/strategy.py`. `pool_builder` external path calls
+**Stage 2 — `ExternalExecutionStrategy.assemble()` (behaviour unchanged).**
+Add `agents/external/strategy.py`. `pool_builder` external path calls
 `strategy.assemble()`. Tests: external pool full regression.
 
 **Stage 3 — Slim `AgentPipeline` + eliminate mirrors.**
@@ -370,12 +370,12 @@ full regression.
 
 **Stage 4 — Cleanup.**
 Delete the `if is_external` branch in `pipeline.py:205-240`. Delete the
-`if execution_strategy == EXTERNAL_CODING` branches in `pool_builder` and
+`if execution_strategy == EXTERNAL` branches in `pool_builder` and
 `factory.py:125`. Move the validation branches from
 `pool_config/store.py:264,335,429` into
-`ExternalCodingExecutionStrategy.validate_pool_spec`. Delete the
-`_external_coding_wiring.py` functions now superseded by
-`ExternalCodingExecutionStrategy.assemble()`. Move the imported
+`ExternalExecutionStrategy.validate_pool_spec`. Delete the
+`_external_wiring.py` functions now superseded by
+`ExternalExecutionStrategy.assemble()`. Move the imported
 `_build_*` helpers from `pool_builder` into `ReactExecutionStrategy`.
 Tests: full regression + architecture guard test asserting no
 `if execution_strategy ==` branches remain in `pool_builder.create_pool`
@@ -405,11 +405,11 @@ Each stage is independently revertible. Stage 0+1 can ship together; Stage
   "assembly strategy" and "execution strategy") is resolved: the enum
   becomes `ExecutionStrategyKind` (a pure lookup key), the ABC owns the
   "strategy" semantics.
-- React and external_coding can evolve independently — approval reform,
+- React and external can evolve independently — approval reform,
   dream-engine changes, cassette wrapping touch only
   `ReactExecutionStrategy.assemble()`; OpenCode subagent support, sticky
   fallback policy, env refresh touch only
-  `ExternalCodingExecutionStrategy.assemble()`.
+  `ExternalExecutionStrategy.assemble()`.
 
 **Negative:**
 
@@ -440,15 +440,15 @@ Each stage is independently revertible. Stage 0+1 can ship together; Stage
   may push it into `ReactExecutionStrategy` if the dream-task lifecycle
   needs strategy-specific control; not done now to keep the Stage 3 cut
   focused.
-- `AgentPool` still serves external_coding pools (E1). Its
+- `AgentPool` still serves external pools (E1). Its
   subagent-related fields (`_template_registry`, `_materialize_deps`) are
-  empty for external_coding — a small wasted reference, not a maintenance
+  empty for external — a small wasted reference, not a maintenance
   burden.
 
 ## Relationships to prior ADRs
 
 - **ADR-0022** (external coding agent integration) is unchanged in
-  topology: external_coding pools are still NORMAL main agents of their own
+  topology: external pools are still NORMAL main agents of their own
   pools, communicating via `modexctl send` through `InboxMQ.deliver()`. This
   ADR only changes how they are *assembled*, not how they *run*.
 - **ADR-0019** (cross-pool peer communication) is unchanged. `peer_normal`
@@ -515,7 +515,7 @@ external read sites — deferred as a follow-up.
 **Spec said:** "`pool_builder.create_pool` (440 → ~150 lines)", "factory.py:125
 branch Removed", "_wire_main_pipeline moves into ReactExecutionStrategy",
 "pool_config/store.py validation branches move to
-ExternalCodingExecutionStrategy.validate_pool_spec".
+ExternalExecutionStrategy.validate_pool_spec".
 
 **Actual:**
 - `pool_builder.create_pool` is ~265 lines (not ~150). The function has
@@ -524,11 +524,11 @@ ExternalCodingExecutionStrategy.validate_pool_spec".
   AgentMaterializeDeps, InboxPoller, communication wiring) that the ~150
   estimate undercounted.
 - `factory.py:125` (`_get_builder` dispatch) is **Retained** — it is
-  runtime agent-construction dispatch (selects ExternalCodingAgentBuilder
+  runtime agent-construction dispatch (selects ExternalAgentBuilder
   vs ReActAgentBuilder), not assembly branching. The factory is already
-  strategy-aware via `ExternalCodingAwareFactory._build_turn_runner` override.
+  strategy-aware via `ExternalAwareFactory._build_turn_runner` override.
 - `_wire_main_pipeline` is **Deferred** — remains in pool_builder because
-  it is called for both react and external_coding pools (external path uses
+  it is called for both react and external pools (external path uses
   `strategy.requires_main_agent_tools == False` to skip it). Moving it into
   `ReactExecutionStrategy.assemble()` would require splitting the function
   or adding a no-op override; the function's post-construction wiring
@@ -539,7 +539,7 @@ ExternalCodingExecutionStrategy.validate_pool_spec".
 - `pool_config/store.py` validation branches are **Retained at store level**
   as defense-in-depth (subagent stripping, provider_kind validation,
   native-field omission for non-react pools).
-  `ExternalCodingExecutionStrategy.validate_pool_spec` remains as
+  `ExternalExecutionStrategy.validate_pool_spec` remains as
   assembly-time defense-in-depth. The store-level validation was
   temporarily deleted in ticket 6 but restored after code review found
   WebUI write-time tests depended on it.
@@ -548,11 +548,11 @@ ExternalCodingExecutionStrategy.validate_pool_spec".
   assembly branching).
 - `pool_config/specs.py` is **Retained** — Pydantic `@model_validator`
   cross-field validation (`provider_kind` set iff
-  `execution_strategy == EXTERNAL_CODING`); same validation category as
+  `execution_strategy == EXTERNAL`); same validation category as
   `subagent_validator.py`, not assembly branching.
 - `template.py` is **Retained** — T5 subagent materialize dispatch:
-  when the spec's `execution_strategy` is `EXTERNAL_CODING`, `materialize`
-  delegates to `deps.subagent_external_coding_builder.build()` instead of
+  when the spec's `execution_strategy` is `EXTERNAL`, `materialize`
+  delegates to `deps.subagent_external_builder.build()` instead of
   `agent_factory.create_agent()`. Same runtime construction-dispatch
   category as `factory.py._get_builder`; the react path is byte-for-byte
   unchanged.
@@ -575,27 +575,27 @@ ExternalCodingExecutionStrategy.validate_pool_spec".
   is a pure function called per-message with no `self` state to read —
   OOP dispatch would gain nothing while violating the D1 boundary.
 
-### Additional achievement — external_coding bloat elimination
+### Additional achievement — external bloat elimination
 
 Beyond the original ADR scope, a follow-up cleanup eliminated ALL react-only
-object construction for external_coding pools:
+object construction for external pools:
 
-- `ExternalCodingAwareFactory.create_agent` fully overridden — builds only
-  6 objects (ExternalCodingAgent + broker I/O + emitter_factory + registry +
+- `ExternalAwareFactory.create_agent` fully overridden — builds only
+  6 objects (ExternalAgent + broker I/O + emitter_factory + registry +
   ExternalTurnRunner + AgentPipeline), down from ~15.
-- `ExternalCodingExecutionStrategy.assemble()` builds only
-  `external_coding_deps` (backend/session_store/parser/env_spec).
+- `ExternalExecutionStrategy.assemble()` builds only
+  `external_deps` (backend/session_store/parser/env_spec).
 - `pool_builder.create_pool` external path skips `SendToAgentTool`
   registration and `_wire_main_pipeline`.
 - External_coding pools now boot **without `model.yml` configured** — no
   BotModelProvider is built. Verified by
-  `test_external_coding_pool_boots_without_model_yml`.
+  `test_external_pool_boots_without_model_yml`.
 
 ### Deferred items
 
 1. `_wire_main_pipeline` stays in pool_builder (see D5 deviations above).
 2. `StrategyAssembly` transitional fields (`cassette_recorder`, `todo_store`,
-   `root_provider`, `external_coding_deps`) remain — they carry side products
+   `root_provider`, `external_deps`) remain — they carry side products
    from `strategy.assemble()` to pool_builder's post-assembly phase.
    Eliminating them requires resolving the agent-construction chicken-and-egg
    (agent is created by factory, which runs after assemble()).

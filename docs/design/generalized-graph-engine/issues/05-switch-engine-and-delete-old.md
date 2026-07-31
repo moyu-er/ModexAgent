@@ -28,5 +28,5 @@
 - [ ] Snapshot serialize/deserialize round-trip works on the new engine (using the simplified `ReActSnapshotPolicy` from ticket 03)
 - [ ] Loop detection hook (ADR-0016) still fires correctly on the new engine — `LoopDetectionHook` is registered on `HookRunner`, dispatched via `ReactGraphRuntime.dispatch_hook(ReActHookPoint.AFTER_LLM_RESPONSE, ctx)`; the hook raises `LoopDetectedError` which propagates through `ReActAgent.run()`'s `except AgentControlError` block unchanged
 - [ ] `AgentPipeline` / `ReActTurnRunner` / `ExecutionStrategy` (ADR-0025) interfaces unchanged — the engine switch is internal to `ReActAgent.run()`
-- [ ] `ExternalCodingAgent` is NOT migrated — it remains a subprocess streaming harness using `ExternalTurnRunner` directly
+- [ ] `ExternalAgent` is NOT migrated — it remains a subprocess streaming harness using `ExternalTurnRunner` directly
 - [ ] No behavior change visible to `AgentPipeline` or any external ReAct consumer — the engine switch is fully encapsulated

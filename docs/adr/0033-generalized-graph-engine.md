@@ -26,7 +26,7 @@ migrated ReAct to a 4-node topology on the new engine.
 
 `modex_agent/core/graph/` is nominally a generic state-machine engine but in
 practice has only one consumer (`ReActAgent`). Other agents bypass it:
-`ExternalCodingAgent` drives a subprocess streaming harness directly;
+`ExternalAgent` drives a subprocess streaming harness directly;
 `SummarizerAgent` is deprecated and unused (separate removal tracked below).
 Tool-using agents that need the graph (`ArchiveSummarizer` /
 `KnowledgeConsolidator` / `ExperienceReviewAgent` — `KnowledgeConsolidator`
@@ -69,7 +69,7 @@ The graph engine has three structural defects that block generalization:
    "preserve unchanged" constraint from earlier in the session is lifted.
    Net change must be an improvement (e.g. `ReActSnapshotPolicy` 230 lines
    → ~50 lines via per-channel checkpoint).
-5. ReAct migrates to the new engine as its kernel; `ExternalCodingAgent`
+5. ReAct migrates to the new engine as its kernel; `ExternalAgent`
    does not (it remains a subprocess streaming harness).
 6. `SummarizerAgent` + `SummarizerStrategy` ABC + `DefaultSummarizerStrategy`
    + `SummarizerEvent` are deprecated and unused (only `tests/unit/agents/
@@ -575,7 +575,7 @@ node, enabling zero-ceremony subgraph nesting.
   channel — no hand-written `ApprovalSnapshotKey` enum + 80-line
   `serialize_approval` / `approval_from_snapshot` pair.
 
-ExternalCodingAgent is NOT migrated. It remains a subprocess streaming
+ExternalAgent is NOT migrated. It remains a subprocess streaming
 harness outside the Graph Engine. `ExecutionStrategy` /
 `TurnRunner` ABCs (ADR-0025) are unchanged.
 
@@ -1045,7 +1045,7 @@ These are **examples, not framework modules** — they live under
 
 ### Neutral
 
-- `ExternalCodingAgent` is not migrated — by design, it is not a
+- `ExternalAgent` is not migrated — by design, it is not a
   graph-shaped workflow.
 - ADR-0016 (`LoopDetectionHook`) and the new Graph Engine cycle guard
   coexist — ADR-0016 detects ReAct-level semantic loops (repeated
@@ -1057,9 +1057,9 @@ These are **examples, not framework modules** — they live under
 
 ## Rejected alternatives
 
-- **Graph as the sole execution substrate (force ExternalCoding into a
+- **Graph as the sole execution substrate (force External into a
   graph).** Rejected — ADR-0025's strategy abstraction is sound;
-  ExternalCoding as a subprocess streaming harness does not fit a graph
+  External as a subprocess streaming harness does not fit a graph
   shape; forcing it adds ceremony without value.
 - **Three-step `prep/exec/post` node interface.** Rejected — a separate
   "pure computation" step is false for LLM agents (LLM calls have side

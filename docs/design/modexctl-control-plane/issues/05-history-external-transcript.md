@@ -1,6 +1,6 @@
 # 05 — History for external agents (transcript source)
 
-**What to build:** Extend `BotControlFacade.history()` to handle external coding agent sessions (Pi, OpenCode) by selecting the transcript source when `execution_strategy == EXTERNAL_CODING`.
+**What to build:** Extend `BotControlFacade.history()` to handle external coding agent sessions (Pi, OpenCode) by selecting the transcript source when `execution_strategy == EXTERNAL`.
 
 The facade loads the complete transcript event sequence for the exact `session_id` (not prefix fan-in via `load_sessions_by_prefix()`), runs the existing transcript materialization (group by turn id, coalesce text/reasoning by part id, pair tool calls/results by call id), projects materialized blocks to `HistoryMessage` records, omits unavailable fields (no `message_id` for transcript-derived records; no fabricated timestamps, tool_call_ids, or content), discards blocks with no representable CLI history record, orders the resulting logical records newest-first, and applies `limit` to logical records — never to raw events.
 
@@ -10,7 +10,7 @@ The facade loads the complete transcript event sequence for the exact `session_i
 
 **Status:** done (commit 24e85772)
 
-- [x] `BotControlFacade.history()` selects `HistorySource.observable_transcript` when `execution_strategy == EXTERNAL_CODING`.
+- [x] `BotControlFacade.history()` selects `HistorySource.observable_transcript` when `execution_strategy == EXTERNAL`.
 - [x] Transcript is loaded for the exact `session_id` (no prefix fan-in).
 - [x] Complete event sequence is materialized before any limiting.
 - [x] Text/reasoning chunks are coalesced by part id into single logical records.

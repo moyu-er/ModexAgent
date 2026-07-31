@@ -171,7 +171,7 @@ class SendResult(BaseModel):
     # True for cross-pool peer delivery.
 
     is_external_target: bool = False
-    # True when the target's execution_strategy is EXTERNAL_CODING.
+    # True when the target's execution_strategy is EXTERNAL.
     # Determines whether output_path/trace_dir apply.
 
     output_path: Path | None = None
@@ -320,7 +320,7 @@ class HistoryResult(BaseModel):
     agent_name: str
     pool: str
     execution_strategy: str
-    # "react" or "external_coding" — lets the client distinguish without
+    # "react" or "external" — lets the client distinguish without
     # conflating transcript history with provider memory.
 
     items: list[HistoryMessage]
@@ -369,7 +369,7 @@ class HistoryResult(BaseModel):
    If missing: 422 (configuration error).
 
 6. Select data source deterministically
-   EXTERNAL_CODING → HistorySource.OBSERVABLE_TRANSCRIPT
+   EXTERNAL → HistorySource.OBSERVABLE_TRANSCRIPT
    All native strategies → HistorySource.MESSAGE_STORE
    Do NOT probe both stores and pick the non-empty one.
 
@@ -936,9 +936,9 @@ typed exception translation.
 | `tests/unit/cli/modexctl/test_main.py` | `from modexctl.main import ...`, `from modexctl.quadrant import ...` |
 | `tests/unit/cli/modexctl/test_parent_session_id_propagation.py` | `from modexctl.main import _PoolScopedRecordScope, build_app` |
 | `tests/unit/cli/modexctl/test_sqlite_persistence_unification.py` | `from modexctl.main import _PoolScopedRecordScope` |
-| `tests/unit/cli/modexctl/test_external_coding_communication.py` | `from modexctl.main import build_app` |
+| `tests/unit/cli/modexctl/test_external_communication.py` | `from modexctl.main import build_app` |
 | `tests/unit/cli/modexctl/test_cross_pool_peer_messaging.py` | `from modexctl.main import _PoolScopedRecordScope, build_app` |
-| `examples/bot_project/tests/unit/service/test_subagent_external_coding_builder.py:367` | `from modexctl.main import _parse_pool_map, _resolve_target_pool` |
+| `examples/bot_project/tests/unit/service/test_subagent_external_builder.py:367` | `from modexctl.main import _parse_pool_map, _resolve_target_pool` |
 | `examples/bot_project/packaging/windows/postinstall.py:111` | shim: `from modexctl.main import main` |
 | `examples/bot_project/packaging/windows/postinstall.py:157` | verify: `import modexctl` |
 

@@ -554,7 +554,7 @@ CREATE TABLE workspace_meta (
 | 1 | `WorkspaceRegistryStore` | framework | `workspace/` | ✅ | deepened `RegistryStore`; absorbs `RecentWorkspaces` |
 | 2 | `SessionStore` | framework | `core/` | ✅ | removed `index_dir` param |
 | 3 | `PoolRoutingStore` | framework | `multi_agent/` | ✅ | extracted from `PoolSessionStore` |
-| 4 | `ExternalSessionMapStore` | framework | `agents/external_coding/` | ✅ | extracted from `ExternalSessionStore` |
+| 4 | `ExternalSessionMapStore` | framework | `agents/external/` | ✅ | extracted from `ExternalSessionStore` |
 | 5 | `TurnStateStore` | framework | `runtime/` | ✅ | — |
 | 6 | `TodoStore` | framework | `runtime/` | ✅ | — |
 | 7 | `InboxMQ` | framework | `multi_agent/inbox/` | ✅ | `deliver()` sync method; absorbs `DeliveredIdTracker` |

@@ -3,7 +3,7 @@
 Status: implemented (2026-07-18) — see ADR-0025 Disposition for deviations
 
 Related: ADR-0025 (`docs/adr/0025-execution-strategy-abstraction-and-pipeline-slimming.md`);
-ADR-0022 (`docs/adr/0022-external-coding-agent-integration.md` — external_coding topology unchanged,
+ADR-0022 (`docs/adr/0022-external-agent-integration.md` — external topology unchanged,
 only assembly changes); ADR-0020 (`docs/adr/0020-pool-config-convergence-and-framework-promotion.md`
 — `PoolSpec` / `MainAgentSpec` remain the disk models); ADR-0019 (`docs/adr/0019-cross-pool-peer-communication.md`
 — `peer_normal` reply-contract branch retained);
@@ -14,7 +14,7 @@ only assembly changes); ADR-0020 (`docs/adr/0020-pool-config-convergence-and-fra
 
 A framework developer who wants to add a new pool shape — a RAG-only pool, a
 planning-graph pool, or a new external coding CLI — cannot do so without
-editing four scattered `if execution_strategy == EXTERNAL_CODING` branches
+editing four scattered `if execution_strategy == EXTERNAL` branches
 across `pool_builder.create_pool`, `AgentPipeline.__init__`, the agent
 factory, and the pool config validator. The framework has no explicit
 extension point for "pool shape"; instead, shape-specific assembly logic is
@@ -24,11 +24,11 @@ threading new branches through all four sites plus the pipeline constructor.
 A bot maintainer feels this as bloat: `pool_builder.create_pool` is 440
 lines and unconditionally assembles ReAct-only resources
 (`BotModelProvider`, `terminal_manager`, full `_build_tools`,
-`_build_skill_manager`, `_wire_main_pipeline`) even for external_coding
-pools that need none of them. An external_coding pool with no `model.yml`
+`_build_skill_manager`, `_wire_main_pipeline`) even for external
+pools that need none of them. An external pool with no `model.yml`
 configured silently receives a `_placeholder_model_config` stub — a
 provider the pool will never call, assembled only because the shared
-assembly path does not know that external_coding pools bypass the
+assembly path does not know that external pools bypass the
 framework's LLM provider entirely.
 
 `AgentPipeline` is 569 lines with a 33-parameter constructor and five
@@ -40,9 +40,9 @@ propagates every new collaborator into a new mirror. The pipeline
 unconditionally constructs `ApprovalRenderer`, `ApprovalResumer`, and
 `TurnContextBuilder` — ReAct-only components — then replaces the turn
 runner with `ExternalTurnRunner` via an `if is_external` branch for
-external_coding pools, discarding the ReAct-only construction.
+external pools, discarding the ReAct-only construction.
 
-An external_coding pool, by design, needs none of: `LLMProvider`,
+An external pool, by design, needs none of: `LLMProvider`,
 `ToolManager`, `SkillManager`, `ApprovalRenderer`, `ApprovalResumer`,
 `ContextGovernance`, `InterceptorChain`, `HookRunner`,
 `InMemoryControlChannel`, `TurnContextBuilder`, `TurnStateStore`,
@@ -119,7 +119,7 @@ do not touch `pool_builder`, `AgentPipeline`, or any existing strategy.
 
 7. As a framework developer, I want a `default_strategy_registry()`
    factory that pre-registers the shipped strategies (`react`,
-   `external_coding`), so that a framework-only consumer gets them without
+   `external`), so that a framework-only consumer gets them without
    business-layer wiring.
 
 8. As a framework developer, I want to override the registry in my
@@ -138,10 +138,10 @@ do not touch `pool_builder`, `AgentPipeline`, or any existing strategy.
     responsibilities without scrolling past approval/governance/interceptor
     construction that the pipeline does not own.
 
-11. As a bot maintainer, I want external_coding pools to no longer
+11. As a bot maintainer, I want external pools to no longer
     assemble `BotModelProvider`, `terminal_manager`, `_build_tools`,
     `_build_skill_manager`, or `_wire_main_pipeline`, so that an
-    external_coding pool without `model.yml` boots without a placeholder
+    external pool without `model.yml` boots without a placeholder
     provider.
 
 12. As a bot maintainer, I want the five mutable property mirrors on
@@ -160,13 +160,13 @@ do not touch `pool_builder`, `AgentPipeline`, or any existing strategy.
     identity.
 
 15. As a bot maintainer, I want `pool_builder.create_pool` to call
-    `strategy.assemble()` for both react and external_coding paths
+    `strategy.assemble()` for both react and external paths
     uniformly, so that there is one assembly path, not two interleaved
     ones.
 
 16. As a bot maintainer, I want the existing
-    `_external_coding_wiring.py` helpers folded into
-    `ExternalCodingExecutionStrategy`, so that external-coding assembly
+    `_external_wiring.py` helpers folded into
+    `ExternalExecutionStrategy`, so that external assembly
     logic lives with its strategy, not in a separate wiring file.
 
 17. As a bot maintainer, I want the existing `_build_llm_provider`,
@@ -227,28 +227,28 @@ do not touch `pool_builder`, `AgentPipeline`, or any existing strategy.
     session memory) to be byte-for-byte unchanged after the refactor, so
     that my existing react pools work identically.
 
-28. As an external_coding pool user, I want external_coding pool behavior
+28. As an external pool user, I want external pool behavior
     (OpenCode SSE/subprocess fallback, session resume, `modexctl send`
     peer communication, WebUI streaming projection) to be byte-for-byte
-    unchanged after the refactor, so that my existing external_coding
+    unchanged after the refactor, so that my existing external
     pools work identically.
 
 29. As a cross-pool user, I want peer-pool communication (react →
-    external_coding, external_coding → react) to be unchanged, so that
+    external, external → react) to be unchanged, so that
     `send_to_agent` and `modexctl send` continue to interoperate.
 
 30. As a WebUI user, I want `is_session_active`, `has_active_sessions`,
     and `get_active_turn_uuid` queries to continue working for both react
-    and external_coding pools, so that the WebUI's active-turn indicator
+    and external pools, so that the WebUI's active-turn indicator
     is unaffected.
 
 31. As an IM user, I want `/stop` turn cancellation to continue working
-    for both react and external_coding pools, so that busy-input
+    for both react and external pools, so that busy-input
     interruption is unaffected.
 
 32. As a workspace user, I want per-workspace pool data resolution
     (memory, runtime stores, experience) to continue working for both
-    react and external_coding pools, so that workspace switching is
+    react and external pools, so that workspace switching is
     unaffected.
 
 ### Non-functional
@@ -294,7 +294,7 @@ do not touch `pool_builder`, `AgentPipeline`, or any existing strategy.
 
 - **`StrategyAssembly`** (frozen `@dataclass`): output of `assemble()`.
   Carries `Agent`, `TurnRunner`, common services, react-only collaborators
-  (`None` for external_coding), external-only collaborators (`None` for
+  (`None` for external), external-only collaborators (`None` for
   react), `extra_cleanup` hooks. The `None` defaults are typed; consumers
   gate on capability flags (`strategy.requires_main_agent_tools`) rather
   than `is None` checks.
@@ -316,8 +316,8 @@ do not touch `pool_builder`, `AgentPipeline`, or any existing strategy.
   phases — common assembly → `strategy.assemble(ctx)` → common
   post-assembly. `_build_llm_provider` / `_build_terminal_manager` /
   `_build_tools` / `_build_skill_manager` / `_wire_main_pipeline` move
-  into `ReactExecutionStrategy`. `_external_coding_wiring.py` content
-  moves into `ExternalCodingExecutionStrategy`.
+  into `ReactExecutionStrategy`. `_external_wiring.py` content
+  moves into `ExternalExecutionStrategy`.
 
 - **`emitter_factory` pre-wrapping**: `_WorkspaceEmitterFactory` wrapping
   moves from `_wire_main_pipeline` (post-construction) to before
@@ -334,10 +334,10 @@ do not touch `pool_builder`, `AgentPipeline`, or any existing strategy.
   execution strategy) is runtime per-target routing, not assembly-time
   branching. It stays.
 
-- **`AgentPool` still serves external_coding**: `InboxPoller` integration,
+- **`AgentPool` still serves external**: `InboxPoller` integration,
   session lock, TTL/LRU eviction are common needs. Subagent-related
   `AgentPool` fields (`_template_registry`, `_materialize_deps`) are empty
-  for external_coding.
+  for external.
 
 ### Migration discipline (from ADR-0025 D6)
 
@@ -350,12 +350,12 @@ Five stages, each a pure refactor ending in a green test suite:
 2. **Stage 1** — Add `ReactExecutionStrategy.assemble()` (calls existing
    `_build_*` helpers imported from `pool_builder`). `pool_builder` react
    path calls `strategy.assemble()`.
-3. **Stage 2** — Add `ExternalCodingExecutionStrategy.assemble()`.
+3. **Stage 2** — Add `ExternalExecutionStrategy.assemble()`.
    `pool_builder` external path calls `strategy.assemble()`.
 4. **Stage 3** — Slim `AgentPipeline.__init__` to 13 params, delete five
    mirror properties, pre-wrap `emitter_factory`.
 5. **Stage 4** — Move `_build_*` helpers into strategies, delete
-   `_external_coding_wiring.py`, remove residual `if execution_strategy ==`
+   `_external_wiring.py`, remove residual `if execution_strategy ==`
    assembly branches, rename enum → `ExecutionStrategyKind`, add
    architecture guard test.
 
@@ -374,11 +374,11 @@ debt:
    `getattr` / `type: ignore[attr-defined]` on turn_runner/builder/approval
    in production code.
 
-2. **external_coding react-only bloat elimination**: `ExternalCodingAwareFactory
-   .create_agent` fully overridden — builds only 6 objects (ExternalCodingAgent
+2. **external react-only bloat elimination**: `ExternalAwareFactory
+   .create_agent` fully overridden — builds only 6 objects (ExternalAgent
    + broker I/O + emitter_factory + registry + ExternalTurnRunner + AgentPipeline),
-   down from ~15. `ExternalCodingExecutionStrategy.assemble()` builds only
-   `external_coding_deps`. `pool_builder.create_pool` external path skips
+   down from ~15. `ExternalExecutionStrategy.assemble()` builds only
+   `external_deps`. `pool_builder.create_pool` external path skips
    `SendToAgentTool` registration and `_wire_main_pipeline`. **External_coding
    pools now boot without `model.yml` configured** — no BotModelProvider is
    built.
@@ -407,7 +407,7 @@ debt:
   no offsetting benefit.
 - **Protocol instead of ABC**: rejected per rule 7.
 - **External pool bypassing `AgentPool`**: rejected — `AgentPool` provides
-  `InboxPoller` integration that external_coding also needs.
+  `InboxPoller` integration that external also needs.
 - **Pushing `dream_engine` into strategy**: deferred — lifecycle is bound
   to `run()`/`stop()`; splitting requires cross-object coordination with
   no benefit.
@@ -432,27 +432,27 @@ primary test surface is the **existing test suite, unmodified, green**.
 ### Primary seam: existing test suite (zero modifications)
 
 The highest possible seam — the existing tests already encode the
-behavior contract of react pools, external_coding pools, and the pipeline.
+behavior contract of react pools, external pools, and the pipeline.
 If the refactor preserves behavior, they pass unchanged. If it does not,
 they fail and pinpoint the regression.
 
 - `tests/unit/pipeline/test_turn_runner.py` — react turn execution
   (approval suspend/resume, governance, hooks, interceptors, context
   assembly).
-- `tests/unit/agents/external_coding/test_turn_runner.py` — external turn
+- `tests/unit/agents/external/test_turn_runner.py` — external turn
   execution (minimal context, `current_input` forwarding, cancellation).
-- `tests/unit/agents/external_coding/test_agent.py` —
-  `ExternalCodingAgent.run()` (backend delegation, session map
+- `tests/unit/agents/external/test_agent.py` —
+  `ExternalAgent.run()` (backend delegation, session map
   commit/error, stale-session retry).
-- `tests/unit/agents/external_coding/test_builder_external_coding.py` —
-  `ExternalCodingAgentBuilder.build_agent()` (collaborator wiring).
-- `tests/unit/multi_agent/test_factory_external_coding.py` —
-  `DefaultAgentFactory` external_coding dispatch.
-- `tests/unit/bot_service/test_pool_builder_external_coding.py` —
-  `pool_builder.create_pool` external_coding path (provider availability
+- `tests/unit/agents/external/test_builder_external.py` —
+  `ExternalAgentBuilder.build_agent()` (collaborator wiring).
+- `tests/unit/multi_agent/test_factory_external.py` —
+  `DefaultAgentFactory` external dispatch.
+- `tests/unit/bot_service/test_pool_builder_external.py` —
+  `pool_builder.create_pool` external path (provider availability
   gating, deps assembly).
-- `tests/integration/multi_agent/test_cross_pool_external_coding.py` —
-  cross-pool end-to-end (react → external_coding, external_coding →
+- `tests/integration/multi_agent/test_cross_pool_external.py` —
+  cross-pool end-to-end (react → external, external →
   react, `modexctl send` delivery, WebUI streaming projection).
 
 Prior art: these tests are the existing regression surface. The refactor
@@ -483,12 +483,12 @@ Each strategy's `assemble()` gets a unit test verifying the
   fields (`provider`, `tool_manager`, `skill_manager`, `context_manager`,
   `dream_engine`, `command_processor`, `control_channel`) and `None`
   external-only fields (`backend`, `session_map_store`).
-- `ExternalCodingExecutionStrategy.assemble()` produces non-`None`
+- `ExternalExecutionStrategy.assemble()` produces non-`None`
   external-only fields and `None` react-only fields.
-- `ExternalCodingExecutionStrategy.validate_pool_spec()` rejects pools
+- `ExternalExecutionStrategy.validate_pool_spec()` rejects pools
   with subagents or missing `provider_kind`.
 
-Prior art: `tests/unit/agents/external_coding/test_builder_external_coding.py`
+Prior art: `tests/unit/agents/external/test_builder_external.py`
 already tests builder output shape; the new tests follow the same pattern
 at the strategy level.
 
@@ -507,7 +507,7 @@ at the strategy level.
 - **Turn-stage abstraction** (à la `InputStage`): the turn execution
   itself is not stage-ified. `ExternalTurnRunner` already solves the
   react/external turn-execution dichotomy.
-- **External pool bypassing `AgentPool`**: external_coding pools still use
+- **External pool bypassing `AgentPool`**: external pools still use
   `AgentPool` for `InboxPoller` integration and session lifecycle.
 - **Pushing `dream_engine` into strategy**: `dream_engine` stays as a
   pipeline-level optional; its lifecycle is bound to `run()`/`stop()`.
@@ -518,7 +518,7 @@ at the strategy level.
   this refactor prepares the seam but does not split processes.
 - **`peer_normal.py` reply-contract branch removal**: retained — it is
   runtime per-target routing, not assembly-time branching.
-- **Changing pool.yml values**: `react` and `external_coding` string
+- **Changing pool.yml values**: `react` and `external` string
   values in pool.yml are unchanged; only the Python symbol
   (`ExecutionStrategy` enum → `ExecutionStrategyKind`) moves.
 

@@ -2,7 +2,7 @@
 
 ## Project Layout
 
-`src/modex_agent/` is the reusable agent framework (src layout, ADR-0003). `src/modex_graph/` is the standalone graph engine (ADR-0033). Key framework areas: `agents/react/` (ReAct runtime), `agents/external_coding/` (Pi/OpenCode harness), `memory/` (three-layer), `persistence/` (hybrid SQLite+file, ADR-0023), `multi_agent/` (star-topology), `pipeline/`, `hook/`+`interceptor/`+`control/` (three-layer runtime), `tools/`, `approval/`, `sandbox/`, `media/`, `commands/`. See `src/modex_agent/AGENTS.md` for the exhaustive module table (26 modules).
+`src/modex_agent/` is the reusable agent framework (src layout, ADR-0003). `src/modex_graph/` is the standalone graph engine (ADR-0033). Key framework areas: `agents/react/` (ReAct runtime), `agents/external/` (Pi/OpenCode harness), `memory/` (three-layer), `persistence/` (hybrid SQLite+file, ADR-0023), `multi_agent/` (star-topology), `pipeline/`, `hook/`+`interceptor/`+`control/` (three-layer runtime), `tools/`, `approval/`, `sandbox/`, `media/`, `commands/`. See `src/modex_agent/AGENTS.md` for the exhaustive module table (26 modules).
 
 `examples/bot_project/` is the primary end-to-end reference (Pool mode, WebUI React frontend, QQ + Telegram adapters). Framework-generic behavior in `src/modex_agent/`; business wiring in `examples/`.
 
@@ -40,7 +40,7 @@ Detailed rules in `rules/type-safety.md` (16 rules) and `rules/architecture.md` 
 
 2. **Tests must exercise the real call-site pattern.** If no correct test seam exists for a bug pattern, that itself is the finding — note it and flag the architectural gap.
 
-   Example: a unit test that mocks `ExternalCodingAgent.__init__` cannot reproduce a bug where `_handle_emission` drops child emissions because `child_discovery_sink` is None — the mock hides the None. The correct seam is to use a real agent with a mock `ChildSessionDiscoverySink`.
+   Example: a unit test that mocks `ExternalAgent.__init__` cannot reproduce a bug where `_handle_emission` drops child emissions because `child_discovery_sink` is None — the mock hides the None. The correct seam is to use a real agent with a mock `ChildSessionDiscoverySink`.
 
 ## Memory Rules
 
@@ -57,7 +57,7 @@ Detailed rules in `rules/type-safety.md` (16 rules) and `rules/architecture.md` 
 - Single LLM-facing tool: `send_to_agent`. The framework decides delivery mechanism internally.
 - Session ID format: `{prefix}.{agent_name}` (dot-separated, via `SessionIdFactory`).
 - `SubagentAutoSendHook` auto-forwards final output to parent.
-- External coding agents (Pi, OpenCode) are NORMAL main agents of their own pools; they reply via `modexctl send` CLI, not `send_to_agent`. See ADR-0022 and `docs/design/external-coding-agent-integration/`.
+- External coding agents (OpenCode) are NORMAL main agents of their own pools; they reply via `modexctl send` CLI, not `send_to_agent`. See ADR-0022 and `docs/design/external-agent-integration/`.
 
 ## Approval Architecture Rules
 

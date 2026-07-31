@@ -165,7 +165,7 @@ ModexAgent/
 | [CONTEXT.md](CONTEXT.md) | 领域术语表——Pool、Workspace、ReAct Agent、Graph、GraphInterrupt、Assembly 等 |
 | [本地环境搭建](docs/bot-local-setup.md) | 从源码搭建 bot 的详细步骤（前置依赖、venv、配置向导、故障排除） |
 | [Bot 示例](examples/bot_project/README.md) | bot_project 详解（多通道 IM + WebUI、多 Agent 配置） |
-| [外部编码 Agent](docs/design/external-coding-agent-integration/spec.md) | 将 Pi / OpenCode 等编码 Agent CLI 接入为 pool 主 Agent（ADR-0022） |
+| [外部编码 Agent](docs/design/external-agent-integration/spec.md) | 将 OpenCode 等编码 Agent CLI 接入为 pool 主 Agent（ADR-0022） |
 | 各模块 `AGENTS.md` | `src/modex_agent/` 下每个包都附带 `AGENTS.md`，描述其职责与关键文件 |
 
 ## 开发命令

@@ -78,12 +78,12 @@ in-process Python `Agent[E]` subclass itself — see harness.
 ### provider
 A specific coding-agent CLI family. At launch: `pi`, `opencode`. Each
 provider has its own `ProviderBackend` implementation under
-`agents/external_coding/providers/`. The `ProviderKind` enum
+`agents/external/providers/`. The `ProviderKind` enum
 (`StrEnum`: `PI`, `OPENCODE`, …) is the canonical discriminator; new
 providers add one enum value and one backend file.
 
 ### harness
-The framework-side Python class `ExternalCodingAgent(Agent[E])` that wraps
+The framework-side Python class `ExternalAgent(Agent[E])` that wraps
 a provider. Owns turn orchestration: resolve session id, construct env,
 inject system prompt, write AGENTS.md statics, execute the backend, project
 events through `ContentEmitter`, and persist the transcript. It delegates
@@ -152,7 +152,7 @@ path (daemon-minted, inside the workdir); for OpenCode it is a
 provider-minted id captured from the first stdout event. Distinct from
 modex_session_id; the two are correlated only through ExternalSessionMapStore.
 
-### ExternalCodingEvent
+### ExternalEvent
 The `StrEnum` event kind emitted by provider parsers (inherits
 `AgentEvent`): `TEXT_DELTA`, `THINKING`, `TOOL_USE`, `TOOL_RESULT`,
 `ERROR`. Five types at launch; the parser interface admits more
@@ -163,21 +163,21 @@ sites.
 The provider-neutral canonical event discriminated union
 (`core/turn_events.py`): `TurnTextEvent`, `TurnReasoningEvent`,
 `TurnToolCallEvent`, `TurnToolResultEvent`. Frozen Pydantic models with
-`Field(discriminator="kind")`. `ExternalCodingAgent._handle_emission`
+`Field(discriminator="kind")`. `ExternalAgent._handle_emission`
 is the sole adapter from provider `Emission` → canonical `TurnEvent`.
 `ContentEmitter.emit_turn_event()` is a concrete no-op default;
 `WebBotEmitter` projects canonical events into existing `ServerEvent`/
-transcript types. The WebUI has zero imports from `external_coding` —
+transcript types. The WebUI has zero imports from `external` —
 it consumes only the canonical seam.
 
 ### ProviderEventParser
 Per-provider parser that consumes one stdout JSONL line and returns zero
-or more `ExternalCodingEvent` emissions. Interface is open-ended
+or more `ExternalEvent` emissions. Interface is open-ended
 (`Iterator[Emission]`) so a single provider line can fan out to multiple
 events (e.g. a Pi `message_update` carrying both thinking and text).
 
 ### OS layer
-Two functions + one dataclass in `agents/external_coding/os_layer.py`:
+Two functions + one dataclass in `agents/external/os_layer.py`:
 `resolve_executable(name) → ResolvedExecutable`,
 `spawn_process_group(args, cwd, env, stdin) → Process`,
 `terminate_process_group(proc)`. Concentrates all `sys.platform` branches
@@ -236,7 +236,7 @@ failure is re-raised.
 
 ### retryable shutdown
 The lifecycle rule that ownership is committed as closed/stopped/shutdown only
-after cleanup succeeds. `ExternalCodingAgent` retains a failed backend close;
+after cleanup succeeds. `ExternalAgent` retains a failed backend close;
 `AgentPool` retains failed or timed-out agents as `SHUTTING_DOWN`. Concurrent
 callers share the same close/shutdown task, and a later call may retry failure.
 
@@ -256,7 +256,7 @@ Standard ADR-0015 path. Sender's `send_to_agent` routes through
 `InboxMQ.receive()` (file backend: `LocalFileInboxMQ` appends to pending.jsonl;
 SQLite backend: writes to the workspace `state.db`) → target pool's
 `InboxPoller` 200 ms tick → `consume()` → `pool.dispatch_envelope` →
-`pipeline.process_message` → `ExternalCodingAgent.run(ctx, emitter)`.
+`pipeline.process_message` → `ExternalAgent.run(ctx, emitter)`.
 
 ### outbound (external → other agent)
 External agent invokes `modexctl send --to <name> --content ...` (or

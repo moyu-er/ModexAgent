@@ -393,7 +393,7 @@ All adapters: `scope` column references → `scope_key`; `time.time()` →
 
 8 sites change `RecordScope(pool=...)` → `BotRecordScope(pool=...)`:
 - `bot/workspace/pool_data.py`
-- `bot/service/external_coding_strategy.py`
+- `bot/service/external_strategy.py`
 - `bot/service/_assembly_helpers.py`
 - `bot/service/web_ui_service.py`
 - `bot/service/builders.py`

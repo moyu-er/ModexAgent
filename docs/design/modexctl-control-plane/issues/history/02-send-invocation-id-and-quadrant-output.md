@@ -13,7 +13,7 @@ The four quadrant output templates (exact formatting) are defined in the spec un
 **Status:** done
 
 - [x] `send --to X --content Y` (no `--invocation-id`, `MODEX_COMM_KIND=subagent`, target = NATIVE) → quadrant ② output with `status: new_task`, plus `invocation_id`, `session_id`, `output_path`, `trace_dir`, and the "wait for `<replied>`" footer.
-- [x] `send --to X --content Y` (no `--invocation-id`, `MODEX_COMM_KIND=subagent`, target = EXTERNAL_CODING) → quadrant ③ output with `status: new_task`, plus `invocation_id`, `session_id`, NO `output_path`/`trace_dir`, and the "wait for `<replied>`" footer.
+- [x] `send --to X --content Y` (no `--invocation-id`, `MODEX_COMM_KIND=subagent`, target = EXTERNAL) → quadrant ③ output with `status: new_task`, plus `invocation_id`, `session_id`, NO `output_path`/`trace_dir`, and the "wait for `<replied>`" footer.
 - [x] `send --to X --content Y --invocation-id foo123` (session `foo123.X` exists in `sessions` table) → `status: resumed`, `invocation_id: foo123`.
 - [x] `send --to X --content Y --invocation-id foo123` (session `foo123.X` does NOT exist in `sessions` table) → mints a NEW uuid (not `foo123`), `status: new_task (provided 'foo123' not found, created new)`, and the `invocation_id:` line shows the new uuid (not `foo123`).
 - [x] `send --to X --content Y` (`MODEX_COMM_KIND=normal`, cross-pool peer) → quadrant ① output: `Message delivered to '{to}'.\nPeer will process asynchronously. No wait needed.` — no `session_id`, no `invocation_id`.
@@ -37,9 +37,9 @@ The D2 acceptance criteria include assertions about `send --help` output shape (
 
 The CLI determines the quadrant from two inputs already available without new env vars:
 1. `MODEX_COMM_KIND` env var (`normal` vs. `subagent`) — already set by `ExternalEnvBuilder`.
-2. Target agent kind (NATIVE vs. EXTERNAL_CODING) — derivable from `MODEX_AGENT_POOL_MAP` + the existing pool/agent registry, OR from whether `MODEX_TARGETS` lists the agent as external. The implementation should reuse whatever signal the existing `send` command already uses to decide `build_dispatch_xml` vs. `build_peer_agent_message`.
+2. Target agent kind (NATIVE vs. EXTERNAL) — derivable from `MODEX_AGENT_POOL_MAP` + the existing pool/agent registry, OR from whether `MODEX_TARGETS` lists the agent as external. The implementation should reuse whatever signal the existing `send` command already uses to decide `build_dispatch_xml` vs. `build_peer_agent_message`.
 
-If the target kind cannot be determined at CLI time (e.g., the agent is not in `MODEX_TARGETS`), the implementation should default to NATIVE (the more informative quadrant — includes `output_path`/`trace_dir`). This is a safe default because external-coding subagents are a configured minority.
+If the target kind cannot be determined at CLI time (e.g., the agent is not in `MODEX_TARGETS`), the implementation should default to NATIVE (the more informative quadrant — includes `output_path`/`trace_dir`). This is a safe default because external subagents are a configured minority.
 
 ### Not-found race (accepted)
 

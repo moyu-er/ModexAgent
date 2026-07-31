@@ -1,16 +1,16 @@
 # Child session capture — design note
 
 Status: implemented (2026-07-30)
-Parent ADR: ADR-0022 (`docs/adr/0022-external-coding-agent-integration.md`)
-Parent spec: `docs/design/external-coding-agent-integration/spec.md`
-Module doc: `src/modex_agent/agents/external_coding/AGENTS.md` (§ Child Session Capture)
+Parent ADR: ADR-0022 (`docs/adr/0022-external-agent-integration.md`)
+Parent spec: `docs/design/external-agent-integration/spec.md`
+Module doc: `src/modex_agent/agents/external/AGENTS.md` (§ Child Session Capture)
 
 ## Problem
 
 opencode (and future Claude Code) forks internal subagent sessions at
 runtime — transient child sessions that execute tool calls and produce
 text/reasoning output. Under the original ADR-0022 design, the
-`OpenCodeSSEParser` parsed SSE events from the main session only. Events
+`OpenCodeV2EventParser` parsed SSE events from the main session only. Events
 carrying a different `sessionID` (a child fork) were either dropped or
 misrouted to the main-session emitter, making internal subagent work
 invisible in the WebUI transcript and absent from the session tree.
@@ -25,7 +25,7 @@ A provider-neutral discovery pipeline that makes provider-internal child
 sessions first-class ModexAgent sessions:
 
 1. **`ChildSessionDiscoverySink` ABC** (`child_discovery.py`) — isolates
-   the discovery mechanism so the `ExternalCodingAgent` harness and the
+   the discovery mechanism so the `ExternalAgent` harness and the
    persistence layer (`ExternalSessionMapStore`) stay provider-neutral.
    A new provider family (Claude Code, Codex, Cursor) implements this
    ABC; the harness and persistence layer are unchanged.
@@ -106,9 +106,9 @@ under their parent in the sidebar with no WebUI code change.
 ## SSE-only limitation
 
 Child session discovery relies on `Emission.source_session_id`, which
-is set by `OpenCodeSSEParser` from the SSE event's `sessionID` field
+is set by `OpenCodeV2EventParser` from the SSE event's `sessionID` field
 when it differs from the main session. The JSONL stdout parsers
-(`OpenCodeEventParser`, `PiEventParser`) do not carry per-event session
+(`OpenCodeEventParser`) do not carry per-event session
 IDs, so child sessions are invisible under `opencode run --format json`
 and Pi's JSONL output. Only the warm `opencode serve` SSE backend
 surfaces child events.
@@ -116,8 +116,8 @@ surfaces child events.
 ## Testing
 
 Integration tests
-(`tests/unit/agents/external_coding/test_external_subagent_capture_integration.py`)
-use `ScriptedStreamingAdapter` + `OpenCodeSSEParser` to simulate a
+(`tests/unit/agents/external/test_external_subagent_capture_integration.py`)
+use `ScriptedStreamingAdapter` + `OpenCodeV2EventParser` to simulate a
 complete opencode SSE event sequence — no real opencode process is
 spawned. Coverage:
 
