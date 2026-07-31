@@ -24,7 +24,11 @@ def _tgt(name: str, kind: AgentCommKind) -> CommunicationTarget:
 class _FakeRegistry:
     """Minimal registry for testing communication service routing."""
 
-    def __init__(self, profiles: list[AgentProfile] | None = None, descriptors: list[AgentDescriptor] | None = None) -> None:
+    def __init__(
+        self,
+        profiles: list[AgentProfile] | None = None,
+        descriptors: list[AgentDescriptor] | None = None,
+    ) -> None:
         self._profiles = profiles or []
         self._descriptors = descriptors or []
 
@@ -192,7 +196,9 @@ class TestCommunicationService:
         svc = self._make_service(
             profiles=[AgentProfile(name="office-expert", comm_kind=AgentCommKind.SUBAGENT)],
             descriptors=[
-                AgentDescriptor(address=AgentAddress(name="office-expert"), comm_kind=AgentCommKind.SUBAGENT),
+                AgentDescriptor(
+                    address=AgentAddress(name="office-expert"), comm_kind=AgentCommKind.SUBAGENT
+                ),
             ],
         )
         ctx = _make_context()
@@ -210,7 +216,9 @@ class TestCommunicationService:
         svc = self._make_service(
             profiles=[AgentProfile(name="office-expert", comm_kind=AgentCommKind.SUBAGENT)],
             descriptors=[
-                AgentDescriptor(address=AgentAddress(name="office-expert"), comm_kind=AgentCommKind.SUBAGENT),
+                AgentDescriptor(
+                    address=AgentAddress(name="office-expert"), comm_kind=AgentCommKind.SUBAGENT
+                ),
             ],
         )
         ctx = _make_context()
@@ -229,7 +237,9 @@ class TestCommunicationService:
         svc = self._make_service(
             profiles=[AgentProfile(name="office-expert", comm_kind=AgentCommKind.SUBAGENT)],
             descriptors=[
-                AgentDescriptor(address=AgentAddress(name="office-expert"), comm_kind=AgentCommKind.SUBAGENT),
+                AgentDescriptor(
+                    address=AgentAddress(name="office-expert"), comm_kind=AgentCommKind.SUBAGENT
+                ),
             ],
             agent_bus=bus,
         )
@@ -248,6 +258,7 @@ class TestCommunicationService:
         assert len(bus.sent_silent) == 0
         session_id, envelope = bus.sent[0]
         from modex_agent.core.session_id import SessionIdFactory
+
         factory = SessionIdFactory()
         expected_sid = factory.create_with_prefix(
             agent_name="office-expert",
@@ -264,7 +275,9 @@ class TestCommunicationService:
         svc = self._make_service(
             profiles=[AgentProfile(name="office-expert", comm_kind=AgentCommKind.SUBAGENT)],
             descriptors=[
-                AgentDescriptor(address=AgentAddress(name="office-expert"), comm_kind=AgentCommKind.SUBAGENT),
+                AgentDescriptor(
+                    address=AgentAddress(name="office-expert"), comm_kind=AgentCommKind.SUBAGENT
+                ),
             ],
         )
         ctx = _make_context()
@@ -274,7 +287,9 @@ class TestCommunicationService:
             invocation_id=None,
             context=ctx,
         )
-        assert "invocation_id" in result.lower() or "Error" in result or "not found" in result.lower()
+        assert (
+            "invocation_id" in result.lower() or "Error" in result or "not found" in result.lower()
+        )
 
     @pytest.mark.asyncio
     async def test_subagent_consult_routes_to_real_parent_session(self) -> None:
@@ -327,7 +342,9 @@ class TestCommunicationService:
         svc = self._make_service(
             profiles=[AgentProfile(name="query-12306", comm_kind=AgentCommKind.SUBAGENT)],
             descriptors=[
-                AgentDescriptor(address=AgentAddress(name="query-12306"), comm_kind=AgentCommKind.SUBAGENT),
+                AgentDescriptor(
+                    address=AgentAddress(name="query-12306"), comm_kind=AgentCommKind.SUBAGENT
+                ),
             ],
             source_name="office-expert",
         )

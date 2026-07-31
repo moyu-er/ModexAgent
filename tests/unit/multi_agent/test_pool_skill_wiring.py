@@ -3,6 +3,7 @@
 Reproduces the pool-mode bug where /skill commands produce "Unknown command"
 because pipeline.skill_manager is None at runtime.
 """
+
 from __future__ import annotations
 
 import tempfile
@@ -134,6 +135,7 @@ async def test_pool_skill_manager_end_to_end() -> None:
 
             # Verify slash command would be handled
             from modex_agent.commands.processor import SlashCommandProcessor
+
             processor = SlashCommandProcessor.default()
 
             context = CommandContext(
@@ -145,6 +147,7 @@ async def test_pool_skill_manager_end_to_end() -> None:
             result = await processor.handle("/test-skill", context)
 
             from modex_agent.commands.constants import CommandAction
+
             assert result.action == CommandAction.TRANSFORM_TO_USER_INPUT, (
                 f"/test-skill should resolve to TRANSFORM_TO_USER_INPUT, "
                 f"got {result.action} with notice: {result.notice}"

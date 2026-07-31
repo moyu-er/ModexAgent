@@ -28,13 +28,17 @@ def _make_runtime(hook_runner=None, runtime_mgr=None):
     """Build a minimal AgentRuntime with typed state for test contexts."""
     identity = TurnIdentity(agent_id="test", session=SessionInfo.from_str("test"), turn_id="t1")
     state = TurnStateBase(
-        identity=identity, agent_kind=AgentKind.REACT, phase=TurnPhase.RUNNING,
+        identity=identity,
+        agent_kind=AgentKind.REACT,
+        phase=TurnPhase.RUNNING,
     )
     services = AgentRuntimeServices(
         hooks=hook_runner,
         runtime_context_manager=runtime_mgr,
     )
     return AgentRuntime(services=services, state=state), identity
+
+
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.hook.builtin import SubagentAutoSendHook, RuntimeContextHook
@@ -60,6 +64,7 @@ class FakeAgent:
         async def _call_hook_point(method_name: str, *args):
             if hook_runner is not None:
                 from modex_agent.hook import HookPoint, HookPayload
+
                 payload_data = {}
                 if method_name == "after_turn" and args:
                     payload_data = {"result": args[0]}
@@ -70,8 +75,10 @@ class FakeAgent:
                 elif method_name == "after_tool_execution" and args:
                     payload_data = {"results": args[0]}
                 await hook_runner.dispatch(
-                    HookPoint(method_name), context,
-                    HookPayload(data=payload_data), hook_timeout=10.0,
+                    HookPoint(method_name),
+                    context,
+                    HookPayload(data=payload_data),
+                    hook_timeout=10.0,
                 )
                 return
             for hook in _get_hooks_from_context(context):
@@ -150,6 +157,7 @@ class TestRuntimeContextHookNoAutoInjection:
         )
         assert not any(isinstance(h, RuntimeContextHook) for h in pipeline.hooks)
 
+
 # ---------------------------------------------------------------------------
 # 2. SubagentAutoSendHook (FinallyTurnHook) + RuntimeContextHook collaboration
 # ---------------------------------------------------------------------------
@@ -176,7 +184,10 @@ class TestHookCollaboration:
         hook_runner.add(HookSpec(hook=subagent_hook, on_error=HookErrorPolicy.LOG))
 
         from modex_agent.memory.history import ListMessageHistory
-        runtime, identity = _make_runtime(hook_runner=hook_runner, runtime_mgr=RuntimeContextManager())
+
+        runtime, identity = _make_runtime(
+            hook_runner=hook_runner, runtime_mgr=RuntimeContextManager()
+        )
         ctx = AgentContext(
             system_prompt="",
             history=ListMessageHistory([]),
@@ -189,9 +200,9 @@ class TestHookCollaboration:
             runtime=runtime,
             identity=identity,
         )
-        await FakeAgent(tool_calls=[
-            FakeToolCall("search", "tc_1", {"q": "foo"})
-        ]).run(ctx, MagicMock(spec=ContentEmitter))
+        await FakeAgent(tool_calls=[FakeToolCall("search", "tc_1", {"q": "foo"})]).run(
+            ctx, MagicMock(spec=ContentEmitter)
+        )
 
         bus.send.assert_awaited_once()
         _inbox_key, envelope = bus.send.call_args.args
@@ -210,7 +221,10 @@ class TestHookCollaboration:
         hook_runner.add(HookSpec(hook=subagent_hook, on_error=HookErrorPolicy.LOG))
 
         from modex_agent.memory.history import ListMessageHistory
-        runtime, identity = _make_runtime(hook_runner=hook_runner, runtime_mgr=RuntimeContextManager())
+
+        runtime, identity = _make_runtime(
+            hook_runner=hook_runner, runtime_mgr=RuntimeContextManager()
+        )
         ctx = AgentContext(
             system_prompt="",
             history=ListMessageHistory([]),
@@ -224,9 +238,9 @@ class TestHookCollaboration:
             identity=identity,
         )
         # Even though send_to_agent was called, the hook still fires
-        await FakeAgent(tool_calls=[
-            FakeToolCall("send_to_agent", "tc_1", {"target_agent": "main"})
-        ]).run(ctx, MagicMock(spec=ContentEmitter))
+        await FakeAgent(
+            tool_calls=[FakeToolCall("send_to_agent", "tc_1", {"target_agent": "main"})]
+        ).run(ctx, MagicMock(spec=ContentEmitter))
 
         bus.send.assert_awaited_once()
         _inbox_key, envelope = bus.send.call_args.args
@@ -239,6 +253,7 @@ class TestHookCollaboration:
         rch = RuntimeContextHook()
 
         from modex_agent.memory.history import ListMessageHistory
+
         hook_runner = HookRunner()
         hook_runner.add(HookSpec(hook=rch, on_error=HookErrorPolicy.LOG))
         runtime, identity = _make_runtime(hook_runner=hook_runner, runtime_mgr=runtime_mgr)
@@ -247,7 +262,6 @@ class TestHookCollaboration:
             history=ListMessageHistory([]),
             tool_manager=InMemoryToolManager(),
             session=SessionInfo.from_str("test.agent"),
-
             runtime=runtime,
             identity=identity,
         )
@@ -306,6 +320,7 @@ class TestHookCollaboration:
         hook_runner.add(HookSpec(hook=subagent_hook, on_error=HookErrorPolicy.LOG))
 
         from modex_agent.memory.history import ListMessageHistory
+
         runtime, identity = _make_runtime(hook_runner=hook_runner, runtime_mgr=runtime_mgr)
         ctx = AgentContext(
             system_prompt="",

@@ -12,14 +12,14 @@ branching — per ADR-0025 D5):
 - `peer_normal.py` — runtime per-target routing (which reply mechanism a
   *target* agent uses). This is runtime routing, not assembly branching.
 - `factory.py` — `_get_builder` runtime agent-construction dispatch (selects
-  ExternalCodingAgentBuilder vs ReActAgentBuilder). This is runtime
+  ExternalAgentBuilder vs ReActAgentBuilder). This is runtime
   construction, not assembly branching.
 - `subagent_validator.py` — runtime subagent registration validation.
 - `pool_config/specs.py` — Pydantic `@model_validator` cross-field validation
-  (provider_kind set iff execution_strategy == EXTERNAL_CODING).
+  (provider_kind set iff execution_strategy == EXTERNAL).
 - `template.py` — T5 subagent materialize dispatch (delegates to
-  `subagent_external_coding_builder.build()` when target strategy is
-  EXTERNAL_CODING). Same runtime construction-dispatch category as
+  `subagent_external_builder.build()` when target strategy is
+  EXTERNAL). Same runtime construction-dispatch category as
   `factory.py._get_builder`.
 - `communication/strategies/subagent_dispatch.py` — `SubagentDispatchStrategy.build_result`
   selects ack field shape (output_path/trace_dir omitted for external targets)
@@ -54,11 +54,11 @@ _PIPELINE = _FRAMEWORK_SRC / "pipeline" / "pipeline.py"
 # - execution_strategy.py — docstring text (the phrase "if execution_strategy =="
 #   appears in the module docstring describing what the ABC replaces).
 # - pool_config/specs.py — Pydantic @model_validator cross-field validation
-#   (provider_kind set iff execution_strategy == EXTERNAL_CODING). Same
+#   (provider_kind set iff execution_strategy == EXTERNAL). Same
 #   validation category as subagent_validator.py; not assembly branching.
 # - template.py — T5 subagent materialize dispatch: when the spec's
-#   execution_strategy is EXTERNAL_CODING, materialize delegates to
-#   deps.subagent_external_coding_builder.build() instead of
+#   execution_strategy is EXTERNAL, materialize delegates to
+#   deps.subagent_external_builder.build() instead of
 #   agent_factory.create_agent(). Same runtime construction-dispatch category
 #   as factory.py._get_builder; the react path is byte-for-byte unchanged.
 # - communication/strategies/subagent_dispatch.py — build_result picks ack
@@ -119,7 +119,7 @@ def test_pool_builder_create_pool_has_no_strategy_branching() -> None:
     The function may use `execution_strategy ==` for a 1-line strategy-name
     selection (ternary), but not for branching the assembly path. This test
     checks the full source of pool_builder.py for the forbidden patterns;
-    the ternary at line ~186 (`strategy_name = "external_coding" if ... else "react"`)
+    the ternary at line ~186 (`strategy_name = "external" if ... else "react"`)
     uses `if` inline but does NOT match `if\\s+.*execution_strategy\\s*==` (no
     leading `if` keyword on the same statement as the comparison in a branch).
     """

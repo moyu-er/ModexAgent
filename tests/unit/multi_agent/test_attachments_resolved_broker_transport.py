@@ -15,6 +15,7 @@ These tests pin the transport contract: the publish side carries
 ``attachments_resolved`` in the broker payload, and the dispatch side
 reconstructs it.
 """
+
 from __future__ import annotations
 
 from modex_agent.core.session_id import SessionInfo
@@ -79,9 +80,7 @@ def test_attachments_resolved_survive_full_broker_round_trip() -> None:
     envelope = AgentMessageEnvelope.from_broker_message(broker_msg)
     assert envelope is not None
 
-    reconstructed = input_message_from_dispatch_envelope(
-        envelope, session=_session()
-    )
+    reconstructed = input_message_from_dispatch_envelope(envelope, session=_session())
     assert len(reconstructed.attachments_resolved) == 1
     rec = reconstructed.attachments_resolved[0]
     assert rec == _attachment("cat.png")
@@ -94,8 +93,6 @@ def test_normal_message_round_trips_without_attachments() -> None:
     envelope = AgentMessageEnvelope.from_broker_message(broker_msg)
     assert envelope is not None
 
-    reconstructed = input_message_from_dispatch_envelope(
-        envelope, session=_session()
-    )
+    reconstructed = input_message_from_dispatch_envelope(envelope, session=_session())
     assert reconstructed.attachments_resolved == []
     assert reconstructed.content == "hi there"

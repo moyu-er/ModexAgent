@@ -401,7 +401,8 @@ class TestSubagentAutoSendHookFinallyTurn:
         assert "max iterations reached" not in _extract_xml_field(xml, "result")
 
     async def test_result_text_falls_back_to_content_when_no_messages(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ):
         """When result.messages is empty, fall back to result.content."""
         runtime_dir = tmp_path / "runtime"
@@ -423,7 +424,8 @@ class TestSubagentAutoSendHookFinallyTurn:
         assert _extract_xml_field(xml, "result") == "Direct output."
 
     async def test_result_text_falls_back_when_no_assistant_messages(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ):
         """When result.messages has no assistant messages, fall back to content."""
         runtime_dir = tmp_path / "runtime"
@@ -497,7 +499,7 @@ class TestSubagentAutoSendHookExternalBranch:
             self_name="pi_worker",
             parent_name="main",
             runtime_dir=runtime_dir,
-            execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+            execution_strategy=ExecutionStrategyKind.EXTERNAL,
             external_outbox_path=outbox_path,
         )
 
@@ -509,7 +511,8 @@ class TestSubagentAutoSendHookExternalBranch:
         )
 
     async def test_external_replied_true_when_outbox_has_entries(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ):
         """EXTERNAL branch with non-empty outbox → <replied>true."""
         runtime_dir = tmp_path / "runtime"
@@ -531,7 +534,8 @@ class TestSubagentAutoSendHookExternalBranch:
         assert _extract_xml_field(xml, "replied") == "true"
 
     async def test_external_replied_false_when_outbox_empty(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ):
         """EXTERNAL branch with empty outbox file → <replied>false."""
         runtime_dir = tmp_path / "runtime"
@@ -549,7 +553,8 @@ class TestSubagentAutoSendHookExternalBranch:
         assert _extract_xml_field(xml, "replied") == "false"
 
     async def test_external_replied_false_when_outbox_missing(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ):
         """EXTERNAL branch with no outbox file → <replied>false."""
         runtime_dir = tmp_path / "runtime"
@@ -686,7 +691,7 @@ class TestSubagentAutoSendHookExternalBranch:
             self_name="pi_worker",
             parent_name="main",
             runtime_dir=runtime_dir,
-            execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+            execution_strategy=ExecutionStrategyKind.EXTERNAL,
             external_outbox_path=None,
         )
         ctx = _make_context("abc12345.pi_worker")
@@ -700,7 +705,8 @@ class TestSubagentAutoSendHookExternalBranch:
         assert "<output_status>" not in xml
 
     async def test_default_execution_strategy_is_react_backward_compat(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ):
         """A hook constructed without execution_strategy (the default) must
         produce react-style XML — byte-for-byte identical to a hook that
@@ -729,12 +735,8 @@ class TestSubagentAutoSendHookExternalBranch:
             await hook_default.finally_turn(_make_context(session_id), result)
             await hook_react.finally_turn(_make_context(session_id), result)
 
-        xml_default = (
-            await bus_default.consume("conv123.main")
-        )[0].payload["content"]
-        xml_react = (
-            await bus_react.consume("conv123.main")
-        )[0].payload["content"]
+        xml_default = (await bus_default.consume("conv123.main"))[0].payload["content"]
+        xml_react = (await bus_react.consume("conv123.main"))[0].payload["content"]
 
         assert "<trace>" in xml_default
         assert "<output>" in xml_default
@@ -750,7 +752,10 @@ class TestSubagentAutoSendHookClassify:
 
     def test_native_error_returns_false_with_issue(self):
         success, issue = SubagentAutoSendHook._classify(
-            "completed", "Division by zero", "", is_external=False,
+            "completed",
+            "Division by zero",
+            "",
+            is_external=False,
         )
         assert success is False
         assert "crashed" in issue
@@ -759,14 +764,20 @@ class TestSubagentAutoSendHookClassify:
 
     def test_native_error_with_invocation_id_has_resume_hint(self):
         success, issue = SubagentAutoSendHook._classify(
-            "completed", "timeout", "abc123", is_external=False,
+            "completed",
+            "timeout",
+            "abc123",
+            is_external=False,
         )
         assert success is False
         assert "invocation_id=abc123" in issue
 
     def test_native_max_iterations_returns_false_with_issue(self):
         success, issue = SubagentAutoSendHook._classify(
-            "max_iterations", None, "", is_external=False,
+            "max_iterations",
+            None,
+            "",
+            is_external=False,
         )
         assert success is False
         assert "max_iterations" in issue
@@ -774,28 +785,40 @@ class TestSubagentAutoSendHookClassify:
 
     def test_native_max_iterations_with_invocation_id_has_resume_hint(self):
         success, issue = SubagentAutoSendHook._classify(
-            "max_iterations", None, "xyz789", is_external=False,
+            "max_iterations",
+            None,
+            "xyz789",
+            is_external=False,
         )
         assert success is False
         assert "invocation_id=xyz789" in issue
 
     def test_native_loop_detected_returns_false_with_issue(self):
         success, issue = SubagentAutoSendHook._classify(
-            "loop_detected", None, "", is_external=False,
+            "loop_detected",
+            None,
+            "",
+            is_external=False,
         )
         assert success is False
         assert "loop" in issue.lower()
 
     def test_native_loop_detected_with_invocation_id_has_resume_hint(self):
         success, issue = SubagentAutoSendHook._classify(
-            "loop_detected", None, "loop123", is_external=False,
+            "loop_detected",
+            None,
+            "loop123",
+            is_external=False,
         )
         assert success is False
         assert "invocation_id=loop123" in issue
 
     def test_native_completed_returns_true(self):
         success, issue = SubagentAutoSendHook._classify(
-            "completed", None, "", is_external=False,
+            "completed",
+            None,
+            "",
+            is_external=False,
         )
         assert success is True
         assert issue == ""
@@ -803,21 +826,30 @@ class TestSubagentAutoSendHookClassify:
     def test_native_cancelled_returns_true(self):
         # 'cancelled' is not in _NON_NORMAL_STOPS, only 'turn_cancelled' is
         success, issue = SubagentAutoSendHook._classify(
-            "cancelled", None, "", is_external=False,
+            "cancelled",
+            None,
+            "",
+            is_external=False,
         )
         assert success is True
         assert issue == ""
 
     def test_native_timeout_returns_false(self):
         success, issue = SubagentAutoSendHook._classify(
-            "timeout", None, "", is_external=False,
+            "timeout",
+            None,
+            "",
+            is_external=False,
         )
         assert success is False
         assert "timeout" in issue
 
     def test_native_turn_cancelled_returns_false(self):
         success, issue = SubagentAutoSendHook._classify(
-            "turn_cancelled", None, "", is_external=False,
+            "turn_cancelled",
+            None,
+            "",
+            is_external=False,
         )
         assert success is False
         assert "turn_cancelled" in issue
@@ -828,7 +860,11 @@ class TestSubagentAutoSendHookClassify:
         """Native completed + OUTPUT.md missing → success=true but issue
         carries an advisory that the deliverable file is missing."""
         success, issue = SubagentAutoSendHook._classify(
-            "completed", None, "inv1", is_external=False, output_status="missing",
+            "completed",
+            None,
+            "inv1",
+            is_external=False,
+            output_status="missing",
         )
         assert success is True
         assert "OUTPUT.md was not written" in issue
@@ -838,7 +874,11 @@ class TestSubagentAutoSendHookClassify:
     def test_native_output_written_no_advisory(self):
         """Native completed + OUTPUT.md written → success=true, no issue."""
         success, issue = SubagentAutoSendHook._classify(
-            "completed", None, "inv1", is_external=False, output_status="written",
+            "completed",
+            None,
+            "inv1",
+            is_external=False,
+            output_status="written",
         )
         assert success is True
         assert issue == ""
@@ -847,7 +887,11 @@ class TestSubagentAutoSendHookClassify:
         """Native error + OUTPUT.md missing → failure (error takes priority,
         no advisory about OUTPUT.md)."""
         success, issue = SubagentAutoSendHook._classify(
-            "completed", "crashed", "inv1", is_external=False, output_status="missing",
+            "completed",
+            "crashed",
+            "inv1",
+            is_external=False,
+            output_status="missing",
         )
         assert success is False
         assert "crashed" in issue
@@ -857,7 +901,11 @@ class TestSubagentAutoSendHookClassify:
         """Native max_iterations + OUTPUT.md missing → failure (max_iterations
         takes priority, no advisory about OUTPUT.md)."""
         success, issue = SubagentAutoSendHook._classify(
-            "max_iterations", None, "inv1", is_external=False, output_status="missing",
+            "max_iterations",
+            None,
+            "inv1",
+            is_external=False,
+            output_status="missing",
         )
         assert success is False
         assert "max_iterations" in issue
@@ -867,7 +915,10 @@ class TestSubagentAutoSendHookClassify:
 
     def test_external_error_issue_mentions_last_output_not_trace(self):
         success, issue = SubagentAutoSendHook._classify(
-            "completed", "Division by zero", "abc123", is_external=True,
+            "completed",
+            "Division by zero",
+            "abc123",
+            is_external=True,
         )
         assert success is False
         assert "trace" not in issue.lower()
@@ -877,14 +928,20 @@ class TestSubagentAutoSendHookClassify:
 
     def test_external_error_no_invocation_id(self):
         success, issue = SubagentAutoSendHook._classify(
-            "completed", "crashed", "", is_external=True,
+            "completed",
+            "crashed",
+            "",
+            is_external=True,
         )
         assert success is False
         assert "modexctl" not in issue  # no invocation_id → no resume hint
 
     def test_external_completed_returns_true(self):
         success, issue = SubagentAutoSendHook._classify(
-            "completed", None, "", is_external=True,
+            "completed",
+            None,
+            "",
+            is_external=True,
         )
         assert success is True
         assert issue == ""
@@ -893,7 +950,10 @@ class TestSubagentAutoSendHookClassify:
         """External subagent max_iterations is NOT a failure — the external
         CLI may have finished without sending a reply."""
         success, issue = SubagentAutoSendHook._classify(
-            "max_iterations", None, "", is_external=True,
+            "max_iterations",
+            None,
+            "",
+            is_external=True,
         )
         assert success is True
         assert issue == ""
@@ -901,7 +961,10 @@ class TestSubagentAutoSendHookClassify:
     def test_external_timeout_not_failure(self):
         """External subagent timeout is NOT a failure."""
         success, issue = SubagentAutoSendHook._classify(
-            "timeout", None, "", is_external=True,
+            "timeout",
+            None,
+            "",
+            is_external=True,
         )
         assert success is True
         assert issue == ""
@@ -909,7 +972,10 @@ class TestSubagentAutoSendHookClassify:
     def test_external_loop_detected_is_failure(self):
         """External subagent loop_detected IS a failure (hard stop)."""
         success, issue = SubagentAutoSendHook._classify(
-            "loop_detected", None, "ext123", is_external=True,
+            "loop_detected",
+            None,
+            "ext123",
+            is_external=True,
         )
         assert success is False
         assert "loop" in issue.lower()

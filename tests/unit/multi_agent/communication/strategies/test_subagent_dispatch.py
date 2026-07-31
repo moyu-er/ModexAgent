@@ -202,7 +202,7 @@ class TestBuildResultExecutionStrategyBranch:
             target=CommunicationTarget(
                 name="worker",
                 kind=AgentCommKind.SUBAGENT,
-                execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+                execution_strategy=ExecutionStrategyKind.EXTERNAL,
             ),
             content="do work",
             invocation_id="task-1",
@@ -224,7 +224,7 @@ class TestBuildResultExecutionStrategyBranch:
             target=CommunicationTarget(
                 name="worker",
                 kind=AgentCommKind.SUBAGENT,
-                execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+                execution_strategy=ExecutionStrategyKind.EXTERNAL,
             ),
             content="do work",
             invocation_id="task-1",
@@ -268,7 +268,7 @@ class TestBuildEnvelopeXmlBranch:
             target=CommunicationTarget(
                 name="coder",
                 kind=AgentCommKind.SUBAGENT,
-                execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+                execution_strategy=ExecutionStrategyKind.EXTERNAL,
             ),
             content="implement feature X",
             invocation_id="task-1",

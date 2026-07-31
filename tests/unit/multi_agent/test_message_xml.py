@@ -39,7 +39,9 @@ def test_build_agent_result_completed():
         stop_reason="missed_communication",
         content="All tasks finished.",
     )
-    assert '<agent_result source="office-expert" invocation_id="abc123" status="completed">' in result
+    assert (
+        '<agent_result source="office-expert" invocation_id="abc123" status="completed">' in result
+    )
     assert "<stop_reason>missed_communication</stop_reason>" in result
     assert "<content>All tasks finished.</content>" in result
 
@@ -64,7 +66,7 @@ def test_xml_escapes_special_chars():
     )
     # Attribute values use entity escaping
     assert "agent&lt;&gt;" in result
-    assert 'id&quot;&amp;' in result
+    assert "id&quot;&amp;" in result
     # Element text uses CDATA when special chars present
     assert "<![CDATA[\n<hello> & world\n]]>" in result
 
@@ -143,7 +145,7 @@ def test_build_peer_agent_message_no_implementation_attr():
     result = build_peer_agent_message(
         source="main", content="hi", receiver_implementation=AgentImplementation.EXTERNAL
     )
-    assert 'implementation=' not in result
+    assert "implementation=" not in result
 
 
 def test_build_peer_agent_message_warns_not_to_instruct_others():
@@ -167,7 +169,7 @@ def test_build_dispatch_xml_external_target_uses_peer_format():
         source="main",
         invocation_id="abc12345",
         content="do work",
-        target_execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+        target_execution_strategy=ExecutionStrategyKind.EXTERNAL,
     )
     assert "<reply_contract>" in result
     assert 'modexctl send --to "main"' in result
@@ -182,7 +184,7 @@ def test_build_dispatch_xml_external_target_drops_invocation_id_attr():
         source="main",
         invocation_id="abc12345",
         content="do work",
-        target_execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+        target_execution_strategy=ExecutionStrategyKind.EXTERNAL,
     )
     assert "invocation_id" not in result
 

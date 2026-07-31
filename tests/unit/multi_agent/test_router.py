@@ -54,9 +54,7 @@ class TestDefaultMeshRouter:
         result = router.route(
             InputMessage(
                 content="task",
-                session=SessionInfo.from_str(
-                    "transport-session"
-                ),
+                session=SessionInfo.from_str("transport-session"),
                 metadata={"agent_session_id": "chat-1.office-expert.task-42"},
             )
         )

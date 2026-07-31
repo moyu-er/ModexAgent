@@ -27,7 +27,7 @@ from modex_agent.core.emitter import AgentResult, ContentEmitter, EmitterConfig
 from modex_agent.core.events import AgentEvent
 from modex_agent.core.session_id import SessionInfo
 
-E = TypeVar('E', bound=AgentEvent)
+E = TypeVar("E", bound=AgentEvent)
 
 
 class _BufferingEmitter(ContentEmitter[E]):
@@ -152,7 +152,8 @@ class TestQQBotServiceIntegration:
     async def test_qb_bot_emitter_business_logic(self, caplog):
         """Test QQBotEmitter business logic in isolation."""
         import sys
-        sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'examples' / 'bot_project'))
+
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent / "examples" / "bot_project"))
 
         try:
             from bot.adapters.qq import QQBotEmitter
@@ -182,7 +183,8 @@ class TestQQBotServiceIntegration:
 
             # Test reasoning is logged (not sent)
             import logging
-            with caplog.at_level(logging.INFO, logger='bot.reasoning'):
+
+            with caplog.at_level(logging.INFO, logger="bot.reasoning"):
                 await emitter.emit(ReActEvent.MODEL_REASONING, "Thinking...")
                 assert "[Reasoning]" in caplog.text
 
@@ -213,7 +215,9 @@ class TestQQBotServiceIntegration:
                 self.chat_stream_called = False
                 self.chat_called = False
 
-            async def chat_stream(self, messages=None, on_content_delta=None, on_reasoning_delta=None, **kwargs):
+            async def chat_stream(
+                self, messages=None, on_content_delta=None, on_reasoning_delta=None, **kwargs
+            ):
                 self.chat_stream_called = True
                 if on_content_delta:
                     await on_content_delta("Hello")
@@ -230,6 +234,7 @@ class TestQQBotServiceIntegration:
         agent = ReActAgent(provider=provider)
 
         from modex_agent.memory.history import ListMessageHistory
+
         context = AgentContext(
             system_prompt="Test",
             history=ListMessageHistory([{"role": "user", "content": "Hi"}]),
@@ -306,6 +311,7 @@ class TestQQBotServiceIntegration:
 
         # Create mock provider
         from modex_agent.core.types import LLMResponse
+
         class MockProvider:
             async def chat(self, **kwargs):
                 return LLMResponse(
@@ -318,6 +324,7 @@ class TestQQBotServiceIntegration:
 
         agent = ReActAgent(provider=MockProvider())
         from modex_agent.memory.history import ListMessageHistory
+
         context = AgentContext(
             system_prompt="Test",
             history=ListMessageHistory([{"role": "user", "content": "Hi"}]),
@@ -340,7 +347,8 @@ class TestQQBotServiceIntegration:
     def test_qq_service_initialization_structure(self, mock_config):
         """Test QQBotService structure without actually initializing."""
         import sys
-        sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'examples' / 'bot_project'))
+
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent / "examples" / "bot_project"))
 
         try:
             from bot.service.qq_service import QQBotService
@@ -358,7 +366,8 @@ class TestQQBotServiceIntegration:
         not inline full skill content, to avoid exceeding LLM context limits.
         """
         import sys
-        sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'examples' / 'bot_project'))
+
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent / "examples" / "bot_project"))
 
         from modex_agent.core.skills import (
             FileSkillSource,
@@ -367,7 +376,14 @@ class TestQQBotServiceIntegration:
             SkillManager,
         )
 
-        skills_dir = Path(__file__).parent.parent.parent / 'examples' / 'bot_project' / 'skills' / 'default' / 'default'
+        skills_dir = (
+            Path(__file__).parent.parent.parent
+            / "examples"
+            / "bot_project"
+            / "skills"
+            / "default"
+            / "default"
+        )
         if not skills_dir.exists():
             pytest.skip("bot_project/skills/default/default directory not found")
 
@@ -392,7 +408,6 @@ class TestQQBotServiceIntegration:
         assert prompt.count("<skill name=") > 0  # at least one skill listed
         # Each skill should appear as a single table row, not as multi-line content
         assert prompt.count("<available_skills>") == 1
-
 
     @pytest.mark.asyncio
     async def test_bot_service_pool_mode_bridge_routing(self, tmp_path):
@@ -433,6 +448,7 @@ class TestQQBotServiceIntegration:
                             yield msg
                         except TimeoutError:
                             pass
+
                 return _gen()
 
             async def inject(self, msg: InputMessage):
@@ -522,11 +538,19 @@ memory:
 
         def _emitter_factory(session_id: str):
             from modex_agent.agents.react import ReActEvent
+
             return _BufferingEmitter[ReActEvent]()
 
-        with patch("bot.service._assembly_helpers._PoolAssemblyMixin._build_llm_provider", return_value=_MockProvider()), patch(
-            "bot.service.builders._load_agent_mcp_tools", return_value=([], None)
-        ), patch("bot.service.core.BotService._build_default_provider", return_value=_MockProvider()):
+        with (
+            patch(
+                "bot.service._assembly_helpers._PoolAssemblyMixin._build_llm_provider",
+                return_value=_MockProvider(),
+            ),
+            patch("bot.service.builders._load_agent_mcp_tools", return_value=([], None)),
+            patch(
+                "bot.service.core.BotService._build_default_provider", return_value=_MockProvider()
+            ),
+        ):
             service = BotService(
                 config_dir=config_dir,
                 input_adapter=input_adapter,
@@ -540,7 +564,9 @@ memory:
             await asyncio.sleep(0.1)
 
             # 注入一条消息
-            await input_adapter.inject(InputMessage(content="ping", session=SessionInfo.from_str("s1")))
+            await input_adapter.inject(
+                InputMessage(content="ping", session=SessionInfo.from_str("s1"))
+            )
 
             # 等待消息流转
             for _ in range(50):
@@ -574,26 +600,42 @@ memory:
 
         class _MockInputAdapter(InputAdapter):
             @property
-            def name(self): return "mock_input"
-            async def start(self): pass
-            async def stop(self): pass
+            def name(self):
+                return "mock_input"
+
+            async def start(self):
+                pass
+
+            async def stop(self):
+                pass
+
             def receive(self):
                 async def _gen():
                     if False:
                         yield None
+
                 return _gen()
 
         class _MockOutputAdapter(OutputAdapter):
             @property
-            def name(self): return "mock_output"
-            async def send(self, message: OutputMessage, session_id: str): pass
-            async def send_delta(self, delta: str, session_id: str, metadata=None): pass
-            async def flush_deltas(self, session_id: str): pass
+            def name(self):
+                return "mock_output"
+
+            async def send(self, message: OutputMessage, session_id: str):
+                pass
+
+            async def send_delta(self, delta: str, session_id: str, metadata=None):
+                pass
+
+            async def flush_deltas(self, session_id: str):
+                pass
 
         class _MockProvider:
             async def chat(self, messages=None, **kwargs):
                 return LLMResponse(content="ok")
-            def get_default_model(self): return "mock"
+
+            def get_default_model(self):
+                return "mock"
 
         config_dir = tmp_path / "config"
         config_dir.mkdir()
@@ -636,9 +678,16 @@ memory:
             encoding="utf-8",
         )
 
-        with patch("bot.service._assembly_helpers._PoolAssemblyMixin._build_llm_provider", return_value=_MockProvider()), patch(
-            "bot.service.builders._load_agent_mcp_tools", return_value=([], None)
-        ), patch("bot.service.core.BotService._build_default_provider", return_value=_MockProvider()):
+        with (
+            patch(
+                "bot.service._assembly_helpers._PoolAssemblyMixin._build_llm_provider",
+                return_value=_MockProvider(),
+            ),
+            patch("bot.service.builders._load_agent_mcp_tools", return_value=([], None)),
+            patch(
+                "bot.service.core.BotService._build_default_provider", return_value=_MockProvider()
+            ),
+        ):
             service = BotService(
                 config_dir=config_dir,
                 input_adapter=_MockInputAdapter(),

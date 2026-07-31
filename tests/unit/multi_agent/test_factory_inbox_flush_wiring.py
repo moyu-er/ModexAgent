@@ -6,6 +6,7 @@ the factory auto-injects must be added to ``hook_runner``, not appended to the
 dead list — otherwise fold-in silently never fires (notably for subagents,
 which have no separate manual wiring path the way main does via pool_builder).
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock

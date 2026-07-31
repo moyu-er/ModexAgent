@@ -1,4 +1,5 @@
 """Integration test for Phase 1: DreamEngine dual trigger + knowledge templates."""
+
 from __future__ import annotations
 
 import pytest

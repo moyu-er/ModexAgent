@@ -147,9 +147,7 @@ class TestInboxPollerHandlesOrphanWithoutDataLoss:
             assert error_count == 1, f"error should be logged once; got {error_count}"
 
             # NO drain warning — message is NOT consumed
-            drained = any(
-                "drained" in r.message and "orphan" in r.message for r in caplog.records
-            )
+            drained = any("drained" in r.message and "orphan" in r.message for r in caplog.records)
             assert not drained, "orphan must NOT be drained (no silent drop)"
 
             # Message MUST still be pending (no data loss)
@@ -232,9 +230,7 @@ class TestInboxPollerHandlesOrphanWithoutDataLoss:
                 await asyncio.sleep(0.5)
                 await poller.stop()
 
-            error_count = sum(
-                1 for r in caplog.records if "no template" in r.message
-            )
+            error_count = sum(1 for r in caplog.records if "no template" in r.message)
             assert error_count == 1, (
                 f"error must appear exactly once (not every tick); got {error_count}"
             )
@@ -252,9 +248,7 @@ class TestPoolRouterSelfHealsStaleRouting:
     serve, the router finds the owning pool and re-routes + self-heals."""
 
     @pytest.mark.asyncio
-    async def test_message_for_coder_agent_rerouted_from_default(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_message_for_coder_agent_rerouted_from_default(self, tmp_path: Path) -> None:
         """A message with session_id='conv1.orchestrator' (agent_name=orchestrator)
         routed to default pool → re-routed to coder pool (which serves orchestrator).
 
@@ -274,21 +268,39 @@ class TestPoolRouterSelfHealsStaleRouting:
 
         pools = {
             "default": PoolInstance(
-                name="default", media=MagicMock(), subagent_count=0, pool=default_pool,
-                broker_bridge=MagicMock(), tool_manager=MagicMock(), skill_manager=None,
-                mcp_manager=None, terminal_manager=None, main_agent_name="default",
+                name="default",
+                media=MagicMock(),
+                subagent_count=0,
+                pool=default_pool,
+                broker_bridge=MagicMock(),
+                tool_manager=MagicMock(),
+                skill_manager=None,
+                mcp_manager=None,
+                terminal_manager=None,
+                main_agent_name="default",
                 main_execution_strategy=ExecutionStrategyKind.REACT,
-                provider=MagicMock(), notification_service=MagicMock(),
-                communication_service=MagicMock(), agent_bus=MagicMock(),
+                provider=MagicMock(),
+                notification_service=MagicMock(),
+                communication_service=MagicMock(),
+                agent_bus=MagicMock(),
                 target_store=MagicMock(),
             ),
             "coder": PoolInstance(
-                name="coder", media=MagicMock(), subagent_count=0, pool=coder_pool,
-                broker_bridge=MagicMock(), tool_manager=MagicMock(), skill_manager=None,
-                mcp_manager=None, terminal_manager=None, main_agent_name="orchestrator",
+                name="coder",
+                media=MagicMock(),
+                subagent_count=0,
+                pool=coder_pool,
+                broker_bridge=MagicMock(),
+                tool_manager=MagicMock(),
+                skill_manager=None,
+                mcp_manager=None,
+                terminal_manager=None,
+                main_agent_name="orchestrator",
                 main_execution_strategy=ExecutionStrategyKind.REACT,
-                provider=MagicMock(), notification_service=MagicMock(),
-                communication_service=MagicMock(), agent_bus=MagicMock(),
+                provider=MagicMock(),
+                notification_service=MagicMock(),
+                communication_service=MagicMock(),
+                agent_bus=MagicMock(),
                 target_store=MagicMock(),
             ),
         }
@@ -331,12 +343,21 @@ class TestPoolRouterSelfHealsStaleRouting:
 
         pools = {
             "default": PoolInstance(
-                name="default", media=MagicMock(), subagent_count=0, pool=default_pool,
-                broker_bridge=MagicMock(), tool_manager=MagicMock(), skill_manager=None,
-                mcp_manager=None, terminal_manager=None, main_agent_name="default",
+                name="default",
+                media=MagicMock(),
+                subagent_count=0,
+                pool=default_pool,
+                broker_bridge=MagicMock(),
+                tool_manager=MagicMock(),
+                skill_manager=None,
+                mcp_manager=None,
+                terminal_manager=None,
+                main_agent_name="default",
                 main_execution_strategy=ExecutionStrategyKind.REACT,
-                provider=MagicMock(), notification_service=MagicMock(),
-                communication_service=MagicMock(), agent_bus=MagicMock(),
+                provider=MagicMock(),
+                notification_service=MagicMock(),
+                communication_service=MagicMock(),
+                agent_bus=MagicMock(),
                 target_store=MagicMock(),
             ),
         }
@@ -367,9 +388,7 @@ class TestPoolRouterSelfHealsStaleRouting:
         assert routing_store.get_pool("conv1") == "default"
 
     @pytest.mark.asyncio
-    async def test_bare_prefix_session_trusts_routing_store(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_bare_prefix_session_trusts_routing_store(self, tmp_path: Path) -> None:
         """A session with no agent_name (bare prefix → agent_name='')
         routes to the stored pool without re-routing — empty agent_name
         matches no pool's agents so the reconciler leaves it on the
@@ -382,12 +401,21 @@ class TestPoolRouterSelfHealsStaleRouting:
 
         pools = {
             "default": PoolInstance(
-                name="default", media=MagicMock(), subagent_count=0, pool=default_pool,
-                broker_bridge=MagicMock(), tool_manager=MagicMock(), skill_manager=None,
-                mcp_manager=None, terminal_manager=None, main_agent_name="default",
+                name="default",
+                media=MagicMock(),
+                subagent_count=0,
+                pool=default_pool,
+                broker_bridge=MagicMock(),
+                tool_manager=MagicMock(),
+                skill_manager=None,
+                mcp_manager=None,
+                terminal_manager=None,
+                main_agent_name="default",
                 main_execution_strategy=ExecutionStrategyKind.REACT,
-                provider=MagicMock(), notification_service=MagicMock(),
-                communication_service=MagicMock(), agent_bus=MagicMock(),
+                provider=MagicMock(),
+                notification_service=MagicMock(),
+                communication_service=MagicMock(),
+                agent_bus=MagicMock(),
                 target_store=MagicMock(),
             ),
         }

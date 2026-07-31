@@ -69,7 +69,8 @@ class _PoolBundle:
         self.producer = InboxProducer(server=self.server)
         self.consumer = InboxConsumer(server=self.server)
         self.bus = LocalAgentMessageBus(
-            producer=self.producer, consumer=self.consumer,
+            producer=self.producer,
+            consumer=self.consumer,
         )
         self.session_factory = SessionIdFactory()
 
@@ -160,12 +161,8 @@ async def test_two_pools_isolate_inbox_dispatch() -> None:
         # After dispatch, neither pool has pending sessions for the OTHER's sid.
         main_pending = await main_bundle.pool.sessions_with_pending()
         coding_pending = await coding_bundle.pool.sessions_with_pending()
-        assert coding_sid not in main_pending, (
-            "main pool saw coding-pool's session — cross-talk!"
-        )
-        assert main_sid not in coding_pending, (
-            "coding pool saw main-pool's session — cross-talk!"
-        )
+        assert coding_sid not in main_pending, "main pool saw coding-pool's session — cross-talk!"
+        assert main_sid not in coding_pending, "coding pool saw main-pool's session — cross-talk!"
     finally:
         await main_bundle.stop()
         await coding_bundle.stop()

@@ -6,6 +6,7 @@ Root cause being fixed: subagent's ``_build_turn_runner`` hardcoded
 None → ``_read_image_as_multimodal`` degraded to text even when the LLM
 supports IMAGE.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -32,9 +33,7 @@ def any_broker():
 def _vision_model_info() -> ModelInfo:
     return ModelInfo(
         model_name="test-vision",
-        capabilities=ModelCapabilities(
-            modalities=frozenset({Modality.TEXT, Modality.IMAGE})
-        ),
+        capabilities=ModelCapabilities(modalities=frozenset({Modality.TEXT, Modality.IMAGE})),
     )
 
 
@@ -66,7 +65,9 @@ async def test_create_agent_threads_model_info_to_runtime_services(any_broker):
     builder = _get_react_builder(instance)
     rs = builder.runtime_services
     assert rs is not None, "runtime_services must not be None when model_info is configured"
-    assert rs.model_info is not None, "model_info must be threaded from descriptor to runtime_services"
+    assert rs.model_info is not None, (
+        "model_info must be threaded from descriptor to runtime_services"
+    )
     assert rs.model_info.capabilities.supports(Modality.IMAGE)
 
 

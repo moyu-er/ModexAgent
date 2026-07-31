@@ -24,9 +24,7 @@ def _write_files(base: Path, pool: str, agent_type: str, yml_content: str, md_co
     tpl_dir.mkdir(parents=True, exist_ok=True)
     (tpl_dir / f"{agent_type}.yml").write_text(yml_content, encoding="utf-8")
     if not (pool_dir / "pool.yml").exists():
-        (pool_dir / "pool.yml").write_text(
-            f"main_agent_name: {pool}\n", encoding="utf-8"
-        )
+        (pool_dir / "pool.yml").write_text(f"main_agent_name: {pool}\n", encoding="utf-8")
     agents_dir = base / "agents" / pool
     agents_dir.mkdir(parents=True, exist_ok=True)
     (agents_dir / f"{agent_type}.md").write_text(md_content, encoding="utf-8")
@@ -128,9 +126,7 @@ def test_template_memory_baked_from_factory_default():
         project = Path(tmp)
         yml = "agent_name: light\ndescription: light\n"
         _write_files(project, "main", "light", yml, "Light agent.")
-        registry = AgentTemplateRegistry(
-            PoolStore(base_dir=project), default_subagent_memory=baked
-        )
+        registry = AgentTemplateRegistry(PoolStore(base_dir=project), default_subagent_memory=baked)
         t = registry.get_template("main", "light")
         assert t is not None
         assert t.memory is baked

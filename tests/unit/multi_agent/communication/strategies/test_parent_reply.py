@@ -187,7 +187,7 @@ class TestParentReplyStrategy:
             target=CommunicationTarget(
                 name="main",
                 kind=AgentCommKind.NORMAL,
-                execution_strategy=ExecutionStrategyKind.EXTERNAL_CODING,
+                execution_strategy=ExecutionStrategyKind.EXTERNAL,
             ),
             content="task done",
             invocation_id=None,

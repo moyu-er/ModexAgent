@@ -22,8 +22,8 @@ Four test groups:
    env equals ``build_full_env()`` (no MODEX_ vars), CommandTool uses
    ``get_default()`` + ``env=None``.
 
-4. **external agent 不变** — the external-coding env builder
-   (``tests/unit/agents/external_coding/test_env_builder.py``) is zero-
+4. **external agent 不变** — the external env builder
+   (``tests/unit/agents/external/test_env_builder.py``) is zero-
    regression. This verification point is covered by Todo 2; this test
    only declares the coverage delegation in its docstring and asserts the
    referenced file exists. It does NOT re-run the unit tests.
@@ -455,7 +455,7 @@ def test_external_agent_env_builder_coverage_declared() -> None:
     """External-coding env builder is zero-regression.
 
     This verification point is covered by Todo 2:
-    ``tests/unit/agents/external_coding/test_env_builder.py``.
+    ``tests/unit/agents/external/test_env_builder.py``.
 
     Per spec: "已在 Todo 2 覆盖, 此处不重复测试, 只在 docstring 中声明
     此验证点由 Todo 2 覆盖." This test does NOT re-run the unit tests — it
@@ -464,13 +464,13 @@ def test_external_agent_env_builder_coverage_declared() -> None:
 
     To verify zero-regression, run::
 
-        pytest tests/unit/agents/external_coding/test_env_builder.py -v
+        pytest tests/unit/agents/external/test_env_builder.py -v
     """
     referenced = (
         Path(__file__).resolve().parent.parent
         / "unit"
         / "agents"
-        / "external_coding"
+        / "external"
         / "test_env_builder.py"
     )
     assert referenced.exists(), (

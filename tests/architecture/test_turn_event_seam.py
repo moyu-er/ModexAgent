@@ -4,7 +4,7 @@ These AST-based guards lock the provider-neutral turn-event contract so a
 future external provider (Pi, OpenCode, Claude Code, Codex, Cursor, ...)
 cannot accidentally regress the convergence by:
 
-1. Importing external-coding types into the WebUI layer (the original
+1. Importing external types into the WebUI layer (the original
    partial-implementation defect the convergence replaced).
 2. Importing WebUI / example-layer types from provider modules (the
    inverse leak).
@@ -32,9 +32,9 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WEBUI_ROOT = REPO_ROOT / "examples" / "bot_project" / "bot" / "webui"
 EXTERNAL_PROVIDERS_ROOT = (
-    REPO_ROOT / "src" / "modex_agent" / "agents" / "external_coding" / "providers"
+    REPO_ROOT / "src" / "modex_agent" / "agents" / "external" / "providers"
 )
-EXTERNAL_CODING_ROOT = REPO_ROOT / "src" / "modex_agent" / "agents" / "external_coding"
+EXTERNAL_ROOT = REPO_ROOT / "src" / "modex_agent" / "agents" / "external"
 CORE_EVENTS_PATH = REPO_ROOT / "src" / "modex_agent" / "core" / "events.py"
 CORE_EMITTER_PATH = REPO_ROOT / "src" / "modex_agent" / "core" / "emitter.py"
 WEBUI_EMITTER_PATH = WEBUI_ROOT / "emitter.py"
@@ -78,15 +78,15 @@ def _parse(path: Path) -> ast.Module:
 # ── Guard 1: WebUI has no runtime import of external coding ────────────────
 
 
-def test_webui_does_not_import_external_coding() -> None:
+def test_webui_does_not_import_external() -> None:
     """The WebUI layer projects canonical ``TurnEvent`` only — it must not
-    import ``modex_agent.agents.external_coding`` (the original partial
+    import ``modex_agent.agents.external`` (the original partial
     implementation's defect).
     """
     offenders: dict[str, list[str]] = {}
     for path in sorted(WEBUI_ROOT.rglob("*.py")):
         tree = _parse(path)
-        for mod in _imports_from(tree, "modex_agent.agents.external_coding"):
+        for mod in _imports_from(tree, "modex_agent.agents.external"):
             offenders.setdefault(mod, []).append(
                 path.relative_to(WEBUI_ROOT).as_posix()
             )
@@ -188,15 +188,15 @@ def test_core_events_does_not_import_concrete_agents() -> None:
 
 def test_webui_emitter_has_no_external_provider_branches() -> None:
     """``WebBotEmitter`` must consume canonical ``TurnEvent`` only — no
-    string comparisons against ``ExternalCodingEvent`` values and no
+    string comparisons against ``ExternalEvent`` values and no
     ``Emission`` type references.
     """
     src = WEBUI_EMITTER_PATH.read_text(encoding="utf-8")
-    assert "ExternalCodingEvent" not in src, (
-        "WebBotEmitter must not reference ExternalCodingEvent (canonical seam)"
+    assert "ExternalEvent" not in src, (
+        "WebBotEmitter must not reference ExternalEvent (canonical seam)"
     )
-    assert "from modex_agent.agents.external_coding" not in src, (
-        "WebBotEmitter must not import from external_coding (canonical seam)"
+    assert "from modex_agent.agents.external" not in src, (
+        "WebBotEmitter must not import from external (canonical seam)"
     )
 
 

@@ -87,6 +87,7 @@ class TestMessageDeduplicator:
         dedup = MessageDeduplicator(max_size=10, ttl_seconds=0.01)
         dedup.is_duplicate("m1")
         import time
+
         time.sleep(0.05)
         dedup.is_duplicate("m2")  # trigger prune by adding new item
         assert dedup.is_duplicate("m1") is False
@@ -170,5 +171,3 @@ class TestMultiAgentContextBuilder:
         assert messages[0]["role"] == "system"
         assert messages[1]["role"] == "user"
         assert messages[1]["metadata"]["agent_session_id"] == "c1:a"
-
-

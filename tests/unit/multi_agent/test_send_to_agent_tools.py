@@ -46,9 +46,12 @@ def _context() -> AgentContext:
 def _store_with_target() -> CommunicationTargetStore:
     """Pre-populated store for tests that need a valid target."""
     store = CommunicationTargetStore()
-    store.add(CommunicationTarget(
-        name="office-expert", kind=AgentCommKind.SUBAGENT,
-    ))
+    store.add(
+        CommunicationTarget(
+            name="office-expert",
+            kind=AgentCommKind.SUBAGENT,
+        )
+    )
     return store
 
 
@@ -202,9 +205,12 @@ class TestSendToAgentToolTargetValidation:
     async def test_rejects_unknown_target(self) -> None:
         service = _RecordingService()
         store = CommunicationTargetStore()
-        store.add(CommunicationTarget(
-            name="office-expert", kind=AgentCommKind.SUBAGENT,
-        ))
+        store.add(
+            CommunicationTarget(
+                name="office-expert",
+                kind=AgentCommKind.SUBAGENT,
+            )
+        )
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
@@ -282,9 +288,12 @@ class TestSelfSendGuard:
     @pytest.mark.asyncio
     async def test_self_send_checked_before_target_lookup(self) -> None:
         store = CommunicationTargetStore()
-        store.add(CommunicationTarget(
-            name="agent", kind=AgentCommKind.NORMAL,
-        ))
+        store.add(
+            CommunicationTarget(
+                name="agent",
+                kind=AgentCommKind.NORMAL,
+            )
+        )
         service = _RecordingService()
         tool = SendToAgentTool(
             store=store,
@@ -318,13 +327,22 @@ class TestToolManagerIntegration:
 
     def test_tool_manager_descriptions_use_dynamic_schema(self) -> None:
         from modex_agent.core.tool_manager import InMemoryToolManager
+
         store = CommunicationTargetStore()
-        store.add(CommunicationTarget(
-            name="scout", kind=AgentCommKind.SUBAGENT, description="Fast recon",
-        ))
-        store.add(CommunicationTarget(
-            name="worker", kind=AgentCommKind.SUBAGENT, description="Implementation",
-        ))
+        store.add(
+            CommunicationTarget(
+                name="scout",
+                kind=AgentCommKind.SUBAGENT,
+                description="Fast recon",
+            )
+        )
+        store.add(
+            CommunicationTarget(
+                name="worker",
+                kind=AgentCommKind.SUBAGENT,
+                description="Implementation",
+            )
+        )
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
@@ -375,21 +393,33 @@ class TestSendToAgentToolDescription:
         )
         assert "No targets" in tool.description
 
-        tool.add_target(CommunicationTarget(
-            name="scout", kind=AgentCommKind.SUBAGENT, description="Fast recon",
-        ))
+        tool.add_target(
+            CommunicationTarget(
+                name="scout",
+                kind=AgentCommKind.SUBAGENT,
+                description="Fast recon",
+            )
+        )
         assert "scout" in tool.description
         assert "Fast recon" in tool.description
         assert "No targets" not in tool.description
 
     def test_description_updates_after_pop_target(self) -> None:
         store = CommunicationTargetStore()
-        store.add(CommunicationTarget(
-            name="scout", kind=AgentCommKind.SUBAGENT, description="Recon",
-        ))
-        store.add(CommunicationTarget(
-            name="worker", kind=AgentCommKind.SUBAGENT, description="Impl",
-        ))
+        store.add(
+            CommunicationTarget(
+                name="scout",
+                kind=AgentCommKind.SUBAGENT,
+                description="Recon",
+            )
+        )
+        store.add(
+            CommunicationTarget(
+                name="worker",
+                kind=AgentCommKind.SUBAGENT,
+                description="Impl",
+            )
+        )
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
@@ -417,9 +447,12 @@ class TestSendToAgentToolDescription:
             service=_RecordingService(),  # type: ignore[arg-type]
         )
         with pytest.raises(ValueError, match="office-expert"):
-            tool.add_target(CommunicationTarget(
-                name="office-expert", kind=AgentCommKind.SUBAGENT,
-            ))
+            tool.add_target(
+                CommunicationTarget(
+                    name="office-expert",
+                    kind=AgentCommKind.SUBAGENT,
+                )
+            )
 
     def test_pop_nonexistent_does_not_change_description(self) -> None:
         store = _store_with_target()
@@ -482,13 +515,22 @@ class TestSendToAgentToolDescription:
     def test_description_via_tool_manager(self) -> None:
         """ToolManager.get_tool_descriptions() returns dynamic description."""
         from modex_agent.core.tool_manager import InMemoryToolManager
+
         store = CommunicationTargetStore()
-        store.add(CommunicationTarget(
-            name="scout", kind=AgentCommKind.SUBAGENT, description="Fast recon",
-        ))
-        store.add(CommunicationTarget(
-            name="worker", kind=AgentCommKind.SUBAGENT, description="Implementation",
-        ))
+        store.add(
+            CommunicationTarget(
+                name="scout",
+                kind=AgentCommKind.SUBAGENT,
+                description="Fast recon",
+            )
+        )
+        store.add(
+            CommunicationTarget(
+                name="worker",
+                kind=AgentCommKind.SUBAGENT,
+                description="Implementation",
+            )
+        )
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
@@ -551,14 +593,21 @@ class TestSendToAgentToolDynamicSchema:
             agent_bus=object(),  # type: ignore[arg-type]
             service=_RecordingService(),  # type: ignore[arg-type]
         )
-        assert "enum" not in tool.get_dynamic_schema()["function"]["parameters"]["properties"]["target_agent"]
+        assert (
+            "enum"
+            not in tool.get_dynamic_schema()["function"]["parameters"]["properties"]["target_agent"]
+        )
 
         tool.add_target(CommunicationTarget(name="alpha", kind=AgentCommKind.SUBAGENT))
-        enum = tool.get_dynamic_schema()["function"]["parameters"]["properties"]["target_agent"].get("enum")
+        enum = tool.get_dynamic_schema()["function"]["parameters"]["properties"][
+            "target_agent"
+        ].get("enum")
         assert enum == ["alpha"]
 
         tool.add_target(CommunicationTarget(name="beta", kind=AgentCommKind.SUBAGENT))
-        enum = tool.get_dynamic_schema()["function"]["parameters"]["properties"]["target_agent"].get("enum")
+        enum = tool.get_dynamic_schema()["function"]["parameters"]["properties"][
+            "target_agent"
+        ].get("enum")
         assert enum == ["alpha", "beta"]
 
     def test_target_agent_description_emphasizes_exact_name(self) -> None:
@@ -605,12 +654,8 @@ class TestSendToAgentToolDynamicSchema:
         The static parameter schema stays kind-agnostic.
         """
         store = CommunicationTargetStore()
-        store.add(
-            CommunicationTarget(name="scout", kind=AgentCommKind.SUBAGENT)
-        )
-        store.add(
-            CommunicationTarget(name="coding_main", kind=AgentCommKind.NORMAL)
-        )
+        store.add(CommunicationTarget(name="scout", kind=AgentCommKind.SUBAGENT))
+        store.add(CommunicationTarget(name="coding_main", kind=AgentCommKind.NORMAL))
         tool = SendToAgentTool(
             store=store,
             source=AgentAddress(name="main"),
@@ -799,8 +844,11 @@ def test_empty_store_list_is_falsy():
 def test_nonempty_store_list_is_truthy():
     """A CommunicationTargetStore with at least one target is truthy."""
     store = CommunicationTargetStore()
-    store.add(CommunicationTarget(
-        name="explore", kind=AgentCommKind.SUBAGENT,
-    ))
+    store.add(
+        CommunicationTarget(
+            name="explore",
+            kind=AgentCommKind.SUBAGENT,
+        )
+    )
     assert store.list()
     assert len(store.list()) == 1

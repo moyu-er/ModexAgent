@@ -141,7 +141,8 @@ class TestFullLifecycleNotification:
         assert len(spans) >= 1
 
         turn_start = next(
-            (s for s in spans if s.name == SpanName.INVOKE_AGENT.value), None,
+            (s for s in spans if s.name == SpanName.INVOKE_AGENT.value),
+            None,
         )
         assert turn_start is not None
         assert turn_start.attributes[GenAiAttr.CONVERSATION_ID] == session_id
@@ -215,7 +216,8 @@ class TestTraceCollectorRecordsErrorTurnEnd:
 
         # Step 2: finally_turn with error -> no new span (TURN_END is a no-op)
         await trace_hook.finally_turn(
-            ctx, AgentResult(error="timeout", stop_reason=StopReason.ERROR),
+            ctx,
+            AgentResult(error="timeout", stop_reason=StopReason.ERROR),
         )
 
         spans = await store.list_by_session(session_id)

@@ -143,23 +143,25 @@ class TestThinkExtractorToolCallStreaming:
 
     @pytest.fixture
     def calculator_tool(self):
-        return [{
-            "type": "function",
-            "function": {
-                "name": "calculator",
-                "description": "Evaluate a math expression",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "expression": {
-                            "type": "string",
-                            "description": "Math expression to evaluate",
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "calculator",
+                    "description": "Evaluate a math expression",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "expression": {
+                                "type": "string",
+                                "description": "Math expression to evaluate",
+                            },
                         },
+                        "required": ["expression"],
                     },
-                    "required": ["expression"],
                 },
-            },
-        }]
+            }
+        ]
 
     @pytest.mark.asyncio
     async def test_streaming_tool_calling(self, provider, calculator_tool):
@@ -167,10 +169,12 @@ class TestThinkExtractorToolCallStreaming:
         deltas: list[str] = []
 
         result = await provider.chat_stream(
-            messages=[{
-                "role": "user",
-                "content": "Calculate 123 + 456 using the calculator tool.",
-            }],
+            messages=[
+                {
+                    "role": "user",
+                    "content": "Calculate 123 + 456 using the calculator tool.",
+                }
+            ],
             tools=calculator_tool,
             on_content_delta=lambda d: deltas.append(d),
         )
@@ -185,10 +189,12 @@ class TestThinkExtractorToolCallStreaming:
         """Two consecutive tool-calling streaming calls work correctly."""
         # First call
         r1 = await provider.chat_stream(
-            messages=[{
-                "role": "user",
-                "content": "Calculate 2+3 with calculator.",
-            }],
+            messages=[
+                {
+                    "role": "user",
+                    "content": "Calculate 2+3 with calculator.",
+                }
+            ],
             tools=calculator_tool,
         )
 
@@ -197,10 +203,12 @@ class TestThinkExtractorToolCallStreaming:
 
         # Second call — new extractor instance
         r2 = await provider.chat_stream(
-            messages=[{
-                "role": "user",
-                "content": "Calculate 10*5 with calculator.",
-            }],
+            messages=[
+                {
+                    "role": "user",
+                    "content": "Calculate 10*5 with calculator.",
+                }
+            ],
             tools=calculator_tool,
         )
 

@@ -183,15 +183,10 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
     tpl_dir = project / "config" / "pools" / "main" / "templates"
     tpl_dir.mkdir(parents=True)
     (tpl_dir / "helper.yml").write_text(
-        "agent_name: helper\n"
-        "description: Test helper\n"
-        "tool_preset: read_write\n"
-        "max_steps: 5\n",
+        "agent_name: helper\ndescription: Test helper\ntool_preset: read_write\nmax_steps: 5\n",
         encoding="utf-8",
     )
-    (tpl_dir.parent / "pool.yml").write_text(
-        "main_agent_name: main\n", encoding="utf-8"
-    )
+    (tpl_dir.parent / "pool.yml").write_text("main_agent_name: main\n", encoding="utf-8")
     template_registry = AgentTemplateRegistry(PoolStore(base_dir=project))
 
     # --- workspace (fake) ---
@@ -346,7 +341,8 @@ async def test_send_to_agent_runs_subagent_with_own_prompt_and_writes_output(
         # --- assertion 2: OUTPUT.md task + workspace-rooted path in prompt ---
         assert "OUTPUT.md" in subagent_system
         injected_path = re.search(
-            r"([A-Za-z]:[^\s`]*OUTPUT\.md|/\S*OUTPUT\.md)", subagent_system,
+            r"([A-Za-z]:[^\s`]*OUTPUT\.md|/\S*OUTPUT\.md)",
+            subagent_system,
         )
         assert injected_path is not None, "no absolute OUTPUT.md path in prompt"
         output_file = Path(injected_path.group(1))

@@ -18,6 +18,7 @@ approval wiring the feature added:
 
 The only fakes are a scripted LLM provider and a recording ``write`` tool.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -346,9 +347,7 @@ async def test_dangerous_tool_suspends_then_webui_decision_resumes(tmp_path: Pat
     session_id = session.session_id
 
     # --- Step 1: dangerous tool call -> suspend ---
-    result = await pipeline._process_message(
-        InputMessage(content="write secrets", session=session)
-    )
+    result = await pipeline._process_message(InputMessage(content="write secrets", session=session))
 
     # GraphInterrupt is caught inside TurnRunner.execute_turn -> returns None.
     assert result is None, "suspended turn must return None (GraphInterrupt swallowed)"
@@ -398,9 +397,7 @@ async def test_im_approve_command_resumes_suspended_turn(tmp_path: Path) -> None
     session_id = session.session_id
 
     # --- Suspend first ---
-    result = await pipeline._process_message(
-        InputMessage(content="write secrets", session=session)
-    )
+    result = await pipeline._process_message(InputMessage(content="write secrets", session=session))
     assert result is None
     snapshot = await _assert_one_suspended_snapshot(turn_store, session_id)
     assert recorded == []
@@ -456,9 +453,7 @@ async def test_in_project_path_is_auto_allowed_no_suspend(tmp_path: Path) -> Non
     )
     session = SessionInfo.from_str("s1.main")
 
-    result = await pipeline._process_message(
-        InputMessage(content="write inside", session=session)
-    )
+    result = await pipeline._process_message(InputMessage(content="write inside", session=session))
 
     assert result is not None, "in-project path must NOT suspend"
     assert recorded == [("./inside.txt", "ok")], f"in-project tool should run, got {recorded}"
@@ -504,9 +499,7 @@ async def test_default_off_no_suspend_even_for_dangerous_path(tmp_path: Path) ->
     # Sanity: the factory returned None, so runtime_services has no approval.
     _rs = pipeline._turn_runner._builder._runtime_services  # type: ignore[attr-defined]
     assert _rs is not None
-    assert _rs.approval is None, (
-        "build_approval_runtime must return None when enabled=False"
-    )
+    assert _rs.approval is None, "build_approval_runtime must return None when enabled=False"
 
     session = SessionInfo.from_str("s1.main")
     result = await pipeline._process_message(
@@ -567,9 +560,10 @@ async def test_resume_feeds_llm_well_formed_history(tmp_path: Path) -> None:
     session = SessionInfo.from_str("s1.main")
 
     # Step 1: dangerous tool call -> suspend.
-    assert await pipeline._process_message(
-        InputMessage(content="write secrets", session=session)
-    ) is None
+    assert (
+        await pipeline._process_message(InputMessage(content="write secrets", session=session))
+        is None
+    )
     await _assert_one_suspended_snapshot(turn_store, session.session_id)
 
     # Step 2: approval -> resume. The validating provider asserts on the 2nd
@@ -638,9 +632,10 @@ async def test_resume_with_tool_chain_governance_feeds_llm_well_formed_history(
     )
     session = SessionInfo.from_str("s1.main")
 
-    assert await pipeline._process_message(
-        InputMessage(content="write secrets", session=session)
-    ) is None
+    assert (
+        await pipeline._process_message(InputMessage(content="write secrets", session=session))
+        is None
+    )
     await _assert_one_suspended_snapshot(turn_store, session.session_id)
 
     resume_result = await pipeline._process_message(
@@ -713,9 +708,7 @@ async def test_post_construction_governance_mirrors_and_backfills_dangling_toolc
     # The mirror setter must propagate to the builder (the bug was that it didn't).
     assert pipeline._turn_runner._builder._governance  # type: ignore[attr-defined] is governance
 
-    result = await pipeline._process_message(
-        InputMessage(content="continue", session=session)
-    )
+    result = await pipeline._process_message(InputMessage(content="continue", session=session))
     assert result is not None
     assert provider.calls >= 1
     # _ValidatingProvider.chat asserts every assistant tool_call is followed by a
@@ -772,9 +765,7 @@ async def test_snapshot_and_resume_connect_across_different_agent_ids(
     session = SessionInfo.from_str("s1.main")
 
     # Flow A: snapshot is stored with agent_id from the descriptor ("main").
-    assert await pipeline._process_message(
-        InputMessage(content="do it", session=session)
-    ) is None
+    assert await pipeline._process_message(InputMessage(content="do it", session=session)) is None
     snap = await _assert_one_suspended_snapshot(turn_store, session.session_id)
     assert snap.identity.agent_id == "main"
     assert pipeline.agent.name == "ReActAgent"  # differs from snapshot agent_id
@@ -834,9 +825,7 @@ async def test_resume_isolated_by_session_id_no_cross_contamination(
     sess_b = SessionInfo.from_str("s2.main")
 
     # Session A suspends a write.
-    assert await pipeline._process_message(
-        InputMessage(content="do a", session=sess_a)
-    ) is None
+    assert await pipeline._process_message(InputMessage(content="do a", session=sess_a)) is None
     await _assert_one_suspended_snapshot(turn_store, sess_a.session_id)
 
     # Session B approves (different session_id) — must not touch A's snapshot.
@@ -871,9 +860,10 @@ async def test_webui_approval_decision_not_persisted_as_empty_user_message(
     session = SessionInfo.from_str("s1.main")
 
     # turn 1: dangerous write -> suspend
-    assert await pipeline._process_message(
-        InputMessage(content="write secrets", session=session)
-    ) is None
+    assert (
+        await pipeline._process_message(InputMessage(content="write secrets", session=session))
+        is None
+    )
     await _assert_one_suspended_snapshot(turn_store, session.session_id)
 
     # turn 2: webui approve (content="" — the decision rides on approval_decision)
@@ -892,15 +882,12 @@ async def test_webui_approval_decision_not_persisted_as_empty_user_message(
     empty_users = [
         m
         for m in history
-        if m.get("role") == str(MessageRole.USER)
-        and not (m.get("content") or "").strip()
+        if m.get("role") == str(MessageRole.USER) and not (m.get("content") or "").strip()
     ]
     assert empty_users == [], f"approval decision leaked as empty user message: {history}"
     # The original user request is preserved (resume saves the restored turn).
     user_contents = [
-        (m.get("content") or "")
-        for m in history
-        if m.get("role") == str(MessageRole.USER)
+        (m.get("content") or "") for m in history if m.get("role") == str(MessageRole.USER)
     ]
     assert any("write secrets" in c for c in user_contents), (
         f"original user request missing from history: {user_contents}"
@@ -958,9 +945,10 @@ async def test_resume_with_file_turn_store_feeds_llm_well_formed_history(
     session = SessionInfo.from_str("s1.main")
 
     # Step 1: dangerous tool call -> suspend (snapshot persisted to JSON file).
-    assert await pipeline._process_message(
-        InputMessage(content="write secrets", session=session)
-    ) is None
+    assert (
+        await pipeline._process_message(InputMessage(content="write secrets", session=session))
+        is None
+    )
     await _assert_one_suspended_snapshot(turn_store, session.session_id)  # type: ignore[arg-type]
 
     # Step 2: approval -> resume. Validating provider asserts well-formed history.
@@ -1036,9 +1024,10 @@ async def test_resume_with_production_memory_cm_feeds_llm_well_formed_history(
     )
     session = SessionInfo.from_str("s1.main")
 
-    assert await pipeline._process_message(
-        InputMessage(content="write secrets", session=session)
-    ) is None
+    assert (
+        await pipeline._process_message(InputMessage(content="write secrets", session=session))
+        is None
+    )
     await _assert_one_suspended_snapshot(turn_store, session.session_id)
 
     resume_result = await pipeline._process_message(

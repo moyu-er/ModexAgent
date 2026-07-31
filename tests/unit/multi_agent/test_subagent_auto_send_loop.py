@@ -1,4 +1,5 @@
 """SubagentAutoSendHook must classify loop_detected as incomplete."""
+
 from modex_agent.hook.builtin.subagent_auto_send import SubagentAutoSendHook
 
 

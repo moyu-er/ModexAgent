@@ -104,7 +104,9 @@ async def _make_pool_and_bus(
     return pool, bus, poller, instance
 
 
-def _envelope(content: str = "test", mtype: str = AgentMessageType.AGENT_MESSAGE) -> AgentMessageEnvelope:
+def _envelope(
+    content: str = "test", mtype: str = AgentMessageType.AGENT_MESSAGE
+) -> AgentMessageEnvelope:
     return AgentMessageEnvelope(
         payload={"content": content, "message_type": mtype},
         source=AgentAddress(name="src"),

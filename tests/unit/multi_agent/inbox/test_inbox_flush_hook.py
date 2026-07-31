@@ -21,7 +21,9 @@ class TestInboxFlushHook:
 
         await server.receive(
             "s1",
-            InboxMessage(session_id="s1", source="helper", content="done", message_type="agent_message"),
+            InboxMessage(
+                session_id="s1", source="helper", content="done", message_type="agent_message"
+            ),
         )
 
         history = ListMessageHistory([])
@@ -77,7 +79,9 @@ class TestInboxFlushHook:
 
         await server.receive(
             "s1",
-            InboxMessage(session_id="s1", source="helper", content="iter", message_type="agent_message"),
+            InboxMessage(
+                session_id="s1", source="helper", content="iter", message_type="agent_message"
+            ),
         )
 
         history = ListMessageHistory([])
@@ -98,7 +102,11 @@ class TestInboxFlushHook:
         await server.receive(
             "s1",
             InboxMessage(
-                session_id="s1", source="helper", content="once", message_type="agent_message", message_id="m1"
+                session_id="s1",
+                source="helper",
+                content="once",
+                message_type="agent_message",
+                message_id="m1",
             ),
         )
 

@@ -109,9 +109,7 @@ class TestLocalFileInboxServer:
     async def test_receive_new_message(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             server = LocalFileInboxServer(workspace=Path(tmpdir))
-            msg = InboxMessage(
-                session_id="s1", source="a", content="hello", message_type="test"
-            )
+            msg = InboxMessage(session_id="s1", source="a", content="hello", message_type="test")
             assert await server.receive("s1", msg) is True
             assert await server.count("s1") == 1
 

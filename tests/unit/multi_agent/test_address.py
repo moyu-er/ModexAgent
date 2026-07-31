@@ -8,7 +8,9 @@ from modex_agent.multi_agent.address import AgentAddress
 
 class TestAgentAddress:
     def test_inherits_address(self) -> None:
-        addr = AgentAddress(kind="agent", name="coder", role="developer", capabilities=["python", "code_review"])
+        addr = AgentAddress(
+            kind="agent", name="coder", role="developer", capabilities=["python", "code_review"]
+        )
         assert addr.kind == "agent"
         assert addr.name == "coder"
         assert addr.role == "developer"

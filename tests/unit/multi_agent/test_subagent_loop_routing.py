@@ -1,4 +1,5 @@
 """Subagent loop_detected result must be routed to the parent inbox."""
+
 from __future__ import annotations
 
 import re

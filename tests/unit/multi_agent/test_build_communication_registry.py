@@ -13,6 +13,7 @@ reply) AND on_subagent_created was never called (webui tree not folded).
 This test drives the PRODUCTION helper (_build_communication) — the existing
 e2e bypasses it by building the service manually with session_registry set.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -65,7 +66,9 @@ def _descriptor(name: str, comm_kind: AgentCommKind) -> AgentDescriptor:
     )
 
 
-async def _make_pool(tmp_path: Path) -> tuple[AgentPool, LocalAgentMessageBus, InMemorySessionRegistry]:
+async def _make_pool(
+    tmp_path: Path,
+) -> tuple[AgentPool, LocalAgentMessageBus, InMemorySessionRegistry]:
     broker = InMemoryMessageBroker()
     await broker.start()
     server = InMemoryInboxServer()
@@ -84,7 +87,9 @@ async def _make_pool(tmp_path: Path) -> tuple[AgentPool, LocalAgentMessageBus, I
     )
     # Register a NORMAL main agent + a SUBAGENT helper so _resolve_target finds
     # helper as a registered subagent (no template needed).
-    await pool.register_resident(_descriptor("main", AgentCommKind.NORMAL), MagicMock(pipeline=MagicMock()))
+    await pool.register_resident(
+        _descriptor("main", AgentCommKind.NORMAL), MagicMock(pipeline=MagicMock())
+    )
     helper_inst = MagicMock()
     helper_inst.descriptor = _descriptor("helper", AgentCommKind.SUBAGENT)
     await pool.register_resident(_descriptor("helper", AgentCommKind.SUBAGENT), helper_inst)
@@ -189,7 +194,10 @@ async def test_build_communication_restores_subagent_output_path(tmp_path):
     # send_async's ack must explain what each artifact IS, not just give paths:
     # trace = live, runtime-observable execution log; output = final deliverable.
     ack = await service.send_async(
-        target=_tgt("helper", AgentCommKind.SUBAGENT), content="more", invocation_id="", context=ctx,
+        target=_tgt("helper", AgentCommKind.SUBAGENT),
+        content="more",
+        invocation_id="",
+        context=ctx,
     )
     assert "Trace" in ack and "live execution log" in ack
     assert "spans.jsonl" in ack

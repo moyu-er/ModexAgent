@@ -237,10 +237,17 @@ class TestDeliveredIdTrackerDeprecated:
             warnings.simplefilter("always")
 
             class _Dummy(DeliveredIdTracker):
-                async def load(self, session_id): return set()
-                async def save(self, session_id, ids): pass
-                async def add(self, session_id, message_id): pass
-                async def clear(self, session_id): pass
+                async def load(self, session_id):
+                    return set()
+
+                async def save(self, session_id, ids):
+                    pass
+
+                async def add(self, session_id, message_id):
+                    pass
+
+                async def clear(self, session_id):
+                    pass
 
             _Dummy()
             assert any(issubclass(x.category, DeprecationWarning) for x in w)
@@ -256,6 +263,4 @@ class TestDeliveredIdTrackerDeprecated:
             warnings.simplefilter("always")
             with tempfile.TemporaryDirectory() as t:
                 FileDeliveredIdTracker(Path(t))
-            assert not any(
-                issubclass(x.category, DeprecationWarning) for x in w
-            )
+            assert not any(issubclass(x.category, DeprecationWarning) for x in w)

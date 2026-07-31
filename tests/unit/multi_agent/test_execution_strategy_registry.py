@@ -162,7 +162,7 @@ def test_strategy_assembly_optional_defaults() -> None:
         communication_service=MagicMock(),
         target_store=MagicMock(),
     )
-    # React-only (None for external_coding)
+    # React-only (None for external)
     assert assembly.provider is None
     assert assembly.tool_manager is None
     assert assembly.skill_manager is None

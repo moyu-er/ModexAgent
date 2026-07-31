@@ -1,4 +1,5 @@
 """Tests for AgentPool dispatch behavior."""
+
 from __future__ import annotations
 
 import asyncio
@@ -62,6 +63,7 @@ class TestRunDispatch:
         and the agent state transitioned to ERROR.
         After fix: re-raised unchanged.
         """
+
         async def _raising_coro():
             raise GraphInterrupt(value=["test"])
 
@@ -111,7 +113,6 @@ class TestRegisterResidentTakesInstance:
         assert pool.get_status("main") == AgentState.IDLE
         # Verify instance was stored (no consumer task — _consumers dict is deleted)
 
-
     async def test_track_session_registers_correct_session_id(self):
         """Regression: _track_session called factory.create with
         external_id=session_id (a full '{prefix}.{agent}' string), causing
@@ -144,6 +145,7 @@ class TestRegisterResidentTakesInstance:
         # The fire-and-forget registration will be scheduled; we need to let
         # it run before checking.
         import asyncio
+
         await asyncio.sleep(0.05)
 
         assert registry.register.call_count == 1
@@ -423,8 +425,8 @@ class TestSubmitInputAndPollerHelpers:
     async def test_submit_input_preserves_payload_and_routes_to_inbox(self, pool_with_bus):
         """C2: submit_input must write a full BrokerInputPayload to external_input.
 
- approval_decision + attachments_resolved + sender_id + chat_id must survive
-        the bus round-trip (webui approvals + ADR-0013 mechanism-B depend on it).
+        approval_decision + attachments_resolved + sender_id + chat_id must survive
+               the bus round-trip (webui approvals + ADR-0013 mechanism-B depend on it).
         """
         pool = pool_with_bus
         msg, sid = self._build_input_message()
@@ -509,5 +511,3 @@ class TestSubmitInputAndPollerHelpers:
         """dispatch_envelope is the renamed public _run_inbox_turn (C4/C5)."""
         assert hasattr(AgentPool, "dispatch_envelope")
         assert not hasattr(AgentPool, "_run_inbox_turn")
-
-
