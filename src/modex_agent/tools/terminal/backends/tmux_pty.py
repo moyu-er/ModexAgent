@@ -82,6 +82,7 @@ class TmuxPtyBackend(TerminalBackend):
     platform = Platform.LINUX
 
     def __init__(self, *, visibility: TerminalVisibility = TerminalVisibility.HIDDEN) -> None:
+        super().__init__()
         try:
             import libtmux
         except ImportError as e:
@@ -116,7 +117,8 @@ class TmuxPtyBackend(TerminalBackend):
         loop = asyncio.get_running_loop()
 
         def _create_session():
-            self._server.set_option("history-limit", 5000)
+            with contextlib.suppress(Exception):
+                self._server.set_option("history-limit", 5000)
             return self._server.new_session(
                 session_name=self._session_name,
                 attach=False,
