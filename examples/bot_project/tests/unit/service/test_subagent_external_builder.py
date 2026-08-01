@@ -45,7 +45,7 @@ from modex_agent.agents.external.env_builder import ExternalEnvBuilder
 from modex_agent.agents.external.os_layer import (
     register_signal_handlers,
 )
-from modex_agent.agents.external.paths import ExternalPaths, ProviderKind
+from modex_agent.agents.external.paths import ProviderKind
 from modex_agent.agents.external.providers.opencode.v2_parser import (
     OpenCodeV2EventParser,
 )
@@ -248,9 +248,6 @@ async def test_build_hook_runner_carries_subagent_auto_send_with_external_strate
     assert hook._execution_strategy is ExecutionStrategyKind.EXTERNAL
     assert hook._self_name == "coder"
     assert hook._parent_name == "main"
-    # T7: external_outbox_path must point at <workdir>/.modex/external/outbox.jsonl
-    expected_outbox = tmp_path / ".modex" / "external" / "outbox.jsonl"
-    assert hook._external_outbox_path == expected_outbox
 
 
 @pytest.mark.asyncio
@@ -473,41 +470,6 @@ async def test_build_opencode_provider_kind_uses_opencode_parser(
     )
 
     assert isinstance(_external_agent(instance)._parser, OpenCodeV2EventParser)
-
-
-@pytest.mark.asyncio
-async def test_build_outbox_path_matches_external_paths_layout(
-    tmp_path: Path,
-) -> None:
-    """``external_outbox_path`` matches ``ExternalPaths(workdir).outbox``."""
-    builder = BotSubagentExternalBuilder(
-        pool_name="default",
-        project_dir=tmp_path,
-        data_dir=tmp_path / ".modex",
-    )
-    spec = _make_subagent_spec()
-    descriptor = _make_descriptor()
-    deps = _make_deps(
-        broker=MagicMock(),
-        agent_bus=MagicMock(),
-        project_dir=tmp_path,
-    )
-
-    instance = await builder.build(
-        spec=spec,
-        descriptor=descriptor,
-        parent_session="inv123.main",
-        invocation_id="inv123",
-        deps=deps,
-    )
-
-    hook_runner = _external_turn_runner(instance)._hook_runner
-    auto_send_specs = [
-        s for s in hook_runner.hook_specs if isinstance(s.hook, SubagentAutoSendHook)
-    ]
-    hook: SubagentAutoSendHook = auto_send_specs[0].hook
-    expected = ExternalPaths(tmp_path).outbox
-    assert hook._external_outbox_path == expected
 
 
 # Emitter factory injection for external subagents is owned by

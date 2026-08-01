@@ -500,7 +500,6 @@ class TestSubagentAutoSendHookExternalBranch:
             parent_name="main",
             runtime_dir=runtime_dir,
             execution_strategy=ExecutionStrategyKind.EXTERNAL,
-            external_outbox_path=outbox_path,
         )
 
     def _write_outbox(self, outbox_path: Path, entries: list[str]) -> None:
@@ -510,11 +509,11 @@ class TestSubagentAutoSendHookExternalBranch:
             encoding="utf-8",
         )
 
-    async def test_external_replied_true_when_outbox_has_entries(
+    async def test_external_omits_replied_element(
         self,
         tmp_path: Path,
     ):
-        """EXTERNAL branch with non-empty outbox → <replied>true."""
+        """EXTERNAL branch: <replied> is omitted (replied tracking disabled)."""
         runtime_dir = tmp_path / "runtime"
         outbox = tmp_path / "workdir" / ".modex" / "external" / "outbox.jsonl"
         self._write_outbox(
@@ -531,47 +530,10 @@ class TestSubagentAutoSendHookExternalBranch:
 
         xml = (await bus.consume("conv123.main"))[0].payload["content"]
         assert "<subagent_result>" in xml
-        assert _extract_xml_field(xml, "replied") == "true"
-
-    async def test_external_replied_false_when_outbox_empty(
-        self,
-        tmp_path: Path,
-    ):
-        """EXTERNAL branch with empty outbox file → <replied>false."""
-        runtime_dir = tmp_path / "runtime"
-        outbox = tmp_path / "workdir" / ".modex" / "external" / "outbox.jsonl"
-        self._write_outbox(outbox, [])
-
-        bus = _make_bus(tmp_path)
-        hook = self._make_external_hook(bus, runtime_dir, outbox)
-        ctx = _make_context("abc12345.pi_worker")
-        result = AgentResult(content="done", stop_reason=StopReason.COMPLETED)
-
-        await hook.finally_turn(ctx, result)
-
-        xml = (await bus.consume("conv123.main"))[0].payload["content"]
-        assert _extract_xml_field(xml, "replied") == "false"
-
-    async def test_external_replied_false_when_outbox_missing(
-        self,
-        tmp_path: Path,
-    ):
-        """EXTERNAL branch with no outbox file → <replied>false."""
-        runtime_dir = tmp_path / "runtime"
-        outbox = tmp_path / "workdir" / ".modex" / "external" / "outbox.jsonl"
-
-        bus = _make_bus(tmp_path)
-        hook = self._make_external_hook(bus, runtime_dir, outbox)
-        ctx = _make_context("abc12345.pi_worker")
-        result = AgentResult(content="done", stop_reason=StopReason.COMPLETED)
-
-        await hook.finally_turn(ctx, result)
-
-        xml = (await bus.consume("conv123.main"))[0].payload["content"]
-        assert _extract_xml_field(xml, "replied") == "false"
+        assert "<replied>" not in xml
 
     async def test_external_omits_native_artifacts(self, tmp_path: Path):
-        """EXTERNAL branch: no <trace>/<output>/<output_status> tags."""
+        """EXTERNAL branch: no <trace>/<output>/<output_status>/<replied> tags."""
         runtime_dir = tmp_path / "runtime"
         outbox = tmp_path / "workdir" / ".modex" / "external" / "outbox.jsonl"
         self._write_outbox(
@@ -587,7 +549,7 @@ class TestSubagentAutoSendHookExternalBranch:
         await hook.finally_turn(ctx, result)
 
         xml = (await bus.consume("conv123.main"))[0].payload["content"]
-        assert "<replied>" in xml
+        assert "<replied>" not in xml
         assert "<trace>" not in xml
         assert "<output>" not in xml
         assert "<output_status>" not in xml
@@ -616,7 +578,7 @@ class TestSubagentAutoSendHookExternalBranch:
         assert "<issue>" not in xml
 
     async def test_external_completed_no_replied_still_success(self, tmp_path: Path):
-        """EXTERNAL branch: empty outbox but completed → still success=true."""
+        """EXTERNAL branch: completed → still success=true, <replied> omitted."""
         runtime_dir = tmp_path / "runtime"
         outbox = tmp_path / "workdir" / ".modex" / "external" / "outbox.jsonl"
         self._write_outbox(outbox, [])
@@ -630,7 +592,7 @@ class TestSubagentAutoSendHookExternalBranch:
 
         xml = (await bus.consume("conv123.main"))[0].payload["content"]
         assert _extract_xml_field(xml, "success") == "true"
-        assert _extract_xml_field(xml, "replied") == "false"
+        assert "<replied>" not in xml
         assert "<issue>" not in xml
 
     async def test_external_error_propagates_issue(self, tmp_path: Path):
@@ -682,8 +644,8 @@ class TestSubagentAutoSendHookExternalBranch:
         assert _extract_xml_field(xml, "success") == "true"
         assert "<issue>" not in xml
 
-    async def test_external_no_outbox_path_replied_false(self, tmp_path: Path):
-        """EXTERNAL branch with external_outbox_path=None → <replied>false."""
+    async def test_external_no_outbox_path_omits_replied(self, tmp_path: Path):
+        """EXTERNAL branch: <replied> omitted (replied tracking not implemented)."""
         runtime_dir = tmp_path / "runtime"
         bus = _make_bus(tmp_path)
         hook = SubagentAutoSendHook(
@@ -692,7 +654,6 @@ class TestSubagentAutoSendHookExternalBranch:
             parent_name="main",
             runtime_dir=runtime_dir,
             execution_strategy=ExecutionStrategyKind.EXTERNAL,
-            external_outbox_path=None,
         )
         ctx = _make_context("abc12345.pi_worker")
         result = AgentResult(content="done", stop_reason=StopReason.COMPLETED)
@@ -700,7 +661,7 @@ class TestSubagentAutoSendHookExternalBranch:
         await hook.finally_turn(ctx, result)
 
         xml = (await bus.consume("conv123.main"))[0].payload["content"]
-        assert _extract_xml_field(xml, "replied") == "false"
+        assert "<replied>" not in xml
         assert "<trace>" not in xml
         assert "<output_status>" not in xml
 

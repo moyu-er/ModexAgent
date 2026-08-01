@@ -51,11 +51,12 @@ import os
 import uuid
 from abc import abstractmethod
 from collections.abc import Awaitable, Callable, Iterator
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
-from modex_agent.core.agent import Agent, AgentContext, current_agent_context
+from modex_agent.core.agent import Agent, AgentCommKind, AgentContext, current_agent_context
 from modex_agent.core.constants import StopReason
 from modex_agent.core.emitter import AgentResult, ContentEmitter
 from modex_agent.core.turn_events import (
@@ -92,6 +93,33 @@ class _EmissionAccumulator:
     def __init__(self) -> None:
         self.text: list[str] = []
         self.tool_names: dict[str, str] = {}
+
+
+@dataclass
+class _TurnEmissionContext:
+    """Per-turn emission routing state.
+
+    Created in ``_run_turn``, captured by the ``on_emission`` closure,
+    and passed to ``_handle_emission``. This replaces the old instance
+    variables (``self._current_modex_sid`` etc.) which were shared
+    across concurrent turns on the same ExternalAgent instance —
+    a crossover bug when multiple sessions share one pool.
+
+    The same ExternalAgent instance serves all sessions in its pool.
+    With instance variables, session B's ``_run_turn`` overwrites
+    ``self._current_modex_sid`` while session A's turn is still
+    running, causing A's child discovery to register children under
+    B's session ID. This dataclass is per-turn (one per ``_run_turn``
+    call), captured by the closure, so each turn sees its own values.
+    """
+
+    modex_sid: str
+    paths: ExternalPaths
+    spec: ExternalEnvSpec
+    child_sid_to_modex_sid: dict[str, str] = field(default_factory=dict)
+    child_emitters: dict[str, ContentEmitter[ExternalEvent]] = field(default_factory=dict)
+    child_accumulators: dict[str, _EmissionAccumulator] = field(default_factory=dict)
+    pending_child_tasks: set[asyncio.Task[str]] = field(default_factory=set)
 
 
 # W3C traceparent propagation: inject into child subprocess env so the
@@ -173,6 +201,30 @@ def _otel_invoke_agent_span(provider_kind: str) -> Iterator[Any]:
         },
     ) as span:
         yield span
+
+
+_CHILD_AGENT_NAME = "external-subagent"
+
+
+def write_env_snapshot_for_session(
+    paths: ExternalPaths, env: dict[str, str], provider_session_id: str
+) -> None:
+    """Write ``env-snapshots/<provider_session_id>.json``.
+
+    The single convergence point for per-provider-session env snapshot
+    files. Called by ``OpenCodeServerBackend.execute_streaming`` (main
+    session, after session-id resolution, before ``prompt_async_v1``) and
+    by ``ExternalAgent._write_child_env_snapshot`` (child session, on
+    discovery). modexctl reads the file matching the
+    ``OPENCODE_SESSION_ID`` injected by the shell.env plugin.
+    """
+    snapshot = {k: v for k, v in env.items() if k.startswith("MODEX_") or k == "PATH"}
+    snapshot_dir = paths.env_snapshots_dir
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    paths.env_snapshot_for_session(provider_session_id).write_text(
+        json.dumps(snapshot, indent=2, sort_keys=True, ensure_ascii=False),
+        encoding="utf-8",
+    )
 
 
 __all__ = [
@@ -364,21 +416,10 @@ class ExternalAgent(Agent[ExternalEvent]):
         self._timeout = timeout
         self._stopped = False
         self._stop_task: asyncio.Task[None] | None = None
-        # Child session discovery collaborators (all optional — None means
-        # no child capture, behavior unchanged). Discovery is driven
-        # entirely in _handle_emission; no backend callback or
-        # execute_streaming signature change.
         self._child_discovery_sink = child_discovery_sink
         self._session_registry = session_registry
         self._session_id_factory = session_id_factory
         self._child_emitter_factory = child_emitter_factory
-        # Per-turn child routing state — reinitialized at the top of each
-        # _run_turn and cleared in the finally block. Never cross-turn.
-        self._current_modex_sid: str | None = None
-        self._child_sid_to_modex_sid: dict[str, str] = {}
-        self._child_emitters: dict[str, ContentEmitter[ExternalEvent]] = {}
-        self._child_accumulators: dict[str, _EmissionAccumulator] = {}
-        self._pending_child_tasks: set[asyncio.Task[str]] = set()
 
     def set_child_emitter_factory(
         self,
@@ -449,7 +490,6 @@ class ExternalAgent(Agent[ExternalEvent]):
         emitter: ContentEmitter[ExternalEvent],
     ) -> AgentResult:
         modex_sid = self._modex_session_id(ctx)
-        self._current_modex_sid = modex_sid
 
         if is_workspace_root_bound():
             current_workdir = resolve_workspace_root()
@@ -468,14 +508,6 @@ class ExternalAgent(Agent[ExternalEvent]):
 
         self._ensure_runtime_block(paths)
 
-        # Clear the outbox so <replied> reflects only THIS turn's sends.
-        # SubagentAutoSendHook reads outbox.jsonl at FINALLY_TURN to set
-        # <replied>; without clearing, a reply from a prior turn would
-        # produce a false positive.
-        outbox = paths.outbox
-        if outbox.exists():
-            outbox.write_text("", encoding="utf-8")
-
         prompt = await self._extract_prompt(ctx)
         opts = ExecOptions(
             prompt=prompt,
@@ -487,16 +519,11 @@ class ExternalAgent(Agent[ExternalEvent]):
             timeout=self._timeout,
         )
 
-        # Per-turn child routing state — fresh containers each turn.
-        self._child_sid_to_modex_sid = {}
-        self._child_emitters = {}
-        self._child_accumulators = {}
-        self._pending_child_tasks = set()
-
+        turn_ctx = _TurnEmissionContext(modex_sid=modex_sid, paths=paths, spec=spec)
         accumulator = _EmissionAccumulator()
 
         async def on_emission(emission: Emission) -> None:
-            await self._handle_emission(emission, emitter, accumulator)
+            await self._handle_emission(emission, emitter, accumulator, turn_ctx)
 
         # Borrow a backend for this turn. PoolScopedBackendProvider returns
         # the same instance every turn (both main-agent and subagent paths).
@@ -520,23 +547,15 @@ class ExternalAgent(Agent[ExternalEvent]):
             turn_failed = True
             raise
         finally:
-            # Await pending child discovery side-effects so registration
-            # completes within the turn boundary. Tasks that already
-            # completed were discarded from the set by add_done_callback;
-            # remaining tasks are gathered here with return_exceptions
-            # so a failing side-effect does not mask the turn result.
-            if self._pending_child_tasks:
-                results = await asyncio.gather(*self._pending_child_tasks, return_exceptions=True)
+            if turn_ctx.pending_child_tasks:
+                results = await asyncio.gather(*turn_ctx.pending_child_tasks, return_exceptions=True)
                 for r in results:
                     if isinstance(r, BaseException):
                         logger.warning("Child discovery side-effect failed: %s", r)
-            # ContentEmitter ABC defines no close/aclose — clearing the
-            # dict drops references; underlying resources are owned
-            # elsewhere (backend, output adapter).
-            self._child_emitters.clear()
-            self._child_sid_to_modex_sid.clear()
-            self._child_accumulators.clear()
-            self._pending_child_tasks.clear()
+            turn_ctx.child_emitters.clear()
+            turn_ctx.child_sid_to_modex_sid.clear()
+            turn_ctx.child_accumulators.clear()
+            turn_ctx.pending_child_tasks.clear()
             await self._backend_provider.release(backend, turn_failed=turn_failed)
 
     async def _execute_with_retry(
@@ -580,6 +599,7 @@ class ExternalAgent(Agent[ExternalEvent]):
         emission: Emission,
         emitter: ContentEmitter[ExternalEvent],
         accumulator: _EmissionAccumulator,
+        turn_ctx: _TurnEmissionContext,
     ) -> None:
         """Route one parsed emission through the emitter and text buffer.
 
@@ -590,14 +610,13 @@ class ExternalAgent(Agent[ExternalEvent]):
         The async registration side-effect fires as a tracked background
         task gathered in ``_run_turn``'s finally block.
 
-        The whole typed ``Emission`` is forwarded as the event payload so
-        the WebUI projection (and any emitter) reads typed fields rather
-        than loose dicts. ERROR is emitted exactly once via
-        ``emit_error``.
+        Per-turn state (modex_sid, child maps, emitters) is passed via
+        ``turn_ctx`` — NOT read from ``self`` — so concurrent turns on
+        the same ExternalAgent instance cannot crossover.
         """
         provider_child_sid = emission.source_session_id
         if provider_child_sid is not None:
-            child_modex_sid = self._child_sid_to_modex_sid.get(provider_child_sid)
+            child_modex_sid = turn_ctx.child_sid_to_modex_sid.get(provider_child_sid)
             if child_modex_sid is None:
                 if self._child_discovery_sink is None or self._child_emitter_factory is None:
                     logger.warning(
@@ -606,24 +625,26 @@ class ExternalAgent(Agent[ExternalEvent]):
                         provider_child_sid,
                     )
                     return
-                # Steps 1-3 are sync so the first child emission is
-                # routed in the same call — no await race window.
                 child_modex_sid = self._child_discovery_sink.resolve_child_modex_session_id(
                     provider_child_sid
                 )
-                self._child_sid_to_modex_sid[provider_child_sid] = child_modex_sid
-                self._child_emitters[child_modex_sid] = self._child_emitter_factory(child_modex_sid)
-                # Step 4: async fire-and-forget. The task reference is
-                # retained so it is not GC'd mid-flight; _run_turn's
-                # finally block gathers remaining tasks.
-                parent_sid = self._current_modex_sid or ""
+                turn_ctx.child_sid_to_modex_sid[provider_child_sid] = child_modex_sid
+                turn_ctx.child_emitters[child_modex_sid] = self._child_emitter_factory(child_modex_sid)
+                parent_sid = turn_ctx.modex_sid
                 task = asyncio.create_task(
                     self._child_discovery_sink.on_child_discovered(provider_child_sid, parent_sid)
                 )
-                self._pending_child_tasks.add(task)
-                task.add_done_callback(self._pending_child_tasks.discard)
-            target_emitter = self._child_emitters[child_modex_sid]
-            target_accumulator = self._child_accumulators.setdefault(
+                turn_ctx.pending_child_tasks.add(task)
+                task.add_done_callback(turn_ctx.pending_child_tasks.discard)
+                self._write_child_env_snapshot(
+                    turn_ctx.paths,
+                    turn_ctx.spec,
+                    provider_child_sid,
+                    child_modex_sid,
+                    parent_sid,
+                )
+            target_emitter = turn_ctx.child_emitters[child_modex_sid]
+            target_accumulator = turn_ctx.child_accumulators.setdefault(
                 child_modex_sid, _EmissionAccumulator()
             )
         else:
@@ -707,6 +728,35 @@ class ExternalAgent(Agent[ExternalEvent]):
             json.dumps(snapshot, indent=2, sort_keys=True, ensure_ascii=False),
             encoding="utf-8",
         )
+
+    def _write_child_env_snapshot(
+        self,
+        paths: ExternalPaths,
+        parent_spec: ExternalEnvSpec,
+        provider_child_sid: str,
+        child_modex_sid: str,
+        parent_modex_sid: str,
+    ) -> None:
+        """Write a per-provider-session env snapshot for a discovered child.
+
+        The child spec mirrors the parent's workspace / inbox / workdir /
+        pool-map / targets / modexctl paths, but overrides session_id,
+        provider_session_id, agent_name, comm_kind, and parent_session_id
+        for the child identity. ``comm_kind=SUBAGENT`` triggers
+        ``MODEX_PARENT_SESSION_ID`` injection so modexctl routes child
+        sends to the parent verbatim.
+        """
+        child_spec = parent_spec.model_copy(
+            update={
+                "session_id": child_modex_sid,
+                "provider_session_id": provider_child_sid,
+                "agent_name": _CHILD_AGENT_NAME,
+                "comm_kind": AgentCommKind.SUBAGENT,
+                "parent_session_id": parent_modex_sid,
+            }
+        )
+        child_env = ExternalEnvBuilder.build(child_spec, self._base_env)
+        write_env_snapshot_for_session(paths, child_env, provider_child_sid)
 
     def _ensure_runtime_block(self, paths: ExternalPaths) -> None:
         agents_md = paths.agents_md

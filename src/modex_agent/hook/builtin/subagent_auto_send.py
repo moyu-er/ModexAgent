@@ -112,7 +112,6 @@ class SubagentAutoSendHook(FinallyTurnHook):
         runtime_dir: Path | None = None,
         trace_enabled: bool = True,
         execution_strategy: ExecutionStrategyKind = ExecutionStrategyKind.REACT,
-        external_outbox_path: Path | None = None,
         max_result_chars: int = DEFAULT_MAX_RESULT_CHARS,
     ) -> None:
         self._agent_bus = agent_bus
@@ -121,7 +120,6 @@ class SubagentAutoSendHook(FinallyTurnHook):
         self._runtime_dir = runtime_dir or Path(".")
         self._trace_enabled = trace_enabled
         self._execution_strategy = execution_strategy
-        self._external_outbox_path = external_outbox_path
         self._max_result_chars = max_result_chars
 
     # -- FINALLY_TURN (always fires) ------------------------------------------
@@ -187,7 +185,12 @@ class SubagentAutoSendHook(FinallyTurnHook):
             is_external=True,
             output_status=None,
         )
-        replied = self._check_replied()
+        # replied is None — the <replied> element is omitted from the XML.
+        # A correct per-session send-tracking mechanism (e.g. modexctl
+        # writing a .sent marker after successful fetch_send) does not
+        # exist yet. The parent agent judges the outcome solely on
+        # <success>, <result>, and <issue>.
+        replied: bool | None = None
 
         return self._build_xml(
             agent_name=self._self_name,
@@ -458,23 +461,6 @@ class SubagentAutoSendHook(FinallyTurnHook):
             )
 
     # -- content helpers ------------------------------------------------------
-
-    def _check_replied(self) -> bool:
-        """Return True if the external subagent emitted any modexctl send.
-
-        Simplified for T7: checks whether outbox.jsonl has any content at all.
-        Turn-window filtering (entries timestamped within the current turn's
-        start/end window) requires BEFORE_TURN dispatch, which T3 did not add
-        to ExternalTurnRunner; it can be layered in as a future refinement
-        without changing this method's signature.
-        """
-        if self._external_outbox_path is None:
-            return False
-        try:
-            content = self._external_outbox_path.read_text(encoding="utf-8").strip()
-            return bool(content)
-        except OSError:
-            return False
 
     @classmethod
     def _truncate_content(cls, content: str, max_chars: int = DEFAULT_MAX_RESULT_CHARS) -> str:

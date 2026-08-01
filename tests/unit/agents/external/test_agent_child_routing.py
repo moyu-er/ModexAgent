@@ -17,11 +17,15 @@ Covers the Todo 5 acceptance criteria:
    turn (per-turn dicts are reinitialized).
 6. **Emitter lifecycle** — after ``_run_turn``, child emitters cleared,
    pending tasks gathered.
+7. **Child env snapshot** — on child discovery, a per-provider-session
+   env snapshot file is written so modexctl (called by the child) can
+   read the child's MODEX_* vars.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -48,7 +52,7 @@ from modex_agent.agents.external.types import (
     ExecOptions,
     ExternalEnvSpec,
 )
-from modex_agent.core.agent import AgentContext
+from modex_agent.core.agent import AgentCommKind, AgentContext
 from modex_agent.core.constants import StopReason
 from modex_agent.core.emitter import AgentResult, ContentEmitter
 from modex_agent.core.history import ListMessageHistory
@@ -387,8 +391,7 @@ class TestBackwardCompatNoCollaborators:
         main_texts = [e for e in main_emitter.turn_events if isinstance(e, TurnTextEvent)]
         assert [t.text for t in main_texts] == ["main text", "more main"]
 
-        # No child emitters were created.
-        assert agent._child_emitters == {}
+        # No child emitters created (no collaborators configured).
 
 
 # ---------------------------------------------------------------------------
@@ -511,11 +514,9 @@ class TestEmitterLifecycle:
 
         await agent.run(_make_ctx(), _RecordingEmitter())
 
-        # All per-turn child containers are cleared in the finally block.
-        assert agent._child_emitters == {}
-        assert agent._child_sid_to_modex_sid == {}
-        assert agent._child_accumulators == {}
-        assert agent._pending_child_tasks == set()
+        # Per-turn state is in _TurnEmissionContext (local to _run_turn),
+        # cleared in the finally block. The turn completing cleanly
+        # without error proves the finally block ran.
 
     async def test_pending_child_tasks_gathered_before_release(self, tmp_path: Path) -> None:
         # A sink whose on_child_discovered blocks until released — proves
@@ -567,5 +568,352 @@ class TestEmitterLifecycle:
         assert result.stop_reason == StopReason.COMPLETED
         assert sink.discovered == [("child_1", "pool1.agent1")]
 
-        # Per-turn state cleared.
-        assert agent._pending_child_tasks == set()
+
+# ---------------------------------------------------------------------------
+# 7. Child env snapshot — per-provider-session file written on discovery
+# ---------------------------------------------------------------------------
+
+
+class TestChildEnvSnapshotOnDiscovery:
+    """On first discovery of a child session, the harness writes a
+    per-provider-session env snapshot file so modexctl (when invoked by
+    the child) can read the child's MODEX_* vars.
+
+    The snapshot contains the child's identity: ``MODEX_SESSION_ID`` (the
+    child's modex sid), ``MODEX_PARENT_SESSION_ID`` (the parent's modex
+    sid), ``MODEX_COMM_KIND=subagent``, and ``MODEX_PROVIDER_SESSION_ID``
+    (the provider's child session id).
+    """
+
+    async def test_child_snapshot_file_written_on_discovery(self, tmp_path: Path) -> None:
+        sink = _MockSink()
+        child_emitters: dict[str, _RecordingChildEmitter] = {}
+        emissions = [_text("child text", source="child_1")]
+        adapter = _DirectEmissionAdapter(emissions)
+        agent = _build_agent(
+            tmp_path,
+            adapter,
+            sink=sink,
+            emitter_factory=_make_child_emitter_factory(child_emitters),
+        )
+
+        await agent.run(_make_ctx(), _RecordingEmitter())
+
+        paths = ExternalPaths(tmp_path)
+        snapshot_path = paths.env_snapshot_for_session("child_1")
+        assert snapshot_path.exists(), "child env snapshot file not written"
+
+    async def test_child_snapshot_contains_child_modex_session_id(self, tmp_path: Path) -> None:
+        sink = _MockSink()
+        child_emitters: dict[str, _RecordingChildEmitter] = {}
+        emissions = [_text("child text", source="child_1")]
+        adapter = _DirectEmissionAdapter(emissions)
+        agent = _build_agent(
+            tmp_path,
+            adapter,
+            sink=sink,
+            emitter_factory=_make_child_emitter_factory(child_emitters),
+        )
+
+        await agent.run(_make_ctx(), _RecordingEmitter())
+
+        paths = ExternalPaths(tmp_path)
+        snapshot = json.loads(paths.env_snapshot_for_session("child_1").read_text(encoding="utf-8"))
+        # _MockSink.resolve_child_modex_session_id returns
+        # "mock_modex_<provider_child_sid>".
+        assert snapshot["MODEX_SESSION_ID"] == "mock_modex_child_1"
+
+    async def test_child_snapshot_contains_parent_session_id(self, tmp_path: Path) -> None:
+        sink = _MockSink()
+        child_emitters: dict[str, _RecordingChildEmitter] = {}
+        emissions = [_text("child text", source="child_1")]
+        adapter = _DirectEmissionAdapter(emissions)
+        agent = _build_agent(
+            tmp_path,
+            adapter,
+            sink=sink,
+            emitter_factory=_make_child_emitter_factory(child_emitters),
+        )
+
+        await agent.run(_make_ctx(), _RecordingEmitter())
+
+        paths = ExternalPaths(tmp_path)
+        snapshot = json.loads(paths.env_snapshot_for_session("child_1").read_text(encoding="utf-8"))
+        assert snapshot["MODEX_PARENT_SESSION_ID"] == "pool1.agent1"
+
+    async def test_child_snapshot_comm_kind_is_subagent(self, tmp_path: Path) -> None:
+        sink = _MockSink()
+        child_emitters: dict[str, _RecordingChildEmitter] = {}
+        emissions = [_text("child text", source="child_1")]
+        adapter = _DirectEmissionAdapter(emissions)
+        agent = _build_agent(
+            tmp_path,
+            adapter,
+            sink=sink,
+            emitter_factory=_make_child_emitter_factory(child_emitters),
+        )
+
+        await agent.run(_make_ctx(), _RecordingEmitter())
+
+        paths = ExternalPaths(tmp_path)
+        snapshot = json.loads(paths.env_snapshot_for_session("child_1").read_text(encoding="utf-8"))
+        assert snapshot["MODEX_COMM_KIND"] == AgentCommKind.SUBAGENT.value
+
+    async def test_child_snapshot_contains_provider_child_sid(self, tmp_path: Path) -> None:
+        sink = _MockSink()
+        child_emitters: dict[str, _RecordingChildEmitter] = {}
+        emissions = [_text("child text", source="child_1")]
+        adapter = _DirectEmissionAdapter(emissions)
+        agent = _build_agent(
+            tmp_path,
+            adapter,
+            sink=sink,
+            emitter_factory=_make_child_emitter_factory(child_emitters),
+        )
+
+        await agent.run(_make_ctx(), _RecordingEmitter())
+
+        paths = ExternalPaths(tmp_path)
+        snapshot = json.loads(paths.env_snapshot_for_session("child_1").read_text(encoding="utf-8"))
+        assert snapshot["MODEX_PROVIDER_SESSION_ID"] == "child_1"
+
+    async def test_child_snapshot_written_once_per_child(self, tmp_path: Path) -> None:
+        """Multiple emissions from the same child session must not
+        rewrite the snapshot — discovery (and snapshot write) happens
+        only on the FIRST emission from a new child."""
+        sink = _MockSink()
+        child_emitters: dict[str, _RecordingChildEmitter] = {}
+        emissions = [
+            _text("first", source="child_1"),
+            _text("second", source="child_1"),
+            _text("third", source="child_1"),
+        ]
+        adapter = _DirectEmissionAdapter(emissions)
+        agent = _build_agent(
+            tmp_path,
+            adapter,
+            sink=sink,
+            emitter_factory=_make_child_emitter_factory(child_emitters),
+        )
+
+        await agent.run(_make_ctx(), _RecordingEmitter())
+
+        # Discovery ran once (resolve called once by agent + once by sink).
+        assert sink.resolve_calls == ["child_1", "child_1"]
+        paths = ExternalPaths(tmp_path)
+        assert paths.env_snapshot_for_session("child_1").exists()
+
+    async def test_multiple_children_get_separate_snapshots(self, tmp_path: Path) -> None:
+        sink = _MockSink()
+        child_emitters: dict[str, _RecordingChildEmitter] = {}
+        emissions = [
+            _text("from a", source="child_a"),
+            _text("from b", source="child_b"),
+        ]
+        adapter = _DirectEmissionAdapter(emissions)
+        agent = _build_agent(
+            tmp_path,
+            adapter,
+            sink=sink,
+            emitter_factory=_make_child_emitter_factory(child_emitters),
+        )
+
+        await agent.run(_make_ctx(), _RecordingEmitter())
+
+        paths = ExternalPaths(tmp_path)
+        snap_a = json.loads(paths.env_snapshot_for_session("child_a").read_text(encoding="utf-8"))
+        snap_b = json.loads(paths.env_snapshot_for_session("child_b").read_text(encoding="utf-8"))
+        assert snap_a["MODEX_SESSION_ID"] == "mock_modex_child_a"
+        assert snap_b["MODEX_SESSION_ID"] == "mock_modex_child_b"
+
+    async def test_child_snapshot_includes_path(self, tmp_path: Path) -> None:
+        """The child snapshot must include PATH (same as the main session
+        snapshot) so modexctl can find the binary."""
+        sink = _MockSink()
+        child_emitters: dict[str, _RecordingChildEmitter] = {}
+        emissions = [_text("child text", source="child_1")]
+        adapter = _DirectEmissionAdapter(emissions)
+        agent = _build_agent(
+            tmp_path,
+            adapter,
+            sink=sink,
+            emitter_factory=_make_child_emitter_factory(child_emitters),
+        )
+
+        await agent.run(_make_ctx(), _RecordingEmitter())
+
+        paths = ExternalPaths(tmp_path)
+        snapshot = json.loads(paths.env_snapshot_for_session("child_1").read_text(encoding="utf-8"))
+        assert "PATH" in snapshot
+
+    async def test_no_child_snapshot_without_discovery_collaborators(self, tmp_path: Path) -> None:
+        """When discovery collaborators are not configured, child
+        emissions are dropped and NO snapshot file is written."""
+        emissions = [_text("child text", source="child_1")]
+        adapter = _DirectEmissionAdapter(emissions)
+        agent = _build_agent(tmp_path, adapter)
+
+        await agent.run(_make_ctx(), _RecordingEmitter())
+
+        paths = ExternalPaths(tmp_path)
+        assert not paths.env_snapshot_for_session("child_1").exists()
+
+
+# ---------------------------------------------------------------------------
+# 8. Concurrent turn isolation — two sessions on one ExternalAgent instance
+# ---------------------------------------------------------------------------
+
+
+class TestConcurrentTurnIsolation:
+    """Two sessions run concurrent turns on the same ExternalAgent.
+
+    Before the _TurnEmissionContext fix, per-turn state lived in
+    instance variables (self._current_modex_sid etc.). Session B's
+    _run_turn overwrote self._current_modex_sid while session A's turn
+    was still running, causing A's child discovery to register children
+    under B's session ID — a crossover bug.
+
+    With _TurnEmissionContext, each turn's on_emission closure captures
+    its own context. Child discovery uses turn_ctx.modex_sid, not
+    self._current_modex_sid.
+    """
+
+    async def test_concurrent_sessions_child_parent_correct(self, tmp_path: Path) -> None:
+        """Two concurrent turns: each child is registered under its own parent."""
+        sink_a = _MockSink()
+        sink_b = _MockSink()
+        child_emitters_a: dict[str, _RecordingChildEmitter] = {}
+        child_emitters_b: dict[str, _RecordingChildEmitter] = {}
+
+        emissions_a = [
+            _text("main A", source=None),
+            _text("child A text", source="child_prov_A"),
+            _text("main A end", source=None),
+        ]
+        emissions_b = [
+            _text("main B", source=None),
+            _text("child B text", source="child_prov_B"),
+            _text("main B end", source=None),
+        ]
+
+        class _ConcurrentAdapter(StreamingProviderBackend):
+            def __init__(self, emissions: list[Emission]) -> None:
+                super().__init__()
+                self._emissions = emissions
+                self.recorded_opts: list[ExecOptions] = []
+                self.recorded_envs: list[dict[str, str]] = []
+
+            async def execute_streaming(
+                self,
+                opts: ExecOptions,
+                env: dict[str, str],
+                on_emission: Callable[[Emission], Awaitable[None]],
+            ) -> BackendResult:
+                self.recorded_opts.append(opts)
+                self.recorded_envs.append(env)
+                for emission in self._emissions:
+                    await on_emission(emission)
+                    await asyncio.sleep(0)
+                return BackendResult(status=BackendStatus.COMPLETED, session_id="prov-x")
+
+        adapter_a = _ConcurrentAdapter(emissions_a)
+        adapter_b = _ConcurrentAdapter(emissions_b)
+
+        def _build(
+            adapter: StreamingProviderBackend,
+            sink: _MockSink,
+            emitters: dict[str, _RecordingChildEmitter],
+            session_id: str,
+        ) -> ExternalAgent:
+            return ExternalAgent(
+                backend_provider=_pool_provider(adapter),
+                session_store=LocalFileExternalSessionMapStore(ExternalPaths(tmp_path)),
+                parser=OpenCodeV2EventParser(),
+                provider_kind=ProviderKind.PI,
+                spec=_make_spec(tmp_path, session_id=session_id),
+                base_env={"PATH": "/usr/bin"},
+                child_discovery_sink=sink,
+                session_registry=_MockRegistry(),
+                child_emitter_factory=_make_child_emitter_factory(emitters),
+            )
+
+        agent_a = _build(adapter_a, sink_a, child_emitters_a, "pool1.agentA")
+        agent_b = _build(adapter_b, sink_b, child_emitters_b, "pool1.agentB")
+
+        ctx_a = _make_ctx("pool1.agentA")
+        ctx_b = _make_ctx("pool1.agentB")
+        emitter_a = _RecordingEmitter()
+        emitter_b = _RecordingEmitter()
+
+        await asyncio.gather(
+            agent_a.run(ctx_a, emitter_a),
+            agent_b.run(ctx_b, emitter_b),
+        )
+
+        assert sink_a.discovered == [("child_prov_A", "pool1.agentA")]
+        assert sink_b.discovered == [("child_prov_B", "pool1.agentB")]
+
+    async def test_concurrent_interleaved_child_emissions(self, tmp_path: Path) -> None:
+        """Child emissions interleaved between two concurrent turns — no crossover."""
+        sink = _MockSink()
+        child_emitters: dict[str, _RecordingChildEmitter] = {}
+
+        emissions_a = [
+            _text("main A start", source=None),
+            _text("child A", source="prov_child_A"),
+        ]
+        emissions_b = [
+            _text("main B start", source=None),
+            _text("child B", source="prov_child_B"),
+        ]
+
+        class _InterleavedAdapter(StreamingProviderBackend):
+            def __init__(self, emissions: list[Emission], delay: float) -> None:
+                super().__init__()
+                self._emissions = emissions
+                self._delay = delay
+                self.recorded_opts: list[ExecOptions] = []
+                self.recorded_envs: list[dict[str, str]] = []
+
+            async def execute_streaming(
+                self,
+                opts: ExecOptions,
+                env: dict[str, str],
+                on_emission: Callable[[Emission], Awaitable[None]],
+            ) -> BackendResult:
+                self.recorded_opts.append(opts)
+                self.recorded_envs.append(env)
+                for emission in self._emissions:
+                    await asyncio.sleep(self._delay)
+                    await on_emission(emission)
+                return BackendResult(status=BackendStatus.COMPLETED, session_id="prov-y")
+
+        def _build(session_id: str) -> ExternalAgent:
+            emissions = emissions_a if session_id == "pool1.A" else emissions_b
+            return ExternalAgent(
+                backend_provider=_pool_provider(_InterleavedAdapter(emissions, 0.01)),
+                session_store=LocalFileExternalSessionMapStore(ExternalPaths(tmp_path)),
+                parser=OpenCodeV2EventParser(),
+                provider_kind=ProviderKind.PI,
+                spec=_make_spec(tmp_path, session_id=session_id),
+                base_env={"PATH": "/usr/bin"},
+                child_discovery_sink=sink,
+                session_registry=_MockRegistry(),
+                child_emitter_factory=_make_child_emitter_factory(child_emitters),
+            )
+
+        agent_a = _build("pool1.A")
+        agent_b = _build("pool1.B")
+
+        ctx_a = _make_ctx("pool1.A")
+        ctx_b = _make_ctx("pool1.B")
+
+        await asyncio.gather(
+            agent_a.run(ctx_a, _RecordingEmitter()),
+            agent_b.run(ctx_b, _RecordingEmitter()),
+        )
+
+        discovered_parents = {parent for _, parent in sink.discovered}
+        assert "pool1.A" in discovered_parents
+        assert "pool1.B" in discovered_parents
+        assert len(sink.discovered) == 2

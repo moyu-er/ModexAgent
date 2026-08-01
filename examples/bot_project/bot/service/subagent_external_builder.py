@@ -51,7 +51,7 @@ from modex_agent.agents.external.builder import ExternalAgentBuilder
 from modex_agent.agents.external.cli_resolver import resolve_modexctl_bin_dir
 from modex_agent.agents.external.contracts import ProviderEventParser
 from modex_agent.agents.external.os_layer import register_signal_handlers
-from modex_agent.agents.external.paths import ExternalPaths, ProviderKind
+from modex_agent.agents.external.paths import ProviderKind
 from modex_agent.agents.external.providers.opencode.server_backend import (
     OpenCodeServerBackend,
 )
@@ -257,7 +257,6 @@ class BotSubagentExternalBuilder(SubagentExternalBuilder):
 
         # ── 6. HookRunner carrying SubagentAutoSendHook (T7) ─────────────
         runtime_dir = self._resolve_runtime_dir(deps)
-        outbox_path = ExternalPaths(workspace_dir).outbox
         hook_runner = HookRunner()
         hook_runner.add(
             HookSpec(
@@ -268,7 +267,6 @@ class BotSubagentExternalBuilder(SubagentExternalBuilder):
                     runtime_dir=runtime_dir or Path("."),
                     trace_enabled=False,
                     execution_strategy=ExecutionStrategyKind.EXTERNAL,
-                    external_outbox_path=outbox_path,
                 ),
                 on_error=HookErrorPolicy.LOG,
             )
