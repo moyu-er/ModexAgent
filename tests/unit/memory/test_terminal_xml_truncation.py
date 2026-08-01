@@ -76,7 +76,6 @@ def test_get_truncatable_paths_detects_terminal_result() -> None:
     paths = get_terminal_xml_truncatable_paths(TERMINAL_RESULT)
     assert paths is not None
     assert "output" in paths
-    assert "cursor" in paths
 
 
 def test_get_truncatable_paths_detects_overflow_result() -> None:

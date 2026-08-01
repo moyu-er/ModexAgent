@@ -9,6 +9,7 @@ import contextvars
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Generic
 
 from typing_extensions import TypeVar
@@ -99,6 +100,13 @@ class AgentContext:
     Hooks and agents that need workspace-scoped data (e.g. the experience dir)
     read it from here. None when no workspace manager is wired, in which case
     consumers fall back to their own defaults.
+    """
+
+    workspace: Path | None = None
+    """Working directory for the current turn, from ``InputMessage.workspace``.
+
+    Carried so inter-agent communication strategies can propagate it in the
+    envelope payload. ``None`` when no workspace is bound.
     """
 
     current_input: str | None = None

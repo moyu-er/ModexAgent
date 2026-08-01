@@ -259,6 +259,7 @@ class AgentPool(AgentRegistry):
             if message.approval_decision is not None
             else None,
             attachments_resolved=[a.to_dict() for a in message.attachments_resolved],
+            workspace=str(message.workspace) if message.workspace is not None else None,
             message_type=AgentMessageType.EXTERNAL_INPUT,  # extra field, allowed by extra="allow"
         )
         payload: dict[str, Any] = payload_model.model_dump(exclude_none=True)

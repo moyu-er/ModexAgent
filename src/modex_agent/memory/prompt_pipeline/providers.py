@@ -18,7 +18,11 @@ from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.agent import AgentCommKind
 from modex_agent.core.capabilities import Modality, ModelInfo
-from modex_agent.core.constants import AgentRole
+from modex_agent.core.constants import (
+    AgentRole,
+    _NO_DIR_SENTINEL,
+    format_working_directory_line,
+)
 from modex_agent.core.prompt import SystemPromptProvider
 from modex_agent.core.scope import MemoryContext
 from modex_agent.core.session_id import SessionInfo, session_id_prefix_of
@@ -326,10 +330,23 @@ class AgentCommunicationSystemPromptProvider(SystemPromptProvider):
 
 
 class RuntimeProvider(SystemPromptProvider):
-    """Runtime metadata — current date/hour and platform. Refreshes hourly."""
+    """Runtime metadata for the current turn — date/hour, platform, and working directory.
+
+    The working directory is upstream-injected from ``InputMessage.workspace``;
+    when absent, the directory section is omitted entirely. The version key
+    includes a directory hash so the prompt cache refreshes on workspace change.
+    """
+
+    def __init__(self, working_directory: Path | None = None) -> None:
+        super().__init__()
+        self._working_directory = working_directory
 
     async def _fetch_version(self) -> str:
-        return datetime.now(get_user_timezone()).strftime("%Y-%m-%d-%H")
+        hour = datetime.now(get_user_timezone()).strftime("%Y-%m-%d-%H")
+        if self._working_directory is None:
+            return f"{hour}:{_NO_DIR_SENTINEL}"
+        directory_version = hashlib.md5(str(self._working_directory).encode()).hexdigest()[:16]
+        return f"{hour}:{directory_version}"
 
     async def _fetch_content(self) -> str:
         current_time = datetime.now(get_user_timezone()).strftime("%Y-%m-%d %Hh")
@@ -344,6 +361,9 @@ class RuntimeProvider(SystemPromptProvider):
             f"Current Time: {current_time} (hour precision, not exact)",
             f"Platform: {platform_name}",
         ]
+        dir_line = format_working_directory_line(self._working_directory)
+        if dir_line is not None:
+            lines.append(dir_line)
         return "\n".join(lines)
 
 

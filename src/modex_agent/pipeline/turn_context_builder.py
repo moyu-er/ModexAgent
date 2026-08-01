@@ -415,6 +415,7 @@ class TurnContextBuilder:
         input_metadata: dict[str, Any] | None = None,
         pool_data: PoolDataSnapshot | None = None,
         inline_attachments: Sequence[Attachment] | None = None,
+        workspace: Path | None = None,
     ) -> tuple[AgentContext, ContentEmitter]:
         """Build AgentContext and emitter for the turn.
 
@@ -457,6 +458,7 @@ class TurnContextBuilder:
         # the resolved workspace's stores (e.g. experience dir). None when
         # no workspace manager is wired.
         agent_context.workspace_snapshot = pool_data
+        agent_context.workspace = workspace
 
         # ---- governance (pending injection, etc.) — unconditional ----
         base_services = self._runtime_services

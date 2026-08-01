@@ -1,14 +1,15 @@
 """Tests for individual SystemPromptProvider implementations."""
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
 from modex_agent.memory.prompt_pipeline.providers import (
     BasePromptProvider,
-    ExperienceProvider,
     CoreMemoryProvider,
+    ExperienceProvider,
     RuntimeProvider,
     SkillProvider,
 )
@@ -48,6 +49,7 @@ async def test_runtime_contains_date_and_platform():
     result = await provider.get_or_refresh()
     assert "Current Time:" in result
     assert "Platform:" in result
+    assert "Working Directory:" not in result
 
 
 @pytest.mark.asyncio
@@ -55,7 +57,41 @@ async def test_runtime_version_changes_hourly():
     provider = RuntimeProvider()
     await provider.get_or_refresh()
     assert provider.last_version is not None
-    assert len(provider.last_version) == 13  # YYYY-MM-DD-HH
+    assert provider.last_version.endswith(":no-dir")
+
+
+@pytest.mark.asyncio
+async def test_runtime_includes_upstream_working_directory():
+    ws = Path("D:/projects/demo")
+    provider = RuntimeProvider(working_directory=ws)
+
+    result = await provider.get_or_refresh()
+
+    assert f"Working Directory: {ws}" in result
+    assert "workspace" not in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_runtime_versions_are_isolated_by_working_directory():
+    first = RuntimeProvider(working_directory=Path("D:/projects/one"))
+    second = RuntimeProvider(working_directory=Path("D:/projects/two"))
+
+    await first.get_or_refresh()
+    await second.get_or_refresh()
+
+    assert first.last_version != second.last_version
+
+
+@pytest.mark.asyncio
+async def test_runtime_without_working_directory_does_not_reuse_previous_value():
+    with_directory = RuntimeProvider(working_directory=Path("D:/projects/one"))
+    without_directory = RuntimeProvider()
+
+    await with_directory.get_or_refresh()
+    result = await without_directory.get_or_refresh()
+
+    assert "Working Directory:" in (await with_directory.get_or_refresh())
+    assert "Working Directory:" not in result
 
 
 # -- SkillProvider --

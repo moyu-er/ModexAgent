@@ -246,6 +246,7 @@ class PoolRouter:
                 chat_id=msg.chat_id,
                 approval_decision=msg.approval_decision,
                 attachments_resolved=msg.attachments_resolved,
+                workspace=msg.workspace,
             ),
         )
 

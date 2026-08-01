@@ -4,6 +4,7 @@
 """
 
 from enum import Enum, StrEnum
+from pathlib import Path
 
 
 class ToolCallType(str, Enum):
@@ -178,3 +179,24 @@ class RuntimeInfoKey(StrEnum):
     TENANT_ID = "tenant_id"
     CHANNEL = "channel"
     CHAT_ID = "chat_id"
+    WORKING_DIRECTORY = "working_directory"
+
+
+# Sentinel for the RuntimeProvider version key when no working directory is bound.
+# Included in the hourly version hash so the cache correctly distinguishes
+# "no directory" from a specific directory within the same hour.
+_NO_DIR_SENTINEL: str = "no-dir"
+
+
+def format_working_directory_line(working_directory: str | Path | None) -> str | None:
+    """Format the working-directory line for the system prompt runtime section.
+
+    Returns ``None`` when *working_directory* is ``None`` so callers can skip
+    the line entirely (preserving the "omit when absent" contract).
+    """
+    if working_directory is None:
+        return None
+    return (
+        f"Working Directory: {working_directory}\n"
+        "Use this directory as the base for relative file paths and shell commands."
+    )

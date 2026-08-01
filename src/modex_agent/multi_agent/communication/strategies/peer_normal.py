@@ -56,7 +56,7 @@ class PeerNormalStrategy(SendStrategy):
             ),
         )
         return AgentMessageEnvelope(
-            payload={"content": xml_content, "message_type": AgentMessageType.AGENT_MESSAGE},
+            payload=self._envelope_payload(xml_content, AgentMessageType.AGENT_MESSAGE, req),
             source=effective_source,
             target=AgentAddress(name=req.target.name),
             message_type=AgentMessageType.AGENT_MESSAGE,

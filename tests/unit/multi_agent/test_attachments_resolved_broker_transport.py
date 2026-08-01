@@ -18,6 +18,8 @@ reconstructs it.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.types import InputMessage
 from modex_agent.media.models import Attachment, AttachmentLocator, Kind
@@ -96,3 +98,19 @@ def test_normal_message_round_trips_without_attachments() -> None:
     reconstructed = input_message_from_dispatch_envelope(envelope, session=_session())
     assert reconstructed.attachments_resolved == []
     assert reconstructed.content == "hi there"
+
+
+def test_workspace_round_trips_through_broker_transport() -> None:
+    original = InputMessage(
+        content="work here",
+        session=_session(),
+        workspace=Path("D:/projects/demo"),
+    )
+
+    broker_msg = build_input_broker_message(original, Address(kind="agent", name="main"))
+    envelope = AgentMessageEnvelope.from_broker_message(broker_msg)
+    assert envelope is not None
+
+    reconstructed = input_message_from_dispatch_envelope(envelope, session=_session())
+
+    assert reconstructed.workspace == original.workspace

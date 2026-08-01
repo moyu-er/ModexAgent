@@ -1,6 +1,5 @@
-from dataclasses import FrozenInstanceError
-
 import pytest
+from pydantic import ValidationError
 
 from modex_agent.core.constants import InterfaceFormat, ReasoningEffort
 from modex_agent.ioc.configs.llm import LLMConfig, Modality, ModelCapabilities
@@ -119,7 +118,7 @@ class TestCreateLLMProvider:
 class TestModelCapabilities:
     def test_frozen(self) -> None:
         caps = ModelCapabilities()
-        with pytest.raises(FrozenInstanceError):
+        with pytest.raises(ValidationError):
             caps.modalities = frozenset()  # type: ignore[misc]
 
     def test_default_is_text_only(self) -> None:

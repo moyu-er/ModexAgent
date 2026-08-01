@@ -91,6 +91,8 @@ async def assemble_context(
         runtime_info[RuntimeInfoKey.PARENT_SESSION_ID] = parent_sid
     if model_info is not None:
         runtime_info[RuntimeInfoKey.MODEL_INFO] = model_info
+    if input_msg.workspace is not None:
+        runtime_info[RuntimeInfoKey.WORKING_DIRECTORY] = input_msg.workspace
     context_state = await ctx_mgr.load(
         session_id,
         tool_manager=tool_manager,

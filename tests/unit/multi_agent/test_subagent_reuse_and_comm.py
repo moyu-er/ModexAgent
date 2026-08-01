@@ -420,6 +420,7 @@ async def test_send_to_agent_routes_through_agent_bus():
     ctx = SimpleNamespace(
         session=SessionIdFactory().create(agent_name="main"),
         comm_kind=AgentCommKind.NORMAL,
+        workspace=None,
     )
     await svc._send(
         target=_tgt("scout", AgentCommKind.SUBAGENT),

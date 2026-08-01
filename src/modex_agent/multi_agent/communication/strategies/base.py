@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.comm_kind import AgentCommKind
@@ -149,6 +149,13 @@ class SendStrategy(ABC):
         )
 
     # --- shared helpers ---------------------------------------------------
+
+    def _envelope_payload(self, content: str, message_type: str, req: SendRequest) -> dict[str, Any]:
+        """Build the envelope payload dict, including workspace when bound."""
+        payload: dict[str, Any] = {"content": content, "message_type": message_type}
+        if req.context.workspace is not None:
+            payload["workspace"] = str(req.context.workspace)
+        return payload
 
     def _resolve_source(self, req: SendRequest) -> AgentAddress:
         """Resolve effective source address from context, fallback to default."""

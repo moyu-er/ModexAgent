@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
 
@@ -132,6 +133,31 @@ class TestSubagentDispatchStrategy:
         assert envelope.agent_session_id == result.session_id
         assert envelope.message_type == AgentMessageType.TASK_REQUEST
         assert envelope.invocation_id == result.invocation_id
+
+    @pytest.mark.asyncio
+    async def test_workspace_propagated_in_envelope_payload(self) -> None:
+        bus = _FakeBus()
+        strategy = SubagentDispatchStrategy(_make_deps(bus=bus))
+        ws = Path("D:/projects/demo")
+        ctx = _make_context()
+        ctx.workspace = ws
+        req = SendRequest(
+            target=CommunicationTarget(name="worker", kind=AgentCommKind.SUBAGENT),
+            content="do work",
+            invocation_id=None,
+            context=ctx,
+        )
+
+        result = await strategy.execute(req)
+
+        assert result.error is None
+        _, envelope = bus.sent[0]
+        assert envelope.payload["workspace"] == str(ws)
+
+        reconstructed = envelope.to_input_message(
+            session=SessionInfo.from_str(result.session_id)
+        )
+        assert reconstructed.workspace == ws
 
     @pytest.mark.asyncio
     async def test_execute_reuses_existing_invocation_id(self) -> None:

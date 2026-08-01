@@ -187,6 +187,7 @@ class BrokerInputPayload(BaseModel):
     chat_id: str = ""
     approval_decision: dict[str, Any] | None = None
     attachments_resolved: list[dict[str, Any]] = Field(default_factory=list)
+    workspace: str | None = None
 
 
 def build_input_broker_message(msg: InputMessage, recipient: Address) -> BrokerMessage:
@@ -209,6 +210,7 @@ def build_input_broker_message(msg: InputMessage, recipient: Address) -> BrokerM
         if msg.approval_decision is not None
         else None,
         attachments_resolved=[a.to_dict() for a in msg.attachments_resolved],
+        workspace=str(msg.workspace) if msg.workspace is not None else None,
     )
     return BrokerMessage(
         payload=payload.model_dump(exclude_none=True),

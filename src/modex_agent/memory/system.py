@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from modex_agent.core.agent import AgentCommKind
-from modex_agent.core.constants import RuntimeInfoKey
+from modex_agent.core.constants import RuntimeInfoKey, format_working_directory_line
 from modex_agent.core.context import ContextManager, ContextState
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.governance import ContextGovernance
@@ -286,7 +286,11 @@ class MemorySystemContextManager(ContextManager):
 
         # 1. Runtime metadata (refreshes daily)
         if runtime_info:
-            providers.append(RuntimeProvider())
+            providers.append(
+                RuntimeProvider(
+                    working_directory=runtime_info.get(RuntimeInfoKey.WORKING_DIRECTORY)
+                )
+            )
             providers.append(
                 ModelInfoProvider(runtime_info.get(RuntimeInfoKey.MODEL_INFO))
             )
@@ -583,4 +587,8 @@ class MemorySystemContextManager(ContextManager):
             platform_raw, platform_raw
         )
         lines.append(f"Platform: {platform_name}")
+        working_directory = info.get(RuntimeInfoKey.WORKING_DIRECTORY)
+        dir_line = format_working_directory_line(working_directory)
+        if dir_line is not None:
+            lines.append(dir_line)
         return "\n".join(lines)

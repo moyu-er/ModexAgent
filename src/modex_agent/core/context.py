@@ -10,6 +10,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from modex_agent.core.constants import RuntimeInfoKey, format_working_directory_line
 from modex_agent.core.history import ListMessageHistory, MessageHistory
 from modex_agent.core.message import ChatMessage
 
@@ -236,4 +237,8 @@ class InMemoryContextManager(ContextManager):
             lines.append(f"Current Time: {info['current_time']}")
         if "platform" in info:
             lines.append(f"Platform: {info['platform']}")
+        working_directory = info.get(RuntimeInfoKey.WORKING_DIRECTORY)
+        dir_line = format_working_directory_line(working_directory)
+        if dir_line is not None:
+            lines.append(dir_line)
         return "\n".join(lines)

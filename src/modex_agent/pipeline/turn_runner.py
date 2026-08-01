@@ -527,6 +527,7 @@ class ReActTurnRunner(TurnRunner):
             input_metadata=input_metadata,
             pool_data=pool_data,
             inline_attachments=input_msg.attachments_resolved,
+            workspace=input_msg.workspace,
         )
         agent_context.current_input = sanitized_content
 
