@@ -492,7 +492,6 @@ class TestSubagentAutoSendHookExternalBranch:
         self,
         bus: LocalAgentMessageBus,
         runtime_dir: Path,
-        outbox_path: Path,
     ) -> SubagentAutoSendHook:
         return SubagentAutoSendHook(
             agent_bus=bus,
@@ -502,12 +501,6 @@ class TestSubagentAutoSendHookExternalBranch:
             execution_strategy=ExecutionStrategyKind.EXTERNAL,
         )
 
-    def _write_outbox(self, outbox_path: Path, entries: list[str]) -> None:
-        outbox_path.parent.mkdir(parents=True, exist_ok=True)
-        outbox_path.write_text(
-            "\n".join(entries) + ("\n" if entries else ""),
-            encoding="utf-8",
-        )
 
     async def test_external_omits_replied_element(
         self,
@@ -515,14 +508,9 @@ class TestSubagentAutoSendHookExternalBranch:
     ):
         """EXTERNAL branch: <replied> is omitted (replied tracking disabled)."""
         runtime_dir = tmp_path / "runtime"
-        outbox = tmp_path / "workdir" / ".modex" / "external" / "outbox.jsonl"
-        self._write_outbox(
-            outbox,
-            ['{"target":"main","content":"hi from pi"}'],
-        )
 
         bus = _make_bus(tmp_path)
-        hook = self._make_external_hook(bus, runtime_dir, outbox)
+        hook = self._make_external_hook(bus, runtime_dir)
         ctx = _make_context("abc12345.pi_worker")
         result = AgentResult(content="done", stop_reason=StopReason.COMPLETED)
 
@@ -535,14 +523,9 @@ class TestSubagentAutoSendHookExternalBranch:
     async def test_external_omits_native_artifacts(self, tmp_path: Path):
         """EXTERNAL branch: no <trace>/<output>/<output_status>/<replied> tags."""
         runtime_dir = tmp_path / "runtime"
-        outbox = tmp_path / "workdir" / ".modex" / "external" / "outbox.jsonl"
-        self._write_outbox(
-            outbox,
-            ['{"target":"main","content":"hi"}'],
-        )
 
         bus = _make_bus(tmp_path)
-        hook = self._make_external_hook(bus, runtime_dir, outbox)
+        hook = self._make_external_hook(bus, runtime_dir)
         ctx = _make_context("abc12345.pi_worker")
         result = AgentResult(content="done", stop_reason=StopReason.COMPLETED)
 
@@ -557,11 +540,9 @@ class TestSubagentAutoSendHookExternalBranch:
     async def test_external_completed_success(self, tmp_path: Path):
         """EXTERNAL branch: completed → success=true, result carries content."""
         runtime_dir = tmp_path / "runtime"
-        outbox = tmp_path / "workdir" / ".modex" / "external" / "outbox.jsonl"
-        self._write_outbox(outbox, ['{"target":"main","content":"hi"}'])
 
         bus = _make_bus(tmp_path)
-        hook = self._make_external_hook(bus, runtime_dir, outbox)
+        hook = self._make_external_hook(bus, runtime_dir)
         ctx = _make_context("abc12345.pi_worker", agent_name="pi_worker")
         result = AgentResult(
             content="Final answer.",
@@ -580,11 +561,9 @@ class TestSubagentAutoSendHookExternalBranch:
     async def test_external_completed_no_replied_still_success(self, tmp_path: Path):
         """EXTERNAL branch: completed → still success=true, <replied> omitted."""
         runtime_dir = tmp_path / "runtime"
-        outbox = tmp_path / "workdir" / ".modex" / "external" / "outbox.jsonl"
-        self._write_outbox(outbox, [])
 
         bus = _make_bus(tmp_path)
-        hook = self._make_external_hook(bus, runtime_dir, outbox)
+        hook = self._make_external_hook(bus, runtime_dir)
         ctx = _make_context("abc12345.pi_worker")
         result = AgentResult(content="done", stop_reason=StopReason.COMPLETED)
 
@@ -598,11 +577,9 @@ class TestSubagentAutoSendHookExternalBranch:
     async def test_external_error_propagates_issue(self, tmp_path: Path):
         """EXTERNAL branch error path: issue field is populated with modexctl resume hint."""
         runtime_dir = tmp_path / "runtime"
-        outbox = tmp_path / "workdir" / ".modex" / "external" / "outbox.jsonl"
-        self._write_outbox(outbox, [])
 
         bus = _make_bus(tmp_path)
-        hook = self._make_external_hook(bus, runtime_dir, outbox)
+        hook = self._make_external_hook(bus, runtime_dir)
         ctx = _make_context("abc12345.pi_worker")
         result = AgentResult(
             content="",
@@ -627,11 +604,9 @@ class TestSubagentAutoSendHookExternalBranch:
         CLI may have finished without sending a reply.  The parent decides
         based on <result> and <replied>."""
         runtime_dir = tmp_path / "runtime"
-        outbox = tmp_path / "workdir" / ".modex" / "external" / "outbox.jsonl"
-        self._write_outbox(outbox, [])
 
         bus = _make_bus(tmp_path)
-        hook = self._make_external_hook(bus, runtime_dir, outbox)
+        hook = self._make_external_hook(bus, runtime_dir)
         ctx = _make_context("abc12345.pi_worker")
         result = AgentResult(
             content="partial work",
@@ -643,27 +618,6 @@ class TestSubagentAutoSendHookExternalBranch:
         xml = (await bus.consume("conv123.main"))[0].payload["content"]
         assert _extract_xml_field(xml, "success") == "true"
         assert "<issue>" not in xml
-
-    async def test_external_no_outbox_path_omits_replied(self, tmp_path: Path):
-        """EXTERNAL branch: <replied> omitted (replied tracking not implemented)."""
-        runtime_dir = tmp_path / "runtime"
-        bus = _make_bus(tmp_path)
-        hook = SubagentAutoSendHook(
-            agent_bus=bus,
-            self_name="pi_worker",
-            parent_name="main",
-            runtime_dir=runtime_dir,
-            execution_strategy=ExecutionStrategyKind.EXTERNAL,
-        )
-        ctx = _make_context("abc12345.pi_worker")
-        result = AgentResult(content="done", stop_reason=StopReason.COMPLETED)
-
-        await hook.finally_turn(ctx, result)
-
-        xml = (await bus.consume("conv123.main"))[0].payload["content"]
-        assert "<replied>" not in xml
-        assert "<trace>" not in xml
-        assert "<output_status>" not in xml
 
     async def test_default_execution_strategy_is_react_backward_compat(
         self,

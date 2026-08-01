@@ -13,6 +13,16 @@ coupled to the path accessor (each value maps to a session-file suffix).
 from __future__ import annotations
 
 from enum import StrEnum
+
+
+def sanitize_session_id(session_id: str) -> str:
+    """Sanitize a provider session ID for use as a filename.
+
+    Replaces path separators and traversal sequences with underscores.
+    The same logic is duplicated in ``modexctl/main.py:_read_env_snapshot``
+    because modexctl is a standalone CLI that does not import the framework.
+    """
+    return session_id.replace("/", "_").replace("\\", "_").replace("..", "_")
 from pathlib import Path
 
 
@@ -67,24 +77,9 @@ class ExternalPaths:
         return self.modex_root / "external"
 
     @property
-    def outbox(self) -> Path:
-        """``<workdir>/.modex/external/outbox.jsonl`` — outbound message log."""
-        return self.external_root / "outbox.jsonl"
-
-    @property
     def inbox_snapshot(self) -> Path:
         """``<workdir>/.modex/external/inbox-snapshot.jsonl`` — last inbox read."""
         return self.external_root / "inbox-snapshot.jsonl"
-
-    @property
-    def result(self) -> Path:
-        """``<workdir>/.modex/external/result.json`` — last backend result."""
-        return self.external_root / "result.json"
-
-    @property
-    def env_snapshot(self) -> Path:
-        """``<workdir>/.modex/external/env-snapshot.json`` — last spawned env."""
-        return self.external_root / "env-snapshot.json"
 
     @property
     def env_snapshots_dir(self) -> Path:
@@ -103,9 +98,7 @@ class ExternalPaths:
         on each turn (main session) and on child discovery (subagent session).
         Read by modexctl when OPENCODE_SESSION_ID is set in the env.
         """
-        # Sanitize: only allow filename-safe characters (opencode session IDs
-        # are alphanumeric + dashes, but guard against path traversal)
-        safe_sid = provider_session_id.replace("/", "_").replace("\\", "_").replace("..", "_")
+        safe_sid = sanitize_session_id(provider_session_id)
         return self.env_snapshots_dir / f"{safe_sid}.json"
 
     @property

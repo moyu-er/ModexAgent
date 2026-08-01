@@ -48,8 +48,8 @@ def _parse_inbox_timestamp(value: object) -> datetime:
     """Parse a ``pending.jsonl`` timestamp into a timezone-aware datetime.
 
     T9 switched :class:`LocalFileInboxMQ`'s own writes to int ms, but the
-    ``modexctl send`` CLI (via :class:`OutboxLine`) still serialises
-    ``timestamp`` as an ISO-8601 string until a follow-up ticket aligns it.
+    ``modexctl send`` CLI still serialises ``timestamp`` as an ISO-8601
+    string until a follow-up ticket aligns it.
     The reader therefore accepts both representations.
     """
     if isinstance(value, int):

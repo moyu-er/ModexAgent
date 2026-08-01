@@ -9,10 +9,6 @@ fields typed as BaseModel).
 The single non-Pydantic access path in the integration is
 ``ExternalPaths`` (see ``paths.py``), which is a process-local path
 accessor and intentionally not a value object.
-
-The byte-exact ``OutboxLine`` shape matches what
-``LocalFileInboxServer.receive()`` writes to ``pending.jsonl`` so
-``modexctl send`` can be a second writer into the same on-disk format.
 """
 
 from __future__ import annotations
@@ -21,7 +17,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer
+from pydantic import BaseModel, ConfigDict, Field
 
 from modex_agent.core.agent import AgentCommKind
 
@@ -204,60 +200,6 @@ class ExternalEnvSpec(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Outbox line — byte-identical to LocalFileInboxServer.receive() output
-# ---------------------------------------------------------------------------
-
-
-class OutboxMetadata(BaseModel):
-    """The ``metadata`` field of one ``OutboxLine``.
-
-    Carries the bookkeeping ``LocalFileInboxServer._session_id_from_text``
-    relies on to recover the original ``session_id`` during
-    ``sessions_with_pending`` scans (namely ``agent_session_id``).
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    agent_session_id: str = Field(
-        description="Original (un-encoded) session_id used by _session_id_from_text."
-    )
-    session_id: str = Field(description="Sender session_id (the modexbot caller).")
-    invocation_id: str | None = None
-    parent_session_id: str | None = None
-
-
-class OutboxLine(BaseModel):
-    """A single JSONL line written to ``pending.jsonl`` by ``modexctl send``.
-
-    Field order and content match ``LocalFileInboxServer.receive()``'s
-    serialiser exactly: ``message_id``, ``source``, ``content``,
-    ``message_type``, ``timestamp`` (ISO-8601 string), ``metadata``.
-    ``model_dump_json()`` is therefore byte-identical to what
-    ``receive()`` writes, modulo the values themselves.
-
-    The ``timestamp`` field serialises through ``datetime.isoformat()``
-    (matching the existing inbox serialiser) rather than Pydantic's
-    default ``Z``-format so UTC offsets render as ``+00:00``.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    message_id: str
-    source: str
-    content: str
-    message_type: str
-    timestamp: datetime
-    metadata: OutboxMetadata
-
-    @field_serializer("timestamp")
-    def _serialize_timestamp(self, value: datetime) -> str:
-        # Match ``LocalFileInboxServer.receive()``'s
-        # ``message.timestamp.isoformat()`` byte-for-byte so consumers
-        # can re-parse with ``datetime.fromisoformat()`` unchanged.
-        return value.isoformat()
-
-
-# ---------------------------------------------------------------------------
 # Emission (per line) — discriminated union by event
 # ---------------------------------------------------------------------------
 
@@ -304,7 +246,5 @@ __all__ = [
     "BackendResult",
     "SessionMapEntry",
     "ExternalEnvSpec",
-    "OutboxMetadata",
-    "OutboxLine",
     "Emission",
 ]

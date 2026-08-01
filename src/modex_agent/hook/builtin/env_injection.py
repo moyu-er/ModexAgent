@@ -15,9 +15,7 @@ Per ADR-0022 D6, no other site constructs ``MODEX_*`` vars — this hook calls
 
 from __future__ import annotations
 
-import os
-
-from modex_agent.agents.external.env_builder import ExternalEnvBuilder
+from modex_agent.agents.external.env_builder import ExternalEnvBuilder, join_modexctl_path
 from modex_agent.agents.external.types import ExternalEnvSpec
 from modex_agent.core.agent import AgentCommKind, AgentContext
 from modex_agent.hook.abc import BeforeTurnHook
@@ -82,11 +80,7 @@ class NativeEnvInjectionHook(BeforeTurnHook):
         # PATH here (modexctl_bin_dir + build_full_env's PATH with bundled_bin
         # + registry merge) so nothing is lost.
         base_path = build_full_env().get("PATH", "")
-        modex_vars["PATH"] = (
-            str(spec.modexctl_bin_dir) + os.pathsep + base_path
-            if base_path
-            else str(spec.modexctl_bin_dir)
-        )
+        modex_vars["PATH"] = join_modexctl_path(spec.modexctl_bin_dir, base_path)
 
         _modex_env.set(modex_vars)
         _current_session_id.set(ctx.session.session_id)

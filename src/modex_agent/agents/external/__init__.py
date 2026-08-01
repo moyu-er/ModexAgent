@@ -34,8 +34,6 @@ from .types import (
     Emission,
     ExecOptions,
     ExternalEnvSpec,
-    OutboxLine,
-    OutboxMetadata,
     SessionMapEntry,
 )
 
@@ -62,9 +60,6 @@ __all__ = [
     "ExternalSessionMapStore",
     "LocalFileExternalSessionMapStore",
     "SessionMapEntry",
-    # Outbox (inbox-line shape)
-    "OutboxMetadata",
-    "OutboxLine",
     # Per-line emission
     "Emission",
     # Subagent materialize seam (T5)

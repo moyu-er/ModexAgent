@@ -47,10 +47,7 @@ class TestExternalPaths:
     @pytest.mark.parametrize(
         "name,expected_suffix",
         [
-            ("outbox", "outbox.jsonl"),
             ("inbox_snapshot", "inbox-snapshot.jsonl"),
-            ("result", "result.json"),
-            ("env_snapshot", "env-snapshot.json"),
         ],
     )
     def test_named_paths_anchor_under_external_root(
@@ -89,10 +86,7 @@ class TestExternalPaths:
         for p in [
             paths.modex_root,
             paths.external_root,
-            paths.outbox,
             paths.inbox_snapshot,
-            paths.result,
-            paths.env_snapshot,
             paths.agents_md,
             paths.session_map(),
         ]:

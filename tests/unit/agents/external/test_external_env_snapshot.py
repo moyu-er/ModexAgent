@@ -198,16 +198,6 @@ class TestWriteEnvSnapshotForSession:
         snapshot = json.loads(paths.env_snapshot_for_session("prov-1").read_text(encoding="utf-8"))
         assert snapshot["MODEX_SESSION_ID"] == "conv.v2"
 
-    def test_does_not_write_legacy_env_snapshot(self, tmp_path: Path) -> None:
-        """The per-session writer must NOT touch the legacy
-        ``env-snapshot.json`` — that file is owned by ``_snapshot_env``."""
-        paths = ExternalPaths(tmp_path)
-        env = _build_env(tmp_path)
-
-        write_env_snapshot_for_session(paths, env, "prov-1")
-
-        assert not paths.env_snapshot.exists()
-
     def test_json_is_sorted_and_indented(self, tmp_path: Path) -> None:
         """The snapshot file is human-readable (sorted keys, indent=2)."""
         paths = ExternalPaths(tmp_path)

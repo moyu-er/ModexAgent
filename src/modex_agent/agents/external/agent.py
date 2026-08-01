@@ -504,7 +504,6 @@ class ExternalAgent(Agent[ExternalEvent]):
         resume_session_id = provider_sid if is_resume else None
 
         env = ExternalEnvBuilder.build(spec, self._base_env)
-        self._snapshot_env(paths, env)
 
         self._ensure_runtime_block(paths)
 
@@ -713,21 +712,6 @@ class ExternalAgent(Agent[ExternalEvent]):
         if ctx.current_input:
             return ctx.current_input
         return ""
-
-    def _snapshot_env(self, paths: ExternalPaths, env: dict[str, str]) -> None:
-        """Write the ``MODEX_*`` keys + ``PATH`` to ``env-snapshot.json``.
-
-        Only the harness-managed keys are persisted — the full
-        ``base_env`` (which may be ``os.environ`` and carry secrets) is
-        never written to disk. The 8 ``MODEX_*`` vars plus the recreated
-        ``PATH`` form the observable record tests assert against.
-        """
-        snapshot = {k: v for k, v in env.items() if k.startswith("MODEX_") or k == "PATH"}
-        paths.external_root.mkdir(parents=True, exist_ok=True)
-        paths.env_snapshot.write_text(
-            json.dumps(snapshot, indent=2, sort_keys=True, ensure_ascii=False),
-            encoding="utf-8",
-        )
 
     def _write_child_env_snapshot(
         self,

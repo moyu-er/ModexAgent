@@ -21,8 +21,7 @@ with five star-topology adjustments mandated by ADR-0027:
    into the parent's pool) so ``modexctl send --to <parent>`` can resolve
    the target pool.
 3. **HookRunner**: carries :class:`SubagentAutoSendHook` (T7) with
-   ``execution_strategy=EXTERNAL`` and the per-workdir
-   ``external_outbox_path``. ``ExternalTurnRunner`` dispatches
+   ``execution_strategy=EXTERNAL``. ``ExternalTurnRunner`` dispatches
    ``FINALLY_TURN`` so the hook fires on every turn end.
 4. **No ``send_to_agent`` tool**: external subagents have no tool surface;
    they reply via ``modexctl send`` to the parent's inbox. Star topology is

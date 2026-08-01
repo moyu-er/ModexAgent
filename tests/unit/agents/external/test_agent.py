@@ -55,8 +55,6 @@ from modex_agent.agents.external.types import (
     Emission,
     ExecOptions,
     ExternalEnvSpec,
-    OutboxLine,
-    OutboxMetadata,
 )
 from modex_agent.core.agent import AgentContext, current_agent_context
 from modex_agent.core.constants import StopReason
@@ -393,11 +391,6 @@ class TestExternalAgentFullTurn:
             assert key in recorded_env, f"missing {key}"
         assert "PATH" in recorded_env
         assert str(spec.modexctl_bin_dir) in recorded_env["PATH"]
-
-        # env-snapshot.json also carries the MODEX_* subset.
-        snapshot = json.loads(paths.env_snapshot.read_text(encoding="utf-8"))
-        for key in _MODEX_ENV_KEYS:
-            assert key in snapshot
 
         # Session committed for resume.
         provider_sid, is_resume = store.resolve(str(ctx.session))
@@ -816,20 +809,21 @@ class TestOutboundSendViaRouting:
                 source=spec.agent_name,
                 content="hello from agent1",
             )
-            line = OutboxLine(
-                message_id="test-id",
-                source=spec.agent_name,
-                content=xml_content,
-                message_type=AgentMessageType.AGENT_MESSAGE.value,
-                timestamp=datetime.now(UTC),
-                metadata=OutboxMetadata(
-                    agent_session_id="pool1.helper",
-                    session_id=spec.session_id,
-                    invocation_id="pool1",
-                    parent_session_id=None,
-                ),
-            )
-            built.append(line.model_dump_json())
+            import json as _json
+            line_dict = {
+                "message_id": "test-id",
+                "source": spec.agent_name,
+                "content": xml_content,
+                "message_type": AgentMessageType.AGENT_MESSAGE.value,
+                "timestamp": datetime.now(UTC).isoformat(),
+                "metadata": {
+                    "agent_session_id": "pool1.helper",
+                    "session_id": spec.session_id,
+                    "invocation_id": "pool1",
+                    "parent_session_id": None,
+                },
+            }
+            built.append(_json.dumps(line_dict))
 
         steps = (
             _pi_text_step("sending a message"),

@@ -37,6 +37,19 @@ def _format_targets(targets: list[tuple[str, str]]) -> str:
     return ";".join(f"{name}={description}" for name, description in targets)
 
 
+def join_modexctl_path(modexctl_bin_dir: Path, base_path: str) -> str:
+    """Prepend ``modexctl_bin_dir`` to ``base_path`` with the OS path separator.
+
+    Returns just ``modexctl_bin_dir`` if ``base_path`` is empty.
+    Shared by ``ExternalEnvBuilder.build`` (external spawn) and
+    ``NativeEnvInjectionHook`` (native contextvar) — the single
+    PATH-join idiom.
+    """
+    if base_path:
+        return str(modexctl_bin_dir) + os.pathsep + base_path
+    return str(modexctl_bin_dir)
+
+
 class ExternalEnvBuilder:
     """Static builder for the per-spawn ``MODEX_*`` env dict.
 
@@ -104,11 +117,7 @@ class ExternalEnvBuilder:
         modex = ExternalEnvBuilder.build_modex_vars(spec)
 
         base_path = base_env.get("PATH", "")
-        new_path = (
-            str(spec.modexctl_bin_dir) + os.pathsep + base_path
-            if base_path
-            else str(spec.modexctl_bin_dir)
-        )
+        new_path = join_modexctl_path(spec.modexctl_bin_dir, base_path)
 
         merged: dict[str, str] = dict(base_env)
         merged.update(modex)

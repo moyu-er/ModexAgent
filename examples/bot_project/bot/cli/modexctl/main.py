@@ -148,7 +148,10 @@ def _read_env_snapshot(opencode_sid: str) -> dict[str, str] | None:
     .modex/external/env-snapshots/ is relative to CWD.
 
     Returns None if the file doesn't exist or can't be parsed. Path traversal
-    is guarded by sanitizing the sid (replacing /, \\, ..).
+    is guarded by sanitizing the sid (replacing /, \\, ..). The same
+    sanitization logic exists in ``modex_agent.agents.external.paths.
+    sanitize_session_id`` — modexctl duplicates it because it is a standalone
+    CLI that does not import the framework.
     """
     safe_sid = opencode_sid.replace("/", "_").replace("\\", "_").replace("..", "_")
     snapshot_path = Path.cwd() / ".modex" / "external" / "env-snapshots" / f"{safe_sid}.json"
