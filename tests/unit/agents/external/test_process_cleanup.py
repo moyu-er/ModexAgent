@@ -94,6 +94,7 @@ def _patch_manager_spawn_chain(
     mock_reader.stop = AsyncMock()
     mock_reader.register_session = Mock()
     mock_reader.unregister_session = Mock()
+    mock_reader.attach_session_state = Mock()
     monkeypatch.setattr(
         opencode_server_manager, "OpenCodeV2SseReader", Mock(return_value=mock_reader)
     )

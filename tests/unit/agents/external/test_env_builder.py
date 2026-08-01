@@ -2,13 +2,23 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
 import pytest
 
-from modex_agent.agents.external import ExternalEnvBuilder, ExternalEnvSpec
+from modex_agent.agents.external import ExternalEnvBuilder, ExternalEnvSpec, ExternalPaths
 from modex_agent.core.agent import AgentCommKind
+
+# Framework static resource path — the plugin file shipped with the package.
+_PLUGIN_FILE = (
+    Path(ExternalEnvBuilder.build.__code__.co_filename).parent
+    / "providers"
+    / "opencode"
+    / "plugins"
+    / "modex-shell-env.ts"
+)
 
 
 def _spec(
@@ -361,3 +371,114 @@ class TestOpenCodePermissionVar:
         spec = _spec(tmp_path)
         out = ExternalEnvBuilder.build(spec, base_env={"OPENCODE_PERMISSION": '{"edit":"ask"}'})
         assert out["OPENCODE_PERMISSION"] == self._EXPECTED
+
+
+class TestOpenCodeConfigContent:
+    """OPENCODE_CONFIG_CONTENT injection — per-process env var pointing
+    opencode at the ``shell.env`` plugin that exposes the current session
+    ID to bash subprocesses.
+
+    Only the ModexAgent-spawned opencode loads this plugin (the env var
+    is per-process). The plugin injects ``OPENCODE_SESSION_ID`` so
+    modexctl can look up the correct per-session env snapshot file,
+    fixing the frozen-env crossover bug.
+    """
+
+    def test_plugin_file_exists_on_disk(self) -> None:
+        """The plugin TS file is a framework static resource shipped with
+        the package — it must exist at the expected path."""
+        assert _PLUGIN_FILE.exists(), f"Plugin file missing: {_PLUGIN_FILE}"
+
+    def test_build_includes_opencode_config_content(self, tmp_path: Path) -> None:
+        spec = _spec(tmp_path)
+        out = ExternalEnvBuilder.build(spec, base_env={})
+        assert "OPENCODE_CONFIG_CONTENT" in out
+
+    def test_config_content_is_valid_json_with_plugin_array(self, tmp_path: Path) -> None:
+        spec = _spec(tmp_path)
+        out = ExternalEnvBuilder.build(spec, base_env={})
+        parsed = json.loads(out["OPENCODE_CONFIG_CONTENT"])
+        assert isinstance(parsed, dict)
+        assert "plugin" in parsed
+        assert isinstance(parsed["plugin"], list)
+        assert len(parsed["plugin"]) >= 1
+
+    def test_config_content_plugin_url_is_file_uri(self, tmp_path: Path) -> None:
+        """The plugin entry must be a ``file://`` URL pointing at the
+        on-disk TS file so opencode can load it."""
+        spec = _spec(tmp_path)
+        out = ExternalEnvBuilder.build(spec, base_env={})
+        parsed = json.loads(out["OPENCODE_CONFIG_CONTENT"])
+        plugin_url = parsed["plugin"][0]
+        assert plugin_url.startswith("file://")
+        # The URL must resolve to the actual plugin file.
+        url_path = Path(plugin_url.replace("file://", "").lstrip("/"))
+        assert url_path.exists()
+
+    def test_config_content_overrides_base_env(self, tmp_path: Path) -> None:
+        """Given base_env has a conflicting OPENCODE_CONFIG_CONTENT, When
+        build is called, Then the output is overwritten to the harness value."""
+        spec = _spec(tmp_path)
+        out = ExternalEnvBuilder.build(
+            spec, base_env={"OPENCODE_CONFIG_CONTENT": '{"plugin": ["other"]}'}
+        )
+        parsed = json.loads(out["OPENCODE_CONFIG_CONTENT"])
+        assert parsed["plugin"][0].startswith("file://")
+
+    def test_build_modex_vars_excludes_opencode_config_content(self, tmp_path: Path) -> None:
+        """``build_modex_vars`` only produces MODEX_* vars —
+        OPENCODE_CONFIG_CONTENT is an opencode-specific spawn var, not a
+        MODEX_ var, so it must not appear in the modex-only dict."""
+        spec = _spec(tmp_path)
+        out = ExternalEnvBuilder.build_modex_vars(spec)
+        assert "OPENCODE_CONFIG_CONTENT" not in out
+
+
+class TestEnvSnapshotsPaths:
+    """``env_snapshots_dir`` and ``env_snapshot_for_session`` — per-provider-
+    session env snapshot paths on ``ExternalPaths``.
+
+    Each file is ``<provider_session_id>.json`` containing the MODEX_* vars
+    for that specific opencode session. modexctl reads the file matching
+    the OPENCODE_SESSION_ID injected by the shell.env plugin.
+    """
+
+    def test_env_snapshots_dir_under_external_root(self, tmp_path: Path) -> None:
+        paths = ExternalPaths(tmp_path)
+        assert paths.env_snapshots_dir == paths.external_root / "env-snapshots"
+
+    def test_env_snapshots_dir_never_escapes_workdir(self, tmp_path: Path) -> None:
+        paths = ExternalPaths(tmp_path)
+        assert paths.workdir in paths.env_snapshots_dir.parents
+
+    def test_env_snapshot_for_session_has_json_extension(self, tmp_path: Path) -> None:
+        paths = ExternalPaths(tmp_path)
+        snapshot = paths.env_snapshot_for_session("opc-123")
+        assert snapshot.suffix == ".json"
+        assert snapshot.name == "opc-123.json"
+
+    def test_env_snapshot_for_session_under_snapshots_dir(self, tmp_path: Path) -> None:
+        paths = ExternalPaths(tmp_path)
+        snapshot = paths.env_snapshot_for_session("opc-123")
+        assert snapshot.parent == paths.env_snapshots_dir
+
+    def test_env_snapshot_for_session_sanitizes_path_traversal(self, tmp_path: Path) -> None:
+        """Path traversal attempts in the provider_session_id must not
+        escape the snapshots directory."""
+        paths = ExternalPaths(tmp_path)
+        snapshots_dir = paths.env_snapshots_dir
+        for malicious in ["../etc/passwd", "..\\etc\\passwd", "..", "../../secret"]:
+            snapshot = paths.env_snapshot_for_session(malicious)
+            assert snapshot.parent == snapshots_dir, (
+                f"Traversal escaped for input {malicious!r}: {snapshot}"
+            )
+
+    def test_env_snapshot_for_session_strips_parent_refs(self, tmp_path: Path) -> None:
+        """The sanitized filename must contain no path separators or
+        parent-directory references."""
+        paths = ExternalPaths(tmp_path)
+        snapshot = paths.env_snapshot_for_session("../etc/passwd")
+        name = snapshot.name
+        assert "/" not in name
+        assert "\\" not in name
+        assert ".." not in name

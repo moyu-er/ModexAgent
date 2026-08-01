@@ -8,7 +8,9 @@ permitted to construct them.
 
 from __future__ import annotations
 
+import json
 import os
+from pathlib import Path
 
 from modex_agent.core.agent import AgentCommKind
 
@@ -122,6 +124,20 @@ class ExternalEnvBuilder:
         # with source-level config: the permission system never asks in the
         # first place.
         merged["OPENCODE_PERMISSION"] = '{"*":"allow","question":"deny"}'
+        # OPENCODE_CONFIG_CONTENT injects a shell.env plugin that exposes
+        # the current opencode session ID to bash subprocesses. The plugin
+        # file is a framework static resource (shipped with the package).
+        # OPENCODE_CONFIG_CONTENT is per-process env — only the ModexAgent-
+        # spawned opencode loads this plugin; other opencode instances are
+        # unaffected. The plugin injects OPENCODE_SESSION_ID=<current_sid>
+        # so modexctl can look up the correct per-session env snapshot.
+        plugin_path = (
+            Path(__file__).parent / "providers" / "opencode" / "plugins" / "modex-shell-env.ts"
+        )
+        if plugin_path.exists():
+            merged["OPENCODE_CONFIG_CONTENT"] = json.dumps(
+                {"plugin": [plugin_path.resolve().as_uri()]}
+            )
         return merged
 
 

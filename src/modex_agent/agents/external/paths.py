@@ -87,6 +87,28 @@ class ExternalPaths:
         return self.external_root / "env-snapshot.json"
 
     @property
+    def env_snapshots_dir(self) -> Path:
+        """``<workdir>/.modex/external/env-snapshots`` — per-provider-session env snapshot directory.
+
+        Each file is ``<provider_session_id>.json`` containing the MODEX_* vars
+        for that specific opencode session. modexctl reads the file matching
+        the OPENCODE_SESSION_ID injected by the shell.env plugin.
+        """
+        return self.external_root / "env-snapshots"
+
+    def env_snapshot_for_session(self, provider_session_id: str) -> Path:
+        """``<workdir>/.modex/external/env-snapshots/<provider_session_id>.json``.
+
+        Per-provider-session env snapshot file. Written by ExternalAgent
+        on each turn (main session) and on child discovery (subagent session).
+        Read by modexctl when OPENCODE_SESSION_ID is set in the env.
+        """
+        # Sanitize: only allow filename-safe characters (opencode session IDs
+        # are alphanumeric + dashes, but guard against path traversal)
+        safe_sid = provider_session_id.replace("/", "_").replace("\\", "_").replace("..", "_")
+        return self.env_snapshots_dir / f"{safe_sid}.json"
+
+    @property
     def agents_md(self) -> Path:
         """``<workdir>/AGENTS.md`` — provider-visible static runtime notes."""
         return self._workdir / "AGENTS.md"

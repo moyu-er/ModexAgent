@@ -31,10 +31,13 @@ from typing import override
 
 import aiohttp
 
-from ...agent import StaleSessionError, StreamingProviderBackend
+from ...agent import StaleSessionError, StreamingProviderBackend, write_env_snapshot_for_session
 from ...events import ExternalEvent
+from ...paths import ExternalPaths
 from ...types import BackendResult, BackendStatus, Emission, ExecOptions
 from .server_manager import OpenCodeServerManager
+from .session_state import OpenCodeSessionState
+from .turn_waiter import TurnCompletionWaiter
 from .v2_client import (
     ModelRef,
     OpencodeV2Client,
@@ -70,8 +73,9 @@ class OpenCodeServerBackend(StreamingProviderBackend):
     is the manager's responsibility (refcounted across all backends).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, quiesce_s: float = 3.0) -> None:
         self._handle: OpenCodeServerManager.ServerHandle | None = None
+        self._quiesce_s = quiesce_s
 
     @property
     def _client(self) -> OpencodeV2Client:
@@ -92,6 +96,11 @@ class OpenCodeServerBackend(StreamingProviderBackend):
     def _server_url(self) -> str:
         assert self._handle is not None
         return self._handle.server_url
+
+    @property
+    def _session_state(self) -> OpenCodeSessionState:
+        assert self._handle is not None
+        return self._handle.session_state
 
     async def _ensure_server(self, workdir: Path, env: dict[str, str]) -> None:
         self._handle = await OpenCodeServerManager.acquire(workdir, env)
@@ -116,6 +125,8 @@ class OpenCodeServerBackend(StreamingProviderBackend):
             session_id = await self._client.create_session_v1(workdir_str)
         self._handle.register_session(session_id)
 
+        write_env_snapshot_for_session(ExternalPaths(opts.workdir), env, session_id)
+
         text_seen = False
 
         async def _on_emission_tracked(emission: Emission) -> None:
@@ -126,26 +137,52 @@ class OpenCodeServerBackend(StreamingProviderBackend):
 
         self._sse_reader.register_session(session_id, _on_emission_tracked)
 
+        registry = self._session_state
+        waiter = TurnCompletionWaiter(
+            session_id,
+            registry,
+            client=self._client,
+            directory=workdir_str,
+            quiesce_s=self._quiesce_s,
+        )
+        registry.register_waiter(waiter)
+
         try:
             model_ref = _model_ref_from_str(opts.model)
             try:
-                await self._client.prompt_async_v1(session_id, opts.prompt, model=model_ref, directory=workdir_str)
+                await self._client.prompt_async_v1(
+                    session_id, opts.prompt, model=model_ref, directory=workdir_str
+                )
             except OpencodeV2Error as exc:
                 if exc.tag == "SessionNotFoundError":
                     raise StaleSessionError(f"OpenCode session {session_id} not found") from exc
                 raise
 
+            # Disconnect fallback: only poll busy if reader is reconnecting.
+            # After reconnect, rebuild the subtree from authoritative REST state.
+            if registry.is_reconnect_pending():
+                await self._wait_busy_fallback(session_id, directory=workdir_str)
+                await registry.rebuild_subtree(session_id, self._client, workdir_str)
+
             timeout = opts.timeout if opts.timeout and opts.timeout > 0 else _SSE_READ_TIMEOUT
             try:
-                await asyncio.wait_for(self._poll_status_v1(session_id, directory=workdir_str), timeout=timeout)
+                await asyncio.wait_for(waiter.wait_complete(), timeout=timeout)
             except TimeoutError:
                 with contextlib.suppress(OpencodeV2Error):
-                        await self._client.abort_session_v1(session_id, directory=workdir_str)
+                    await self._client.abort_session_v1(session_id, directory=workdir_str)
                 return BackendResult(status=BackendStatus.TIMEOUT, session_id=session_id)
             except OpencodeV2Error as exc:
-                logger.exception("OpenCode status polling error")
+                logger.exception("OpenCode turn error")
                 return BackendResult(
                     status=BackendStatus.FAILED, session_id=session_id, error=str(exc)
+                )
+
+            # Root session gone (opencode process restarted) → ERROR
+            if registry.is_root_missing(session_id):
+                return BackendResult(
+                    status=BackendStatus.FAILED,
+                    session_id=session_id,
+                    error="OpenCode session lost (process may have restarted)",
                 )
 
             if not text_seen:
@@ -153,66 +190,46 @@ class OpenCodeServerBackend(StreamingProviderBackend):
 
             return BackendResult(status=BackendStatus.COMPLETED, session_id=session_id)
         finally:
-            self._sse_reader.unregister_session(session_id)
-            self._handle.unregister_session(session_id)
+            registry.unregister_waiter(waiter)
+            # NOT unregister_session — output route preserved for cross-turn
+            # reuse (design 5.6: "finally 不再 unregister_session"). Idle sids
+            # are cleaned by LRU, not per-turn teardown.
 
-    async def _poll_status_v1(self, session_id: str, *, directory: str) -> None:
-        """Poll ``GET /session/status`` — wait for busy, then wait for idle.
+    async def _wait_busy_fallback(self, session_id: str, *, directory: str) -> None:
+        """Disconnect fallback: poll until the session becomes busy or idle.
 
-        V1 ``prompt_async`` is fire-and-forget (returns 204 immediately). The
-        opencode server forks the prompt fiber via ``Effect.forkIn`` and sets
-        ``{type: "busy"}`` inside the fiber (``prompt.ts:1089``). There is a
-        race window between the 204 response and the fiber setting "busy":
-        during this window the session is absent from the status map, which
-        opencode's ``SessionStatus.get`` defaults to ``{type: "idle"}``.
+        ONLY used when ``is_reconnect_pending()`` is True (SSE reader
+        reconnecting). Confirms the prompt was received by the server before
+        the ``TurnCompletionWaiter`` takes over via the event-driven path
+        after reconnect + ``rebuild_subtree``.
 
-        Without waiting for "busy" first, the first poll sees "unknown"
-        (session not in map) → treated as "idle" → returns immediately → turn
-        ends in ~1.9s with zero SSE events captured.
-
-        Two-phase poll:
-          1. Wait for busy — poll until ``"busy"`` or ``"retry"`` (timeout:
-             ``_BUSY_WAIT_TIMEOUT``). ``"idle"`` returns immediately. ``"unknown"``
-             keeps polling.
-          2. Wait for idle — poll until ``"idle"`` or ``"unknown"``.
+        Does NOT wait for idle as a turn-completion signal — the waiter
+        handles that. Best-effort: on network error or timeout, logs a
+        warning and returns; the waiter + ``rebuild_subtree`` handle the rest.
         """
         deadline = asyncio.get_event_loop().time() + _BUSY_WAIT_TIMEOUT
-        saw_busy = False
         while asyncio.get_event_loop().time() < deadline:
-            status = await self._client.get_session_status_v1(session_id, directory=directory)
-            if status in ("busy", "retry"):
-                saw_busy = True
-                break
-            if status == "idle":
-                return
-            await asyncio.sleep(_ACTIVE_POLL_INTERVAL)
-
-        if not saw_busy:
-            logger.warning(
-                "OpenCode session %s never became busy within %.1fs — "
-                "prompt_async may have completed instantly or failed silently",
-                session_id,
-                _BUSY_WAIT_TIMEOUT,
-            )
-            return
-
-        while True:
             if OpenCodeServerManager.is_process_dead():
-                raise RuntimeError(
-                    f"opencode process died during turn (session {session_id}) — "
-                    "watchdog will respawn; next turn should recover"
-                )
+                return
             try:
                 status = await self._client.get_session_status_v1(session_id, directory=directory)
             except (aiohttp.ClientError, OSError, TimeoutError) as exc:
                 if OpenCodeServerManager.is_process_dead():
-                    raise RuntimeError(
-                        f"opencode process died during turn (session {session_id}): {exc}"
-                    ) from exc
-                raise
-            if status in ("idle", "unknown"):
+                    return
+                logger.warning(
+                    "wait_busy_fallback: status poll failed for %s: %s",
+                    session_id,
+                    exc,
+                )
+                return
+            if status in ("busy", "retry", "idle", "unknown"):
                 return
             await asyncio.sleep(_ACTIVE_POLL_INTERVAL)
+        logger.warning(
+            "OpenCode session %s never became busy within %.1fs during reconnect fallback",
+            session_id,
+            _BUSY_WAIT_TIMEOUT,
+        )
 
     async def _emit_fallback_text(
         self,

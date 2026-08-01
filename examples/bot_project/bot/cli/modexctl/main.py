@@ -139,6 +139,30 @@ def _normalize_text(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _read_env_snapshot(opencode_sid: str) -> dict[str, str] | None:
+    """Read per-provider-session env snapshot from .modex/external/env-snapshots/.
+
+    The snapshot file is written by ExternalAgent/server_backend and contains
+    the MODEX_* vars + PATH for the opencode session that injected
+    OPENCODE_SESSION_ID. modexctl runs with CWD = the session workdir, so
+    .modex/external/env-snapshots/ is relative to CWD.
+
+    Returns None if the file doesn't exist or can't be parsed. Path traversal
+    is guarded by sanitizing the sid (replacing /, \\, ..).
+    """
+    safe_sid = opencode_sid.replace("/", "_").replace("\\", "_").replace("..", "_")
+    snapshot_path = Path.cwd() / ".modex" / "external" / "env-snapshots" / f"{safe_sid}.json"
+    if not snapshot_path.exists():
+        return None
+    try:
+        data = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return {str(k): str(v) for k, v in data.items()}
+    except (json.JSONDecodeError, OSError):
+        pass
+    return None
+
+
 class ModexCtlContext(BaseModel):
     """Caller identity and communication context, derived once from env vars.
 
@@ -160,18 +184,47 @@ class ModexCtlContext(BaseModel):
 
     @classmethod
     def from_env(cls) -> ModexCtlContext | None:
-        if _missing_comm_env_key() is not None:
+        # Path 1 (opencode singleton): OPENCODE_SESSION_ID + snapshot file.
+        # When OPENCODE_SESSION_ID is set, the shell.env plugin injected it —
+        # we are inside an opencode singleton process whose MODEX_* env vars
+        # are FROZEN at first spawn and cannot be trusted. The per-session
+        # snapshot file is the authoritative source. This path MUST be checked
+        # before the native path, because the frozen process env always has
+        # MODEX_* vars that would match the native check.
+        opencode_sid = os.environ.get("OPENCODE_SESSION_ID")
+        if opencode_sid:
+            snapshot = _read_env_snapshot(opencode_sid)
+            if snapshot is not None:
+                missing = next(
+                    (k for k in _REQUIRED_ENV_KEYS if k not in snapshot or not snapshot[k]),
+                    None,
+                )
+                if missing is None:
+                    return cls(
+                        session_id=snapshot["MODEX_SESSION_ID"],
+                        agent_name=snapshot["MODEX_AGENT_NAME"],
+                        comm_kind=snapshot.get("MODEX_COMM_KIND", "normal"),
+                        parent_session_id=snapshot.get("MODEX_PARENT_SESSION_ID") or None,
+                        pool_map=_parse_pool_map(snapshot.get("MODEX_AGENT_POOL_MAP", "")),
+                        targets=_parse_targets(snapshot.get("MODEX_TARGETS", "")),
+                        workspace_root=snapshot.get("MODEX_WORKSPACE_ROOT") or None,
+                        control_origin=snapshot.get("MODEX_CONTROL_ORIGIN") or None,
+                    )
             return None
-        return cls(
-            session_id=os.environ["MODEX_SESSION_ID"],
-            agent_name=os.environ["MODEX_AGENT_NAME"],
-            comm_kind=os.environ.get("MODEX_COMM_KIND", "normal"),
-            parent_session_id=os.environ.get("MODEX_PARENT_SESSION_ID") or None,
-            pool_map=_parse_pool_map(os.environ.get("MODEX_AGENT_POOL_MAP", "")),
-            targets=_parse_targets(os.environ.get("MODEX_TARGETS", "")),
-            workspace_root=os.environ.get("MODEX_WORKSPACE_ROOT") or None,
-            control_origin=os.environ.get("MODEX_CONTROL_ORIGIN") or None,
-        )
+
+        if _missing_comm_env_key() is None:
+            return cls(
+                session_id=os.environ["MODEX_SESSION_ID"],
+                agent_name=os.environ["MODEX_AGENT_NAME"],
+                comm_kind=os.environ.get("MODEX_COMM_KIND", "normal"),
+                parent_session_id=os.environ.get("MODEX_PARENT_SESSION_ID") or None,
+                pool_map=_parse_pool_map(os.environ.get("MODEX_AGENT_POOL_MAP", "")),
+                targets=_parse_targets(os.environ.get("MODEX_TARGETS", "")),
+                workspace_root=os.environ.get("MODEX_WORKSPACE_ROOT") or None,
+                control_origin=os.environ.get("MODEX_CONTROL_ORIGIN") or None,
+            )
+
+        return None
 
     @property
     def is_subagent(self) -> bool:
