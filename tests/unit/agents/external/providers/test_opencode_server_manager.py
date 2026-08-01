@@ -58,6 +58,7 @@ def _make_reader_mock() -> AsyncMock:
     r.stop = AsyncMock()
     r.register_session = Mock()
     r.unregister_session = Mock()
+    r.attach_session_state = Mock()
     return r
 
 
@@ -1060,12 +1061,12 @@ class TestServerHandleActiveSessionsTracking:
 
 
 # ---------------------------------------------------------------------------
-# Poll-phase dead-process detection — backend raises RuntimeError
+# wait_busy_fallback dead-process detection — returns silently (best-effort)
 # ---------------------------------------------------------------------------
 
 
-class TestPollStatusDeadProcessDetection:
-    async def test_poll_raises_runtime_error_when_proc_already_dead(self) -> None:
+class TestWaitBusyFallbackDeadProcess:
+    async def test_fallback_returns_when_proc_already_dead(self) -> None:
         mgr = OpenCodeServerManager()
         proc = Mock()
         proc.returncode = -1
@@ -1080,12 +1081,12 @@ class TestPollStatusDeadProcessDetection:
             mock_handle.client = mock_client
             backend._handle = mock_handle
 
-            with pytest.raises(RuntimeError, match="opencode process died"):
-                await backend._poll_status_v1("test-sess-dead", directory="/tmp/test")
+            await backend._wait_busy_fallback("test-sess-dead", directory="/tmp/test")
+            mock_client.get_session_status_v1.assert_not_awaited()
         finally:
             OpenCodeServerManager.reset_for_tests()
 
-    async def test_poll_raises_runtime_error_on_conn_error_with_dead_proc(self) -> None:
+    async def test_fallback_returns_on_conn_error_with_dead_proc(self) -> None:
         mgr = OpenCodeServerManager()
         proc = Mock()
         proc.returncode = None
@@ -1095,23 +1096,21 @@ class TestPollStatusDeadProcessDetection:
         try:
             backend = OpenCodeServerBackend()
             mock_client = AsyncMock()
-            call_count = 0
 
-            def status_side_effect(session_id: str, *, directory: str | None = None) -> str:
-                nonlocal call_count
-                call_count += 1
-                if call_count == 1:
-                    return "busy"
+            async def status_side_effect(
+                session_id: str, *, directory: str | None = None
+            ) -> str:
                 proc.returncode = -1
                 raise OSError("connection refused")
 
-            mock_client.get_session_status_v1 = AsyncMock(side_effect=status_side_effect)
+            mock_client.get_session_status_v1 = AsyncMock(
+                side_effect=status_side_effect
+            )
             mock_handle = Mock()
             mock_handle.client = mock_client
             backend._handle = mock_handle
 
-            with pytest.raises(RuntimeError, match="opencode process died"):
-                await backend._poll_status_v1("test-sess-conn", directory="/tmp/test")
+            await backend._wait_busy_fallback("test-sess-conn", directory="/tmp/test")
         finally:
             OpenCodeServerManager.reset_for_tests()
 

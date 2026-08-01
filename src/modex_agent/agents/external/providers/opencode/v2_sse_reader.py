@@ -10,7 +10,7 @@ dispatching to the parser.
 
 Child session auto-discovery: when a ``session.created`` event arrives with
 ``info.parentID`` matching a registered session, the child session is
-automatically registered with the parent's callback. This mirrors openchamber's
+automatically registered with the parent's callback. This mirrors opencode's
 session tree discovery — child events flow through the same global stream and
 are routed to the parent's callback, where ``_handle_emission`` in the agent
 creates a child emitter based on ``source_session_id``.
@@ -32,6 +32,7 @@ from typing import Any
 import aiohttp
 
 from ...types import Emission
+from .session_state import OpenCodeSessionState, SessionActivity
 from .v2_parser import OpenCodeV1EventType, OpenCodeV2EventParser
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,54 @@ __all__ = ["OpenCodeV2SseReader"]
 _STALL_TIMEOUT: float = 20.0
 _RECONNECT_DELAY: float = 0.25
 _REPLAY_STALL_TIMEOUT: float = 0.5
+
+
+def _extract_parent_sid(data: dict[str, Any]) -> str | None:
+    """Extract ``parentID`` from a ``session.created`` event's normalized data.
+
+    Shared by the dual-path registry dispatch and ``_maybe_discover_child``
+    (design 5.4: "建议把 parentID 提取收敛成一个函数"). Returns the parentID
+    string when ``data.info.parentID`` (or top-level ``data.parentID``) is a
+    non-empty string, else ``None``.
+    """
+    info = data.get("info", data)
+    if isinstance(info, dict):
+        parent_id = info.get("parentID")
+        if isinstance(parent_id, str) and parent_id:
+            return parent_id
+    return None
+
+
+def _activity_from_event(payload: dict[str, Any]) -> SessionActivity | None:
+    """Map a ``session.status``/``session.idle``/``session.error`` event to activity.
+
+    ``session.status`` carries ``status.type`` (``busy``/``idle``/``retry``);
+    ``retry`` maps to BUSY (the session is actively retrying, e.g. rate-limit
+    backoff). The deprecated ``session.idle`` event maps to IDLE;
+    ``session.error`` maps to ERROR. Returns ``None`` for all other event
+    types (the registry ignores them).
+    """
+    event_type = payload.get("type")
+    if event_type == OpenCodeV1EventType.SESSION_STATUS:
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            data = payload.get("properties")
+        if not isinstance(data, dict):
+            return None
+        status = data.get("status")
+        if not isinstance(status, dict):
+            return None
+        status_type = status.get("type")
+        if status_type in ("busy", "retry"):
+            return SessionActivity.BUSY
+        if status_type == "error":
+            return SessionActivity.ERROR
+        return SessionActivity.IDLE
+    if event_type == OpenCodeV1EventType.SESSION_IDLE:
+        return SessionActivity.IDLE
+    if event_type == OpenCodeV1EventType.SESSION_ERROR_V1:
+        return SessionActivity.ERROR
+    return None
 
 
 class _ServerUnavailableError(Exception):
@@ -77,7 +126,19 @@ class OpenCodeV2SseReader:
         self._stall_timeout: float = _STALL_TIMEOUT
         self._reconnect_delay: float = _RECONNECT_DELAY
 
+        self._session_state: OpenCodeSessionState | None = None
+
     # -- Public API --------------------------------------------------------
+
+    def attach_session_state(self, state: OpenCodeSessionState) -> None:
+        """Attach the shared session-state registry for dual-path dispatch.
+
+        Once attached, every raw SSE event is fed to ``state.on_event``
+        before the parser path runs (design 5.4). The registry is
+        orthogonal to ``register_session``/``unregister_session`` (which
+        route output emissions) — it drives turn-completion detection.
+        """
+        self._session_state = state
 
     async def start(self) -> None:
         if self._reconnect_task is not None and not self._reconnect_task.done():
@@ -107,6 +168,8 @@ class OpenCodeV2SseReader:
         self._owns_http_session = False
 
     async def restart(self, server_url: str) -> None:
+        if self._session_state is not None:
+            self._session_state.mark_reconnect_pending()
         await self.stop()
         self._server_url = server_url.rstrip("/")
         self._last_known_seq.clear()
@@ -213,6 +276,16 @@ class OpenCodeV2SseReader:
         self._track_durable_seq(payload, sid_str)
         self._maybe_discover_child(payload, data, sid_str)
 
+        # Feed the registry before dedup — it needs all events (incl. dups)
+        # for state tracking; on_event is idempotent for status events.
+        if self._session_state is not None:
+            self._session_state.on_event(
+                sid_str,
+                payload.get("type") or "",
+                parent_sid=_extract_parent_sid(data),
+                activity=_activity_from_event(payload),
+            )
+
         # Dedup
         event_id = payload.get("id")
         if isinstance(event_id, str) and sid_str is not None:
@@ -242,16 +315,16 @@ class OpenCodeV2SseReader:
         """Auto-register child sessions from ``session.created`` events."""
         if payload.get("type") != OpenCodeV1EventType.SESSION_CREATED:
             return
+        parent_id = _extract_parent_sid(data)
+        if parent_id is None:
+            return
         info = data.get("info", data)
         if not isinstance(info, dict):
             return
         child_id = info.get("id")
-        parent_id = info.get("parentID")
         if (
             isinstance(child_id, str)
-            and isinstance(parent_id, str)
             and child_id
-            and parent_id
             and parent_id in self._session_callbacks
             and child_id not in self._session_callbacks
         ):

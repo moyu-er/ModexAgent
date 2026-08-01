@@ -1099,6 +1099,25 @@ class OpencodeV2Client:
             return entry.get("type", "unknown")
         return "unknown"
 
+    async def get_children(
+        self, session_id: str, *, directory: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Get child sessions via V1 ``GET /session/{session_id}/children``.
+
+        Returns a list of session info dicts (each with at least ``id`` and
+        ``parentID`` fields). Used by ``OpenCodeSessionState.rebuild_subtree``
+        for authoritative tree reconstruction after SSE reconnect.
+
+        Raises :class:`OpencodeV2Error` on non-2xx (404 → root session gone).
+        Returns an empty list if the response body is not a JSON array.
+        """
+        body = await self._request_json(
+            "GET", f"/session/{session_id}/children", directory=directory
+        )
+        if isinstance(body, list):
+            return body
+        return []
+
     async def create_session_v1(self, directory: str) -> str:
         """Create a session via V1 ``POST /session``.
 

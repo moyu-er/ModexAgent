@@ -20,7 +20,12 @@ import aiohttp
 import pytest
 
 from modex_agent.agents.external import Emission, ExternalEvent
+from modex_agent.agents.external.providers.opencode.session_state import (
+    OpenCodeSessionState,
+    SessionActivity,
+)
 from modex_agent.agents.external.providers.opencode.v2_parser import (
+    OpenCodeV1EventType,
     OpenCodeV2EventParser,
     OpenCodeV2EventType,
 )
@@ -834,3 +839,252 @@ class TestCrossTurnChildRediscovery:
         assert main_recv[0].source_session_id == "ses_c1"
         assert main_recv[1].text == "child2 text"
         assert main_recv[1].source_session_id == "ses_c2"
+
+
+# ---------------------------------------------------------------------------
+# 3.1 — Dual-path dispatch: session_state registry fed alongside parser
+# ---------------------------------------------------------------------------
+
+
+class _MockWaiter:
+    """Test double for ``TurnCompletionWaiter``.
+
+    The registry only depends on ``root_sid`` and ``touch()`` (same shape
+    as the ``_MockWaiter`` in ``test_opencode_session_state.py``).
+    """
+
+    def __init__(self, root_sid: str) -> None:
+        self.root_sid = root_sid
+        self.touch_count = 0
+
+    def touch(self) -> None:
+        self.touch_count += 1
+
+
+class TestSessionStateDualPath:
+    """3.1 — Inject session_state, event arrives → ``on_event`` called.
+
+    The reader feeds the shared registry alongside the existing
+    parser/callback path. Uses the real ``OpenCodeSessionState`` (not
+    mocked) to exercise the integration.
+    """
+
+    async def test_session_status_busy_updates_registry_node(self) -> None:
+        reader = _make_reader()
+        state = OpenCodeSessionState()
+        state.register_waiter(_MockWaiter("ses_root"))
+        reader.attach_session_state(state)
+        reader._stopped = False
+
+        await reader._process_event(
+            json.dumps(
+                _v1_event(
+                    OpenCodeV1EventType.SESSION_STATUS,
+                    {"sessionID": "ses_root", "status": {"type": "busy"}},
+                    event_id="evt_busy",
+                )
+            )
+        )
+
+        assert "ses_root" in state._nodes
+        assert state._nodes["ses_root"].activity is SessionActivity.BUSY
+
+    async def test_session_status_idle_updates_registry_node(self) -> None:
+        reader = _make_reader()
+        state = OpenCodeSessionState()
+        state.register_waiter(_MockWaiter("ses_root"))
+        reader.attach_session_state(state)
+        reader._stopped = False
+
+        # First busy, then idle
+        await reader._process_event(
+            json.dumps(
+                _v1_event(
+                    OpenCodeV1EventType.SESSION_STATUS,
+                    {"sessionID": "ses_root", "status": {"type": "busy"}},
+                    event_id="evt_busy",
+                )
+            )
+        )
+        await reader._process_event(
+            json.dumps(
+                _v1_event(
+                    OpenCodeV1EventType.SESSION_STATUS,
+                    {"sessionID": "ses_root", "status": {"type": "idle"}},
+                    event_id="evt_idle",
+                )
+            )
+        )
+
+        assert state._nodes["ses_root"].activity is SessionActivity.IDLE
+
+    async def test_session_error_sets_error_activity(self) -> None:
+        reader = _make_reader()
+        state = OpenCodeSessionState()
+        state.register_waiter(_MockWaiter("ses_root"))
+        reader.attach_session_state(state)
+        reader._stopped = False
+
+        await reader._process_event(
+            json.dumps(
+                _v1_event(
+                    OpenCodeV1EventType.SESSION_ERROR_V1,
+                    {"sessionID": "ses_root", "error": {"message": "boom"}},
+                    event_id="evt_err",
+                )
+            )
+        )
+
+        assert state._nodes["ses_root"].activity is SessionActivity.ERROR
+
+    async def test_session_created_adds_child_to_registry(self) -> None:
+        reader = _make_reader()
+        state = OpenCodeSessionState()
+        state.register_waiter(_MockWaiter("ses_root"))
+        reader.attach_session_state(state)
+        reader._stopped = False
+
+        # Root must exist in tree first (via session.status)
+        await reader._process_event(
+            json.dumps(
+                _v1_event(
+                    OpenCodeV1EventType.SESSION_STATUS,
+                    {"sessionID": "ses_root", "status": {"type": "busy"}},
+                    event_id="evt_root_busy",
+                )
+            )
+        )
+
+        # session.created for child with parentID=root
+        await reader._process_event(
+            json.dumps(
+                _v1_event(
+                    OpenCodeV1EventType.SESSION_CREATED,
+                    {
+                        "sessionID": "ses_child",
+                        "info": {"id": "ses_child", "parentID": "ses_root"},
+                    },
+                    event_id="evt_create",
+                )
+            )
+        )
+
+        assert "ses_child" in state._nodes
+        assert state._nodes["ses_child"].parent_sid == "ses_root"
+        assert "ses_child" in state.subtree_ids("ses_root")
+
+    async def test_dual_path_does_not_break_parser_dispatch(self) -> None:
+        """Registry fed AND parser emissions still delivered (both paths)."""
+        reader = _make_reader()
+        parser = reader._parser
+        parser.add_main_session("ses_root")
+        received: list[Emission] = []
+        reader.register_session("ses_root", _collect(received))
+
+        state = OpenCodeSessionState()
+        waiter = _MockWaiter("ses_root")
+        state.register_waiter(waiter)
+        reader.attach_session_state(state)
+        reader._stopped = False
+
+        # Establish root in registry via session.status busy
+        await reader._process_event(
+            json.dumps(
+                _v1_event(
+                    OpenCodeV1EventType.SESSION_STATUS,
+                    {"sessionID": "ses_root", "status": {"type": "busy"}},
+                    event_id="evt_status",
+                )
+            )
+        )
+        touches_after_status = waiter.touch_count
+
+        # Text delta: parser path delivers emission, registry path touches root node
+        await reader._process_event(
+            json.dumps(
+                _v2_event(
+                    OpenCodeV2EventType.SESSION_NEXT_TEXT_DELTA,
+                    {"sessionID": "ses_root", "delta": "hi"},
+                    event_id="evt_delta",
+                )
+            )
+        )
+
+        assert len(received) == 1
+        assert received[0].text == "hi"
+        # Registry saw the tree event → waiter touched again
+        assert waiter.touch_count > touches_after_status
+
+    async def test_no_session_state_attached_reader_still_works(self) -> None:
+        """Regression: without attach_session_state, behavior is unchanged."""
+        reader = _make_reader()
+        received: list[Emission] = []
+        reader.register_session("ses_1", _collect(received))
+        reader._stopped = False
+
+        await reader._process_event(
+            json.dumps(
+                _v2_event(
+                    OpenCodeV2EventType.SESSION_NEXT_TEXT_DELTA,
+                    {"sessionID": "ses_1", "delta": "Hi"},
+                )
+            )
+        )
+        assert len(received) == 1
+        assert received[0].text == "Hi"
+
+
+# ---------------------------------------------------------------------------
+# 3.2 — restart() notifies session_state.mark_reconnect_pending()
+# ---------------------------------------------------------------------------
+
+
+class TestRestartReconnectPending:
+    """3.2 — ``restart()`` calls ``state.mark_reconnect_pending()``.
+
+    The hook must fire at the start of ``restart()`` so the registry
+    knows events may have been missed. All active waiters are touched
+    (canceling any quiesce timer → back to ACTIVE).
+    """
+
+    async def test_restart_marks_reconnect_pending(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        reader = _make_reader(server_url="http://old:4096")
+        state = OpenCodeSessionState()
+        waiter = _MockWaiter("ses_root")
+        state.register_waiter(waiter)
+        reader.attach_session_state(state)
+
+        mock_session = MagicMock()
+        mock_session.closed = False
+        mock_session.get = MagicMock(return_value=_MockResponse(200, block_forever=True))
+        mock_session.close = AsyncMock()
+        monkeypatch.setattr(aiohttp, "ClientSession", lambda *a, **kw: mock_session)
+
+        initial_touches = waiter.touch_count
+        await reader.restart("http://new:4096")
+        await asyncio.sleep(0.05)
+
+        assert state.is_reconnect_pending() is True
+        # mark_reconnect_pending touches all active waiters
+        assert waiter.touch_count > initial_touches
+        await reader.stop()
+
+    async def test_restart_without_session_state_still_works(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression: restart without attached state must not crash."""
+        reader = _make_reader(server_url="http://old:4096")
+
+        mock_session = MagicMock()
+        mock_session.closed = False
+        mock_session.get = MagicMock(return_value=_MockResponse(200, block_forever=True))
+        mock_session.close = AsyncMock()
+        monkeypatch.setattr(aiohttp, "ClientSession", lambda *a, **kw: mock_session)
+
+        await reader.restart("http://new:4096")
+        await asyncio.sleep(0.05)
+
+        assert reader._server_url == "http://new:4096"
+        await reader.stop()

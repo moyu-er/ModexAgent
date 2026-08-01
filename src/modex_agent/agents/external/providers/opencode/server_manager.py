@@ -20,8 +20,7 @@ Design:
 
 4. **Orphan reaping** — on first ``acquire()``, kill any ``opencode serve``
    processes WE spawned in a prior run that were orphaned by a crash.
-   On-disk PID registry, one JSON file per PID (matching openchamber's
-   safety model).
+   On-disk PID registry, one JSON file per PID.
 
 5. **External server** — ``OPENCODE_HOST`` env var connects to an
    already-running server instead of spawning.
@@ -55,6 +54,7 @@ from ...os_layer import (
     spawn_process_group,
     terminate_process_group,
 )
+from .session_state import OpenCodeSessionState
 from .v2_client import OpencodeV2Client
 from .v2_parser import OpenCodeV2EventParser
 from .v2_sse_reader import OpenCodeV2SseReader
@@ -79,6 +79,7 @@ def _find_free_port() -> int:
 class _WorkdirEntry:
     sse_reader: OpenCodeV2SseReader
     parser: OpenCodeV2EventParser
+    session_state: OpenCodeSessionState
     main_sessions: set[str] = field(default_factory=set)
 
 
@@ -95,7 +96,15 @@ class OpenCodeServerManager:
     _lifecycle_bound: bool = False
 
     class ServerHandle:
-        __slots__ = ("server_url", "client", "parser", "sse_reader", "_manager", "_workdir")
+        __slots__ = (
+            "server_url",
+            "client",
+            "parser",
+            "sse_reader",
+            "session_state",
+            "_manager",
+            "_workdir",
+        )
 
         def __init__(
             self,
@@ -103,6 +112,7 @@ class OpenCodeServerManager:
             client: OpencodeV2Client,
             parser: OpenCodeV2EventParser,
             sse_reader: OpenCodeV2SseReader,
+            session_state: OpenCodeSessionState,
             manager: OpenCodeServerManager,
             workdir: str,
         ) -> None:
@@ -110,6 +120,7 @@ class OpenCodeServerManager:
             self.client = client
             self.parser = parser
             self.sse_reader = sse_reader
+            self.session_state = session_state
             self._manager = manager
             self._workdir = workdir
 
@@ -207,8 +218,14 @@ class OpenCodeServerManager:
                     workdir=workdir_str,
                     parser=parser,
                 )
+                session_state = OpenCodeSessionState()
+                sse_reader.attach_session_state(session_state)
                 await sse_reader.start()
-                entry = _WorkdirEntry(sse_reader=sse_reader, parser=parser)
+                entry = _WorkdirEntry(
+                    sse_reader=sse_reader,
+                    parser=parser,
+                    session_state=session_state,
+                )
                 mgr._workdir_entries[workdir_str] = entry
                 logger.info("SSE reader started for workdir %s", workdir_str)
 
@@ -219,6 +236,7 @@ class OpenCodeServerManager:
                 client=mgr._client,
                 parser=entry.parser,
                 sse_reader=entry.sse_reader,
+                session_state=entry.session_state,
                 manager=mgr,
                 workdir=workdir_str,
             )
