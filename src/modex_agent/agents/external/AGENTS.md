@@ -137,7 +137,11 @@ The SSE reader is **persistent and per-workdir**, owned by
 
 - `register_session(sid, on_emission)` routes emissions to the correct turn
   callback. Call before `start` so events route from the first connection.
-- `unregister_session` on turn completion stops routing for that session.
+  **Output routes are preserved across turns** — `execute_streaming`'s
+  `finally` block does NOT call `unregister_session`. This enables subagent
+  recovery output to flow into the same turn's emitter after the main session
+  resumes from an `inject`. Stale sid cleanup is handled by LRU on the
+  `OpenCodeSessionState` registry.
 - `restart(new_url)` stops, resets state, and restarts when the opencode server
   URL changes.
 - `/event` filters by the `x-opencode-directory` header, so each workdir's
@@ -145,6 +149,9 @@ The SSE reader is **persistent and per-workdir**, owned by
 - The parser's `_main_session_ids` set (mutated via `add_main_session` /
   `remove_main_session`) distinguishes main sessions from child sessions and
   tags `Emission.source_session_id` accordingly.
+- `session.status` events with `status.type === "retry"` map to `BUSY`
+  (the session is actively retrying, e.g. rate-limit backoff). This preserves
+  the old polling semantics where `retry` was treated as active.
 
 V1+V2 event types parsed by `OpenCodeV2EventParser` (payload in `data`, not V1
 `properties`):
@@ -156,18 +163,40 @@ V1+V2 event types parsed by `OpenCodeV2EventParser` (payload in `data`, not V1
 - `session.next.tool.failed` → `TOOL_RESULT` (error message)
 - `session.error` → `ERROR`
 
-## Turn Completion Polling (`_poll_status_v1`)
+## Turn Completion (Event-Driven)
 
-V1 has no blocking wait endpoint. Turn completion is detected by polling
-`GET /session/active` in two phases:
+Turn completion is detected by the `TurnCompletionWaiter` state machine
+(`turn_waiter.py`), driven by `session.status`/`session.idle` SSE events
+fed through the `OpenCodeSessionState` shared registry (`session_state.py`).
+The registry hangs off the SSE reader via `attach_session_state()` and
+receives every raw event in `_process_event` (dual-path: parser for
+output emissions + registry for state tracking).
 
-1. **Wait-for-busy**: poll until the session appears in the active set. This
-   closes the race where `prompt_async_v1` returns before the server registers
-   the session as active.
-2. **Wait-for-idle**: poll until the session drops out of the active set.
+**State machine:** ACTIVE → QUIESCING → COMPLETE.
 
-Dead-process fast-fail: `is_process_dead()` short-circuits the poll if the
-opencode process died, so a hung turn does not burn the full timeout.
+- **ACTIVE**: the session tree has busy nodes or recent events.
+- **QUIESCING**: all nodes in the session subtree are idle/error. A quiesce
+  window (default 3s) starts. Any tree event during the window cancels it
+  and returns to ACTIVE.
+- **COMPLETE**: the quiesce window elapses with no events. Two-layer REST
+  validation (`GET /session/:id/children`) guards against `session.created`
+  loss → fake empty tree — checked before entering QUIESCING (for
+  single-node trees) and after the window elapses.
+
+**Key invariant:** a logical turn = the **entire session tree** quiescing,
+not just the root session going idle. This ensures subagent recovery output
+(injected by opencode's internal `inject` mechanism) flows into the same
+turn's emitter before the turn ends.
+
+**Disconnect fallback (`_wait_busy_fallback`):** when the SSE reader is
+reconnecting (`is_reconnect_pending()`), a lightweight poll confirms the
+session became busy (closing the `prompt_async` → busy race). After
+reconnect, `rebuild_subtree` does a full REST tree reconstruction. This
+is the ONLY use of polling — the primary path is fully event-driven.
+
+**Lifecycle:** the waiter is per-turn (created in `execute_streaming`,
+destroyed in `finally` via `unregister_waiter`). The registry is
+per-workdir (persistent across turns, attached to the SSE reader).
 
 ## Child Session Capture
 
@@ -227,10 +256,13 @@ fire-and-forget; the task reference is retained and gathered in
 `_run_turn`'s finally block so registration completes within the turn
 boundary.
 
-Per-turn child routing state (`_child_sid_to_modex_sid`,
-`_child_emitters`, `_child_accumulators`, `_pending_child_tasks`) is
-reinitialized at the top of each `_run_turn` and cleared in the finally
-block. Never cross-turn.
+Per-turn child routing state lives in `_TurnEmissionContext` (a dataclass
+created per `_run_turn` call, captured by the `on_emission` closure, passed
+to `_handle_emission`). This is **not** stored in instance attributes —
+the same `ExternalAgent` instance serves all sessions in its pool, so
+instance variables would crossover when multiple sessions run concurrent
+turns. The closure capture guarantees each turn sees its own `modex_sid`,
+`paths`, `spec`, and child maps.
 
 ### Deterministic session IDs
 
@@ -258,6 +290,90 @@ The WebUI's `buildTree()` pure function (`sessionTree.ts`) groups the
 flat session list into a parent-to-children tree by matching
 `parent_session_id` to `session_id`, so child sessions appear nested
 under their parent in the sidebar with no WebUI code change.
+
+## Environment Variable Isolation (opencode Singleton)
+
+The opencode process is a **singleton** — one `opencode serve` process serves
+all opencode pools and all sessions. The process env is set at first spawn
+and **frozen forever**: `MODEX_SESSION_ID`, `MODEX_AGENT_NAME`, and all other
+`MODEX_*` vars point to the *first* session. When a second session runs
+concurrently, `modexctl` (executed by opencode's bash tool) would read the
+frozen env and route messages to the wrong session — **crossover**.
+
+### Solution: shell.env plugin + per-session env snapshots
+
+1. **`shell.env` plugin** (`providers/opencode/plugins/modex-shell-env.ts`):
+   a ~10-line TypeScript plugin registered via `OPENCODE_CONFIG_CONTENT` env
+   var (per-process, not written to disk). The plugin hooks into opencode's
+   `shell.env` extension point and injects `OPENCODE_SESSION_ID` (the current
+   opencode session ID) into every bash subprocess env. This is **per-tool-call**
+   — the main session's bash gets the main session ID; a subagent's bash gets
+   the subagent's session ID.
+
+2. **Per-session env snapshot files** (`<workdir>/.modex/external/env-snapshots/<provider_sid>.json`):
+   written by `server_backend.execute_streaming` after session creation (main
+   session) and by `_handle_emission` on child discovery (subagent session).
+   Each file contains the `MODEX_*` vars + `PATH` for that specific opencode
+   session.
+
+3. **`modexctl` two-path resolution** (`modexctl/main.py:from_env()`):
+   - **Path 1 (opencode singleton)**: `OPENCODE_SESSION_ID` is set → read the
+     matching snapshot file → construct `ModexCtlContext` from snapshot.
+     **Fail-closed**: if the snapshot is missing or corrupt, return `None`
+     (do NOT fall through to the frozen process env — that would crossover).
+   - **Path 2 (native agent)**: no `OPENCODE_SESSION_ID` → `MODEX_*` vars are
+     per-turn correct (contextvar injection by `NativeEnvInjectionHook`) →
+     read directly from env.
+
+### Process isolation
+
+`OPENCODE_CONFIG_CONTENT` is a per-process env var set only on the
+ModexAgent-spawned opencode process. Other opencode instances (IDE plugin,
+manual `opencode run`, same directory) do not have this env var → the plugin
+is not loaded → their bash subprocess env is unchanged. The plugin file lives
+in the framework package (`providers/opencode/plugins/`) and is located at
+runtime via `Path(__file__)`.
+
+### Concurrency safety
+
+- Each opencode session has a unique ID → unique snapshot file → no file
+  overwrite between concurrent sessions.
+- `shell.env` plugin injects the *current* session ID per-tool-call (not the
+  frozen process env value) → each session's `modexctl` reads its own snapshot.
+- Native agents use contextvar (`_modex_env`) which is asyncio-task-scoped →
+  no crossover with opencode sessions or other native sessions.
+
+## Per-Turn State Isolation (_TurnEmissionContext)
+
+The same `ExternalAgent` instance serves all sessions in its pool. Per-turn
+state (`modex_sid`, `paths`, `spec`, child routing maps, emitters, pending
+tasks) MUST NOT live in instance attributes — concurrent turns would
+overwrite each other, causing child discovery to register children under the
+wrong parent session.
+
+**Solution**: `_TurnEmissionContext` dataclass, created per `_run_turn` call,
+captured by the `on_emission` closure, passed to `_handle_emission`. Each
+turn's closure sees its own values. The finally block clears `turn_ctx.*`
+(not `self.*`). No instance variables hold per-turn state.
+
+This is the same isolation principle as `NativeEnvInjectionHook`'s contextvar
+(`_modex_env`): per-turn state must be task-scoped, not instance-scoped.
+
+## SubagentAutoSendHook (external)
+
+`SubagentAutoSendHook` notifies the parent agent when an external subagent
+turn ends. For external subagents:
+
+- `<replied>` is **omitted** from the XML notification (`replied=None`).
+  The old `_check_replied` read a per-workdir `outbox.jsonl` that was never
+  written by production code (modexctl sends via HTTP, not file-based outbox).
+  A correct per-session send-tracking mechanism does not exist yet — the
+  parent agent judges the outcome solely on `<success>`, `<result>`, and
+  `<issue>`.
+- `external_outbox_path` parameter has been removed from the hook constructor
+  (the path was never read).
+- The outbox.jsonl clearing in `_run_turn` has been removed (was a no-op on
+  an always-empty file, and a crossover source when sessions shared a workdir).
 
 ## Provider Behavior
 
