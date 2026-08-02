@@ -54,7 +54,8 @@ class _FakeBroker(MessageBroker):
     async def stop(self) -> None: ...
     async def register_consumer(self, address: object) -> None: ...
     async def unregister_consumer(self, address: object) -> None: ...
-    async def consume(self, address: object) -> BrokerMessage | None: return None
+    async def consume(self, address: object) -> BrokerMessage | None:
+        return None
 
     def consume_stream(self, address: object) -> AsyncIterator[BrokerMessage]:
         import asyncio
@@ -82,7 +83,8 @@ class _FakeRegistry:
     def get_profile(self, name: str) -> AgentProfile | None:
         return next((p for p in self._profiles if p.name == name), None)
 
-    def get_descriptor(self, name: str) -> None: return None
+    def get_descriptor(self, name: str) -> None:
+        return None
 
 
 class _RecordingStrategy:
@@ -223,7 +225,10 @@ class TestHandoffSpanEmission:
         from modex_agent.core.tool_manager import ToolResult
 
         tool_calls = [
-            ToolCall(tool_name="send_to_agent", arguments={"target_agent": "worker", "content": "do the thing"}),
+            ToolCall(
+                tool_name="send_to_agent",
+                arguments={"target_agent": "worker", "content": "do the thing"},
+            ),
         ]
         results = [
             ToolResult.from_text("send_to_agent", "ack: sent to worker", execution_time=0.01),
@@ -262,7 +267,10 @@ class TestHandoffSpanEmission:
         from modex_agent.core.tool_manager import ToolResult
 
         tool_calls = [
-            ToolCall(tool_name="send_to_agent", arguments={"target_agent": "reviewer", "content": "hello"}),
+            ToolCall(
+                tool_name="send_to_agent",
+                arguments={"target_agent": "reviewer", "content": "hello"},
+            ),
         ]
         results = [
             ToolResult.from_text("send_to_agent", "ack", execution_time=0.01),
@@ -275,6 +283,36 @@ class TestHandoffSpanEmission:
         assert len(handoffs) == 1
         attrs = handoffs[0].attributes
         assert attrs[GenAiAttr.HANDOFF_TARGET_AGENT] == "reviewer"
+
+    async def test_task_tool_also_emits_handoff_span(self, tmp_path: Path) -> None:
+        """The `task` tool is a dispatch tool — it must emit agent.handoff spans
+        just like send_to_agent, per _DISPATCH_TOOL_NAMES in trace/hooks.py."""
+        store = OtelSpanTraceStore(base_dir=tmp_path / "traces")
+        hook = TraceCollectorHook()
+        ctx = _make_context(store)
+
+        await hook.before_turn(ctx)
+
+        from modex_agent.core.types import ToolCall
+        from modex_agent.core.tool_manager import ToolResult
+
+        tool_calls = [
+            ToolCall(
+                tool_name="task",
+                arguments={"target_agent": "worker", "content": "implement feature X"},
+            ),
+        ]
+        results = [
+            ToolResult.from_text("task", "ack: dispatched to worker", execution_time=0.01),
+        ]
+        await hook.before_tool_execution(ctx, tool_calls)
+        await hook.after_tool_execution(ctx, results)
+
+        spans = await store.list_by_session(SESSION_ID)
+        handoffs = _handoff_spans(spans)
+        assert len(handoffs) == 1
+        attrs = handoffs[0].attributes
+        assert attrs[GenAiAttr.HANDOFF_TARGET_AGENT] == "worker"
 
 
 # -- tests: guards + fail-open -----------------------------------------------

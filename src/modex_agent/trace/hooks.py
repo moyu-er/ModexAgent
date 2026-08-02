@@ -62,6 +62,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Dispatch tools that transfer control to another agent — both emit agent.handoff spans.
+_DISPATCH_TOOL_NAMES: frozenset[str] = frozenset({"send_to_agent", "task"})
+
 
 def _safe_json_dumps(obj: object) -> str:
     """JSON-serialise *obj*."""
@@ -253,9 +256,7 @@ class TraceCollectorHook(
             full_attrs.update(attrs)
 
         if error is not None and GenAiAttr.LANGFUSE_OBSERVATION_LEVEL not in full_attrs:
-            full_attrs[GenAiAttr.LANGFUSE_OBSERVATION_LEVEL] = (
-                LangfuseObservationLevel.ERROR.value
-            )
+            full_attrs[GenAiAttr.LANGFUSE_OBSERVATION_LEVEL] = LangfuseObservationLevel.ERROR.value
 
         # ── Span kind ─────────────────────────────────────────────────
         span_kind = (
@@ -397,9 +398,7 @@ class TraceCollectorHook(
                     for tc in response.tool_calls
                 ]
             )
-        output_messages: list[dict[str, object]] = [
-            {"role": "assistant", "parts": output_parts}
-        ]
+        output_messages: list[dict[str, object]] = [{"role": "assistant", "parts": output_parts}]
 
         attrs: dict[str, object] = {
             GenAiAttr.RESPONSE_FINISH_REASONS: [response.finish_reason.value],
@@ -512,7 +511,7 @@ class TraceCollectorHook(
 
         Stores tool_calls (with arguments) for:
         - after_tool_execution's per-tool execute_tool span input (arguments)
-        - _maybe_emit_handoff_spans's agent.handoff span when tool_name=send_to_agent
+        - _maybe_emit_handoff_spans's agent.handoff span when tool_name is a dispatch tool (send_to_agent or task)
         """
         if not self._enabled:
             return
@@ -527,7 +526,7 @@ class TraceCollectorHook(
            - gen_ai.tool.name / type / call.id / call.result
            - langfuse.observation.input = {tool_name, arguments}
            - langfuse.observation.output = {result}
-        2. agent.handoff (SPAN): when tool_name=send_to_agent
+        2. agent.handoff (SPAN): when tool_name is a dispatch tool (send_to_agent or task)
         """
         if not self._enabled:
             return
@@ -593,9 +592,10 @@ class TraceCollectorHook(
         tool_calls: Sequence[ToolCall],
         results: Sequence[ToolResult],
     ) -> None:
-        """Emit agent.handoff spans for send_to_agent tool calls.
+        """Emit agent.handoff spans for dispatch tool calls.
 
-        When an agent calls send_to_agent, this method emits an
+        When an agent calls send_to_agent or task (both are dispatch tools
+        that transfer control to another agent), this method emits an
         agent.handoff span (SPAN) on the sender's trace tree, marking
         the control transfer point. Attributes:
         - gen_ai.handoff.target_agent / target_kind / message_type
@@ -607,32 +607,37 @@ class TraceCollectorHook(
         AgentCommunicationService — trace logic now lives entirely in hooks.
         """
         for tc, result in zip(tool_calls, results):
-            if tc.tool_name != "send_to_agent":
+            if tc.tool_name not in _DISPATCH_TOOL_NAMES:
                 continue
             target_agent = tc.arguments.get("target_agent", "unknown")
             root_span_id = self._root_span_id(self._trace_id(ctx))
             now = time.time()
             base = self._build_base_attrs(ctx, "invoke_agent")
-            base.update({
-                GenAiAttr.HANDOFF_TARGET_AGENT: target_agent,
-                GenAiAttr.HANDOFF_TARGET_KIND: "unknown",
-                GenAiAttr.HANDOFF_MESSAGE_TYPE: "unknown",
-                GenAiAttr.HANDOFF_PARENT_TURN_ID: (
-                    ctx.identity.turn_id if ctx.identity else None
-                ),
-                GenAiAttr.HANDOFF_CHILD_TURN_ID: None,
-                GenAiAttr.LANGFUSE_OBSERVATION_TYPE: LangfuseObservationType.SPAN.value,
-                GenAiAttr.LANGFUSE_OBSERVATION_INPUT: json.dumps(
-                    {"target_agent": target_agent, "content": _safe_json_dumps(tc.arguments.get("content", ""))},
-                    ensure_ascii=False,
-                    default=str,
-                ),
-                GenAiAttr.LANGFUSE_OBSERVATION_OUTPUT: json.dumps(
-                    {"result": result.message_content() or None, "success": result.success},
-                    ensure_ascii=False,
-                    default=str,
-                ),
-            })
+            base.update(
+                {
+                    GenAiAttr.HANDOFF_TARGET_AGENT: target_agent,
+                    GenAiAttr.HANDOFF_TARGET_KIND: "unknown",
+                    GenAiAttr.HANDOFF_MESSAGE_TYPE: "unknown",
+                    GenAiAttr.HANDOFF_PARENT_TURN_ID: (
+                        ctx.identity.turn_id if ctx.identity else None
+                    ),
+                    GenAiAttr.HANDOFF_CHILD_TURN_ID: None,
+                    GenAiAttr.LANGFUSE_OBSERVATION_TYPE: LangfuseObservationType.SPAN.value,
+                    GenAiAttr.LANGFUSE_OBSERVATION_INPUT: json.dumps(
+                        {
+                            "target_agent": target_agent,
+                            "content": _safe_json_dumps(tc.arguments.get("content", "")),
+                        },
+                        ensure_ascii=False,
+                        default=str,
+                    ),
+                    GenAiAttr.LANGFUSE_OBSERVATION_OUTPUT: json.dumps(
+                        {"result": result.message_content() or None, "success": result.success},
+                        ensure_ascii=False,
+                        default=str,
+                    ),
+                }
+            )
             span = SpanModel(
                 trace_id=self._trace_id(ctx),
                 span_id=uuid.uuid4().hex,
@@ -863,9 +868,7 @@ class TraceCollectorHook(
             **attrs,
         }
         if error is not None:
-            root_attrs[GenAiAttr.LANGFUSE_OBSERVATION_LEVEL] = (
-                LangfuseObservationLevel.ERROR.value
-            )
+            root_attrs[GenAiAttr.LANGFUSE_OBSERVATION_LEVEL] = LangfuseObservationLevel.ERROR.value
         span = SpanModel(
             trace_id=trace_id,
             span_id=root_span_id,
@@ -883,27 +886,21 @@ class TraceCollectorHook(
         if self._score_injector is not None:
             await self._inject_l2_scores(ctx, trace_id, root_span_id)
 
-    async def _inject_l2_scores(
-        self, ctx: AgentContext, trace_id: str, root_span_id: str
-    ) -> None:
+    async def _inject_l2_scores(self, ctx: AgentContext, trace_id: str, root_span_id: str) -> None:
         """Compute L2 heuristic scores and inject to Langfuse.
 
         Fire-and-forget: any failure is logged and swallowed. Never raises.
         """
         injector = self._score_injector
         try:
-            runtime_store = (
-                ctx.runtime.services.trace_store if ctx.runtime is not None else None
-            )
+            runtime_store = ctx.runtime.services.trace_store if ctx.runtime is not None else None
             if runtime_store is None or injector is None:
                 return
             spans = await runtime_store.list_by_trace_id(trace_id)
             if not spans:
                 return
             scores = compute_score(spans)
-            await injector.inject_scores(
-                trace_id, scores, observation_id=root_span_id
-            )
+            await injector.inject_scores(trace_id, scores, observation_id=root_span_id)
         except Exception:
             logger.warning(
                 "TraceCollectorHook: L2 score injection failed (trace_id=%s)",
