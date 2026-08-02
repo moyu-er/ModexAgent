@@ -37,7 +37,7 @@ EXTERNAL_PROVIDERS_ROOT = (
 EXTERNAL_ROOT = REPO_ROOT / "src" / "modex_agent" / "agents" / "external"
 CORE_EVENTS_PATH = REPO_ROOT / "src" / "modex_agent" / "core" / "events.py"
 CORE_EMITTER_PATH = REPO_ROOT / "src" / "modex_agent" / "core" / "emitter.py"
-WEBUI_EMITTER_PATH = WEBUI_ROOT / "emitter.py"
+WEBUI_EMITTER_DIR = WEBUI_ROOT / "emitter"
 
 
 def _imports_from(tree: ast.Module, target_prefix: str) -> list[str]:
@@ -191,13 +191,16 @@ def test_webui_emitter_has_no_external_provider_branches() -> None:
     string comparisons against ``ExternalEvent`` values and no
     ``Emission`` type references.
     """
-    src = WEBUI_EMITTER_PATH.read_text(encoding="utf-8")
-    assert "ExternalEvent" not in src, (
-        "WebBotEmitter must not reference ExternalEvent (canonical seam)"
-    )
-    assert "from modex_agent.agents.external" not in src, (
-        "WebBotEmitter must not import from external (canonical seam)"
-    )
+    for py_file in WEBUI_EMITTER_DIR.rglob("*.py"):
+        if "__pycache__" in py_file.parts:
+            continue
+        src = py_file.read_text(encoding="utf-8")
+        assert "ExternalEvent" not in src, (
+            f"{py_file.name} must not reference ExternalEvent (canonical seam)"
+        )
+        assert "from modex_agent.agents.external" not in src, (
+            f"{py_file.name} must not import from external (canonical seam)"
+        )
 
 
 if __name__ == "__main__":

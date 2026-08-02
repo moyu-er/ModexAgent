@@ -94,10 +94,10 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 | `bot/input_pipeline/stages/set_channel.py` | S4 — conversation channel tagging (runs first in IM pipeline) |
 | `bot/service/core.py` | `BotService` — initialization, workspace context, pool creation, pipeline wiring |
 | `bot/service/builders.py` | Tool registration, MCP tools, subagent memory/skill construction, terminal setup |
-| `bot/service/pool_builder.py` | Pool mode assembly — creates `AgentPool`, subagent descriptors |
+| `bot/service/pool/` | Pool mode assembly — creates `AgentPool`, subagent descriptors (split into 11 focused modules) |
 | `bot/service/pool_router.py` | `PoolRouter` — session→pool dispatch, `PoolSessionStore` persistence |
 | `bot/service/pool_instance.py` | `PoolInstance` — pool runtime holder (config, pool, main_agent_name) |
-| `bot/workspace/wiring.py` | `build_workspace_stack` / `build_single_workspace_stack` — workspace assembly |
+| `bot/workspace/wiring/` | `build_workspace_stack` / `build_single_workspace_stack` — workspace assembly (split into 4 modules) |
 | `bot/workspace/handle.py` | `PoolWorkspaceResources` — per-workspace resource bundle |
 | `bot/workspace/dispatch.py` | `WorkspaceMessageDispatcher` — per-message workspace routing |
 | `bot/workspace/pool_data.py` | `PoolData` — frozen per-pool data bundle |
@@ -105,7 +105,7 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 | `modex_agent/workspace/routing.py` | `SessionWorkspaceMap` — per-session workspace pointer |
 | `bot/service/web_ui_service.py` | `WebUIService` — the single IM + WebUI entry point; auto-discovers every `bot/adapters/register_*.py` (QQ / Telegram / WebSocket), assembles and starts the HTTP/WS server |
 | `bot/service/qq_service.py` | `QQBotService` — standalone QQ-only `BotService` variant (the CLI start path uses `WebUIService`) |
-| `bot/adapters/qq.py` | QQ platform input/output adapters (C2C + group + file upload) |
+| `bot/adapters/qq/` | QQ platform input/output adapters (C2C + group + file upload) — split into 5 modules |
 | `bot/adapters/telegram.py` | Telegram input/output adapters (long-polling inbound, HTML chunked outbound) |
 | `bot/adapters/web_socket.py` | WebSocket input adapter for WebUI real-time chat |
 | `bot/adapters/fan_in.py` | Multi-agent output fan-in for WebUI (merges agents' streams to one WS) |
@@ -113,7 +113,7 @@ All user messages (IM + WebUI) flow through the **Input Pipeline** (`bot/input_p
 | `bot/webui/server.py` | aiohttp REST+WS server (sessions, pools, workspace APIs) |
 | `bot/webui/transcript_store.py` | Per-agent transcript persistence (JSONL) for history replay |
 | `bot/webui/events.py` | WebUI event types (model deltas, tool calls, turn lifecycle) |
-| `bot/webui/emitter.py` | Emits WebUI events via fan-in adapter |
+| `bot/webui/emitter/` | Emits WebUI events via fan-in adapter — split into 4 modules |
 | `modexbot/cli.py` | CLI entry point — 3-layer process discovery for start/stop/restart |
 | `modexbot/main.py` | CLI→service bootstrap |
 | `config/bot_config.yml` | Agent, memory, tool, runtime, observability config. `${ENV_VAR}` interpolation |
@@ -215,7 +215,7 @@ points, so the presets never reach them regardless of config:
 1. **Subagent**: `AgentTemplate.materialize` (`template.py:100`) early-dispatches
    to `_materialize_external` when `execution_strategy == EXTERNAL` —
    skips native memory/tool/skill/hooks assembly entirely.
-2. **Main agent pipeline**: `pool_builder.create_pool` (`pool_builder.py:389`)
+2. **Main agent pipeline**: `pool.create_pool` (`pool/factory.py`)
    takes the external branch, skipping `_wire_main_pipeline` (no governance,
    no hooks, no approval renderer).
 3. **Experience hook**: `wiring._wire_pool_to_resources` (`wiring.py:534`)
@@ -262,7 +262,7 @@ If any of these three is missing, experience degrades silently:
 
 Governance is **derived from memory config**, never configured independently:
 
-- **Main agent**: `pool_builder.py:1105` calls `create_governance(memory)` →
+- **Main agent**: `pool/pipeline_wiring.py` calls `create_governance(memory)` →
   `CompositeGovernance` with `LossyContentCompactionGovernance` (truncates
   oversized tool_results/assistant/user content per `LossyConfig`) +
   `ToolChainRepairGovernance` (repairs broken tool_call/tool_result pairing

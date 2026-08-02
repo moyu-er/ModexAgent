@@ -10,13 +10,13 @@ Bot service lifecycle, pool orchestration, and workspace management. This is the
 | File | Description |
 |------|-------------|
 | `__init__.py` | Package marker |
-| `core.py` | `BotService` — initialization, workspace stack assembly (multi-live), pool creation, pipeline assembly, lifecycle management. **Owns the shared MCP connection registry** (ADR-0017 Task 5a): built once in `initialize()` gated by `config/mcp/registry.json` `sharedRegistry` (default on), shut down in `stop()` after workspaces evict |
+| `core.py` | `BotService` — initialization, workspace stack assembly (multi-live), pool creation, pipeline assembly, lifecycle management. **Owns the shared MCP connection registry** (ADR-0017 Task 5a): built once in `initialize()` gated by `config/mcp/registry.json` `sharedRegistry` (default on), shut down in `stop()` after workspaces evict. Extracted helpers: `_model_config_loader.py`, `_runtime_builders.py` |
 | `builders.py` | Tool registration, MCP tool loading, subagent memory/skill construction, terminal tool setup. `_load_agent_mcp_tools` has a shared-registry branch: when passed a `McpConnectionRegistry` it acquires a `SharedMcpBackend` facade instead of building a private `MCPClientManager` |
-| `pool_builder.py` | `create_pool()` — assembles an `AgentPool` with main agent + subagent descriptors from config; per-workspace tool wrapping via `WorkspaceRootProvider`. Threads `mcp_registry` through to the main-agent MCP tool loader |
+| `pool/` | `create_pool()` subpackage — assembles an `AgentPool` with main agent + subagent descriptors from config. Split into `factory.py` (orchestrator), `assembly_context.py`, `external_subagent.py`, `strategy_registry.py`, `memory_defaults.py`, `tool_projection.py`, `agent_factory.py`, `pool_construction.py`, `communication.py`, `pipeline_wiring.py`. Per-workspace tool wrapping via `WorkspaceRootProvider`. Threads `mcp_registry` through to the main-agent MCP tool loader |
 | `_external_wiring.py` | External pool assembly. OpenCode uses the shared `opencode serve` backend (managed by the `OpenCodeServerManager` singleton); Pi uses its per-turn backend. `BotService.start()` enters `OpenCodeServerManager.lifecycle()` and `stop()` exits it |
 | `pool_instance.py` | `PoolInstance` dataclass — holds pool config, `AgentPool` reference, main agent name |
 | `pool_router.py` | `PoolRouter` — session→pool dispatch; `PoolSessionStore` persists session→pool mapping. Now delegates message processing to input pipeline (adapter produces seed envelope → pipeline stages → enqueue callback enters broker queue) |
-| `web_ui_service.py` | `WebUIService` — the single IM + WebUI entry point. Assembles and starts the HTTP + WS server; **auto-discovers every `bot/adapters/register_*.py`** (QQ / Telegram / WebSocket) by importing them to fire the `@register` decorators, then builds enabled adapters from `ADAPTERS`; creates `PoolSkillManagerRegistry` and `BotInputContext`; wires pipeline into adapters |
+| `web_ui_service.py` | `WebUIService` — the single IM + WebUI entry point. Assembles and starts the HTTP + WS server; **auto-discovers every `bot/adapters/register_*.py`** (QQ / Telegram / WebSocket) by importing them to fire the `@register` decorators, then builds enabled adapters from `ADAPTERS`; creates `PoolSkillManagerRegistry` and `BotInputContext`; wires pipeline into adapters. Extracted helpers: `bot/webui/workspace_providers.py`, `bot/webui/adapter_discovery.py` |
 | `qq_service.py` | `QQBotService` — a QQ-only `BotService` variant. The `modexbot` CLI start path runs `WebUIService` (which itself auto-discovers the QQ adapter), so this is a standalone/alternate entry, not the default |
 | `session_store.py` | `WorkspacePoolSessionStore` — SessionInfo index partitioned by pool under a per-workspace `session_index` dir |
 | `workspace_store.py` | Workspace- and pool-partitioned transcript store (ctxvar-routed writes); cross-cutting business concern |
@@ -104,7 +104,7 @@ Defined in `pool_router.py`:
 
 ### Common Patterns
 - IOC pattern: `AppConfig` is the single source of truth; all config flows from it.
-- Builder pattern: `builders.py` and `pool_builder.py` construct complex objects with many dependencies.
+- Builder pattern: `builders.py` and `pool/` construct complex objects with many dependencies.
 - Multi-live pattern: switching mutates only a per-session pointer; resources are lazy + cached + evictable; in-flight turns are unaffected.
 
 ## Dependencies

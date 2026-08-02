@@ -43,7 +43,7 @@ import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _FRAMEWORK_SRC = _REPO_ROOT / "src" / "modex_agent"
-_POOL_BUILDER = _REPO_ROOT / "examples" / "bot_project" / "bot" / "service" / "pool_builder.py"
+_POOL_DIR = _REPO_ROOT / "examples" / "bot_project" / "bot" / "service" / "pool"
 _PIPELINE = _FRAMEWORK_SRC / "pipeline" / "pipeline.py"
 
 # Files allowed to contain `execution_strategy ==` (runtime dispatch/routing/
@@ -113,24 +113,27 @@ def _files_with_execution_strategy_compare(root: Path) -> set[Path]:
 
 
 def test_pool_builder_create_pool_has_no_strategy_branching() -> None:
-    """pool_builder.create_pool must not contain `if is_external` or
+    """pool/ subpackage must not contain `if is_external` or
     `if execution_strategy ==` assembly branches.
 
     The function may use `execution_strategy ==` for a 1-line strategy-name
     selection (ternary), but not for branching the assembly path. This test
-    checks the full source of pool_builder.py for the forbidden patterns;
-    the ternary at line ~186 (`strategy_name = "external" if ... else "react"`)
+    checks ALL .py files in the pool/ subpackage for the forbidden patterns;
+    the ternary at factory.py line ~186 (`strategy_name = "external" if ... else "react"`)
     uses `if` inline but does NOT match `if\\s+.*execution_strategy\\s*==` (no
     leading `if` keyword on the same statement as the comparison in a branch).
     """
-    source = _source(_POOL_BUILDER)
-    for pattern in _FORBIDDEN_PATTERNS:
-        matches = pattern.findall(source)
-        assert not matches, (
-            f"pool_builder.py contains forbidden strategy-branching pattern "
-            f"{pattern.pattern!r} ({len(matches)} matches). ADR-0025 requires "
-            f"zero strategy-specific branching in create_pool."
-        )
+    for py_file in _POOL_DIR.rglob("*.py"):
+        if "__pycache__" in py_file.parts:
+            continue
+        source = _source(py_file)
+        for pattern in _FORBIDDEN_PATTERNS:
+            matches = pattern.findall(source)
+            assert not matches, (
+                f"{py_file.name} contains forbidden strategy-branching pattern "
+                f"{pattern.pattern!r} ({len(matches)} matches). ADR-0025 requires "
+                f"zero strategy-specific branching in create_pool."
+            )
 
 
 def test_pipeline_init_has_no_strategy_branching() -> None:

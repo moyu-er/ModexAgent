@@ -14,9 +14,9 @@ WebUI backend — aiohttp server with REST API, WebSocket, and transcript storag
 | `types.py` | Shared types and constants — `_WsConnectionState`, `RuntimeStores`, `SessionListEntry`, `WorkspaceIndex`, `_safe_send_json`, `_materialize_partial_deltas`, path constants. Leaf dependency (no imports from `server.py`). |
 | `routes/__init__.py` | Route package marker |
 | `routes/models.py` | Models/Config/Restart routes — `GET /api/models`, `GET|PUT /api/config/{domain}`, `POST /api/system/restart`, `POST /api/models/fetch` |
-| `routes/sessions.py` | Session/Messages/Todos/Approvals/Attachments routes — `GET|POST /api/sessions`, `GET /api/sessions/{id}/messages`, todos, approvals, attachments, media config |
+| `routes/sessions/` | Session/Messages/Todos/Approvals/Attachments routes — `GET|POST /api/sessions`, `GET /api/sessions/{id}/messages`, todos, approvals, attachments, media config. Split into `__init__.py` (register + helpers), `lifecycle.py`, `messages.py`, `approvals.py`, `attachments.py` |
 | `routes/workspace.py` | Workspace routes — `GET /api/workspace`, `POST /api/workspace/cd`, `POST /api/workspace/pick`, `GET /api/workspace/recent`, media tmp sweep |
-| `routes/pool_config.py` | Pool/MCP/Skills/Prompts routes — 22 handlers for `GET|POST|PUT|DELETE /api/pools/*`, `/api/mcp/*`, `/api/skills/*`, `/api/prompts/*` |
+| `routes/pool_config/` | Pool/MCP/Skills/Prompts routes — 22 handlers for `GET|POST|PUT|DELETE /api/pools/*`, `/api/mcp/*`, `/api/skills/*`, `/api/prompts/*`. Split into `__init__.py` (register + helpers), `pools.py`, `mcp.py`, `skills.py`, `prompts.py` |
 | `routes/websocket/__init__.py` | WebSocket entry point + action dispatch — `GET /ws`, `dispatch_ws_message` |
 | `routes/websocket/attach.py` | WS ATTACH action — session registration, pool switching, deferred materialize |
 | `routes/websocket/messaging.py` | WS SEND_MESSAGE action — user message → input pipeline → enqueue |
@@ -24,7 +24,7 @@ WebUI backend — aiohttp server with REST API, WebSocket, and transcript storag
 | `routes/websocket/streaming.py` | Delta forwarding — `forward_deltas`, `watch_new_queues`, queue connection filtering |
 | `events.py` | WebUI event types — `ModelContentDelta`, `ModelReasoningDelta`, `ToolCallStart/End`, `TurnEnd`, `UserMessage` |
 | `transcript_store.py` | `TranscriptStore` — per-agent JSONL transcript persistence for history replay |
-| `emitter.py` | `WebBotEmitter` / `CompositeEmitter` — emits streaming events (content deltas, tool calls) to WebSocket clients |
+| `emitter/` | `WebBotEmitter` / `CompositeEmitter` — emits streaming events (content deltas, tool calls) to WebSocket clients. Split into `__init__.py` (re-exports), `web_bot.py`, `_segments.py`, `composite.py` |
 
 ## REST API Endpoints
 
