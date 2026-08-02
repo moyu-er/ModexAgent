@@ -32,6 +32,13 @@ class TestWriteRuntimeBlockCreate:
         text = target.read_text(encoding="utf-8")
         assert "modexctl send" in text
 
+    def test_default_body_does_not_mention_send_to_agent(self, tmp_path: Path) -> None:
+        target = tmp_path / "AGENTS.md"
+        write_runtime_block(target)
+        text = target.read_text(encoding="utf-8")
+        assert "send_to_agent" not in text
+        assert "task" not in text
+
 
 class TestWriteRuntimeBlockIdempotent:
     def test_rewrite_replaces_only_block_content(self, tmp_path: Path) -> None:

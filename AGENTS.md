@@ -54,7 +54,7 @@ Detailed rules in `rules/type-safety.md` (16 rules) and `rules/architecture.md` 
 ## Multi-Agent Communication Rules
 
 - Star topology: subagents communicate only through main agent (`subagent_validator.py` enforces).
-- Single LLM-facing tool: `send_to_agent`. The framework decides delivery mechanism internally.
+- Two LLM-facing tools: `task` (dispatch new subagent tasks) + `send_to_agent` (continuation, consultation, peer communication). Both converge on `AgentCommunicationService.send_async()`.
 - Session ID format: `{prefix}.{agent_name}` (dot-separated, via `SessionIdFactory`).
 - `SubagentAutoSendHook` auto-forwards final output to parent.
 - External coding agents (OpenCode) are NORMAL main agents of their own pools; they reply via `modexctl send` CLI, not `send_to_agent`. See ADR-0022 and `docs/design/external-agent-integration/`.

@@ -85,7 +85,7 @@ per invocation by pipeline providers, so reuse is safe.)
 | `bus.py` | `AgentMessageBus` ABC + `LocalAgentMessageBus` — persist + signal the pool's `InboxPoller` via `signal_wakeup()` (in-process `Event.set`, the single convergence point for every inbox writer: user input, agent-to-agent, CLI `modexctl send`, external peer reply). `consume(only_types=)` for fold-in filtering; `sessions_with_pending()` for poller enumeration. The poller is wired post-construction via `set_poller()`; until then `send` is persist-only and the poller's tick fallback covers delivery. |
 | `communication/` (package) | `AgentCommunicationService` — pure router. Strategy-dispatched (ADR-0019): `_send` resolves target → `TopologyPolicy.check` → one of three `SendStrategy` subclasses (`SubagentDispatchStrategy`, `ParentReplyStrategy`, `PeerNormalStrategy`) handles the full vertical slice (session construction, invocation_id semantics, envelope shape, delivery, result). See `communication/AGENTS.md` for the strategy contract. |
 | `comm_kind.py` | `AgentCommKind` — `NORMAL` / `SUBAGENT` topology kind. |
-| `tools.py` | `SendToAgentTool` (the single LLM-facing comm tool), `CommunicationTargetStore`, `CommunicationTarget` (carries `pool_name` + `bus_ref` for cross-pool routing per ADR-0019). |
+| `tools.py` | `SendToAgentTool` (communication: continuation, consultation, peer) + `TaskDispatchTool` (dispatch new subagent tasks), `CommunicationTargetStore`, `CommunicationTarget` (carries `pool_name` + `bus_ref` for cross-pool routing per ADR-0019). Both tools converge on `AgentCommunicationService.send_async()`. |
 | `template.py` | `AgentTemplate` — subagent preset + the **only** construction path (`materialize`). Builds the tool manager, session-only memory, subagent hooks; wires per-invocation APPEND/FORK prompt providers. |
 | `template_registry.py` | `AgentTemplateRegistry` — scans/loads per-pool subagent templates (`config/pools/<pool>/templates/*.yml`). |
 | `materialize_deps.py` | `AgentMaterializeDeps` — frozen value object of construction deps (factory, broker, pool, path resolver, fork builder, …); replaces ~30 scattered ctor params. |
@@ -118,13 +118,18 @@ per invocation by pipeline providers, so reuse is safe.)
   **session group** (A→B creates `convA.mainB`; B→A reply lands on
   `convA.mainA`). No fresh `invocation_id` is minted; the peer session is a root
   session (`parent_session_id=null`) — peer agents are equals, not parent/child.
-- `send_to_agent(target_agent, content, invocation_id?)` is the single
-  LLM-facing comm tool. `SendToAgentTool.execute` resolves the target by name
-  from `CommunicationTargetStore` and dispatches via
-  `AgentCommunicationService.send_async`. The service runs `TopologyPolicy.check`
-  (single star-topology enforcement point) then delegates to one of three
-  `SendStrategy` subclasses based on the target's routing kind. It never creates
-  an agent instance — the poller materializes lazily.
+- Two LLM-facing tools, both converging on `AgentCommunicationService.send_async`:
+  - `task(target_agent, content)` — dispatch a NEW subagent task (always
+    `invocation_id=None`). Only registered for main agents. Rich description
+    guides the LLM to construct high-quality, self-contained task prompts.
+  - `send_to_agent(target_agent, content, invocation_id?)` — communication:
+    continue an existing subagent session, consult parent, or message a peer.
+    `SendToAgentTool.execute` resolves the target by name from
+    `CommunicationTargetStore` and dispatches via
+    `AgentCommunicationService.send_async`. The service runs `TopologyPolicy.check`
+    (single star-topology enforcement point) then delegates to one of three
+    `SendStrategy` subclasses based on the target's routing kind. It never creates
+    an agent instance — the poller materializes lazily.
   - `invocation_id` empty → mint a new subagent task session (cold-start; the
     poller materializes on first turn).
   - `invocation_id` concrete → continue that subagent session verbatim.

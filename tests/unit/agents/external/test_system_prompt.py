@@ -46,3 +46,8 @@ class TestRenderSystemPrompt:
     def test_mentions_modexctl_agents(self) -> None:
         out = render_system_prompt([("helper", "a helper")])
         assert "modexctl agents" in out
+
+    def test_does_not_mention_send_to_agent(self) -> None:
+        out = render_system_prompt([("helper", "a helper")])
+        assert "send_to_agent" not in out
+        assert "task" not in out
