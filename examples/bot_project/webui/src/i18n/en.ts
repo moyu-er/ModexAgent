@@ -315,7 +315,7 @@ export const en = {
       enableTerminal: "Enable terminal",
       visibleWindow: "Visible window",
       description: "Description",
-      descriptionHelper: "Used for agent discovery and inter-agent communication via send_to_agent.",
+      descriptionHelper: "Describe this agent's own capabilities and the work it's suited for. Don't mention other agents, delegation, communication, or topology.",
       toolSupplements: "Tool supplements",
       approvalRequired: "Approval required for write/edit tools",
       writeAllowedPaths: "Write allowed paths (one per line)",
@@ -499,7 +499,7 @@ export const en = {
       providerRunHelper: "Max steps, terminal, tool preset, approval, MCP, skills and the system prompt are controlled by the {cli} CLI. This agent receives work and replies through send_to_agent.",
       agentName: "Agent name",
       description: "Description",
-      descriptionHelper: "Used for agent discovery and inter-agent communication via send_to_agent.",
+      descriptionHelper: "Describe this agent's own capabilities and the work it's suited for. Don't mention other agents, delegation, communication, or topology.",
     },
     agentMcp: {
       mcpServersSelected: "MCP servers ({count} selected)",

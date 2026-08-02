@@ -1,11 +1,10 @@
 main_agent_name: orchestrator
 description: >-
-  Software engineering agent — explores, plans, reviews, and dispatches
-  implementation to subagents. Handles non-implementation work directly:
-  quick codebase lookups, planning, diff review, and design validation.
-  Delegates deep exploration to the explore subagent and code/file
-  modification to the coder subagent (external coding). Use for any code
-  change, refactoring, bug fix, or repo exploration.
+  Software engineering agent for codebase investigation, implementation
+  planning, design validation, change review, and structured technical
+  analysis. Performs quick codebase lookups, planning, diff review, and
+  design checks. Use when a task needs investigation, planning, review,
+  or design analysis of a codebase.
 max_steps: 100
 use_terminal: false
 terminal_visibility: false
