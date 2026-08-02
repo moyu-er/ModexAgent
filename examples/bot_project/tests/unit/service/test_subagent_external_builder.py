@@ -32,7 +32,7 @@ _BOT_PROJECT = Path(__file__).parent.parent.parent.parent.parent / "examples" / 
 if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
-from bot.service.pool_builder import _maybe_build_external_subagent_builder
+from bot.service.pool.external_subagent import _maybe_build_external_subagent_builder
 from bot.service.subagent_external_builder import (
     BotSubagentExternalBuilder,
 )

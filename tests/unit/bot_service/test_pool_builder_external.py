@@ -41,7 +41,7 @@ async def _build_external_pool(
     """Call ``create_pool`` for an external pool with ``shutil.which`` mocked."""
     from bot.service.model_choice import ModelChoiceRegistry
     from bot.service.model_config import BotModelConfig
-    from bot.service.pool_builder import create_pool
+    from bot.service.pool import create_pool
     from bot.workspace.handle import WorkspaceHandle
 
     target = tmp_path / "ws"
@@ -112,7 +112,7 @@ async def _build_external_pool_no_model(
     ignores the provider parameter.
     """
     from bot.service.model_choice import ModelChoiceRegistry
-    from bot.service.pool_builder import create_pool
+    from bot.service.pool import create_pool
     from bot.workspace.handle import WorkspaceHandle
 
     target = tmp_path / "ws"

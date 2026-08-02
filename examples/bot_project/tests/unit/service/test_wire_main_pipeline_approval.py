@@ -1,6 +1,6 @@
 """Approval wiring on the main pipeline — opt-in, main-only.
 
-Pins that ``bot.service.pool_builder._wire_main_pipeline`` installs an
+Pins that ``bot.service.pool.pipeline_wiring._wire_main_pipeline`` installs an
 ``ApprovalRuntime`` on the main agent's pipeline when the main agent's
 ``ApprovalConfig`` is enabled + gates tools, and leaves approval unwired
 otherwise (default-off). The model info carrier
@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).parents[3]))
 
 from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
-from bot.service.pool_builder import _wire_main_pipeline
+from bot.service.pool.pipeline_wiring import _wire_main_pipeline
 
 from modex_agent.approval.runtime import ApprovalRuntime, TieredToolApprovalClassifier
 from modex_agent.core.emitter import AgentResult

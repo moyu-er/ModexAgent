@@ -19,7 +19,7 @@ from bot.workspace.handle import (  # noqa: F401
 from bot.workspace.pool_data import PoolData, build_pool_data  # noqa: F401
 
 # NOTE: ``wiring`` (build_workspace_stack) is intentionally NOT re-exported
-# here — it imports ``bot.service.pool_builder`` (BotService), and this package
+# here — it imports ``bot.service.pool`` (BotService), and this package
 # is imported by tests/low-level modules that must not pull in the service
 # layer. Import it explicitly: ``from bot.workspace.wiring import ...``.
 

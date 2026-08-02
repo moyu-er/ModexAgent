@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from bot.service.pool_builder import build_main_agent_tool_names
+from bot.service.pool.tool_projection import build_main_agent_tool_names
 
 
 class TestBuildMainAgentToolNames:

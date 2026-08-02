@@ -177,7 +177,7 @@ async def test_main_agent_tool_manager_is_workspace_scoped(tmp_path: Path) -> No
     """Verify that create_pool's tool_manager contains workspace-scoped tools when handle is given."""
     from bot.service.model_choice import ModelChoiceRegistry
     from bot.service.model_config import BotModelConfig
-    from bot.service.pool_builder import create_pool
+    from bot.service.pool import create_pool
 
     from modex_agent.control.channel import InMemoryControlChannel
     from modex_agent.core.llm_struct import RuntimeSafetyPolicy

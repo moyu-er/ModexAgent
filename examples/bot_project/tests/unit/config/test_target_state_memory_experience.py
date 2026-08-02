@@ -297,7 +297,7 @@ class TestAssemblyDepsUniformInjection:
 
     def test_all_pools_get_same_memory_preset(self, tmp_path: Path) -> None:
         """Every pool — native or external — gets the same memory config."""
-        from bot.workspace.wiring import _build_assembly_deps_for_pools
+        from bot.workspace.wiring.stack import _build_assembly_deps_for_pools
 
         pool_names = ["native_main", "external_main", "mixed"]
         deps_map = _build_assembly_deps_for_pools(
@@ -327,7 +327,7 @@ class TestAssemblyDepsUniformInjection:
         pipeline, experience would work.
         """
         from bot.config.memory_defaults import main_agent_experience
-        from bot.workspace.wiring import _build_assembly_deps_for_pools
+        from bot.workspace.wiring.stack import _build_assembly_deps_for_pools
 
         pool_names = ["native_a", "native_b", "external_c"]
         deps_map = _build_assembly_deps_for_pools(
@@ -344,7 +344,7 @@ class TestAssemblyDepsUniformInjection:
 
     def test_works_with_empty_pool_list(self, tmp_path: Path) -> None:
         """Empty pool list must not crash (defensive)."""
-        from bot.workspace.wiring import _build_assembly_deps_for_pools
+        from bot.workspace.wiring.stack import _build_assembly_deps_for_pools
 
         deps_map = _build_assembly_deps_for_pools(
             pool_names=[],
@@ -354,7 +354,7 @@ class TestAssemblyDepsUniformInjection:
 
     def test_works_with_single_pool(self, tmp_path: Path) -> None:
         """Single pool must get full config."""
-        from bot.workspace.wiring import _build_assembly_deps_for_pools
+        from bot.workspace.wiring.stack import _build_assembly_deps_for_pools
 
         deps_map = _build_assembly_deps_for_pools(
             pool_names=["solo"],
@@ -453,7 +453,8 @@ class TestExternalMainAgentSkip:
     ) -> None:
         """When default_provider is None (no model.yml), experience review
         is skipped with a warning. The bot must NOT crash."""
-        from bot.workspace.wiring import _build_assembly_deps_for_pools, _wire_pool_to_resources
+        from bot.workspace.wiring.pool_wiring import _wire_pool_to_resources
+        from bot.workspace.wiring.stack import _build_assembly_deps_for_pools
 
         deps_map = _build_assembly_deps_for_pools(
             pool_names=["test_pool"],
@@ -494,7 +495,8 @@ class TestExternalMainAgentSkip:
         """Both native and external pools use the SAME bot-global default_provider
         for experience review — NOT per-pool provider. This decouples experience
         review from pool type."""
-        from bot.workspace.wiring import _build_assembly_deps_for_pools, _wire_pool_to_resources
+        from bot.workspace.wiring.pool_wiring import _wire_pool_to_resources
+        from bot.workspace.wiring.stack import _build_assembly_deps_for_pools
 
         from modex_agent.core.provider import LLMProvider
 
@@ -579,7 +581,7 @@ class TestExperienceThreeComponentPackaging:
         never adds <available_experiences> to the system prompt.
         """
         from bot.workspace.pool_data import _build_experience_manager
-        from bot.workspace.wiring import _build_assembly_deps_for_pools
+        from bot.workspace.wiring.stack import _build_assembly_deps_for_pools
 
         deps_map = _build_assembly_deps_for_pools(
             pool_names=["test"],
@@ -625,7 +627,7 @@ class TestExperienceThreeComponentPackaging:
         directory grows unbounded.
         """
         from bot.workspace.background import BackgroundTaskRunner
-        from bot.workspace.wiring import _build_assembly_deps_for_pools
+        from bot.workspace.wiring.stack import _build_assembly_deps_for_pools
 
         deps_map = _build_assembly_deps_for_pools(
             pool_names=["native_a", "native_b"],
@@ -706,7 +708,7 @@ class TestEndToEndWithSynthesizedPools:
         4. External subagent is correctly marked EXTERNAL
         """
         from bot.config.memory_defaults import subagent_memory
-        from bot.workspace.wiring import _build_assembly_deps_for_pools
+        from bot.workspace.wiring.stack import _build_assembly_deps_for_pools
 
         # 1. Build synthesized pool store
         store = _build_pool_store_with_mixed_pools(tmp_path)
@@ -787,7 +789,8 @@ class TestExperienceReviewerUsesDefaultProvider:
         experience review uses the global default. This ensures external
         pools (provider=None) don't crash.
         """
-        from bot.workspace.wiring import _build_assembly_deps_for_pools, _wire_pool_to_resources
+        from bot.workspace.wiring.pool_wiring import _wire_pool_to_resources
+        from bot.workspace.wiring.stack import _build_assembly_deps_for_pools
 
         from modex_agent.core.provider import LLMProvider
 
@@ -844,7 +847,8 @@ class TestExperienceReviewerUsesDefaultProvider:
         without model.yml can still boot — chat turns fail, but the WebUI
         is fully usable so the user can configure a model.
         """
-        from bot.workspace.wiring import _build_assembly_deps_for_pools, _wire_pool_to_resources
+        from bot.workspace.wiring.pool_wiring import _wire_pool_to_resources
+        from bot.workspace.wiring.stack import _build_assembly_deps_for_pools
 
         deps_map = _build_assembly_deps_for_pools(
             pool_names=["no_model"],
@@ -888,7 +892,8 @@ class TestExperienceReviewerUsesDefaultProvider:
         ``TypeError: provider must be LLMProvider, got NoneType``.
         The fix: experience review uses default_provider, not pool_instance.provider.
         """
-        from bot.workspace.wiring import _build_assembly_deps_for_pools, _wire_pool_to_resources
+        from bot.workspace.wiring.pool_wiring import _wire_pool_to_resources
+        from bot.workspace.wiring.stack import _build_assembly_deps_for_pools
 
         from modex_agent.core.provider import LLMProvider
 
@@ -958,7 +963,7 @@ class TestArchiveEmitterNotification:
     def test_listener_sends_start_notice_on_cleanup_triggered(self) -> None:
         """UserNoticeCleanupListener.on_cleanup_triggered MUST send the
         start notice via notification_service.send_notice."""
-        from bot.service.pool_builder import UserNoticeCleanupListener
+        from bot.service.pool.communication import UserNoticeCleanupListener
 
         notification_service = MagicMock()
         notification_service.send_notice = AsyncMock()
@@ -980,7 +985,7 @@ class TestArchiveEmitterNotification:
     def test_listener_sends_done_notice_on_cleanup_finished(self) -> None:
         """UserNoticeCleanupListener.on_cleanup_finished MUST send the
         done notice via notification_service.send_notice."""
-        from bot.service.pool_builder import UserNoticeCleanupListener
+        from bot.service.pool.communication import UserNoticeCleanupListener
 
         notification_service = MagicMock()
         notification_service.send_notice = AsyncMock()
@@ -1005,7 +1010,7 @@ class TestArchiveEmitterNotification:
     def test_listener_skips_when_session_id_is_none(self) -> None:
         """Listener MUST NOT send notices when session_id is None
         (defensive — avoids crash on malformed context)."""
-        from bot.service.pool_builder import UserNoticeCleanupListener
+        from bot.service.pool.communication import UserNoticeCleanupListener
 
         notification_service = MagicMock()
         notification_service.send_notice = AsyncMock()
@@ -1027,7 +1032,7 @@ class TestArchiveEmitterNotification:
         Without this, ``memory_system.add_cleanup_listener`` would reject it
         (or the ABC's abstract methods would prevent instantiation).
         """
-        from bot.service.pool_builder import UserNoticeCleanupListener
+        from bot.service.pool.communication import UserNoticeCleanupListener
 
         from modex_agent.memory.cleanup_events import MemoryCleanupListener
 
@@ -1043,7 +1048,7 @@ class TestArchiveEmitterNotification:
         The ``[compact]`` tag lets the WebUI/IM filter these notices
         differently from regular agent messages if needed.
         """
-        from bot.service.pool_builder import UserNoticeCleanupListener
+        from bot.service.pool.communication import UserNoticeCleanupListener
 
         assert UserNoticeCleanupListener._START_NOTICE.startswith("[compact]")
         assert UserNoticeCleanupListener._DONE_NOTICE.startswith("[compact]")

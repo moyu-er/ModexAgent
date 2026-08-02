@@ -101,7 +101,7 @@ async def test_build_communication_wires_session_registry(tmp_path):
     """_build_communication forwards session_registry so _send registers the
     parent->child relationship and recover_parent_session resolves."""
     from modex_agent.core.agent import AgentContext
-    from bot.service.pool_builder import _build_communication
+    from bot.service.pool.communication import _build_communication
 
     pool, bus, registry = await _make_pool(tmp_path)
 
@@ -151,7 +151,7 @@ async def test_build_communication_restores_subagent_output_path(tmp_path):
     line in the send_async ack text (parity with main)."""
     from modex_agent.core.agent import AgentContext
     from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
-    from bot.service.pool_builder import _build_communication
+    from bot.service.pool.communication import _build_communication
 
     pool, bus, registry = await _make_pool(tmp_path)
     resolver = WorkspacePathResolver(

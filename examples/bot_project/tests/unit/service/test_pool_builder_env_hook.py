@@ -1,6 +1,6 @@
 """Env-hook wiring on the main pipeline — complete pool_map/targets.
 
-Pins that ``bot.service.pool_builder._wire_main_pipeline`` installs a
+Pins that ``bot.service.pool.pipeline_wiring._wire_main_pipeline`` installs a
 ``NativeEnvInjectionHook`` whose ``env_spec_template`` carries a complete
 ``agent_pool_map`` (main + every subagent + every peer pool's main agent)
 and ``targets`` (every subagent + every peer main), so native main agents
@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).parents[3]))
 
 from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
-from bot.service.pool_builder import _wire_main_pipeline
+from bot.service.pool.pipeline_wiring import _wire_main_pipeline
 
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
@@ -276,7 +276,7 @@ def test_wire_main_pipeline_skips_missing_peer_pool_with_warning(
 
     pipeline = _make_pipeline()
     pool = _StandInPool(main_name, pipeline)
-    with caplog.at_level(logging.WARNING, logger="bot.service.pool_builder"):
+    with caplog.at_level(logging.WARNING, logger="bot.service.pool.pipeline_wiring"):
         _wire_main_pipeline(
             pool=pool,
             main_agent_name=main_name,

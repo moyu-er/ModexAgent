@@ -17,7 +17,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
-from bot.service.pool_builder import _register_main_agent
+from bot.service.pool.pool_construction import _register_main_agent
 
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
