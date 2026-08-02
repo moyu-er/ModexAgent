@@ -15,6 +15,8 @@ class TestBuildMainAgentToolNames:
         assert {"ast_grep_search", "ast_grep_replace"} <= names
         # send_to_agent always present.
         assert "send_to_agent" in names
+        # task dispatch tool always present alongside send_to_agent.
+        assert "task" in names
 
     def test_terminal_added_when_use_terminal(self) -> None:
         names = build_main_agent_tool_names("full", [], use_terminal=True)

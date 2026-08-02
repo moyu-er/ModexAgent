@@ -95,6 +95,7 @@ from modex_agent.multi_agent.tools import (
     CommunicationTarget,
     CommunicationTargetStore,
     SendToAgentTool,
+    TaskDispatchTool,
 )
 from modex_agent.multi_agent.workspace_paths import WorkspacePathResolver
 from modex_agent.pipeline.adapters import OutputAdapter
@@ -465,6 +466,13 @@ async def create_pool(
                 )
             )
             logger.info("Pool '%s': communication tool registered", pool_name)
+            tool_manager.register(
+                TaskDispatchTool(
+                    store=main_store,
+                    service=main_service,
+                )
+            )
+            logger.info("Pool '%s': task dispatch tool registered", pool_name)
         else:
             logger.info("Pool '%s': no communication targets — skipped send_to_agent", pool_name)
 
@@ -765,9 +773,9 @@ def build_main_agent_tool_names(
     """Return the set of tool NAMES the main agent will receive.
 
     Pure projection of the main-agent tool assembly (Task 1.6 parity
-    helper). Mirrors :func:`_PoolAssemblyMixin._build_tools` + ``send_to_agent``:
+    helper). Mirrors :func:`_PoolAssemblyMixin._build_tools` + ``send_to_agent``/``task``:
     preset-gated file/search/bash + supplement tools (e.g. ast_grep) +
-    terminal tools (when ``use_terminal``) + the always-on send_to_agent.
+    terminal tools (when ``use_terminal``) + the always-on send_to_agent and task.
     Bot-specific tools (send_file_to_user, todo, experience) and MCP tools
     are excluded from this projection - they are runtime/path-dependent and
     not governed by the preset/supplement policy.
@@ -791,6 +799,7 @@ def build_main_agent_tool_names(
         # TerminalTool.name="terminal".
         names |= {"bash", "process", "terminal"}
     names.add("send_to_agent")
+    names.add("task")
     return names
 
 

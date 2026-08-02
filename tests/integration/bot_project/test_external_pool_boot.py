@@ -123,6 +123,8 @@ async def test_pool_pi_boots_with_external_strategy(
 
             # send_to_agent tool is present in the default main agent's tool set.
             assert "send_to_agent" in default_pi.tool_manager.list_tools()
+            # task dispatch tool is present (default pool has subagents).
+            assert "task" in default_pi.tool_manager.list_tools()
         finally:
             await service.stop()
 
@@ -170,6 +172,8 @@ async def test_pool_pi_skips_main_agent_when_provider_missing(
             # Peer sends still land in the pool's inbox via the broker bus,
             # verified by test_default_pool_can_send_to_pool_pi_inbox.
             assert "send_to_agent" not in pool_pi.tool_manager.list_tools()
+            # task dispatch tool is also absent (external pool has no tool surface).
+            assert "task" not in pool_pi.tool_manager.list_tools()
             # Pool is still structurally intact for peer routing.
             assert pool_pi.agent_bus is not None
             assert pool_pi.target_store is not None
