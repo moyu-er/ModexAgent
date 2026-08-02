@@ -17,8 +17,8 @@ import os
 from pathlib import Path
 
 import pytest
+from bot.cli.modexctl.app import EXIT_ROUTING, EXIT_USAGE, build_app
 from bot.cli.modexctl.http_client import ControlClientError
-from bot.cli.modexctl.main import EXIT_ROUTING, EXIT_USAGE, build_app
 from bot.control.models import (
     HistoryMessage,
     HistoryRequest,
@@ -30,7 +30,7 @@ from typer.testing import CliRunner
 # Resolve the actual module object (not the re-exported ``main`` function
 # that ``bot.cli.modexctl.__init__`` shadows). Needed for monkeypatching
 # ``fetch_history`` on the module's namespace.
-main_module = importlib.import_module("bot.cli.modexctl.main")
+main_module = importlib.import_module("bot.cli.modexctl.commands.history")
 
 # ---------------------------------------------------------------------------
 # Env fixtures

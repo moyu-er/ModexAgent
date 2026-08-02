@@ -14,8 +14,8 @@ import os
 from pathlib import Path
 
 import pytest
+from bot.cli.modexctl.app import EXIT_ROUTING, EXIT_USAGE, build_app
 from bot.cli.modexctl.http_client import ControlClientError
-from bot.cli.modexctl.main import EXIT_ROUTING, EXIT_USAGE, build_app
 from bot.control.models import (
     ControlError,
     DispatchOutcome,
@@ -24,7 +24,7 @@ from bot.control.models import (
 )
 from typer.testing import CliRunner
 
-main_module = importlib.import_module("bot.cli.modexctl.main")
+main_module = importlib.import_module("bot.cli.modexctl.commands.send")
 
 # ---------------------------------------------------------------------------
 # Env fixtures

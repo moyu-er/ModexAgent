@@ -17,14 +17,8 @@ from pathlib import Path
 
 import pytest
 import typer
-from bot.cli.modexctl.main import (
-    EXIT_OK,
-    EXIT_USAGE,
-    ModexCtlContext,
-    _parse_targets,
-    _read_env_snapshot,
-    build_app,
-)
+from bot.cli.modexctl.app import EXIT_OK, EXIT_USAGE, build_app
+from bot.cli.modexctl.context import ModexCtlContext, _parse_targets, _read_env_snapshot
 from typer.testing import CliRunner
 
 # ---------------------------------------------------------------------------

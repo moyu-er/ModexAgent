@@ -49,7 +49,7 @@ import pytest
 # Ensure bot_project is importable
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "examples" / "bot_project"))
 
-from bot.cli.modexctl.main import ModexCtlContext  # noqa: E402
+from bot.cli.modexctl.context import ModexCtlContext  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
