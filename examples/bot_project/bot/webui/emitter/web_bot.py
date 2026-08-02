@@ -16,18 +16,16 @@ Buffered persistence (flushed at stream/turn boundaries):
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 import uuid
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Generic, TypeVar
+from typing import Any
 
 from modex_agent.agents.react.agent import ReActEvent
-from modex_agent.core.emitter import AgentResult, ContentEmitter, EmitterConfig, StreamingAwareEmitter
+from modex_agent.core.emitter import AgentResult, EmitterConfig, StreamingAwareEmitter
 from modex_agent.core.session_id import agent_of
-from modex_agent.core.tool_manager import ToolResult
 from modex_agent.core.turn_events import (
     TurnEvent,
     TurnReasoningEvent,
@@ -35,58 +33,37 @@ from modex_agent.core.turn_events import (
     TurnToolCallEvent,
     TurnToolResultEvent,
 )
-from modex_agent.core.types import ToolCall
 
-from ..adapters.web_socket import WebSocketOutputAdapter
-from .events import (
-    AssistantReasoningEvent,
-    AssistantTextEvent,
-    DeltaEnvelope,
+from ...adapters.web_socket import WebSocketOutputAdapter
+from ..events import (
     ModelContentDelta,
     ModelReasoningDelta,
     ServerEvent,
     SessionMeta,
     ToolCallEndEvent,
-    ToolCallEvent as TcEvent,
     ToolCallStartEvent,
-    ToolResultEvent as TrEvent,
     TurnEndEvent,
-    TurnStartEvent,
 )
-from .transcript_store import TranscriptStore
+from ..events import (
+    ToolCallEvent as TcEvent,
+)
+from ..events import (
+    ToolResultEvent as TrEvent,
+)
+from ..transcript_store import TranscriptStore
+from ._segments import (
+    _MAX_TOOL_RESULT_LEN,
+    _MODEL_REASONING,
+    _TOOL_CALL_END,
+    _TOOL_CALL_START,
+    _accumulate_segment,
+    _empty_session_meta,
+    _flush_active_segment,
+    _send_event,
+    _truncate_tool_args,
+)
 
-# ── ReActEvent values we handle ────────────────────────────────────────────
-
-_MODEL_REASONING: str = "model_reasoning"
-_TOOL_CALL_START: str = "tool_call_start"
-_TOOL_CALL_END: str = "tool_call_end"
-
-# ── Truncation limits for WebSocket events ─────────────────────────────────
-# Full data is saved in the transcript store; only truncated versions are
-# pushed to the frontend for rendering.
-
-_MAX_TOOL_ARGS_LEN: int = 500
-_MAX_TOOL_RESULT_LEN: int = 200
-
-
-def _truncate_tool_args(args: dict[str, object]) -> dict[str, object]:
-    """Return a copy of *args* with values truncated for frontend display."""
-    truncated: dict[str, object] = {}
-    for key, val in args.items():
-        s = str(val)
-        if len(s) > _MAX_TOOL_ARGS_LEN:
-            truncated[key] = s[:_MAX_TOOL_ARGS_LEN] + "..."
-        else:
-            truncated[key] = val
-    return truncated
-
-
-# ── Emitter ────────────────────────────────────────────────────────────────
-
-
-def _empty_session_meta() -> SessionMeta:
-    """Default resolver: no business routing context known."""
-    return SessionMeta()
+logger = logging.getLogger(__name__)
 
 
 class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
@@ -97,6 +74,12 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
     - At ``emit_complete``, persists the complete turn to the transcript
       store and notifies the client via ``turn_end``.
     """
+
+    # Extracted to ._segments; assigned as class attrs so self. call-sites and
+    # instance overrides (tests monkeypatch emitter._flush_active_segment) hold.
+    _accumulate_segment = _accumulate_segment
+    _flush_active_segment = _flush_active_segment
+    _send_event = _send_event
 
     def __init__(
         self,
@@ -489,61 +472,6 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _accumulate_segment(self, text: str, kind: str, part_id: str | None) -> None:
-        if not text:
-            return
-        self._ensure_turn_started()
-        key = part_id if part_id else f"_{kind}"
-        if key not in self._segments:
-            self._segments[key] = ""
-            self._segment_kinds[key] = kind
-            self._segment_order.append(key)
-        self._segments[key] += text
-
-    async def _flush_active_segment(self) -> None:
-        for key in self._segment_order:
-            text = self._segments.get(key, "").strip()
-            if not text:
-                continue
-            kind = self._segment_kinds.get(key, "text")
-            if kind == "reasoning":
-                evt: ServerEvent = AssistantReasoningEvent(
-                    session_id=self._session_id,
-                    agent_name=self._agent_name,
-                    turn_id=self._current_turn_id,
-                    text=text,
-                )
-            else:
-                evt = AssistantTextEvent(
-                    session_id=self._session_id,
-                    agent_name=self._agent_name,
-                    turn_id=self._current_turn_id,
-                    text=text,
-                )
-            await self._persist(evt)
-        self._segments = {}
-        self._segment_kinds = {}
-        self._segment_order = []
-        # Clear the partial buffer here so it only holds deltas accumulated
-        # since the last flush boundary (tool call / stream end). Without
-        # this, the partial buffer retains ALL deltas for the entire turn —
-        # including text already persisted as AssistantTextEvent — and
-        # _materialize_partial_deltas produces a synthetic streaming turn
-        # whose single concatenated text block duplicates the materialized
-        # transcript turn's text.
-        await self._clear_partial()
-
-    async def _send_event(self, event: ServerEvent) -> None:
-        """Wrap *event* in a structured DeltaEnvelope and enqueue it."""
-        meta = self._session_meta_resolver()
-        envelope = DeltaEnvelope.from_event(
-            event,
-            metadata=self._metadata(),
-            pool=meta.pool,
-            parent_session_id=meta.parent_session_id,
-        )
-        await self._output.send_envelope(envelope)
-
     def set_sessions_dir_provider(
         self, provider: Callable[[], Path | None] | None
     ) -> None:
@@ -558,115 +486,3 @@ class WebBotEmitter(StreamingAwareEmitter[ReActEvent]):
     def _metadata(self) -> dict[str, object]:
         """Cross-cutting context attached to every emitted envelope."""
         return {"turn_id": self._current_turn_id}
-
-
-# ── Composite (fan-out) emitter ──────────────────────────────────────────────
-
-logger = logging.getLogger(__name__)
-
-_E = TypeVar("_E")
-
-
-class CompositeEmitter(ContentEmitter[_E], Generic[_E]):
-    """Fan-out emitter that delegates all calls to a list of child emitters.
-
-    Each method is forwarded to ALL children concurrently via
-    ``asyncio.gather(..., return_exceptions=True)``.  Errors in individual
-    children are logged but do not prevent other children from receiving the
-    event.
-
-    Usage::
-
-        emitter = CompositeEmitter([
-            WebBotEmitter(ws_output, session_id, ...),
-            QQBotEmitter(qq_output, session_id, ...),
-        ])
-    """
-
-    def __init__(
-        self,
-        emitters: list[ContentEmitter[_E]],
-        config: EmitterConfig | None = None,
-    ) -> None:
-        super().__init__(config)
-        self._emitters: list[ContentEmitter[_E]] = list(emitters)
-
-    @property
-    def emitters(self) -> list[ContentEmitter[_E]]:
-        return list(self._emitters)
-
-    def set_sessions_dir_provider(
-        self, provider: Callable[[], Path | None] | None
-    ) -> None:
-        """Forward the sessions_dir provider to every child emitter that accepts one."""
-        for child in self._emitters:
-            setter = getattr(child, "set_sessions_dir_provider", None)
-            if setter is not None:
-                setter(provider)
-
-    def wants_streaming(self) -> bool:
-        """Return ``True`` if ANY child wants streaming."""
-        return any(e.wants_streaming() for e in self._emitters)
-
-    async def emit(self, event: _E, data: Any = None) -> None:
-        results = await asyncio.gather(
-            *(e.emit(event, data) for e in self._emitters),
-            return_exceptions=True,
-        )
-        self._log_exceptions(results, "emit")
-
-    async def emit_delta(self, delta: str) -> None:
-        results = await asyncio.gather(
-            *(e.emit_delta(delta) for e in self._emitters),
-            return_exceptions=True,
-        )
-        self._log_exceptions(results, "emit_delta")
-
-    async def emit_turn_event(self, event: TurnEvent) -> None:
-        results = await asyncio.gather(
-            *(e.emit_turn_event(event) for e in self._emitters),
-            return_exceptions=True,
-        )
-        self._log_exceptions(results, "emit_turn_event")
-
-    async def emit_content(self, full_content: str) -> None:
-        results = await asyncio.gather(
-            *(e.emit_content(full_content) for e in self._emitters),
-            return_exceptions=True,
-        )
-        self._log_exceptions(results, "emit_content")
-
-    async def emit_stream_end(self, resuming: bool = False) -> None:
-        results = await asyncio.gather(
-            *(e.emit_stream_end(resuming) for e in self._emitters),
-            return_exceptions=True,
-        )
-        self._log_exceptions(results, "emit_stream_end")
-
-    async def emit_complete(self, result: AgentResult) -> None:
-        results = await asyncio.gather(
-            *(e.emit_complete(result) for e in self._emitters),
-            return_exceptions=True,
-        )
-        self._log_exceptions(results, "emit_complete")
-
-    async def emit_error(self, error: str) -> None:
-        results = await asyncio.gather(
-            *(e.emit_error(error) for e in self._emitters),
-            return_exceptions=True,
-        )
-        self._log_exceptions(results, "emit_error")
-
-    async def flush(self) -> None:
-        results = await asyncio.gather(
-            *(e.flush() for e in self._emitters),
-            return_exceptions=True,
-        )
-        self._log_exceptions(results, "flush")
-
-    @staticmethod
-    def _log_exceptions(results: list[object], method: str) -> None:
-        """Log any exceptions from ``asyncio.gather(return_exceptions=True)``."""
-        for exc in results:
-            if isinstance(exc, Exception):
-                logger.error("CompositeEmitter.%s child error: %s", method, exc)
