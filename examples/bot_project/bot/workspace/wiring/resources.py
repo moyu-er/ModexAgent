@@ -1,30 +1,22 @@
-"""Per-workspace stack assembly + resource closures (CUTOVER).
+"""Per-workspace resource construction and teardown (re-home of _on_workspace_activate)."""
 
-``build_workspace_stack`` wires the generic registry/resolver/controller/
-dispatcher with the business ``PoolResourceFactory`` whose ``build_resources``
-/``stop_resources`` closures re-home — FAITHFULLY — the per-workspace
-construction that the old single-active ``_on_workspace_activate`` +
-``_initialize_pool`` did, bound to one workspace's ``WorkspaceContext`` and
-using PER-WORKSPACE broker/inbox/bus/interceptor.
-"""
 from __future__ import annotations
 
 import asyncio
 import contextlib
 import logging
-from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from bot.service.core import BotService
-    from modex_agent.core.provider import LLMProvider
-    from modex_agent.multi_agent.pool_instance import PoolInstance
     from modex_agent.persistence.managers import WorkspacePersistenceManager
 
+from bot.service._runtime_builders import (
+    _build_hook_runner,
+    _build_main_command_processor,
+    _collect_run_hooks,
+)
 from bot.workspace.background import BackgroundTaskRunner
-from bot.workspace.dispatch import WorkspaceMessageDispatcher
-from bot.workspace.factory import PoolResourceFactory
 from bot.workspace.handle import (
     PoolWorkspaceResources,
     WorkspaceHandle,
@@ -32,11 +24,6 @@ from bot.workspace.handle import (
 )
 from bot.workspace.pool_data import build_pool_data
 from modex_agent.approval.ui import IMUserInterface
-from modex_agent.commands.models import CommandContext
-from modex_agent.core.session_id import session_id_prefix_of
-from modex_agent.core.types import InputMessage
-from modex_agent.interceptor.builtin import ToolResultLimitInterceptor
-from modex_agent.interceptor.chain import InterceptorChain
 from modex_agent.messaging.broker_memory import InMemoryMessageBroker
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.comm_kind import AgentCommKind
@@ -46,150 +33,15 @@ from modex_agent.multi_agent.pool_config.specs import PoolSpec
 from modex_agent.multi_agent.pool_router import PoolRouter
 from modex_agent.multi_agent.tools import CommunicationTarget
 from modex_agent.persistence.config import PersistenceBackend
-from modex_agent.tools.overflow.cleaner import OverflowCleaner
-from modex_agent.tools.overflow.handler import ToolResultOverflowHandler
 from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
 from modex_agent.tools.terminal.managers import TerminalManagerBase
 from modex_agent.workspace.context import WorkspaceContext
-from modex_agent.workspace.control import WorkspaceController
-from modex_agent.workspace.registry import WorkspaceRegistry, WorkspaceRegistryStore
-from modex_agent.workspace.routing import WorkspaceResolver
 
 logger = logging.getLogger(__name__)
 
 
 class _PoolShutdownIncompleteError(RuntimeError):
     pass
-
-
-@dataclass(frozen=True)
-class WorkspaceStack:
-    """The assembled multi-live workspace stack held by BotService.
-
-    BotService reads ``controller`` (compat ``workspace_context``) and eagerly
-    materializes home via ``registry.materialize(home_context)``.
-    """
-
-    registry: WorkspaceRegistry[PoolWorkspaceResources]
-    resolver: WorkspaceResolver[PoolWorkspaceResources]
-    controller: WorkspaceController
-    dispatcher: WorkspaceMessageDispatcher
-    factory: PoolResourceFactory
-    store: WorkspaceRegistryStore
-
-
-def build_single_workspace_stack(service: BotService, *, data_dir_name: str) -> WorkspaceStack:
-    """Wire a single-home (workspace disabled) stack against ``service``.
-
-    Uses a WorkspaceController that rejects /cd /exit.
-    """
-    return build_workspace_stack(service, data_dir_name=data_dir_name, enabled=False)
-
-
-def _build_assembly_deps_for_pools(
-    *,
-    pool_names: list[str],
-    max_context_tokens: int | None,
-) -> dict[str, PoolAssemblyDeps]:
-    """Build PoolAssemblyDeps for every pool from memory_defaults presets.
-
-    All native main agents get the same converged memory + experience preset
-    (see ``bot.config.memory_defaults``). External_coding pools receive the
-    same deps, but ``_wire_pool_to_resources`` skips them at wiring time
-    because their main agent has no ``AgentPipeline``
-    (``pipeline is None`` → early return).
-    """
-    from bot.config.memory_defaults import main_agent_experience, main_agent_memory
-
-    memory = main_agent_memory(max_context_tokens=max_context_tokens)
-    experience = main_agent_experience()
-    return {
-        name: PoolAssemblyDeps(memory=memory, experience=experience)
-        for name in pool_names
-    }
-
-
-def build_workspace_stack(
-    service: BotService, *, data_dir_name: str, enabled: bool = True
-) -> WorkspaceStack:
-    from bot.service.builders import build_workspace_registry_store
-
-    """Wire the full multi-live stack against ``service``.
-
-    ``service`` is the BotService: read for app config, default provider/pool,
-    hooks, control channel, emitter factory, and the shared input/output
-    adapters. The per-workspace broker/inbox/bus/interceptor are built inside
-    ``build_resources`` (one set per workspace), NOT shared here.
-
-    ``enabled`` controls whether the WorkspaceController allows workspace
-    switches (``/cd``); ``False`` gives a single-home (workspace disabled) stack.
-    """
-
-    async def build_resources(ctx: WorkspaceContext) -> PoolWorkspaceResources:
-        return await _build_resources(service, ctx)
-
-    async def stop_resources(resources: PoolWorkspaceResources) -> None:
-        await _stop_resources(resources)
-
-    factory = PoolResourceFactory(
-        build_resources=build_resources, stop_resources=stop_resources
-    )
-    store = build_workspace_registry_store(
-        service._app_config,
-        service._registry_persistence,
-        service._project_dir,
-        data_dir_name,
-    )
-    registry: WorkspaceRegistry[PoolWorkspaceResources] = WorkspaceRegistry(
-        home=service._project_dir,
-        data_dir_name=data_dir_name,
-        factory=factory,
-        store=store,
-    )
-    resolver = WorkspaceResolver(registry=registry)
-    controller = WorkspaceController(
-        registry=registry,
-        data_dir_name=data_dir_name,
-        enabled=enabled,
-    )
-    dispatcher = _build_dispatcher(service, resolver)
-    return WorkspaceStack(
-        registry=registry,
-        resolver=resolver,
-        controller=controller,
-        dispatcher=dispatcher,
-        factory=factory,
-        store=store,
-    )
-
-
-def _message_workspace_of(message: InputMessage) -> Path:
-    """Workspace path carried on the message (filled by ResolveWorkspaceStage)."""
-    return message.workspace
-
-
-def _command_session_id_of(context: CommandContext) -> str:
-    """Conversation id from a CommandContext (slash-command path)."""
-    return session_id_prefix_of(context.session_id)
-
-
-def _build_dispatcher(
-    service: BotService,
-    resolver: WorkspaceResolver,
-) -> WorkspaceMessageDispatcher:
-    from bot.workspace.dispatch import WorkspaceMessageDispatcher
-
-    async def _route_one(resources: PoolWorkspaceResources, message: InputMessage) -> None:
-        # Each workspace's pool_router is rooted at that workspace; route the
-        # single already-received message into it.
-        await resources.pool_router.route_message(message)  # type: ignore[union-attr]
-
-    return WorkspaceMessageDispatcher(
-        receive=service.input_adapter.receive,
-        resolver=resolver,
-        workspace_of=_message_workspace_of,
-        route_one=_route_one,
-    )
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -211,9 +63,7 @@ class _WorkspaceBuildState:
                 await self.persistence.close()
 
 
-async def _build_resources(
-    service: BotService, ctx: WorkspaceContext
-) -> PoolWorkspaceResources:
+async def _build_resources(service: BotService, ctx: WorkspaceContext) -> PoolWorkspaceResources:
     state = _WorkspaceBuildState()
     try:
         return await _assemble_resources(service, ctx, state)
@@ -234,14 +84,17 @@ async def _assemble_resources(
     PER-WORKSPACE broker/inbox/bus/interceptor rooted at ``ctx.paths``.
     """
     from bot.service.builders import build_pool_routing_store, build_session_store
-    from bot.service.pool_builder import create_pool
+    from bot.service.pool import create_pool
+    from bot.workspace.wiring.pool_wiring import (
+        _build_workspace_interceptor_chain,
+        _wire_pool_to_resources,
+    )
+    from bot.workspace.wiring.stack import _build_assembly_deps_for_pools
 
     app_config = service._app_config
     pool_store = PoolStore(base_dir=service._project_dir)
     pool_names = [s.name for s in pool_store.list_pools()]
-    pool_specs: dict[str, PoolSpec] = {
-        name: pool_store.read_pool(name) for name in pool_names
-    }
+    pool_specs: dict[str, PoolSpec] = {name: pool_store.read_pool(name) for name in pool_names}
 
     logger.info(
         "[workspace-build] target=%s mcp_registry=%s pools=%s",
@@ -308,9 +161,7 @@ async def _assemble_resources(
     if persistence is not None:
         from bot.persistence.transcript import build_database_transcript_store
 
-        workspace_transcript_store = await build_database_transcript_store(
-            persistence.connection
-        )
+        workspace_transcript_store = await build_database_transcript_store(persistence.connection)
     resources = PoolWorkspaceResources(
         target=ctx.target,
         ctx=ctx,
@@ -328,13 +179,11 @@ async def _assemble_resources(
     )
     state.resources = resources
     # 3. Per-workspace interceptor chain, rooted at THIS workspace's overflow dir.
-    shared_interceptor_chain = _build_workspace_interceptor_chain(
-        service, overflow_store
-    )
+    shared_interceptor_chain = _build_workspace_interceptor_chain(service, overflow_store)
 
     # Shared (service-level) infra reused across this workspace's pools.
-    shared_hooks = service._collect_run_hooks()
-    shared_hook_runner = service._build_hook_runner(shared_hooks)
+    shared_hooks = _collect_run_hooks(service.plugin_integration, app_config)
+    shared_hook_runner = _build_hook_runner(shared_hooks)
     im_ui = IMUserInterface(
         output_adapter=service.output_adapter,
     )
@@ -345,7 +194,7 @@ async def _assemble_resources(
         ttl_seconds=retention_cfg.ttl_seconds,
         cleanup_interval_seconds=retention_cfg.cleanup_interval_seconds,
     )
-    command_processor = service.command_processor or service._build_main_command_processor()
+    command_processor = service.command_processor or _build_main_command_processor()
 
     # 4. Per-pool data snapshots.
     for name in pool_names:
@@ -383,9 +232,7 @@ async def _assemble_resources(
             control_channel=service.control_channel,
             command_processor=command_processor,
             pool_data=pool_data[name],
-            workspace_handle=WorkspaceHandle(
-                target=ctx.target, data_root=ctx.paths.root
-            ),
+            workspace_handle=WorkspaceHandle(target=ctx.target, data_root=ctx.paths.root),
             workspace_resolver=resolver_cell,
             emitter_factory=service.emitter_factory,
             output_adapter_factory=service._output_adapter_factory,
@@ -409,10 +256,7 @@ async def _assemble_resources(
         for peer_pool_name in pool_tree.peers:
             peer_instance = resources.pools[peer_pool_name]
             peer_tree = pool_store.read_pool(peer_pool_name)
-            description = (
-                peer_tree.main.description
-                or f"Peer pool {peer_pool_name}'s main agent"
-            )
+            description = peer_tree.main.description or f"Peer pool {peer_pool_name}'s main agent"
             target = CommunicationTarget(
                 name=peer_instance.main_agent_name,
                 kind=AgentCommKind.NORMAL,
@@ -433,9 +277,7 @@ async def _assemble_resources(
     # superseded. The Drainer + idle poller (still spawned per pool until Task
     # 8 disables them) operate on each pool's own bus.
     for name, pi in pools.items():
-        _wire_pool_to_resources(
-            pi, name, assembly_deps[name], resources, service._default_provider
-        )
+        _wire_pool_to_resources(pi, name, assembly_deps[name], resources, service._default_provider)
         # Start this pool's output broker bridge so agent output published to
         # THIS workspace's broker reaches the output adapter. This MUST happen
         # at materialization for EVERY workspace — home and non-home alike —
@@ -454,8 +296,7 @@ async def _assemble_resources(
         fallback = next(iter(pools), default_pool)
         if fallback != default_pool:
             logger.warning(
-                "[pool-routing] nominated default pool %r not found; "
-                "falling back to %r (pools=%s)",
+                "[pool-routing] nominated default pool %r not found; falling back to %r (pools=%s)",
                 default_pool,
                 fallback,
                 list(pools),
@@ -510,95 +351,6 @@ async def _assemble_resources(
     return resources
 
 
-def _build_workspace_interceptor_chain(
-    service: BotService, overflow_store: LocalFileToolOverflowStore
-) -> InterceptorChain:
-    """Per-workspace interceptor chain rooted at THIS workspace's overflow dir.
-
-    Re-homes ``BotService._build_interceptor_chain`` minus the shared-state
-    caching: each workspace gets its own chain. Control-drain interceptors
-    reuse the service-level control channel.
-    """
-    chain = InterceptorChain()
-    overflow_cleaner = OverflowCleaner(overflow_store)
-    overflow_handler = ToolResultOverflowHandler(
-        store=overflow_store, cleaner=overflow_cleaner
-    )
-    chain.add(
-        ToolResultLimitInterceptor(
-            overflow_handler=overflow_handler, max_chars=50_000
-        )
-    )
-    from modex_agent.hook.builtin.control_drain import (
-        ControlDrainInterceptor,
-        LlmCancelInterceptor,
-    )
-
-    chain.add(ControlDrainInterceptor(channel=service.control_channel))
-    chain.add(LlmCancelInterceptor(channel=service.control_channel))
-    return chain
-
-
-def _wire_pool_to_resources(
-    pool_instance: PoolInstance,
-    name: str,
-    deps: PoolAssemblyDeps,
-    resources: PoolWorkspaceResources,
-    default_provider: LLMProvider | None,
-) -> None:
-    """Wire one pool's main pipeline + experience hook to the workspace R.
-
-    ``default_provider`` is the bot-global default LLM provider (from
-    ``model.yml`` via ``BotService._default_provider``). ExperienceReviewAgent
-    uses it to run ReAct — experience review is a background task that should
-    NOT depend on any pool's own provider (external pools have none).
-    When ``default_provider`` is None (model.yml unconfigured), experience
-    review is skipped with a warning; the bot itself boots and runs normally.
-    """
-
-    main_inst = pool_instance.pool._agents.get(pool_instance.main_agent_name)
-    pipeline = main_inst.pipeline if main_inst is not None else None
-    if pipeline is None:
-        return
-
-    exp_cfg = deps.experience
-    if exp_cfg is None or not exp_cfg.enabled:
-        return
-
-    if default_provider is None:
-        logger.warning(
-            "Experience review skipped for pool %r: no default LLM provider "
-            "(configure model.yml to enable)",
-            name,
-        )
-        return
-
-    pool_data = resources.pool_data.get(name)
-    if pool_data is None:
-        return
-
-    from modex_agent.agents.experience.review_agent import ExperienceReviewAgent
-    from modex_agent.hook import HookErrorPolicy, HookSpec
-    from modex_agent.hook.builtin.experience_review import ExperienceReviewHook
-
-    review_agent = ExperienceReviewAgent(
-        provider=default_provider,
-        max_iterations=exp_cfg.max_iterations,
-    )
-    hook = ExperienceReviewHook(
-        review_agent=review_agent,
-        experience_dir=pool_data.experience_dir,
-        meta_store=pool_data.experience_meta,
-        min_messages=exp_cfg.min_messages,
-        exp_cooldown_turns=exp_cfg.exp_cooldown_turns,
-    )
-    spec = HookSpec(hook=hook, on_error=HookErrorPolicy.LOG)
-    if pipeline.hook_runner is not None:
-        pipeline.hook_runner.add(spec)
-    else:
-        pipeline.hooks.append(hook)
-
-
 async def _stop_resources(resources: PoolWorkspaceResources) -> None:
     """Tear down one workspace's resources (re-home of _on_workspace_deactivate).
 
@@ -616,9 +368,7 @@ async def _stop_resources(resources: PoolWorkspaceResources) -> None:
         if mgr is None:
             continue
         for term_name in list(mgr.list_names()):
-            tasks.append(
-                asyncio.create_task(_close_terminal(mgr, term_name))
-            )
+            tasks.append(asyncio.create_task(_close_terminal(mgr, term_name)))
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
     pools_stopped = True
@@ -658,10 +408,3 @@ async def _close_terminal(mgr: TerminalManagerBase, name: str) -> None:
         await mgr.close(name)
     except BaseException:
         logger.debug("terminal close failed for %s", name, exc_info=True)
-
-
-__all__ = [
-    "WorkspaceStack",
-    "build_workspace_stack",
-    "build_single_workspace_stack",
-]

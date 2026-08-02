@@ -5,6 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
+from bot.service._model_config_loader import _apply_bot_model_config, _load_app_config
 from bot.service.core import BotService
 from bot.service.model_config import BotModelConfig
 
@@ -42,7 +43,8 @@ def test_load_app_config_injects_bot_model_config(tmp_path: Path) -> None:
         output_adapter=object(),
         emitter_factory=lambda sid: None,
     )
-    app_cfg = svc._load_app_config()
+    app_cfg = _load_app_config(config_dir)
+    svc._bot_model_config = _apply_bot_model_config(config_dir, app_cfg)
     assert isinstance(app_cfg, AppConfig)
     assert svc._bot_model_config is not None
     assert isinstance(svc._bot_model_config, BotModelConfig)

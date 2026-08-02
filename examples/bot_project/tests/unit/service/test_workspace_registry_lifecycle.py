@@ -64,8 +64,8 @@ async def test_initialize_closes_canonical_registry_after_materialization_failur
             new_callable=lambda: property(lambda self: tmp_path),
         ),
         patch.object(service, "_build_default_provider", return_value=MagicMock()),
-        patch.object(service, "_build_control_channel", return_value=MagicMock()),
-        patch.object(service, "_build_main_command_processor", return_value=MagicMock()),
+        patch("bot.service.core._build_control_channel", return_value=MagicMock()),
+        patch("bot.service.core._build_main_command_processor", return_value=MagicMock()),
         patch("bot.service.core.PoolStore", create=True),
         patch(
             "bot.service.builders.build_pool_routing_store",
@@ -233,8 +233,8 @@ async def test_initialize_preserves_shared_dependencies_when_eviction_is_incompl
             new_callable=lambda: property(lambda self: tmp_path),
         ),
         patch.object(service, "_build_default_provider", return_value=MagicMock()),
-        patch.object(service, "_build_control_channel", return_value=MagicMock()),
-        patch.object(service, "_build_main_command_processor", return_value=MagicMock()),
+        patch("bot.service.core._build_control_channel", return_value=MagicMock()),
+        patch("bot.service.core._build_main_command_processor", return_value=MagicMock()),
         patch("bot.service.core.PoolStore", create=True),
         patch(
             "bot.service.builders.build_pool_routing_store",

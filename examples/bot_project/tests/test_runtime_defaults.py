@@ -39,7 +39,7 @@ def test_default_interceptor_chain_keeps_only_effective_defaults() -> None:
     wiring) still installs the ToolResultLimitInterceptor."""
     from unittest.mock import MagicMock
 
-    from bot.workspace.wiring import _build_workspace_interceptor_chain
+    from bot.workspace.wiring.pool_wiring import _build_workspace_interceptor_chain
     from modex_agent.tools.overflow.local import LocalFileToolOverflowStore
 
     service = MagicMock()
