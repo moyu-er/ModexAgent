@@ -548,6 +548,42 @@ class TestSendToAgentToolDescription:
         assert "worker" in desc
         assert "Implementation" in desc
 
+    def test_subagent_description_truncated_in_send_to_agent(self) -> None:
+        """Long subagent descriptions are truncated to ~40 chars with ``...``
+        in the send_to_agent description, while normal target descriptions
+        are kept in full."""
+        store = CommunicationTargetStore()
+        store.add(
+            CommunicationTarget(
+                name="coder",
+                kind=AgentCommKind.SUBAGENT,
+                description="Executes delegated implementation tasks with code generation and testing",
+            )
+        )
+        store.add(
+            CommunicationTarget(
+                name="team-alpha",
+                kind=AgentCommKind.NORMAL,
+                description="Another team agent for cross-team work and coordination",
+            )
+        )
+        tool = SendToAgentTool(
+            store=store,
+            source=AgentAddress(name="main"),
+            broker=object(),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            agent_bus=object(),  # type: ignore[arg-type]
+            service=_RecordingService(),  # type: ignore[arg-type]
+        )
+        desc = tool.description
+        # Subagent description truncated — full text must NOT appear.
+        assert "coder" in desc
+        assert "code generation and testing" not in desc
+        assert "Executes delegated implementation tasks..." in desc
+        # Normal target description kept in full.
+        assert "team-alpha" in desc
+        assert "cross-team work and coordination" in desc
+
 
 class TestSendToAgentToolDynamicSchema:
     def test_schema_name_and_parameters_intact(self) -> None:
@@ -644,14 +680,12 @@ class TestSendToAgentToolDynamicSchema:
         assert "follow-up" in desc.lower() or "continue" in desc.lower()
         assert "{invocation_id}.{target_agent}" in desc
 
-    def test_invocation_id_description_explains_peer_ignore(self) -> None:
-        """invocation_id handling MUST be documented per-kind in the tool
-        description — subagent threads an id, normal peers reuse the
-        sender's prefix and ignore this field.
+    def test_description_documents_continuation_and_peer_guidance(self) -> None:
+        """The tool description must document continuation (invocation_id)
+        and peer messaging guidance so the LLM picks the right relationship.
 
-        Verified against the tool description (dynamic), not the static
-        parameter schema, because the per-kind behaviour is itself dynamic.
-        The static parameter schema stays kind-agnostic.
+        The static parameter schema stays kind-agnostic; the per-kind guidance
+        lives in the dynamic tool description.
         """
         store = CommunicationTargetStore()
         store.add(CommunicationTarget(name="scout", kind=AgentCommKind.SUBAGENT))
@@ -665,9 +699,13 @@ class TestSendToAgentToolDynamicSchema:
             service=_RecordingService(),  # type: ignore[arg-type]
         )
         desc = tool.description.lower()
-        assert "thread `invocation_id`" in desc
-        assert "`invocation_id` is ignored" in desc
-        assert "sender's session prefix is reused" in desc
+        # Continuation guidance — invocation_id mentioned for subagent sessions.
+        assert "pass invocation_id" in desc
+        # Peer messaging guidance — normal targets as equals.
+        assert "peer agent" in desc
+        assert "as an equal" in desc
+        # Pointer to the `task` tool for new subagent dispatch.
+        assert "`task` tool" in desc
 
     def test_static_parameters_not_mutated_by_dynamic_schema(self) -> None:
         """get_dynamic_schema() must not modify the shared parameter template."""
