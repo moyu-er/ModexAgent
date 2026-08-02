@@ -1,4 +1,5 @@
 """Tests for individual SystemPromptProvider implementations."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -150,13 +151,14 @@ async def test_experience_empty_when_no_content():
 # -- AgentCommunicationSystemPromptProvider --
 
 
-def _make_tool_manager(targets: list):
+def _make_tool_manager(targets: list, *, with_task: bool = True):
     from modex_agent.core.tool_manager import InMemoryToolManager
     from modex_agent.multi_agent.address import AgentAddress
     from modex_agent.multi_agent.bus import AgentMessageBus
     from modex_agent.multi_agent.tools import (
         CommunicationTargetStore,
         SendToAgentTool,
+        TaskDispatchTool,
     )
 
     store = CommunicationTargetStore()
@@ -172,6 +174,14 @@ def _make_tool_manager(targets: list):
     )
     mgr = InMemoryToolManager()
     mgr.register(tool)
+    if with_task:
+        # Shared store: both tools see the same targets, matching production wiring.
+        mgr.register(
+            TaskDispatchTool(
+                store=store,
+                service=MagicMock(),
+            )
+        )
     return mgr
 
 
@@ -246,7 +256,10 @@ async def test_comm_provider_subagent_target_emits_dispatch_contract():
     )
     result = await provider.get_or_refresh()
     assert "Dispatching Subagents" in result
+    assert "`task`" in result
+    assert "`send_to_agent`" in result
     assert "invocation_id" in result
+    assert "NEED_DECISION" in result
     assert provider.last_version is not None
     assert provider.last_version.startswith("comm:dispatch:")
 
@@ -266,12 +279,35 @@ async def test_comm_provider_dispatch_fires_for_none_comm_kind():
         CommunicationTarget(name="scout", kind=AgentCommKind.SUBAGENT),
     ]
     provider = AgentCommunicationSystemPromptProvider(
-        _make_tool_manager(targets), None  # comm_kind=None = main agent
+        _make_tool_manager(targets),
+        None,  # comm_kind=None = main agent
     )
     result = await provider.get_or_refresh()
     assert "Dispatching Subagents" in result
     assert provider.last_version is not None
     assert provider.last_version.startswith("comm:dispatch:")
+
+
+@pytest.mark.asyncio
+async def test_dispatch_provider_does_not_fire_without_task_tool():
+    """When only send_to_agent is registered (no task tool), the dispatch
+    sub-provider must NOT fire — dispatch requires the task tool."""
+    from modex_agent.core.agent import AgentCommKind
+    from modex_agent.memory.prompt_pipeline.providers import (
+        AgentCommunicationSystemPromptProvider,
+    )
+    from modex_agent.multi_agent.tools import CommunicationTarget
+
+    targets = [
+        CommunicationTarget(name="scout", kind=AgentCommKind.SUBAGENT),
+    ]
+    provider = AgentCommunicationSystemPromptProvider(
+        _make_tool_manager(targets, with_task=False), AgentCommKind.NORMAL
+    )
+    result = await provider.get_or_refresh()
+    assert "Dispatching Subagents" not in result
+    assert provider.last_version is not None
+    assert "dispatch:" not in provider.last_version
 
 
 @pytest.mark.asyncio
@@ -355,9 +391,7 @@ async def test_comm_provider_version_changes_when_target_added():
     from modex_agent.multi_agent.tools import CommunicationTarget, SendToAgentTool
 
     targets = [
-        CommunicationTarget(
-            name="alpha", kind=AgentCommKind.NORMAL, bus_ref=MagicMock()
-        ),
+        CommunicationTarget(name="alpha", kind=AgentCommKind.NORMAL, bus_ref=MagicMock()),
     ]
     mgr = _make_tool_manager(targets)
     provider = AgentCommunicationSystemPromptProvider(mgr, AgentCommKind.NORMAL)
@@ -366,9 +400,7 @@ async def test_comm_provider_version_changes_when_target_added():
     tool = mgr.get_tool("send_to_agent")
     assert isinstance(tool, SendToAgentTool)
     tool.add_target(
-        CommunicationTarget(
-            name="beta", kind=AgentCommKind.NORMAL, bus_ref=MagicMock()
-        )
+        CommunicationTarget(name="beta", kind=AgentCommKind.NORMAL, bus_ref=MagicMock())
     )
     await provider.get_or_refresh()
     v2 = provider.last_version
@@ -385,9 +417,7 @@ async def test_comm_provider_contract_does_not_expose_pool_concepts():
     from modex_agent.multi_agent.tools import CommunicationTarget
 
     targets = [
-        CommunicationTarget(
-            name="x", kind=AgentCommKind.NORMAL, bus_ref=MagicMock()
-        ),
+        CommunicationTarget(name="x", kind=AgentCommKind.NORMAL, bus_ref=MagicMock()),
     ]
     provider = AgentCommunicationSystemPromptProvider(
         _make_tool_manager(targets), AgentCommKind.NORMAL

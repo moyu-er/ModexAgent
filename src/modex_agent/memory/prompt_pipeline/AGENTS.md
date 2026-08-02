@@ -28,7 +28,7 @@ System prompt pipeline — an ordered, versioned collection of `SystemPromptProv
 | `ProviderBlocksProvider` | blocks hash | Provider blocks configured | Custom prompt blocks |
 | `ProviderPrefetchProvider` | prefetch hash | Prefetch configured | Prefetched context |
 | `TodoAwareSystemPromptProvider` | `todo-enabled` / `no-todo` | Agent owns `todo_read` + `todo_write` tools | Task-discipline reminder |
-| `AgentCommunicationSystemPromptProvider` | `comm:<fragments>` / `comm:none` | `send_to_agent` tool has targets matching sub-module conditions | Composite provider with 3 internal sub-modules: peer reply contract (targets with `bus_ref`), subagent dispatch contract (NON-subagent + SUBAGENT targets), subagent consultation contract (SUBAGENT kind). Version is `"comm:"` + `|`-joined sub-module fragments; content joins applying sections. Replaces the deleted `PeerCommunicationSystemPromptProvider`. |
+| `AgentCommunicationSystemPromptProvider` | `comm:<fragments>` / `comm:none` | `send_to_agent`/`task` tools have targets matching sub-module conditions | Composite provider with 3 internal sub-modules: peer reply contract (targets with `bus_ref`, via `send_to_agent`), subagent dispatch contract (NON-subagent + `task` tool registered, guides LLM to use `task` for new dispatch and `send_to_agent` for continuation), subagent consultation contract (SUBAGENT kind, via `send_to_agent`). Version is `"comm:"` + `|`-joined sub-module fragments; content joins applying sections. |
 
 ## For AI Agents
 

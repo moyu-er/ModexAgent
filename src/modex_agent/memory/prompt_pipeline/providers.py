@@ -194,7 +194,7 @@ class _SubagentDispatchSubProvider(_CommSubProvider):
     """Main-agent subagent dispatch contract.
 
     Fires when the agent is NOT a subagent (``comm_kind`` is ``None`` or
-    ``NORMAL``) AND the agent owns ``send_to_agent`` AND at least one target
+    ``NORMAL``) AND the agent owns the ``task`` tool AND at least one target
     is a subagent (``kind == SUBAGENT``). Main agents are constructed with
     ``comm_kind=None`` (the default), so the check uses ``== SUBAGENT``
     rather than ``!= NORMAL`` to treat ``None`` as main/normal.
@@ -211,16 +211,14 @@ class _SubagentDispatchSubProvider(_CommSubProvider):
     def _subagent_target_names(self) -> list[str]:
         if self._tool_manager is None:
             return []
-        tool = self._tool_manager.get_tool("send_to_agent")
+        tool = self._tool_manager.get_tool("task")
         if tool is None:
             return []
-        from modex_agent.multi_agent.tools import SendToAgentTool
+        from modex_agent.multi_agent.tools import TaskDispatchTool
 
-        if not isinstance(tool, SendToAgentTool):
+        if not isinstance(tool, TaskDispatchTool):
             return []
-        return sorted(
-            t.name for t in tool.list_targets() if t.kind == AgentCommKind.SUBAGENT
-        )
+        return sorted(t.name for t in tool.list_targets() if t.kind == AgentCommKind.SUBAGENT)
 
     def applies(self) -> bool:
         if self._comm_kind == AgentCommKind.SUBAGENT:
@@ -234,18 +232,17 @@ class _SubagentDispatchSubProvider(_CommSubProvider):
     def content(self) -> str:
         return (
             "## Dispatching Subagents\n\n"
-            "Subagents cannot see anything you output directly. The only way to\n"
-            "assign them a task is `send_to_agent` — the full task goes in its\n"
-            "`content` parameter.\n\n"
-            "- `invocation_id: null` → start a NEW subagent task (fresh session).\n"
-            "- `invocation_id: \"<id>\"` → CONTINUE an existing subagent session\n"
-            "  (preserves its memory).\n\n"
-            "After sending, end your turn — the notification resumes you with the\n"
-            "result when the subagent finishes. Don't continue to steps that need\n"
-            "its result.\n\n"
+            "Subagents cannot see anything you output directly. To assign a NEW task,\n"
+            "use the `task` tool — its `content` parameter carries the full task\n"
+            "description, and the tool guides you to construct a high-quality prompt.\n\n"
+            "To CONTINUE an existing subagent session (e.g. after receiving a\n"
+            "NEED_DECISION response), use `send_to_agent` with the `invocation_id`\n"
+            "from the prior task result.\n\n"
+            "After dispatching, end your turn — the notification resumes you with the\n"
+            "result when the subagent finishes.\n\n"
             "Subagents surface structured prefixes in their delivered result:\n"
-            "- `NEED_DECISION: <question>` — needs your decision. Re-invoke it\n"
-            "  (same invocation_id) with your answer.\n"
+            "- `NEED_DECISION: <question>` — needs your decision. Continue the session\n"
+            "  (send_to_agent with same invocation_id) with your answer.\n"
             "- `PROGRESS_UPDATE: <info>` — informational, no action needed.\n"
         )
 
@@ -278,7 +275,7 @@ class _SubagentConsultationSubProvider(_CommSubProvider):
             "prompt) — NOT to `send_to_agent`. That tool is for consultation only:\n"
             "ask your parent a question or request a decision when you cannot\n"
             "proceed without input.\n\n"
-            "- `content`: `\"QUESTION: ...\"` or `\"NEED_DECISION: ...\"`.\n"
+            '- `content`: `"QUESTION: ..."` or `"NEED_DECISION: ..."`.\n'
             "- After sending, stop and wait — the reply comes back as another\n"
             "  message to you.\n\n"
             "Do not use `send_to_agent` to report results or progress; that path\n"
