@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from modex_agent.agents.react.approval import ApprovalRuntime, TieredToolApprovalClassifier
 from modex_agent.approval.config import AgentApprovalConfig, ToolApprovalConfig
+from modex_agent.approval.runtime import ApprovalRuntime, TieredToolApprovalClassifier
 from modex_agent.interceptor.builtin.tool_approval import ArgumentMatcher
 from modex_agent.ioc.configs.approval import ApprovalConfig
 from modex_agent.tools.workspace_scoped import WorkspaceRootProvider

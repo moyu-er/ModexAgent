@@ -42,12 +42,12 @@ from pathlib import Path
 import pathvalidate
 
 from bot.webui.events import ServerEvent
-from bot.webui.server import WorkspaceIndex
 from bot.webui.transcript_store import (
     JSONLTranscriptStore,
     ResilientTranscriptStore,
     TranscriptStore,
 )
+from bot.webui.types import WorkspaceIndex
 from modex_agent.core.session_id import agent_of, session_id_prefix_of
 from modex_agent.workspace.paths import WorkspacePaths
 from modex_agent.workspace.runtime import is_workspace_root_bound, resolve_workspace_root

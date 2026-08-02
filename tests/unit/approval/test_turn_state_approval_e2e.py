@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from modex_agent.agents.react.agent import ReActAgent
-from modex_agent.agents.react.approval import ApprovalRuntime
+from modex_agent.approval.runtime import ApprovalRuntime
 from modex_agent.agents.react.state import ReActSnapshotPolicy, ReActTurnState
 from modex_agent.approval.constants import ApprovalDecision, ApprovalTier
 from modex_agent.approval.types import ApprovalAction

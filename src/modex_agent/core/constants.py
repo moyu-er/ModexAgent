@@ -78,6 +78,27 @@ class ExecutionStrategyKind(StrEnum):
     EXTERNAL = "external"
 
 
+class ProviderKind(StrEnum):
+    """Coding-agent provider families supported by ``ExternalAgent``.
+
+    Day-one values are ``PI`` and ``OPENCODE``. Add a new value when a new
+    CLI family (Claude Code, Codex, Cursor) is integrated — paired with a
+    new ``ProviderBackend`` subclass and a new ``ProviderEventParser``.
+
+    Co-located with ``ExecutionStrategyKind`` because the two are paired in
+    pool-config validation (``_validate_execution_provider_pair`` in
+    ``multi_agent.pool_config.specs``): ``provider_kind`` must be set iff
+    ``execution_strategy`` is ``EXTERNAL``. Keeping them in the same leaf
+    module lets data-layer types (``AgentDescriptor``, ``MainAgentSpec``,
+    ``SubagentSpec``) depend on ``core.constants`` without pulling in
+    ``agents.external.paths`` (which would close a cycle through
+    ``agents.external.__init__``).
+    """
+
+    PI = "pi"
+    OPENCODE = "opencode"
+
+
 class ReasoningEffort(StrEnum):
     """模型 reasoning effort 参数的可选值。
 

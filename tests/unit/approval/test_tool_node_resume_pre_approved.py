@@ -93,7 +93,7 @@ def _make_ctx(store, executed, default_deny_policy=ApprovalDenyPolicy.TOOL_RESUL
         agent_kind=AgentKind.REACT,
         phase=TurnPhase.CREATED,
     )
-    from modex_agent.agents.react.approval import ApprovalRuntime
+    from modex_agent.approval.runtime import ApprovalRuntime
     ctx = AgentContext(
         system_prompt="",
         history=ListMessageHistory(),

@@ -18,8 +18,7 @@ from .models import TurnSnapshot, TurnStateBase
 if TYPE_CHECKING:
     import asyncio
 
-    from modex_agent.agents.react.approval import ApprovalRuntime
-    from modex_agent.agents.react.runtime import ReactGraphRuntime
+    from modex_agent.approval.runtime import ApprovalRuntime
     from modex_agent.control.channel import InMemoryControlChannel
     from modex_agent.core.agent import AgentContext
     from modex_agent.core.runtime_context import RuntimeContextManager
@@ -27,6 +26,7 @@ if TYPE_CHECKING:
     from modex_agent.interceptor.chain import InterceptorChain
     from modex_agent.memory.context_governance import ContextGovernance
     from modex_agent.trace.otel_store import OtelSpanTraceStore
+    from modex_graph.runtime import GraphRuntime
 
     from .store import TurnStateStore
 
@@ -74,8 +74,10 @@ class AgentRuntime:
     services: AgentRuntimeServices
     state: TurnStateBase
     _runtime_context: Any = field(default=None, repr=False)
-    # ADR-0033 D5 + ticket 04: graph-runtime AOP bridge. Set by ReActAgent.run().
-    graph_runtime: ReactGraphRuntime | None = None
+    # ADR-0033 D5 + ticket 04: graph-runtime AOP bridge.
+    # Typed as the GraphRuntime ABC (modex_graph) so the runtime layer
+    # does not depend on the react implementation layer.
+    graph_runtime: GraphRuntime | None = None
 
     # ------------------------------------------------------------------
     # Field-access properties (backward compat)

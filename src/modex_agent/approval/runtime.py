@@ -1,8 +1,16 @@
-"""ApprovalRuntime — typed approval service for ReActAgent.
+"""ApprovalRuntime — typed approval service for tool execution.
 
 Approval classification (``ApprovalClassifier``) is a policy service;
 ``ApprovalTransaction`` inside ``ReActTurnState`` owns the state.
 ``ApprovalDenyPolicy`` defines turn-cancel behaviour for denied approvals.
+
+Migrated from ``agents/react/approval.py`` — the types have zero react-layer
+dependencies (only ``approval/``, ``core/``, ``interceptor/``, ``runtime/``),
+so they belong in the ``approval/`` domain module, not the react implementation.
+This migration breaks the ``runtime.services → agents.react.approval``
+type-coupling direction violation (D-level fix): ``runtime/services.py`` now
+imports from ``approval.runtime`` (same domain level) instead of
+``agents.react.approval`` (implementation layer).
 """
 
 from __future__ import annotations
@@ -29,10 +37,10 @@ class ApprovalClassifier(ABC):
 class TieredToolApprovalClassifier(ApprovalClassifier):
     """Agent-level tool approval classifier driven by path rules.
 
-    - approval.enabled=False  → all tools NORMAL
-    - tool not in config      → NORMAL
-    - path matches allowed    → NORMAL
-    - path does not match     → DANGEROUS
+    - approval.enabled=False  -> all tools NORMAL
+    - tool not in config      -> NORMAL
+    - path matches allowed    -> NORMAL
+    - path does not match     -> DANGEROUS
     """
 
     config: AgentApprovalConfig

@@ -146,8 +146,14 @@ def classify_litellm_error(exc: Exception) -> LLMErrorInfo:
 # ─── Provider 标识 ─────────────────────────────────────────────────────────────
 
 
-class ProviderKind(StrEnum):
-    """LLM Provider 种类。"""
+class LLMProviderKind(StrEnum):
+    """LLM Provider 种类。
+
+    Renamed from ``ProviderKind`` to disambiguate from the coding-agent
+    ``ProviderKind`` in ``modex_agent.core.constants`` (PI / OPENCODE).
+    This enum is LLM-provider-only (OpenAI / Anthropic / LiteLLM) and is
+    used solely by ``LLMProviderConfig`` below.
+    """
 
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
@@ -199,7 +205,7 @@ class LLMProviderConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    provider: ProviderKind = ProviderKind.OPENAI
+    provider: LLMProviderKind = LLMProviderKind.OPENAI
     model: str = ""
     api_key: str | None = None
     base_url: str | None = None

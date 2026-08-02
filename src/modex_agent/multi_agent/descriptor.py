@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from modex_agent.core.capabilities import ModelInfo
-from modex_agent.core.constants import ExecutionStrategyKind, ReasoningEffort
+from modex_agent.core.constants import ExecutionStrategyKind, ProviderKind, ReasoningEffort
 from modex_agent.core.context import ContextManager
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.ioc.configs.memory import MemoryConfig
@@ -14,7 +14,6 @@ from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.comm_kind import AgentCommKind
 
 if TYPE_CHECKING:
-    from modex_agent.agents.external.paths import ProviderKind
     from modex_agent.pipeline.pipeline import AgentPipeline
 
 
@@ -138,10 +137,4 @@ class AgentInstance:
             await self.pipeline.agent.stop()
 
 
-# ProviderKind lives behind external.__init__ which imports modules that
-# import from multi_agent — a cycle we can only close once AgentDescriptor and
-# AgentInstance are defined above. Rebuild the schema now so the model is fully
-# resolved before any caller tries to instantiate it.
-from modex_agent.agents.external.paths import ProviderKind  # noqa: E402, F401
 
-AgentDescriptor.model_rebuild()

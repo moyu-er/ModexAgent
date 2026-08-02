@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from modex_agent.agents.external.paths import ProviderKind
-from modex_agent.core.constants import ExecutionStrategyKind
+from modex_agent.core.constants import ExecutionStrategyKind, ProviderKind
 from modex_agent.ioc.configs.approval import ApprovalConfig
 from modex_agent.tools.presets import (
     DEFAULT_FORK_MAX_MESSAGES,

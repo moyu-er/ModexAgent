@@ -5,7 +5,7 @@ event contract, engine routing, and bot_project wiring.
 """
 
 import pytest
-from modex_agent.agents.react.approval import TieredToolApprovalClassifier
+from modex_agent.approval.runtime import TieredToolApprovalClassifier
 from modex_agent.approval.config import AgentApprovalConfig, ToolApprovalConfig
 from modex_agent.approval.constants import ApprovalDecision, ApprovalTier, ApprovalStatus
 from modex_agent.approval.response import parse_approval_action

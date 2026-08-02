@@ -27,7 +27,7 @@ from bot.service.model_choice import ModelChoiceRegistry
 from bot.service.model_config import BotModelConfig
 from bot.service.pool_builder import _wire_main_pipeline
 
-from modex_agent.agents.react.approval import ApprovalRuntime, TieredToolApprovalClassifier
+from modex_agent.approval.runtime import ApprovalRuntime, TieredToolApprovalClassifier
 from modex_agent.core.emitter import AgentResult
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager

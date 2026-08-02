@@ -346,7 +346,7 @@ class TestToolNode:
         ctx.agent_ctx.history = history  # type: ignore[assignment]
 
         from modex_agent.runtime.enums import ApprovalDenyPolicy
-        from modex_agent.agents.react.approval import ApprovalRuntime
+        from modex_agent.approval.runtime import ApprovalRuntime
 
         ctx.agent_ctx.runtime.services.approval = ApprovalRuntime(
             classifier=type("_Cls", (), {"classify": lambda s, tc, c: "normal"})(),  # type: ignore[arg-type]
@@ -374,7 +374,7 @@ class TestToolNode:
         tc = ToolCall(tool_name="write", arguments={"path": "/tmp/x"}, call_id="c1")
         runtime = _make_runtime()
         runtime.state.iteration = 1
-        from modex_agent.agents.react.approval import ApprovalRuntime
+        from modex_agent.approval.runtime import ApprovalRuntime
         from modex_agent.runtime.enums import ApprovalDenyPolicy
 
         runtime.services.approval = ApprovalRuntime(

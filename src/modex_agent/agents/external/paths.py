@@ -1,18 +1,23 @@
 """Workdir-relative path accessor for the external coding agent integration.
 
-`ExternalPaths` is the single source of truth for everything under a workdir
+``ExternalPaths`` is the single source of truth for everything under a workdir
 (``.modex/`` layout, provider session files, outbox / inbox / result /
 env-snapshot files, AGENTS.md marker). It is **not** a Pydantic model — it is
 a process-local path accessor receiving an already-validated workdir from
-`WorkspacePathResolver.external_workdir()`.
+``WorkspacePathResolver.external_workdir()``.
 
-`ProviderKind` lives here too because it is a domain-level enum tightly
-coupled to the path accessor (each value maps to a session-file suffix).
+``ProviderKind`` is re-exported from ``modex_agent.core.constants`` for
+backward compatibility — it was moved there to break the
+``multi_agent.descriptor → agents.external.paths`` eager import cycle (the
+canonical home is now next to ``ExecutionStrategyKind``, which it is paired
+with in pool-config validation).
 """
 
 from __future__ import annotations
 
-from enum import StrEnum
+from pathlib import Path
+
+from modex_agent.core.constants import ProviderKind  # noqa: F401 — re-export
 
 
 def sanitize_session_id(session_id: str) -> str:
@@ -23,19 +28,6 @@ def sanitize_session_id(session_id: str) -> str:
     because modexctl is a standalone CLI that does not import the framework.
     """
     return session_id.replace("/", "_").replace("\\", "_").replace("..", "_")
-from pathlib import Path
-
-
-class ProviderKind(StrEnum):
-    """Coding-agent provider families supported by `ExternalAgent`.
-
-    Day-one values are ``PI`` and ``OPENCODE``. Add a new value when a new
-    CLI family (Claude Code, Codex, Cursor) is integrated — paired with a
-    new ``ProviderBackend`` subclass and a new ``ProviderEventParser``.
-    """
-
-    PI = "pi"
-    OPENCODE = "opencode"
 
 
 class ExternalPaths:
