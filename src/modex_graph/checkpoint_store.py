@@ -89,6 +89,20 @@ class CheckpointData(BaseModel):
       already completed; used to skip re-execution on resume.
     - `dispatch_events: list[DispatchEvent]` — the full dispatch audit log
       for this run (from `ParallelScheduler.dispatch_log`).
+    - `graph_instance_id: int | None` — the graph instance this checkpoint
+      belongs to (ticket 10 class 1). Replaces `run_id` as the persistence
+      key (rule 15: converge on a single key). `None` means not yet
+      assigned — backward compatible with existing construction that does
+      not set it.
+    - `activated_sources: dict[str, list[str]]` — ticket 10 class 1.
+      `target_node → list of activated source node names`. Tracks which
+      predecessors have actually dispatched to each target under
+      `ParallelScheduler` (`NodeTrigger.ON_ALL_PREDS`).
+    - `instance_seq: int` — ticket 10 class 1. Next instance sequence
+      number, used for `NodeInstance.instance_id` generation
+      (e.g. `"llm#3"` ← `instance_seq=3`).
+    - `iteration_count: int` — ticket 10 class 1. Total iterations
+      completed, for `GraphSpec.max_iterations` tracking.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -109,6 +123,37 @@ class CheckpointData(BaseModel):
     dispatch_events: list[DispatchEvent] = Field(
         default_factory=list,
         description="The full dispatch audit log for this run.",
+    )
+    # ── Ticket 10 class 1 — graph-instance-keyed fields ────────────────
+    graph_instance_id: int | None = Field(
+        default=None,
+        description=(
+            "The graph instance this checkpoint belongs to (ticket 10 "
+            "class 1). Snowflake ID — replaces run_id as the persistence "
+            "key (rule 15: converge). None = not yet assigned, backward "
+            "compatible with existing construction."
+        ),
+    )
+    activated_sources: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description=(
+            "Ticket 10 class 1. target_node → list of activated source "
+            "node names. Tracks which predecessors have actually dispatched "
+            "to each target under ParallelScheduler (ON_ALL_PREDS)."
+        ),
+    )
+    instance_seq: int = Field(
+        default=0,
+        description=(
+            "Ticket 10 class 1. Next instance sequence number, used for "
+            "NodeInstance.instance_id generation (e.g. 'llm#3' ← 3)."
+        ),
+    )
+    iteration_count: int = Field(
+        default=0,
+        description=(
+            "Ticket 10 class 1. Total iterations completed, for GraphSpec.max_iterations tracking."
+        ),
     )
 
 

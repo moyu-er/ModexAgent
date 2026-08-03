@@ -15,6 +15,9 @@ Covers:
 - Cross-run isolation: checkpoints under different run_ids are isolated.
 - clear on non-existent run_id is a no-op.
 - load_latest on non-existent run_id returns None.
+- Ticket 10 class 1 new fields (graph_instance_id, activated_sources,
+  instance_seq, iteration_count): defaults, backward compatibility,
+  round-trip preservation.
 """
 
 from __future__ import annotations
@@ -88,9 +91,7 @@ class TestCheckpointStoreABC:
 
         for method_name in ("save", "load_latest", "clear"):
             method = getattr(CheckpointStore, method_name)
-            assert inspect.iscoroutinefunction(method), (
-                f"{method_name} should be async"
-            )
+            assert inspect.iscoroutinefunction(method), f"{method_name} should be async"
 
 
 # ── MemoryCheckpointStore is concrete ─────────────────────────────────────
@@ -461,3 +462,239 @@ class TestCheckpointDataFrozen:
         )
         assert data.completed_instances == []
         assert data.dispatch_events == []
+
+
+# ── Ticket 10 class 1 — new fields ────────────────────────────────────────
+
+
+class TestCheckpointDataTicket10Fields:
+    """`CheckpointData` new fields from ticket 10 class 1.
+
+    - `graph_instance_id: int | None` — defaults to None.
+    - `activated_sources: dict[str, list[str]]` — defaults to {}.
+    - `instance_seq: int` — defaults to 0.
+    - `iteration_count: int` — defaults to 0.
+    """
+
+    def test_new_fields_have_defaults(self) -> None:
+        data = CheckpointData(
+            main_state={"count": 0},
+            pending_on_all_preds={},
+        )
+        assert data.graph_instance_id is None
+        assert data.activated_sources == {}
+        assert data.instance_seq == 0
+        assert data.iteration_count == 0
+
+    def test_graph_instance_id_is_int_or_none(self) -> None:
+        data = CheckpointData(
+            main_state={},
+            pending_on_all_preds={},
+            graph_instance_id=123456789,
+        )
+        assert data.graph_instance_id == 123456789
+        assert isinstance(data.graph_instance_id, int)
+
+    def test_graph_instance_id_none_explicit(self) -> None:
+        data = CheckpointData(
+            main_state={},
+            pending_on_all_preds={},
+            graph_instance_id=None,
+        )
+        assert data.graph_instance_id is None
+
+    def test_activated_sources_populated(self) -> None:
+        data = CheckpointData(
+            main_state={},
+            pending_on_all_preds={},
+            activated_sources={"llm": ["tool", "retriever"]},
+        )
+        assert data.activated_sources == {"llm": ["tool", "retriever"]}
+
+    def test_instance_seq_set(self) -> None:
+        data = CheckpointData(
+            main_state={},
+            pending_on_all_preds={},
+            instance_seq=7,
+        )
+        assert data.instance_seq == 7
+
+    def test_iteration_count_set(self) -> None:
+        data = CheckpointData(
+            main_state={},
+            pending_on_all_preds={},
+            iteration_count=12,
+        )
+        assert data.iteration_count == 12
+
+    def test_all_new_fields_set_together(self) -> None:
+        data = CheckpointData(
+            main_state={"v": 1},
+            pending_on_all_preds={},
+            graph_instance_id=999,
+            activated_sources={"a": ["b", "c"]},
+            instance_seq=3,
+            iteration_count=5,
+        )
+        assert data.graph_instance_id == 999
+        assert data.activated_sources == {"a": ["b", "c"]}
+        assert data.instance_seq == 3
+        assert data.iteration_count == 5
+
+    def test_new_fields_frozen_immutable(self) -> None:
+        data = CheckpointData(
+            main_state={},
+            pending_on_all_preds={},
+            graph_instance_id=1,
+        )
+        with pytest.raises(ValidationError):
+            data.graph_instance_id = 2  # type: ignore[misc]
+        with pytest.raises(ValidationError):
+            data.activated_sources = {"x": ["y"]}  # type: ignore[misc]
+        with pytest.raises(ValidationError):
+            data.instance_seq = 99  # type: ignore[misc]
+        with pytest.raises(ValidationError):
+            data.iteration_count = 99  # type: ignore[misc]
+
+    def test_new_fields_extra_still_forbid(self) -> None:
+        """extra='forbid' still applies — unknown fields rejected."""
+        with pytest.raises(ValidationError):
+            CheckpointData(  # type: ignore[call-arg]
+                main_state={},
+                pending_on_all_preds={},
+                not_a_field="bad",
+            )
+
+
+class TestCheckpointDataTicket10BackwardCompat:
+    """Existing construction (without the new fields) must still work.
+
+    The new fields all have defaults, so any code that constructs
+    `CheckpointData` with only the original four fields continues to work
+    unchanged. This is the backward-compatibility contract.
+    """
+
+    def test_minimal_construction_still_works(self) -> None:
+        data = CheckpointData(
+            main_state={"x": 1},
+            pending_on_all_preds={},
+        )
+        assert data.main_state == {"x": 1}
+        assert data.pending_on_all_preds == {}
+        assert data.completed_instances == []
+        assert data.dispatch_events == []
+        assert data.graph_instance_id is None
+        assert data.activated_sources == {}
+        assert data.instance_seq == 0
+        assert data.iteration_count == 0
+
+    def test_existing_make_checkpoint_helper_still_works(self) -> None:
+        """The existing `make_checkpoint` helper (no new fields) still
+        produces a valid CheckpointData with defaulted new fields."""
+        data = make_checkpoint(count=5, name="compat")
+        assert data.main_state == {"count": 5, "name": "compat"}
+        assert data.graph_instance_id is None
+        assert data.activated_sources == {}
+        assert data.instance_seq == 0
+        assert data.iteration_count == 0
+
+    async def test_existing_round_trip_preserves_new_defaults(self) -> None:
+        """Round-trip of a CheckpointData constructed without the new fields
+        preserves the defaulted values."""
+        store = MemoryCheckpointStore()
+        original = CheckpointData(
+            main_state={"count": 1},
+            pending_on_all_preds={},
+        )
+        await store.save(original, "run-compat")
+        loaded = await store.load_latest("run-compat")
+        assert loaded is not None
+        assert loaded.graph_instance_id is None
+        assert loaded.activated_sources == {}
+        assert loaded.instance_seq == 0
+        assert loaded.iteration_count == 0
+
+
+class TestCheckpointDataTicket10RoundTrip:
+    """Round-trip persistence preserves the new fields."""
+
+    async def test_round_trip_preserves_new_fields_memory(self) -> None:
+        store = MemoryCheckpointStore()
+        original = CheckpointData(
+            main_state={"count": 1},
+            pending_on_all_preds={},
+            graph_instance_id=12345,
+            activated_sources={"llm": ["tool", "retriever"], "tool": ["llm"]},
+            instance_seq=42,
+            iteration_count=7,
+        )
+        await store.save(original, "run-t10-mem")
+        loaded = await store.load_latest("run-t10-mem")
+        assert loaded is not None
+        assert loaded.graph_instance_id == 12345
+        assert loaded.activated_sources == {"llm": ["tool", "retriever"], "tool": ["llm"]}
+        assert loaded.instance_seq == 42
+        assert loaded.iteration_count == 7
+
+    async def test_round_trip_preserves_new_fields_sqlite(self) -> None:
+        store = SqliteCheckpointStore(":memory:")
+        try:
+            original = CheckpointData(
+                main_state={"count": 1},
+                pending_on_all_preds={},
+                graph_instance_id=99_999_999,
+                activated_sources={"a": ["b"]},
+                instance_seq=100,
+                iteration_count=25,
+            )
+            await store.save(original, "run-t10-sqlite")
+            loaded = await store.load_latest("run-t10-sqlite")
+            assert loaded is not None
+            assert loaded.graph_instance_id == 99_999_999
+            assert loaded.activated_sources == {"a": ["b"]}
+            assert loaded.instance_seq == 100
+            assert loaded.iteration_count == 25
+        finally:
+            store.close()
+
+    async def test_round_trip_preserves_graph_instance_id_none(self) -> None:
+        """graph_instance_id=None round-trips (not silently coerced to 0)."""
+        store = MemoryCheckpointStore()
+        original = CheckpointData(
+            main_state={},
+            pending_on_all_preds={},
+            graph_instance_id=None,
+        )
+        await store.save(original, "run-none-gid")
+        loaded = await store.load_latest("run-none-gid")
+        assert loaded is not None
+        assert loaded.graph_instance_id is None
+
+    def test_model_dump_round_trip_preserves_new_fields(self) -> None:
+        original = CheckpointData(
+            main_state={"x": 1},
+            pending_on_all_preds={},
+            graph_instance_id=77,
+            activated_sources={"n": ["s1", "s2"]},
+            instance_seq=9,
+            iteration_count=3,
+        )
+        restored = CheckpointData.model_validate(original.model_dump())
+        assert restored == original
+        assert restored.graph_instance_id == 77
+        assert restored.activated_sources == {"n": ["s1", "s2"]}
+        assert restored.instance_seq == 9
+        assert restored.iteration_count == 3
+
+    def test_model_dump_json_round_trip_preserves_new_fields(self) -> None:
+        original = CheckpointData(
+            main_state={},
+            pending_on_all_preds={},
+            graph_instance_id=55,
+            activated_sources={"t": ["s"]},
+            instance_seq=11,
+            iteration_count=22,
+        )
+        json_str = original.model_dump_json()
+        restored = CheckpointData.model_validate_json(json_str)
+        assert restored == original
