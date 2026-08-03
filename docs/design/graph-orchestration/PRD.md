@@ -1,5 +1,7 @@
 # Graph Orchestration System
 
+> **Note**: This PRD is the planning-stage record. Implementation status and design authority live in `distributed-persistence.md`. Ticket links below resolve under `issues/history/`.
+
 Status: wayfinder:map
 
 ## Destination

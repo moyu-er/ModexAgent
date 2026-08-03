@@ -5,6 +5,8 @@ Date: 2026-08-04
 
 本文档描述 `modex_graph` 分布式持久化与 Node 生命周期统一调度的当前实现。目标读者是需要理解和维护该系统的开发者。
 
+> **Design rationale provenance**: 本文档的设计决策由 11 项 critical finding(F1-F11)驱动,finding → task 映射见 `issues/history/IMPLEMENTATION-PLAN-V2.md` §1.3。
+
 ## 1. 概述
 
 分布式持久化用 per-node 的版本链存储取代了单一的 `CheckpointData` JSON blob。全局图状态由 graph metadata 加上各 node 的 invocation 版本记录拼装而成,不再序列化为一个快照。
