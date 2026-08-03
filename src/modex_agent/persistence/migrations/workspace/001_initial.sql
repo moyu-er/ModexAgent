@@ -386,3 +386,121 @@ BEGIN
     UPDATE pool_routing SET updated_at = CAST(strftime('%s','now') AS INTEGER) * 1000
     WHERE rowid = NEW.rowid;
 END;
+
+-- ---------------------------------------------------------------------------
+-- 16. graph_specs — graph definition persistence (full GraphSpec serialization).
+--     spec_id is a Snowflake ID (BIGINT, application-generated; not AUTOINCREMENT).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS graph_specs (
+    spec_id         BIGINT  PRIMARY KEY,
+    name            TEXT    NOT NULL,
+    version         TEXT    NOT NULL DEFAULT '1.0',
+    spec_json       TEXT    NOT NULL CHECK (json_valid(spec_json)),
+    created_at      INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
+    updated_at      INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
+    UNIQUE (name, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_graph_specs_name ON graph_specs (name);
+
+CREATE TRIGGER IF NOT EXISTS trg_graph_specs_auto_updated_at
+AFTER UPDATE ON graph_specs
+FOR EACH ROW
+WHEN NEW.updated_at IS OLD.updated_at
+BEGIN
+    UPDATE graph_specs SET updated_at = CAST(strftime('%s','now') AS INTEGER) * 1000
+    WHERE rowid = NEW.rowid;
+END;
+
+-- ---------------------------------------------------------------------------
+-- 17. graph_instances — runtime graph instances (graph_instance_id is the
+--     persistence unique key). parent_instance_id enables recursive subgraph
+--     nesting (null for top-level). parent_node is the node name in the parent
+--     graph that spawned this instance.
+--     spec_id references graph_specs.spec_id (FK enforced at app layer; SQLite
+--     FK enforcement is off by default).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS graph_instances (
+    graph_instance_id   BIGINT  PRIMARY KEY,
+    spec_id             BIGINT  NOT NULL,
+    parent_instance_id  BIGINT,
+    parent_node         TEXT,
+    status              TEXT    NOT NULL DEFAULT 'running'
+                        CHECK (status IN ('running', 'paused', 'stopped', 'crashed', 'completed', 'failed')),
+    created_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
+    updated_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
+);
+
+CREATE INDEX IF NOT EXISTS idx_graph_instances_spec
+    ON graph_instances (spec_id);
+
+CREATE INDEX IF NOT EXISTS idx_graph_instances_parent
+    ON graph_instances (parent_instance_id)
+    WHERE parent_instance_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_graph_instances_active
+    ON graph_instances (status)
+    WHERE status IN ('running', 'paused', 'crashed');
+
+CREATE TRIGGER IF NOT EXISTS trg_graph_instances_auto_updated_at
+AFTER UPDATE ON graph_instances
+FOR EACH ROW
+WHEN NEW.updated_at IS OLD.updated_at
+BEGIN
+    UPDATE graph_instances SET updated_at = CAST(strftime('%s','now') AS INTEGER) * 1000
+    WHERE rowid = NEW.rowid;
+END;
+
+-- ---------------------------------------------------------------------------
+-- 18. node_states — per-node state snapshots (MVCC version chain).
+--     Append-only: one row per (graph_instance_id, node_name, version). All
+--     versions retained for MVCC rollback — NO updated_at, NO trigger.
+--     graph_instance_id references graph_instances.graph_instance_id (app-layer FK).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS node_states (
+    node_state_id       BIGINT  PRIMARY KEY,
+    graph_instance_id   BIGINT  NOT NULL,
+    node_name           TEXT    NOT NULL,
+    version             INTEGER NOT NULL DEFAULT 0,
+    state_json          TEXT    NOT NULL CHECK (json_valid(state_json)),
+    created_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
+    UNIQUE (graph_instance_id, node_name, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_node_states_latest
+    ON node_states (graph_instance_id, node_name, version DESC);
+
+CREATE INDEX IF NOT EXISTS idx_node_states_node
+    ON node_states (graph_instance_id, node_name);
+
+-- ---------------------------------------------------------------------------
+-- 19. deliver_states — accumulated deliver payloads (ticket 07).
+--     node_name is the accumulating node; next_node is the target downstream.
+--     graph_instance_id references graph_instances.graph_instance_id (app-layer FK).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS deliver_states (
+    deliver_id          BIGINT  PRIMARY KEY,
+    graph_instance_id   BIGINT  NOT NULL,
+    node_name           TEXT    NOT NULL,
+    next_node           TEXT    NOT NULL,
+    content_json        TEXT    NOT NULL CHECK (json_valid(content_json)),
+    status              TEXT    NOT NULL DEFAULT 'accumulated'
+                        CHECK (status IN ('accumulated', 'submitted')),
+    created_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
+    updated_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
+);
+
+CREATE INDEX IF NOT EXISTS idx_deliver_states_node
+    ON deliver_states (graph_instance_id, node_name, status);
+
+CREATE INDEX IF NOT EXISTS idx_deliver_states_target
+    ON deliver_states (graph_instance_id, next_node, status);
+
+CREATE TRIGGER IF NOT EXISTS trg_deliver_states_auto_updated_at
+AFTER UPDATE ON deliver_states
+FOR EACH ROW
+WHEN NEW.updated_at IS OLD.updated_at
+BEGIN
+    UPDATE deliver_states SET updated_at = CAST(strftime('%s','now') AS INTEGER) * 1000
+    WHERE rowid = NEW.rowid;
+END;
