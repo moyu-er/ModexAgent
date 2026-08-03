@@ -10,7 +10,7 @@ Verifies:
   via default edges.
 
 Tests assert observable state changes (counter increments + branch labels),
-not internal `NodeResult.transition` values — per the TDD-at-the-execution-seam
+not internal routing fields — per the TDD-at-the-execution-seam
 guidance in the task spec.
 """
 
@@ -40,6 +40,7 @@ from modex_graph import (  # noqa: E402
     GraphNode,
     GraphRuntime,
     GraphState,
+    IntegratedInput,
     LastValue,
     Node,
     NodeResult,
@@ -60,9 +61,10 @@ class AddNode(Node[BranchState]):
         self.amount = amount
         self.label = label
 
-    def execute(self, ctx: GraphContext[BranchState]) -> NodeResult:
+    def execute(self, ctx: GraphContext[BranchState], integrated_input: IntegratedInput) -> NodeResult:
         ctx.state.count += self.amount
         ctx.state.last_branch = self.label
+        self.deliver(None, None, ctx)
         return NodeResult()
 
 
@@ -87,8 +89,8 @@ class TestConditionalNode:
         g.add_node("high", AddNode(amount=10, label="high"))
         g.add_node("low", AddNode(amount=1, label="low"))
         g.add_edge(GraphNode.START, "decide")
-        g.add_edge("decide", "high", reason="high")
-        g.add_edge("decide", "low", reason="low")
+        g.add_edge("decide", "high")
+        g.add_edge("decide", "low")
         g.add_edge("high", GraphNode.END)
         g.add_edge("low", GraphNode.END)
         return g
@@ -132,10 +134,10 @@ class TestSwitchNode:
         g.add_node("c", AddNode(amount=3, label="c"))
         g.add_node("d", AddNode(amount=4, label="d"))
         g.add_edge(GraphNode.START, "switch")
-        g.add_edge("switch", "a", reason="a")
-        g.add_edge("switch", "b", reason="b")
-        g.add_edge("switch", "c", reason="c")
-        g.add_edge("switch", "d", reason="d")
+        g.add_edge("switch", "a")
+        g.add_edge("switch", "b")
+        g.add_edge("switch", "c")
+        g.add_edge("switch", "d")
         g.add_edge("a", GraphNode.END)
         g.add_edge("b", GraphNode.END)
         g.add_edge("c", GraphNode.END)

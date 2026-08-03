@@ -12,9 +12,15 @@ Public surface (ADR-0033 acceptance criteria):
 - **Context + runtime:** `GraphContext`, `GraphRuntime`.
 - **State + channels:** `GraphState`, `BaseChannel`, `LastValue`,
   `ReducerChannel`, `Codec`, `register_codec`.
-- **Result types:** `NodeResult`, `Command`, `Task`, `DispatchEvent`.
+- **Result types:** `NodeResult`, `DispatchEvent`.
+- **Deliver/submit (ticket 07):** `IntegratedPayload`, `IntegratedInput`,
+  `InputIntegrator`, `DefaultInputIntegrator`, `DeliverStore`,
+  `InMemoryDeliverStore`, `SqliteDeliverStore`, `DeliverRecord`,
+  `DeliverStatus`.
 - **Scheduler:** `Scheduler` (ABC), `LinearScheduler`, `ParallelScheduler`,
   `SchedulerKind`, `NodeInstanceStatus`, `NodeInstance`, `NodeTrigger`.
+- **Lifecycle + interrupt:** `GraphInstanceStatus` (ticket 10 class 3),
+  `InterruptPolicy` (ABC, ticket 04), `CrashPolicy` (default, ticket 04).
 - **Exceptions:** `GraphBubbleUp`, `GraphInterrupt`, `GraphDrained`,
   `ParentCommand`, `InvalidUpdateError`, `RoutingError`, `GraphRecursionError`.
 
@@ -40,8 +46,21 @@ from .checkpoint_store import (
 )
 from .compiled_graph import CompiledGraph
 from .conflict_detector import GenerationWriteTracker, WriteConflictDetector
-from .constants import GraphNode, NodeInstanceStatus, NodeTrigger, SchedulerKind
+from .constants import (
+    GraphInstanceStatus,
+    GraphNode,
+    NodeInstanceStatus,
+    NodeTrigger,
+    SchedulerKind,
+)
 from .context import GraphContext
+from .deliver_store import (
+    DeliverRecord,
+    DeliverStatus,
+    DeliverStore,
+    InMemoryDeliverStore,
+    SqliteDeliverStore,
+)
 from .dispatch_store import (
     DispatchStore,
     InMemoryDispatchStore,
@@ -58,11 +77,57 @@ from .exceptions import (
     RoutingError,
 )
 from .graph import Edge, Graph
+from .graph_instance import GraphInstance
+from .id_generator import IdGenerator, SnowflakeIdGenerator, default_id_generator
+from .instance_store import (
+    GraphInstanceStore,
+    InMemoryGraphInstanceStore,
+    SqliteGraphInstanceStore,
+)
+from .integration import (
+    DefaultInputIntegrator,
+    InputIntegrator,
+    IntegratedInput,
+    IntegratedPayload,
+)
+from .interrupt_policy import CrashPolicy, InterruptPolicy
 from .node import Node
-from .result import Command, DispatchEvent, NodeResult, Task
+from .node_factory import NodeFactory, NodeRegistry
+from .node_state import NodeState, SimpleNodeState
+from .node_state_store import (
+    InMemoryNodeStateStore,
+    NodeStateStore,
+    SqliteNodeStateStore,
+)
+from .nodes import (
+    DelayNode,
+    DelayNodeFactory,
+    FunctionNode,
+    FunctionNodeFactory,
+    GraphAsNode,
+    GraphAsNodeFactory,
+    HumanInputNode,
+    HumanInputNodeFactory,
+)
+from .result import DispatchEvent, NodeResult
 from .runtime import GraphRuntime
 from .scheduler import LinearScheduler, NodeInstance, ParallelScheduler, Scheduler
+from .spec import EdgeSpec, GraphSpec, NodeSpec
+from .spec_compiler import GraphSpecCompiler
+from .spec_store import (
+    GraphSpecStore,
+    InMemoryGraphSpecStore,
+    SqliteGraphSpecStore,
+)
 from .state import GraphState
+from .state_factory import (
+    DynamicStateFactory,
+    SimpleStateFactory,
+    StateFactory,
+    StateRegistry,
+)
+from .state_schema import StateFieldSpec, StateSchema
+from .topology_validator import TopologyError, TopologyValidator
 
 __all__ = [
     # Graph primitives
@@ -85,13 +150,26 @@ __all__ = [
     "JsonValue",
     # Result types
     "NodeResult",
-    "Command",
-    "Task",
     "DispatchEvent",
+    # ID generation
+    "IdGenerator",
+    "SnowflakeIdGenerator",
+    "default_id_generator",
     # Dispatch persistence
     "DispatchStore",
     "InMemoryDispatchStore",
     "SqliteDispatchStore",
+    # Deliver/submit persistence (ticket 07)
+    "DeliverStatus",
+    "DeliverRecord",
+    "DeliverStore",
+    "InMemoryDeliverStore",
+    "SqliteDeliverStore",
+    # Deliver/submit input integration (ticket 07)
+    "IntegratedPayload",
+    "IntegratedInput",
+    "InputIntegrator",
+    "DefaultInputIntegrator",
     # Conflict detection
     "WriteConflictDetector",
     "GenerationWriteTracker",
@@ -109,6 +187,10 @@ __all__ = [
     "NodeInstanceStatus",
     "NodeInstance",
     "NodeTrigger",
+    # Lifecycle + interrupt policy (ticket 04 + ticket 10 class 3)
+    "GraphInstanceStatus",
+    "InterruptPolicy",
+    "CrashPolicy",
     # Exceptions
     "GraphBubbleUp",
     "GraphInterrupt",
@@ -117,6 +199,48 @@ __all__ = [
     "InvalidUpdateError",
     "RoutingError",
     "GraphRecursionError",
+    # Declarative graph spec (ticket 08)
+    "GraphSpec",
+    "NodeSpec",
+    "EdgeSpec",
+    # Runtime graph instance (ticket 04)
+    "GraphInstance",
+    # Graph spec persistence (P1C.6)
+    "GraphSpecStore",
+    "InMemoryGraphSpecStore",
+    "SqliteGraphSpecStore",
+    # Graph instance persistence (P1C.6)
+    "GraphInstanceStore",
+    "InMemoryGraphInstanceStore",
+    "SqliteGraphInstanceStore",
+    # Node state persistence (P1C.6)
+    "NodeStateStore",
+    "InMemoryNodeStateStore",
+    "SqliteNodeStateStore",
+    # Node state in-memory abstraction (ticket 10)
+    "NodeState",
+    "SimpleNodeState",
+    "StateSchema",
+    "StateFieldSpec",
+    "NodeFactory",
+    "NodeRegistry",
+    "StateFactory",
+    "StateRegistry",
+    "SimpleStateFactory",
+    "DynamicStateFactory",
+    # Generic Node types + factories (ticket 02)
+    "FunctionNode",
+    "FunctionNodeFactory",
+    "GraphAsNode",
+    "GraphAsNodeFactory",
+    "DelayNode",
+    "DelayNodeFactory",
+    "HumanInputNode",
+    "HumanInputNodeFactory",
+    # Declarative → imperative bridge (ticket 08)
+    "GraphSpecCompiler",
+    "TopologyValidator",
+    "TopologyError",
 ]
 
 __version__ = "1.0.0"

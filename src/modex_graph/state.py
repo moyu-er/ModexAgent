@@ -100,8 +100,8 @@ class GraphState(BaseModel):
     )
 
     # Resume target set by ``ctx.interrupt(value, resume_to=...)``; the
-    # entry node routes via ``Command(goto=...)`` on re-entry, then clears
-    # it. Replaces entry-node phase hardcoding.
+    # entry node routes via ``deliver(content, target, ctx)`` on re-entry,
+    # then clears it. Replaces entry-node phase hardcoding.
     resume_target: Annotated[str | None, LastValue] = None
 
     # Per-instance channel bag. Populated by _setup_channels model_validator.

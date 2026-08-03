@@ -7,6 +7,7 @@ from modex_graph import (
     GraphContext,
     GraphRuntime,
     GraphState,
+    IntegratedInput,
     LastValue,
     Node,
     NodeResult,
@@ -52,47 +53,27 @@ class CounterState(GraphState):
 
 
 class AddNode(Node[CounterState]):
-    """Sync node that increments count by `amount`."""
+    """Sync node that increments count by `amount`, delivers to default target."""
 
     def __init__(self, amount: int = 1) -> None:
         self.amount = amount
 
-    def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+    def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
         ctx.state.count += self.amount
+        self.deliver(None, None, ctx)
         return NodeResult()
 
 
 class AsyncAddNode(Node[CounterState]):
-    """Async node that increments count by `amount`."""
+    """Async node that increments count by `amount`, delivers to default target."""
 
     def __init__(self, amount: int = 1) -> None:
         self.amount = amount
 
-    async def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+    async def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
         ctx.state.count += self.amount
+        self.deliver(None, None, ctx)
         return NodeResult()
-
-
-class TransitionNode(Node[CounterState]):
-    """Sync node that returns a transition."""
-
-    def __init__(self, transition: str) -> None:
-        self.transition = transition
-
-    def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
-        return NodeResult(transition=self.transition)
-
-
-class CommandNode(Node[CounterState]):
-    """Sync node that returns a Command(goto=...)."""
-
-    def __init__(self, goto: Any) -> None:
-        self.goto = goto
-
-    def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
-        from modex_graph import Command
-
-        return NodeResult(command=Command(goto=self.goto))
 
 
 class InterruptNode(Node[CounterState]):
@@ -101,7 +82,7 @@ class InterruptNode(Node[CounterState]):
     def __init__(self, value: Any = "interrupted") -> None:
         self.value = value
 
-    def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+    def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
         ctx.interrupt(self.value)
         # Unreachable — interrupt raises.
         return NodeResult()
@@ -113,7 +94,7 @@ class RecordNameNode(Node[CounterState]):
     def __init__(self, label: str | None = None) -> None:
         self.label = label
 
-    def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+    def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
         label = self.label if self.label is not None else self.name
         return NodeResult(state_update={"messages": [label]})
 
@@ -124,8 +105,18 @@ def make_runtime() -> GraphRuntime:
 
 
 def make_ctx(state: CounterState | None = None) -> GraphContext[CounterState]:
-    """Build a GraphContext with a CounterState + no-op runtime."""
-    return GraphContext(
+    """Build a GraphContext with a CounterState + no-op runtime.
+
+    Registers a no-op dispatch handler so ``Node._submit`` can call
+    ``ctx.dispatch()`` without a RuntimeError. Tests that need to verify
+    dispatch calls should register their own recording handler via
+    ``ctx.set_dispatch_handler(...)`` (overwrites the no-op).
+    """
+    ctx = GraphContext(
         state=state if state is not None else CounterState(),
         runtime=make_runtime(),
     )
+    # No-op dispatch handler — required because _submit always calls
+    # ctx.dispatch (rule 15 convergence: no scheduler_kind branch).
+    ctx.set_dispatch_handler(lambda _src, _tgt, _update: None)
+    return ctx

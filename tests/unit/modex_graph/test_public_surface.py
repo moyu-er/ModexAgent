@@ -7,7 +7,7 @@ def test_all_exports_importable() -> None:
 
     expected = {
         "Graph", "Node", "CompiledGraph", "GraphEngine", "GraphContext",
-        "NodeResult", "Command", "Task", "BaseChannel", "LastValue",
+        "NodeResult", "BaseChannel", "LastValue",
         "ReducerChannel", "GraphState", "GraphRuntime", "GraphBubbleUp",
         "GraphInterrupt", "GraphDrained", "ParentCommand", "GraphNode",
         "register_codec", "Codec", "RoutingError", "GraphRecursionError",

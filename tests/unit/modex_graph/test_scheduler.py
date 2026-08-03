@@ -10,7 +10,9 @@ Covers:
   ParallelScheduler under PARALLEL.
 - CompiledGraph.scheduler field defaults to LINEAR.
 - Graph.compile(scheduler=...) parameter.
-- GraphContext.dispatch: raises RuntimeError under LINEAR.
+- GraphContext.dispatch: works under both LINEAR and PARALLEL (both
+  schedulers register a dispatch handler). Raises RuntimeError if no
+  handler is registered.
 - GraphContext.scheduler_kind: defaults to LINEAR, propagates via fork.
 - Architecture guard: Scheduler is ABC (not Protocol), LinearScheduler
   inherits Scheduler.
@@ -20,23 +22,21 @@ from __future__ import annotations
 
 import inspect
 from abc import ABC
-from typing import Any
 
 import pytest
 from helpers import AddNode, AsyncAddNode, CounterState, make_ctx
 
 from modex_graph import (
-    Command,
     Graph,
     GraphContext,
     GraphEngine,
     GraphNode,
+    IntegratedInput,
     LinearScheduler,
     Node,
     NodeResult,
     Scheduler,
     SchedulerKind,
-    Task,
 )
 
 # ── SchedulerKind ─────────────────────────────────────────────────────────
@@ -134,8 +134,8 @@ class TestLinearSchedulerExecution:
         g.add_node("a", AddNode(amount=1))
         g.add_node("b", AddNode(amount=2))
         g.add_edge(GraphNode.START, "a")
-        g.add_edge("a", "b", reason=None)
-        g.add_edge("b", GraphNode.END, reason=None)
+        g.add_edge("a", "b")
+        g.add_edge("b", GraphNode.END)
 
         compiled = g.compile()
         ctx = make_ctx(CounterState(count=0))
@@ -147,7 +147,7 @@ class TestLinearSchedulerExecution:
         g: Graph[CounterState] = Graph()
         g.add_node("a", AddNode(amount=5))
         g.add_edge(GraphNode.START, "a")
-        g.add_edge("a", GraphNode.END, reason=None)
+        g.add_edge("a", GraphNode.END)
         compiled = g.compile()
         ctx = make_ctx(CounterState(count=0))
         scheduler = LinearScheduler(compiled)
@@ -165,76 +165,17 @@ class TestLinearSchedulerExecution:
         result = await scheduler.run_async(ctx)
         assert result.count == 8
 
-    async def test_command_goto_str(self) -> None:
-        class GotoNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
-                return NodeResult(command=Command(goto="target"))
-
-        g: Graph[CounterState] = Graph()
-        g.add_node("start", GotoNode())
-        g.add_node("target", AddNode(amount=10))
-        g.add_edge(GraphNode.START, "start")
-        g.add_edge("target", GraphNode.END)
-        compiled = g.compile()
-        ctx = make_ctx(CounterState(count=0))
-        scheduler = LinearScheduler(compiled)
-        result = await scheduler.run_async(ctx)
-        assert result.count == 10
-
-    async def test_command_goto_list_task(self) -> None:
-        class MergeNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
-                return NodeResult(state_update={"messages": [self.name]})
-
-        g: Graph[CounterState] = Graph()
-        g.add_node(
-            "start",
-            _CommandNode(
-                goto=[
-                    Task(node="w1", state=CounterState()),
-                    Task(node="w2", state=CounterState()),
-                ]
-            ),
-        )
-        g.add_node("w1", MergeNode())
-        g.add_node("w2", MergeNode())
-        g.add_edge(GraphNode.START, "start")
-        compiled = g.compile()
-        ctx = make_ctx(CounterState())
-        scheduler = LinearScheduler(compiled)
-        result = await scheduler.run_async(ctx)
-        assert result.messages == ["w1", "w2"]
-
-    async def test_transition_routing(self) -> None:
-        class DecideNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
-                return NodeResult(transition="high" if ctx.state.count > 5 else "low")
-
-        g: Graph[CounterState] = Graph()
-        g.add_node("decide", DecideNode())
-        g.add_node("high", AddNode(amount=10))
-        g.add_node("low", AddNode(amount=1))
-        g.add_edge(GraphNode.START, "decide")
-        g.add_edge("decide", "high", reason="high")
-        g.add_edge("decide", "low", reason="low")
-        g.add_edge("high", GraphNode.END)
-        g.add_edge("low", GraphNode.END)
-        compiled = g.compile()
-        ctx = make_ctx(CounterState(count=0))
-        scheduler = LinearScheduler(compiled)
-        result = await scheduler.run_async(ctx)
-        assert result.count == 1
-
     async def test_max_iterations_raises(self) -> None:
         class InfiniteNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
                 ctx.state.count += 1
-                return NodeResult(transition="loop")
+                self.deliver(None, "inf", ctx)
+                return NodeResult()
 
         g: Graph[CounterState] = Graph()
         g.add_node("inf", InfiniteNode())
         g.add_edge(GraphNode.START, "inf")
-        g.add_edge("inf", "inf", reason="loop")
+        g.add_edge("inf", "inf")
         compiled = g.compile(max_iterations=5)
         ctx = make_ctx(CounterState(count=0))
         scheduler = LinearScheduler(compiled)
@@ -242,17 +183,6 @@ class TestLinearSchedulerExecution:
 
         with pytest.raises(GraphRecursionError, match="max_iterations=5"):
             await scheduler.run_async(ctx)
-
-
-class _CommandNode(Node[CounterState]):
-    def __init__(self, goto: Any) -> None:  # noqa: ANN401
-        self.goto = goto
-
-    def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
-        return NodeResult(command=Command(goto=self.goto))
-
-
-# ── GraphEngine delegation ────────────────────────────────────────────────
 
 
 class TestGraphEngineDelegation:
@@ -370,19 +300,29 @@ class TestCompileSchedulerParameter:
 
 
 class TestGraphContextDispatch:
-    def test_dispatch_raises_under_default_linear(self) -> None:
-        ctx = make_ctx(CounterState())
-        with pytest.raises(RuntimeError, match="dispatch is only available under ParallelScheduler"):
-            ctx.dispatch("some_target")
+    def test_dispatch_works_under_linear_with_handler(self) -> None:
+        """dispatch works under LINEAR when a handler is registered."""
+        calls: list[tuple[str, str, dict | None]] = []
 
-    def test_dispatch_raises_under_explicit_linear(self) -> None:
+        def handler(src: str, tgt: str, update: dict | None) -> None:
+            calls.append((src, tgt, update))
+
         ctx = GraphContext(
             state=CounterState(),
             runtime=make_ctx(CounterState()).runtime,
             scheduler_kind=SchedulerKind.LINEAR,
+            dispatch_handler=handler,
         )
-        with pytest.raises(RuntimeError, match="dispatch is only available under ParallelScheduler"):
-            ctx.dispatch("some_target")
+        ctx.dispatch("some_target", {"delivered": "payload"})
+        assert len(calls) == 1
+        assert calls[0] == ("", "some_target", {"delivered": "payload"})
+
+    def test_dispatch_works_under_default_linear_with_handler(self) -> None:
+        """dispatch works under default LINEAR (make_ctx provides a no-op handler)."""
+        ctx = make_ctx(CounterState())
+        assert ctx.scheduler_kind == SchedulerKind.LINEAR
+        # Should NOT raise — make_ctx registers a no-op handler.
+        ctx.dispatch("some_target")
 
     def test_dispatch_raises_without_handler_under_parallel(self) -> None:
         ctx = GraphContext(
@@ -390,6 +330,18 @@ class TestGraphContextDispatch:
             runtime=make_ctx(CounterState()).runtime,
             scheduler_kind=SchedulerKind.PARALLEL,
         )
+        ctx.set_dispatch_handler(None)  # explicitly clear the default no-op
+        with pytest.raises(RuntimeError, match="no dispatch_handler"):
+            ctx.dispatch("some_target")
+
+    def test_dispatch_raises_without_handler_under_linear(self) -> None:
+        """LINEAR without a handler is still a programmer error."""
+        ctx = GraphContext(
+            state=CounterState(),
+            runtime=make_ctx(CounterState()).runtime,
+            scheduler_kind=SchedulerKind.LINEAR,
+        )
+        ctx.set_dispatch_handler(None)  # explicitly clear the default no-op
         with pytest.raises(RuntimeError, match="no dispatch_handler"):
             ctx.dispatch("some_target")
 

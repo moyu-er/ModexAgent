@@ -13,8 +13,8 @@ Under `SchedulerKind.PARALLEL`, `GraphEngine` delegates to
 `ParallelScheduler` — the multi-instance execution model where nodes must
 call `ctx.dispatch(target, state_update)` to route.
 
-The original execution logic (run_async / run / _resolve_next / _execute_task)
-now lives in `src/modex_graph/scheduler/linear.py` (`LinearScheduler`).
+The original execution logic (run_async / run) now lives in
+`src/modex_graph/scheduler/linear.py` (`LinearScheduler`).
 
 Per ADR-0033 D3 + D6 + D7 + D9.3 (unchanged):
 

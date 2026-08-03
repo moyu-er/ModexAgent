@@ -34,6 +34,7 @@ from modex_graph import (
     GraphEngine,
     GraphNode,
     InMemoryDispatchStore,
+    IntegratedInput,
     Node,
     NodeResult,
     ParallelScheduler,
@@ -325,10 +326,10 @@ class _DispatchAddNode(Node[CounterState]):
         self.amount = amount
         self.target = target
 
-    def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+    def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
         ctx.state.count += self.amount
         if self.target is not None:
-            ctx.dispatch(self.target)
+            self.deliver(None, self.target, ctx)
         return NodeResult()
 
 
@@ -340,9 +341,9 @@ class _DispatchAddWithPayloadNode(Node[CounterState]):
         self.target = target
         self.payload = payload
 
-    def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+    def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
         ctx.state.count += self.amount
-        ctx.dispatch(self.target, self.payload)
+        self.deliver(self.payload, self.target, ctx)
         return NodeResult()
 
 
@@ -528,7 +529,7 @@ class TestParallelSchedulerWithDispatchStore:
 
         events = store.query_all(scheduler._run_id)  # type: ignore[arg-type]
         assert len(events) == 1
-        assert events[0].payload == {"data": 42}
+        assert events[0].payload == {"delivered": {"data": 42}}
 
     async def test_clear_removes_run_events(self) -> None:
         """clear(run_id) removes events for that run from the store."""

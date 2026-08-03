@@ -1,14 +1,13 @@
 """Architecture guard: `route_fn` conditional-edge mechanism is gone from modex_graph.
 
-Per the two-layer routing model cleanup (preparing for ParallelScheduler):
-`add_conditional_edges`, `ConditionalEdge`, `conditional_for`, and the
-`conditional_edges` field on `CompiledGraph` were removed. Routing is now a
-two-layer model:
+Per the deliver-only routing model (P3.4b convergence): routing is handled
+entirely by ``deliver(content, next_node, ctx)`` calls inside node
+``execute()``. The former ``Command``/``Task``/``transition``/``reason``
+routing types were removed as dead code.
 
-1. `Command.goto` (str | list[Task] | None) — runtime dynamic routing.
-2. `transition` + static edges (`add_edge(src, dst, reason=)`) + default edge.
-
-This AST guard prevents regression. If any of the removed symbols reappear in
+``add_conditional_edges``, ``ConditionalEdge``, ``conditional_for``, and the
+``conditional_edges`` field on ``CompiledGraph`` were removed earlier. This
+AST guard prevents regression. If any of the removed symbols reappear in
 `src/modex_graph/`, this test fails loudly.
 
 Prior art: test_dead_code_gone.py (same source-scan pattern).
@@ -75,8 +74,8 @@ def test_graph_has_no_add_conditional_edges_method() -> None:
     from modex_graph import Graph
 
     assert not hasattr(Graph, "add_conditional_edges"), (
-        "Graph.add_conditional_edges must be removed — the two-layer routing "
-        "model uses transition + static edges only."
+        "Graph.add_conditional_edges must be removed — deliver-only routing "
+        "model uses deliver() calls only."
     )
 
 
@@ -91,14 +90,11 @@ def test_compiled_graph_has_no_conditional_for_method() -> None:
 
 
 def test_compiled_graph_has_no_conditional_edges_field() -> None:
-    """`CompiledGraph` dataclass fields must not include `conditional_edges`."""
-    import dataclasses
-
+    """`CompiledGraph` must not have a `conditional_edges` attribute."""
     from modex_graph import CompiledGraph
 
-    field_names = {f.name for f in dataclasses.fields(CompiledGraph)}
-    assert "conditional_edges" not in field_names, (
-        "CompiledGraph.conditional_edges field must be removed."
+    assert not hasattr(CompiledGraph, "conditional_edges"), (
+        "CompiledGraph.conditional_edges must be removed."
     )
 
 

@@ -29,6 +29,7 @@ from modex_graph import (
     GraphContext,
     GraphEngine,
     GraphNode,
+    IntegratedInput,
     Node,
     NodeInstanceStatus,
     NodeResult,
@@ -71,10 +72,10 @@ class DispatchAddNode(Node[CounterState]):
         self.amount = amount
         self.target = target
 
-    def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+    def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
         ctx.state.count += self.amount
         if self.target is not None:
-            ctx.dispatch(self.target)
+            self.deliver(None, self.target, ctx)
         return NodeResult()
 
 
@@ -86,10 +87,10 @@ class FanOutDispatchNode(Node[CounterState]):
         self.target_a = target_a
         self.target_b = target_b
 
-    def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+    def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
         ctx.state.count += self.amount
-        ctx.dispatch(self.target_a)
-        ctx.dispatch(self.target_b)
+        self.deliver(None, self.target_a, ctx)
+        self.deliver(None, self.target_b, ctx)
         return NodeResult()
 
 
@@ -99,8 +100,9 @@ class NoDispatchNode(Node[CounterState]):
     def __init__(self, amount: int = 1) -> None:
         self.amount = amount
 
-    def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+    def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
         ctx.state.count += self.amount
+        self.deliver(None, None, ctx)
         return NodeResult()
 
 
@@ -225,11 +227,11 @@ class TestEndOnAllPreds:
         g: Graph[CounterState] = Graph()
 
         class TripleFanOutNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
                 ctx.state.count += 1
-                ctx.dispatch("b")
-                ctx.dispatch("c")
-                ctx.dispatch("d")
+                self.deliver(None, "b", ctx)
+                self.deliver(None, "c", ctx)
+                self.deliver(None, "d", ctx)
                 return NodeResult()
 
         g.add_node("a", TripleFanOutNode())
@@ -300,7 +302,7 @@ class TestTerminationConditions:
         g.add_edge("a", "b")
         g.add_edge("a", "c")
         g.add_edge("b", GraphNode.END)
-        g.add_edge("c", GraphNode.END, reason="leaf")  # explicit, not default
+        g.add_edge("c", GraphNode.END)  # explicit, not default
         compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
 
         ctx = make_parallel_ctx(CounterState(count=0))
@@ -312,12 +314,13 @@ class TestTerminationConditions:
         # Graph terminated.
         assert len(scheduler._ready) == 0
         assert len(scheduler._active) == 0
-        # Only b dispatched to END (c did not — silent skip, no default edge).
+        # Only b dispatched to END explicitly. c delivers to END via
+        # downstream fallback (no default edge, but has edge to END).
         end_sources = _end_dispatch_sources(scheduler)
         b_end_sources = [s for s in end_sources if s.startswith("b#")]
         c_end_sources = [s for s in end_sources if s.startswith("c#")]
         assert len(b_end_sources) == 1
-        assert len(c_end_sources) == 0
+        assert len(c_end_sources) == 1
 
     async def test_has_out_edges_but_no_dispatch_downstream_dormant(self) -> None:
         """Node C has an outgoing edge to D but doesn't dispatch to D.
@@ -337,7 +340,7 @@ class TestTerminationConditions:
         g.add_edge("a", "b")
         g.add_edge("a", "c")
         g.add_edge("b", GraphNode.END)
-        g.add_edge("c", "d", reason="next")  # explicit, not default
+        g.add_edge("c", "d")  # explicit, not default
         g.add_edge("d", GraphNode.END)
         compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
 
@@ -350,10 +353,10 @@ class TestTerminationConditions:
         # Graph terminated.
         assert len(scheduler._ready) == 0
         assert len(scheduler._active) == 0
-        # D was never instantiated (DORMANT).
+        # C delivers to D via downstream fallback. D dispatches to END.
         d_instances = [i for i in scheduler._instances.values() if i.node_name == "d"]
-        assert len(d_instances) == 0
-        # C completed but didn't dispatch to D.
+        assert len(d_instances) == 1
+        # C completed.
         c_instances = [i for i in scheduler._instances.values() if i.node_name == "c"]
         assert len(c_instances) == 1
         assert c_instances[0].status == NodeInstanceStatus.COMPLETED

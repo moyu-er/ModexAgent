@@ -9,9 +9,7 @@ detection, async checkpointing, and trigger-mode routing.
 from __future__ import annotations
 
 import asyncio
-import inspect
-import uuid
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from ..channel import LastValue
 from ..checkpoint_store import CheckpointStore, MemoryCheckpointStore
@@ -19,7 +17,9 @@ from ..conflict_detector import GenerationWriteTracker, WriteConflictDetector
 from ..constants import GraphNode, NodeInstanceStatus, NodeTrigger, SchedulerKind
 from ..dispatch_store import DispatchStore, InMemoryDispatchStore
 from ..exceptions import GraphRecursionError, RoutingError
-from ..result import DispatchEvent, NodeResult
+from ..id_generator import default_id_generator
+from ..integration import IntegratedPayload
+from ..result import DispatchEvent
 from .base import Scheduler
 from .instance import NodeInstance
 
@@ -68,12 +68,11 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
 
     - `ctx.dispatch(target, state_update)` routing: validates target against
       the source node's outgoing edges, creates a `DispatchEvent`, and
-      creates/queues the target instance.
+      creates/queues the target instance. Dispatches happen inside
+      `Node._submit` (called by `run()`), before the merge.
     - `GraphNode.END` dispatch: terminal signal, does NOT create an instance.
     - `max_iterations`: global per-instance-execution counter; raises
       `GraphRecursionError` on overflow.
-    - Routing compilation: after `node.execute` returns, `NodeResult` is
-      compiled into `ctx.dispatch` calls.
     - Trigger modes: `ON_ALL_PREDS` (gated by reachability BFS) and
       `ON_RECEIVE` (immediate, no gating).
 
@@ -102,6 +101,10 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
             dispatch_store if dispatch_store is not None else InMemoryDispatchStore()
         )
         self._run_id: str | None = None
+        # graph_instance_id (P1C.3): Snowflake ID — the single persistence
+        # key replacing uuid run_id (rule 15: converge). Set at the top of
+        # run_async from ctx.graph_instance_id (P1A) or generated fresh.
+        self._graph_instance_id: int = 0
         self._active: set[str] = set()
         self._ready: set[str] = set()
         self._iteration_count: int = 0
@@ -135,6 +138,17 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
             return []
         return self._dispatch_store.query_all(self._run_id)
 
+    def query_dispatches_by_target(self, target: str) -> list[DispatchEvent]:
+        """Recovery query (P1C.8): all dispatches to ``target`` in the current run.
+
+        Wraps ``DispatchStore.query_by_target`` with the scheduler's current
+        ``run_id``. Returns an empty list if no run is active. Useful for
+        external callers and debugging recovery state.
+        """
+        if self._run_id is None:
+            return []
+        return self._dispatch_store.query_by_target(target, self._run_id)
+
     # ── Scheduler ABC implementation ───────────────────────────────────
 
     async def run_async(self, ctx: GraphContext[S]) -> S:
@@ -156,29 +170,32 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         atomic `commit + apply_state_update + advance + complete` segment
         after `node.execute` returns.
 
+        Recovery (P1C.5): at the top, `checkpoint_store.load_latest(run_id)`
+        is tried. If a checkpoint exists, state is rebuilt from it
+        (`_restore_from_checkpoint`) — completed instances are NOT
+        re-executed, pending ON_ALL_PREDS targets are re-dispatched via
+        `_recheck_pending`. If no checkpoint, fresh start
+        (`_init_fresh_state`) — identical to pre-recovery behavior.
+
         Error handling (D13): if any instance raises, all remaining running
         tasks are cancelled and the exception propagates to the caller.
 
         Returns `ctx.state` (the shared `main_state`).
         """
-        self._main_state = ctx.state
-        self._instances = {}
-        self._instance_seq = 0
-        self._run_id = uuid.uuid4().hex
-        self._active = set()
-        self._ready = set()
-        self._iteration_count = 0
-        self._activated_sources = {}
-        self._pending_dispatches = {}
-        self._conflict_detector.reset()
-        self._current_version = 0
-        self._wakeup = asyncio.Event()
+        # graph_instance_id from ctx (P1A) or generate fresh (backward
+        # compat). Snowflake ID — the single persistence key replacing
+        # uuid run_id (rule 15: converge on one key).
+        self._graph_instance_id = ctx.graph_instance_id or default_id_generator().generate()
+        self._run_id = str(self._graph_instance_id)
 
-        ctx.scheduler_kind = SchedulerKind.PARALLEL
-        ctx.set_dispatch_handler(self._handle_dispatch)
-
-        entry_id = self._create_instance(self.graph.entry_node)
-        self._mark_ready(entry_id)
+        # Recovery: try to load a checkpoint for this graph_instance_id.
+        # If found, rebuild state (skip completed, re-dispatch pending).
+        # Otherwise, fresh start — identical to pre-recovery behavior.
+        checkpoint = await self._checkpoint_store.load_latest(self._run_id)
+        if checkpoint is not None:
+            self._restore_from_checkpoint(ctx, checkpoint)
+        else:
+            self._init_fresh_state(ctx)
 
         running: dict[asyncio.Task[None], str] = {}
 
@@ -236,17 +253,120 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         if self._wakeup is not None:
             await self._wakeup.wait()
 
+    # ── State initialization: fresh vs recovery (P1C.3/P1C.5) ───────────
+
+    def _init_fresh_state(self, ctx: GraphContext[S]) -> None:
+        """Initialize scheduler state for a fresh run (no checkpoint).
+
+        This is the pre-recovery behavior — identical to what ``run_async``
+        did before P1C.5. Extracted into a method so ``run_async`` branches
+        cleanly between fresh start and checkpoint recovery.
+        """
+        self._main_state = ctx.state
+        self._instances = {}
+        self._instance_seq = 0
+        self._active = set()
+        self._ready = set()
+        self._iteration_count = 0
+        self._activated_sources = {}
+        self._pending_dispatches = {}
+        self._conflict_detector.reset()
+        self._current_version = 0
+        self._wakeup = asyncio.Event()
+        self._checkpoint_tasks = set()
+
+        ctx.scheduler_kind = SchedulerKind.PARALLEL
+        ctx.set_dispatch_handler(self._handle_dispatch)
+
+        entry_id = self._create_instance(self.graph.entry_node)
+        self._mark_ready(entry_id)
+
+    def _restore_from_checkpoint(
+        self, ctx: GraphContext[S], checkpoint: CheckpointData
+    ) -> None:
+        """Rebuild scheduler state from a checkpoint (P1C.4 + P1C.5).
+
+        Recovery contract (ticket 10 class 1 + ticket 04):
+
+        - ``main_state`` is restored via ``GraphState.from_checkpoint`` —
+          the caller's ``ctx.state`` is replaced by the recovered state.
+        - Counters (``_iteration_count``, ``_instance_seq``) are restored
+          so new instances get correct seq numbers and recursion budget
+          accounting continues from where the run left off.
+        - ``_activated_sources`` and ``_pending_dispatches`` are restored
+          so ON_ALL_PREDS targets with queued dispatches can fire.
+        - Completed instances are NOT re-added to ``_instances`` — they
+          are done (ticket 10: "不倒推 completed").
+        - ``_recheck_pending`` is called to re-dispatch any pending
+          ON_ALL_PREDS targets whose reachability gate is now clear
+          (ticket 04: "重新 dispatch 其他被中断的节点").
+        - ``_wakeup`` and ``_checkpoint_tasks`` are reset fresh for this
+          run. The conflict detector is reset (ephemeral per-generation,
+          not persisted — D19).
+        """
+        # 1. Restore main_state via the state class's from_checkpoint.
+        state_class = type(ctx.state)
+        restored = state_class.from_checkpoint(checkpoint.main_state)
+        ctx.state = restored
+        self._main_state = restored
+
+        # 2. Restore counters.
+        self._iteration_count = checkpoint.iteration_count
+        self._instance_seq = checkpoint.instance_seq
+
+        # 3. Restore activated_sources (list → set).
+        self._activated_sources = {
+            target: set(sources)
+            for target, sources in checkpoint.activated_sources.items()
+        }
+
+        # 4. Restore pending_dispatches (already dict[str, dict[str, list]]).
+        self._pending_dispatches = dict(checkpoint.pending_on_all_preds)
+
+        # 5. Completed instances are NOT re-added. Fresh _instances/_active.
+        self._instances = {}
+        self._active = set()
+        self._ready = set()
+
+        # Context wiring (needed before _recheck_pending — _mark_ready uses
+        # _wakeup, and future dispatch calls need the handler registered).
+        ctx.scheduler_kind = SchedulerKind.PARALLEL
+        ctx.set_dispatch_handler(self._handle_dispatch)
+
+        # Conflict detector is ephemeral per-generation (D19: not persisted).
+        self._conflict_detector.reset()
+        self._current_version = 0
+
+        # 7. Reset async state BEFORE _recheck_pending — _mark_ready sets
+        # _wakeup, which must be a live Event by then.
+        self._wakeup = asyncio.Event()
+        self._checkpoint_tasks = set()
+
+        # 6. Re-dispatch pending ON_ALL_PREDS targets. Creates instances
+        # for any target whose reachability gate is now clear (no active
+        # instances blocking) and marks them READY.
+        self._recheck_pending()
+
     # ── Instance lifecycle ────────────────────────────────────────────
 
-    def _create_instance(self, node_name: str, initial_state: S | None = None) -> str:
+    def _create_instance(
+        self,
+        node_name: str,
+        initial_state: S | None = None,
+        upstream_payloads: list[IntegratedPayload] | None = None,
+    ) -> str:
         """Create a new `NodeInstance` for `node_name` in DORMANT status.
 
         Assigns the next global seq number and registers the instance in
         `_instances` and `_active`. Returns the `instance_id`.
 
-        If ``initial_state`` is provided (e.g. from a ``Task.state``), it
-        is stored on the instance as ``forked_state`` and used as the
-        execution state instead of forking ``main_state``.
+        If ``initial_state`` is provided, it is stored on the instance as
+        ``forked_state`` and used as the execution state instead of forking
+        ``main_state``.
+
+        If ``upstream_payloads`` is provided, it is stored on the instance
+        and passed to ``node.run()`` as the ``upstream_payloads`` parameter
+        for input integration. ``None`` means the entry node (no upstream).
 
         Does NOT mark the instance READY — the caller does that via
         `_mark_ready` once any gating is satisfied.
@@ -260,6 +380,7 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
             seq=seq,
             status=NodeInstanceStatus.DORMANT,
             forked_state=initial_state,
+            upstream_payloads=upstream_payloads,
         )
         self._instances[instance_id] = instance
         self._active.add(instance_id)
@@ -339,13 +460,19 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         # Engine-auto-invoked lifecycle hook (D5: before_node).
         await exec_ctx.runtime.before_node(exec_ctx, instance.node_name)
 
-        # Execute the node. Sync/async unified via inspect.isawaitable.
+        # Execute via run() — enforce_deliver=True, pass graph topology.
+        # _submit dispatches (via ctx.dispatch) happen inside run(), before
+        # the merge below. _handle_dispatch only creates DORMANT instances
+        # and marks READY; forking happens at next-loop iteration, post-merge.
         # GraphBubbleUp exceptions propagate — NOT caught here.
-        raw_result = node.execute(exec_ctx)
-        if inspect.isawaitable(raw_result):
-            result: NodeResult = await raw_result
-        else:
-            result = raw_result
+        # upstream_payloads flows from the dispatch payloads stored on the
+        # instance → node.run() → InputIntegrator → execute(integrated_input).
+        result = await node.run(
+            exec_ctx,
+            upstream_payloads=instance.upstream_payloads,
+            enforce_deliver=True,
+            graph=self.graph,
+        )
 
         # Atomic merge segment (ADR-0034 D8): commit + apply_state_update +
         # advance + complete as one synchronous segment (no await between
@@ -390,87 +517,9 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         self._active.discard(instance_id)
         self._iteration_count += 1
 
-        assert self._run_id is not None
-        manual_dispatches = len(self._dispatch_store.query_by_source(instance_id, self._run_id))
-        self._compile_routing(instance_id, exec_ctx, result, manual_dispatches)
-
         self._recheck_pending()
 
         self._schedule_checkpoint()
-
-    # ── Routing compilation (Task 04) ──────────────────────────────────
-
-    def _compile_routing(
-        self,
-        instance_id: str,
-        ctx: GraphContext[S],
-        result: NodeResult,
-        manual_dispatches: int,
-    ) -> None:
-        """Compile `NodeResult.transition` / `Command.goto` into dispatches.
-
-        Called after `node.execute` returns and `state_update` is applied.
-        Manual dispatches made during `execute` are independent — both
-        sets fire (not mutually exclusive).
-
-        Priority (mirrors LinearScheduler D12, adapted for fan-out):
-
-        1. `Command.goto` — `str` dispatches to one target; `list[Task]`
-           dispatches to each Task's node (`Task.state` handling deferred
-           to Task 05). Exclusive with transition.
-        2. `transition` — dispatch to ALL matching static-edge targets
-           (fan-out). No match → fall back to default edges. No default
-           either → raise `RoutingError`.
-        3. No transition, no Command — if no manual dispatch was made,
-           dispatch to all default-edge targets; else silent skip.
-
-        `NodeResult.state_update` is the payload for compiled dispatches;
-        manual `ctx.dispatch` payloads are set by the caller.
-        """
-        instance = self._instances[instance_id]
-        node_name = instance.node_name
-        payload = result.state_update
-
-        # 1. Command.goto (highest priority — exclusive with transition).
-        if result.command is not None and result.command.goto is not None:
-            goto = result.command.goto
-            if isinstance(goto, str):
-                ctx.dispatch(goto, state_update=payload)
-            elif isinstance(goto, list):
-                for task in goto:
-                    if task.state is not None:
-                        self._handle_dispatch(
-                            instance_id, task.node, payload,
-                            initial_state=cast("S | None", task.state),
-                        )
-                    else:
-                        ctx.dispatch(task.node, state_update=payload)
-            return
-
-        # 2. transition — static edge fan-out.
-        if result.transition is not None:
-            targets = self.graph.next_nodes_by_transition(node_name, result.transition)
-            if targets:
-                for target in targets:
-                    ctx.dispatch(target, state_update=payload)
-                return
-            default_targets = self.graph.default_edge_targets(node_name)
-            if default_targets:
-                for target in default_targets:
-                    ctx.dispatch(target, state_update=payload)
-                return
-            raise RoutingError(
-                f"No routing match from node {node_name!r}: "
-                f"transition={result.transition!r} matched no static edge "
-                f"and no default edge exists."
-            )
-
-        # 3. No transition, no Command — default edge fallback. Only
-        # auto-dispatch defaults if the node didn't route manually.
-        if manual_dispatches == 0:
-            default_targets = self.graph.default_edge_targets(node_name)
-            for target in default_targets:
-                ctx.dispatch(target, state_update=payload)
 
     # ── Dispatch handling (Task 06: trigger modes) ────────────────────
 
@@ -537,8 +586,13 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         if trigger == NodeTrigger.ON_RECEIVE:
             # ON_RECEIVE (D4): create instance and mark READY immediately.
             # No reachability check, no PENDING state — the run_async loop
-            # picks it up directly.
-            target_id = self._create_instance(target, initial_state=initial_state)
+            # picks it up directly. Store the dispatch payload as an
+            # IntegratedPayload for the downstream node's input integration.
+            content = payload.get("delivered") if payload is not None else None
+            upstream = [IntegratedPayload(source_node=source_node_name, content=content)]
+            target_id = self._create_instance(
+                target, initial_state=initial_state, upstream_payloads=upstream
+            )
             self._mark_ready(target_id)
         else:
             self._activated_sources.setdefault(target, set()).add(source_node_name)
@@ -630,11 +684,21 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
                 return
         if self._can_reach_active(target):
             return
+        # Collect upstream payloads from all sources for the downstream
+        # node's input integration. One IntegratedPayload per dispatch.
+        upstream_payloads: list[IntegratedPayload] = []
         for source in list(pending.keys()):
+            for state_update in pending[source]:
+                content = (
+                    state_update.get("delivered") if state_update else None
+                )
+                upstream_payloads.append(
+                    IntegratedPayload(source_node=source, content=content)
+                )
             pending[source].clear()
         self._pending_dispatches.pop(target, None)
         self._activated_sources.pop(target, None)
-        target_id = self._create_instance(target)
+        target_id = self._create_instance(target, upstream_payloads=upstream_payloads)
         self._mark_ready(target_id)
 
     def _recheck_pending(self) -> None:
@@ -654,21 +718,19 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
 
     # ── Checkpoint (ADR-0034 D19) ─────────────────────────────────────
 
-    def _schedule_checkpoint(self) -> None:
-        """Snapshot scheduler state synchronously, then save asynchronously.
+    def _build_checkpoint_data(self) -> CheckpointData:
+        """Build ``CheckpointData`` from current scheduler state (P1C.3).
 
-        The ``CheckpointData`` is built NOW (synchronously, in the merge
-        segment) so it captures the exact post-merge state — not a stale
-        view from when the background task eventually runs. The async save
-        is tracked in ``_checkpoint_tasks`` to prevent GC and cleaned up
-        via a done-callback.
+        Captures the post-merge state synchronously so the async save
+        sees the exact state at merge time, not a stale view. Includes
+        the ticket-10-class-1 fields (``graph_instance_id``,
+        ``activated_sources``, ``instance_seq``, ``iteration_count``)
+        needed for full recovery via ``_restore_from_checkpoint``.
         """
-        if self._run_id is None or self._main_state is None:
-            return
         from ..checkpoint_store import CheckpointData, InstanceRecord
 
-        data = CheckpointData(
-            main_state=self._main_state.checkpoint(),
+        return CheckpointData(
+            main_state=self._main_state.checkpoint() if self._main_state else {},
             pending_on_all_preds={
                 tgt: {src: list(payloads) for src, payloads in queues.items()}
                 for tgt, queues in self._pending_dispatches.items()
@@ -684,7 +746,27 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
                 if inst.status == NodeInstanceStatus.COMPLETED
             ],
             dispatch_events=self._dispatch_log,
+            graph_instance_id=self._graph_instance_id,
+            activated_sources={
+                target: sorted(sources)
+                for target, sources in self._activated_sources.items()
+            },
+            instance_seq=self._instance_seq,
+            iteration_count=self._iteration_count,
         )
+
+    def _schedule_checkpoint(self) -> None:
+        """Snapshot scheduler state synchronously, then save asynchronously.
+
+        The ``CheckpointData`` is built NOW (synchronously, in the merge
+        segment) so it captures the exact post-merge state — not a stale
+        view from when the background task eventually runs. The async save
+        is tracked in ``_checkpoint_tasks`` to prevent GC and cleaned up
+        via a done-callback.
+        """
+        if self._run_id is None or self._main_state is None:
+            return
+        data = self._build_checkpoint_data()
         run_id = self._run_id
         task = asyncio.create_task(self._save_checkpoint_async(data, run_id))
         self._checkpoint_tasks.add(task)

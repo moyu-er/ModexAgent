@@ -4,6 +4,7 @@ from __future__ import annotations
 from helpers import CounterState, make_ctx
 
 from modex_graph import GraphContext, GraphRuntime, Node, NodeResult
+from modex_graph.integration import IntegratedInput
 
 
 class TestGraphRuntimeNoOp:
@@ -135,8 +136,9 @@ class TestGraphRuntimeNoOp:
             def __init__(self, amount: int) -> None:
                 self.amount = amount
 
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
                 ctx.state.count += self.amount
+                self.deliver(None, None, ctx)
                 return NodeResult()
 
         g: Graph[CounterState] = Graph()

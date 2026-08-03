@@ -10,7 +10,7 @@ from modex_graph import Graph, GraphNode, Node, NodeResult, RoutingError
 
 
 class _NoOpNode(Node[CounterState]):
-    def execute(self, ctx):  # type: ignore[no-untyped-def]
+    def execute(self, ctx, integrated_input):  # type: ignore[no-untyped-def]
         return NodeResult()
 
 
@@ -66,8 +66,8 @@ class TestCompileValidation:
         g.add_node("a", _NoOpNode())
         g.add_node("b", _NoOpNode())
         g.add_edge(GraphNode.START, "a")
-        g.add_edge("a", "b", reason="loop")
-        g.add_edge("b", "a", reason=None)  # back-edge → cycle
+        g.add_edge("a", "b")
+        g.add_edge("b", "a")  # back-edge → cycle
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             compiled = g.compile(cycle_detection="warn")
@@ -79,8 +79,8 @@ class TestCompileValidation:
         g.add_node("a", _NoOpNode())
         g.add_node("b", _NoOpNode())
         g.add_edge(GraphNode.START, "a")
-        g.add_edge("a", "b", reason="loop")
-        g.add_edge("b", "a", reason=None)
+        g.add_edge("a", "b")
+        g.add_edge("b", "a")
         with pytest.raises(RoutingError, match="cycle"):
             g.compile(cycle_detection="raise")
 
@@ -89,8 +89,8 @@ class TestCompileValidation:
         g.add_node("a", _NoOpNode())
         g.add_node("b", _NoOpNode())
         g.add_edge(GraphNode.START, "a")
-        g.add_edge("a", "b", reason="loop")
-        g.add_edge("b", "a", reason=None)
+        g.add_edge("a", "b")
+        g.add_edge("b", "a")
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             g.compile(cycle_detection="off")

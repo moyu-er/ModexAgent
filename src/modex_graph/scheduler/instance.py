@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from ..constants import NodeInstanceStatus
 
 if TYPE_CHECKING:
+    from ..integration import IntegratedPayload
     from ..state import GraphState
 
 
@@ -40,6 +41,11 @@ class NodeInstance[S: "GraphState"]:
       two instances in the same generation writing the same `LastValue`
       field = conflict. `0` means the fast path (no fork, no conflict
       detection).
+    - `upstream_payloads: list[IntegratedPayload] | None` — the delivered
+      payloads from upstream nodes, passed to `node.run()` as
+      `upstream_payloads` for input integration. `None` for the entry node
+      (no upstream). Populated by `_handle_dispatch` / `_try_fire_on_all_preds`
+      from dispatch `state_update={"delivered": content}` payloads.
     """
 
     __slots__ = (
@@ -49,6 +55,7 @@ class NodeInstance[S: "GraphState"]:
         "status",
         "forked_state",
         "fork_version",
+        "upstream_payloads",
     )
 
     def __init__(
@@ -60,6 +67,7 @@ class NodeInstance[S: "GraphState"]:
         status: NodeInstanceStatus,
         forked_state: S | None = None,
         fork_version: int = 0,
+        upstream_payloads: list[IntegratedPayload] | None = None,
     ) -> None:
         self.instance_id = instance_id
         self.node_name = node_name
@@ -67,6 +75,7 @@ class NodeInstance[S: "GraphState"]:
         self.status = status
         self.forked_state = forked_state
         self.fork_version = fork_version
+        self.upstream_payloads = upstream_payloads
 
     def __repr__(self) -> str:
         return f"NodeInstance(instance_id={self.instance_id!r}, status={self.status!r})"

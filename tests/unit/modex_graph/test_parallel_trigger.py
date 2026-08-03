@@ -28,6 +28,7 @@ from modex_graph import (
     GraphContext,
     GraphEngine,
     GraphNode,
+    IntegratedInput,
     Node,
     NodeInstanceStatus,
     NodeResult,
@@ -50,10 +51,10 @@ class DispatchAddNode(Node[CounterState]):
         self.amount = amount
         self.target = target
 
-    def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+    def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
         ctx.state.count += self.amount
         if self.target is not None:
-            ctx.dispatch(self.target)
+            self.deliver(None, self.target, ctx)
         return NodeResult()
 
 
@@ -65,10 +66,10 @@ class FanOutDispatchNode(Node[CounterState]):
         self.target_a = target_a
         self.target_b = target_b
 
-    def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+    def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
         ctx.state.count += self.amount
-        ctx.dispatch(self.target_a)
-        ctx.dispatch(self.target_b)
+        self.deliver(None, self.target_a, ctx)
+        self.deliver(None, self.target_b, ctx)
         return NodeResult()
 
 
@@ -79,9 +80,9 @@ class ConditionalDispatchNode(Node[CounterState]):
         self.amount = amount
         self.chosen_target = chosen_target
 
-    def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+    def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
         ctx.state.count += self.amount
-        ctx.dispatch(self.chosen_target)
+        self.deliver(None, self.chosen_target, ctx)
         return NodeResult()
 
 
@@ -91,10 +92,10 @@ class RecordExecutionNode(Node[CounterState]):
     def __init__(self, target: str | None = None) -> None:
         self.target = target
 
-    def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+    def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
         label = ctx._current_instance or self.name
         if self.target is not None:
-            ctx.dispatch(self.target)
+            self.deliver(None, self.target, ctx)
         return NodeResult(state_update={"messages": [label]})
 
 
@@ -398,10 +399,10 @@ class TestNodeTriggerOverridesDefault:
                 self.amount = amount
                 self.target = target
 
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
                 ctx.state.count += self.amount
                 if self.target is not None:
-                    ctx.dispatch(self.target)
+                    self.deliver(None, self.target, ctx)
                 return NodeResult()
 
         g: Graph[CounterState] = Graph()
@@ -438,10 +439,10 @@ class TestNodeTriggerOverridesDefault:
                 self.amount = amount
                 self.target = target
 
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
                 ctx.state.count += self.amount
                 if self.target is not None:
-                    ctx.dispatch(self.target)
+                    self.deliver(None, self.target, ctx)
                 return NodeResult()
 
         g: Graph[CounterState] = Graph()
@@ -481,12 +482,12 @@ class TestSelfLoop:
             def __init__(self) -> None:
                 pass
 
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
                 ctx.state.count += 1
                 if ctx.state.count >= 5:
-                    ctx.dispatch(GraphNode.END)
+                    self.deliver(None, GraphNode.END, ctx)
                 else:
-                    ctx.dispatch("loop")
+                    self.deliver(None, "loop", ctx)
                 return NodeResult()
 
         g: Graph[CounterState] = Graph()
@@ -507,12 +508,12 @@ class TestSelfLoop:
 
     async def test_self_loop_instance_count(self) -> None:
         class SelfDispatchNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
                 ctx.state.count += 1
                 if ctx.state.count >= 3:
-                    ctx.dispatch(GraphNode.END)
+                    self.deliver(None, GraphNode.END, ctx)
                 else:
-                    ctx.dispatch("loop")
+                    self.deliver(None, "loop", ctx)
                 return NodeResult()
 
         g: Graph[CounterState] = Graph()
@@ -542,12 +543,12 @@ class TestSelfLoop:
 
     async def test_self_loop_on_receive_also_works(self) -> None:
         class SelfDispatchNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
                 ctx.state.count += 1
                 if ctx.state.count >= 4:
-                    ctx.dispatch(GraphNode.END)
+                    self.deliver(None, GraphNode.END, ctx)
                 else:
-                    ctx.dispatch("loop")
+                    self.deliver(None, "loop", ctx)
                 return NodeResult()
 
         g: Graph[CounterState] = Graph()
@@ -644,7 +645,7 @@ class TestResolveTrigger:
         class OnReceiveNode(Node[CounterState]):
             trigger = NodeTrigger.ON_RECEIVE
 
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
                 return NodeResult()
 
         g: Graph[CounterState] = Graph()
@@ -724,10 +725,10 @@ class TestOnAllPredsMultipleGroups:
 
     async def test_single_source_multiple_dispatches(self) -> None:
         class DoubleDispatchNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
                 ctx.state.count += 1
-                ctx.dispatch("d")
-                ctx.dispatch("d")
+                self.deliver(None, "d", ctx)
+                self.deliver(None, "d", ctx)
                 return NodeResult()
 
         g: Graph[CounterState] = Graph()

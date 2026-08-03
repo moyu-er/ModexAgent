@@ -90,6 +90,7 @@ from modex_graph import (
     GraphInterrupt,
     GraphNode,
     GraphState,
+    IntegratedInput,
     InvalidUpdateError,
     LastValue,
     Node,
@@ -140,17 +141,17 @@ class FanOutNode(Node[ErrorState]):
         self.target_a = target_a
         self.target_b = target_b
 
-    def execute(self, ctx: GraphContext[ErrorState]) -> NodeResult:
-        ctx.dispatch(self.target_a)
-        ctx.dispatch(self.target_b)
+    def execute(self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput) -> NodeResult:
+        self.deliver(None, self.target_a, ctx)
+        self.deliver(None, self.target_b, ctx)
         return NodeResult()
 
 
 class DispatchToEndNode(Node[ErrorState]):
     """No-op node that dispatches to END."""
 
-    def execute(self, ctx: GraphContext[ErrorState]) -> NodeResult:
-        ctx.dispatch(GraphNode.END)
+    def execute(self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput) -> NodeResult:
+        self.deliver(None, GraphNode.END, ctx)
         return NodeResult()
 
 
@@ -168,7 +169,7 @@ class AsyncRaisingNode(Node[ErrorState]):
         self.exc = exc
         self.msg = msg
 
-    async def execute(self, ctx: GraphContext[ErrorState]) -> NodeResult:
+    async def execute(self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput) -> NodeResult:
         await asyncio.sleep(0)
         raise self.exc(self.msg)
 
@@ -179,7 +180,7 @@ class AsyncInterruptNode(Node[ErrorState]):
     def __init__(self, value: Any = "interrupted") -> None:
         self.value = value
 
-    async def execute(self, ctx: GraphContext[ErrorState]) -> NodeResult:
+    async def execute(self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput) -> NodeResult:
         await asyncio.sleep(0)
         ctx.interrupt(self.value)
         return NodeResult()  # Unreachable — interrupt raises.
@@ -197,10 +198,11 @@ class AsyncSlowNode(Node[ErrorState]):
         self.started = False
         self.completed = False
 
-    async def execute(self, ctx: GraphContext[ErrorState]) -> NodeResult:
+    async def execute(self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput) -> NodeResult:
         self.started = True
         await asyncio.sleep(10)
         self.completed = True
+        self.deliver(None, None, ctx)
         return NodeResult()
 
 
@@ -211,12 +213,12 @@ class AsyncEmitNode(Node[ErrorState]):
         self.event_type = event_type
         self.count = count
 
-    async def execute(self, ctx: GraphContext[ErrorState]) -> NodeResult:
+    async def execute(self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput) -> NodeResult:
         # Yield so the sibling task also gets to run emits concurrently.
         await asyncio.sleep(0)
         for i in range(self.count):
             ctx.emit(self.event_type, {"seq": i})
-        ctx.dispatch(GraphNode.END)
+        self.deliver(None, GraphNode.END, ctx)
         return NodeResult()
 
 
@@ -227,7 +229,8 @@ class WriteLastValueNode(Node[ErrorState]):
         self.field = field
         self.value = value
 
-    def execute(self, ctx: GraphContext[ErrorState]) -> NodeResult:
+    def execute(self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput) -> NodeResult:
+        self.deliver(None, None, ctx)
         return NodeResult(state_update={self.field: self.value})
 
 
@@ -488,9 +491,9 @@ class TestConcurrentEmitSafe:
         one that emits none (emit is fire-and-forget).
         """
         class NoEmitNode(Node[ErrorState]):
-            async def execute(self, ctx: GraphContext[ErrorState]) -> NodeResult:
+            async def execute(self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput) -> NodeResult:
                 await asyncio.sleep(0)
-                ctx.dispatch(GraphNode.END)
+                self.deliver(None, GraphNode.END, ctx)
                 return NodeResult()
 
         g = _build_fanout_graph(
