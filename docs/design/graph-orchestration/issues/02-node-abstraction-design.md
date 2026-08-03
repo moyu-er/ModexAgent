@@ -95,3 +95,13 @@ ADR-0015 + `InboxFlushHook` + `InboxPoller` 完整实现。AgentNode 内 agent �
 - 输出修正:deliver 累积 → _submit 派发。不再用 NodeResult.transition/command 做 dispatch。AgentNode 的 execute 内部 agent 可通过 cli deliver 累积结果,execute 完成后框架自动 _submit 派发
 - 新增三层方法拆分:_deliver(框架固定,累积+持久化)/ deliver(node 自定义,默认 append) / _submit(框架固定,按 next_node 分组派发) / submit(node 自定义,默认分组整合)
 - InputIntegrator ABC:整合多上游 submit 的 IntegratedPayload 为单一 IntegratedInput,框架给默认实现,node 可自定义
+
+### 设计修正(2026-08-03,见 `distributed-persistence-design.md` §9)
+
+实现检视后,GraphAsNode 和 FunctionNode 的定位调整:
+
+**GraphAsNode(P2.8)**: 不作为特殊 wrapper 机制。Node 天生可以在 execute 内部创建子图 GraphInstance + GraphEngine 执行。框架提供原语(GraphInstance / GraphEngine / coordinator / NodeState),node 自由组合。state 隔离是 node 自己的事。当前 `GraphAsNode` wrapper 保留为示范实现。
+
+**FunctionNode(P2.7)**: callable 注入模式与声明式 config 驱动设计矛盾。通用 node 是声明式,不注入 callable。如果需要可配置逻辑,用户自定义 Node(继承 Node ABC,实现 execute)是标准模式。当前 `FunctionNode` + `FunctionNodeFactory` 保留为示范。
+
+**保留的通用 Node**: DelayNode(声明式 config 驱动)、HumanInputNode(声明式 + GraphInterrupt 框架原语)、AgentNode(业务层,TurnRunner 注入有 ADR 支撑)。

@@ -76,8 +76,8 @@ GraphInstance 属性:
 - `parent_node: str | None` —— 父图中的节点名(该节点创建了此子图实例)
 - `graph_spec: GraphSpec` —— 图定义
 - `compiled_graph: CompiledGraph` —— 编译产物
-- 运行状态(checkpoint/dispatch/activated_sources/completed_instances 等,ticket 10 覆盖)
-- 节点状态(ticket 10 的 Node 级状态抽象)
+- 运行状态(graph metadata: instance_seq / iteration_count / activated_sources / pending_dispatches,见 `distributed-persistence-design.md`)
+- 节点状态(各 node 的版本链 + invocation 记录,见 `distributed-persistence-design.md` §4)
 
 **持久化**:统一 schema,所有图实例(外层 + 内层)在同一张表/同一个 schema 中,通过 graph_instance_id 区分,通过 parent_instance_id 关联。不建零散的 SQL 表。
 
@@ -91,7 +91,7 @@ GraphInstance 属性:
 | GraphEngine | 执行器(松耦合,可替换,基于 Graph 抽象) | modex_graph(已有) |
 | StateFactory | 创建/恢复独立 state | modex_graph(ticket 08 决议) |
 | 持久化层 | 统一 schema,graph_instance_id 关联 | modex_graph |
-| checkpoint/resume | 图实例级 + 节点级 | modex_graph(ticket 10 覆盖) |
+| checkpoint/resume | 分布式持久化(graph metadata + 各 node 版本链) | modex_graph(见 `distributed-persistence-design.md`) |
 
 ### 框架不做的(节点自行决定)
 
@@ -145,3 +145,9 @@ GraphInstance 属性:
   2. execute(node 自定义逻辑,执行期间 deliver 可被多次调用)
   3. _submit(框架自动,按 next_node 分组派发,execute 之后)
 - 节点内部创建子图实例时,子图的 deliver/submit 独立于外层(子图有自己的 deliver_states)
+
+### 设计修正(2026-08-03,见 `distributed-persistence-design.md`)
+
+- **GraphAsNode 不再是特殊机制**:Node 天生可在 execute 内创建子图 GraphInstance + GraphEngine 执行,不需特殊 wrapper。框架提供原语,node 自由组合。
+- **持久化改为分布式**:GraphInstance 的持久化不再是单一 CheckpointData blob,而是 graph metadata + 各 node 版本链拼装。见 `distributed-persistence-design.md`。
+- **CheckpointData / DispatchStore / activated_sources 等的持久化方式调整**:CheckpointData 移除,activated_sources / pending_dispatches 归入 graph metadata,各 node 状态通过 NodeState ABC 持久化。

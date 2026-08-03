@@ -133,6 +133,8 @@ Resolved: 2026-08-02(类别1+2+3)
 
 #### 1.1 CheckpointStore load_latest 接通
 
+> **设计修正(2026-08-03)**:本节的 CheckpointData 单一 blob 持久化已被分布式持久化替代。见 `distributed-persistence-design.md`。恢复流程改为 coordinator.load_for_recovery(从 graph metadata + 各 node 版本链重建),不再从单一 blob 恢复。CheckpointData 移除,activated_sources / instance_seq / iteration_count 归入 graph metadata。以下为原始设计(保留作历史参考)。
+
 **恢复流程**:
 ```
 1. 业务层传入 graph_instance_id → load_latest(graph_instance_id) → CheckpointData
@@ -172,6 +174,8 @@ Resolved: 2026-08-02(类别1+2+3)
 
 #### 2.1 多节点并行恢复
 
+> **设计修正(2026-08-03)**:本节的多节点恢复策略已纳入分布式持久化设计。恢复从各 node 最新 invocation 状态推导(COMPLETED 跳过,非 COMPLETED 重新 dispatch,新建 invocation)。见 `distributed-persistence-design.md` §5。以下为原始设计(保留作历史参考)。
+
 **策略:不捕获 in_flight,根据 activated_sources + pending_dispatches + 可达性重新推导**
 
 crash 时 RUNNING/READY/PENDING 实例的状态丢弃(瞬态,不可信)。恢复时:
@@ -205,6 +209,8 @@ modex_graph 根据 checkpoint 定位断点:
 
 ### 类别 2 新增:Node 级状态抽象(MVCC 版本链)
 
+> **设计修正(2026-08-03)**:本节的 Node 级状态抽象已演进为完整的分布式持久化设计。NodeState ABC 从 read/snapshot/restore 扩展为 save_invocation/load/query_versions + 版本链 + 生命周期统一调度(PENDING→RUNNING→COMPLETED/CANCELED/CRASHED)。见 `distributed-persistence-design.md` §3-§4。以下为原始设计(保留作历史参考)。
+
 #### 设计原则
 
 - **ABC 在 modex_graph**:定义节点状态接口(read/snapshot/restore/状态查询)
@@ -234,12 +240,14 @@ Node 暴露状态方法,graph 调度时通过这些方法读取:
 
 ### 待新增 ADR
 
-建议新增 ADR 扩展 ADR-0034 D19:
-- CheckpointData 新增字段(activated_sources / instance_seq / iteration_count)
-- run_id 外部传入
-- load_latest 接通 + 恢复流程
-- Node 级状态抽象 ABC
-- 不在 modex_graph 层面设计节点幂等(职责分离)
+> **设计修正(2026-08-03)**:以下 ADR 扩展建议已被 `distributed-persistence-design.md` 替代。CheckpointData 新增字段改为 graph metadata + NodeState 分布式持久化;load_latest 接通改为 coordinator.load_for_recovery;Node 级状态抽象已演进为完整持久化接口。原 ADR-0034 D19 的 CheckpointStore ABC 被 coordinator + NodeState 替代。
+
+建议新增 ADR 扩展 ADR-0034 D19:(已被替代,见 `distributed-persistence-design.md` §10)
+- ~~CheckpointData 新增字段(activated_sources / instance_seq / iteration_count)~~ → 归入 graph metadata
+- ~~run_id 外部传入~~ → graph_instance_id(已实现)
+- ~~load_latest 接通 + 恢复流程~~ → coordinator.load_for_recovery
+- ~~Node 级状态抽象 ABC~~ → NodeState 完整持久化接口
+- 不在 modex_graph 层面设计节点幂等(职责分离)— 仍然有效
 
 ### 类别 3:完全新设计(图定义持久化 + 生命周期状态机 + bot 工厂 + 外部控制)
 

@@ -127,7 +127,7 @@ class InputIntegrator(ABC):
 
 #### deliver 持久化
 
-**持久化抽象**:deliver 持久化是 ABC + 通用实现。ParallelScheduler 场景用 deliver_states 表(SQLite);LinearScheduler 场景可用内存对象(不写表),因为 crash 后重跑 execute,deliver 重新累积。持久化策略由 scheduler/节点选择,框架提供 ABC。
+**持久化抽象**:deliver 持久化是 ABC + 通用实现。持久化策略是 GraphInstance 级决策(不是 scheduler 级),scheduler 无感知。框架提供 ABC(Null / Memory / SQLite 三种实现)。LinearScheduler 默认 Null(crash 后重跑 execute,deliver 重新累积);ParallelScheduler 默认 Memory 或 SQLite。见 `distributed-persistence-design.md` §2.1。
 
 - deliver 累积的内容需要持久化(故障恢复)
 - 统一 SQLite 表(deliver_states),与 node_states / graph_instances 同 schema 风格
