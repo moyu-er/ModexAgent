@@ -1,4 +1,4 @@
-"""Tests for GraphRecoveryService — auto + manual recovery (ticket 10 §3.5)."""
+"""Tests for GraphRecoveryService — auto + manual recovery."""
 
 from __future__ import annotations
 
@@ -16,9 +16,9 @@ from modex_agent.control.types import ControlCommand, ControlCommandType, Contro
 from modex_graph import (
     GraphInstance,
     GraphInstanceStatus,
-    InMemoryDeliverStore,
+    GraphMetadata,
     InMemoryGraphInstanceStore,
-    MemoryCheckpointStore,
+    create_null_coordinator,
 )
 
 _SPEC_ID = 1001
@@ -31,9 +31,18 @@ def _make_instance(
     status: str = GraphInstanceStatus.RUNNING.value,
 ) -> GraphInstance:
     return GraphInstance(
-        graph_instance_id=graph_instance_id,
-        spec_id=_SPEC_ID,
-        status=status,
+        GraphMetadata(
+            graph_instance_id=graph_instance_id,
+            spec_id=_SPEC_ID,
+            parent_instance_id=None,
+            parent_node=None,
+            status=GraphInstanceStatus(status),
+            instance_seq=0,
+            iteration_count=0,
+            activated_sources={},
+            pending_dispatches={},
+        ),
+        create_null_coordinator(graph_instance_id),
     )
 
 
@@ -66,10 +75,9 @@ def _make_recovery_service(
 ]:
     instance_store = InMemoryGraphInstanceStore()
     for inst in instances or []:
-        instance_store.save(inst)
-    checkpoint_store = MemoryCheckpointStore()
+        instance_store.save(inst.metadata)
     factory = factory or _RecordingEngineFactory()
-    service = GraphRecoveryService(instance_store, checkpoint_store, factory)
+    service = GraphRecoveryService(instance_store, factory)
     return service, instance_store, factory
 
 
@@ -263,14 +271,11 @@ class TestControlServiceDelegation:
     async def test_resume_delegates_to_recovery_service_when_wired(self) -> None:
         paused = _make_instance(6001, status=GraphInstanceStatus.PAUSED.value)
         instance_store = InMemoryGraphInstanceStore()
-        instance_store.save(paused)
-        deliver_store = InMemoryDeliverStore()
+        instance_store.save(paused.metadata)
         factory = _RecordingEngineFactory()
-        recovery = GraphRecoveryService(
-            instance_store, MemoryCheckpointStore(), factory
-        )
+        recovery = GraphRecoveryService(instance_store, factory)
         service = GraphControlService(
-            instance_store, deliver_store, recovery_service=recovery
+            instance_store, recovery, coordinator_lookup=lambda gid: None
         )
 
         await service.handle(_make_resume_command(6001))
@@ -286,14 +291,11 @@ class TestControlServiceDelegation:
         """If recovery_service raises, the error propagates through handle()."""
         running = _make_instance(6003, status=GraphInstanceStatus.RUNNING.value)
         instance_store = InMemoryGraphInstanceStore()
-        instance_store.save(running)
-        deliver_store = InMemoryDeliverStore()
+        instance_store.save(running.metadata)
         factory = _RecordingEngineFactory()
-        recovery = GraphRecoveryService(
-            instance_store, MemoryCheckpointStore(), factory
-        )
+        recovery = GraphRecoveryService(instance_store, factory)
         service = GraphControlService(
-            instance_store, deliver_store, recovery_service=recovery
+            instance_store, recovery, coordinator_lookup=lambda gid: None
         )
 
         with pytest.raises(ValueError, match="only PAUSED/STOPPED"):
@@ -305,14 +307,11 @@ class TestControlServiceDelegation:
         """When recovery_service is wired, the in-memory controller is bypassed."""
         paused = _make_instance(6004, status=GraphInstanceStatus.PAUSED.value)
         instance_store = InMemoryGraphInstanceStore()
-        instance_store.save(paused)
-        deliver_store = InMemoryDeliverStore()
+        instance_store.save(paused.metadata)
         factory = _RecordingEngineFactory()
-        recovery = GraphRecoveryService(
-            instance_store, MemoryCheckpointStore(), factory
-        )
+        recovery = GraphRecoveryService(instance_store, factory)
         service = GraphControlService(
-            instance_store, deliver_store, recovery_service=recovery
+            instance_store, recovery, coordinator_lookup=lambda gid: None
         )
         engine = InMemoryGraphEngineController(6004)
         service.register_engine(engine)

@@ -27,7 +27,7 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 import pytest
-from helpers import make_runtime
+from helpers import make_runtime, make_coordinator
 
 from modex_graph import (
     Graph,
@@ -63,6 +63,7 @@ def make_parallel_ctx(state: ForkState | None = None) -> GraphContext[ForkState]
     return GraphContext(
         state=state if state is not None else ForkState(),
         runtime=make_runtime(),
+        coordinator=make_coordinator(),
         scheduler_kind=SchedulerKind.PARALLEL,
     )
 

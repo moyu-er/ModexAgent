@@ -1,6 +1,6 @@
 """Tests for `GraphInstanceStatus` + `InterruptPolicy` / `CrashPolicy`.
 
-Covers (ticket 10 class 3 + ticket 04):
+Covers:
 
 - `GraphInstanceStatus` enum membership and `StrEnum` str equality.
 - `InterruptPolicy` is an ABC (rule 7) — cannot instantiate directly,
@@ -8,8 +8,8 @@ Covers (ticket 10 class 3 + ticket 04):
 - `CrashPolicy` is the default `InterruptPolicy` implementation; its
   `handle_interrupt` is a no-op that returns `None`.
 - Subclass polymorphism: a custom policy overriding `handle_interrupt`
-  is invoked correctly and receives the original `GraphInterrupt`,
-  `graph_instance_id`, and `checkpoint_store`.
+  is invoked correctly and receives the original `GraphInterrupt`
+  and `graph_instance_id`.
 """
 
 from __future__ import annotations
@@ -24,15 +24,13 @@ from modex_graph import (
     GraphInstanceStatus,
     GraphInterrupt,
     InterruptPolicy,
-    MemoryCheckpointStore,
 )
-from modex_graph.checkpoint_store import CheckpointStore
 
 # ── GraphInstanceStatus ────────────────────────────────────────────────────
 
 
 class TestGraphInstanceStatus:
-    """`GraphInstanceStatus` StrEnum — ticket 10 class 3 lifecycle states."""
+    """`GraphInstanceStatus` StrEnum — lifecycle states."""
 
     def test_is_strenum(self) -> None:
         from enum import StrEnum
@@ -109,8 +107,8 @@ class TestInterruptPolicyABC:
     def test_handle_interrupt_signature(self) -> None:
         sig = inspect.signature(InterruptPolicy.handle_interrupt)
         params = list(sig.parameters.keys())
-        # self + interrupt + graph_instance_id + checkpoint_store
-        assert params == ["self", "interrupt", "graph_instance_id", "checkpoint_store"]
+        # self + interrupt + graph_instance_id
+        assert params == ["self", "interrupt", "graph_instance_id"]
 
     def test_subclass_without_impl_cannot_instantiate(self) -> None:
         class Incomplete(InterruptPolicy):
@@ -140,19 +138,14 @@ class TestCrashPolicy:
         assert inspect.iscoroutinefunction(CrashPolicy.handle_interrupt)
 
     async def test_handle_interrupt_is_noop(self) -> None:
-        """Default policy returns None without touching the store."""
+        """Default policy returns None."""
         policy = CrashPolicy()
-        store = MemoryCheckpointStore()
         interrupt = GraphInterrupt(value="payload", node_name="n")
         result = await policy.handle_interrupt(
             interrupt=interrupt,
             graph_instance_id=42,
-            checkpoint_store=store,
         )
         assert result is None
-        # CrashPolicy is a no-op — it must NOT save anything to the store.
-        loaded = await store.load_latest("any-run")
-        assert loaded is None
 
     def test_handle_interrupt_overrides_abstract(self) -> None:
         """CrashPolicy's own dict has a concrete handle_interrupt."""
@@ -175,23 +168,18 @@ class TestSubclassPolymorphism:
                 self,
                 interrupt: GraphInterrupt,
                 graph_instance_id: int,
-                checkpoint_store: CheckpointStore,
             ) -> None:
                 seen["interrupt"] = interrupt
                 seen["graph_instance_id"] = graph_instance_id
-                seen["checkpoint_store"] = checkpoint_store
 
-        store = MemoryCheckpointStore()
         interrupt = GraphInterrupt(value="payload", node_name="tool_node")
         policy: InterruptPolicy = RecordingPolicy()
         await policy.handle_interrupt(
             interrupt=interrupt,
             graph_instance_id=99,
-            checkpoint_store=store,
         )
         assert seen["interrupt"] is interrupt
         assert seen["graph_instance_id"] == 99
-        assert seen["checkpoint_store"] is store
 
     async def test_custom_policy_isolation_from_crashpolicy(self) -> None:
         """Subclassing CrashPolicy and overriding still works."""
@@ -201,17 +189,13 @@ class TestSubclassPolymorphism:
                 self,
                 interrupt: GraphInterrupt,
                 graph_instance_id: int,
-                checkpoint_store: CheckpointStore,
             ) -> None:
-                # Custom behavior: record and delegate to parent (no-op).
-                await super().handle_interrupt(interrupt, graph_instance_id, checkpoint_store)
+                await super().handle_interrupt(interrupt, graph_instance_id)
 
         policy = CustomCrash()
-        store = MemoryCheckpointStore()
         ret = await policy.handle_interrupt(
             interrupt=GraphInterrupt(value="x"),
             graph_instance_id=1,
-            checkpoint_store=store,
         )
         assert ret is None
 
@@ -221,7 +205,6 @@ class TestSubclassPolymorphism:
                 self,
                 interrupt: GraphInterrupt,
                 graph_instance_id: int,
-                checkpoint_store: CheckpointStore,
             ) -> None:
                 return None
 

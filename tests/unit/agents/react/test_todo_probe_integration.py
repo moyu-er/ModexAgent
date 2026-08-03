@@ -1,6 +1,9 @@
+# ruff: noqa: ANN401
 """Integration: the probe hook keeps the ReAct loop alive and keeps the XML out
 of the user-facing stream (it lands only in ctx.history = LLM memory)."""
 from __future__ import annotations
+
+from typing import Any
 
 import pytest
 
@@ -24,6 +27,34 @@ from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.runtime.store import JsonFileTodoStore, TodoItem
 from modex_agent.tools.standard import TodoCompletionProbeHook, TodoReadTool
+from modex_graph import (    GraphNode,
+
+    GraphPersistenceCoordinator,
+    InvocationContext,
+    NullDeliverStoreFactory,
+    NullGraphMetadataStore,
+    NullNodeStateFactory,
+)
+
+
+class _AutoRegCoord(GraphPersistenceCoordinator):
+    """Test-only coordinator that auto-registers nodes on begin_invocation."""
+
+    def begin_invocation(self, node_name: str) -> InvocationContext:
+        if self.get_deliver_store(node_name) is None:
+            self.register_node(node_name)
+        return super().begin_invocation(node_name)
+    def route_deliver(
+        self,
+        target_node: str,
+        content: Any,
+        source_node: str,
+        source_invocation_id: int,
+    ) -> int | None:
+        if target_node != GraphNode.END and self.get_deliver_store(target_node) is None:
+            self.register_node(target_node)
+        return super().route_deliver(target_node, content, source_node, source_invocation_id)
+
 
 
 class _RecordingEmitter:
@@ -66,7 +97,17 @@ async def test_probe_continues_loop_and_keeps_xml_out_of_stream(tmp_path, monkey
         session=SessionInfo.from_str("s1"),
     )
     agent_ctx.emitter = _RecordingEmitter()
-    ctx = ReActGraphContext(state=state, runtime=graph_runtime, user_data=agent_ctx)
+    ctx = ReActGraphContext(
+        state=state,
+        runtime=graph_runtime,
+        user_data=agent_ctx,
+        coordinator=_AutoRegCoord(
+            graph_instance_id=0,
+            graph_metadata_store=NullGraphMetadataStore(),
+            default_node_state_factory=NullNodeStateFactory(),
+            default_deliver_store_factory=NullDeliverStoreFactory(),
+        ),
+    )
 
     # Seed an unfinished todo for THIS session id, so gate 3 passes.
     sid = agent_ctx.session.session_id

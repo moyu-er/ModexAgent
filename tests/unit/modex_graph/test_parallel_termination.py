@@ -22,7 +22,7 @@ Covers:
 from __future__ import annotations
 
 import pytest
-from helpers import CounterState, make_runtime
+from helpers import CounterState, make_runtime, make_coordinator
 
 from modex_graph import (
     Graph,
@@ -43,6 +43,7 @@ def make_parallel_ctx(state: CounterState | None = None) -> GraphContext[Counter
     return GraphContext(
         state=state if state is not None else CounterState(),
         runtime=make_runtime(),
+        coordinator=make_coordinator(),
         scheduler_kind=SchedulerKind.PARALLEL,
     )
 

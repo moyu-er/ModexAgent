@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from helpers import CounterState, make_runtime
+from helpers import CounterState, make_runtime, make_coordinator
 
 from modex_graph import (
     DispatchEvent,
@@ -353,6 +353,7 @@ def _make_parallel_ctx(
     return GraphContext(
         state=state if state is not None else CounterState(),
         runtime=make_runtime(),
+        coordinator=make_coordinator(),
         scheduler_kind=SchedulerKind.PARALLEL,
     )
 
@@ -529,7 +530,7 @@ class TestParallelSchedulerWithDispatchStore:
 
         events = store.query_all(scheduler._run_id)  # type: ignore[arg-type]
         assert len(events) == 1
-        assert events[0].payload == {"delivered": {"data": 42}}
+        assert events[0].payload and events[0].payload["delivered"] == {"data": 42}
 
     async def test_clear_removes_run_events(self) -> None:
         """clear(run_id) removes events for that run from the store."""

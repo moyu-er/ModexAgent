@@ -1,9 +1,8 @@
-"""Tests for `NodeState` ABC + `SimpleNodeState` impl (ticket 10).
+"""Tests for `NodeState` ABC + `SimpleNodeState` impl.
 
 Covers:
 
-- `NodeState` ABC (rule 7: ABC, not Protocol): 5 abstract methods
-  (`read`, `write`, `snapshot`, `restore`, `has`).
+- `NodeState` ABC (rule 7: ABC, not Protocol): 10 abstract methods.
 - `SimpleNodeState`:
     - CRUD: write -> read round-trip, overwrite.
     - `snapshot()` returns a shallow copy (mutating the returned dict
@@ -41,8 +40,19 @@ class TestNodeStateABC:
         with pytest.raises(TypeError):
             NodeState()  # type: ignore[abstract]
 
-    def test_five_abstract_methods(self) -> None:
-        expected = {"read", "write", "snapshot", "restore", "has"}
+    def test_ten_abstract_methods(self) -> None:
+        expected = {
+            "read",
+            "write",
+            "snapshot",
+            "restore",
+            "has",
+            "save_invocation",
+            "load_invocation",
+            "load_latest",
+            "load_latest_completed",
+            "query_versions",
+        }
         assert set(NodeState.__abstractmethods__) == expected
 
     def test_simple_node_state_subclass(self) -> None:

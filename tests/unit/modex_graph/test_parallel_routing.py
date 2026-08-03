@@ -9,7 +9,7 @@ Covers:
 """
 from __future__ import annotations
 
-from helpers import CounterState, make_runtime
+from helpers import CounterState, make_runtime, make_coordinator
 
 from modex_graph import (
     Graph,
@@ -29,6 +29,7 @@ def make_parallel_ctx(state: CounterState | None = None) -> GraphContext[Counter
     return GraphContext(
         state=state if state is not None else CounterState(),
         runtime=make_runtime(),
+        coordinator=make_coordinator(),
         scheduler_kind=SchedulerKind.PARALLEL,
     )
 
@@ -178,7 +179,7 @@ class TestDeliverFanOut:
             e for e in scheduler._dispatch_log if e.source_instance == "a#0" and e.target == "b"
         ]
         assert len(a_to_b) == 1
-        assert a_to_b[0].payload == {"delivered": {"messages": ["payload_data"]}}
+        assert a_to_b[0].payload and a_to_b[0].payload["delivered"] == {"messages": ["payload_data"]}
 
 
 # ── Fan-out + fan-in end-to-end ────────────────────────────────────────────

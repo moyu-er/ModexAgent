@@ -1,5 +1,5 @@
 # ruff: noqa: ANN401
-"""Tests for ``AgentNode`` + ``AgentNodeFactory`` (ticket 02 / P3.1).
+"""Tests for ``AgentNode`` + ``AgentNodeFactory``.
 
 Covers:
 
@@ -25,17 +25,53 @@ from modex_agent.agents.agent_node import AgentNode, AgentNodeFactory, Collector
 from modex_agent.core.agent import Agent, AgentContext
 from modex_agent.core.constants import StopReason
 from modex_agent.core.emitter import AgentResult, ContentEmitter
-from modex_graph import (
+from modex_graph import (    GraphNode,
+
     GraphContext,
+    GraphPersistenceCoordinator,
     GraphRuntime,
     GraphState,
+    InvocationContext,
     Node,
     NodeFactory,
     NodeRegistry,
     NodeResult,
     NodeSpec,
     NodeTrigger,
+    NullDeliverStoreFactory,
+    NullGraphMetadataStore,
+    NullNodeStateFactory,
 )
+
+
+class _AutoRegCoord(GraphPersistenceCoordinator):
+    """Test-only coordinator that auto-registers nodes on begin_invocation."""
+
+    def begin_invocation(self, node_name: str) -> InvocationContext:
+        if self.get_deliver_store(node_name) is None:
+            self.register_node(node_name)
+        return super().begin_invocation(node_name)
+    def route_deliver(
+        self,
+        target_node: str,
+        content: Any,
+        source_node: str,
+        source_invocation_id: int,
+    ) -> int | None:
+        if target_node != GraphNode.END and self.get_deliver_store(target_node) is None:
+            self.register_node(target_node)
+        return super().route_deliver(target_node, content, source_node, source_invocation_id)
+
+
+
+def _make_coordinator() -> _AutoRegCoord:
+    return _AutoRegCoord(
+        graph_instance_id=0,
+        graph_metadata_store=NullGraphMetadataStore(),
+        default_node_state_factory=NullNodeStateFactory(),
+        default_deliver_store_factory=NullDeliverStoreFactory(),
+    )
+
 
 # ── Test helpers ──────────────────────────────────────────────────────────
 
@@ -45,6 +81,7 @@ def _make_ctx() -> GraphContext[Any]:
     return GraphContext(
         state=GraphState(),
         runtime=GraphRuntime(),
+        coordinator=_make_coordinator(),
     )
 
 

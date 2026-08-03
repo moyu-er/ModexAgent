@@ -37,6 +37,7 @@ from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.enums import AgentKind, SnapshotReason, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_graph import create_null_coordinator
 from modex_graph.context import GraphContext
 from modex_graph.runtime import GraphRuntime
 from modex_graph.state import GraphState
@@ -63,7 +64,12 @@ def _make_agent_ctx(iteration: int = 3) -> AgentContext:
 
 
 def _make_graph_ctx(agent_ctx: AgentContext, runtime: GraphRuntime) -> GraphContext[GraphState]:
-    return GraphContext(state=GraphState(), runtime=runtime, user_data=agent_ctx)
+    return GraphContext(
+        state=GraphState(),
+        runtime=runtime,
+        user_data=agent_ctx,
+        coordinator=create_null_coordinator(),
+    )
 
 
 class TestReactGraphRuntimeConstruction:

@@ -2,7 +2,7 @@
 ``001_initial.sql`` (tables 16-19: graph_specs, graph_instances, node_states,
 deliver_states).
 
-Verifies the DDL added per tickets 04, 07, 10:
+Verifies the DDL for the four orchestration tables:
 - Snowflake ID (BIGINT) primary keys, application-generated (not AUTOINCREMENT)
 - node_states MVCC version chain (append-only, one row per version)
 - deliver_states accumulated/submitted lifecycle
@@ -507,12 +507,12 @@ def test_node_states_mvcc_keeps_all_versions() -> None:
         conn.close()
 
 
-def test_node_states_has_no_updated_at_column() -> None:
+def test_node_states_has_updated_at_column() -> None:
     conn = _connect()
     try:
         cols = set(_table_columns(conn, "node_states"))
-        assert "updated_at" not in cols, (
-            "node_states is append-only (MVCC) — must not have updated_at"
+        assert "updated_at" in cols, (
+            "node_states must have updated_at (status lifecycle)"
         )
     finally:
         conn.close()
@@ -549,12 +549,12 @@ def test_deliver_states_accepts_valid_insert() -> None:
         row = conn.execute(
             "SELECT status FROM deliver_states WHERE deliver_id = ?", (DELIVER_ID,)
         ).fetchone()
-        assert row == ("accumulated",)
+        assert row == ("pending",)
     finally:
         conn.close()
 
 
-def test_deliver_states_default_status_is_accumulated() -> None:
+def test_deliver_states_default_status_is_pending() -> None:
     conn = _connect()
     try:
         _seed_spec_and_instance(conn)
@@ -568,7 +568,7 @@ def test_deliver_states_default_status_is_accumulated() -> None:
         status = conn.execute(
             "SELECT status FROM deliver_states WHERE deliver_id = ?", (DELIVER_ID,)
         ).fetchone()[0]
-        assert status == "accumulated"
+        assert status == "pending"
     finally:
         conn.close()
 
@@ -582,7 +582,7 @@ def test_deliver_states_rejects_invalid_status() -> None:
                 "INSERT INTO deliver_states "
                 "(deliver_id, graph_instance_id, node_name, next_node, "
                 "content_json, status) VALUES (?, ?, ?, ?, ?, ?)",
-                (DELIVER_ID, INSTANCE_ID, "n", "m", "{}", "pending"),
+                (DELIVER_ID, INSTANCE_ID, "n", "m", "{}", "invalid_status"),
             )
     finally:
         conn.close()

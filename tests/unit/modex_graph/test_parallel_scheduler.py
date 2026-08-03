@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from helpers import CounterState, make_ctx, make_runtime
+from helpers import CounterState, make_ctx, make_runtime, make_coordinator
 from pydantic import ValidationError
 
 from modex_graph import (
@@ -84,6 +84,7 @@ def make_parallel_ctx(state: CounterState | None = None) -> GraphContext[Counter
     return GraphContext(
         state=state if state is not None else CounterState(),
         runtime=make_runtime(),
+        coordinator=make_coordinator(),
         scheduler_kind=SchedulerKind.PARALLEL,
     )
 
@@ -341,7 +342,7 @@ class TestLinearGraphParallel:
         assert isinstance(scheduler, ParallelScheduler)
         assert len(scheduler._dispatch_log) == 1
         event = scheduler._dispatch_log[0]
-        assert event.payload == {"delivered": {"data": 42}}
+        assert event.payload and event.payload["delivered"] == {"data": 42}
         assert event.target == GraphNode.END
 
 
@@ -561,6 +562,7 @@ class TestGraphContextDispatch:
         ctx = GraphContext(
             state=CounterState(),
             runtime=make_runtime(),
+            coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
         ctx.set_dispatch_handler(None)  # explicitly clear the default no-op
@@ -576,6 +578,7 @@ class TestGraphContextDispatch:
         ctx = GraphContext(
             state=CounterState(),
             runtime=make_runtime(),
+            coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
             dispatch_handler=handler,
             current_instance="a#0",
@@ -587,6 +590,7 @@ class TestGraphContextDispatch:
         ctx = GraphContext(
             state=CounterState(),
             runtime=make_runtime(),
+            coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
         assert ctx._current_instance is None
@@ -600,6 +604,7 @@ class TestGraphContextDispatch:
         ctx = GraphContext(
             state=CounterState(),
             runtime=make_runtime(),
+            coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
             dispatch_handler=handler,
         )
@@ -610,6 +615,7 @@ class TestGraphContextDispatch:
         ctx = GraphContext(
             state=CounterState(),
             runtime=make_runtime(),
+            coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
             current_instance="a#0",
         )

@@ -32,7 +32,7 @@ from __future__ import annotations
 import asyncio
 from typing import Annotated
 
-from helpers import make_runtime
+from helpers import make_runtime, make_coordinator
 
 from modex_graph import (
     Graph,
@@ -139,6 +139,7 @@ class TestParallelMapReduce:
         ctx = GraphContext(
             state=MapReduceState(items=[1, 2, 3, 4]),
             runtime=make_runtime(),
+            coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
         result = await GraphEngine(compiled).run_async(ctx)
@@ -154,6 +155,7 @@ class TestParallelMapReduce:
         ctx = GraphContext(
             state=MapReduceState(items=[7]),
             runtime=make_runtime(),
+            coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
         result = await GraphEngine(compiled).run_async(ctx)
@@ -169,6 +171,7 @@ class TestParallelMapReduce:
         ctx = GraphContext(
             state=MapReduceState(items=[]),
             runtime=make_runtime(),
+            coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
         result = await GraphEngine(compiled).run_async(ctx)
@@ -256,6 +259,7 @@ class TestConditionalBranchJoin:
         ctx = GraphContext(
             state=RouterState(mode="high"),
             runtime=make_runtime(),
+            coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
         result = await GraphEngine(compiled).run_async(ctx)
@@ -272,6 +276,7 @@ class TestConditionalBranchJoin:
         ctx = GraphContext(
             state=RouterState(mode="low"),
             runtime=make_runtime(),
+            coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
         result = await GraphEngine(compiled).run_async(ctx)
@@ -288,6 +293,7 @@ class TestConditionalBranchJoin:
         ctx = GraphContext(
             state=RouterState(mode="both"),
             runtime=make_runtime(),
+            coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
         result = await GraphEngine(compiled).run_async(ctx)
@@ -358,6 +364,7 @@ class TestOnReceiveEventAggregation:
         ctx = GraphContext(
             state=EventState(),
             runtime=make_runtime(),
+            coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
         result = await GraphEngine(compiled).run_async(ctx)
@@ -383,6 +390,7 @@ class TestOnReceiveEventAggregation:
         ctx = GraphContext(
             state=EventState(),
             runtime=make_runtime(),
+            coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
         result = await GraphEngine(compiled).run_async(ctx)
@@ -468,6 +476,7 @@ class TestMixedTriggerModes:
         ctx = GraphContext(
             state=PipelineState(),
             runtime=make_runtime(),
+            coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
         result = await GraphEngine(compiled).run_async(ctx)
@@ -546,6 +555,7 @@ class TestAsyncParallelPipeline:
         ctx = GraphContext(
             state=AsyncWorkState(work_val=5),
             runtime=make_runtime(),
+            coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
         result = await GraphEngine(compiled).run_async(ctx)
@@ -569,6 +579,7 @@ class TestAsyncParallelPipeline:
         ctx = GraphContext(
             state=AsyncWorkState(work_val=1),
             runtime=make_runtime(),
+            coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
 

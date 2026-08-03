@@ -24,7 +24,7 @@ import inspect
 from abc import ABC
 
 import pytest
-from helpers import AddNode, AsyncAddNode, CounterState, make_ctx
+from helpers import AddNode, AsyncAddNode, CounterState, make_ctx, make_coordinator
 
 from modex_graph import (
     Graph,
@@ -310,6 +310,7 @@ class TestGraphContextDispatch:
         ctx = GraphContext(
             state=CounterState(),
             runtime=make_ctx(CounterState()).runtime,
+            coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.LINEAR,
             dispatch_handler=handler,
         )
@@ -328,6 +329,7 @@ class TestGraphContextDispatch:
         ctx = GraphContext(
             state=CounterState(),
             runtime=make_ctx(CounterState()).runtime,
+            coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
         ctx.set_dispatch_handler(None)  # explicitly clear the default no-op
@@ -339,6 +341,7 @@ class TestGraphContextDispatch:
         ctx = GraphContext(
             state=CounterState(),
             runtime=make_ctx(CounterState()).runtime,
+            coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.LINEAR,
         )
         ctx.set_dispatch_handler(None)  # explicitly clear the default no-op
@@ -353,6 +356,7 @@ class TestGraphContextDispatch:
         ctx = GraphContext(
             state=CounterState(),
             runtime=make_ctx(CounterState()).runtime,
+            coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
         sub = ctx.fork(state=CounterState())

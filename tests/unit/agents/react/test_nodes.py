@@ -1,6 +1,9 @@
+# ruff: noqa: ANN401
 """Tests for ReAct nodes."""
 
 from __future__ import annotations
+
+from typing import Any
 
 import pytest
 
@@ -25,7 +28,43 @@ from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.enums import AgentKind, TurnCustomKey, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
+from modex_graph import (
+    GraphPersistenceCoordinator,
+    InvocationContext,
+    NullDeliverStoreFactory,
+    NullGraphMetadataStore,
+    NullNodeStateFactory,
+)
 from modex_graph.constants import GraphNode
+
+
+class _AutoRegCoord(GraphPersistenceCoordinator):
+    """Test-only coordinator that auto-registers nodes on begin_invocation."""
+
+    def begin_invocation(self, node_name: str) -> InvocationContext:
+        if self.get_deliver_store(node_name) is None:
+            self.register_node(node_name)
+        return super().begin_invocation(node_name)
+    def route_deliver(
+        self,
+        target_node: str,
+        content: Any,
+        source_node: str,
+        source_invocation_id: int,
+    ) -> int | None:
+        if target_node != GraphNode.END and self.get_deliver_store(target_node) is None:
+            self.register_node(target_node)
+        return super().route_deliver(target_node, content, source_node, source_invocation_id)
+
+
+
+def _make_test_coordinator() -> _AutoRegCoord:
+    return _AutoRegCoord(
+        graph_instance_id=0,
+        graph_metadata_store=NullGraphMetadataStore(),
+        default_node_state_factory=NullNodeStateFactory(),
+        default_deliver_store_factory=NullDeliverStoreFactory(),
+    )
 
 
 def _make_state() -> ReActTurnState:
@@ -69,7 +108,12 @@ def _make_graph_ctx(
         session=SessionInfo.from_str("test.agent"),
     )
     graph_runtime = ReactGraphRuntime()
-    return ReActGraphContext(state=state, runtime=graph_runtime, user_data=agent_ctx)
+    return ReActGraphContext(
+        state=state,
+        runtime=graph_runtime,
+        user_data=agent_ctx,
+        coordinator=_make_test_coordinator(),
+    )
 
 
 def _make_llm_client() -> ReactLlmClient:

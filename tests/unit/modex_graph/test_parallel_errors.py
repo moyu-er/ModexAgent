@@ -80,7 +80,7 @@ import asyncio
 from typing import Annotated, Any
 
 import pytest
-from helpers import TrackingRuntime, make_runtime
+from helpers import TrackingRuntime, make_runtime, make_coordinator
 
 from modex_graph import (
     Graph,
@@ -114,6 +114,7 @@ def make_parallel_ctx(state: ErrorState | None = None) -> GraphContext[ErrorStat
     return GraphContext(
         state=state if state is not None else ErrorState(),
         runtime=make_runtime(),
+        coordinator=make_coordinator(),
         scheduler_kind=SchedulerKind.PARALLEL,
     )
 
@@ -126,6 +127,7 @@ def make_tracking_ctx(state: ErrorState | None = None) -> tuple[
     ctx = GraphContext(
         state=state if state is not None else ErrorState(),
         runtime=runtime,
+        coordinator=make_coordinator(),
         scheduler_kind=SchedulerKind.PARALLEL,
     )
     return ctx, runtime
@@ -598,6 +600,7 @@ class TestReactGraphRuntimeAudit:
         ctx = GraphContext(
             state=ErrorState(),
             runtime=runtime,
+            coordinator=make_coordinator(),
             scheduler_kind=SchedulerKind.PARALLEL,
         )
         # Should complete without raising — no-op hooks are safe.

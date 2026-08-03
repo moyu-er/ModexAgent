@@ -5,8 +5,8 @@ import pytest
 from modex_agent.core.llm_struct import (
     LLMErrorInfo,
     LLMErrorKind,
+    LLMProviderKind,
     LLMTimeoutPolicy,
-    ProviderKind,
     RuntimeSafetyPolicy,
     TurnTimeoutPolicy,
     build_timeout_response,
@@ -57,9 +57,9 @@ class TestLLMErrorInfo:
 
 class TestProviderKind:
     def test_provider_kinds(self):
-        assert ProviderKind.OPENAI.value == "openai"
-        assert ProviderKind.ANTHROPIC.value == "anthropic"
-        assert ProviderKind.LITELLM.value == "litellm"
+        assert LLMProviderKind.OPENAI.value == "openai"
+        assert LLMProviderKind.ANTHROPIC.value == "anthropic"
+        assert LLMProviderKind.LITELLM.value == "litellm"
 
 
 class TestSafetyPolicyDefaults:

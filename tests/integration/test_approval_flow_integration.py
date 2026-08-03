@@ -26,9 +26,10 @@ from typing import Any
 
 import pytest
 
+from modex_agent.adapters.platform import StreamingMode
 from modex_agent.agents.react.agent import ReActAgent
-from modex_agent.approval.ui import IMUserInterface
 from modex_agent.approval.types import ApprovalAction
+from modex_agent.approval.ui import IMUserInterface
 from modex_agent.approval.views import ApprovalDecisionInput
 from modex_agent.commands.processor import SlashCommandProcessor
 from modex_agent.core.context import InMemoryContextManager
@@ -38,11 +39,11 @@ from modex_agent.core.types import InputMessage, LLMResponse, OutputMessage, Too
 from modex_agent.ioc.configs.approval import ApprovalConfig, ToolApprovalEntry
 from modex_agent.ioc.factories.approval import build_approval_runtime
 from modex_agent.pipeline.pipeline import AgentPipeline
-from tests.unit.pipeline._helpers import _make_react_pipeline
 from modex_agent.runtime.enums import SnapshotReason, TurnPhase
 from modex_agent.runtime.models import StateQueryScope
 from modex_agent.runtime.services import AgentRuntimeServices
 from modex_agent.runtime.store import InMemoryTurnStateStore
+from tests.unit.pipeline._helpers import _make_react_pipeline
 
 pytestmark = pytest.mark.integration
 
@@ -101,7 +102,7 @@ class _ValidatingProvider:
         while i < len(msgs):
             m = msgs[i]
             if m.get("role") == "assistant" and m.get("tool_calls"):
-                expected = {tc.get("id") for tc in m["tool_calls"]}
+                expected = {tc.call_id for tc in m["tool_calls"]}
                 j = i + 1
                 seen = set()
                 while j < len(msgs) and msgs[j].get("role") == "tool":
@@ -176,6 +177,10 @@ class _RecordingOutputAdapter:
     @property
     def supports_streaming(self) -> bool:
         return False
+
+    @property
+    def streaming_mode(self) -> StreamingMode:
+        return StreamingMode.NONE
 
 
 # --------------------------------------------------------------------------

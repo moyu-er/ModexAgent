@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import pytest
-from helpers import CounterState, make_ctx
+from helpers import CounterState, make_ctx, make_coordinator
 
 from modex_graph import (
     Graph,
@@ -108,6 +108,7 @@ class TestEngineDoesNotSwallow:
         ctx = GraphContext(
             state=CounterState(),
             runtime=InterruptRuntime(),
+            coordinator=make_coordinator(),
         )
         with pytest.raises(GraphInterrupt) as exc_info:
             await GraphEngine(compiled).run_async(ctx)
@@ -135,6 +136,7 @@ class TestEngineDoesNotSwallow:
         ctx = GraphContext(
             state=CounterState(),
             runtime=DrainRuntime(),
+            coordinator=make_coordinator(),
         )
         with pytest.raises(GraphDrained):
             await GraphEngine(compiled).run_async(ctx)

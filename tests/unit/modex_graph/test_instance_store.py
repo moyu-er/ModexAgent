@@ -27,8 +27,9 @@ from pathlib import Path
 import pytest
 
 from modex_graph import (
-    GraphInstance,
+    GraphInstanceStatus,
     GraphInstanceStore,
+    GraphMetadata,
     InMemoryGraphInstanceStore,
     SqliteGraphInstanceStore,
 )
@@ -41,19 +42,23 @@ _OTHER_INSTANCE_ID = 2002
 _PARENT_INSTANCE_ID = 3003
 
 
-def _make_instance(
+def _make_metadata(
     graph_instance_id: int = _GRAPH_INSTANCE_ID,
     spec_id: int = _SPEC_ID,
     parent_instance_id: int | None = None,
     parent_node: str | None = None,
     status: str = "running",
-) -> GraphInstance:
-    return GraphInstance(
+) -> GraphMetadata:
+    return GraphMetadata(
         graph_instance_id=graph_instance_id,
         spec_id=spec_id,
         parent_instance_id=parent_instance_id,
         parent_node=parent_node,
-        status=status,
+        status=GraphInstanceStatus(status),
+        instance_seq=0,
+        iteration_count=0,
+        activated_sources={},
+        pending_dispatches={},
     )
 
 
@@ -115,7 +120,7 @@ class TestGraphInstanceStoreABC:
 class TestGraphInstanceStoreCRUD:
     def test_save_and_load_by_id(self, kind: str) -> None:
         store = _store_factory(kind)()
-        inst = _make_instance()
+        inst = _make_metadata()
         store.save(inst)
         loaded = store.load_by_id(_GRAPH_INSTANCE_ID)
         assert loaded is not None
@@ -129,9 +134,9 @@ class TestGraphInstanceStoreCRUD:
 
     def test_save_is_upsert(self, kind: str) -> None:
         store = _store_factory(kind)()
-        store.save(_make_instance(status="running"))
+        store.save(_make_metadata(status="running"))
         store.save(
-            _make_instance(status="completed")
+            _make_metadata(status="completed")
         )
         loaded = store.load_by_id(_GRAPH_INSTANCE_ID)
         assert loaded is not None
@@ -139,10 +144,10 @@ class TestGraphInstanceStoreCRUD:
 
     def test_load_by_status(self, kind: str) -> None:
         store = _store_factory(kind)()
-        store.save(_make_instance(graph_instance_id=1, status="running"))
-        store.save(_make_instance(graph_instance_id=2, status="crashed"))
-        store.save(_make_instance(graph_instance_id=3, status="running"))
-        store.save(_make_instance(graph_instance_id=4, status="completed"))
+        store.save(_make_metadata(graph_instance_id=1, status="running"))
+        store.save(_make_metadata(graph_instance_id=2, status="crashed"))
+        store.save(_make_metadata(graph_instance_id=3, status="running"))
+        store.save(_make_metadata(graph_instance_id=4, status="completed"))
         crashed = store.load_by_status("crashed")
         assert len(crashed) == 1
         assert crashed[0].graph_instance_id == 2
@@ -158,11 +163,11 @@ class TestGraphInstanceStoreCRUD:
     def test_load_by_parent(self, kind: str) -> None:
         store = _store_factory(kind)()
         store.save(
-            _make_instance(graph_instance_id=1, parent_instance_id=_PARENT_INSTANCE_ID, parent_node="child_a")
+            _make_metadata(graph_instance_id=1, parent_instance_id=_PARENT_INSTANCE_ID, parent_node="child_a")
         )
-        store.save(_make_instance(graph_instance_id=2))
+        store.save(_make_metadata(graph_instance_id=2))
         store.save(
-            _make_instance(graph_instance_id=3, parent_instance_id=_PARENT_INSTANCE_ID, parent_node="child_b")
+            _make_metadata(graph_instance_id=3, parent_instance_id=_PARENT_INSTANCE_ID, parent_node="child_b")
         )
         children = store.load_by_parent(_PARENT_INSTANCE_ID)
         assert len(children) == 2
@@ -176,7 +181,7 @@ class TestGraphInstanceStoreCRUD:
 
     def test_update_status(self, kind: str) -> None:
         store = _store_factory(kind)()
-        store.save(_make_instance(status="running"))
+        store.save(_make_metadata(status="running"))
         store.update_status(_GRAPH_INSTANCE_ID, "paused")
         loaded = store.load_by_id(_GRAPH_INSTANCE_ID)
         assert loaded is not None
@@ -184,7 +189,7 @@ class TestGraphInstanceStoreCRUD:
 
     def test_update_status_all_lifecycle_transitions(self, kind: str) -> None:
         store = _store_factory(kind)()
-        store.save(_make_instance(status="running"))
+        store.save(_make_metadata(status="running"))
         for status in ("paused", "stopped", "crashed", "completed", "failed"):
             store.update_status(_GRAPH_INSTANCE_ID, status)
             loaded = store.load_by_id(_GRAPH_INSTANCE_ID)
@@ -197,7 +202,7 @@ class TestGraphInstanceStoreCRUD:
 
     def test_delete_removes_instance(self, kind: str) -> None:
         store = _store_factory(kind)()
-        store.save(_make_instance())
+        store.save(_make_metadata())
         store.delete(_GRAPH_INSTANCE_ID)
         assert store.load_by_id(_GRAPH_INSTANCE_ID) is None
 
@@ -207,8 +212,8 @@ class TestGraphInstanceStoreCRUD:
 
     def test_different_instances_isolated(self, kind: str) -> None:
         store = _store_factory(kind)()
-        store.save(_make_instance(graph_instance_id=1, status="running"))
-        store.save(_make_instance(graph_instance_id=2, status="crashed"))
+        store.save(_make_metadata(graph_instance_id=1, status="running"))
+        store.save(_make_metadata(graph_instance_id=2, status="crashed"))
         assert store.load_by_id(1) is not None
         assert store.load_by_id(1).status == "running"  # type: ignore[union-attr]
         assert store.load_by_id(2) is not None
@@ -217,7 +222,7 @@ class TestGraphInstanceStoreCRUD:
     def test_save_preserves_parent_linkage(self, kind: str) -> None:
         store = _store_factory(kind)()
         store.save(
-            _make_instance(
+            _make_metadata(
                 parent_instance_id=_PARENT_INSTANCE_ID,
                 parent_node="spawn_node",
             )
@@ -229,7 +234,7 @@ class TestGraphInstanceStoreCRUD:
 
     def test_save_preserves_null_parent(self, kind: str) -> None:
         store = _store_factory(kind)()
-        store.save(_make_instance(parent_instance_id=None, parent_node=None))
+        store.save(_make_metadata(parent_instance_id=None, parent_node=None))
         loaded = store.load_by_id(_GRAPH_INSTANCE_ID)
         assert loaded is not None
         assert loaded.parent_instance_id is None
@@ -237,8 +242,8 @@ class TestGraphInstanceStoreCRUD:
 
     def test_load_by_status_returns_correct_spec_id(self, kind: str) -> None:
         store = _store_factory(kind)()
-        store.save(_make_instance(graph_instance_id=1, spec_id=111, status="running"))
-        store.save(_make_instance(graph_instance_id=2, spec_id=222, status="running"))
+        store.save(_make_metadata(graph_instance_id=1, spec_id=111, status="running"))
+        store.save(_make_metadata(graph_instance_id=2, spec_id=222, status="running"))
         result = store.load_by_status("running")
         assert len(result) == 2
         spec_ids = {i.spec_id for i in result}
@@ -253,7 +258,7 @@ class TestSqliteGraphInstanceStoreSpecifics:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = str(Path(tmp) / "instances.db")
             store1 = SqliteGraphInstanceStore(db_path)
-            store1.save(_make_instance(status="running"))
+            store1.save(_make_metadata(status="running"))
             store1.close()
             store2 = SqliteGraphInstanceStore(db_path)
             loaded = store2.load_by_id(_GRAPH_INSTANCE_ID)
@@ -298,7 +303,7 @@ class TestSqliteGraphInstanceStoreSpecifics:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = str(Path(tmp) / "instances.db")
             store1 = SqliteGraphInstanceStore(db_path)
-            store1.save(_make_instance(graph_instance_id=42, status="crashed"))
+            store1.save(_make_metadata(graph_instance_id=42, status="crashed"))
             store1.close()
             store2 = SqliteGraphInstanceStore(db_path)
             loaded = store2.load_by_id(42)
@@ -310,7 +315,7 @@ class TestSqliteGraphInstanceStoreSpecifics:
         from modex_graph.instance_store import _COL_CREATED_AT, _INSTANCE_TABLE
 
         store = SqliteGraphInstanceStore(":memory:")
-        store.save(_make_instance())
+        store.save(_make_metadata())
         row = store._conn.execute(
             f"SELECT {_COL_CREATED_AT} FROM {_INSTANCE_TABLE}"
         ).fetchone()
@@ -340,7 +345,7 @@ class TestSqliteGraphInstanceStoreSpecifics:
         )
 
         store = SqliteGraphInstanceStore(":memory:")
-        store.save(_make_instance(status="running"))
+        store.save(_make_metadata(status="running"))
         original_row = store._conn.execute(
             f"SELECT {_COL_UPDATED_AT} FROM {_INSTANCE_TABLE} "
             f"WHERE graph_instance_id = ?",
@@ -365,9 +370,9 @@ class TestSqliteGraphInstanceStoreSpecifics:
 
     def test_upsert_via_on_conflict(self) -> None:
         store = SqliteGraphInstanceStore(":memory:")
-        store.save(_make_instance(status="running"))
-        store.save(_make_instance(status="completed"))
-        store.save(_make_instance(status="failed"))
+        store.save(_make_metadata(status="running"))
+        store.save(_make_metadata(status="completed"))
+        store.save(_make_metadata(status="failed"))
         loaded = store.load_by_id(_GRAPH_INSTANCE_ID)
         assert loaded is not None
         assert loaded.status == "failed"
@@ -385,12 +390,12 @@ class TestSqliteGraphInstanceStoreSpecifics:
 class TestInMemoryGraphInstanceStoreSpecifics:
     def test_internal_dict_keyed_by_id(self) -> None:
         store = InMemoryGraphInstanceStore()
-        store.save(_make_instance())
+        store.save(_make_metadata())
         assert _GRAPH_INSTANCE_ID in store._instances
 
     def test_update_status_replaces_with_new_instance(self) -> None:
         store = InMemoryGraphInstanceStore()
-        store.save(_make_instance(status="running"))
+        store.save(_make_metadata(status="running"))
         original = store._instances[_GRAPH_INSTANCE_ID]
         store.update_status(_GRAPH_INSTANCE_ID, "crashed")
         updated = store._instances[_GRAPH_INSTANCE_ID]
@@ -400,7 +405,7 @@ class TestInMemoryGraphInstanceStoreSpecifics:
 
     def test_save_upsert_replaces(self) -> None:
         store = InMemoryGraphInstanceStore()
-        store.save(_make_instance(status="running"))
-        store.save(_make_instance(status="completed"))
+        store.save(_make_metadata(status="running"))
+        store.save(_make_metadata(status="completed"))
         assert len(store._instances) == 1
         assert store._instances[_GRAPH_INSTANCE_ID].status == "completed"

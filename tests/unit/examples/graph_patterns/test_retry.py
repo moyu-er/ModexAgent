@@ -1,3 +1,4 @@
+# ruff: noqa: ANN401
 """Tests for ``examples/graph_patterns/retry.py``.
 
 Verifies:
@@ -15,7 +16,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Annotated
+from typing import Any, Annotated
 
 _EXAMPLES_DIR = Path(__file__).parent.parent.parent.parent.parent / "examples"
 if str(_EXAMPLES_DIR) not in sys.path:
@@ -31,13 +32,45 @@ from modex_graph import (  # noqa: E402
     GraphContext,
     GraphEngine,
     GraphNode,
+    GraphPersistenceCoordinator,
     GraphRuntime,
     GraphState,
     IntegratedInput,
+    InvocationContext,
     LastValue,
     Node,
     NodeResult,
+    NullDeliverStoreFactory,
+    NullGraphMetadataStore,
+    NullNodeStateFactory,
 )
+
+
+class _AutoRegCoord(GraphPersistenceCoordinator):
+    def begin_invocation(self, node_name: str) -> InvocationContext:
+        if self.get_deliver_store(node_name) is None:
+            self.register_node(node_name)
+        return super().begin_invocation(node_name)
+    def route_deliver(
+        self,
+        target_node: str,
+        content: Any,
+        source_node: str,
+        source_invocation_id: int,
+    ) -> int | None:
+        if target_node != GraphNode.END and self.get_deliver_store(target_node) is None:
+            self.register_node(target_node)
+        return super().route_deliver(target_node, content, source_node, source_invocation_id)
+
+
+
+def _make_coordinator() -> _AutoRegCoord:
+    return _AutoRegCoord(
+        graph_instance_id=0,
+        graph_metadata_store=NullGraphMetadataStore(),
+        default_node_state_factory=NullNodeStateFactory(),
+        default_deliver_store_factory=NullDeliverStoreFactory(),
+    )
 
 
 class RetryState(GraphState):
@@ -121,6 +154,7 @@ def _make_retry_ctx(state: RetryState | None = None) -> GraphContext[RetryState]
     return GraphContext(
         state=state if state is not None else RetryState(),
         runtime=GraphRuntime(),
+        coordinator=_make_coordinator(),
     )
 
 
@@ -130,6 +164,7 @@ def _make_topology_ctx(
     return GraphContext(
         state=state if state is not None else TopologyRetryState(),
         runtime=GraphRuntime(),
+        coordinator=_make_coordinator(),
     )
 
 
