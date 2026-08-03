@@ -326,7 +326,7 @@ class LastValue(BaseChannel[T]):
         # field in one generation is a single-writer violation. Raise
         # InvalidUpdateError (a GraphBubbleUp) so the engine propagates it.
         if len(values) > 1:
-            from .exceptions import InvalidUpdateError
+            from ..exceptions import InvalidUpdateError
 
             raise InvalidUpdateError(
                 f"LastValue channel received {len(values)} concurrent writes. "

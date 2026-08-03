@@ -80,7 +80,7 @@ import asyncio
 from typing import Annotated, Any
 
 import pytest
-from helpers import TrackingRuntime, make_runtime, make_coordinator
+from helpers import TrackingRuntime, make_coordinator, make_runtime
 
 from modex_graph import (
     Graph,
@@ -119,9 +119,9 @@ def make_parallel_ctx(state: ErrorState | None = None) -> GraphContext[ErrorStat
     )
 
 
-def make_tracking_ctx(state: ErrorState | None = None) -> tuple[
-    GraphContext[ErrorState], TrackingRuntime
-]:
+def make_tracking_ctx(
+    state: ErrorState | None = None,
+) -> tuple[GraphContext[ErrorState], TrackingRuntime]:
     """Build a ctx backed by TrackingRuntime; return (ctx, runtime)."""
     runtime = TrackingRuntime()
     ctx = GraphContext(
@@ -143,7 +143,9 @@ class FanOutNode(Node[ErrorState]):
         self.target_a = target_a
         self.target_b = target_b
 
-    def execute(self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput) -> NodeResult:
+    def execute(
+        self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         self.deliver(None, self.target_a, ctx)
         self.deliver(None, self.target_b, ctx)
         return NodeResult()
@@ -152,7 +154,9 @@ class FanOutNode(Node[ErrorState]):
 class DispatchToEndNode(Node[ErrorState]):
     """No-op node that dispatches to END."""
 
-    def execute(self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput) -> NodeResult:
+    def execute(
+        self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         self.deliver(None, GraphNode.END, ctx)
         return NodeResult()
 
@@ -171,7 +175,9 @@ class AsyncRaisingNode(Node[ErrorState]):
         self.exc = exc
         self.msg = msg
 
-    async def execute(self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput) -> NodeResult:
+    async def execute(
+        self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         await asyncio.sleep(0)
         raise self.exc(self.msg)
 
@@ -182,7 +188,9 @@ class AsyncInterruptNode(Node[ErrorState]):
     def __init__(self, value: Any = "interrupted") -> None:
         self.value = value
 
-    async def execute(self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput) -> NodeResult:
+    async def execute(
+        self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         await asyncio.sleep(0)
         ctx.interrupt(self.value)
         return NodeResult()  # Unreachable — interrupt raises.
@@ -200,7 +208,9 @@ class AsyncSlowNode(Node[ErrorState]):
         self.started = False
         self.completed = False
 
-    async def execute(self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput) -> NodeResult:
+    async def execute(
+        self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         self.started = True
         await asyncio.sleep(10)
         self.completed = True
@@ -215,7 +225,9 @@ class AsyncEmitNode(Node[ErrorState]):
         self.event_type = event_type
         self.count = count
 
-    async def execute(self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput) -> NodeResult:
+    async def execute(
+        self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         # Yield so the sibling task also gets to run emits concurrently.
         await asyncio.sleep(0)
         for i in range(self.count):
@@ -231,7 +243,9 @@ class WriteLastValueNode(Node[ErrorState]):
         self.field = field
         self.value = value
 
-    def execute(self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput) -> NodeResult:
+    def execute(
+        self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         self.deliver(None, None, ctx)
         return NodeResult(state_update={self.field: self.value})
 
@@ -492,8 +506,11 @@ class TestConcurrentEmitSafe:
         A node that emits many events should complete just as fast as
         one that emits none (emit is fire-and-forget).
         """
+
         class NoEmitNode(Node[ErrorState]):
-            async def execute(self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput) -> NodeResult:
+            async def execute(
+                self, ctx: GraphContext[ErrorState], integrated_input: IntegratedInput
+            ) -> NodeResult:
                 await asyncio.sleep(0)
                 self.deliver(None, GraphNode.END, ctx)
                 return NodeResult()

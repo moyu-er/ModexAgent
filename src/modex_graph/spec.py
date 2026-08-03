@@ -28,7 +28,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .constants import GraphNode, NodeTrigger, SchedulerKind
-from .state_schema import StateSchema
+from .state import StateSchema
 
 
 class NodeSpec(BaseModel):
@@ -122,9 +122,7 @@ class GraphSpec(BaseModel):
         - Edge endpoints are either sentinels or reference declared nodes.
         """
         if not self.nodes:
-            raise ValueError(
-                "GraphSpec must declare at least one node (got empty nodes list)."
-            )
+            raise ValueError("GraphSpec must declare at least one node (got empty nodes list).")
 
         # No duplicate node names.
         names = [n.name for n in self.nodes]
@@ -136,15 +134,12 @@ class GraphSpec(BaseModel):
             )
 
         if self.max_iterations <= 0:
-            raise ValueError(
-                f"GraphSpec.max_iterations must be > 0 (got {self.max_iterations})."
-            )
+            raise ValueError(f"GraphSpec.max_iterations must be > 0 (got {self.max_iterations}).")
 
         # At least one entry edge from GraphNode.START to a real node.
         node_name_set = set(names)
         has_entry = any(
-            e.source == GraphNode.START and e.target in node_name_set
-            for e in self.edges
+            e.source == GraphNode.START and e.target in node_name_set for e in self.edges
         )
         if not has_entry:
             raise ValueError(

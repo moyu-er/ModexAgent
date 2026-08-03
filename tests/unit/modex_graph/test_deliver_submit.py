@@ -268,12 +268,18 @@ class TestExecuteBasic:
         store = ctx.coordinator.get_deliver_store("read_integrated")
         assert store is not None
         store.accumulate(
-            graph_instance_id=0, target_node="read_integrated",
-            source_node="up_a", source_invocation_id=1, content="hello",
+            graph_instance_id=0,
+            target_node="read_integrated",
+            source_node="up_a",
+            source_invocation_id=1,
+            content="hello",
         )
         store.accumulate(
-            graph_instance_id=0, target_node="read_integrated",
-            source_node="up_b", source_invocation_id=2, content="world",
+            graph_instance_id=0,
+            target_node="read_integrated",
+            source_node="up_b",
+            source_invocation_id=2,
+            content="world",
         )
         await node.run(ctx)
         assert ctx.state.name == "['hello', 'world']"
@@ -295,12 +301,18 @@ class TestExecuteBasic:
         store = ctx.coordinator.get_deliver_store("read_integrated")
         assert store is not None
         store.accumulate(
-            graph_instance_id=0, target_node="read_integrated",
-            source_node="up_a", source_invocation_id=1, content="hello",
+            graph_instance_id=0,
+            target_node="read_integrated",
+            source_node="up_a",
+            source_invocation_id=1,
+            content="hello",
         )
         store.accumulate(
-            graph_instance_id=0, target_node="read_integrated",
-            source_node="up_b", source_invocation_id=2, content="world",
+            graph_instance_id=0,
+            target_node="read_integrated",
+            source_node="up_b",
+            source_invocation_id=2,
+            content="world",
         )
         await node.run(ctx)
         assert ctx.state.name == "hello + world"
@@ -655,12 +667,18 @@ class TestFullFlowWithStore:
         store = ctx.coordinator.get_deliver_store("transform")
         assert store is not None
         store.accumulate(
-            graph_instance_id=0, target_node="transform",
-            source_node="up_a", source_invocation_id=1, content="input1",
+            graph_instance_id=0,
+            target_node="transform",
+            source_node="up_a",
+            source_invocation_id=1,
+            content="input1",
         )
         store.accumulate(
-            graph_instance_id=0, target_node="transform",
-            source_node="up_b", source_invocation_id=2, content="input2",
+            graph_instance_id=0,
+            target_node="transform",
+            source_node="up_b",
+            source_invocation_id=2,
+            content="input2",
         )
         await node.run(ctx)
         assert "transformed_output" in node._submit_result

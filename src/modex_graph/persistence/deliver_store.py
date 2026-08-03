@@ -38,9 +38,9 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .constants import DeliverConsumptionStatus
+from ..constants import DeliverConsumptionStatus
+from ..id_generator import default_id_generator
 from .dispatch_store import now_ms
-from .id_generator import default_id_generator
 
 # ── Table / column name constants ─────────────────────────────────────────
 # Centralized (rule 14) — same pattern as dispatch_store.py. The DDL/DML

@@ -17,7 +17,7 @@ from __future__ import annotations
 import sqlite3
 from abc import ABC, abstractmethod
 
-from .constants import GraphInstanceStatus
+from ..constants import GraphInstanceStatus
 from .dispatch_store import now_ms
 from .graph_metadata import GraphMetadata
 

@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from .constants import GraphInstanceStatus
+from ..constants import GraphInstanceStatus
 from .node_state import NodeInvocationRecord
 
 

@@ -18,13 +18,14 @@ Covers:
   inherits Scheduler.
 - Zero behaviour change: Graph.compile(scheduler=LINEAR) == Graph.compile().
 """
+
 from __future__ import annotations
 
 import inspect
 from abc import ABC
 
 import pytest
-from helpers import AddNode, AsyncAddNode, CounterState, make_ctx, make_coordinator
+from helpers import AddNode, AsyncAddNode, CounterState, make_coordinator, make_ctx
 
 from modex_graph import (
     Graph,
@@ -167,7 +168,9 @@ class TestLinearSchedulerExecution:
 
     async def test_max_iterations_raises(self) -> None:
         class InfiniteNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+            def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> NodeResult:
                 ctx.state.count += 1
                 self.deliver(None, "inf", ctx)
                 return NodeResult()

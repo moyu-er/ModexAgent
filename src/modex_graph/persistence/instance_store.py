@@ -41,7 +41,7 @@ import sqlite3
 from abc import ABC, abstractmethod
 from typing import Any
 
-from .constants import GraphInstanceStatus
+from ..constants import GraphInstanceStatus
 from .dispatch_store import now_ms
 from .graph_metadata import GraphMetadata
 
@@ -59,9 +59,7 @@ _COL_UPDATED_AT = "updated_at"
 
 # Allowed status values (matches the CHECK constraint in 001_initial.sql
 # table 17). Kept as a module-level constant for parity with the migration.
-_ALLOWED_STATUSES = frozenset(
-    {"running", "paused", "stopped", "crashed", "completed", "failed"}
-)
+_ALLOWED_STATUSES = frozenset({"running", "paused", "stopped", "crashed", "completed", "failed"})
 
 # Default values for GraphMetadata fields not stored in the graph_instances
 # table. The table only has identity + status columns; the scheduler
@@ -185,20 +183,14 @@ class InMemoryGraphInstanceStore(GraphInstanceStore):
         return [m for m in self._instances.values() if m.status == status]
 
     def load_by_parent(self, parent_instance_id: int) -> list[GraphMetadata]:
-        return [
-            m
-            for m in self._instances.values()
-            if m.parent_instance_id == parent_instance_id
-        ]
+        return [m for m in self._instances.values() if m.parent_instance_id == parent_instance_id]
 
     def update_status(self, graph_instance_id: int, status: str) -> None:
         existing = self._instances.get(graph_instance_id)
         if existing is None:
             return
         # Frozen model — replace with a new instance with updated status.
-        self._instances[graph_instance_id] = existing.model_copy(
-            update={"status": status}
-        )
+        self._instances[graph_instance_id] = existing.model_copy(update={"status": status})
 
     def delete(self, graph_instance_id: int) -> None:
         self._instances.pop(graph_instance_id, None)
@@ -352,8 +344,7 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
 
     def delete(self, graph_instance_id: int) -> None:
         self._conn.execute(
-            f"DELETE FROM {_INSTANCE_TABLE} "
-            f"WHERE {_COL_GRAPH_INSTANCE_ID} = ?",
+            f"DELETE FROM {_INSTANCE_TABLE} WHERE {_COL_GRAPH_INSTANCE_ID} = ?",
             (graph_instance_id,),
         )
         self._conn.commit()

@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from helpers import CounterState, make_runtime, make_coordinator
+from helpers import CounterState, make_coordinator, make_runtime
 
 from modex_graph import (
     DispatchEvent,
@@ -221,7 +221,7 @@ class TestSqliteDispatchStoreSpecifics:
 
     def test_timestamps_are_epoch_ms(self) -> None:
         """created_at_ms column stores INTEGER epoch milliseconds (ADR-0029)."""
-        from modex_graph.dispatch_store import _COL_CREATED_AT_MS, _DISPATCH_TABLE
+        from modex_graph.persistence.dispatch_store import _COL_CREATED_AT_MS, _DISPATCH_TABLE
 
         store = SqliteDispatchStore(":memory:")
         store.record(_make_event(), "run-1")
@@ -235,7 +235,7 @@ class TestSqliteDispatchStoreSpecifics:
 
     def test_table_and_column_constants(self) -> None:
         """Table/column names come from module constants (rule 14)."""
-        from modex_graph.dispatch_store import (
+        from modex_graph.persistence.dispatch_store import (
             _COL_CREATED_AT_MS,
             _COL_ID,
             _COL_PAYLOAD,
@@ -281,7 +281,7 @@ class TestSqliteDispatchStoreSpecifics:
 
     def test_payload_null_stored_as_sql_null(self) -> None:
         """None payload is stored as SQL NULL, not the string 'null'."""
-        from modex_graph.dispatch_store import _COL_PAYLOAD, _DISPATCH_TABLE
+        from modex_graph.persistence.dispatch_store import _COL_PAYLOAD, _DISPATCH_TABLE
 
         store = SqliteDispatchStore(":memory:")
         store.record(_make_event("a#0", "b", payload=None), "run-1")
@@ -296,20 +296,20 @@ class TestSqliteDispatchStoreSpecifics:
 
 class TestNowMs:
     def test_returns_int(self) -> None:
-        from modex_graph.dispatch_store import now_ms
+        from modex_graph.persistence.dispatch_store import now_ms
 
         ts = now_ms()
         assert isinstance(ts, int)
 
     def test_epoch_milliseconds(self) -> None:
-        from modex_graph.dispatch_store import now_ms
+        from modex_graph.persistence.dispatch_store import now_ms
 
         ts = now_ms()
         assert ts > 1_700_000_000_000
 
     def test_monotonicish(self) -> None:
         """Two calls return non-decreasing values."""
-        from modex_graph.dispatch_store import now_ms
+        from modex_graph.persistence.dispatch_store import now_ms
 
         t1 = now_ms()
         t2 = now_ms()
@@ -326,7 +326,9 @@ class _DispatchAddNode(Node[CounterState]):
         self.amount = amount
         self.target = target
 
-    def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+    def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         ctx.state.count += self.amount
         if self.target is not None:
             self.deliver(None, self.target, ctx)
@@ -341,7 +343,9 @@ class _DispatchAddWithPayloadNode(Node[CounterState]):
         self.target = target
         self.payload = payload
 
-    def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+    def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         ctx.state.count += self.amount
         self.deliver(self.payload, self.target, ctx)
         return NodeResult()

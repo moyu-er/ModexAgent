@@ -122,9 +122,7 @@ class LinearScheduler[S: "GraphState"](Scheduler[S]):
                 # for custom submit overrides that don't call _submit).
                 current = next(iter(node.result.keys()))
             else:
-                raise RoutingError(
-                    f"Node {previous!r} did not deliver."
-                )
+                raise RoutingError(f"Node {previous!r} did not deliver.")
 
             iteration += 1
 
@@ -147,7 +145,11 @@ class LinearScheduler[S: "GraphState"](Scheduler[S]):
         payload = state_update.get("delivered") if state_update else None
         self._dispatches.setdefault(target, []).append(payload)
         if self._ctx is not None and target != GraphNode.END:
-            source_node = state_update.get("_source_node", source_instance) if state_update else source_instance
+            source_node = (
+                state_update.get("_source_node", source_instance)
+                if state_update
+                else source_instance
+            )
             source_inv_id = state_update.get("_source_inv_id", 0) if state_update else 0
             self._ctx.coordinator.route_deliver(target, payload, source_node, source_inv_id)
 

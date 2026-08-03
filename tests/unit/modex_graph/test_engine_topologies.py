@@ -1,4 +1,5 @@
 """Engine topology tests: linear, conditional, loop, interrupt, sync/async/mixed."""
+
 from __future__ import annotations
 
 import pytest
@@ -57,7 +58,9 @@ class TestLoopWithCycleGuard:
 
     async def test_loop_exits_via_deliver(self) -> None:
         class LoopNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+            def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> NodeResult:
                 ctx.state.count += 1
                 if ctx.state.count >= 5:
                     self.deliver(None, GraphNode.END, ctx)
@@ -78,7 +81,9 @@ class TestLoopWithCycleGuard:
 
     async def test_max_iterations_raises_recursion_error(self) -> None:
         class InfiniteNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+            def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> NodeResult:
                 ctx.state.count += 1
                 self.deliver(None, "inf", ctx)
                 return NodeResult()
@@ -113,7 +118,9 @@ class TestHitlInterruptResume:
         """Suspend-without-re-execution: mutations before interrupt persist."""
 
         class MutateThenInterrupt(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+            def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> NodeResult:
                 ctx.state.count += 42
                 ctx.interrupt("paused")
                 return NodeResult()
@@ -136,7 +143,9 @@ class TestHitlInterruptResume:
         class StartNode(Node[CounterState]):
             """Detects suspended state: if count > 0, route to 'after_resume'."""
 
-            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+            def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> NodeResult:
                 if ctx.state.count > 0:
                     self.deliver(None, "after_resume", ctx)
                 else:
@@ -169,7 +178,9 @@ class TestHitlInterruptResume:
         """Resume routing via state.resume_target + deliver()."""
 
         class EntryNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+            def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> NodeResult:
                 if ctx.state.resume_target is not None:
                     target = ctx.state.resume_target
                     ctx.state.resume_target = None
@@ -180,7 +191,9 @@ class TestHitlInterruptResume:
                 return NodeResult()
 
         class SuspendNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+            def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> NodeResult:
                 ctx.state.resume_target = "after_resume"
                 ctx.interrupt("paused")
                 return NodeResult()

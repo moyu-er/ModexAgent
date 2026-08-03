@@ -298,14 +298,20 @@ class TestDeliverStoreConsumption:
     def test_query_consumable_returns_pending(self, kind: str) -> None:
         store = _store_factory(kind)()
         _accumulate(store, target_node="a", content="data")
-        assert [record.content for record in store.query_consumable(_GRAPH_INSTANCE_ID, "a")] == ["data"]
+        assert [record.content for record in store.query_consumable(_GRAPH_INSTANCE_ID, "a")] == [
+            "data"
+        ]
 
     def test_mark_consumed_records_consumer(self, kind: str) -> None:
         store = _store_factory(kind)()
         deliver_id = _accumulate(store, target_node="a", content="data")
         store.mark_consumed([deliver_id], 1)
 
-        records = store._records[_GRAPH_INSTANCE_ID] if kind == "memory" else store.query_consumable(_GRAPH_INSTANCE_ID, "a")
+        records = (
+            store._records[_GRAPH_INSTANCE_ID]
+            if kind == "memory"
+            else store.query_consumable(_GRAPH_INSTANCE_ID, "a")
+        )
         assert records[0].consumed_by_invocation_id == 1
 
     def test_promote_consumed_finishes_strategy_transition(self, kind: str) -> None:
@@ -533,7 +539,7 @@ class TestSqliteDeliverStoreSpecifics:
             store2.close()
 
     def test_table_and_column_constants(self) -> None:
-        from modex_graph.deliver_store import (
+        from modex_graph.persistence.deliver_store import (
             _COL_CONSUMED_BY_INVOCATION_ID,
             _COL_CONTENT_JSON,
             _COL_CREATED_AT,
@@ -591,7 +597,7 @@ class TestSqliteDeliverStoreSpecifics:
             store2.close()
 
     def test_timestamps_are_epoch_ms(self) -> None:
-        from modex_graph.deliver_store import _COL_CREATED_AT, _DELIVER_TABLE
+        from modex_graph.persistence.deliver_store import _COL_CREATED_AT, _DELIVER_TABLE
 
         store = SqliteDeliverStore(":memory:")
         store.accumulate(
@@ -609,7 +615,7 @@ class TestSqliteDeliverStoreSpecifics:
         store.close()
 
     def test_status_check_constraint_rejects_invalid(self) -> None:
-        from modex_graph.deliver_store import _DELIVER_TABLE
+        from modex_graph.persistence.deliver_store import _DELIVER_TABLE
 
         store = SqliteDeliverStore(":memory:")
         with pytest.raises(sqlite3_integrity_error()):
@@ -621,7 +627,7 @@ class TestSqliteDeliverStoreSpecifics:
         store.close()
 
     def test_status_check_constraint_accepts_consumption_values(self) -> None:
-        from modex_graph.deliver_store import _DELIVER_TABLE
+        from modex_graph.persistence.deliver_store import _DELIVER_TABLE
 
         store = SqliteDeliverStore(":memory:")
         for status_val in (
@@ -641,7 +647,7 @@ class TestSqliteDeliverStoreSpecifics:
         store.close()
 
     def test_new_columns_exist_after_init(self) -> None:
-        from modex_graph.deliver_store import _DELIVER_TABLE
+        from modex_graph.persistence.deliver_store import _DELIVER_TABLE
 
         store = SqliteDeliverStore(":memory:")
         columns = {

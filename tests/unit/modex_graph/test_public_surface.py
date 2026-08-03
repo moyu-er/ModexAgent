@@ -1,4 +1,5 @@
 """Public surface import test — all acceptance-criteria exports resolve."""
+
 from __future__ import annotations
 
 
@@ -6,11 +7,26 @@ def test_all_exports_importable() -> None:
     import modex_graph
 
     expected = {
-        "Graph", "Node", "CompiledGraph", "GraphEngine", "GraphContext",
-        "NodeResult", "BaseChannel", "LastValue",
-        "ReducerChannel", "GraphState", "GraphRuntime", "GraphBubbleUp",
-        "GraphInterrupt", "GraphDrained", "ParentCommand", "GraphNode",
-        "register_codec", "Codec", "RoutingError", "GraphRecursionError",
+        "Graph",
+        "Node",
+        "CompiledGraph",
+        "GraphEngine",
+        "GraphContext",
+        "NodeResult",
+        "BaseChannel",
+        "LastValue",
+        "ReducerChannel",
+        "GraphState",
+        "GraphRuntime",
+        "GraphBubbleUp",
+        "GraphInterrupt",
+        "GraphDrained",
+        "ParentCommand",
+        "GraphNode",
+        "register_codec",
+        "Codec",
+        "RoutingError",
+        "GraphRecursionError",
     }
     actual = set(modex_graph.__all__)
     missing = expected - actual

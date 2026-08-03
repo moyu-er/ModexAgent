@@ -96,9 +96,7 @@ class NodeRegistry:
 
     def __init__(self) -> None:
         # factory + optional config-validation model, keyed by node_type
-        self._factories: dict[
-            str, tuple[NodeFactory, type[BaseModel] | None]
-        ] = {}
+        self._factories: dict[str, tuple[NodeFactory, type[BaseModel] | None]] = {}
 
     def register(
         self,

@@ -42,8 +42,7 @@ from .exceptions import GraphInterrupt
 from .runtime import GraphRuntime
 
 if TYPE_CHECKING:
-    from .graph_metadata import InvocationContext
-    from .persistence_coordinator import GraphPersistenceCoordinator
+    from .persistence import GraphPersistenceCoordinator, InvocationContext
     from .state import GraphState
 
 S = TypeVar("S", bound="GraphState")

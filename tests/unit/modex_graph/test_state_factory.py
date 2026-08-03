@@ -375,7 +375,9 @@ class TestStateRegistry:
 
     def test_registered_names_sorted(self) -> None:
         registry = StateRegistry()
-        schema = StateSchema(name="dyn", fields=[StateFieldSpec(name="x", field_type="int", default=0)])
+        schema = StateSchema(
+            name="dyn", fields=[StateFieldSpec(name="x", field_type="int", default=0)]
+        )
         registry.register("zeta", SimpleStateFactory(_SimpleState))
         registry.register("alpha", DynamicStateFactory(schema))
         registry.register("mid", SimpleStateFactory(_ReducerState))

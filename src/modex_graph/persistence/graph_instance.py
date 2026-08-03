@@ -42,7 +42,7 @@ Lifecycle status uses the `GraphInstanceStatus` StrEnum
 
 from __future__ import annotations
 
-from .constants import GraphInstanceStatus
+from ..constants import GraphInstanceStatus
 from .graph_metadata import GraphMetadata, GraphStateSnapshot, RecoveryContext
 from .persistence_coordinator import GraphPersistenceCoordinator
 

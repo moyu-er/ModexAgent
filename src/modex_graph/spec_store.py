@@ -30,8 +30,8 @@ from __future__ import annotations
 import sqlite3
 from abc import ABC, abstractmethod
 
-from .dispatch_store import now_ms
 from .id_generator import default_id_generator
+from .persistence.dispatch_store import now_ms
 from .spec import GraphSpec
 
 # ── Table / column name constants ─────────────────────────────────────────
@@ -229,8 +229,7 @@ class SqliteGraphSpecStore(GraphSpecStore):
         )
         # Index matching the migration (idx_graph_specs_name).
         conn.execute(
-            f"CREATE INDEX IF NOT EXISTS idx_{_SPEC_TABLE}_name "
-            f"ON {_SPEC_TABLE} ({_COL_NAME})"
+            f"CREATE INDEX IF NOT EXISTS idx_{_SPEC_TABLE}_name ON {_SPEC_TABLE} ({_COL_NAME})"
         )
         conn.commit()
 
@@ -251,8 +250,7 @@ class SqliteGraphSpecStore(GraphSpecStore):
 
     def load_by_id(self, spec_id: int) -> GraphSpec | None:
         row = self._conn.execute(
-            f"SELECT {_COL_SPEC_JSON} FROM {_SPEC_TABLE} "
-            f"WHERE {_COL_SPEC_ID} = ?",
+            f"SELECT {_COL_SPEC_JSON} FROM {_SPEC_TABLE} WHERE {_COL_SPEC_ID} = ?",
             (spec_id,),
         ).fetchone()
         if row is None:
@@ -271,8 +269,7 @@ class SqliteGraphSpecStore(GraphSpecStore):
 
     def list_all(self) -> list[GraphSpec]:
         rows = self._conn.execute(
-            f"SELECT {_COL_SPEC_JSON} FROM {_SPEC_TABLE} "
-            f"ORDER BY {_COL_SPEC_ID}"
+            f"SELECT {_COL_SPEC_JSON} FROM {_SPEC_TABLE} ORDER BY {_COL_SPEC_ID}"
         ).fetchall()
         return [GraphSpec.model_validate_json(r[0]) for r in rows]
 

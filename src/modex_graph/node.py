@@ -50,7 +50,6 @@ from typing import TYPE_CHECKING, Any
 from typing_extensions import TypeVar
 
 from .constants import GraphNode, NodeTrigger
-from .deliver_store import DeliverStore
 from .exceptions import GraphBubbleUp, GraphInterrupt, RoutingError
 from .integration import (
     DefaultInputIntegrator,
@@ -58,6 +57,7 @@ from .integration import (
     IntegratedInput,
     IntegratedPayload,
 )
+from .persistence import DeliverStore
 
 if TYPE_CHECKING:
     from .compiled_graph import CompiledGraph
@@ -234,12 +234,14 @@ class Node[S: "GraphState"](ABC):
             # Integrate (may throw — covered by crash/finalize).
             if is_resume:
                 assert prev is not None
-                integrated = self.input_integrator.integrate([
-                    IntegratedPayload(
-                        source_node="__resume__",
-                        content=prev.state_json,
-                    )
-                ])
+                integrated = self.input_integrator.integrate(
+                    [
+                        IntegratedPayload(
+                            source_node="__resume__",
+                            content=prev.state_json,
+                        )
+                    ]
+                )
             else:
                 delivers = coordinator.collect_consumable_delivers(
                     self.name, invocation.invocation_id
@@ -422,11 +424,14 @@ class Node[S: "GraphState"](ABC):
         for target, contents in groups.items():
             payload: Any = contents[0] if len(contents) == 1 else contents
             inv_ctx = ctx.current_invocation
-            ctx.dispatch(target, state_update={
-                "delivered": payload,
-                "_source_node": inv_ctx.node_name if inv_ctx else self.name,
-                "_source_inv_id": inv_ctx.invocation_id if inv_ctx else 0,
-            })
+            ctx.dispatch(
+                target,
+                state_update={
+                    "delivered": payload,
+                    "_source_node": inv_ctx.node_name if inv_ctx else self.name,
+                    "_source_inv_id": inv_ctx.invocation_id if inv_ctx else 0,
+                },
+            )
 
         # LINEAR-only: scheduler reads this for next-node selection. PARALLEL
         # uses ctx.dispatch. Kept as a fallback for custom submit overrides.

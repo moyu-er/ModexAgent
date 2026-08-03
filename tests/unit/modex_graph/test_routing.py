@@ -1,4 +1,5 @@
 """Routing tests: default edge resolution + deliver-based routing."""
+
 from __future__ import annotations
 
 from helpers import CounterState, make_ctx
@@ -17,7 +18,9 @@ from modex_graph import (
 class _RecordNameNode(Node[CounterState]):
     """Records its name into state.messages, delivers to default target."""
 
-    def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+    def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         ctx.state.messages = ctx.state.messages + [self.name]
         self.deliver(None, None, ctx)
         return NodeResult()
@@ -29,7 +32,9 @@ class _StateUpdateNode(Node[CounterState]):
     def __init__(self, label: str) -> None:
         self.label = label
 
-    def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+    def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         return NodeResult(state_update={"messages": [self.label]})
 
 

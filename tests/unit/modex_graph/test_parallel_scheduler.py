@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from helpers import CounterState, make_ctx, make_runtime, make_coordinator
+from helpers import CounterState, make_coordinator, make_ctx, make_runtime
 from pydantic import ValidationError
 
 from modex_graph import (
@@ -58,7 +58,9 @@ class DispatchAddNode(Node[CounterState]):
         self.amount = amount
         self.target = target
 
-    def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+    def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         ctx.state.count += self.amount
         if self.target is not None:
             self.deliver(None, self.target, ctx)
@@ -73,7 +75,9 @@ class DispatchAddWithPayloadNode(Node[CounterState]):
         self.target = target
         self.payload = payload
 
-    def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+    def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         ctx.state.count += self.amount
         self.deliver(self.payload, self.target, ctx)
         return NodeResult()
@@ -308,7 +312,9 @@ class TestLinearGraphParallel:
         """A node that delivers to END terminates the graph."""
 
         class NoDispatchNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+            def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> NodeResult:
                 ctx.state.count += 10
                 self.deliver(None, None, ctx)
                 return NodeResult()
@@ -436,7 +442,9 @@ class TestRoutingError:
         """ctx.dispatch to a target not in outgoing edges raises RoutingError."""
 
         class BadDispatchNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+            def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> NodeResult:
                 ctx.dispatch("nonexistent")  # no edge from "a" to "nonexistent"
                 return NodeResult()
 
@@ -461,7 +469,9 @@ class TestRoutingError:
         """
 
         class DispatchToBNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+            def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> NodeResult:
                 ctx.dispatch("b")  # "b" exists but no direct edge a→b
                 return NodeResult()
 
@@ -489,7 +499,9 @@ class TestMaxIterations:
         """A node that dispatches to itself loops until max_iterations."""
 
         class SelfDispatchNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+            def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> NodeResult:
                 ctx.state.count += 1
                 self.deliver(None, "loop", ctx)
                 return NodeResult()
@@ -695,7 +707,9 @@ class TestRoutingCompilationIntegration:
         """Node delivers with next_node=None → default edge fires."""
 
         class DeliverDefaultNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+            def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> NodeResult:
                 ctx.state.count += 1
                 self.deliver(None, None, ctx)
                 return NodeResult()

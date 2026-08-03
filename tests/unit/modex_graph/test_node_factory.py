@@ -152,9 +152,7 @@ class TestNodeRegistry:
         registry = NodeRegistry()
         registry.register("plain", _NoSchemaFactory())
 
-        node = registry.create(
-            NodeSpec(name="n1", node_type="plain", config={"anything": True})
-        )
+        node = registry.create(NodeSpec(name="n1", node_type="plain", config={"anything": True}))
         assert isinstance(node, _EchoNode)
 
     def test_config_validation_rejects_invalid(self) -> None:

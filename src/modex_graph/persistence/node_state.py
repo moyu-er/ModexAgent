@@ -49,7 +49,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from .constants import InvocationStatus
+from ..constants import InvocationStatus
 from .dispatch_store import now_ms
 
 
@@ -631,7 +631,7 @@ class SqliteNodeState(NodeState):
         suspended: bool = False,
     ) -> None:
         ts = now_ms()
-        from .id_generator import default_id_generator
+        from ..id_generator import default_id_generator
 
         node_state_id = default_id_generator().generate()
         self._conn.execute(

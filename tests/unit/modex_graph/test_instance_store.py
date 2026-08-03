@@ -135,9 +135,7 @@ class TestGraphInstanceStoreCRUD:
     def test_save_is_upsert(self, kind: str) -> None:
         store = _store_factory(kind)()
         store.save(_make_metadata(status="running"))
-        store.save(
-            _make_metadata(status="completed")
-        )
+        store.save(_make_metadata(status="completed"))
         loaded = store.load_by_id(_GRAPH_INSTANCE_ID)
         assert loaded is not None
         assert loaded.status == "completed"
@@ -163,11 +161,15 @@ class TestGraphInstanceStoreCRUD:
     def test_load_by_parent(self, kind: str) -> None:
         store = _store_factory(kind)()
         store.save(
-            _make_metadata(graph_instance_id=1, parent_instance_id=_PARENT_INSTANCE_ID, parent_node="child_a")
+            _make_metadata(
+                graph_instance_id=1, parent_instance_id=_PARENT_INSTANCE_ID, parent_node="child_a"
+            )
         )
         store.save(_make_metadata(graph_instance_id=2))
         store.save(
-            _make_metadata(graph_instance_id=3, parent_instance_id=_PARENT_INSTANCE_ID, parent_node="child_b")
+            _make_metadata(
+                graph_instance_id=3, parent_instance_id=_PARENT_INSTANCE_ID, parent_node="child_b"
+            )
         )
         children = store.load_by_parent(_PARENT_INSTANCE_ID)
         assert len(children) == 2
@@ -267,7 +269,7 @@ class TestSqliteGraphInstanceStoreSpecifics:
             store2.close()
 
     def test_table_and_column_constants(self) -> None:
-        from modex_graph.instance_store import (
+        from modex_graph.persistence.instance_store import (
             _COL_CREATED_AT,
             _COL_GRAPH_INSTANCE_ID,
             _COL_PARENT_INSTANCE_ID,
@@ -312,13 +314,11 @@ class TestSqliteGraphInstanceStoreSpecifics:
             store2.close()
 
     def test_timestamps_are_epoch_ms(self) -> None:
-        from modex_graph.instance_store import _COL_CREATED_AT, _INSTANCE_TABLE
+        from modex_graph.persistence.instance_store import _COL_CREATED_AT, _INSTANCE_TABLE
 
         store = SqliteGraphInstanceStore(":memory:")
         store.save(_make_metadata())
-        row = store._conn.execute(
-            f"SELECT {_COL_CREATED_AT} FROM {_INSTANCE_TABLE}"
-        ).fetchone()
+        row = store._conn.execute(f"SELECT {_COL_CREATED_AT} FROM {_INSTANCE_TABLE}").fetchone()
         assert row is not None
         ts = row[0]
         assert isinstance(ts, int)
@@ -326,7 +326,7 @@ class TestSqliteGraphInstanceStoreSpecifics:
         store.close()
 
     def test_status_check_constraint_rejects_invalid(self) -> None:
-        from modex_graph.instance_store import _INSTANCE_TABLE
+        from modex_graph.persistence.instance_store import _INSTANCE_TABLE
 
         store = SqliteGraphInstanceStore(":memory:")
         with pytest.raises(sqlite3.IntegrityError):
@@ -339,7 +339,7 @@ class TestSqliteGraphInstanceStoreSpecifics:
         store.close()
 
     def test_update_status_sets_updated_at(self) -> None:
-        from modex_graph.instance_store import (
+        from modex_graph.persistence.instance_store import (
             _COL_UPDATED_AT,
             _INSTANCE_TABLE,
         )
@@ -347,16 +347,14 @@ class TestSqliteGraphInstanceStoreSpecifics:
         store = SqliteGraphInstanceStore(":memory:")
         store.save(_make_metadata(status="running"))
         original_row = store._conn.execute(
-            f"SELECT {_COL_UPDATED_AT} FROM {_INSTANCE_TABLE} "
-            f"WHERE graph_instance_id = ?",
+            f"SELECT {_COL_UPDATED_AT} FROM {_INSTANCE_TABLE} WHERE graph_instance_id = ?",
             (_GRAPH_INSTANCE_ID,),
         ).fetchone()
         assert original_row is not None
         original_ts = original_row[0]
         store.update_status(_GRAPH_INSTANCE_ID, "paused")
         updated_row = store._conn.execute(
-            f"SELECT {_COL_UPDATED_AT} FROM {_INSTANCE_TABLE} "
-            f"WHERE graph_instance_id = ?",
+            f"SELECT {_COL_UPDATED_AT} FROM {_INSTANCE_TABLE} WHERE graph_instance_id = ?",
             (_GRAPH_INSTANCE_ID,),
         ).fetchone()
         assert updated_row is not None

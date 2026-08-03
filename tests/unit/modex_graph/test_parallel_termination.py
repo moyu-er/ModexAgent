@@ -22,7 +22,7 @@ Covers:
 from __future__ import annotations
 
 import pytest
-from helpers import CounterState, make_runtime, make_coordinator
+from helpers import CounterState, make_coordinator, make_runtime
 
 from modex_graph import (
     Graph,
@@ -54,13 +54,7 @@ def _end_dispatch_sources(scheduler: ParallelScheduler[CounterState]) -> list[st
     Mirrors the former ``_end_sources`` set via the live dispatch log
     (``DispatchEvent`` records with ``target == GraphNode.END``).
     """
-    return list(
-        {
-            e.source_instance
-            for e in scheduler._dispatch_log
-            if e.target == GraphNode.END
-        }
-    )
+    return list({e.source_instance for e in scheduler._dispatch_log if e.target == GraphNode.END})
 
 
 # ── Test helpers ──────────────────────────────────────────────────────────
@@ -73,7 +67,9 @@ class DispatchAddNode(Node[CounterState]):
         self.amount = amount
         self.target = target
 
-    def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+    def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         ctx.state.count += self.amount
         if self.target is not None:
             self.deliver(None, self.target, ctx)
@@ -88,7 +84,9 @@ class FanOutDispatchNode(Node[CounterState]):
         self.target_a = target_a
         self.target_b = target_b
 
-    def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+    def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         ctx.state.count += self.amount
         self.deliver(None, self.target_a, ctx)
         self.deliver(None, self.target_b, ctx)
@@ -101,7 +99,9 @@ class NoDispatchNode(Node[CounterState]):
     def __init__(self, amount: int = 1) -> None:
         self.amount = amount
 
-    def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+    def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         ctx.state.count += self.amount
         self.deliver(None, None, ctx)
         return NodeResult()
@@ -228,7 +228,9 @@ class TestEndOnAllPreds:
         g: Graph[CounterState] = Graph()
 
         class TripleFanOutNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+            def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> NodeResult:
                 ctx.state.count += 1
                 self.deliver(None, "b", ctx)
                 self.deliver(None, "c", ctx)

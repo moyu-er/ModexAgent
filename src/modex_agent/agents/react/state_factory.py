@@ -11,7 +11,7 @@ is the only addition over the generic implementation.
 
 from __future__ import annotations
 
-from modex_graph.state_factory import SimpleStateFactory
+from modex_graph.state import SimpleStateFactory
 
 from .state import ReActTurnState
 

@@ -14,7 +14,7 @@ from modex_agent.agents.react.state_factory import (
     REACT_STATE_FACTORY_NAME,
     ReactStateFactory,
 )
-from modex_graph.state_factory import StateRegistry
+from modex_graph.state import StateRegistry
 
 
 def test_factory_name_constant() -> None:

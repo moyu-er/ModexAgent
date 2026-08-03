@@ -126,8 +126,12 @@ class TestGraphSpecStoreCRUD:
 
     def test_save_generates_unique_ids(self, kind: str) -> None:
         store = _store_factory(kind)()
-        id1 = store.save(_make_spec(name="g1"), )
-        id2 = store.save(_make_spec(name="g2"), )
+        id1 = store.save(
+            _make_spec(name="g1"),
+        )
+        id2 = store.save(
+            _make_spec(name="g2"),
+        )
         assert id1 != id2
 
     def test_load_by_id_returns_spec(self, kind: str) -> None:
@@ -320,9 +324,7 @@ class TestSqliteGraphSpecStoreSpecifics:
 
         store = SqliteGraphSpecStore(":memory:")
         store.save(_make_spec())
-        row = store._conn.execute(
-            f"SELECT {_COL_CREATED_AT} FROM {_SPEC_TABLE}"
-        ).fetchone()
+        row = store._conn.execute(f"SELECT {_COL_CREATED_AT} FROM {_SPEC_TABLE}").fetchone()
         assert row is not None
         ts = row[0]
         assert isinstance(ts, int)
@@ -336,9 +338,7 @@ class TestSqliteGraphSpecStoreSpecifics:
 
         store = SqliteGraphSpecStore(":memory:")
         store.save(_make_spec(name="json_check"))
-        row = store._conn.execute(
-            f"SELECT {_COL_SPEC_JSON} FROM {_SPEC_TABLE}"
-        ).fetchone()
+        row = store._conn.execute(f"SELECT {_COL_SPEC_JSON} FROM {_SPEC_TABLE}").fetchone()
         assert row is not None
         data = json.loads(row[0])
         assert data["name"] == "json_check"

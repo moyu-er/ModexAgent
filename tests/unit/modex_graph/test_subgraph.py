@@ -1,4 +1,5 @@
 """Subgraph-as-node execution test (Graph-is-a-Node, ADR-0033 D8)."""
+
 from __future__ import annotations
 
 from helpers import CounterState, make_ctx
@@ -25,7 +26,9 @@ class TestSubgraphAsNode:
         """An inner graph (compiled) is used as a node in the outer graph."""
 
         class IncrementNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+            def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> NodeResult:
                 ctx.state.count += 1
                 self.deliver(None, None, ctx)
                 return NodeResult()
@@ -37,7 +40,9 @@ class TestSubgraphAsNode:
         inner_compiled = inner.compile()
 
         class VerifyNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+            def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> NodeResult:
                 ctx.state.name = f"count_is_{ctx.state.count}"
                 self.deliver(None, None, ctx)
                 return NodeResult()
@@ -59,7 +64,9 @@ class TestSubgraphAsNode:
         """The subgraph shares ctx.state / ctx.runtime / ctx.user_data with parent."""
 
         class TagNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+            def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> NodeResult:
                 ctx.state.name = ctx.state.name + "tagged"
                 self.deliver(None, None, ctx)
                 return NodeResult()

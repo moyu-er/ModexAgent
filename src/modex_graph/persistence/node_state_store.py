@@ -34,8 +34,8 @@ import sqlite3
 from abc import ABC, abstractmethod
 from typing import Any
 
+from ..id_generator import default_id_generator
 from .dispatch_store import now_ms
-from .id_generator import default_id_generator
 
 # ── Table / column name constants ─────────────────────────────────────────
 # Centralized (rule 14) — same pattern as dispatch_store.py / deliver_store.py.
@@ -190,7 +190,7 @@ class InMemoryNodeStateStore(NodeStateStore):
         state: dict[str, Any],
     ) -> int:
         records = self._records.get(graph_instance_id, [])
-        for (_, existing_name, existing_ver, _) in records:
+        for _, existing_name, existing_ver, _ in records:
             if existing_name == node_name and existing_ver == version:
                 raise ValueError(
                     f"NodeState for (graph_instance_id={graph_instance_id}, "
@@ -219,7 +219,7 @@ class InMemoryNodeStateStore(NodeStateStore):
         node_name: str,
         version: int,
     ) -> dict[str, Any] | None:
-        for (_, name, ver, state) in self._records.get(graph_instance_id, []):
+        for _, name, ver, state in self._records.get(graph_instance_id, []):
             if name == node_name and ver == version:
                 return state
         return None
@@ -236,7 +236,7 @@ class InMemoryNodeStateStore(NodeStateStore):
 
     def list_nodes(self, graph_instance_id: int) -> list[str]:
         seen: dict[str, None] = {}
-        for (_, name, _, _) in self._records.get(graph_instance_id, []):
+        for _, name, _, _ in self._records.get(graph_instance_id, []):
             if name not in seen:
                 seen[name] = None
         return list(seen.keys())
@@ -398,8 +398,7 @@ class SqliteNodeStateStore(NodeStateStore):
 
     def clear(self, graph_instance_id: int) -> None:
         self._conn.execute(
-            f"DELETE FROM {_NODE_STATE_TABLE} "
-            f"WHERE {_COL_GRAPH_INSTANCE_ID} = ?",
+            f"DELETE FROM {_NODE_STATE_TABLE} WHERE {_COL_GRAPH_INSTANCE_ID} = ?",
             (graph_instance_id,),
         )
         self._conn.commit()

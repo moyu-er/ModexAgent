@@ -70,7 +70,9 @@ class DispatchAddNode(Node[CounterState]):
         self.amount = amount
         self.target = target
 
-    def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+    def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         ctx.state.count += self.amount
         if self.target is not None:
             self.deliver(None, self.target, ctx)
@@ -296,8 +298,12 @@ class TestRecoveryFromCoordinator:
             iteration_count=2,
             instance_seq=2,
             node_states={
-                "a": _make_invocation_record("a", status=InvocationStatus.COMPLETED, invocation_id=100),
-                "b": _make_invocation_record("b", status=InvocationStatus.COMPLETED, invocation_id=101),
+                "a": _make_invocation_record(
+                    "a", status=InvocationStatus.COMPLETED, invocation_id=100
+                ),
+                "b": _make_invocation_record(
+                    "b", status=InvocationStatus.COMPLETED, invocation_id=101
+                ),
             },
             rebuilt_main_state={"count": 3, "name": ""},
         )
@@ -324,8 +330,12 @@ class TestRecoveryFromCoordinator:
             iteration_count=2,
             instance_seq=2,
             node_states={
-                "a": _make_invocation_record("a", status=InvocationStatus.COMPLETED, invocation_id=100),
-                "b": _make_invocation_record("b", status=InvocationStatus.COMPLETED, invocation_id=101),
+                "a": _make_invocation_record(
+                    "a", status=InvocationStatus.COMPLETED, invocation_id=100
+                ),
+                "b": _make_invocation_record(
+                    "b", status=InvocationStatus.COMPLETED, invocation_id=101
+                ),
             },
             rebuilt_main_state={"count": 3, "name": ""},
         )
@@ -353,8 +363,12 @@ class TestRecoveryFromCoordinator:
             iteration_count=2,
             instance_seq=2,
             node_states={
-                "a": _make_invocation_record("a", status=InvocationStatus.COMPLETED, invocation_id=100),
-                "b": _make_invocation_record("b", status=InvocationStatus.COMPLETED, invocation_id=101),
+                "a": _make_invocation_record(
+                    "a", status=InvocationStatus.COMPLETED, invocation_id=100
+                ),
+                "b": _make_invocation_record(
+                    "b", status=InvocationStatus.COMPLETED, invocation_id=101
+                ),
             },
             rebuilt_main_state={"count": 3, "name": ""},
         )
@@ -420,7 +434,9 @@ class TestRecoveryFromCoordinator:
             iteration_count=0,
             instance_seq=1,
             node_states={
-                "a": _make_invocation_record("a", status=InvocationStatus.CRASHED, invocation_id=100),
+                "a": _make_invocation_record(
+                    "a", status=InvocationStatus.CRASHED, invocation_id=100
+                ),
             },
             rebuilt_main_state={"count": 0, "name": ""},
         )
@@ -451,7 +467,9 @@ class TestRecoveryFromCoordinator:
             iteration_count=0,
             instance_seq=1,
             node_states={
-                "a": _make_invocation_record("a", status=InvocationStatus.CANCELED, invocation_id=100),
+                "a": _make_invocation_record(
+                    "a", status=InvocationStatus.CANCELED, invocation_id=100
+                ),
             },
             rebuilt_main_state={"count": 0, "name": ""},
         )
@@ -491,7 +509,9 @@ class TestRecoveryFromCoordinator:
             activated_sources={"b": ["a"]},
             pending_dispatches={"b": {"a": [None]}},
             node_states={
-                "a": _make_invocation_record("a", status=InvocationStatus.COMPLETED, invocation_id=100),
+                "a": _make_invocation_record(
+                    "a", status=InvocationStatus.COMPLETED, invocation_id=100
+                ),
                 "b": None,
             },
             rebuilt_main_state={"count": 1, "name": ""},
@@ -556,7 +576,9 @@ class TestRecoveryFromCoordinator:
             iteration_count=1,
             instance_seq=1,
             node_states={
-                "a": _make_invocation_record("a", status=InvocationStatus.COMPLETED, invocation_id=100),
+                "a": _make_invocation_record(
+                    "a", status=InvocationStatus.COMPLETED, invocation_id=100
+                ),
             },
             rebuilt_main_state={"count": 5, "name": ""},
         )

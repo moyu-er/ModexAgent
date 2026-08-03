@@ -30,8 +30,7 @@ from .compiled_graph import CompiledGraph
 from .graph import Graph
 from .node_factory import NodeRegistry
 from .spec import GraphSpec
-from .state_factory import DynamicStateFactory, StateFactory, StateRegistry
-from .state_schema import StateSchema
+from .state import DynamicStateFactory, StateFactory, StateRegistry, StateSchema
 from .topology_validator import TopologyValidator
 
 # Default validator instance, lazily constructed. Reused across compile()

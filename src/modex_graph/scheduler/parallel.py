@@ -11,21 +11,21 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-from ..channel import LastValue
 from ..conflict_detector import GenerationWriteTracker, WriteConflictDetector
 from ..constants import GraphNode, InvocationStatus, NodeInstanceStatus, NodeTrigger, SchedulerKind
-from ..dispatch_store import DispatchStore, InMemoryDispatchStore
 from ..exceptions import GraphRecursionError, RoutingError
 from ..id_generator import default_id_generator
 from ..integration import IntegratedPayload
+from ..persistence import DispatchStore, InMemoryDispatchStore
 from ..result import DispatchEvent
+from ..state import LastValue
 from .base import Scheduler
 from .instance import NodeInstance
 
 if TYPE_CHECKING:
     from ..compiled_graph import CompiledGraph
     from ..context import GraphContext
-    from ..graph_metadata import RecoveryContext
+    from ..persistence import RecoveryContext
     from ..state import GraphState
 
 
@@ -215,9 +215,7 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
                         assert self._main_state is not None
                         instance.forked_state = self._main_state.model_copy(deep=True)
 
-                task = asyncio.create_task(
-                    self._execute_instance(iid, ctx, fork=need_fork)
-                )
+                task = asyncio.create_task(self._execute_instance(iid, ctx, fork=need_fork))
                 running[task] = iid
 
             if not running:
@@ -276,9 +274,7 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         entry_id = self._create_instance(self.graph.entry_node)
         self._mark_ready(entry_id)
 
-    def _restore_from_recovery(
-        self, ctx: GraphContext[S], recovery: RecoveryContext
-    ) -> None:
+    def _restore_from_recovery(self, ctx: GraphContext[S], recovery: RecoveryContext) -> None:
         """Rebuild scheduler state from a ``RecoveryContext``.
 
         - ``main_state`` is restored via ``GraphState.from_checkpoint`` from
@@ -307,8 +303,7 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         self._instance_seq = recovery.metadata.instance_seq
 
         self._activated_sources = {
-            target: set(sources)
-            for target, sources in recovery.metadata.activated_sources.items()
+            target: set(sources) for target, sources in recovery.metadata.activated_sources.items()
         }
         self._pending_dispatches = dict(recovery.metadata.pending_dispatches)
 
@@ -343,9 +338,7 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
                 # Check deliver_store for PENDING delivers targeting
                 # this COMPLETED node. If delivers exist, re-dispatch.
                 if self._ctx is not None:
-                    delivers = self._ctx.coordinator.collect_consumable_delivers(
-                        node_name, 0
-                    )
+                    delivers = self._ctx.coordinator.collect_consumable_delivers(node_name, 0)
                     if delivers:
                         instance_id = self._create_instance(node_name)
                         self._mark_ready(instance_id)
@@ -504,9 +497,7 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
                     for name, ch in self._main_state._channels.items()
                     if isinstance(ch, LastValue)
                 }
-                conflict_fields = [
-                    f for f in result.state_update if f in last_value_fields
-                ]
+                conflict_fields = [f for f in result.state_update if f in last_value_fields]
                 self._conflict_detector.commit(instance.fork_version, conflict_fields)
                 self._main_state.apply_state_update(result.state_update)
                 if exec_ctx.state is not self._main_state:
@@ -528,7 +519,6 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         self._iteration_count += 1
 
         self._recheck_pending()
-
 
     # ── Dispatch handling (trigger modes) ────────────────────
 
@@ -612,9 +602,9 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
             self._mark_ready(target_id)
         else:
             self._activated_sources.setdefault(target, set()).add(source_node_name)
-            self._pending_dispatches.setdefault(target, {}).setdefault(
-                source_node_name, []
-            ).append(payload)
+            self._pending_dispatches.setdefault(target, {}).setdefault(source_node_name, []).append(
+                payload
+            )
 
     # ── Trigger mode helpers ────────────────────────────────
 
@@ -705,12 +695,8 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         upstream_payloads: list[IntegratedPayload] = []
         for source in list(pending.keys()):
             for state_update in pending[source]:
-                content = (
-                    state_update.get("delivered") if state_update else None
-                )
-                upstream_payloads.append(
-                    IntegratedPayload(source_node=source, content=content)
-                )
+                content = state_update.get("delivered") if state_update else None
+                upstream_payloads.append(IntegratedPayload(source_node=source, content=content))
             pending[source].clear()
         self._pending_dispatches.pop(target, None)
         self._activated_sources.pop(target, None)

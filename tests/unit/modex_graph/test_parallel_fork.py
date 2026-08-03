@@ -27,7 +27,7 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 import pytest
-from helpers import make_runtime, make_coordinator
+from helpers import make_coordinator, make_runtime
 
 from modex_graph import (
     Graph,
@@ -78,7 +78,9 @@ class FanOutNode(Node[ForkState]):
         self.target_a = target_a
         self.target_b = target_b
 
-    def execute(self, ctx: GraphContext[ForkState], integrated_input: IntegratedInput) -> NodeResult:
+    def execute(
+        self, ctx: GraphContext[ForkState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         self.deliver(None, self.target_a, ctx)
         self.deliver(None, self.target_b, ctx)
         return NodeResult()
@@ -91,7 +93,9 @@ class WriteLastValueNode(Node[ForkState]):
         self.field = field
         self.value = value
 
-    def execute(self, ctx: GraphContext[ForkState], integrated_input: IntegratedInput) -> NodeResult:
+    def execute(
+        self, ctx: GraphContext[ForkState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         self.deliver(None, None, ctx)
         return NodeResult(state_update={self.field: self.value})
 
@@ -103,7 +107,9 @@ class WriteReducerNode(Node[ForkState]):
         self.field = field
         self.value = value
 
-    def execute(self, ctx: GraphContext[ForkState], integrated_input: IntegratedInput) -> NodeResult:
+    def execute(
+        self, ctx: GraphContext[ForkState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         self.deliver(None, None, ctx)
         return NodeResult(state_update={self.field: self.value})
 
@@ -116,7 +122,9 @@ class ImperativeMutateNode(Node[ForkState]):
         self.value = value
         self.target = target
 
-    def execute(self, ctx: GraphContext[ForkState], integrated_input: IntegratedInput) -> NodeResult:
+    def execute(
+        self, ctx: GraphContext[ForkState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         setattr(ctx.state, self.field, self.value)
         if self.target is not None:
             self.deliver(None, self.target, ctx)
@@ -126,7 +134,9 @@ class ImperativeMutateNode(Node[ForkState]):
 class DispatchToEndNode(Node[ForkState]):
     """No-op node that dispatches to END."""
 
-    def execute(self, ctx: GraphContext[ForkState], integrated_input: IntegratedInput) -> NodeResult:
+    def execute(
+        self, ctx: GraphContext[ForkState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         self.deliver(None, GraphNode.END, ctx)
         return NodeResult()
 
@@ -137,7 +147,9 @@ class SquareWorker(Node[ForkState]):
     def __init__(self, item: int) -> None:
         self.item = item
 
-    def execute(self, ctx: GraphContext[ForkState], integrated_input: IntegratedInput) -> NodeResult:
+    def execute(
+        self, ctx: GraphContext[ForkState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         self.deliver(None, None, ctx)
         return NodeResult(state_update={"squares": [self.item * self.item]})
 
@@ -226,9 +238,7 @@ class TestApplyConcurrentUpdates:
 
     def test_reducer_channel_folds_multiple_updates(self) -> None:
         state = ForkState()
-        state.apply_concurrent_updates(
-            [{"items": ["a"]}, {"items": ["b"]}, {"items": ["c"]}]
-        )
+        state.apply_concurrent_updates([{"items": ["a"]}, {"items": ["b"]}, {"items": ["c"]}])
         assert state.items == ["a", "b", "c"]
 
     def test_lastvalue_multi_write_raises(self) -> None:
@@ -494,7 +504,9 @@ class TestMapReduceParallelFold:
         """Three concurrent workers contribute to squares ReducerChannel."""
 
         class TripleFanOutNode(Node[ForkState]):
-            def execute(self, ctx: GraphContext[ForkState], integrated_input: IntegratedInput) -> NodeResult:
+            def execute(
+                self, ctx: GraphContext[ForkState], integrated_input: IntegratedInput
+            ) -> NodeResult:
                 self.deliver(None, "b", ctx)
                 self.deliver(None, "c", ctx)
                 self.deliver(None, "d", ctx)
@@ -538,7 +550,9 @@ class TestForkMixedMutation:
                 self.poison_count = poison_count
                 self.item_label = item_label
 
-            def execute(self, ctx: GraphContext[ForkState], integrated_input: IntegratedInput) -> NodeResult:
+            def execute(
+                self, ctx: GraphContext[ForkState], integrated_input: IntegratedInput
+            ) -> NodeResult:
                 # Imperative mutation — should NOT propagate.
                 ctx.state.count = self.poison_count
                 # Declarative state_update — should merge.
@@ -584,14 +598,18 @@ class TestForkDownstreamSeesMergedState:
                 self.item = item
                 self.target = target
 
-            def execute(self, ctx: GraphContext[ForkState], integrated_input: IntegratedInput) -> NodeResult:
+            def execute(
+                self, ctx: GraphContext[ForkState], integrated_input: IntegratedInput
+            ) -> NodeResult:
                 self.deliver(None, None, ctx)
                 return NodeResult(state_update={"items": [self.item]})
 
         class ReadItemsNode(Node[ForkState]):
             """Reads ctx.state.items and writes name imperatively (fast path)."""
 
-            def execute(self, ctx: GraphContext[ForkState], integrated_input: IntegratedInput) -> NodeResult:
+            def execute(
+                self, ctx: GraphContext[ForkState], integrated_input: IntegratedInput
+            ) -> NodeResult:
                 items = list(ctx.state.items)
                 ctx.state.name = ",".join(items)
                 self.deliver(None, GraphNode.END, ctx)

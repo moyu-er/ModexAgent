@@ -28,7 +28,7 @@ import time
 from abc import ABC, abstractmethod
 from typing import Any
 
-from .result import DispatchEvent
+from ..result import DispatchEvent
 
 # ── Table / column name constants ─────────────────────────────────────────
 # Centralized (rule 14) to avoid hardcoding in SQL strings. The DDL/DML

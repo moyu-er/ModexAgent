@@ -1,5 +1,6 @@
 # ruff: noqa: ANN401
 """Shared test state types + node helpers for modex_graph unit tests."""
+
 from __future__ import annotations
 
 from typing import Annotated, Any
@@ -71,14 +72,10 @@ class TrackingRuntime(GraphRuntime):
     async def before_node(self, ctx: GraphContext[Any], node_name: str) -> None:
         self.before_calls.append(node_name)
 
-    async def after_node(
-        self, ctx: GraphContext[Any], node_name: str, result: Any
-    ) -> None:
+    async def after_node(self, ctx: GraphContext[Any], node_name: str, result: Any) -> None:
         self.after_calls.append(node_name)
 
-    async def emit(
-        self, event_type: str, data: Any, ctx: GraphContext[Any]
-    ) -> None:
+    async def emit(self, event_type: str, data: Any, ctx: GraphContext[Any]) -> None:
         self.emit_calls.append((event_type, data))
 
 
@@ -96,7 +93,9 @@ class AddNode(Node[CounterState]):
     def __init__(self, amount: int = 1) -> None:
         self.amount = amount
 
-    def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+    def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         ctx.state.count += self.amount
         self.deliver(None, None, ctx)
         return NodeResult()
@@ -108,7 +107,9 @@ class AsyncAddNode(Node[CounterState]):
     def __init__(self, amount: int = 1) -> None:
         self.amount = amount
 
-    async def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+    async def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         ctx.state.count += self.amount
         self.deliver(None, None, ctx)
         return NodeResult()
@@ -120,7 +121,9 @@ class InterruptNode(Node[CounterState]):
     def __init__(self, value: Any = "interrupted") -> None:
         self.value = value
 
-    def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+    def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         ctx.interrupt(self.value)
         # Unreachable — interrupt raises.
         return NodeResult()
@@ -132,7 +135,9 @@ class RecordNameNode(Node[CounterState]):
     def __init__(self, label: str | None = None) -> None:
         self.label = label
 
-    def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+    def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         label = self.label if self.label is not None else self.name
         return NodeResult(state_update={"messages": [label]})
 

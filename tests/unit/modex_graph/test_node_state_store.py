@@ -275,7 +275,7 @@ class TestSqliteNodeStateStoreSpecifics:
             store2.close()
 
     def test_table_and_column_constants(self) -> None:
-        from modex_graph.node_state_store import (
+        from modex_graph.persistence.node_state_store import (
             _COL_CREATED_AT,
             _COL_GRAPH_INSTANCE_ID,
             _COL_NODE_NAME,
@@ -319,13 +319,11 @@ class TestSqliteNodeStateStoreSpecifics:
             store2.close()
 
     def test_timestamps_are_epoch_ms(self) -> None:
-        from modex_graph.node_state_store import _COL_CREATED_AT, _NODE_STATE_TABLE
+        from modex_graph.persistence.node_state_store import _COL_CREATED_AT, _NODE_STATE_TABLE
 
         store = SqliteNodeStateStore(":memory:")
         store.save(_GRAPH_INSTANCE_ID, "node_a", 0, _make_state())
-        row = store._conn.execute(
-            f"SELECT {_COL_CREATED_AT} FROM {_NODE_STATE_TABLE}"
-        ).fetchone()
+        row = store._conn.execute(f"SELECT {_COL_CREATED_AT} FROM {_NODE_STATE_TABLE}").fetchone()
         assert row is not None
         ts = row[0]
         assert isinstance(ts, int)
@@ -335,13 +333,11 @@ class TestSqliteNodeStateStoreSpecifics:
     def test_state_json_is_valid_json(self) -> None:
         import json
 
-        from modex_graph.node_state_store import _COL_STATE_JSON, _NODE_STATE_TABLE
+        from modex_graph.persistence.node_state_store import _COL_STATE_JSON, _NODE_STATE_TABLE
 
         store = SqliteNodeStateStore(":memory:")
         store.save(_GRAPH_INSTANCE_ID, "node_a", 0, {"key": "value"})
-        row = store._conn.execute(
-            f"SELECT {_COL_STATE_JSON} FROM {_NODE_STATE_TABLE}"
-        ).fetchone()
+        row = store._conn.execute(f"SELECT {_COL_STATE_JSON} FROM {_NODE_STATE_TABLE}").fetchone()
         assert row is not None
         data = json.loads(row[0])
         assert data == {"key": "value"}
@@ -349,9 +345,7 @@ class TestSqliteNodeStateStoreSpecifics:
 
     def test_no_updated_at_column(self) -> None:
         store = SqliteNodeStateStore(":memory:")
-        columns = store._conn.execute(
-            "PRAGMA table_info(node_states)"
-        ).fetchall()
+        columns = store._conn.execute("PRAGMA table_info(node_states)").fetchall()
         col_names = {c[1] for c in columns}
         assert "updated_at" not in col_names
         assert "created_at" in col_names
@@ -375,8 +369,7 @@ class TestSqliteNodeStateStoreSpecifics:
         store.save(_GRAPH_INSTANCE_ID, "node_a", 1, {"v": 1})
         store.save(_GRAPH_INSTANCE_ID, "node_a", 2, {"v": 2})
         count = store._conn.execute(
-            "SELECT COUNT(*) FROM node_states "
-            "WHERE graph_instance_id = ? AND node_name = ?",
+            "SELECT COUNT(*) FROM node_states WHERE graph_instance_id = ? AND node_name = ?",
             (_GRAPH_INSTANCE_ID, "node_a"),
         ).fetchone()
         assert count[0] == 3

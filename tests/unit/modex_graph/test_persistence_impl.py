@@ -54,7 +54,9 @@ def test_simple_node_state_round_trips_and_filters_versions() -> None:
     assert state.load_latest(101, "worker") == state.query_versions(101, "worker")[0]
     assert state.load_latest_completed(101, "worker") is not None
     assert [record.version for record in state.query_versions(101, "worker")] == [1, 0]
-    assert [record.version for record in state.query_versions(101, "worker", {InvocationStatus.RUNNING})] == [1]
+    assert [
+        record.version for record in state.query_versions(101, "worker", {InvocationStatus.RUNNING})
+    ] == [1]
 
 
 def test_sqlite_node_state_round_trips_and_creates_indexes() -> None:
@@ -76,7 +78,12 @@ def test_sqlite_node_state_round_trips_and_creates_indexes() -> None:
     assert latest.state_json == {"value": 2}
     assert completed is not None
     assert completed.invocation_id == 1001
-    assert {"idx_node_states_latest", "idx_node_states_status", "idx_node_states_cross", "idx_node_states_global"} <= index_names
+    assert {
+        "idx_node_states_latest",
+        "idx_node_states_status",
+        "idx_node_states_cross",
+        "idx_node_states_global",
+    } <= index_names
 
 
 def test_sqlite_node_state_migrates_legacy_schema_idempotently() -> None:
@@ -116,7 +123,9 @@ def test_null_and_memory_graph_metadata_stores_obey_their_capabilities() -> None
     memory_store.update_status(101, GraphInstanceStatus.PAUSED)
 
     assert null_store.load(101) is None
-    assert memory_store.load(101) == metadata.model_copy(update={"status": GraphInstanceStatus.PAUSED})
+    assert memory_store.load(101) == metadata.model_copy(
+        update={"status": GraphInstanceStatus.PAUSED}
+    )
 
 
 def test_sqlite_graph_metadata_store_round_trips_and_updates_status() -> None:
@@ -134,7 +143,9 @@ def test_deliver_factories_create_expected_strategies_with_shared_connection() -
     connection = sqlite3.connect(":memory:")
 
     assert isinstance(modex_graph.NullDeliverStoreFactory().create(), modex_graph.NullDeliverStore)
-    assert isinstance(modex_graph.InMemoryDeliverStoreFactory().create(), modex_graph.InMemoryDeliverStore)
+    assert isinstance(
+        modex_graph.InMemoryDeliverStoreFactory().create(), modex_graph.InMemoryDeliverStore
+    )
     sqlite_store = modex_graph.SqliteDeliverStoreFactory(connection).create()
     assert isinstance(sqlite_store, modex_graph.SqliteDeliverStore)
     assert sqlite_store._conn is connection

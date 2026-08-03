@@ -1,4 +1,5 @@
 """GraphRuntime no-op default tests."""
+
 from __future__ import annotations
 
 from helpers import CounterState, make_ctx
@@ -136,7 +137,9 @@ class TestGraphRuntimeNoOp:
             def __init__(self, amount: int) -> None:
                 self.amount = amount
 
-            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+            def execute(
+                self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+            ) -> NodeResult:
                 ctx.state.count += self.amount
                 self.deliver(None, None, ctx)
                 return NodeResult()

@@ -55,8 +55,7 @@ from modex_agent.runtime.models import (
     TurnStateBase,
 )
 from modex_agent.runtime.policy import SnapshotPolicy
-from modex_graph.channel import LastValue
-from modex_graph.state import GraphState
+from modex_graph.state import GraphState, LastValue
 
 from .constants import ReActNode
 
@@ -345,7 +344,9 @@ class ReActRuntimeStateCodec(RuntimeStateCodec):
             "content": msg.content,
             "source": md.source.value,
             "provider_payload": dict(md.provider_payload) if md.provider_payload else None,
-            "tool_calls": [tc.model_dump(mode="json") for tc in msg.tool_calls] if msg.tool_calls else None,
+            "tool_calls": [tc.model_dump(mode="json") for tc in msg.tool_calls]
+            if msg.tool_calls
+            else None,
             "tool_call_id": msg.tool_call_id,
             "name": msg.name,
         }

@@ -7,9 +7,10 @@ Covers:
 - `NodeResult.state_update` is carried as the dispatch payload.
 - `CompiledGraph.edges_from` returns all edges from a source.
 """
+
 from __future__ import annotations
 
-from helpers import CounterState, make_runtime, make_coordinator
+from helpers import CounterState, make_coordinator, make_runtime
 
 from modex_graph import (
     Graph,
@@ -41,7 +42,9 @@ class FanOutDeliverNode(Node[CounterState]):
         self.amount = amount
         self.targets = targets
 
-    def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+    def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         ctx.state.count += self.amount
         for target in self.targets:
             self.deliver(None, target, ctx)
@@ -51,7 +54,9 @@ class FanOutDeliverNode(Node[CounterState]):
 class NoOpNode(Node[CounterState]):
     """Delivers to default target — no explicit routing."""
 
-    def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+    def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         self.deliver(None, None, ctx)
         return NodeResult()
 
@@ -63,7 +68,9 @@ class AddAndDispatchNode(Node[CounterState]):
         self.amount = amount
         self.target = target
 
-    def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+    def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         ctx.state.count += self.amount
         self.deliver(None, self.target, ctx)
         return NodeResult()
@@ -77,7 +84,9 @@ class StateUpdateDeliverNode(Node[CounterState]):
         self.target = target
         self.label = label
 
-    def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+    def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         ctx.state.count += self.amount
         payload = {"messages": [self.label]}
         self.deliver(payload, self.target, ctx)
@@ -179,7 +188,9 @@ class TestDeliverFanOut:
             e for e in scheduler._dispatch_log if e.source_instance == "a#0" and e.target == "b"
         ]
         assert len(a_to_b) == 1
-        assert a_to_b[0].payload and a_to_b[0].payload["delivered"] == {"messages": ["payload_data"]}
+        assert a_to_b[0].payload and a_to_b[0].payload["delivered"] == {
+            "messages": ["payload_data"]
+        }
 
 
 # ── Fan-out + fan-in end-to-end ────────────────────────────────────────────
