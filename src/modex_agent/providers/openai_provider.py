@@ -358,10 +358,15 @@ class OpenAIProvider(StreamingLLMProvider):
         serializes to the OpenAI wire format (``id``/``type``/``function``)
         and ``arguments`` becomes a JSON string — ``model_dump()`` would
         produce the internal ToolCall field names instead.
+
+        Coerces dict entries to ``ChatMessage`` at the trust boundary —
+        callers may pass ``list[dict]`` (legacy tests, external callers),
+        but the API serialization path requires ``ChatMessage.to_dict()``.
         """
         allowed = OpenAIProvider._API_MSG_FIELDS
         result: list[dict[str, Any]] = []
         for msg in messages:
+            msg = ChatMessage.coerce(msg)
             raw = msg.to_dict()
             result.append({k: v for k, v in raw.items() if k in allowed})
         return result

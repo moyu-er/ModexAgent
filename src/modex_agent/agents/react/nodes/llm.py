@@ -39,10 +39,16 @@ from modex_agent.runtime.enums import (
     TurnPhase,
 )
 from modex_agent.runtime.models import MessageDelta
+from modex_graph import create_null_coordinator
 from modex_graph.context import GraphContext
 from modex_graph.integration import IntegratedInput
 from modex_graph.node import Node
 from modex_graph.result import NodeResult
+
+# Module-level Null coordinator for the governance helper context.
+# Node.run() is never called on it — it only provides the coordinator
+# reference that ReActGraphContext requires for governance application.
+_governance_coordinator = create_null_coordinator()
 
 _default_tool_media_strategy = SyntheticUserMessageStrategy()
 
@@ -300,7 +306,12 @@ class LLMNode(Node[ReActTurnState]):
             if state is not None:
                 graph_runtime = runtime.graph_runtime
                 if graph_runtime is not None:
-                    graph_ctx = ReActGraphContext(state=state, runtime=graph_runtime, user_data=ctx)
+                    graph_ctx = ReActGraphContext(
+                        state=state,
+                        runtime=graph_runtime,
+                        user_data=ctx,
+                        coordinator=_governance_coordinator,
+                    )
                     messages = await graph_runtime.apply_governance(messages, graph_ctx)
 
         return enrich_inline_media(messages, ctx)

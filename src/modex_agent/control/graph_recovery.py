@@ -1,32 +1,36 @@
-"""`GraphRecoveryService` — recovery for graph instances (ticket 10 §3.5).
+"""`GraphRecoveryService` — recovery for graph instances.
 
 Two recovery types share the SAME flow (rule 15: converge — single
 recovery path, no per-type branches):
 
 - **Fault recovery** (`recover_crashed`) — auto-pick `CRASHED` instances
-  on startup, reload from checkpoint, re-dispatch.
+  on startup, reload via coordinator, re-dispatch.
 - **Manual recovery** (`resume`) — reload a `PAUSED`/`STOPPED` instance
   on external `resume()`.
 
 The shared per-instance flow is:
 
-1. Set status to `RUNNING` (in `GraphInstanceStore`).
-2. Call `engine_factory.create_and_run(instance)` — the factory creates
-   a `GraphEngine` + `ParallelScheduler`, passes `graph_instance_id`
-   via `ctx`, and the scheduler's `run_async` calls
-   `checkpoint_store.load_latest → _restore_from_checkpoint →
-   re-dispatch`.
+1. Load `GraphMetadata` from `GraphInstanceStore`.
+2. Reconstruct the coordinator (`create_null_coordinator(gid)` —
+   SQLite strategy would recover state from DB; Null is the current default).
+3. Create `GraphInstance(metadata, coordinator)`.
+4. Set status to `RUNNING` (in `GraphInstanceStore`).
+5. Call `engine_factory.create_and_run(instance)` — the factory (wired to
+   `GraphOrchestrator._run_existing_instance` via `_EngineFactoryAdapter`)
+   handles eviction, node registration, registry insertion, and
+   `_execute`. The scheduler's `run_async` calls
+   `coordinator.load_for_recovery → _restore_from_recovery → re-dispatch`.
 
 `GraphEngineFactory` is an ABC (rule 7) because actual engine creation
 depends on business wiring (`NodeFactory`, `StateFactory`, etc.) which
-lives in the bot factory (P3.5). It is the second consumer of
+lives in the bot factory. It is the second consumer of
 `GraphInstance` after `GraphSpecCompiler` — a real seam (rule 6).
 
-`checkpoint_store` is held by the recovery service so it is the
-checkpoint-aware owner of the recovery flow. The actual checkpoint
-loading happens INSIDE `ParallelScheduler.run_async` (called by the
-engine factory) — the recovery service triggers the engine, and the
-engine rebuilds state from the checkpoint.
+Recovery state loading happens INSIDE `ParallelScheduler.run_async`
+(called by the engine factory) — the scheduler calls
+`ctx.coordinator.load_for_recovery()` at the top of `run_async`, which
+returns a `RecoveryContext` with metadata + node_states + rebuilt
+main_state. The scheduler rebuilds its in-memory state from this context.
 """
 
 from __future__ import annotations
@@ -35,10 +39,10 @@ import logging
 from abc import ABC, abstractmethod
 
 from modex_graph import (
-    CheckpointStore,
     GraphInstance,
     GraphInstanceStatus,
     GraphInstanceStore,
+    create_null_coordinator,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,18 +55,17 @@ class GraphEngineFactory(ABC):
     of `GraphInstance` after `GraphSpecCompiler` — a real seam, not a
     hypothetical one). The actual engine creation depends on
     `NodeFactory`, `StateFactory`, `GraphSpecStore`, etc., which live in
-    the bot factory (P3.5). The framework provides the contract; the bot
+    the bot factory. The framework provides the contract; the bot
     factory provides the implementation.
 
     The implementation must:
 
     - Load the `GraphSpec` from `instance.spec_id` via `GraphSpecStore`.
     - Compile it via `GraphSpecCompiler` to get a `CompiledGraph`.
-    - Construct a `GraphEngine` with a `ParallelScheduler` wired to the
-      same `CheckpointStore` that the recovery service holds.
-    - Call `engine.run(graph_instance_id=instance.graph_instance_id, …)`
-      so the scheduler's `run_async` loads the latest checkpoint and
-      restores state.
+    - Construct a `GraphEngine` and a `GraphContext` with a coordinator
+      wired to the same persistence stores used in the original run.
+    - Call `engine.run_async(ctx)` so the scheduler's `run_async` calls
+      `coordinator.load_for_recovery()` and restores state.
     """
 
     @abstractmethod
@@ -70,50 +73,47 @@ class GraphEngineFactory(ABC):
         """Create a `GraphEngine` for the instance and run it.
 
         Recovery = `run_async` with the existing `graph_instance_id`.
-        The scheduler's `run_async` calls `load_latest` at the top; if a
-        checkpoint exists, state is rebuilt via
-        `_restore_from_checkpoint` and pending dispatches are
-        re-dispatched. If no checkpoint exists, fresh start (rare for
-        recovery — typically only crashed instances that never reached
-        the first checkpoint).
+        The scheduler's `run_async` calls `coordinator.load_for_recovery()`
+        at the top; if prior state exists, state is rebuilt via
+        `_restore_from_recovery` and pending dispatches are re-dispatched.
+        If no prior state exists, fresh start.
 
         Args:
             instance: The `GraphInstance` to recover. Its
-                `graph_instance_id` is the persistence key for the
-                checkpoint.
+                `graph_instance_id` is the persistence key.
         """
         ...
 
 
 class GraphRecoveryService:
-    """Recovery service for graph instances (ticket 10 §3.5).
+    """Recovery service for graph instances.
 
     Two recovery types sharing the same flow (rule 15: converge —
     single recovery path for both auto and manual):
 
     - **Fault recovery** (`recover_crashed`) — auto-pick `CRASHED`
-      instances on startup, reload from checkpoint, re-dispatch.
+      instances on startup, reload via coordinator, re-dispatch.
     - **Manual recovery** (`resume`) — reload a `PAUSED`/`STOPPED`
       instance on external `resume()`.
 
     The only difference between the two types is the trigger condition
     and the status filter. The per-instance recovery flow is identical:
+    load metadata → reconstruct coordinator → create GraphInstance →
     set status to `RUNNING` → call `engine_factory.create_and_run`.
 
-    `checkpoint_store` is held so the recovery service is the
-    checkpoint-aware owner of the recovery flow. The actual checkpoint
-    loading is delegated to `ParallelScheduler.run_async` inside the
-    engine factory's `create_and_run` call.
+    The engine factory (wired to `GraphOrchestrator._run_existing_instance`
+    via `_EngineFactoryAdapter`) handles eviction, node registration,
+    registry insertion, and `_execute`. Recovery state loading is
+    delegated to `ParallelScheduler.run_async` inside the engine factory's
+    `create_and_run` call, which calls `coordinator.load_for_recovery()`.
     """
 
     def __init__(
         self,
         instance_store: GraphInstanceStore,
-        checkpoint_store: CheckpointStore,
         engine_factory: GraphEngineFactory,
     ) -> None:
         self._instance_store = instance_store
-        self._checkpoint_store = checkpoint_store
         self._engine_factory = engine_factory
 
     async def recover_crashed(self) -> list[int]:
@@ -128,9 +128,13 @@ class GraphRecoveryService:
             The list of recovered `graph_instance_id`s. Callers (e.g.
             the bot factory) may log or expose this for observability.
         """
-        crashed = self._instance_store.load_by_status(
+        crashed_metadata = self._instance_store.load_by_status(
             GraphInstanceStatus.CRASHED.value
         )
+        crashed = [
+            GraphInstance(m, create_null_coordinator(m.graph_instance_id))
+            for m in crashed_metadata
+        ]
         return await self._recover_instances(crashed)
 
     async def resume(self, graph_instance_id: int) -> None:
@@ -148,21 +152,22 @@ class GraphRecoveryService:
             ValueError: If the instance does not exist, or its status
                 is not `PAUSED`/`STOPPED`.
         """
-        instance = self._instance_store.load_by_id(graph_instance_id)
-        if instance is None:
+        metadata = self._instance_store.load_by_id(graph_instance_id)
+        if metadata is None:
             raise ValueError(
                 f"Graph instance {graph_instance_id} not found; "
                 "cannot resume"
             )
-        if instance.status not in (
+        if metadata.status not in (
             GraphInstanceStatus.PAUSED.value,
             GraphInstanceStatus.STOPPED.value,
         ):
             raise ValueError(
                 f"Graph instance {graph_instance_id} status is "
-                f"{instance.status!r}; only PAUSED/STOPPED can be "
+                f"{metadata.status!r}; only PAUSED/STOPPED can be "
                 "manually resumed"
             )
+        instance = GraphInstance(metadata, create_null_coordinator(graph_instance_id))
         await self._recover_instances([instance])
 
     async def _recover_instances(
@@ -170,11 +175,15 @@ class GraphRecoveryService:
     ) -> list[int]:
         """Shared recovery flow (rule 15: single path for both types).
 
-        For each instance:
+        For each instance (already constructed with a reconstructed
+        coordinator via ``create_null_coordinator``):
 
         1. Set status to `RUNNING` (in `GraphInstanceStore`).
-        2. Call `engine_factory.create_and_run(instance)` — the engine
-           loads the latest checkpoint via `run_async` and re-dispatches.
+        2. Call `engine_factory.create_and_run(instance)` — the factory
+           (wired to ``GraphOrchestrator._run_existing_instance``) handles
+           eviction, node registration, registry insertion, and
+           `_execute`. The engine loads recovery state via
+           `coordinator.load_for_recovery()` and re-dispatches.
 
         Returns the list of recovered `graph_instance_id`s.
         """

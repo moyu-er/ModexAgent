@@ -279,10 +279,18 @@ class ReActAgent(Agent[ReActEvent]):
             engine = GraphEngine(graph)
             react_state = get_react_state(context)
             assert react_state is not None  # constructed just above if previously None
+            # Per-turn Null coordinator: node-invocation layer is orthogonal to
+            # AgentContext (which holds agent turn state).
+            from modex_graph import create_null_coordinator
+
+            coordinator = create_null_coordinator()
+            for node_name in graph.nodes:
+                coordinator.register_node(node_name)
             graph_ctx = ReActGraphContext(
                 state=react_state,
                 runtime=graph_runtime,
                 user_data=context,
+                coordinator=coordinator,
             )
             returned_state = await engine.run_async(graph_ctx)
             # ADR-0033 D9.3: the terminal ``EndNode`` writes ``state.result``;

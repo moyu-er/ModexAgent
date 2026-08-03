@@ -452,18 +452,30 @@ BEGIN
 END;
 
 -- ---------------------------------------------------------------------------
--- 18. node_states — per-node state snapshots (MVCC version chain).
---     Append-only: one row per (graph_instance_id, node_name, version). All
---     versions retained for MVCC rollback — NO updated_at, NO trigger.
+-- 18. node_states — per-node invocation version chain.
+--     One row per (graph_instance_id, node_name, version). All versions
+--     retained for MVCC rollback. `status` tracks the InvocationStatus
+--     lifecycle (pending → running → completed/canceled/crashed/superseded);
+--     `invocation_id` links the version to its producing invocation;
+--     `parent_version` chains superseded versions to their predecessor.
 --     graph_instance_id references graph_instances.graph_instance_id (app-layer FK).
+--     No auto-update trigger — each version row is write-once; `updated_at`
+--     is set by the application layer when the row is created.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS node_states (
     node_state_id       BIGINT  PRIMARY KEY,
     graph_instance_id   BIGINT  NOT NULL,
     node_name           TEXT    NOT NULL,
     version             INTEGER NOT NULL DEFAULT 0,
+    parent_version      INTEGER,
+    status              TEXT    NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('pending', 'running', 'completed',
+                                          'canceled', 'crashed', 'superseded')),
+    invocation_id       BIGINT  NOT NULL DEFAULT 0,
     state_json          TEXT    NOT NULL CHECK (json_valid(state_json)),
+    suspended           INTEGER NOT NULL DEFAULT 0,
     created_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
+    updated_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
     UNIQUE (graph_instance_id, node_name, version)
 );
 
@@ -473,9 +485,23 @@ CREATE INDEX IF NOT EXISTS idx_node_states_latest
 CREATE INDEX IF NOT EXISTS idx_node_states_node
     ON node_states (graph_instance_id, node_name);
 
+CREATE INDEX IF NOT EXISTS idx_node_states_status
+    ON node_states (graph_instance_id, node_name, status);
+
+CREATE INDEX IF NOT EXISTS idx_node_states_cross
+    ON node_states (graph_instance_id, node_name, invocation_id);
+
+CREATE INDEX IF NOT EXISTS idx_node_states_global
+    ON node_states (graph_instance_id, invocation_id DESC);
+
 -- ---------------------------------------------------------------------------
--- 19. deliver_states — accumulated deliver payloads (ticket 07).
+-- 19. deliver_states — accumulated deliver payloads with consumption state machine.
 --     node_name is the accumulating node; next_node is the target downstream.
+--     `source_node` / `source_invocation_id` record the delivering node;
+--     `consumed_by_invocation_id` records the consumer (NULL until consumed).
+--     `status` transitions: PENDING → CONSUMED_PENDING → CONSUMED_COMPLETED
+--     (three-state machine). Legacy 'accumulated'/'submitted' values retained
+--     for backward compat. Default is 'pending'.
 --     graph_instance_id references graph_instances.graph_instance_id (app-layer FK).
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS deliver_states (
@@ -483,9 +509,14 @@ CREATE TABLE IF NOT EXISTS deliver_states (
     graph_instance_id   BIGINT  NOT NULL,
     node_name           TEXT    NOT NULL,
     next_node           TEXT    NOT NULL,
+    source_node         TEXT    NOT NULL DEFAULT '',
+    source_invocation_id INTEGER NOT NULL DEFAULT 0,
+    consumed_by_invocation_id INTEGER,
     content_json        TEXT    NOT NULL CHECK (json_valid(content_json)),
-    status              TEXT    NOT NULL DEFAULT 'accumulated'
-                        CHECK (status IN ('accumulated', 'submitted')),
+    status              TEXT    NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('accumulated', 'submitted',
+                                          'pending', 'consumed',
+                                          'consumed_pending', 'consumed_completed')),
     created_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
     updated_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)
 );

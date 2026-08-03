@@ -1,6 +1,6 @@
 # ruff: noqa: ANN401
 
-"""`GraphControlService` — external control interface for graph instances (ticket 10 §3.3).
+"""`GraphControlService` — external control interface for graph instances.
 
 External control (pause / stop / resume / deliver) all go through the same
 `ControlCommand` pattern (rule 15: converge — single control path). REST +
@@ -10,9 +10,12 @@ The service holds:
 
 - `instance_store: GraphInstanceStore` — for status persistence (running →
   paused / stopped / running transitions).
-- `deliver_store: DeliverStore` — for `DELIVER_TO_NODE` accumulation.
-  External delivers are persisted so they survive crashes and are picked
-  up when the node's `_collect_delivers` next runs.
+- `coordinator_lookup: Callable[[int], GraphPersistenceCoordinator | None]`
+  — fetches the coordinator for an active graph instance from the
+  orchestrator's `_active_instances` registry. Used by `_deliver` to route
+  external delivers through `coordinator.route_deliver` (no shared
+  `deliver_store` — delivers go to the per-node store inside the
+  coordinator).
 - `engines: dict[int, GraphEngineController]` — running engine handles,
   keyed by `graph_instance_id`. The handle is a lightweight ABC that can
   pause / stop / resume the engine and deliver content to a node.
@@ -21,19 +24,19 @@ The service holds:
 `InMemoryGraphEngineController` is a recording stub — it sets boolean
 flags but does NOT actually control a running `ParallelScheduler` loop.
 A `LiveGraphEngineController` that wires pause/stop/resume into the
-scheduler loop is deferred (not yet specified in the implementation
-plan).
+scheduler loop is deferred (not yet specified).
 """
 
 from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from typing import Any
 
 from modex_agent.control.graph_recovery import GraphRecoveryService
 from modex_agent.control.types import ControlCommand, ControlCommandType
-from modex_graph import DeliverStore, GraphInstanceStatus, GraphInstanceStore
+from modex_graph import GraphInstanceStatus, GraphInstanceStore, GraphPersistenceCoordinator
 
 logger = logging.getLogger(__name__)
 
@@ -47,15 +50,13 @@ class GraphEngineController(ABC):
 
     - `pause()` — signal the engine to stop scheduling new nodes.
     - `stop()` — cancel the running engine.
-    - `resume()` — re-dispatch from checkpoint (delegates to P2.6
-      recovery).
+    - `resume()` — re-dispatch from checkpoint (delegates to recovery).
     - `deliver_to_node(node_name, content)` — notify the engine that
       content was externally delivered to a node.
 
-    For P2.5, `InMemoryGraphEngineController` is a recording stub. A
+    `InMemoryGraphEngineController` is a recording stub. A
     `LiveGraphEngineController` that wires pause/stop/resume into the
-    scheduler loop is deferred (not yet specified in the implementation
-    plan).
+    scheduler loop is deferred (not yet specified).
     """
 
     @property
@@ -76,7 +77,7 @@ class GraphEngineController(ABC):
 
     @abstractmethod
     async def resume(self) -> None:
-        """Re-dispatch from checkpoint (delegates to P2.6 recovery)."""
+        """Re-dispatch from checkpoint (delegates to recovery)."""
         ...
 
     @abstractmethod
@@ -90,8 +91,7 @@ class InMemoryGraphEngineController(GraphEngineController):
 
     Records `pause` / `stop` / `resume` / `deliver_to_node` calls for
     verification. A `LiveGraphEngineController` that wires pause/stop/
-    resume into the scheduler loop is deferred (not yet specified in
-    the implementation plan).
+    resume into the scheduler loop is deferred (not yet specified).
     """
 
     def __init__(self, graph_instance_id: int) -> None:
@@ -119,27 +119,28 @@ class InMemoryGraphEngineController(GraphEngineController):
 
 
 class GraphControlService:
-    """Routes `ControlCommand`s to graph instance actions (ticket 10 §3.3).
+    """Routes `ControlCommand`s to graph instance actions.
 
     External control (pause / stop / resume / deliver) all go through the
     same `ControlCommand` pattern (rule 15: converge — single control
     path). REST + CLI converge to this service.
 
-    The service persists status transitions via `GraphInstanceStore` and
-    accumulates external delivers via `DeliverStore`. Running engines are
-    notified via `GraphEngineController` handles registered by the bot
-    factory.
+    The service persists status transitions via `GraphInstanceStore`.
+    External delivers are routed through `coordinator.route_deliver`
+    via the `coordinator_lookup` callable — no shared
+    `deliver_store`. Running engines are notified via
+    `GraphEngineController` handles registered by the orchestrator.
     """
 
     def __init__(
         self,
         instance_store: GraphInstanceStore,
-        deliver_store: DeliverStore,
         recovery_service: GraphRecoveryService,
+        coordinator_lookup: Callable[[int], GraphPersistenceCoordinator | None],
     ) -> None:
         self._instance_store = instance_store
-        self._deliver_store = deliver_store
         self._recovery_service = recovery_service
+        self._coordinator_lookup = coordinator_lookup
         self._engines: dict[int, GraphEngineController] = {}
 
     def register_engine(self, controller: GraphEngineController) -> None:
@@ -209,13 +210,21 @@ class GraphControlService:
                 "payload['node_name'] to be a str"
             )
         content = command.payload.get("content")
-        # Persist via DeliverStore — next_node="" marks the downstream
-        # target as unresolved (the node resolves it when it submits).
-        self._deliver_store.accumulate(
-            graph_instance_id=gid,
-            node_name=node_name,
-            next_node="",
+        # Route through coordinator.route_deliver (no shared
+        # deliver_store). The coordinator holds per-node DeliverStores
+        # registered via register_node. source_node="__external__" marks
+        # this as an externally-originated deliver (no invocation).
+        coordinator = self._coordinator_lookup(gid)
+        if coordinator is None:
+            raise ValueError(
+                f"No active graph instance {gid} for DELIVER_TO_NODE; "
+                "instance must be running or paused"
+            )
+        coordinator.route_deliver(
+            target_node=node_name,
             content=content,
+            source_node="__external__",
+            source_invocation_id=0,
         )
         engine = self._engines.get(gid)
         if engine is not None:
