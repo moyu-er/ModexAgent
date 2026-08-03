@@ -19,7 +19,7 @@ approval suspend/resume, and integration points for hooks, interceptors, and con
 | `state.py` | `ReActTurnState(GraphState)` with `Annotated[T, LastValue]` fields, `ReActSnapshotPolicy` (simplified via `state.checkpoint()` per-channel path, ADR-0033 D14), `ReActRuntimeStateCodec`. |
 | `builder.py` | `ReActAgentBuilder` -- `build_agent()` + `build_emitter_factory()` from `AgentDescriptor`. |
 | `approval.py` | *(removed — migrated to `modex_agent.approval.runtime`)* |
-| `constants.py` | `ReActNode`, `ReActReason`, `ReActHookPoint`, `ReActScope`, `ReActEvent`, `InterruptReason` (B1) StrEnums. |
+| `constants.py` | `ReActNode`, `ReActHookPoint`, `ReActScope`, `ReActEvent`, `InterruptReason` (B1) StrEnums. |
 | `nodes/start.py` | `StartNode` -- routes to LLM (fresh) or stored `current_node` (resume from suspended). |
 | `nodes/llm.py` | `LLMNode` -- calls LLM, handles streaming, dispatches hooks/interceptors via `ctx.runtime.*`, emits iteration events. |
 | `nodes/tool.py` | `ToolNode` -- classify all -> suspend for approval via `ctx.interrupt(tx)` -> batch execute -> route. |
@@ -27,15 +27,15 @@ approval suspend/resume, and integration points for hooks, interceptors, and con
 
 ## Graph Edges
 
+Edges are plain topology — nodes route at runtime via `deliver()`.
+
 ```
-START --NORMAL_START--> LLM
-START --RESUME_TOOLS--> TOOL
-LLM   --HAS_TOOLS--> TOOL
-LLM   --NO_TOOLS--> END
-LLM   --MAX_ITERATIONS--> END
-LLM   --LLM_ERROR--> END
-TOOL  --TOOLS_DONE--> LLM
-TOOL  --TURN_CANCELLED--> END
+START → LLM
+LLM   → TOOL
+LLM   → END
+TOOL  → LLM
+TOOL  → END
+END   → GraphNode.END
 ```
 
 ## Runtime Modes

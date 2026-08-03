@@ -17,9 +17,9 @@
 
 ## Rules
 
-Detailed rules in `rules/type-safety.md` (16 rules) and `rules/architecture.md` (15 rules). Read before any framework code change. Core principles:
+Detailed rules in `rules/type-safety.md` and `rules/architecture.md`. Read before any framework code change. Core principles:
 
-- **Type safety:** enums/constants over raw strings; typed structures over loose dicts; declared types, no bare `Any`/`list`/`dict` in framework APIs; ABCs before implementations, zero Protocols; no `getattr`/`hasattr`/`isinstance` except at real extension boundaries. Pydantic `BaseModel` with `frozen=True, extra="forbid"` for all cross-module structured data; serialization via `model_dump()`/`model_validate()`, never hand-rolled `json.dumps`.
+- **Type safety:** enums/constants over raw strings; typed structures over loose dicts; declared types, no bare `Any`/`list`/`dict` in framework APIs; ABCs before implementations, zero Protocols; no `getattr`/`hasattr`/`isinstance` except at real extension boundaries; no `object.__setattr__`/`__dict__` manipulation (rule 17 — fix the root cause instead). Pydantic `BaseModel` with `frozen=True, extra="forbid"` for all cross-module structured data; serialization via `model_dump()`/`model_validate()`, never hand-rolled `json.dumps`. Never use `@dataclass(frozen=True)` on classes with behavior (rule 11) — use a regular class with `__init__`.
 - **Architecture:** deep modules (interface simpler than implementation); deletion test before extracting; interface is the test surface; one adapter is hypothetical, two make a real seam; preserve locality; ABCs for interfaces; per-turn state in `runtime.state`; `GraphInterrupt` for approval suspension. See `rules/architecture.md` for the full list.
 
 ## Convergence Rules
