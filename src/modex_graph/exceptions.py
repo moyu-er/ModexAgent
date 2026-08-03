@@ -20,7 +20,7 @@ Two layers:
 
 - Routing / recursion errors:
     - `RoutingError` — raised when the engine cannot resolve a next node
-      (no matching `Command.goto`, transition, or default edge).
+      (node did not deliver and no default edge exists).
     - `GraphRecursionError` — raised when the engine-level `max_iterations`
       safety net is exceeded (abnormal exit, prevents infinite loops).
 """
@@ -46,7 +46,7 @@ class GraphInterrupt(GraphBubbleUp):
     side effects persist across the interrupt boundary. Resume re-enters
     the graph at the entry node; the interrupted node body is NOT re-run.
     Re-entry routing is driven by `state.resume_target`: the entry node
-    reads it and routes via `Command(goto=...)`.
+    reads it and routes via `deliver(content, target, ctx)`.
 
     The `value` carries the interrupt payload (e.g. an `ApprovalTransaction`
     awaiting human decision). The caller (e.g. `ReActAgent.run()`) inspects
@@ -105,9 +105,9 @@ class InvalidUpdateError(GraphBubbleUp):
 class RoutingError(Exception):
     """Raised when the engine cannot resolve the next node.
 
-    Two-layer routing model (ADR-0034 D12): `Command.goto` (dynamic layer)
-    is tried first, then `transition` matched against static edges, then the
-    default edge (`reason=None`). If none matches, `RoutingError` is raised.
+    Deliver-only routing: nodes must call ``deliver(content, next_node, ctx)``
+    during ``execute()``. If a node produces no delivers and has no downstream
+    edges, ``RoutingError`` is raised.
     """
 
 
@@ -116,7 +116,7 @@ class GraphRecursionError(Exception):
 
     This is an ABNORMAL exit — it prevents infinite loops. Distinct from
     the node-level graceful exit (nodes check business iteration count and
-    return `transition=...` to route to END via static edge, producing a
-    normal result). Both coexist; engine-level N should be larger than
-    business max (e.g. business 25, compile 100). See ADR-0033 D9.3.
+    deliver to END, producing a normal result). Both coexist; engine-level
+    N should be larger than business max (e.g. business 25, compile 100).
+    See ADR-0033 D9.3.
     """

@@ -1,30 +1,18 @@
 # ruff: noqa: ANN401
-"""Structured node return values: `NodeResult` + `Command` + `Task` + `DispatchEvent`.
+"""Structured node return values: `NodeResult` + `DispatchEvent`.
 
 A node's `execute(ctx)` returns a `NodeResult` — a frozen Pydantic value
 object carrying:
 
-- `transition: str | None` — static edge lookup key. The engine finds the
-  next node via `add_edge(source, target, reason=transition)`. `None` means
-  no static transition; the engine falls through to the default edge.
 - `state_update: dict[str, Any] | None` — declarative state mutation. The
   engine calls `channel.update([value])` for each entry, then syncs back to
   the Pydantic field. Bypassed when None.
-- `command: Command | None` — dynamic routing / fan-out. Highest priority.
 
-`Command.goto` accepts three forms (two-layer routing model):
-
-- `None` — no goto; fall through to transition / default.
-- `str` — dynamic routing to one node.
-- `list[Task]` — fan-out. `LinearScheduler` executes tasks sequentially;
-  `ParallelScheduler` executes them concurrently (ADR-0034).
-
-`list[str]` sequential multi-target was removed in the two-layer cleanup;
-use `list[Task]` for fan-out or `str` for single-target routing.
-
-`Task(node, state)` carries an independent state for fan-out.
-`LinearScheduler` executes tasks sequentially; `ParallelScheduler`
-executes them concurrently (ADR-0034 D2/D7).
+Routing is deliver-only: nodes call `self.deliver(content, next_node, ctx)`
+during `execute()` to accumulate delivers, and the framework dispatches them
+via `_submit` after `execute` returns. `NodeResult` carries no routing fields
+— the legacy `transition` / `command` / `Task` / `Command` types were removed
+as dead code (P3.4b convergence).
 
 `DispatchEvent` is the immutable record of a single `ctx.dispatch()` call
 under `ParallelScheduler`. It is a frozen Pydantic value object (per rules
@@ -38,86 +26,23 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
-
-
-class Task(BaseModel):
-    """A single fan-out task — execute `node` with `state`.
-
-    `LinearScheduler` executes tasks sequentially; `ParallelScheduler`
-    executes them concurrently (ADR-0034). The upgrade is engine-only —
-    node code returning `Command(goto=[Task(...)])` runs in parallel
-    automatically under `ParallelScheduler`.
-
-    `state=None` means share the parent state (mutations propagate directly).
-    A non-None `state` means independent state (imperative mutations do NOT
-    propagate; only `NodeResult.state_update` merges via reducer).
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    node: str = Field(description="Target node name to execute.")
-    state: Any | None = Field(
-        default=None,
-        description=(
-            "Independent state for this task. None = share parent state "
-            "(mutations propagate). Non-None = isolated state."
-        ),
-    )
-
-
-class Command(BaseModel):
-    """Dynamic routing / fan-out instruction. Highest-priority routing mechanism.
-
-    `goto` accepts:
-    - `None` — no goto; fall through to transition / default.
-    - `str` — jump to one node.
-    - `list[Task]` — fan-out with independent state per task.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    goto: str | list[Task] | None = Field(
-        default=None,
-        description="Dynamic routing target(s). See class docstring for forms.",
-    )
-
-    @field_validator("goto", mode="before")
-    @classmethod
-    def _reject_str_list(cls, v: Any) -> Any:
-        if isinstance(v, list) and len(v) > 0 and isinstance(v[0], str):
-            raise ValueError(
-                "Command.goto no longer accepts list[str] (removed in the "
-                "two-layer routing cleanup). Use str for single-target "
-                "routing or list[Task] for fan-out."
-            )
-        return v
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class NodeResult(BaseModel):
     """Structured return value from `Node.execute(ctx)`.
 
-    Three fields, all optional, evaluated by the engine in strict priority:
+    Single field, optional:
 
-    1. `command` (if not None and `command.goto` is not None) → use goto.
-    2. `transition` (if not None) → static edge lookup.
-    3. default edge (reason=None) if defined.
-    4. else raise `RoutingError`.
+    - `state_update` — declarative state mutation. Applied by the engine
+      before routing is resolved (routing is deliver-only).
 
-    `state_update` is applied regardless of routing — it merges into the
-    channels before routing is resolved.
+    Routing is handled entirely by `deliver()` / `_submit()` — `NodeResult`
+    itself carries no routing information.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    transition: str | None = Field(
-        default=None,
-        description=(
-            "Static edge lookup key. The engine finds the next node via "
-            "`add_edge(current, target, reason=transition)`. None = no "
-            "static transition; fall through to default."
-        ),
-    )
     state_update: dict[str, Any] | None = Field(
         default=None,
         description=(
@@ -125,10 +50,6 @@ class NodeResult(BaseModel):
             "`channel.update([value])` for each entry, then syncs back to "
             "the Pydantic field. Open payload keyed by field name."
         ),
-    )
-    command: Command | None = Field(
-        default=None,
-        description="Dynamic routing / fan-out. Highest priority.",
     )
 
 
@@ -174,4 +95,4 @@ class DispatchEvent(BaseModel):
     )
 
 
-__all__ = ["Command", "NodeResult", "Task", "DispatchEvent"]
+__all__ = ["NodeResult", "DispatchEvent"]

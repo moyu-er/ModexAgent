@@ -13,6 +13,7 @@ from modex_graph import (
     GraphInterrupt,
     GraphNode,
     GraphRuntime,
+    IntegratedInput,
     Node,
     NodeResult,
     ParentCommand,
@@ -45,7 +46,7 @@ class TestEngineDoesNotSwallow:
 
     async def test_engine_propagates_graphinterrupt(self) -> None:
         class InterruptNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
                 ctx.interrupt({"approval": "needed"})
                 return NodeResult()
 
@@ -61,7 +62,7 @@ class TestEngineDoesNotSwallow:
 
     async def test_engine_propagates_graphdrained(self) -> None:
         class DrainNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
                 raise GraphDrained()
 
         g: Graph[CounterState] = Graph()
@@ -75,7 +76,7 @@ class TestEngineDoesNotSwallow:
 
     async def test_engine_propagates_parentcommand(self) -> None:
         class ParentCmdNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
                 raise ParentCommand("goto_parent")
 
         g: Graph[CounterState] = Graph()
@@ -95,7 +96,8 @@ class TestEngineDoesNotSwallow:
                 raise GraphInterrupt(value="from_before_node")
 
         class NoOpNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+                self.deliver(None, None, ctx)
                 return NodeResult()
 
         g: Graph[CounterState] = Graph()
@@ -121,7 +123,8 @@ class TestEngineDoesNotSwallow:
                 raise GraphDrained()
 
         class NoOpNode(Node[CounterState]):
-            def execute(self, ctx: GraphContext[CounterState]) -> NodeResult:
+            def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+                self.deliver(None, None, ctx)
                 return NodeResult()
 
         g: Graph[CounterState] = Graph()
