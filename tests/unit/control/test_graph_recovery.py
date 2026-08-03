@@ -282,24 +282,6 @@ class TestControlServiceDelegation:
         assert factory.calls[0].graph_instance_id == 6001
 
     @pytest.mark.asyncio
-    async def test_resume_falls_back_when_recovery_service_not_wired(self) -> None:
-        """P2.5 mode: no recovery_service → status update + engine.resume()."""
-        paused = _make_instance(6002, status=GraphInstanceStatus.PAUSED.value)
-        instance_store = InMemoryGraphInstanceStore()
-        instance_store.save(paused)
-        deliver_store = InMemoryDeliverStore()
-        service = GraphControlService(instance_store, deliver_store)
-        engine = InMemoryGraphEngineController(6002)
-        service.register_engine(engine)
-
-        await service.handle(_make_resume_command(6002))
-
-        instance = instance_store.load_by_id(6002)
-        assert instance is not None
-        assert instance.status == GraphInstanceStatus.RUNNING.value
-        assert engine.resume_called is True
-
-    @pytest.mark.asyncio
     async def test_resume_propagates_validation_error_from_recovery(self) -> None:
         """If recovery_service raises, the error propagates through handle()."""
         running = _make_instance(6003, status=GraphInstanceStatus.RUNNING.value)

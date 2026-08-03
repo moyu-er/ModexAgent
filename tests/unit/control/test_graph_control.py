@@ -8,6 +8,10 @@ from modex_agent.control.graph_control import (
     GraphControlService,
     InMemoryGraphEngineController,
 )
+from modex_agent.control.graph_recovery import (
+    GraphEngineFactory,
+    GraphRecoveryService,
+)
 from modex_agent.control.types import ControlCommand, ControlCommandType, ControlScope
 from modex_graph import (
     DeliverStatus,
@@ -15,11 +19,22 @@ from modex_graph import (
     GraphInstanceStatus,
     InMemoryDeliverStore,
     InMemoryGraphInstanceStore,
+    MemoryCheckpointStore,
 )
 
 _SESSION_ID = "sess-1:main"
 _SPEC_ID = 1001
 _GID = 9001
+
+
+class _RecordingEngineFactory(GraphEngineFactory):
+    """Concrete factory that records create_and_run calls."""
+
+    def __init__(self) -> None:
+        self.calls: list[GraphInstance] = []
+
+    async def create_and_run(self, instance: GraphInstance) -> None:
+        self.calls.append(instance)
 
 
 def _make_command(
@@ -63,7 +78,10 @@ def _make_service(
     deliver_store = InMemoryDeliverStore()
     if instance is not None:
         instance_store.save(instance)
-    service = GraphControlService(instance_store, deliver_store)
+    recovery_service = GraphRecoveryService(
+        instance_store, MemoryCheckpointStore(), _RecordingEngineFactory()
+    )
+    service = GraphControlService(instance_store, deliver_store, recovery_service)
     if engine is not None:
         service.register_engine(engine)
     return service, instance_store, deliver_store
@@ -103,7 +121,6 @@ class TestHandleRouting:
             instance=_make_instance(status="paused"), engine=engine
         )
         await service.handle(_make_command(ControlCommandType.RESUME_GRAPH))
-        assert engine.resume_called is True
         assert _load_status(instance_store) == GraphInstanceStatus.RUNNING
 
     @pytest.mark.asyncio
@@ -220,15 +237,6 @@ class TestResume:
         )
         await service.handle(_make_command(ControlCommandType.RESUME_GRAPH))
         assert _load_status(instance_store) == GraphInstanceStatus.RUNNING
-
-    @pytest.mark.asyncio
-    async def test_calls_engine_resume_when_registered(self) -> None:
-        engine = InMemoryGraphEngineController(_GID)
-        service, _, _ = _make_service(
-            instance=_make_instance(status="paused"), engine=engine
-        )
-        await service.handle(_make_command(ControlCommandType.RESUME_GRAPH))
-        assert engine.resume_called is True
 
 
 # ── DELIVER_TO_NODE ─────────────────────────────────────────────────────

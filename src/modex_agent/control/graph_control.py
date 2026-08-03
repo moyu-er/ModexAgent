@@ -135,7 +135,7 @@ class GraphControlService:
         self,
         instance_store: GraphInstanceStore,
         deliver_store: DeliverStore,
-        recovery_service: GraphRecoveryService | None = None,
+        recovery_service: GraphRecoveryService,
     ) -> None:
         self._instance_store = instance_store
         self._deliver_store = deliver_store
@@ -193,21 +193,12 @@ class GraphControlService:
             await engine.stop()
 
     async def _resume(self, command: ControlCommand) -> None:
+        # Delegate to the recovery service (load checkpoint → rebuild →
+        # re-dispatch via engine_factory.create_and_run). The recovery
+        # service owns the full flow: status validation (PAUSED/STOPPED
+        # only), RUNNING transition, and engine creation.
         gid = self._require_graph_instance_id(command)
-        if self._recovery_service is not None:
-            # P2.6: delegate to the recovery service (load checkpoint →
-            # rebuild → re-dispatch via engine_factory.create_and_run).
-            # The recovery service owns the full flow: status validation,
-            # RUNNING transition, and engine creation.
-            await self._recovery_service.resume(gid)
-            return
-        # P2.5 in-memory mode: no recovery service wired. Status
-        # transition + engine.resume() on the registered controller
-        # (stub). The bot factory (P3.5) wires the recovery service.
-        self._instance_store.update_status(gid, GraphInstanceStatus.RUNNING)
-        engine = self._engines.get(gid)
-        if engine is not None:
-            await engine.resume()
+        await self._recovery_service.resume(gid)
 
     async def _deliver(self, command: ControlCommand) -> None:
         gid = self._require_graph_instance_id(command)
