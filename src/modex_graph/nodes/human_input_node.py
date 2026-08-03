@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from ..integration import IntegratedInput
 from ..node import Node
@@ -30,6 +30,20 @@ from ..spec import NodeSpec
 if TYPE_CHECKING:
     from ..context import GraphContext
     from ..result import NodeResult
+
+
+class HumanInputNodeConfig(BaseModel):
+    """Pydantic config schema for `HumanInputNode` (rule 12 — strict-shape).
+
+    Fields:
+    - `prompt`: the prompt displayed to the human when the graph suspends.
+    - `next_node`: explicit deliver target for the resume signal (optional).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    prompt: str = ""
+    next_node: str | None = None
 
 
 class HumanInputNode(Node[Any]):
@@ -88,27 +102,26 @@ class HumanInputNodeFactory(NodeFactory):
     """Creates `HumanInputNode` from config (ticket 02).
 
     `NodeSpec.config = {"prompt": <str>, "next_node": <str> (optional)}`.
+
+    Config shape is validated by `HumanInputNodeConfig` (returned from
+    `config_schema()`).
     """
 
     def create(self, spec: NodeSpec) -> Node[Any]:
         """Create a `HumanInputNode` from the spec's `prompt` config key.
 
+        Config shape is validated via `HumanInputNodeConfig` — `prompt` is
+        guaranteed to be a `str` and `next_node` a `str | None`.
+
         Raises:
-            ValueError: if `prompt` is missing or not a string.
+            pydantic.ValidationError: if `spec.config` fails config validation.
         """
-        prompt = spec.config.get("prompt", "")
-        if not isinstance(prompt, str):
-            raise ValueError(f"HumanInputNode 'prompt' config must be a string. Got: {prompt!r}.")
-        next_node = spec.config.get("next_node")
-        if next_node is not None and not isinstance(next_node, str):
-            raise ValueError(
-                f"HumanInputNode 'next_node' config must be a string or None. Got: {next_node!r}."
-            )
-        return HumanInputNode(prompt, next_node=next_node)
+        config = HumanInputNodeConfig.model_validate(spec.config)
+        return HumanInputNode(config.prompt, next_node=config.next_node)
 
-    def config_schema(self) -> type[BaseModel] | None:
-        """No Pydantic schema — config is validated in `create()`."""
-        return None
+    def config_schema(self) -> type[BaseModel]:
+        """Return `HumanInputNodeConfig` — the Pydantic config model."""
+        return HumanInputNodeConfig
 
 
-__all__ = ["HumanInputNode", "HumanInputNodeFactory"]
+__all__ = ["HumanInputNode", "HumanInputNodeConfig", "HumanInputNodeFactory"]

@@ -10,7 +10,7 @@ Covers:
 - `FunctionNodeFactory`: creates from config, holds a function registry.
 - Factory rejects bad config (missing/unregistered/non-string function name).
 - Factory `register_function` / `unregister_function` lifecycle.
-- Factory `config_schema()` returns None.
+- Factory `config_schema()` returns a Pydantic model.
 - Integration with `NodeRegistry` (name + trigger set by registry).
 """
 
@@ -20,6 +20,7 @@ from typing import Any
 
 import pytest
 from helpers import CounterState, make_ctx  # type: ignore[import-not-found]
+from pydantic import BaseModel, ValidationError
 
 from modex_graph import (
     FunctionNode,
@@ -32,6 +33,7 @@ from modex_graph import (
     NodeSpec,
     NodeTrigger,
 )
+from modex_graph.nodes import FunctionNodeConfig
 
 # ── Test functions ────────────────────────────────────────────────────────
 
@@ -175,9 +177,12 @@ class TestFunctionNodeFactory:
         factory = FunctionNodeFactory()
         factory.unregister_function("nonexistent")
 
-    def test_config_schema_returns_none(self) -> None:
+    def test_config_schema_returns_model(self) -> None:
         factory = FunctionNodeFactory()
-        assert factory.config_schema() is None
+        schema = factory.config_schema()
+        assert schema is not None
+        assert issubclass(schema, BaseModel)
+        assert schema is FunctionNodeConfig
 
     def test_empty_registry_by_default(self) -> None:
         factory = FunctionNodeFactory()
@@ -202,7 +207,7 @@ class TestFunctionNodeFactory:
 class TestFunctionNodeFactoryRejectsBadConfig:
     def test_missing_function_key(self) -> None:
         factory = FunctionNodeFactory({"double": _sync_double})
-        with pytest.raises(ValueError, match="requires a 'function'"):
+        with pytest.raises(ValidationError, match="function"):
             factory.create(NodeSpec(name="n1", node_type="function", config={}))
 
     def test_unregistered_function_name(self) -> None:
@@ -214,17 +219,28 @@ class TestFunctionNodeFactoryRejectsBadConfig:
 
     def test_non_string_function_name(self) -> None:
         factory = FunctionNodeFactory({"double": _sync_double})
-        with pytest.raises(ValueError, match="requires a 'function'"):
+        with pytest.raises(ValidationError, match="function"):
             factory.create(NodeSpec(name="n1", node_type="function", config={"function": 123}))
 
     def test_non_string_next_node(self) -> None:
         factory = FunctionNodeFactory({"double": _sync_double})
-        with pytest.raises(ValueError, match="next_node"):
+        with pytest.raises(ValidationError, match="next_node"):
             factory.create(
                 NodeSpec(
                     name="n1",
                     node_type="function",
                     config={"function": "double", "next_node": 123},
+                )
+            )
+
+    def test_extra_config_key_rejected(self) -> None:
+        factory = FunctionNodeFactory({"double": _sync_double})
+        with pytest.raises(ValidationError, match="extra"):
+            factory.create(
+                NodeSpec(
+                    name="n1",
+                    node_type="function",
+                    config={"function": "double", "unknown_key": "bad"},
                 )
             )
 

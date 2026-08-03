@@ -11,26 +11,32 @@ Modules:
 - `delay_node` — `DelayNode` for async delay / rate-limiting.
 - `human_input_node` — `HumanInputNode` suspends via `GraphInterrupt`.
 
-All factories return `None` from `config_schema()` — validation is done in
-`create()` against the factory's own state (function registry, compiler,
-or simple type coercion). Register them with `NodeRegistry.register(...)`
-at startup; `GraphSpecCompiler` resolves them at compile time.
+Each factory declares a Pydantic `config_schema()` model — the
+`NodeRegistry` validates `NodeSpec.config` against it before `create()` is
+called, and `create()` re-validates to obtain a typed config object.
+Runtime validation (function registry lookup, GraphSpec compilation) stays
+in `create()`. Register them with `NodeRegistry.register(...)` at startup;
+`GraphSpecCompiler` resolves them at compile time.
 """
 
 from __future__ import annotations
 
-from .delay_node import DelayNode, DelayNodeFactory
-from .function_node import FunctionNode, FunctionNodeFactory
-from .graph_as_node import GraphAsNode, GraphAsNodeFactory
-from .human_input_node import HumanInputNode, HumanInputNodeFactory
+from .delay_node import DelayNode, DelayNodeConfig, DelayNodeFactory
+from .function_node import FunctionNode, FunctionNodeConfig, FunctionNodeFactory
+from .graph_as_node import GraphAsNode, GraphAsNodeConfig, GraphAsNodeFactory
+from .human_input_node import HumanInputNode, HumanInputNodeConfig, HumanInputNodeFactory
 
 __all__ = [
     "DelayNode",
+    "DelayNodeConfig",
     "DelayNodeFactory",
     "FunctionNode",
+    "FunctionNodeConfig",
     "FunctionNodeFactory",
     "GraphAsNode",
+    "GraphAsNodeConfig",
     "GraphAsNodeFactory",
     "HumanInputNode",
+    "HumanInputNodeConfig",
     "HumanInputNodeFactory",
 ]

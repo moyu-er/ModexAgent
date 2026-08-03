@@ -10,7 +10,7 @@ Covers:
   to deliver a "human_input_resumed" signal instead of interrupting.
 - `HumanInputNodeFactory`: creates from config.
 - Factory rejects bad config (non-string prompt, non-string next_node).
-- Factory `config_schema()` returns None.
+- Factory `config_schema()` returns a Pydantic model.
 - Integration with `NodeRegistry`.
 """
 
@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import pytest
 from helpers import make_ctx  # type: ignore[import-not-found]
+from pydantic import BaseModel, ValidationError
 
 from modex_graph import (
     GraphInterrupt,
@@ -31,6 +32,7 @@ from modex_graph import (
     NodeSpec,
     NodeTrigger,
 )
+from modex_graph.nodes import HumanInputNodeConfig
 
 # ── HumanInputNode construction ───────────────────────────────────────────
 
@@ -182,9 +184,12 @@ class TestHumanInputNodeFactory:
         node = factory.create(NodeSpec(name="n1", node_type="human_input", config={}))
         assert isinstance(node, Node)
 
-    def test_config_schema_returns_none(self) -> None:
+    def test_config_schema_returns_model(self) -> None:
         factory = HumanInputNodeFactory()
-        assert factory.config_schema() is None
+        schema = factory.config_schema()
+        assert schema is not None
+        assert issubclass(schema, BaseModel)
+        assert schema is HumanInputNodeConfig
 
     def test_factory_is_node_factory_subclass(self) -> None:
         assert issubclass(HumanInputNodeFactory, NodeFactory)
@@ -196,24 +201,35 @@ class TestHumanInputNodeFactory:
 class TestHumanInputNodeFactoryRejectsBadConfig:
     def test_non_string_prompt_raises(self) -> None:
         factory = HumanInputNodeFactory()
-        with pytest.raises(ValueError, match="prompt.*must be a string"):
+        with pytest.raises(ValidationError, match="prompt"):
             factory.create(NodeSpec(name="n1", node_type="human_input", config={"prompt": 123}))
 
     def test_list_prompt_raises(self) -> None:
         factory = HumanInputNodeFactory()
-        with pytest.raises(ValueError, match="prompt.*must be a string"):
+        with pytest.raises(ValidationError, match="prompt"):
             factory.create(
                 NodeSpec(name="n1", node_type="human_input", config={"prompt": ["a", "b"]})
             )
 
     def test_non_string_next_node_raises(self) -> None:
         factory = HumanInputNodeFactory()
-        with pytest.raises(ValueError, match="next_node"):
+        with pytest.raises(ValidationError, match="next_node"):
             factory.create(
                 NodeSpec(
                     name="n1",
                     node_type="human_input",
                     config={"prompt": "hi", "next_node": 123},
+                )
+            )
+
+    def test_extra_config_key_rejected(self) -> None:
+        factory = HumanInputNodeFactory()
+        with pytest.raises(ValidationError, match="extra"):
+            factory.create(
+                NodeSpec(
+                    name="n1",
+                    node_type="human_input",
+                    config={"prompt": "hi", "unknown_key": "bad"},
                 )
             )
 

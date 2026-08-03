@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from ..integration import IntegratedInput
 from ..node import Node
@@ -23,6 +23,22 @@ from ..spec import NodeSpec
 if TYPE_CHECKING:
     from ..context import GraphContext
     from ..result import NodeResult
+
+
+class DelayNodeConfig(BaseModel):
+    """Pydantic config schema for `DelayNode` (rule 12 — strict-shape).
+
+    Fields:
+    - `delay_seconds`: non-negative sleep duration. Pydantic coerces int/str
+      to float; the `< 0` business check is in `DelayNode.__init__` and
+      `DelayNodeFactory.create()`.
+    - `next_node`: explicit deliver target (optional).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    delay_seconds: float = 0.0
+    next_node: str | None = None
 
 
 class DelayNode(Node[Any]):
@@ -66,34 +82,33 @@ class DelayNodeFactory(NodeFactory):
     """Creates `DelayNode` from config (ticket 02).
 
     `NodeSpec.config = {"delay_seconds": <float>, "next_node": <str> (optional)}`.
+
+    Config shape is validated by `DelayNodeConfig` (returned from
+    `config_schema()`). Pydantic coerces int/str to float; the `< 0`
+    business check remains in `create()`.
     """
 
     def create(self, spec: NodeSpec) -> Node[Any]:
         """Create a `DelayNode` from the spec's `delay_seconds` config key.
 
+        Config shape is validated via `DelayNodeConfig` — `delay_seconds` is
+        guaranteed to be a `float` and `next_node` a `str | None`. The `< 0`
+        business check remains (Pydantic validates type, not range).
+
         Raises:
-            ValueError: if `delay_seconds` is present but not coercible to
-                a non-negative float, or is negative.
+            pydantic.ValidationError: if `spec.config` fails config validation.
+            ValueError: if `delay_seconds` is negative.
         """
-        delay = spec.config.get("delay_seconds", 0.0)
-        try:
-            delay_float = float(delay)
-        except (TypeError, ValueError) as exc:
+        config = DelayNodeConfig.model_validate(spec.config)
+        if config.delay_seconds < 0:
             raise ValueError(
-                f"DelayNode 'delay_seconds' must be a number. Got: {delay!r}."
-            ) from exc
-        if delay_float < 0:
-            raise ValueError(f"DelayNode 'delay_seconds' must be >= 0 (got {delay_float}).")
-        next_node = spec.config.get("next_node")
-        if next_node is not None and not isinstance(next_node, str):
-            raise ValueError(
-                f"DelayNode 'next_node' config must be a string or None. Got: {next_node!r}."
+                f"DelayNode 'delay_seconds' must be >= 0 (got {config.delay_seconds})."
             )
-        return DelayNode(delay_float, next_node=next_node)
+        return DelayNode(config.delay_seconds, next_node=config.next_node)
 
-    def config_schema(self) -> type[BaseModel] | None:
-        """No Pydantic schema — config is validated in `create()`."""
-        return None
+    def config_schema(self) -> type[BaseModel]:
+        """Return `DelayNodeConfig` — the Pydantic config model."""
+        return DelayNodeConfig
 
 
-__all__ = ["DelayNode", "DelayNodeFactory"]
+__all__ = ["DelayNode", "DelayNodeConfig", "DelayNodeFactory"]

@@ -27,7 +27,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from ..compiled_graph import CompiledGraph
 from ..integration import IntegratedInput
@@ -39,6 +39,22 @@ if TYPE_CHECKING:
     from ..context import GraphContext
     from ..result import NodeResult
     from ..spec_compiler import GraphSpecCompiler
+
+
+class GraphAsNodeConfig(BaseModel):
+    """Pydantic config schema for `GraphAsNode` (rule 12 — strict-shape).
+
+    Fields:
+    - `graph_spec`: inline `GraphSpec` as a dict or a `GraphSpec` instance.
+      Pydantic validates the shape; full `GraphSpec` validation +
+      topology compilation happens in `create()`.
+    - `next_node`: explicit deliver target for the completion signal (optional).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    graph_spec: dict[str, Any] | GraphSpec
+    next_node: str | None = None
 
 
 class GraphAsNode(Node[Any]):
@@ -85,13 +101,11 @@ class GraphAsNodeFactory(NodeFactory):
 
     `NodeSpec.config = {"graph_spec": <GraphSpec dict>, "next_node": <str>}`.
 
-    The factory compiles the `GraphSpec` via a `GraphSpecCompiler` (which
-    requires `NodeRegistry` + `StateRegistry`). The compiled graph is
+    Config shape is validated by `GraphAsNodeConfig` (returned from
+    `config_schema()`). The `graph_spec` is then compiled via a
+    `GraphSpecCompiler` (which requires `NodeRegistry` + `StateRegistry`) —
+    that is runtime validation, not config validation. The compiled graph is
     embedded in the `GraphAsNode` wrapper.
-
-    The factory does NOT declare a `config_schema` (returns `None`) — the
-    `graph_spec` is validated by `GraphSpec.model_validate` + the compiler's
-    topology validation at `create()` time.
     """
 
     def __init__(self, compiler: GraphSpecCompiler) -> None:
@@ -107,35 +121,28 @@ class GraphAsNodeFactory(NodeFactory):
     def create(self, spec: NodeSpec) -> Node[Any]:
         """Create a `GraphAsNode` from the spec's `graph_spec` config key.
 
+        Config shape is validated via `GraphAsNodeConfig` — `graph_spec` is
+        guaranteed to be a `dict` or `GraphSpec`, and `next_node` a `str |
+        None`. A dict is then validated + compiled into a `CompiledGraph`
+        via the compiler; a `GraphSpec` instance is compiled directly.
+
         Raises:
-            ValueError: if `config["graph_spec"]` is missing.
-            pydantic.ValidationError: if the `graph_spec` data fails
+            pydantic.ValidationError: if `spec.config` fails config validation.
+            pydantic.ValidationError: if a dict `graph_spec` fails
                 `GraphSpec` validation.
             TopologyError: if topology validation fails during compilation.
         """
-        graph_spec_data = spec.config.get("graph_spec")
-        if graph_spec_data is None:
-            raise ValueError(f"GraphAsNode requires a 'graph_spec' config key. Spec: {spec!r}.")
-        if isinstance(graph_spec_data, dict):
-            graph_spec = GraphSpec.model_validate(graph_spec_data)
-        elif isinstance(graph_spec_data, GraphSpec):
-            graph_spec = graph_spec_data
+        config = GraphAsNodeConfig.model_validate(spec.config)
+        if isinstance(config.graph_spec, dict):
+            graph_spec = GraphSpec.model_validate(config.graph_spec)
         else:
-            raise ValueError(
-                f"GraphAsNode 'graph_spec' must be a dict or GraphSpec "
-                f"instance. Got: {type(graph_spec_data).__name__}."
-            )
+            graph_spec = config.graph_spec
         compiled = self._compiler.compile(graph_spec)
-        next_node = spec.config.get("next_node")
-        if next_node is not None and not isinstance(next_node, str):
-            raise ValueError(
-                f"GraphAsNode 'next_node' config must be a string or None. Got: {next_node!r}."
-            )
-        return GraphAsNode(compiled, next_node=next_node)
+        return GraphAsNode(compiled, next_node=config.next_node)
 
-    def config_schema(self) -> type[BaseModel] | None:
-        """No Pydantic schema — config is validated in `create()`."""
-        return None
+    def config_schema(self) -> type[BaseModel]:
+        """Return `GraphAsNodeConfig` — the Pydantic config model."""
+        return GraphAsNodeConfig
 
 
-__all__ = ["GraphAsNode", "GraphAsNodeFactory"]
+__all__ = ["GraphAsNode", "GraphAsNodeConfig", "GraphAsNodeFactory"]

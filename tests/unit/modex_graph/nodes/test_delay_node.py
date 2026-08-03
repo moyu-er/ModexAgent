@@ -9,7 +9,7 @@ Covers:
 - Zero-delay path (no sleep — fast for tests).
 - `DelayNodeFactory`: creates from config.
 - Factory rejects bad config (negative delay, non-numeric delay).
-- Factory `config_schema()` returns None.
+- Factory `config_schema()` returns a Pydantic model.
 - Integration with `NodeRegistry`.
 """
 
@@ -19,6 +19,7 @@ import asyncio
 
 import pytest
 from helpers import make_ctx  # type: ignore[import-not-found]
+from pydantic import BaseModel, ValidationError
 
 from modex_graph import (
     DelayNode,
@@ -31,6 +32,7 @@ from modex_graph import (
     NodeSpec,
     NodeTrigger,
 )
+from modex_graph.nodes import DelayNodeConfig
 
 # ── DelayNode construction ────────────────────────────────────────────────
 
@@ -140,9 +142,12 @@ class TestDelayNodeFactory:
         node = factory.create(NodeSpec(name="n1", node_type="delay", config={}))
         assert isinstance(node, Node)
 
-    def test_config_schema_returns_none(self) -> None:
+    def test_config_schema_returns_model(self) -> None:
         factory = DelayNodeFactory()
-        assert factory.config_schema() is None
+        schema = factory.config_schema()
+        assert schema is not None
+        assert issubclass(schema, BaseModel)
+        assert schema is DelayNodeConfig
 
     def test_factory_is_node_factory_subclass(self) -> None:
         assert issubclass(DelayNodeFactory, NodeFactory)
@@ -159,24 +164,35 @@ class TestDelayNodeFactoryRejectsBadConfig:
 
     def test_non_numeric_delay_raises(self) -> None:
         factory = DelayNodeFactory()
-        with pytest.raises(ValueError, match="must be a number"):
+        with pytest.raises(ValidationError, match="delay_seconds"):
             factory.create(
                 NodeSpec(name="n1", node_type="delay", config={"delay_seconds": "not_a_number"})
             )
 
     def test_list_delay_raises(self) -> None:
         factory = DelayNodeFactory()
-        with pytest.raises(ValueError, match="must be a number"):
+        with pytest.raises(ValidationError, match="delay_seconds"):
             factory.create(NodeSpec(name="n1", node_type="delay", config={"delay_seconds": [1, 2]}))
 
     def test_non_string_next_node_raises(self) -> None:
         factory = DelayNodeFactory()
-        with pytest.raises(ValueError, match="next_node"):
+        with pytest.raises(ValidationError, match="next_node"):
             factory.create(
                 NodeSpec(
                     name="n1",
                     node_type="delay",
                     config={"delay_seconds": 0.0, "next_node": 123},
+                )
+            )
+
+    def test_extra_config_key_rejected(self) -> None:
+        factory = DelayNodeFactory()
+        with pytest.raises(ValidationError, match="extra"):
+            factory.create(
+                NodeSpec(
+                    name="n1",
+                    node_type="delay",
+                    config={"delay_seconds": 0.0, "unknown_key": "bad"},
                 )
             )
 

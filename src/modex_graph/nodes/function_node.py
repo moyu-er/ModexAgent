@@ -24,7 +24,7 @@ import inspect
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from ..integration import IntegratedInput
 from ..node import Node
@@ -34,6 +34,20 @@ from ..spec import NodeSpec
 if TYPE_CHECKING:
     from ..context import GraphContext
     from ..result import NodeResult
+
+
+class FunctionNodeConfig(BaseModel):
+    """Pydantic config schema for `FunctionNode` (rule 12 — strict-shape).
+
+    Fields:
+    - `function`: registered function name to invoke.
+    - `next_node`: explicit deliver target (optional).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    function: str
+    next_node: str | None = None
 
 
 class FunctionNode(Node[Any]):
@@ -88,8 +102,9 @@ class FunctionNodeFactory(NodeFactory):
     `NodeSpec.config = {"function": "<registered_name>",
     "next_node": "<target>" (optional)}`.
 
-    The factory does NOT declare a `config_schema` (returns `None`) — the
-    function name is validated at `create()` time against the registry.
+    Config shape is validated by `FunctionNodeConfig` (returned from
+    `config_schema()`). The function name is validated at `create()` time
+    against the registry — that is runtime validation, not config validation.
     """
 
     def __init__(self, functions: dict[str, Callable[..., Any]] | None = None) -> None:
@@ -123,32 +138,27 @@ class FunctionNodeFactory(NodeFactory):
     def create(self, spec: NodeSpec) -> Node[Any]:
         """Create a `FunctionNode` from the spec's `function` config key.
 
+        Config shape is validated via `FunctionNodeConfig` — the `function`
+        field is guaranteed to be a `str` and `next_node` a `str | None`.
+        The function name is then resolved against the registry; an
+        unregistered name raises `ValueError`.
+
         Raises:
-            ValueError: if `config["function"]` is missing, not a string,
-                or not a registered function name.
+            pydantic.ValidationError: if `spec.config` fails config validation.
+            ValueError: if the function name is not registered.
         """
-        func_name = spec.config.get("function")
-        if not func_name or not isinstance(func_name, str):
-            raise ValueError(
-                f"FunctionNode requires a 'function' config key (string). "
-                f"Got: {func_name!r}. Spec: {spec!r}."
-            )
-        func = self._functions.get(func_name)
+        config = FunctionNodeConfig.model_validate(spec.config)
+        func = self._functions.get(config.function)
         if func is None:
             raise ValueError(
-                f"Function {func_name!r} is not registered. "
+                f"Function {config.function!r} is not registered. "
                 f"Registered functions: {sorted(self._functions.keys())}."
             )
-        next_node = spec.config.get("next_node")
-        if next_node is not None and not isinstance(next_node, str):
-            raise ValueError(
-                f"FunctionNode 'next_node' config must be a string or None. Got: {next_node!r}."
-            )
-        return FunctionNode(func, next_node=next_node)
+        return FunctionNode(func, next_node=config.next_node)
 
-    def config_schema(self) -> type[BaseModel] | None:
-        """No Pydantic schema — config is validated in `create()`."""
-        return None
+    def config_schema(self) -> type[BaseModel]:
+        """Return `FunctionNodeConfig` — the Pydantic config model."""
+        return FunctionNodeConfig
 
 
-__all__ = ["FunctionNode", "FunctionNodeFactory"]
+__all__ = ["FunctionNode", "FunctionNodeConfig", "FunctionNodeFactory"]

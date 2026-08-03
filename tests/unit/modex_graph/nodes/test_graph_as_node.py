@@ -9,7 +9,7 @@ Covers:
   wrapper delivers `{"subgraph_completed": True}`.
 - `GraphAsNodeFactory`: creates from an inline `GraphSpec` in config.
 - Factory rejects bad config (missing `graph_spec`, wrong type).
-- Factory `config_schema()` returns None.
+- Factory `config_schema()` returns a Pydantic model.
 - Integration with `NodeRegistry`.
 """
 
@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 from helpers import CounterState, make_ctx  # type: ignore[import-not-found]
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from modex_graph import (
     CompiledGraph,
@@ -41,12 +41,15 @@ from modex_graph import (
     StateRegistry,
     StateSchema,
 )
+from modex_graph.nodes import GraphAsNodeConfig
 
 # ── Test fixtures: inner graph node + factory ────────────────────────────
 
 
 class _IncNode(Node[CounterState]):
-    def execute(self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput) -> NodeResult:
+    def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> NodeResult:
         ctx.state.count += 1
         self.deliver(None, None, ctx)
         return NodeResult()
@@ -204,9 +207,12 @@ class TestGraphAsNodeFactory:
         )
         assert isinstance(node, Node)
 
-    def test_config_schema_returns_none(self) -> None:
+    def test_config_schema_returns_model(self) -> None:
         factory = GraphAsNodeFactory(_compiler())
-        assert factory.config_schema() is None
+        schema = factory.config_schema()
+        assert schema is not None
+        assert issubclass(schema, BaseModel)
+        assert schema is GraphAsNodeConfig
 
     def test_factory_is_node_factory_subclass(self) -> None:
         assert issubclass(GraphAsNodeFactory, NodeFactory)
@@ -218,12 +224,12 @@ class TestGraphAsNodeFactory:
 class TestGraphAsNodeFactoryRejectsBadConfig:
     def test_missing_graph_spec_key(self) -> None:
         factory = GraphAsNodeFactory(_compiler())
-        with pytest.raises(ValueError, match="requires a 'graph_spec'"):
+        with pytest.raises(ValidationError, match="graph_spec"):
             factory.create(NodeSpec(name="sub", node_type="graph_as_node", config={}))
 
     def test_wrong_type_graph_spec(self) -> None:
         factory = GraphAsNodeFactory(_compiler())
-        with pytest.raises(ValueError, match="must be a dict or GraphSpec"):
+        with pytest.raises(ValidationError, match="graph_spec"):
             factory.create(
                 NodeSpec(
                     name="sub",
@@ -234,7 +240,7 @@ class TestGraphAsNodeFactoryRejectsBadConfig:
 
     def test_non_string_next_node(self) -> None:
         factory = GraphAsNodeFactory(_compiler())
-        with pytest.raises(ValueError, match="next_node"):
+        with pytest.raises(ValidationError, match="next_node"):
             factory.create(
                 NodeSpec(
                     name="sub",
@@ -247,8 +253,6 @@ class TestGraphAsNodeFactoryRejectsBadConfig:
             )
 
     def test_invalid_graph_spec_data_raises(self) -> None:
-        from pydantic import ValidationError
-
         factory = GraphAsNodeFactory(_compiler())
         with pytest.raises((ValidationError, ValueError)):
             factory.create(
@@ -257,6 +261,20 @@ class TestGraphAsNodeFactoryRejectsBadConfig:
                     node_type="graph_as_node",
                     config={
                         "graph_spec": {"name": "bad", "nodes": [], "edges": [], "state_schema": "x"}
+                    },
+                )
+            )
+
+    def test_extra_config_key_rejected(self) -> None:
+        factory = GraphAsNodeFactory(_compiler())
+        with pytest.raises(ValidationError, match="extra"):
+            factory.create(
+                NodeSpec(
+                    name="sub",
+                    node_type="graph_as_node",
+                    config={
+                        "graph_spec": _inner_graph_spec().model_dump(),
+                        "unknown_key": "bad",
                     },
                 )
             )
