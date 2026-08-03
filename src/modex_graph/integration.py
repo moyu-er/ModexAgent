@@ -15,11 +15,12 @@ Provides:
 - `DefaultInputIntegrator` — default impl: concatenates all payloads.
   `integrated_content = [p.content for p in payloads]`.
 
-Per ticket 07: the deliver/submit model replaces `transition`/`command`/
-`_compile_routing` conceptually. This step is ADDITIVE — the old mechanisms
-stay; the new `_execute`/`_deliver`/`_submit` methods on `Node` are
-testable in isolation and NOT yet wired into the scheduler loop. Wiring +
-old-mechanism removal happens in a later convergence step.
+Per ticket 07: the deliver/submit model is the SOLE routing mechanism,
+having fully replaced `transition`/`command`/`_compile_routing` (P3.4b
+convergence — rule 15). Both `LinearScheduler` and `ParallelScheduler`
+call `node.run()` which integrates upstream payloads via
+`InputIntegrator`, calls `node.execute(ctx, integrated_input)`, then
+`node._submit(ctx)` which dispatches grouped delivers via `ctx.dispatch`.
 """
 
 from __future__ import annotations

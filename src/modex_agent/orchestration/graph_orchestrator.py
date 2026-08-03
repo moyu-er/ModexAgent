@@ -197,7 +197,7 @@ class GraphOrchestrator:
         instance = GraphInstance(
             graph_instance_id=graph_instance_id,
             spec_id=spec_id,
-            status=GraphInstanceStatus.RUNNING.value,
+            status=GraphInstanceStatus.RUNNING,
             parent_instance_id=parent_instance_id,
         )
         self._instance_store.save(instance)
@@ -298,7 +298,9 @@ class GraphOrchestrator:
         - Always unregister the engine controller (cleanup).
         """
         gid = instance.graph_instance_id
-        engine: GraphEngine[Any] = GraphEngine(compiled)
+        engine: GraphEngine[Any] = GraphEngine(
+            compiled, checkpoint_store=self._checkpoint_store
+        )
         ctx: GraphContext[Any] = GraphContext(
             state=state,
             runtime=self._runtime,

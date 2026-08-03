@@ -112,7 +112,7 @@ class Node[S: "GraphState"](ABC):
     # `_submit_result` are the only instance attributes — they are reset at
     # the start of each `run()` call. NOT concurrency-safe — a single Node
     # instance shared across concurrent executions would race.
-    _pending_delivers: list[tuple[Any, str | None]] = []
+    _pending_delivers: list[tuple[Any, str | None]] | None = None
     _submit_result: dict[str, list[Any]] = {}
     # Topology reference (per-execution, set by `run(graph=...)`). Schedulers
     # pass the CompiledGraph so `_resolve_default_target` can resolve
@@ -277,6 +277,8 @@ class Node[S: "GraphState"](ABC):
             )
             return deliver_id
         # In-memory accumulation only
+        if self._pending_delivers is None:
+            self._pending_delivers = []
         self._pending_delivers.append((content, next_node))
         return None
 
@@ -307,7 +309,7 @@ class Node[S: "GraphState"](ABC):
         if self.deliver_store is not None and ctx.graph_instance_id is not None:
             records = self.deliver_store.query_pending(ctx.graph_instance_id, self.name)
             return [(r.content, r.next_node or None) for r in records]
-        return list(self._pending_delivers)
+        return list(self._pending_delivers or [])
 
     def _resolve_default_target(self, ctx: GraphContext[S]) -> list[str]:
         """Resolve `next_node=None` to concrete target(s) via graph topology.
@@ -366,6 +368,19 @@ class Node[S: "GraphState"](ABC):
         # LINEAR-only: scheduler reads this for next-node selection. PARALLEL
         # uses ctx.dispatch. Kept as a fallback for custom submit overrides.
         self._submit_result = groups
+
+        # Mark delivered records as SUBMITTED to prevent re-reading stale
+        # ACCUMULATED records on re-execution in cyclic graphs (e.g. ReAct
+        # LLM↔TOOL loop). Without this, _collect_delivers returns old records
+        # from previous executions, causing duplicate dispatches.
+        if self.deliver_store is not None and ctx.graph_instance_id is not None:
+            records = self.deliver_store.query_pending(
+                ctx.graph_instance_id, self.name
+            )
+            if records:
+                self.deliver_store.mark_submitted(
+                    [r.deliver_id for r in records]
+                )
 
     def submit(self, ctx: GraphContext[S]) -> None:
         """Node-facing customization point. Default: delegates to `_submit`.

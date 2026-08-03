@@ -41,6 +41,7 @@ from .constants import SchedulerKind
 from .scheduler import LinearScheduler, ParallelScheduler, Scheduler
 
 if TYPE_CHECKING:
+    from .checkpoint_store import CheckpointStore
     from .compiled_graph import CompiledGraph
     from .context import GraphContext
     from .state import GraphState
@@ -58,27 +59,42 @@ class GraphEngine[S: "GraphState"]:
     `GraphBubbleUp` exceptions propagate verbatim — the engine NEVER catches
     and swallows them. This is the formal "never swallow" rule from D7.
 
-    Construction: `GraphEngine(compiled_graph)`. The scheduler is selected
-    internally from `compiled_graph.scheduler`. Existing call sites
-    (`GraphEngine(compiled)`) are unchanged.
+    Construction: `GraphEngine(compiled_graph, checkpoint_store=...)`. The
+    scheduler is selected internally from `compiled_graph.scheduler`. The
+    optional `checkpoint_store` is forwarded to `ParallelScheduler` for
+    crash-recovery checkpoint persistence. `LinearScheduler` does not
+    support checkpointing (deferred — see implementation plan §五).
     """
 
-    def __init__(self, graph: CompiledGraph[S]) -> None:
+    def __init__(
+        self,
+        graph: CompiledGraph[S],
+        *,
+        checkpoint_store: CheckpointStore | None = None,
+    ) -> None:
         self.graph = graph
-        self._scheduler: Scheduler[S] = self._select_scheduler(graph)
+        self._scheduler: Scheduler[S] = self._select_scheduler(
+            graph, checkpoint_store=checkpoint_store
+        )
 
     @staticmethod
-    def _select_scheduler(graph: CompiledGraph[S]) -> Scheduler[S]:
+    def _select_scheduler(
+        graph: CompiledGraph[S],
+        *,
+        checkpoint_store: CheckpointStore | None = None,
+    ) -> Scheduler[S]:
         """Select the `Scheduler` implementation for `graph.scheduler`.
 
         - `SchedulerKind.LINEAR` → `LinearScheduler` (sequential execution).
         - `SchedulerKind.PARALLEL` → `ParallelScheduler` (multi-instance
-          execution with `ctx.dispatch` routing).
+          execution with `ctx.dispatch` routing). The `checkpoint_store`
+          is forwarded so checkpoints survive across engine instances —
+          required for crash recovery via `GraphRecoveryService`.
         """
         if graph.scheduler == SchedulerKind.LINEAR:
             return LinearScheduler(graph)
         if graph.scheduler == SchedulerKind.PARALLEL:
-            return ParallelScheduler(graph)
+            return ParallelScheduler(graph, checkpoint_store=checkpoint_store)
         raise ValueError(
             f"Unknown scheduler kind {graph.scheduler!r}. "
             f"Supported: {SchedulerKind.LINEAR!r}, {SchedulerKind.PARALLEL!r}."

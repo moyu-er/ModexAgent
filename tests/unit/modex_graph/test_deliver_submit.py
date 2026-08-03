@@ -456,13 +456,15 @@ class TestDeliverStoreBacked:
         ctx = _make_linear_ctx()
         ctx.graph_instance_id = 5001
         await node.run(ctx)
-        # The store should have 2 accumulated records for this node.
-        records = store.query_pending(5001, "store_node")
-        assert len(records) == 2
-        assert all(r.next_node == "db_target" for r in records)
-        contents = [r.content for r in records]
+        # After _submit, records are marked SUBMITTED — query_pending
+        # (ACCUMULATED only) returns empty. Verify dispatch via
+        # _submit_result and confirm mark_submitted took effect.
+        assert "db_target" in node._submit_result
+        assert len(node._submit_result["db_target"]) == 2
+        contents = node._submit_result["db_target"]
         assert {"key": "value"} in contents
         assert "second" in contents
+        assert store.query_pending(5001, "store_node") == []
 
     async def test_submit_groups_from_store(self) -> None:
         store = InMemoryDeliverStore()
@@ -480,10 +482,9 @@ class TestDeliverStoreBacked:
         ctx.graph_instance_id = 5003
         result = await node.run(ctx)
         assert isinstance(result, NodeResult)
-        records = store.query_pending(5003, "async_store_node")
-        assert len(records) == 1
-        assert records[0].content == "async_db_data"
-        assert records[0].next_node == "async_db_target"
+        assert "async_db_target" in node._submit_result
+        assert node._submit_result["async_db_target"] == ["async_db_data"]
+        assert store.query_pending(5003, "async_store_node") == []
 
     async def test_deliver_without_graph_instance_id_uses_in_memory(self) -> None:
         """If ctx.graph_instance_id is None, falls back to in-memory accumulation."""
@@ -550,9 +551,12 @@ class TestCollectDelivers:
         ctx = _make_linear_ctx()
         ctx.graph_instance_id = 5006
         await node.run(ctx)
-        # After _execute, _collect_delivers reads from the store.
+        # After _submit, records are SUBMITTED → _collect_delivers
+        # (which reads query_pending) returns empty. The dispatched
+        # content is in _submit_result.
         collected = node._collect_delivers(ctx)
-        assert len(collected) == 2
+        assert len(collected) == 0
+        assert "db_target" in node._submit_result
 
 
 # ── Integration: full _execute flow with DeliverStore ─────────────────────
@@ -567,8 +571,8 @@ class TestFullFlowWithStore:
         result = await node.run(ctx)
         assert isinstance(result, NodeResult)
         assert "db_target" in node._submit_result
-        records = store.query_pending(5007, "store_node")
-        assert len(records) == 2
+        assert len(node._submit_result["db_target"]) == 2
+        assert store.query_pending(5007, "store_node") == []
 
     async def test_full_flow_async_node(self) -> None:
         store = InMemoryDeliverStore()
@@ -578,8 +582,7 @@ class TestFullFlowWithStore:
         result = await node.run(ctx)
         assert isinstance(result, NodeResult)
         assert "async_db_target" in node._submit_result
-        records = store.query_pending(5008, "async_store_node")
-        assert len(records) == 1
+        assert store.query_pending(5008, "async_store_node") == []
 
     async def test_full_flow_with_upstream_payloads_and_deliver(self) -> None:
         """Node receives upstream payloads, integrates them, and delivers output."""

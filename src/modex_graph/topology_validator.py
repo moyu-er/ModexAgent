@@ -131,6 +131,10 @@ class TopologyValidator:
             raise TopologyError(
                 f"Entry edge target cannot be {GraphNode.END!r} — the entry must be a real node."
             )
+        if entry_node == GraphNode.START:
+            raise TopologyError(
+                f"Entry edge target cannot be {GraphNode.START!r} — the entry must be a real node."
+            )
         # entry_node is in node_name_set (step 1 guarantees this).
 
         # 3. Exit edge — at least one edge to GraphNode.END.

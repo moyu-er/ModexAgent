@@ -17,10 +17,12 @@ The service holds:
   keyed by `graph_instance_id`. The handle is a lightweight ABC that can
   pause / stop / resume the engine and deliver content to a node.
 
-`GraphEngineController` is the ABC (rule 7) for the engine handle. For
-P2.5, `InMemoryGraphEngineController` is a recording stub. The actual
-`ParallelScheduler` integration (wiring pause / stop / resume into the
-scheduler loop) is P2.6.
+`GraphEngineController` is the ABC (rule 7) for the engine handle.
+`InMemoryGraphEngineController` is a recording stub — it sets boolean
+flags but does NOT actually control a running `ParallelScheduler` loop.
+A `LiveGraphEngineController` that wires pause/stop/resume into the
+scheduler loop is deferred (not yet specified in the implementation
+plan).
 """
 
 from __future__ import annotations
@@ -50,8 +52,10 @@ class GraphEngineController(ABC):
     - `deliver_to_node(node_name, content)` — notify the engine that
       content was externally delivered to a node.
 
-    For P2.5, `InMemoryGraphEngineController` is a recording stub. The
-    actual `ParallelScheduler` integration is P2.6.
+    For P2.5, `InMemoryGraphEngineController` is a recording stub. A
+    `LiveGraphEngineController` that wires pause/stop/resume into the
+    scheduler loop is deferred (not yet specified in the implementation
+    plan).
     """
 
     @property
@@ -82,11 +86,12 @@ class GraphEngineController(ABC):
 
 
 class InMemoryGraphEngineController(GraphEngineController):
-    """In-memory recording stub controller for P2.5.
+    """In-memory recording stub controller.
 
     Records `pause` / `stop` / `resume` / `deliver_to_node` calls for
-    verification. The actual `ParallelScheduler` integration (wiring
-    pause / stop / resume into the scheduler loop) is P2.6.
+    verification. A `LiveGraphEngineController` that wires pause/stop/
+    resume into the scheduler loop is deferred (not yet specified in
+    the implementation plan).
     """
 
     def __init__(self, graph_instance_id: int) -> None:

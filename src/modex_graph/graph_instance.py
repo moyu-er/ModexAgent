@@ -34,16 +34,18 @@ implementation deliberately uses `int` because Snowflake IDs are 64-bit
 signed ints and SQLite stores them natively as `INTEGER`. This is the
 single persistence key (rule 15: converge — replaces `run_id`).
 
-Lifecycle status (`status: str`) is a `str` for now. The
-`GraphInstanceStatus` enum (running/paused/stopped/crashed/completed/
-failed) is P2.3; the DB schema (P0.2) already enforces a CHECK
-constraint on the string value. Using `str` here keeps the data
-structure decoupled from the enum's introduction order.
+Lifecycle status uses the `GraphInstanceStatus` StrEnum
+(running/paused/stopped/crashed/completed/failed). The DB schema (P0.2)
+enforces a CHECK constraint on the string value. `StrEnum` is a `str`
+subclass, so existing callers passing `.value` or raw strings continue
+to work.
 """
 
 from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from .constants import GraphInstanceStatus
 
 __all__ = ["GraphInstance"]
 
@@ -74,9 +76,8 @@ class GraphInstance(BaseModel):
       instance is a nested subgraph; `None` for the outer instance.
     - `parent_node: str | None` — node name in the parent graph that
       created this instance; `None` for the outer instance.
-    - `status: str` — lifecycle status. `str` for now; the
-      `GraphInstanceStatus` enum is P2.3. The DB schema enforces a CHECK
-      constraint on the allowed values.
+    - `status: GraphInstanceStatus` — lifecycle status (StrEnum). The
+      DB schema enforces a CHECK constraint on the allowed values.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -108,11 +109,11 @@ class GraphInstance(BaseModel):
             "Node name in the parent graph that created this instance. None for the outer instance."
         ),
     )
-    status: str = Field(
-        default="running",
+    status: GraphInstanceStatus = Field(
+        default=GraphInstanceStatus.RUNNING,
         description=(
-            "Lifecycle status. str for now — the GraphInstanceStatus enum "
-            "(running/paused/stopped/crashed/completed/failed) is P2.3. "
-            "The DB schema (P0.2 DDL) already enforces a CHECK constraint."
+            "Lifecycle status (GraphInstanceStatus enum). "
+            "The DB schema (P0.2 DDL) enforces a CHECK constraint on the "
+            "string value."
         ),
     )
