@@ -1,119 +1,146 @@
-"""`GraphInstance` — runtime graph instance abstraction (ticket 04).
+"""`GraphInstance` — runtime graph instance.
 
 A `GraphInstance` is the persistence/recovery unit. It is created when a
 `GraphSpec` is compiled and instantiated, and carries the
 `graph_instance_id` (a Snowflake ID — the persistence unique key that
 replaces the in-memory `run_id`) plus parent linkage for nested subgraphs.
 
-The full chain (per ticket 08 / `spec.py`):
+The full chain (per `spec.py`):
 
     GraphSpec → GraphSpecCompiler → CompiledGraph → GraphInstance → GraphEngine
 
-Design note — why `GraphInstance` carries IDs only, not runtime objects:
+`GraphInstance` evolved from a frozen Pydantic
+data record into a plain runtime class. It now holds:
 
-The ticket lists `graph_spec` and `compiled_graph` as conceptual attributes
-of a graph instance. In the implementation they are NOT fields on this
-frozen model:
+- ``metadata: GraphMetadata`` — the serializable value object (frozen Pydantic).
+  Stored by ``GraphMetadataStore``. Carries identity,
+  status, scheduler bookkeeping fields (``instance_seq``, ``iteration_count``,
+  ``activated_sources``, ``pending_dispatches``).
+- ``coordinator: GraphPersistenceCoordinator`` — the persistence coordinator.
+  The coordinator lifecycle is bound to the ``GraphInstance``
+  lifecycle: it persists node invocations + delivers and provides recovery
+  state loading.
 
-- `GraphSpec` is a frozen Pydantic model, but persisting the full spec on
-  every instance row duplicates data — the `graph_specs` table (P0.2) is
-  the single source of truth for spec content. `GraphInstance.spec_id`
-  links to it.
-- `CompiledGraph` is a `@dataclass(frozen=True)` holding runtime `Node`
-  objects (closures, callables) — it cannot be serialized. It is built
-  fresh by the `GraphSpecCompiler` at runtime.
+Callers that access ``graph_instance.graph_instance_id`` / ``.status`` /
+``.spec_id`` / ``.parent_instance_id`` / ``.parent_node`` are unchanged —
+these delegate to ``metadata`` via properties.
 
-The bot factory (P3.5) loads the `GraphSpec` from `spec_id`, compiles it
-to get a `CompiledGraph`, then pairs them with the `GraphInstance` in
-memory. `GraphInstance` itself only persists the identity + status —
-that is the contract of a recovery unit.
+Methods:
+
+- ``get_state()`` → delegates to ``coordinator.get_graph_state``.
+- ``load_for_recovery()`` → delegates to ``coordinator.load_for_recovery``.
+- ``update_status(status)`` → delegates to the coordinator's metadata store
+  + updates the local ``metadata`` via ``model_copy``.
 
 `graph_instance_id` is a Snowflake-format `int` (per `id_generator.py`),
-matching the `BIGINT` column in the P0.2 DDL. The PRD text says `str`; the
-implementation deliberately uses `int` because Snowflake IDs are 64-bit
-signed ints and SQLite stores them natively as `INTEGER`. This is the
-single persistence key (rule 15: converge — replaces `run_id`).
+matching the `BIGINT` column in the SQLite schema. This is the single persistence
+key (rule 15: converge — replaces `run_id`).
 
 Lifecycle status uses the `GraphInstanceStatus` StrEnum
-(running/paused/stopped/crashed/completed/failed). The DB schema (P0.2)
-enforces a CHECK constraint on the string value. `StrEnum` is a `str`
-subclass, so existing callers passing `.value` or raw strings continue
-to work.
+(running/paused/stopped/crashed/completed/failed).
 """
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
-
 from .constants import GraphInstanceStatus
+from .graph_metadata import GraphMetadata, GraphStateSnapshot, RecoveryContext
+from .persistence_coordinator import GraphPersistenceCoordinator
 
 __all__ = ["GraphInstance"]
 
 
-class GraphInstance(BaseModel):
-    """Runtime graph instance — the persistence/recovery unit (ticket 04).
+class GraphInstance:
+    """Runtime graph instance — holds coordinator + serializable metadata.
 
     A `GraphInstance` is created when a `GraphSpec` is compiled and
-    instantiated. It carries the `graph_instance_id` (Snowflake, the
-    persistence unique key that replaces `run_id`), parent linkage (for
-    nested subgraphs), and runtime status.
+    instantiated. It pairs the serializable `GraphMetadata` (identity +
+    status + scheduler bookkeeping) with the `GraphPersistenceCoordinator`
+    (node invocation persistence + deliver routing + recovery).
 
-    This is a data structure, NOT a runtime engine. It holds only IDs +
-    status. The `GraphSpec` (loaded from `spec_id` via the `graph_specs`
-    table) and `CompiledGraph` (built fresh by the `GraphSpecCompiler`)
-    are paired with the instance at runtime by the bot factory (P3.5).
+    The coordinator lifecycle is bound to the GraphInstance lifecycle. The
+    metadata is the serializable value object stored by GraphMetadataStore.
 
-    Persistence: all graph instances (outer + nested) live in one table
-    (`graph_instances`), distinguished by `graph_instance_id` and linked
-    via `parent_instance_id` (ticket 04 — unified schema).
+    Properties delegate to ``metadata`` so callers that access
+    ``graph_instance_id`` / ``status`` / ``spec_id`` / ``parent_instance_id``
+    / ``parent_node`` are unchanged from the frozen-Pydantic era.
 
-    Fields:
-    - `graph_instance_id: int` — Snowflake ID, the persistence unique key.
-      Replaces the in-memory `run_id` (rule 15: converge on a single key).
-    - `spec_id: int` — FK → `graph_specs.spec_id`; the `GraphSpec` that
-      defines this instance.
-    - `parent_instance_id: int | None` — parent graph instance when this
-      instance is a nested subgraph; `None` for the outer instance.
-    - `parent_node: str | None` — node name in the parent graph that
-      created this instance; `None` for the outer instance.
-    - `status: GraphInstanceStatus` — lifecycle status (StrEnum). The
-      DB schema enforces a CHECK constraint on the allowed values.
+    Attributes:
+        metadata: The serializable `GraphMetadata` value object (frozen
+            Pydantic). Stored by `GraphMetadataStore`.
+        coordinator: The `GraphPersistenceCoordinator` for this instance.
+            Provides node invocation persistence, deliver routing, and
+            recovery state loading.
     """
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    def __init__(self, metadata: GraphMetadata, coordinator: GraphPersistenceCoordinator) -> None:
+        """Initialize the runtime graph instance.
 
-    graph_instance_id: int = Field(
-        description=(
-            "Snowflake ID — the persistence unique key for this graph "
-            "instance (replaces run_id). 64-bit signed int, matches the "
-            "BIGINT column in graph_instances (P0.2 DDL)."
-        ),
-    )
-    spec_id: int = Field(
-        description=(
-            "FK → graph_specs.spec_id. The GraphSpec that defines this "
-            "instance. The spec content is loaded from the graph_specs "
-            "table at runtime, not stored on this model."
-        ),
-    )
-    parent_instance_id: int | None = Field(
-        default=None,
-        description=(
-            "Parent graph instance ID when this instance is a nested "
-            "subgraph (recursive nesting). None for the outer instance."
-        ),
-    )
-    parent_node: str | None = Field(
-        default=None,
-        description=(
-            "Node name in the parent graph that created this instance. None for the outer instance."
-        ),
-    )
-    status: GraphInstanceStatus = Field(
-        default=GraphInstanceStatus.RUNNING,
-        description=(
-            "Lifecycle status (GraphInstanceStatus enum). "
-            "The DB schema (P0.2 DDL) enforces a CHECK constraint on the "
-            "string value."
-        ),
-    )
+        Args:
+            metadata: The serializable `GraphMetadata` value object.
+            coordinator: The persistence coordinator bound to this instance.
+        """
+        self.metadata = metadata
+        self.coordinator = coordinator
+
+    # ── Properties delegating to metadata ───────────────────────────────
+
+    @property
+    def graph_instance_id(self) -> int:
+        """Snowflake ID — the persistence unique key (replaces run_id)."""
+        return self.metadata.graph_instance_id
+
+    @property
+    def spec_id(self) -> int:
+        """FK → graph_specs.spec_id."""
+        return self.metadata.spec_id
+
+    @property
+    def parent_instance_id(self) -> int | None:
+        """Parent graph instance ID for nested subgraphs; None for outer."""
+        return self.metadata.parent_instance_id
+
+    @property
+    def parent_node(self) -> str | None:
+        """Node name in the parent graph that created this instance."""
+        return self.metadata.parent_node
+
+    @property
+    def status(self) -> GraphInstanceStatus:
+        """Lifecycle status (GraphInstanceStatus StrEnum)."""
+        return self.metadata.status
+
+    # ── Methods ───────────────────────────────────────────────
+
+    def get_state(self) -> GraphStateSnapshot:
+        """Collect graph metadata + per-node version histories.
+
+        Delegates to ``coordinator.get_graph_state``.
+        """
+        return self.coordinator.get_graph_state()
+
+    def load_for_recovery(self) -> RecoveryContext:
+        """Load recovery context: metadata + node states + rebuilt main_state.
+
+        Delegates to ``coordinator.load_for_recovery``.
+        """
+        return self.coordinator.load_for_recovery()
+
+    def update_status(self, status: GraphInstanceStatus) -> None:
+        """Update the instance lifecycle status.
+
+        Delegates to the coordinator's metadata store for persistence, then
+        updates the local ``metadata`` via ``model_copy`` (GraphMetadata is
+        frozen — replacement is the only way to update).
+
+        For a NullGraphMetadataStore (``create_null_coordinator``), the store
+        update is a no-op; only the local metadata is updated.
+
+        Args:
+            status: The new lifecycle status.
+        """
+        # Delegate to the coordinator's metadata store for persistence.
+        # The coordinator holds _metadata_store as an internal attribute;
+        # GraphInstance is the runtime owner of the coordinator and is the
+        # intended caller for status transitions.
+        self.coordinator.update_graph_status(status)
+        self.metadata = self.metadata.model_copy(update={"status": status})

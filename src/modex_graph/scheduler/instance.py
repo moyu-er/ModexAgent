@@ -42,10 +42,14 @@ class NodeInstance[S: "GraphState"]:
       field = conflict. `0` means the fast path (no fork, no conflict
       detection).
     - `upstream_payloads: list[IntegratedPayload] | None` — the delivered
-      payloads from upstream nodes, passed to `node.run()` as
-      `upstream_payloads` for input integration. `None` for the entry node
-      (no upstream). Populated by `_handle_dispatch` / `_try_fire_on_all_preds`
-      from dispatch `state_update={"delivered": content}` payloads.
+      payloads from upstream nodes, stored on the instance for scheduler
+      internal bookkeeping.       No longer passed to ``node.run()``
+      — upstream payloads now flow through the coordinator's
+      ``collect_consumable_delivers``. Retained for dispatch
+      handler → ``coordinator.route_deliver`` wiring. `None` for the entry
+      node (no upstream). Populated by ``_handle_dispatch`` /
+      ``_try_fire_on_all_preds`` from dispatch
+      ``state_update={"delivered": content}`` payloads.
     """
 
     __slots__ = (

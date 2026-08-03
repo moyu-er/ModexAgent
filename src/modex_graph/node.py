@@ -1,7 +1,7 @@
 # ruff: noqa: ANN401
 
 """`Node[S]` ABC — single-method `execute` with structured `NodeResult`,
-plus the additive deliver/submit dual-method API (ticket 07).
+plus the additive deliver/submit dual-method API.
 
 Per ADR-0033 D2: the `execute` method is declared as `def` (NOT `async def`).
 Subclasses may override with either `def` or `async def`. The engine unifies
@@ -18,7 +18,7 @@ and writes to via `ctx.state`.
 
 ---
 
-Ticket 07 — deliver/submit dual-method API:
+Deliver/submit dual-method API:
 
 Three-layer method split:
 
@@ -51,7 +51,7 @@ from typing_extensions import TypeVar
 
 from .constants import GraphNode, NodeTrigger
 from .deliver_store import DeliverStore
-from .exceptions import RoutingError
+from .exceptions import GraphBubbleUp, GraphInterrupt, RoutingError
 from .integration import (
     DefaultInputIntegrator,
     InputIntegrator,
@@ -80,11 +80,11 @@ class Node[S: "GraphState"](ABC):
     registration key in the `Graph`. The `Graph.add_node(name, node)` call
     sets it; subclasses may also set it in `__init__`.
 
-    `trigger` (Task 06) is the per-node trigger mode under
+    `trigger` is the per-node trigger mode under
     `ParallelScheduler`. `None` means "use the compiled graph's
     `default_trigger`". Subclasses may override to force a mode.
 
-    Ticket 07 additive attributes:
+    Additive attributes:
 
     - `input_integrator: InputIntegrator` — default `DefaultInputIntegrator()`.
       Subclasses may override with a custom integrator.
@@ -96,13 +96,13 @@ class Node[S: "GraphState"](ABC):
     name: str = ""
     trigger: NodeTrigger | None = None
 
-    # ── Ticket 07: deliver/submit attributes ───────────────────────────
+    # ── Deliver/submit attributes ───────────────────────────────────
     # `input_integrator` has a real runtime default (DefaultInputIntegrator
     # instance). `deliver_store` defaults to None (in-memory accumulation).
     input_integrator: InputIntegrator = DefaultInputIntegrator()
     deliver_store: DeliverStore | None = None
 
-    # Ticket 03: max retries for undelivered detection. If a node's `execute`
+    # Max retries for undelivered detection. If a node's `execute`
     # produces no delivers, the framework retries with error feedback injected
     # into the integrated input. After `max_retry` retries (so max_retry + 1
     # total executions), `RoutingError` is raised as a safety net.
@@ -151,104 +151,182 @@ class Node[S: "GraphState"](ABC):
         """
         ...
 
-    # ── Ticket 07: deliver/submit dual-method API ───────────────────────
+    # ── Deliver/submit dual-method API ───────────────────────
+
+    # ── Coordinator-driven lifecycle ─────────────────────────
 
     async def run(
         self,
         ctx: GraphContext[S],
-        upstream_payloads: list[IntegratedPayload] | None = None,
         *,
-        enforce_deliver: bool = True,
         graph: CompiledGraph[S] | None = None,
     ) -> NodeResult:
-        """Framework entry point. Calls integrate -> execute (with undelivered
-        detection retry) -> _submit.
+        """Framework entry point. Coordinator-driven lifecycle:
 
-        Called by the scheduler (``enforce_deliver=True``) and by direct test
-        callers (``enforce_deliver=True``, the default).
+        begin → integrate → execute (with undelivered detection retry) →
+        complete/cancel/suspend/crash → finalize.
+
+        Called by the scheduler (``graph=compiled``) and by direct test
+        callers. The coordinator is accessed via ``ctx.coordinator``
+        (always present). Upstream payloads now flow through the
+        coordinator's ``collect_consumable_delivers`` instead of an
+        explicit parameter.
 
         ``graph`` is the CompiledGraph topology, passed by the scheduler so
         ``_resolve_default_target`` can resolve ``next_node=None`` via default
         edges / downstream / END. Direct callers (tests) may omit it — nodes
         that deliver with explicit ``next_node`` never need topology.
 
-        Steps:
+        Lifecycle:
 
-        1. Integrate upstream payloads via `input_integrator.integrate(...)`.
-           The result is a LOCAL variable — never stored on the instance.
-        2. Retry loop (ticket 03 — undelivered detection):
-           - Reset per-execution state (`_pending_delivers`).
-           - Execute (node custom logic — may call `self.deliver()`), passing
-             ``integrated`` as an explicit parameter.
+        1. ``load_latest_invocation`` — resume check (read-only, before
+           begin). If the latest invocation is suspended with a state
+           snapshot, the snapshot is used as integrated input and delivers
+           are NOT re-consumed.
+        2. ``begin_invocation`` — create a new PENDING invocation.
+           ``parent_version`` computed internally.
+        3. Integrate (inside try — crashes are covered by crash/finalize):
+           - Resume: use ``prev.state_json`` as integrated input.
+           - Normal: collect consumable delivers, mark consumed, integrate
+             via ``input_integrator``.
+        4. Retry loop (undelivered detection):
+           - Reset per-execution state (``_pending_delivers``).
+           - Execute (node custom logic — may call ``self.deliver()``),
+             passing ``integrated`` as an explicit parameter.
            - Collect delivers. If any accumulated -> break (normal flow).
-           - If no delivers: bridge check (see below). If the bridge skips
-             retry, break. Otherwise create a NEW `IntegratedInput` with error
-             feedback prepended (the original is never mutated) and re-execute.
-             Repeat up to `max_retry` times. After `max_retry` retries
-             without delivers, raise `RoutingError` (safety net).
-        3. Submit (framework auto-dispatch by `next_node` grouping).
-        4. Return the `NodeResult` (for compatibility — scheduler still uses it).
+           - If no delivers: create a NEW ``IntegratedInput`` with error
+             feedback prepended (the original is never mutated) and
+             re-execute. Repeat up to ``max_retry`` times. After
+             ``max_retry`` retries without delivers, raise ``RoutingError``
+             (safety net).
+        5. Submit (framework auto-dispatch by ``next_node`` grouping).
+        6. ``complete_invocation`` — save COMPLETED + promote delivers.
 
-        Bridge (P3.4b — deliver-only convergence):
+        Exception handling:
 
-        When ``enforce_deliver=True`` (all callers post-convergence), nodes
-        that produce no delivers retry with error feedback injected into the
-        integrated input. After ``max_retry`` retries without delivers,
-        ``RoutingError`` is raised as a safety net. There is no
-        command/transition skip — every node MUST deliver.
+        - ``GraphInterrupt``: checkpoint state via
+          ``ctx.state.checkpoint()``, call ``suspend_invocation``, re-raise.
+        - ``GraphBubbleUp`` (other cooperative-control): call
+          ``cancel_invocation``, re-raise.
+        - Other ``Exception``: call ``crash_invocation``, re-raise.
+        - ``finally``: ``finalize_invocation`` (safety net for orphan
+          PENDING).
         """
-        integrated = self.input_integrator.integrate(upstream_payloads or [])
+        coordinator = ctx.coordinator
+
+        # Resume check — before begin_invocation (read-only query).
+        # If the latest invocation is suspended, this is a resume from
+        # suspend — use the snapshot as integrated input and skip
+        # re-consuming delivers (they were already consumed by the
+        # suspended invocation). An empty state_json ({}) is a valid
+        # checkpoint and must remain distinguishable from "not suspended".
+        prev = coordinator.load_latest_invocation(self.name)
+        is_resume = prev is not None and prev.suspended
+
+        # Begin invocation (parent_version computed internally).
+        invocation = coordinator.begin_invocation(self.name)
+        ctx.current_invocation = invocation
+
         self._submit_result = {}
         self._graph_ref = graph
 
-        retry_count = 0
-        while True:
-            self._pending_delivers = []
-
-            raw_result = self.execute(ctx, integrated)
-            if inspect.isawaitable(raw_result):
-                result: NodeResult = await raw_result
+        try:
+            # Integrate (may throw — covered by crash/finalize).
+            if is_resume:
+                assert prev is not None
+                integrated = self.input_integrator.integrate([
+                    IntegratedPayload(
+                        source_node="__resume__",
+                        content=prev.state_json,
+                    )
+                ])
             else:
-                result = raw_result
-
-            delivers = self._collect_delivers(ctx)
-
-            if delivers:
-                break
-
-            if not enforce_deliver:
-                break
-
-            if retry_count >= self.max_retry:
-                raise RoutingError(
-                    f"Node {self.name!r} produced no delivers after "
-                    f"{retry_count + 1} executions (max_retry={self.max_retry}). "
-                    f"The node forgot to call deliver() during execute()."
+                delivers = coordinator.collect_consumable_delivers(
+                    self.name, invocation.invocation_id
                 )
+                if delivers:
+                    coordinator.mark_delivers_consumed(
+                        self.name,
+                        [r.deliver_id for r in delivers],
+                        invocation.invocation_id,
+                    )
+                    payloads = [
+                        IntegratedPayload(
+                            source_node=r.source_node,
+                            content=r.content,
+                        )
+                        for r in delivers
+                    ]
+                    integrated = self.input_integrator.integrate(payloads)
+                else:
+                    integrated = self.input_integrator.integrate([])
 
-            retry_count += 1
-            error_feedback = IntegratedPayload(
-                source_node="__framework__",
-                content={
-                    "error": "undelivered",
-                    "message": (
-                        f"Previous execution of node {self.name!r} produced no "
-                        f"delivers. You MUST call deliver(content, next_node, ctx) "
-                        f"during execute(). Retry {retry_count}/{self.max_retry}."
-                    ),
-                    "retry_count": retry_count,
-                    "max_retry": self.max_retry,
-                },
-                metadata={"error_type": "undelivered", "retry": retry_count},
-            )
-            integrated = self.input_integrator.integrate(
-                [error_feedback] + (upstream_payloads or [])
-            )
+            # Execute with undelivered detection retry.
+            retry_count = 0
+            result: NodeResult
+            while True:
+                self._pending_delivers = []
 
-        if delivers:
+                raw_result = self.execute(ctx, integrated)
+                if inspect.isawaitable(raw_result):
+                    result = await raw_result
+                else:
+                    result = raw_result
+
+                collected = self._collect_delivers(ctx)
+
+                if collected:
+                    break
+
+                if retry_count >= self.max_retry:
+                    raise RoutingError(
+                        f"Node {self.name!r} produced no delivers after "
+                        f"{retry_count + 1} executions (max_retry={self.max_retry}). "
+                        f"The node forgot to call deliver() during execute()."
+                    )
+
+                retry_count += 1
+                error_feedback = IntegratedPayload(
+                    source_node="__framework__",
+                    content={
+                        "error": "undelivered",
+                        "message": (
+                            f"Previous execution of node {self.name!r} produced no "
+                            f"delivers. You MUST call deliver(content, next_node, ctx) "
+                            f"during execute(). Retry {retry_count}/{self.max_retry}."
+                        ),
+                        "retry_count": retry_count,
+                        "max_retry": self.max_retry,
+                    },
+                    metadata={"error_type": "undelivered", "retry": retry_count},
+                )
+                integrated = self.input_integrator.integrate([error_feedback])
+
+            # Submit (framework auto-dispatch by next_node grouping).
             self.submit(ctx)
 
-        return result
+            # Complete: save COMPLETED + promote delivers.
+            coordinator.complete_invocation(
+                invocation, result.state_update if result.state_update else {}
+            )
+            return result
+
+        except GraphInterrupt:
+            # Checkpoint state directly, then suspend.
+            snapshot = ctx.state.checkpoint()
+            coordinator.suspend_invocation(invocation, snapshot)
+            raise
+        except GraphBubbleUp:
+            # Cancel cooperative-control exceptions (GraphDrained,
+            # ParentCommand, InvalidUpdateError). GraphInterrupt is
+            # caught above (suspend path).
+            coordinator.cancel_invocation(invocation)
+            raise
+        except Exception:
+            coordinator.crash_invocation(invocation)
+            raise
+        finally:
+            coordinator.finalize_invocation(invocation)
 
     def _deliver(
         self,
@@ -256,27 +334,17 @@ class Node[S: "GraphState"](ABC):
         next_node: str | None,
         ctx: GraphContext[S],
     ) -> int | None:
-        """Framework: accumulate a deliver. Returns `deliver_id` if persisted,
-        `None` if in-memory only.
+        """Framework: accumulate a deliver in-memory.
 
-        If `deliver_store` is set AND `ctx.graph_instance_id` is not None:
-        persists via `DeliverStore.accumulate(...)`. Otherwise: in-memory
-        accumulation (append to `_pending_delivers`).
+        The ``deliver_store`` / ``graph_instance_id`` persistence
+        branch is removed — delivers are always in-memory during execute.
+        Persistence routing happens via the coordinator's ``route_deliver``
+        in the dispatch handler.
 
-        `next_node` resolution (default edge / downstream / END) is deferred
-        to `_submit` — here we store the raw `next_node` (`None` or `str`).
-        When persisting, `None` is stored as `""` (empty string) per the
-        `DeliverRecord.next_node` field contract.
+        ``next_node`` resolution (default edge / downstream / END) is deferred
+        to ``_submit`` — here we store the raw ``next_node`` (``None`` or
+        ``str``).
         """
-        if self.deliver_store is not None and ctx.graph_instance_id is not None:
-            deliver_id = self.deliver_store.accumulate(
-                graph_instance_id=ctx.graph_instance_id,
-                node_name=self.name,
-                next_node=next_node or "",
-                content=content,
-            )
-            return deliver_id
-        # In-memory accumulation only
         if self._pending_delivers is None:
             self._pending_delivers = []
         self._pending_delivers.append((content, next_node))
@@ -295,20 +363,15 @@ class Node[S: "GraphState"](ABC):
         self._deliver(content, next_node, ctx)
 
     def _collect_delivers(self, ctx: GraphContext[S]) -> list[tuple[Any, str | None]]:
-        """Collect all accumulated delivers for this execution.
+        """Collect all accumulated delivers for this execution (in-memory).
 
-        If `deliver_store` is set and `ctx.graph_instance_id` is not None:
-        reads from the store (`query_pending`). Otherwise: reads from
-        in-memory `_pending_delivers`.
+        The ``deliver_store`` / ``graph_instance_id`` read branch
+        is removed — delivers are always read from in-memory
+        ``_pending_delivers``.
 
         Returns:
-            A list of `(content, next_node)` tuples. `next_node` is `None`
-            for unresolved entries (stored as `""` in the DB, converted back
-            to `None` here).
+            A list of ``(content, next_node)`` tuples.
         """
-        if self.deliver_store is not None and ctx.graph_instance_id is not None:
-            records = self.deliver_store.query_pending(ctx.graph_instance_id, self.name)
-            return [(r.content, r.next_node or None) for r in records]
         return list(self._pending_delivers or [])
 
     def _resolve_default_target(self, ctx: GraphContext[S]) -> list[str]:
@@ -323,9 +386,7 @@ class Node[S: "GraphState"](ABC):
         """
         graph = self._graph_ref
         if graph is None:
-            raise RoutingError(
-                "next_node=None requires graph topology — pass graph= to run()"
-            )
+            raise RoutingError("next_node=None requires graph topology — pass graph= to run()")
         targets = [e.target for e in graph.edges_from(self.name)]
         if targets:
             return targets
@@ -354,33 +415,22 @@ class Node[S: "GraphState"](ABC):
         delivers = self._collect_delivers(ctx)
         groups: dict[str, list[Any]] = {}
         for content, next_node in delivers:
-            targets = (
-                [next_node] if next_node is not None
-                else self._resolve_default_target(ctx)
-            )
+            targets = [next_node] if next_node is not None else self._resolve_default_target(ctx)
             for t in targets:
                 groups.setdefault(t, []).append(content)
 
         for target, contents in groups.items():
             payload: Any = contents[0] if len(contents) == 1 else contents
-            ctx.dispatch(target, state_update={"delivered": payload})
+            inv_ctx = ctx.current_invocation
+            ctx.dispatch(target, state_update={
+                "delivered": payload,
+                "_source_node": inv_ctx.node_name if inv_ctx else self.name,
+                "_source_inv_id": inv_ctx.invocation_id if inv_ctx else 0,
+            })
 
         # LINEAR-only: scheduler reads this for next-node selection. PARALLEL
         # uses ctx.dispatch. Kept as a fallback for custom submit overrides.
         self._submit_result = groups
-
-        # Mark delivered records as SUBMITTED to prevent re-reading stale
-        # ACCUMULATED records on re-execution in cyclic graphs (e.g. ReAct
-        # LLM↔TOOL loop). Without this, _collect_delivers returns old records
-        # from previous executions, causing duplicate dispatches.
-        if self.deliver_store is not None and ctx.graph_instance_id is not None:
-            records = self.deliver_store.query_pending(
-                ctx.graph_instance_id, self.name
-            )
-            if records:
-                self.deliver_store.mark_submitted(
-                    [r.deliver_id for r in records]
-                )
 
     def submit(self, ctx: GraphContext[S]) -> None:
         """Node-facing customization point. Default: delegates to `_submit`.
