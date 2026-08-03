@@ -25,11 +25,10 @@ See `__init__.py` for the full export list. Key types:
   `SchedulerKind`, `NodeTrigger`, `NodeInstanceStatus`, `NodeInstance`
 - `DispatchStore`, `InMemoryDispatchStore`, `SqliteDispatchStore`
 - `WriteConflictDetector`, `GenerationWriteTracker`
-- `CheckpointStore`, `CheckpointData`, `MemoryCheckpointStore`, `SqliteCheckpointStore`
+- `GraphPersistenceCoordinator`, `RecoveryContext`, `GraphMetadata`
 - `GraphBubbleUp`, `GraphInterrupt`, `GraphDrained`, `ParentCommand`,
   `InvalidUpdateError`
 - `GraphNode` (START/END sentinels), `RoutingError`, `GraphRecursionError`
 
-See `docs/adr/0033-generalized-graph-engine.md` (Phase a) and
-`docs/adr/0034-parallel-scheduling-engine.md` (Phase c parallel scheduling)
-for the authoritative design.
+See `docs/adr/0033-generalized-graph-engine.md` and
+`docs/adr/0034-parallel-scheduling-engine.md` for the authoritative design.

@@ -14,12 +14,12 @@ sequential execution behaviour; `PARALLEL` selects `ParallelScheduler`
 `NodeInstanceStatus` is the `StrEnum` state machine for `NodeInstance` under
 `ParallelScheduler`: `DORMANT → PENDING → READY → RUNNING → COMPLETED`.
 
-`NodeTrigger` is the per-node trigger mode `StrEnum` (Task 06):
+`NodeTrigger` is the per-node trigger mode `StrEnum`:
 `ON_ALL_PREDS` (wait for all activated predecessors) or `ON_RECEIVE`
 (each dispatch creates an instance).
 
 `GraphInstanceStatus` is the lifecycle state machine `StrEnum` for
-`GraphInstance` (ticket 10 class 3): `running` / `paused` / `stopped` /
+`GraphInstance`: `running` / `paused` / `stopped` /
 `crashed` / `completed` / `failed`. Recovery rules: `paused`/`stopped`
 are NOT auto-recovered (manual resume only); `crashed` IS auto-recovered
 by fault recovery; `completed`/`failed` are terminal.
@@ -74,7 +74,7 @@ class NodeInstanceStatus(StrEnum):
     `DORMANT` is the initial status when an instance is first created. In the
     current phase (no fork isolation), instances transition `DORMANT → READY`
     immediately upon creation (no gating). `PENDING` is reserved for future
-    trigger-mode gating (Task 04+).
+    trigger-mode gating.
     """
 
     DORMANT = "dormant"
@@ -85,7 +85,7 @@ class NodeInstanceStatus(StrEnum):
 
 
 class NodeTrigger(StrEnum):
-    """Per-node trigger mode under `ParallelScheduler` (Task 06).
+    """Per-node trigger mode under `ParallelScheduler`.
 
     Controls when a node becomes READY given inbound dispatches:
 
@@ -103,7 +103,7 @@ class NodeTrigger(StrEnum):
 
 
 class GraphInstanceStatus(StrEnum):
-    """Lifecycle state machine for `GraphInstance` (ticket 10 class 3).
+    """Lifecycle state machine for `GraphInstance`.
 
     Transitions:
 
@@ -131,3 +131,32 @@ class GraphInstanceStatus(StrEnum):
     CRASHED = "crashed"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+class SchedulerInstanceStatus(StrEnum):
+    """Scheduler state for whether an instance is ready to execute."""
+
+    DORMANT = "dormant"
+    READY = "ready"
+    RUNNING = "running"
+    COMPLETED = "completed"
+
+
+class InvocationStatus(StrEnum):
+    """Persistent status for an invocation version chain."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    CANCELED = "canceled"
+    CRASHED = "crashed"
+    SUPERSEDED = "superseded"
+
+
+class DeliverConsumptionStatus(StrEnum):
+    """Consumption status for delivers across persistence implementations."""
+
+    PENDING = "pending"
+    CONSUMED = "consumed"
+    CONSUMED_PENDING = "consumed_pending"
+    CONSUMED_COMPLETED = "consumed_completed"

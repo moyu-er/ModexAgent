@@ -1,28 +1,31 @@
 # ruff: noqa: ANN401
 
-"""`DeliverStore` — persistence abstraction for accumulated delivers (ticket 07).
+"""`DeliverStore` — persistence abstraction for accumulated delivers.
 
 Provides:
 
-- `DeliverStatus` StrEnum — `ACCUMULATED` / `SUBMITTED` (rule 1: enums
-  over raw strings).
+- `DeliverStatus` StrEnum — `ACCUMULATED` / `SUBMITTED` (retained for
+  backward compat; `DeliverRecord.status` now uses
+  `DeliverConsumptionStatus`).
+- `DeliverConsumptionStatus` — re-exported from `.constants`:
+  `PENDING` / `CONSUMED` / `CONSUMED_PENDING` / `CONSUMED_COMPLETED`.
 - `DeliverRecord` — frozen Pydantic value object: one accumulated deliver
-  entry (rules 10-16).
-- `DeliverStore` ABC (rule 7: ABC, not Protocol) — the minimal interface
-  for accumulating, querying, and marking delivers.
+  entry (rules 10-16). Adds `source_node`,
+  `source_invocation_id`, `consumed_by_invocation_id` fields and
+  `DeliverConsumptionStatus` status type.
+- `DeliverStore` ABC (rule 7: ABC, not Protocol) — per-node consumption
+  state machine: `accumulate` (new keyword-only signature),
+  `query_consumable`, `mark_consumed`, `promote_consumed`. Old methods
+  (`query_pending` / `query_by_target` / `mark_submitted`) retained for
+  expand-contract (old API retained during expansion; removed in a future contraction step).
 - `InMemoryDeliverStore` — dict-backed default, uses `default_id_generator()`.
-- `SqliteDeliverStore` — SQLite adapter. `CREATE TABLE IF NOT EXISTS
-  deliver_states` with the SAME DDL as in `001_initial.sql` (idempotent).
-  Content serialized via `json.dumps` / `json.loads`. Uses
-  `default_id_generator()` for Snowflake IDs.
+- `SqliteDeliverStore` — SQLite adapter. Schema migrated to include new
+  columns + expanded CHECK constraint.   New consumption methods with real implementation.
+- `DeliverStoreFactory` ABC — `create() -> DeliverStore`.
 
-Follows the EXACT pattern of `dispatch_store.py`: ABC + InMemory + SQLite,
-`now_ms()` from `dispatch_store`, centralized table/column constants,
-`CREATE TABLE IF NOT EXISTS`, `?` placeholders.
-
-Per ticket 07: `ParallelScheduler` scenario uses `deliver_states` table
-(SQLite); `LinearScheduler` scenario can use in-memory objects (no table),
-because crash -> re-run `execute` -> delivers re-accumulate.
+During the expand phase, the old API (`query_pending` /
+  `query_by_target` / `mark_submitted` / `DeliverStatus` enum) coexists with
+  the new API. A future contract phase removes the old API.
 """
 
 from __future__ import annotations
@@ -35,6 +38,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .constants import DeliverConsumptionStatus
 from .dispatch_store import now_ms
 from .id_generator import default_id_generator
 
@@ -48,6 +52,9 @@ _COL_DELIVER_ID = "deliver_id"
 _COL_GRAPH_INSTANCE_ID = "graph_instance_id"
 _COL_NODE_NAME = "node_name"
 _COL_NEXT_NODE = "next_node"
+_COL_SOURCE_NODE = "source_node"
+_COL_SOURCE_INVOCATION_ID = "source_invocation_id"
+_COL_CONSUMED_BY_INVOCATION_ID = "consumed_by_invocation_id"
 _COL_CONTENT_JSON = "content_json"
 _COL_STATUS = "status"
 _COL_CREATED_AT = "created_at"
@@ -55,12 +62,16 @@ _COL_UPDATED_AT = "updated_at"
 
 
 class DeliverStatus(StrEnum):
-    """Status of a deliver entry (rule 1: enum, not raw string).
+    """Legacy status enum — retained for backward compat during the expand phase.
 
-    - `ACCUMULATED` — the deliver has been accumulated by `_deliver` but
-      not yet dispatched to the downstream node.
-    - `SUBMITTED` — the deliver has been dispatched to the downstream node
-      by `_submit` (marked via `mark_submitted`).
+    ``DeliverRecord.status`` now uses ``DeliverConsumptionStatus``.
+    This enum is kept so old code referencing it still
+    compiles. A future contract phase removes it.
+
+    - ``ACCUMULATED`` — the deliver has been accumulated by ``_deliver``
+      but not yet dispatched to the downstream node.
+    - ``SUBMITTED`` — the deliver has been dispatched to the downstream
+      node by ``_submit`` (marked via ``mark_submitted``).
     """
 
     ACCUMULATED = "accumulated"
@@ -70,116 +81,282 @@ class DeliverStatus(StrEnum):
 class DeliverRecord(BaseModel):
     """One accumulated deliver entry. Frozen value object (rule 12).
 
+    Adds ``source_node``,
+    ``source_invocation_id``, ``consumed_by_invocation_id`` fields and
+    changed ``status`` type from ``DeliverStatus`` to
+    ``DeliverConsumptionStatus``.
+
+    Old fields (``node_name``, ``next_node``) retained for backward compat
+    with old query methods (``query_pending`` / ``query_by_target``).
+    A future contract phase removes them.
+
     Fields:
 
-    - `deliver_id: int` — Snowflake ID (primary key).
-    - `graph_instance_id: int` — FK -> `graph_instances`.
-    - `node_name: str` — the accumulating node.
-    - `next_node: str` — target downstream node (or `""` for unresolved).
-    - `content: Any` — delivered content (JSON-serializable).
-    - `status: DeliverStatus` — `ACCUMULATED` | `SUBMITTED` (default accumulated).
-    - `created_at: int` — epoch ms.
-    - `updated_at: int` — epoch ms.
+    - ``deliver_id: int`` — Snowflake ID (primary key).
+    - ``graph_instance_id: int`` — FK -> ``graph_instances``.
+    - ``node_name: str`` — OLD: the accumulating node (retained; maps to
+      ``target_node`` in the new API).
+    - ``next_node: str`` — OLD: target downstream node (retained; empty
+      string in the new per-node store model).
+    - ``source_node: str`` — NEW: the delivering node.
+    - ``source_invocation_id: int`` — NEW: deliverer's invocation_id.
+    - ``consumed_by_invocation_id: int | None`` — NEW: consumer's
+      invocation_id (None until consumed).
+    - ``content: Any`` — delivered content (JSON-serializable).
+    - ``status: DeliverConsumptionStatus`` — consumption state machine
+      (default PENDING).
+    - ``created_at: int`` — epoch ms.
+    - ``updated_at: int`` — epoch ms.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     deliver_id: int = Field(description="Snowflake ID (primary key).")
     graph_instance_id: int = Field(description="FK -> graph_instances.")
-    node_name: str = Field(description="The accumulating node.")
-    next_node: str = Field(description="Target downstream node (or empty for unresolved).")
+    node_name: str = Field(description="The accumulating node (OLD, retained).")
+    next_node: str = Field(description="Target downstream node (OLD, retained).")
+    source_node: str = Field(description="The delivering node (NEW).")
+    source_invocation_id: int = Field(description="Deliverer's invocation_id (NEW).")
+    consumed_by_invocation_id: int | None = Field(
+        default=None,
+        description="Consumer's invocation_id (NEW; None until consumed).",
+    )
     content: Any = Field(description="Delivered content (JSON-serializable).")
-    status: DeliverStatus = Field(
-        default=DeliverStatus.ACCUMULATED,
-        description="accumulated | submitted.",
+    status: DeliverConsumptionStatus = Field(
+        default=DeliverConsumptionStatus.PENDING,
+        description="Consumption status (PENDING/CONSUMED/CONSUMED_PENDING/CONSUMED_COMPLETED).",
     )
     created_at: int = Field(description="Epoch ms.")
     updated_at: int = Field(description="Epoch ms.")
 
 
 class DeliverStore(ABC):
-    """Persistence abstraction for accumulated delivers (rule 7: ABC).
+    """Per-node deliver accumulation + consumption state machine (rule 7: ABC).
 
-    The store is keyed by `graph_instance_id` — a 64-bit int identifying
-    one graph run (replaces the string `run_id` used by `DispatchStore`;
-    per ticket 10, `graph_instance_id` is the persistence unique key).
+    Evolved from graph-level management to
+    per-node consumption. The store is owned by a single node (the
+    ``target_node``); delivers are accumulated into it and consumed by that
+    node's invocations.
 
-    All methods are synchronous. `_deliver` runs synchronously inside
-    `Node.execute` (called from `deliver()`), so a sync store matches the
-    call site.
+    New API:
+
+    - ``accumulate`` — new keyword-only signature with ``source_node`` +
+      ``source_invocation_id``.
+    - ``query_consumable`` — query delivers ready for consumption.
+    - ``mark_consumed`` — mark delivers as consumed by an invocation.
+    - ``promote_consumed`` — promote consumed delivers on invocation
+      completion.
+
+    Old API (retained for expand-contract; a future contract phase
+    removes):
+
+    - ``query_pending`` / ``query_by_target`` / ``mark_submitted`` —
+      graph-level query/submit semantics. Updated internally to use
+      ``DeliverConsumptionStatus`` (PENDING/CONSUMED) instead of
+      ``DeliverStatus`` (ACCUMULATED/SUBMITTED).
+
+    The store is keyed by ``graph_instance_id`` — a 64-bit int identifying
+    one graph run (replaces the string ``run_id`` used by ``DispatchStore``;
+    ``graph_instance_id`` is the persistence unique key).
+
+    All methods are synchronous. ``_deliver`` runs synchronously inside
+    ``Node.execute`` (called from ``deliver()``), so a sync store matches
+    the call site.
 
     Implementations:
 
-    - `InMemoryDeliverStore` — dict-backed, default.
-    - `SqliteDeliverStore` — SQLite file or `:memory:`.
+    - ``InMemoryDeliverStore`` — dict-backed, default.
+    - ``SqliteDeliverStore`` — SQLite file or ``:memory:``.
     """
 
     @abstractmethod
     def accumulate(
         self,
+        *,
         graph_instance_id: int,
-        node_name: str,
-        next_node: str,
+        target_node: str,
+        source_node: str,
+        source_invocation_id: int,
         content: Any,
     ) -> int:
-        """Accumulate a deliver. Returns the `deliver_id` (Snowflake).
+        """Accumulate a deliver into this store. Returns ``deliver_id`` (Snowflake).
 
         Args:
             graph_instance_id: The graph instance ID (FK -> graph_instances).
-            node_name: The accumulating node's name.
-            next_node: The target downstream node (or `""` for unresolved).
+            target_node: The owning node (this store's owner).
+            source_node: The delivering node.
+            source_invocation_id: The deliverer's invocation_id.
             content: The delivered content (JSON-serializable).
 
         Returns:
-            The `deliver_id` (Snowflake ID) of the new record.
+            The ``deliver_id`` (Snowflake ID) of the new record.
         """
         ...
 
     @abstractmethod
+    def query_consumable(self, graph_instance_id: int, target_node: str) -> list[DeliverRecord]:
+        """Return delivers ready for consumption by ``target_node``.
+
+        Args:
+            graph_instance_id: The graph instance ID.
+            target_node: The consuming node's name.
+
+        Returns:
+            Consumable ``DeliverRecord``s for this node under this graph
+            instance, in insertion order.
+        """
+        ...
+
+    @abstractmethod
+    def mark_consumed(self, deliver_ids: list[int], consumed_by_invocation_id: int) -> None:
+        """Mark delivers as consumed by an invocation.
+
+        Args:
+            deliver_ids: The ``deliver_id``s to mark as consumed.
+            consumed_by_invocation_id: The consuming invocation's ID.
+        """
+        ...
+
+    @abstractmethod
+    def promote_consumed(self, consumed_by_invocation_id: int) -> None:
+        """Promote consumed delivers on invocation completion.
+
+        Args:
+            consumed_by_invocation_id: The invocation whose consumed
+                delivers should be promoted.
+        """
+        ...
+
+    # ── OLD API (retained for expand-contract; contract phase removes) ────
+
+    @abstractmethod
     def query_pending(self, graph_instance_id: int, node_name: str) -> list[DeliverRecord]:
-        """Return all accumulated (not submitted) delivers for `node_name`.
+        """Return all pending (not consumed) delivers for ``node_name``.
 
         Args:
             graph_instance_id: The graph instance ID.
             node_name: The accumulating node's name.
 
         Returns:
-            All `DeliverRecord`s with `status == "accumulated"` for this
+            All ``DeliverRecord``s with ``status == PENDING`` for this
             node under this graph instance, in insertion order.
         """
         ...
 
     @abstractmethod
     def query_by_target(self, graph_instance_id: int, next_node: str) -> list[DeliverRecord]:
-        """Return all accumulated delivers targeting `next_node`.
+        """Return all pending delivers targeting ``next_node``.
 
         Args:
             graph_instance_id: The graph instance ID.
             next_node: The target downstream node.
 
         Returns:
-            All `DeliverRecord`s with `status == "accumulated"` targeting
-            `next_node` under this graph instance, in insertion order.
+            All ``DeliverRecord``s with ``status == PENDING`` targeting
+            ``next_node`` under this graph instance, in insertion order.
         """
         ...
 
     @abstractmethod
     def mark_submitted(self, deliver_ids: list[int]) -> None:
-        """Mark delivers as submitted (dispatched to downstream).
+        """Mark delivers as submitted/consumed (legacy semantics).
 
         Args:
-            deliver_ids: The `deliver_id`s to mark as submitted.
+            deliver_ids: The ``deliver_id``s to mark as consumed.
         """
         ...
 
     @abstractmethod
     def clear(self, graph_instance_id: int) -> None:
-        """Delete all delivers for `graph_instance_id`.
+        """Delete all delivers for ``graph_instance_id``.
 
         Args:
             graph_instance_id: The graph instance ID to clear.
         """
         ...
+
+
+class NullDeliverStore(DeliverStore):
+    """No-op `DeliverStore` — in-memory queue without consumption state machine.
+
+    `accumulate` creates records with `status = PENDING` and stores them
+    in an in-memory queue. `mark_consumed` REMOVES matching records from
+    the queue (no CONSUMED state — this is the Null strategy). `promote_consumed`
+    is a no-op (no further state transition). `query_consumable` returns
+    all remaining records for `target_node`.
+
+    Used when the consumption state machine is disabled but the queue
+    semantics are still needed (e.g. test harnesses, ephemeral runs).
+    Old API methods (`query_pending` / `query_by_target` / `mark_submitted`
+    / `clear`) operate on the same queue for backward compat.
+    """
+
+    def __init__(self) -> None:
+        self._records: dict[int, list[DeliverRecord]] = {}
+
+    def accumulate(
+        self,
+        *,
+        graph_instance_id: int,
+        target_node: str,
+        source_node: str,
+        source_invocation_id: int,
+        content: Any,
+    ) -> int:
+        deliver_id = default_id_generator().generate()
+        ts = now_ms()
+        record = DeliverRecord(
+            deliver_id=deliver_id,
+            graph_instance_id=graph_instance_id,
+            node_name=target_node,
+            next_node="",
+            source_node=source_node,
+            source_invocation_id=source_invocation_id,
+            consumed_by_invocation_id=None,
+            content=content,
+            status=DeliverConsumptionStatus.PENDING,
+            created_at=ts,
+            updated_at=ts,
+        )
+        self._records.setdefault(graph_instance_id, []).append(record)
+        return deliver_id
+
+    def query_consumable(self, graph_instance_id: int, target_node: str) -> list[DeliverRecord]:
+        return [r for r in self._records.get(graph_instance_id, []) if r.node_name == target_node]
+
+    def mark_consumed(self, deliver_ids: list[int], consumed_by_invocation_id: int) -> None:
+        if not deliver_ids:
+            return
+        id_set = set(deliver_ids)
+        for gid, records in self._records.items():
+            self._records[gid] = [r for r in records if r.deliver_id not in id_set]
+
+    def promote_consumed(self, consumed_by_invocation_id: int) -> None:
+        pass
+
+    def query_pending(self, graph_instance_id: int, node_name: str) -> list[DeliverRecord]:
+        return [
+            r
+            for r in self._records.get(graph_instance_id, [])
+            if r.node_name == node_name and r.status == DeliverConsumptionStatus.PENDING
+        ]
+
+    def query_by_target(self, graph_instance_id: int, next_node: str) -> list[DeliverRecord]:
+        return [
+            r
+            for r in self._records.get(graph_instance_id, [])
+            if r.next_node == next_node and r.status == DeliverConsumptionStatus.PENDING
+        ]
+
+    def mark_submitted(self, deliver_ids: list[int]) -> None:
+        if not deliver_ids:
+            return
+        id_set = set(deliver_ids)
+        for gid, records in self._records.items():
+            self._records[gid] = [r for r in records if r.deliver_id not in id_set]
+
+    def clear(self, graph_instance_id: int) -> None:
+        self._records.pop(graph_instance_id, None)
 
 
 class InMemoryDeliverStore(DeliverStore):
@@ -189,8 +366,14 @@ class InMemoryDeliverStore(DeliverStore):
     Uses `default_id_generator()` for Snowflake IDs. Suitable for
     single-process runs and tests. Not persistent across process restarts.
 
-    For `LinearScheduler` scenarios: crash -> re-run `execute` -> delivers
-    re-accumulate, so in-memory is sufficient (per ticket 07).
+    Consumption state machine (two-state):
+
+    - `accumulate` creates a record with `status = PENDING`.
+    - `query_consumable` returns records with `status == PENDING`.
+    - `mark_consumed` sets `status = CONSUMED` + `consumed_by_invocation_id`
+      (frozen model — replaces the record in the list via `model_copy`).
+    - `promote_consumed` DELETES records where
+      `consumed_by_invocation_id == arg` (two-state: promote = delete).
     """
 
     def __init__(self) -> None:
@@ -198,9 +381,11 @@ class InMemoryDeliverStore(DeliverStore):
 
     def accumulate(
         self,
+        *,
         graph_instance_id: int,
-        node_name: str,
-        next_node: str,
+        target_node: str,
+        source_node: str,
+        source_invocation_id: int,
         content: Any,
     ) -> int:
         deliver_id = default_id_generator().generate()
@@ -208,28 +393,60 @@ class InMemoryDeliverStore(DeliverStore):
         record = DeliverRecord(
             deliver_id=deliver_id,
             graph_instance_id=graph_instance_id,
-            node_name=node_name,
-            next_node=next_node,
+            node_name=target_node,
+            next_node="",
+            source_node=source_node,
+            source_invocation_id=source_invocation_id,
+            consumed_by_invocation_id=None,
             content=content,
-            status=DeliverStatus.ACCUMULATED,
+            status=DeliverConsumptionStatus.PENDING,
             created_at=ts,
             updated_at=ts,
         )
         self._records.setdefault(graph_instance_id, []).append(record)
         return deliver_id
 
+    def query_consumable(self, graph_instance_id: int, target_node: str) -> list[DeliverRecord]:
+        return [
+            r
+            for r in self._records.get(graph_instance_id, [])
+            if r.node_name == target_node and r.status == DeliverConsumptionStatus.PENDING
+        ]
+
+    def mark_consumed(self, deliver_ids: list[int], consumed_by_invocation_id: int) -> None:
+        if not deliver_ids:
+            return
+        id_set = set(deliver_ids)
+        ts = now_ms()
+        for records in self._records.values():
+            for i, r in enumerate(records):
+                if r.deliver_id in id_set:
+                    records[i] = r.model_copy(
+                        update={
+                            "status": DeliverConsumptionStatus.CONSUMED,
+                            "consumed_by_invocation_id": consumed_by_invocation_id,
+                            "updated_at": ts,
+                        }
+                    )
+
+    def promote_consumed(self, consumed_by_invocation_id: int) -> None:
+        for gid, records in self._records.items():
+            self._records[gid] = [
+                r for r in records if r.consumed_by_invocation_id != consumed_by_invocation_id
+            ]
+
     def query_pending(self, graph_instance_id: int, node_name: str) -> list[DeliverRecord]:
         return [
             r
             for r in self._records.get(graph_instance_id, [])
-            if r.node_name == node_name and r.status == DeliverStatus.ACCUMULATED
+            if r.node_name == node_name and r.status == DeliverConsumptionStatus.PENDING
         ]
 
     def query_by_target(self, graph_instance_id: int, next_node: str) -> list[DeliverRecord]:
         return [
             r
             for r in self._records.get(graph_instance_id, [])
-            if r.next_node == next_node and r.status == DeliverStatus.ACCUMULATED
+            if r.next_node == next_node and r.status == DeliverConsumptionStatus.PENDING
         ]
 
     def mark_submitted(self, deliver_ids: list[int]) -> None:
@@ -242,7 +459,7 @@ class InMemoryDeliverStore(DeliverStore):
                     # Frozen model — replace with a new instance with updated status.
                     records[i] = r.model_copy(
                         update={
-                            "status": DeliverStatus.SUBMITTED,
+                            "status": DeliverConsumptionStatus.CONSUMED,
                             "updated_at": now_ms(),
                         }
                     )
@@ -252,50 +469,76 @@ class InMemoryDeliverStore(DeliverStore):
 
 
 class SqliteDeliverStore(DeliverStore):
-    """SQLite-backed `DeliverStore` using stdlib `sqlite3`.
+    """SQLite-backed ``DeliverStore`` using stdlib ``sqlite3``.
 
-    Schema is created on construction via `CREATE TABLE IF NOT EXISTS`
+    Schema is created on construction via ``CREATE TABLE IF NOT EXISTS``
     (lightweight migration — does not depend on modex_agent's
-    `MigrationRunner`). The DDL matches `001_initial.sql` table
-    `deliver_states` (idempotent — if the migration already created it,
-    this is a no-op; if `modex_graph` is used standalone, this creates it).
+    ``MigrationRunner``). The DDL matches ``001_initial.sql`` table
+    ``deliver_states`` (idempotent — if the migration already created it,
+    this is a no-op; if ``modex_graph`` is used standalone, this creates it).
+
+    The DDL includes ``source_node``,
+    ``source_invocation_id``, ``consumed_by_invocation_id`` columns and an
+    expanded CHECK constraint allowing all ``DeliverConsumptionStatus``
+    values plus legacy ``DeliverStatus`` values for backward compat. The
+    default status changed from ``'accumulated'`` to ``'pending'``. For
+    existing tables created by old DDL, new columns are added via
+    ``ALTER TABLE`` migration (``_migrate_add_columns``).
+
+    The consumption state machine is now
+    three-state (PENDING → CONSUMED_PENDING → CONSUMED_COMPLETED).
+    ``mark_consumed`` transitions PENDING → CONSUMED_PENDING (records
+    the ``consumed_by_invocation_id``); ``promote_consumed`` transitions
+    CONSUMED_PENDING → CONSUMED_COMPLETED for the given invocation.
 
     Table and column names are module-level constants; all data values go
-    through `?` parameter placeholders (no string interpolation, no SQL
+    through ``?`` parameter placeholders (no string interpolation, no SQL
     injection surface).
 
-    The `content` field is serialized to JSON text on write and
-    deserialized via `json.loads` on read.
+    The ``content`` field is serialized to JSON text on write and
+    deserialized via ``json.loads`` on read.
 
-    Timestamps are epoch milliseconds (`now_ms()`), per ADR-0029.
+    Timestamps are epoch milliseconds (``now_ms()``), per ADR-0029.
 
-    Uses `default_id_generator()` for Snowflake IDs (the `deliver_id`
+    Uses ``default_id_generator()`` for Snowflake IDs (the ``deliver_id``
     primary key — application-side ID generation, not SQLite AUTOINCREMENT,
     because Snowflake IDs are monotonic across processes).
 
-    The store holds a single `sqlite3.Connection` for its lifetime.
-    `check_same_thread=False` allows the connection to be used from the
-    event-loop thread or a thread-pool worker. Access is serialized by the
-    GIL and the synchronous `_deliver` call site — no concurrent writes.
+    Constructor accepts either a filesystem path (``str``) or an existing
+    ``sqlite3.Connection`` (shared connection mode for per-workspace
+    SQLite files where NodeState + GraphMetadata + Deliver stores share
+    one connection). When given a path, the store owns the connection and
+    closes it on ``close()``; when given a Connection, the caller owns
+    the lifetime and ``close()`` is a no-op on the connection (closing a
+    shared connection would break sibling stores).
 
-    For `:memory:` databases, the schema and data live as long as the store
+    For ``:memory:`` databases, the schema and data live as long as the store
     instance. For file paths, data persists across process restarts.
     """
 
-    def __init__(self, db_path: str) -> None:
-        self._db_path = db_path
-        self._conn = sqlite3.connect(db_path, check_same_thread=False)
+    def __init__(self, connection_or_path: str | sqlite3.Connection) -> None:
+        if isinstance(connection_or_path, sqlite3.Connection):
+            self._conn = connection_or_path
+            self._owns_conn = False
+        else:
+            self._conn = sqlite3.connect(connection_or_path, check_same_thread=False)
+            self._owns_conn = True
         self._init_schema()
 
     def _init_schema(self) -> None:
-        """Create the `deliver_states` table + indexes if they don't exist.
+        """Create the ``deliver_states`` table + indexes if they don't exist.
 
-        The DDL matches `001_initial.sql` table 19. The CHECK constraints
-        (`status IN (...)`) are included for parity with the migration.
-        `json_valid` CHECK is omitted here (it requires the SQLite JSON1
-        extension which may not be compiled in on all builds; the migration
-        in `001_initial.sql` includes it for workspace DBs where JSON1 is
-        guaranteed).
+        The DDL includes new columns
+        (``source_node``, ``source_invocation_id``,
+        ``consumed_by_invocation_id``) and an expanded CHECK constraint
+        allowing all ``DeliverConsumptionStatus`` values plus legacy
+        ``DeliverStatus`` values for backward compat. Default status is
+        ``'pending'``.
+
+        For existing tables created by old DDL: new columns
+        are added via ``ALTER TABLE`` (``_migrate_add_columns``). The
+        CHECK constraint on existing tables cannot be altered in SQLite
+        — fresh tables get the new CHECK.
         """
         conn = self._conn
         conn.execute(
@@ -304,14 +547,24 @@ class SqliteDeliverStore(DeliverStore):
             f"{_COL_GRAPH_INSTANCE_ID} INTEGER NOT NULL, "
             f"{_COL_NODE_NAME} TEXT NOT NULL, "
             f"{_COL_NEXT_NODE} TEXT NOT NULL, "
+            f"{_COL_SOURCE_NODE} TEXT NOT NULL DEFAULT '', "
+            f"{_COL_SOURCE_INVOCATION_ID} INTEGER NOT NULL DEFAULT 0, "
+            f"{_COL_CONSUMED_BY_INVOCATION_ID} INTEGER, "
             f"{_COL_CONTENT_JSON} TEXT NOT NULL, "
-            f"{_COL_STATUS} TEXT NOT NULL DEFAULT '{DeliverStatus.ACCUMULATED.value}' "
-            f"CHECK ({_COL_STATUS} IN ('{DeliverStatus.ACCUMULATED.value}', "
-            f"'{DeliverStatus.SUBMITTED.value}')), "
+            f"{_COL_STATUS} TEXT NOT NULL DEFAULT '{DeliverConsumptionStatus.PENDING.value}' "
+            f"CHECK ({_COL_STATUS} IN ("
+            f"'{DeliverConsumptionStatus.PENDING.value}', "
+            f"'{DeliverConsumptionStatus.CONSUMED.value}', "
+            f"'{DeliverConsumptionStatus.CONSUMED_PENDING.value}', "
+            f"'{DeliverConsumptionStatus.CONSUMED_COMPLETED.value}', "
+            f"'{DeliverStatus.ACCUMULATED.value}', "
+            f"'{DeliverStatus.SUBMITTED.value}'"
+            f")), "
             f"{_COL_CREATED_AT} INTEGER NOT NULL, "
             f"{_COL_UPDATED_AT} INTEGER NOT NULL"
             f")"
         )
+        self._migrate_add_columns()
         # Indexes matching the migration (idx_deliver_states_node + idx_deliver_states_target).
         conn.execute(
             f"CREATE INDEX IF NOT EXISTS idx_{_DELIVER_TABLE}_node "
@@ -323,11 +576,42 @@ class SqliteDeliverStore(DeliverStore):
         )
         conn.commit()
 
+    def _migrate_add_columns(self) -> None:
+        """Add new columns to existing ``deliver_states`` tables (expand phase).
+
+        If the table was created by the old DDL, the new
+        columns (``source_node``, ``source_invocation_id``,
+        ``consumed_by_invocation_id``) won't exist. This adds them via
+        ``ALTER TABLE`` with defaults so old rows get backward-compatible
+        values. For fresh tables created with the new DDL, this is a
+        no-op (columns already present).
+        """
+        conn = self._conn
+        existing = {
+            row[1] for row in conn.execute(f"PRAGMA table_info({_DELIVER_TABLE})").fetchall()
+        }
+        if _COL_SOURCE_NODE not in existing:
+            conn.execute(
+                f"ALTER TABLE {_DELIVER_TABLE} "
+                f"ADD COLUMN {_COL_SOURCE_NODE} TEXT NOT NULL DEFAULT ''"
+            )
+        if _COL_SOURCE_INVOCATION_ID not in existing:
+            conn.execute(
+                f"ALTER TABLE {_DELIVER_TABLE} "
+                f"ADD COLUMN {_COL_SOURCE_INVOCATION_ID} INTEGER NOT NULL DEFAULT 0"
+            )
+        if _COL_CONSUMED_BY_INVOCATION_ID not in existing:
+            conn.execute(
+                f"ALTER TABLE {_DELIVER_TABLE} ADD COLUMN {_COL_CONSUMED_BY_INVOCATION_ID} INTEGER"
+            )
+
     def accumulate(
         self,
+        *,
         graph_instance_id: int,
-        node_name: str,
-        next_node: str,
+        target_node: str,
+        source_node: str,
+        source_invocation_id: int,
         content: Any,
     ) -> int:
         deliver_id = default_id_generator().generate()
@@ -336,16 +620,20 @@ class SqliteDeliverStore(DeliverStore):
         self._conn.execute(
             f"INSERT INTO {_DELIVER_TABLE} "
             f"({_COL_DELIVER_ID}, {_COL_GRAPH_INSTANCE_ID}, {_COL_NODE_NAME}, "
-            f"{_COL_NEXT_NODE}, {_COL_CONTENT_JSON}, {_COL_STATUS}, "
+            f"{_COL_NEXT_NODE}, {_COL_SOURCE_NODE}, {_COL_SOURCE_INVOCATION_ID}, "
+            f"{_COL_CONSUMED_BY_INVOCATION_ID}, {_COL_CONTENT_JSON}, {_COL_STATUS}, "
             f"{_COL_CREATED_AT}, {_COL_UPDATED_AT}) "
-            f"VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 deliver_id,
                 graph_instance_id,
-                node_name,
-                next_node,
+                target_node,
+                "",
+                source_node,
+                source_invocation_id,
+                None,
                 content_json,
-                DeliverStatus.ACCUMULATED,
+                DeliverConsumptionStatus.PENDING,
                 ts,
                 ts,
             ),
@@ -353,29 +641,83 @@ class SqliteDeliverStore(DeliverStore):
         self._conn.commit()
         return deliver_id
 
+    def query_consumable(self, graph_instance_id: int, target_node: str) -> list[DeliverRecord]:
+        rows = self._conn.execute(
+            f"SELECT {_COL_DELIVER_ID}, {_COL_GRAPH_INSTANCE_ID}, {_COL_NODE_NAME}, "
+            f"{_COL_NEXT_NODE}, {_COL_SOURCE_NODE}, {_COL_SOURCE_INVOCATION_ID}, "
+            f"{_COL_CONSUMED_BY_INVOCATION_ID}, {_COL_CONTENT_JSON}, {_COL_STATUS}, "
+            f"{_COL_CREATED_AT}, {_COL_UPDATED_AT} "
+            f"FROM {_DELIVER_TABLE} "
+            f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_NAME} = ? "
+            f"AND {_COL_STATUS} IN (?, ?) "
+            f"ORDER BY {_COL_DELIVER_ID}",
+            (
+                graph_instance_id,
+                target_node,
+                DeliverConsumptionStatus.PENDING.value,
+                DeliverConsumptionStatus.CONSUMED_PENDING.value,
+            ),
+        ).fetchall()
+        return [self._row_to_record(r) for r in rows]
+
+    def mark_consumed(self, deliver_ids: list[int], consumed_by_invocation_id: int) -> None:
+        if not deliver_ids:
+            return
+        placeholders = ",".join("?" for _ in deliver_ids)
+        self._conn.execute(
+            f"UPDATE {_DELIVER_TABLE} "
+            f"SET {_COL_STATUS} = ?, {_COL_CONSUMED_BY_INVOCATION_ID} = ?, "
+            f"{_COL_UPDATED_AT} = ? "
+            f"WHERE {_COL_DELIVER_ID} IN ({placeholders})",
+            [
+                DeliverConsumptionStatus.CONSUMED_PENDING.value,
+                consumed_by_invocation_id,
+                now_ms(),
+                *deliver_ids,
+            ],
+        )
+        self._conn.commit()
+
+    def promote_consumed(self, consumed_by_invocation_id: int) -> None:
+        self._conn.execute(
+            f"UPDATE {_DELIVER_TABLE} "
+            f"SET {_COL_STATUS} = ?, {_COL_UPDATED_AT} = ? "
+            f"WHERE {_COL_CONSUMED_BY_INVOCATION_ID} = ? "
+            f"AND {_COL_STATUS} = ?",
+            (
+                DeliverConsumptionStatus.CONSUMED_COMPLETED.value,
+                now_ms(),
+                consumed_by_invocation_id,
+                DeliverConsumptionStatus.CONSUMED_PENDING.value,
+            ),
+        )
+        self._conn.commit()
+
     def query_pending(self, graph_instance_id: int, node_name: str) -> list[DeliverRecord]:
         rows = self._conn.execute(
             f"SELECT {_COL_DELIVER_ID}, {_COL_GRAPH_INSTANCE_ID}, {_COL_NODE_NAME}, "
-            f"{_COL_NEXT_NODE}, {_COL_CONTENT_JSON}, {_COL_STATUS}, "
+            f"{_COL_NEXT_NODE}, {_COL_SOURCE_NODE}, {_COL_SOURCE_INVOCATION_ID}, "
+            f"{_COL_CONSUMED_BY_INVOCATION_ID}, {_COL_CONTENT_JSON}, {_COL_STATUS}, "
             f"{_COL_CREATED_AT}, {_COL_UPDATED_AT} "
             f"FROM {_DELIVER_TABLE} "
             f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_NAME} = ? "
             f"AND {_COL_STATUS} = ? "
             f"ORDER BY {_COL_DELIVER_ID}",
-            (graph_instance_id, node_name, DeliverStatus.ACCUMULATED),
+            (graph_instance_id, node_name, DeliverConsumptionStatus.PENDING),
         ).fetchall()
         return [self._row_to_record(r) for r in rows]
 
     def query_by_target(self, graph_instance_id: int, next_node: str) -> list[DeliverRecord]:
         rows = self._conn.execute(
             f"SELECT {_COL_DELIVER_ID}, {_COL_GRAPH_INSTANCE_ID}, {_COL_NODE_NAME}, "
-            f"{_COL_NEXT_NODE}, {_COL_CONTENT_JSON}, {_COL_STATUS}, "
+            f"{_COL_NEXT_NODE}, {_COL_SOURCE_NODE}, {_COL_SOURCE_INVOCATION_ID}, "
+            f"{_COL_CONSUMED_BY_INVOCATION_ID}, {_COL_CONTENT_JSON}, {_COL_STATUS}, "
             f"{_COL_CREATED_AT}, {_COL_UPDATED_AT} "
             f"FROM {_DELIVER_TABLE} "
             f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NEXT_NODE} = ? "
             f"AND {_COL_STATUS} = ? "
             f"ORDER BY {_COL_DELIVER_ID}",
-            (graph_instance_id, next_node, DeliverStatus.ACCUMULATED),
+            (graph_instance_id, next_node, DeliverConsumptionStatus.PENDING),
         ).fetchall()
         return [self._row_to_record(r) for r in rows]
 
@@ -387,7 +729,7 @@ class SqliteDeliverStore(DeliverStore):
             f"UPDATE {_DELIVER_TABLE} "
             f"SET {_COL_STATUS} = ?, {_COL_UPDATED_AT} = ? "
             f"WHERE {_COL_DELIVER_ID} IN ({placeholders})",
-            [DeliverStatus.SUBMITTED, now_ms(), *deliver_ids],
+            [DeliverConsumptionStatus.CONSUMED, now_ms(), *deliver_ids],
         )
         self._conn.commit()
 
@@ -405,6 +747,9 @@ class SqliteDeliverStore(DeliverStore):
             graph_instance_id,
             node_name,
             next_node,
+            source_node,
+            source_invocation_id,
+            consumed_by_invocation_id,
             content_json,
             status,
             created_at,
@@ -415,6 +760,9 @@ class SqliteDeliverStore(DeliverStore):
             graph_instance_id=graph_instance_id,
             node_name=node_name,
             next_node=next_node,
+            source_node=source_node,
+            source_invocation_id=source_invocation_id,
+            consumed_by_invocation_id=consumed_by_invocation_id,
             content=json.loads(content_json),
             status=status,
             created_at=created_at,
@@ -422,18 +770,60 @@ class SqliteDeliverStore(DeliverStore):
         )
 
     def close(self) -> None:
-        """Close the underlying SQLite connection.
+        """Close the underlying SQLite connection if this store owns it.
 
-        Not part of the `DeliverStore` ABC — concrete resource cleanup for
-        the SQLite adapter. Safe to call multiple times.
+        Not part of the ``DeliverStore`` ABC — concrete resource cleanup for
+        the SQLite adapter. Safe to call multiple times. When the store was
+        constructed with a shared ``sqlite3.Connection``, the caller
+        owns the connection and ``close()`` is a no-op.
         """
-        self._conn.close()
+        if self._owns_conn:
+            self._conn.close()
+
+
+class DeliverStoreFactory(ABC):
+    """Create the default DeliverStore persistence strategy."""
+
+    @abstractmethod
+    def create(self) -> DeliverStore: ...
+
+
+class NullDeliverStoreFactory(DeliverStoreFactory):
+    """Factory for `NullDeliverStore` — in-memory queue, no state machine."""
+
+    def create(self) -> NullDeliverStore:
+        return NullDeliverStore()
+
+
+class InMemoryDeliverStoreFactory(DeliverStoreFactory):
+    """Factory for `InMemoryDeliverStore` — in-memory two-state strategy."""
+
+    def create(self) -> InMemoryDeliverStore:
+        return InMemoryDeliverStore()
+
+
+class SqliteDeliverStoreFactory(DeliverStoreFactory):
+    """Factory for `SqliteDeliverStore` — accepts a shared connection.
+
+    The connection is owned by the caller; the factory does NOT close it.
+    """
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._conn = connection
+
+    def create(self) -> SqliteDeliverStore:
+        return SqliteDeliverStore(self._conn)
 
 
 __all__ = [
     "DeliverStatus",
     "DeliverRecord",
     "DeliverStore",
+    "DeliverStoreFactory",
     "InMemoryDeliverStore",
+    "InMemoryDeliverStoreFactory",
+    "NullDeliverStore",
+    "NullDeliverStoreFactory",
     "SqliteDeliverStore",
+    "SqliteDeliverStoreFactory",
 ]
