@@ -10,7 +10,7 @@ from modex_agent.approval.config import AgentApprovalConfig, ToolApprovalConfig
 from modex_agent.approval.constants import ApprovalDecision, ApprovalTier, ApprovalStatus
 from modex_agent.approval.response import parse_approval_action
 from modex_agent.approval.types import ApprovalAction
-from modex_agent.agents.react.constants import ReActNode, ReActReason
+from modex_agent.agents.react.constants import ReActNode
 from modex_agent.agents.react.nodes.tool import ToolNode
 from modex_agent.agents.react.nodes.start import StartNode
 from modex_agent.agents.react.nodes.llm import LLMNode

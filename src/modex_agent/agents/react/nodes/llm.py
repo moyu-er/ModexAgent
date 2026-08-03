@@ -13,7 +13,6 @@ from modex_agent.agents.react.constants import ReActEvent as GraphReActEvent
 from modex_agent.agents.react.constants import (
     ReActHookPoint,
     ReActNode,
-    ReActReason,
     ReActScope,
 )
 from modex_agent.agents.react.context import ReActGraphContext, get_agent_ctx
@@ -41,6 +40,7 @@ from modex_agent.runtime.enums import (
 )
 from modex_agent.runtime.models import MessageDelta
 from modex_graph.context import GraphContext
+from modex_graph.integration import IntegratedInput
 from modex_graph.node import Node
 from modex_graph.result import NodeResult
 
@@ -139,7 +139,11 @@ class LLMNode(Node[ReActTurnState]):
         self._llm_client = llm_client
         self._injection_drainer = injection_drainer
 
-    async def execute(self, ctx: GraphContext[ReActTurnState]) -> NodeResult:
+    async def execute(
+        self,
+        ctx: GraphContext[ReActTurnState],
+        integrated_input: IntegratedInput,
+    ) -> NodeResult:
         state = ctx.state
         # The ReAct engine always passes a ``ReActGraphContext`` — reach the
         # wrapped ``AgentContext`` via ``user_data`` (typed ``Any`` on the
@@ -165,11 +169,12 @@ class LLMNode(Node[ReActTurnState]):
         # edge to END.
         if state.iteration > agent_ctx.max_iterations:
             await ctx.runtime.emit(GraphReActEvent.MAX_ITERATIONS, None, ctx)
-            return NodeResult(transition=ReActReason.MAX_ITERATIONS)
+            self.deliver(state.llm_response, ReActNode.END, ctx)
+            return NodeResult()
 
         agent_runtime = agent_ctx.runtime
 
-        async def actual_iteration():
+        async def actual_iteration() -> None:
             # ITERATION_START is NOT in ``constants.ReActEvent`` (the
             # graph-runtime subset) — it stays as a direct emitter call.
             if agent_ctx.emitter is not None:
@@ -252,17 +257,20 @@ class LLMNode(Node[ReActTurnState]):
 
         response = state.llm_response
         if response is not None and response.finish_reason == FinishReason.ERROR.value:
-            return NodeResult(transition=ReActReason.LLM_ERROR)
+            self.deliver(response, ReActNode.END, ctx)
+            return NodeResult()
 
         if response is not None and response.tool_calls:
-            return NodeResult(transition=ReActReason.HAS_TOOLS)
+            self.deliver(response, ReActNode.TOOL, ctx)
+            return NodeResult()
 
         await ctx.runtime.emit(
             GraphReActEvent.ITERATION_END,
             {"iteration": state.iteration, "has_tool_calls": False},
             ctx,
         )
-        return NodeResult(transition=ReActReason.NO_TOOLS)
+        self.deliver(response, ReActNode.END, ctx)
+        return NodeResult()
 
     async def _build_messages(
         self,

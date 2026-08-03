@@ -174,7 +174,10 @@ class ExternalEnvSpec(BaseModel):
     task_id: str | None = Field(
         default=None,
         description=(
-            "Optional workflow task id surfaced as MODEX_TASK_ID. "
+            "Workflow task id surfaced as MODEX_TASK_ID. "
+            "In graph orchestration (ticket 05), task_id = str(graph_instance_id) "
+            "— the bot factory sets this when creating a GraphInstance so the "
+            "external agent's modexctl commands can route to the correct graph. "
             "None omits the var entirely (external agent sees no key)."
         ),
     )

@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 from modex_agent.agents.react.constants import ReActEvent as GraphReActEvent
-from modex_agent.agents.react.constants import (
-    ReActNode,
-    ReActReason,
-)
+from modex_agent.agents.react.constants import ReActNode
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.runtime.enums import TurnPhase
 from modex_graph.context import GraphContext
+from modex_graph.integration import IntegratedInput
 from modex_graph.node import Node
-from modex_graph.result import Command, NodeResult
+from modex_graph.result import NodeResult
 
 
 class StartNode(Node[ReActTurnState]):
@@ -20,20 +18,26 @@ class StartNode(Node[ReActTurnState]):
     def __init__(self) -> None:
         self.name = ReActNode.START
 
-    async def execute(self, ctx: GraphContext[ReActTurnState]) -> NodeResult:
+    async def execute(
+        self,
+        ctx: GraphContext[ReActTurnState],
+        integrated_input: IntegratedInput,
+    ) -> NodeResult:
         state = ctx.state
 
         if state.resume_target is not None:
             target = state.resume_target
             state.resume_target = None
-            return NodeResult(command=Command(goto=target))
+            self.deliver(None, target, ctx)
+            return NodeResult()
 
         state.phase = TurnPhase.RUNNING
         state.current_node = ReActNode.START
         state.iteration = 0
 
         await ctx.runtime.emit(GraphReActEvent.START, None, ctx)
-        return NodeResult(transition=ReActReason.NORMAL_START)
+        self.deliver(None, ReActNode.LLM, ctx)
+        return NodeResult()
 
 
 __all__ = ["StartNode"]

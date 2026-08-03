@@ -11,7 +11,9 @@ from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.constants import FinishReason, StopReason
 from modex_agent.core.emitter import AgentResult
 from modex_agent.runtime.enums import TurnPhase
+from modex_graph.constants import GraphNode
 from modex_graph.context import GraphContext
+from modex_graph.integration import IntegratedInput
 from modex_graph.node import Node
 from modex_graph.result import NodeResult
 
@@ -22,7 +24,11 @@ class EndNode(Node[ReActTurnState]):
     def __init__(self) -> None:
         self.name = ReActNode.END
 
-    async def execute(self, ctx: GraphContext[ReActTurnState]) -> NodeResult:
+    async def execute(
+        self,
+        ctx: GraphContext[ReActTurnState],
+        integrated_input: IntegratedInput,
+    ) -> NodeResult:
         state = ctx.state
         agent_ctx = get_agent_ctx(ctx)
         response = state.llm_response
@@ -77,11 +83,8 @@ class EndNode(Node[ReActTurnState]):
 
         state.mark_completed()
 
-        # ``transition=None`` falls through to the default edge
-        # ``add_edge(ReActNode.END, GraphNode.END)`` declared in
-        # ``build_react_graph()``, routing the engine to ``GraphNode.END`` and
-        # terminating the loop.
-        return NodeResult(transition=None)
+        self.deliver(result, GraphNode.END, ctx)
+        return NodeResult()
 
 
 __all__ = ["EndNode"]

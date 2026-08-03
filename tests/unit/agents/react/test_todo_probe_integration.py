@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from modex_agent.agents.react.constants import ReActNode, ReActReason
+from modex_agent.agents.react.constants import ReActNode
 from modex_agent.agents.react.context import ReActGraphContext
 from modex_agent.agents.react.injection_drainer import InjectionDrainer
 from modex_agent.agents.react.llm_client import ReactLlmClient
@@ -84,10 +84,10 @@ async def test_probe_continues_loop_and_keeps_xml_out_of_stream(tmp_path, monkey
     node = LLMNode(llm_client=client, injection_drainer=InjectionDrainer())
 
     # --- act ----------------------------------------------------------------
-    result = await node.execute(ctx)
+    await node.run(ctx)
 
-    # --- the loop continues (probe injected a tool call) --------------------
-    assert result.transition == ReActReason.HAS_TOOLS
+    # --- the loop continues (probe injected a tool call → routed to TOOL) --
+    assert ReActNode.TOOL in node.result
 
     messages = await agent_ctx.history.to_list()
     assistant = [m for m in messages if m.role == "assistant"][-1]
