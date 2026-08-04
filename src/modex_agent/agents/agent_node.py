@@ -40,7 +40,6 @@ from modex_graph.context import GraphContext
 from modex_graph.integration import IntegratedInput
 from modex_graph.node import Node
 from modex_graph.node_factory import NodeFactory
-from modex_graph.result import NodeResult
 from modex_graph.spec import NodeSpec
 
 
@@ -92,7 +91,7 @@ class AgentNode(Node[Any]):
     ``AgentResult`` to ``next_node`` via ``self.deliver``.
 
     The node is stateless per execution — the agent holds its own state
-    via ``AgentContext``. No ``NodeState`` is needed.
+    via ``AgentContext``.
     """
 
     def __init__(
@@ -121,14 +120,14 @@ class AgentNode(Node[Any]):
         self,
         ctx: GraphContext[Any],
         integrated_input: IntegratedInput,
-    ) -> NodeResult:
+    ) -> None:
         """Construct context, run the agent, deliver the result."""
         agent_ctx = self._agent_context_factory(ctx)
         emitter = CollectorEmitter()
         agent_ctx.emitter = emitter
         result = await self._agent.run(agent_ctx, emitter)
         self.deliver(result, self._next_node, ctx)
-        return NodeResult()
+        return None
 
 
 class AgentNodeFactory(NodeFactory):
@@ -156,9 +155,7 @@ class AgentNodeFactory(NodeFactory):
             context_factories: initial name→factory mapping. Must cover the
                 same keys as ``agents``. May be ``None`` (empty).
         """
-        self._agents: dict[str, Agent[Any]] = (
-            dict(agents) if agents is not None else {}
-        )
+        self._agents: dict[str, Agent[Any]] = dict(agents) if agents is not None else {}
         self._context_factories: dict[str, Callable[[GraphContext[Any]], AgentContext]] = (
             dict(context_factories) if context_factories is not None else {}
         )
@@ -176,8 +173,7 @@ class AgentNodeFactory(NodeFactory):
         """
         if name in self._agents:
             raise ValueError(
-                f"Agent {name!r} is already registered. "
-                f"Use a different name or unregister first."
+                f"Agent {name!r} is already registered. Use a different name or unregister first."
             )
         self._agents[name] = agent
         self._context_factories[name] = context_factory

@@ -22,7 +22,6 @@ from ..spec import NodeSpec
 
 if TYPE_CHECKING:
     from ..context import GraphContext
-    from ..result import NodeResult
 
 
 class DelayNodeConfig(BaseModel):
@@ -68,14 +67,12 @@ class DelayNode(Node[Any]):
         self,
         ctx: GraphContext[Any],
         integrated_input: IntegratedInput,
-    ) -> NodeResult:
+    ) -> None:
         """Sleep for the configured delay, then deliver a tick signal."""
-        from ..result import NodeResult
-
         if self._delay > 0:
             await asyncio.sleep(self._delay)
         self.deliver({"delayed_seconds": self._delay}, self._next_node, ctx)
-        return NodeResult()
+        return None
 
 
 class DelayNodeFactory(NodeFactory):

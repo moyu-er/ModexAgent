@@ -20,7 +20,6 @@ from modex_graph import (
     GraphState,
     IntegratedInput,
     Node,
-    NodeResult,
 )
 
 
@@ -41,10 +40,10 @@ class ConditionalNode[S: GraphState](Node[S]):
     def __init__(self, predicate: Callable[[S], str]) -> None:
         self.predicate = predicate
 
-    def execute(self, ctx: GraphContext[S], integrated_input: IntegratedInput) -> NodeResult:
+    async def execute(self, ctx: GraphContext[S], integrated_input: IntegratedInput) -> None:
         target = self.predicate(ctx.state)
         self.deliver(None, target, ctx)
-        return NodeResult()
+        return None
 
 
 class SwitchNode[S: GraphState](Node[S]):
@@ -73,13 +72,13 @@ class SwitchNode[S: GraphState](Node[S]):
         self.cases = cases
         self.default = default
 
-    def execute(self, ctx: GraphContext[S], integrated_input: IntegratedInput) -> NodeResult:
+    async def execute(self, ctx: GraphContext[S], integrated_input: IntegratedInput) -> None:
         for target, predicate in self.cases.items():
             if predicate(ctx.state):
                 self.deliver(None, target, ctx)
-                return NodeResult()
+                return None
         self.deliver(None, self.default, ctx)
-        return NodeResult()
+        return None
 
 
 def build_conditional_graph[S: GraphState](

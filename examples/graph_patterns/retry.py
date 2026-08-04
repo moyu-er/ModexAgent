@@ -2,8 +2,8 @@
 
 Two forms of retry, exercising different parts of the deliver/submit API:
 
-1. ``RetryNode[S]`` — synchronous retry within a single ``execute`` call.
-   The node wraps a body ``Node`` and calls ``body.execute(ctx)`` up to
+1. ``RetryNode[S]`` — retry within a single ``execute`` call.
+   The node wraps a body ``Node`` and awaits ``body.execute(ctx)`` up to
    ``max_retries + 1`` times. If ``is_failure(ctx.state)`` returns ``False``,
    the node delivers to its default target (success). If all attempts fail,
    the node delivers to ``failure_target`` (exhaustion). This form exercises
@@ -21,10 +21,7 @@ the body failed. The body signals failure via imperative state mutation
 (e.g. ``ctx.state.exit_path = "fail"``). The former ``transition``-based
 signaling was removed (P3.4b convergence).
 
-IMPORTANT: the body must NOT return ``NodeResult(state_update=...)`` for the
-failure signal — ``apply_state_update`` syncs ALL channels back to fields,
-which would reset imperative counter mutations. Use imperative state
-mutation only.
+The body reports outcomes through imperative state mutation.
 
 This is example code (lives under ``examples/`` per ADR-0007 rule 9). It
 uses only the public ``modex_graph`` API — no framework-internal hooks, no
@@ -44,15 +41,13 @@ from modex_graph import (
     GraphState,
     IntegratedInput,
     Node,
-    NodeResult,
 )
 
 
 class RetryNode[S: GraphState](Node[S]):
-    """Synchronous retry within a single ``execute`` call.
+    """Retry within a single ``execute`` call.
 
-    Calls ``body.execute(ctx)`` up to ``max_retries + 1`` times. On each
-    attempt, the body's ``state_update`` (if any) is applied to ``ctx.state``.
+    Calls ``body.execute(ctx)`` up to ``max_retries + 1`` times.
     If ``is_failure(ctx.state)`` returns ``False``, the node delivers to
     ``success_target``. If all attempts fail, the node delivers to
     ``failure_target``.
@@ -60,8 +55,6 @@ class RetryNode[S: GraphState](Node[S]):
     The body signals failure via imperative state mutation (e.g.
     ``ctx.state.exit_path = "fail"``). ``is_failure`` reads the state to
     determine if the body failed.
-
-    The body's ``execute`` must be synchronous (``def``, not ``async def``).
 
     Example::
 
@@ -85,42 +78,27 @@ class RetryNode[S: GraphState](Node[S]):
         self.success_target = success_target
         self.failure_target = failure_target
 
-    def execute(self, ctx: GraphContext[S], integrated_input: IntegratedInput) -> NodeResult:
+    async def execute(self, ctx: GraphContext[S], integrated_input: IntegratedInput) -> None:
         for _ in range(self.max_retries + 1):
-            raw = self.body.execute(ctx, integrated_input)
-            if isinstance(raw, NodeResult):
-                result = raw
-            else:
-                raise TypeError(
-                    "RetryNode requires a synchronous body node "
-                    "(body.execute must return NodeResult directly, not a "
-                    "coroutine). Use build_retry_graph for async bodies."
-                )
-            if result.state_update is not None:
-                ctx.state.apply_state_update(result.state_update)
+            await self.body.execute(ctx, integrated_input)
             if not self.is_failure(ctx.state):
                 self.deliver(None, self.success_target, ctx)
-                return NodeResult()
+                return None
         self.deliver(None, self.failure_target, ctx)
-        return NodeResult()
+        return None
 
 
 class _RetryBodyWrapper[S: GraphState](Node[S]):
     """Internal retry-aware wrapper around a user-provided body node.
 
     On each execution:
-    1. Calls ``body.execute(ctx)`` to get the ``NodeResult``.
-    2. Applies the body's ``state_update`` (if any) to ``ctx.state``.
-    3. Increments ``ctx.state.<counter_state_field>`` by 1 (imperative).
-    4. If ``not is_failure(ctx.state)``: delivers to ``GraphNode.END``.
-    5. If ``is_failure(ctx.state)`` and counter < ``max_retries``: delivers
+    1. Awaits ``body.execute(ctx)``.
+    2. Increments ``ctx.state.<counter_state_field>`` by 1.
+    3. If ``not is_failure(ctx.state)``: delivers to ``GraphNode.END``.
+    4. If ``is_failure(ctx.state)`` and counter < ``max_retries``: delivers
        to ``"body"`` (self-loop).
-    6. If ``is_failure(ctx.state)`` and counter >= ``max_retries``: delivers
+    5. If ``is_failure(ctx.state)`` and counter >= ``max_retries``: delivers
        to ``GraphNode.END`` (exhaustion).
-
-    The counter is managed via imperative mutation (``setattr``), NOT
-    ``state_update`` — ``apply_state_update`` syncs ALL channels, which
-    would reset the counter.
     """
 
     def __init__(
@@ -135,29 +113,19 @@ class _RetryBodyWrapper[S: GraphState](Node[S]):
         self.is_failure = is_failure
         self.counter_state_field = counter_state_field
 
-    def execute(self, ctx: GraphContext[S], integrated_input: IntegratedInput) -> NodeResult:
-        raw = self.body.execute(ctx, integrated_input)
-        if isinstance(raw, NodeResult):
-            result = raw
-        else:
-            raise TypeError(
-                "_RetryBodyWrapper requires a synchronous body node "
-                "(body.execute must return NodeResult directly, not a "
-                "coroutine)."
-            )
-        if result.state_update is not None:
-            ctx.state.apply_state_update(result.state_update)
+    async def execute(self, ctx: GraphContext[S], integrated_input: IntegratedInput) -> None:
+        await self.body.execute(ctx, integrated_input)
         current = getattr(ctx.state, self.counter_state_field)
         next_count = current + 1
         setattr(ctx.state, self.counter_state_field, next_count)
         if not self.is_failure(ctx.state):
             self.deliver(None, GraphNode.END, ctx)
-            return NodeResult()
+            return None
         if next_count < self.max_retries:
             self.deliver(None, "body", ctx)
-            return NodeResult()
+            return None
         self.deliver(None, GraphNode.END, ctx)
-        return NodeResult()
+        return None
 
 
 def build_retry_graph[S: GraphState](
@@ -209,4 +177,3 @@ __all__ = [
     "RetryNode",
     "build_retry_graph",
 ]
-

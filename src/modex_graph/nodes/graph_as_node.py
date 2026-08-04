@@ -5,16 +5,12 @@ Ticket 02 (P2.8): per ADR-0033 D8 (Graph-is-a-Node), a `CompiledGraph` is
 already a `Node` subclass. This module provides a thin *wrapper* that:
 
 - holds a `CompiledGraph` instance,
-- runs the inner graph's `execute(ctx)` on the shared `ctx`,
+- awaits the inner graph's `execute(ctx)` on the shared `ctx`,
 - delivers a completion signal to the next node via `self.deliver(...)`.
 
 Design decision: a wrapper rather than modifying `CompiledGraph` directly.
-`CompiledGraph` is a frozen dataclass whose `execute` returns an empty
-`NodeResult` for the parent to route via its own edges. Adding deliver
-semantics to `CompiledGraph.execute` would change the behaviour of every
-existing subgraph call-site. The wrapper is additive and isolated — it
-participates in the deliver/submit model without touching the existing
-`CompiledGraph` contract.
+The wrapper participates in the deliver/submit model while the compiled
+graph remains responsible only for running its inner topology.
 
 The inner graph shares `ctx.state` / `ctx.runtime` / `ctx.user_data` with
 the parent (per D8). The subgraph writes its result to `ctx.state` (a
@@ -37,7 +33,6 @@ from ..spec import GraphSpec, NodeSpec
 
 if TYPE_CHECKING:
     from ..context import GraphContext
-    from ..result import NodeResult
     from ..spec_compiler import GraphSpecCompiler
 
 
@@ -87,13 +82,11 @@ class GraphAsNode(Node[Any]):
         self,
         ctx: GraphContext[Any],
         integrated_input: IntegratedInput,
-    ) -> NodeResult:
+    ) -> None:
         """Run the inner graph and deliver a completion signal."""
-        from ..result import NodeResult
-
         await self._compiled.execute(ctx, integrated_input)
         self.deliver({"subgraph_completed": True}, self._next_node, ctx)
-        return NodeResult()
+        return None
 
 
 class GraphAsNodeFactory(NodeFactory):
@@ -103,7 +96,7 @@ class GraphAsNodeFactory(NodeFactory):
 
     Config shape is validated by `GraphAsNodeConfig` (returned from
     `config_schema()`). The `graph_spec` is then compiled via a
-    `GraphSpecCompiler` (which requires `NodeRegistry` + `StateRegistry`) —
+    `GraphSpecCompiler` (which requires a node registry and state-class mapping) —
     that is runtime validation, not config validation. The compiled graph is
     embedded in the `GraphAsNode` wrapper.
     """
@@ -114,7 +107,7 @@ class GraphAsNodeFactory(NodeFactory):
         Args:
             compiler: the compiler used to materialize inline `GraphSpec`
                 data into a `CompiledGraph`. The caller is responsible for
-                wiring the compiler's `NodeRegistry` + `StateRegistry`.
+                wiring the compiler's node registry and state-class mapping.
         """
         self._compiler = compiler
 

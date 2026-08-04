@@ -9,8 +9,7 @@ Per ADR-0033 D8: `Graph` is-a `Node`. `Graph.compile()` returns a
 
 `CompiledGraph.execute(ctx)` runs its own `GraphEngine` loop on `ctx`,
 sharing the parent context's state, runtime, and user_data. The subgraph
-writes its result to `ctx.state` (a field on the state, per D9.3) and
-returns a `NodeResult` for the parent graph to route on.
+writes its result to `ctx.state` (a field on the state, per D9.3).
 
 `CompiledGraph` is a regular class (NOT a frozen dataclass). Per rule 12:
 runtime objects holding state and connections are NOT covered by the
@@ -36,7 +35,6 @@ from .node import Node
 if TYPE_CHECKING:
     from .context import GraphContext
     from .graph import Edge
-    from .result import NodeResult
     from .state import GraphState
 
 S = TypeVar("S", bound="GraphState")
@@ -48,10 +46,9 @@ class CompiledGraph(Node[S]):
     Constructed by `Graph.compile()`. Holds the validated node registry,
     edges, entry node, and `max_iterations` safety net.
 
-    As a `Node`: `execute(ctx)` runs its own `GraphEngine` loop on `ctx`,
-    returning a `NodeResult` for the parent graph to route on. The subgraph
-    writes its result to `ctx.state` (a field on the state) — the engine
-    returns `ctx.state` after the inner loop reaches END.
+    As a `Node`: `execute(ctx)` runs its own `GraphEngine` loop on `ctx`.
+    The subgraph writes its result to `ctx.state` (a field on the state) —
+    the engine returns `ctx.state` after the inner loop reaches END.
 
     `default_trigger` (Task 06) is the graph-level default trigger mode for
     `ParallelScheduler`. A per-node `Node.trigger` (when not `None`) overrides
@@ -79,14 +76,10 @@ class CompiledGraph(Node[S]):
 
     async def execute(
         self,
-        ctx: GraphContext[Any],
+        ctx: GraphContext[S],
         integrated_input: IntegratedInput,
-    ) -> NodeResult:
+    ) -> None:
         """Run this graph as a node. Delegates to `GraphEngine.run_async`.
-
-        This is an `async def` override of `Node.execute` (which is declared
-        `def`). The parent engine's `inspect.isawaitable` detects and awaits
-        the returned coroutine. This is the dual-mode design from D2/D3.
 
         ``integrated_input`` is accepted to satisfy the ``Node.execute``
         contract but ignored — the subgraph runs its own engine loop which
@@ -98,15 +91,10 @@ class CompiledGraph(Node[S]):
         """
         # Imported here to avoid a circular import at module load.
         from .engine import GraphEngine
-        from .result import NodeResult as _NodeResult
 
-        engine: GraphEngine[Any] = GraphEngine(self)
+        engine: GraphEngine[S] = GraphEngine(self)
         await engine.run_async(ctx)
-        # The subgraph writes its result to ctx.state.<some_field>.
-        # The parent graph reads it. We return an empty NodeResult —
-        # the parent routes via its own edges, not via
-        # the subgraph's return value.
-        return _NodeResult()
+        return None
 
     # ── Edge lookup helpers (used by GraphEngine) ──────────────────────
 

@@ -33,7 +33,6 @@ from ..spec import NodeSpec
 
 if TYPE_CHECKING:
     from ..context import GraphContext
-    from ..result import NodeResult
 
 
 class FunctionNodeConfig(BaseModel):
@@ -84,15 +83,13 @@ class FunctionNode(Node[Any]):
         self,
         ctx: GraphContext[Any],
         integrated_input: IntegratedInput,
-    ) -> NodeResult:
+    ) -> None:
         """Call the wrapped function and deliver its result."""
-        from ..result import NodeResult
-
         result = self._func(ctx)
         if inspect.isawaitable(result):
             result = await result
         self.deliver(result, self._next_node, ctx)
-        return NodeResult()
+        return None
 
 
 class FunctionNodeFactory(NodeFactory):

@@ -43,7 +43,6 @@ from modex_graph import create_null_coordinator
 from modex_graph.context import GraphContext
 from modex_graph.integration import IntegratedInput
 from modex_graph.node import Node
-from modex_graph.result import NodeResult
 
 # Module-level Null coordinator for the governance helper context.
 # Node.run() is never called on it — it only provides the coordinator
@@ -79,7 +78,11 @@ def enrich_inline_media(
     references).  Runs AFTER governance so governance only sees text.
     """
     runtime = ctx.runtime
-    caps = runtime.model_info.capabilities if runtime is not None and runtime.model_info is not None else None
+    caps = (
+        runtime.model_info.capabilities
+        if runtime is not None and runtime.model_info is not None
+        else None
+    )
     if caps is None or not caps.supports(Modality.IMAGE):
         return messages
 
@@ -149,7 +152,7 @@ class LLMNode(Node[ReActTurnState]):
         self,
         ctx: GraphContext[ReActTurnState],
         integrated_input: IntegratedInput,
-    ) -> NodeResult:
+    ) -> None:
         state = ctx.state
         # The ReAct engine always passes a ``ReActGraphContext`` — reach the
         # wrapped ``AgentContext`` via ``user_data`` (typed ``Any`` on the
@@ -176,7 +179,7 @@ class LLMNode(Node[ReActTurnState]):
         if state.iteration > agent_ctx.max_iterations:
             await ctx.runtime.emit(GraphReActEvent.MAX_ITERATIONS, None, ctx)
             self.deliver(state.llm_response, ReActNode.END, ctx)
-            return NodeResult()
+            return None
 
         agent_runtime = agent_ctx.runtime
 
@@ -264,11 +267,11 @@ class LLMNode(Node[ReActTurnState]):
         response = state.llm_response
         if response is not None and response.finish_reason == FinishReason.ERROR.value:
             self.deliver(response, ReActNode.END, ctx)
-            return NodeResult()
+            return None
 
         if response is not None and response.tool_calls:
             self.deliver(response, ReActNode.TOOL, ctx)
-            return NodeResult()
+            return None
 
         await ctx.runtime.emit(
             GraphReActEvent.ITERATION_END,
@@ -276,7 +279,7 @@ class LLMNode(Node[ReActTurnState]):
             ctx,
         )
         self.deliver(response, ReActNode.END, ctx)
-        return NodeResult()
+        return None
 
     async def _build_messages(
         self,

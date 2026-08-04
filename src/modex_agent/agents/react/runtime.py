@@ -111,7 +111,7 @@ class ReactGraphRuntime(GraphRuntime):
         explicitly by the nodes via ``dispatch_hook``.
         """
 
-    async def after_node(self, ctx: GraphContext[Any], node_name: str, result: Any) -> None:
+    async def after_node(self, ctx: GraphContext[Any], node_name: str) -> None:
         """Engine calls this after each node's ``execute(ctx)`` returns.
 
         No-op for ReAct — same rationale as ``before_node``.

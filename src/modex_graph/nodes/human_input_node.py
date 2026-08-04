@@ -29,7 +29,6 @@ from ..spec import NodeSpec
 
 if TYPE_CHECKING:
     from ..context import GraphContext
-    from ..result import NodeResult
 
 
 class HumanInputNodeConfig(BaseModel):
@@ -81,10 +80,8 @@ class HumanInputNode(Node[Any]):
         self,
         ctx: GraphContext[Any],
         integrated_input: IntegratedInput,
-    ) -> NodeResult:
+    ) -> None:
         """Suspend for human input on first entry; deliver on resume."""
-        from ..result import NodeResult
-
         if not self._resumed:
             self._resumed = True
             ctx.interrupt({"prompt": self._prompt, "node": self.name})
@@ -95,7 +92,7 @@ class HumanInputNode(Node[Any]):
             ctx,
         )
         self._resumed = False
-        return NodeResult()
+        return None
 
 
 class HumanInputNodeFactory(NodeFactory):

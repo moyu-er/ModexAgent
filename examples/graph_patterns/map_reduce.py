@@ -3,8 +3,7 @@
 Reusable split -> fan-out -> reduce workflow using the deliver/submit API:
 
 - `MapNode` calls `deliver(item, worker_node, ctx)` for each item (fan-out).
-- `ReducerChannel` for fan-in (folds all workers' `state_update`
-  contributions).
+- Workers append their results directly to shared graph state.
 - `ReduceNode` reads the accumulated list, applies the reducer, writes the
   result.
 
@@ -35,7 +34,6 @@ from modex_graph import (
     GraphState,
     IntegratedInput,
     Node,
-    NodeResult,
 )
 
 
@@ -62,27 +60,25 @@ class MapNode[S: GraphState](Node[S]):
         self.items_fn = items_fn
         self.worker_node = worker_node
 
-    def execute(self, ctx: GraphContext[S], integrated_input: IntegratedInput) -> NodeResult:
+    async def execute(self, ctx: GraphContext[S], integrated_input: IntegratedInput) -> None:
         items = self.items_fn(ctx.state)
         if items:
             for item in items:
                 self.deliver(item, self.worker_node, ctx)
         else:
             self.deliver(None, "reduce", ctx)
-        return NodeResult()
+        return None
 
 
 class ReduceNode[S: GraphState](Node[S]):
     """Fan-in node: reads accumulated list, applies reducer, writes result.
 
-    `execute` reads `getattr(ctx.state, source_field)` (the
-    `ReducerChannel`-backed field that has accumulated all workers'
-    `state_update` contributions), applies `reducer(values)`, and writes
+    `execute` reads `getattr(ctx.state, source_field)`, applies
+    `reducer(values)`, and writes
     the result to `result_field` via `setattr(ctx.state, result_field,
     reduced_value)`.
 
-    Imperative mode — `ReduceNode` does NOT use `NodeResult.state_update`
-    because it is the terminal node writing the final result. The
+    Imperative mode writes the terminal result directly to graph state. The
     `getattr`/`setattr` dynamic field access is a legitimate extension
     boundary (rule 6): `ReduceNode` is generic over any `GraphState`
     subclass and any field names.
@@ -106,12 +102,12 @@ class ReduceNode[S: GraphState](Node[S]):
         self.source_field = source_field
         self.result_field = result_field
 
-    def execute(self, ctx: GraphContext[S], integrated_input: IntegratedInput) -> NodeResult:
+    async def execute(self, ctx: GraphContext[S], integrated_input: IntegratedInput) -> None:
         values = getattr(ctx.state, self.source_field)
         reduced = self.reducer(values)
         setattr(ctx.state, self.result_field, reduced)
         self.deliver(None, GraphNode.END, ctx)
-        return NodeResult()
+        return None
 
 
 def build_map_reduce_graph[S: GraphState](
@@ -128,12 +124,11 @@ def build_map_reduce_graph[S: GraphState](
         START -> map -> worker -> reduce -> END
 
     - ``map`` is a `MapNode` that delivers each item to ``worker``.
-    - ``worker`` processes items and returns
-      `NodeResult(state_update={source_field: [processed_result]})`.
+    - ``worker`` processes items and appends results to ``source_field``.
       Under `LinearScheduler`, one execution processes all items; under
       `ParallelScheduler`, one instance per item.
-    - ``reduce`` is a `ReduceNode` that reads the `ReducerChannel`-backed
-      `source_field`, applies `reducer(values)`, and writes `result_field`.
+    - ``reduce`` reads ``source_field``, applies `reducer(values)`, and writes
+      `result_field`.
 
     The worker node is registered as ``"worker"``; `MapNode`'s
     `worker_node` parameter is wired to ``"worker"`` automatically.

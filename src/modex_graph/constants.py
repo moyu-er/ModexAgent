@@ -71,10 +71,10 @@ class NodeInstanceStatus(StrEnum):
     - `READY → RUNNING` — scheduler picked up the instance for execution.
     - `RUNNING → COMPLETED` — node `execute()` returned.
 
-    `DORMANT` is the initial status when an instance is first created. In the
-    current phase (no fork isolation), instances transition `DORMANT → READY`
-    immediately upon creation (no gating). `PENDING` is reserved for future
-    trigger-mode gating.
+    `DORMANT` is the initial status when an instance is first created.
+    Trigger gating moves it through `PENDING` before it becomes `READY`, the
+    scheduler marks it `RUNNING` during execution, and successful execution
+    ends at `COMPLETED`.
     """
 
     DORMANT = "dormant"
@@ -143,14 +143,18 @@ class SchedulerInstanceStatus(StrEnum):
 
 
 class InvocationStatus(StrEnum):
-    """Persistent status for an invocation version chain."""
+    """Persistent status for an invocation version chain.
 
-    PENDING = "pending"
+    Records begin directly as ``RUNNING`` (no ``PENDING`` intermediate).
+    Terminal states: ``COMPLETED``, ``CANCELED``, ``CRASHED`` — no
+    transition FROM terminal. Suspended invocations stay ``RUNNING``
+    with ``suspended=True`` (a distinct flag, not a separate status).
+    """
+
     RUNNING = "running"
     COMPLETED = "completed"
     CANCELED = "canceled"
     CRASHED = "crashed"
-    SUPERSEDED = "superseded"
 
 
 class DeliverConsumptionStatus(StrEnum):

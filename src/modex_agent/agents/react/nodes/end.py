@@ -15,7 +15,6 @@ from modex_graph.constants import GraphNode
 from modex_graph.context import GraphContext
 from modex_graph.integration import IntegratedInput
 from modex_graph.node import Node
-from modex_graph.result import NodeResult
 
 
 class EndNode(Node[ReActTurnState]):
@@ -28,7 +27,7 @@ class EndNode(Node[ReActTurnState]):
         self,
         ctx: GraphContext[ReActTurnState],
         integrated_input: IntegratedInput,
-    ) -> NodeResult:
+    ) -> None:
         state = ctx.state
         agent_ctx = get_agent_ctx(ctx)
         response = state.llm_response
@@ -84,7 +83,7 @@ class EndNode(Node[ReActTurnState]):
         state.mark_completed()
 
         self.deliver(result, GraphNode.END, ctx)
-        return NodeResult()
+        return None
 
 
 __all__ = ["EndNode"]

@@ -1,17 +1,6 @@
 # ruff: noqa: ANN401
 
-"""`Node[S]` ABC — single-method `execute` with structured `NodeResult`,
-plus the additive deliver/submit dual-method API.
-
-Per ADR-0033 D2: the `execute` method is declared as `def` (NOT `async def`).
-Subclasses may override with either `def` or `async def`. The engine unifies
-both via `inspect.isawaitable(result)` — if the return value is awaitable
-(coroutine), the engine awaits it; otherwise it uses the value directly.
-
-This dual-mode design (borrowed from anyio/httpx/starlette precedent) avoids
-splitting the node library into `SyncNode` + `AsyncNode` and duplicating the
-engine loop. The cost is one `inspect.isawaitable` call per node execution
-(negligible).
+"""`Node[S]` ABC — async node execution with the deliver/submit API.
 
 `S` is bound to `GraphState` — the typed Pydantic state the node reads from
 and writes to via `ctx.state`.
@@ -42,9 +31,7 @@ instance-attribute fallback).
 
 from __future__ import annotations
 
-import inspect
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable
 from typing import TYPE_CHECKING, Any
 
 from typing_extensions import TypeVar
@@ -62,19 +49,15 @@ from .persistence import DeliverStore
 if TYPE_CHECKING:
     from .compiled_graph import CompiledGraph
     from .context import GraphContext
-    from .result import NodeResult
     from .state import GraphState
 
 S = TypeVar("S", bound="GraphState")
 
 
 class Node[S: "GraphState"](ABC):
-    """Abstract graph node. Executes logic and returns a `NodeResult`.
+    """Abstract graph node. Executes logic and routes through deliver/submit.
 
-    Subclasses implement `execute(ctx) -> NodeResult`. The method is declared
-    as `def` (sync); subclasses MAY override with `async def` for async I/O
-    (LLM calls, tool execution, network requests). The engine detects the
-    return type via `inspect.isawaitable` and awaits if needed.
+    Subclasses implement async ``execute(ctx, integrated_input) -> None``.
 
     Convention: each `Node` instance has a `name` attribute matching its
     registration key in the `Graph`. The `Graph.add_node(name, node)` call
@@ -120,15 +103,12 @@ class Node[S: "GraphState"](ABC):
     _graph_ref: CompiledGraph[S] | None = None
 
     @abstractmethod
-    def execute(
+    async def execute(
         self,
         ctx: GraphContext[S],
         integrated_input: IntegratedInput,
-    ) -> NodeResult | Awaitable[NodeResult]:
-        """Execute node logic and return a `NodeResult`.
-
-        Declared as `def` (not `async def`). Subclasses may override with
-        `async def` — the engine unifies both via `inspect.isawaitable`.
+    ) -> None:
+        """Execute node logic and accumulate downstream delivers.
 
         ``integrated_input`` carries the upstream delivered data, integrated
         by ``InputIntegrator``. It is an explicit parameter — NOT an instance
@@ -136,14 +116,8 @@ class Node[S: "GraphState"](ABC):
         integrated payload) or ``integrated_input.payloads`` (raw upstream
         payloads) to access data delivered by upstream nodes.
 
-        Return type is `NodeResult | Awaitable[NodeResult]` to honestly
-        reflect the dual-mode design: a `def` override returns `NodeResult`
-        directly; an `async def` override returns a coroutine that yields
-        `NodeResult`. The engine's `inspect.isawaitable` check handles both.
-
         Implementations may:
         - Read/write `ctx.state` imperatively (`ctx.state.x = y`).
-        - Return `NodeResult(state_update={...})` for declarative updates.
         - Call `ctx.interrupt(value)` to suspend for HITL.
         - Call `ctx.runtime.dispatch_hook(...)` for AOP concerns.
         - Call `self.deliver(content, next_node, ctx)` to accumulate delivers
@@ -160,7 +134,7 @@ class Node[S: "GraphState"](ABC):
         ctx: GraphContext[S],
         *,
         graph: CompiledGraph[S] | None = None,
-    ) -> NodeResult:
+    ) -> None:
         """Framework entry point. Coordinator-driven lifecycle:
 
         begin → integrate → execute (with undelivered detection retry) →
@@ -179,11 +153,11 @@ class Node[S: "GraphState"](ABC):
 
         Lifecycle:
 
-        1. ``load_latest_invocation`` — resume check (read-only, before
+        1. ``load_latest`` — resume check (read-only, before
            begin). If the latest invocation is suspended with a state
            snapshot, the snapshot is used as integrated input and delivers
            are NOT re-consumed.
-        2. ``begin_invocation`` — create a new PENDING invocation.
+        2. ``begin_invocation`` — create a new RUNNING invocation.
            ``parent_version`` computed internally.
         3. Integrate (inside try — crashes are covered by crash/finalize):
            - Resume: use ``prev.state_json`` as integrated input.
@@ -210,9 +184,10 @@ class Node[S: "GraphState"](ABC):
           ``cancel_invocation``, re-raise.
         - Other ``Exception``: call ``crash_invocation``, re-raise.
         - ``finally``: ``finalize_invocation`` (safety net for orphan
-          PENDING).
+           non-suspended RUNNING).
         """
         coordinator = ctx.coordinator
+        store = ctx.node_state_store
 
         # Resume check — before begin_invocation (read-only query).
         # If the latest invocation is suspended, this is a resume from
@@ -220,11 +195,11 @@ class Node[S: "GraphState"](ABC):
         # re-consuming delivers (they were already consumed by the
         # suspended invocation). An empty state_json ({}) is a valid
         # checkpoint and must remain distinguishable from "not suspended".
-        prev = coordinator.load_latest_invocation(self.name)
+        prev = store.load_latest(self.name)
         is_resume = prev is not None and prev.suspended
 
         # Begin invocation (parent_version computed internally).
-        invocation = coordinator.begin_invocation(self.name)
+        invocation = store.begin_invocation(self.name)
         ctx.current_invocation = invocation
 
         self._submit_result = {}
@@ -265,15 +240,10 @@ class Node[S: "GraphState"](ABC):
 
             # Execute with undelivered detection retry.
             retry_count = 0
-            result: NodeResult
             while True:
                 self._pending_delivers = []
 
-                raw_result = self.execute(ctx, integrated)
-                if inspect.isawaitable(raw_result):
-                    result = await raw_result
-                else:
-                    result = raw_result
+                await self.execute(ctx, integrated)
 
                 collected = self._collect_delivers(ctx)
 
@@ -308,27 +278,25 @@ class Node[S: "GraphState"](ABC):
             self.submit(ctx)
 
             # Complete: save COMPLETED + promote delivers.
-            coordinator.complete_invocation(
-                invocation, result.state_update if result.state_update else {}
-            )
-            return result
+            store.complete_invocation(invocation, ctx.state.checkpoint())
+            coordinator.promote_delivers(self.name, invocation.invocation_id)
+            return None
 
         except GraphInterrupt:
             # Checkpoint state directly, then suspend.
             snapshot = ctx.state.checkpoint()
-            coordinator.suspend_invocation(invocation, snapshot)
+            store.suspend_invocation(invocation, snapshot)
             raise
         except GraphBubbleUp:
-            # Cancel cooperative-control exceptions (GraphDrained,
-            # ParentCommand, InvalidUpdateError). GraphInterrupt is
+            # Cancel cooperative-control exceptions. GraphInterrupt is
             # caught above (suspend path).
-            coordinator.cancel_invocation(invocation)
+            store.cancel_invocation(invocation)
             raise
         except Exception:
-            coordinator.crash_invocation(invocation)
+            store.crash_invocation(invocation)
             raise
         finally:
-            coordinator.finalize_invocation(invocation)
+            store.finalize_invocation(invocation)
 
     def _deliver(
         self,

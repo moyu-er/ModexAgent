@@ -9,7 +9,7 @@ registration time.
 
 This is the declarative construction path — the alternative to the
 imperative `Graph.add_node(name, node_instance)`. Business modules register
-factories for their node types (e.g. `ReactStateFactory`, `FunctionFactory`)
+factories for their node types (for example, function and agent nodes)
 and then construct graphs entirely from `GraphSpec` data.
 
 Architecture:

@@ -14,9 +14,6 @@ Two layers:
       raised; wiring is deferred (ADR-0034 D10 termination does not use it).
     - `ParentCommand` — subgraph→parent routing. Class exists but is never
       raised; wiring is deferred (ADR-0033 D12 Phase c item 2).
-    - `InvalidUpdateError` — multiple concurrent writes to the same
-      `LastValue` channel in one generation. Raised by `LastValue.update`
-      when `len(values) > 1`. See ADR-0033 D4.
 
 - Routing / recursion errors:
     - `RoutingError` — raised when the engine cannot resolve a next node
@@ -33,8 +30,8 @@ from typing import Any
 class GraphBubbleUp(Exception):  # noqa: N818
     """Base class for cooperative-control exceptions the engine never swallows.
 
-    Subclasses: `GraphInterrupt`, `GraphDrained`, `ParentCommand`,
-    `InvalidUpdateError`. The engine propagates these to the caller verbatim
+    Subclasses: `GraphInterrupt`, `GraphDrained`, `ParentCommand`. The engine
+    propagates these to the caller verbatim
     — never caught and silenced. See ADR-0033 D7.
     """
 
@@ -81,27 +78,6 @@ class ParentCommand(GraphBubbleUp):
     """
 
 
-class InvalidUpdateError(GraphBubbleUp):
-    """Raised when multiple concurrent writes target the same `LastValue` channel.
-
-    Per ADR-0033 D4: `LastValue` enforces single-writer semantics. When ≥2
-    concurrent instances write the same `LastValue` field in one generation,
-    `LastValue.update(values)` with `len(values) > 1` raises this error.
-    Callers should use `ReducerChannel` for fan-in, or restructure the graph
-    so only one instance writes each `LastValue` field per generation.
-
-    This is a `GraphBubbleUp` subclass: the engine propagates it to the
-    caller verbatim (never caught and silenced). The caller can catch it as
-    `InvalidUpdateError`, `GraphBubbleUp`, or `Exception`.
-
-    Raised by:
-    - `WriteConflictDetector.commit()` when two same-generation instances
-      write the same field.
-    - `LastValue.update(values)` when `len(values) > 1` (the batch merge
-      path, still used by `GraphState.apply_concurrent_updates`).
-    """
-
-
 class RoutingError(Exception):
     """Raised when the engine cannot resolve the next node.
 
@@ -119,4 +95,17 @@ class GraphRecursionError(Exception):
     deliver to END, producing a normal result). Both coexist; engine-level
     N should be larger than business max (e.g. business 25, compile 100).
     See ADR-0033 D9.3.
+    """
+
+
+class InvocationStateError(Exception):
+    """Raised when a CAS (compare-and-swap) transition on a node invocation fails.
+
+    The strict lifecycle methods (``complete_invocation``,
+    ``suspend_invocation``, ``cancel_invocation``) update the
+    ``node_states`` row only if it is in the ``running`` state with
+    ``suspended=0``. If the row is already terminal (``completed`` /
+    ``canceled`` / ``crashed``) or suspended, the UPDATE affects 0 rows
+    and this exception is raised — indicating a lost race or a duplicate
+    transition attempt.
     """

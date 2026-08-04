@@ -9,7 +9,6 @@ from modex_agent.runtime.enums import TurnPhase
 from modex_graph.context import GraphContext
 from modex_graph.integration import IntegratedInput
 from modex_graph.node import Node
-from modex_graph.result import NodeResult
 
 
 class StartNode(Node[ReActTurnState]):
@@ -22,14 +21,14 @@ class StartNode(Node[ReActTurnState]):
         self,
         ctx: GraphContext[ReActTurnState],
         integrated_input: IntegratedInput,
-    ) -> NodeResult:
+    ) -> None:
         state = ctx.state
 
         if state.resume_target is not None:
             target = state.resume_target
             state.resume_target = None
             self.deliver(None, target, ctx)
-            return NodeResult()
+            return None
 
         state.phase = TurnPhase.RUNNING
         state.current_node = ReActNode.START
@@ -37,7 +36,7 @@ class StartNode(Node[ReActTurnState]):
 
         await ctx.runtime.emit(GraphReActEvent.START, None, ctx)
         self.deliver(None, ReActNode.LLM, ctx)
-        return NodeResult()
+        return None
 
 
 __all__ = ["StartNode"]

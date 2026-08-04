@@ -43,7 +43,6 @@ from modex_agent.runtime.models import (
 from modex_graph.context import GraphContext
 from modex_graph.integration import IntegratedInput
 from modex_graph.node import Node
-from modex_graph.result import NodeResult
 
 logger = logging.getLogger(__name__)
 
@@ -64,13 +63,14 @@ class ToolNode(Node[ReActTurnState]):
         self,
         ctx: GraphContext[ReActTurnState],
         integrated_input: IntegratedInput,
-    ) -> NodeResult:
+    ) -> None:
         state = ctx.state
         if state.phase == TurnPhase.SUSPENDED:
-            return await self._resume_suspended_batch(ctx)
+            await self._resume_suspended_batch(ctx)
+            return None
         if state.llm_response is None:
             self.deliver(None, ReActNode.END, ctx)
-            return NodeResult()
+            return None
 
         response = state.llm_response
         tool_calls: list[ToolCall] = response.tool_calls
@@ -83,14 +83,18 @@ class ToolNode(Node[ReActTurnState]):
             if agent_ctx.runtime
             else None
         )
-        if max_tools is not None and isinstance(max_tools, (int, float)) and len(tool_calls) > max_tools:
+        if (
+            max_tools is not None
+            and isinstance(max_tools, (int, float))
+            and len(tool_calls) > max_tools
+        ):
             await ctx.runtime.emit(
                 GraphReActEvent.ERROR,
                 f"Exceeded max_tools_per_turn ({max_tools})",
                 ctx,
             )
             self.deliver(None, ReActNode.END, ctx)
-            return NodeResult()
+            return None
 
         decisions = self._classify_all(tool_calls, agent_ctx)
         await self._emit_batch(ctx, GraphReActEvent.TOOL_CALL_START, tool_calls)
@@ -106,13 +110,15 @@ class ToolNode(Node[ReActTurnState]):
         self._apply_decisions_to_batch(batch, decisions)
 
         if ApprovalDecision.PENDING in decisions:
-            return await self._suspend_for_approval(batch, tool_calls, decisions, ctx)
+            await self._suspend_for_approval(batch, tool_calls, decisions, ctx)
+            return None
 
-        return await self._execute_batch(
+        await self._execute_batch(
             tool_calls,
             self._normalize_batch_decisions(decisions),
             ctx,
         )
+        return None
 
     async def _suspend_for_approval(
         self,
@@ -120,13 +126,13 @@ class ToolNode(Node[ReActTurnState]):
         tool_calls: list[ToolCall],
         decisions: list[ApprovalDecision],
         ctx: GraphContext[ReActTurnState],
-    ) -> NodeResult:
+    ) -> None:
         state = ctx.state
         agent_ctx = get_agent_ctx(ctx)
         if agent_ctx.runtime is None or agent_ctx.runtime.turn_store is None:
             logger.error("ToolNode: approval required but no TurnStateStore configured")
             self.deliver(None, ReActNode.END, ctx)
-            return NodeResult()
+            return None
 
         approval_id = uuid4().hex
         requests: list[ApprovalRequestState] = []
@@ -168,15 +174,15 @@ class ToolNode(Node[ReActTurnState]):
         await ctx.runtime.capture_snapshot(ctx, SnapshotReason.TOOL_APPROVAL_REQUIRED.value)
         ctx.interrupt(requests)
 
-    async def _resume_suspended_batch(self, ctx: GraphContext[ReActTurnState]) -> NodeResult:
+    async def _resume_suspended_batch(self, ctx: GraphContext[ReActTurnState]) -> None:
         state = ctx.state
         if state.approval is None:
             self.deliver(None, ReActNode.END, ctx)
-            return NodeResult()
+            return None
         batch = state.active_tool_batch()
         if batch is None:
             self.deliver(None, ReActNode.END, ctx)
-            return NodeResult()
+            return None
 
         pending_requests = [
             req
@@ -211,11 +217,14 @@ class ToolNode(Node[ReActTurnState]):
         if pre_approved_ids:
             agent_ctx = get_agent_ctx(ctx)
             if agent_ctx.runtime is not None:
-                agent_ctx.runtime.state.custom[TurnCustomKey.PRE_APPROVED_TOOL_IDS] = pre_approved_ids
+                agent_ctx.runtime.state.custom[TurnCustomKey.PRE_APPROVED_TOOL_IDS] = (
+                    pre_approved_ids
+                )
 
         state.phase = TurnPhase.RUNNING
         state.current_node = ReActNode.TOOL
-        return await self._execute_batch(tool_calls, decisions, ctx)
+        await self._execute_batch(tool_calls, decisions, ctx)
+        return None
 
     def _classify_all(
         self,
@@ -271,7 +280,7 @@ class ToolNode(Node[ReActTurnState]):
         tool_calls: list[ToolCall],
         decisions: list[ApprovalDecision],
         ctx: GraphContext[ReActTurnState],
-    ) -> NodeResult:
+    ) -> None:
         decisions = self._normalize_batch_decisions(decisions)
         state = ctx.state
         agent_ctx = get_agent_ctx(ctx)
@@ -363,7 +372,7 @@ class ToolNode(Node[ReActTurnState]):
         if dedup_stop:
             state.phase = TurnPhase.CANCELLED
             self.deliver(None, ReActNode.END, ctx)
-            return NodeResult()
+            return None
 
         if denied_encountered:
             # EXTENSION POINT: whether denial cancels the ReAct turn is
@@ -378,10 +387,10 @@ class ToolNode(Node[ReActTurnState]):
             if deny_policy == ApprovalDenyPolicy.CANCEL_TURN:
                 state.phase = TurnPhase.CANCELLED
                 self.deliver(None, ReActNode.END, ctx)
-                return NodeResult()
+                return None
 
         self.deliver(tool_results, ReActNode.LLM, ctx)
-        return NodeResult()
+        return None
 
     async def _execute_single(
         self,
@@ -427,9 +436,7 @@ class ToolNode(Node[ReActTurnState]):
             if streak_action.action == StreakDecision.REMIND:
                 existing = result.message_content()
                 appended = (
-                    f"{existing}\n{streak_action.reminder}"
-                    if existing
-                    else streak_action.reminder
+                    f"{existing}\n{streak_action.reminder}" if existing else streak_action.reminder
                 )
                 result = result.model_copy(update={"content": [TextPart(text=appended)]})
             self._deduplicator.register_result(tc.tool_name, args, result)
