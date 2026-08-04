@@ -9,9 +9,8 @@ per rule 12). Subclassable so business modules can add type-safe accessors
 
 Provides:
 
-- `state: S` — the typed Pydantic `GraphState` instance. Nodes read/write
-  directly (`ctx.state.x = y` for imperative; `ctx.state.apply_state_update`
-  is called by the engine for declarative `NodeResult.state_update`).
+- `state: S` — the typed Pydantic `GraphState` instance. Nodes read and write
+  it directly (`ctx.state.x = y`).
 - `runtime: GraphRuntime` — AOP bridge. Nodes call `ctx.runtime.dispatch_hook`
   etc. for business-specific AOP.
 - `user_data: Any` — turn-scoped business context. For ReAct, holds the
@@ -22,10 +21,10 @@ Provides:
 - `interrupt(value)` — raises `GraphInterrupt(value)` (suspend-without-
   re-execution semantics).
 - `dispatch(target, state_update)` — routes to a downstream node. Under
-  `ParallelScheduler`, creates a `DispatchEvent` and queues a new
-  `NodeInstance`. Under `LinearScheduler`, records the target + payload
-  for the scheduler to pick up as the next node. Both schedulers register
-  a dispatch handler before executing nodes.
+  `ParallelScheduler`, validates and queues the target according to its
+  trigger mode. Under `LinearScheduler`, records the target + payload for
+  the scheduler to pick up as the next node. Both schedulers register a
+  dispatch handler before executing nodes.
 
 `S` is bound to `GraphState`.
 """
@@ -42,18 +41,18 @@ from .exceptions import GraphInterrupt
 from .runtime import GraphRuntime
 
 if TYPE_CHECKING:
-    from .persistence import GraphPersistenceCoordinator, InvocationContext
+    from .persistence import GraphPersistenceCoordinator, InvocationContext, NodeStateStore
     from .state import GraphState
 
 S = TypeVar("S", bound="GraphState")
 
 # Dispatch handler signature: (source_instance, target, state_update) -> None.
 # Provided by BOTH `ParallelScheduler` and `LinearScheduler` via
-# `set_dispatch_handler`. Under PARALLEL, the handler creates a
-# `DispatchEvent` and queues a new `NodeInstance`. Under LINEAR, the
-# handler records the target + payload for the scheduler to pick up as
-# the next node. Raises `RoutingError` if `target` is not in the source
-# node's outgoing edges (PARALLEL only — LINEAR does not validate edges).
+# `set_dispatch_handler`. Under PARALLEL, the handler routes the deliver and
+# queues a new `NodeInstance` according to its trigger mode. Under LINEAR, the
+# handler records the target + payload for the scheduler to pick up as the next
+# node. Raises `RoutingError` if `target` is not in the source node's outgoing
+# edges (PARALLEL only — LINEAR does not validate edges).
 type DispatchHandler = Callable[[str, str, "dict[str, Any] | None"], None]
 
 
@@ -162,12 +161,10 @@ class GraphContext[S: "GraphState"]:
           Turn-internal context does not change across tasks.
         - **`state` isolated** (if `state` is passed): subtask has its own
           state. Imperative mutations (`sub_ctx.state.x = y`) do NOT
-          propagate to the parent state. Only `NodeResult.state_update`
-          is merged back to the parent via reducer channels.
+          propagate to the parent state unless the caller propagates them.
           If `state=None` is passed (the default), the subtask shares the
-          parent state (mutations propagate directly — use with care under
-          `LinearScheduler`; `ParallelScheduler` forbids this via fork
-          isolation, ADR-0034 D7).
+          parent state and mutations propagate directly. `ParallelScheduler`
+          uses per-task context shells that share the same state object.
         - **`scheduler_kind` shared** (inherited from parent if
           `scheduler_kind=None`): subtask sees the same scheduler kind.
           Needed so `dispatch` checks the right kind under fan-out.
@@ -247,9 +244,9 @@ class GraphContext[S: "GraphState"]:
         Works under BOTH `LINEAR` and `PARALLEL` schedulers. Both
         schedulers register a dispatch handler before executing nodes:
 
-        - Under `ParallelScheduler`: the handler validates `target`
-          against the current node's outgoing edges, creates a
-          `DispatchEvent`, and queues a new `NodeInstance` for the target.
+        - Under `ParallelScheduler`: the handler validates `target` against
+          the current node's outgoing edges, routes the deliver through the
+          coordinator, and queues the target according to its trigger mode.
         - Under `LinearScheduler`: the handler records the target + payload
           for the scheduler to pick up as the next node (LINEAR is
           sequential — one target at a time).
@@ -285,10 +282,10 @@ class GraphContext[S: "GraphState"]:
 
         The handler is a callback with signature
         `(source_instance: str, target: str, state_update: dict | None) -> None`.
-        Under `ParallelScheduler`, it validates the target, creates a
-        `DispatchEvent`, and queues the target instance. Under
-        `LinearScheduler`, it records the target + payload for the scheduler
-        to pick up as the next node. Passing `None` clears the handler.
+        Under `ParallelScheduler`, it validates the target, routes the deliver,
+        and queues the target according to its trigger mode. Under
+        `LinearScheduler`, it records the target + payload for the scheduler to
+        pick up as the next node. Passing `None` clears the handler.
         """
         self._dispatch_handler = handler
 
@@ -299,6 +296,16 @@ class GraphContext[S: "GraphState"]:
         dispatch. Set to `None` to clear (e.g. between executions).
         """
         self._current_instance = instance_id
+
+    @property
+    def node_state_store(self) -> NodeStateStore:
+        """The node state store (lifecycle + version chain + CAS authority).
+
+        Convenience accessor for ``self.coordinator.node_state_store``.
+        ``Node.run()`` calls lifecycle methods (begin / complete / suspend /
+        crash / cancel / finalize) through this property.
+        """
+        return self.coordinator.node_state_store
 
 
 __all__ = ["GraphContext", "S", "DispatchHandler"]

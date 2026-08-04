@@ -30,7 +30,7 @@ class Scheduler[S: "GraphState"](ABC):
     - `LinearScheduler` — sequential execution (the original `GraphEngine`
       logic). Default.
     - `ParallelScheduler` — continuous multi-instance execution with
-      `ctx.dispatch` routing and generation-based conflict detection.
+      `ctx.dispatch` routing.
 
     The ABC receives the `CompiledGraph` at construction time (mirroring the
     original `GraphEngine.__init__(graph)` pattern) and `GraphContext` per

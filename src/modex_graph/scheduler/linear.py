@@ -77,6 +77,11 @@ class LinearScheduler[S: "GraphState"](Scheduler[S]):
         ctx.set_dispatch_handler(self._handle_linear_dispatch)
         self._ctx = ctx
 
+        recovery = ctx.coordinator.load_for_recovery()
+        has_prior_state = any(v is not None for v in recovery.node_states.values())
+        if has_prior_state and recovery.rebuilt_main_state:
+            ctx.state = type(ctx.state).model_validate(recovery.rebuilt_main_state)
+
         current: str = self.graph.entry_node
         iteration = 0
 
@@ -102,15 +107,12 @@ class LinearScheduler[S: "GraphState"](Scheduler[S]):
             # coordinator.collect_consumable_delivers. The dispatch
             # handler calls coordinator.route_deliver to route delivers to
             # the target node's deliver_store.
-            result = await node.run(
+            await node.run(
                 ctx,
                 graph=self.graph,
             )
 
-            if result.state_update is not None:
-                ctx.state.apply_state_update(result.state_update)
-
-            await ctx.runtime.after_node(ctx, current, result)
+            await ctx.runtime.after_node(ctx, current)
 
             # Deliver-only routing: read recorded dispatches for next target.
             # LINEAR is sequential — take the first target.
