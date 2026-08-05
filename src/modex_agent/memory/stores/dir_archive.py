@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_REQUIRED_ARCHIVE_FILES: frozenset[str] = frozenset({"context.md", "knowledge.md", "index.md"})
+_REQUIRED_ARCHIVE_FILES: frozenset[str] = frozenset({"context.md", "knowledge.md"})
 
 
 class DirArchiveStorage(StoreMetadata, MessageStore, KVStore, CursorStore, ArchiveStore):
@@ -44,7 +44,6 @@ class DirArchiveStorage(StoreMetadata, MessageStore, KVStore, CursorStore, Archi
           1/
             context.md
             knowledge.md
-            index.md
           2/
             ...
     """
@@ -364,7 +363,7 @@ class DirArchiveStorage(StoreMetadata, MessageStore, KVStore, CursorStore, Archi
         return [aid for aid in ids if aid > since_id][:limit]
 
     async def is_archive_complete(self, archive_id: int) -> bool:
-        """Check if the archive dir has all 3 required MD files, non-empty."""
+        """Check if the archive dir has all required MD files, non-empty."""
         archive_dir = self._base / str(archive_id)
         if not archive_dir.is_dir():
             return False

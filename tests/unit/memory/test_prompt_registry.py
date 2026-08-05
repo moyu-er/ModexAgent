@@ -191,7 +191,6 @@ def test_archive_prompts_contain_expected_content() -> None:
     system = registry._defaults.get("archive/agent_system", "")
     assert "context.md" in system
     assert "knowledge.md" in system
-    assert "index.md" in system
 
 
 # ---------------------------------------------------------------------------

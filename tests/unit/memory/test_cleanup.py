@@ -19,10 +19,13 @@ from modex_agent.memory.cleanup import (
 )
 from modex_agent.memory.core.layers import MemoryLayerSet, SessionMemoryManager
 from modex_agent.memory.core.models import CompressionReason
+from modex_agent.memory.core.split_stores import MemoryStoreBundle
 from modex_agent.memory.layers.factory import MemoryLayerFactory
+from modex_agent.memory.layers.session import ScopedSessionMemoryManager
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry, MemoryStoreRegistry
 from modex_agent.memory.stores.dir_archive import DirArchiveStorage
 from modex_agent.memory.token_estimator import TokenEstimator
+from modex_agent.persistence.managers.workspace import WorkspacePersistenceManager
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -129,8 +132,42 @@ class TestCheckTriggerTokenOnly:
         user_only = [{"role": "user", "content": "x", "token_count": 100000}]
         assert _check_trigger(user_only, _FixedEstimator(10), max_context_tokens=100, max_token_ratio=0.8) == CompressionReason.TOKEN_PRESSURE
 
+    def test_trigger_accounts_for_output_tokens(self) -> None:
+        """max_output_tokens reserves space for the model response before applying ratio.
 
-class TestComputeBoundaryTokenBased:
+        With max_context_tokens=200000 and max_token_ratio=0.85:
+          - max_output_tokens=0      -> threshold = 200000 * 0.85      = 170000
+          - max_output_tokens=20000  -> threshold = (200000-20000)*0.85 = 153000
+        A pressure of 160000 sits between the two: triggers only when output
+        space is reserved.
+        """
+        msgs = [{"role": "user", "content": "x", "token_count": 160000}]
+        est = _FixedEstimator(10)
+
+        # Default (no reservation): 160000 < 170000 -> no trigger
+        assert _check_trigger(
+            msgs, est, max_context_tokens=200000, max_token_ratio=0.85
+        ) is None
+        # Explicit zero: identical to default (backward compatible)
+        assert _check_trigger(
+            msgs, est, max_context_tokens=200000, max_token_ratio=0.85, max_output_tokens=0
+        ) is None
+        # Reserve 20K for output: 160000 > 153000 -> trigger
+        assert _check_trigger(
+            msgs, est, max_context_tokens=200000, max_token_ratio=0.85, max_output_tokens=20000
+        ) == CompressionReason.TOKEN_PRESSURE
+
+    def test_trigger_when_output_exceeds_context(self) -> None:
+        """max_output_tokens > max_context_tokens floors effective context at 1.
+
+        Threshold becomes 1 * ratio, so any non-zero pressure triggers.
+        This is a misconfiguration guard, not a normal operating mode.
+        """
+        msgs = [{"role": "user", "content": "x", "token_count": 1}]
+        est = _FixedEstimator(10)
+        assert _check_trigger(
+            msgs, est, max_context_tokens=200000, max_token_ratio=0.85, max_output_tokens=300000
+        ) == CompressionReason.TOKEN_PRESSURE
     """Boundary keeps a tail whose token sum stays within the keep target."""
 
     def test_keeps_tail_within_token_target(self) -> None:
@@ -510,7 +547,6 @@ class TestKeepBoundary:
             # recomputed since _add_messages bypasses append-stamping), line 224 -> triggers
             max_token_ratio=0.8, keep_ratio=0.5,  # keep_target_tokens = 140 -> keep ~10 msgs
             token_estimator=_FixedEstimator(10),
-            user_retention=layer_set.user_retention,
         )
 
         assert result.triggered is True
@@ -576,264 +612,6 @@ class TestKeepToolChainIntegrity:
         )
 
 
-class TestUserRetentionExtraction:
-    """Pruned user messages must be extracted and persisted to the URB."""
-
-    @pytest.mark.asyncio
-    async def test_pruned_user_without_response_saved_to_urb(
-        self, registry: MemoryStoreRegistry,
-    ) -> None:
-        """User message pruned during ReAct loop (no final response) saved to URB.
-
-        Scenario: q1 asked, assistant started tool call but no plain response.
-        Boundary moves forward past tool chain to user q2. q1 becomes URB entry.
-        """
-        layer_set = _make_layer_set(registry)
-        context = _ctx()
-        session = layer_set.session
-
-        msgs = [
-            _user_msg("q1"),           # will be pruned — no plain assistant after it
-            _tool_call_msg("c1"),      # tool call (not plain assistant → doesn't clear URB)
-            _tool_result_msg("c1"),
-            _user_msg("q2"),           # most recent user (in keep)
-        ]
-        await _add_messages(session, context, msgs)
-
-        result = await cleanup_session(
-            session=session,
-            archive=None,
-            context=context,
-            max_context_tokens=20,  # 4 msgs = 40 tokens, line 16 -> triggers
-            max_token_ratio=0.8,
-            keep_ratio=0.5,
-            token_estimator=_FixedEstimator(10),
-            user_retention=layer_set.user_retention,
-        )
-
-        assert result.triggered is True
-        assert result.user_retention_extracted >= 1
-
-        entries = await layer_set.user_retention.get_entries(context)
-        assert len(entries) >= 1
-        urbs = [str(e.pruned_user_content) for e in entries]
-        assert any("q1" in c for c in urbs), (
-            f"Expected q1 in URB, got {urbs}"
-        )
-
-    @pytest.mark.asyncio
-    async def test_pruned_users_with_assistant_still_extracted(
-        self, registry: MemoryStoreRegistry,
-    ) -> None:
-        """Pruned user messages with plain assistant responses are extracted as completed entries."""
-        layer_set = _make_layer_set(registry)
-        context = _ctx()
-        session = layer_set.session
-
-        msgs = [
-            _user_msg("q1"), _assistant_msg("a1"),
-            _user_msg("q2"), _assistant_msg("a2"),
-            _user_msg("q3"), _assistant_msg("a3"),
-            _user_msg("q4"), _assistant_msg("a4"),
-            _user_msg("q5"), _assistant_msg("a5"),
-        ]
-        await _add_messages(session, context, msgs)
-
-        result = await cleanup_session(
-            session=session,
-            archive=None,
-            context=context,
-            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
-            max_token_ratio=0.8,
-            keep_ratio=0.4,
-            token_estimator=_FixedEstimator(10),
-            user_retention=layer_set.user_retention,
-        )
-
-        assert result.triggered is True
-        # Pruned user messages in completed turns are still extracted to URB
-        # (they carry completing_assistant_content for governance decisions)
-        assert result.user_retention_extracted > 0
-
-    @pytest.mark.asyncio
-    async def test_no_urb_when_user_retention_is_none(
-        self, registry: MemoryStoreRegistry,
-    ) -> None:
-        """When user_retention=None, cleanup still succeeds (no extraction)."""
-        layer_set = _make_layer_set(registry)
-        context = _ctx()
-        session = layer_set.session
-
-        msgs = []
-        for i in range(5):
-            msgs.append(_user_msg(f"u-{i}"))
-            msgs.append(_assistant_msg(f"a-{i}"))
-        await _add_messages(session, context, msgs)
-
-        result = await cleanup_session(
-            session=session,
-            archive=None,
-            context=context,
-            max_context_tokens=50,  # 10 msgs = 100 tokens, line 40 -> triggers
-            max_token_ratio=0.8,
-            keep_ratio=0.5,
-            token_estimator=_FixedEstimator(10),
-            user_retention=None,
-        )
-
-        assert result.triggered is True
-        assert result.user_retention_extracted == 0
-
-
-class TestUserRetentionCompletion:
-    """URB entries must be correctly marked as completed when their answering
-    plain assistant is in the kept (unpruned) region.
-
-    Key property: a plain assistant completes ALL currently unfinished entries,
-    including ones left over from previous cleanups.  Unfinished entries always
-    sit at the buffer's tail.
-    """
-
-    @pytest.mark.asyncio
-    async def test_pruned_user_completed_by_kept_assistant(
-        self, registry: MemoryStoreRegistry,
-    ) -> None:
-        """User pruned, plain assistant kept → entry must be completed."""
-        layer_set = _make_layer_set(registry)
-        context = _ctx()
-        session = layer_set.session
-
-        msgs = [
-            _user_msg("q1"), _assistant_msg("a1"),
-            _user_msg("q2"), _assistant_msg("a2"),
-            _user_msg("q3"), _assistant_msg("a3"),
-            _user_msg("q4"), _assistant_msg("a4"),
-        ]
-        await _add_messages(session, context, msgs)
-
-        result = await cleanup_session(
-            session=session,
-            archive=None,
-            context=context,
-            max_context_tokens=50,  # 8 msgs = 80 tokens, line 40 -> triggers
-            max_token_ratio=0.8,
-            keep_ratio=0.5,
-            token_estimator=_FixedEstimator(10),
-            user_retention=layer_set.user_retention,
-        )
-
-        assert result.triggered is True
-        entries = await layer_set.user_retention.get_entries(context)
-        # All pruned users had plain assistants (pruned or kept) after them.
-        # Every entry must be completed.
-        unfinished = [e for e in entries if not e.is_completed]
-        assert unfinished == [], (
-            f"All entries should be completed, but found unfinished: "
-            f"{[e.pruned_user_content for e in unfinished]}"
-        )
-
-    @pytest.mark.asyncio
-    async def test_pruned_user_completed_by_pruned_assistant_kept_has_no_plain(
-        self, registry: MemoryStoreRegistry,
-    ) -> None:
-        """Plain assistant in the PRUNED region, kept region has no plain
-        assistant (only tool chain).  Pruned entries must still be completed."""
-        layer_set = _make_layer_set(registry)
-        context = _ctx()
-        session = layer_set.session
-
-        msgs = [
-            _user_msg("q1"), _assistant_msg("a1"),
-            _user_msg("q2"), _assistant_msg("a2"),
-            _user_msg("q3"),
-            _tool_call_msg("c1"),
-            _tool_result_msg("c1"),
-        ]
-        await _add_messages(session, context, msgs)
-
-        result = await cleanup_session(
-            session=session,
-            archive=None,
-            context=context,
-            max_context_tokens=70,  # 7 msgs ~= 98 tokens (14/msg: 10 estimate + 4 overhead,
-            # recomputed since _add_messages bypasses append-stamping), line 56 -> triggers
-            max_token_ratio=0.8,
-            keep_ratio=0.4,  # keep_target_tokens = 28 -> keep [call c1, result c1]
-            token_estimator=_FixedEstimator(10),
-            user_retention=layer_set.user_retention,
-        )
-
-        assert result.triggered is True
-        entries = await layer_set.user_retention.get_entries(context)
-        by_content = {e.pruned_user_content: e for e in entries}
-        # q1 answered by a1 (pruned), q2 answered by a2 (pruned) → completed
-        assert by_content["q1"].is_completed, "q1 should be completed by pruned a1"
-        assert by_content["q2"].is_completed, "q2 should be completed by pruned a2"
-        # q3 has no plain assistant after it → legitimately unfinished
-        assert not by_content["q3"].is_completed, "q3 should be unfinished (no plain assistant)"
-
-    @pytest.mark.asyncio
-    async def test_kept_assistant_completes_prior_unfinished_entries(
-        self, registry: MemoryStoreRegistry,
-    ) -> None:
-        """A plain assistant in the kept region also completes unfinished
-        entries from a *previous* cleanup cycle."""
-        layer_set = _make_layer_set(registry)
-        context = _ctx()
-        session = layer_set.session
-
-        # Round 1: force a cleanup that leaves unfinished entries.
-        # q1 has no following plain assistant → stays unfinished.
-        msgs = [
-            _user_msg("q1"),
-            _tool_call_msg("c1", "tool_x"),
-            _tool_result_msg("c1"),
-            _user_msg("q2"),
-            _user_msg("q3"),
-        ]
-        await _add_messages(session, context, msgs)
-
-        await cleanup_session(
-            session=session,
-            archive=None,
-            context=context,
-            max_context_tokens=20,  # 5 msgs = 50 tokens, line 16 -> triggers
-            max_token_ratio=0.8,
-            keep_ratio=0.5,
-            token_estimator=_FixedEstimator(10),
-            user_retention=layer_set.user_retention,
-        )
-
-        entries_after_round1 = await layer_set.user_retention.get_entries(context)
-        assert len(entries_after_round1) > 0, "First cleanup should extract entries"
-        # At this point, all entries are unfinished (no plain assistant anywhere).
-        assert all(not e.is_completed for e in entries_after_round1)
-
-        # Round 2: add messages so that a plain assistant lands in the KEPT region.
-        # This assistant should complete ALL existing unfinished entries.
-        await _add_messages(session, context, [
-            _user_msg("q4"),
-            _assistant_msg("final_answer"),
-        ])
-        await cleanup_session(
-            session=session,
-            archive=None,
-            context=context,
-            max_context_tokens=20,  # 3 msgs = 30 tokens, line 16 -> triggers
-            max_token_ratio=0.8,
-            keep_ratio=0.5,
-            token_estimator=_FixedEstimator(10),
-            user_retention=layer_set.user_retention,
-        )
-
-        entries_after_round2 = await layer_set.user_retention.get_entries(context)
-        unfinished = [e for e in entries_after_round2 if not e.is_completed]
-        assert unfinished == [], (
-            f"Plain assistant in kept region should complete all entries, "
-            f"but found unfinished: {[e.pruned_user_content for e in unfinished]}"
-        )
-
-
 class TestToolChainDominanceDoesNotOverPrune:
     """Regression: sessions dominated by tool chains must not over-prune.
 
@@ -867,7 +645,6 @@ class TestToolChainDominanceDoesNotOverPrune:
             max_token_ratio=0.8,
             keep_ratio=0.4,  # keep_target_tokens = 400 -> keep ~40 msgs
             token_estimator=_FixedEstimator(10),
-            user_retention=layer_set.user_retention,
         )
 
         assert result.triggered is True
@@ -1076,7 +853,6 @@ class TestArchiveAgentIntegration:
         archive_path = storage.base_dir / "1"
         assert (archive_path / "context.md").exists()
         assert (archive_path / "knowledge.md").exists()
-        assert (archive_path / "index.md").exists()
 
     @pytest.mark.asyncio
     async def test_archive_agent_failure_falls_back(
@@ -1192,7 +968,6 @@ class TestArchiveAgentIntegration:
         await storage.write_archive_state({"next_archive_id": 1})
         await storage.write_archive_file(1, "context.md", "existing context")
         await storage.write_archive_file(1, "knowledge.md", "existing knowledge")
-        await storage.write_archive_file(1, "index.md", "existing index")
 
         msgs = []
         for i in range(5):
@@ -1263,7 +1038,7 @@ class TestArchiveAgentIntegration:
         # Archive files exist (agent wrote them before commit)
         assert len(agent.calls) == 1
         archive_path = storage.base_dir / "1"
-        assert (archive_path / "index.md").exists()
+        assert (archive_path / "context.md").exists()
 
 
 class TestArchiveSuccessPrunedContent:
@@ -1440,9 +1215,10 @@ class TestArchiveSuccessPrunedContent:
 
 class TestResolvedStoragePropagation:
     @pytest.mark.asyncio
-    async def test_pruned_topic_from_archive_when_storage_not_injected(
+    async def test_pruned_written_when_storage_not_injected(
         self, registry: MemoryStoreRegistry, tmp_path,
     ) -> None:
+        """archive_storage=None → pruned catalog still written (fallback topic)."""
         from modex_agent.memory.pruned.manager import PrunedManager
         layer_set = _make_layer_set(registry)
         context = _ctx("resolve-topic-session")
@@ -1472,13 +1248,18 @@ class TestResolvedStoragePropagation:
         assert result.triggered is True
         pruned_storage = pruned_mgr._get_storage(context.session_id or "")
         entries = pruned_storage.read_index()
-        assert entries[-1].topic == "Test Archive Topic"
+        assert len(entries) >= 1
+        # No compactor → topic falls back to time-range format
+        entry = entries[-1]
+        assert "(" in entry.topic and "messages)" in entry.topic, (
+            f"Expected fallback time-range topic, got: '{entry.topic}'"
+        )
 
     @pytest.mark.asyncio
-    async def test_pruned_topic_from_archive_when_storage_explicitly_provided(
+    async def test_pruned_written_when_storage_explicitly_provided(
         self, registry: MemoryStoreRegistry, tmp_path,
     ) -> None:
-        """archive_storage provided → existing behavior unchanged (topic from archive)."""
+        """archive_storage provided → pruned catalog written (fallback topic)."""
         from modex_agent.memory.pruned.manager import PrunedManager
 
         layer_set = _make_layer_set(registry)
@@ -1515,7 +1296,10 @@ class TestResolvedStoragePropagation:
         assert len(entries) >= 1
 
         entry = entries[-1]
-        assert entry.topic == "Test Archive Topic"
+        # No compactor → topic falls back to time-range format
+        assert "(" in entry.topic and "messages)" in entry.topic, (
+            f"Expected fallback time-range topic, got: '{entry.topic}'"
+        )
 
     @pytest.mark.asyncio
     async def test_fallback_topic_when_archive_agent_fails(
@@ -1683,3 +1467,178 @@ class TestResolvedStoragePropagation:
         assert len(archive_ids) >= 1
         content = await dir_storage.read_archive_file(archive_ids[0], "context.md")
         assert content == "context summary"
+
+
+# ---------------------------------------------------------------------------
+# SQLite backend end-to-end: compact summary persistence (the bot default)
+# ---------------------------------------------------------------------------
+
+
+class _StubCompactor:
+    """Minimal SessionCompactorAgent stand-in.
+
+    Records calls, returns a fixed structured summary, and reuses the real
+    ``extract_topic`` so topic extraction is covered too.
+    """
+
+    def __init__(self, summary: str) -> None:
+        self._summary = summary
+        self.calls: list[dict[str, Any]] = []
+
+    async def compact(
+        self,
+        messages: Sequence[dict[str, Any]],
+        previous_summary: str | None = None,
+        *,
+        session_id: str = "session-compactor",
+    ) -> str:
+        self.calls.append(
+            {"messages": list(messages), "previous_summary": previous_summary, "session_id": session_id}
+        )
+        return self._summary
+
+    @staticmethod
+    def extract_topic(summary: str) -> str | None:
+        from modex_agent.agents.summarizer.session_compactor import (
+            SessionCompactorAgent,
+        )
+
+        return SessionCompactorAgent.extract_topic(summary)
+
+
+_COMPACT_SUMMARY = (
+    "## Objective\n"
+    "- sqlite e2e objective\n"
+    "\n"
+    "## Work State\n"
+    "### Completed\n"
+    "- (none)\n"
+)
+
+
+class TestCleanupSqliteBackend:
+    """End-to-end cleanup against the SQLite backend (the bot default).
+
+    Regression coverage for the bug where the compact summary was silently
+    dropped on SQLite: ``retain_messages`` only soft-deleted and never
+    inserted, so the summary never landed in the session.
+    """
+
+    async def _open_sqlite_session(
+        self, tmp_path: Path
+    ) -> tuple[WorkspacePersistenceManager, ScopedSessionMemoryManager]:
+        from modex_agent.core.scope import RecordScope
+
+        manager = WorkspacePersistenceManager(tmp_path / "state.db")
+        await manager.open()
+        scope = RecordScope(session_id="s1", agent_id="main", user_id="u1")
+
+        async def factory(_context: MemoryContext) -> MemoryStoreBundle:
+            return manager.create_bundle(scope)
+
+        return manager, ScopedSessionMemoryManager(factory)
+
+    @pytest.mark.asyncio
+    async def test_compact_summary_persisted_at_top(self, tmp_path: Path) -> None:
+        manager, session = await self._open_sqlite_session(tmp_path)
+        try:
+            context = _ctx("sqlite-compact-session")
+            msgs = []
+            for i in range(10):
+                msgs.append(_user_msg(f"u-{i}"))
+                msgs.append(_assistant_msg(f"a-{i}"))
+            await _add_messages(session, context, msgs)
+
+            compactor = _StubCompactor(_COMPACT_SUMMARY)
+            result = await cleanup_session(
+                session=session,
+                archive=None,
+                context=context,
+                compactor=compactor,
+                max_context_tokens=100,  # 20 msgs = 200 tokens, line 85 -> triggers
+                max_token_ratio=0.85,
+                keep_ratio=0.3,  # keep last 3 messages
+                token_estimator=_FixedEstimator(10),
+            )
+
+            assert result.triggered is True
+            assert result.compact_generated is True
+
+            kept = await session.get_all_messages(context)
+            assert str(kept[0].role) == "compact"
+            assert "sqlite e2e objective" in (kept[0].content or "")
+            # Tail preserved verbatim after the summary (no tool chains here).
+            original = [m["content"] for m in msgs]
+            assert [m.content for m in kept[1:]] == original[-(len(kept) - 1):]
+            assert len(kept) >= 2  # compact + at least one tail message
+
+            # History view: pruned visible as soft-deleted, no duplicates of
+            # kept messages, exactly one compact.
+            from modex_agent.core.scope import RecordScope
+
+            bundle = manager.create_bundle(
+                RecordScope(session_id="s1", agent_id="main", user_id="u1")
+            )
+            all_msgs = await bundle.messages.load_all_messages()
+            compact_rows = [m for m in all_msgs if m.get("role") == "compact"]
+            assert len(compact_rows) == 1
+            contents = [m.get("content") for m in all_msgs]
+            for tail_msg in kept[1:]:
+                assert contents.count(tail_msg.content) == 1
+        finally:
+            await manager.close()
+
+    @pytest.mark.asyncio
+    async def test_second_cycle_chains_previous_summary(self, tmp_path: Path) -> None:
+        manager, session = await self._open_sqlite_session(tmp_path)
+        try:
+            context = _ctx("sqlite-chain-session")
+            msgs = []
+            for i in range(10):
+                msgs.append(_user_msg(f"u-{i}"))
+                msgs.append(_assistant_msg(f"a-{i}"))
+            await _add_messages(session, context, msgs)
+
+            compactor = _StubCompactor(_COMPACT_SUMMARY)
+            await cleanup_session(
+                session=session,
+                archive=None,
+                context=context,
+                compactor=compactor,
+                max_context_tokens=100,
+                max_token_ratio=0.85,
+                keep_ratio=0.3,
+                token_estimator=_FixedEstimator(10),
+            )
+
+            # Grow the session past the trigger again.
+            more = []
+            for i in range(10, 15):
+                more.append(_user_msg(f"u-{i}"))
+                more.append(_assistant_msg(f"a-{i}"))
+            await _add_messages(session, context, more)
+
+            result = await cleanup_session(
+                session=session,
+                archive=None,
+                context=context,
+                compactor=compactor,
+                max_context_tokens=100,
+                max_token_ratio=0.85,
+                keep_ratio=0.3,
+                token_estimator=_FixedEstimator(10),
+            )
+
+            assert result.triggered is True
+            assert result.compact_generated is True
+            # The previous compact summary was extracted from the pruned zone
+            # and chained into the second compaction call.
+            assert len(compactor.calls) == 2
+            assert compactor.calls[1]["previous_summary"] == _COMPACT_SUMMARY
+
+            kept = await session.get_all_messages(context)
+            compact_rows = [m for m in kept if str(m.role) == "compact"]
+            assert len(compact_rows) == 1
+            assert str(kept[0].role) == "compact"
+        finally:
+            await manager.close()

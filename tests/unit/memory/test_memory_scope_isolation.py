@@ -1,7 +1,7 @@
 """Memory scope isolation tests.
 
 Verifies that the tiered memory system enforces correct isolation:
-- Session-level (session, pruned, user_retention): strict per-session isolation
+- Session-level (session, pruned): strict per-session isolation
 - User-level (archive, knowledge): shared across sessions of same user, isolated between users
 - Concurrent safety: resolve(), archive_id, and cleanup are race-free
 """
@@ -9,7 +9,6 @@ Verifies that the tiered memory system enforces correct isolation:
 from __future__ import annotations
 
 import asyncio
-import time
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -29,14 +28,11 @@ from modex_agent.memory.layers.config import (
     ArchiveMemoryConfig,
     MemoryLayerConfigSet,
     SessionMemoryConfig,
-    UserRetentionBufferConfig,
 )
 from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.layers.core import ScopedCoreMemoryManager
-from modex_agent.memory.layers.user_buffer import ScopedUserRetentionBuffer
 from modex_agent.memory.pruned.manager import PrunedManager
 from modex_agent.memory.registry.file import DefaultMemoryStoreRegistry
-from modex_agent.memory.user_buffer import UserBufferEntry
 from tests.unit.memory.conftest import FixedTokenEstimator
 
 # -- Helpers ---------------------------------------------------------------
@@ -102,35 +98,6 @@ class TestSessionIsolation:
         xml_a: str | None = pruned.get_injection_xml(session_id="sess-a")
         assert xml_a is not None
         assert "topic-a" in xml_a
-
-    async def test_user_retention_buffer_isolated(self, tmp_path: Path) -> None:
-        """UserRetentionBuffer entries must be isolated per session."""
-        registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
-        await registry.initialize()
-
-        urb_config = UserRetentionBufferConfig(enabled=True, max_entries=5)
-        storage_factory = MemoryLayerFactory._storage_factory(
-            registry, MemoryLayerName.USER_RETENTION, urb_config.scope
-        )
-        urb = ScopedUserRetentionBuffer(storage_factory, urb_config)
-
-        ctx_a = _ctx("sess-a", "user-1")
-        ctx_b = _ctx("sess-b", "user-1")
-
-        entry = UserBufferEntry.from_message(
-            {"role": "user", "content": "unfinished-user-msg-a"},
-            pruned_at=time.time(),
-        )
-        await urb.append_entries(ctx_a, [entry])
-
-        entries_b = await urb.get_entries(ctx_b)
-        assert len(entries_b) == 0, f"Session B saw A's URB: {entries_b}"
-
-        entries_a = await urb.get_entries(ctx_a)
-        assert len(entries_a) == 1
-        assert entries_a[0].pruned_user_content == "unfinished-user-msg-a"
-
-        await registry.close()
 
 
 # ==========================================================================
@@ -771,29 +738,6 @@ class TestScopePathPersistence:
 
         await registry.close()
 
-    # -- User Retention (SessionScope) ------------------------------------
-
-    async def test_user_retention_path_contains_session_id(self, tmp_path: Path) -> None:
-        """UserRetentionBuffer writes to {root}/user_retention/{session_id}/."""
-        registry = DefaultMemoryStoreRegistry(tmp_path / "mem")
-        await registry.initialize()
-        urb_config = UserRetentionBufferConfig(enabled=True, max_entries=5)
-        storage_factory = MemoryLayerFactory._storage_factory(
-            registry, MemoryLayerName.USER_RETENTION, urb_config.scope
-        )
-        urb = ScopedUserRetentionBuffer(storage_factory, urb_config)
-
-        entry = UserBufferEntry.from_message(
-            {"role": "user", "content": "test"}, pruned_at=time.time()
-        )
-        await urb.append_entries(_ctx("conv-xyz.main"), [entry])
-
-        urb_dir = tmp_path / "mem" / "user_retention" / "conv-xyz.main"
-        assert urb_dir.exists(), f"URB dir missing: {urb_dir}"
-        assert (urb_dir / "kv.json").exists(), "kv.json missing"
-
-        await registry.close()
-
     # -- Archive (UserScope) ------------------------------------------------
 
     async def test_archive_user_scope_path_contains_user_id(self, tmp_path: Path) -> None:
@@ -981,7 +925,7 @@ class TestScopePathPersistence:
 
 
 class TestSubagentMemoryLayers:
-    """Subagent must NOT have archive/knowledge — only session + user_retention."""
+    """Subagent must NOT have archive/knowledge — only session."""
 
     def test_subagent_session_only_has_no_archive_knowledge(self, tmp_path: Path) -> None:
         """session_only factory creates MemoryLayerSet without archive/knowledge."""
@@ -996,19 +940,8 @@ class TestSubagentMemoryLayers:
             "subagent must NOT have knowledge layer — no access to SOUL/USER/MEMORY.md"
         )
 
-    def test_subagent_session_only_user_retention_present(self, tmp_path: Path) -> None:
-        """session_only includes user_retention if enabled."""
-        registry = DefaultMemoryStoreRegistry(tmp_path)
-        layer_set = MemoryLayerFactory.session_only(
-            registry=registry,
-            user_retention_config=UserRetentionBufferConfig(enabled=True),
-        )
-        assert layer_set.user_retention is not None, (
-            "subagent should have user_retention (SessionScope) for context retention"
-        )
-
-    def test_subagent_has_only_two_active_layers(self, tmp_path: Path) -> None:
-        """Subagent has exactly 2 active layers: session + user_retention."""
+    def test_subagent_has_only_one_active_layer(self, tmp_path: Path) -> None:
+        """Subagent has exactly 1 active layer: session."""
         registry = DefaultMemoryStoreRegistry(tmp_path)
         layer_set = MemoryLayerFactory.session_only(registry=registry)
 
@@ -1016,9 +949,8 @@ class TestSubagentMemoryLayers:
             layer_set.session,
             layer_set.archive,
             layer_set.core,
-            layer_set.user_retention,
         ] if x is not None)
-        assert active == 2, f"subagent should have 2 layers, got {active}"
+        assert active == 1, f"subagent should have 1 layer, got {active}"
 
 
 # ==========================================================================
@@ -1090,13 +1022,6 @@ class TestScopeFlexibility:
         cfg = SessionMemoryConfig()
         assert isinstance(cfg.scope, SessionScope), (
             "Session layer must always use SessionScope"
-        )
-
-    def test_user_retention_scope_is_fixed_session(self) -> None:
-        """UserRetentionBufferConfig always defaults to SessionScope."""
-        cfg = UserRetentionBufferConfig()
-        assert isinstance(cfg.scope, SessionScope), (
-            "User retention must always use SessionScope"
         )
 
 

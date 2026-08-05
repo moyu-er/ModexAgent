@@ -42,6 +42,7 @@ class MessageRole(StrEnum):
     ASSISTANT = "assistant"
     TOOL = "tool"
     AGENT = "agent"
+    COMPACT = "compact"
     PENDING = "pending"
 
 

@@ -89,7 +89,7 @@ class TestDirArchiveStorage:
     ) -> None:
         d = store.base_dir / "1"
         d.mkdir(parents=True, exist_ok=True)
-        for name in ("context.md", "knowledge.md", "index.md"):
+        for name in ("context.md", "knowledge.md"):
             (d / name).write_text("content", encoding="utf-8")
         assert await store.is_archive_complete(1) is True
 
@@ -99,8 +99,7 @@ class TestDirArchiveStorage:
         d = store.base_dir / "2"
         d.mkdir(parents=True, exist_ok=True)
         (d / "context.md").write_text("content", encoding="utf-8")
-        (d / "knowledge.md").write_text("content", encoding="utf-8")
-        # index.md is missing
+        # knowledge.md is missing
         assert await store.is_archive_complete(2) is False
 
     async def test_is_archive_complete_empty_file(
@@ -109,8 +108,7 @@ class TestDirArchiveStorage:
         d = store.base_dir / "3"
         d.mkdir(parents=True, exist_ok=True)
         (d / "context.md").write_text("content", encoding="utf-8")
-        (d / "knowledge.md").write_text("content", encoding="utf-8")
-        (d / "index.md").write_text("", encoding="utf-8")  # 0 bytes
+        (d / "knowledge.md").write_text("", encoding="utf-8")  # 0 bytes
         assert await store.is_archive_complete(3) is False
 
     async def test_is_archive_complete_no_dir(
@@ -152,7 +150,7 @@ class TestDirArchiveStorage:
         for aid in [1, 2, 3]:
             d = store.base_dir / str(aid)
             d.mkdir(parents=True, exist_ok=True)
-            for name in ("context.md", "knowledge.md", "index.md"):
+            for name in ("context.md", "knowledge.md"):
                 (d / name).write_text("content", encoding="utf-8")
 
         await store.save_channel_logs("context", [

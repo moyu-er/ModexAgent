@@ -24,16 +24,15 @@ def _msg_to_dict(msg: ChatMessage | dict[str, Any]) -> dict[str, Any]:
 def normalize_agent_messages_for_llm(
     messages: Sequence[ChatMessage | dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], bool]:
-    """将内部 `role: "agent"` 消息转换为 LLM 可识别的 XML 格式。
+    """将内部非标准 role 消息转换为 LLM 可识别的格式。
 
     转换规则：
-    - `role: "agent"` → `role: "user"` with XML <agent_message> envelope
-    - Content wrapped in: <agent_message source="..."><content>...</content></agent_message>
-    - content_format set to "xml" for correct truncation handling
+    - ``role: "compact"`` → ``role: "assistant"``（纯 role 替换，不改 content）
+    - ``role: "agent"`` → ``role: "user"`` with XML <agent_message> envelope
     - Other role messages are unaffected
 
     Args:
-        messages: Raw message list (may contain role: "agent"), ChatMessage or dict
+        messages: Raw message list (may contain non-standard roles), ChatMessage or dict
 
     Returns:
         (converted_messages, has_agent_messages) tuple:
@@ -45,7 +44,14 @@ def normalize_agent_messages_for_llm(
 
     for msg in messages:
         msg_dict = _msg_to_dict(msg)
-        if msg_dict.get("role") != MessageRole.AGENT:
+        role = msg_dict.get("role")
+
+        # COMPACT → ASSISTANT (pure role replacement, no content change)
+        if role == MessageRole.COMPACT:
+            converted.append({**msg_dict, "role": MessageRole.ASSISTANT})
+            continue
+
+        if role != MessageRole.AGENT:
             converted.append(msg_dict)
             continue
 

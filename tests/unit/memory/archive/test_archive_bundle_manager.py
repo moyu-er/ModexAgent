@@ -70,10 +70,8 @@ async def test_append_generation_materializes_documents_under_allocated_id(
     assert (first.archive_id, second.archive_id) == (1, 2)
     assert (archive_root / "1" / "context.md").read_text(encoding="utf-8") == "context 1"
     assert (archive_root / "1" / "knowledge.md").read_text(encoding="utf-8") == "knowledge 1"
-    assert (archive_root / "1" / "index.md").read_text(encoding="utf-8") == "topic 1"
     assert (archive_root / "2" / "context.md").read_text(encoding="utf-8") == "context 2"
     assert (archive_root / "2" / "knowledge.md").read_text(encoding="utf-8") == "knowledge 2"
-    assert (archive_root / "2" / "index.md").read_text(encoding="utf-8") == "topic 2"
 
 
 async def test_concurrent_append_generation_keeps_documents_with_allocated_ids(
@@ -105,7 +103,6 @@ async def test_concurrent_append_generation_keeps_documents_with_allocated_ids(
         archive_dir = archive_root / str(archive_id)
         assert (archive_dir / "context.md").read_text(encoding="utf-8") == f"context {label}"
         assert (archive_dir / "knowledge.md").read_text(encoding="utf-8") == f"knowledge {label}"
-        assert (archive_dir / "index.md").read_text(encoding="utf-8") == f"topic {label}"
 
 
 async def test_append_empty_generation_allocates_archive_id(tmp_path: Path) -> None:
@@ -129,7 +126,6 @@ async def test_append_empty_generation_allocates_archive_id(tmp_path: Path) -> N
     )
     assert (archive_dir / "context.md").read_text(encoding="utf-8") == ""
     assert (archive_dir / "knowledge.md").read_text(encoding="utf-8") == ""
-    assert (archive_dir / "index.md").read_text(encoding="utf-8") == ""
 
 
 async def test_knowledge_cursor_uses_archive_id(tmp_path: Path) -> None:
