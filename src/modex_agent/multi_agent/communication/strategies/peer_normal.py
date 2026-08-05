@@ -5,6 +5,7 @@ from __future__ import annotations
 from modex_agent.core.agent import AgentImplementation
 from modex_agent.core.constants import ExecutionStrategyKind
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.types import ReminderKind
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.communication.result import AgentSendResult
 from modex_agent.multi_agent.communication.strategies.base import SendRequest, SendStrategy
@@ -63,6 +64,7 @@ class PeerNormalStrategy(SendStrategy):
             session_id=str(sender_sid),
             agent_session_id=str(session),
             invocation_id=envelope_invocation_id,
+            metadata={"reminder_kind": ReminderKind.PEER_MESSAGE},
         )
 
     async def deliver(self, env: AgentMessageEnvelope, target: CommunicationTarget) -> str | None:

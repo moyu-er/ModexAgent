@@ -85,11 +85,10 @@ class TestHookConfiguration:
             stop_reason="max_iterations",
             content="some output",
         )
-        assert "<agent_result" in xml
-        assert 'source="test_agent"' in xml
-        assert "max_iterations" in xml
-        assert "<stop_reason>" in xml
-        assert "<content>" in xml
+        assert "Subagent 'test_agent' task ended" in xml
+        assert "status: max_iterations" in xml
+        assert "Stop reason:" in xml
+        assert "Result:" in xml
         assert "some output" in xml
 
 

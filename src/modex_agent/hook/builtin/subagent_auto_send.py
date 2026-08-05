@@ -3,57 +3,61 @@
 Fires on FINALLY_TURN (guaranteed) — no communication tool check needed.
 Subagents have no communication tools; this hook is the sole notification path.
 
-The notification XML is consumed **by the parent agent's LLM** (injected as a
-tool-result message into the parent's conversation).  No code parses the XML
-fields programmatically — every field must be self-explanatory to an LLM.
+The notification markdown is consumed **by the parent agent's LLM** (injected as a
+tool-result message into the parent's conversation).  No code parses the fields
+programmatically — every field must be self-explanatory to an LLM.
 
-XML structure (``<subagent_result>``) — native (react) subagent:
+The hook delegates to ``build_agent_result`` from ``message_xml.py`` (convergence
+— single source of truth for the result markdown format).  The ``content`` body
+carries the subagent's last output plus optional advisory lines (issue, output
+path, trace path, replied flag).
 
-    <subagent_result>
-      <agent>explore</agent>
-      <invocation_id>638aaa67</invocation_id>
-      <success>true</success>
-      <result>Exploration complete. Found 3 entry points...</result>
-      <output>/path/to/OUTPUT.md</output>
-      <output_status>written</output_status>
-      <trace>/path/to/spans.jsonl</trace>
-    </subagent_result>
+Native (react) subagent — includes output/trace paths::
 
-External coding subagent — ``<replied>`` replaces the file-based artifacts:
+    Subagent 'explore' task ended (status: success).
+    invocation_id: 638aaa67
+    Stop reason: normal
 
-    <subagent_result>
-      <agent>coder</agent>
-      <invocation_id>638aaa67</invocation_id>
-      <success>true</success>
-      <result>Task finished.</result>
-      <replied>true</replied>
-    </subagent_result>
+    Result:
+    Exploration complete. Found 3 entry points...
+    Output: /path/to/OUTPUT.md (written)
+    Trace: /path/to/spans.jsonl
 
-On failure an ``<issue>`` element explains the problem and how to resume:
+External coding subagent — no file artifacts::
 
-    <subagent_result>
-      <agent>office-expert</agent>
-      <invocation_id>638aaa67</invocation_id>
-      <success>false</success>
-      <result></result>
-      <issue>Subagent crashed with error: timeout. To continue, send a message with invocation_id=638aaa67.</issue>
-      <output>/path/to/OUTPUT.md</output>
-      <output_status>missing</output_status>
-      <trace>/path/to/spans.jsonl</trace>
-    </subagent_result>
+    Subagent 'coder' task ended (status: success).
+    invocation_id: 638aaa67
+    Stop reason: normal
+
+    Result:
+    Task finished.
+
+On failure an ``Issue:`` line explains the problem and how to resume::
+
+    Subagent 'office-expert' task ended (status: failed).
+    invocation_id: 638aaa67
+    Stop reason: error
+
+    Result:
+
+    Issue: Subagent crashed with error: timeout. To continue, send a message with invocation_id=638aaa67.
+    Output: /path/to/OUTPUT.md (missing)
+    Trace: /path/to/spans.jsonl
 
 Design rationale (ADR-0027 evolution):
-- ``success`` replaces the old ``status`` / ``is_normal`` / ``stop_reason``
-  triple.  One boolean is all the parent LLM needs to decide next steps.
-- ``result`` carries the subagent's **real last output** extracted from
+- ``status`` ("success"/"failed") replaces the old ``success`` boolean XML field.
+  ``build_agent_result`` renders it in the header line.
+- ``result_text`` carries the subagent's **real last output** extracted from
   ``result.messages`` (not ``result.content``, which is a placeholder on
   non-normal exit paths).  Truncated to ``max_result_chars`` (default 6000).
 - ``issue`` merges the old ``error`` + ``hint`` and appears **only** on
   failure, keeping the success notification clean.
-- Native subagents keep ``<output>`` / ``<output_status>`` / ``<trace>`` so
-  the parent can read the full deliverable and trace file.
-- External subagents keep ``<replied>`` (whether the subagent emitted any
-  ``modexctl send`` during the turn) instead of file-based artifacts.
+- Native subagents keep ``Output:`` / ``Trace:`` lines so the parent can read
+  the full deliverable and trace file.
+- External subagents omit file-based artifacts (no OUTPUT.md concept).  The
+  ``Replied:`` line is omitted when ``replied`` is None (the per-session
+  send-tracking mechanism does not exist yet; the parent judges the outcome
+  solely on status, result, and issue).
 """
 
 from __future__ import annotations
@@ -64,6 +68,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from modex_agent.core.constants import ExecutionStrategyKind
+from modex_agent.core.types import ReminderKind
 from modex_agent.hook.abc import FinallyTurnHook
 
 if TYPE_CHECKING:
@@ -79,15 +84,15 @@ class SubagentAutoSendHook(FinallyTurnHook):
     """Always-fire result notification for subagents.
 
     Fires on FINALLY_TURN (success, error, cancel, max_iterations — always).
-    Sends a ``<subagent_result>`` XML to the parent inbox.
+    Sends a markdown result notification to the parent inbox via
+    ``build_agent_result`` from ``message_xml.py``.
 
-    Native (react) subagents include ``<output>``, ``<output_status>``, and
-    ``<trace>`` file paths so the parent can read the full deliverable.
-    External coding subagents include ``<replied>`` instead (whether the
-    subagent sent any ``modexctl send`` during the turn).
+    Native (react) subagents include ``Output:`` and ``Trace:`` file paths so
+    the parent can read the full deliverable.  External coding subagents omit
+    file artifacts.
     """
 
-    #: Default truncation limit for the ``<result>`` field (≈1500 tokens).
+    #: Default truncation limit for the result text (~1500 tokens).
     DEFAULT_MAX_RESULT_CHARS: int = 6000
 
     @property
@@ -132,15 +137,15 @@ class SubagentAutoSendHook(FinallyTurnHook):
         session_id = str(ctx.session)
 
         if self._execution_strategy is ExecutionStrategyKind.EXTERNAL:
-            xml = self._build_external_xml(result, invocation_id)
+            content = self._build_external_content(result, invocation_id)
         else:
-            xml = self._build_native_xml(result, invocation_id, session_id)
+            content = self._build_native_content(result, invocation_id, session_id)
 
-        await self._notify_parent(ctx, session_id, xml)
+        await self._notify_parent(ctx, session_id, content)
 
-    # -- XML construction -----------------------------------------------------
+    # -- content construction -------------------------------------------------
 
-    def _build_native_xml(
+    def _build_native_content(
         self,
         result: AgentResult | None,
         invocation_id: str,
@@ -161,19 +166,20 @@ class SubagentAutoSendHook(FinallyTurnHook):
             output_status=output_status,
         )
 
-        return self._build_xml(
+        return self._build_content(
             agent_name=self._self_name,
             invocation_id=invocation_id,
             success=success,
             result_text=result_text,
             issue=issue,
+            stop_reason=stop_reason,
             trace_path=str(trace_path) if trace_path is not None else None,
             output_path=str(output_path),
             output_status=output_status,
             replied=None,
         )
 
-    def _build_external_xml(
+    def _build_external_content(
         self,
         result: AgentResult | None,
         invocation_id: str,
@@ -185,19 +191,20 @@ class SubagentAutoSendHook(FinallyTurnHook):
             is_external=True,
             output_status=None,
         )
-        # replied is None — the <replied> element is omitted from the XML.
+        # replied is None — the Replied: line is omitted from the content.
         # A correct per-session send-tracking mechanism (e.g. modexctl
         # writing a .sent marker after successful fetch_send) does not
         # exist yet. The parent agent judges the outcome solely on
-        # <success>, <result>, and <issue>.
+        # status, result, and issue.
         replied: bool | None = None
 
-        return self._build_xml(
+        return self._build_content(
             agent_name=self._self_name,
             invocation_id=invocation_id,
             success=success,
             result_text=result_text,
             issue=issue,
+            stop_reason=stop_reason,
             trace_path=None,
             output_path=None,
             output_status=None,
@@ -205,44 +212,48 @@ class SubagentAutoSendHook(FinallyTurnHook):
         )
 
     @staticmethod
-    def _build_xml(
+    def _build_content(
         *,
         agent_name: str,
         invocation_id: str,
         success: bool,
         result_text: str,
         issue: str,
+        stop_reason: str = "",
         trace_path: str | None = None,
         output_path: str | None = None,
         output_status: str | None = None,
         replied: bool | None = None,
     ) -> str:
-        from modex_agent.utils.xml import xml_text
+        """Build the markdown result content via ``build_agent_result``.
 
-        lines: list[str] = [
-            "<subagent_result>",
-            f"  <agent>{xml_text(agent_name)}</agent>",
-            f"  <invocation_id>{xml_text(invocation_id)}</invocation_id>",
-            f"  <success>{str(success).lower()}</success>",
-            f"  <result>{xml_text(result_text)}</result>",
-        ]
+        Delegates the header format to ``build_agent_result`` (convergence —
+        single source of truth).  The ``content`` body is the result text
+        followed by optional advisory lines (Issue, Output, Trace, Replied),
+        each omitted when its value is None/empty.
+        """
+        from modex_agent.multi_agent.message_xml import build_agent_result
+
+        body_lines: list[str] = [result_text]
         if issue:
-            lines.append(f"  <issue>{xml_text(issue)}</issue>")
-
-        # Native artifacts: output + output_status + trace
+            body_lines.append(f"Issue: {issue}")
         if output_path is not None:
-            lines.append(f"  <output>{xml_text(output_path)}</output>")
-        if output_status is not None:
-            lines.append(f"  <output_status>{xml_text(output_status)}</output_status>")
+            if output_status is not None:
+                body_lines.append(f"Output: {output_path} ({output_status})")
+            else:
+                body_lines.append(f"Output: {output_path}")
         if trace_path is not None:
-            lines.append(f"  <trace>{xml_text(trace_path)}</trace>")
-
-        # External artifact: whether the subagent emitted any modexctl send
+            body_lines.append(f"Trace: {trace_path}")
         if replied is not None:
-            lines.append(f"  <replied>{str(replied).lower()}</replied>")
+            body_lines.append(f"Replied: {str(replied).lower()}")
 
-        lines.append("</subagent_result>")
-        return "\n".join(lines)
+        return build_agent_result(
+            source=agent_name,
+            invocation_id=invocation_id,
+            status="success" if success else "failed",
+            stop_reason=stop_reason,
+            content="\n".join(body_lines),
+        )
 
     # -- field extraction -----------------------------------------------------
 
@@ -325,18 +336,18 @@ class SubagentAutoSendHook(FinallyTurnHook):
           / ``timeout`` / ``turn_cancelled`` are all real failures.
           ``output_status="missing"`` is an advisory: OUTPUT.md is the
           primary deliverable, so the parent should be told to read the
-          ``<result>`` field instead (or check the trace).
+          result text instead (or check the trace).
         - External subagent: the external CLI's stop_reason may be
           unreliable — it may exit cleanly without ``modexctl send``.
           Only ``error`` and ``loop_detected`` count as hard failures;
           other non-normal stops are left for the parent to judge based
-          on ``<result>`` and ``<replied>``.  ``output_status`` is always
-          ``None`` for external (no OUTPUT.md concept).
+          on the result text.  ``output_status`` is always ``None`` for
+          external (no OUTPUT.md concept).
 
         The resume hint does **not** depend on the subagent type — it is
-        advice to the **parent** (the agent receiving this XML).  The hook
-        runs on the subagent side and does not know the parent's type, so
-        it uses the tool-agnostic wording "send a message with
+        advice to the **parent** (the agent receiving this notification).
+        The hook runs on the subagent side and does not know the parent's
+        type, so it uses the tool-agnostic wording "send a message with
         invocation_id=xxx" (matching the original design).  The parent
         already knows which communication tool it has.
         """
@@ -364,7 +375,7 @@ class SubagentAutoSendHook(FinallyTurnHook):
         # External subagents: max_iterations / timeout / turn_cancelled are
         # NOT reliable failure signals — the external CLI may have finished
         # its work without sending a reply.  Let the parent decide based on
-        # ``<result>`` and ``<replied>``.
+        # the result text.
         if not is_external and stop_reason in cls._NON_NORMAL_STOPS:
             return False, (
                 f"Subagent stopped with {stop_reason} — task is incomplete."
@@ -374,7 +385,7 @@ class SubagentAutoSendHook(FinallyTurnHook):
         # --- Native advisory: OUTPUT.md missing ---
         # Not a failure (the subagent completed normally), but the primary
         # deliverable file was not written.  The parent should rely on the
-        # ``<result>`` field or check the trace.
+        # result text or check the trace.
         if (
             not is_external
             and output_status == "missing"
@@ -384,8 +395,8 @@ class SubagentAutoSendHook(FinallyTurnHook):
             return True, (
                 "Subagent finished but OUTPUT.md was not written — "
                 "the deliverable file is missing. "
-                "Check the <result> field for the subagent's last output"
-                f" or read the <trace> for details.{resume}"
+                "Check the result text for the subagent's last output"
+                f" or read the trace for details.{resume}"
             )
 
         return True, ""
@@ -409,9 +420,12 @@ class SubagentAutoSendHook(FinallyTurnHook):
         self,
         ctx: AgentContext,
         session_id: str,
-        xml: str,
+        content: str,
     ) -> None:
-        """Send XML notification to parent agent's inbox."""
+        """Send markdown notification to parent agent's inbox."""
+        if self._agent_bus is None:
+            return
+
         from modex_agent.multi_agent.address import AgentAddress
         from modex_agent.multi_agent.envelope import AgentMessageEnvelope
         from modex_agent.multi_agent.message_type import AgentMessageType
@@ -427,16 +441,16 @@ class SubagentAutoSendHook(FinallyTurnHook):
             return
         inbox_key = parent_session_id
 
-        # Strip think tags from the XML (defense in depth)
+        # Strip think tags from the content (defense in depth)
         from modex_agent.hook.builtin.inbox_flush import InboxFlushHook
 
-        xml = InboxFlushHook._sanitize_content(xml)
+        content = InboxFlushHook._sanitize_content(content)
 
         envelope = AgentMessageEnvelope(
             payload={
-                "content": xml,
+                "content": content,
                 "message_type": AgentMessageType.AGENT_RESULT,
-                "metadata": {"agent_type": self._self_name, "format": "xml"},
+                "metadata": {"agent_type": self._self_name, "format": "markdown"},
             },
             source=AgentAddress(name=self._self_name),
             target=AgentAddress(name=self._parent_name),
@@ -444,6 +458,7 @@ class SubagentAutoSendHook(FinallyTurnHook):
             session_id=session_id,
             agent_session_id=inbox_key,
             invocation_id=invocation_id,
+            metadata={"reminder_kind": ReminderKind.SUBAGENT_RESULT},
         )
 
         try:

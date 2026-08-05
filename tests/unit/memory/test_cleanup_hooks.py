@@ -116,7 +116,7 @@ def _hook_ctx(
 
 
 def _reminder_messages(msgs: list[ChatMessage]) -> list[ChatMessage]:
-    return [m for m in msgs if m.role == MessageRole.USER and "<system-reminder>" in (m.content or "")]
+    return [m for m in msgs if m.role == MessageRole.SYSTEM_REMINDER and "<system-reminder>" in (m.content or "")]
 
 
 # ---------------------------------------------------------------------------
@@ -496,7 +496,7 @@ class TestWording:
         await hook.on_cleanup_finished(hook_ctx)
         msgs = await session_manager.get_all_messages(ctx)
         reminder = _reminder_messages(msgs)[0]
-        assert reminder.role == MessageRole.USER
+        assert reminder.role == MessageRole.SYSTEM_REMINDER
         # ChatMessage has extra="allow"; verify write_id was never set via the serialized form.
         dumped = reminder.model_dump()
         assert not dumped.get("write_id")

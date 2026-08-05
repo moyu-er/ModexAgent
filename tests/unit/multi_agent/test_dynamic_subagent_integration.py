@@ -64,8 +64,8 @@ def test_xml_message_round_trip():
         invocation_id="abc123",
         content="PDF 转换完成，共 12 页。",
     )
-    assert "<agent_message" in msg
-    assert 'source="office-expert"' in msg
+    assert "Message from agent" in msg
+    assert "Message from agent 'office-expert'" in msg
     assert "PDF 转换完成" in msg
 
     # Hook generates a result
@@ -76,8 +76,8 @@ def test_xml_message_round_trip():
         stop_reason="missed_communication",
         content="任务完成。文件路径：/output/result.docx",
     )
-    assert "<agent_result" in result
-    assert 'status="completed"' in result
+    assert "Subagent 'office-expert' task ended" in result
+    assert "status: completed" in result
     assert "任务完成" in result
 
 
@@ -404,10 +404,10 @@ class TestAgentMessageXmlWrapping:
         payload = sent_payloads[0]
         content = payload.get("content", "")
 
-        assert "<agent_message" in content, (
-            f"Agent messages must be XML-wrapped, got: {content[:100]}"
+        assert "Message from agent" in content, (
+            f"Agent messages must be markdown-wrapped, got: {content[:100]}"
         )
-        assert 'invocation_id="existing123"' in content
+        assert "invocation_id: existing123" in content
         assert "Follow-up question" in content
 
 

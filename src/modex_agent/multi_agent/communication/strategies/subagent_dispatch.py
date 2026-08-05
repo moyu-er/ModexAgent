@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid as _uuid_mod
 
 from modex_agent.core.session_id import SessionInfo
+from modex_agent.core.types import ReminderKind
 from modex_agent.multi_agent.address import AgentAddress
 from modex_agent.multi_agent.communication.result import AgentSendResult
 from modex_agent.multi_agent.communication.strategies.base import SendRequest, SendStrategy
@@ -60,6 +61,7 @@ class SubagentDispatchStrategy(SendStrategy):
             agent_session_id=str(session),
             parent_session_id=str(parent_sid),
             invocation_id=invocation_id,
+            metadata={"reminder_kind": ReminderKind.AGENT_MESSAGE},
         )
 
     def should_register_session(self) -> bool:

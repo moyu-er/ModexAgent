@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 
 from modex_agent.core.message import ChatMessage
+from modex_agent.core.message_utils import wrap_system_reminder
 from modex_agent.core.types import MessageRole, TodoStatus
 from modex_agent.memory.hooks import CleanupFinishedHook, MemoryHookContext
 from modex_agent.runtime.store import TodoItem, TodoStore
@@ -40,8 +41,9 @@ def _build_reminder(
     has_archive: bool,
     todo_section: str | None,
 ) -> str:
-    lines: list[str] = ["<system-reminder>"]
-    lines.append("Earlier conversation context was compacted (earlier messages were pruned).")
+    lines: list[str] = [
+        "Earlier conversation context was compacted (earlier messages were pruned)."
+    ]
     if has_archive:
         lines.append(
             "The archive summaries in your system prompt provide condensed "
@@ -57,7 +59,6 @@ def _build_reminder(
         lines.append(todo_section)
     else:
         lines.append("Continue your work.")
-    lines.append("</system-reminder>")
     return "\n".join(lines)
 
 
@@ -122,5 +123,5 @@ class TodoReorientationHook(CleanupFinishedHook):
         )
         await ctx.session_manager.add_messages(
             ctx.memory_context,
-            [ChatMessage(role=MessageRole.USER, content=reminder)],
+            [ChatMessage(role=MessageRole.SYSTEM_REMINDER, content=wrap_system_reminder(reminder))],
         )

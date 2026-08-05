@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from modex_agent.core import AgentCommKind
 from modex_agent.core.constants import StopReason
+from modex_agent.core.types import ReminderKind
 from modex_agent.hook.abc import AfterTurnHook, FinallyTurnHook
 
 if TYPE_CHECKING:
@@ -44,12 +45,12 @@ class AgentNotificationService:
     async def notify(
         self,
         ctx: AgentContext,
-        xml_content: str,
+        content: str,
     ) -> None:
         if ctx.comm_kind == AgentCommKind.SUBAGENT:
-            await self._notify_parent(ctx, xml_content)
+            await self._notify_parent(ctx, content)
         else:
-            await self._notify_user(ctx, xml_content)
+            await self._notify_user(ctx, content)
 
     async def send_notice(self, session_id: str, text: str) -> None:
         """Deliver a transient plain-text notice to the user.
@@ -68,15 +69,15 @@ class AgentNotificationService:
         except Exception:
             logger.exception("send_notice failed: session=%s", session_id)
 
-    async def _notify_user(self, ctx: AgentContext, xml: str) -> None:
+    async def _notify_user(self, ctx: AgentContext, content: str) -> None:
         from modex_agent.core.types import OutputMessage
 
         await self._output_adapter.send(
-            OutputMessage(content=xml),
+            OutputMessage(content=content),
             str(ctx.session),
         )
 
-    async def _notify_parent(self, ctx: AgentContext, xml: str) -> None:
+    async def _notify_parent(self, ctx: AgentContext, content: str) -> None:
         parent_name = self._parent_agent_name
 
         parent_session_id = ctx.session.parent_session_id
@@ -93,22 +94,23 @@ class AgentNotificationService:
         from modex_agent.multi_agent.message_type import AgentMessageType
 
         envelope = AgentMessageEnvelope(
-            payload={"content": xml, "message_type": AgentMessageType.AGENT_RESULT},
+            payload={"content": content, "message_type": AgentMessageType.AGENT_RESULT},
             source=AgentAddress(name=ctx.session.agent_name),
             target=AgentAddress(name=parent_name),
             message_type=AgentMessageType.AGENT_RESULT,
             session_id=str(ctx.session),
             agent_session_id=inbox_key,
+            metadata={"reminder_kind": ReminderKind.SUBAGENT_MAX_ITERATIONS},
         )
         await self._agent_bus.send(inbox_key, envelope)
 
 
 class MaxIterationNotifyHook(AfterTurnHook):
-    """Sends XML notification to the PARENT when a SUBAGENT hits max_iterations.
+    """Sends markdown notification to the PARENT when a SUBAGENT hits max_iterations.
 
     Subagent-only: the user-facing max-iteration notice for NORMAL main agents is
     owned by :class:`TurnOutcomeNotifyHook` (plain text). This hook retains the
-    structured XML envelope for the subagent→parent result channel.
+    structured markdown result for the subagent→parent result channel.
     """
 
     @property
@@ -136,14 +138,14 @@ class MaxIterationNotifyHook(AfterTurnHook):
 
         from modex_agent.multi_agent.message_xml import build_agent_result
 
-        xml = build_agent_result(
+        markdown_content = build_agent_result(
             source=agent_name,
             invocation_id=invocation_id,
-            status="max_iterations",
+            status="failed",
             stop_reason="max_iterations",
             content=truncated,
         )
-        await self._svc.notify(ctx=ctx, xml_content=xml)
+        await self._svc.notify(ctx=ctx, content=markdown_content)
 
 
 class TurnOutcomeNotifyHook(FinallyTurnHook):

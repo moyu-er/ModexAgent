@@ -31,7 +31,12 @@ if TYPE_CHECKING:
 
 
 class AgentCommKind(StrEnum):
-    """Agent topology kind — normal main agent vs subagent invocation."""
+    """Agent topology kind — internal routing classification.
+
+    ``NORMAL`` is the internal implementation term for a main/peer agent.
+    Agent-facing text (tool descriptions, message bodies) uses **peer**,
+    not "normal" — e.g. "Peer targets", "Message from peer agent 'X'".
+    """
 
     NORMAL = "normal"
     SUBAGENT = "subagent"
@@ -125,8 +130,8 @@ class AgentContext:
         return self.runtime.turn_uuid
 
     async def to_messages(self) -> list[dict[str, Any]]:
-        history_list = await self.history.to_list()
-        history_list, _has_agent_msgs = normalize_agent_messages_for_llm(history_list)
+        raw_history = await self.history.to_list()
+        history_list = normalize_agent_messages_for_llm(raw_history)
         non_system = [msg for msg in history_list if msg.get("role") != "system"]
 
         def _strip_none(d: dict[str, Any]) -> dict[str, Any]:

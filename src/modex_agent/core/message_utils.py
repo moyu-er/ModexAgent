@@ -1,10 +1,15 @@
-"""Agent 消息规范化工具。
+"""Agent message normalization and system-reminder wrapping utilities.
 
-处理内部 `role: "agent"` 消息到 LLM 兼容格式的转换。
+Normalizes internal non-standard message roles to LLM-compatible format:
+- ``compact`` -> ``assistant`` (role replacement, content unchanged)
+- ``system_reminder`` -> ``user`` (role replacement, content already wrapped
+  at storage time via :func:`wrap_system_reminder`)
+- ``agent`` -> ``user`` + legacy ``<agent_message>`` envelope (backward compat
+  for old history records; new code uses ``system_reminder``)
 
-设计原则：
-- 内部存储使用 `role: "agent"` + `source_agent` 字段，语义清晰
-- 调用 LLM 前映射为 `role: "user"` + `name` 字段 + XML 信封
+:func:`wrap_system_reminder` wraps markdown content in a
+``<system-reminder>`` XML envelope (no attributes) for use by message
+builders and hooks at storage time.
 """
 
 from collections.abc import Sequence
@@ -21,25 +26,46 @@ def _msg_to_dict(msg: ChatMessage | dict[str, Any]) -> dict[str, Any]:
     return msg
 
 
-def normalize_agent_messages_for_llm(
-    messages: Sequence[ChatMessage | dict[str, Any]],
-) -> tuple[list[dict[str, Any]], bool]:
-    """将内部非标准 role 消息转换为 LLM 可识别的格式。
+def wrap_system_reminder(content: str) -> str:
+    """Wrap free-form reminder content in a ``<system-reminder>`` envelope.
 
-    转换规则：
-    - ``role: "compact"`` → ``role: "assistant"``（纯 role 替换，不改 content）
-    - ``role: "agent"`` → ``role: "user"`` with XML <agent_message> envelope
-    - Other role messages are unaffected
+    The reminder tag carries no XML attributes — callers that need to attach
+    provenance metadata (source agent, invocation id, etc.) store it on the
+    ``ChatMessage`` extra fields, not on the tag itself. The content is
+    whitespace-trimmed so stored reminders stay compact regardless of how the
+    upstream caller built the string.
 
     Args:
-        messages: Raw message list (may contain non-standard roles), ChatMessage or dict
+        content: Raw reminder text to wrap.
 
     Returns:
-        (converted_messages, has_agent_messages) tuple:
-        - converted_messages: Converted message list (new list, does not modify original data)
-        - has_agent_messages: Whether agent messages are present (used to decide whether to inject system prompt note)
+        ``<system-reminder>\\n{content.strip()}\\n</system-reminder>``
     """
-    has_agent = False
+    return f"<system-reminder>\n{content.strip()}\n</system-reminder>"
+
+
+def normalize_agent_messages_for_llm(
+    messages: Sequence[ChatMessage | dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Convert internal non-standard role messages to an LLM-compatible form.
+
+    Conversion rules:
+    - ``role: "compact"`` → ``role: "assistant"`` (pure role replacement,
+      content untouched)
+    - ``role: "system_reminder"`` → ``role: "user"`` (pure role replacement,
+      content untouched — the ``<system-reminder>`` envelope is already applied
+      at storage time via ``wrap_system_reminder``)
+    - ``role: "agent"`` → ``role: "user"`` with XML ``<agent_message>`` envelope
+      (legacy branch, retained for already-persisted history records)
+    - Other role messages are passed through unchanged
+
+    Args:
+        messages: Raw message list (may contain non-standard roles),
+            ``ChatMessage`` or ``dict``.
+
+    Returns:
+        Converted message list (a new list; the original data is not mutated).
+    """
     converted: list[dict[str, Any]] = []
 
     for msg in messages:
@@ -51,11 +77,15 @@ def normalize_agent_messages_for_llm(
             converted.append({**msg_dict, "role": MessageRole.ASSISTANT})
             continue
 
+        # SYSTEM_REMINDER → USER (pure role replacement; content already wrapped)
+        if role == MessageRole.SYSTEM_REMINDER:
+            converted.append({**msg_dict, "role": MessageRole.USER})
+            continue
+
         if role != MessageRole.AGENT:
             converted.append(msg_dict)
             continue
 
-        has_agent = True
         source_agent = msg_dict.get("source_agent", "unknown")
         original_content = msg_dict.get("content", "")
         ts = msg_dict.get("created_at", "")
@@ -81,4 +111,4 @@ def normalize_agent_messages_for_llm(
             }
         )
 
-    return converted, has_agent
+    return converted

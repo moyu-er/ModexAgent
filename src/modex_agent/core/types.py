@@ -44,6 +44,22 @@ class MessageRole(StrEnum):
     AGENT = "agent"
     COMPACT = "compact"
     PENDING = "pending"
+    SYSTEM_REMINDER = "system_reminder"
+
+
+class ReminderKind(StrEnum):
+    """Category of a system-reminder message.
+
+    Stored as ``ChatMessage`` metadata (``reminder_kind`` extra field) to
+    classify the source/channel of a framework-to-agent notification.
+    Used by builders, strategies, and ``InboxFlushHook``.
+    """
+
+    AGENT_MESSAGE = "agent_message"
+    PEER_MESSAGE = "peer_message"
+    SUBAGENT_RESULT = "subagent_result"
+    SUBAGENT_MAX_ITERATIONS = "subagent_max_iterations"
+    TODO_REORIENTATION = "todo_reorientation"
 
 
 class TodoStatus(StrEnum):

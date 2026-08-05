@@ -47,10 +47,10 @@ class ContextState:
         内部存储的 role: "agent" 消息会在此处转换为 role: "user" 并添加来源前缀。
         当存在 agent 消息时，自动追加 Agent 通信说明到 system prompt。
         """
-        history_list = await self.history.to_list()
+        raw_history = await self.history.to_list()
 
         # 将内部 agent 角色转换为 LLM 兼容格式
-        history_list, has_agent_msgs = normalize_agent_messages_for_llm(history_list)
+        history_list = normalize_agent_messages_for_llm(raw_history)
 
         messages = []
         # Prefer pipeline over static system_prompt

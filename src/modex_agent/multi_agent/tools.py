@@ -126,8 +126,8 @@ _SUBAGENT_PARAMS: dict[str, Any] = {
         "target_agent": {
             "type": "string",
             "description": (
-                "The agent that assigned your task — the exact value of source= "
-                "from the <agent_message> you received."
+                "The agent that assigned your task — the exact name shown after "
+                "'Message from agent' in the system-reminder you received."
             ),
         },
         "content": {"type": "string", "description": "Message content."},
@@ -265,7 +265,7 @@ class CommunicationTargetStore:
             [
                 "Use this tool for:",
                 "  - Continuing an existing subagent session (pass invocation_id).",
-                "  - Messaging a peer agent (normal target) as an equal.",
+                "  - Messaging a peer agent as an equal.",
                 "  - Replying to a remote agent that sent you a message.",
                 "",
                 "For dispatching a NEW subagent task, use the `task` tool instead.",
@@ -298,15 +298,13 @@ class CommunicationTargetStore:
         lines = [
             "Ask the agent that assigned you this task a clarifying question or for a decision.",
             "",
-            "Your task arrived as:",
-            '  <agent_message source="<PARENT_NAME>" invocation_id="...">',
-            "    <content>...</content>",
-            "  </agent_message>",
+            "Your task arrived as a system-reminder starting with",
+            "\"Message from agent '<PARENT_NAME>':\".",
         ]
         if parent is not None:
             lines.append(
-                f"Use that exact {parent.name!r} (the `source` value) as "
-                "`target_agent`. It is your only valid target."
+                f"Use that exact {parent.name!r} (the name shown after "
+                "'Message from agent') as `target_agent`. It is your only valid target."
             )
         else:
             lines.append("No parent is currently available.")
@@ -315,7 +313,7 @@ class CommunicationTargetStore:
                 "",
                 "Use this tool ONLY to consult your parent when you cannot proceed without input:",
                 '  content: "QUESTION: ..." or "NEED_DECISION: ...".',
-                "Then stop and wait — the reply comes back to you as another <agent_message>.",
+                "Then stop and wait — the reply comes back to you as another system-reminder.",
                 "",
                 "This tool is for consultation, not for returning your result. Your deliverable",
                 "still goes to OUTPUT.md (write it there as instructed); nothing you send here",

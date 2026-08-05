@@ -6,9 +6,10 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from modex_agent.core.types import MessageRole
+from modex_agent.core.message_utils import wrap_system_reminder
+from modex_agent.core.types import MessageRole, ReminderKind
 from modex_agent.hook.abc import BeforeIterationHook, BeforeTurnHook
 from modex_agent.multi_agent.message_type import AgentMessageType
 
@@ -50,7 +51,7 @@ class InboxFlushHook(BeforeTurnHook, BeforeIterationHook):
         if not content:
             return content
         content = re.sub(
-            r"<\s*system\b[^>]*>.*?<\s*/\s*system\s*>",
+            r"<\s*system(?:-reminder)?\b[^>]*>.*?<\s*/\s*system(?:-reminder)?\s*>",
             "",
             content,
             flags=re.IGNORECASE | re.DOTALL,
@@ -72,14 +73,34 @@ class InboxFlushHook(BeforeTurnHook, BeforeIterationHook):
         for msg in messages:
             safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", msg.source)[:64] or "agent"
             sanitized = self._sanitize_content(msg.content)
-            await history.append(
-                {
-                    "role": MessageRole.AGENT,
-                    "source_agent": safe_name,
-                    "content": sanitized,
-                    "meta_inbox": True,
-                    "meta_source": msg.source,
-                    "meta_target_agent": self._agent_name,
-                }
-            )
+            wrapped = wrap_system_reminder(sanitized)
+
+            msg_meta = msg.metadata or {}
+            reminder_kind = msg_meta.get("reminder_kind")
+            if not reminder_kind:
+                # Fallback by message_type — TASK_REQUEST / AGENT_MESSAGE are
+                # peer/dispatch reminders; AGENT_RESULT is a subagent reply.
+                if msg.message_type in (
+                    AgentMessageType.TASK_REQUEST,
+                    AgentMessageType.AGENT_MESSAGE,
+                ):
+                    reminder_kind = ReminderKind.AGENT_MESSAGE
+                elif msg.message_type == AgentMessageType.AGENT_RESULT:
+                    reminder_kind = ReminderKind.SUBAGENT_RESULT
+                else:
+                    reminder_kind = ReminderKind.AGENT_MESSAGE
+
+            append_dict: dict[str, Any] = {
+                "role": MessageRole.SYSTEM_REMINDER,
+                "source_agent": safe_name,
+                "content": wrapped,
+                "meta_inbox": True,
+                "meta_source": msg.source,
+                "meta_target_agent": self._agent_name,
+                "reminder_kind": reminder_kind,
+            }
+            invocation_id = msg_meta.get("invocation_id")
+            if invocation_id:
+                append_dict["invocation_id"] = invocation_id
+            await history.append(append_dict)
         return True

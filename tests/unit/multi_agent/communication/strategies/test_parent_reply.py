@@ -202,7 +202,8 @@ class TestParentReplyStrategy:
         envelope = strategy.build_envelope(req, session, "")
         xml = envelope.payload["content"]
 
-        assert "<reply_contract>" in xml
+        assert "---" in xml
+        assert "To reply" in xml
         assert 'modexctl send --to "worker"' in xml
 
     def test_build_envelope_native_target_uses_minimal_format(self) -> None:

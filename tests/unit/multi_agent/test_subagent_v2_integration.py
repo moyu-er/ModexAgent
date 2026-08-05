@@ -10,7 +10,6 @@ Three test cases:
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from unittest.mock import patch
 
@@ -75,12 +74,6 @@ def _make_bus(tmpdir: Path) -> LocalAgentMessageBus:
     producer = InboxProducer(server=server)
     consumer = InboxConsumer(server=server)
     return LocalAgentMessageBus(producer=producer, consumer=consumer)
-
-
-def _extract_xml_field(xml: str, tag: str) -> str:
-    pattern = rf"<{tag}>(.*?)</{tag}>"
-    m = re.search(pattern, xml, re.DOTALL)
-    return m.group(1).strip() if m else ""
 
 
 def _mock_output_exists(runtime_dir: Path, session_id: str):
@@ -156,9 +149,9 @@ class TestFullLifecycleNotification:
         assert len(envelopes) == 1
 
         content = envelopes[0].payload["content"]
-        assert "<subagent_result>" in content
-        assert "<agent>worker</agent>" in content
-        assert "<output_status>written</output_status>" in content
+        assert "Subagent 'worker' task ended" in content
+        assert "Subagent 'worker'" in content
+        assert "(written)" in content
 
 
 # ---------------------------------------------------------------------------
@@ -190,10 +183,10 @@ class TestCrashSendsErrorNotification:
         assert len(envelopes) == 1
 
         content = envelopes[0].payload["content"]
-        assert "<subagent_result>" in content
-        assert _extract_xml_field(content, "success") == "false"
-        assert "crashed" in _extract_xml_field(content, "issue").lower()
-        assert "something broke" in _extract_xml_field(content, "issue")
+        assert "Subagent 'worker' task ended" in content
+        assert "status: failed" in content
+        assert "crashed" in content.lower()
+        assert "something broke" in content
 
 
 # ---------------------------------------------------------------------------

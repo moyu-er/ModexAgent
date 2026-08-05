@@ -37,9 +37,9 @@ class TestInboxFlushHook:
 
         msgs = await history.to_list()
         assert len(msgs) == 1
-        assert msgs[0]["role"] == "agent"
+        assert msgs[0]["role"] == "system_reminder"
         assert msgs[0]["source_agent"] == "helper"
-        assert msgs[0]["content"] == "done"
+        assert "done" in msgs[0]["content"]
         assert msgs[0].get("meta_inbox") is True
 
     async def test_before_turn_no_session_id(self):
@@ -167,7 +167,7 @@ class TestInboxFlushHook:
 
         msgs = await history.to_list()
         assert len(msgs) == 1, "AGENT_RESULT must be pulled mid-turn (active fold-in)"
-        assert msgs[0]["role"] == "agent"
+        assert msgs[0]["role"] == "system_reminder"
         assert msgs[0]["source_agent"] == "scout"
 
     async def test_external_input_never_folded(self):

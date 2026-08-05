@@ -192,6 +192,12 @@ class SessionCompactorAgent(ScopedFileAgent):
                     lines.append(f"[User]: {content}")
                 continue
 
+            if role == str(MessageRole.SYSTEM_REMINDER):
+                if content.strip():
+                    source = msg.get("source_agent", "system")
+                    lines.append(f"[System reminder ({source})]: {content}")
+                continue
+
             if role == str(MessageRole.AGENT):
                 source = msg.get("source_agent", "unknown")
                 if content.strip():

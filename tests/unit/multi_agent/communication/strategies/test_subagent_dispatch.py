@@ -305,9 +305,9 @@ class TestBuildEnvelopeXmlBranch:
         envelope = strategy.build_envelope(req, session, "task-1")
         xml = envelope.payload["content"]
 
-        assert "<reply_contract>" in xml
+        assert "---" in xml
+        assert "To reply" in xml
         assert 'modexctl send --to "main"' in xml
-        assert "INVISIBLE" in xml
 
     def test_native_target_envelope_xml_is_minimal_no_reply_contract(self) -> None:
         from modex_agent.core.constants import ExecutionStrategyKind
@@ -330,4 +330,4 @@ class TestBuildEnvelopeXmlBranch:
 
         assert "<reply_contract>" not in xml
         assert "modexctl send" not in xml
-        assert 'invocation_id="task-1"' in xml
+        assert "invocation_id: task-1" in xml

@@ -160,7 +160,7 @@ class TestPeerNormalStrategy:
         assert envelope.agent_session_id == "convA.mainB"
         assert envelope.invocation_id == "convA"
         assert "invocation_id" not in envelope.payload["content"]
-        assert '<agent_message source="mainA">' in envelope.payload["content"]
+        assert "Message from peer agent 'mainA'" in envelope.payload["content"]
 
     @pytest.mark.asyncio
     async def test_deliver_prefers_target_bus_ref(self) -> None:

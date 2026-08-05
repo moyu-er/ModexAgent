@@ -363,4 +363,4 @@ class TestCommunicationService:
 
         assert "Error:" in result
         assert "subagent" in result.lower()
-        assert "normal" in result.lower()
+        assert "peer" in result.lower()

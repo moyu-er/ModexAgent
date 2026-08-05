@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -48,12 +47,6 @@ def _make_context(
     )
 
 
-def _extract_xml_field(xml: str, tag: str) -> str:
-    pattern = rf"<{tag}>(.*?)</{tag}>"
-    m = re.search(pattern, xml, re.DOTALL)
-    return m.group(1).strip() if m else ""
-
-
 @pytest.mark.asyncio
 async def test_loop_detected_sends_incomplete_notification(tmp_path: Path):
     """A subagent that stops with LOOP_DETECTED must notify the parent with
@@ -79,11 +72,11 @@ async def test_loop_detected_sends_incomplete_notification(tmp_path: Path):
     msgs = await bus.consume("conv123.main")
     assert len(msgs) == 1
     xml = msgs[0].payload["content"]
-    assert "<subagent_result>" in xml
-    assert _extract_xml_field(xml, "success") == "false"
-    issue = _extract_xml_field(xml, "issue")
-    assert "loop" in issue.lower()
-    assert "stuck" in issue.lower()
+    assert "Subagent 'worker' task ended" in xml
+    assert "status: failed" in xml
+    assert "Issue:" in xml
+    assert "loop" in xml.lower()
+    assert "stuck" in xml.lower()
 
 
 @pytest.mark.asyncio
@@ -108,9 +101,8 @@ async def test_loop_detected_includes_invocation_id_in_hint(tmp_path: Path):
     await hook.finally_turn(ctx, result)
 
     xml = (await bus.consume("conv123.main"))[0].payload["content"]
-    issue = _extract_xml_field(xml, "issue")
     invocation_id = SessionInfo.from_str(session_id).session_id_prefix
-    assert f"invocation_id={invocation_id}" in issue
+    assert f"invocation_id={invocation_id}" in xml
 
 
 @pytest.mark.asyncio

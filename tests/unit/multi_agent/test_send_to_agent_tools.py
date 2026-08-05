@@ -763,8 +763,8 @@ class TestSubagentDescriptionContent:
             desc = tool.description
         finally:
             current_agent_context.reset(token)
-        assert "<agent_message" in desc
-        assert "source=" in desc
+        assert "system-reminder" in desc
+        assert "Message from agent" in desc
         assert "'main'" in desc  # the resolved parent echoed back
 
     def test_subagent_description_mentions_output_md_and_consultation(self) -> None:
@@ -816,7 +816,7 @@ class TestSubagentDescriptionContent:
         # No contextvar set → no resolvable parent.
         desc = tool.description
         assert "No parent" in desc
-        assert "<agent_message" in desc  # description template still shown
+        assert "system-reminder" in desc  # description template still shown
 
 
 class TestSubagentWiringSelectsSubagentMode:

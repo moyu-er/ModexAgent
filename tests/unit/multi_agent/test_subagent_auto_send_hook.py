@@ -15,7 +15,6 @@ Covers:
 - Default REACT strategy == explicit REACT strategy (byte-for-byte)
 """
 
-import re
 from pathlib import Path
 from unittest.mock import patch
 
@@ -61,13 +60,6 @@ def _make_context(
     )
 
 
-def _extract_xml_field(xml: str, tag: str) -> str:
-    """Extract text content from a simple XML tag in the notification."""
-    pattern = rf"<{tag}>(.*?)</{tag}>"
-    m = re.search(pattern, xml, re.DOTALL)
-    return m.group(1).strip() if m else ""
-
-
 def _mock_output_exists(runtime_dir: Path, session_id: str):
     """Return a patch that makes the output_path.exist() return True.
 
@@ -89,7 +81,7 @@ class TestSubagentAutoSendHookFinallyTurn:
     """Verify finally_turn always-fire notification logic."""
 
     async def test_completed_sends_success_xml(self, tmp_path: Path):
-        """Completed → XML with success=true, result carries content."""
+        """Completed → markdown with status=success, result carries content."""
         runtime_dir = tmp_path / "runtime"
         session_id = "a1b2c3d4.worker"
 
@@ -109,16 +101,15 @@ class TestSubagentAutoSendHookFinallyTurn:
         msgs = await bus.consume("conv123.main")
         assert len(msgs) == 1
         xml = msgs[0].payload["content"]
-        assert "<subagent_result>" in xml
-        assert "</subagent_result>" in xml
-        assert _extract_xml_field(xml, "agent") == "worker"
-        assert _extract_xml_field(xml, "success") == "true"
-        assert _extract_xml_field(xml, "result") == "Done."
-        # No <issue> on success
-        assert "<issue>" not in xml
+        assert "Subagent 'worker' task ended" in xml
+        assert "status: success" in xml
+        assert "Result:" in xml
+        assert "Done." in xml
+        # No Issue: line on success
+        assert "Issue:" not in xml
 
     async def test_native_includes_output_and_trace_paths(self, tmp_path: Path):
-        """Native XML must include <output>, <output_status>, <trace> paths."""
+        """Native markdown must include Output and Trace paths."""
         runtime_dir = tmp_path / "runtime"
         session_id = "a1b2c3d4.worker"
 
@@ -138,15 +129,15 @@ class TestSubagentAutoSendHookFinallyTurn:
         xml = (await bus.consume("conv123.main"))[0].payload["content"]
         expected_trace = str(runtime_dir / "trace" / session_id / "spans.jsonl")
         expected_output = str(runtime_dir / "output" / session_id / "OUTPUT.md")
-        assert _extract_xml_field(xml, "trace") == expected_trace
-        assert _extract_xml_field(xml, "output") == expected_output
-        assert _extract_xml_field(xml, "output_status") == "written"
+        assert f"Trace: {expected_trace}" in xml
+        assert f"Output: {expected_output}" in xml
+        assert "(written)" in xml
         # Must not be bare relative fragments
-        assert not _extract_xml_field(xml, "trace").startswith("trace/")
-        assert not _extract_xml_field(xml, "output").startswith("output/")
+        assert f"Trace: {expected_trace}" in xml
+        assert f"Output: {expected_output}" in xml
 
     async def test_error_crash_sends_issue(self, tmp_path: Path):
-        """Error result → success=false, issue explains error."""
+        """Error result → status=failed, issue explains error."""
         runtime_dir = tmp_path / "runtime"
         session_id = "a1b2c3d4.worker"
 
@@ -169,12 +160,13 @@ class TestSubagentAutoSendHookFinallyTurn:
         msgs = await bus.consume("conv123.main")
         assert len(msgs) == 1
         xml = msgs[0].payload["content"]
-        assert _extract_xml_field(xml, "success") == "false"
-        assert "crashed with error" in _extract_xml_field(xml, "issue")
-        assert "Division by zero" in _extract_xml_field(xml, "issue")
+        assert "status: failed" in xml
+        assert "Issue:" in xml
+        assert "crashed with error" in xml
+        assert "Division by zero" in xml
 
     async def test_max_iterations_sends_issue(self, tmp_path: Path):
-        """max_iterations → success=false, issue mentions max_iterations."""
+        """max_iterations → status=failed, issue mentions max_iterations."""
         runtime_dir = tmp_path / "runtime"
         session_id = "a1b2c3d4.worker"
 
@@ -197,12 +189,13 @@ class TestSubagentAutoSendHookFinallyTurn:
         msgs = await bus.consume("conv123.main")
         assert len(msgs) == 1
         xml = msgs[0].payload["content"]
-        assert _extract_xml_field(xml, "success") == "false"
-        assert "max_iterations" in _extract_xml_field(xml, "issue")
-        assert "incomplete" in _extract_xml_field(xml, "issue")
+        assert "status: failed" in xml
+        assert "Issue:" in xml
+        assert "max_iterations" in xml
+        assert "incomplete" in xml
 
     async def test_loop_detected_sends_issue(self, tmp_path: Path):
-        """loop_detected → success=false, issue mentions loop."""
+        """loop_detected → status=failed, issue mentions loop."""
         runtime_dir = tmp_path / "runtime"
         session_id = "a1b2c3d4.worker"
 
@@ -224,8 +217,8 @@ class TestSubagentAutoSendHookFinallyTurn:
         msgs = await bus.consume("conv123.main")
         assert len(msgs) == 1
         xml = msgs[0].payload["content"]
-        assert _extract_xml_field(xml, "success") == "false"
-        assert "loop" in _extract_xml_field(xml, "issue").lower()
+        assert "status: failed" in xml
+        assert "loop" in xml.lower()
 
     async def test_no_agent_bus_noop(self):
         """No bus → no error, hook is a graceful no-op."""
@@ -259,16 +252,17 @@ class TestSubagentAutoSendHookFinallyTurn:
         msgs = await bus.consume("conv123.main")
         assert len(msgs) == 1
         xml = msgs[0].payload["content"]
-        assert _extract_xml_field(xml, "success") == "false"
-        assert "subagent crashed" in _extract_xml_field(xml, "issue")
+        assert "status: failed" in xml
+        assert "Issue:" in xml
+        assert "subagent crashed" in xml
 
     async def test_output_missing_still_success_but_advisory_issue(self, tmp_path: Path):
-        """No OUTPUT.md but completed → success=true, but <issue> carries an
+        """No OUTPUT.md but completed → status=success, but Issue: line carries an
         advisory that the deliverable file is missing.
 
-        OUTPUT.md is the primary deliverable for native subagents; <result>
-        is a fallback.  The parent should be told to check <result> or
-        <trace> when OUTPUT.md was not written.
+        OUTPUT.md is the primary deliverable for native subagents; the result
+        text is a fallback.  The parent should be told to check the result
+        or trace when OUTPUT.md was not written.
         """
         runtime_dir = tmp_path / "runtime"
         session_id = "a1b2c3d4.worker"
@@ -289,15 +283,15 @@ class TestSubagentAutoSendHookFinallyTurn:
         msgs = await bus.consume("conv123.main")
         assert len(msgs) == 1
         xml = msgs[0].payload["content"]
-        assert _extract_xml_field(xml, "success") == "true"
-        assert _extract_xml_field(xml, "output_status") == "missing"
+        assert "status: success" in xml
+        assert "(missing)" in xml
         # Advisory issue present (not a failure, but informational)
-        issue = _extract_xml_field(xml, "issue")
-        assert "OUTPUT.md was not written" in issue
-        assert "result" in issue.lower() or "trace" in issue.lower()
+        assert "Issue:" in xml
+        assert "OUTPUT.md was not written" in xml
+        assert "result" in xml.lower() or "trace" in xml.lower()
 
     async def test_invocation_id_from_session_snowflake(self, tmp_path: Path):
-        """invocation_id is the session snowflake and included in XML."""
+        """invocation_id is the session snowflake and included in markdown."""
         runtime_dir = tmp_path / "runtime"
         session_id = "abc12345.worker"
 
@@ -316,10 +310,10 @@ class TestSubagentAutoSendHookFinallyTurn:
         msgs = await bus.consume("conv123.main")
         assert len(msgs) == 1
         xml = msgs[0].payload["content"]
-        assert _extract_xml_field(xml, "invocation_id") == "abc12345"
+        assert "invocation_id: abc12345" in xml
 
     async def test_think_tags_stripped_from_result(self, tmp_path: Path):
-        """Think tags in content are stripped before appearing in <result>."""
+        """Think tags in content are stripped before appearing in result body."""
         runtime_dir = tmp_path / "runtime"
         session_id = "a1b2c3d4.worker"
 
@@ -340,9 +334,8 @@ class TestSubagentAutoSendHookFinallyTurn:
         msgs = await bus.consume("conv123.main")
         assert len(msgs) == 1
         xml = msgs[0].payload["content"]
-        result_text = _extract_xml_field(xml, "result")
-        assert "reasoning here" not in result_text
-        assert "Actual answer." in result_text
+        assert "reasoning here" not in xml
+        assert "Actual answer." in xml
 
     async def test_non_default_parent_name(self, tmp_path: Path):
         """parent_name != 'main' → inbox_key routes to correct parent."""
@@ -395,10 +388,10 @@ class TestSubagentAutoSendHookFinallyTurn:
         await hook.finally_turn(ctx, result)
 
         xml = (await bus.consume("conv123.main"))[0].payload["content"]
-        assert _extract_xml_field(xml, "success") == "false"
+        assert "status: failed" in xml
         # The real output from the last assistant message, not the placeholder
-        assert "Here is the partial result: 42" in _extract_xml_field(xml, "result")
-        assert "max iterations reached" not in _extract_xml_field(xml, "result")
+        assert "Here is the partial result: 42" in xml
+        assert "max iterations reached" not in xml
 
     async def test_result_text_falls_back_to_content_when_no_messages(
         self,
@@ -421,7 +414,7 @@ class TestSubagentAutoSendHookFinallyTurn:
         await hook.finally_turn(ctx, result)
 
         xml = (await bus.consume("conv123.main"))[0].payload["content"]
-        assert _extract_xml_field(xml, "result") == "Direct output."
+        assert "Direct output." in xml
 
     async def test_result_text_falls_back_when_no_assistant_messages(
         self,
@@ -451,7 +444,7 @@ class TestSubagentAutoSendHookFinallyTurn:
         await hook.finally_turn(ctx, result)
 
         xml = (await bus.consume("conv123.main"))[0].payload["content"]
-        assert _extract_xml_field(xml, "result") == "Fallback content."
+        assert "Fallback content." in xml
 
     async def test_old_fields_removed_from_xml(self, tmp_path: Path):
         """The new XML must not contain old field names."""
@@ -506,7 +499,7 @@ class TestSubagentAutoSendHookExternalBranch:
         self,
         tmp_path: Path,
     ):
-        """EXTERNAL branch: <replied> is omitted (replied tracking disabled)."""
+        """EXTERNAL branch: Replied: is omitted (replied tracking disabled)."""
         runtime_dir = tmp_path / "runtime"
 
         bus = _make_bus(tmp_path)
@@ -517,11 +510,11 @@ class TestSubagentAutoSendHookExternalBranch:
         await hook.finally_turn(ctx, result)
 
         xml = (await bus.consume("conv123.main"))[0].payload["content"]
-        assert "<subagent_result>" in xml
-        assert "<replied>" not in xml
+        assert "Subagent 'pi_worker' task ended" in xml
+        assert "Replied:" not in xml
 
     async def test_external_omits_native_artifacts(self, tmp_path: Path):
-        """EXTERNAL branch: no <trace>/<output>/<output_status>/<replied> tags."""
+        """EXTERNAL branch: no Trace:/Output:/Replied: lines."""
         runtime_dir = tmp_path / "runtime"
 
         bus = _make_bus(tmp_path)
@@ -532,13 +525,12 @@ class TestSubagentAutoSendHookExternalBranch:
         await hook.finally_turn(ctx, result)
 
         xml = (await bus.consume("conv123.main"))[0].payload["content"]
-        assert "<replied>" not in xml
-        assert "<trace>" not in xml
-        assert "<output>" not in xml
-        assert "<output_status>" not in xml
+        assert "Replied:" not in xml
+        assert "Trace:" not in xml
+        assert "Output:" not in xml
 
     async def test_external_completed_success(self, tmp_path: Path):
-        """EXTERNAL branch: completed → success=true, result carries content."""
+        """EXTERNAL branch: completed → status=success, result carries content."""
         runtime_dir = tmp_path / "runtime"
 
         bus = _make_bus(tmp_path)
@@ -552,14 +544,14 @@ class TestSubagentAutoSendHookExternalBranch:
         await hook.finally_turn(ctx, result)
 
         xml = (await bus.consume("conv123.main"))[0].payload["content"]
-        assert _extract_xml_field(xml, "agent") == "pi_worker"
-        assert _extract_xml_field(xml, "invocation_id") == "abc12345"
-        assert _extract_xml_field(xml, "success") == "true"
-        assert _extract_xml_field(xml, "result") == "Final answer."
-        assert "<issue>" not in xml
+        assert "Subagent 'pi_worker'" in xml
+        assert "invocation_id: abc12345" in xml
+        assert "status: success" in xml
+        assert "Final answer." in xml
+        assert "Issue:" not in xml
 
     async def test_external_completed_no_replied_still_success(self, tmp_path: Path):
-        """EXTERNAL branch: completed → still success=true, <replied> omitted."""
+        """EXTERNAL branch: completed → still status=success, Replied: omitted."""
         runtime_dir = tmp_path / "runtime"
 
         bus = _make_bus(tmp_path)
@@ -570,9 +562,9 @@ class TestSubagentAutoSendHookExternalBranch:
         await hook.finally_turn(ctx, result)
 
         xml = (await bus.consume("conv123.main"))[0].payload["content"]
-        assert _extract_xml_field(xml, "success") == "true"
-        assert "<replied>" not in xml
-        assert "<issue>" not in xml
+        assert "status: success" in xml
+        assert "Replied:" not in xml
+        assert "Issue:" not in xml
 
     async def test_external_error_propagates_issue(self, tmp_path: Path):
         """EXTERNAL branch error path: issue field is populated with modexctl resume hint."""
@@ -590,19 +582,20 @@ class TestSubagentAutoSendHookExternalBranch:
         await hook.finally_turn(ctx, result)
 
         xml = (await bus.consume("conv123.main"))[0].payload["content"]
-        assert _extract_xml_field(xml, "success") == "false"
-        assert "crashed with error" in _extract_xml_field(xml, "issue")
-        assert "provider crashed" in _extract_xml_field(xml, "issue")
+        assert "status: failed" in xml
+        assert "Issue:" in xml
+        assert "crashed with error" in xml
+        assert "provider crashed" in xml
         # External issue should mention "last output" not "trace"
-        assert "last output" in _extract_xml_field(xml, "issue").lower()
-        assert "trace" not in _extract_xml_field(xml, "issue").lower()
+        assert "last output" in xml.lower()
+        assert "trace" not in xml.lower()
         # External resume hint is tool-agnostic (parent knows its own tools)
-        assert "invocation_id=abc12345" in _extract_xml_field(xml, "issue")
+        assert "invocation_id=abc12345" in xml
 
     async def test_external_max_iterations_not_failure(self, tmp_path: Path):
         """EXTERNAL branch: max_iterations is NOT a failure — the external
         CLI may have finished without sending a reply.  The parent decides
-        based on <result> and <replied>."""
+        based on the result text."""
         runtime_dir = tmp_path / "runtime"
 
         bus = _make_bus(tmp_path)
@@ -616,8 +609,8 @@ class TestSubagentAutoSendHookExternalBranch:
         await hook.finally_turn(ctx, result)
 
         xml = (await bus.consume("conv123.main"))[0].payload["content"]
-        assert _extract_xml_field(xml, "success") == "true"
-        assert "<issue>" not in xml
+        assert "status: success" in xml
+        assert "Issue:" not in xml
 
     async def test_default_execution_strategy_is_react_backward_compat(
         self,
@@ -653,10 +646,10 @@ class TestSubagentAutoSendHookExternalBranch:
         xml_default = (await bus_default.consume("conv123.main"))[0].payload["content"]
         xml_react = (await bus_react.consume("conv123.main"))[0].payload["content"]
 
-        assert "<trace>" in xml_default
-        assert "<output>" in xml_default
-        assert "<output_status>" in xml_default
-        assert "<replied>" not in xml_default
+        assert "Trace:" in xml_default
+        assert "Output:" in xml_default
+        assert "(written)" in xml_default
+        assert "Replied:" not in xml_default
         assert xml_default == xml_react
 
 
@@ -924,10 +917,10 @@ class TestSubagentAutoSendHookTruncateContent:
 
 
 class TestSubagentAutoSendHookBuildXml:
-    """Unit tests for _build_xml static method."""
+    """Unit tests for _build_content static method."""
 
     def test_xml_structure_success_native(self):
-        xml = SubagentAutoSendHook._build_xml(
+        xml = SubagentAutoSendHook._build_content(
             agent_name="worker",
             invocation_id="abc123",
             success=True,
@@ -937,17 +930,16 @@ class TestSubagentAutoSendHookBuildXml:
             output_path="output/conv123.worker:abc123/OUTPUT.md",
             output_status="written",
         )
-        assert "<subagent_result>" in xml
-        assert "</subagent_result>" in xml
-        assert "<agent>worker</agent>" in xml
-        assert "<invocation_id>abc123</invocation_id>" in xml
-        assert "<success>true</success>" in xml
-        assert "<result>Task done.</result>" in xml
-        assert "<issue>" not in xml
-        assert "<output_status>written</output_status>" in xml
+        assert "Subagent 'worker' task ended" in xml
+        assert "invocation_id: abc123" in xml
+        assert "status: success" in xml
+        assert "Result:" in xml
+        assert "Task done." in xml
+        assert "Issue:" not in xml
+        assert "(written)" in xml
 
     def test_xml_structure_failure_with_issue(self):
-        xml = SubagentAutoSendHook._build_xml(
+        xml = SubagentAutoSendHook._build_content(
             agent_name="worker",
             invocation_id="abc",
             success=False,
@@ -957,14 +949,14 @@ class TestSubagentAutoSendHookBuildXml:
             output_path="o",
             output_status="missing",
         )
-        assert "<subagent_result>" in xml
-        assert "<success>false</success>" in xml
-        assert "<result></result>" in xml
-        assert "<issue>" in xml
+        assert "Subagent 'worker' task ended" in xml
+        assert "status: failed" in xml
+        assert "Result:" in xml
+        assert "Issue:" in xml
         assert "timeout" in xml
 
     def test_xml_structure_external(self):
-        xml = SubagentAutoSendHook._build_xml(
+        xml = SubagentAutoSendHook._build_content(
             agent_name="pi_worker",
             invocation_id="abc",
             success=True,
@@ -972,15 +964,14 @@ class TestSubagentAutoSendHookBuildXml:
             issue="",
             replied=True,
         )
-        assert "<subagent_result>" in xml
-        assert "<success>true</success>" in xml
-        assert "<replied>true</replied>" in xml
-        assert "<trace>" not in xml
-        assert "<output>" not in xml
-        assert "<output_status>" not in xml
+        assert "Subagent 'pi_worker' task ended" in xml
+        assert "status: success" in xml
+        assert "Replied: true" in xml
+        assert "Trace:" not in xml
+        assert "Output:" not in xml
 
     def test_xml_escapes_special_chars(self):
-        xml = SubagentAutoSendHook._build_xml(
+        xml = SubagentAutoSendHook._build_content(
             agent_name="worker",
             invocation_id="abc",
             success=False,
@@ -990,6 +981,6 @@ class TestSubagentAutoSendHookBuildXml:
             output_path="o",
             output_status="missing",
         )
-        assert "<subagent_result>" in xml
-        # xml_text wraps in CDATA when special chars present
-        assert "CDATA" in xml or ("&lt;" in xml and "&amp;" in xml)
+        assert "Subagent 'worker' task ended" in xml
+        # Markdown preserves special chars verbatim (no XML entity escaping)
+        assert "crashed <with> &special 'chars'" in xml

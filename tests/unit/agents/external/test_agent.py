@@ -852,7 +852,7 @@ class TestOutboundSendViaRouting:
         assert len(built) == 1
         line = json.loads(built[0])
         assert line["source"] == "agent1"
-        assert "<agent_message" in line["content"]
+        assert "Message from peer agent" in line["content"]
         assert "hello from agent1" in line["content"]
         assert line["metadata"]["agent_session_id"] == "pool1.helper"
         assert line["metadata"]["session_id"] == "pool1.agent1"

@@ -17,8 +17,10 @@ def test_build_agent_message_with_invocation_id():
         invocation_id="abc123",
         content="Task done.",
     )
-    assert '<agent_message source="office-expert" invocation_id="abc123">' in result
-    assert "<content>Task done.</content>" in result
+    assert "Message from agent 'office-expert'" in result
+    assert "invocation_id: abc123" in result
+    assert "Task done." in result
+    assert "<agent_message" not in result
 
 
 def test_build_agent_message_without_invocation_id():
@@ -27,7 +29,7 @@ def test_build_agent_message_without_invocation_id():
         invocation_id=None,
         content="Hello.",
     )
-    assert 'source="main"' in result
+    assert "Message from agent 'main'" in result
     assert "invocation_id" not in result
 
 
@@ -39,11 +41,13 @@ def test_build_agent_result_completed():
         stop_reason="missed_communication",
         content="All tasks finished.",
     )
-    assert (
-        '<agent_result source="office-expert" invocation_id="abc123" status="completed">' in result
-    )
-    assert "<stop_reason>missed_communication</stop_reason>" in result
-    assert "<content>All tasks finished.</content>" in result
+    assert "Subagent 'office-expert' task ended" in result
+    assert "status: completed" in result
+    assert "invocation_id: abc123" in result
+    assert "Stop reason: missed_communication" in result
+    assert "Result:" in result
+    assert "All tasks finished." in result
+    assert "<agent_result" not in result
 
 
 def test_build_agent_result_max_iterations():
@@ -54,8 +58,8 @@ def test_build_agent_result_max_iterations():
         stop_reason="max_iterations",
         content="Still working...",
     )
-    assert 'status="max_iterations"' in result
-    assert "<stop_reason>max_iterations</stop_reason>" in result
+    assert "status: max_iterations" in result
+    assert "Stop reason: max_iterations" in result
 
 
 def test_xml_escapes_special_chars():
@@ -64,11 +68,10 @@ def test_xml_escapes_special_chars():
         invocation_id='id"&',
         content="<hello> & world",
     )
-    # Attribute values use entity escaping
-    assert "agent&lt;&gt;" in result
-    assert "id&quot;&amp;" in result
-    # Element text uses CDATA when special chars present
-    assert "<![CDATA[\n<hello> & world\n]]>" in result
+    # Markdown preserves special chars verbatim (no XML entity escaping)
+    assert "agent<>" in result
+    assert 'id"&' in result
+    assert "<hello> & world" in result
 
 
 def test_build_peer_agent_message_has_source_and_content():
@@ -76,21 +79,23 @@ def test_build_peer_agent_message_has_source_and_content():
         source="coding",
         content="What's your status?",
     )
-    assert '<agent_message source="coding">' in result
-    assert "<content>What's your status?</content>" in result
+    assert "Message from peer agent 'coding'" in result
+    assert "What's your status?" in result
+    assert "<agent_message" not in result
 
 
 def test_build_peer_agent_message_has_reply_contract():
-    """Peer XML MUST include a reply_contract so the receiver knows normal
-    output is invisible and the only reply path is send_to_agent."""
+    """Peer markdown MUST include a reply contract (--- separator + To reply
+    instructions) so the receiver knows the only reply path is send_to_agent."""
     result = build_peer_agent_message(source="coding", content="hi")
-    assert "<reply_contract>" in result
-    assert "INVISIBLE" in result
+    assert "---" in result
+    assert "To reply" in result
     assert "send_to_agent" in result
+    assert "<reply_contract>" not in result
 
 
 def test_build_peer_agent_message_names_source_as_reply_target():
-    """The reply_contract MUST tell the receiver to send back to the source
+    """The reply contract MUST tell the receiver to send back to the source
     by exact name — otherwise the receiver cannot reply."""
     result = build_peer_agent_message(source="coding", content="hi")
     assert 'target_agent = "coding"' in result
@@ -104,7 +109,7 @@ def test_build_peer_agent_message_marks_reply_optional():
 
 
 def test_build_peer_agent_message_has_no_invocation_id_attr():
-    """Peer XML never carries invocation_id — the sender's prefix is reused,
+    """Peer markdown never carries invocation_id — the sender's prefix is reused,
     and exposing an invocation_id would mislead the receiver into thinking
     it needs to continue a task session."""
     result = build_peer_agent_message(source="coding", content="hi")
@@ -112,9 +117,10 @@ def test_build_peer_agent_message_has_no_invocation_id_attr():
 
 
 def test_build_peer_agent_message_escapes_source_in_reply_target():
-    """Source name is echoed into target_agent= line — must be escaped."""
+    """Source name is echoed into target_agent= line — must appear verbatim."""
     result = build_peer_agent_message(source='naughty"&me', content="hi")
-    assert 'target_agent = "naughty&quot;&amp;me"' in result
+    assert 'naughty"&me' in result
+    assert "target_agent" in result
 
 
 def test_build_peer_agent_message_external_uses_modexctl_cli():
@@ -140,7 +146,7 @@ def test_build_peer_agent_message_native_uses_send_to_agent_tool():
 
 
 def test_build_peer_agent_message_no_implementation_attr():
-    """No implementation attribute on the XML — sender's implementation is
+    """No implementation attribute on the markdown — sender's implementation is
     invisible to agents."""
     result = build_peer_agent_message(
         source="main", content="hi", receiver_implementation=AgentImplementation.EXTERNAL
@@ -153,7 +159,6 @@ def test_build_peer_agent_message_warns_not_to_instruct_others():
     mechanism may differ."""
     result = build_peer_agent_message(source="main", content="hi")
     assert "Do NOT instruct other agents" in result
-    assert "may differ" in result
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +167,7 @@ def test_build_peer_agent_message_warns_not_to_instruct_others():
 
 
 def test_build_dispatch_xml_external_target_uses_peer_format():
-    """External targets receive the peer format with <reply_contract> +
+    """External targets receive the peer format with reply contract +
     modexctl send instructions — the external CLI has no
     SubagentAutoSendHook, so it MUST see the reply contract to reply."""
     result = build_dispatch_xml(
@@ -171,10 +176,11 @@ def test_build_dispatch_xml_external_target_uses_peer_format():
         content="do work",
         target_execution_strategy=ExecutionStrategyKind.EXTERNAL,
     )
-    assert "<reply_contract>" in result
+    assert "---" in result
+    assert "To reply" in result
     assert 'modexctl send --to "main"' in result
     assert "--stdin" in result
-    assert "INVISIBLE" in result
+    assert "<reply_contract>" not in result
 
 
 def test_build_dispatch_xml_external_target_drops_invocation_id_attr():
@@ -192,14 +198,15 @@ def test_build_dispatch_xml_external_target_drops_invocation_id_attr():
 def test_build_dispatch_xml_native_target_uses_agent_format():
     """Native targets receive the minimal build_agent_message format —
     SubagentAutoSendHook delivers the reply automatically, so the
-    reply_contract is unnecessary token overhead."""
+    reply contract is unnecessary token overhead."""
     result = build_dispatch_xml(
         source="main",
         invocation_id="abc12345",
         content="do work",
         target_execution_strategy=ExecutionStrategyKind.REACT,
     )
-    assert '<agent_message source="main" invocation_id="abc12345">' in result
+    assert "Message from agent 'main'" in result
+    assert "invocation_id: abc12345" in result
     assert "<reply_contract>" not in result
     assert "modexctl send" not in result
 
@@ -211,4 +218,4 @@ def test_build_dispatch_xml_native_target_preserves_invocation_id():
         content="do work",
         target_execution_strategy=ExecutionStrategyKind.REACT,
     )
-    assert 'invocation_id="abc12345"' in result
+    assert "invocation_id: abc12345" in result

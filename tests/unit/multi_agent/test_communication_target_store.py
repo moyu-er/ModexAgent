@@ -137,7 +137,7 @@ class TestStoreDescription:
         assert "Coding expert" in desc
         assert "scout" in desc
         assert "Fast recon" in desc
-        assert "normal" in desc
+        assert "peer" in desc.lower()
         assert "subagent" in desc
 
     def test_normal_description_shows_kind_labels(self) -> None:
