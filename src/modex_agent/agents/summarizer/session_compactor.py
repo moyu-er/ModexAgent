@@ -165,7 +165,7 @@ class SessionCompactorAgent(ScopedFileAgent):
             if role == str(MessageRole.ASSISTANT):
                 # Output tool calls if present.
                 tool_calls = msg.get("tool_calls")
-                if tool_calls:
+                if tool_calls and isinstance(tool_calls, Sequence):
                     tool_parts: list[str] = []
                     for tc in tool_calls:
                         if isinstance(tc, dict):
@@ -242,29 +242,51 @@ class SessionCompactorAgent(ScopedFileAgent):
 
     @staticmethod
     def extract_topic(summary: str, max_chars: int = 200) -> str | None:
-        """Extract a topic string from the ``## Objective`` section.
+        """Extract a topic string from the compact summary.
 
-        Scans for ``## Objective`` heading, takes content until the next
-        ``## `` heading, strips markdown bullet prefixes, and truncates.
+        Primary source: the ``## Objective`` section (template-defined
+        heading).  Fallback: the first ``##`` heading's section body,
+        covering cases where the LLM translates headings into the
+        conversation's language (e.g. ``## 目标``) and the literal
+        ``## Objective`` is absent.
 
-        Returns ``None`` if the section is not found or empty.
+        Both paths strip markdown bullet prefixes and truncate to
+        *max_chars*.  Returns ``None`` if no ``##`` heading exists or
+        the extracted section body is empty.
         """
-        # Find the ## Objective heading.
-        pattern = r"^##\s+Objective\s*$"
-        match = re.search(pattern, summary, re.MULTILINE)
-        if match is None:
-            return None
+        objective_match = re.search(r"^##\s+Objective\s*$", summary, re.MULTILINE)
+        if objective_match is not None:
+            topic = SessionCompactorAgent._extract_section_body(
+                summary, objective_match.end(), max_chars
+            )
+            if topic is not None:
+                return topic
 
-        start = match.end()
-        # Find the next ## heading after Objective.
+        # [ \t]+ (not \s+) prevents matching across newlines; \S skips bare
+        # "## " lines with no title. Covers translated headings (e.g. "## 目标")
+        # when "## Objective" is absent. .*$ matches the full heading line so
+        # end() lands at the section body start, same as the Objective regex.
+        first_heading = re.search(r"^##[ \t]+\S.*$", summary, re.MULTILINE)
+        if first_heading is not None:
+            return SessionCompactorAgent._extract_section_body(
+                summary, first_heading.end(), max_chars
+            )
+
+        return None
+
+    @staticmethod
+    def _extract_section_body(summary: str, start: int, max_chars: int) -> str | None:
+        """Section body from *start* to the next ``##`` heading, bullets stripped.
+
+        Returns ``None`` if empty after cleaning.
+        """
         next_heading = re.search(r"^##\s+", summary[start:], re.MULTILINE)
         if next_heading is not None:
             section = summary[start : start + next_heading.start()]
         else:
             section = summary[start:]
 
-        # Strip bullet prefixes and whitespace.
-        lines = []
+        lines: list[str] = []
         for line in section.strip().splitlines():
             stripped = re.sub(r"^\s*[-*]\s*", "", line).strip()
             if stripped:
