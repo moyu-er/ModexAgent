@@ -944,12 +944,12 @@ class TestExperienceReviewerUsesDefaultProvider:
         )
 
 
-# ─── Test 8: Archive emitter notification (UserNoticeCleanupListener) ─────────
+# ─── Test 8: Archive emitter notification (UserNoticeCleanupHook) ──────────
 
 
 class TestArchiveEmitterNotification:
-    """Verify the archive emitter notification (UserNoticeCleanupListener)
-    is correctly wired and fires the right notices.
+    """Verify the cleanup notice hook (UserNoticeCleanupHook) is correctly
+    wired and fires the right notices.
 
     When session memory is compacted (archive generation triggered), the user
     sees two notices:
@@ -960,188 +960,294 @@ class TestArchiveEmitterNotification:
     Without these notices, the user sees a stuck agent during archive
     generation (which can take 10+ seconds for the LLM summarizer call).
 
-    The listener is injected at ``pool_builder.py:362``:
-        ``memory_system.add_cleanup_listener(UserNoticeCleanupListener(notification_service))``
+    The hook is registered via ``memory_system.add_cleanup_hook(...)`` in
+    ``pool/factory.py``.
     """
 
-    def test_listener_sends_start_notice_on_cleanup_triggered(self) -> None:
-        """UserNoticeCleanupListener.on_cleanup_triggered MUST send the
+    def test_hook_sends_start_notice_on_cleanup_triggered(self) -> None:
+        """UserNoticeCleanupHook.on_cleanup_triggered MUST send the
         start notice via notification_service.send_notice."""
-        from bot.service.pool.communication import UserNoticeCleanupListener
+        from bot.service.pool.communication import UserNoticeCleanupHook
+
+        from modex_agent.core.scope import MemoryContext
+        from modex_agent.memory.hooks import MemoryHookContext
 
         notification_service = MagicMock()
         notification_service.send_notice = AsyncMock()
-        listener = UserNoticeCleanupListener(notification_service)
+        hook = UserNoticeCleanupHook(notification_service)
 
-        context = MagicMock()
-        context.session_id = "test_session.orchestrator"
+        ctx = MemoryHookContext(
+            memory_context=MemoryContext(
+                session_id="test_session.orchestrator",
+                user_id="u1",
+            ),
+        )
+
         import asyncio
 
-        from modex_agent.memory.core.models import CompressionReason
-
-        asyncio.run(listener.on_cleanup_triggered(context, CompressionReason.TOKEN_PRESSURE))
+        asyncio.run(hook.on_cleanup_triggered(ctx))
 
         notification_service.send_notice.assert_called_once_with(
             "test_session.orchestrator",
             "[compact] Consolidating conversation memory, please wait...",
         )
 
-    def test_listener_sends_done_notice_on_cleanup_finished(self) -> None:
-        """UserNoticeCleanupListener.on_cleanup_finished MUST send the
+    def test_hook_sends_done_notice_on_cleanup_finished(self) -> None:
+        """UserNoticeCleanupHook.on_cleanup_finished MUST send the
         done notice via notification_service.send_notice."""
-        from bot.service.pool.communication import UserNoticeCleanupListener
+        from bot.service.pool.communication import UserNoticeCleanupHook
+
+        from modex_agent.core.scope import MemoryContext
+        from modex_agent.memory.cleanup import CleanupResult
+        from modex_agent.memory.core.models import CompressionReason
+        from modex_agent.memory.hooks import MemoryHookContext
 
         notification_service = MagicMock()
         notification_service.send_notice = AsyncMock()
-        listener = UserNoticeCleanupListener(notification_service)
+        hook = UserNoticeCleanupHook(notification_service)
 
-        context = MagicMock()
-        context.session_id = "test_session.orchestrator"
-        from modex_agent.memory.cleanup import CleanupResult
-
-        result = MagicMock(spec=CleanupResult)
-        result.triggered = True
+        ctx = MemoryHookContext(
+            memory_context=MemoryContext(
+                session_id="test_session.orchestrator",
+                user_id="u1",
+            ),
+            cleanup_result=CleanupResult(
+                triggered=True,
+                messages_kept=5,
+                messages_pruned=10,
+                reason=CompressionReason.TOKEN_PRESSURE,
+            ),
+        )
 
         import asyncio
 
-        asyncio.run(listener.on_cleanup_finished(context, result))
+        asyncio.run(hook.on_cleanup_finished(ctx))
 
         notification_service.send_notice.assert_called_once_with(
             "test_session.orchestrator",
             "[compact] Memory consolidated.",
         )
 
-    def test_listener_skips_when_session_id_is_none(self) -> None:
-        """Listener MUST NOT send notices when session_id is None
+    def test_hook_skips_when_session_id_is_none(self) -> None:
+        """Hook MUST NOT send notices when session_id is None
         (defensive — avoids crash on malformed context)."""
-        from bot.service.pool.communication import UserNoticeCleanupListener
+        from bot.service.pool.communication import UserNoticeCleanupHook
+
+        from modex_agent.core.scope import MemoryContext
+        from modex_agent.memory.hooks import MemoryHookContext
 
         notification_service = MagicMock()
         notification_service.send_notice = AsyncMock()
-        listener = UserNoticeCleanupListener(notification_service)
+        hook = UserNoticeCleanupHook(notification_service)
 
-        context = MagicMock()
-        context.session_id = None
+        ctx = MemoryHookContext(
+            memory_context=MemoryContext(session_id=None),
+        )
 
         import asyncio
 
-        asyncio.run(listener.on_cleanup_triggered(context, MagicMock()))
-        asyncio.run(listener.on_cleanup_finished(context, MagicMock()))
+        asyncio.run(hook.on_cleanup_triggered(ctx))
+        asyncio.run(hook.on_cleanup_finished(ctx))
 
         assert not notification_service.send_notice.called
 
-    def test_listener_implements_memory_cleanup_listener_abc(self) -> None:
-        """UserNoticeCleanupListener MUST implement MemoryCleanupListener ABC.
+    def test_hook_skips_when_memory_context_is_none(self) -> None:
+        """Hook MUST NOT send notices when memory_context is None
+        (defensive — guards against incomplete hook context)."""
+        from bot.service.pool.communication import UserNoticeCleanupHook
 
-        Without this, ``memory_system.add_cleanup_listener`` would reject it
-        (or the ABC's abstract methods would prevent instantiation).
+        from modex_agent.memory.hooks import MemoryHookContext
+
+        notification_service = MagicMock()
+        notification_service.send_notice = AsyncMock()
+        hook = UserNoticeCleanupHook(notification_service)
+
+        ctx = MemoryHookContext(memory_context=None)
+
+        import asyncio
+
+        asyncio.run(hook.on_cleanup_triggered(ctx))
+        asyncio.run(hook.on_cleanup_finished(ctx))
+
+        assert not notification_service.send_notice.called
+
+    def test_hook_implements_both_point_abcs(self) -> None:
+        """UserNoticeCleanupHook MUST implement both CleanupTriggeredHook
+        and CleanupFinishedHook ABCs.
+
+        Without this, ``memory_system.add_cleanup_hook`` would not dispatch
+        either point to it (the runner isinstance-checks each ABC).
         """
-        from bot.service.pool.communication import UserNoticeCleanupListener
+        from bot.service.pool.communication import UserNoticeCleanupHook
 
-        from modex_agent.memory.cleanup_events import MemoryCleanupListener
+        from modex_agent.memory.hooks import CleanupFinishedHook, CleanupTriggeredHook
 
-        assert issubclass(UserNoticeCleanupListener, MemoryCleanupListener), (
-            "UserNoticeCleanupListener must inherit from MemoryCleanupListener "
-            "so memory_system.add_cleanup_listener accepts it"
+        assert issubclass(UserNoticeCleanupHook, CleanupTriggeredHook | CleanupFinishedHook), (
+            "UserNoticeCleanupHook must inherit from both CleanupTriggeredHook "
+            "and CleanupFinishedHook so the runner dispatches both points to it"
         )
 
-    def test_listener_notices_are_english_and_start_with_compact_tag(self) -> None:
+    def test_hook_notices_are_english_and_start_with_compact_tag(self) -> None:
         """Notice text must start with ``[compact]`` tag and be in English
         (matching the existing convention — not localized).
 
         The ``[compact]`` tag lets the WebUI/IM filter these notices
         differently from regular agent messages if needed.
         """
-        from bot.service.pool.communication import UserNoticeCleanupListener
+        from bot.service.pool.communication import UserNoticeCleanupHook
 
-        assert UserNoticeCleanupListener._START_NOTICE.startswith("[compact]")
-        assert UserNoticeCleanupListener._DONE_NOTICE.startswith("[compact]")
-        # Must be English (not localized) — stable contract
-        assert "Consolidating" in UserNoticeCleanupListener._START_NOTICE
-        assert "consolidated" in UserNoticeCleanupListener._DONE_NOTICE.lower()
-
-
-# ─── Test 9: MemorySystem fires cleanup listeners at the right time ──────────
+        assert UserNoticeCleanupHook._START_NOTICE.startswith("[compact]")
+        assert UserNoticeCleanupHook._DONE_NOTICE.startswith("[compact]")
+        assert "Consolidating" in UserNoticeCleanupHook._START_NOTICE
+        assert "consolidated" in UserNoticeCleanupHook._DONE_NOTICE.lower()
 
 
-class TestMemorySystemCleanupListenerFiring:
-    """Verify DefaultMemorySystem fires cleanup listeners at the right time:
-    - ``on_cleanup_triggered`` fires BEFORE archive generation
-    - ``on_cleanup_finished`` fires AFTER cleanup completes (only when triggered)
+# ─── Test 9: MemorySystem fires cleanup hooks through the real path ───────
 
-    This is the framework-side counterpart to UserNoticeCleanupListener.
-    The listener injection (pool_builder.py:362) is meaningless if the
-    MemorySystem doesn't actually fire the events.
 
-    See ``default_system.py:91-119`` for the firing logic.
+class TestMemorySystemCleanupHookFiring:
+    """Verify DefaultMemorySystem fires cleanup hooks through the real path:
+
+    - Registers a recording ``CleanupFinishedHook`` via ``add_cleanup_hook``.
+    - Appends messages to a real ``ScopedMessageHistory`` to trigger cleanup.
+    - Asserts the hook received a ``MemoryHookContext`` with the expected
+      ``memory_context`` and ``cleanup_result``.
+
+    No ``MagicMock(spec=...)`` for private list storage — the hook is
+    registered via the public ``add_cleanup_hook`` API and fired by actually
+    running ``cleanup_session()`` through the real ``ScopedMessageHistory`` →
+    ``_run_cleanup`` → ``cleanup_session`` path.
     """
 
-    def test_default_memory_system_accepts_cleanup_listeners(self) -> None:
-        """DefaultMemorySystem MUST accept cleanup listeners via
-        ``add_cleanup_listener`` and store them."""
-        from modex_agent.memory.cleanup_events import MemoryCleanupListener
-        from modex_agent.memory.core.layers import MemoryLayerSet
+    def test_real_cleanup_fires_finished_hook(self, tmp_path: Path) -> None:
+        import asyncio
+
+        asyncio.run(self._run_real_cleanup_fires_finished_hook(tmp_path))
+
+    async def _run_real_cleanup_fires_finished_hook(self, tmp_path: Path) -> None:
+        from modex_agent.core.scope import MemoryContext
         from modex_agent.memory.default_system import DefaultMemorySystem
-        from modex_agent.memory.registry import MemoryStoreRegistry
+        from modex_agent.memory.hooks import CleanupFinishedHook, MemoryHookContext
+        from modex_agent.memory.layers.factory import MemoryLayerFactory
+        from modex_agent.memory.registry import DefaultMemoryStoreRegistry
+        from modex_agent.memory.token_estimator import TokenEstimator
 
-        layer_set = MagicMock(spec=MemoryLayerSet)
-        store_registry = MagicMock(spec=MemoryStoreRegistry)
-        system = DefaultMemorySystem(layer_set=layer_set, store_registry=store_registry)
+        class _FixedEstimator(TokenEstimator):
+            def __init__(self) -> None:
+                self.per_message = 10
 
-        listener = MagicMock(spec=MemoryCleanupListener)
-        system.add_cleanup_listener(listener)
-        assert listener in system._cleanup_listeners
+            def estimate_text(self, text: str) -> int:
+                return self.per_message
 
-    def test_add_cleanup_listener_appends_to_list(self) -> None:
-        """``add_cleanup_listener`` MUST append to the internal list
-        (supports multiple listeners)."""
-        from modex_agent.memory.cleanup_events import MemoryCleanupListener
-        from modex_agent.memory.core.layers import MemoryLayerSet
+        class _RecordingFinishedHook(CleanupFinishedHook):
+            def __init__(self) -> None:
+                self.calls: list[MemoryHookContext] = []
+
+            async def on_cleanup_finished(self, ctx: MemoryHookContext) -> None:
+                self.calls.append(ctx)
+
+        registry = DefaultMemoryStoreRegistry(tmp_path)
+        layer_set = MemoryLayerFactory.single_user(registry=registry)
+        system = DefaultMemorySystem(
+            layer_set=layer_set,
+            store_registry=registry,
+            cleanup_config={
+                "max_context_tokens": 100,
+                "max_token_ratio": 0.8,
+                "keep_ratio": 0.5,
+            },
+            token_estimator=_FixedEstimator(),
+        )
+        await system.initialize()
+
+        hook = _RecordingFinishedHook()
+        system.add_cleanup_hook(hook)
+
+        context = MemoryContext(session_id="test-session", user_id="test-user")
+        history = system.create_message_history(context)
+
+        for i in range(20):
+            await history.append({"role": "user", "content": f"msg-{i}"})
+
+        assert len(hook.calls) > 0, (
+            "CleanupFinishedHook must fire when cleanup is triggered"
+        )
+        finished_ctx = hook.calls[0]
+        assert finished_ctx.memory_context is not None
+        assert finished_ctx.memory_context.session_id == "test-session"
+        assert finished_ctx.cleanup_result is not None
+        assert finished_ctx.cleanup_result.triggered is True
+
+    def test_real_cleanup_fires_triggered_and_finished_on_normal_path(
+        self, tmp_path: Path
+    ) -> None:
+        import asyncio
+
+        asyncio.run(self._run_real_cleanup_fires_both(tmp_path))
+
+    async def _run_real_cleanup_fires_both(self, tmp_path: Path) -> None:
+        from modex_agent.core.scope import MemoryContext
         from modex_agent.memory.default_system import DefaultMemorySystem
-        from modex_agent.memory.registry import MemoryStoreRegistry
+        from modex_agent.memory.hooks import (
+            CleanupFinishedHook,
+            CleanupTriggeredHook,
+            MemoryHookContext,
+        )
+        from modex_agent.memory.layers.factory import MemoryLayerFactory
+        from modex_agent.memory.registry import DefaultMemoryStoreRegistry
+        from modex_agent.memory.token_estimator import TokenEstimator
 
-        layer_set = MagicMock(spec=MemoryLayerSet)
-        store_registry = MagicMock(spec=MemoryStoreRegistry)
-        system = DefaultMemorySystem(layer_set=layer_set, store_registry=store_registry)
+        class _FixedEstimator(TokenEstimator):
+            def __init__(self) -> None:
+                self.per_message = 10
 
-        listener1 = MagicMock(spec=MemoryCleanupListener)
-        listener2 = MagicMock(spec=MemoryCleanupListener)
+            def estimate_text(self, text: str) -> int:
+                return self.per_message
 
-        system.add_cleanup_listener(listener1)
-        system.add_cleanup_listener(listener2)
+        class _RecordingBothHook(CleanupTriggeredHook, CleanupFinishedHook):
+            def __init__(self) -> None:
+                self.triggered_calls: list[MemoryHookContext] = []
+                self.finished_calls: list[MemoryHookContext] = []
 
-        assert len(system._cleanup_listeners) == 2
-        assert listener1 in system._cleanup_listeners
-        assert listener2 in system._cleanup_listeners
+            async def on_cleanup_triggered(self, ctx: MemoryHookContext) -> None:
+                self.triggered_calls.append(ctx)
 
-    def test_listener_exception_does_not_break_cleanup(self) -> None:
-        """If a listener raises, the cleanup MUST still complete and other
-        listeners MUST still fire.
+            async def on_cleanup_finished(self, ctx: MemoryHookContext) -> None:
+                self.finished_calls.append(ctx)
 
-        This is defensive: a buggy listener (e.g. notification service down)
-        must not break memory compaction.
+        registry = DefaultMemoryStoreRegistry(tmp_path)
+        layer_set = MemoryLayerFactory.single_user(registry=registry)
+        system = DefaultMemorySystem(
+            layer_set=layer_set,
+            store_registry=registry,
+            cleanup_config={
+                "max_context_tokens": 100,
+                "max_token_ratio": 0.8,
+                "keep_ratio": 0.5,
+            },
+            token_estimator=_FixedEstimator(),
+        )
+        await system.initialize()
 
-        The exception handling is in default_system.py:95-99 (try/except
-        around listener.on_cleanup_triggered). We verify the firing path
-        catches exceptions by checking the _on_triggered callback exists
-        when listeners are present.
-        """
-        from modex_agent.memory.cleanup_events import MemoryCleanupListener
-        from modex_agent.memory.core.layers import MemoryLayerSet
-        from modex_agent.memory.default_system import DefaultMemorySystem
-        from modex_agent.memory.registry import MemoryStoreRegistry
+        hook = _RecordingBothHook()
+        system.add_cleanup_hook(hook)
 
-        layer_set = MagicMock(spec=MemoryLayerSet)
-        store_registry = MagicMock(spec=MemoryStoreRegistry)
-        system = DefaultMemorySystem(layer_set=layer_set, store_registry=store_registry)
+        context = MemoryContext(session_id="test-session", user_id="test-user")
+        history = system.create_message_history(context)
 
-        bad_listener = MagicMock(spec=MemoryCleanupListener)
-        bad_listener.on_cleanup_triggered = MagicMock(side_effect=RuntimeError("boom"))
-        bad_listener.on_cleanup_finished = MagicMock(side_effect=RuntimeError("boom"))
+        for i in range(20):
+            await history.append({"role": "user", "content": f"msg-{i}"})
 
-        good_listener = MagicMock(spec=MemoryCleanupListener)
-
-        system.add_cleanup_listener(bad_listener)
-        system.add_cleanup_listener(good_listener)
-
-        assert len(system._cleanup_listeners) == 2
+        assert len(hook.triggered_calls) > 0, (
+            "CleanupTriggeredHook must fire on the normal cleanup path"
+        )
+        assert len(hook.finished_calls) > 0, (
+            "CleanupFinishedHook must fire on the normal cleanup path"
+        )
+        assert hook.finished_calls[0].memory_context is not None
+        assert hook.finished_calls[0].memory_context.session_id == "test-session"
+        assert hook.finished_calls[0].cleanup_result is not None
+        assert hook.finished_calls[0].cleanup_result.triggered is True
+        assert hook.finished_calls[0].cleanup_result.messages_pruned > 0, (
+            "Normal cleanup path must prune messages"
+        )
