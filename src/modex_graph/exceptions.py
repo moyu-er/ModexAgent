@@ -10,8 +10,8 @@ Two layers:
       Suspend-without-re-execution semantics: already-applied state updates
       persist; resume re-enters from the entry node, NOT by re-running the
       interrupted node body.
-    - `GraphDrained` — cooperative shutdown. Class exists but is never
-      raised; wiring is deferred (ADR-0034 D10 termination does not use it).
+    - `GraphDrained` — cooperative pause/stop signal raised by scheduler
+      safe points when `GraphRunControl` receives an external request.
     - `ParentCommand` — subgraph→parent routing. Class exists but is never
       raised; wiring is deferred (ADR-0033 D12 Phase c item 2).
 
@@ -57,15 +57,7 @@ class GraphInterrupt(GraphBubbleUp):
 
 
 class GraphDrained(GraphBubbleUp):
-    """Cooperative shutdown signal.
-
-    The class exists but is never raised. ADR-0034 realized Phase c via
-    continuous scheduling (not BSP supersteps), so there are no superstep
-    boundaries to wire this at. Termination is driven by the ready/active
-    sets being empty (ADR-0034 D10). Cooperative shutdown wiring (e.g.
-    SIGTERM-style graceful drain with checkpoint preservation) remains
-    deferred. See ADR-0033 D7 + D1.
-    """
+    """Cooperative pause/stop signal raised at scheduler safe points."""
 
 
 class ParentCommand(GraphBubbleUp):

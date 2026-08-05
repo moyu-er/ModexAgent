@@ -175,17 +175,18 @@ class TestResume:
         assert factory.calls[0].graph_instance_id == 3001
 
     @pytest.mark.asyncio
-    async def test_resumes_stopped_instance(self) -> None:
+    async def test_rejects_stopped_instance(self) -> None:
+        """STOPPED is a terminal status (manual termination) — not resumable."""
         stopped = _make_instance(3002, status=GraphInstanceStatus.STOPPED.value)
         service, instance_store, factory = _make_recovery_service(instances=[stopped])
 
-        await service.resume(3002)
+        with pytest.raises(ValueError, match="STOPPED is a terminal status"):
+            await service.resume(3002)
 
         instance = instance_store.load(3002)
         assert instance is not None
-        assert instance.status == GraphInstanceStatus.RUNNING.value
-        assert len(factory.calls) == 1
-        assert factory.calls[0].graph_instance_id == 3002
+        assert instance.status == GraphInstanceStatus.STOPPED.value
+        assert factory.calls == []
 
     @pytest.mark.asyncio
     async def test_raises_when_instance_not_found(self) -> None:
@@ -200,7 +201,7 @@ class TestResume:
         running = _make_instance(3003, status=GraphInstanceStatus.RUNNING.value)
         service, _, factory = _make_recovery_service(instances=[running])
 
-        with pytest.raises(ValueError, match="only PAUSED/STOPPED"):
+        with pytest.raises(ValueError, match="only PAUSED"):
             await service.resume(3003)
         assert factory.calls == []
 
@@ -210,7 +211,7 @@ class TestResume:
         crashed = _make_instance(3004, status=GraphInstanceStatus.CRASHED.value)
         service, _, factory = _make_recovery_service(instances=[crashed])
 
-        with pytest.raises(ValueError, match="only PAUSED/STOPPED"):
+        with pytest.raises(ValueError, match="only PAUSED"):
             await service.resume(3004)
         assert factory.calls == []
 
@@ -219,7 +220,7 @@ class TestResume:
         completed = _make_instance(3005, status=GraphInstanceStatus.COMPLETED.value)
         service, _, factory = _make_recovery_service(instances=[completed])
 
-        with pytest.raises(ValueError, match="only PAUSED/STOPPED"):
+        with pytest.raises(ValueError, match="only PAUSED"):
             await service.resume(3005)
         assert factory.calls == []
 
@@ -228,7 +229,7 @@ class TestResume:
         failed = _make_instance(3006, status=GraphInstanceStatus.FAILED.value)
         service, _, factory = _make_recovery_service(instances=[failed])
 
-        with pytest.raises(ValueError, match="only PAUSED/STOPPED"):
+        with pytest.raises(ValueError, match="only PAUSED"):
             await service.resume(3006)
         assert factory.calls == []
 
@@ -243,6 +244,67 @@ class TestResume:
         instance = instance_store.load(3007)
         assert instance is not None
         assert instance.status == GraphInstanceStatus.RUNNING.value
+
+
+# ── resume status matrix ────────────────────────────────────────────────
+
+
+class TestResumeStatusMatrix:
+    """Authoritative status matrix: only PAUSED can be manually resumed.
+
+    Iterates all 6 ``GraphInstanceStatus`` values. PAUSED → resume
+    succeeds (status → RUNNING, engine factory called). All others →
+    ``ValueError`` raised, status unchanged, engine factory NOT called.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "status",
+        [
+            GraphInstanceStatus.STOPPED,
+            GraphInstanceStatus.CRASHED,
+            GraphInstanceStatus.COMPLETED,
+            GraphInstanceStatus.FAILED,
+            GraphInstanceStatus.RUNNING,
+        ],
+    )
+    async def test_non_paused_status_rejected(self, status: GraphInstanceStatus) -> None:
+        gid = 9100
+        instance = _make_instance(gid, status=status.value)
+        service, instance_store, factory = _make_recovery_service(instances=[instance])
+
+        with pytest.raises(ValueError, match="only PAUSED"):
+            await service.resume(gid)
+
+        loaded = instance_store.load(gid)
+        assert loaded is not None
+        assert loaded.status == status.value
+        assert factory.calls == []
+
+    @pytest.mark.asyncio
+    async def test_paused_status_succeeds(self) -> None:
+        gid = 9101
+        paused = _make_instance(gid, status=GraphInstanceStatus.PAUSED.value)
+        service, instance_store, factory = _make_recovery_service(instances=[paused])
+
+        await service.resume(gid)
+
+        loaded = instance_store.load(gid)
+        assert loaded is not None
+        assert loaded.status == GraphInstanceStatus.RUNNING.value
+        assert len(factory.calls) == 1
+        assert factory.calls[0].graph_instance_id == gid
+
+    @pytest.mark.asyncio
+    async def test_stopped_rejected_with_terminal_message(self) -> None:
+        """STOPPED gets a specific terminal-status message, not the generic one."""
+        gid = 9102
+        stopped = _make_instance(gid, status=GraphInstanceStatus.STOPPED.value)
+        service, _, factory = _make_recovery_service(instances=[stopped])
+
+        with pytest.raises(ValueError, match="STOPPED is a terminal status"):
+            await service.resume(gid)
+        assert factory.calls == []
 
 
 # ── GraphEngineFactory ABC ───────────────────────────────────────────────
@@ -298,7 +360,7 @@ class TestControlServiceDelegation:
             instance_store, recovery, coordinator_lookup=lambda gid: None
         )
 
-        with pytest.raises(ValueError, match="only PAUSED/STOPPED"):
+        with pytest.raises(ValueError, match="only PAUSED"):
             await service.handle(_make_resume_command(6003))
         assert factory.calls == []
 

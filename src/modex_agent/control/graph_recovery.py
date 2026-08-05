@@ -5,8 +5,9 @@ recovery path, no per-type branches):
 
 - **Fault recovery** (`recover_crashed`) — auto-pick `CRASHED` instances
   on startup, reload via coordinator, re-dispatch.
-- **Manual recovery** (`resume`) — reload a `PAUSED`/`STOPPED` instance
-  on external `resume()`.
+- **Manual recovery** (`resume`) — reload a `PAUSED` instance on
+  external `resume()`. `STOPPED` is terminal (manual termination) and
+  cannot be resumed.
 
 The shared per-instance flow is:
 
@@ -99,8 +100,10 @@ class GraphRecoveryService:
 
     - **Fault recovery** (`recover_crashed`) — auto-pick `CRASHED`
       instances on startup, reload via coordinator, re-dispatch.
-    - **Manual recovery** (`resume`) — reload a `PAUSED`/`STOPPED`
-      instance on external `resume()`.
+    - **Manual recovery** (`resume`) — reload a `PAUSED` instance on
+      external `resume()`. `STOPPED` is terminal (manual termination)
+      and cannot be resumed; `CRASHED` is recovered via
+      `recover_crashed()`; `COMPLETED`/`FAILED` are terminal.
 
     The only difference between the two types is the trigger condition
     and the status filter. The per-instance recovery flow is identical:
@@ -134,8 +137,8 @@ class GraphRecoveryService:
         kill leaves the graph in ``RUNNING`` because the in-process
         exception handler never runs.
 
-        ``PAUSED``/``STOPPED`` are NOT auto-recovered (they require
-        explicit ``resume()``); ``COMPLETED``/``FAILED`` are terminal.
+        ``PAUSED`` is NOT auto-recovered (requires explicit ``resume()``);
+        ``STOPPED``/``COMPLETED``/``FAILED`` are terminal.
 
         Returns:
             The list of recovered ``graph_instance_id``s. Callers (e.g.
@@ -157,19 +160,21 @@ class GraphRecoveryService:
         return await self._recover_instances(instances)
 
     async def resume(self, graph_instance_id: int) -> None:
-        """Manual recovery: reload a `PAUSED`/`STOPPED` instance, re-dispatch.
+        """Manual recovery: reload a `PAUSED` instance, re-dispatch.
 
         Triggered by external `resume()` (REST/CLI via
-        `GraphControlService`). Only `PAUSED`/`STOPPED` instances can be
-        manually resumed — `CRASHED` instances are auto-recovered by
-        `recover_crashed`, and `COMPLETED`/`FAILED` are terminal.
+        `GraphControlService`). Only `PAUSED` instances can be manually
+        resumed — `STOPPED` is a terminal status (manual termination)
+        and cannot be resumed; `CRASHED` instances are auto-recovered by
+        `recover_crashed()`; `COMPLETED`/`FAILED` are terminal;
+        `RUNNING` means the instance is already active.
 
         Args:
             graph_instance_id: The instance to resume.
 
         Raises:
             ValueError: If the instance does not exist, or its status
-                is not `PAUSED`/`STOPPED`.
+                is not `PAUSED`.
         """
         metadata = self._instance_store.load(graph_instance_id)
         if metadata is None:
@@ -177,14 +182,19 @@ class GraphRecoveryService:
                 f"Graph instance {graph_instance_id} not found; "
                 "cannot resume"
             )
-        if metadata.status not in (
-            GraphInstanceStatus.PAUSED,
-            GraphInstanceStatus.STOPPED,
-        ):
+        if metadata.status == GraphInstanceStatus.STOPPED:
             raise ValueError(
-                f"Graph instance {graph_instance_id} status is "
-                f"{metadata.status!r}; only PAUSED/STOPPED can be "
-                "manually resumed"
+                f"Cannot resume instance {graph_instance_id}: "
+                f"STOPPED is a terminal status (manual termination); "
+                "only PAUSED instances can be resumed."
+            )
+        if metadata.status != GraphInstanceStatus.PAUSED:
+            raise ValueError(
+                f"Cannot resume instance {graph_instance_id}: "
+                f"status is {metadata.status!r}; only PAUSED instances "
+                "can be resumed (STOPPED/COMPLETED/FAILED are terminal, "
+                "CRASHED is auto-recovered via recover_crashed(), "
+                "RUNNING means already active)."
             )
         instance = GraphInstance(
             metadata,
@@ -207,7 +217,12 @@ class GraphRecoveryService:
            `_execute`. The engine loads recovery state via
            `coordinator.load_for_recovery()` and re-dispatches.
 
-        Returns the list of recovered `graph_instance_id`s.
+        Per-instance failures are isolated: if one instance raises, the
+        remaining are still attempted. Failed instances are left in
+        CRASHED status (set by the orchestrator's ``except Exception``
+        handler) and are NOT included in the returned list.
+
+        Returns the list of successfully recovered ``graph_instance_id``s.
         """
         recovered: list[int] = []
         for instance in instances:
@@ -215,8 +230,15 @@ class GraphRecoveryService:
                 instance.graph_instance_id,
                 GraphInstanceStatus.RUNNING,
             )
-            await self._engine_factory.create_and_run(instance)
-            recovered.append(instance.graph_instance_id)
+            try:
+                await self._engine_factory.create_and_run(instance)
+                recovered.append(instance.graph_instance_id)
+            except Exception:
+                logger.exception(
+                    "Recovery failed for graph instance %s; "
+                    "continuing to next candidate",
+                    instance.graph_instance_id,
+                )
         return recovered
 
 

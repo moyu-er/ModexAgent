@@ -15,13 +15,19 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ..constants import GraphNode, SchedulerKind
+from ..constants import (
+    DeliverConsumptionStatus,
+    GraphNode,
+    InvocationStatus,
+    SchedulerKind,
+)
 from ..exceptions import GraphRecursionError, RoutingError
 from .base import Scheduler
 
 if TYPE_CHECKING:
     from ..compiled_graph import CompiledGraph
     from ..context import GraphContext
+    from ..persistence import RecoveryContext
     from ..state import GraphState
 
 
@@ -33,9 +39,9 @@ class LinearScheduler[S: "GraphState"](Scheduler[S]):
 
     Owns:
 
-    - `run_async` — async entry; iterates nodes from `entry_node` to
-      `GraphNode.END`, applying state updates, resolving the next node
-      via recorded dispatches, and passing upstream payloads.
+    - `run_async` — async entry; derives the crash-recovery start from
+      version-chain heads and PENDING delivers, then iterates to
+      `GraphNode.END` via recorded dispatches.
 
     `run` (sync entry) is inherited from the `Scheduler` ABC.
 
@@ -52,16 +58,17 @@ class LinearScheduler[S: "GraphState"](Scheduler[S]):
         self._ctx: GraphContext[S] | None = None
 
     async def run_async(self, ctx: GraphContext[S]) -> S:
-        """Run the graph from `entry_node` until `GraphNode.END`.
+        """Run the graph from its derived start until `GraphNode.END`.
 
         Returns `ctx.state` (the final state). The terminal node writes its
         result to a state field; the caller reads it after this returns.
 
-        Re-entry semantics: always starts from `entry_node`. The scheduler
-        is stateless across `run_async` calls — no internal "resume
-        context". Resume routing is driven by `state.resume_target`
-        (set by `ctx.interrupt(value, resume_to=...)`): the entry node
-        reads it and routes via `deliver()`.
+        Crash recovery starts from the topologically earliest node whose
+        version-chain head is non-terminal or whose deliver store contains a
+        PENDING deliver. An empty candidate set is a fresh start at
+        `entry_node`. HITL resume routing remains driven by
+        `state.resume_target` (set by
+        `ctx.interrupt(value, resume_to=...)`).
 
         Routing is deliver-only: nodes MUST call
         ``deliver()`` during ``execute()``. The ``_submit`` step calls
@@ -82,10 +89,11 @@ class LinearScheduler[S: "GraphState"](Scheduler[S]):
         if has_prior_state and recovery.rebuilt_main_state:
             ctx.state = type(ctx.state).model_validate(recovery.rebuilt_main_state)
 
-        current: str = self.graph.entry_node
+        current = self._recovery_start_node(ctx, recovery)
         iteration = 0
 
         while current != GraphNode.END:
+            ctx.control.check()
             if iteration >= self.graph.max_iterations:
                 raise GraphRecursionError(
                     f"Graph exceeded max_iterations={self.graph.max_iterations} "
@@ -126,6 +134,49 @@ class LinearScheduler[S: "GraphState"](Scheduler[S]):
 
         ctx.set_current_instance(None)
         return ctx.state
+
+    def _recovery_start_node(
+        self,
+        ctx: GraphContext[S],
+        recovery: RecoveryContext,
+    ) -> str:
+        """Derive the earliest recovery candidate from persisted evidence."""
+        candidates = {
+            node_name
+            for node_name, record in recovery.node_states.items()
+            if record is not None
+            and record.status in {InvocationStatus.CRASHED, InvocationStatus.RUNNING}
+        }
+        for node_name in self.graph.nodes:
+            if any(
+                deliver.status == DeliverConsumptionStatus.PENDING
+                for deliver in ctx.coordinator.collect_consumable_delivers(node_name, 0)
+            ):
+                candidates.add(node_name)
+
+        if not candidates:
+            return self.graph.entry_node
+
+        queue = [self.graph.entry_node]
+        visited: set[str] = set()
+        while queue:
+            node_name = queue.pop(0)
+            if node_name in visited:
+                continue
+            if node_name in candidates:
+                return node_name
+            visited.add(node_name)
+            queue.extend(
+                edge.target
+                for edge in self.graph.edges_from(node_name)
+                if edge.target != GraphNode.END and edge.target not in visited
+            )
+
+        for node_name in self.graph.nodes:
+            if node_name in candidates:
+                return node_name
+
+        raise RoutingError(f"Recovery candidates are absent from the graph: {sorted(candidates)}.")
 
     def _handle_linear_dispatch(
         self,

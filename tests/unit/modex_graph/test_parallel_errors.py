@@ -69,7 +69,6 @@ was NOT modified):
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 
 import pytest
 from helpers import TrackingRuntime, make_coordinator, make_runtime
@@ -171,7 +170,7 @@ class AsyncRaisingNode(Node[ErrorState]):
 class AsyncInterruptNode(Node[ErrorState]):
     """Async node that calls ``ctx.interrupt(value)`` after yielding."""
 
-    def __init__(self, value: Any = "interrupted") -> None:
+    def __init__(self, value: str = "interrupted") -> None:
         self.value = value
 
     async def execute(
@@ -223,7 +222,7 @@ class AsyncEmitNode(Node[ErrorState]):
 
 
 class WriteStateNode(Node[ErrorState]):
-    def __init__(self, field: str, value: Any) -> None:
+    def __init__(self, field: str, value: int | str) -> None:
         self.field = field
         self.value = value
 

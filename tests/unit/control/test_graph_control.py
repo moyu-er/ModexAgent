@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -20,6 +21,7 @@ import pytest
 from modex_agent.control.graph_control import (
     GraphControlService,
     InMemoryGraphEngineController,
+    LiveGraphEngineController,
 )
 from modex_agent.control.graph_recovery import (
     GraphEngineFactory,
@@ -33,6 +35,7 @@ from modex_graph import (
     GraphInstanceStatus,
     GraphMetadata,
     GraphPersistenceCoordinator,
+    GraphRunControl,
     InMemoryGraphInstanceStore,
     create_null_coordinator,
 )
@@ -270,10 +273,12 @@ class TestResume:
         assert _load_status(instance_store) == GraphInstanceStatus.RUNNING
 
     @pytest.mark.asyncio
-    async def test_resumes_stopped_instance_to_running(self) -> None:
+    async def test_rejects_stopped_instance(self) -> None:
+        """STOPPED is terminal — resume must be rejected (ticket 37)."""
         service, instance_store, _ = _make_service(instance=_make_instance(status="stopped"))
-        await service.handle(_make_command(ControlCommandType.RESUME_GRAPH))
-        assert _load_status(instance_store) == GraphInstanceStatus.RUNNING
+        with pytest.raises(ValueError, match="STOPPED is a terminal status"):
+            await service.handle(_make_command(ControlCommandType.RESUME_GRAPH))
+        assert _load_status(instance_store) == GraphInstanceStatus.STOPPED
 
 
 # -- DELIVER_TO_NODE -------------------------------------
@@ -487,3 +492,52 @@ class TestEngineRegistration:
         await service.handle(_make_command(ControlCommandType.PAUSE_GRAPH))
         assert engine_a.pause_called is True
         assert engine_b.pause_called is False
+
+
+class TestLiveGraphEngineController:
+    @pytest.mark.asyncio
+    async def test_pause_requests_external_pause_and_wakes_scheduler(self) -> None:
+        control = GraphRunControl()
+        wakeup = asyncio.Event()
+        control.set_wakeup(wakeup)
+        controller = LiveGraphEngineController(_GID, control)
+
+        await controller.pause()
+
+        assert control.pause_requested is True
+        assert control.drain_reason == "external pause"
+        assert wakeup.is_set() is True
+
+    @pytest.mark.asyncio
+    async def test_stop_requests_external_stop_and_wakes_scheduler(self) -> None:
+        control = GraphRunControl()
+        wakeup = asyncio.Event()
+        control.set_wakeup(wakeup)
+        controller = LiveGraphEngineController(_GID, control)
+
+        await controller.stop()
+
+        assert control.stop_requested is True
+        assert control.drain_reason == "external stop"
+        assert wakeup.is_set() is True
+
+    @pytest.mark.asyncio
+    async def test_deliver_notifies_running_control_after_persistence(self) -> None:
+        control = GraphRunControl()
+        wakeup = asyncio.Event()
+        control.set_wakeup(wakeup)
+        controller = LiveGraphEngineController(_GID, control)
+        instance = _make_instance()
+        service, _, _ = _make_service(instance=instance, register_nodes=["worker"])
+        service.register_engine(controller)
+
+        await service.handle(
+            _make_command(
+                ControlCommandType.DELIVER_TO_NODE,
+                payload={"node_name": "worker", "content": "wake"},
+            )
+        )
+
+        store = _get_deliver_store(instance.coordinator, "worker")
+        assert len(store.query_consumable(_GID, "worker")) == 1
+        assert wakeup.is_set() is True

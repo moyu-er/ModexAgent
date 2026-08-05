@@ -9,7 +9,7 @@ Public surface (ADR-0033 acceptance criteria):
 
 - **Graph primitives:** `Graph`, `Node`, `CompiledGraph`, `GraphEngine`,
   `GraphNode` (START/END sentinels).
-- **Context + runtime:** `GraphContext`, `GraphRuntime`.
+- **Context + runtime:** `GraphContext`, `GraphRuntime`, `GraphRunControl`.
 - **State:** `GraphState`.
 - **Deliver/submit:** `IntegratedPayload`, `IntegratedInput`,
   `InputIntegrator`, `DefaultInputIntegrator`, `DeliverStore`,
@@ -98,6 +98,7 @@ from .persistence import (
     SqliteNodeStateStore,
     create_null_coordinator,
 )
+from .run_control import GraphRunControl
 from .runtime import GraphRuntime
 from .scheduler import LinearScheduler, NodeInstance, ParallelScheduler, Scheduler
 from .spec import EdgeSpec, GraphSpec, NodeSpec
@@ -121,6 +122,7 @@ __all__ = [
     # Context + runtime
     "GraphContext",
     "GraphRuntime",
+    "GraphRunControl",
     # State
     "GraphState",
     # ID generation

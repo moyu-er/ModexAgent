@@ -96,6 +96,8 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         # (source_instance, target, payload) tuple preserving the original
         # dispatch arguments. In-memory only — NOT persisted across crashes.
         self._on_receive_queue: dict[str, deque[tuple[str, str, dict[str, Any] | None]]] = {}
+        # Store scans must not reschedule delivers already handled by in-memory dispatch.
+        self._scheduled_deliver_ids: set[int] = set()
         self._wakeup: asyncio.Event | None = None
 
     # ── Scheduler ABC implementation ───────────────────────────────────
@@ -131,43 +133,60 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         # created only when no prior invocations exist (fresh start).
         recovery = ctx.coordinator.load_for_recovery()
         self._restore_from_recovery(ctx, recovery)
+        ctx.control.set_wakeup(self._wakeup)
 
         running: dict[asyncio.Task[None], str] = {}
 
-        while self._ready or running:
-            while self._ready:
-                iid = sorted(self._ready)[0]
-                self._ready.discard(iid)
+        try:
+            while self._ready or running:
+                ctx.control.check()
+                while self._ready:
+                    iid = sorted(self._ready)[0]
+                    self._ready.discard(iid)
 
-                task = asyncio.create_task(self._execute_instance(iid, ctx))
-                running[task] = iid
+                    task = asyncio.create_task(self._execute_instance(iid, ctx))
+                    running[task] = iid
 
-            if not running:
-                break
+                if not running:
+                    break
 
-            assert self._wakeup is not None
-            wakeup_wait = asyncio.ensure_future(self._wait_for_wakeup())
-            try:
-                done, _ = await asyncio.wait(
-                    {*running.keys(), wakeup_wait},
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-            finally:
-                if not wakeup_wait.done():
-                    wakeup_wait.cancel()
-            self._wakeup.clear()
-
-            for task in done:
-                if task is wakeup_wait:
-                    continue
-                iid = running.pop(task)
+                assert self._wakeup is not None
+                wakeup_wait = asyncio.ensure_future(self._wait_for_wakeup())
                 try:
-                    task.result()
-                except Exception:
-                    for t in running:
-                        t.cancel()
-                    await asyncio.gather(*running, return_exceptions=True)
-                    raise
+                    done, _ = await asyncio.wait(
+                        {*running.keys(), wakeup_wait},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                finally:
+                    if not wakeup_wait.done():
+                        wakeup_wait.cancel()
+                self._wakeup.clear()
+
+                self._rebuild_pending_from_delivers(ctx, recovery)
+                self._recheck_pending()
+
+                for task in done:
+                    if task is wakeup_wait:
+                        continue
+                    iid = running.pop(task)
+                    try:
+                        task.result()
+                    except Exception:
+                        for t in running:
+                            t.cancel()
+                        await asyncio.gather(*running, return_exceptions=True)
+                        raise
+        finally:
+            # Cancel any remaining in-flight tasks on ALL exit paths
+            # (GraphDrained, owner-task CancelledError, unhandled Exception,
+            #  normal completion). On normal exit `running` is empty → no-op.
+            # On the inner `except Exception` path, tasks are already
+            # cancelled+gathered but still in the dict → cancel is no-op,
+            # gather returns immediately.
+            for task in running:
+                task.cancel()
+            if running:
+                await asyncio.gather(*running, return_exceptions=True)
 
         ctx.set_current_instance(None)
         return ctx.state
@@ -215,6 +234,7 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         self._activated_sources = {}
         self._pending_dispatches = {}
         self._on_receive_queue = {}
+        self._scheduled_deliver_ids = set()
 
         self._instances = {}
         self._active = set()
@@ -259,7 +279,10 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         for node_name in recovery.node_states:
             delivers = coordinator.collect_consumable_delivers(node_name, 0)
             pending = [
-                d for d in delivers if d.status == DeliverConsumptionStatus.PENDING
+                d
+                for d in delivers
+                if d.status == DeliverConsumptionStatus.PENDING
+                and d.deliver_id not in self._scheduled_deliver_ids
             ]
             if not pending:
                 continue
@@ -278,6 +301,7 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
                     ]
                     target_id = self._create_instance(node_name, upstream_payloads=upstream)
                     self._mark_ready(target_id)
+                    self._scheduled_deliver_ids.update(d.deliver_id for d in pending)
             else:
                 for deliver in pending:
                     payload: dict[str, Any] | None = {
@@ -290,6 +314,7 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
                     self._pending_dispatches.setdefault(node_name, {}).setdefault(
                         deliver.source_node, []
                     ).append(payload)
+                    self._scheduled_deliver_ids.add(deliver.deliver_id)
 
     def _redispatch_from_recovery(self, recovery: RecoveryContext) -> None:
         """Re-dispatch nodes based on their latest invocation status.
@@ -461,7 +486,11 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         source_node = payload.get("_source_node", source_node_name) if payload else source_node_name
         source_inv_id = payload.get("_source_inv_id", 0) if payload else 0
         if self._ctx is not None:
-            self._ctx.coordinator.route_deliver(target, content, source_node, source_inv_id)
+            deliver_id = self._ctx.coordinator.route_deliver(
+                target, content, source_node, source_inv_id
+            )
+            if deliver_id is not None:
+                self._scheduled_deliver_ids.add(deliver_id)
 
         if target == GraphNode.END:
             return

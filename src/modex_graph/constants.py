@@ -20,9 +20,10 @@ sequential execution behaviour; `PARALLEL` selects `ParallelScheduler`
 
 `GraphInstanceStatus` is the lifecycle state machine `StrEnum` for
 `GraphInstance`: `running` / `paused` / `stopped` /
-`crashed` / `completed` / `failed`. Recovery rules: `paused`/`stopped`
-are NOT auto-recovered (manual resume only); `crashed` IS auto-recovered
-by fault recovery; `completed`/`failed` are terminal.
+`crashed` / `completed` / `failed`. Recovery rules: `paused` is NOT
+auto-recovered (manual resume only); `stopped` is terminal (manual
+termination, not resumable); `crashed` IS auto-recovered by fault
+recovery; `completed`/`failed` are terminal.
 
 Per ADR-0033 D9.2: business modules use `StrEnum` for their own node names
 (e.g. `ReActNode.START/LLM/TOOL/END`); the engine's `GraphNode` is distinct
@@ -108,18 +109,18 @@ class GraphInstanceStatus(StrEnum):
     Transitions:
 
     - `running → paused` — manual pause.
-    - `running → stopped` — manual stop.
+    - `running → stopped` — manual stop (terminal).
     - `running → crashed` — unhandled exception / process kill.
-    - `running → completed` — normal termination.
-    - `running → failed` — error termination.
+    - `running → completed` — normal termination (terminal).
+    - `running → failed` — error termination (terminal).
     - `paused → running` — manual resume.
-    - `stopped → running` — manual resume.
     - `crashed → running` — fault-recovery auto-resume.
 
     Recovery rules:
 
-    - `paused` / `stopped`: NOT auto-recovered by fault recovery. Only
-      manual `resume()` transitions them back to `running`.
+    - `paused`: NOT auto-recovered by fault recovery. Only manual
+      `resume()` transitions it back to `running`.
+    - `stopped`: terminal — manual termination, NOT resumable.
     - `crashed`: auto-recovered by fault recovery (load latest checkpoint
       → rebuild scheduler state → re-dispatch).
     - `completed` / `failed`: terminal — no recovery.

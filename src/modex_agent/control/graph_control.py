@@ -21,10 +21,9 @@ The service holds:
   pause / stop / resume the engine and deliver content to a node.
 
 `GraphEngineController` is the ABC (rule 7) for the engine handle.
-`InMemoryGraphEngineController` is a recording stub — it sets boolean
-flags but does NOT actually control a running `ParallelScheduler` loop.
-A `LiveGraphEngineController` that wires pause/stop/resume into the
-scheduler loop is deferred (not yet specified).
+`LiveGraphEngineController` connects commands to a running graph's
+`GraphRunControl`. `InMemoryGraphEngineController` remains a recording stub
+for tests and fallback scenarios.
 """
 
 from __future__ import annotations
@@ -36,7 +35,12 @@ from typing import Any
 
 from modex_agent.control.graph_recovery import GraphRecoveryService
 from modex_agent.control.types import ControlCommand, ControlCommandType
-from modex_graph import GraphInstanceStatus, GraphInstanceStore, GraphPersistenceCoordinator
+from modex_graph import (
+    GraphInstanceStatus,
+    GraphInstanceStore,
+    GraphPersistenceCoordinator,
+    GraphRunControl,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -54,9 +58,8 @@ class GraphEngineController(ABC):
     - `deliver_to_node(node_name, content)` — notify the engine that
       content was externally delivered to a node.
 
-    `InMemoryGraphEngineController` is a recording stub. A
-    `LiveGraphEngineController` that wires pause/stop/resume into the
-    scheduler loop is deferred (not yet specified).
+    `LiveGraphEngineController` controls a running scheduler.
+    `InMemoryGraphEngineController` is a recording stub.
     """
 
     @property
@@ -90,8 +93,7 @@ class InMemoryGraphEngineController(GraphEngineController):
     """In-memory recording stub controller.
 
     Records `pause` / `stop` / `resume` / `deliver_to_node` calls for
-    verification. A `LiveGraphEngineController` that wires pause/stop/
-    resume into the scheduler loop is deferred (not yet specified).
+    verification.
     """
 
     def __init__(self, graph_instance_id: int) -> None:
@@ -116,6 +118,31 @@ class InMemoryGraphEngineController(GraphEngineController):
 
     async def deliver_to_node(self, node_name: str, content: Any) -> None:
         self.deliver_calls.append((node_name, content))
+
+
+class LiveGraphEngineController(GraphEngineController):
+    """Connect external graph commands to one running scheduler control."""
+
+    def __init__(self, graph_instance_id: int, control: GraphRunControl) -> None:
+        self._graph_instance_id = graph_instance_id
+        self._control = control
+
+    @property
+    def graph_instance_id(self) -> int:
+        return self._graph_instance_id
+
+    async def pause(self) -> None:
+        self._control.request_pause("external pause")
+
+    async def stop(self) -> None:
+        self._control.request_stop("external stop")
+
+    async def resume(self) -> None:
+        """No-op — resume is handled by ``GraphRecoveryService`` via ``GraphControlService._resume``."""
+        return None
+
+    async def deliver_to_node(self, node_name: str, content: Any) -> None:
+        self._control.notify_deliver(node_name)
 
 
 class GraphControlService:
@@ -187,6 +214,9 @@ class GraphControlService:
             await engine.pause()
 
     async def _stop(self, command: ControlCommand) -> None:
+        # STOPPED is a terminal status — the instance cannot be resumed
+        # (only PAUSED can). The status write is the source of truth;
+        # engine.stop() just cancels the running engine handle.
         gid = self._require_graph_instance_id(command)
         self._instance_store.update_status(gid, GraphInstanceStatus.STOPPED)
         engine = self._engines.get(gid)
@@ -196,8 +226,8 @@ class GraphControlService:
     async def _resume(self, command: ControlCommand) -> None:
         # Delegate to the recovery service (load checkpoint → rebuild →
         # re-dispatch via engine_factory.create_and_run). The recovery
-        # service owns the full flow: status validation (PAUSED/STOPPED
-        # only), RUNNING transition, and engine creation.
+        # service owns the full flow: status validation (PAUSED only —
+        # STOPPED is terminal), RUNNING transition, and engine creation.
         gid = self._require_graph_instance_id(command)
         await self._recovery_service.resume(gid)
 
@@ -234,5 +264,6 @@ class GraphControlService:
 __all__ = [
     "GraphEngineController",
     "InMemoryGraphEngineController",
+    "LiveGraphEngineController",
     "GraphControlService",
 ]

@@ -26,11 +26,13 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
 from pydantic import BaseModel
 
+from modex_agent.control.graph_control import LiveGraphEngineController
 from modex_agent.orchestration import GraphOrchestrator
 from modex_graph import (
     CoordinatorFactory,
@@ -113,6 +115,31 @@ class _InterruptFactory(NodeFactory):
         return None
 
 
+class _BlockingNode(Node[CounterState]):
+    def __init__(self, entered: asyncio.Event, release: asyncio.Event) -> None:
+        self._entered = entered
+        self._release = release
+
+    async def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> None:
+        self._entered.set()
+        await self._release.wait()
+        self.deliver(None, None, ctx)
+
+
+class _BlockingFactory(NodeFactory):
+    def __init__(self, entered: asyncio.Event, release: asyncio.Event) -> None:
+        self._entered = entered
+        self._release = release
+
+    def create(self, spec: NodeSpec) -> Node[Any]:
+        return _BlockingNode(self._entered, self._release)
+
+    def config_schema(self) -> type[BaseModel] | None:
+        return None
+
+
 # -- Registry + spec builders --------------------------------------------
 
 
@@ -179,6 +206,32 @@ def _get_coordinator(orch: GraphOrchestrator, gid: int) -> GraphPersistenceCoord
     instance = orch._active_instances.get(gid)
     assert instance is not None, f"Instance {gid} not in _active_instances"
     return instance.coordinator
+
+
+async def _start_blocked_graph(
+    orch: GraphOrchestrator,
+    spec_store: InMemoryGraphSpecStore,
+    instance_store: InMemoryGraphInstanceStore,
+    entered: asyncio.Event,
+) -> tuple[int, asyncio.Task[int]]:
+    spec = GraphSpec(
+        name="externally_controlled_graph",
+        nodes=[
+            NodeSpec(name="entry", node_type="blocking"),
+            NodeSpec(name="tail", node_type="function", config={"function": "increment"}),
+        ],
+        edges=[
+            EdgeSpec(source=GraphNode.START, target="entry"),
+            EdgeSpec(source="entry", target="tail"),
+            EdgeSpec(source="tail", target=GraphNode.END),
+        ],
+        state_class="counter",
+    )
+    run_task = asyncio.create_task(orch.create_and_run(_save_spec(spec_store, spec)))
+    await asyncio.wait_for(entered.wait(), timeout=5.0)
+    running = instance_store.load_by_status(GraphInstanceStatus.RUNNING)
+    assert len(running) == 1
+    return running[0].graph_instance_id, run_task
 
 
 # -- E2E: create_and_run -------------------------------------------------
@@ -384,6 +437,42 @@ class TestE2ELifecycle:
 
 
 class TestControlDelegation:
+    async def test_pause_drains_running_graph_without_overwriting_status(self) -> None:
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        registry = _function_registry()
+        registry.register("blocking", _BlockingFactory(entered, release))
+        orch, spec_store, instance_store = _make_orchestrator(node_registry=registry)
+        gid, run_task = await _start_blocked_graph(orch, spec_store, instance_store, entered)
+
+        controller = orch._control_service._engines.get(gid)
+        assert type(controller) is LiveGraphEngineController
+        await orch.pause(gid)
+        release.set()
+        returned_gid = await run_task
+
+        assert returned_gid == gid
+        assert _load_status(instance_store, gid) == GraphInstanceStatus.PAUSED.value
+        assert gid not in orch._control_service._engines
+
+    async def test_stop_drains_running_graph_without_overwriting_status(self) -> None:
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        registry = _function_registry()
+        registry.register("blocking", _BlockingFactory(entered, release))
+        orch, spec_store, instance_store = _make_orchestrator(node_registry=registry)
+        gid, run_task = await _start_blocked_graph(orch, spec_store, instance_store, entered)
+
+        controller = orch._control_service._engines.get(gid)
+        assert type(controller) is LiveGraphEngineController
+        await orch.stop(gid)
+        release.set()
+        returned_gid = await run_task
+
+        assert returned_gid == gid
+        assert _load_status(instance_store, gid) == GraphInstanceStatus.STOPPED.value
+        assert gid not in orch._control_service._engines
+
     async def test_pause_sets_status_to_paused(self) -> None:
         orch, spec_store, instance_store = _make_orchestrator()
         spec_id = _save_spec(spec_store, _simple_spec())
@@ -418,7 +507,7 @@ class TestControlDelegation:
         spec_id = _save_spec(spec_store, _simple_spec())
         gid = await orch.create_and_run(spec_id)
 
-        with pytest.raises(ValueError, match="only PAUSED/STOPPED"):
+        with pytest.raises(ValueError, match="only PAUSED"):
             await orch.resume(gid)
 
     async def test_deliver_to_node_routes_through_coordinator(self) -> None:
@@ -511,6 +600,7 @@ class TestErrorHandling:
         instances = instance_store.load_by_status(GraphInstanceStatus.CRASHED)
         assert len(instances) == 1
         assert instances[0].spec_id == spec_id
+        assert instances[0].graph_instance_id not in orch._control_service._engines
 
     async def test_graph_interrupt_sets_status_to_paused(self) -> None:
         node_registry = NodeRegistry()
@@ -536,6 +626,7 @@ class TestErrorHandling:
         instances = instance_store.load_by_status(GraphInstanceStatus.PAUSED)
         assert len(instances) == 1
         assert instances[0].spec_id == spec_id
+        assert instances[0].graph_instance_id not in orch._control_service._engines
 
     async def test_engine_controller_unregistered_after_completion(self) -> None:
         orch, spec_store, _ = _make_orchestrator()

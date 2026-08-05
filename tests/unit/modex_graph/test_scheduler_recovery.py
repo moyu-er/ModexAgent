@@ -36,7 +36,6 @@ import pytest
 from helpers import CounterState, make_coordinator, make_runtime
 
 from modex_graph import (
-    DeliverConsumptionStatus,
     Graph,
     GraphContext,
     GraphEngine,

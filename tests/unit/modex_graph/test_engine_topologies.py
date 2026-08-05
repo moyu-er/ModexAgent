@@ -263,10 +263,5 @@ class TestSyncAsyncMixed:
         g.add_edge("a", GraphNode.END)
         compiled = g.compile()
         ctx = make_ctx(CounterState(count=0))
-        result = engine_run_helper(compiled, ctx)
+        result = GraphEngine(compiled).run(ctx)
         assert result.count == 9
-
-
-def engine_run_helper(compiled, ctx):
-    """Helper to run engine synchronously."""
-    return GraphEngine(compiled).run(ctx)

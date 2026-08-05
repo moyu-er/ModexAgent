@@ -38,6 +38,7 @@ from typing_extensions import TypeVar
 
 from .constants import SchedulerKind
 from .exceptions import GraphInterrupt
+from .run_control import GraphRunControl
 from .runtime import GraphRuntime
 
 if TYPE_CHECKING:
@@ -108,6 +109,7 @@ class GraphContext[S: "GraphState"]:
         current_instance: str | None = None,
         graph_instance_id: int | None = None,
         current_invocation: InvocationContext | None = None,
+        control: GraphRunControl | None = None,
     ) -> None:
         self.state: S = state
         self.runtime: GraphRuntime = runtime
@@ -132,6 +134,7 @@ class GraphContext[S: "GraphState"]:
         # Current invocation context, set by Node.run() step 1.
         # None until a node begins executing.
         self.current_invocation: InvocationContext | None = current_invocation
+        self.control: GraphRunControl = control if control is not None else GraphRunControl()
 
     def fork(
         self,
@@ -201,6 +204,7 @@ class GraphContext[S: "GraphState"]:
             if graph_instance_id is not None
             else self.graph_instance_id,
             current_invocation=current_invocation,
+            control=self.control,
         )
 
     def emit(self, event_type: str, data: Any) -> None:
