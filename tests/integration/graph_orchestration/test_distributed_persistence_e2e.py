@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from modex_agent.orchestration import GraphOrchestrator
+from modex_agent.orchestration import GraphOrchestrator, SqliteCoordinatorFactory
 from modex_graph import (
     DeliverConsumptionStatus,
     EdgeSpec,
@@ -46,9 +46,7 @@ from modex_graph import (
     NodeSpec,
     RecoveryContext,
     RoutingError,
-    SqliteDeliverStoreFactory,
     SqliteGraphInstanceStore,
-    SqliteNodeStateStore,
     create_null_coordinator,
 )
 
@@ -213,11 +211,9 @@ def _sqlite_coordinator(
         db_path = str(Path(tmp_dir) / "instances.db")
         atexit.register(_cleanup_db_dir, tmp_dir)
     conn = conn or sqlite3.connect(db_path)
-    coord = GraphPersistenceCoordinator(
-        graph_instance_id=gid,
-        instance_store=SqliteGraphInstanceStore(conn),
-        node_state_store=SqliteNodeStateStore(conn, gid),
-        default_deliver_store_factory=SqliteDeliverStoreFactory(conn),
+    coord = SqliteCoordinatorFactory(conn).create(
+        gid,
+        SqliteGraphInstanceStore(conn),
     )
     return coord, conn, db_path
 

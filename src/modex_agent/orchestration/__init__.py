@@ -9,5 +9,8 @@ build REST endpoints, CLI commands, or business-level wiring.
 """
 
 from modex_agent.orchestration.graph_orchestrator import GraphOrchestrator
+from modex_agent.orchestration.sqlite_coordinator_factory import (
+    SqliteCoordinatorFactory,
+)
 
-__all__ = ["GraphOrchestrator"]
+__all__ = ["GraphOrchestrator", "SqliteCoordinatorFactory"]
