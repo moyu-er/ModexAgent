@@ -38,6 +38,30 @@ def _validate_execution_provider_pair(
         )
 
 
+class MemoryToggle(BaseModel):
+    """Per-main-agent gate for the archive/core memory layers.
+
+    Defaults to fully off — ``MemoryToggle()`` is byte-for-byte identical to
+    the pre-field behavior (no archive, no core). ``core_enabled`` requires
+    ``archive_enabled``: core memory is fed by archive consolidation, so
+    enabling core without archive is a configuration error.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    archive_enabled: bool = False
+    core_enabled: bool = False
+
+    @model_validator(mode="after")
+    def _validate_core_requires_archive(self) -> MemoryToggle:
+        if self.core_enabled and not self.archive_enabled:
+            raise ValueError(
+                "core_enabled=True requires archive_enabled=True "
+                "(core memory is fed by archive consolidation)"
+            )
+        return self
+
+
 class MainAgentSpec(BaseModel):
     """Editable main-agent disk projection. Rename of MainAgentNode."""
 
@@ -65,6 +89,10 @@ class MainAgentSpec(BaseModel):
     ``agents/<agent_name>.md`` is used. A non-None value references a different
     prompt md by name. Pure metadata in T1; runtime wiring comes in later
     tickets."""
+    memory: MemoryToggle = Field(default_factory=MemoryToggle)
+    """Per-main-agent memory layer gate. Default ``MemoryToggle()`` is fully
+    off — identical to the pre-field behavior. Subagents do NOT carry this
+    field (subagents are session-only by construction)."""
 
     @model_validator(mode="after")
     def _validate(self) -> MainAgentSpec:
