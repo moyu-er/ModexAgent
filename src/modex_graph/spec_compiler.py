@@ -5,32 +5,28 @@ Per ticket 08: the full chain is
 
     GraphSpec → GraphSpecCompiler → CompiledGraph → GraphInstance → GraphEngine
 
-`GraphSpecCompiler` resolves `StateFactory` / `NodeFactory` from registries,
+`GraphSpecCompiler` resolves state classes and node factories,
 builds a `Graph` topology, runs `TopologyValidator`, and calls
 `graph.compile()` to produce a `CompiledGraph`.
 
-State is NOT created here — that happens at `GraphInstance` instantiation
-time (P3.5 bot factory), where `StateFactory.create_state()` is called to
-produce the runtime state. The compiler only validates that the
-`StateFactory` CAN create the state (resolves the schema / registered name
-and constructs the factory, which may eagerly build the dynamic state class).
+State is not created here. The compiler validates that `spec.state_class`
+names an injected `GraphState` subclass; the orchestrator creates runtime
+state at `GraphInstance` construction.
 
-Type parameter note: the compiler does not know the state type `S` at
-compile time. `StateFactory` may be a `DynamicStateFactory` that builds a
-`GraphState` subclass at runtime via `pydantic.create_model`. The returned
-`CompiledGraph` is therefore typed `CompiledGraph[Any]` — the one place
-`Any` is justified in this package (state type is runtime-determined).
+The returned `CompiledGraph` is typed `CompiledGraph[Any]` because the state
+class is selected from a runtime mapping.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from .compiled_graph import CompiledGraph
 from .graph import Graph
 from .node_factory import NodeRegistry
 from .spec import GraphSpec
-from .state import DynamicStateFactory, StateFactory, StateRegistry, StateSchema
+from .state import GraphState
 from .topology_validator import TopologyValidator
 
 # Default validator instance, lazily constructed. Reused across compile()
@@ -55,22 +51,19 @@ class GraphSpecCompiler:
 
     Steps:
 
-    1. Resolve `StateFactory` from `spec.state_schema` (inline `StateSchema`
-       → `DynamicStateFactory`, registered name → `StateRegistry`). The
-       factory is resolved for validation only — no state is created.
+    1. Resolve `spec.state_class` from the injected state-class mapping.
     2. Build `Graph` topology (create `Node` instances via `NodeRegistry`,
        `add_node`, `add_edge` — edges are plain topology).
     3. Run `TopologyValidator` on the spec.
     4. Call `graph.compile(max_iterations, scheduler, default_trigger)` →
        `CompiledGraph`.
 
-    Does NOT create state (state is at `GraphInstance` level, created by
-    `StateFactory.create_state()` later).
+    Does not create state; state belongs to the `GraphInstance` execution.
 
     Usage:
 
     ```python
-    compiler = GraphSpecCompiler(node_registry, state_registry)
+    compiler = GraphSpecCompiler(node_registry, state_classes)
     compiled: CompiledGraph[Any] = compiler.compile(spec)
     ```
     """
@@ -78,7 +71,7 @@ class GraphSpecCompiler:
     def __init__(
         self,
         node_registry: NodeRegistry,
-        state_registry: StateRegistry,
+        state_classes: Mapping[str, type[GraphState]],
         validator: TopologyValidator | None = None,
     ) -> None:
         """Initialize the compiler with the required registries.
@@ -86,15 +79,14 @@ class GraphSpecCompiler:
         Args:
             node_registry: registry of `NodeFactory` by `node_type` string.
                 Used to materialize `NodeSpec` → `Node` instances.
-            state_registry: registry of `StateFactory` by name. Used to
-                resolve `GraphSpec.state_schema` when it is a registered
-                name (string).
+            state_classes: mapping from serialized registry names to concrete
+                `GraphState` subclasses.
             validator: optional `TopologyValidator` override. If `None`,
                 a shared default instance is used. Injecting a custom
                 validator is primarily for tests.
         """
         self._node_registry = node_registry
-        self._state_registry = state_registry
+        self._state_classes = state_classes
         self._validator = validator
 
     def compile(self, spec: GraphSpec) -> CompiledGraph[Any]:
@@ -104,22 +96,16 @@ class GraphSpecCompiler:
             TopologyError: if topology validation fails.
             KeyError: if a `NodeSpec.node_type` is not registered in the
                 `NodeRegistry`.
-            ValueError: if a registered `StateFactory` name is not found in
-                the `StateRegistry`, or if `DynamicStateFactory` construction
-                fails on a bad inline `StateSchema`.
+            ValueError: if `spec.state_class` is not in the state-class mapping.
             pydantic.ValidationError: if a `NodeSpec.config` fails
                 validation against the factory's `config_schema()`.
             RoutingError: if `Graph.compile()` finds a structural issue that
                 `TopologyValidator` did not catch (should not happen in
                 practice — the validator is stricter).
         """
-        # 1. Resolve StateFactory (validates state_schema — no state created).
-        # The factory is not stored on the CompiledGraph; resolution IS the
-        # validation. Discarding the bound name is intentional.
-        self._resolve_state_factory(spec.state_schema)
+        self._resolve_state_class(spec.state_class)
 
-        # 2. Build Graph topology. State type S is runtime-determined (may
-        # be a DynamicStateFactory-built class), so the Graph is typed Any.
+        # State type is selected at runtime, so the graph is typed Any.
         graph: Graph[Any] = Graph(name=spec.name)
 
         # 3. Create and register nodes from NodeSpecs.
@@ -147,31 +133,15 @@ class GraphSpecCompiler:
         )
         return compiled
 
-    def _resolve_state_factory(self, state_schema: StateSchema | str) -> StateFactory:
-        """Resolve `StateFactory` from an inline `StateSchema` or registered name.
-
-        - Inline (`StateSchema` instance): construct a `DynamicStateFactory`.
-          The factory builds the `GraphState` subclass eagerly in `__init__`,
-          so construction IS the validation — bad schemas (unresolvable
-          types, bad channels) raise here.
-        - Registered (`str`): look up the factory in `StateRegistry`. Raises
-          `ValueError` if the name is not registered.
-
-        The returned factory is NOT used to create state (that happens at
-        `GraphInstance` instantiation). Resolution is validation only.
-        """
-        if isinstance(state_schema, StateSchema):
-            # DynamicStateFactory.__init__ builds the state class eagerly —
-            # raises ValueError on unresolvable field types / bad channels.
-            return DynamicStateFactory(state_schema)
-        # Registered name — verify existence and retrieve the factory.
-        factory = self._state_registry.get_factory(state_schema)
-        if factory is None:
+    def _resolve_state_class(self, name: str) -> type[GraphState]:
+        """Resolve a state class name or raise the compiler's validation error."""
+        state_class = self._state_classes.get(name)
+        if state_class is None:
             raise ValueError(
-                f"StateFactory {state_schema!r} is not registered. "
-                f"Registered names: {self._state_registry.registered_names()}."
+                f"State class {name!r} is not registered. "
+                f"Registered names: {sorted(self._state_classes)}."
             )
-        return factory
+        return state_class
 
 
 __all__ = ["GraphSpecCompiler"]

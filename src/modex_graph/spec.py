@@ -28,7 +28,6 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .constants import GraphNode, NodeTrigger, SchedulerKind
-from .state import StateSchema
 
 
 class NodeSpec(BaseModel):
@@ -87,11 +86,8 @@ class GraphSpec(BaseModel):
     GraphEngine`. `GraphSpecCompiler` and `TopologyValidator` are P2 (out
     of scope here).
 
-    `state_schema` supports two reference modes (ticket 08):
-    - Inline: `state_schema = StateSchema(fields=[...])` — schema embedded
-      in the spec.
-    - Registered: `state_schema = "my_schema"` — name looked up in a
-      `StateRegistry` at compile time.
+    `state_class` names a `GraphState` subclass in the compiler's injected
+    state-class mapping.
 
     Basic structural validation is done here (no duplicate node names, at
     least one node, at least one entry edge from `GraphNode.START`). Full
@@ -104,7 +100,7 @@ class GraphSpec(BaseModel):
     name: str
     nodes: list[NodeSpec] = Field(default_factory=list)
     edges: list[EdgeSpec] = Field(default_factory=list)
-    state_schema: StateSchema | str
+    state_class: str
     scheduler: SchedulerKind = SchedulerKind.LINEAR
     version: str = "1.0"
     metadata: dict[str, Any] = Field(default_factory=dict)

@@ -82,18 +82,30 @@ class CompiledGraph(Node[S]):
         """Run this graph as a node. Delegates to `GraphEngine.run_async`.
 
         ``integrated_input`` is accepted to satisfy the ``Node.execute``
-        contract but ignored — the subgraph runs its own engine loop which
-        manages its own input integration internally.
+        contract but is ignored — the subgraph runs its own engine loop
+        which manages its own input integration internally.
 
         The subgraph shares `ctx.state` / `ctx.runtime` / `ctx.user_data`
         with the parent. The subgraph's terminal node writes its result to
         a state field; the parent reads it after this `execute` returns.
+
+        The dispatch handler, current_instance, and current_invocation are
+        saved and restored so the inner scheduler does not clobber the
+        outer scheduler's routing state.
         """
-        # Imported here to avoid a circular import at module load.
         from .engine import GraphEngine
 
+        saved_dispatch_handler = ctx._dispatch_handler
+        saved_current_instance = ctx._current_instance
+        saved_current_invocation = ctx.current_invocation
+
         engine: GraphEngine[S] = GraphEngine(self)
-        await engine.run_async(ctx)
+        try:
+            await engine.run_async(ctx)
+        finally:
+            ctx.set_dispatch_handler(saved_dispatch_handler)
+            ctx.set_current_instance(saved_current_instance)
+            ctx.current_invocation = saved_current_invocation
         return None
 
     # ── Edge lookup helpers (used by GraphEngine) ──────────────────────

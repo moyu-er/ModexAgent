@@ -13,10 +13,10 @@ Provides:
   `GraphSpec.model_validate_json()`. Uses `default_id_generator()` for
   Snowflake IDs.
 
-Follows the EXACT pattern of `dispatch_store.py` / `deliver_store.py`: ABC +
-InMemory + SQLite, `now_ms()` from `dispatch_store`, centralized table/column
-constants, `CREATE TABLE IF NOT EXISTS`, `?` placeholders,
-`check_same_thread=False`, `close()` method.
+Follows the same store pattern as `deliver_store.py`: ABC +
+InMemory + SQLite, centralized table/column
+constants, `CREATE TABLE IF NOT EXISTS`, `?` placeholders. The SQLite
+adapter takes a caller-owned `sqlite3.Connection` and never closes it.
 
 Per ticket 08: `GraphSpec` is the declarative, fully-serializable graph
 description — the persistence unit. The full chain is
@@ -31,11 +31,10 @@ import sqlite3
 from abc import ABC, abstractmethod
 
 from .id_generator import default_id_generator
-from .persistence.dispatch_store import now_ms
+from .persistence._time import now_ms
 from .spec import GraphSpec
 
 # ── Table / column name constants ─────────────────────────────────────────
-# Centralized (rule 14) — same pattern as dispatch_store.py / deliver_store.py.
 # The DDL/DML statements below are assembled from these constants; all data
 # values go through `?` parameter placeholders.
 
@@ -54,8 +53,9 @@ class GraphSpecStore(ABC):
     The store is keyed by `spec_id` — a Snowflake ID (BIGINT). A secondary
     unique key `(name, version)` allows lookup by human-readable identifier.
 
-    All methods are synchronous. The bot factory / spec loader calls these
-    from non-async contexts (startup, config reload).
+    All methods are synchronous and must be called from the event-loop
+    thread only. The caller owns the ``sqlite3.Connection`` and manages its
+    lifetime — the store never closes it.
 
     Implementations:
 
@@ -194,18 +194,14 @@ class SqliteGraphSpecStore(GraphSpecStore):
     key — application-side ID generation, not SQLite AUTOINCREMENT, because
     Snowflake IDs are monotonic across processes).
 
-    The store holds a single `sqlite3.Connection` for its lifetime.
-    `check_same_thread=False` allows the connection to be used from the
-    event-loop thread or a thread-pool worker. Access is serialized by the
-    GIL and the synchronous call site — no concurrent writes.
-
-    For `:memory:` databases, the schema and data live as long as the store
-    instance. For file paths, data persists across process restarts.
+    The store uses a single caller-owned ``sqlite3.Connection`` for its
+    lifetime. The caller creates the connection (with ``check_same_thread``
+    set as needed) and passes it to all stores sharing one workspace DB;
+    the store never closes it.
     """
 
-    def __init__(self, db_path: str) -> None:
-        self._db_path = db_path
-        self._conn = sqlite3.connect(db_path, check_same_thread=False)
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._conn = connection
         self._init_schema()
 
     def _init_schema(self) -> None:
@@ -279,14 +275,6 @@ class SqliteGraphSpecStore(GraphSpecStore):
             (spec_id,),
         )
         self._conn.commit()
-
-    def close(self) -> None:
-        """Close the underlying SQLite connection.
-
-        Not part of the `GraphSpecStore` ABC — concrete resource cleanup for
-        the SQLite adapter. Safe to call multiple times.
-        """
-        self._conn.close()
 
 
 __all__ = [

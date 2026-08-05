@@ -111,7 +111,8 @@ class GraphContext[S: "GraphState"]:
     ) -> None:
         self.state: S = state
         self.runtime: GraphRuntime = runtime
-        # Coordinator is required, always present. Drives node lifecycle.
+        # Coordinator: deliver routing + recovery queries. Lifecycle is
+        # on ctx.node_state_store (property delegating to coordinator).
         self.coordinator: GraphPersistenceCoordinator = coordinator
         self.user_data: Any = user_data
         self.scheduler_kind: SchedulerKind = scheduler_kind

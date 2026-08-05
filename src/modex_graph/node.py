@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING, Any
 
 from typing_extensions import TypeVar
 
-from .constants import GraphNode, NodeTrigger
+from .constants import DeliverConsumptionStatus, GraphNode, NodeTrigger
 from .exceptions import GraphBubbleUp, GraphInterrupt, RoutingError
 from .integration import (
     DefaultInputIntegrator,
@@ -44,7 +44,6 @@ from .integration import (
     IntegratedInput,
     IntegratedPayload,
 )
-from .persistence import DeliverStore
 
 if TYPE_CHECKING:
     from .compiled_graph import CompiledGraph
@@ -71,19 +70,13 @@ class Node[S: "GraphState"](ABC):
 
     - `input_integrator: InputIntegrator` — default `DefaultInputIntegrator()`.
       Subclasses may override with a custom integrator.
-    - `deliver_store: DeliverStore | None` — default `None` (in-memory
-      accumulation only). Set to `InMemoryDeliverStore` or
-      `SqliteDeliverStore` for persistence.
     """
 
     name: str = ""
     trigger: NodeTrigger | None = None
 
     # ── Deliver/submit attributes ───────────────────────────────────
-    # `input_integrator` has a real runtime default (DefaultInputIntegrator
-    # instance). `deliver_store` defaults to None (in-memory accumulation).
     input_integrator: InputIntegrator = DefaultInputIntegrator()
-    deliver_store: DeliverStore | None = None
 
     # Max retries for undelivered detection. If a node's `execute`
     # produces no delivers, the framework retries with error feedback injected
@@ -92,9 +85,9 @@ class Node[S: "GraphState"](ABC):
     max_retry: int = 3
 
     # Per-execution state (reset by `run`). `_pending_delivers` and
-    # `_submit_result` are the only instance attributes — they are reset at
-    # the start of each `run()` call. NOT concurrency-safe — a single Node
-    # instance shared across concurrent executions would race.
+    # `_submit_result` are reset at the start of each `run()` call.
+    # NOT concurrency-safe — a single Node instance shared across
+    # concurrent executions would race.
     _pending_delivers: list[tuple[Any, str | None]] | None = None
     _submit_result: dict[str, list[Any]] = {}
     # Topology reference (per-execution, set by `run(graph=...)`). Schedulers
@@ -127,7 +120,7 @@ class Node[S: "GraphState"](ABC):
 
     # ── Deliver/submit dual-method API ───────────────────────
 
-    # ── Coordinator-driven lifecycle ─────────────────────────
+    # ── Store-driven lifecycle (via ctx.node_state_store) ─────
 
     async def run(
         self,
@@ -135,7 +128,7 @@ class Node[S: "GraphState"](ABC):
         *,
         graph: CompiledGraph[S] | None = None,
     ) -> None:
-        """Framework entry point. Coordinator-driven lifecycle:
+        """Framework entry point. Store-driven lifecycle via ctx.node_state_store:
 
         begin → integrate → execute (with undelivered detection retry) →
         complete/cancel/suspend/crash → finalize.
@@ -191,10 +184,9 @@ class Node[S: "GraphState"](ABC):
 
         # Resume check — before begin_invocation (read-only query).
         # If the latest invocation is suspended, this is a resume from
-        # suspend — use the snapshot as integrated input and skip
-        # re-consuming delivers (they were already consumed by the
-        # suspended invocation). An empty state_json ({}) is a valid
-        # checkpoint and must remain distinguishable from "not suspended".
+        # suspend — use the snapshot as integrated input base, then
+        # append any PENDING delivers that arrived after suspend
+        # (CONSUMED_PENDING are skipped — already consumed pre-suspend).
         prev = store.load_latest(self.name)
         is_resume = prev is not None and prev.suspended
 
@@ -206,7 +198,6 @@ class Node[S: "GraphState"](ABC):
         self._graph_ref = graph
 
         try:
-            # Integrate (may throw — covered by crash/finalize).
             if is_resume:
                 assert prev is not None
                 integrated = self.input_integrator.integrate(
@@ -217,6 +208,31 @@ class Node[S: "GraphState"](ABC):
                         )
                     ]
                 )
+                new_delivers = [
+                    d for d in coordinator.collect_consumable_delivers(
+                        self.name, invocation.invocation_id
+                    )
+                    if d.status == DeliverConsumptionStatus.PENDING
+                ]
+                if new_delivers:
+                    coordinator.mark_delivers_consumed(
+                        self.name,
+                        [r.deliver_id for r in new_delivers],
+                        invocation.invocation_id,
+                    )
+                    new_payloads = [
+                        IntegratedPayload(
+                            source_node=r.source_node,
+                            content=r.content,
+                        )
+                        for r in new_delivers
+                    ]
+                    integrated = self.input_integrator.integrate(
+                        [IntegratedPayload(
+                            source_node="__resume__",
+                            content=prev.state_json,
+                        )] + new_payloads
+                    )
             else:
                 delivers = coordinator.collect_consumable_delivers(
                     self.name, invocation.invocation_id
@@ -401,8 +417,6 @@ class Node[S: "GraphState"](ABC):
                 },
             )
 
-        # LINEAR-only: scheduler reads this for next-node selection. PARALLEL
-        # uses ctx.dispatch. Kept as a fallback for custom submit overrides.
         self._submit_result = groups
 
     def submit(self, ctx: GraphContext[S]) -> None:
@@ -414,10 +428,6 @@ class Node[S: "GraphState"](ABC):
         payload.
         """
         self._submit(ctx)
-
-    @property
-    def result(self) -> dict[str, list[Any]]:
-        return self._submit_result
 
 
 __all__ = ["Node", "S"]
