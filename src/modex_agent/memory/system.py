@@ -62,7 +62,6 @@ def create_memory_system(
     archive_agent: ArchiveGenerator | None = None,
     archive_storage: DirArchiveStorage | None = None,
     core_memory_consolidator: CoreMemoryConsolidatorBase | None = None,
-    archive_trigger_callback: Callable[[MemoryContext], Awaitable[None]] | None = None,
     token_estimator: TokenEstimator | None = None,
     store_registry: MemoryStoreRegistry | None = None,
     compactor: Any | None = None,
@@ -90,7 +89,6 @@ def create_memory_system(
         archive_agent=archive_agent,
         archive_storage=archive_storage,
         core_memory_consolidator=core_memory_consolidator,
-        archive_trigger_callback=archive_trigger_callback,
         token_estimator=token_estimator,
         compactor=compactor,
     )
