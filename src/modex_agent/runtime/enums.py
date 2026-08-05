@@ -161,18 +161,3 @@ class TurnCustomKey(StrEnum):
     # SyntheticUserMessageStrategy — Path B) to inject a synthetic user message
     # after tool results.
     TOOL_MEDIA_CACHE = "_tool_media_cache"
-    # Probe state machine for TodoCompletionProbeHook: {"fp": str, "count": int}.
-    # Transient ("_"-prefix ⇒ never persisted in snapshots); reclaimed when the
-    # turn's ReActTurnState is rebuilt. Tracks the last-probed active-todo
-    # fingerprint so each distinct list is probed at most once per turn.
-    TODO_PROBE = "_todo_probe"
-    # Per-turn snapshot of history (length + first-message fingerprint) used by
-    # CompactionReminderHook to detect session cleanup within the current turn.
-    # Transient ("_"-prefix ⇒ never persisted in snapshots).
-    # Value: {"len": int, "fp": str | None}.
-    #
-    # Known limitation: per-turn scope means cleanup that occurs on the LAST
-    # iteration of a turn (after which the agent ends) cannot be detected by
-    # the NEXT turn — the snapshot is destroyed when the turn's ReActTurnState
-    # is rebuilt. A future persistence-backed version can close this gap.
-    COMPACTION_PREV_SNAPSHOT = "_compaction_prev_snapshot"

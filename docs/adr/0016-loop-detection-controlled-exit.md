@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-07-07
 - **Revised:** 2026-07-10 — 检测语义由「内容循环 OR 工具循环」改为「内容相似 AND 工具相同」的合取判定（见 §4）。原 OR 方案对正当的重复步骤（多步确认、迭代探查）误报过多；合取要求两个信号在同一段连续窗口上同时成立才介入。
-- **Related:** ADR-0008（审批主 agent 镜像与 sanitizer）、`TodoCompletionProbeHook`（`src/modex_agent/tools/standard/todo_probe.py`）、`AgentControlError` 退出模型（`src/modex_agent/control/exceptions.py`）
+- **Related:** ADR-0008（审批主 agent 镜像与 sanitizer）、`AgentControlError` 退出模型（`src/modex_agent/control/exceptions.py`）
 
 ## Context
 
@@ -14,7 +14,7 @@
 1. **内容循环**：连续多次 assistant 输出高度相似甚至相同的纯文本回复（无工具调用）。
 2. **工具循环**：连续多次调用**同名 + 同参数**的工具（例如反复 `read` 同一个 path、反复 `ls` 同一目录）。
 
-现有机制无法检测：`max_iterations` 只数迭代次数，不关心内容是否重复；`TodoCompletionProbeHook` 只在“有未完成 todo 且想结束 turn”时介入，与死循环无关。
+现有机制无法检测：`max_iterations` 只数迭代次数，不关心内容是否重复；已有的 todo 相关机制只在“有未完成 todo 且想结束 turn”时介入，与死循环无关。
 
 ### 现有架构契合点
 
@@ -233,7 +233,7 @@ hooks:
 
 ### 6. 注册
 
-`LoopDetectionHook` 在每个 ReAct pool 上无条件装配（默认 `enabled=true`，可经配置关闭），与 `TodoCompletionProbeHook` 的装配方式一致（在 pool builder 里 `HookSpec(hook=LoopDetectionHook(...))`）。配置实例在装配时传入 hook 构造函数。
+`LoopDetectionHook` 在每个 ReAct pool 上无条件装配（默认 `enabled=true`，可经配置关闭），在 pool builder 里 `HookSpec(hook=LoopDetectionHook(...))`。配置实例在装配时传入 hook 构造函数。
 
 > **v1 实现说明：** 当前版本在 `DefaultAgentFactory.create_agent` 中无条件装配 `LoopDetectionHook()`，覆盖 main agent 与 subagent。配置来源为构造函数默认值；待产品确认需要 per-agent 调参后，再接入 `HooksConfig` / pool-builder 传参。
 

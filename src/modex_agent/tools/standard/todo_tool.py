@@ -21,13 +21,12 @@ from modex_agent.core.types import TodoStatus
 from modex_agent.runtime.store import TodoItem, TodoStore
 
 #: The statuses that count as "active" (still to be done). Shared single source
-#: of truth — ``todo_tool`` (dict view) and ``todo_probe`` (filter) both use it.
+#: of truth — used by ``todo_tool`` and ``TodoReorientationHook``.
 ACTIVE_TODO_STATUSES: tuple[TodoStatus, ...] = (TodoStatus.PENDING, TodoStatus.IN_PROGRESS)
 
 #: Guidance prefix prepended to the active-view JSON in every tool result, so the
 #: model treats the list as an ordered work queue rather than a bare data dump.
-#: Shared by ``todo_write``/``todo_read`` (and therefore by the probe hook, whose
-#: injected ``todo_read`` call produces the same result).
+#: Shared by ``todo_write``/``todo_read``.
 ACTIVE_VIEW_PREFIX = (
     "Current unfinished tasks — work through them in the listed order "
     "(mark each in_progress when you start it, completed/cancelled when done):"
