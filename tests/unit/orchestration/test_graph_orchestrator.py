@@ -26,18 +26,20 @@ Covers:
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Any
 
 import pytest
 from pydantic import BaseModel
 
 from modex_agent.orchestration import GraphOrchestrator
 from modex_graph import (
+    CoordinatorFactory,
     EdgeSpec,
     FunctionNodeFactory,
     GraphContext,
     GraphInstance,
     GraphInstanceStatus,
+    GraphInstanceStore,
     GraphMetadata,
     GraphNode,
     GraphPersistenceCoordinator,
@@ -46,16 +48,11 @@ from modex_graph import (
     InMemoryGraphInstanceStore,
     InMemoryGraphSpecStore,
     IntegratedInput,
-    LastValue,
     Node,
     NodeFactory,
     NodeRegistry,
-    NodeResult,
     NodeSpec,
-    SimpleStateFactory,
-    StateFieldSpec,
-    StateRegistry,
-    StateSchema,
+    NullCoordinatorFactory,
     create_null_coordinator,
 )
 
@@ -65,7 +62,7 @@ from modex_graph import (
 class CounterState(GraphState):
     """Simple state with a counter for testing."""
 
-    count: Annotated[int, LastValue] = 0
+    count: int = 0
 
 
 def _increment(ctx: GraphContext[Any]) -> None:
@@ -79,9 +76,9 @@ def _add_five(ctx: GraphContext[Any]) -> None:
 class _FailingNode(Node[CounterState]):
     """Node that raises a RuntimeError during execute."""
 
-    def execute(
+    async def execute(
         self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-    ) -> NodeResult:
+    ) -> None:
         raise RuntimeError("boom")
 
 
@@ -98,12 +95,12 @@ class _FailingFactory(NodeFactory):
 class _InterruptNode(Node[CounterState]):
     """Node that calls ``ctx.interrupt()`` to suspend the graph."""
 
-    def execute(
+    async def execute(
         self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-    ) -> NodeResult:
+    ) -> None:
         ctx.state.count += 1
         ctx.interrupt("approval_needed")
-        return NodeResult()  # unreachable
+        return None  # unreachable
 
 
 class _InterruptFactory(NodeFactory):
@@ -126,22 +123,13 @@ def _function_registry() -> NodeRegistry:
     return registry
 
 
-def _state_registry() -> StateRegistry:
-    registry = StateRegistry()
-    registry.register("counter", SimpleStateFactory(CounterState))
-    return registry
-
-
-def _inline_schema() -> StateSchema:
-    return StateSchema(
-        name="counter",
-        fields=[StateFieldSpec(name="count", field_type="int", default=0)],
-    )
+def _state_classes() -> dict[str, type[GraphState]]:
+    return {"counter": CounterState}
 
 
 def _simple_spec(
     *,
-    state_schema: StateSchema | str = "counter",
+    state_class: str = "counter",
     name: str = "test_graph",
 ) -> GraphSpec:
     return GraphSpec(
@@ -153,25 +141,23 @@ def _simple_spec(
             EdgeSpec(source=GraphNode.START, target="entry"),
             EdgeSpec(source="entry", target=GraphNode.END),
         ],
-        state_schema=state_schema,
+        state_class=state_class,
     )
 
 
 def _make_orchestrator(
     *,
     node_registry: NodeRegistry | None = None,
-    state_registry: StateRegistry | None = None,
+    state_classes: dict[str, type[GraphState]] | None = None,
     spec_store: InMemoryGraphSpecStore | None = None,
     instance_store: InMemoryGraphInstanceStore | None = None,
 ) -> tuple[GraphOrchestrator, InMemoryGraphSpecStore, InMemoryGraphInstanceStore]:
     """Build an orchestrator with in-memory stores + the test registries."""
     spec_store = spec_store if spec_store is not None else InMemoryGraphSpecStore()
-    instance_store = (
-        instance_store if instance_store is not None else InMemoryGraphInstanceStore()
-    )
+    instance_store = instance_store if instance_store is not None else InMemoryGraphInstanceStore()
     orchestrator = GraphOrchestrator(
         node_registry=node_registry if node_registry is not None else _function_registry(),
-        state_registry=state_registry if state_registry is not None else _state_registry(),
+        state_classes=state_classes if state_classes is not None else _state_classes(),
         spec_store=spec_store,
         instance_store=instance_store,
     )
@@ -183,7 +169,7 @@ def _save_spec(spec_store: InMemoryGraphSpecStore, spec: GraphSpec) -> int:
 
 
 def _load_status(store: InMemoryGraphInstanceStore, gid: int) -> str:
-    instance = store.load_by_id(gid)
+    instance = store.load(gid)
     assert instance is not None, f"Instance {gid} not found in store"
     return instance.status
 
@@ -218,14 +204,6 @@ class TestCreateAndRun:
 
         assert state.count == 1
 
-    async def test_inline_state_schema_runs_to_completion(self) -> None:
-        orch, spec_store, instance_store = _make_orchestrator()
-        spec_id = _save_spec(spec_store, _simple_spec(state_schema=_inline_schema()))
-
-        gid = await orch.create_and_run(spec_id)
-
-        assert _load_status(instance_store, gid) == GraphInstanceStatus.COMPLETED.value
-
     async def test_unknown_spec_id_raises_value_error(self) -> None:
         orch, _, _ = _make_orchestrator()
 
@@ -239,7 +217,7 @@ class TestCreateAndRun:
         parent = 12345
         gid = await orch.create_and_run(spec_id, parent_instance_id=parent)
 
-        instance = instance_store.load_by_id(gid)
+        instance = instance_store.load(gid)
         assert instance is not None
         assert instance.parent_instance_id == parent
 
@@ -341,7 +319,7 @@ class TestCrashRecoveryEviction:
 
         gid = await orch.create_and_run(spec_id)
         old_coordinator = _get_coordinator(orch, gid)
-        instance_store.update_status(gid, GraphInstanceStatus.CRASHED.value)
+        instance_store.update_status(gid, GraphInstanceStatus.CRASHED)
 
         recovered = await orch.recover_crashed()
 
@@ -366,7 +344,7 @@ class TestCrashRecoveryEviction:
             original_close()
 
         old_coordinator.close = tracking_close  # type: ignore[method-assign]
-        instance_store.update_status(gid, GraphInstanceStatus.CRASHED.value)
+        instance_store.update_status(gid, GraphInstanceStatus.CRASHED)
 
         await orch.recover_crashed()
 
@@ -389,7 +367,7 @@ class TestE2ELifecycle:
         assert gid in orch._active_instances
 
         # Simulate crash
-        instance_store.update_status(gid, GraphInstanceStatus.CRASHED.value)
+        instance_store.update_status(gid, GraphInstanceStatus.CRASHED)
 
         # Recover (evicts old, registers new)
         recovered = await orch.recover_crashed()
@@ -429,7 +407,7 @@ class TestControlDelegation:
         spec_id = _save_spec(spec_store, _simple_spec())
 
         gid = await orch.create_and_run(spec_id)
-        instance_store.update_status(gid, GraphInstanceStatus.PAUSED.value)
+        instance_store.update_status(gid, GraphInstanceStatus.PAUSED)
 
         await orch.resume(gid)
 
@@ -454,7 +432,7 @@ class TestControlDelegation:
         coordinator = _get_coordinator(orch, gid)
         store = coordinator.get_deliver_store("entry")
         assert store is not None
-        pending = store.query_pending(gid, "entry")
+        pending = store.query_consumable(gid, "entry")
         assert len(pending) == 1
         assert pending[0].content == "hello"
         assert pending[0].source_node == "__external__"
@@ -476,7 +454,7 @@ class TestRecoverCrashed:
         spec_id = _save_spec(spec_store, _simple_spec())
 
         gid = await orch.create_and_run(spec_id)
-        instance_store.update_status(gid, GraphInstanceStatus.CRASHED.value)
+        instance_store.update_status(gid, GraphInstanceStatus.CRASHED)
 
         recovered = await orch.recover_crashed()
 
@@ -498,7 +476,7 @@ class TestRecoverCrashed:
 
         gid_completed = await orch.create_and_run(spec_id)
         gid_paused = await orch.create_and_run(spec_id)
-        instance_store.update_status(gid_paused, GraphInstanceStatus.PAUSED.value)
+        instance_store.update_status(gid_paused, GraphInstanceStatus.PAUSED)
 
         recovered = await orch.recover_crashed()
 
@@ -523,14 +501,14 @@ class TestErrorHandling:
                 EdgeSpec(source=GraphNode.START, target="entry"),
                 EdgeSpec(source="entry", target=GraphNode.END),
             ],
-            state_schema="counter",
+            state_class="counter",
         )
         spec_id = _save_spec(spec_store, spec)
 
         with pytest.raises(RuntimeError, match="boom"):
             await orch.create_and_run(spec_id)
 
-        instances = instance_store.load_by_status(GraphInstanceStatus.CRASHED.value)
+        instances = instance_store.load_by_status(GraphInstanceStatus.CRASHED)
         assert len(instances) == 1
         assert instances[0].spec_id == spec_id
 
@@ -546,7 +524,7 @@ class TestErrorHandling:
                 EdgeSpec(source=GraphNode.START, target="entry"),
                 EdgeSpec(source="entry", target=GraphNode.END),
             ],
-            state_schema="counter",
+            state_class="counter",
         )
         spec_id = _save_spec(spec_store, spec)
 
@@ -555,7 +533,7 @@ class TestErrorHandling:
         with pytest.raises(GraphInterrupt):
             await orch.create_and_run(spec_id)
 
-        instances = instance_store.load_by_status(GraphInstanceStatus.PAUSED.value)
+        instances = instance_store.load_by_status(GraphInstanceStatus.PAUSED)
         assert len(instances) == 1
         assert instances[0].spec_id == spec_id
 
@@ -579,7 +557,7 @@ class TestErrorHandling:
                 EdgeSpec(source=GraphNode.START, target="entry"),
                 EdgeSpec(source="entry", target=GraphNode.END),
             ],
-            state_schema="counter",
+            state_class="counter",
         )
         spec_id = _save_spec(spec_store, spec)
 
@@ -609,11 +587,11 @@ class TestEngineFactoryAdapter:
         spec_id = _save_spec(spec_store, _simple_spec())
 
         gid = await orch.create_and_run(spec_id)
-        metadata = instance_store.load_by_id(gid)
+        metadata = instance_store.load(gid)
         assert metadata is not None
 
         orch.unregister_instance(gid)
-        instance_store.update_status(gid, GraphInstanceStatus.CRASHED.value)
+        instance_store.update_status(gid, GraphInstanceStatus.CRASHED)
         instance = GraphInstance(metadata, create_null_coordinator(gid))
         await orch._run_existing_instance(instance)
 
@@ -626,7 +604,7 @@ class TestEngineFactoryAdapter:
         spec_id = _save_spec(spec_store, _simple_spec())
 
         gid = await orch.create_and_run(spec_id)
-        metadata = instance_store.load_by_id(gid)
+        metadata = instance_store.load(gid)
         assert metadata is not None
         orch.unregister_instance(gid)
 
@@ -647,10 +625,6 @@ class TestEngineFactoryAdapter:
                 parent_instance_id=None,
                 parent_node=None,
                 status=GraphInstanceStatus.RUNNING,
-                instance_seq=0,
-                iteration_count=0,
-                activated_sources={},
-                pending_dispatches={},
             ),
             create_null_coordinator(1),
         )
@@ -676,7 +650,7 @@ class TestMultiNodeGraph:
                 EdgeSpec(source="a", target="b"),
                 EdgeSpec(source="b", target=GraphNode.END),
             ],
-            state_schema="counter",
+            state_class="counter",
         )
         spec_id = _save_spec(spec_store, spec)
 
@@ -684,3 +658,69 @@ class TestMultiNodeGraph:
         await orch.create_and_run(spec_id, initial_state=state)
 
         assert state.count == 6
+
+
+# -- CoordinatorFactory injection ----------------------------------------
+
+
+class _RecordingFactory(CoordinatorFactory):
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, GraphInstanceStore]] = []
+        self._null = NullCoordinatorFactory()
+
+    def create(
+        self,
+        graph_instance_id: int,
+        instance_store: GraphInstanceStore,
+    ) -> GraphPersistenceCoordinator:
+        self.calls.append((graph_instance_id, instance_store))
+        return self._null.create(graph_instance_id, instance_store)
+
+
+class TestCoordinatorFactoryInjection:
+    async def test_create_and_run_uses_injected_factory(self) -> None:
+        instance_store = InMemoryGraphInstanceStore()
+        spec_store = InMemoryGraphSpecStore()
+        factory = _RecordingFactory()
+        orch = GraphOrchestrator(
+            node_registry=_function_registry(),
+            state_classes=_state_classes(),
+            spec_store=spec_store,
+            instance_store=instance_store,
+            coordinator_factory=factory,
+        )
+        spec_id = _save_spec(spec_store, _simple_spec())
+
+        gid = await orch.create_and_run(spec_id)
+
+        assert len(factory.calls) == 1
+        called_gid, called_store = factory.calls[0]
+        assert called_gid == gid
+        assert called_store is instance_store
+
+    async def test_default_factory_is_null(self) -> None:
+        orch, _, _ = _make_orchestrator()
+        assert isinstance(orch._coordinator_factory, NullCoordinatorFactory)
+
+    async def test_recovery_uses_same_factory_as_create(self) -> None:
+        instance_store = InMemoryGraphInstanceStore()
+        spec_store = InMemoryGraphSpecStore()
+        factory = _RecordingFactory()
+        orch = GraphOrchestrator(
+            node_registry=_function_registry(),
+            state_classes=_state_classes(),
+            spec_store=spec_store,
+            instance_store=instance_store,
+            coordinator_factory=factory,
+        )
+        spec_id = _save_spec(spec_store, _simple_spec())
+        gid = await orch.create_and_run(spec_id)
+        instance_store.update_status(gid, GraphInstanceStatus.CRASHED)
+
+        await orch.recover_crashed()
+
+        assert len(factory.calls) == 2
+        assert factory.calls[0][0] == gid
+        assert factory.calls[1][0] == gid
+        assert factory.calls[0][1] is instance_store
+        assert factory.calls[1][1] is instance_store

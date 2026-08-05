@@ -11,31 +11,30 @@ from modex_graph import (
     GraphNode,
     IntegratedInput,
     Node,
-    NodeResult,
 )
 
 
 class _RecordNameNode(Node[CounterState]):
     """Records its name into state.messages, delivers to default target."""
 
-    def execute(
+    async def execute(
         self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-    ) -> NodeResult:
+    ) -> None:
         ctx.state.messages = ctx.state.messages + [self.name]
         self.deliver(None, None, ctx)
-        return NodeResult()
+        return None
 
 
 class _StateUpdateNode(Node[CounterState]):
-    """Returns NodeResult(state_update={"messages": [label]})."""
-
     def __init__(self, label: str) -> None:
         self.label = label
 
-    def execute(
+    async def execute(
         self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-    ) -> NodeResult:
-        return NodeResult(state_update={"messages": [self.label]})
+    ) -> None:
+        ctx.state.messages.append(self.label)
+        self.deliver(None, None, ctx)
+        return None
 
 
 class TestDefaultEdgeFallback:

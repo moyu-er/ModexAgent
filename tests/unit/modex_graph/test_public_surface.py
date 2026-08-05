@@ -12,10 +12,6 @@ def test_all_exports_importable() -> None:
         "CompiledGraph",
         "GraphEngine",
         "GraphContext",
-        "NodeResult",
-        "BaseChannel",
-        "LastValue",
-        "ReducerChannel",
         "GraphState",
         "GraphRuntime",
         "GraphBubbleUp",
@@ -23,8 +19,6 @@ def test_all_exports_importable() -> None:
         "GraphDrained",
         "ParentCommand",
         "GraphNode",
-        "register_codec",
-        "Codec",
         "RoutingError",
         "GraphRecursionError",
     }
@@ -42,17 +36,13 @@ def test_graph_node_sentinels() -> None:
     assert isinstance(GraphNode.END, str)
 
 
-def test_node_abc_has_def_execute() -> None:
+def test_node_abc_has_async_execute() -> None:
     import inspect
 
     from modex_graph import Node
 
-    # The ABC method must be declared as `def`, not `async def`.
     execute = Node.execute
-    assert not inspect.iscoroutinefunction(execute), (
-        "Node.execute must be declared as `def` (not `async def`) per ADR-0033 D2. "
-        "Subclasses may override with `async def`."
-    )
+    assert inspect.iscoroutinefunction(execute)
 
 
 def test_compiled_graph_is_node_subclass() -> None:

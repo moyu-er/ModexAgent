@@ -21,7 +21,6 @@ from modex_agent.core.agent import AgentContext
 from modex_graph.engine import GraphEngine
 from modex_graph.graph import Graph
 from modex_graph.exceptions import GraphInterrupt
-from modex_graph.result import NodeResult
 
 from modex_agent.core.tool_manager import InMemoryToolManager
 from modex_agent.core.types import ToolCall

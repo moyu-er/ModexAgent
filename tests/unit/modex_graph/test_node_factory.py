@@ -9,6 +9,7 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from modex_graph import (
+    GraphContext,
     GraphState,
     IntegratedInput,
     Node,
@@ -27,10 +28,12 @@ class _EchoNode(Node[GraphState]):
     def __init__(self, message: str = "default") -> None:
         self.message = message
 
-    def execute(self, ctx: Any, integrated_input: IntegratedInput) -> Any:  # type: ignore[override]
-        from modex_graph import NodeResult
-
-        return NodeResult(state_update={})
+    async def execute(
+        self,
+        ctx: GraphContext[GraphState],
+        integrated_input: IntegratedInput,
+    ) -> None:
+        return None
 
 
 class _EchoConfig(BaseModel):

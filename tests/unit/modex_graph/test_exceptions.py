@@ -16,7 +16,6 @@ from modex_graph import (
     GraphRuntime,
     IntegratedInput,
     Node,
-    NodeResult,
     ParentCommand,
 )
 
@@ -47,11 +46,11 @@ class TestEngineDoesNotSwallow:
 
     async def test_engine_propagates_graphinterrupt(self) -> None:
         class InterruptNode(Node[CounterState]):
-            def execute(
+            async def execute(
                 self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-            ) -> NodeResult:
+            ) -> None:
                 ctx.interrupt({"approval": "needed"})
-                return NodeResult()
+                return None
 
         g: Graph[CounterState] = Graph()
         g.add_node("n", InterruptNode())
@@ -65,9 +64,9 @@ class TestEngineDoesNotSwallow:
 
     async def test_engine_propagates_graphdrained(self) -> None:
         class DrainNode(Node[CounterState]):
-            def execute(
+            async def execute(
                 self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-            ) -> NodeResult:
+            ) -> None:
                 raise GraphDrained()
 
         g: Graph[CounterState] = Graph()
@@ -81,9 +80,9 @@ class TestEngineDoesNotSwallow:
 
     async def test_engine_propagates_parentcommand(self) -> None:
         class ParentCmdNode(Node[CounterState]):
-            def execute(
+            async def execute(
                 self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-            ) -> NodeResult:
+            ) -> None:
                 raise ParentCommand("goto_parent")
 
         g: Graph[CounterState] = Graph()
@@ -103,11 +102,11 @@ class TestEngineDoesNotSwallow:
                 raise GraphInterrupt(value="from_before_node")
 
         class NoOpNode(Node[CounterState]):
-            def execute(
+            async def execute(
                 self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-            ) -> NodeResult:
+            ) -> None:
                 self.deliver(None, None, ctx)
-                return NodeResult()
+                return None
 
         g: Graph[CounterState] = Graph()
         g.add_node("n", NoOpNode())
@@ -127,17 +126,15 @@ class TestEngineDoesNotSwallow:
         """GraphBubbleUp raised in runtime.after_node propagates."""
 
         class DrainRuntime(GraphRuntime):
-            async def after_node(
-                self, ctx: GraphContext[CounterState], node_name: str, result: NodeResult
-            ) -> None:
+            async def after_node(self, ctx: GraphContext[CounterState], node_name: str) -> None:
                 raise GraphDrained()
 
         class NoOpNode(Node[CounterState]):
-            def execute(
+            async def execute(
                 self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-            ) -> NodeResult:
+            ) -> None:
                 self.deliver(None, None, ctx)
-                return NodeResult()
+                return None
 
         g: Graph[CounterState] = Graph()
         g.add_node("n", NoOpNode())

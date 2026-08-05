@@ -12,17 +12,18 @@ from modex_graph import (
     DeliverStore,
     DeliverStoreFactory,
     GraphInstanceStatus,
+    GraphInstanceStore,
     GraphMetadata,
-    GraphMetadataStore,
     GraphStateSnapshot,
+    InMemoryNodeStateStore,
     InvocationContext,
     InvocationStatus,
     NodeInvocationRecord,
-    NodeState,
-    NodeStateFactory,
+    NodeStateStore,
+    NullGraphInstanceStore,
+    NullNodeStateStore,
     RecoveryContext,
     SchedulerInstanceStatus,
-    SimpleNodeState,
 )
 
 
@@ -33,7 +34,7 @@ def _node_record() -> NodeInvocationRecord:
         node_name="worker",
         version=0,
         parent_version=None,
-        status=InvocationStatus.PENDING,
+        status=InvocationStatus.RUNNING,
         state_json={"input": "value"},
         created_at=1_000,
         updated_at=1_001,
@@ -47,10 +48,6 @@ def _metadata() -> GraphMetadata:
         parent_instance_id=None,
         parent_node=None,
         status=GraphInstanceStatus.RUNNING,
-        instance_seq=4,
-        iteration_count=5,
-        activated_sources={"worker": ["start"]},
-        pending_dispatches={"worker": {"start": [{"input": "value"}]}},
     )
 
 
@@ -62,12 +59,10 @@ def test_distributed_persistence_enums_have_the_specified_values() -> None:
         SchedulerInstanceStatus.COMPLETED,
     ]
     assert list(InvocationStatus) == [
-        InvocationStatus.PENDING,
         InvocationStatus.RUNNING,
         InvocationStatus.COMPLETED,
         InvocationStatus.CANCELED,
         InvocationStatus.CRASHED,
-        InvocationStatus.SUPERSEDED,
     ]
     assert list(DeliverConsumptionStatus) == [
         DeliverConsumptionStatus.PENDING,
@@ -114,60 +109,84 @@ def test_graph_persistence_value_objects_retain_recovery_and_history_data() -> N
         RecoveryContext,
         GraphStateSnapshot,
     ):
-        assert model.model_config["frozen"] is True
-        assert model.model_config["extra"] == "forbid"
+        assert model.model_config.get("frozen") is True
+        assert model.model_config.get("extra") == "forbid"
 
 
 def test_persistence_interfaces_are_abstract_with_the_specified_methods() -> None:
-    assert issubclass(NodeState, ABC)
-    assert issubclass(GraphMetadataStore, ABC)
-    assert issubclass(NodeStateFactory, ABC)
+    assert issubclass(NodeStateStore, ABC)
+    assert issubclass(GraphInstanceStore, ABC)
     assert issubclass(DeliverStoreFactory, ABC)
-    assert set(GraphMetadataStore.__abstractmethods__) == {"save", "load", "update_status"}
-    assert set(NodeStateFactory.__abstractmethods__) == {"create"}
+    assert set(GraphInstanceStore.__abstractmethods__) == {
+        "save",
+        "load",
+        "load_by_status",
+        "load_by_parent",
+        "update_status",
+        "delete",
+    }
     assert set(DeliverStoreFactory.__abstractmethods__) == {"create"}
 
     with pytest.raises(TypeError):
-        GraphMetadataStore()
+        GraphInstanceStore()
     with pytest.raises(TypeError):
-        NodeStateFactory()
+        NodeStateStore(0)  # type: ignore[abstract]
     with pytest.raises(TypeError):
         DeliverStoreFactory()
+
+
+def test_null_graph_instance_store_is_concrete_no_op() -> None:
+    store = NullGraphInstanceStore()
+    assert len(NullGraphInstanceStore.__abstractmethods__) == 0
+    assert store.load(0) is None
+    assert store.load_by_status(GraphInstanceStatus.CRASHED) == []
+    assert store.load_by_parent(0) == []
+    store.save(_metadata())
+    store.update_status(0, GraphInstanceStatus.PAUSED)
+    store.delete(0)
+    assert store.load(0) is None
+
+
+def test_null_node_state_store_is_concrete_no_op() -> None:
+    store = NullNodeStateStore(0)
+    assert len(NullNodeStateStore.__abstractmethods__) == 0
+    inv = store.begin_invocation("worker")
+    assert inv.invocation_id > 0
+    store.complete_invocation(inv, {})
+    assert store.load_latest("worker") is None
+    assert store.query_versions("worker") == []
+
+
+def test_in_memory_node_state_store_is_concrete() -> None:
+    store = InMemoryNodeStateStore(202)
+    assert len(InMemoryNodeStateStore.__abstractmethods__) == 0
+    inv = store.begin_invocation("worker")
+    store.complete_invocation(inv, {"value": 1})
+    assert store.load_latest("worker") is not None
+    assert store.load_latest_completed("worker") is not None
+    assert len(store.query_versions("worker")) == 1
 
 
 def test_deliver_store_factory_create_returns_required_deliver_store_type() -> None:
     assert get_type_hints(DeliverStoreFactory.create)["return"] is DeliverStore
 
 
-def test_simple_node_state_remains_concrete_with_ticket_fourteen_implementation() -> None:
-    state = SimpleNodeState()
-
-    assert SimpleNodeState.__abstractmethods__ == frozenset()
-    state.save_invocation(202, "worker", 101, 0, None, InvocationStatus.COMPLETED, {"value": 1})
-    assert state.load_invocation(202, "worker", 101) == state.load_latest(202, "worker")
-    assert state.load_latest_completed(202, "worker") == state.load_latest(202, "worker")
-    assert len(state.query_versions(202, "worker")) == 1
+# ── DeliverStore ABC + DeliverRecord fields ─────
 
 
-# ── DeliverStore ABC evolution + DeliverRecord new fields ─────
-
-
-def test_deliver_store_abc_has_eight_abstract_methods_including_new_consumption_api() -> None:
+def test_deliver_store_abc_has_active_consumption_api() -> None:
     expected = {
         "accumulate",
         "query_consumable",
         "mark_consumed",
         "promote_consumed",
-        "query_pending",
-        "query_by_target",
-        "mark_submitted",
-        "clear",
     }
     assert set(DeliverStore.__abstractmethods__) == expected
 
 
-def test_deliver_record_has_ticket_thirteen_fields_with_correct_types() -> None:
+def test_deliver_record_has_active_fields_with_correct_types() -> None:
     hints = get_type_hints(DeliverRecord)
+    assert "next_node" not in hints
     assert "source_node" in hints
     assert hints["source_node"] is str
     assert "source_invocation_id" in hints
@@ -181,7 +200,6 @@ def test_deliver_record_status_defaults_to_pending_and_consumed_by_defaults_to_n
         deliver_id=1,
         graph_instance_id=202,
         node_name="worker",
-        next_node="",
         source_node="producer",
         source_invocation_id=99,
         content="payload",
@@ -200,7 +218,6 @@ def test_deliver_record_status_accepts_all_consumption_enum_values() -> None:
             deliver_id=1,
             graph_instance_id=202,
             node_name="worker",
-            next_node="",
             source_node="producer",
             source_invocation_id=99,
             content="payload",
@@ -216,15 +233,14 @@ def test_deliver_record_is_frozen_and_extra_forbid() -> None:
         deliver_id=1,
         graph_instance_id=202,
         node_name="worker",
-        next_node="",
         source_node="producer",
         source_invocation_id=99,
         content="payload",
         created_at=1_000,
         updated_at=1_000,
     )
-    assert record.model_config["frozen"] is True
-    assert record.model_config["extra"] == "forbid"
+    assert record.model_config.get("frozen") is True
+    assert record.model_config.get("extra") == "forbid"
     with pytest.raises(ValidationError):
         record.source_node = "other"  # type: ignore[misc]
     with pytest.raises(ValidationError):

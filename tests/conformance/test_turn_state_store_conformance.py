@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from modex_agent.agents.react.state import ReActRuntimeStateCodec, ReActSnapshotPayloadKey
+from modex_agent.agents.react.state import ReActRuntimeStateCodec
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.persistence import ConnectionManager, DatabaseKind
 from modex_agent.persistence.adapters.turn_state_store import SqliteTurnStateStore
@@ -40,9 +40,9 @@ def _make_snapshot(
         turn_id=turn_id,
     )
     state_payload: dict[str, Any] = {
-        ReActSnapshotPayloadKey.CURRENT_NODE.value: "tool",
-        ReActSnapshotPayloadKey.ITERATION.value: 1,
-        ReActSnapshotPayloadKey.TOOL_BATCHES.value: [],
+        "current_node": "tool",
+        "iteration": 1,
+        "tool_batches": [],
     }
     return TurnSnapshot(
         identity=identity,

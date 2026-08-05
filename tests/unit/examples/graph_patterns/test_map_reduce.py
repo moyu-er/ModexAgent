@@ -3,8 +3,7 @@
 
 Verifies:
 - `MapNode` delivers each item to the worker node.
-- `ReducerChannel` on the source field accumulates all workers'
-  `state_update` contributions in order.
+- Workers append results directly to shared state in execution order.
 - `ReduceNode` reads the accumulated list, applies reducer, and writes
   the result to `result_field`.
 - A complete split -> fan-out -> reduce graph produces the expected final
@@ -19,22 +18,11 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable
+from importlib import import_module
 from pathlib import Path
-from typing import Any, Annotated
+from typing import Any
 
-# Add `examples/` to sys.path so `graph_patterns` is importable as a
-# top-level package.
-_EXAMPLES_DIR = Path(__file__).parent.parent.parent.parent.parent / "examples"
-if str(_EXAMPLES_DIR) not in sys.path:
-    sys.path.insert(0, str(_EXAMPLES_DIR))
-
-from graph_patterns import (  # noqa: E402
-    MapNode,
-    ReduceNode,
-    build_map_reduce_graph,
-)
-
-from modex_graph import (  # noqa: E402
+from modex_graph import (
     Graph,
     GraphContext,
     GraphEngine,
@@ -43,22 +31,30 @@ from modex_graph import (  # noqa: E402
     GraphRuntime,
     GraphState,
     IntegratedInput,
-    InvocationContext,
-    LastValue,
     Node,
-    NodeResult,
     NullDeliverStoreFactory,
-    NullGraphMetadataStore,
-    NullNodeStateFactory,
-    ReducerChannel,
+    NullGraphInstanceStore,
+    NullNodeStateStore,
 )
+
+_EXAMPLES_DIR = Path(__file__).parent.parent.parent.parent.parent / "examples"
+if str(_EXAMPLES_DIR) not in sys.path:
+    sys.path.insert(0, str(_EXAMPLES_DIR))
+
+_map_reduce = import_module("graph_patterns.map_reduce")
+MapNode = _map_reduce.MapNode
+ReduceNode = _map_reduce.ReduceNode
+build_map_reduce_graph = _map_reduce.build_map_reduce_graph
 
 
 class _AutoRegCoord(GraphPersistenceCoordinator):
-    def begin_invocation(self, node_name: str) -> InvocationContext:
+    def collect_consumable_delivers(
+        self, node_name: str, invocation_id: int
+    ) -> list[Any]:
         if self.get_deliver_store(node_name) is None:
             self.register_node(node_name)
-        return super().begin_invocation(node_name)
+        return super().collect_consumable_delivers(node_name, invocation_id)
+
     def route_deliver(
         self,
         target_node: str,
@@ -71,12 +67,11 @@ class _AutoRegCoord(GraphPersistenceCoordinator):
         return super().route_deliver(target_node, content, source_node, source_invocation_id)
 
 
-
 def _make_coordinator() -> _AutoRegCoord:
     return _AutoRegCoord(
         graph_instance_id=0,
-        graph_metadata_store=NullGraphMetadataStore(),
-        default_node_state_factory=NullNodeStateFactory(),
+        instance_store=NullGraphInstanceStore(),
+        node_state_store=NullNodeStateStore(0),
         default_deliver_store_factory=NullDeliverStoreFactory(),
     )
 
@@ -84,21 +79,20 @@ def _make_coordinator() -> _AutoRegCoord:
 class SqState(GraphState):
     """State for the square-and-sum map-reduce example."""
 
-    items: Annotated[list[int], LastValue] = []
-    squares: Annotated[list[int], ReducerChannel(reducer=lambda a, b: a + b)] = []
-    total: Annotated[int, LastValue] = 0
+    items: list[int] = []
+    squares: list[int] = []
+    total: int = 0
 
 
 class SquareWorker(Node[SqState]):
-    """Squares each item in state.items, writes results via state_update."""
-
-    def execute(self, ctx: GraphContext[SqState], integrated_input: IntegratedInput) -> NodeResult:
+    async def execute(self, ctx: GraphContext[SqState], integrated_input: IntegratedInput) -> None:
         squares = [item * item for item in ctx.state.items]
+        ctx.state.squares.extend(squares)
         if squares:
             self.deliver(None, "reduce", ctx)
         else:
             self.deliver(None, GraphNode.END, ctx)
-        return NodeResult(state_update={"squares": squares})
+        return None
 
 
 def _make_ctx(state: SqState | None = None) -> GraphContext[SqState]:
@@ -109,6 +103,10 @@ def _make_ctx(state: SqState | None = None) -> GraphContext[SqState]:
     )
 
 
+def _items(state: SqState) -> list[int]:
+    return state.items
+
+
 def _build_graph(
     items: list[int],
     *,
@@ -117,7 +115,7 @@ def _build_graph(
     result_field: str = "total",
 ) -> Graph[SqState]:
     return build_map_reduce_graph(
-        items_fn=lambda s: s.items,
+        items_fn=_items,
         worker_node=SquareWorker(),
         reducer=reducer,
         source_field=source_field,
@@ -131,12 +129,12 @@ class TestMapNode:
     async def test_delivers_all_items_to_worker(self) -> None:
         """items_fn returns N items -> N delivers to worker."""
         map_node = MapNode(
-            items_fn=lambda s: s.items,
+            items_fn=_items,
             worker_node="worker",
         )
         ctx = _make_ctx(SqState(items=[1, 2, 3, 4, 5]))
         await map_node.run(ctx)
-        result = map_node.result
+        result = map_node._submit_result
         assert "worker" in result
         assert len(result["worker"]) == 5
 
@@ -145,21 +143,19 @@ class TestMapNode:
         from modex_graph import RoutingError
 
         map_node = MapNode(
-            items_fn=lambda s: s.items,
+            items_fn=_items,
             worker_node="worker",
         )
         ctx = _make_ctx(SqState(items=[]))
         try:
             await map_node.run(ctx)
             # If no RoutingError, check if it delivered anything
-            assert not map_node.result or "worker" not in map_node.result
+            assert not map_node._submit_result or "worker" not in map_node._submit_result
         except RoutingError:
             pass  # Expected — no items means no delivers
 
 
-class TestReducerChannelAccumulation:
-    """ReducerChannel on source field accumulates all contributions in order."""
-
+class TestWorkerAccumulation:
     async def test_folds_worker_contributions_in_execution_order(self) -> None:
         """Worker squares [3, 1, 2] -> squares = [9, 1, 4]."""
         compiled = _build_graph([3, 1, 2]).compile()
@@ -172,7 +168,7 @@ class TestReducerChannelAccumulation:
 class TestReduceNode:
     """ReduceNode reads accumulated list, applies reducer, writes result_field."""
 
-    def test_reads_accumulated_list_applies_reducer_writes_result_field(
+    async def test_reads_accumulated_list_applies_reducer_writes_result_field(
         self,
     ) -> None:
         """Isolated: pre-populate state.squares, call ReduceNode.execute, check."""
@@ -184,9 +180,9 @@ class TestReduceNode:
         state = SqState(squares=[1, 4, 9])
         ctx = _make_ctx(state)
 
-        result = reduce_node.execute(ctx, IntegratedInput())
+        result = await reduce_node.execute(ctx, IntegratedInput())
 
-        assert result.state_update is None
+        assert result is None
         assert ctx.state.total == 14
         assert ctx.state.squares == [1, 4, 9]
 

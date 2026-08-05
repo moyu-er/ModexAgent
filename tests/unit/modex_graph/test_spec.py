@@ -12,16 +12,7 @@ from modex_graph import (
     NodeSpec,
     NodeTrigger,
     SchedulerKind,
-    StateFieldSpec,
-    StateSchema,
 )
-
-
-def _make_state_schema() -> StateSchema:
-    return StateSchema(
-        name="test_state",
-        fields=[StateFieldSpec(name="count", field_type="int", default=0)],
-    )
 
 
 class TestNodeSpec:
@@ -103,7 +94,7 @@ class TestGraphSpec:
             name="g1",
             nodes=[NodeSpec(name="entry", node_type="function")],
             edges=[EdgeSpec(source=GraphNode.START, target="entry")],
-            state_schema=_make_state_schema(),
+            state_class="counter_state",
         )
         assert spec.name == "g1"
         assert len(spec.nodes) == 1
@@ -113,34 +104,21 @@ class TestGraphSpec:
         assert spec.max_iterations == 25
         assert spec.default_trigger == NodeTrigger.ON_ALL_PREDS
 
-    def test_registered_state_schema_name(self) -> None:
-        """state_schema can be a string (registered name)."""
+    def test_state_class_registry_name(self) -> None:
         spec = GraphSpec(
             name="g1",
             nodes=[NodeSpec(name="entry", node_type="function")],
             edges=[EdgeSpec(source=GraphNode.START, target="entry")],
-            state_schema="my_registered_schema",
+            state_class="my_registered_state",
         )
-        assert spec.state_schema == "my_registered_schema"
-
-    def test_inline_state_schema(self) -> None:
-        """state_schema can be an inline StateSchema."""
-        schema = _make_state_schema()
-        spec = GraphSpec(
-            name="g1",
-            nodes=[NodeSpec(name="entry", node_type="function")],
-            edges=[EdgeSpec(source=GraphNode.START, target="entry")],
-            state_schema=schema,
-        )
-        assert isinstance(spec.state_schema, StateSchema)
-        assert spec.state_schema.name == "test_state"
+        assert spec.state_class == "my_registered_state"
 
     def test_frozen(self) -> None:
         spec = GraphSpec(
             name="g1",
             nodes=[NodeSpec(name="entry", node_type="function")],
             edges=[EdgeSpec(source=GraphNode.START, target="entry")],
-            state_schema=_make_state_schema(),
+            state_class="counter_state",
         )
         with pytest.raises(ValidationError):
             spec.name = "g2"  # type: ignore[misc]
@@ -151,7 +129,7 @@ class TestGraphSpec:
                 name="g1",
                 nodes=[NodeSpec(name="entry", node_type="function")],
                 edges=[EdgeSpec(source=GraphNode.START, target="entry")],
-                state_schema=_make_state_schema(),
+                state_class="counter_state",
                 bogus=True,  # type: ignore[call-arg]
             )
 
@@ -163,7 +141,7 @@ class TestGraphSpec:
                 EdgeSpec(source=GraphNode.START, target="entry"),
                 EdgeSpec(source="entry", target=GraphNode.END),
             ],
-            state_schema=_make_state_schema(),
+            state_class="counter_state",
             scheduler=SchedulerKind.PARALLEL,
             max_iterations=50,
         )
@@ -177,7 +155,7 @@ class TestGraphSpec:
             name="g1",
             nodes=[NodeSpec(name="entry", node_type="function")],
             edges=[EdgeSpec(source=GraphNode.START, target="entry")],
-            state_schema=_make_state_schema(),
+            state_class="counter_state",
         )
         json_str = spec.model_dump_json()
         restored = GraphSpec.model_validate_json(json_str)
@@ -191,7 +169,7 @@ class TestGraphSpec:
                 name="g1",
                 nodes=[],
                 edges=[EdgeSpec(source=GraphNode.START, target="entry")],
-                state_schema=_make_state_schema(),
+                state_class="counter_state",
             )
         assert "at least one node" in str(exc_info.value)
 
@@ -204,7 +182,7 @@ class TestGraphSpec:
                     NodeSpec(name="dup", node_type="function"),
                 ],
                 edges=[EdgeSpec(source=GraphNode.START, target="dup")],
-                state_schema=_make_state_schema(),
+                state_class="counter_state",
             )
         assert "Duplicate node names" in str(exc_info.value)
 
@@ -214,7 +192,7 @@ class TestGraphSpec:
                 name="g1",
                 nodes=[NodeSpec(name="entry", node_type="function")],
                 edges=[EdgeSpec(source="entry", target=GraphNode.END)],
-                state_schema=_make_state_schema(),
+                state_class="counter_state",
             )
         assert "entry edge" in str(exc_info.value)
 
@@ -224,7 +202,7 @@ class TestGraphSpec:
                 name="g1",
                 nodes=[NodeSpec(name="entry", node_type="function")],
                 edges=[EdgeSpec(source=GraphNode.START, target="entry")],
-                state_schema=_make_state_schema(),
+                state_class="counter_state",
                 max_iterations=0,
             )
         assert "max_iterations" in str(exc_info.value)
@@ -238,7 +216,7 @@ class TestGraphSpec:
                     EdgeSpec(source=GraphNode.START, target="entry"),
                     EdgeSpec(source="entry", target="nonexistent"),
                 ],
-                state_schema=_make_state_schema(),
+                state_class="counter_state",
             )
         assert "unknown node" in str(exc_info.value)
 
@@ -251,7 +229,7 @@ class TestGraphSpec:
                 EdgeSpec(source=GraphNode.START, target="n1"),
                 EdgeSpec(source="n1", target=GraphNode.END),
             ],
-            state_schema=_make_state_schema(),
+            state_class="counter_state",
         )
         assert len(spec.edges) == 2
 
@@ -269,7 +247,7 @@ class TestGraphSpec:
                 EdgeSpec(source="middle", target="end"),
                 EdgeSpec(source="end", target=GraphNode.END),
             ],
-            state_schema=_make_state_schema(),
+            state_class="counter_state",
             scheduler=SchedulerKind.PARALLEL,
             default_trigger=NodeTrigger.ON_RECEIVE,
         )

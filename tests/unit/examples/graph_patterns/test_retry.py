@@ -15,19 +15,11 @@ Verifies:
 from __future__ import annotations
 
 import sys
+from importlib import import_module
 from pathlib import Path
-from typing import Any, Annotated
+from typing import Any
 
-_EXAMPLES_DIR = Path(__file__).parent.parent.parent.parent.parent / "examples"
-if str(_EXAMPLES_DIR) not in sys.path:
-    sys.path.insert(0, str(_EXAMPLES_DIR))
-
-from graph_patterns import (  # noqa: E402
-    RetryNode,
-    build_retry_graph,
-)
-
-from modex_graph import (  # noqa: E402
+from modex_graph import (
     Graph,
     GraphContext,
     GraphEngine,
@@ -36,21 +28,29 @@ from modex_graph import (  # noqa: E402
     GraphRuntime,
     GraphState,
     IntegratedInput,
-    InvocationContext,
-    LastValue,
     Node,
-    NodeResult,
     NullDeliverStoreFactory,
-    NullGraphMetadataStore,
-    NullNodeStateFactory,
+    NullGraphInstanceStore,
+    NullNodeStateStore,
 )
+
+_EXAMPLES_DIR = Path(__file__).parent.parent.parent.parent.parent / "examples"
+if str(_EXAMPLES_DIR) not in sys.path:
+    sys.path.insert(0, str(_EXAMPLES_DIR))
+
+_retry = import_module("graph_patterns.retry")
+RetryNode = _retry.RetryNode
+build_retry_graph = _retry.build_retry_graph
 
 
 class _AutoRegCoord(GraphPersistenceCoordinator):
-    def begin_invocation(self, node_name: str) -> InvocationContext:
+    def collect_consumable_delivers(
+        self, node_name: str, invocation_id: int
+    ) -> list[Any]:
         if self.get_deliver_store(node_name) is None:
             self.register_node(node_name)
-        return super().begin_invocation(node_name)
+        return super().collect_consumable_delivers(node_name, invocation_id)
+
     def route_deliver(
         self,
         target_node: str,
@@ -63,12 +63,11 @@ class _AutoRegCoord(GraphPersistenceCoordinator):
         return super().route_deliver(target_node, content, source_node, source_invocation_id)
 
 
-
 def _make_coordinator() -> _AutoRegCoord:
     return _AutoRegCoord(
         graph_instance_id=0,
-        graph_metadata_store=NullGraphMetadataStore(),
-        default_node_state_factory=NullNodeStateFactory(),
+        instance_store=NullGraphInstanceStore(),
+        node_state_store=NullNodeStateStore(0),
         default_deliver_store_factory=NullDeliverStoreFactory(),
     )
 
@@ -76,16 +75,16 @@ def _make_coordinator() -> _AutoRegCoord:
 class RetryState(GraphState):
     """State for RetryNode tests: tracks body call count + exit path."""
 
-    attempts: Annotated[int, LastValue] = 0
-    exit_path: Annotated[str, LastValue] = ""
+    attempts: int = 0
+    exit_path: str = ""
 
 
 class TopologyRetryState(GraphState):
     """State for build_retry_graph tests: counter + body call count."""
 
-    retries: Annotated[int, LastValue] = 0
-    attempts: Annotated[int, LastValue] = 0
-    exit_path: Annotated[str, LastValue] = ""
+    retries: int = 0
+    attempts: int = 0
+    exit_path: str = ""
 
 
 class FlakyBody(Node[RetryState]):
@@ -97,22 +96,26 @@ class FlakyBody(Node[RetryState]):
     def __init__(self, fail_count: int) -> None:
         self.fail_count = fail_count
 
-    def execute(self, ctx: GraphContext[RetryState], integrated_input: IntegratedInput) -> NodeResult:
+    async def execute(
+        self, ctx: GraphContext[RetryState], integrated_input: IntegratedInput
+    ) -> None:
         ctx.state.attempts += 1
         if ctx.state.attempts <= self.fail_count:
             ctx.state.exit_path = "fail"
         else:
             ctx.state.exit_path = "ok"
-        return NodeResult()
+        return None
 
 
 class AlwaysFailBody(Node[TopologyRetryState]):
     """Body that always fails."""
 
-    def execute(self, ctx: GraphContext[TopologyRetryState], integrated_input: IntegratedInput) -> NodeResult:
+    async def execute(
+        self, ctx: GraphContext[TopologyRetryState], integrated_input: IntegratedInput
+    ) -> None:
         ctx.state.attempts += 1
         ctx.state.exit_path = "fail"
-        return NodeResult()
+        return None
 
 
 class FailNTimesBody(Node[TopologyRetryState]):
@@ -121,13 +124,15 @@ class FailNTimesBody(Node[TopologyRetryState]):
     def __init__(self, fail_count: int) -> None:
         self.fail_count = fail_count
 
-    def execute(self, ctx: GraphContext[TopologyRetryState], integrated_input: IntegratedInput) -> NodeResult:
+    async def execute(
+        self, ctx: GraphContext[TopologyRetryState], integrated_input: IntegratedInput
+    ) -> None:
         ctx.state.attempts += 1
         if ctx.state.attempts <= self.fail_count:
             ctx.state.exit_path = "fail"
         else:
             ctx.state.exit_path = "ok"
-        return NodeResult()
+        return None
 
 
 class MarkExitNode(Node[RetryState]):
@@ -136,10 +141,12 @@ class MarkExitNode(Node[RetryState]):
     def __init__(self, label: str) -> None:
         self.label = label
 
-    def execute(self, ctx: GraphContext[RetryState], integrated_input: IntegratedInput) -> NodeResult:
+    async def execute(
+        self, ctx: GraphContext[RetryState], integrated_input: IntegratedInput
+    ) -> None:
         ctx.state.exit_path = self.label
         self.deliver(None, None, ctx)
-        return NodeResult()
+        return None
 
 
 def _is_retry_failure(state: RetryState) -> bool:
@@ -177,7 +184,16 @@ class TestRetryNode:
         max_retries: int,
     ) -> Graph[RetryState]:
         g: Graph[RetryState] = Graph()
-        g.add_node("retry", RetryNode(body, max_retries, _is_retry_failure, success_target="default_exit", failure_target="failed_exit"))
+        g.add_node(
+            "retry",
+            RetryNode(
+                body,
+                max_retries,
+                _is_retry_failure,
+                success_target="default_exit",
+                failure_target="failed_exit",
+            ),
+        )
         g.add_node("failed_exit", MarkExitNode("failed"))
         g.add_node("default_exit", MarkExitNode("success"))
         g.add_edge(GraphNode.START, "retry")

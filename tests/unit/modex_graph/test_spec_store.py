@@ -32,18 +32,9 @@ from modex_graph import (
     NodeSpec,
     SchedulerKind,
     SqliteGraphSpecStore,
-    StateFieldSpec,
-    StateSchema,
 )
 
 # ── Test helpers ──────────────────────────────────────────────────────────
-
-
-def _make_state_schema() -> StateSchema:
-    return StateSchema(
-        name="test_state",
-        fields=[StateFieldSpec(name="count", field_type="int", default=0)],
-    )
 
 
 def _make_spec(
@@ -54,7 +45,7 @@ def _make_spec(
         name=name,
         nodes=[NodeSpec(name="entry", node_type="function")],
         edges=[EdgeSpec(source=GraphNode.START, target="entry")],
-        state_schema=_make_state_schema(),
+        state_class="counter_state",
         scheduler=SchedulerKind.LINEAR,
         version=version,
         max_iterations=25,
@@ -65,7 +56,7 @@ def _store_factory(kind: str) -> Callable[[], GraphSpecStore]:
     if kind == "memory":
         return lambda: InMemoryGraphSpecStore()
     if kind == "sqlite":
-        return lambda: SqliteGraphSpecStore(":memory:")
+        return lambda: SqliteGraphSpecStore(sqlite3.connect(":memory:"))
     raise ValueError(f"unknown kind: {kind}")
 
 
@@ -209,7 +200,7 @@ class TestGraphSpecStoreCRUD:
                 EdgeSpec(source="entry", target="llm"),
                 EdgeSpec(source="llm", target=GraphNode.END),
             ],
-            state_schema=_make_state_schema(),
+            state_class="counter_state",
             scheduler=SchedulerKind.PARALLEL,
             version="3.1.4",
             metadata={"author": "test", "tags": ["a", "b"]},
@@ -220,18 +211,18 @@ class TestGraphSpecStoreCRUD:
         assert loaded is not None
         assert loaded == spec
 
-    def test_serialization_round_trip_registered_schema_name(self, kind: str) -> None:
+    def test_serialization_round_trip_state_class_name(self, kind: str) -> None:
         store = _store_factory(kind)()
         spec = GraphSpec(
             name="registered",
             nodes=[NodeSpec(name="entry", node_type="function")],
             edges=[EdgeSpec(source=GraphNode.START, target="entry")],
-            state_schema="my_registered_schema",
+            state_class="my_registered_state",
         )
         spec_id = store.save(spec)
         loaded = store.load_by_id(spec_id)
         assert loaded is not None
-        assert loaded.state_schema == "my_registered_schema"
+        assert loaded.state_class == "my_registered_state"
 
     def test_different_specs_isolated(self, kind: str) -> None:
         store = _store_factory(kind)()
@@ -269,14 +260,16 @@ class TestSqliteGraphSpecStoreSpecifics:
     def test_create_table_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = str(Path(tmp) / "specs.db")
-            store1 = SqliteGraphSpecStore(db_path)
+            conn1 = sqlite3.connect(db_path)
+            store1 = SqliteGraphSpecStore(conn1)
             spec_id = store1.save(_make_spec(name="persist"))
-            store1.close()
-            store2 = SqliteGraphSpecStore(db_path)
+            conn1.close()
+            conn2 = sqlite3.connect(db_path)
+            store2 = SqliteGraphSpecStore(conn2)
             loaded = store2.load_by_id(spec_id)
             assert loaded is not None
             assert loaded.name == "persist"
-            store2.close()
+            conn2.close()
 
     def test_table_and_column_constants(self) -> None:
         from modex_graph.spec_store import (
@@ -298,63 +291,64 @@ class TestSqliteGraphSpecStoreSpecifics:
         assert _COL_UPDATED_AT == "updated_at"
 
     def test_indexes_created(self) -> None:
-        store = SqliteGraphSpecStore(":memory:")
+        conn = sqlite3.connect(":memory:")
+        store = SqliteGraphSpecStore(conn)
         indexes = store._conn.execute(
             "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name = ?",
             ("graph_specs",),
         ).fetchall()
         index_names = {r[0] for r in indexes}
         assert "idx_graph_specs_name" in index_names
-        store.close()
+        conn.close()
 
     def test_file_based_persistence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = str(Path(tmp) / "specs.db")
-            store1 = SqliteGraphSpecStore(db_path)
+            conn1 = sqlite3.connect(db_path)
+            store1 = SqliteGraphSpecStore(conn1)
             spec_id = store1.save(_make_spec(name="file_test"))
-            store1.close()
-            store2 = SqliteGraphSpecStore(db_path)
+            conn1.close()
+            conn2 = sqlite3.connect(db_path)
+            store2 = SqliteGraphSpecStore(conn2)
             loaded = store2.load_by_id(spec_id)
             assert loaded is not None
             assert loaded.name == "file_test"
-            store2.close()
+            conn2.close()
 
     def test_timestamps_are_epoch_ms(self) -> None:
         from modex_graph.spec_store import _COL_CREATED_AT, _SPEC_TABLE
 
-        store = SqliteGraphSpecStore(":memory:")
+        conn = sqlite3.connect(":memory:")
+        store = SqliteGraphSpecStore(conn)
         store.save(_make_spec())
         row = store._conn.execute(f"SELECT {_COL_CREATED_AT} FROM {_SPEC_TABLE}").fetchone()
         assert row is not None
         ts = row[0]
         assert isinstance(ts, int)
         assert ts > 1_700_000_000_000
-        store.close()
+        conn.close()
 
     def test_spec_json_is_valid_json(self) -> None:
         import json
 
         from modex_graph.spec_store import _COL_SPEC_JSON, _SPEC_TABLE
 
-        store = SqliteGraphSpecStore(":memory:")
+        conn = sqlite3.connect(":memory:")
+        store = SqliteGraphSpecStore(conn)
         store.save(_make_spec(name="json_check"))
         row = store._conn.execute(f"SELECT {_COL_SPEC_JSON} FROM {_SPEC_TABLE}").fetchone()
         assert row is not None
         data = json.loads(row[0])
         assert data["name"] == "json_check"
-        store.close()
-
-    def test_close_is_safe_multiple_times(self) -> None:
-        store = SqliteGraphSpecStore(":memory:")
-        store.close()
-        store.close()
+        conn.close()
 
     def test_unique_name_version_constraint(self) -> None:
-        store = SqliteGraphSpecStore(":memory:")
+        conn = sqlite3.connect(":memory:")
+        store = SqliteGraphSpecStore(conn)
         store.save(_make_spec(name="uniq", version="1.0"))
         with pytest.raises(sqlite3.IntegrityError):
             store.save(_make_spec(name="uniq", version="1.0"))
-        store.close()
+        conn.close()
 
 
 # ── InMemoryGraphSpecStore specifics ──────────────────────────────────────

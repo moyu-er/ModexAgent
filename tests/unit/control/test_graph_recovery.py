@@ -14,10 +14,14 @@ from modex_agent.control.graph_recovery import (
 )
 from modex_agent.control.types import ControlCommand, ControlCommandType, ControlScope
 from modex_graph import (
+    CoordinatorFactory,
     GraphInstance,
     GraphInstanceStatus,
+    GraphInstanceStore,
     GraphMetadata,
+    GraphPersistenceCoordinator,
     InMemoryGraphInstanceStore,
+    NullCoordinatorFactory,
     create_null_coordinator,
 )
 
@@ -37,10 +41,6 @@ def _make_instance(
             parent_instance_id=None,
             parent_node=None,
             status=GraphInstanceStatus(status),
-            instance_seq=0,
-            iteration_count=0,
-            activated_sources={},
-            pending_dispatches={},
         ),
         create_null_coordinator(graph_instance_id),
     )
@@ -86,7 +86,7 @@ def _make_recovery_service(
 
 class TestRecoverCrashed:
     @pytest.mark.asyncio
-    async def test_picks_only_crashed_instances(self) -> None:
+    async def test_picks_crashed_and_orphan_running(self) -> None:
         crashed_a = _make_instance(1001, status=GraphInstanceStatus.CRASHED.value)
         crashed_b = _make_instance(1002, status=GraphInstanceStatus.CRASHED.value)
         running = _make_instance(1003, status=GraphInstanceStatus.RUNNING.value)
@@ -98,9 +98,9 @@ class TestRecoverCrashed:
 
         recovered = await service.recover_crashed()
 
-        assert sorted(recovered) == [1001, 1002]
-        assert len(factory.calls) == 2
-        assert {c.graph_instance_id for c in factory.calls} == {1001, 1002}
+        assert sorted(recovered) == [1001, 1002, 1003]
+        assert len(factory.calls) == 3
+        assert {c.graph_instance_id for c in factory.calls} == {1001, 1002, 1003}
 
     @pytest.mark.asyncio
     async def test_sets_status_to_running(self) -> None:
@@ -109,7 +109,7 @@ class TestRecoverCrashed:
 
         await service.recover_crashed()
 
-        instance = instance_store.load_by_id(9001)
+        instance = instance_store.load(9001)
         assert instance is not None
         assert instance.status == GraphInstanceStatus.RUNNING.value
 
@@ -124,10 +124,10 @@ class TestRecoverCrashed:
         assert sorted(recovered) == [7001, 7002]
 
     @pytest.mark.asyncio
-    async def test_no_crashed_returns_empty_list(self) -> None:
-        running = _make_instance(8001, status=GraphInstanceStatus.RUNNING.value)
+    async def test_no_crashed_or_running_returns_empty_list(self) -> None:
         paused = _make_instance(8002, status=GraphInstanceStatus.PAUSED.value)
-        service, _, factory = _make_recovery_service(instances=[running, paused])
+        completed = _make_instance(8003, status=GraphInstanceStatus.COMPLETED.value)
+        service, _, factory = _make_recovery_service(instances=[paused, completed])
 
         recovered = await service.recover_crashed()
 
@@ -168,7 +168,7 @@ class TestResume:
 
         await service.resume(3001)
 
-        instance = instance_store.load_by_id(3001)
+        instance = instance_store.load(3001)
         assert instance is not None
         assert instance.status == GraphInstanceStatus.RUNNING.value
         assert len(factory.calls) == 1
@@ -181,7 +181,7 @@ class TestResume:
 
         await service.resume(3002)
 
-        instance = instance_store.load_by_id(3002)
+        instance = instance_store.load(3002)
         assert instance is not None
         assert instance.status == GraphInstanceStatus.RUNNING.value
         assert len(factory.calls) == 1
@@ -240,7 +240,7 @@ class TestResume:
         with pytest.raises(ValueError):
             await service.resume(3007)
 
-        instance = instance_store.load_by_id(3007)
+        instance = instance_store.load(3007)
         assert instance is not None
         assert instance.status == GraphInstanceStatus.RUNNING.value
 
@@ -280,7 +280,7 @@ class TestControlServiceDelegation:
 
         await service.handle(_make_resume_command(6001))
 
-        instance = instance_store.load_by_id(6001)
+        instance = instance_store.load(6001)
         assert instance is not None
         assert instance.status == GraphInstanceStatus.RUNNING.value
         assert len(factory.calls) == 1
@@ -320,3 +320,68 @@ class TestControlServiceDelegation:
 
         assert engine.resume_called is False
         assert len(factory.calls) == 1
+
+
+# ── CoordinatorFactory injection ─────────────────────────────────────────
+
+
+class _RecordingCoordinatorFactory(CoordinatorFactory):
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, GraphInstanceStore]] = []
+        self._null = NullCoordinatorFactory()
+
+    def create(
+        self,
+        graph_instance_id: int,
+        instance_store: GraphInstanceStore,
+    ) -> GraphPersistenceCoordinator:
+        self.calls.append((graph_instance_id, instance_store))
+        return self._null.create(graph_instance_id, instance_store)
+
+
+class TestCoordinatorFactoryInjection:
+    @pytest.mark.asyncio
+    async def test_recover_crashed_uses_injected_factory(self) -> None:
+        crashed = _make_instance(2001, status=GraphInstanceStatus.CRASHED.value)
+        instance_store = InMemoryGraphInstanceStore()
+        instance_store.save(crashed.metadata)
+        coord_factory = _RecordingCoordinatorFactory()
+        service = GraphRecoveryService(
+            instance_store,
+            _RecordingEngineFactory(),
+            coordinator_factory=coord_factory,
+        )
+
+        await service.recover_crashed()
+
+        assert len(coord_factory.calls) == 1
+        called_gid, called_store = coord_factory.calls[0]
+        assert called_gid == 2001
+        assert called_store is instance_store
+
+    @pytest.mark.asyncio
+    async def test_resume_uses_injected_factory(self) -> None:
+        paused = _make_instance(2002, status=GraphInstanceStatus.PAUSED.value)
+        instance_store = InMemoryGraphInstanceStore()
+        instance_store.save(paused.metadata)
+        coord_factory = _RecordingCoordinatorFactory()
+        service = GraphRecoveryService(
+            instance_store,
+            _RecordingEngineFactory(),
+            coordinator_factory=coord_factory,
+        )
+
+        await service.resume(2002)
+
+        assert len(coord_factory.calls) == 1
+        called_gid, called_store = coord_factory.calls[0]
+        assert called_gid == 2002
+        assert called_store is instance_store
+
+    @pytest.mark.asyncio
+    async def test_default_factory_is_null(self) -> None:
+        service = GraphRecoveryService(
+            InMemoryGraphInstanceStore(),
+            _RecordingEngineFactory(),
+        )
+        assert isinstance(service._coordinator_factory, NullCoordinatorFactory)

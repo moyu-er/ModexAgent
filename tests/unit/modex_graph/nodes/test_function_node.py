@@ -29,7 +29,6 @@ from modex_graph import (
     Node,
     NodeFactory,
     NodeRegistry,
-    NodeResult,
     NodeSpec,
     NodeTrigger,
 )
@@ -98,12 +97,12 @@ class TestFunctionNodeExecute:
         await node.run(ctx)
         assert node._submit_result == {"state_target": [7]}
 
-    async def test_execute_returns_node_result(self) -> None:
+    async def test_execute_returns_none(self) -> None:
         node = FunctionNode(_sync_double, next_node="target")
         node.name = "fn"
         ctx = make_ctx()
         result = await node.run(ctx)
-        assert isinstance(result, NodeResult)
+        assert result is None
 
     async def test_deliver_to_end_sentinel(self) -> None:
         from modex_graph import GraphNode

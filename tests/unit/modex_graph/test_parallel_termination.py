@@ -3,8 +3,6 @@
 Covers:
 
 - `GraphNode.END` sentinel: no instance created, no execution.
-- Dispatch to END is recorded as a `DispatchEvent` (target=END) in the
-  dispatch log; the source instance IDs are retrievable via the store.
 - END `ON_ALL_PREDS` semantics: graph terminates only after all
   dispatch-to-END source instances COMPLETED (implicitly via ready+active
   empty).
@@ -32,7 +30,6 @@ from modex_graph import (
     IntegratedInput,
     Node,
     NodeInstanceStatus,
-    NodeResult,
     ParallelScheduler,
     RoutingError,
     SchedulerKind,
@@ -48,15 +45,6 @@ def make_parallel_ctx(state: CounterState | None = None) -> GraphContext[Counter
     )
 
 
-def _end_dispatch_sources(scheduler: ParallelScheduler[CounterState]) -> list[str]:
-    """Return unique source_instance IDs that dispatched to GraphNode.END.
-
-    Mirrors the former ``_end_sources`` set via the live dispatch log
-    (``DispatchEvent`` records with ``target == GraphNode.END``).
-    """
-    return list({e.source_instance for e in scheduler._dispatch_log if e.target == GraphNode.END})
-
-
 # ── Test helpers ──────────────────────────────────────────────────────────
 
 
@@ -67,13 +55,13 @@ class DispatchAddNode(Node[CounterState]):
         self.amount = amount
         self.target = target
 
-    def execute(
+    async def execute(
         self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-    ) -> NodeResult:
+    ) -> None:
         ctx.state.count += self.amount
         if self.target is not None:
             self.deliver(None, self.target, ctx)
-        return NodeResult()
+        return None
 
 
 class FanOutDispatchNode(Node[CounterState]):
@@ -84,13 +72,13 @@ class FanOutDispatchNode(Node[CounterState]):
         self.target_a = target_a
         self.target_b = target_b
 
-    def execute(
+    async def execute(
         self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-    ) -> NodeResult:
+    ) -> None:
         ctx.state.count += self.amount
         self.deliver(None, self.target_a, ctx)
         self.deliver(None, self.target_b, ctx)
-        return NodeResult()
+        return None
 
 
 class NoDispatchNode(Node[CounterState]):
@@ -99,12 +87,12 @@ class NoDispatchNode(Node[CounterState]):
     def __init__(self, amount: int = 1) -> None:
         self.amount = amount
 
-    def execute(
+    async def execute(
         self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-    ) -> NodeResult:
+    ) -> None:
         ctx.state.count += self.amount
         self.deliver(None, None, ctx)
-        return NodeResult()
+        return None
 
 
 # ── END sentinel: no instance created, no execution ──────────────────────
@@ -114,7 +102,6 @@ class TestEndSentinel:
     """GraphNode.END is a sentinel — no instance created, no execution."""
 
     async def test_end_has_no_instance(self) -> None:
-        """Dispatch to END creates no instance; the dispatch is logged."""
         g: Graph[CounterState] = Graph()
         g.add_node("a", DispatchAddNode(amount=1, target=GraphNode.END))
         g.add_edge(GraphNode.START, "a")
@@ -127,18 +114,13 @@ class TestEndSentinel:
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
-        # The dispatch to END was recorded (source instance a#0).
-        end_sources = _end_dispatch_sources(scheduler)
-        assert len(end_sources) == 1
-        assert "a#0" in end_sources
         # No instance created for END.
         end_instances = [
             inst for inst in scheduler._instances.values() if inst.node_name == GraphNode.END
         ]
         assert len(end_instances) == 0
 
-    async def test_end_sources_tracks_multiple_sources(self) -> None:
-        """Multiple branches dispatching to END all recorded in the dispatch log."""
+    async def test_multiple_sources_complete_without_end_instances(self) -> None:
         g: Graph[CounterState] = Graph()
         g.add_node("a", FanOutDispatchNode(amount=1, target_a="b", target_b="c"))
         g.add_node("b", DispatchAddNode(amount=10, target=GraphNode.END))
@@ -156,13 +138,15 @@ class TestEndSentinel:
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
-        # Both b and c dispatched to END.
-        end_sources = _end_dispatch_sources(scheduler)
-        assert len(end_sources) == 2
-        b_ids = [iid for iid in end_sources if iid.startswith("b#")]
-        c_ids = [iid for iid in end_sources if iid.startswith("c#")]
-        assert len(b_ids) == 1
-        assert len(c_ids) == 1
+        completed = {
+            instance.node_name
+            for instance in scheduler._instances.values()
+            if instance.status == NodeInstanceStatus.COMPLETED
+        }
+        assert completed == {"a", "b", "c"}
+        assert all(
+            instance.node_name != GraphNode.END for instance in scheduler._instances.values()
+        )
 
 
 # ── END ON_ALL_PREDS: all dispatch-to-END sources COMPLETED -> terminate ─
@@ -191,9 +175,8 @@ class TestEndOnAllPreds:
         ctx = make_parallel_ctx(CounterState(count=0))
         result = await GraphEngine(compiled).run_async(ctx)
 
-        # A=1 (fast), B+C forked (mutations dropped), so count = 1.
         assert result is ctx.state
-        assert ctx.state.count == 1
+        assert ctx.state.count == 111
 
     async def test_multi_branch_all_to_end_end_sources_completed(self) -> None:
         """Verify all dispatch-to-END source instances are COMPLETED after termination."""
@@ -214,10 +197,13 @@ class TestEndOnAllPreds:
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
-        # All dispatch-to-END source instances must be COMPLETED.
-        for source_id in _end_dispatch_sources(scheduler):
-            inst = scheduler._instances[source_id]
-            assert inst.status == NodeInstanceStatus.COMPLETED
+        branch_instances = [
+            instance
+            for instance in scheduler._instances.values()
+            if instance.node_name in {"b", "c"}
+        ]
+        assert len(branch_instances) == 2
+        assert all(instance.status == NodeInstanceStatus.COMPLETED for instance in branch_instances)
         # ready and active are both empty after termination.
         assert len(scheduler._ready) == 0
         assert len(scheduler._active) == 0
@@ -228,14 +214,14 @@ class TestEndOnAllPreds:
         g: Graph[CounterState] = Graph()
 
         class TripleFanOutNode(Node[CounterState]):
-            def execute(
+            async def execute(
                 self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-            ) -> NodeResult:
+            ) -> None:
                 ctx.state.count += 1
                 self.deliver(None, "b", ctx)
                 self.deliver(None, "c", ctx)
                 self.deliver(None, "d", ctx)
-                return NodeResult()
+                return None
 
         g.add_node("a", TripleFanOutNode())
         g.add_node("b", DispatchAddNode(amount=10, target=GraphNode.END))
@@ -256,7 +242,13 @@ class TestEndOnAllPreds:
 
         scheduler = engine._scheduler
         assert isinstance(scheduler, ParallelScheduler)
-        assert len(_end_dispatch_sources(scheduler)) == 3
+        branch_instances = [
+            instance
+            for instance in scheduler._instances.values()
+            if instance.node_name in {"b", "c", "d"}
+        ]
+        assert len(branch_instances) == 3
+        assert all(instance.status == NodeInstanceStatus.COMPLETED for instance in branch_instances)
         assert len(scheduler._ready) == 0
         assert len(scheduler._active) == 0
 
@@ -317,13 +309,13 @@ class TestTerminationConditions:
         # Graph terminated.
         assert len(scheduler._ready) == 0
         assert len(scheduler._active) == 0
-        # Only b dispatched to END explicitly. c delivers to END via
-        # downstream fallback (no default edge, but has edge to END).
-        end_sources = _end_dispatch_sources(scheduler)
-        b_end_sources = [s for s in end_sources if s.startswith("b#")]
-        c_end_sources = [s for s in end_sources if s.startswith("c#")]
-        assert len(b_end_sources) == 1
-        assert len(c_end_sources) == 1
+        branch_instances = [
+            instance
+            for instance in scheduler._instances.values()
+            if instance.node_name in {"b", "c"}
+        ]
+        assert len(branch_instances) == 2
+        assert all(instance.status == NodeInstanceStatus.COMPLETED for instance in branch_instances)
 
     async def test_has_out_edges_but_no_dispatch_downstream_dormant(self) -> None:
         """Node C has an outgoing edge to D but doesn't dispatch to D.

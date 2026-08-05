@@ -28,7 +28,6 @@ from modex_graph import (
     Node,
     NodeFactory,
     NodeRegistry,
-    NodeResult,
     NodeSpec,
     NodeTrigger,
 )
@@ -76,12 +75,12 @@ class TestDelayNodeExecute:
         assert "tick" in node._submit_result
         assert node._submit_result["tick"] == [{"delayed_seconds": 0.01}]
 
-    async def test_execute_returns_node_result(self) -> None:
+    async def test_execute_returns_none(self) -> None:
         node = DelayNode(0.0, next_node="target")
         node.name = "delay_node"
         ctx = make_ctx()
         result = await node.run(ctx)
-        assert isinstance(result, NodeResult)
+        assert result is None
 
     async def test_deliver_to_end_sentinel(self) -> None:
         node = DelayNode(0.0, next_node=GraphNode.END)

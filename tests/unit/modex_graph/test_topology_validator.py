@@ -9,18 +9,9 @@ from modex_graph import (
     GraphNode,
     GraphSpec,
     NodeSpec,
-    StateFieldSpec,
-    StateSchema,
     TopologyError,
     TopologyValidator,
 )
-
-
-def _schema() -> StateSchema:
-    return StateSchema(
-        name="test_state",
-        fields=[StateFieldSpec(name="count", field_type="int", default=0)],
-    )
 
 
 def _node(name: str) -> NodeSpec:
@@ -37,7 +28,7 @@ def _spec(
         name="test_graph",
         nodes=nodes,
         edges=edges,
-        state_schema=_schema(),
+        state_class="counter_state",
         max_iterations=max_iterations,
     )
 
@@ -57,7 +48,7 @@ def _raw_spec(
         name="test_graph",
         nodes=nodes,
         edges=edges,
-        state_schema=_schema(),
+        state_class="counter_state",
         max_iterations=max_iterations,
     )
 

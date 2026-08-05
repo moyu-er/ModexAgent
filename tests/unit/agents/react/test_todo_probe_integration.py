@@ -27,23 +27,24 @@ from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_agent.runtime.store import JsonFileTodoStore, TodoItem
 from modex_agent.tools.standard import TodoCompletionProbeHook, TodoReadTool
-from modex_graph import (    GraphNode,
-
+from modex_graph import (
+    GraphNode,
     GraphPersistenceCoordinator,
-    InvocationContext,
     NullDeliverStoreFactory,
-    NullGraphMetadataStore,
-    NullNodeStateFactory,
+    NullGraphInstanceStore,
+    NullNodeStateStore,
 )
 
 
 class _AutoRegCoord(GraphPersistenceCoordinator):
     """Test-only coordinator that auto-registers nodes on begin_invocation."""
 
-    def begin_invocation(self, node_name: str) -> InvocationContext:
+    def collect_consumable_delivers(
+        self, node_name: str, invocation_id: int
+    ) -> list[Any]:
         if self.get_deliver_store(node_name) is None:
             self.register_node(node_name)
-        return super().begin_invocation(node_name)
+        return super().collect_consumable_delivers(node_name, invocation_id)
     def route_deliver(
         self,
         target_node: str,
@@ -103,8 +104,8 @@ async def test_probe_continues_loop_and_keeps_xml_out_of_stream(tmp_path, monkey
         user_data=agent_ctx,
         coordinator=_AutoRegCoord(
             graph_instance_id=0,
-            graph_metadata_store=NullGraphMetadataStore(),
-            default_node_state_factory=NullNodeStateFactory(),
+            instance_store=NullGraphInstanceStore(),
+            node_state_store=NullNodeStateStore(0),
             default_deliver_store_factory=NullDeliverStoreFactory(),
         ),
     )
@@ -128,7 +129,7 @@ async def test_probe_continues_loop_and_keeps_xml_out_of_stream(tmp_path, monkey
     await node.run(ctx)
 
     # --- the loop continues (probe injected a tool call → routed to TOOL) --
-    assert ReActNode.TOOL in node.result
+    assert ReActNode.TOOL in node._submit_result
 
     messages = await agent_ctx.history.to_list()
     assistant = [m for m in messages if m.role == "assistant"][-1]

@@ -8,8 +8,7 @@ pattern that would benefit from parallel execution.
 Scenarios:
 
 1. **Parallel map-reduce**: split work → fan-out N workers in parallel →
-   reduce results. Uses ``deliver()`` for fan-out + ``ReducerChannel`` for
-   fan-in.
+   reduce results. Uses ``deliver()`` for fan-out and shared state for fan-in.
 
 2. **Conditional branch with ON_ALL_PREDS join**: a router node selects
    1 or 2 branches based on state; a downstream join node waits for all
@@ -17,13 +16,13 @@ Scenarios:
 
 3. **ON_RECEIVE event aggregation**: multiple upstream nodes each produce
    events; a downstream processor fires once per event (N inputs → N
-   executions), accumulating results via ``ReducerChannel``.
+   executions), accumulating results in shared state.
 
 4. **Mixed trigger modes in one graph**: some nodes ``ON_ALL_PREDS``,
    others ``ON_RECEIVE``, demonstrating that per-node trigger configuration
    works in a realistic mixed topology.
 
-5. **Parallel pipeline with fork+join+continue**: A fans out to [B, C],
+5. **Parallel pipeline with fan-out+join+continue**: A fans out to [B, C],
    both join at D (ON_ALL_PREDS), then D routes to E → END. Verifies
    that parallel branches converge and the graph continues past the join.
 """
@@ -31,7 +30,6 @@ Scenarios:
 from __future__ import annotations
 
 import asyncio
-from typing import Annotated
 
 from helpers import make_coordinator, make_runtime
 
@@ -42,11 +40,8 @@ from modex_graph import (
     GraphNode,
     GraphState,
     IntegratedInput,
-    LastValue,
     Node,
-    NodeResult,
     NodeTrigger,
-    ReducerChannel,
     SchedulerKind,
 )
 
@@ -56,26 +51,26 @@ from modex_graph import (
 class MapReduceState(GraphState):
     """State for the parallel map-reduce scenario."""
 
-    items: Annotated[list[int], LastValue] = []
-    current_item: Annotated[int, LastValue] = 0
-    results: Annotated[list[int], ReducerChannel(reducer=lambda a, b: a + b)] = []
-    total: Annotated[int, LastValue] = 0
+    items: list[int] = []
+    current_item: int = 0
+    results: list[int] = []
+    total: int = 0
 
 
 class EventState(GraphState):
     """State for the event aggregation scenario."""
 
-    current_event: Annotated[str, LastValue] = ""
-    processed: Annotated[list[str], ReducerChannel(reducer=lambda a, b: a + b)] = []
-    count: Annotated[int, LastValue] = 0
+    current_event: str = ""
+    processed: list[str] = []
+    count: int = 0
 
 
 class PipelineState(GraphState):
     """State for the mixed-mode pipeline scenario."""
 
-    value: Annotated[int, LastValue] = 0
-    messages: Annotated[list[str], ReducerChannel(reducer=lambda a, b: a + b)] = []
-    stage: Annotated[str, LastValue] = ""
+    value: int = 0
+    messages: list[str] = []
+    stage: str = ""
 
 
 # ── Scenario 1: Parallel map-reduce ──────────────────────────────────────
@@ -84,46 +79,47 @@ class PipelineState(GraphState):
 class SplitNode(Node[MapReduceState]):
     """Reads ``items`` from state, delivers to ``worker`` (triggers processing)."""
 
-    def execute(
+    async def execute(
         self, ctx: GraphContext[MapReduceState], integrated_input: IntegratedInput
-    ) -> NodeResult:
+    ) -> None:
         if ctx.state.items:
             self.deliver(None, "worker", ctx)
         else:
             self.deliver(None, "reduce", ctx)
-        return NodeResult()
+        return None
 
 
 class WorkerNode(Node[MapReduceState]):
-    """Processes all items: squares each, writes results via state_update."""
+    """Processes all items and appends their squares to shared results."""
 
     trigger = NodeTrigger.ON_RECEIVE
 
-    def execute(
+    async def execute(
         self, ctx: GraphContext[MapReduceState], integrated_input: IntegratedInput
-    ) -> NodeResult:
+    ) -> None:
         squares = [item * item for item in ctx.state.items]
+        ctx.state.results.extend(squares)
         self.deliver(None, "reduce", ctx)
-        return NodeResult(state_update={"results": squares})
+        return None
 
 
 class ReduceNode(Node[MapReduceState]):
     """Reads accumulated results, computes total."""
 
-    def execute(
+    async def execute(
         self, ctx: GraphContext[MapReduceState], integrated_input: IntegratedInput
-    ) -> NodeResult:
+    ) -> None:
         results = ctx.state.results
+        ctx.state.total = sum(results)
         self.deliver(None, GraphNode.END, ctx)
-        return NodeResult(state_update={"total": sum(results)})
+        return None
 
 
 class TestParallelMapReduce:
     """Split → [worker×N parallel] → reduce → END.
 
-    Workers use ``deliver()`` for fan-out. ``ReducerChannel`` folds all
-    workers' ``state_update`` contributions. The reduce node runs after
-    all workers complete (ON_ALL_PREDS default).
+    Workers use ``deliver()`` for fan-out and mutate shared results directly.
+    The reduce node runs after all workers complete (ON_ALL_PREDS default).
     """
 
     def _build_graph(self) -> Graph[MapReduceState]:
@@ -193,18 +189,18 @@ class TestParallelMapReduce:
 class RouterState(GraphState):
     """State for conditional branch scenario."""
 
-    mode: Annotated[str, LastValue] = ""
-    high_result: Annotated[int, LastValue] = 0
-    low_result: Annotated[int, LastValue] = 0
-    merged: Annotated[int, LastValue] = 0
+    mode: str = ""
+    high_result: int = 0
+    low_result: int = 0
+    merged: int = 0
 
 
 class RouterNode(Node[RouterState]):
     """Routes to 'high', 'low', or both based on state.mode."""
 
-    def execute(
+    async def execute(
         self, ctx: GraphContext[RouterState], integrated_input: IntegratedInput
-    ) -> NodeResult:
+    ) -> None:
         mode = ctx.state.mode
         if mode == "both":
             self.deliver(None, "high", ctx)
@@ -213,23 +209,25 @@ class RouterNode(Node[RouterState]):
             self.deliver(None, "high", ctx)
         else:
             self.deliver(None, "low", ctx)
-        return NodeResult()
+        return None
 
 
 class HighProcessor(Node[RouterState]):
-    def execute(
+    async def execute(
         self, ctx: GraphContext[RouterState], integrated_input: IntegratedInput
-    ) -> NodeResult:
+    ) -> None:
+        ctx.state.high_result = 100
         self.deliver(None, "merge", ctx)
-        return NodeResult(state_update={"high_result": 100})
+        return None
 
 
 class LowProcessor(Node[RouterState]):
-    def execute(
+    async def execute(
         self, ctx: GraphContext[RouterState], integrated_input: IntegratedInput
-    ) -> NodeResult:
+    ) -> None:
+        ctx.state.low_result = 1
         self.deliver(None, "merge", ctx)
-        return NodeResult(state_update={"low_result": 1})
+        return None
 
 
 class MergeNode(Node[RouterState]):
@@ -237,12 +235,13 @@ class MergeNode(Node[RouterState]):
 
     trigger = NodeTrigger.ON_ALL_PREDS
 
-    def execute(
+    async def execute(
         self, ctx: GraphContext[RouterState], integrated_input: IntegratedInput
-    ) -> NodeResult:
+    ) -> None:
         merged = ctx.state.high_result + ctx.state.low_result
+        ctx.state.merged = merged
         self.deliver(None, GraphNode.END, ctx)
-        return NodeResult(state_update={"merged": merged})
+        return None
 
 
 class TestConditionalBranchJoin:
@@ -327,12 +326,12 @@ class EventSourceNode(Node[EventState]):
     def __init__(self, events: list[str]) -> None:
         self.events = events
 
-    def execute(
+    async def execute(
         self, ctx: GraphContext[EventState], integrated_input: IntegratedInput
-    ) -> NodeResult:
+    ) -> None:
         ctx.state.current_event = ",".join(self.events)
         self.deliver(None, "processor", ctx)
-        return NodeResult()
+        return None
 
 
 class EventProcessorNode(Node[EventState]):
@@ -340,23 +339,25 @@ class EventProcessorNode(Node[EventState]):
 
     trigger = NodeTrigger.ON_RECEIVE
 
-    def execute(
+    async def execute(
         self, ctx: GraphContext[EventState], integrated_input: IntegratedInput
-    ) -> NodeResult:
+    ) -> None:
         events = ctx.state.current_event.split(",") if ctx.state.current_event else []
         processed = [f"processed:{e}" for e in events]
+        ctx.state.processed.extend(processed)
         self.deliver(None, "aggregator", ctx)
-        return NodeResult(state_update={"processed": processed})
+        return None
 
 
 class EventAggregator(Node[EventState]):
     """Counts processed events."""
 
-    def execute(
+    async def execute(
         self, ctx: GraphContext[EventState], integrated_input: IntegratedInput
-    ) -> NodeResult:
+    ) -> None:
+        ctx.state.count = len(ctx.state.processed)
         self.deliver(None, GraphNode.END, ctx)
-        return NodeResult(state_update={"count": len(ctx.state.processed)})
+        return None
 
 
 class TestOnReceiveEventAggregation:
@@ -426,12 +427,13 @@ class TestOnReceiveEventAggregation:
 class MixedFanOutNode(Node[PipelineState]):
     """Fans out to both 'left' and 'right' via deliver."""
 
-    def execute(
+    async def execute(
         self, ctx: GraphContext[PipelineState], integrated_input: IntegratedInput
-    ) -> NodeResult:
+    ) -> None:
+        ctx.state.value = 1
         self.deliver(None, "left", ctx)
         self.deliver(None, "right", ctx)
-        return NodeResult(state_update={"value": 1})
+        return None
 
 
 class LeftNode(Node[PipelineState]):
@@ -439,21 +441,23 @@ class LeftNode(Node[PipelineState]):
 
     trigger = NodeTrigger.ON_RECEIVE
 
-    def execute(
+    async def execute(
         self, ctx: GraphContext[PipelineState], integrated_input: IntegratedInput
-    ) -> NodeResult:
+    ) -> None:
+        ctx.state.messages.append("left")
         self.deliver(None, "join", ctx)
-        return NodeResult(state_update={"messages": ["left"]})
+        return None
 
 
 class RightNode(Node[PipelineState]):
     """ON_ALL_PREDS (default): waits for all activated sources."""
 
-    def execute(
+    async def execute(
         self, ctx: GraphContext[PipelineState], integrated_input: IntegratedInput
-    ) -> NodeResult:
+    ) -> None:
+        ctx.state.messages.append("right")
         self.deliver(None, "join", ctx)
-        return NodeResult(state_update={"messages": ["right"]})
+        return None
 
 
 class JoinNode(Node[PipelineState]):
@@ -461,19 +465,21 @@ class JoinNode(Node[PipelineState]):
 
     trigger = NodeTrigger.ON_ALL_PREDS
 
-    def execute(
+    async def execute(
         self, ctx: GraphContext[PipelineState], integrated_input: IntegratedInput
-    ) -> NodeResult:
+    ) -> None:
+        ctx.state.stage = "joined"
         self.deliver(None, "continue", ctx)
-        return NodeResult(state_update={"stage": "joined"})
+        return None
 
 
 class ContinueNode(Node[PipelineState]):
-    def execute(
+    async def execute(
         self, ctx: GraphContext[PipelineState], integrated_input: IntegratedInput
-    ) -> NodeResult:
+    ) -> None:
+        ctx.state.value += 10
         self.deliver(None, GraphNode.END, ctx)
-        return NodeResult(state_update={"value": ctx.state.value + 10})
+        return None
 
 
 class TestMixedTriggerModes:
@@ -525,19 +531,19 @@ class TestMixedTriggerModes:
 class AsyncWorkState(GraphState):
     """State for async parallel pipeline."""
 
-    work_val: Annotated[int, LastValue] = 0
-    results: Annotated[list[int], ReducerChannel(reducer=lambda a, b: a + b)] = []
-    final: Annotated[int, LastValue] = 0
+    work_val: int = 0
+    results: list[int] = []
+    final: int = 0
 
 
 class AsyncSplitNode(Node[AsyncWorkState]):
     """Delivers to 'worker' (triggers async processing)."""
 
-    def execute(
+    async def execute(
         self, ctx: GraphContext[AsyncWorkState], integrated_input: IntegratedInput
-    ) -> NodeResult:
+    ) -> None:
         self.deliver(None, "worker", ctx)
-        return NodeResult()
+        return None
 
 
 class AsyncWorkerNode(Node[AsyncWorkState]):
@@ -547,12 +553,13 @@ class AsyncWorkerNode(Node[AsyncWorkState]):
 
     async def execute(
         self, ctx: GraphContext[AsyncWorkState], integrated_input: IntegratedInput
-    ) -> NodeResult:
+    ) -> None:
         await asyncio.sleep(0.01)
         val = ctx.state.work_val
         results = [val * 2 + 1, val * 3 + 1]
+        ctx.state.results.extend(results)
         self.deliver(None, "collect", ctx)
-        return NodeResult(state_update={"results": results})
+        return None
 
 
 class AsyncCollectNode(Node[AsyncWorkState]):
@@ -560,10 +567,11 @@ class AsyncCollectNode(Node[AsyncWorkState]):
 
     async def execute(
         self, ctx: GraphContext[AsyncWorkState], integrated_input: IntegratedInput
-    ) -> NodeResult:
+    ) -> None:
         await asyncio.sleep(0.01)
+        ctx.state.final = sum(ctx.state.results)
         self.deliver(None, GraphNode.END, ctx)
-        return NodeResult(state_update={"final": sum(ctx.state.results)})
+        return None
 
 
 class TestAsyncParallelPipeline:

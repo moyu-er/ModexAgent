@@ -7,12 +7,16 @@ import warnings
 import pytest
 from helpers import CounterState
 
-from modex_graph import Graph, GraphNode, Node, NodeResult, RoutingError
+from modex_graph import Graph, GraphContext, GraphNode, IntegratedInput, Node, RoutingError
 
 
 class _NoOpNode(Node[CounterState]):
-    def execute(self, ctx, integrated_input):  # type: ignore[no-untyped-def]
-        return NodeResult()
+    async def execute(
+        self,
+        ctx: GraphContext[CounterState],
+        integrated_input: IntegratedInput,
+    ) -> None:
+        return None
 
 
 class TestCompileValidation:

@@ -78,17 +78,13 @@ def _make_instance(graph_instance_id: int = _GID, status: str = "running") -> Gr
             parent_instance_id=None,
             parent_node=None,
             status=GraphInstanceStatus(status),
-            instance_seq=0,
-            iteration_count=0,
-            activated_sources={},
-            pending_dispatches={},
         ),
         create_null_coordinator(graph_instance_id),
     )
 
 
 def _load_status(store: InMemoryGraphInstanceStore, gid: int = _GID) -> str:
-    instance = store.load_by_id(gid)
+    instance = store.load(gid)
     assert instance is not None
     return instance.status
 
@@ -178,7 +174,7 @@ class TestHandleRouting:
         assert len(engine.deliver_calls) == 1
         assert engine.deliver_calls[0] == ("worker", {"k": "v"})
         store = _get_deliver_store(instance.coordinator, "worker")
-        pending = store.query_pending(_GID, "worker")
+        pending = store.query_consumable(_GID, "worker")
         assert len(pending) == 1
         assert pending[0].content == {"k": "v"}
         assert pending[0].node_name == "worker"
@@ -200,7 +196,7 @@ class TestHandleRouting:
         assert _load_status(instance_store) == "running"
         if instance is not None:
             store = _get_deliver_store(instance.coordinator, "worker")
-            assert store.query_pending(_GID, "worker") == []
+            assert store.query_consumable(_GID, "worker") == []
 
 
 # -- PAUSE --------------------------------------------------------------------
@@ -297,7 +293,7 @@ class TestDeliver:
             )
         )
         store = _get_deliver_store(instance.coordinator, "summarizer")
-        pending = store.query_pending(_GID, "summarizer")
+        pending = store.query_consumable(_GID, "summarizer")
         assert len(pending) == 1
         record = pending[0]
         assert record.node_name == "summarizer"
@@ -333,7 +329,7 @@ class TestDeliver:
             )
         )
         store = _get_deliver_store(instance.coordinator, "worker")
-        pending = store.query_pending(_GID, "worker")
+        pending = store.query_consumable(_GID, "worker")
         assert len(pending) == 1
         assert pending[0].content == [1, 2, 3]
 
@@ -352,7 +348,7 @@ class TestDeliver:
                 )
             )
         store = _get_deliver_store(instance.coordinator, "worker")
-        pending = store.query_pending(_GID, "worker")
+        pending = store.query_consumable(_GID, "worker")
         assert [r.content for r in pending] == [0, 1, 2]
 
     @pytest.mark.asyncio
@@ -376,10 +372,10 @@ class TestDeliver:
         )
         alpha_store = _get_deliver_store(instance.coordinator, "alpha")
         beta_store = _get_deliver_store(instance.coordinator, "beta")
-        assert len(alpha_store.query_pending(_GID, "alpha")) == 1
-        assert len(beta_store.query_pending(_GID, "beta")) == 1
-        assert alpha_store.query_pending(_GID, "alpha")[0].content == "a"
-        assert beta_store.query_pending(_GID, "beta")[0].content == "b"
+        assert len(alpha_store.query_consumable(_GID, "alpha")) == 1
+        assert len(beta_store.query_consumable(_GID, "beta")) == 1
+        assert alpha_store.query_consumable(_GID, "alpha")[0].content == "a"
+        assert beta_store.query_consumable(_GID, "beta")[0].content == "b"
 
     @pytest.mark.asyncio
     async def test_raises_when_node_name_missing(self) -> None:
@@ -440,7 +436,7 @@ class TestDeliver:
             )
         )
         store = _get_deliver_store(instance.coordinator, "worker")
-        pending = store.query_pending(_GID, "worker")
+        pending = store.query_consumable(_GID, "worker")
         assert len(pending) == 1
         assert pending[0].content is None
 

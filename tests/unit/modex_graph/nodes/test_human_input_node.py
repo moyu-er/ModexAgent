@@ -28,7 +28,6 @@ from modex_graph import (
     Node,
     NodeFactory,
     NodeRegistry,
-    NodeResult,
     NodeSpec,
     NodeTrigger,
 )
@@ -121,13 +120,13 @@ class TestHumanInputNodeResume:
         await node.run(ctx)
         assert node._resumed is False
 
-    async def test_resume_returns_node_result(self) -> None:
+    async def test_resume_returns_none(self) -> None:
         node = HumanInputNode("Approve?", next_node="target")
         node.name = "human_input"
         node._resumed = True
         ctx = make_ctx()
         result = await node.run(ctx)
-        assert isinstance(result, NodeResult)
+        assert result is None
 
     async def test_resume_then_re_interrupt(self) -> None:
         node = HumanInputNode("Approve?", next_node="target")

@@ -30,10 +30,9 @@ from modex_agent.runtime.models import TurnIdentity
 from modex_agent.runtime.services import AgentRuntime, AgentRuntimeServices
 from modex_graph import (
     GraphPersistenceCoordinator,
-    InvocationContext,
     NullDeliverStoreFactory,
-    NullGraphMetadataStore,
-    NullNodeStateFactory,
+    NullGraphInstanceStore,
+    NullNodeStateStore,
 )
 from modex_graph.constants import GraphNode
 
@@ -41,10 +40,12 @@ from modex_graph.constants import GraphNode
 class _AutoRegCoord(GraphPersistenceCoordinator):
     """Test-only coordinator that auto-registers nodes on begin_invocation."""
 
-    def begin_invocation(self, node_name: str) -> InvocationContext:
+    def collect_consumable_delivers(
+        self, node_name: str, invocation_id: int
+    ) -> list[Any]:
         if self.get_deliver_store(node_name) is None:
             self.register_node(node_name)
-        return super().begin_invocation(node_name)
+        return super().collect_consumable_delivers(node_name, invocation_id)
     def route_deliver(
         self,
         target_node: str,
@@ -61,8 +62,8 @@ class _AutoRegCoord(GraphPersistenceCoordinator):
 def _make_test_coordinator() -> _AutoRegCoord:
     return _AutoRegCoord(
         graph_instance_id=0,
-        graph_metadata_store=NullGraphMetadataStore(),
-        default_node_state_factory=NullNodeStateFactory(),
+        instance_store=NullGraphInstanceStore(),
+        node_state_store=NullNodeStateStore(0),
         default_deliver_store_factory=NullDeliverStoreFactory(),
     )
 
@@ -164,7 +165,7 @@ class TestStartNode:
         ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
 
         await node.run(ctx)
-        assert node.result == {ReActNode.LLM: [None]}
+        assert node._submit_result == {ReActNode.LLM: [None]}
         assert ctx.state.iteration == 0
 
     @pytest.mark.asyncio
@@ -175,7 +176,7 @@ class TestStartNode:
         ctx = _make_graph_ctx(runtime=runtime)
 
         await node.run(ctx)
-        assert node.result == {ReActNode.TOOL: [None]}
+        assert node._submit_result == {ReActNode.TOOL: [None]}
         assert ctx.state.resume_target is None
 
     @pytest.mark.asyncio
@@ -186,7 +187,7 @@ class TestStartNode:
         ctx = _make_graph_ctx(runtime=runtime)
 
         await node.run(ctx)
-        assert node.result == {ReActNode.LLM: [None]}
+        assert node._submit_result == {ReActNode.LLM: [None]}
         assert ctx.state.resume_target is None
 
 
@@ -209,7 +210,7 @@ class TestEndNode:
         ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
 
         await node.run(ctx)
-        assert GraphNode.END in node.result
+        assert GraphNode.END in node._submit_result
         assert ctx.state.result is not None
         assert ctx.state.result.content == "Done!"
 
@@ -221,7 +222,7 @@ class TestEndNode:
         ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
 
         await node.run(ctx)
-        assert GraphNode.END in node.result
+        assert GraphNode.END in node._submit_result
         assert ctx.state.result is not None
         assert ctx.state.result.content == "max iterations reached"
         assert ctx.state.result.stop_reason == "max_iterations"
@@ -235,7 +236,7 @@ class TestEndNode:
         ctx.agent_ctx.emitter = _MockEmitter()  # type: ignore[assignment]
 
         await node.run(ctx)
-        assert GraphNode.END in node.result
+        assert GraphNode.END in node._submit_result
         assert ctx.state.result is not None
         assert ctx.state.result.stop_reason == "turn_cancelled"
 
@@ -265,7 +266,7 @@ class TestLLMNode:
         ctx.agent_ctx.history = _MockHistory()  # type: ignore[assignment]
 
         await node.run(ctx)
-        assert ReActNode.TOOL in node.result
+        assert ReActNode.TOOL in node._submit_result
 
     @pytest.mark.asyncio
     async def test_routes_to_end_on_no_tool_calls(self):
@@ -291,7 +292,7 @@ class TestLLMNode:
         ctx.agent_ctx.history = _MockHistory()  # type: ignore[assignment]
 
         await node.run(ctx)
-        assert ReActNode.END in node.result
+        assert ReActNode.END in node._submit_result
 
     @pytest.mark.asyncio
     async def test_routes_to_end_on_max_iterations(self):
@@ -305,7 +306,7 @@ class TestLLMNode:
         ctx.agent_ctx.max_iterations = 5
 
         await node.run(ctx)
-        assert node.result == {ReActNode.END: [None]}
+        assert node._submit_result == {ReActNode.END: [None]}
 
     @pytest.mark.asyncio
     async def test_routes_to_end_on_llm_error(self):
@@ -331,7 +332,7 @@ class TestLLMNode:
         ctx.agent_ctx.history = _MockHistory()  # type: ignore[assignment]
 
         await node.run(ctx)
-        assert ReActNode.END in node.result
+        assert ReActNode.END in node._submit_result
 
 
 class TestToolNode:
@@ -361,7 +362,7 @@ class TestToolNode:
         ctx.agent_ctx.history = history  # type: ignore[assignment]
 
         await node.run(ctx)
-        assert ReActNode.LLM in node.result
+        assert ReActNode.LLM in node._submit_result
         assert len(executed) == 2
         assert len(history.msgs) == 2
 
@@ -405,7 +406,7 @@ class TestToolNode:
 
         # Atomic batch: one DENIED cascades to PREEMPT the ALLOWED call,
         # nothing executes, and CANCEL_TURN routes the turn to END.
-        assert node.result == {ReActNode.END: [None]}
+        assert node._submit_result == {ReActNode.END: [None]}
         assert len(executed) == 0
 
     @pytest.mark.asyncio
@@ -434,7 +435,7 @@ class TestToolNode:
 
         await node.run(ctx)
 
-        assert node.result == {ReActNode.END: [None]}
+        assert node._submit_result == {ReActNode.END: [None]}
 
     @pytest.mark.asyncio
     async def test_exceeds_max_tools_routes_to_end(self):
@@ -452,7 +453,7 @@ class TestToolNode:
         ctx.agent_ctx.history = _MockHistory()  # type: ignore[assignment]
 
         await node.run(ctx)
-        assert node.result == {ReActNode.END: [None]}
+        assert node._submit_result == {ReActNode.END: [None]}
 
     @pytest.mark.asyncio
     async def test_classify_all_returns_allowed_for_normal_tools(self):

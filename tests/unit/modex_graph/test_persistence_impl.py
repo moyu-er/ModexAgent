@@ -7,7 +7,6 @@ from modex_graph import (
     DeliverConsumptionStatus,
     GraphInstanceStatus,
     GraphMetadata,
-    InvocationStatus,
 )
 
 
@@ -18,125 +17,47 @@ def _metadata(status: GraphInstanceStatus = GraphInstanceStatus.RUNNING) -> Grap
         parent_instance_id=None,
         parent_node=None,
         status=status,
-        instance_seq=3,
-        iteration_count=4,
-        activated_sources={"worker": ["start"]},
-        pending_dispatches={"worker": {"start": [{"value": 1}]}},
     )
 
 
-def _save_versions(state: modex_graph.NodeState) -> None:
-    state.save_invocation(101, "worker", 1001, 0, None, InvocationStatus.COMPLETED, {"value": 1})
-    state.save_invocation(101, "worker", 1002, 1, 0, InvocationStatus.RUNNING, {"value": 2})
-
-
-def test_null_node_state_is_noop() -> None:
-    state = modex_graph.NullNodeState()
-
-    state.write("value", 1)
-    state.restore({"value": 2})
-    state.save_invocation(101, "worker", 1001, 0, None, InvocationStatus.PENDING, {})
-
-    assert state.read("value") is None
-    assert state.snapshot() == {}
-    assert state.has("value") is False
-    assert state.load_invocation(101, "worker", 1001) is None
-    assert state.load_latest(101, "worker") is None
-    assert state.load_latest_completed(101, "worker") is None
-    assert state.query_versions(101, "worker") == []
-
-
-def test_simple_node_state_round_trips_and_filters_versions() -> None:
-    state = modex_graph.SimpleNodeState()
-    _save_versions(state)
-
-    assert state.load_invocation(101, "worker", 1001) == state.query_versions(101, "worker")[1]
-    assert state.load_latest(101, "worker") == state.query_versions(101, "worker")[0]
-    assert state.load_latest_completed(101, "worker") is not None
-    assert [record.version for record in state.query_versions(101, "worker")] == [1, 0]
-    assert [
-        record.version for record in state.query_versions(101, "worker", {InvocationStatus.RUNNING})
-    ] == [1]
-
-
-def test_sqlite_node_state_round_trips_and_creates_indexes() -> None:
-    connection = sqlite3.connect(":memory:")
-    state = modex_graph.SqliteNodeState(connection)
-    _save_versions(state)
-
-    latest = state.load_latest(101, "worker")
-    completed = state.load_latest_completed(101, "worker")
-    index_names = {
-        row[0]
-        for row in connection.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'node_states'"
-        ).fetchall()
-    }
-
-    assert latest is not None
-    assert latest.invocation_id == 1002
-    assert latest.state_json == {"value": 2}
-    assert completed is not None
-    assert completed.invocation_id == 1001
-    assert {
-        "idx_node_states_latest",
-        "idx_node_states_status",
-        "idx_node_states_cross",
-        "idx_node_states_global",
-    } <= index_names
-
-
-def test_sqlite_node_state_migrates_legacy_schema_idempotently() -> None:
-    connection = sqlite3.connect(":memory:")
-    connection.execute(
-        "CREATE TABLE node_states ("
-        "node_state_id INTEGER PRIMARY KEY, graph_instance_id INTEGER NOT NULL, "
-        "node_name TEXT NOT NULL, version INTEGER NOT NULL, state_json TEXT NOT NULL, "
-        "created_at INTEGER NOT NULL, UNIQUE(graph_instance_id, node_name, version))"
-    )
-
-    state = modex_graph.SqliteNodeState(connection)
-    state._migrate_schema()
-    columns = {row[1] for row in connection.execute("PRAGMA table_info(node_states)").fetchall()}
-
-    assert {"invocation_id", "parent_version", "status", "suspended", "updated_at"} <= columns
-
-
-def test_node_state_factories_create_expected_strategies_with_shared_connection() -> None:
-    connection = sqlite3.connect(":memory:")
-
-    assert isinstance(modex_graph.NullNodeStateFactory().create(), modex_graph.NullNodeState)
-    assert isinstance(modex_graph.SimpleNodeStateFactory().create(), modex_graph.SimpleNodeState)
-    sqlite_state = modex_graph.SqliteNodeStateFactory(connection).create()
-    assert isinstance(sqlite_state, modex_graph.SqliteNodeState)
-    assert sqlite_state._conn is connection
-
-
-def test_null_and_memory_graph_metadata_stores_obey_their_capabilities() -> None:
-    null_store = modex_graph.NullGraphMetadataStore()
-    memory_store = modex_graph.MemoryGraphMetadataStore()
+def test_null_graph_instance_store_is_noop_and_load_returns_none() -> None:
+    null_store = modex_graph.NullGraphInstanceStore()
     metadata = _metadata()
 
-    null_store.save(101, metadata)
+    null_store.save(metadata)
     null_store.update_status(101, GraphInstanceStatus.COMPLETED)
-    memory_store.save(101, metadata)
-    memory_store.update_status(101, GraphInstanceStatus.PAUSED)
+    null_store.delete(101)
 
     assert null_store.load(101) is None
-    assert memory_store.load(101) == metadata.model_copy(
-        update={"status": GraphInstanceStatus.PAUSED}
-    )
+    assert null_store.load_by_status(GraphInstanceStatus.RUNNING) == []
+    assert null_store.load_by_parent(0) == []
 
 
-def test_sqlite_graph_metadata_store_round_trips_and_updates_status() -> None:
-    connection = sqlite3.connect(":memory:")
-    store = modex_graph.SqliteGraphMetadataStore(connection)
+def test_in_memory_graph_instance_store_round_trips_full_metadata_and_updates_status() -> None:
+    store = modex_graph.InMemoryGraphInstanceStore()
     metadata = _metadata()
 
-    store.save(101, metadata)
+    store.save(metadata)
+    assert store.load(101) == metadata
+
+    store.update_status(101, GraphInstanceStatus.PAUSED)
+    loaded = store.load(101)
+    assert loaded is not None
+    assert loaded.status == GraphInstanceStatus.PAUSED
+
+
+def test_sqlite_graph_instance_store_round_trips_full_metadata_and_updates_status() -> None:
+    conn = sqlite3.connect(":memory:")
+    store = modex_graph.SqliteGraphInstanceStore(conn)
+    metadata = _metadata()
+
+    store.save(metadata)
     store.update_status(101, GraphInstanceStatus.CRASHED)
 
-    assert store.load(101) == metadata.model_copy(update={"status": GraphInstanceStatus.CRASHED})
+    loaded = store.load(101)
+    assert loaded is not None
+    assert loaded == metadata.model_copy(update={"status": GraphInstanceStatus.CRASHED})
+    conn.close()
 
 
 def test_deliver_factories_create_expected_strategies_with_shared_connection() -> None:

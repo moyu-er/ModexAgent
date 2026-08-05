@@ -260,7 +260,7 @@ class TestApplyGovernance:
         original = [{"role": "user", "content": "hi"}]
         result = await rt.apply_governance(original, ctx)
 
-        mock_gov.apply.assert_awaited_once_with(original)
+        mock_gov.apply.assert_awaited_once_with(original, agent_ctx)
         assert result == [{"role": "system", "content": "filtered"}]
 
     async def test_returns_messages_unchanged_when_no_governance(self) -> None:
@@ -402,4 +402,4 @@ class TestEngineAutoMethods:
         rt = ReactGraphRuntime()
         agent_ctx = _make_agent_ctx()
         ctx = _make_graph_ctx(agent_ctx, rt)
-        await rt.after_node(ctx, "llm", result=MagicMock())
+        await rt.after_node(ctx, "llm")

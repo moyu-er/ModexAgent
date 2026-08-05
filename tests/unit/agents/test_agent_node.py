@@ -25,32 +25,33 @@ from modex_agent.agents.agent_node import AgentNode, AgentNodeFactory, Collector
 from modex_agent.core.agent import Agent, AgentContext
 from modex_agent.core.constants import StopReason
 from modex_agent.core.emitter import AgentResult, ContentEmitter
-from modex_graph import (    GraphNode,
-
+from modex_graph import (
     GraphContext,
+    GraphNode,
     GraphPersistenceCoordinator,
     GraphRuntime,
     GraphState,
-    InvocationContext,
     Node,
     NodeFactory,
     NodeRegistry,
-    NodeResult,
     NodeSpec,
     NodeTrigger,
     NullDeliverStoreFactory,
-    NullGraphMetadataStore,
-    NullNodeStateFactory,
+    NullGraphInstanceStore,
+    NullNodeStateStore,
 )
 
 
 class _AutoRegCoord(GraphPersistenceCoordinator):
     """Test-only coordinator that auto-registers nodes on begin_invocation."""
 
-    def begin_invocation(self, node_name: str) -> InvocationContext:
+    def collect_consumable_delivers(
+        self, node_name: str, invocation_id: int
+    ) -> list[Any]:
         if self.get_deliver_store(node_name) is None:
             self.register_node(node_name)
-        return super().begin_invocation(node_name)
+        return super().collect_consumable_delivers(node_name, invocation_id)
+
     def route_deliver(
         self,
         target_node: str,
@@ -63,12 +64,11 @@ class _AutoRegCoord(GraphPersistenceCoordinator):
         return super().route_deliver(target_node, content, source_node, source_invocation_id)
 
 
-
 def _make_coordinator() -> _AutoRegCoord:
     return _AutoRegCoord(
         graph_instance_id=0,
-        graph_metadata_store=NullGraphMetadataStore(),
-        default_node_state_factory=NullNodeStateFactory(),
+        instance_store=NullGraphInstanceStore(),
+        node_state_store=NullNodeStateStore(0),
         default_deliver_store_factory=NullDeliverStoreFactory(),
     )
 
@@ -229,13 +229,13 @@ class TestAgentNodeExecute:
         assert isinstance(emitter, CollectorEmitter)
         assert agent_ctx.emitter is emitter
 
-    async def test_execute_returns_node_result(self) -> None:
+    async def test_execute_returns_none(self) -> None:
         agent = _MockAgent()
         node = AgentNode(agent, _make_agent_context, next_node="target")
         node.name = "agent_n"
         ctx = _make_ctx()
         result = await node.run(ctx)
-        assert isinstance(result, NodeResult)
+        assert result is None
 
     async def test_deliver_to_end_sentinel(self) -> None:
         from modex_graph import GraphNode
@@ -318,9 +318,7 @@ class TestAgentNodeFactory:
             agents={"my_agent": agent},
             context_factories={"my_agent": _make_agent_context},
         )
-        node = factory.create(
-            NodeSpec(name="n1", node_type="agent", config={"agent": "my_agent"})
-        )
+        node = factory.create(NodeSpec(name="n1", node_type="agent", config={"agent": "my_agent"}))
         assert isinstance(node, AgentNode)
         assert node._next_node is None
 
@@ -330,18 +328,14 @@ class TestAgentNodeFactory:
             agents={"a": agent},
             context_factories={"a": _make_agent_context},
         )
-        node = factory.create(
-            NodeSpec(name="n1", node_type="agent", config={"agent": "a"})
-        )
+        node = factory.create(NodeSpec(name="n1", node_type="agent", config={"agent": "a"}))
         assert isinstance(node, Node)
 
     def test_register_agent(self) -> None:
         factory = AgentNodeFactory()
         agent = _MockAgent()
         factory.register_agent("new_agent", agent, _make_agent_context)
-        node = factory.create(
-            NodeSpec(name="n1", node_type="agent", config={"agent": "new_agent"})
-        )
+        node = factory.create(NodeSpec(name="n1", node_type="agent", config={"agent": "new_agent"}))
         assert isinstance(node, AgentNode)
         assert node._agent is agent
 
@@ -375,9 +369,7 @@ class TestAgentNodeFactory:
     def test_empty_registry_by_default(self) -> None:
         factory = AgentNodeFactory()
         with pytest.raises(ValueError, match="not registered"):
-            factory.create(
-                NodeSpec(name="n1", node_type="agent", config={"agent": "anything"})
-            )
+            factory.create(NodeSpec(name="n1", node_type="agent", config={"agent": "anything"}))
 
     def test_initial_dicts_are_copied(self) -> None:
         agent = _MockAgent()
@@ -415,9 +407,7 @@ class TestAgentNodeFactoryRejectsBadConfig:
             context_factories={"a": _make_agent_context},
         )
         with pytest.raises(ValueError, match="not registered"):
-            factory.create(
-                NodeSpec(name="n1", node_type="agent", config={"agent": "nonexistent"})
-            )
+            factory.create(NodeSpec(name="n1", node_type="agent", config={"agent": "nonexistent"}))
 
     def test_non_string_agent_name(self) -> None:
         agent = _MockAgent()
@@ -426,9 +416,7 @@ class TestAgentNodeFactoryRejectsBadConfig:
             context_factories={"a": _make_agent_context},
         )
         with pytest.raises(ValueError, match="requires an 'agent'"):
-            factory.create(
-                NodeSpec(name="n1", node_type="agent", config={"agent": 123})
-            )
+            factory.create(NodeSpec(name="n1", node_type="agent", config={"agent": 123}))
 
     def test_non_string_next_node(self) -> None:
         agent = _MockAgent()

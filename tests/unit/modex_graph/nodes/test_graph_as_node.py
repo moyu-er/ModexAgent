@@ -35,11 +35,7 @@ from modex_graph import (
     Node,
     NodeFactory,
     NodeRegistry,
-    NodeResult,
     NodeSpec,
-    StateFieldSpec,
-    StateRegistry,
-    StateSchema,
 )
 from modex_graph.nodes import GraphAsNodeConfig
 
@@ -47,12 +43,12 @@ from modex_graph.nodes import GraphAsNodeConfig
 
 
 class _IncNode(Node[CounterState]):
-    def execute(
+    async def execute(
         self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-    ) -> NodeResult:
+    ) -> None:
         ctx.state.count += 1
         self.deliver(None, None, ctx)
-        return NodeResult()
+        return None
 
 
 class _IncFactory(NodeFactory):
@@ -63,16 +59,6 @@ class _IncFactory(NodeFactory):
         return None
 
 
-def _state_schema() -> StateSchema:
-    return StateSchema(
-        name="counter_state",
-        fields=[
-            StateFieldSpec(name="count", field_type="int", default=0),
-            StateFieldSpec(name="name", field_type="str", default=""),
-        ],
-    )
-
-
 def _inner_graph_spec() -> GraphSpec:
     return GraphSpec(
         name="inner_graph",
@@ -81,15 +67,14 @@ def _inner_graph_spec() -> GraphSpec:
             EdgeSpec(source=GraphNode.START, target="inc"),
             EdgeSpec(source="inc", target=GraphNode.END),
         ],
-        state_schema=_state_schema(),
+        state_class="counter_state",
     )
 
 
 def _compiler() -> GraphSpecCompiler:
     nodes = NodeRegistry()
     nodes.register("inc", _IncFactory())
-    states = StateRegistry()
-    return GraphSpecCompiler(nodes, states)
+    return GraphSpecCompiler(nodes, {"counter_state": CounterState})
 
 
 def _compiled_inner() -> CompiledGraph[Any]:
@@ -141,12 +126,12 @@ class TestGraphAsNodeExecute:
         await node.run(ctx)
         assert ctx.state.count == 6
 
-    async def test_execute_returns_node_result(self) -> None:
+    async def test_execute_returns_none(self) -> None:
         node = GraphAsNode(_compiled_inner(), next_node="parent")
         node.name = "subgraph_node"
         ctx = make_ctx()
         result = await node.run(ctx)
-        assert isinstance(result, NodeResult)
+        assert result is None
 
     async def test_deliver_to_end_sentinel(self) -> None:
         node = GraphAsNode(_compiled_inner(), next_node=GraphNode.END)
@@ -260,7 +245,7 @@ class TestGraphAsNodeFactoryRejectsBadConfig:
                     name="sub",
                     node_type="graph_as_node",
                     config={
-                        "graph_spec": {"name": "bad", "nodes": [], "edges": [], "state_schema": "x"}
+                        "graph_spec": {"name": "bad", "nodes": [], "edges": [], "state_class": "x"}
                     },
                 )
             )

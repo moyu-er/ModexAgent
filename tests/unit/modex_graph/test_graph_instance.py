@@ -7,17 +7,19 @@ runtime class holding ``coordinator + GraphMetadata``:
 - Property delegation: ``graph_instance_id`` / ``spec_id`` /
   ``parent_instance_id`` / ``parent_node`` / ``status`` delegate to
   ``metadata``.
-- Method delegation: ``get_state()`` / ``load_for_recovery()`` /
-  ``update_status()`` delegate to ``coordinator`` + ``metadata``.
+- Method delegation: ``get_state()`` / ``load_for_recovery()`` delegate to
+  ``coordinator``.
 - ``metadata`` is the serializable value object (frozen Pydantic).
 - ``coordinator`` lifecycle is bound to the ``GraphInstance`` lifecycle.
-- ``update_status`` updates both the coordinator's metadata store (A7)
-  and the local ``metadata`` via ``model_copy``.
+- Status transitions are routed directly through ``GraphInstanceStore`` by
+  the orchestrator / recovery / control services — ``GraphInstance`` no
+  longer owns a status-update method.
 - Export from ``modex_graph``.
 """
 
 from __future__ import annotations
 
+import pytest
 from helpers import make_graph_instance, make_graph_metadata
 from pydantic import BaseModel
 
@@ -171,69 +173,25 @@ class TestGraphInstanceLoadForRecovery:
         assert ctx.rebuilt_main_state == {}
 
 
-class TestGraphInstanceUpdateStatus:
-    def test_update_status_updates_local_metadata(self) -> None:
-        """update_status updates the local metadata via model_copy."""
+class TestGraphInstanceNoUpdateStatusMethod:
+    """GraphInstance no longer owns a status-update method.
+
+    Status transitions are routed directly through ``GraphInstanceStore``
+    (``store.update_status(gid, status)``) by the orchestrator / recovery /
+    control services that hold the store. ``GraphInstance`` exposes
+    ``status`` as a read-only property delegating to ``metadata``.
+    """
+
+    def test_update_status_method_removed(self) -> None:
+        """No ``update_status`` attribute on GraphInstance."""
+        instance = make_graph_instance(gid=1)
+        assert not hasattr(instance, "update_status")
+
+    def test_status_is_read_only_property(self) -> None:
+        """``status`` is a read-only property — direct assignment raises."""
         instance = make_graph_instance(gid=1, status=GraphInstanceStatus.RUNNING)
-        instance.update_status(GraphInstanceStatus.PAUSED)
-        assert instance.status == GraphInstanceStatus.PAUSED
-        assert instance.metadata.status == GraphInstanceStatus.PAUSED
-
-    def test_update_status_replaces_metadata_object(self) -> None:
-        """update_status replaces metadata with a new frozen model (model_copy)."""
-        instance = make_graph_instance(gid=1, status=GraphInstanceStatus.RUNNING)
-        original_metadata = instance.metadata
-        instance.update_status(GraphInstanceStatus.COMPLETED)
-        assert instance.metadata is not original_metadata
-        assert original_metadata.status == GraphInstanceStatus.RUNNING
-        assert instance.metadata.status == GraphInstanceStatus.COMPLETED
-
-    def test_update_status_all_lifecycle_transitions(self) -> None:
-        instance = make_graph_instance(gid=1, status=GraphInstanceStatus.RUNNING)
-        for status in (
-            GraphInstanceStatus.PAUSED,
-            GraphInstanceStatus.STOPPED,
-            GraphInstanceStatus.CRASHED,
-            GraphInstanceStatus.COMPLETED,
-            GraphInstanceStatus.FAILED,
-        ):
-            instance.update_status(status)
-            assert instance.status == status
-            assert instance.metadata.status == status
-
-    def test_update_status_with_real_metadata_store(self) -> None:
-        """update_status delegates to the coordinator's metadata store (A7).
-
-        With a MemoryGraphMetadataStore, the status is persisted — a
-        subsequent load returns the updated status.
-        """
-        from modex_graph import (
-            GraphPersistenceCoordinator,
-            MemoryGraphMetadataStore,
-            NullDeliverStoreFactory,
-            NullNodeStateFactory,
-        )
-
-        gid = 555
-        metadata = make_graph_metadata(gid=gid, status=GraphInstanceStatus.RUNNING)
-        store = MemoryGraphMetadataStore()
-        store.save(gid, metadata)
-        coordinator = GraphPersistenceCoordinator(
-            graph_instance_id=gid,
-            graph_metadata_store=store,
-            default_node_state_factory=NullNodeStateFactory(),
-            default_deliver_store_factory=NullDeliverStoreFactory(),
-        )
-        instance = GraphInstance(metadata, coordinator)
-
-        instance.update_status(GraphInstanceStatus.PAUSED)
-
-        # The store was updated (A7).
-        loaded = store.load(gid)
-        assert loaded is not None
-        assert loaded.status == GraphInstanceStatus.PAUSED
-        # The local metadata was also updated.
-        assert instance.status == GraphInstanceStatus.PAUSED
+        with pytest.raises(AttributeError):
+            instance.status = GraphInstanceStatus.PAUSED  # type: ignore[misc]
 
 
 class TestGraphInstanceIsExported:
@@ -246,3 +204,4 @@ class TestGraphInstanceIsExported:
         import modex_graph
 
         assert "GraphInstance" in modex_graph.__all__
+

@@ -35,7 +35,6 @@ from modex_graph import (
     IntegratedInput,
     LinearScheduler,
     Node,
-    NodeResult,
     Scheduler,
     SchedulerKind,
 )
@@ -168,12 +167,12 @@ class TestLinearSchedulerExecution:
 
     async def test_max_iterations_raises(self) -> None:
         class InfiniteNode(Node[CounterState]):
-            def execute(
+            async def execute(
                 self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-            ) -> NodeResult:
+            ) -> None:
                 ctx.state.count += 1
                 self.deliver(None, "inf", ctx)
-                return NodeResult()
+                return None
 
         g: Graph[CounterState] = Graph()
         g.add_node("inf", InfiniteNode())

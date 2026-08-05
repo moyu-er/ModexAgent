@@ -12,7 +12,6 @@ from modex_graph import (
     GraphNode,
     IntegratedInput,
     Node,
-    NodeResult,
 )
 
 
@@ -26,12 +25,12 @@ class TestSubgraphAsNode:
         """An inner graph (compiled) is used as a node in the outer graph."""
 
         class IncrementNode(Node[CounterState]):
-            def execute(
+            async def execute(
                 self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-            ) -> NodeResult:
+            ) -> None:
                 ctx.state.count += 1
                 self.deliver(None, None, ctx)
-                return NodeResult()
+                return None
 
         inner: Graph[CounterState] = Graph(name="inner")
         inner.add_node("inc", IncrementNode())
@@ -40,12 +39,12 @@ class TestSubgraphAsNode:
         inner_compiled = inner.compile()
 
         class VerifyNode(Node[CounterState]):
-            def execute(
+            async def execute(
                 self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-            ) -> NodeResult:
+            ) -> None:
                 ctx.state.name = f"count_is_{ctx.state.count}"
                 self.deliver(None, None, ctx)
-                return NodeResult()
+                return None
 
         outer: Graph[CounterState] = Graph(name="outer")
         outer.add_node("inner", GraphAsNode(inner_compiled))
@@ -64,12 +63,12 @@ class TestSubgraphAsNode:
         """The subgraph shares ctx.state / ctx.runtime / ctx.user_data with parent."""
 
         class TagNode(Node[CounterState]):
-            def execute(
+            async def execute(
                 self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-            ) -> NodeResult:
+            ) -> None:
                 ctx.state.name = ctx.state.name + "tagged"
                 self.deliver(None, None, ctx)
-                return NodeResult()
+                return None
 
         inner: Graph[CounterState] = Graph(name="inner")
         inner.add_node("tag", TagNode())

@@ -1,18 +1,18 @@
-"""Tests for NodeStateStore ABC + InMemoryNodeStateStore + SqliteNodeStateStore (P1C.6).
+# ruff: noqa: ANN401, S101
+
+"""Tests for NodeStateStore ABC + Null / InMemory / Sqlite impls.
 
 Covers:
 
-- `NodeStateStore` ABC (rule 7: ABC, not Protocol): 6 abstract methods.
-- `InMemoryNodeStateStore`: save (append-only), load_latest, load_version,
-  load_all_versions, list_nodes, clear. Uses `default_id_generator()` for
-  Snowflake IDs.
-- `SqliteNodeStateStore`: same CRUD + idempotent schema, timestamps epoch
-  ms, table/column constants, indexes created, file-based persistence,
-  `json.dumps` / `json.loads` round-trip, MVCC append-only (no UPDATE).
-- Cross-instance isolation.
-- `clear` on non-existent instance is a no-op.
-- Version ordering (ASC / DESC / latest).
-- Follows the EXACT pattern of `test_deliver_store.py`.
+- `NodeStateStore` ABC (rule 7: ABC, not Protocol): lifecycle + query methods.
+- `NullNodeStateStore`: begin returns valid context, all else no-op.
+- `InMemoryNodeStateStore`: lifecycle transitions, CAS semantics,
+  version chain, orphan cleanup, finalize safety net, query methods.
+- `SqliteNodeStateStore`: same lifecycle + CAS via UPDATE ... WHERE,
+  schema creation, file-based persistence, timestamps, close.
+- `InvocationStateError` raised on CAS failure (complete/suspend/cancel
+  on already-terminal or suspended record).
+- `InvocationStatus` enum has no PENDING / SUPERSEDED.
 """
 
 from __future__ import annotations
@@ -20,43 +20,56 @@ from __future__ import annotations
 import sqlite3
 import tempfile
 from abc import ABC
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 from modex_graph import (
     InMemoryNodeStateStore,
+    InvocationStateError,
+    InvocationStatus,
     NodeStateStore,
+    NullNodeStateStore,
     SqliteNodeStateStore,
 )
 
-# ── Test helpers ──────────────────────────────────────────────────────────
-
 _GRAPH_INSTANCE_ID = 1001
-_OTHER_INSTANCE_ID = 2002
 
 
-def _make_state(extra: dict[str, Any] | None = None) -> dict[str, Any]:
-    state: dict[str, Any] = {"count": 0, "messages": []}
-    if extra:
-        state.update(extra)
-    return state
-
-
-def _store_factory(kind: str) -> Callable[[], NodeStateStore]:
+def _store_factory(kind: str, gid: int = _GRAPH_INSTANCE_ID) -> NodeStateStore:
+    if kind == "null":
+        return NullNodeStateStore(gid)
     if kind == "memory":
-        return lambda: InMemoryNodeStateStore()
+        return InMemoryNodeStateStore(gid)
     if kind == "sqlite":
-        return lambda: SqliteNodeStateStore(":memory:")
+        return SqliteNodeStateStore(sqlite3.connect(":memory:"), gid)
     raise ValueError(f"unknown kind: {kind}")
 
 
-STORE_KINDS = ["memory", "sqlite"]
+LIFECYCLE_KINDS = ["null", "memory", "sqlite"]
+PERSISTED_KINDS = ["memory", "sqlite"]
 
 
-# ── NodeStateStore ABC ────────────────────────────────────────────────────
+# ── InvocationStatus enum ─────────────────────────────────────────────
+
+
+class TestInvocationStatusEnum:
+    def test_no_pending(self) -> None:
+        assert not hasattr(InvocationStatus, "PENDING")
+
+    def test_no_superseded(self) -> None:
+        assert not hasattr(InvocationStatus, "SUPERSEDED")
+
+    def test_values(self) -> None:
+        assert {s.value for s in InvocationStatus} == {
+            "running",
+            "completed",
+            "canceled",
+            "crashed",
+        }
+
+
+# ── NodeStateStore ABC ────────────────────────────────────────────────
 
 
 class TestNodeStateStoreABC:
@@ -65,18 +78,10 @@ class TestNodeStateStoreABC:
 
     def test_cannot_instantiate_directly(self) -> None:
         with pytest.raises(TypeError):
-            NodeStateStore()  # type: ignore[abstract]
+            NodeStateStore(0)  # type: ignore[abstract]
 
-    def test_six_abstract_methods(self) -> None:
-        expected = {
-            "save",
-            "load_latest",
-            "load_version",
-            "load_all_versions",
-            "list_nodes",
-            "clear",
-        }
-        assert set(NodeStateStore.__abstractmethods__) == expected
+    def test_null_is_subclass(self) -> None:
+        assert issubclass(NullNodeStateStore, NodeStateStore)
 
     def test_in_memory_is_subclass(self) -> None:
         assert issubclass(InMemoryNodeStateStore, NodeStateStore)
@@ -84,10 +89,8 @@ class TestNodeStateStoreABC:
     def test_sqlite_is_subclass(self) -> None:
         assert issubclass(SqliteNodeStateStore, NodeStateStore)
 
-    def test_is_not_protocol(self) -> None:
-        from typing import Protocol
-
-        assert not issubclass(NodeStateStore, Protocol)
+    def test_null_no_abstract_methods(self) -> None:
+        assert len(NullNodeStateStore.__abstractmethods__) == 0
 
     def test_in_memory_no_abstract_methods(self) -> None:
         assert len(InMemoryNodeStateStore.__abstractmethods__) == 0
@@ -96,309 +99,379 @@ class TestNodeStateStoreABC:
         assert len(SqliteNodeStateStore.__abstractmethods__) == 0
 
 
-# ── Parametrized CRUD tests ───────────────────────────────────────────────
+# ── NullNodeStateStore ────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("kind", STORE_KINDS)
-class TestNodeStateStoreCRUD:
-    def test_save_returns_int_node_state_id(self, kind: str) -> None:
-        store = _store_factory(kind)()
-        ns_id = store.save(_GRAPH_INSTANCE_ID, "node_a", 0, _make_state())
-        assert isinstance(ns_id, int)
-        assert ns_id > 0
+class TestNullNodeStateStore:
+    def test_begin_returns_valid_context(self) -> None:
+        store = NullNodeStateStore(0)
+        inv = store.begin_invocation("node_a")
+        assert inv.invocation_id > 0
+        assert inv.node_name == "node_a"
+        assert inv.version == 0
+        assert inv.parent_version is None
 
-    def test_save_generates_unique_ids(self, kind: str) -> None:
-        store = _store_factory(kind)()
-        id1 = store.save(_GRAPH_INSTANCE_ID, "a", 0, _make_state())
-        id2 = store.save(_GRAPH_INSTANCE_ID, "a", 1, _make_state())
-        assert id1 != id2
+    def test_lifecycle_methods_are_noop(self) -> None:
+        store = NullNodeStateStore(0)
+        inv = store.begin_invocation("node_a")
+        store.complete_invocation(inv, {"result": "done"})
+        store.suspend_invocation(inv, {"snapshot": True})
+        store.crash_invocation(inv)
+        store.cancel_invocation(inv)
+        store.finalize_invocation(inv)
 
-    def test_load_latest_returns_highest_version(self, kind: str) -> None:
-        store = _store_factory(kind)()
-        store.save(_GRAPH_INSTANCE_ID, "node_a", 0, {"count": 0})
-        store.save(_GRAPH_INSTANCE_ID, "node_a", 1, {"count": 1})
-        store.save(_GRAPH_INSTANCE_ID, "node_a", 2, {"count": 2})
-        result = store.load_latest(_GRAPH_INSTANCE_ID, "node_a")
-        assert result is not None
-        state, version = result
-        assert version == 2
-        assert state["count"] == 2
+    def test_queries_return_none_or_empty(self) -> None:
+        store = NullNodeStateStore(0)
+        assert store.load_latest("node_a") is None
+        assert store.load_latest_completed("node_a") is None
+        assert store.query_versions("node_a") == []
+        assert store.list_nodes() == []
+        assert store.query_all({InvocationStatus.RUNNING}) == []
+
+    def test_graph_instance_id_captured(self) -> None:
+        store = NullNodeStateStore(42)
+        assert store.graph_instance_id == 42
+
+
+# ── Parametrized lifecycle tests (memory + sqlite) ────────────────────
+
+
+@pytest.mark.parametrize("kind", PERSISTED_KINDS)
+class TestLifecycleTransitions:
+    def test_begin_creates_running_record(self, kind: str) -> None:
+        store = _store_factory(kind)
+        inv = store.begin_invocation("worker")
+        assert inv.invocation_id > 0
+        assert inv.version == 0
+        assert inv.parent_version is None
+
+        latest = store.load_latest("worker")
+        assert latest is not None
+        assert latest.status == InvocationStatus.RUNNING
+        assert latest.suspended is False
+        assert latest.invocation_id == inv.invocation_id
+
+    def test_complete_transitions_to_completed(self, kind: str) -> None:
+        store = _store_factory(kind)
+        inv = store.begin_invocation("worker")
+        store.complete_invocation(inv, {"result": "done"})
+
+        latest = store.load_latest("worker")
+        assert latest is not None
+        assert latest.status == InvocationStatus.COMPLETED
+        assert latest.state_json == {"result": "done"}
+
+    def test_suspend_sets_suspended_true(self, kind: str) -> None:
+        store = _store_factory(kind)
+        inv = store.begin_invocation("worker")
+        snapshot = {"resume_target": "tool"}
+        store.suspend_invocation(inv, snapshot)
+
+        latest = store.load_latest("worker")
+        assert latest is not None
+        assert latest.status == InvocationStatus.RUNNING
+        assert latest.suspended is True
+        assert latest.state_json == snapshot
+
+    def test_cancel_transitions_to_canceled(self, kind: str) -> None:
+        store = _store_factory(kind)
+        inv = store.begin_invocation("worker")
+        store.cancel_invocation(inv)
+
+        latest = store.load_latest("worker")
+        assert latest is not None
+        assert latest.status == InvocationStatus.CANCELED
+
+    def test_crash_transitions_to_crashed(self, kind: str) -> None:
+        store = _store_factory(kind)
+        inv = store.begin_invocation("worker")
+        store.crash_invocation(inv)
+
+        latest = store.load_latest("worker")
+        assert latest is not None
+        assert latest.status == InvocationStatus.CRASHED
+
+    def test_crash_is_tolerant_on_terminal(self, kind: str) -> None:
+        store = _store_factory(kind)
+        inv = store.begin_invocation("worker")
+        store.complete_invocation(inv, {"result": "done"})
+        store.crash_invocation(inv)
+
+        latest = store.load_latest("worker")
+        assert latest is not None
+        assert latest.status == InvocationStatus.COMPLETED
+
+    def test_finalize_skips_suspended_running(self, kind: str) -> None:
+        store = _store_factory(kind)
+        inv = store.begin_invocation("worker")
+        store.suspend_invocation(inv, {"snapshot": True})
+        store.finalize_invocation(inv)
+
+        latest = store.load_latest("worker")
+        assert latest is not None
+        assert latest.status == InvocationStatus.RUNNING
+        assert latest.suspended is True
+
+    def test_finalize_orphan_running_to_crashed(self, kind: str) -> None:
+        store = _store_factory(kind)
+        inv = store.begin_invocation("worker")
+        store.finalize_invocation(inv)
+
+        latest = store.load_latest("worker")
+        assert latest is not None
+        assert latest.status == InvocationStatus.CRASHED
+
+    def test_finalize_skips_terminal(self, kind: str) -> None:
+        store = _store_factory(kind)
+        inv = store.begin_invocation("worker")
+        store.complete_invocation(inv, {"result": "done"})
+        store.finalize_invocation(inv)
+
+        latest = store.load_latest("worker")
+        assert latest is not None
+        assert latest.status == InvocationStatus.COMPLETED
+
+
+# ── CAS strictness (complete / suspend / cancel raise on lost race) ──
+
+
+@pytest.mark.parametrize("kind", PERSISTED_KINDS)
+class TestCASStrictness:
+    def test_complete_on_completed_raises(self, kind: str) -> None:
+        store = _store_factory(kind)
+        inv = store.begin_invocation("worker")
+        store.complete_invocation(inv, {"result": "done"})
+        with pytest.raises(InvocationStateError, match="CAS failed"):
+            store.complete_invocation(inv, {"result": "again"})
+
+    def test_complete_on_suspended_raises(self, kind: str) -> None:
+        store = _store_factory(kind)
+        inv = store.begin_invocation("worker")
+        store.suspend_invocation(inv, {"snapshot": True})
+        with pytest.raises(InvocationStateError, match="CAS failed"):
+            store.complete_invocation(inv, {"result": "done"})
+
+    def test_suspend_on_completed_raises(self, kind: str) -> None:
+        store = _store_factory(kind)
+        inv = store.begin_invocation("worker")
+        store.complete_invocation(inv, {"result": "done"})
+        with pytest.raises(InvocationStateError, match="CAS failed"):
+            store.suspend_invocation(inv, {"snapshot": True})
+
+    def test_cancel_on_completed_raises(self, kind: str) -> None:
+        store = _store_factory(kind)
+        inv = store.begin_invocation("worker")
+        store.complete_invocation(inv, {"result": "done"})
+        with pytest.raises(InvocationStateError, match="CAS failed"):
+            store.cancel_invocation(inv)
+
+    def test_complete_on_canceled_raises(self, kind: str) -> None:
+        store = _store_factory(kind)
+        inv = store.begin_invocation("worker")
+        store.cancel_invocation(inv)
+        with pytest.raises(InvocationStateError, match="CAS failed"):
+            store.complete_invocation(inv, {})
+
+
+# ── Version chain + orphan cleanup ────────────────────────────────────
+
+
+@pytest.mark.parametrize("kind", PERSISTED_KINDS)
+class TestVersionChain:
+    def test_version_increments(self, kind: str) -> None:
+        store = _store_factory(kind)
+        inv0 = store.begin_invocation("worker")
+        store.complete_invocation(inv0, {"v": 0})
+
+        inv1 = store.begin_invocation("worker")
+        assert inv1.version == 1
+        assert inv1.parent_version == 0
+        store.complete_invocation(inv1, {"v": 1})
+
+        inv2 = store.begin_invocation("worker")
+        assert inv2.version == 2
+        assert inv2.parent_version == 1
+
+    def test_parent_version_from_latest_completed(self, kind: str) -> None:
+        store = _store_factory(kind)
+        inv0 = store.begin_invocation("worker")
+        store.complete_invocation(inv0, {"v": 0})
+
+        inv1 = store.begin_invocation("worker")
+        store.crash_invocation(inv1)
+
+        inv2 = store.begin_invocation("worker")
+        assert inv2.parent_version == 0
+        assert inv2.parent_version != 1
+
+    def test_orphan_running_marked_crashed_on_begin(self, kind: str) -> None:
+        store = _store_factory(kind)
+        inv0 = store.begin_invocation("worker")
+        store.begin_invocation("worker")
+
+        versions = store.query_versions("worker", {InvocationStatus.CRASHED})
+        assert len(versions) == 1
+        assert versions[0].invocation_id == inv0.invocation_id
+
+    def test_suspended_running_left_in_place_on_begin(self, kind: str) -> None:
+        store = _store_factory(kind)
+        inv0 = store.begin_invocation("worker")
+        store.suspend_invocation(inv0, {"resume_target": "tool"})
+
+        inv1 = store.begin_invocation("worker")
+        assert inv1.version == 1
+
+        running = store.query_versions("worker", {InvocationStatus.RUNNING})
+        suspended_records = [r for r in running if r.suspended]
+        assert len(suspended_records) == 1
+        assert suspended_records[0].invocation_id == inv0.invocation_id
+        assert suspended_records[0].state_json == {"resume_target": "tool"}
+
+
+# ── Query methods ─────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("kind", PERSISTED_KINDS)
+class TestQueryMethods:
+    def test_load_latest_completed(self, kind: str) -> None:
+        store = _store_factory(kind)
+        inv0 = store.begin_invocation("worker")
+        store.complete_invocation(inv0, {"v": 0})
+
+        inv1 = store.begin_invocation("worker")
+        store.crash_invocation(inv1)
+
+        completed = store.load_latest_completed("worker")
+        assert completed is not None
+        assert completed.invocation_id == inv0.invocation_id
 
     def test_load_latest_returns_none_for_missing(self, kind: str) -> None:
-        store = _store_factory(kind)()
-        assert store.load_latest(_GRAPH_INSTANCE_ID, "nonexistent") is None
+        store = _store_factory(kind)
+        assert store.load_latest("nonexistent") is None
 
-    def test_load_latest_single_version(self, kind: str) -> None:
-        store = _store_factory(kind)()
-        store.save(_GRAPH_INSTANCE_ID, "node_a", 0, {"count": 42})
-        result = store.load_latest(_GRAPH_INSTANCE_ID, "node_a")
-        assert result is not None
-        state, version = result
-        assert version == 0
-        assert state["count"] == 42
+    def test_load_by_invocation_id(self, kind: str) -> None:
+        store = _store_factory(kind)
+        inv0 = store.begin_invocation("worker")
+        store.complete_invocation(inv0, {"v": 0})
+        inv1 = store.begin_invocation("worker")
+        store.crash_invocation(inv1)
 
-    def test_load_version_returns_specific_state(self, kind: str) -> None:
-        store = _store_factory(kind)()
-        store.save(_GRAPH_INSTANCE_ID, "node_a", 0, {"count": 0})
-        store.save(_GRAPH_INSTANCE_ID, "node_a", 1, {"count": 1})
-        store.save(_GRAPH_INSTANCE_ID, "node_a", 2, {"count": 2})
-        state = store.load_version(_GRAPH_INSTANCE_ID, "node_a", 1)
-        assert state is not None
-        assert state["count"] == 1
+        found = store.load_by_invocation_id("worker", inv1.invocation_id)
+        assert found is not None
+        assert found.invocation_id == inv1.invocation_id
+        assert found.status == InvocationStatus.CRASHED
 
-    def test_load_version_returns_none_for_missing(self, kind: str) -> None:
-        store = _store_factory(kind)()
-        assert store.load_version(_GRAPH_INSTANCE_ID, "node_a", 99) is None
+    def test_load_by_invocation_id_returns_none_for_missing(self, kind: str) -> None:
+        store = _store_factory(kind)
+        store.begin_invocation("worker")
+        assert store.load_by_invocation_id("worker", 999999) is None
+        assert store.load_by_invocation_id("nonexistent", 1) is None
 
-    def test_load_all_versions_ordered_asc(self, kind: str) -> None:
-        store = _store_factory(kind)()
-        store.save(_GRAPH_INSTANCE_ID, "node_a", 2, {"count": 2})
-        store.save(_GRAPH_INSTANCE_ID, "node_a", 0, {"count": 0})
-        store.save(_GRAPH_INSTANCE_ID, "node_a", 1, {"count": 1})
-        versions = store.load_all_versions(_GRAPH_INSTANCE_ID, "node_a")
-        assert len(versions) == 3
-        version_nums = [v for (_, v) in versions]
-        assert version_nums == [0, 1, 2]
+    def test_query_versions_with_filter(self, kind: str) -> None:
+        store = _store_factory(kind)
+        inv0 = store.begin_invocation("worker")
+        store.complete_invocation(inv0, {"v": 0})
+        inv1 = store.begin_invocation("worker")
+        store.crash_invocation(inv1)
 
-    def test_load_all_versions_empty(self, kind: str) -> None:
-        store = _store_factory(kind)()
-        assert store.load_all_versions(_GRAPH_INSTANCE_ID, "node_a") == []
+        crashed = store.query_versions("worker", {InvocationStatus.CRASHED})
+        assert len(crashed) == 1
+        assert crashed[0].invocation_id == inv1.invocation_id
 
-    def test_list_nodes_returns_distinct_names(self, kind: str) -> None:
-        store = _store_factory(kind)()
-        store.save(_GRAPH_INSTANCE_ID, "node_a", 0, _make_state())
-        store.save(_GRAPH_INSTANCE_ID, "node_b", 0, _make_state())
-        store.save(_GRAPH_INSTANCE_ID, "node_a", 1, _make_state())
-        store.save(_GRAPH_INSTANCE_ID, "node_c", 0, _make_state())
-        nodes = store.list_nodes(_GRAPH_INSTANCE_ID)
-        assert len(nodes) == 3
-        assert set(nodes) == {"node_a", "node_b", "node_c"}
+    def test_query_versions_ordered_desc(self, kind: str) -> None:
+        store = _store_factory(kind)
+        for i in range(3):
+            inv = store.begin_invocation("worker")
+            store.complete_invocation(inv, {"v": i})
 
-    def test_list_nodes_empty(self, kind: str) -> None:
-        store = _store_factory(kind)()
-        assert store.list_nodes(_GRAPH_INSTANCE_ID) == []
+        versions = store.query_versions("worker")
+        assert [v.version for v in versions] == [2, 1, 0]
 
-    def test_clear_removes_all_for_instance(self, kind: str) -> None:
-        store = _store_factory(kind)()
-        store.save(_GRAPH_INSTANCE_ID, "node_a", 0, _make_state())
-        store.save(_GRAPH_INSTANCE_ID, "node_b", 0, _make_state())
-        store.clear(_GRAPH_INSTANCE_ID)
-        assert store.list_nodes(_GRAPH_INSTANCE_ID) == []
-        assert store.load_latest(_GRAPH_INSTANCE_ID, "node_a") is None
+    def test_list_nodes(self, kind: str) -> None:
+        store = _store_factory(kind)
+        store.begin_invocation("node_a")
+        store.begin_invocation("node_b")
+        nodes = store.list_nodes()
+        assert set(nodes) == {"node_a", "node_b"}
 
-    def test_clear_only_affects_specified_instance(self, kind: str) -> None:
-        store = _store_factory(kind)()
-        store.save(_GRAPH_INSTANCE_ID, "node_a", 0, _make_state())
-        store.save(_OTHER_INSTANCE_ID, "node_a", 0, _make_state())
-        store.clear(_GRAPH_INSTANCE_ID)
-        assert store.list_nodes(_GRAPH_INSTANCE_ID) == []
-        assert len(store.list_nodes(_OTHER_INSTANCE_ID)) == 1
+    def test_query_all(self, kind: str) -> None:
+        store = _store_factory(kind)
+        inv_a = store.begin_invocation("node_a")
+        store.complete_invocation(inv_a, {"a": 1})
+        inv_b = store.begin_invocation("node_b")
+        store.crash_invocation(inv_b)
 
-    def test_clear_nonexistent_is_noop(self, kind: str) -> None:
-        store = _store_factory(kind)()
-        store.clear(99999)
+        all_completed = store.query_all({InvocationStatus.COMPLETED})
+        assert len(all_completed) == 1
+        assert all_completed[0].node_name == "node_a"
 
-    def test_different_instances_isolated(self, kind: str) -> None:
-        store = _store_factory(kind)()
-        store.save(_GRAPH_INSTANCE_ID, "node_a", 0, {"count": 100})
-        store.save(_OTHER_INSTANCE_ID, "node_a", 0, {"count": 200})
-        s1 = store.load_latest(_GRAPH_INSTANCE_ID, "node_a")
-        s2 = store.load_latest(_OTHER_INSTANCE_ID, "node_a")
-        assert s1 is not None
-        assert s2 is not None
-        assert s1[0]["count"] == 100
-        assert s2[0]["count"] == 200
-
-    def test_state_round_trip_dict(self, kind: str) -> None:
-        store = _store_factory(kind)()
-        state = {"key": "value", "num": 42, "nested": {"inner": [1, 2, 3]}}
-        store.save(_GRAPH_INSTANCE_ID, "node_a", 0, state)
-        result = store.load_latest(_GRAPH_INSTANCE_ID, "node_a")
-        assert result is not None
-        assert result[0] == state
-
-    def test_state_round_trip_empty_dict(self, kind: str) -> None:
-        store = _store_factory(kind)()
-        store.save(_GRAPH_INSTANCE_ID, "node_a", 0, {})
-        result = store.load_latest(_GRAPH_INSTANCE_ID, "node_a")
-        assert result is not None
-        assert result[0] == {}
-
-    def test_state_round_trip_with_list(self, kind: str) -> None:
-        store = _store_factory(kind)()
-        state = {"messages": ["msg1", "msg2", "msg3"]}
-        store.save(_GRAPH_INSTANCE_ID, "node_a", 0, state)
-        result = store.load_latest(_GRAPH_INSTANCE_ID, "node_a")
-        assert result is not None
-        assert result[0] == state
-
-    def test_state_round_trip_with_none_values(self, kind: str) -> None:
-        store = _store_factory(kind)()
-        state = {"field": None, "other": 42}
-        store.save(_GRAPH_INSTANCE_ID, "node_a", 0, state)
-        result = store.load_latest(_GRAPH_INSTANCE_ID, "node_a")
-        assert result is not None
-        assert result[0] == state
-
-    def test_append_only_multiple_saves_same_version_rejected(self, kind: str) -> None:
-        store = _store_factory(kind)()
-        store.save(_GRAPH_INSTANCE_ID, "node_a", 0, _make_state())
-        with pytest.raises((ValueError, sqlite3.IntegrityError)):
-            store.save(_GRAPH_INSTANCE_ID, "node_a", 0, _make_state())
-
-    def test_multiple_nodes_per_instance(self, kind: str) -> None:
-        store = _store_factory(kind)()
-        for node_name in ("a", "b", "c", "d", "e"):
-            store.save(_GRAPH_INSTANCE_ID, node_name, 0, {"name": node_name})
-        nodes = store.list_nodes(_GRAPH_INSTANCE_ID)
-        assert len(nodes) == 5
-        for node_name in ("a", "b", "c", "d", "e"):
-            result = store.load_latest(_GRAPH_INSTANCE_ID, node_name)
-            assert result is not None
-            assert result[0]["name"] == node_name
+    def test_clear(self, kind: str) -> None:
+        store = _store_factory(kind)
+        store.begin_invocation("node_a")
+        store.begin_invocation("node_b")
+        store.clear()
+        assert store.list_nodes() == []
+        assert store.load_latest("node_a") is None
 
 
-# ── SqliteNodeStateStore specifics ────────────────────────────────────────
+# ── SqliteNodeStateStore specifics ────────────────────────────────────
 
 
 class TestSqliteNodeStateStoreSpecifics:
-    def test_create_table_idempotent(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            db_path = str(Path(tmp) / "node_states.db")
-            store1 = SqliteNodeStateStore(db_path)
-            store1.save(_GRAPH_INSTANCE_ID, "node_a", 0, {"count": 1})
-            store1.close()
-            store2 = SqliteNodeStateStore(db_path)
-            result = store2.load_latest(_GRAPH_INSTANCE_ID, "node_a")
-            assert result is not None
-            assert result[0]["count"] == 1
-            store2.close()
-
-    def test_table_and_column_constants(self) -> None:
-        from modex_graph.persistence.node_state_store import (
-            _COL_CREATED_AT,
-            _COL_GRAPH_INSTANCE_ID,
-            _COL_NODE_NAME,
-            _COL_NODE_STATE_ID,
-            _COL_STATE_JSON,
-            _COL_VERSION,
-            _NODE_STATE_TABLE,
-        )
-
-        assert _NODE_STATE_TABLE == "node_states"
-        assert _COL_NODE_STATE_ID == "node_state_id"
-        assert _COL_GRAPH_INSTANCE_ID == "graph_instance_id"
-        assert _COL_NODE_NAME == "node_name"
-        assert _COL_VERSION == "version"
-        assert _COL_STATE_JSON == "state_json"
-        assert _COL_CREATED_AT == "created_at"
-
-    def test_indexes_created(self) -> None:
-        store = SqliteNodeStateStore(":memory:")
-        indexes = store._conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name = ?",
-            ("node_states",),
-        ).fetchall()
-        index_names = {r[0] for r in indexes}
-        assert "idx_node_states_latest" in index_names
-        assert "idx_node_states_node" in index_names
-        store.close()
-
     def test_file_based_persistence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = str(Path(tmp) / "node_states.db")
-            store1 = SqliteNodeStateStore(db_path)
-            store1.save(_GRAPH_INSTANCE_ID, "node_a", 0, {"data": 42})
-            store1.save(_GRAPH_INSTANCE_ID, "node_a", 1, {"data": 43})
-            store1.close()
-            store2 = SqliteNodeStateStore(db_path)
-            result = store2.load_latest(_GRAPH_INSTANCE_ID, "node_a")
-            assert result is not None
-            assert result[0]["data"] == 43
-            assert result[1] == 1
-            store2.close()
+            conn1 = sqlite3.connect(db_path)
+            store1 = SqliteNodeStateStore(conn1, _GRAPH_INSTANCE_ID)
+            inv = store1.begin_invocation("worker")
+            store1.complete_invocation(inv, {"data": 42})
+            conn1.close()
 
-    def test_timestamps_are_epoch_ms(self) -> None:
-        from modex_graph.persistence.node_state_store import _COL_CREATED_AT, _NODE_STATE_TABLE
+            conn2 = sqlite3.connect(db_path)
+            store2 = SqliteNodeStateStore(conn2, _GRAPH_INSTANCE_ID)
+            latest = store2.load_latest("worker")
+            assert latest is not None
+            assert latest.status == InvocationStatus.COMPLETED
+            assert latest.state_json == {"data": 42}
+            conn2.close()
 
-        store = SqliteNodeStateStore(":memory:")
-        store.save(_GRAPH_INSTANCE_ID, "node_a", 0, _make_state())
-        row = store._conn.execute(f"SELECT {_COL_CREATED_AT} FROM {_NODE_STATE_TABLE}").fetchone()
-        assert row is not None
-        ts = row[0]
-        assert isinstance(ts, int)
-        assert ts > 1_700_000_000_000
-        store.close()
-
-    def test_state_json_is_valid_json(self) -> None:
-        import json
-
-        from modex_graph.persistence.node_state_store import _COL_STATE_JSON, _NODE_STATE_TABLE
-
-        store = SqliteNodeStateStore(":memory:")
-        store.save(_GRAPH_INSTANCE_ID, "node_a", 0, {"key": "value"})
-        row = store._conn.execute(f"SELECT {_COL_STATE_JSON} FROM {_NODE_STATE_TABLE}").fetchone()
-        assert row is not None
-        data = json.loads(row[0])
-        assert data == {"key": "value"}
-        store.close()
-
-    def test_no_updated_at_column(self) -> None:
-        store = SqliteNodeStateStore(":memory:")
-        columns = store._conn.execute("PRAGMA table_info(node_states)").fetchall()
-        col_names = {c[1] for c in columns}
-        assert "updated_at" not in col_names
-        assert "created_at" in col_names
-        store.close()
-
-    def test_unique_constraint_version(self) -> None:
-        store = SqliteNodeStateStore(":memory:")
-        store.save(_GRAPH_INSTANCE_ID, "node_a", 0, _make_state())
+    def test_check_constraint_no_pending_or_superseded(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        store = SqliteNodeStateStore(conn, _GRAPH_INSTANCE_ID)
         with pytest.raises(sqlite3.IntegrityError):
-            store.save(_GRAPH_INSTANCE_ID, "node_a", 0, _make_state())
-        store.close()
+            store._conn.execute(
+                "INSERT INTO node_states (node_state_id, graph_instance_id, "
+                "node_name, version, status, state_json, created_at, updated_at) "
+                "VALUES (1, ?, 'n', 0, 'pending', '{}', 0, 0)",
+                (_GRAPH_INSTANCE_ID,),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            store._conn.execute(
+                "INSERT INTO node_states (node_state_id, graph_instance_id, "
+                "node_name, version, status, state_json, created_at, updated_at) "
+                "VALUES (2, ?, 'n', 0, 'superseded', '{}', 0, 0)",
+                (_GRAPH_INSTANCE_ID,),
+            )
+        conn.close()
 
-    def test_close_is_safe_multiple_times(self) -> None:
-        store = SqliteNodeStateStore(":memory:")
-        store.close()
-        store.close()
-
-    def test_append_only_no_update_sql(self) -> None:
-        store = SqliteNodeStateStore(":memory:")
-        store.save(_GRAPH_INSTANCE_ID, "node_a", 0, {"v": 0})
-        store.save(_GRAPH_INSTANCE_ID, "node_a", 1, {"v": 1})
-        store.save(_GRAPH_INSTANCE_ID, "node_a", 2, {"v": 2})
-        count = store._conn.execute(
-            "SELECT COUNT(*) FROM node_states WHERE graph_instance_id = ? AND node_name = ?",
-            (_GRAPH_INSTANCE_ID, "node_a"),
-        ).fetchone()
-        assert count[0] == 3
-        v0 = store.load_version(_GRAPH_INSTANCE_ID, "node_a", 0)
-        assert v0 is not None
-        assert v0["v"] == 0
-        store.close()
-
-
-# ── InMemoryNodeStateStore specifics ──────────────────────────────────────
-
-
-class TestInMemoryNodeStateStoreSpecifics:
-    def test_internal_dict_keyed_by_instance_id(self) -> None:
-        store = InMemoryNodeStateStore()
-        store.save(_GRAPH_INSTANCE_ID, "node_a", 0, _make_state())
-        assert _GRAPH_INSTANCE_ID in store._records
-        assert len(store._records[_GRAPH_INSTANCE_ID]) == 1
-
-    def test_records_store_node_state_id(self) -> None:
-        store = InMemoryNodeStateStore()
-        ns_id = store.save(_GRAPH_INSTANCE_ID, "node_a", 0, _make_state())
-        record = store._records[_GRAPH_INSTANCE_ID][0]
-        assert record[0] == ns_id
-        assert record[1] == "node_a"
-        assert record[2] == 0
-
-    def test_clear_removes_from_dict(self) -> None:
-        store = InMemoryNodeStateStore()
-        store.save(_GRAPH_INSTANCE_ID, "node_a", 0, _make_state())
-        store.clear(_GRAPH_INSTANCE_ID)
-        assert _GRAPH_INSTANCE_ID not in store._records
+    def test_schema_has_all_columns(self) -> None:
+        conn = sqlite3.connect(":memory:")
+        store = SqliteNodeStateStore(conn, _GRAPH_INSTANCE_ID)
+        columns = {
+            row[1]
+            for row in store._conn.execute("PRAGMA table_info(node_states)").fetchall()
+        }
+        assert {
+            "node_state_id",
+            "graph_instance_id",
+            "node_name",
+            "version",
+            "parent_version",
+            "status",
+            "invocation_id",
+            "state_json",
+            "suspended",
+            "created_at",
+            "updated_at",
+        } <= columns
+        conn.close()

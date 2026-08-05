@@ -411,8 +411,9 @@ class TestOpenCodeConfigContent:
         parsed = json.loads(out["OPENCODE_CONFIG_CONTENT"])
         plugin_url = parsed["plugin"][0]
         assert plugin_url.startswith("file://")
-        # The URL must resolve to the actual plugin file.
-        url_path = Path(plugin_url.replace("file://", "").lstrip("/"))
+        from urllib.parse import urlparse
+
+        url_path = Path(urlparse(plugin_url).path)
         assert url_path.exists()
 
     def test_config_content_overrides_base_env(self, tmp_path: Path) -> None:

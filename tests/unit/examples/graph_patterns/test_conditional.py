@@ -18,23 +18,11 @@ guidance in the task spec.
 from __future__ import annotations
 
 import sys
+from importlib import import_module
 from pathlib import Path
-from typing import Any, Annotated
+from typing import Any
 
-# Add `examples/` to sys.path so `graph_patterns` is importable as a
-# top-level package. Mirrors the pattern in tests/unit/bot/test_pool_initialize.py
-# which adds examples/bot_project/ to sys.path for `from bot...` imports.
-_EXAMPLES_DIR = Path(__file__).parent.parent.parent.parent.parent / "examples"
-if str(_EXAMPLES_DIR) not in sys.path:
-    sys.path.insert(0, str(_EXAMPLES_DIR))
-
-from graph_patterns import (  # noqa: E402
-    ConditionalNode,
-    SwitchNode,
-    build_conditional_graph,
-)
-
-from modex_graph import (  # noqa: E402
+from modex_graph import (
     Graph,
     GraphContext,
     GraphEngine,
@@ -43,21 +31,30 @@ from modex_graph import (  # noqa: E402
     GraphRuntime,
     GraphState,
     IntegratedInput,
-    InvocationContext,
-    LastValue,
     Node,
-    NodeResult,
     NullDeliverStoreFactory,
-    NullGraphMetadataStore,
-    NullNodeStateFactory,
+    NullGraphInstanceStore,
+    NullNodeStateStore,
 )
+
+_EXAMPLES_DIR = Path(__file__).parent.parent.parent.parent.parent / "examples"
+if str(_EXAMPLES_DIR) not in sys.path:
+    sys.path.insert(0, str(_EXAMPLES_DIR))
+
+_conditional = import_module("graph_patterns.conditional")
+ConditionalNode = _conditional.ConditionalNode
+SwitchNode = _conditional.SwitchNode
+build_conditional_graph = _conditional.build_conditional_graph
 
 
 class _AutoRegCoord(GraphPersistenceCoordinator):
-    def begin_invocation(self, node_name: str) -> InvocationContext:
+    def collect_consumable_delivers(
+        self, node_name: str, invocation_id: int
+    ) -> list[Any]:
         if self.get_deliver_store(node_name) is None:
             self.register_node(node_name)
-        return super().begin_invocation(node_name)
+        return super().collect_consumable_delivers(node_name, invocation_id)
+
     def route_deliver(
         self,
         target_node: str,
@@ -70,12 +67,11 @@ class _AutoRegCoord(GraphPersistenceCoordinator):
         return super().route_deliver(target_node, content, source_node, source_invocation_id)
 
 
-
 def _make_coordinator() -> _AutoRegCoord:
     return _AutoRegCoord(
         graph_instance_id=0,
-        graph_metadata_store=NullGraphMetadataStore(),
-        default_node_state_factory=NullNodeStateFactory(),
+        instance_store=NullGraphInstanceStore(),
+        node_state_store=NullNodeStateStore(0),
         default_deliver_store_factory=NullDeliverStoreFactory(),
     )
 
@@ -83,8 +79,8 @@ def _make_coordinator() -> _AutoRegCoord:
 class BranchState(GraphState):
     """Test state: a counter and the label of the last-executed branch."""
 
-    count: Annotated[int, LastValue] = 0
-    last_branch: Annotated[str, LastValue] = ""
+    count: int = 0
+    last_branch: str = ""
 
 
 class AddNode(Node[BranchState]):
@@ -94,11 +90,13 @@ class AddNode(Node[BranchState]):
         self.amount = amount
         self.label = label
 
-    def execute(self, ctx: GraphContext[BranchState], integrated_input: IntegratedInput) -> NodeResult:
+    async def execute(
+        self, ctx: GraphContext[BranchState], integrated_input: IntegratedInput
+    ) -> None:
         ctx.state.count += self.amount
         ctx.state.last_branch = self.label
         self.deliver(None, None, ctx)
-        return NodeResult()
+        return None
 
 
 def make_ctx(state: BranchState | None = None) -> GraphContext[BranchState]:

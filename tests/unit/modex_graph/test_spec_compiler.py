@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import pytest
 
@@ -14,6 +14,7 @@ from pydantic import BaseModel, ValidationError
 from modex_graph import (
     CompiledGraph,
     EdgeSpec,
+    GraphContext,
     GraphNode,
     GraphSpec,
     GraphSpecCompiler,
@@ -21,13 +22,7 @@ from modex_graph import (
     Node,
     NodeFactory,
     NodeRegistry,
-    NodeResult,
     NodeSpec,
-    SimpleStateFactory,
-    StateFactory,
-    StateFieldSpec,
-    StateRegistry,
-    StateSchema,
     TopologyError,
     TopologyValidator,
 )
@@ -43,8 +38,12 @@ class _NoOpNode(Node[CounterState]):
     def __init__(self, message: str = "default") -> None:
         self.message = message
 
-    def execute(self, ctx: Any, integrated_input: IntegratedInput) -> NodeResult:  # type: ignore[override]
-        return NodeResult()
+    async def execute(
+        self,
+        ctx: GraphContext[CounterState],
+        integrated_input: IntegratedInput,
+    ) -> None:
+        return None
 
 
 class _NoOpConfig(BaseModel):
@@ -83,13 +82,6 @@ class _RecordingValidator(TopologyValidator):
         super().validate(spec, max_depth=max_depth, max_nodes=max_nodes)
 
 
-def _schema() -> StateSchema:
-    return StateSchema(
-        name="test_state",
-        fields=[StateFieldSpec(name="count", field_type="int", default=0)],
-    )
-
-
 def _node(name: str, **config: Any) -> NodeSpec:
     return NodeSpec(name=name, node_type="noop", config=config)
 
@@ -98,21 +90,21 @@ def _spec(
     nodes: list[NodeSpec],
     edges: list[EdgeSpec],
     *,
-    state_schema: StateSchema | str | None = None,
+    state_class: str = "counter",
     name: str = "test_graph",
 ) -> GraphSpec:
     return GraphSpec(
         name=name,
         nodes=nodes,
         edges=edges,
-        state_schema=state_schema if state_schema is not None else _schema(),
+        state_class=state_class,
     )
 
 
-def _registries() -> tuple[NodeRegistry, StateRegistry]:
+def _registries() -> tuple[NodeRegistry, dict[str, type[CounterState]]]:
     nodes = NodeRegistry()
     nodes.register("noop", _NoOpFactory())
-    states = StateRegistry()
+    states = {"counter": CounterState}
     return nodes, states
 
 
@@ -284,9 +276,10 @@ class TestInvalidNodeConfig:
             compiler.compile(spec)
 
 
-class TestStateSchemaResolution:
-    def test_inline_state_schema_resolves(self) -> None:
+class TestStateClassResolution:
+    def test_registered_state_class_name_resolves(self) -> None:
         nodes, states = _registries()
+        states["my_state"] = CounterState
         compiler = GraphSpecCompiler(nodes, states)
 
         spec = _spec(
@@ -295,28 +288,12 @@ class TestStateSchemaResolution:
                 EdgeSpec(source=GraphNode.START, target="a"),
                 EdgeSpec(source="a", target=GraphNode.END),
             ],
-            state_schema=_schema(),
+            state_class="my_state",
         )
         compiled = compiler.compile(spec)
         assert isinstance(compiled, CompiledGraph)
 
-    def test_registered_state_schema_name_resolves(self) -> None:
-        nodes, states = _registries()
-        states.register("my_state", SimpleStateFactory(CounterState))
-        compiler = GraphSpecCompiler(nodes, states)
-
-        spec = _spec(
-            nodes=[_node("a")],
-            edges=[
-                EdgeSpec(source=GraphNode.START, target="a"),
-                EdgeSpec(source="a", target=GraphNode.END),
-            ],
-            state_schema="my_state",
-        )
-        compiled = compiler.compile(spec)
-        assert isinstance(compiled, CompiledGraph)
-
-    def test_unregistered_state_schema_name_raises_valueerror(self) -> None:
+    def test_unregistered_state_class_name_raises_valueerror(self) -> None:
         nodes, states = _registries()
         compiler = GraphSpecCompiler(nodes, states)
 
@@ -326,31 +303,9 @@ class TestStateSchemaResolution:
                 EdgeSpec(source=GraphNode.START, target="a"),
                 EdgeSpec(source="a", target=GraphNode.END),
             ],
-            state_schema="nonexistent_schema",
+            state_class="nonexistent_state",
         )
         with pytest.raises(ValueError, match="not registered"):
-            compiler.compile(spec)
-
-    def test_bad_inline_state_schema_raises(self) -> None:
-        """DynamicStateFactory construction fails on unresolvable types."""
-        nodes, states = _registries()
-        compiler = GraphSpecCompiler(nodes, states)
-
-        bad_schema = StateSchema(
-            name="bad_state",
-            fields=[
-                StateFieldSpec(name="x", field_type="NonExistentType"),
-            ],
-        )
-        spec = _spec(
-            nodes=[_node("a")],
-            edges=[
-                EdgeSpec(source=GraphNode.START, target="a"),
-                EdgeSpec(source="a", target=GraphNode.END),
-            ],
-            state_schema=bad_schema,
-        )
-        with pytest.raises(ValueError, match="Cannot resolve"):
             compiler.compile(spec)
 
 
@@ -420,27 +375,16 @@ class TestTopologyErrorPropagation:
 
 class TestStateNotCreated:
     def test_compile_does_not_create_state(self) -> None:
-        """Compiler must not call StateFactory.create_state (state is at GraphInstance)."""
         nodes, states = _registries()
 
-        class _TrackingFactory(StateFactory):
-            """Factory that records create_state calls."""
+        class _TrackingState(CounterState):
+            create_calls: ClassVar[int] = 0
 
-            def __init__(self) -> None:
-                self.create_calls = 0
+            def __init__(self, **data: Any) -> None:
+                type(self).create_calls += 1
+                super().__init__(**data)
 
-            def create_state(self) -> Any:
-                self.create_calls += 1
-                return CounterState()
-
-            def state_schema(self) -> StateSchema:
-                return _schema()
-
-            def restore_state(self, data: dict[str, Any]) -> Any:
-                return CounterState()
-
-        tracking = _TrackingFactory()
-        states.register("tracking", tracking)
+        states["tracking"] = _TrackingState
         compiler = GraphSpecCompiler(nodes, states)
 
         spec = _spec(
@@ -449,7 +393,7 @@ class TestStateNotCreated:
                 EdgeSpec(source=GraphNode.START, target="a"),
                 EdgeSpec(source="a", target=GraphNode.END),
             ],
-            state_schema="tracking",
+            state_class="tracking",
         )
         compiler.compile(spec)
-        assert tracking.create_calls == 0
+        assert _TrackingState.create_calls == 0

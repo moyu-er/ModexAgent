@@ -3,12 +3,10 @@
 Verifies the formalized NullCoordinator factory and its behavior:
 
 - Factory returns a ``GraphPersistenceCoordinator`` wired with Null stores.
-- Lifecycle methods (begin/complete/cancel/crash/suspend/finalize) are no-op
-  or in-memory — ``NullNodeState`` discards all saves.
+- Lifecycle methods (begin/complete/cancel/crash/suspend/finalize) are on
+  ``coord.node_state_store`` — NullNodeStateStore discards all saves.
 - ``load_for_recovery`` returns a fresh ``RecoveryContext`` (empty state).
-- Deliver-only routing through ``NullDeliverStore`` in-memory queue:
-  accumulate creates PENDING records, mark_consumed REMOVES them (no CONSUMED
-  state), promote_consumed is a no-op.
+- Deliver-only routing through ``NullDeliverStore`` in-memory queue.
 - Suspend/resume: ``suspend_invocation`` is a no-op; the coordinator holds no
   state across suspend/resume — AgentContext is the orthogonal turn-state layer.
 """
@@ -21,6 +19,7 @@ from modex_graph import (
     DeliverConsumptionStatus,
     GraphNode,
     GraphPersistenceCoordinator,
+    NullNodeStateStore,
     RecoveryContext,
     RoutingError,
     create_null_coordinator,
@@ -28,8 +27,6 @@ from modex_graph import (
 
 
 class TestCreateNullCoordinator:
-    """Factory function ``create_null_coordinator``."""
-
     def test_returns_graph_persistence_coordinator(self) -> None:
         coord = create_null_coordinator()
         assert isinstance(coord, GraphPersistenceCoordinator)
@@ -51,14 +48,16 @@ class TestCreateNullCoordinator:
         records = coord.collect_consumable_delivers("llm", 1)
         assert records[0].graph_instance_id == 42
 
+    def test_uses_null_node_state_store(self) -> None:
+        coord = create_null_coordinator()
+        assert isinstance(coord.node_state_store, NullNodeStateStore)
+
 
 class TestNullLifecycleNoOp:
-    """Null coordinator lifecycle — begin returns context, rest are no-op."""
-
     def test_begin_invocation_returns_valid_context(self) -> None:
         coord = create_null_coordinator()
-        coord.register_node("llm")
-        inv = coord.begin_invocation("llm")
+        store = coord.node_state_store
+        inv = store.begin_invocation("llm")
         assert inv.invocation_id > 0
         assert inv.node_name == "llm"
         assert inv.version == 0
@@ -66,56 +65,48 @@ class TestNullLifecycleNoOp:
 
     def test_complete_invocation_is_noop(self) -> None:
         coord = create_null_coordinator()
-        coord.register_node("llm")
-        inv = coord.begin_invocation("llm")
-        coord.complete_invocation(inv, {"result": "done"})
-        assert coord.load_latest_invocation("llm") is None
+        store = coord.node_state_store
+        inv = store.begin_invocation("llm")
+        store.complete_invocation(inv, {"result": "done"})
+        assert store.load_latest("llm") is None
 
     def test_cancel_invocation_is_noop(self) -> None:
         coord = create_null_coordinator()
-        coord.register_node("llm")
-        inv = coord.begin_invocation("llm")
-        coord.cancel_invocation(inv)
-        assert coord.load_latest_invocation("llm") is None
+        store = coord.node_state_store
+        inv = store.begin_invocation("llm")
+        store.cancel_invocation(inv)
+        assert store.load_latest("llm") is None
 
     def test_crash_invocation_is_noop(self) -> None:
         coord = create_null_coordinator()
-        coord.register_node("llm")
-        inv = coord.begin_invocation("llm")
-        coord.crash_invocation(inv)
-        assert coord.load_latest_invocation("llm") is None
+        store = coord.node_state_store
+        inv = store.begin_invocation("llm")
+        store.crash_invocation(inv)
+        assert store.load_latest("llm") is None
 
     def test_suspend_invocation_is_noop(self) -> None:
         coord = create_null_coordinator()
-        coord.register_node("llm")
-        inv = coord.begin_invocation("llm")
-        coord.suspend_invocation(inv, {"resume_target": "tool"})
-        assert coord.load_latest_invocation("llm") is None
+        store = coord.node_state_store
+        inv = store.begin_invocation("llm")
+        store.suspend_invocation(inv, {"resume_target": "tool"})
+        assert store.load_latest("llm") is None
 
     def test_finalize_invocation_is_noop(self) -> None:
         coord = create_null_coordinator()
-        coord.register_node("llm")
-        inv = coord.begin_invocation("llm")
-        coord.finalize_invocation(inv)
-
-    def test_begin_invocation_unregistered_node_raises(self) -> None:
-        coord = create_null_coordinator()
-        with pytest.raises(RoutingError):
-            coord.begin_invocation("nonexistent")
+        store = coord.node_state_store
+        inv = store.begin_invocation("llm")
+        store.finalize_invocation(inv)
 
     def test_repeated_begin_always_returns_version_zero(self) -> None:
-        """NullNodeState has no memory — every begin_invocation starts fresh."""
         coord = create_null_coordinator()
-        coord.register_node("llm")
+        store = coord.node_state_store
         for _ in range(3):
-            inv = coord.begin_invocation("llm")
+            inv = store.begin_invocation("llm")
             assert inv.version == 0
             assert inv.parent_version is None
 
 
 class TestNullRecovery:
-    """Null coordinator recovery — returns fresh empty context."""
-
     def test_load_for_recovery_returns_empty_state(self) -> None:
         coord = create_null_coordinator()
         coord.register_node("llm")
@@ -129,8 +120,9 @@ class TestNullRecovery:
     def test_load_for_recovery_after_complete_still_empty(self) -> None:
         coord = create_null_coordinator()
         coord.register_node("llm")
-        inv = coord.begin_invocation("llm")
-        coord.complete_invocation(inv, {"result": "done"})
+        store = coord.node_state_store
+        inv = store.begin_invocation("llm")
+        store.complete_invocation(inv, {"result": "done"})
         ctx = coord.load_for_recovery()
         assert ctx.rebuilt_main_state == {}
         assert ctx.node_states["llm"] is None
@@ -144,14 +136,6 @@ class TestNullRecovery:
 
 
 class TestNullDeliverOnlyRouting:
-    """Deliver-only routing through NullDeliverStore in-memory queue.
-
-    NullDeliverStore semantics: accumulate creates PENDING records, mark_consumed
-    REMOVES records from the queue (no CONSUMED state), promote_consumed is a
-    no-op. This is the path React 4 nodes (START/LLM/TOOL/END) use via
-    Node.deliver() -> coordinator.route_deliver().
-    """
-
     def test_route_deliver_to_end_returns_none(self) -> None:
         coord = create_null_coordinator()
         coord.register_node("llm")
@@ -183,10 +167,6 @@ class TestNullDeliverOnlyRouting:
         assert records[0].status == DeliverConsumptionStatus.PENDING
 
     def test_full_deliver_cycle_accumulate_mark_promote(self) -> None:
-        """Full deliver-only routing cycle: accumulate -> query -> mark -> promote.
-
-        After mark_consumed (removes) + promote_delivers (no-op), queue is empty.
-        """
         coord = create_null_coordinator()
         coord.register_node("tool")
 
@@ -230,85 +210,74 @@ class TestNullDeliverOnlyRouting:
         assert tool_records[0].content == {"from": "llm"}
 
     def test_react_four_nodes_all_registered_and_routable(self) -> None:
-        """React 4 nodes (start/llm/tool/end) can all be registered and routed."""
         coord = create_null_coordinator()
         for name in ("start", "llm", "tool", "end"):
             coord.register_node(name)
 
-        # Route from start -> llm, llm -> tool, tool -> llm.
         d1 = coord.route_deliver("llm", None, "start", 1)
         d2 = coord.route_deliver("tool", {"result": "ok"}, "llm", 2)
         assert d1 is not None and d2 is not None
 
-        # END routing returns None (no deliver_store for END sentinel).
         assert coord.route_deliver(GraphNode.END, {}, "tool", 3) is None
 
-        # Each node's queue is independent.
         assert len(coord.collect_consumable_delivers("llm", 0)) == 1
         assert len(coord.collect_consumable_delivers("tool", 0)) == 1
 
 
 class TestNullSuspendResume:
-    """Suspend/resume with Null coordinator — coordinator is no-op, AgentContext holds state.
-
-    suspend_invocation is a no-op (NullNodeState discards the snapshot). On
-    resume, begin_invocation starts fresh (version=0, parent_version=None)
-    because NullNodeState has no memory. The deliver queue (NullDeliverStore
-    in-memory) persists across suspend/resume since the same store instance
-    is reused.
-    """
-
     def test_suspend_does_not_persist_state(self) -> None:
         coord = create_null_coordinator()
+        store = coord.node_state_store
         coord.register_node("tool")
-        inv = coord.begin_invocation("tool")
-        coord.suspend_invocation(inv, {"resume_target": "tool", "batch_id": "abc"})
-        assert coord.load_latest_invocation("tool") is None
+        inv = store.begin_invocation("tool")
+        store.suspend_invocation(inv, {"resume_target": "tool", "batch_id": "abc"})
+        assert store.load_latest("tool") is None
 
     def test_resume_starts_fresh(self) -> None:
         coord = create_null_coordinator()
+        store = coord.node_state_store
         coord.register_node("tool")
 
-        inv1 = coord.begin_invocation("tool")
-        coord.suspend_invocation(inv1, {"resume_target": "tool"})
+        inv1 = store.begin_invocation("tool")
+        store.suspend_invocation(inv1, {"resume_target": "tool"})
 
-        inv2 = coord.begin_invocation("tool")
+        inv2 = store.begin_invocation("tool")
         assert inv2.invocation_id > 0
         assert inv2.version == 0
         assert inv2.parent_version is None
         assert inv2.invocation_id != inv1.invocation_id
 
     def test_deliver_queue_survives_suspend_resume(self) -> None:
-        """NullDeliverStore is in-memory on the store instance — persists across suspend/resume."""
         coord = create_null_coordinator()
+        store = coord.node_state_store
         coord.register_node("tool")
 
         d1 = coord.route_deliver("tool", {"step": 1}, "llm", 100)
         assert d1 is not None
 
-        inv = coord.begin_invocation("tool")
-        coord.suspend_invocation(inv, {"resume_target": "tool"})
+        inv = store.begin_invocation("tool")
+        store.suspend_invocation(inv, {"resume_target": "tool"})
 
         records = coord.collect_consumable_delivers("tool", 200)
         assert len(records) == 1
         assert records[0].deliver_id == d1
 
     def test_full_suspend_resume_with_deliver_consumption(self) -> None:
-        """Full cycle: accumulate -> suspend -> resume -> consume -> complete."""
         coord = create_null_coordinator()
+        store = coord.node_state_store
         coord.register_node("tool")
 
         d1 = coord.route_deliver("tool", {"x": 1}, "llm", 100)
         assert d1 is not None
 
-        inv1 = coord.begin_invocation("tool")
-        coord.suspend_invocation(inv1, {"resume_target": "tool"})
+        inv1 = store.begin_invocation("tool")
+        store.suspend_invocation(inv1, {"resume_target": "tool"})
 
-        inv2 = coord.begin_invocation("tool")
+        inv2 = store.begin_invocation("tool")
         records = coord.collect_consumable_delivers("tool", inv2.invocation_id)
         assert len(records) == 1
 
         coord.mark_delivers_consumed("tool", [d1], inv2.invocation_id)
-        coord.complete_invocation(inv2, {"result": "done"})
+        store.complete_invocation(inv2, {"result": "done"})
 
         assert len(coord.collect_consumable_delivers("tool", 0)) == 0

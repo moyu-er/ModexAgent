@@ -20,7 +20,6 @@ from modex_graph import (
     GraphRecursionError,
     IntegratedInput,
     Node,
-    NodeResult,
 )
 
 
@@ -58,15 +57,15 @@ class TestLoopWithCycleGuard:
 
     async def test_loop_exits_via_deliver(self) -> None:
         class LoopNode(Node[CounterState]):
-            def execute(
+            async def execute(
                 self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-            ) -> NodeResult:
+            ) -> None:
                 ctx.state.count += 1
                 if ctx.state.count >= 5:
                     self.deliver(None, GraphNode.END, ctx)
                 else:
                     self.deliver(None, "loop", ctx)
-                return NodeResult()
+                return None
 
         g: Graph[CounterState] = Graph()
         g.add_node("loop", LoopNode())
@@ -81,12 +80,12 @@ class TestLoopWithCycleGuard:
 
     async def test_max_iterations_raises_recursion_error(self) -> None:
         class InfiniteNode(Node[CounterState]):
-            def execute(
+            async def execute(
                 self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-            ) -> NodeResult:
+            ) -> None:
                 ctx.state.count += 1
                 self.deliver(None, "inf", ctx)
-                return NodeResult()
+                return None
 
         g: Graph[CounterState] = Graph()
         g.add_node("inf", InfiniteNode())
@@ -118,12 +117,12 @@ class TestHitlInterruptResume:
         """Suspend-without-re-execution: mutations before interrupt persist."""
 
         class MutateThenInterrupt(Node[CounterState]):
-            def execute(
+            async def execute(
                 self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-            ) -> NodeResult:
+            ) -> None:
                 ctx.state.count += 42
                 ctx.interrupt("paused")
-                return NodeResult()
+                return None
 
         g: Graph[CounterState] = Graph()
         g.add_node("n", MutateThenInterrupt())
@@ -143,15 +142,15 @@ class TestHitlInterruptResume:
         class StartNode(Node[CounterState]):
             """Detects suspended state: if count > 0, route to 'after_resume'."""
 
-            def execute(
+            async def execute(
                 self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-            ) -> NodeResult:
+            ) -> None:
                 if ctx.state.count > 0:
                     self.deliver(None, "after_resume", ctx)
                 else:
                     ctx.state.count += 1
                     self.deliver(None, "interrupt", ctx)
-                return NodeResult()
+                return None
 
         g: Graph[CounterState] = Graph()
         g.add_node("start", StartNode())
@@ -178,9 +177,9 @@ class TestHitlInterruptResume:
         """Resume routing via state.resume_target + deliver()."""
 
         class EntryNode(Node[CounterState]):
-            def execute(
+            async def execute(
                 self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-            ) -> NodeResult:
+            ) -> None:
                 if ctx.state.resume_target is not None:
                     target = ctx.state.resume_target
                     ctx.state.resume_target = None
@@ -188,15 +187,15 @@ class TestHitlInterruptResume:
                 else:
                     ctx.state.count += 1
                     self.deliver(None, "suspend", ctx)
-                return NodeResult()
+                return None
 
         class SuspendNode(Node[CounterState]):
-            def execute(
+            async def execute(
                 self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-            ) -> NodeResult:
+            ) -> None:
                 ctx.state.resume_target = "after_resume"
                 ctx.interrupt("paused")
-                return NodeResult()
+                return None
 
         g: Graph[CounterState] = Graph()
         g.add_node("start", EntryNode())

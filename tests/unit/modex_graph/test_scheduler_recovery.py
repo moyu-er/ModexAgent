@@ -7,7 +7,7 @@ Test groups:
 - Fresh start: Null coordinator (no prior invocations) → identical to
   pre-recovery behavior.
   - ``test_fresh_start_no_graph_instance_id`` — ctx.graph_instance_id=None
-    → Snowflake ID generated, run_id is numeric string.
+  → Snowflake ID generated.
   - ``test_fresh_start_with_graph_instance_id`` — ctx.graph_instance_id=12345
     → uses 12345 as the persistence key.
   - ``test_null_coordinator_fresh_start`` — Null coordinator → fresh start.
@@ -15,22 +15,16 @@ Test groups:
 - Recovery via mocked coordinator: ``load_for_recovery`` returns a
   pre-built ``RecoveryContext`` → scheduler rebuilds state.
   - ``test_recovery_restores_state`` — rebuilt_main_state → ctx.state restored.
-  - ``test_recovery_restores_counters`` — metadata counters restored.
+  - ``test_recovery_restores_counters`` — iteration_count derived from
+    COMPLETED invocations; instance_seq reset to 0.
   - ``test_recovery_skips_completed_nodes`` — COMPLETED nodes not re-executed.
-  - ``test_recovery_redispatches_superseded`` — SUPERSEDED with no
-    successor → re-dispatched.
   - ``test_recovery_redispatches_crashed`` — CRASHED → re-dispatched.
   - ``test_recovery_skips_canceled`` — CANCELED → not re-dispatched.
-  - ``test_recovery_redispatches_pending_on_all_preds`` — pending_dispatches
-    from metadata → _recheck_pending fires the target.
+  - ``test_recovery_redispatches_pending_on_all_preds`` — PENDING delivers
+    → _recheck_pending fires the target.
   - ``test_recovery_f5_pending_delivers_for_completed`` — COMPLETED
-    node with PENDING delivers in deliver_store → re-dispatched.
+    node with PENDING delivers → deliver scan creates instance.
 
-- DispatchStore recovery path:
-  - ``test_query_dispatches_by_target_after_run`` — the helper returns
-    dispatches for the current run.
-  - ``test_query_dispatches_by_target_before_run`` — returns [] before
-    run_async sets run_id.
 """
 
 from __future__ import annotations
@@ -38,22 +32,28 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import patch
 
+import pytest
 from helpers import CounterState, make_coordinator, make_runtime
 
 from modex_graph import (
+    DeliverConsumptionStatus,
     Graph,
     GraphContext,
     GraphEngine,
     GraphInstanceStatus,
+    GraphInterrupt,
     GraphMetadata,
     GraphNode,
     GraphPersistenceCoordinator,
+    InMemoryDeliverStoreFactory,
+    InMemoryGraphInstanceStore,
+    InMemoryNodeStateStore,
     IntegratedInput,
     InvocationStatus,
+    LinearScheduler,
     Node,
     NodeInstanceStatus,
     NodeInvocationRecord,
-    NodeResult,
     NodeTrigger,
     ParallelScheduler,
     RecoveryContext,
@@ -70,13 +70,41 @@ class DispatchAddNode(Node[CounterState]):
         self.amount = amount
         self.target = target
 
-    def execute(
+    async def execute(
         self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
-    ) -> NodeResult:
+    ) -> None:
         ctx.state.count += self.amount
         if self.target is not None:
             self.deliver(None, self.target, ctx)
-        return NodeResult()
+        return None
+
+
+class MixedRecoveryNode(Node[CounterState]):
+    def __init__(
+        self,
+        label: str,
+        *,
+        crash_once: bool = False,
+        interrupt_once: bool = False,
+    ) -> None:
+        self.label = label
+        self.crash_once = crash_once
+        self.interrupt_once = interrupt_once
+        self.inputs: list[Any] = []
+        self.execute_count = 0
+
+    async def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> None:
+        self.execute_count += 1
+        self.inputs.append(integrated_input.integrated_content)
+        if self.crash_once:
+            self.crash_once = False
+            raise RuntimeError(f"{self.label} crashed")
+        if self.interrupt_once:
+            self.interrupt_once = False
+            ctx.interrupt({"node": self.label})
+        self.deliver(self.label, GraphNode.END, ctx)
 
 
 def make_parallel_ctx(
@@ -109,10 +137,6 @@ def make_linear_graph() -> Graph[CounterState]:
 def _make_recovery_context(
     *,
     graph_instance_id: int = 88888,
-    iteration_count: int = 0,
-    instance_seq: int = 0,
-    activated_sources: dict[str, list[str]] | None = None,
-    pending_dispatches: dict[str, dict[str, list[dict[str, Any] | None]]] | None = None,
     node_states: dict[str, NodeInvocationRecord | None] | None = None,
     rebuilt_main_state: dict[str, Any] | None = None,
 ) -> RecoveryContext:
@@ -124,10 +148,6 @@ def _make_recovery_context(
             parent_instance_id=None,
             parent_node=None,
             status=GraphInstanceStatus.RUNNING,
-            instance_seq=instance_seq,
-            iteration_count=iteration_count,
-            activated_sources=activated_sources or {},
-            pending_dispatches=pending_dispatches or {},
         ),
         node_states=node_states or {},
         rebuilt_main_state=rebuilt_main_state or {},
@@ -156,85 +176,6 @@ def _make_invocation_record(
     )
 
 
-# ── Fresh start: no graph_instance_id ─────────────────────────────────────
-
-
-class TestFreshStartNoGraphInstanceId:
-    """ctx.graph_instance_id=None → Snowflake ID generated, fresh start."""
-
-    async def test_generates_snowflake_id(self) -> None:
-        g: Graph[CounterState] = Graph()
-        g.add_node("a", DispatchAddNode(amount=5, target=GraphNode.END))
-        g.add_edge(GraphNode.START, "a")
-        g.add_edge("a", GraphNode.END)
-        compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
-
-        ctx = make_parallel_ctx(CounterState(count=0))
-        assert ctx.graph_instance_id is None
-
-        scheduler = ParallelScheduler(compiled)
-        await scheduler.run_async(ctx)
-
-        assert scheduler._graph_instance_id > 0
-        assert scheduler._run_id is not None
-        assert scheduler._run_id == str(scheduler._graph_instance_id)
-
-    async def test_run_id_is_numeric_string(self) -> None:
-        g: Graph[CounterState] = Graph()
-        g.add_node("a", DispatchAddNode(amount=1, target=GraphNode.END))
-        g.add_edge(GraphNode.START, "a")
-        g.add_edge("a", GraphNode.END)
-        compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
-
-        ctx = make_parallel_ctx(CounterState(count=0))
-        scheduler = ParallelScheduler(compiled)
-        await scheduler.run_async(ctx)
-
-        assert scheduler._run_id is not None
-        assert scheduler._run_id.isdigit()
-        assert int(scheduler._run_id) > 0
-
-    async def test_run_id_is_none_before_run(self) -> None:
-        g: Graph[CounterState] = Graph()
-        g.add_node("a", DispatchAddNode(amount=1, target=GraphNode.END))
-        g.add_edge(GraphNode.START, "a")
-        g.add_edge("a", GraphNode.END)
-        compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
-
-        scheduler = ParallelScheduler(compiled)
-        assert scheduler._run_id is None
-        assert scheduler._graph_instance_id == 0
-
-    async def test_two_runs_produce_different_ids(self) -> None:
-        g: Graph[CounterState] = Graph()
-        g.add_node("a", DispatchAddNode(amount=1, target=GraphNode.END))
-        g.add_edge(GraphNode.START, "a")
-        g.add_edge("a", GraphNode.END)
-        compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
-
-        scheduler = ParallelScheduler(compiled)
-
-        ctx1 = make_parallel_ctx(CounterState(count=0))
-        await scheduler.run_async(ctx1)
-        id1 = scheduler._graph_instance_id
-
-        ctx2 = make_parallel_ctx(CounterState(count=0))
-        await scheduler.run_async(ctx2)
-        id2 = scheduler._graph_instance_id
-
-        assert id1 != id2
-        assert id1 > 0
-        assert id2 > 0
-
-    async def test_fresh_start_executes_normally(self) -> None:
-        g = make_linear_graph()
-        compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
-
-        ctx = make_parallel_ctx(CounterState(count=0))
-        await GraphEngine(compiled).run_async(ctx)
-        assert ctx.state.count == 3
-
-
 # ── Fresh start: with graph_instance_id ───────────────────────────────────
 
 
@@ -252,8 +193,7 @@ class TestFreshStartWithGraphInstanceId:
         scheduler = ParallelScheduler(compiled)
         await scheduler.run_async(ctx)
 
-        assert scheduler._graph_instance_id == 12345
-        assert scheduler._run_id == "12345"
+        assert ctx.state.count == 5
 
     async def test_executes_normally(self) -> None:
         g = make_linear_graph()
@@ -295,8 +235,6 @@ class TestRecoveryFromCoordinator:
 
         recovery = _make_recovery_context(
             graph_instance_id=88888,
-            iteration_count=2,
-            instance_seq=2,
             node_states={
                 "a": _make_invocation_record(
                     "a", status=InvocationStatus.COMPLETED, invocation_id=100
@@ -321,14 +259,19 @@ class TestRecoveryFromCoordinator:
         assert ctx.state.count == 3
 
     async def test_recovery_restores_counters(self) -> None:
-        """metadata.iteration_count + instance_seq restored."""
+        """iteration_count derived from COMPLETED invocations; instance_seq reset to 0."""
         g = make_linear_graph()
         compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
 
+        coord = make_coordinator(("a", "b"))
+        store = coord.node_state_store
+        inv_a = store.begin_invocation("a")
+        store.complete_invocation(inv_a, {"count": 3})
+        inv_b = store.begin_invocation("b")
+        store.complete_invocation(inv_b, {"count": 3})
+
         recovery = _make_recovery_context(
             graph_instance_id=88889,
-            iteration_count=2,
-            instance_seq=2,
             node_states={
                 "a": _make_invocation_record(
                     "a", status=InvocationStatus.COMPLETED, invocation_id=100
@@ -340,7 +283,6 @@ class TestRecoveryFromCoordinator:
             rebuilt_main_state={"count": 3, "name": ""},
         )
 
-        coord = make_coordinator(("a", "b"))
         with patch.object(coord, "load_for_recovery", return_value=recovery):
             ctx = make_parallel_ctx(
                 CounterState(count=0),
@@ -351,7 +293,7 @@ class TestRecoveryFromCoordinator:
             await scheduler.run_async(ctx)
 
         assert scheduler._iteration_count == 2
-        assert scheduler._instance_seq == 2
+        assert scheduler._instance_seq == 0
 
     async def test_recovery_skips_completed_nodes(self) -> None:
         """COMPLETED nodes are NOT re-executed."""
@@ -360,8 +302,6 @@ class TestRecoveryFromCoordinator:
 
         recovery = _make_recovery_context(
             graph_instance_id=88890,
-            iteration_count=2,
-            instance_seq=2,
             node_states={
                 "a": _make_invocation_record(
                     "a", status=InvocationStatus.COMPLETED, invocation_id=100
@@ -388,39 +328,6 @@ class TestRecoveryFromCoordinator:
         assert len(scheduler._ready) == 0
         assert ctx.state.count == 3
 
-    async def test_recovery_redispatches_superseded_f1(self) -> None:
-        """F1: SUPERSEDED with no successor → re-dispatched."""
-        g: Graph[CounterState] = Graph()
-        g.add_node("a", DispatchAddNode(amount=42, target=GraphNode.END))
-        g.add_edge(GraphNode.START, "a")
-        g.add_edge("a", GraphNode.END)
-        compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
-
-        recovery = _make_recovery_context(
-            graph_instance_id=88891,
-            iteration_count=0,
-            instance_seq=1,
-            node_states={
-                "a": _make_invocation_record(
-                    "a", status=InvocationStatus.SUPERSEDED, invocation_id=100, suspended=True
-                ),
-            },
-            rebuilt_main_state={"count": 0, "name": ""},
-        )
-
-        coord = make_coordinator(("a",))
-        with patch.object(coord, "load_for_recovery", return_value=recovery):
-            ctx = make_parallel_ctx(
-                CounterState(count=0),
-                graph_instance_id=88891,
-                coordinator=coord,
-            )
-            scheduler = ParallelScheduler(compiled)
-            await scheduler.run_async(ctx)
-
-        assert ctx.state.count == 42
-        assert scheduler._iteration_count == 1
-
     async def test_recovery_redispatches_crashed(self) -> None:
         """CRASHED node → re-dispatched."""
         g: Graph[CounterState] = Graph()
@@ -431,8 +338,6 @@ class TestRecoveryFromCoordinator:
 
         recovery = _make_recovery_context(
             graph_instance_id=88892,
-            iteration_count=0,
-            instance_seq=1,
             node_states={
                 "a": _make_invocation_record(
                     "a", status=InvocationStatus.CRASHED, invocation_id=100
@@ -464,8 +369,6 @@ class TestRecoveryFromCoordinator:
 
         recovery = _make_recovery_context(
             graph_instance_id=88893,
-            iteration_count=0,
-            instance_seq=1,
             node_states={
                 "a": _make_invocation_record(
                     "a", status=InvocationStatus.CANCELED, invocation_id=100
@@ -489,7 +392,7 @@ class TestRecoveryFromCoordinator:
         assert len(scheduler._instances) == 0
 
     async def test_recovery_redispatches_pending_on_all_preds(self) -> None:
-        """pending_dispatches from metadata → _recheck_pending fires target."""
+        """PENDING delivers → _recheck_pending fires ON_ALL_PREDS target."""
         g: Graph[CounterState] = Graph()
         g.add_node("a", DispatchAddNode(amount=1, target=GraphNode.END))
         g.add_node("b", DispatchAddNode(amount=10, target=GraphNode.END))
@@ -502,12 +405,14 @@ class TestRecoveryFromCoordinator:
             default_trigger=NodeTrigger.ON_ALL_PREDS,
         )
 
+        coord = make_coordinator(("a", "b"))
+        store = coord.node_state_store
+        inv_a = store.begin_invocation("a")
+        store.complete_invocation(inv_a, {"count": 1})
+        coord.route_deliver("b", None, "a", 100)
+
         recovery = _make_recovery_context(
             graph_instance_id=77778,
-            iteration_count=1,
-            instance_seq=1,
-            activated_sources={"b": ["a"]},
-            pending_dispatches={"b": {"a": [None]}},
             node_states={
                 "a": _make_invocation_record(
                     "a", status=InvocationStatus.COMPLETED, invocation_id=100
@@ -517,7 +422,6 @@ class TestRecoveryFromCoordinator:
             rebuilt_main_state={"count": 1, "name": ""},
         )
 
-        coord = make_coordinator(("a", "b"))
         with patch.object(coord, "load_for_recovery", return_value=recovery):
             ctx = make_parallel_ctx(
                 CounterState(count=0),
@@ -535,10 +439,11 @@ class TestRecoveryFromCoordinator:
         assert b_instance.status == NodeInstanceStatus.COMPLETED
 
     async def test_recovery_f5_pending_delivers_for_completed(self) -> None:
-        """F5: COMPLETED node with PENDING delivers in deliver_store → re-dispatched."""
+        """COMPLETED node with PENDING delivers → deliver scan creates instance."""
         from modex_graph import (
             InMemoryDeliverStoreFactory,
-            SimpleNodeStateFactory,
+            InMemoryNodeStateStore,
+            NullGraphInstanceStore,
         )
 
         g: Graph[CounterState] = Graph()
@@ -547,20 +452,20 @@ class TestRecoveryFromCoordinator:
         g.add_edge("a", GraphNode.END)
         compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
 
-        # Build a coordinator with InMemoryDeliverStore so delivers persist.
         from helpers import _AutoRegisterCoordinator
-
-        from modex_graph import NullGraphMetadataStore
 
         coord = _AutoRegisterCoordinator(
             graph_instance_id=88895,
-            graph_metadata_store=NullGraphMetadataStore(),
-            default_node_state_factory=SimpleNodeStateFactory(),
+            instance_store=NullGraphInstanceStore(),
+            node_state_store=InMemoryNodeStateStore(88895),
             default_deliver_store_factory=InMemoryDeliverStoreFactory(),
         )
         coord.register_node("a")
 
-        # Manually add a PENDING deliver to "a"'s deliver_store.
+        store = coord.node_state_store
+        inv_a = store.begin_invocation("a")
+        store.complete_invocation(inv_a, {"count": 5})
+
         deliver_store = coord.get_deliver_store("a")
         assert deliver_store is not None
         deliver_store.accumulate(
@@ -573,8 +478,6 @@ class TestRecoveryFromCoordinator:
 
         recovery = _make_recovery_context(
             graph_instance_id=88895,
-            iteration_count=1,
-            instance_seq=1,
             node_states={
                 "a": _make_invocation_record(
                     "a", status=InvocationStatus.COMPLETED, invocation_id=100
@@ -592,52 +495,105 @@ class TestRecoveryFromCoordinator:
             scheduler = ParallelScheduler(compiled)
             await scheduler.run_async(ctx)
 
-        # "a" was re-dispatched because it had a PENDING deliver.
         assert scheduler._iteration_count == 2
 
+    async def test_mixed_invocation_states_and_pending_delivers_recover(self) -> None:
+        graph_instance_id = 88896
+        node_a = MixedRecoveryNode("a", crash_once=True)
+        node_b = MixedRecoveryNode("b", interrupt_once=True)
+        node_c = MixedRecoveryNode("c")
+        node_a.trigger = NodeTrigger.ON_RECEIVE
+        node_b.trigger = NodeTrigger.ON_RECEIVE
+        node_c.trigger = NodeTrigger.ON_RECEIVE
 
-# ── DispatchStore recovery path (P1C.8) ───────────────────────────────────
+        graph: Graph[CounterState] = Graph()
+        graph.add_node("a", node_a)
+        graph.add_node("b", node_b)
+        graph.add_node("c", node_c)
+        graph.add_edge(GraphNode.START, "a")
+        graph.add_edge("a", "b")
+        graph.add_edge("a", "c")
+        graph.add_edge("a", GraphNode.END)
+        graph.add_edge("b", GraphNode.END)
+        graph.add_edge("c", GraphNode.END)
+        compiled = graph.compile(scheduler=SchedulerKind.PARALLEL)
 
+        instance_store = InMemoryGraphInstanceStore()
+        instance_store.save(
+            GraphMetadata(
+                graph_instance_id=graph_instance_id,
+                spec_id=0,
+                parent_instance_id=None,
+                parent_node=None,
+                status=GraphInstanceStatus.RUNNING,
+            )
+        )
+        coordinator = GraphPersistenceCoordinator(
+            graph_instance_id=graph_instance_id,
+            instance_store=instance_store,
+            node_state_store=InMemoryNodeStateStore(graph_instance_id),
+            default_deliver_store_factory=InMemoryDeliverStoreFactory(),
+        )
+        for node_name in ("a", "b", "c"):
+            coordinator.register_node(node_name)
 
-class TestQueryDispatchesByTarget:
-    """query_dispatches_by_target helper (P1C.8)."""
+        def setup_context() -> GraphContext[CounterState]:
+            return make_parallel_ctx(
+                CounterState(),
+                graph_instance_id=graph_instance_id,
+                coordinator=coordinator,
+            )
 
-    async def test_returns_empty_before_run(self) -> None:
-        g: Graph[CounterState] = Graph()
-        g.add_node("a", DispatchAddNode(amount=1, target=GraphNode.END))
-        g.add_edge(GraphNode.START, "a")
-        g.add_edge("a", GraphNode.END)
-        compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
+        with pytest.raises(RuntimeError, match="a crashed"):
+            await node_a.run(setup_context(), graph=compiled)
+        with pytest.raises(GraphInterrupt):
+            await node_b.run(setup_context(), graph=compiled)
+        await node_c.run(setup_context(), graph=compiled)
+
+        states_before = coordinator.load_for_recovery().node_states
+        assert states_before["a"] is not None
+        assert states_before["a"].status == InvocationStatus.CRASHED
+        assert states_before["b"] is not None
+        assert states_before["b"].status == InvocationStatus.RUNNING
+        assert states_before["b"].suspended is True
+        assert states_before["c"] is not None
+        assert states_before["c"].status == InvocationStatus.COMPLETED
+
+        for node_name in ("a", "b", "c"):
+            coordinator.route_deliver(
+                node_name,
+                f"pending-{node_name}",
+                "external",
+                0,
+            )
 
         scheduler = ParallelScheduler(compiled)
-        assert scheduler.query_dispatches_by_target("a") == []
+        await scheduler.run_async(setup_context())
 
-    async def test_returns_dispatches_after_run(self) -> None:
-        g = make_linear_graph()
-        compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
+        assert node_a.execute_count == 2
+        assert node_a.inputs[-1] == ["pending-a"]
+        assert node_b.execute_count == 2
+        assert node_b.inputs[-1] == [
+            {"resume_target": None, "count": 0, "name": "", "messages": []},
+            "pending-b",
+        ]
+        assert node_c.execute_count == 2
+        assert node_c.inputs[-1] == ["pending-c"]
 
-        ctx = make_parallel_ctx(CounterState(count=0), graph_instance_id=88894)
-        scheduler = ParallelScheduler(compiled)
-        await scheduler.run_async(ctx)
+        store_a = coordinator.get_deliver_store("a")
+        store_b = coordinator.get_deliver_store("b")
+        store_c = coordinator.get_deliver_store("c")
+        assert store_a is not None
+        assert store_b is not None
+        assert store_c is not None
+        assert store_a.query_consumable(graph_instance_id, "a") == []
+        assert store_b.query_consumable(graph_instance_id, "b") == []
+        assert store_c.query_consumable(graph_instance_id, "c") == []
 
-        to_b = scheduler.query_dispatches_by_target("b")
-        assert len(to_b) == 1
-        assert to_b[0].source_instance == "a#0"
-        assert to_b[0].target == "b"
-
-        to_end = scheduler.query_dispatches_by_target(GraphNode.END)
-        assert len(to_end) == 1
-        assert to_end[0].source_instance == "b#1"
-
-    async def test_returns_empty_for_unknown_target(self) -> None:
-        g = make_linear_graph()
-        compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
-
-        ctx = make_parallel_ctx(CounterState(count=0), graph_instance_id=88895)
-        scheduler = ParallelScheduler(compiled)
-        await scheduler.run_async(ctx)
-
-        assert scheduler.query_dispatches_by_target("nonexistent") == []
+        versions = coordinator.node_state_store.query_all(set(InvocationStatus))
+        assert sum(record.node_name == "a" for record in versions) == 2
+        assert sum(record.node_name == "b" for record in versions) == 2
+        assert sum(record.node_name == "c" for record in versions) == 2
 
 
 # ── Basic execution ───────────────────────────────────────────────────────
@@ -655,32 +611,69 @@ class TestBasicExecution:
         await scheduler.run_async(ctx)
         assert ctx.state.count == 3
 
-    async def test_dispatch_log_still_works(self) -> None:
-        """_dispatch_log property still returns events after run."""
-        g = make_linear_graph()
-        compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
 
-        ctx = make_parallel_ctx(CounterState(count=0))
-        engine = GraphEngine(compiled)
-        await engine.run_async(ctx)
+# ── LinearScheduler recovery ──────────────────────────────────────────────
 
-        scheduler = engine._scheduler
-        assert isinstance(scheduler, ParallelScheduler)
-        assert len(scheduler._dispatch_log) == 2
-        assert scheduler._dispatch_log[0].source_instance == "a#0"
-        assert scheduler._dispatch_log[0].target == "b"
 
-    async def test_run_id_is_nonempty_string(self) -> None:
-        """run_id is a non-empty string."""
+class CountSnapshotNode(Node[CounterState]):
+    """Appends str(count) to messages, then delivers to default downstream."""
+
+    async def execute(
+        self, ctx: GraphContext[CounterState], integrated_input: IntegratedInput
+    ) -> None:
+        ctx.state.messages.append(str(ctx.state.count))
+        self.deliver(None, None, ctx)
+        return None
+
+
+class TestLinearSchedulerRecovery:
+    """LinearScheduler restores state from recovery context, then runs from entry."""
+
+    async def test_restores_state_from_recovery_context(self) -> None:
         g: Graph[CounterState] = Graph()
-        g.add_node("a", DispatchAddNode(amount=1, target=GraphNode.END))
+        g.add_node("a", CountSnapshotNode())
         g.add_edge(GraphNode.START, "a")
         g.add_edge("a", GraphNode.END)
-        compiled = g.compile(scheduler=SchedulerKind.PARALLEL)
+        compiled = g.compile(scheduler=SchedulerKind.LINEAR)
 
-        scheduler = ParallelScheduler(compiled)
-        assert scheduler._run_id is None
-        await scheduler.run_async(make_parallel_ctx(CounterState()))
-        assert scheduler._run_id is not None
-        assert isinstance(scheduler._run_id, str)
-        assert len(scheduler._run_id) > 0
+        recovery = _make_recovery_context(
+            node_states={
+                "a": _make_invocation_record(
+                    "a", status=InvocationStatus.COMPLETED, invocation_id=100
+                ),
+            },
+            rebuilt_main_state={"count": 42},
+        )
+
+        coord = make_coordinator(("a",))
+        with patch.object(coord, "load_for_recovery", return_value=recovery):
+            ctx = GraphContext(
+                state=CounterState(count=0),
+                runtime=make_runtime(),
+                coordinator=coord,
+                scheduler_kind=SchedulerKind.LINEAR,
+            )
+            scheduler = LinearScheduler(compiled)
+            await scheduler.run_async(ctx)
+
+        assert ctx.state.count == 42
+        assert ctx.state.messages == ["42"]
+
+    async def test_skips_recovery_when_no_prior_state(self) -> None:
+        g: Graph[CounterState] = Graph()
+        g.add_node("a", CountSnapshotNode())
+        g.add_edge(GraphNode.START, "a")
+        g.add_edge("a", GraphNode.END)
+        compiled = g.compile(scheduler=SchedulerKind.LINEAR)
+
+        ctx = GraphContext(
+            state=CounterState(count=0),
+            runtime=make_runtime(),
+            coordinator=make_coordinator(("a",)),
+            scheduler_kind=SchedulerKind.LINEAR,
+        )
+        scheduler = LinearScheduler(compiled)
+        await scheduler.run_async(ctx)
+
+        assert ctx.state.count == 0
+        assert ctx.state.messages == ["0"]
