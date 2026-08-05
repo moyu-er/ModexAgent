@@ -16,6 +16,7 @@ from bot.workspace.handle import PoolWorkspaceResources
 from modex_agent.commands.models import CommandContext
 from modex_agent.core.session_id import session_id_prefix_of
 from modex_agent.core.types import InputMessage
+from modex_agent.multi_agent.pool_config import PoolSpec
 from modex_agent.multi_agent.pool_config.deps import PoolAssemblyDeps
 from modex_agent.workspace.context import WorkspaceContext
 from modex_agent.workspace.control import WorkspaceController
@@ -51,22 +52,32 @@ def build_single_workspace_stack(service: BotService, *, data_dir_name: str) -> 
 
 def _build_assembly_deps_for_pools(
     *,
-    pool_names: list[str],
+    pool_specs: dict[str, PoolSpec],
     max_context_tokens: int | None,
 ) -> dict[str, PoolAssemblyDeps]:
     """Build PoolAssemblyDeps for every pool from memory_defaults presets.
 
-    All native main agents get the same converged memory + experience preset
-    (see ``bot.config.memory_defaults``). External_coding pools receive the
-    same deps, but ``_wire_pool_to_resources`` skips them at wiring time
+    Each native main agent gets the converged memory + experience preset with
+    its pool-specific long-term memory toggles (see
+    ``bot.config.memory_defaults``). External_coding pools receive the same
+    deps, but ``_wire_pool_to_resources`` skips them at wiring time
     because their main agent has no ``AgentPipeline``
     (``pipeline is None`` → early return).
     """
     from bot.config.memory_defaults import main_agent_experience, main_agent_memory
 
-    memory = main_agent_memory(max_context_tokens=max_context_tokens)
     experience = main_agent_experience()
-    return {name: PoolAssemblyDeps(memory=memory, experience=experience) for name in pool_names}
+    return {
+        name: PoolAssemblyDeps(
+            memory=main_agent_memory(
+                max_context_tokens=max_context_tokens,
+                archive_enabled=spec.main.memory.archive_enabled,
+                core_enabled=spec.main.memory.core_enabled,
+            ),
+            experience=experience,
+        )
+        for name, spec in pool_specs.items()
+    }
 
 
 def build_workspace_stack(

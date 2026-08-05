@@ -129,7 +129,7 @@ async def _assemble_resources(
         else None
     )
     assembly_deps: dict[str, PoolAssemblyDeps] = _build_assembly_deps_for_pools(
-        pool_names=pool_names,
+        pool_specs=pool_specs,
         max_context_tokens=max_context_tokens,
     )
 
