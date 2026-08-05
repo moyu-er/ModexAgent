@@ -174,9 +174,9 @@ per-pool override is not supported.
 
 | Preset | Used by | Contents |
 |---|---|---|
-| `main_agent_memory(max_context_tokens)` | every native main agent | session (token-budget compression, `max_context_tokens` from `model.yml`) + archive (global scope, FIFO 20) + core (global scope, `templates/core`) + dream_engine (600s interval) + governance (tool_chain_repair + lossy_compaction) + pruned + user_retention (default on) |
+| `main_agent_memory(max_context_tokens)` | every native main agent | session (token-budget compression, `max_context_tokens` from `model.yml`) + governance (tool_chain_repair + lossy_compaction) + pruned. archive/core/dream = None. |
 | `main_agent_experience()` | every native main agent | `ExperienceConfig(enabled=True)` — fires `ExperienceReviewHook` |
-| `subagent_memory()` | every native subagent | session + governance (tool_chain_repair only, NO lossy_compaction) + pruned + user_retention (default on). archive/core/dream = None. No experience preset — review is main-agent-only. |
+| `subagent_memory()` | every native subagent | session + governance (tool_chain_repair only, NO lossy_compaction) + pruned. archive/core/dream = None. No experience preset — review is main-agent-only. |
 
 ### Wiring chain (consumers perform NO additional config construction)
 
