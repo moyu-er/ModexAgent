@@ -14,8 +14,8 @@ The bot's memory + experience configuration is **baked, not user-editable**
 
 | Agent type | memory | experience | governance | hooks |
 |---|---|---|---|---|
-| native main | full layers (session+archive+core+dream+pruned+governance+user_retention) | enabled (ExperienceReviewHook fires) | create_governance (lossy + tool_chain_repair) | MaxIter + TurnOutcome + ModelChoiceBind + ExperienceReview |
-| native subagent | minimal (session+pruned+governance+user_retention) | N/A | create_subagent_governance (tool_chain_repair only) | SubagentAutoSend + MaxIter |
+| native main | session + compact + governance + pruned | enabled (ExperienceReviewHook fires) | create_governance (lossy + tool_chain_repair) | MaxIter + TurnOutcome + ModelChoiceBind + ExperienceReview |
+| native subagent | session + compact + governance + pruned | N/A | create_subagent_governance (tool_chain_repair only) | SubagentAutoSend + MaxIter |
 | external main | skipped structurally | skipped | skipped | skipped |
 | external subagent | skipped structurally | skipped | skipped | skipped |
 
@@ -168,7 +168,6 @@ class TestMemoryDefaultsContract:
         - No dream_engine → no offline archive→core consolidation
         - No governance → no tool chain repair, no lossy compaction
         - No pruned → no cleanup catalog
-        - No user_retention → no pruned user context tracking
         """
         from bot.config.memory_defaults import main_agent_memory
 
@@ -179,22 +178,18 @@ class TestMemoryDefaultsContract:
         assert m.session.max_token_ratio > 0
         assert 0 < m.session.keep_ratio < 1
 
-        # Archive layer (compressed history)
-        assert m.archive is not None, "archive must be enabled for main agents"
-        assert m.archive.enabled is True
-        assert isinstance(m.archive, ArchiveConfig)
-        assert m.archive.max_archive_total > 0
+        # Archive layer (default off — user enables per-pool)
+        assert m.archive is None, "archive must be off by default for main agents"
 
-        # Knowledge layer (SOUL/USER/MEMORY.md)
-        assert m.core is not None, "core memory must be enabled for main agents"
-        assert m.core.enabled is True
-        assert isinstance(m.core, CoreMemoryConfig)
-        assert m.core.default_templates_dir is not None
+        # Core memory (default off — depends on archive)
+        assert m.core is None, "core memory must be off by default for main agents"
 
-        # Dream engine (offline consolidation)
-        assert m.dream_engine is not None, "dream_engine must be enabled for main agents"
-        assert m.dream_engine.enabled is True
-        assert isinstance(m.dream_engine, DreamEngineConfig)
+        # Dream engine (default off — depends on archive + core)
+        assert m.dream_engine is None, "dream_engine must be off by default for main agents"
+
+        # Compact (default on — essential for all agents)
+        assert m.compact is not None, "compact must be enabled for main agents"
+        assert m.compact.enabled is True
 
         # Governance (tool chain repair + lossy compaction)
         assert m.governance is not None, "governance must be enabled for main agents"
@@ -209,9 +204,6 @@ class TestMemoryDefaultsContract:
         assert m.pruned is not None, "pruned must be enabled for main agents"
         assert m.pruned.enabled is True
         assert isinstance(m.pruned, PrunedCatalogConfig)
-
-        # User retention (default on)
-        assert m.user_retention.enabled is True
 
     def test_main_agent_memory_accepts_max_context_tokens(self) -> None:
         """max_context_tokens from model.yml MUST flow into session config."""
@@ -251,7 +243,6 @@ class TestMemoryDefaultsContract:
         - session (token-budget compression)
         - governance.tool_chain_repair (prevent broken tool chains)
         - pruned (cleanup catalog)
-        - user_retention (pruned user context tracking)
         """
         from bot.config.memory_defaults import subagent_memory
 
@@ -263,7 +254,6 @@ class TestMemoryDefaultsContract:
         assert m.governance is not None
         assert m.governance.tool_chain_repair is True
         assert m.pruned is not None and m.pruned.enabled is True
-        assert m.user_retention.enabled is True
 
         # MUST NOT have
         assert m.archive is None, "subagent must NOT have archive"
@@ -311,12 +301,12 @@ class TestAssemblyDepsUniformInjection:
         memories = [deps_map[n].memory for n in pool_names]
         for m in memories:
             assert m is not None
-            assert m.archive is not None and m.archive.enabled
-            assert m.core is not None and m.core.enabled
-            assert m.dream_engine is not None and m.dream_engine.enabled
+            assert m.archive is None  # default off
+            assert m.core is None      # default off
+            assert m.dream_engine is None  # default off
+            assert m.compact is not None and m.compact.enabled  # compact always on
             assert m.governance is not None and m.governance.lossy_compaction is not None
             assert m.pruned is not None and m.pruned.enabled
-            assert m.user_retention.enabled is True
             assert m.session.max_context_tokens == 50000
 
     def test_all_pools_get_same_experience_preset(self, tmp_path: Path) -> None:
@@ -744,7 +734,7 @@ class TestEndToEndWithSynthesizedPools:
         )
         for name, deps in deps_map.items():
             assert deps.memory is not None, f"{name}: memory must be injected"
-            assert deps.memory.archive is not None and deps.memory.archive.enabled
+            assert deps.memory.archive is None  # default off
             assert deps.experience is not None and deps.experience.enabled
 
         # 4. Verify subagent template memory injection

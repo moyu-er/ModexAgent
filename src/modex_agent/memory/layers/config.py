@@ -11,10 +11,6 @@ Default session cleanup flow:
 3. When the threshold is exceeded, messages are pruned using the configured
    ``keep_ratio``. If an ``archive_strategy`` is provided, pruned messages
    are archived before removal.
-4. ``UserBufferEntry`` records pruned unfinished
-   ``user``/``agent`` inputs so ``UserRetentionBuffer`` can
-   restore them into the next model-visible context until a plain assistant
-   completion clears the user retention entries.
 """
 
 from __future__ import annotations
@@ -82,20 +78,6 @@ class CoreMemoryConfig(BaseModel):
     default_templates_dir: str | None = None
 
 
-class UserRetentionBufferConfig(BaseModel):
-    model_config = ConfigDict(
-        frozen=True,
-        extra="forbid",
-        arbitrary_types_allowed=True,
-    )
-
-    enabled: bool = True
-    max_entries: int = 3
-    max_user_chars: int = 4000
-    max_assistant_chars: int = 4000
-    scope: Scope = Field(default_factory=SessionScope)
-
-
 class MemoryLayerConfigSet(BaseModel):
     model_config = ConfigDict(
         frozen=True,
@@ -106,6 +88,3 @@ class MemoryLayerConfigSet(BaseModel):
     session: SessionMemoryConfig = Field(default_factory=SessionMemoryConfig)
     archive: ArchiveMemoryConfig | None = Field(default_factory=ArchiveMemoryConfig)
     core: CoreMemoryConfig | None = Field(default_factory=CoreMemoryConfig)
-    user_retention: UserRetentionBufferConfig | None = Field(
-        default_factory=UserRetentionBufferConfig
-    )

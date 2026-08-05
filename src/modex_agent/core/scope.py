@@ -48,10 +48,6 @@ class MemoryLayerName(StrEnum):
     ARCHIVE = "archive"
     CORE = "core"
     PROVIDER = "provider"
-    # Deprecated: URB (UserRetentionBuffer) was removed. This enum value is
-    # retained because persistence/memory_registry.py still references it in
-    # a match-case for storage bundle creation. Do not use in new code.
-    USER_RETENTION = "user_retention"
 
 
 class MemoryContext(BaseModel):

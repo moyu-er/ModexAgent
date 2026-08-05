@@ -58,7 +58,6 @@ class TestMemoryConfig:
         cfg = SummarizerAgentConfig()
         assert cfg.context_max_chars == 20_000
         assert cfg.core_max_chars == 3000
-        assert cfg.index_max_chars == 200
 
     def test_session_max_token_ratio_clamp(self) -> None:
         """max_token_ratio clamped into [0.4, 0.9] per ADR-0009."""

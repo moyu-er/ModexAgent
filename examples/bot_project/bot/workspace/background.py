@@ -34,8 +34,8 @@ class BackgroundTaskRunner:
     ``_build_curators`` / ``start_background_tasks`` /
     ``stop_background_tasks`` / ``_dream_background_loop`` /
     ``_curator_background_loop``). Construction builds the dream engine from the
-    default pool's ``pool_data.context_manager.memory_system`` and one curator
-    per pool whose main agent enables experience.
+    first pool with archive + core memory enabled and one curator per pool
+    whose main agent enables experience.
     """
 
     def __init__(
@@ -65,46 +65,50 @@ class BackgroundTaskRunner:
     # ------------------------------------------------------------------
 
     def _maybe_build_dream(self) -> DreamEngine | None:
-        """Build the workspace DreamEngine from the default pool's memory system.
+        """Build the workspace DreamEngine from the first pool with archive + core memory enabled.
 
-        Re-homed verbatim from ``Workspace._maybe_build_dream``. Returns
-        ``None`` when dream is disabled, there is no default pool, or the pool
-        data has not been built yet.
+        Scans all pools in ``self._assembly_deps`` to find the first one where
+        both ``archive`` and ``core`` memory configs are enabled. Uses that
+        pool's memory system to build the DreamEngine. Returns ``None`` when
+        no pool qualifies or the pool data has not been built yet.
         """
-        name = self._default_pool_name
-        if name is None:
-            return None
-        deps = self._assembly_deps.get(name)
-        if deps is None or deps.memory is None:
-            return None
-        dream_cfg = deps.memory.dream_engine
-        if dream_cfg is None or not dream_cfg.enabled:
-            return None
+        for name, deps in self._assembly_deps.items():
+            if deps.memory is None:
+                continue
+            memory_cfg = deps.memory
+            if memory_cfg.archive is None or not memory_cfg.archive.enabled:
+                continue
+            if memory_cfg.core is None or not memory_cfg.core.enabled:
+                continue
 
-        pool_data = self._pool_data.get(name)
-        if pool_data is None:
-            return None
-        memory_system = pool_data.context_manager.memory_system
-        archive_manager = memory_system.archive_manager
-        core_memory_manager = memory_system.core_memory_manager
-        if archive_manager is None or core_memory_manager is None:
-            return None
+            pool_data = self._pool_data.get(name)
+            if pool_data is None:
+                continue
+            memory_system = pool_data.context_manager.memory_system
+            archive_manager = memory_system.archive_manager
+            core_memory_manager = memory_system.core_memory_manager
+            if archive_manager is None or core_memory_manager is None:
+                continue
 
-        self._dream_interval = dream_cfg.interval
-        engine = DreamEngine(
-            history_manager=archive_manager,
-            long_term_manager=core_memory_manager,
-            registry=memory_system.store_registry,
-            max_consume_per_run=dream_cfg.max_consume_per_run,
-            consolidator=memory_system.core_memory_consolidator,
-        )
-        self.dream_engine = engine
-        logger.info(
-            "Workspace DreamEngine initialized, pool=%s, interval=%ds",
-            name,
-            self._dream_interval,
-        )
-        return engine
+            dream_cfg = memory_cfg.dream_engine
+            self._dream_interval = (
+                dream_cfg.interval if dream_cfg is not None else _DEFAULT_DREAM_INTERVAL
+            )
+            engine = DreamEngine(
+                history_manager=archive_manager,
+                long_term_manager=core_memory_manager,
+                registry=memory_system.store_registry,
+                max_consume_per_run=(dream_cfg.max_consume_per_run if dream_cfg is not None else 3),
+                consolidator=memory_system.core_memory_consolidator,
+            )
+            self.dream_engine = engine
+            logger.info(
+                "Workspace DreamEngine initialized, pool=%s, interval=%ds",
+                name,
+                self._dream_interval,
+            )
+            return engine
+        return None
 
     def _build_curators(self) -> None:
         """Create one :class:`ExperienceCurator` per pool whose main agent
@@ -167,9 +171,7 @@ class BackgroundTaskRunner:
                 )
             )
         for pool_name, curator in self.curators.items():
-            interval = self._curator_intervals.get(
-                pool_name, _DEFAULT_CURATOR_INTERVAL
-            )
+            interval = self._curator_intervals.get(pool_name, _DEFAULT_CURATOR_INTERVAL)
             self._tasks.append(
                 asyncio.create_task(
                     self._curator_loop(curator, interval),
@@ -222,9 +224,7 @@ class BackgroundTaskRunner:
             except Exception:
                 logger.exception("Workspace DreamEngine background loop error")
 
-    async def _curator_loop(
-        self, curator: ExperienceCurator, interval: int
-    ) -> None:
+    async def _curator_loop(self, curator: ExperienceCurator, interval: int) -> None:
         """Periodically run ``curator.run`` until stopped.
 
         Re-homed verbatim from ``Workspace._curator_background_loop``.
@@ -240,6 +240,4 @@ class BackgroundTaskRunner:
             except asyncio.CancelledError:
                 break
             except Exception:
-                logger.exception(
-                    "Workspace ExperienceCurator background loop error"
-                )
+                logger.exception("Workspace ExperienceCurator background loop error")

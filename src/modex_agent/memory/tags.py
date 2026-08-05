@@ -12,7 +12,6 @@ __all__ = [
     "CoreMemoryTag",
     "ArchiveTag",
     "PrunedTag",
-    "UrbTag",
 ]
 
 
@@ -37,12 +36,3 @@ class PrunedTag(StrEnum):
     CONTAINER = "full_transcripts"
     HISTORY = "history"
     TRANSCRIPT = "transcript"
-
-
-class UrbTag(StrEnum):
-    """XML element tag names for injected user retention buffer fragments."""
-
-    CONTAINER = "recent_messages"
-    ENTRY = "entry"
-    USER_MSG = "user"
-    YOU_RESPONSE = "you"

@@ -447,7 +447,7 @@ class _PoolAssemblyMixin:
             default_agent_id=main_spec.agent_name,
             default_agent_role="main",
             base_system_prompt=system_prompt,
-            injection_policy=FullInjectionPolicy(pruned_manager=None),
+            injection_policy=FullInjectionPolicy(),
             experience_manager=None,
             roles=list(main_spec.roles),
         )

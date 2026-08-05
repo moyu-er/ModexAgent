@@ -389,57 +389,6 @@ async def test_archive_skips_empty_generation(tmp_path: Path):
     )
 
 
-# ── Context injection: core + archive + session ──────────────────────
-
-
-@pytest.mark.asyncio
-async def test_full_injection_includes_core_archive_and_session(tmp_path: Path):
-    """FullInjectionPolicy assembles Knowledge, Archive, and Session messages."""
-    from modex_agent.memory.injection import FullInjectionPolicy
-    from modex_agent.memory.stores.dir_archive import DirArchiveStorage
-
-    archive_dir = tmp_path / "archives"
-    storage = DirArchiveStorage(archive_dir)
-    await storage.write_archive_file(
-        1, "context.md", "previous session: discussed memory compression"
-    )
-
-    fake = _FakeInjectableMemorySystem(archive_dir)
-    result = await FullInjectionPolicy(max_history_entries=5).assemble(
-        context=MemoryContext(session_id="s1"),
-        memory_system=fake,
-    )
-
-    # Archive content injected via MD path
-    content = result.system_prompt
-    assert "memory compression" in content
-    assert "### Earlier Conversation Summaries" in content
-
-
-@pytest.mark.asyncio
-async def test_injection_excludes_empty_archive_markers(tmp_path: Path):
-    """Empty context.md files are skipped; only non-empty archives inject."""
-    from modex_agent.memory.injection import FullInjectionPolicy
-    from modex_agent.memory.stores.dir_archive import DirArchiveStorage
-
-    archive_dir = tmp_path / "archives"
-    storage = DirArchiveStorage(archive_dir)
-    await storage.write_archive_file(1, "context.md", "")
-    await storage.write_archive_file(2, "context.md", "   ")
-    await storage.write_archive_file(3, "context.md", "real: user asked about weather")
-
-    fake = _FakeInjectableMemorySystem(archive_dir)
-    result = await FullInjectionPolicy(max_history_entries=5).assemble(
-        context=MemoryContext(session_id="s1"),
-        memory_system=fake,
-    )
-
-    content = result.system_prompt
-    assert "weather" in content
-    assert 'number="1"' not in content
-    assert 'number="2"' not in content
-
-
 # ── Long-term core: full update (existing + new) ─────────────────────
 
 
@@ -580,60 +529,6 @@ async def test_session_only_messages_no_duplicate_cleanup_trigger(tmp_path: Path
     assert remaining > 0
 
 
-# ── Archive injection: distinguishable markers ────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_archive_injection_has_distinguishable_markers(tmp_path: Path):
-    """Multiple archive entries are injected with clear per-entry markers."""
-    from modex_agent.memory.injection import FullInjectionPolicy
-    from modex_agent.memory.stores.dir_archive import DirArchiveStorage
-
-    archive_dir = tmp_path / "archives"
-    storage = DirArchiveStorage(archive_dir)
-    await storage.write_archive_file(1, "context.md", "first session: discussed login bug")
-    await storage.write_archive_file(2, "context.md", "second session: fixed auth flow")
-    await storage.write_archive_file(3, "context.md", "third session: added JWT tests")
-
-    fake = _FakeInjectableMemorySystem(archive_dir)
-    result = await FullInjectionPolicy(max_history_entries=5).assemble(
-        context=MemoryContext(session_id="s1"),
-        memory_system=fake,
-    )
-    content = result.system_prompt
-
-    assert "<summary" in content
-    assert "<older_topics>" in content
-    assert "</older_topics>" in content
-    assert "login bug" in content
-    assert "auth flow" in content
-    assert "JWT tests" in content
-
-
-@pytest.mark.asyncio
-async def test_archive_injection_uses_archive_id_as_number(tmp_path: Path):
-    """Archive entries are injected with archive_id as the number attribute."""
-    from modex_agent.memory.injection import FullInjectionPolicy
-    from modex_agent.memory.stores.dir_archive import DirArchiveStorage
-
-    archive_dir = tmp_path / "archives"
-    storage = DirArchiveStorage(archive_dir)
-    await storage.write_archive_file(1, "context.md", "older discussion")
-    await storage.write_archive_file(2, "context.md", "recent discussion")
-
-    fake = _FakeInjectableMemorySystem(archive_dir)
-    result = await FullInjectionPolicy(max_history_entries=5).assemble(
-        context=MemoryContext(session_id="s1"),
-        memory_system=fake,
-    )
-    content = result.system_prompt
-
-    assert 'number="1"' in content
-    assert 'number="2"' in content
-    assert "older discussion" in content
-    assert "recent discussion" in content
-
-
 # ── Retrieval: archive search by query ────────────────────────────────────
 
 
@@ -695,89 +590,6 @@ async def test_core_retrieve_returns_all_files(tmp_path: Path):
     assert "bot personality" in core.soul
     assert "user preferences" in core.user
     assert "project context" in core.memory
-
-
-# ── Injection: priority ordering ──────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_injection_priority_order_respected(tmp_path: Path):
-    """Sections are ordered by priority descending: core > archive > compression."""
-    from modex_agent.memory.injection import FullInjectionPolicy
-
-    registry = DefaultMemoryStoreRegistry(tmp_path)
-    system = _bot_project_system(registry)
-    await system.initialize()
-    ctx = _make_ctx("priority-order")
-
-    km = system._layers.core
-    await km.ensure_defaults(ctx, {"memory": "- priority: 90"})
-    await system._layers.archive.append(ctx, ArchiveEntry(summary="priority-70 entry"))
-    await system._layers.session.add_messages(
-        ctx,
-        [
-            {"role": "user", "content": "test"},
-            {"role": "assistant", "content": "response"},
-        ],
-    )
-
-    bundle = await FullInjectionPolicy(max_history_entries=5).assemble(
-        context=ctx,
-        memory_system=system,
-        query="",
-    )
-
-    # Verify sections appear in priority order: SOUL(100) before MEMORY(90) before archive(70)
-    memory_pos = bundle.system_prompt.find("- priority: 90")
-    archive_pos = bundle.system_prompt.find("priority-70 entry")
-    # SOUL is at the start (highest priority)
-    assert bundle.system_prompt != "", "System prompt should not be empty"
-    if memory_pos >= 0 and archive_pos >= 0:
-        assert memory_pos < archive_pos, (
-            "MEMORY (priority 90) should appear before archive (priority 70)"
-        )
-    elif memory_pos >= 0:
-        assert memory_pos >= 0, "MEMORY section should be present"
-    elif archive_pos >= 0:
-        assert archive_pos >= 0, "Archive section should be present"
-
-
-@pytest.mark.asyncio
-async def test_injection_budget_trims_low_priority_first(tmp_path: Path):
-    """When token budget is tight, low-priority sections drop first."""
-    from modex_agent.memory.core.models import MemoryBudget
-    from modex_agent.memory.injection import FullInjectionPolicy
-
-    registry = DefaultMemoryStoreRegistry(tmp_path)
-    system = _bot_project_system(registry)
-    await system.initialize()
-    ctx = _make_ctx("budget-trim")
-
-    km = system._layers.core
-    await km.ensure_defaults(
-        ctx,
-        {
-            "soul": "HIGH priority content " * 50,
-            "memory": "medium priority " * 100,
-        },
-    )
-    await system._layers.archive.append(ctx, ArchiveEntry(summary="low priority old history " * 20))
-
-    budget = MemoryBudget(max_system_prompt_tokens=1200)
-    bundle = await FullInjectionPolicy(max_history_entries=5, budget=budget).assemble(
-        context=ctx,
-        memory_system=system,
-        query="",
-    )
-
-    high_priority_found = "HIGH priority" in bundle.system_prompt
-    assert high_priority_found, "SOUL (priority 100) should survive budget trim"
-
-    # Low priority content (archive at priority 70) should be trimmed before high priority
-    # when token budget is tight
-    low_priority_found = "low priority old history" in bundle.system_prompt
-    # Either: high priority survived (always) + low may or may not (budget-dependent)
-    assert high_priority_found
 
 
 @pytest.mark.asyncio

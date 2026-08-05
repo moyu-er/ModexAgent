@@ -216,7 +216,6 @@ class ScopedArchiveMemoryManager(ArchiveMemoryManager):
                 generation.documents.core,
                 encoding="utf-8",
             )
-            (archive_dir / "index.md").write_text(generation.documents.index, encoding="utf-8")
         return result
 
     async def _load_state(self, archive: ArchiveStore) -> ArchiveState:
