@@ -2,7 +2,9 @@
 
 Status: **current**（设计权威）。本文档描述 `modex_graph` 分布式持久化层的当前实现状态。目标读者是需要理解、维护或扩展该系统的开发者。
 
-Date: 2026-08-05
+配套文档：`external-control.md`（外部控制面与恢复语义权威，2026-08-05）。状态机语义精化、恢复入口集推导、at-least-once 契约、持久化档位降级矩阵以该文档为准。所有配套 ticket（34~39）已落地实现。
+
+Date: 2026-08-05（2026-08-06 更新：ticket 34~39 全部落地，移除计划变更标注）
 
 ## 1. 概述
 
@@ -16,7 +18,7 @@ Date: 2026-08-05
 | Node 调用 | `NodeStateStore` | 调用版本链 + lifecycle 状态 + full state snapshot | `GraphPersistenceCoordinator`(per graph instance 一个) |
 | Deliver | `DeliverStore` | per-node 投递与消费状态机 | `GraphPersistenceCoordinator.register_node` 注册(per node 一个) |
 
-每层各有 `Null` / `InMemory` / `Sqlite` 三种实现。`Null` 用于 ReActAgent per-turn 路径(无持久化),`InMemory` 用于测试与单进程临时图,`Sqlite` 用于需要 crash recovery 的生产图。
+每层各有 `Null` / `InMemory` / `Sqlite` 三种实现。`Null` 用于 ReActAgent per-turn 路径(无持久化),`InMemory` 用于测试与单进程临时图,`Sqlite` 用于需要 crash recovery 的生产图。三档的恢复能力降级矩阵与 fail-safe 契约见 `external-control.md` §9。
 
 ### 1.2 共享 state 加 full snapshot
 
@@ -114,8 +116,10 @@ class GraphMetadata(BaseModel):
 Status 更新只走一条路: `instance_store.update_status(graph_instance_id, GraphInstanceStatus)`。
 
 - `GraphOrchestrator` 在 `create_and_run` 时写 `RUNNING`,完成时写 `COMPLETED`,`GraphInterrupt` 时写 `PAUSED`,其他异常写 `CRASHED`。
+- `GraphDrained`(外部 pause/stop 触发的协作排空,见 `external-control.md` §3-5)上抛时**不覆盖状态**——目标状态(PAUSED/STOPPED)已由 `GraphControlService` 在调 engine 之前写入,orchestrator `except GraphDrained: pass` 识别为预期内退出(ticket 34/35 已落地)。
 - `GraphRecoveryService` 恢复时写 `RUNNING`。
 - `GraphControlService` 的 pause / stop / resume 命令写对应 status。
+- FAILED 不由框架写入:业务层重试预算耗尽后经 `update_status` 写入(见 `external-control.md` §2/§10)。
 - `GraphInstance` runtime class 不再有 `update_status` 方法。`GraphInstance.status` 是只读 property,委托到 `metadata.status`。
 
 没有 `GraphMetadataStore`。旧设计的 `GraphMetadataStore` ABC 加三个实现(Null / Memory / Sqlite)已删除,身份与 status 持久化收敛到 `GraphInstanceStore`。
@@ -551,6 +555,10 @@ Node B 的 `run()` 在 integrate 阶段从自己的 deliver_store 消费:
 
 Resume from suspend 时跳过此流程,直接用前一 invocation 的 state snapshot 作为 integrated input,避免 double-effect。
 
+### 9.3 时序不变量(契约)
+
+`Node.run()` 先 `submit()`(`route_deliver` 落目标节点 deliver_store)后 `complete_invocation()`,中间无 await。因此:**上游 COMPLETED ⟹ 其 deliver 必然已持久化**(或条件分支下被有意跳过,D10 silent skip)。这是恢复入口集推导"deliver 记录 ⟺ 上游已提交"推断成立的根基(见 `external-control.md` §7),不得调换顺序。mid-submit 进程被杀的窗口(部分目标收到 deliver)由"源节点重派 + at-least-once"兜底。
+
 ## 10. 恢复流程
 
 ### 10.1 ParallelScheduler 恢复
@@ -570,7 +578,7 @@ Resume from suspend 时跳过此流程,直接用前一 invocation 的 state snap
 
 ### 10.2 LinearScheduler 恢复
 
-LinearScheduler 的恢复是 4 行:
+当前实现是 4 行:
 
 ```python
 recovery = ctx.coordinator.load_for_recovery()
@@ -580,6 +588,8 @@ if has_prior_state and recovery.rebuilt_main_state:
 ```
 
 之后从 `self.graph.entry_node` 开始顺序循环。Resume routing 是 graph author 的 concern: entry node 读 `state.resume_target` 路由到目标 node。如果 `state.resume_target` 未设置,从 entry_node 正常开始。
+
+崩溃恢复与 ParallelScheduler 共享同一套**恢复入口集推导**(ticket 36 已落地,见 `external-control.md` §7):版本链顶端非终态(CRASHED/孤儿 RUNNING/suspended RUNNING)重派 ∪ PENDING deliver 凭证扫描(无来源过滤、无入度推断),取拓扑序最早候选起步,之后走正常 deliver 路由。`resume_target` 机制保留,但回归本职:只管 HITL 挂起恢复,崩溃恢复不再依赖它。
 
 ### 10.3 GraphRecoveryService
 
@@ -593,7 +603,7 @@ if has_prior_state and recovery.rebuilt_main_state:
 
 `recover_crashed()`: 查 `CRASHED` + `RUNNING` 实例(进程被 kill 时 graph 留在 RUNNING——没有活进程在跑它),全部走共享恢复流程。返回恢复的 `graph_instance_id` 列表。
 
-`resume(graph_instance_id)`: 加载单个实例,校验 status 为 PAUSED 或 STOPPED(CRASHED 不被手动 resume,COMPLETED / FAILED 是终态),走共享流程。
+`resume(graph_instance_id)`: 加载单个实例,校验 status 为 PAUSED(STOPPED 是终态不可恢复;CRASHED 不被手动 resume,COMPLETED / FAILED 是终态),走共享流程。STOPPED 终态化决议见 `external-control.md` §2(ticket 37 已落地)。
 
 ## 11. ON_RECEIVE 串行门
 
@@ -686,10 +696,15 @@ Check + increment 是同步代码段,在 `before_node` 的第一个 await 之前
 | 调度 | 顺序:`current` 指针,一个 node 接一个 | 并发:READY set + asyncio.create_task |
 | 路由 | `_handle_linear_dispatch` 记录 target,取第一个 | `_handle_dispatch` 按 trigger mode 处理 |
 | trigger mode | 不适用(顺序) | `ON_ALL_PREDS`(默认) / `ON_RECEIVE` |
-| 恢复 | 4 行:`load_for_recovery` + `model_validate` + entry_node 循环 | `_restore_from_recovery`: redispatch + rebuild pending + recheck |
+| 恢复 | `_recovery_start_node`:版本链非终态 ∪ PENDING deliver → 拓扑序最早候选(ticket 36) | `_restore_from_recovery`: redispatch + rebuild pending + recheck |
+| 外部控制 | 循环顶部 `ctx.control.check()`(ticket 34) | launch 前 `check()`,命中取消在途 task + 抛 `GraphDrained`(ticket 34) |
 | max_iterations | 在循环顶部 check | 在 `_execute_instance` 顶部 check + increment(同步) |
 
 两个 scheduler 都调 `load_for_recovery()`,都从 entry_node 开始(LinearScheduler 直接循环,ParallelScheduler 创建 entry instance)。
+
+### 13.5 upstream_payloads 是 vestigial 字段
+
+`NodeInstance.upstream_payloads`(`scheduler/instance.py`)由 scheduler 在三处写入(`_rebuild_pending_from_delivers` / `_fire_on_receive` / `_try_fire_on_all_preds`),但 **`Node.run()` 从不读它**——节点输入永远来自 `coordinator.collect_consumable_delivers`(查 deliver_store)。该字段是历史遗留记账,不代表节点实际输入。扩展调度器时不要以它为依据;后续可考虑移除(见 `backlog.md` BL-14 同类清理)。
 
 ## 14. 迁移历史
 
