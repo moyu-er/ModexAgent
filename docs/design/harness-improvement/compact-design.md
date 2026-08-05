@@ -26,7 +26,8 @@ ModexAgent 的 session 清理（`cleanup_session`）只有跨会话 archive 记�
         3. session commit (retain [compact_summary] + [tail])
         4. pruned catalog write (topic 从 compact summary 提取)
         5. archive generation (可配置, 默认关闭)
-    → on_cleanup_finished listeners
+    → MemoryHookRunner.dispatch(CLEANUP_TRIGGERED)  ← before phase 2
+    → MemoryHookRunner.dispatch(CLEANUP_FINISHED)  ← before every triggered=True return
 
 下一次 LLM iteration:
   → MemorySystemContextManager.load()
@@ -263,7 +264,7 @@ transcript 通过 `__TRANSCRIPT__` 占位符注入（同样绕开转义）。
 - `_maybe_build_dream()` 不再只从 default pool 构建，改为扫描所有 pool 找到第一个 `archive_enabled and core_enabled` 的 pool 构建
 - `scan_all()` 已经只处理 `MemoryAgentRole.MAIN` 的 archive scope，subagent 被排除
 - DreamEngine 不需要改为 per-pool 实例，只需在构建时选择正确的 pool
-- `on_archive_generated` 回调在生产中从未接线（DreamEngine 靠定时轮询），此设计不改变这一行为
+- archive trigger 回调已删除（DreamEngine 靠定时轮询，是唯一的 archive-consolidation trigger）
 
 ### D9.1: archive/core 关闭后的 provider 注入控制
 

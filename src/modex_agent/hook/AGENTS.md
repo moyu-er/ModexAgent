@@ -5,22 +5,22 @@
 
 ## Purpose
 
-Lifecycle extension points — lightweight observation, context injection, policy veto. Hooks execute at defined `HookPoint`s and must be fast (default 10s timeout). Unlike Interceptors, hooks do NOT wrap execution — they observe and optionally modify context.
+Lifecycle extension points — lightweight observation and context injection. Hooks execute at defined `HookPoint`s and must be fast (default 10s timeout). Unlike Interceptors, hooks do NOT wrap execution — they observe and optionally modify context.
 
 ## Key Files
 
 | File | Description |
 |------|-------------|
-| `abc.py` | `HookPoint` enum, `Hook` ABC, per-point ABCs (`BeforeTurnHook`, `BeforeIterationHook`, etc.), `HookSpec`, `HookPayload`, `HookResult`, `HookErrorPolicy` |
-| `runner.py` | `HookRunner` — sequential dispatch with per-hook timeout, error policy (IGNORE/LOG/ABORT), veto aggregation, `dispatch_finalize` for sync chain |
+| `abc.py` | `HookPoint` enum, `Hook` ABC (with `name` property defaulting to the concrete class name), per-point ABCs (`BeforeTurnHook`, `BeforeIterationHook`, etc.), `HookSpec`, `HookPayload`, `HookErrorPolicy`, `FinalizeContentHook` |
+| `runner.py` | `HookRunner` — sequential dispatch with per-hook timeout, error policy (IGNORE/LOG/ABORT), `dispatch_finalize` for sync chain |
 | `notification.py` | Hook notification utilities — notification payloads and dispatch helpers for hook lifecycle events |
-| `__init__.py` | Public API re-exports: `Hook`, `HookRunner`, `HookPoint`, `HookSpec`, `HookResult`, `HookErrorPolicy`, `HookPayload` |
+| `__init__.py` | Public API re-exports: `Hook`, `HookRunner`, `HookPoint`, `HookSpec`, `HookErrorPolicy`, `HookPayload`, `FinalizeContentHook` |
 
 ## Subdirectories
 
 | Directory | Purpose |
 |-----------|---------|
-| `builtin/` | Built-in hook implementations — `logging.py`, `runtime_context.py`, `inbox_flush.py`, `subagent_auto_send.py`, `env_injection.py`, `loop_detection.py`, `compaction_reminder.py`, `control_drain.py` (interceptors, not hooks), `experience_review.py`. See `hook/builtin/AGENTS.md`. |
+| `builtin/` | Built-in hook implementations — `logging.py`, `runtime_context.py`, `inbox_flush.py`, `subagent_auto_send.py`, `env_injection.py`, `loop_detection.py`, `control_drain.py` (interceptors, not hooks), `experience_review.py`. See `hook/builtin/AGENTS.md`. |
 
 ## HookPoint Dispatch
 
@@ -28,7 +28,7 @@ Lifecycle extension points — lightweight observation, context injection, polic
 |-----------|--------|------|------------|
 | `BEFORE_TURN` | `before_turn` | Agent.run() entry, once | Reset state, flush inbox |
 | `AFTER_TURN` | `after_turn` | Agent.run() exit (all paths), once | Logging, cleanup |
-| `BEFORE_ITERATION` | `before_iteration` | Each ReAct loop iteration | Dynamic tool filtering, compaction detection |
+| `BEFORE_ITERATION` | `before_iteration` | Each ReAct loop iteration | Dynamic tool filtering |
 | `AFTER_ITERATION` | `after_iteration` | After each iteration | Restore state |
 | `BEFORE_TOOL_EXECUTION` | `before_tool_execution` | Before tool batch | Policy guard |
 | `AFTER_TOOL_EXECUTION` | `after_tool_execution` | After tool batch | Result transform |
@@ -79,22 +79,20 @@ The only acceptable instance attributes are **immutable configuration** injected
 
 `before_turn` matches `HookPoint.BEFORE_TURN`, `before_iteration` matches `HookPoint.BEFORE_ITERATION`, etc.
 
-### Rule 3: `HookResult(veto=True)` for lightweight denial
-
-Does NOT exit the agent — the turn continues with the veto recorded.
-
-### Rule 4: ReAct clean mode runs without hook services
+### Rule 3: ReAct clean mode runs without hook services
 
 Hooks are only active in "full" mode (when `AgentRuntimeServices` is wired).
 
 ## For AI Agents
 
-- Hooks are for **observation and lightweight policy** — use Interceptors for execution wrapping.
+- Hooks are for **observation and context injection** — use Interceptors for execution wrapping.
 - All hooks run synchronously with a 10-second timeout by default.
-- Use `HookResult(veto=True, message="...")` to reject an action without raising an exception.
+- `Hook.name` defaults to the concrete class name (`type(self).__name__`); override for custom diagnostics.
+- The veto/result mechanism has been removed. Hooks return `None` — observation only. For execution denial, use Interceptors.
+- `HookErrorPolicy` (IGNORE/LOG/ABORT) is retained per-hook via `HookSpec.on_error`.
+- `FinalizeContentHook` + `dispatch_finalize` are retained for synchronous content formatting before final output.
 - There are 11 hook points; a hook implementation only needs to define the methods it cares about (all are optional).
 - `notification.py` provides utilities for hook lifecycle event notifications.
-- The `FINALIZE_CONTENT` hook point is synchronous (runs in `dispatch_finalize`) and is intended for content formatting before final output.
 - **Before writing any hook, re-read Rule 1.** If you find yourself reaching for `self._something[session_id]`, stop — use `ctx.runtime.state.custom` instead.
 
 ## Dependencies

@@ -123,7 +123,7 @@
 - head 预算多少 token
 - tail 预算多少 token
 - elision 标记的格式和内容
-- 与现有 6 阶段 cleanup 流程如何集成
+- 与现有 5 阶段 cleanup 流程如何集成
 - 与 archive 生成如何协作
 
 ---
@@ -157,7 +157,7 @@
 **探索结论**：
 
 **已重注入（10 项）**：
-1. 压缩通知文本（`CompactionReminderHook` `<system-reminder>`）
+1. 压缩通知文本（`TodoReorientationHook` `<system-reminder>`，event-driven via `MemoryHookRunner`）
 2. Archive 摘要引用（条件性）
 3. Pruned catalog 指针
 4. 活跃 todo 列表（条件性）

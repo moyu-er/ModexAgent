@@ -212,6 +212,41 @@ pool_builder.create_pool()
             └─ resolver.pruned_manager()               → reuses the parent pool's PrunedManager
 ```
 
+### Memory lifecycle hooks
+
+Memory cleanup dispatches lifecycle events through a dedicated
+`MemoryHookRunner` (separate from the ReAct `HookRunner`) — no ReAct
+coupling. Two hooks are registered in deterministic order at pool assembly
+(`factory.py`):
+
+1. **`UserNoticeCleanupHook`** (`CleanupTriggeredHook` +
+   `CleanupFinishedHook`) — sends transient user-facing notices
+   ("Consolidating conversation memory, please wait…" / "Memory
+   consolidated.") via `AgentNotificationService.send_notice`. Notices are
+   never written to session memory.
+2. **`TodoReorientationHook`** (`CleanupFinishedHook`, in
+   `modex_agent.memory.cleanup_hooks`) — persists a `<system-reminder>` USER
+   message so the agent re-orients after compaction prunes messages.
+
+Both register via `memory_system.add_cleanup_hook(hook)` on the shared
+`DefaultMemorySystem._hook_runner` (one runner per memory system, passed by
+reference to every `ScopedMessageHistory` — late registration is visible to
+all histories).
+
+**Event flow**: `cleanup_session()` dispatches `CLEANUP_TRIGGERED` (after
+early-return checks, before compact generation) and `CLEANUP_FINISHED`
+(before every `triggered=True` return). Dispatch uses a tuple-snapshot of
+registered hooks with 10s per-hook timeout and log-and-continue error
+isolation — cleanup never aborts due to a hook failure.
+
+**Todo reorientation persistence**: `TodoReorientationHook` detects cleanup
+purely via `cleanup_result.messages_pruned > 0` (event-driven, no heuristic
+history-diff). It persists the reminder through
+`SessionMemoryManager.add_messages` directly (Path A) — NOT
+`ScopedMessageHistory.append` — bypassing `MemoryAppendRecorder` /
+`MemoryProvider` fan-out and preventing cleanup recursion. The reminder is
+visible on the next iteration via `ScopedMessageHistory.to_list()`.
+
 ### External (external) exclusion — structural, not config-based
 
 External main agents and subagents are excluded at **three** independent

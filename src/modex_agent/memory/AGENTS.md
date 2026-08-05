@@ -21,7 +21,7 @@ The `memory/` module provides a comprehensive memory system for agents. It manag
 | `context_governance.py` | `ContextGovernance` ABC — `CompositeGovernance`, `TokenBudgetGovernance`, `MicrocompactGovernance`, `ToolChainRepairGovernance`. Mutates only LLM input copy, never persisted session data |
 | `archive_models.py` | Archive data models — typed generated documents, channel writes, bundle results, and archive state |
 | `tags.py` | Injection XML element tag names (StrEnum) shared between injection, governance, and truncation |
-| `cleanup.py` | `cleanup_session()`, `CleanupResult` — 6-phase pipeline: trigger+boundary → compact generation → session commit (`[compact_summary]`+`[tail]`) → pruned catalog write (topic from compact's `## Objective`) → archive generation (optional, default off) → archive trigger. `CleanupResult.compact_generated` replaces former `user_retention_extracted`. `cleanup_session()` takes `compactor` param instead of `user_retention` |
+| `cleanup.py` | `cleanup_session()`, `CleanupResult` — 5-phase pipeline: trigger+boundary → compact generation → session commit (`[compact_summary]`+`[tail]`) → pruned catalog write (topic from compact's `## Objective`) → archive generation (optional, default off; archive state advances atomically inside this phase, DreamEngine polling is the only archive-consolidation trigger). `CleanupResult.compact_generated` replaces former `user_retention_extracted`. `cleanup_session()` takes `compactor` param instead of `user_retention` |
 | `sanitizer.py` | `DefaultSessionToolChainSanitizer` — removes invalid tool-chain records (never split assistant.tool_calls from matching tool results) |
 | `recorder.py` | `MemoryAppendRecorder` — records what gets appended and from where |
 | `content_transform.py` | `ContentTransformer` ABC — transforms messages for injection |
@@ -30,6 +30,8 @@ The `memory/` module provides a comprehensive memory system for agents. It manag
 | `lifecycle.py` | `DefaultMemoryMaintenancePolicy` (concrete background-maintenance scan) and retention ABCs — `ArchiveRetentionPolicy`, `CoreMemoryRetentionPolicy` — with per-scope thresholds called from `scan_once` |
 | `xml_truncate.py` | XML-based content truncation for governance — ensures injected XML stays within token budget |
 | `utils.py` | Memory utility helpers |
+| `hooks.py` | `MemoryHookPoint` (`CLEANUP_TRIGGERED`/`CLEANUP_FINISHED`), `MemoryHookContext` (frozen Pydantic), `MemoryHook` ABC, `CleanupTriggeredHook`, `CleanupFinishedHook`, `MemoryHookRunner` — per-system lifecycle dispatch with tuple-snapshot iteration, 10s timeout, log-and-continue isolation |
+| `cleanup_hooks.py` | `TodoReorientationHook(CleanupFinishedHook)` — persists a `<system-reminder>` USER message via `SessionMemoryManager.add_messages` after cleanup prunes messages; event-driven (no heuristic history-diff) |
 
 ## Subdirectories
 
@@ -88,9 +90,53 @@ Message appended
   → (2) compact generation (SessionCompactorAgent → structured compact summary via single LLM call)
   → (3) session commit ([compact_summary] + [tail messages])
   → (4) pruned catalog write (topic from compact summary's ## Objective section)
-  → (5) archive generation (optional, default off — context.md + knowledge.md, no index.md)
-  → (6) archive trigger
+  → (5) archive generation (optional, default off — context.md + knowledge.md, no index.md; archive state advances atomically, DreamEngine polling is the only consolidation trigger)
 ```
+
+### Memory Lifecycle Hooks
+
+Memory lifecycle hooks are a **separate dispatch system** from the ReAct
+`HookRunner` — they fire directly from `cleanup_session()` via
+`MemoryHookRunner`, with no ReAct coupling. One runner per memory system
+(`DefaultMemorySystem._hook_runner`), passed by reference to every
+`ScopedMessageHistory` so late registration is visible to all histories
+sharing the same system.
+
+**Dispatch points**: `CLEANUP_TRIGGERED` (after the 3 early returns:
+under-threshold, all-invalid, no-safe-boundary — fires before phase 2) and
+`CLEANUP_FINISHED` (before every `triggered=True` return — 4 return points:
+all-invalid, no-safe-boundary, revision-conflict, normal).
+
+**Tuple-snapshot dispatch**: `dispatch()` iterates a `tuple(self._hooks)`
+snapshot, so hooks added during dispatch do not affect the current pass.
+
+**Timeout/error isolation**: 10s per-hook timeout
+(`_DEFAULT_MEMORY_HOOK_TIMEOUT`). `CancelledError` propagates; `TimeoutError`
+and all other exceptions are logged with the hook class name + point and
+swallowed — cleanup continues regardless.
+
+**Truth table** (5 paths, verified by `TestCleanupHookTruthTable`):
+
+| path | triggered | pruned | TRIGGERED | FINISHED |
+|---|---|---|---|---|
+| under_threshold | False | 0 | 0 | 0 |
+| all_invalid | True | total | 0 | 1 |
+| no_safe_boundary | True | 0 | 0 | 1 |
+| revision_conflict | True | 0 | 1 | 1 |
+| normal | True | prune_count | 1 | 1 |
+
+**Todo reorientation persistence path**: `TodoReorientationHook` (in
+`cleanup_hooks.py`) persists its reminder via
+`SessionMemoryManager.add_messages` directly (Path A) — NOT
+`ScopedMessageHistory.append`. This bypasses `MemoryAppendRecorder` /
+`MemoryProvider` fan-out and prevents cleanup recursion. The reminder is
+visible to the agent on the next iteration via `ScopedMessageHistory.to_list()`
+(cache invalidated after append).
+
+**Registration**: `DefaultMemorySystem.add_cleanup_hook(hook)` delegates to
+the shared runner. The bot registers two hooks in deterministic order:
+`UserNoticeCleanupHook` (triggered + finished) → `TodoReorientationHook`
+(finished).
 
 ### Pruned Catalog
 - Independent of archive: works with archive off or failed
@@ -111,7 +157,7 @@ Message appended
 
 ### Working In This Directory
 - Memory scopes: Session, User, Tenant, Agent, Channel, Chat, Composite, Global (PeerPair removed in T04)
-- `cleanup_session()` runs after every message append — 6-phase pipeline (see Cleanup Flow above)
+- `cleanup_session()` runs after every message append — 5-phase pipeline (see Cleanup Flow above)
 - Pruned catalog is independent of archive: works with archive off/failed
 - Tool-chain-aware boundary: never split an assistant tool_call from its tool results
 - Governance mutates only LLM input copy, never persisted session data

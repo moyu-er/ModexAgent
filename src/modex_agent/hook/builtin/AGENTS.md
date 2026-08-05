@@ -4,7 +4,9 @@
 # builtin hooks
 
 ## Purpose
-Framework-provided hooks covering logging, context tracking, multi-agent communication, and session-cleanup re-orientation.
+Framework-provided hooks covering logging, context tracking, multi-agent communication, environment injection, and loop detection.
+Session-cleanup re-orientation now lives in `memory/cleanup_hooks.py`
+(`TodoReorientationHook`, a `MemoryHook` — not a ReAct `HookRunner` hook).
 Also hosts `control_drain.py`, which despite living under
 `hook/builtin/` actually defines *interceptors* (not hooks) that consume the control
 channel — see the separate table below.
@@ -18,7 +20,6 @@ channel — see the separate table below.
 | `subagent_auto_send.py` | `SubagentAutoSendHook` | after_turn | live | Auto-forwards to subagents when LLM forgets send_message |
 | `env_injection.py` | `NativeEnvInjectionHook` | before_turn | live | Populates `MODEX_*` env contextvars for native agent subprocess tools |
 | `loop_detection.py` | `LoopDetectionHook` | after_llm_response | live | Detects ReAct tool-repeating loops and force-exits the turn (stateless) |
-| `compaction_reminder.py` | `CompactionReminderHook` | before_iteration | live | Detects session cleanup within the current turn and injects a re-orientation reminder (stateless; per-turn snapshot in `state.custom`) |
 | `experience_review.py` | `ExperienceReviewAgent` driver | — | live | Background conversation-review agent; spawns its own task. |
 
 ## Non-Hook Files In This Directory
@@ -44,6 +45,5 @@ cancel-drain utility:
 - `modex_agent.interceptor.abc` -- ToolCallInterceptor, LlmStreamInterceptor (control_drain.py only)
 - `modex_agent.hook.abc` -- Hook base ABC + per-point ABC hierarchy
 - `modex_agent.runtime.enums` -- `TurnCustomKey` (typed keys for per-turn `state.custom`)
-- `modex_agent.runtime.store` -- `TodoStore` (CompactionReminderHook only)
 
 <!-- MANUAL -->
