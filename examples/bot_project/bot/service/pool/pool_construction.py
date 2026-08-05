@@ -32,7 +32,6 @@ logger = logging.getLogger(__name__)
 def _build_agent_pool(
     broker: Any,
     factory: Any,
-    context_manager: Any,
     agent_bus: Any,
     inbox_consumer: Any,
     session_factory: Any,
@@ -46,7 +45,6 @@ def _build_agent_pool(
     pool = AgentPool(
         broker=broker,
         agent_factory=factory,
-        default_context_manager=context_manager,
         agent_bus=agent_bus,
         inbox_consumer=inbox_consumer,
         session_factory=session_factory,

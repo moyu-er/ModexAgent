@@ -16,8 +16,6 @@ if TYPE_CHECKING:
     from modex_agent.multi_agent.template import AgentTemplate
     from modex_agent.multi_agent.template_registry import AgentTemplateRegistry
 
-from modex_agent.core.context import ContextManager
-from modex_graph.exceptions import GraphInterrupt
 from modex_agent.core.llm_struct import RuntimeSafetyPolicy
 from modex_agent.core.session_id import SessionIdFactory, SessionInfo, session_id_prefix_of
 from modex_agent.core.session_registry import SessionRegistry
@@ -26,6 +24,7 @@ from modex_agent.core.types import InputMessage
 from modex_agent.messaging.broker import AddressKind, MessageBroker
 from modex_agent.messaging.broker_bridge import BrokerInputPayload
 from modex_agent.runtime.dispatch import DispatchDeadline, current_dispatch_deadline
+from modex_graph.exceptions import GraphInterrupt
 
 from .address import AgentAddress
 from .bus import AgentMessageBus
@@ -87,7 +86,6 @@ class AgentPool(AgentRegistry):
         self,
         broker: MessageBroker,
         agent_factory: AgentFactory,
-        default_context_manager: ContextManager | None = None,
         agent_bus: AgentMessageBus | None = None,
         inbox_consumer: InboxConsumer | None = None,
         *,
@@ -101,7 +99,6 @@ class AgentPool(AgentRegistry):
         self._status: dict[str, AgentState] = {}
         self._broker = broker
         self._agent_factory = agent_factory
-        self._default_context_manager = default_context_manager
         self._agent_bus = agent_bus
         self._inbox_consumer = inbox_consumer
         self._session_factory = session_factory or SessionIdFactory()

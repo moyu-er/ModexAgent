@@ -38,6 +38,7 @@ from modex_agent.core.session_registry import SessionRegistry
 from modex_agent.core.session_store import SessionStore
 from modex_agent.hook import HookRunner
 from modex_agent.hook.notification import AgentNotificationService
+from modex_agent.memory.cleanup_hooks import TodoReorientationHook
 from modex_agent.messaging.broker_bridge import BrokerBridgeService, OutputRoute
 from modex_agent.multi_agent import SessionRetentionPolicy
 from modex_agent.multi_agent.address import AgentAddress
@@ -72,7 +73,7 @@ from .assembly_context import (
     _fallback_context_manager,
 )
 from .communication import (
-    UserNoticeCleanupListener,
+    UserNoticeCleanupHook,
     _build_communication,
 )
 from .external_subagent import _maybe_build_external_subagent_builder
@@ -284,7 +285,6 @@ async def create_pool(
     pool = _build_agent_pool(
         broker,
         factory,
-        context_manager,
         agent_bus,
         inbox_consumer,
         session_factory,
@@ -410,10 +410,28 @@ async def create_pool(
     # the main agent is ready — causing "no template for X; skipping".
     pool.start_poller()
 
+    # NOTE: ``pool_data`` is non-None for ALL pools — including external
+    # (Pi/OpenCode) pools whose ``build_pool_data`` still builds a
+    # ``DefaultMemorySystem``.  For external pools the hooks are registered
+    # but never fire: ``ExternalTurnRunner`` uses an empty
+    # ``ListMessageHistory`` and never appends to the framework memory
+    # system, so ``cleanup_session`` is never invoked.  The registration is
+    # intentionally kept (rather than guarded on strategy) so that if
+    # external agents ever gain native memory-system support the notices
+    # work without rewiring.
     if pool_data is not None:
         memory_system = pool_data.context_manager.memory_system
         if memory_system is not None:
-            memory_system.add_cleanup_listener(UserNoticeCleanupListener(notification_service))
+            memory_system.add_cleanup_hook(UserNoticeCleanupHook(notification_service))
+            memory_cfg = assembly_deps.memory
+            has_archive = (
+                memory_cfg is not None
+                and memory_cfg.archive is not None
+                and memory_cfg.archive.enabled
+            )
+            memory_system.add_cleanup_hook(
+                TodoReorientationHook(todo_store, has_archive=has_archive)
+            )
 
     main_service, main_store = _build_communication(
         pool,
@@ -472,7 +490,6 @@ async def create_pool(
             model_choice_registry=model_choice_registry,
             cassette_recorder=cassette_recorder,
             control_origin=control_origin,
-            todo_store=todo_store,
         )
     else:
         # external path: the external agent has no tool surface and

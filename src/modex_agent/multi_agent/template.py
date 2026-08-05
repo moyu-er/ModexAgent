@@ -203,6 +203,21 @@ class AgentTemplate:
             comm_kind=AgentCommKind.SUBAGENT,
         )
 
+        # ── Register TodoReorientationHook on the subagent's memory system ──
+        # Every native subagent needs post-cleanup reorientation: when
+        # ``messages_pruned > 0`` the hook persists a ``<system-reminder>``
+        # so the agent re-orients on its next iteration.  When the subagent
+        # has todo tools (``deps.todo_store`` is wired via
+        # ``tool_supplements``) the reminder includes the active todo list;
+        # otherwise a generic "Continue your work" reminder is written.
+        # ``has_archive`` is always False for subagents (``subagent_memory()``
+        # sets ``archive=None``).
+        from modex_agent.memory.cleanup_hooks import TodoReorientationHook
+
+        subagent_ctx.memory_system.add_cleanup_hook(
+            TodoReorientationHook(todo_store=deps.todo_store, has_archive=False)
+        )
+
         tool_manager = await self._build_tool_manager(deps, name, runtime_dir)
         skill_manager = self._build_skill_manager(deps, name)
         context_manager_for_create = subagent_ctx

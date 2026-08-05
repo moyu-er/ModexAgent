@@ -17,7 +17,7 @@ from modex_agent.agents.external.types import ExternalEnvSpec
 from modex_agent.core.capabilities import ModelInfo
 from modex_agent.core.tool_manager import ToolManager
 from modex_agent.hook import HookErrorPolicy, HookSpec
-from modex_agent.hook.builtin import CompactionReminderHook, NativeEnvInjectionHook
+from modex_agent.hook.builtin import NativeEnvInjectionHook
 from modex_agent.hook.notification import (
     MaxIterationNotifyHook,
     TurnOutcomeNotifyHook,
@@ -27,7 +27,6 @@ from modex_agent.multi_agent import AgentPool
 from modex_agent.multi_agent.comm_kind import AgentCommKind
 from modex_agent.multi_agent.pool_config import PoolAssemblyDeps
 from modex_agent.multi_agent.pool_config.specs import MainAgentSpec, PoolSpec
-from modex_agent.runtime.store import TodoStore
 from modex_agent.tools.workspace_scoped import WorkspaceRootProvider
 from modex_agent.trace.cassette import (
     CassetteFlushHook,
@@ -70,7 +69,6 @@ def _wire_main_pipeline(
     model_choice_registry: ModelChoiceRegistry,
     cassette_recorder: CassetteRecorder | None = None,
     control_origin: str = "",
-    todo_store: TodoStore | None = None,
 ) -> None:
     """Wire hooks, interceptors, governance, and command processor on main pipeline.
 
@@ -102,11 +100,6 @@ def _wire_main_pipeline(
     # inbox_strategy != "none", so fold-in is wired in one place.
     _add_hook(pipeline, MaxIterationNotifyHook(notification_service=notification_service))
     _add_hook(pipeline, TurnOutcomeNotifyHook(notification_service=notification_service))
-    # TodoCompletionProbeHook was previously wired here to force a todo_read
-    # when the main agent tried to end a turn with unfinished todos. It is
-    # deprecated: the correct approach is to rely on the system prompt layer
-    # (TodoAwareSystemPromptProvider) and clear tool descriptions instead of
-    # injecting synthetic tool calls into the conversation history.
     _add_hook(
         pipeline,
         ModelChoiceBindHook(
@@ -144,23 +137,6 @@ def _wire_main_pipeline(
         control_origin=control_origin,
     )
     _add_hook(pipeline, NativeEnvInjectionHook(env_spec_template=env_spec_template))
-
-    has_todo_tool = tool_manager.is_registered("todo_read")
-    memory_cfg = assembly_deps.memory
-    has_archive = (
-        memory_cfg is not None
-        and memory_cfg.archive is not None
-        and memory_cfg.archive.enabled
-        and memory_cfg.archive.max_archive_inject > 0
-    )
-    _add_hook(
-        pipeline,
-        CompactionReminderHook(
-            todo_store=todo_store,
-            has_todo_tool=has_todo_tool,
-            has_archive=has_archive,
-        ),
-    )
 
     # ExternalTurnRunner has no builder/approval_renderer, so access them
     # through the ABC's typed read-only properties (None for external).
