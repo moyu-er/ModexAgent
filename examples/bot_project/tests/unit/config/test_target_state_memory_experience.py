@@ -8,9 +8,11 @@ reconfigured by users.
 
 ## What this guard protects
 
-The bot's memory + experience configuration is **baked, not user-editable**
-(see ``bot/config/memory_defaults.py`` and the "Memory + Experience Presets
-(Target State)" section in ``AGENTS.md``). The contract:
+The bot's archive/core memory toggle is user-editable per pool through the
+WebUI or the main agent's ``pool.yml`` ``memory:`` block. Detailed memory and
+experience configuration remains baked (see ``bot/config/memory_defaults.py``
+and the "Memory + Experience Presets (Target State)" section in ``AGENTS.md``).
+The contract:
 
 | Agent type | memory | experience | governance | hooks |
 |---|---|---|---|---|
@@ -34,6 +36,7 @@ Tests synthesize pool configurations covering the **4 agent-type combinations**
 (native/external × main/subagent) under ``tmp_path``. This decouples the guard
 from the bot's real ``config/pools/`` directory, which may change at any time.
 """
+
 from __future__ import annotations
 
 import sys
@@ -48,10 +51,7 @@ if str(_BOT_PROJECT) not in sys.path:
     sys.path.insert(0, str(_BOT_PROJECT))
 
 from modex_agent.ioc.configs.memory import (  # noqa: E402
-    ArchiveConfig,
-    DreamEngineConfig,
     GovernanceConfig,
-    CoreMemoryConfig,
     MemoryConfig,
     PrunedCatalogConfig,
     SessionConfig,
@@ -59,12 +59,26 @@ from modex_agent.ioc.configs.memory import (  # noqa: E402
 from modex_agent.multi_agent.pool_config.experience import ExperienceConfig  # noqa: E402
 from modex_agent.multi_agent.pool_config.specs import (  # noqa: E402
     ExecutionStrategyKind,
+    MainAgentSpec,
+    PoolSpec,
     ProviderKind,
 )
 from modex_agent.multi_agent.pool_config.store import PoolStore  # noqa: E402
 from modex_agent.multi_agent.template_registry import AgentTemplateRegistry  # noqa: E402
 
 # ─── helpers: synthesize pool configurations under tmp_path ─────────────────
+
+
+def _default_pool_specs(pool_names: list[str]) -> dict[str, PoolSpec]:
+    """Create PoolSpec dict with default MainAgentSpec (memory toggle off)."""
+    return {
+        name: PoolSpec(
+            name=name,
+            main_agent_name=name,
+            main=MainAgentSpec(agent_name=name),
+        )
+        for name in pool_names
+    }
 
 
 def _seed_native_main_pool(
@@ -277,8 +291,8 @@ class TestMemoryDefaultsContract:
 
 
 class TestAssemblyDepsUniformInjection:
-    """Verify _build_assembly_deps_for_pools injects the same memory +
-    experience preset to EVERY pool, regardless of pool type or count.
+    """Verify pools with the default memory toggle (archive/core both off)
+    receive the same memory + experience preset, regardless of type or count.
 
     This is the critical guard: if a new pool is added (native or external),
     it MUST receive the same converged config. External pools are skipped
@@ -291,7 +305,7 @@ class TestAssemblyDepsUniformInjection:
 
         pool_names = ["native_main", "external_main", "mixed"]
         deps_map = _build_assembly_deps_for_pools(
-            pool_names=pool_names,
+            pool_specs=_default_pool_specs(pool_names),
             max_context_tokens=50000,
         )
 
@@ -321,7 +335,7 @@ class TestAssemblyDepsUniformInjection:
 
         pool_names = ["native_a", "native_b", "external_c"]
         deps_map = _build_assembly_deps_for_pools(
-            pool_names=pool_names,
+            pool_specs=_default_pool_specs(pool_names),
             max_context_tokens=None,
         )
 
@@ -337,7 +351,7 @@ class TestAssemblyDepsUniformInjection:
         from bot.workspace.wiring.stack import _build_assembly_deps_for_pools
 
         deps_map = _build_assembly_deps_for_pools(
-            pool_names=[],
+            pool_specs={},
             max_context_tokens=50000,
         )
         assert deps_map == {}
@@ -347,7 +361,7 @@ class TestAssemblyDepsUniformInjection:
         from bot.workspace.wiring.stack import _build_assembly_deps_for_pools
 
         deps_map = _build_assembly_deps_for_pools(
-            pool_names=["solo"],
+            pool_specs=_default_pool_specs(["solo"]),
             max_context_tokens=None,
         )
         assert len(deps_map) == 1
@@ -447,7 +461,7 @@ class TestExternalMainAgentSkip:
         from bot.workspace.wiring.stack import _build_assembly_deps_for_pools
 
         deps_map = _build_assembly_deps_for_pools(
-            pool_names=["test_pool"],
+            pool_specs=_default_pool_specs(["test_pool"]),
             max_context_tokens=50000,
         )
         deps = deps_map["test_pool"]
@@ -492,7 +506,7 @@ class TestExternalMainAgentSkip:
 
         default_provider = MagicMock(spec=LLMProvider)
         deps_map = _build_assembly_deps_for_pools(
-            pool_names=["native_pool", "external_pool"],
+            pool_specs=_default_pool_specs(["native_pool", "external_pool"]),
             max_context_tokens=50000,
         )
 
@@ -574,7 +588,7 @@ class TestExperienceThreeComponentPackaging:
         from bot.workspace.wiring.stack import _build_assembly_deps_for_pools
 
         deps_map = _build_assembly_deps_for_pools(
-            pool_names=["test"],
+            pool_specs=_default_pool_specs(["test"]),
             max_context_tokens=50000,
         )
         deps = deps_map["test"]
@@ -620,7 +634,7 @@ class TestExperienceThreeComponentPackaging:
         from bot.workspace.wiring.stack import _build_assembly_deps_for_pools
 
         deps_map = _build_assembly_deps_for_pools(
-            pool_names=["native_a", "native_b"],
+            pool_specs=_default_pool_specs(["native_a", "native_b"]),
             max_context_tokens=50000,
         )
 
@@ -729,7 +743,7 @@ class TestEndToEndWithSynthesizedPools:
 
         # 3. Verify uniform assembly deps injection
         deps_map = _build_assembly_deps_for_pools(
-            pool_names=pool_names,
+            pool_specs=_default_pool_specs(pool_names),
             max_context_tokens=50000,
         )
         for name, deps in deps_map.items():
@@ -786,7 +800,7 @@ class TestExperienceReviewerUsesDefaultProvider:
 
         default_provider = MagicMock(spec=LLMProvider)
         deps_map = _build_assembly_deps_for_pools(
-            pool_names=["test"],
+            pool_specs=_default_pool_specs(["test"]),
             max_context_tokens=50000,
         )
 
@@ -841,7 +855,7 @@ class TestExperienceReviewerUsesDefaultProvider:
         from bot.workspace.wiring.stack import _build_assembly_deps_for_pools
 
         deps_map = _build_assembly_deps_for_pools(
-            pool_names=["no_model"],
+            pool_specs=_default_pool_specs(["no_model"]),
             max_context_tokens=None,
         )
 
@@ -889,7 +903,7 @@ class TestExperienceReviewerUsesDefaultProvider:
 
         default_provider = MagicMock(spec=LLMProvider)
         deps_map = _build_assembly_deps_for_pools(
-            pool_names=["opencode"],
+            pool_specs=_default_pool_specs(["opencode"]),
             max_context_tokens=50000,
         )
 

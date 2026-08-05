@@ -1,4 +1,9 @@
-"""Baked memory + experience presets — not user-editable.
+"""Converged memory + experience presets with per-pool long-term toggles.
+
+The archive/core toggle is user-editable per pool through ``MemoryToggle`` on
+``MainAgentSpec``. Detailed memory configuration (archive/core internals,
+governance, pruned, session, and dream-engine construction) and experience
+configuration remain baked here.
 
 Converged configuration surface for all native agents:
 

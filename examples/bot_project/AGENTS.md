@@ -163,18 +163,23 @@ See ADR-0022 and `docs/design/external-agent-integration/` for the full design.
 
 ## Memory + Experience Presets (Target State)
 
-All native agents receive **baked, non-user-editable** memory + experience
-configuration from a single converged source: `bot/config/memory_defaults.py`.
-Neither `pool.yml` nor `templates/*.yml` may carry a `memory:` or
-`experience:` block — the framework's `MainAgentSpec` / `SubagentSpec` use
-`extra="forbid"` and reject them. Configuration is uniform across all pools;
-per-pool override is not supported.
+All native agents receive memory + experience configuration from the single
+converged source `bot/config/memory_defaults.py`. A main agent's archive/core
+toggle (`MemoryToggle`) is user-editable per pool through the WebUI or the
+`memory:` block in `pool.yml`. The schema enforces the AND relationship: core
+memory can be enabled only when archive memory is enabled.
+
+Detailed configuration remains baked: `ArchiveConfig`/`CoreMemoryConfig`
+internals, dream-engine derivation, session, governance, pruned, and experience
+settings are not per-pool overrides. `templates/*.yml` cannot carry memory or
+experience configuration: `SubagentSpec` has no memory field, so subagents stay
+session-only, and there is no user-editable experience block.
 
 ### Preset surface (`bot/config/memory_defaults.py`)
 
 | Preset | Used by | Contents |
 |---|---|---|
-| `main_agent_memory(max_context_tokens)` | every native main agent | session (token-budget compression, `max_context_tokens` from `model.yml`) + governance (tool_chain_repair + lossy_compaction) + pruned. archive/core/dream = None. |
+| `main_agent_memory(max_context_tokens, archive_enabled, core_enabled)` | every native main agent | session (token-budget compression, `max_context_tokens` from `model.yml`) + governance (tool_chain_repair + lossy_compaction) + pruned. archive/core follow the per-pool `MemoryToggle`; dream is enabled only when both are on. |
 | `main_agent_experience()` | every native main agent | `ExperienceConfig(enabled=True)` — fires `ExperienceReviewHook` |
 | `subagent_memory()` | every native subagent | session + governance (tool_chain_repair only, NO lossy_compaction) + pruned. archive/core/dream = None. No experience preset — review is main-agent-only. |
 
