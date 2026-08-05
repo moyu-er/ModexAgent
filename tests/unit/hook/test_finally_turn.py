@@ -151,7 +151,7 @@ async def test_non_finally_turn_hook_is_skipped() -> None:
 
     # Should not raise — non-FinallyTurnHook is silently skipped
     result = await runner.dispatch(HookPoint.FINALLY_TURN, ctx)
-    assert result.veto is False
+    assert result is None
 
 
 @pytest.mark.asyncio
@@ -176,7 +176,7 @@ async def test_error_abort_policy() -> None:
     runner = HookRunner([HookSpec(hook, on_error=HookErrorPolicy.ABORT)])
     ctx = _make_minimal_context()
 
-    with pytest.raises(PolicyViolation, match="_FailingFinallyTurnHook"):
+    with pytest.raises(PolicyViolation, match="failing_finally_turn"):
         await runner.dispatch(
             HookPoint.FINALLY_TURN,
             ctx,

@@ -1,6 +1,6 @@
 """Hook 抽象基类与核心类型。
 
-定义 HookPoint 枚举、Hook 协议、HookPayload / HookResult / HookSpec 等核心数据类。
+定义 HookPoint 枚举、Hook 协议、HookPayload / HookSpec 等核心数据类。
 """
 
 from __future__ import annotations
@@ -59,28 +59,6 @@ class HookPayload:
 
 
 @dataclass(frozen=True)
-class HookResult:
-    """Hook 执行结果，表达轻量级决策。
-
-    veto=True 表示该 hook 否决当前操作（轻量拒绝，不退出 agent）。
-    content_override 非空时覆盖 LLM 输出内容。
-    """
-
-    veto: bool = False
-    content_override: str | None = None
-
-    @classmethod
-    def pass_through(cls) -> HookResult:
-        """返回放行结果（默认）。"""
-        return cls(veto=False, content_override=None)
-
-    @classmethod
-    def veto_result(cls) -> HookResult:
-        """返回否决结果。"""
-        return cls(veto=True, content_override=None)
-
-
-@dataclass(frozen=True)
 class HookSpec:
     """Hook 注册规格。
 
@@ -91,7 +69,7 @@ class HookSpec:
     on_error: HookErrorPolicy = HookErrorPolicy.LOG
 
 
-class Hook(ABC):
+class Hook(ABC):  # noqa: B024
     """All hooks' public base class.
 
     Replaces the old Protocol. Each concrete hook inherits from one or more
@@ -99,10 +77,9 @@ class Hook(ABC):
     """
 
     @property
-    @abstractmethod
     def name(self) -> str:
         """Unique hook name for logging and diagnostics."""
-        ...
+        return type(self).__name__
 
 
 class BeforeTurnHook(Hook):

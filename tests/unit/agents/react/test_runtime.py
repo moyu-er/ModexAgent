@@ -32,7 +32,7 @@ from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.tool_manager import InMemoryToolManager
-from modex_agent.hook.abc import HookPayload, HookPoint, HookResult
+from modex_agent.hook.abc import HookPayload, HookPoint
 from modex_agent.memory.history import ListMessageHistory
 from modex_agent.runtime.enums import AgentKind, SnapshotReason, TurnPhase
 from modex_agent.runtime.models import TurnIdentity
@@ -96,7 +96,7 @@ class TestReactGraphRuntimeConstruction:
 class TestDispatchHook:
     async def test_dispatches_with_data(self) -> None:
         mock_runner = MagicMock()
-        mock_runner.dispatch = AsyncMock(return_value=HookResult.pass_through())
+        mock_runner.dispatch = AsyncMock(return_value=None)
         rt = ReactGraphRuntime(hook_runner=mock_runner)
         agent_ctx = _make_agent_ctx()
         ctx = _make_graph_ctx(agent_ctx, rt)
@@ -112,7 +112,7 @@ class TestDispatchHook:
 
     async def test_dispatches_without_data(self) -> None:
         mock_runner = MagicMock()
-        mock_runner.dispatch = AsyncMock(return_value=HookResult.pass_through())
+        mock_runner.dispatch = AsyncMock(return_value=None)
         rt = ReactGraphRuntime(hook_runner=mock_runner)
         agent_ctx = _make_agent_ctx()
         ctx = _make_graph_ctx(agent_ctx, rt)
@@ -132,7 +132,7 @@ class TestDispatchHook:
 
     async def test_noop_for_unknown_hook_point(self) -> None:
         mock_runner = MagicMock()
-        mock_runner.dispatch = AsyncMock(return_value=HookResult.pass_through())
+        mock_runner.dispatch = AsyncMock(return_value=None)
         rt = ReactGraphRuntime(hook_runner=mock_runner)
         agent_ctx = _make_agent_ctx()
         ctx = _make_graph_ctx(agent_ctx, rt)
@@ -143,7 +143,7 @@ class TestDispatchHook:
 
     async def test_all_hook_points_mapped(self) -> None:
         mock_runner = MagicMock()
-        mock_runner.dispatch = AsyncMock(return_value=HookResult.pass_through())
+        mock_runner.dispatch = AsyncMock(return_value=None)
         rt = ReactGraphRuntime(hook_runner=mock_runner)
         agent_ctx = _make_agent_ctx()
         ctx = _make_graph_ctx(agent_ctx, rt)

@@ -61,7 +61,7 @@ class TestHookRunnerLogging:
 
         assert len(caplog.records) == 5
         for record in caplog.records:
-            assert "BrokenHook" in record.message
+            assert "broken_hook" in record.message
 
     @pytest.mark.asyncio
     async def test_other_hooks_still_run_after_exception(self):

@@ -16,6 +16,7 @@ from modex_agent.core.types import MessageRole
 from modex_agent.hook import (
     AfterApprovalHook,
     BeforeLLMHook,
+    BeforeTurnHook,
     HookErrorPolicy,
     HookPayload,
     HookPoint,
@@ -71,7 +72,16 @@ def _make_approval_transaction() -> ApprovalTransaction:
     )
 
 
-# ===========================================================================
+def test_hook_name_defaults_to_concrete_class_name() -> None:
+    class MinimalBeforeTurnHook(BeforeTurnHook):
+        async def before_turn(self, ctx: AgentContext) -> None:
+            pass
+
+    hook = MinimalBeforeTurnHook()
+
+    assert hook.name == "MinimalBeforeTurnHook"
+
+
 # BeforeLLMHook
 # ===========================================================================
 
@@ -140,7 +150,7 @@ async def test_before_llm_skips_non_matching_hook() -> None:
     ctx = _make_minimal_context()
 
     result = await runner.dispatch(HookPoint.BEFORE_LLM, ctx)
-    assert result.veto is False
+    assert result is None
 
 
 @pytest.mark.asyncio
@@ -162,7 +172,7 @@ async def test_before_llm_error_abort_policy() -> None:
     runner = HookRunner([HookSpec(hook, on_error=HookErrorPolicy.ABORT)])
     ctx = _make_minimal_context()
 
-    with pytest.raises(PolicyViolation, match="_FailingBeforeLLMHook"):
+    with pytest.raises(PolicyViolation, match="failing_before_llm"):
         await runner.dispatch(
             HookPoint.BEFORE_LLM,
             ctx,
@@ -253,7 +263,7 @@ async def test_after_approval_skips_non_matching_hook() -> None:
     ctx = _make_minimal_context()
 
     result = await runner.dispatch(HookPoint.AFTER_APPROVAL, ctx)
-    assert result.veto is False
+    assert result is None
 
 
 @pytest.mark.asyncio
@@ -275,7 +285,7 @@ async def test_after_approval_error_abort_policy() -> None:
     runner = HookRunner([HookSpec(hook, on_error=HookErrorPolicy.ABORT)])
     ctx = _make_minimal_context()
 
-    with pytest.raises(PolicyViolation, match="_FailingAfterApprovalHook"):
+    with pytest.raises(PolicyViolation, match="failing_after_approval"):
         await runner.dispatch(
             HookPoint.AFTER_APPROVAL,
             ctx,
