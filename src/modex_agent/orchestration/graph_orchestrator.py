@@ -39,8 +39,7 @@ from typing import Any
 
 from modex_agent.control.graph_control import (
     GraphControlService,
-    GraphEngineController,
-    InMemoryGraphEngineController,
+    LiveGraphEngineController,
 )
 from modex_agent.control.graph_recovery import GraphEngineFactory, GraphRecoveryService
 from modex_agent.control.types import ControlCommand, ControlCommandType, ControlScope
@@ -48,6 +47,7 @@ from modex_graph import (
     CompiledGraph,
     CoordinatorFactory,
     GraphContext,
+    GraphDrained,
     GraphEngine,
     GraphInstance,
     GraphInstanceStatus,
@@ -244,12 +244,13 @@ class GraphOrchestrator:
         )
 
     async def resume(self, graph_instance_id: int) -> None:
-        """Resume a paused/stopped graph instance.
+        """Resume a paused graph instance.
 
         Delegates to ``GraphControlService`` → ``GraphRecoveryService.resume``.
-        The recovery service validates the status (PAUSED/STOPPED only),
-        sets it to RUNNING, and calls ``_run_existing_instance`` to re-run
-        the graph via ``coordinator.load_for_recovery``.
+        The recovery service validates the status (PAUSED only — STOPPED
+        is terminal and cannot be resumed), sets it to RUNNING, and calls
+        ``_run_existing_instance`` to re-run the graph via
+        ``coordinator.load_for_recovery``.
         """
         await self._control_service.handle(
             self._make_command(ControlCommandType.RESUME_GRAPH, graph_instance_id)
@@ -352,6 +353,8 @@ class GraphOrchestrator:
         - ``GraphInterrupt`` (HITL suspend) → ``PAUSED``, re-raise. The
           ``GraphInstance`` stays in ``_active_instances`` (coordinator
           alive for resume).
+        - ``GraphDrained`` (external pause/stop) → expected exit; status was
+          already written by ``GraphControlService``.
         - Any other exception → ``CRASHED``, re-raise.
         - Always unregister the engine controller (cleanup). The
           ``GraphInstance`` stays in the registry until explicitly evicted.
@@ -367,7 +370,7 @@ class GraphOrchestrator:
             coordinator=instance.coordinator,
             graph_instance_id=gid,
         )
-        controller: GraphEngineController = InMemoryGraphEngineController(gid)
+        controller = LiveGraphEngineController(gid, ctx.control)
         self._control_service.register_engine(controller)
         try:
             await engine.run_async(ctx)
@@ -375,6 +378,8 @@ class GraphOrchestrator:
         except GraphInterrupt:
             self._instance_store.update_status(gid, GraphInstanceStatus.PAUSED)
             raise
+        except GraphDrained:
+            pass
         except Exception:
             self._instance_store.update_status(gid, GraphInstanceStatus.CRASHED)
             raise
