@@ -33,7 +33,7 @@ async def test_run_pending_is_idempotent(tmp_path: Path) -> None:
     await runner.run_pending()
     await runner.run_pending()
 
-    # Packaged 001_initial.sql + test 999_create_items.sql
+    # Packaged 001_initial + test 999_create_items.sql
     version_count = await manager.query_value("SELECT COUNT(*) FROM schema_migrations", int)
     await manager.close()
 

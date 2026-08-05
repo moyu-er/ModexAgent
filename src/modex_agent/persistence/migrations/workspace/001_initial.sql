@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS memory_session_messages (
     scope_key       TEXT    NOT NULL,
     seq             INTEGER NOT NULL,
     message_id      TEXT,
-    role            TEXT    NOT NULL CHECK (role IN ('user', 'assistant', 'system', 'tool', 'agent', 'pending')),
+    role            TEXT    NOT NULL CHECK (role IN ('user', 'assistant', 'system', 'tool', 'agent', 'compact', 'pending')),
     content         TEXT,
     is_content_json INTEGER NOT NULL DEFAULT 0 CHECK (is_content_json IN (0, 1)),
     token_count     INTEGER,
@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS memory_session_messages (
     created_at      INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
     updated_at      INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
     state           TEXT    NOT NULL DEFAULT 'normal'
-                    CHECK (state IN ('normal', 'pinned', 'soft_deleted')),
+                    CHECK (state IN ('normal', 'pinned', 'soft_deleted', 'superseded')),
     UNIQUE (scope_key, seq)
 );
 
@@ -35,7 +35,7 @@ CREATE INDEX IF NOT EXISTS idx_memory_session_active
 
 CREATE INDEX IF NOT EXISTS idx_memory_session_ttl
     ON memory_session_messages (updated_at)
-    WHERE state = 'soft_deleted';
+    WHERE state IN ('soft_deleted', 'superseded');
 
 CREATE INDEX IF NOT EXISTS idx_memory_session_state
     ON memory_session_messages (scope_key, state);
@@ -455,12 +455,14 @@ END;
 -- 18. node_states — per-node invocation version chain.
 --     One row per (graph_instance_id, node_name, version). All versions
 --     retained for MVCC rollback. `status` tracks the InvocationStatus
---     lifecycle (pending → running → completed/canceled/crashed/superseded);
---     `invocation_id` links the version to its producing invocation;
---     `parent_version` chains superseded versions to their predecessor.
+--     lifecycle (running → completed/canceled/crashed); no pending or
+--     superseded states. `invocation_id` links the version to its producing
+--     invocation; `parent_version` chains versions to their predecessor.
+--     `suspended` marks a RUNNING invocation paused for HITL resume.
 --     graph_instance_id references graph_instances.graph_instance_id (app-layer FK).
---     No auto-update trigger — each version row is write-once; `updated_at`
---     is set by the application layer when the row is created.
+--     No auto-update trigger — each version row is write-once on INSERT,
+--     then updated via CAS on lifecycle transitions; `updated_at` reflects
+--     the last transition.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS node_states (
     node_state_id       BIGINT  PRIMARY KEY,
@@ -468,9 +470,9 @@ CREATE TABLE IF NOT EXISTS node_states (
     node_name           TEXT    NOT NULL,
     version             INTEGER NOT NULL DEFAULT 0,
     parent_version      INTEGER,
-    status              TEXT    NOT NULL DEFAULT 'pending'
-                        CHECK (status IN ('pending', 'running', 'completed',
-                                          'canceled', 'crashed', 'superseded')),
+    status              TEXT    NOT NULL DEFAULT 'running'
+                        CHECK (status IN ('running', 'completed',
+                                          'canceled', 'crashed')),
     invocation_id       BIGINT  NOT NULL DEFAULT 0,
     state_json          TEXT    NOT NULL CHECK (json_valid(state_json)),
     suspended           INTEGER NOT NULL DEFAULT 0,
@@ -500,8 +502,7 @@ CREATE INDEX IF NOT EXISTS idx_node_states_global
 --     `source_node` / `source_invocation_id` record the delivering node;
 --     `consumed_by_invocation_id` records the consumer (NULL until consumed).
 --     `status` transitions: PENDING → CONSUMED_PENDING → CONSUMED_COMPLETED
---     (three-state machine). Legacy 'accumulated'/'submitted' values retained
---     for backward compat. Default is 'pending'.
+--     (three-state machine). Default is 'pending'.
 --     graph_instance_id references graph_instances.graph_instance_id (app-layer FK).
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS deliver_states (
@@ -514,8 +515,7 @@ CREATE TABLE IF NOT EXISTS deliver_states (
     consumed_by_invocation_id INTEGER,
     content_json        TEXT    NOT NULL CHECK (json_valid(content_json)),
     status              TEXT    NOT NULL DEFAULT 'pending'
-                        CHECK (status IN ('accumulated', 'submitted',
-                                          'pending', 'consumed',
+                        CHECK (status IN ('pending', 'consumed',
                                           'consumed_pending', 'consumed_completed')),
     created_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000),
     updated_at          INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER) * 1000)

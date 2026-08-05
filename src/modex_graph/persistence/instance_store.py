@@ -1,38 +1,36 @@
-"""`GraphInstanceStore` — persistence abstraction for `GraphMetadata` records.
+"""`GraphInstanceStore` — single persistence abstraction for `GraphMetadata`.
 
 Provides:
 
 - `GraphInstanceStore` ABC (rule 7: ABC, not Protocol) — the minimal
   interface for saving and querying `GraphMetadata` records keyed by
-  `graph_instance_id` (Snowflake, the persistence unique key that replaces
-  `run_id`).
-- `InMemoryGraphInstanceStore` — default in-memory dict implementation.
+  `graph_instance_id` (Snowflake, the persistence unique key).
+- `NullGraphInstanceStore` — no-op; `load` returns None. Used by
+  ``create_null_coordinator`` (Null strategy).
+- `InMemoryGraphInstanceStore` — dict-backed default. In-process only.
 - `SqliteGraphInstanceStore` — SQLite adapter. `CREATE TABLE IF NOT EXISTS
-  graph_instances` with the SAME DDL as in `001_initial.sql` table 17
-  (idempotent). Field-by-field column mapping (NOT model_dump_json — the
-  table has individual columns). Uses `UPDATE ... SET status = ? WHERE
+  graph_instances` with the SAME DDL as `001_initial.sql` table 17
+  (idempotent). Field-by-field column mapping for the 5
+  identity/status fields (NOT `model_dump_json` — the table has individual
+  columns for column-level queries). Uses `UPDATE ... SET status = ? WHERE
   graph_instance_id = ?` for `update_status`.
 
-The store now stores `GraphMetadata` (the
-serializable value object) instead of `GraphInstance` (which is now a
-runtime class holding a coordinator — not serializable). Callers that need
-a `GraphInstance` wrap the loaded `GraphMetadata` with a coordinator:
+The store persists the 5 ``GraphMetadata`` identity/status fields
+(``graph_instance_id``, ``spec_id``, ``parent_instance_id``,
+``parent_node``, ``status``) as individual columns. Scheduler bookkeeping
+(``instance_seq``, ``iteration_count``, ``activated_sources``,
+``pending_dispatches``) is NOT persisted — it is derived at recovery time
+from the node_states and deliver stores. Callers that need a
+``GraphInstance`` wrap the loaded ``GraphMetadata`` with a coordinator:
 
-    metadata = store.load_by_id(gid)
+    metadata = store.load(gid)
     if metadata is not None:
         instance = GraphInstance(metadata, create_null_coordinator(gid))
 
-The `graph_instances` SQLite table has individual columns for the basic
-identity/status fields. The extra `GraphMetadata` fields (`instance_seq`,
-`iteration_count`, `activated_sources`, `pending_dispatches`) are not in
-this table — the store fills them with defaults on load. For full-fidelity
-metadata persistence, use `GraphMetadataStore` (stores
-`metadata_json`).
-
-Follows the EXACT pattern of `dispatch_store.py` / `deliver_store.py`: ABC +
-InMemory + SQLite, `now_ms()` from `dispatch_store`, centralized table/column
-constants, `CREATE TABLE IF NOT EXISTS`, `?` placeholders,
-`check_same_thread=False`, `close()` method.
+Follows the same store pattern as `deliver_store.py`: ABC + Null +
+InMemory + SQLite, centralized table/column constants, `CREATE TABLE IF
+NOT EXISTS`, `?` placeholders. The SQLite adapter takes a caller-owned
+`sqlite3.Connection` and never closes it.
 """
 
 from __future__ import annotations
@@ -42,12 +40,10 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from ..constants import GraphInstanceStatus
-from .dispatch_store import now_ms
+from ._time import now_ms
 from .graph_metadata import GraphMetadata
 
 # ── Table / column name constants ─────────────────────────────────────────
-# Centralized (rule 14) — same pattern as dispatch_store.py / deliver_store.py.
-
 _INSTANCE_TABLE = "graph_instances"
 _COL_GRAPH_INSTANCE_ID = "graph_instance_id"
 _COL_SPEC_ID = "spec_id"
@@ -61,31 +57,22 @@ _COL_UPDATED_AT = "updated_at"
 # table 17). Kept as a module-level constant for parity with the migration.
 _ALLOWED_STATUSES = frozenset({"running", "paused", "stopped", "crashed", "completed", "failed"})
 
-# Default values for GraphMetadata fields not stored in the graph_instances
-# table. The table only has identity + status columns; the scheduler
-# bookkeeping fields (instance_seq, iteration_count, activated_sources,
-# pending_dispatches) are filled with these defaults on load. For
-# full-fidelity metadata, use GraphMetadataStore.
-_DEFAULT_INSTANCE_SEQ = 0
-_DEFAULT_ITERATION_COUNT = 0
-_DEFAULT_ACTIVATED_SOURCES: dict[str, list[str]] = {}
-_DEFAULT_PENDING_DISPATCHES: dict[str, dict[str, list[dict[str, Any] | None]]] = {}
-
 
 class GraphInstanceStore(ABC):
     """Persistence abstraction for `GraphMetadata` records (rule 7: ABC).
 
     The store is keyed by `graph_instance_id` — a Snowflake ID (BIGINT) that
-    is the persistence unique key (replaces the in-memory `run_id`). Parent
-    linkage (`parent_instance_id`) enables nested-subgraph queries for
-    cleanup. Status queries support fault recovery (e.g. `load_by_status
-    ("crashed")`).
+    is the persistence unique key. Parent linkage (`parent_instance_id`)
+    enables nested-subgraph queries for cleanup. Status queries support
+    fault recovery (e.g. `load_by_status(GraphInstanceStatus.CRASHED)`).
 
-    All methods are synchronous. The bot factory / instance manager calls
-    these from non-async contexts (startup, crash recovery, cleanup).
+    All methods are synchronous and must be called from the event-loop
+    thread only. The caller owns the ``sqlite3.Connection`` and manages its
+    lifetime — the store never closes it.
 
     Implementations:
 
+    - `NullGraphInstanceStore` — no-op; `load` returns None.
     - `InMemoryGraphInstanceStore` — dict-backed, default.
     - `SqliteGraphInstanceStore` — SQLite file or `:memory:`.
     """
@@ -104,7 +91,7 @@ class GraphInstanceStore(ABC):
         ...
 
     @abstractmethod
-    def load_by_id(self, graph_instance_id: int) -> GraphMetadata | None:
+    def load(self, graph_instance_id: int) -> GraphMetadata | None:
         """Load a `GraphMetadata` by `graph_instance_id`.
 
         Args:
@@ -116,13 +103,14 @@ class GraphInstanceStore(ABC):
         ...
 
     @abstractmethod
-    def load_by_status(self, status: str) -> list[GraphMetadata]:
+    def load_by_status(self, status: GraphInstanceStatus) -> list[GraphMetadata]:
         """Load all instances with a given status.
 
-        Used for fault recovery (e.g. `status="crashed"` on restart).
+        Used for fault recovery (e.g. `status=GraphInstanceStatus.CRASHED`
+        on restart).
 
         Args:
-            status: The lifecycle status to filter by.
+            status: The lifecycle status (enum, not str) to filter by.
 
         Returns:
             All `GraphMetadata` records with this status.
@@ -144,12 +132,12 @@ class GraphInstanceStore(ABC):
         ...
 
     @abstractmethod
-    def update_status(self, graph_instance_id: int, status: str) -> None:
+    def update_status(self, graph_instance_id: int, status: GraphInstanceStatus) -> None:
         """Update only the `status` field (lifecycle transition).
 
         Args:
             graph_instance_id: The instance to update.
-            status: The new status.
+            status: The new lifecycle status (enum, not str).
         """
         ...
 
@@ -161,6 +149,33 @@ class GraphInstanceStore(ABC):
             graph_instance_id: The Snowflake ID of the instance to delete.
         """
         ...
+
+
+class NullGraphInstanceStore(GraphInstanceStore):
+    """No-op `GraphInstanceStore` — `load` returns None, writes are silent.
+
+    The Null strategy for the persistence coordinator: every method is a
+    no-op and ``load`` returns ``None`` so the coordinator's
+    ``load_for_recovery`` falls back to a fresh default `GraphMetadata`.
+    """
+
+    def save(self, metadata: GraphMetadata) -> None:
+        pass
+
+    def load(self, graph_instance_id: int) -> GraphMetadata | None:
+        return None
+
+    def load_by_status(self, status: GraphInstanceStatus) -> list[GraphMetadata]:
+        return []
+
+    def load_by_parent(self, parent_instance_id: int) -> list[GraphMetadata]:
+        return []
+
+    def update_status(self, graph_instance_id: int, status: GraphInstanceStatus) -> None:
+        pass
+
+    def delete(self, graph_instance_id: int) -> None:
+        pass
 
 
 class InMemoryGraphInstanceStore(GraphInstanceStore):
@@ -176,16 +191,16 @@ class InMemoryGraphInstanceStore(GraphInstanceStore):
     def save(self, metadata: GraphMetadata) -> None:
         self._instances[metadata.graph_instance_id] = metadata
 
-    def load_by_id(self, graph_instance_id: int) -> GraphMetadata | None:
+    def load(self, graph_instance_id: int) -> GraphMetadata | None:
         return self._instances.get(graph_instance_id)
 
-    def load_by_status(self, status: str) -> list[GraphMetadata]:
+    def load_by_status(self, status: GraphInstanceStatus) -> list[GraphMetadata]:
         return [m for m in self._instances.values() if m.status == status]
 
     def load_by_parent(self, parent_instance_id: int) -> list[GraphMetadata]:
         return [m for m in self._instances.values() if m.parent_instance_id == parent_instance_id]
 
-    def update_status(self, graph_instance_id: int, status: str) -> None:
+    def update_status(self, graph_instance_id: int, status: GraphInstanceStatus) -> None:
         existing = self._instances.get(graph_instance_id)
         if existing is None:
             return
@@ -201,39 +216,31 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
 
     Schema is created on construction via `CREATE TABLE IF NOT EXISTS`
     (lightweight migration). The DDL matches `001_initial.sql` table 17
-    (`graph_instances`) — idempotent.
+    (`graph_instances`). The canonical schema lives in the migration
+    files; this `_init_schema` is an idempotent fallback for standalone
+    `:memory:` / file usage outside the workspace migration runner.
 
     Table and column names are module-level constants; all data values go
-    through `?` parameter placeholders. The `GraphMetadata` is mapped
-    field-by-field to individual columns (NOT `model_dump_json` — the table
-    has `spec_id`, `parent_instance_id`, `parent_node`, `status` columns for
-    column-level queries).
+    through `?` parameter placeholders. The 5 `GraphMetadata`
+    identity/status fields are mapped field-by-field to individual columns
+    (NOT `model_dump_json` — the table has `spec_id`, `parent_instance_id`,
+    `parent_node`, `status` columns for column-level queries).
 
     `save` uses SQLite UPSERT (`INSERT ... ON CONFLICT DO UPDATE`) so the
     same method handles both insert and update by `graph_instance_id` PK.
     `update_status` uses `UPDATE ... SET status = ? WHERE graph_instance_id
     = ?`.
 
-    The `graph_instances` table stores only the basic identity/status
-    columns. The extra `GraphMetadata` fields (`instance_seq`,
-    `iteration_count`, `activated_sources`, `pending_dispatches`) are
-    filled with defaults on load. For full-fidelity metadata, use
-    `GraphMetadataStore`.
-
     Timestamps are epoch milliseconds (`now_ms()`), per ADR-0029.
 
-    The store holds a single `sqlite3.Connection` for its lifetime.
-    `check_same_thread=False` allows the connection to be used from the
-    event-loop thread or a thread-pool worker. Access is serialized by the
-    GIL and the synchronous call site — no concurrent writes.
-
-    For `:memory:` databases, the schema and data live as long as the store
-    instance. For file paths, data persists across process restarts.
+    The store uses a single caller-owned ``sqlite3.Connection`` for its
+    lifetime. The caller creates the connection (with ``check_same_thread``
+    set as needed) and passes it to all stores sharing one workspace DB;
+    the store never closes it.
     """
 
-    def __init__(self, db_path: str) -> None:
-        self._db_path = db_path
-        self._conn = sqlite3.connect(db_path, check_same_thread=False)
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._conn = connection
         self._init_schema()
 
     def _init_schema(self) -> None:
@@ -279,7 +286,8 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
             f"INSERT INTO {_INSTANCE_TABLE} "
             f"({_COL_GRAPH_INSTANCE_ID}, {_COL_SPEC_ID}, "
             f"{_COL_PARENT_INSTANCE_ID}, {_COL_PARENT_NODE}, "
-            f"{_COL_STATUS}, {_COL_CREATED_AT}, {_COL_UPDATED_AT}) "
+            f"{_COL_STATUS}, "
+            f"{_COL_CREATED_AT}, {_COL_UPDATED_AT}) "
             f"VALUES (?, ?, ?, ?, ?, ?, ?) "
             f"ON CONFLICT({_COL_GRAPH_INSTANCE_ID}) DO UPDATE SET "
             f"{_COL_SPEC_ID} = excluded.{_COL_SPEC_ID}, "
@@ -292,14 +300,14 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
                 metadata.spec_id,
                 metadata.parent_instance_id,
                 metadata.parent_node,
-                metadata.status,
+                metadata.status.value,
                 ts,
                 ts,
             ),
         )
         self._conn.commit()
 
-    def load_by_id(self, graph_instance_id: int) -> GraphMetadata | None:
+    def load(self, graph_instance_id: int) -> GraphMetadata | None:
         row = self._conn.execute(
             f"SELECT {_COL_GRAPH_INSTANCE_ID}, {_COL_SPEC_ID}, "
             f"{_COL_PARENT_INSTANCE_ID}, {_COL_PARENT_NODE}, {_COL_STATUS} "
@@ -311,14 +319,14 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
             return None
         return self._row_to_metadata(row)
 
-    def load_by_status(self, status: str) -> list[GraphMetadata]:
+    def load_by_status(self, status: GraphInstanceStatus) -> list[GraphMetadata]:
         rows = self._conn.execute(
             f"SELECT {_COL_GRAPH_INSTANCE_ID}, {_COL_SPEC_ID}, "
             f"{_COL_PARENT_INSTANCE_ID}, {_COL_PARENT_NODE}, {_COL_STATUS} "
             f"FROM {_INSTANCE_TABLE} "
             f"WHERE {_COL_STATUS} = ? "
             f"ORDER BY {_COL_GRAPH_INSTANCE_ID}",
-            (status,),
+            (status.value,),
         ).fetchall()
         return [self._row_to_metadata(r) for r in rows]
 
@@ -333,12 +341,12 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
         ).fetchall()
         return [self._row_to_metadata(r) for r in rows]
 
-    def update_status(self, graph_instance_id: int, status: str) -> None:
+    def update_status(self, graph_instance_id: int, status: GraphInstanceStatus) -> None:
         self._conn.execute(
             f"UPDATE {_INSTANCE_TABLE} "
             f"SET {_COL_STATUS} = ?, {_COL_UPDATED_AT} = ? "
             f"WHERE {_COL_GRAPH_INSTANCE_ID} = ?",
-            (status, now_ms(), graph_instance_id),
+            (status.value, now_ms(), graph_instance_id),
         )
         self._conn.commit()
 
@@ -353,9 +361,7 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
     def _row_to_metadata(row: tuple[Any, ...]) -> GraphMetadata:
         """Construct a `GraphMetadata` from a DB row.
 
-        The `graph_instances` table stores only the basic identity/status
-        columns. The extra `GraphMetadata` fields are filled with defaults.
-        For full-fidelity metadata, use `GraphMetadataStore`.
+        The 5 identity/status fields come from individual columns.
         """
         (
             graph_instance_id,
@@ -370,23 +376,12 @@ class SqliteGraphInstanceStore(GraphInstanceStore):
             parent_instance_id=parent_instance_id,
             parent_node=parent_node,
             status=GraphInstanceStatus(status),
-            instance_seq=_DEFAULT_INSTANCE_SEQ,
-            iteration_count=_DEFAULT_ITERATION_COUNT,
-            activated_sources=_DEFAULT_ACTIVATED_SOURCES,
-            pending_dispatches=_DEFAULT_PENDING_DISPATCHES,
         )
-
-    def close(self) -> None:
-        """Close the underlying SQLite connection.
-
-        Not part of the `GraphInstanceStore` ABC — concrete resource cleanup
-        for the SQLite adapter. Safe to call multiple times.
-        """
-        self._conn.close()
 
 
 __all__ = [
     "GraphInstanceStore",
     "InMemoryGraphInstanceStore",
+    "NullGraphInstanceStore",
     "SqliteGraphInstanceStore",
 ]

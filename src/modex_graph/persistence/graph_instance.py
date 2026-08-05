@@ -13,9 +13,9 @@ The full chain (per `spec.py`):
 data record into a plain runtime class. It now holds:
 
 - ``metadata: GraphMetadata`` — the serializable value object (frozen Pydantic).
-  Stored by ``GraphMetadataStore``. Carries identity,
-  status, scheduler bookkeeping fields (``instance_seq``, ``iteration_count``,
-  ``activated_sources``, ``pending_dispatches``).
+  Stored by ``GraphInstanceStore``. Carries identity + status (5 fields).
+  Scheduler bookkeeping is derived at recovery time from node_states and
+  deliver stores.
 - ``coordinator: GraphPersistenceCoordinator`` — the persistence coordinator.
   The coordinator lifecycle is bound to the ``GraphInstance``
   lifecycle: it persists node invocations + delivers and provides recovery
@@ -29,8 +29,11 @@ Methods:
 
 - ``get_state()`` → delegates to ``coordinator.get_graph_state``.
 - ``load_for_recovery()`` → delegates to ``coordinator.load_for_recovery``.
-- ``update_status(status)`` → delegates to the coordinator's metadata store
-  + updates the local ``metadata`` via ``model_copy``.
+
+Status transitions are routed directly through the ``GraphInstanceStore``
+(``store.update_status(gid, status)``) by the orchestrator / recovery /
+control services that hold the store; ``GraphInstance`` no longer owns a
+status-update method.
 
 `graph_instance_id` is a Snowflake-format `int` (per `id_generator.py`),
 matching the `BIGINT` column in the SQLite schema. This is the single persistence
@@ -54,19 +57,20 @@ class GraphInstance:
 
     A `GraphInstance` is created when a `GraphSpec` is compiled and
     instantiated. It pairs the serializable `GraphMetadata` (identity +
-    status + scheduler bookkeeping) with the `GraphPersistenceCoordinator`
-    (node invocation persistence + deliver routing + recovery).
+    status, 5 fields) with the `GraphPersistenceCoordinator` (node invocation
+    persistence + deliver routing + recovery). Scheduler bookkeeping is
+    derived at recovery time from node_states and deliver stores.
 
     The coordinator lifecycle is bound to the GraphInstance lifecycle. The
-    metadata is the serializable value object stored by GraphMetadataStore.
+    metadata is the serializable value object stored by GraphInstanceStore.
 
     Properties delegate to ``metadata`` so callers that access
     ``graph_instance_id`` / ``status`` / ``spec_id`` / ``parent_instance_id``
-    / ``parent_node`` are unchanged from the frozen-Pydantic era.
+    / ``.parent_node`` are unchanged from the frozen-Pydantic era.
 
     Attributes:
         metadata: The serializable `GraphMetadata` value object (frozen
-            Pydantic). Stored by `GraphMetadataStore`.
+            Pydantic). Stored by `GraphInstanceStore`.
         coordinator: The `GraphPersistenceCoordinator` for this instance.
             Provides node invocation persistence, deliver routing, and
             recovery state loading.
@@ -125,22 +129,3 @@ class GraphInstance:
         """
         return self.coordinator.load_for_recovery()
 
-    def update_status(self, status: GraphInstanceStatus) -> None:
-        """Update the instance lifecycle status.
-
-        Delegates to the coordinator's metadata store for persistence, then
-        updates the local ``metadata`` via ``model_copy`` (GraphMetadata is
-        frozen — replacement is the only way to update).
-
-        For a NullGraphMetadataStore (``create_null_coordinator``), the store
-        update is a no-op; only the local metadata is updated.
-
-        Args:
-            status: The new lifecycle status.
-        """
-        # Delegate to the coordinator's metadata store for persistence.
-        # The coordinator holds _metadata_store as an internal attribute;
-        # GraphInstance is the runtime owner of the coordinator and is the
-        # intended caller for status transitions.
-        self.coordinator.update_graph_status(status)
-        self.metadata = self.metadata.model_copy(update={"status": status})

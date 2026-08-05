@@ -1,36 +1,33 @@
 """Distributed persistence layer: stores, coordinator, and graph instance.
 
-Sub-package grouping the three-layer persistence model (per
-``docs/design/graph-orchestration/distributed-persistence.md``):
+Sub-package grouping the persistence model:
 
-1. **Graph metadata** — ``GraphMetadataStore`` (Null / Memory / SQLite).
-2. **Node invocation** — ``NodeState`` version-chain stores
-   (Null / Simple / Sqlite) + ``NodeStateStore``.
+1. **Graph instance metadata** — ``GraphInstanceStore`` (Null / InMemory /
+   SQLite). Persists ``GraphMetadata`` (5 identity/status fields as
+   individual columns). Scheduler bookkeeping is derived at recovery
+   time, not persisted.
+2. **Node invocation** — ``NodeStateStore`` (Null / InMemory / Sqlite) —
+   lifecycle + version chain + CAS authority, scoped to one
+   ``graph_instance_id``.
 3. **Deliver** — per-node ``DeliverStore`` (Null / InMemory / Sqlite) with
    consumption state machine.
 
-``GraphPersistenceCoordinator`` is the central orchestrator that unifies node
-lifecycle events (begin / complete / cancel / suspend / crash / finalize)
-with persistence routing (deliver / collect / mark / promote). ``GraphInstance``
-pairs a coordinator with a serializable ``GraphMetadata`` value object.
-
-``DispatchStore`` is the shared base for dispatch event persistence, used by
-both the scheduler and the coordinator. All stores share the same Null /
-Memory / SQLite strategy triple, walking the same ABC.
+``GraphPersistenceCoordinator`` is the central orchestrator that unifies
+deliver routing + recovery. Node lifecycle methods (begin / complete /
+cancel / suspend / crash / finalize) live on ``NodeStateStore``, called
+directly by ``Node.run()`` via ``ctx.node_state_store``. The coordinator
+handles deliver routing, recovery, and state queries.
 
 Modules:
 
-- ``dispatch_store`` — ``DispatchStore`` ABC + InMemory / Sqlite impls.
-  Shared base (``now_ms`` helper) for all timestamped stores.
 - ``deliver_store`` — ``DeliverStore`` ABC + Null / InMemory / Sqlite impls +
   ``DeliverRecord`` value object.
-- ``node_state`` — ``NodeState`` ABC + Null / Simple / Sqlite impls +
-  ``NodeInvocationRecord`` value object + factories.
-- ``node_state_store`` — ``NodeStateStore`` ABC + InMemory / Sqlite impls.
-- ``metadata`` — ``GraphMetadata`` / ``InvocationContext`` /
-  ``RecoveryContext`` / ``GraphStateSnapshot`` value objects.
-- ``metadata_store`` — ``GraphMetadataStore`` ABC + Null / Memory / Sqlite.
-- ``instance_store`` — ``GraphInstanceStore`` ABC + InMemory / Sqlite.
+- ``node_state_store`` — ``NodeStateStore`` ABC + Null / InMemory / Sqlite
+  impls (lifecycle + CAS + version chain).
+- ``graph_metadata`` — ``GraphMetadata`` / ``InvocationContext`` /
+  ``NodeInvocationRecord`` / ``RecoveryContext`` / ``GraphStateSnapshot``
+  value objects.
+- ``instance_store`` — ``GraphInstanceStore`` ABC + Null / InMemory / Sqlite.
 - ``persistence_coordinator`` — ``GraphPersistenceCoordinator`` +
   ``create_null_coordinator`` factory.
 - ``graph_instance`` — ``GraphInstance`` runtime instance.
@@ -40,7 +37,6 @@ from __future__ import annotations
 
 from .deliver_store import (
     DeliverRecord,
-    DeliverStatus,
     DeliverStore,
     DeliverStoreFactory,
     InMemoryDeliverStore,
@@ -50,57 +46,35 @@ from .deliver_store import (
     SqliteDeliverStore,
     SqliteDeliverStoreFactory,
 )
-from .dispatch_store import (
-    DispatchStore,
-    InMemoryDispatchStore,
-    SqliteDispatchStore,
-)
 from .graph_instance import GraphInstance
 from .graph_metadata import (
     GraphMetadata,
     GraphStateSnapshot,
     InvocationContext,
+    NodeInvocationRecord,
     RecoveryContext,
-)
-from .graph_metadata_store import (
-    GraphMetadataStore,
-    MemoryGraphMetadataStore,
-    NullGraphMetadataStore,
-    SqliteGraphMetadataStore,
 )
 from .instance_store import (
     GraphInstanceStore,
     InMemoryGraphInstanceStore,
+    NullGraphInstanceStore,
     SqliteGraphInstanceStore,
-)
-from .node_state import (
-    NodeInvocationRecord,
-    NodeState,
-    NodeStateFactory,
-    NullNodeState,
-    NullNodeStateFactory,
-    SimpleNodeState,
-    SimpleNodeStateFactory,
-    SqliteNodeState,
-    SqliteNodeStateFactory,
 )
 from .node_state_store import (
     InMemoryNodeStateStore,
     NodeStateStore,
+    NullNodeStateStore,
     SqliteNodeStateStore,
 )
 from .persistence_coordinator import (
+    CoordinatorFactory,
     GraphPersistenceCoordinator,
+    NullCoordinatorFactory,
     create_null_coordinator,
 )
 
 __all__ = [
-    # Dispatch persistence
-    "DispatchStore",
-    "InMemoryDispatchStore",
-    "SqliteDispatchStore",
     # Deliver/submit persistence
-    "DeliverStatus",
     "DeliverRecord",
     "DeliverStore",
     "DeliverStoreFactory",
@@ -110,36 +84,26 @@ __all__ = [
     "NullDeliverStoreFactory",
     "SqliteDeliverStore",
     "SqliteDeliverStoreFactory",
-    # Node state persistence
+    # Node state persistence (lifecycle + CAS + version chain)
     "NodeStateStore",
+    "NullNodeStateStore",
     "InMemoryNodeStateStore",
     "SqliteNodeStateStore",
-    # Node state in-memory abstraction
-    "NodeState",
-    "SimpleNodeState",
-    "NullNodeState",
-    "SqliteNodeState",
-    "NodeInvocationRecord",
-    "NodeStateFactory",
-    "NullNodeStateFactory",
-    "SimpleNodeStateFactory",
-    "SqliteNodeStateFactory",
     # Graph metadata
     "GraphMetadata",
     "InvocationContext",
+    "NodeInvocationRecord",
     "RecoveryContext",
     "GraphStateSnapshot",
-    # Graph metadata store
-    "GraphMetadataStore",
-    "NullGraphMetadataStore",
-    "MemoryGraphMetadataStore",
-    "SqliteGraphMetadataStore",
     # Graph instance store
     "GraphInstanceStore",
+    "NullGraphInstanceStore",
     "InMemoryGraphInstanceStore",
     "SqliteGraphInstanceStore",
     # Persistence coordinator
     "GraphPersistenceCoordinator",
+    "CoordinatorFactory",
+    "NullCoordinatorFactory",
     "create_null_coordinator",
     # Runtime graph instance
     "GraphInstance",

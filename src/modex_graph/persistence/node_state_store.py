@@ -1,30 +1,51 @@
 # ruff: noqa: ANN401
 
-"""`NodeStateStore` — persistence abstraction for per-node state snapshots (P1C.6).
+"""``NodeStateStore`` — lifecycle + version chain + CAS authority for node invocations.
 
-Provides:
+The store is scoped to ONE ``graph_instance_id`` (captured at construction).
+All methods take ``node_name`` only — the ``graph_instance_id`` is implicit.
 
-- `NodeStateStore` ABC (rule 7: ABC, not Protocol) — the minimal interface
-  for saving and querying per-node state snapshots keyed by
-  `(graph_instance_id, node_name, version)`.
-- `InMemoryNodeStateStore` — default in-memory implementation. Uses
-  `default_id_generator()` for Snowflake IDs.
-- `SqliteNodeStateStore` — SQLite adapter. `CREATE TABLE IF NOT EXISTS
-  node_states` with the SAME DDL as in `001_initial.sql` table 18
-  (idempotent). `state` dict serialized via `json.dumps()` / `json.loads()`.
-  Append-only (MVCC): `save` always INSERTs, no UPDATE, no per-instance
-  DELETE. Uses `default_id_generator()` for Snowflake IDs.
+Lifecycle (rule 15: single authority — no parallel ``NodeState`` path):
 
-Follows the EXACT pattern of `dispatch_store.py` / `deliver_store.py`: ABC +
-InMemory + SQLite, `now_ms()` from `dispatch_store`, centralized table/column
-constants, `CREATE TABLE IF NOT EXISTS`, `?` placeholders,
-`check_same_thread=False`, `close()` method.
+- ``begin_invocation`` — INSERT a new ``RUNNING`` record (version = max + 1,
+  parent_version from ``load_latest_completed``). If a prior non-suspended
+  ``RUNNING`` record exists, it is marked ``CRASHED`` (orphan cleanup). A
+  prior suspended ``RUNNING`` is left in place (valid rebuild source).
+- ``complete_invocation`` / ``suspend_invocation`` / ``cancel_invocation`` —
+  STRICT CAS: ``UPDATE ... WHERE status='running' AND suspended=0``. If
+  rowcount=0, raise ``InvocationStateError``.
+- ``crash_invocation`` / ``finalize_invocation`` — TOLERANT: idempotent
+  no-op if already terminal. ``crash`` updates ``RUNNING`` → ``CRASHED``.
+  ``finalize`` promotes orphan non-suspended ``RUNNING`` → ``CRASHED``;
+  leaves terminal and suspended records untouched.
 
-Per the P0.2 DDL (table 18): `node_states` is append-only — one row per
-`(graph_instance_id, node_name, version)`. All versions are retained for
-MVCC rollback (no `updated_at`, no trigger, no per-instance delete). The
-`clear` method deletes ALL node states for a graph instance (bulk cleanup
-when an instance is destroyed).
+Terminal states: ``COMPLETED``, ``CANCELED``, ``CRASHED`` — no transition
+FROM terminal.
+
+SQL schema (``node_states`` table):
+
+    node_state_id     BIGINT PRIMARY KEY,
+    graph_instance_id BIGINT NOT NULL,
+    node_name         TEXT NOT NULL,
+    version           INTEGER NOT NULL,
+    parent_version    INTEGER,
+    invocation_id     BIGINT NOT NULL,
+    status            TEXT NOT NULL DEFAULT 'running'
+                      CHECK (status IN ('running','completed','canceled','crashed')),
+    state_json        TEXT NOT NULL,
+    suspended         INTEGER NOT NULL DEFAULT 0,
+    created_at        INTEGER NOT NULL,
+    updated_at        INTEGER NOT NULL,
+    UNIQUE (graph_instance_id, node_name, version)
+
+Implementations:
+
+- ``NullNodeStateStore`` — no-op; ``begin_invocation`` returns a valid
+  ``InvocationContext`` (generated invocation_id, version=0,
+  parent_version=None). Used by ``create_null_coordinator``.
+- ``InMemoryNodeStateStore`` — dict-backed, default for tests.
+- ``SqliteNodeStateStore`` — SQLite adapter with CAS via
+  ``UPDATE ... WHERE status='running'``.
 """
 
 from __future__ import annotations
@@ -34,263 +55,479 @@ import sqlite3
 from abc import ABC, abstractmethod
 from typing import Any
 
+from ..constants import InvocationStatus
+from ..exceptions import InvocationStateError
 from ..id_generator import default_id_generator
-from .dispatch_store import now_ms
+from ._time import now_ms
+from .graph_metadata import InvocationContext, NodeInvocationRecord
 
 # ── Table / column name constants ─────────────────────────────────────────
-# Centralized (rule 14) — same pattern as dispatch_store.py / deliver_store.py.
-
 _NODE_STATE_TABLE = "node_states"
 _COL_NODE_STATE_ID = "node_state_id"
 _COL_GRAPH_INSTANCE_ID = "graph_instance_id"
 _COL_NODE_NAME = "node_name"
 _COL_VERSION = "version"
+_COL_PARENT_VERSION = "parent_version"
+_COL_STATUS = "status"
+_COL_INVOCATION_ID = "invocation_id"
 _COL_STATE_JSON = "state_json"
+_COL_SUSPENDED = "suspended"
 _COL_CREATED_AT = "created_at"
+_COL_UPDATED_AT = "updated_at"
+
+# Columns selected in every query, in order expected by _row_to_record.
+_SELECT_COLUMNS = (
+    f"{_COL_NODE_STATE_ID}, {_COL_GRAPH_INSTANCE_ID}, "
+    f"{_COL_NODE_NAME}, {_COL_VERSION}, {_COL_PARENT_VERSION}, "
+    f"{_COL_STATUS}, {_COL_INVOCATION_ID}, {_COL_STATE_JSON}, "
+    f"{_COL_SUSPENDED}, {_COL_CREATED_AT}, {_COL_UPDATED_AT}"
+)
 
 
 class NodeStateStore(ABC):
-    """Persistence abstraction for per-node state snapshots (rule 7: ABC).
+    """Lifecycle + version chain + CAS authority for node invocations.
 
-    The store is keyed by `(graph_instance_id, node_name, version)`. It is
-    append-only (MVCC): each `save` inserts a new row with a new
-    `node_state_id` (Snowflake) and a caller-supplied `version`. All
-    versions are retained — no UPDATE, no per-instance DELETE. The `clear`
-    method is the only deletion path (bulk cleanup per graph instance).
+    Scoped to ONE ``graph_instance_id`` (captured at construction). All
+    methods take ``node_name`` only.
 
-    All methods are synchronous. The scheduler / engine calls these from
-    non-async contexts (state checkpointing after each node execution).
+    Rule 15: this is the SINGLE lifecycle authority — no parallel
+    ``NodeState`` path. ``Node.run()`` calls these methods directly via
+    ``ctx.node_state_store``.
 
-    Implementations:
-
-    - `InMemoryNodeStateStore` — dict-backed, default.
-    - `SqliteNodeStateStore` — SQLite file or `:memory:`.
+    All methods are synchronous and must be called from the event-loop
+    thread only. The caller owns the ``sqlite3.Connection`` and manages its
+    lifetime — the store never closes it.
     """
 
+    def __init__(self, graph_instance_id: int) -> None:
+        self._graph_instance_id = graph_instance_id
+
+    @property
+    def graph_instance_id(self) -> int:
+        return self._graph_instance_id
+
+    # ── Lifecycle ───────────────────────────────────────────────────────
+
     @abstractmethod
-    def save(
+    def begin_invocation(self, node_name: str) -> InvocationContext:
+        """Begin a new invocation. INSERT a new RUNNING record.
+
+        If a prior non-suspended RUNNING record exists, mark it CRASHED
+        (orphan cleanup). A prior suspended RUNNING is left in place
+        (valid rebuild source). Records begin directly as RUNNING.
+
+        Returns the ``InvocationContext`` with invocation_id, version,
+        and parent_version.
+        """
+        ...
+
+    @abstractmethod
+    def complete_invocation(self, invocation: InvocationContext, state: dict[str, Any]) -> None:
+        """Mark an invocation COMPLETED. STRICT CAS — raises on lost race."""
+        ...
+
+    @abstractmethod
+    def suspend_invocation(self, invocation: InvocationContext, snapshot: dict[str, Any]) -> None:
+        """Suspend an invocation (GraphInterrupt path).
+
+        Status stays RUNNING, ``suspended`` set to True. STRICT CAS.
+        """
+        ...
+
+    @abstractmethod
+    def crash_invocation(self, invocation: InvocationContext) -> None:
+        """Mark an invocation CRASHED. TOLERANT — no-op if already terminal."""
+        ...
+
+    @abstractmethod
+    def cancel_invocation(self, invocation: InvocationContext) -> None:
+        """Mark an invocation CANCELED. STRICT CAS — raises on lost race."""
+        ...
+
+    @abstractmethod
+    def finalize_invocation(self, invocation: InvocationContext) -> None:
+        """Safety net: orphan non-suspended RUNNING → CRASHED. TOLERANT.
+
+        Terminal and suspended records are left untouched.
+        """
+        ...
+
+    # ── Query ───────────────────────────────────────────────────────────
+
+    @abstractmethod
+    def load_latest(self, node_name: str) -> NodeInvocationRecord | None:
+        """Load the latest record for a node (highest version)."""
+        ...
+
+    @abstractmethod
+    def load_latest_completed(self, node_name: str) -> NodeInvocationRecord | None:
+        """Load the latest COMPLETED record for a node."""
+        ...
+
+    @abstractmethod
+    def load_by_invocation_id(
+        self, node_name: str, invocation_id: int
+    ) -> NodeInvocationRecord | None:
+        """Load a record by its ``invocation_id`` within a node's version chain.
+
+        Returns ``None`` if no record for ``node_name`` has the given
+        ``invocation_id``. Used by recovery to check whether a specific
+        consuming invocation is COMPLETED (auto-promote delivers).
+        """
+        ...
+
+    @abstractmethod
+    def query_versions(
         self,
-        graph_instance_id: int,
         node_name: str,
-        version: int,
-        state: dict[str, Any],
-    ) -> int:
-        """Save a node state snapshot. Returns the `node_state_id` (Snowflake).
-
-        Always inserts a new row (append-only / MVCC). The caller supplies
-        the `version` — a per-`(graph_instance_id, node_name)` monotonic
-        counter. The `UNIQUE (graph_instance_id, node_name, version)`
-        constraint prevents duplicate versions.
-
-        Args:
-            graph_instance_id: The graph instance ID (FK -> graph_instances).
-            node_name: The node whose state is being snapshotted.
-            version: The MVCC version number (monotonic per node).
-            state: The state dict (JSON-serializable).
-
-        Returns:
-            The `node_state_id` (Snowflake ID) of the new row.
-        """
+        status_filter: set[InvocationStatus] | None = None,
+    ) -> list[NodeInvocationRecord]:
+        """Query versions for a node, optionally filtered by status."""
         ...
 
     @abstractmethod
-    def load_latest(
-        self, graph_instance_id: int, node_name: str
-    ) -> tuple[dict[str, Any], int] | None:
-        """Load the latest state for a node.
-
-        Args:
-            graph_instance_id: The graph instance ID.
-            node_name: The node name.
-
-        Returns:
-            `(state_dict, version)` of the highest-version snapshot, or
-            `None` if no snapshots exist for this node.
-        """
+    def list_nodes(self) -> list[str]:
+        """List all node names that have state snapshots."""
         ...
 
     @abstractmethod
-    def load_version(
+    def query_all(self, status_filter: set[InvocationStatus]) -> list[NodeInvocationRecord]:
+        """Query across ALL nodes, filtered by status."""
+        ...
+
+    @abstractmethod
+    def clear(self) -> None:
+        """Delete ALL node states for this graph instance."""
+        ...
+
+
+# ── Null ─────────────────────────────────────────────────────────────────
+
+
+class NullNodeStateStore(NodeStateStore):
+    """No-op ``NodeStateStore`` — no persistence.
+
+    ``begin_invocation`` returns a valid ``InvocationContext`` (generated
+    invocation_id, version=0, parent_version=None). All other lifecycle
+    methods are no-ops. All queries return None / empty. Used by
+    ``create_null_coordinator``.
+    """
+
+    def begin_invocation(self, node_name: str) -> InvocationContext:
+        invocation_id = default_id_generator().generate()
+        return InvocationContext(
+            invocation_id=invocation_id,
+            node_name=node_name,
+            version=0,
+            parent_version=None,
+        )
+
+    def complete_invocation(self, invocation: InvocationContext, state: dict[str, Any]) -> None:
+        pass
+
+    def suspend_invocation(self, invocation: InvocationContext, snapshot: dict[str, Any]) -> None:
+        pass
+
+    def crash_invocation(self, invocation: InvocationContext) -> None:
+        pass
+
+    def cancel_invocation(self, invocation: InvocationContext) -> None:
+        pass
+
+    def finalize_invocation(self, invocation: InvocationContext) -> None:
+        pass
+
+    def load_latest(self, node_name: str) -> NodeInvocationRecord | None:
+        return None
+
+    def load_latest_completed(self, node_name: str) -> NodeInvocationRecord | None:
+        return None
+
+    def load_by_invocation_id(
+        self, node_name: str, invocation_id: int
+    ) -> NodeInvocationRecord | None:
+        return None
+
+    def query_versions(
         self,
-        graph_instance_id: int,
         node_name: str,
-        version: int,
-    ) -> dict[str, Any] | None:
-        """Load a specific version's state.
+        status_filter: set[InvocationStatus] | None = None,
+    ) -> list[NodeInvocationRecord]:
+        return []
 
-        Args:
-            graph_instance_id: The graph instance ID.
-            node_name: The node name.
-            version: The MVCC version to load.
+    def list_nodes(self) -> list[str]:
+        return []
 
-        Returns:
-            The `state_dict` for that version, or `None` if not found.
-        """
-        ...
+    def query_all(self, status_filter: set[InvocationStatus]) -> list[NodeInvocationRecord]:
+        return []
 
-    @abstractmethod
-    def load_all_versions(
-        self, graph_instance_id: int, node_name: str
-    ) -> list[tuple[dict[str, Any], int]]:
-        """Load all versions for a node, ordered by version ASC.
+    def clear(self) -> None:
+        pass
 
-        Args:
-            graph_instance_id: The graph instance ID.
-            node_name: The node name.
 
-        Returns:
-            A list of `(state_dict, version)` tuples, ordered by version
-            ascending. Empty list if no snapshots exist.
-        """
-        ...
-
-    @abstractmethod
-    def list_nodes(self, graph_instance_id: int) -> list[str]:
-        """List all node names that have state snapshots for a graph instance.
-
-        Args:
-            graph_instance_id: The graph instance ID.
-
-        Returns:
-            A list of distinct node names. Order is implementation-defined.
-        """
-        ...
-
-    @abstractmethod
-    def clear(self, graph_instance_id: int) -> None:
-        """Delete ALL node states for a graph instance (cleanup).
-
-        The only deletion path. Called when a graph instance is destroyed.
-        Per-instance deletion is not supported (append-only / MVCC).
-
-        Args:
-            graph_instance_id: The graph instance to clear.
-        """
-        ...
+# ── InMemory ─────────────────────────────────────────────────────────────
 
 
 class InMemoryNodeStateStore(NodeStateStore):
-    """Default in-memory `NodeStateStore`.
+    """Dict-backed ``NodeStateStore``. Default for tests + single-process runs.
 
-    Stores records in a flat list keyed by `graph_instance_id`. Each record
-    is a tuple `(node_state_id, node_name, version, state_dict)`. Uses
-    `default_id_generator()` for Snowflake IDs. Suitable for single-process
-    runs and tests. Not persistent across process restarts.
+    Stores records in a dict keyed by ``node_name``. Each node has a list
+    of ``NodeInvocationRecord`` ordered by version ascending. Lifecycle
+    methods mutate records in place (CAS via status check).
     """
 
-    def __init__(self) -> None:
-        # graph_instance_id -> list of (node_state_id, node_name, version, state)
-        self._records: dict[int, list[tuple[int, str, int, dict[str, Any]]]] = {}
+    def __init__(self, graph_instance_id: int) -> None:
+        super().__init__(graph_instance_id)
+        self._records: dict[str, list[NodeInvocationRecord]] = {}
 
-    def save(
-        self,
-        graph_instance_id: int,
-        node_name: str,
-        version: int,
-        state: dict[str, Any],
-    ) -> int:
-        records = self._records.get(graph_instance_id, [])
-        for _, existing_name, existing_ver, _ in records:
-            if existing_name == node_name and existing_ver == version:
-                raise ValueError(
-                    f"NodeState for (graph_instance_id={graph_instance_id}, "
-                    f"node_name={node_name!r}, version={version}) already exists."
+    def begin_invocation(self, node_name: str) -> InvocationContext:
+        gid = self._graph_instance_id
+        records = self._records.get(node_name, [])
+
+        # Orphan cleanup: prior non-suspended RUNNING → CRASHED.
+        if records:
+            latest = records[-1]
+            if latest.status == InvocationStatus.RUNNING and not latest.suspended:
+                ts = now_ms()
+                crashed = latest.model_copy(
+                    update={"status": InvocationStatus.CRASHED, "updated_at": ts}
                 )
-        node_state_id = default_id_generator().generate()
-        records.append((node_state_id, node_name, version, state))
-        self._records[graph_instance_id] = records
-        return node_state_id
+                records[-1] = crashed
+                self._records[node_name] = records
 
-    def load_latest(
-        self, graph_instance_id: int, node_name: str
-    ) -> tuple[dict[str, Any], int] | None:
-        records = [
-            (state, version)
-            for (_, name, version, state) in self._records.get(graph_instance_id, [])
-            if name == node_name
-        ]
-        if not records:
-            return None
-        return max(records, key=lambda sv: sv[1])
+        # version = max(all existing versions) + 1.
+        version = max((r.version for r in records), default=-1) + 1
 
-    def load_version(
-        self,
-        graph_instance_id: int,
-        node_name: str,
-        version: int,
-    ) -> dict[str, Any] | None:
-        for _, name, ver, state in self._records.get(graph_instance_id, []):
-            if name == node_name and ver == version:
-                return state
+        # parent_version from load_latest_completed.
+        completed = [r for r in records if r.status == InvocationStatus.COMPLETED]
+        parent_version = max(completed, key=lambda r: r.version).version if completed else None
+
+        invocation_id = default_id_generator().generate()
+        ts = now_ms()
+        record = NodeInvocationRecord(
+            invocation_id=invocation_id,
+            graph_instance_id=gid,
+            node_name=node_name,
+            version=version,
+            parent_version=parent_version,
+            status=InvocationStatus.RUNNING,
+            state_json={},
+            suspended=False,
+            created_at=ts,
+            updated_at=ts,
+        )
+        records.append(record)
+        self._records[node_name] = records
+
+        return InvocationContext(
+            invocation_id=invocation_id,
+            node_name=node_name,
+            version=version,
+            parent_version=parent_version,
+        )
+
+    def _find_current(self, invocation: InvocationContext) -> NodeInvocationRecord | None:
+        records = self._records.get(invocation.node_name, [])
+        for r in records:
+            if r.version == invocation.version:
+                return r
         return None
 
-    def load_all_versions(
-        self, graph_instance_id: int, node_name: str
-    ) -> list[tuple[dict[str, Any], int]]:
-        records = [
-            (state, version)
-            for (_, name, version, state) in self._records.get(graph_instance_id, [])
-            if name == node_name
-        ]
-        return sorted(records, key=lambda sv: sv[1])
+    def complete_invocation(self, invocation: InvocationContext, state: dict[str, Any]) -> None:
+        current = self._find_current(invocation)
+        if current is None:
+            raise InvocationStateError(
+                f"No record found for {invocation.node_name!r} version {invocation.version}."
+            )
+        if current.status != InvocationStatus.RUNNING or current.suspended:
+            raise InvocationStateError(
+                f"CAS failed: {invocation.node_name!r} v{invocation.version} "
+                f"is {current.status.value} (suspended={current.suspended}), "
+                f"expected non-suspended RUNNING."
+            )
+        ts = now_ms()
+        updated = current.model_copy(
+            update={
+                "status": InvocationStatus.COMPLETED,
+                "state_json": state,
+                "updated_at": ts,
+            }
+        )
+        records = self._records[invocation.node_name]
+        idx = records.index(current)
+        records[idx] = updated
 
-    def list_nodes(self, graph_instance_id: int) -> list[str]:
-        seen: dict[str, None] = {}
-        for _, name, _, _ in self._records.get(graph_instance_id, []):
-            if name not in seen:
-                seen[name] = None
-        return list(seen.keys())
+    def suspend_invocation(self, invocation: InvocationContext, snapshot: dict[str, Any]) -> None:
+        current = self._find_current(invocation)
+        if current is None:
+            raise InvocationStateError(
+                f"No record found for {invocation.node_name!r} version {invocation.version}."
+            )
+        if current.status != InvocationStatus.RUNNING or current.suspended:
+            raise InvocationStateError(
+                f"CAS failed: {invocation.node_name!r} v{invocation.version} "
+                f"is {current.status.value} (suspended={current.suspended}), "
+                f"expected non-suspended RUNNING."
+            )
+        ts = now_ms()
+        updated = current.model_copy(
+            update={
+                "status": InvocationStatus.RUNNING,
+                "state_json": snapshot,
+                "suspended": True,
+                "updated_at": ts,
+            }
+        )
+        records = self._records[invocation.node_name]
+        idx = records.index(current)
+        records[idx] = updated
 
-    def clear(self, graph_instance_id: int) -> None:
-        self._records.pop(graph_instance_id, None)
+    def cancel_invocation(self, invocation: InvocationContext) -> None:
+        current = self._find_current(invocation)
+        if current is None:
+            raise InvocationStateError(
+                f"No record found for {invocation.node_name!r} version {invocation.version}."
+            )
+        if current.status != InvocationStatus.RUNNING or current.suspended:
+            raise InvocationStateError(
+                f"CAS failed: {invocation.node_name!r} v{invocation.version} "
+                f"is {current.status.value} (suspended={current.suspended}), "
+                f"expected non-suspended RUNNING."
+            )
+        ts = now_ms()
+        updated = current.model_copy(
+            update={
+                "status": InvocationStatus.CANCELED,
+                "updated_at": ts,
+            }
+        )
+        records = self._records[invocation.node_name]
+        idx = records.index(current)
+        records[idx] = updated
+
+    def crash_invocation(self, invocation: InvocationContext) -> None:
+        current = self._find_current(invocation)
+        if current is None:
+            return
+        # TOLERANT: no-op if already terminal.
+        if current.status != InvocationStatus.RUNNING:
+            return
+        ts = now_ms()
+        updated = current.model_copy(
+            update={
+                "status": InvocationStatus.CRASHED,
+                "updated_at": ts,
+            }
+        )
+        records = self._records[invocation.node_name]
+        idx = records.index(current)
+        records[idx] = updated
+
+    def finalize_invocation(self, invocation: InvocationContext) -> None:
+        current = self._find_current(invocation)
+        if current is None:
+            return
+        # Suspended RUNNING — don't touch.
+        if current.status == InvocationStatus.RUNNING and current.suspended:
+            return
+        # Terminal — don't touch.
+        if current.status in (
+            InvocationStatus.COMPLETED,
+            InvocationStatus.CANCELED,
+            InvocationStatus.CRASHED,
+        ):
+            return
+        # Orphan non-suspended RUNNING → CRASHED.
+        ts = now_ms()
+        updated = current.model_copy(
+            update={
+                "status": InvocationStatus.CRASHED,
+                "updated_at": ts,
+            }
+        )
+        records = self._records[invocation.node_name]
+        idx = records.index(current)
+        records[idx] = updated
+
+    def load_latest(self, node_name: str) -> NodeInvocationRecord | None:
+        records = self._records.get(node_name, [])
+        if not records:
+            return None
+        return records[-1]
+
+    def load_latest_completed(self, node_name: str) -> NodeInvocationRecord | None:
+        records = self._records.get(node_name, [])
+        completed = [r for r in records if r.status == InvocationStatus.COMPLETED]
+        if not completed:
+            return None
+        return max(completed, key=lambda r: r.version)
+
+    def load_by_invocation_id(
+        self, node_name: str, invocation_id: int
+    ) -> NodeInvocationRecord | None:
+        records = self._records.get(node_name, [])
+        for r in records:
+            if r.invocation_id == invocation_id:
+                return r
+        return None
+
+    def query_versions(
+        self,
+        node_name: str,
+        status_filter: set[InvocationStatus] | None = None,
+    ) -> list[NodeInvocationRecord]:
+        records = self._records.get(node_name, [])
+        filtered = (
+            [r for r in records if r.status in status_filter]
+            if status_filter is not None
+            else list(records)
+        )
+        return sorted(filtered, key=lambda r: r.version, reverse=True)
+
+    def list_nodes(self) -> list[str]:
+        return sorted(self._records.keys())
+
+    def query_all(self, status_filter: set[InvocationStatus]) -> list[NodeInvocationRecord]:
+        result: list[NodeInvocationRecord] = []
+        for records in self._records.values():
+            result.extend(r for r in records if r.status in status_filter)
+        return sorted(result, key=lambda r: (r.node_name, r.version), reverse=True)
+
+    def clear(self) -> None:
+        self._records.clear()
+
+
+# ── SQLite ───────────────────────────────────────────────────────────────
 
 
 class SqliteNodeStateStore(NodeStateStore):
-    """SQLite-backed `NodeStateStore` using stdlib `sqlite3`.
+    """SQLite-backed ``NodeStateStore`` with CAS semantics.
 
-    Schema is created on construction via `CREATE TABLE IF NOT EXISTS`
-    (lightweight migration). The DDL matches `001_initial.sql` table 18
-    (`node_states`) — idempotent.
+    Uses ``UPDATE ... WHERE status='running' AND suspended=0`` for strict
+    transitions (complete / suspend / cancel). ``rowcount == 0`` indicates
+    a lost race → ``InvocationStateError``.
 
-    Table and column names are module-level constants; all data values go
-    through `?` parameter placeholders. The `state` dict is serialized via
-    `json.dumps()` on write and `json.loads()` on read.
-
-    Append-only (MVCC): `save` always INSERTs (no UPDATE). The
-    `UNIQUE (graph_instance_id, node_name, version)` constraint prevents
-    duplicate versions. `load_latest` uses `ORDER BY version DESC LIMIT 1`.
-    No `updated_at` column, no trigger (append-only table).
-
-    The `json_valid` CHECK constraint from the migration is omitted here
-    (same convention as `SqliteDeliverStore` — JSON1 may not be compiled
-    in on all standalone builds).
-
-    Timestamps are epoch milliseconds (`now_ms()`), per ADR-0029.
-
-    Uses `default_id_generator()` for Snowflake IDs (the `node_state_id`
-    primary key — application-side ID generation, not SQLite AUTOINCREMENT).
-
-    The store holds a single `sqlite3.Connection` for its lifetime.
-    `check_same_thread=False` allows the connection to be used from the
-    event-loop thread or a thread-pool worker. Access is serialized by the
-    GIL and the synchronous call site — no concurrent writes.
-
-    For `:memory:` databases, the schema and data live as long as the store
-    instance. For file paths, data persists across process restarts.
+    The store uses a single caller-owned ``sqlite3.Connection`` for its
+    lifetime. The caller creates the connection (with ``check_same_thread``
+    set as needed) and passes it to all stores sharing one workspace DB;
+    the store never closes it.
     """
 
-    def __init__(self, db_path: str) -> None:
-        self._db_path = db_path
-        self._conn = sqlite3.connect(db_path, check_same_thread=False)
+    def __init__(self, connection: sqlite3.Connection, graph_instance_id: int) -> None:
+        super().__init__(graph_instance_id)
+        self._conn = connection
         self._init_schema()
 
     def _init_schema(self) -> None:
         """Create the `node_states` table + indexes if they don't exist.
 
-        The DDL matches `001_initial.sql` table 18. The `json_valid` CHECK
-        is omitted (same convention as `SqliteDeliverStore`); `UNIQUE
-        (graph_instance_id, node_name, version)` is included for parity.
-        No `updated_at` column, no trigger (append-only table).
+        The DDL matches `001_initial.sql` table 18 (including the `status`
+        CHECK constraint and the ``UNIQUE (graph_instance_id, node_name,
+        version)`` constraint). The ``json_valid(state_json)`` CHECK from
+        the migration is omitted here — JSON1 may not be compiled in on
+        all standalone builds; the migration includes it for workspace DBs
+        where JSON1 is guaranteed (same convention as
+        ``SqliteGraphSpecStore`` and ``SqliteDeliverStore``).
         """
         conn = self._conn
         conn.execute(
@@ -299,12 +536,22 @@ class SqliteNodeStateStore(NodeStateStore):
             f"{_COL_GRAPH_INSTANCE_ID} INTEGER NOT NULL, "
             f"{_COL_NODE_NAME} TEXT NOT NULL, "
             f"{_COL_VERSION} INTEGER NOT NULL DEFAULT 0, "
+            f"{_COL_PARENT_VERSION} INTEGER, "
+            f"{_COL_STATUS} TEXT NOT NULL DEFAULT '{InvocationStatus.RUNNING.value}' "
+            f"CHECK ({_COL_STATUS} IN ("
+            f"'{InvocationStatus.RUNNING.value}', "
+            f"'{InvocationStatus.COMPLETED.value}', "
+            f"'{InvocationStatus.CANCELED.value}', "
+            f"'{InvocationStatus.CRASHED.value}'"
+            f")), "
+            f"{_COL_INVOCATION_ID} BIGINT NOT NULL DEFAULT 0, "
             f"{_COL_STATE_JSON} TEXT NOT NULL, "
+            f"{_COL_SUSPENDED} INTEGER NOT NULL DEFAULT 0, "
             f"{_COL_CREATED_AT} INTEGER NOT NULL, "
+            f"{_COL_UPDATED_AT} INTEGER NOT NULL, "
             f"UNIQUE ({_COL_GRAPH_INSTANCE_ID}, {_COL_NODE_NAME}, {_COL_VERSION})"
             f")"
         )
-        # Indexes matching the migration.
         conn.execute(
             f"CREATE INDEX IF NOT EXISTS idx_{_NODE_STATE_TABLE}_latest "
             f"ON {_NODE_STATE_TABLE} "
@@ -314,106 +561,327 @@ class SqliteNodeStateStore(NodeStateStore):
             f"CREATE INDEX IF NOT EXISTS idx_{_NODE_STATE_TABLE}_node "
             f"ON {_NODE_STATE_TABLE} ({_COL_GRAPH_INSTANCE_ID}, {_COL_NODE_NAME})"
         )
+        conn.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_{_NODE_STATE_TABLE}_status "
+            f"ON {_NODE_STATE_TABLE} ({_COL_GRAPH_INSTANCE_ID}, {_COL_NODE_NAME}, {_COL_STATUS})"
+        )
         conn.commit()
 
-    def save(
-        self,
-        graph_instance_id: int,
-        node_name: str,
-        version: int,
-        state: dict[str, Any],
-    ) -> int:
+    # ── Lifecycle ───────────────────────────────────────────────────────
+
+    def begin_invocation(self, node_name: str) -> InvocationContext:
+        gid = self._graph_instance_id
+        conn = self._conn
+
+        # Orphan cleanup: prior non-suspended RUNNING → CRASHED (tolerant CAS).
+        latest = self.load_latest(node_name)
+        if latest is not None and latest.status == InvocationStatus.RUNNING and not latest.suspended:
+            ts = now_ms()
+            conn.execute(
+                f"UPDATE {_NODE_STATE_TABLE} "
+                f"SET {_COL_STATUS} = ?, {_COL_STATE_JSON} = ?, {_COL_SUSPENDED} = 0, {_COL_UPDATED_AT} = ? "
+                f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_NAME} = ? "
+                f"AND {_COL_VERSION} = ? AND {_COL_STATUS} = ? AND {_COL_SUSPENDED} = 0",
+                (
+                    InvocationStatus.CRASHED.value,
+                    json.dumps({}),
+                    ts,
+                    gid, node_name, latest.version,
+                    InvocationStatus.RUNNING.value,
+                ),
+            )
+            conn.commit()
+
+        # version = max(all existing versions) + 1.
+        row = conn.execute(
+            f"SELECT MAX({_COL_VERSION}) FROM {_NODE_STATE_TABLE} "
+            f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_NAME} = ?",
+            (gid, node_name),
+        ).fetchone()
+        version = (row[0] + 1) if row[0] is not None else 0
+
+        # parent_version from load_latest_completed.
+        latest_completed = self.load_latest_completed(node_name)
+        parent_version = latest_completed.version if latest_completed is not None else None
+
+        invocation_id = default_id_generator().generate()
         node_state_id = default_id_generator().generate()
         ts = now_ms()
-        state_json = json.dumps(state)
-        self._conn.execute(
+        conn.execute(
             f"INSERT INTO {_NODE_STATE_TABLE} "
-            f"({_COL_NODE_STATE_ID}, {_COL_GRAPH_INSTANCE_ID}, "
-            f"{_COL_NODE_NAME}, {_COL_VERSION}, {_COL_STATE_JSON}, "
-            f"{_COL_CREATED_AT}) "
-            f"VALUES (?, ?, ?, ?, ?, ?)",
-            (node_state_id, graph_instance_id, node_name, version, state_json, ts),
+            f"({_COL_NODE_STATE_ID}, {_COL_GRAPH_INSTANCE_ID}, {_COL_NODE_NAME}, "
+            f"{_COL_VERSION}, {_COL_PARENT_VERSION}, {_COL_STATUS}, "
+            f"{_COL_INVOCATION_ID}, {_COL_STATE_JSON}, {_COL_SUSPENDED}, "
+            f"{_COL_CREATED_AT}, {_COL_UPDATED_AT}) "
+            f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                node_state_id,
+                gid,
+                node_name,
+                version,
+                parent_version,
+                InvocationStatus.RUNNING.value,
+                invocation_id,
+                json.dumps({}),
+                0,
+                ts,
+                ts,
+            ),
         )
-        self._conn.commit()
-        return node_state_id
+        conn.commit()
 
-    def load_latest(
-        self, graph_instance_id: int, node_name: str
-    ) -> tuple[dict[str, Any], int] | None:
+        return InvocationContext(
+            invocation_id=invocation_id,
+            node_name=node_name,
+            version=version,
+            parent_version=parent_version,
+        )
+
+    def complete_invocation(self, invocation: InvocationContext, state: dict[str, Any]) -> None:
+        self._strict_update(
+            invocation,
+            status=InvocationStatus.COMPLETED,
+            state_json=state,
+            suspended=None,
+        )
+
+    def suspend_invocation(self, invocation: InvocationContext, snapshot: dict[str, Any]) -> None:
+        self._strict_update(
+            invocation,
+            status=InvocationStatus.RUNNING,
+            state_json=snapshot,
+            suspended=True,
+        )
+
+    def cancel_invocation(self, invocation: InvocationContext) -> None:
+        self._strict_update(
+            invocation,
+            status=InvocationStatus.CANCELED,
+            state_json=None,
+            suspended=None,
+        )
+
+    def _strict_update(
+        self,
+        invocation: InvocationContext,
+        *,
+        status: InvocationStatus,
+        state_json: dict[str, Any] | None,
+        suspended: bool | None,
+    ) -> None:
+        """STRICT CAS: UPDATE only if status='running' AND suspended=0.
+
+        Raises ``InvocationStateError`` if rowcount=0 (lost race or
+        already terminal).
+        """
+        gid = self._graph_instance_id
+        conn = self._conn
+        ts = now_ms()
+
+        set_clauses = [
+            f"{_COL_STATUS} = ?",
+            f"{_COL_UPDATED_AT} = ?",
+        ]
+        params: list[Any] = [status.value, ts]
+
+        if state_json is not None:
+            set_clauses.append(f"{_COL_STATE_JSON} = ?")
+            params.append(json.dumps(state_json))
+        if suspended is not None:
+            set_clauses.append(f"{_COL_SUSPENDED} = ?")
+            params.append(1 if suspended else 0)
+
+        params.extend([gid, invocation.node_name, invocation.version])
+
+        cursor = conn.execute(
+            f"UPDATE {_NODE_STATE_TABLE} "
+            f"SET {', '.join(set_clauses)} "
+            f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_NAME} = ? "
+            f"AND {_COL_VERSION} = ? "
+            f"AND {_COL_STATUS} = ? AND {_COL_SUSPENDED} = 0",
+            (*params, InvocationStatus.RUNNING.value),
+        )
+        conn.commit()
+
+        if cursor.rowcount == 0:
+            current = self.load_latest(invocation.node_name)
+            cur_status = current.status.value if current else "missing"
+            cur_suspended = current.suspended if current else False
+            raise InvocationStateError(
+                f"CAS failed: {invocation.node_name!r} v{invocation.version} "
+                f"is {cur_status} (suspended={cur_suspended}), "
+                f"expected non-suspended RUNNING."
+            )
+
+    def crash_invocation(self, invocation: InvocationContext) -> None:
+        """TOLERANT: update RUNNING → CRASHED. No-op if already terminal."""
+        gid = self._graph_instance_id
+        conn = self._conn
+        ts = now_ms()
+        conn.execute(
+            f"UPDATE {_NODE_STATE_TABLE} "
+            f"SET {_COL_STATUS} = ?, {_COL_STATE_JSON} = ?, {_COL_SUSPENDED} = 0, {_COL_UPDATED_AT} = ? "
+            f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_NAME} = ? "
+            f"AND {_COL_VERSION} = ? AND {_COL_STATUS} = ?",
+            (
+                InvocationStatus.CRASHED.value,
+                json.dumps({}),
+                ts,
+                gid,
+                invocation.node_name,
+                invocation.version,
+                InvocationStatus.RUNNING.value,
+            ),
+        )
+        conn.commit()
+
+    def finalize_invocation(self, invocation: InvocationContext) -> None:
+        """TOLERANT: orphan non-suspended RUNNING → CRASHED.
+
+        Terminal and suspended records are left untouched.
+        """
+        gid = self._graph_instance_id
+        conn = self._conn
+        ts = now_ms()
+        conn.execute(
+            f"UPDATE {_NODE_STATE_TABLE} "
+            f"SET {_COL_STATUS} = ?, {_COL_STATE_JSON} = ?, {_COL_SUSPENDED} = 0, {_COL_UPDATED_AT} = ? "
+            f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_NAME} = ? "
+            f"AND {_COL_VERSION} = ? AND {_COL_STATUS} = ? AND {_COL_SUSPENDED} = 0",
+            (
+                InvocationStatus.CRASHED.value,
+                json.dumps({}),
+                ts,
+                gid,
+                invocation.node_name,
+                invocation.version,
+                InvocationStatus.RUNNING.value,
+            ),
+        )
+        conn.commit()
+
+    # ── Query ───────────────────────────────────────────────────────────
+
+    def load_latest(self, node_name: str) -> NodeInvocationRecord | None:
+        gid = self._graph_instance_id
         row = self._conn.execute(
-            f"SELECT {_COL_STATE_JSON}, {_COL_VERSION} "
-            f"FROM {_NODE_STATE_TABLE} "
+            f"SELECT {_SELECT_COLUMNS} FROM {_NODE_STATE_TABLE} "
             f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_NAME} = ? "
             f"ORDER BY {_COL_VERSION} DESC LIMIT 1",
-            (graph_instance_id, node_name),
+            (gid, node_name),
         ).fetchone()
-        if row is None:
-            return None
-        state: dict[str, Any] = json.loads(row[0])
-        return (state, row[1])
+        return self._row_to_record(row) if row is not None else None
 
-    def load_version(
-        self,
-        graph_instance_id: int,
-        node_name: str,
-        version: int,
-    ) -> dict[str, Any] | None:
+    def load_latest_completed(self, node_name: str) -> NodeInvocationRecord | None:
+        gid = self._graph_instance_id
         row = self._conn.execute(
-            f"SELECT {_COL_STATE_JSON} "
-            f"FROM {_NODE_STATE_TABLE} "
-            f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? "
-            f"AND {_COL_NODE_NAME} = ? AND {_COL_VERSION} = ?",
-            (graph_instance_id, node_name, version),
-        ).fetchone()
-        if row is None:
-            return None
-        result: dict[str, Any] = json.loads(row[0])
-        return result
-
-    def load_all_versions(
-        self, graph_instance_id: int, node_name: str
-    ) -> list[tuple[dict[str, Any], int]]:
-        rows = self._conn.execute(
-            f"SELECT {_COL_STATE_JSON}, {_COL_VERSION} "
-            f"FROM {_NODE_STATE_TABLE} "
+            f"SELECT {_SELECT_COLUMNS} FROM {_NODE_STATE_TABLE} "
             f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_NAME} = ? "
-            f"ORDER BY {_COL_VERSION} ASC",
-            (graph_instance_id, node_name),
-        ).fetchall()
-        results: list[tuple[dict[str, Any], int]] = []
-        for r in rows:
-            state_dict: dict[str, Any] = json.loads(r[0])
-            results.append((state_dict, r[1]))
-        return results
+            f"AND {_COL_STATUS} = ? "
+            f"ORDER BY {_COL_VERSION} DESC LIMIT 1",
+            (gid, node_name, InvocationStatus.COMPLETED.value),
+        ).fetchone()
+        return self._row_to_record(row) if row is not None else None
 
-    def list_nodes(self, graph_instance_id: int) -> list[str]:
+    def load_by_invocation_id(
+        self, node_name: str, invocation_id: int
+    ) -> NodeInvocationRecord | None:
+        gid = self._graph_instance_id
+        row = self._conn.execute(
+            f"SELECT {_SELECT_COLUMNS} FROM {_NODE_STATE_TABLE} "
+            f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_NAME} = ? "
+            f"AND {_COL_INVOCATION_ID} = ? "
+            f"ORDER BY {_COL_VERSION} DESC LIMIT 1",
+            (gid, node_name, invocation_id),
+        ).fetchone()
+        return self._row_to_record(row) if row is not None else None
+
+    def query_versions(
+        self,
+        node_name: str,
+        status_filter: set[InvocationStatus] | None = None,
+    ) -> list[NodeInvocationRecord]:
+        gid = self._graph_instance_id
+        if status_filter is None:
+            rows = self._conn.execute(
+                f"SELECT {_SELECT_COLUMNS} FROM {_NODE_STATE_TABLE} "
+                f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_NAME} = ? "
+                f"ORDER BY {_COL_VERSION} DESC",
+                (gid, node_name),
+            ).fetchall()
+        else:
+            placeholders = ",".join("?" for _ in status_filter)
+            rows = self._conn.execute(
+                f"SELECT {_SELECT_COLUMNS} FROM {_NODE_STATE_TABLE} "
+                f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? AND {_COL_NODE_NAME} = ? "
+                f"AND {_COL_STATUS} IN ({placeholders}) "
+                f"ORDER BY {_COL_VERSION} DESC",
+                (gid, node_name, *[s.value for s in status_filter]),
+            ).fetchall()
+        return [self._row_to_record(row) for row in rows]
+
+    def list_nodes(self) -> list[str]:
+        gid = self._graph_instance_id
         rows = self._conn.execute(
-            f"SELECT DISTINCT {_COL_NODE_NAME} "
-            f"FROM {_NODE_STATE_TABLE} "
+            f"SELECT DISTINCT {_COL_NODE_NAME} FROM {_NODE_STATE_TABLE} "
             f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? "
             f"ORDER BY {_COL_NODE_NAME}",
-            (graph_instance_id,),
+            (gid,),
         ).fetchall()
         return [r[0] for r in rows]
 
-    def clear(self, graph_instance_id: int) -> None:
+    def query_all(self, status_filter: set[InvocationStatus]) -> list[NodeInvocationRecord]:
+        gid = self._graph_instance_id
+        placeholders = ",".join("?" for _ in status_filter)
+        rows = self._conn.execute(
+            f"SELECT {_SELECT_COLUMNS} FROM {_NODE_STATE_TABLE} "
+            f"WHERE {_COL_GRAPH_INSTANCE_ID} = ? "
+            f"AND {_COL_STATUS} IN ({placeholders}) "
+            f"ORDER BY {_COL_NODE_NAME}, {_COL_VERSION} DESC",
+            (gid, *[s.value for s in status_filter]),
+        ).fetchall()
+        return [self._row_to_record(row) for row in rows]
+
+    def clear(self) -> None:
+        gid = self._graph_instance_id
         self._conn.execute(
             f"DELETE FROM {_NODE_STATE_TABLE} WHERE {_COL_GRAPH_INSTANCE_ID} = ?",
-            (graph_instance_id,),
+            (gid,),
         )
         self._conn.commit()
 
-    def close(self) -> None:
-        """Close the underlying SQLite connection.
-
-        Not part of the `NodeStateStore` ABC — concrete resource cleanup
-        for the SQLite adapter. Safe to call multiple times.
-        """
-        self._conn.close()
+    @staticmethod
+    def _row_to_record(row: tuple[Any, ...]) -> NodeInvocationRecord:
+        (
+            _node_state_id,
+            graph_instance_id,
+            node_name,
+            version,
+            parent_version,
+            status,
+            invocation_id,
+            state_json,
+            suspended,
+            created_at,
+            updated_at,
+        ) = row
+        return NodeInvocationRecord(
+            invocation_id=invocation_id,
+            graph_instance_id=graph_instance_id,
+            node_name=node_name,
+            version=version,
+            parent_version=parent_version,
+            status=InvocationStatus(status),
+            state_json=json.loads(state_json),
+            suspended=bool(suspended),
+            created_at=created_at,
+            updated_at=updated_at,
+        )
 
 
 __all__ = [
     "NodeStateStore",
+    "NullNodeStateStore",
     "InMemoryNodeStateStore",
     "SqliteNodeStateStore",
 ]

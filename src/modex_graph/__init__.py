@@ -10,19 +10,16 @@ Public surface (ADR-0033 acceptance criteria):
 - **Graph primitives:** `Graph`, `Node`, `CompiledGraph`, `GraphEngine`,
   `GraphNode` (START/END sentinels).
 - **Context + runtime:** `GraphContext`, `GraphRuntime`.
-- **State + channels:** `GraphState`, `BaseChannel`, `LastValue`,
-  `ReducerChannel`, `Codec`, `register_codec`.
-- **Result types:** `NodeResult`, `DispatchEvent`.
+- **State:** `GraphState`.
 - **Deliver/submit:** `IntegratedPayload`, `IntegratedInput`,
   `InputIntegrator`, `DefaultInputIntegrator`, `DeliverStore`,
-  `InMemoryDeliverStore`, `SqliteDeliverStore`, `DeliverRecord`,
-  `DeliverStatus`.
+  `InMemoryDeliverStore`, `SqliteDeliverStore`, `DeliverRecord`.
 - **Scheduler:** `Scheduler` (ABC), `LinearScheduler`, `ParallelScheduler`,
   `SchedulerKind`, `NodeInstanceStatus`, `NodeInstance`, `NodeTrigger`.
 - **Lifecycle + interrupt:** `GraphInstanceStatus`,
   `InterruptPolicy` (ABC), `CrashPolicy` (default).
 - **Exceptions:** `GraphBubbleUp`, `GraphInterrupt`, `GraphDrained`,
-  `ParentCommand`, `InvalidUpdateError`, `RoutingError`, `GraphRecursionError`.
+  `ParentCommand`, `RoutingError`, `GraphRecursionError`.
 
 See `docs/adr/0033-generalized-graph-engine.md` for the authoritative design.
 """
@@ -30,7 +27,6 @@ See `docs/adr/0033-generalized-graph-engine.md` for the authoritative design.
 from __future__ import annotations
 
 from .compiled_graph import CompiledGraph
-from .conflict_detector import GenerationWriteTracker, WriteConflictDetector
 from .constants import (
     DeliverConsumptionStatus,
     GraphInstanceStatus,
@@ -48,7 +44,7 @@ from .exceptions import (
     GraphDrained,
     GraphInterrupt,
     GraphRecursionError,
-    InvalidUpdateError,
+    InvocationStateError,
     ParentCommand,
     RoutingError,
 )
@@ -74,47 +70,34 @@ from .nodes import (
     HumanInputNodeFactory,
 )
 from .persistence import (
+    CoordinatorFactory,
     DeliverRecord,
-    DeliverStatus,
     DeliverStore,
     DeliverStoreFactory,
-    DispatchStore,
     GraphInstance,
     GraphInstanceStore,
     GraphMetadata,
-    GraphMetadataStore,
     GraphPersistenceCoordinator,
     GraphStateSnapshot,
     InMemoryDeliverStore,
     InMemoryDeliverStoreFactory,
-    InMemoryDispatchStore,
     InMemoryGraphInstanceStore,
     InMemoryNodeStateStore,
     InvocationContext,
-    MemoryGraphMetadataStore,
     NodeInvocationRecord,
-    NodeState,
-    NodeStateFactory,
     NodeStateStore,
+    NullCoordinatorFactory,
     NullDeliverStore,
     NullDeliverStoreFactory,
-    NullGraphMetadataStore,
-    NullNodeState,
-    NullNodeStateFactory,
+    NullGraphInstanceStore,
+    NullNodeStateStore,
     RecoveryContext,
-    SimpleNodeState,
-    SimpleNodeStateFactory,
     SqliteDeliverStore,
     SqliteDeliverStoreFactory,
-    SqliteDispatchStore,
     SqliteGraphInstanceStore,
-    SqliteGraphMetadataStore,
-    SqliteNodeState,
-    SqliteNodeStateFactory,
     SqliteNodeStateStore,
     create_null_coordinator,
 )
-from .result import DispatchEvent, NodeResult
 from .runtime import GraphRuntime
 from .scheduler import LinearScheduler, NodeInstance, ParallelScheduler, Scheduler
 from .spec import EdgeSpec, GraphSpec, NodeSpec
@@ -124,21 +107,7 @@ from .spec_store import (
     InMemoryGraphSpecStore,
     SqliteGraphSpecStore,
 )
-from .state import (
-    BaseChannel,
-    Codec,
-    DynamicStateFactory,
-    GraphState,
-    JsonValue,
-    LastValue,
-    ReducerChannel,
-    SimpleStateFactory,
-    StateFactory,
-    StateFieldSpec,
-    StateRegistry,
-    StateSchema,
-    register_codec,
-)
+from .state import GraphState
 from .topology_validator import TopologyError, TopologyValidator
 
 __all__ = [
@@ -152,27 +121,13 @@ __all__ = [
     # Context + runtime
     "GraphContext",
     "GraphRuntime",
-    # State + channels
+    # State
     "GraphState",
-    "BaseChannel",
-    "LastValue",
-    "ReducerChannel",
-    "Codec",
-    "register_codec",
-    "JsonValue",
-    # Result types
-    "NodeResult",
-    "DispatchEvent",
     # ID generation
     "IdGenerator",
     "SnowflakeIdGenerator",
     "default_id_generator",
-    # Dispatch persistence
-    "DispatchStore",
-    "InMemoryDispatchStore",
-    "SqliteDispatchStore",
     # Deliver/submit persistence
-    "DeliverStatus",
     "DeliverRecord",
     "DeliverStore",
     "DeliverStoreFactory",
@@ -187,9 +142,6 @@ __all__ = [
     "IntegratedInput",
     "InputIntegrator",
     "DefaultInputIntegrator",
-    # Conflict detection
-    "WriteConflictDetector",
-    "GenerationWriteTracker",
     # Scheduler
     "Scheduler",
     "LinearScheduler",
@@ -210,9 +162,9 @@ __all__ = [
     "GraphInterrupt",
     "GraphDrained",
     "ParentCommand",
-    "InvalidUpdateError",
     "RoutingError",
     "GraphRecursionError",
+    "InvocationStateError",
     # Declarative graph spec
     "GraphSpec",
     "NodeSpec",
@@ -225,40 +177,25 @@ __all__ = [
     "SqliteGraphSpecStore",
     # Graph instance persistence
     "GraphInstanceStore",
+    "NullGraphInstanceStore",
     "InMemoryGraphInstanceStore",
     "SqliteGraphInstanceStore",
-    # Node state persistence
+    # Node state persistence (lifecycle + CAS + version chain)
     "NodeStateStore",
+    "NullNodeStateStore",
     "InMemoryNodeStateStore",
     "SqliteNodeStateStore",
-    # Node state in-memory abstraction
-    "NodeState",
-    "SimpleNodeState",
-    "NullNodeState",
-    "SqliteNodeState",
     "NodeInvocationRecord",
-    "NodeStateFactory",
-    "NullNodeStateFactory",
-    "SimpleNodeStateFactory",
-    "SqliteNodeStateFactory",
     "GraphMetadata",
     "InvocationContext",
     "RecoveryContext",
     "GraphStateSnapshot",
-    "GraphMetadataStore",
-    "NullGraphMetadataStore",
-    "MemoryGraphMetadataStore",
-    "SqliteGraphMetadataStore",
     "GraphPersistenceCoordinator",
+    "CoordinatorFactory",
+    "NullCoordinatorFactory",
     "create_null_coordinator",
-    "StateSchema",
-    "StateFieldSpec",
     "NodeFactory",
     "NodeRegistry",
-    "StateFactory",
-    "StateRegistry",
-    "SimpleStateFactory",
-    "DynamicStateFactory",
     # Generic Node types + factories
     "FunctionNode",
     "FunctionNodeFactory",
