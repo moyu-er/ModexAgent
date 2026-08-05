@@ -11,8 +11,11 @@ recovery path, no per-type branches):
 The shared per-instance flow is:
 
 1. Load `GraphMetadata` from `GraphInstanceStore`.
-2. Reconstruct the coordinator (`create_null_coordinator(gid)` —
-   SQLite strategy would recover state from DB; Null is the current default).
+2. Reconstruct the coordinator via `coordinator_factory.create(gid,
+   instance_store)` — the factory assembles the node state store and
+   deliver store factory internally. The framework default is
+   `NullCoordinatorFactory` (no-op persistence); a SQLite-backed factory
+   would recover state from DB.
 3. Create `GraphInstance(metadata, coordinator)`.
 4. Set status to `RUNNING` (in `GraphInstanceStore`).
 5. Call `engine_factory.create_and_run(instance)` — the factory (wired to
@@ -22,7 +25,7 @@ The shared per-instance flow is:
    `coordinator.load_for_recovery → _restore_from_recovery → re-dispatch`.
 
 `GraphEngineFactory` is an ABC (rule 7) because actual engine creation
-depends on business wiring (`NodeFactory`, `StateFactory`, etc.) which
+depends on business wiring (node registries, state classes, etc.) which
 lives in the bot factory. It is the second consumer of
 `GraphInstance` after `GraphSpecCompiler` — a real seam (rule 6).
 
@@ -39,13 +42,16 @@ import logging
 from abc import ABC, abstractmethod
 
 from modex_graph import (
+    CoordinatorFactory,
     GraphInstance,
     GraphInstanceStatus,
     GraphInstanceStore,
-    create_null_coordinator,
+    NullCoordinatorFactory,
 )
 
 logger = logging.getLogger(__name__)
+
+_NULL_COORDINATOR_FACTORY = NullCoordinatorFactory()
 
 
 class GraphEngineFactory(ABC):
@@ -54,7 +60,7 @@ class GraphEngineFactory(ABC):
     The factory is the business-wiring seam (rule 6: the second consumer
     of `GraphInstance` after `GraphSpecCompiler` — a real seam, not a
     hypothetical one). The actual engine creation depends on
-    `NodeFactory`, `StateFactory`, `GraphSpecStore`, etc., which live in
+    node registries, state classes, `GraphSpecStore`, etc., which live in
     the bot factory. The framework provides the contract; the bot
     factory provides the implementation.
 
@@ -112,30 +118,43 @@ class GraphRecoveryService:
         self,
         instance_store: GraphInstanceStore,
         engine_factory: GraphEngineFactory,
+        *,
+        coordinator_factory: CoordinatorFactory = _NULL_COORDINATOR_FACTORY,
     ) -> None:
         self._instance_store = instance_store
         self._engine_factory = engine_factory
+        self._coordinator_factory = coordinator_factory
 
     async def recover_crashed(self) -> list[int]:
-        """Fault recovery: find all `CRASHED` instances, reload, re-dispatch.
+        """Fault recovery: find all non-terminal crashed instances, reload, re-dispatch.
 
         Called on startup (or on-demand by an operator) to auto-recover
-        instances that crashed mid-execution. Only `CRASHED` instances
-        are picked up — `PAUSED`/`STOPPED` are NOT auto-recovered (they
-        require explicit `resume()`); `COMPLETED`/`FAILED` are terminal.
+        instances that crashed mid-execution. Picks up both explicit
+        ``CRASHED`` instances and orphan ``RUNNING`` instances — a process
+        kill leaves the graph in ``RUNNING`` because the in-process
+        exception handler never runs.
+
+        ``PAUSED``/``STOPPED`` are NOT auto-recovered (they require
+        explicit ``resume()``); ``COMPLETED``/``FAILED`` are terminal.
 
         Returns:
-            The list of recovered `graph_instance_id`s. Callers (e.g.
+            The list of recovered ``graph_instance_id``s. Callers (e.g.
             the bot factory) may log or expose this for observability.
         """
-        crashed_metadata = self._instance_store.load_by_status(
-            GraphInstanceStatus.CRASHED.value
+        crashed = self._instance_store.load_by_status(
+            GraphInstanceStatus.CRASHED
         )
-        crashed = [
-            GraphInstance(m, create_null_coordinator(m.graph_instance_id))
-            for m in crashed_metadata
+        orphaned = self._instance_store.load_by_status(
+            GraphInstanceStatus.RUNNING
+        )
+        instances = [
+            GraphInstance(
+                m,
+                self._coordinator_factory.create(m.graph_instance_id, self._instance_store),
+            )
+            for m in crashed + orphaned
         ]
-        return await self._recover_instances(crashed)
+        return await self._recover_instances(instances)
 
     async def resume(self, graph_instance_id: int) -> None:
         """Manual recovery: reload a `PAUSED`/`STOPPED` instance, re-dispatch.
@@ -152,22 +171,25 @@ class GraphRecoveryService:
             ValueError: If the instance does not exist, or its status
                 is not `PAUSED`/`STOPPED`.
         """
-        metadata = self._instance_store.load_by_id(graph_instance_id)
+        metadata = self._instance_store.load(graph_instance_id)
         if metadata is None:
             raise ValueError(
                 f"Graph instance {graph_instance_id} not found; "
                 "cannot resume"
             )
         if metadata.status not in (
-            GraphInstanceStatus.PAUSED.value,
-            GraphInstanceStatus.STOPPED.value,
+            GraphInstanceStatus.PAUSED,
+            GraphInstanceStatus.STOPPED,
         ):
             raise ValueError(
                 f"Graph instance {graph_instance_id} status is "
                 f"{metadata.status!r}; only PAUSED/STOPPED can be "
                 "manually resumed"
             )
-        instance = GraphInstance(metadata, create_null_coordinator(graph_instance_id))
+        instance = GraphInstance(
+            metadata,
+            self._coordinator_factory.create(graph_instance_id, self._instance_store),
+        )
         await self._recover_instances([instance])
 
     async def _recover_instances(
@@ -176,7 +198,7 @@ class GraphRecoveryService:
         """Shared recovery flow (rule 15: single path for both types).
 
         For each instance (already constructed with a reconstructed
-        coordinator via ``create_null_coordinator``):
+        coordinator via ``coordinator_factory.create``):
 
         1. Set status to `RUNNING` (in `GraphInstanceStore`).
         2. Call `engine_factory.create_and_run(instance)` — the factory
@@ -191,7 +213,7 @@ class GraphRecoveryService:
         for instance in instances:
             self._instance_store.update_status(
                 instance.graph_instance_id,
-                GraphInstanceStatus.RUNNING.value,
+                GraphInstanceStatus.RUNNING,
             )
             await self._engine_factory.create_and_run(instance)
             recovered.append(instance.graph_instance_id)

@@ -119,10 +119,6 @@ class LinearScheduler[S: "GraphState"](Scheduler[S]):
             previous = current
             if self._dispatches:
                 current = next(iter(self._dispatches.keys()))
-            elif node.result:
-                # Fallback: read _submit_result (LINEAR-only safety net
-                # for custom submit overrides that don't call _submit).
-                current = next(iter(node.result.keys()))
             else:
                 raise RoutingError(f"Node {previous!r} did not deliver.")
 

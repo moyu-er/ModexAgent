@@ -8,9 +8,8 @@ Wires the full graph lifecycle:
 
 The orchestrator is the framework-level service that the bot factory
 (``examples/bot_project/``) calls. It does NOT know about specific node
-types — it uses the injected ``NodeRegistry`` and ``StateRegistry``, which
-the bot factory pre-populates with ``AgentNodeFactory``, ``ReactStateFactory``,
-etc. (rule 5: the interface is the test surface; rule 6: second consumer of
+types; callers inject a node registry and a state-class mapping. This is the
+second consumer of
 ``GraphSpecCompiler`` after the compiler's own tests — a real seam).
 
 Provides:
@@ -35,6 +34,7 @@ type-branching (rule 15: converge).
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 from modex_agent.control.graph_control import (
@@ -46,7 +46,7 @@ from modex_agent.control.graph_recovery import GraphEngineFactory, GraphRecovery
 from modex_agent.control.types import ControlCommand, ControlCommandType, ControlScope
 from modex_graph import (
     CompiledGraph,
-    DynamicStateFactory,
+    CoordinatorFactory,
     GraphContext,
     GraphEngine,
     GraphInstance,
@@ -61,9 +61,7 @@ from modex_graph import (
     GraphSpecStore,
     GraphState,
     NodeRegistry,
-    StateRegistry,
-    StateSchema,
-    create_null_coordinator,
+    NullCoordinatorFactory,
     default_id_generator,
 )
 
@@ -74,6 +72,7 @@ logger = logging.getLogger(__name__)
 # _deliver) uses only scope.graph_instance_id; session_id is required by the
 # ControlScope dataclass but unused for graph-scoped commands.
 _ORCHESTRATOR_SESSION_ID = "_orchestrator"
+_NULL_COORDINATOR_FACTORY = NullCoordinatorFactory()
 
 
 class _EngineFactoryAdapter(GraphEngineFactory):
@@ -109,9 +108,8 @@ class GraphOrchestrator:
     ``GraphEngine`` execution. Provides external control via
     ``GraphControlService``. Provides recovery via ``GraphRecoveryService``.
 
-    The orchestrator does NOT know about specific node types — it uses the
-    injected ``NodeRegistry`` and ``StateRegistry``, which the bot factory
-    pre-populates with ``AgentNodeFactory``, ``ReactStateFactory``, etc.
+    The orchestrator does not know specific node or state implementations;
+    callers inject the node registry and state-class mapping.
 
     Registry:
 
@@ -143,35 +141,45 @@ class GraphOrchestrator:
         self,
         *,
         node_registry: NodeRegistry,
-        state_registry: StateRegistry,
+        state_classes: Mapping[str, type[GraphState]],
         spec_store: GraphSpecStore,
         instance_store: GraphInstanceStore,
+        coordinator_factory: CoordinatorFactory = _NULL_COORDINATOR_FACTORY,
     ) -> None:
         """Initialize the orchestrator with the required registries + stores.
 
         Args:
             node_registry: pre-populated by the bot factory with
                 ``AgentNodeFactory``, ``FunctionNodeFactory``, etc.
-            state_registry: pre-populated by the bot factory with
-                ``ReactStateFactory``, ``SimpleStateFactory``, etc.
+            state_classes: registry names mapped to concrete graph state classes.
             spec_store: persistence for ``GraphSpec`` records.
             instance_store: persistence for ``GraphInstance`` records.
+            coordinator_factory: creates the ``GraphPersistenceCoordinator``
+                for each graph instance. The factory receives this
+                orchestrator's ``instance_store`` and assembles the remaining
+                stores internally. Defaults to ``NullCoordinatorFactory``
+                (no-op persistence); business layers substitute a
+                SQLite-backed factory for crash recovery.
         """
         self._node_registry = node_registry
-        self._state_registry = state_registry
+        self._state_classes = state_classes
         self._spec_store = spec_store
         self._instance_store = instance_store
-        self._compiler = GraphSpecCompiler(node_registry, state_registry)
+        self._coordinator_factory = coordinator_factory
+        self._compiler = GraphSpecCompiler(node_registry, state_classes)
         self._runtime = GraphRuntime()
         self._active_instances: dict[int, GraphInstance] = {}
 
         # Wire recovery + control (rule 15: single control + recovery path).
         # The adapter lets GraphRecoveryService call back into the orchestrator
-        # to create engines for recovered instances.
+        # to create engines for recovered instances. The same coordinator
+        # factory is shared by both create_and_run and recovery so that
+        # store-assembly strategy stays consistent across both paths.
         self._engine_factory = _EngineFactoryAdapter(self)
         self._recovery_service = GraphRecoveryService(
             instance_store,
             self._engine_factory,
+            coordinator_factory=coordinator_factory,
         )
         # GraphControlService._deliver converges on
         # coordinator.route_deliver via the registry lookup — no shared
@@ -212,13 +220,9 @@ class GraphOrchestrator:
             parent_instance_id=parent_instance_id,
             parent_node=None,
             status=GraphInstanceStatus.RUNNING,
-            instance_seq=0,
-            iteration_count=0,
-            activated_sources={},
-            pending_dispatches={},
         )
         self._instance_store.save(metadata)
-        coordinator = create_null_coordinator(graph_instance_id)
+        coordinator = self._coordinator_factory.create(graph_instance_id, self._instance_store)
         for node_name in compiled.nodes:
             coordinator.register_node(node_name)
         instance = GraphInstance(metadata, coordinator)
@@ -286,7 +290,8 @@ class GraphOrchestrator:
     def unregister_instance(self, graph_instance_id: int) -> None:
         """Evict a GraphInstance from the registry.
 
-        Calls ``coordinator.close()`` (closes SQLite connections etc.)
+        Calls ``coordinator.close()`` (a no-op — the coordinator owns no
+        connections; the caller manages the ``sqlite3.Connection`` lifetime)
         and removes the instance from ``_active_instances``. Safe to call
         on an unregistered ID (no-op).
 
@@ -307,7 +312,7 @@ class GraphOrchestrator:
         Called by ``_EngineFactoryAdapter.create_and_run`` when
         ``GraphRecoveryService`` recovers a crashed/paused/stopped instance.
         The recovery service creates the ``GraphInstance`` with a fresh
-        coordinator (``create_null_coordinator``); this method handles:
+        coordinator (via ``coordinator_factory.create``); this method handles:
 
         - If an old ``GraphInstance`` with the same gid is still in the
           registry, ``unregister_instance`` it (closes the old coordinator)
@@ -366,12 +371,12 @@ class GraphOrchestrator:
         self._control_service.register_engine(controller)
         try:
             await engine.run_async(ctx)
-            self._instance_store.update_status(gid, GraphInstanceStatus.COMPLETED.value)
+            self._instance_store.update_status(gid, GraphInstanceStatus.COMPLETED)
         except GraphInterrupt:
-            self._instance_store.update_status(gid, GraphInstanceStatus.PAUSED.value)
+            self._instance_store.update_status(gid, GraphInstanceStatus.PAUSED)
             raise
         except Exception:
-            self._instance_store.update_status(gid, GraphInstanceStatus.CRASHED.value)
+            self._instance_store.update_status(gid, GraphInstanceStatus.CRASHED)
             raise
         finally:
             self._control_service.unregister_engine(gid)
@@ -401,19 +406,8 @@ class GraphOrchestrator:
         return spec
 
     def _create_state(self, spec: GraphSpec) -> GraphState:
-        """Create a fresh ``GraphState`` from the spec's ``state_schema``.
-
-        - Inline ``StateSchema`` → ``DynamicStateFactory(schema).create_state()``.
-        - Registered name (``str``) → ``state_registry.create_state(name)``.
-
-        Mirrors ``GraphSpecCompiler._resolve_state_factory`` — the compiler
-        resolves the factory for validation only (no state created); the
-        orchestrator creates the actual state here.
-        """
-        schema = spec.state_schema
-        if isinstance(schema, StateSchema):
-            return DynamicStateFactory(schema).create_state()
-        return self._state_registry.create_state(schema)
+        """Create fresh state from the class selected by the serialized spec."""
+        return self._state_classes[spec.state_class]()
 
     # ── Internal: control command construction ─────────────────────────
 

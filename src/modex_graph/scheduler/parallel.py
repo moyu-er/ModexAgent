@@ -22,7 +22,6 @@ from ..constants import (
     SchedulerKind,
 )
 from ..exceptions import GraphRecursionError, RoutingError
-from ..id_generator import default_id_generator
 from ..integration import IntegratedPayload
 from .base import Scheduler
 from .instance import NodeInstance
@@ -78,10 +77,6 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
         # Reset at the top of each `run_async` call — stateless across calls.
         self._instances: dict[str, NodeInstance[S]] = {}
         self._instance_seq: int = 0
-        # graph_instance_id: Snowflake ID — the single persistence
-        # key replacing uuid run_id (rule 15: converge). Set at the top of
-        # run_async from ctx.graph_instance_id or generated fresh.
-        self._graph_instance_id: int = 0
         self._active: set[str] = set()
         self._ready: set[str] = set()
         self._iteration_count: int = 0
@@ -128,10 +123,6 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
 
         Returns the shared `ctx.state`.
         """
-        # graph_instance_id from ctx or generate fresh (backward
-        # compat). Snowflake ID — the single persistence key replacing
-        # uuid run_id (rule 15: converge on one key).
-        self._graph_instance_id = ctx.graph_instance_id or default_id_generator().generate()
         self._ctx = ctx
 
         # Recovery: load from coordinator and rebuild scheduler state.
@@ -215,7 +206,7 @@ class ParallelScheduler[S: "GraphState"](Scheduler[S]):
             ctx.state = restored
 
         # Derive iteration_count from COMPLETED invocations in the store.
-        completed = ctx.coordinator.node_state_store.query_all({InvocationStatus.COMPLETED})
+        completed = ctx.node_state_store.query_all({InvocationStatus.COMPLETED})
         self._iteration_count = len(completed)
 
         # instance_seq is an in-memory temporary — reset to 0.
