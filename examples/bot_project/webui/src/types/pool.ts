@@ -21,6 +21,13 @@ export interface ApprovalConfig {
   tools: Record<string, ApprovalEntry>;
 }
 
+// ─── Memory ──────────────────────────────────────────────────────────────────
+
+export interface MemoryToggle {
+  archive_enabled: boolean;
+  core_enabled: boolean;
+}
+
 // ─── MCP registry entry ──────────────────────────────────────────────────────
 //
 // The backend stores the transport discriminator on disk under the `type` key
@@ -68,6 +75,8 @@ export interface MainAgentNode {
   tool_preset: ToolPreset;
   tool_supplements: string[];
   approval?: ApprovalConfig | null;
+  /** Memory layer toggles; core memory requires archive memory. */
+  memory?: MemoryToggle;
   mcp: string[];
   /** Execution strategy; backend default is "react". Present on read; omit on write to use the default. */
   execution_strategy?: ExecutionStrategy;

@@ -20,6 +20,7 @@ import type {
   ApprovalConfig,
   ContextMode,
   MainAgentNode,
+  MemoryToggle,
   PoolSummary,
   PoolTree,
   PromptSummary,
@@ -989,6 +990,13 @@ function MainAgentFields({
   const setApproval = (p: Partial<ApprovalConfig>): void =>
     patch({ approval: { ...approval, ...p } });
 
+  const memory: MemoryToggle = node.memory ?? {
+    archive_enabled: false,
+    core_enabled: false,
+  };
+  const setMemory = (p: Partial<MemoryToggle>): void =>
+    patch({ memory: { ...memory, ...p } });
+
   const writePaths = (approval.tools.write?.allowed_paths ?? []).join("\n");
   const editPaths = (approval.tools.edit?.allowed_paths ?? []).join("\n");
   const setToolPaths = (tool: "write" | "edit", text: string): void => {
@@ -1095,6 +1103,33 @@ function MainAgentFields({
             />
           </div>
         )}
+      </div>
+
+      {/* Memory sub-section */}
+      <div className="rounded-md border border-hairline bg-hairline-soft p-3">
+        <div className="flex flex-col gap-1.5">
+          <Checkbox
+            label={t("settings.pools.archiveMemory")}
+            checked={memory.archive_enabled}
+            onChange={(e) =>
+              setMemory({
+                archive_enabled: e.target.checked,
+                core_enabled: e.target.checked ? memory.core_enabled : false,
+              })
+            }
+          />
+          <Checkbox
+            label={t("settings.pools.coreMemory")}
+            checked={memory.core_enabled}
+            disabled={!memory.archive_enabled}
+            helper={
+              memory.archive_enabled
+                ? undefined
+                : t("settings.pools.coreRequiresArchive")
+            }
+            onChange={(e) => setMemory({ core_enabled: e.target.checked })}
+          />
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
