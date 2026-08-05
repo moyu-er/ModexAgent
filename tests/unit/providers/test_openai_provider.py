@@ -16,7 +16,7 @@ from modex_agent.core.llm_struct import (
 from modex_agent.core.message import ChatMessage, ContentFormat
 from modex_agent.core.types import LLMResponse, MessageRole, ToolCall
 from modex_agent.providers.openai_provider import OpenAIProvider
-from modex_agent.providers.shared.constants import REASONING_EFFORT_PARAM
+from modex_agent.providers.shared.constants import PROMPT_CACHE_KEY_PARAM, REASONING_EFFORT_PARAM
 
 
 class TestOpenAIProviderChat:
@@ -562,3 +562,100 @@ class TestOpenAIProviderChatStream:
         # Partial content already streamed before the error must be preserved.
         assert deltas == ["partial answer"]
         assert "new_sensitive" in (result.error or "")
+
+
+class TestOpenAIProviderCacheControl:
+    """OpenAIProvider prompt_cache_key parameter tests.
+
+    Verifies that ``prompt_cache_key`` passed via kwargs is injected into
+    the API request params via ``inject_cache_control``, following the
+    same pattern as ``reasoning_effort``.
+    """
+
+    @pytest.fixture
+    def provider(self):
+        safety = RuntimeSafetyPolicy(
+            llm=LLMTimeoutPolicy(request_timeout_seconds=10, stream_idle_timeout_seconds=30),
+            turn=TurnTimeoutPolicy(),
+        )
+        with patch("modex_agent.providers.openai_provider.AsyncOpenAI") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client_cls.return_value = mock_client
+            p = OpenAIProvider(model="gpt-4o", api_key="sk-test", safety=safety)
+            p._client = mock_client
+            yield p
+
+    def test_prompt_cache_key_injected_from_kwargs(self, provider):
+        """_build_params pops prompt_cache_key from kwargs and injects it."""
+        params = provider._build_params(
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+            prompt_cache_key="test-session-123",
+        )
+        assert params[PROMPT_CACHE_KEY_PARAM] == "test-session-123"
+
+    def test_prompt_cache_key_omitted_when_not_in_kwargs(self, provider):
+        """No prompt_cache_key in kwargs → param absent."""
+        params = provider._build_params(
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+        )
+        assert PROMPT_CACHE_KEY_PARAM not in params
+
+    def test_prompt_cache_key_omitted_when_empty(self, provider):
+        """Empty session_id → param absent (inject_cache_control guard)."""
+        params = provider._build_params(
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+            prompt_cache_key="",
+        )
+        assert PROMPT_CACHE_KEY_PARAM not in params
+
+    def test_prompt_cache_key_not_duplicated_in_kwargs(self, provider):
+        """prompt_cache_key is popped from kwargs, not merged twice by params.update."""
+        params = provider._build_params(
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+            prompt_cache_key="session-abc",
+        )
+        assert list(params.keys()).count(PROMPT_CACHE_KEY_PARAM) == 1
+
+    @pytest.mark.asyncio
+    async def test_prompt_cache_key_flows_to_api_call(self, provider):
+        """End-to-end: chat_stream passes prompt_cache_key to the SDK call."""
+        chunks = [self._make_chunk(content="ok", finish_reason="stop")]
+        provider._client.chat.completions.create = AsyncMock(
+            return_value=self._stream_chunks(chunks)
+        )
+
+        async def _on_content(d: str) -> None:
+            pass
+
+        async def _on_reasoning(d: str) -> None:
+            pass
+
+        await provider.chat_stream(
+            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+            on_content_delta=_on_content,
+            on_reasoning_delta=_on_reasoning,
+            prompt_cache_key="e2e-session-id",
+        )
+
+        call_kwargs = provider._client.chat.completions.create.call_args.kwargs
+        assert call_kwargs[PROMPT_CACHE_KEY_PARAM] == "e2e-session-id"
+
+    def _make_chunk(self, content=None, finish_reason=None, reasoning=None, usage=None):
+        """Build a mock ChatCompletionChunk."""
+        delta = MagicMock()
+        delta.content = content
+        delta.tool_calls = None
+        delta.model_extra = {"reasoning_content": reasoning} if reasoning else None
+
+        choice = MagicMock()
+        choice.delta = delta
+        choice.finish_reason = finish_reason
+
+        chunk = MagicMock()
+        chunk.choices = [choice]
+        chunk.usage = usage
+        return chunk
+
+    async def _stream_chunks(self, chunks):
+        for c in chunks:
+            yield c

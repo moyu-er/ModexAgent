@@ -24,8 +24,6 @@ from modex_agent.memory.injection.policy import MemoryInjectionPolicy
 from modex_agent.memory.layers.config import MemoryLayerConfigSet
 from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.pruned.manager import PrunedManager
-
-# UserRetentionBuffer injection moved to framework.memory.user_buffer (Task 6 stub)
 from modex_agent.memory.registry.base import MemoryStoreRegistry
 from modex_agent.memory.registry.file import DefaultMemoryStoreRegistry
 from modex_agent.memory.token_estimator import TokenEstimator
@@ -67,24 +65,15 @@ def create_memory_system(
     archive_trigger_callback: Callable[[MemoryContext], Awaitable[None]] | None = None,
     token_estimator: TokenEstimator | None = None,
     store_registry: MemoryStoreRegistry | None = None,
+    compactor: Any | None = None,
 ) -> DefaultMemorySystem:
-    """Create a production-ready memory system.
-
-    Args:
-        workspace: Root directory for file-based storage.
-        config: Optional layer configuration set.
-        llm_provider: Optional LLM provider for compression/summarization.
-        session_only: If True, create session-only layers (subagent — no archive, no core memory).
-        store_registry: Optional registry override; defaults to local file storage.
-    """
+    """Create a production-ready memory system."""
     registry = store_registry or DefaultMemoryStoreRegistry(workspace)
     if session_only:
         session_config = config.session if config else None
-        user_retention_config = config.user_retention if config else None
         layer_set = MemoryLayerFactory.session_only(
             registry=registry,
             config=session_config,
-            user_retention_config=user_retention_config,
         )
     else:
         layer_set = MemoryLayerFactory.single_user(
@@ -103,6 +92,7 @@ def create_memory_system(
         core_memory_consolidator=core_memory_consolidator,
         archive_trigger_callback=archive_trigger_callback,
         token_estimator=token_estimator,
+        compactor=compactor,
     )
 
 
@@ -113,7 +103,7 @@ class MemorySystemContextManager(ContextManager):
       1. Runtime metadata (date, platform)
       2. Base system prompt (agent personality / system.md)
       3. Memory layers via ``injection_policy.assemble()`` — session, archive,
-         core memory, user-retention (subject to budget & pruning)
+         core memory (subject to budget & pruning)
       4. Experiences — persistent reference knowledge (NOT a memory layer)
       5. Skills — persistent reference knowledge (NOT a memory layer)
 
@@ -147,9 +137,8 @@ class MemorySystemContextManager(ContextManager):
         self.default_agent_id = default_agent_id
         self.default_agent_role = default_agent_role
         self.base_system_prompt = base_system_prompt
-        self.injection_policy: MemoryInjectionPolicy = injection_policy or FullInjectionPolicy(
-            archive_config=archive_injection_config
-        )
+        self.injection_policy: MemoryInjectionPolicy = injection_policy or FullInjectionPolicy()
+        self._archive_injection_config = archive_injection_config
         self._last_session_id: str | None = None
         self._context_cache: dict[str, MemoryContext] = {}
         self._max_context_cache_size = 1000
@@ -171,35 +160,7 @@ class MemorySystemContextManager(ContextManager):
         governance: ContextGovernance | None,
         session_id: str,
     ) -> ContextGovernance | None:
-        try:
-            urb = self.memory_system.layers.user_retention
-        except AttributeError:
-            return governance
-        if urb is None:
-            return governance
-        from modex_agent.memory.context_governance import (
-            CompositeGovernance,
-            UserRetentionBufferInjectionGovernance,
-        )
-        from modex_agent.memory.layers.config import UserRetentionBufferConfig
-
-        # Mirror the URB layer's default entry limit (3) for injection.
-        injector = UserRetentionBufferInjectionGovernance(
-            urb=urb,
-            context_factory=lambda: (
-                self._context_cache.get(session_id)
-                or MemoryContext(
-                    session_id=session_id,
-                    user_id=self.default_user_id,
-                    agent_id=self.default_agent_id,
-                    agent_role=self.default_agent_role,
-                )
-            ),
-            max_entries=UserRetentionBufferConfig().max_entries,
-        )
-        if governance is not None:
-            return CompositeGovernance([governance, injector])
-        return injector
+        return governance
 
     # -- ContextManager interface -----------------------------------------
 
@@ -243,12 +204,12 @@ class MemorySystemContextManager(ContextManager):
             query = str(runtime_info[RuntimeInfoKey.MESSAGE])
 
         # ── Prompt assembly ────────────────────────────────────────────
-        # Build SystemPromptPipeline with individual providers.
-        # Archive and Pruned have dedicated refreshable providers.
-        # The injection_policy provides: disclaimer + core memory + blocks + prefetch.
+        # The injection_policy assembles the core memory bundle (disclaimer +
+        # core memory XML, budget-trimmed). All other content (archive, pruned,
+        # provider blocks, prefetch) is handled by dedicated SystemPromptProvider
+        # pipeline providers with version-based caching below.
         # ────────────────────────────────────────────────────────────────
         from modex_agent.core.prompt import SystemPromptPipeline
-        from modex_agent.memory.injection.full_injection import FullInjectionPolicy
         from modex_agent.memory.prompt_pipeline.providers import (
             AgentCommunicationSystemPromptProvider,
             AgentRoleContractProvider,
@@ -264,19 +225,7 @@ class MemorySystemContextManager(ContextManager):
             TodoAwareSystemPromptProvider,
         )
 
-        # If the policy injects archive/pruned content itself, those sections are
-        # handled by dedicated refreshable providers below; use a clean policy
-        # that skips them to avoid double emission.
-        policy = self.injection_policy
-        pipeline_policy: MemoryInjectionPolicy
-        if policy.injects_pruned() or policy.injects_archive():
-            pipeline_policy = FullInjectionPolicy(
-                pruned_manager=None,
-                archive_config=ArchiveInjectionConfig(count=0),
-            )
-        else:
-            pipeline_policy = policy
-        result = await pipeline_policy.assemble(
+        result = await self.injection_policy.assemble(
             context=ctx,
             memory_system=self.memory_system,
             query=query,
@@ -338,13 +287,13 @@ class MemorySystemContextManager(ContextManager):
             AgentCommunicationSystemPromptProvider(tool_manager, self._comm_kind)
         )
 
-        # 3. Memory layers from injection policy (disclaimer + core memory + blocks + prefetch)
+        # 3. Core memory bundle from injection policy (disclaimer + core memory, budget-trimmed)
         if result.system_prompt:
             providers.append(CoreMemoryProvider(result.system_prompt))
 
         # 4. Archive summaries (must refresh on cleanup)
-        archive_config = policy.get_archive_injection_config()
-        if archive_config is not None:
+        archive_config = self._archive_injection_config
+        if archive_config is not None and archive_config.count > 0:
             providers.append(ArchiveProvider(self.memory_system, ctx, archive_config))
 
         # 5. Pruned catalog (must refresh on cleanup)

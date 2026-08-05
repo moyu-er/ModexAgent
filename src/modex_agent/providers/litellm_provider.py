@@ -26,7 +26,7 @@ from modex_agent.core.tool_call_accumulator import (
     parse_tool_call_chunks_from_delta,
 )
 from modex_agent.core.types import LLMResponse, ToolCall
-from modex_agent.providers.shared.constants import inject_reasoning_effort
+from modex_agent.providers.shared.constants import inject_cache_control, inject_reasoning_effort
 from modex_agent.utils.think_tag import ThinkTagExtractor
 
 import importlib.util
@@ -188,6 +188,7 @@ class LiteLLMProvider(StreamingLLMProvider):
         stream: bool = False,
         **kwargs,
     ) -> dict[str, Any]:
+        session_id = kwargs.pop("prompt_cache_key", "")
         params = {
             "model": model or self._model,
             "messages": self._sanitize_api_messages(messages),
@@ -205,6 +206,7 @@ class LiteLLMProvider(StreamingLLMProvider):
             params["stream_options"] = {"include_usage": True}
 
         inject_reasoning_effort(params, self._reasoning_effort)
+        inject_cache_control(params, session_id)
 
         if tools:
             params["tools"] = tools

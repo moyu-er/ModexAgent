@@ -19,6 +19,7 @@ from modex_agent.agents.react.nodes.llm import LLMNode, enrich_inline_attachment
 from modex_agent.agents.react.runtime import ReactGraphRuntime
 from modex_agent.agents.react.state import ReActTurnState
 from modex_agent.core.agent import AgentContext
+from modex_agent.core.governance import ContextGovernance
 from modex_agent.core.session_id import SessionInfo
 from modex_agent.core.capabilities import Modality, ModelCapabilities, ModelInfo
 from modex_agent.media.models import Attachment, AttachmentLocator, Kind
@@ -351,8 +352,10 @@ class TestEnrichmentGuard:
 
         seen: list[Any] = []
 
-        class _RecordingGovernance:
-            async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        class _RecordingGovernance(ContextGovernance):
+            async def apply(
+                self, messages: list[dict[str, Any]], ctx: AgentContext
+            ) -> list[dict[str, Any]]:
                 seen.extend(messages)
                 return messages
 

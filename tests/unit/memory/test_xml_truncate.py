@@ -211,17 +211,20 @@ def test_empty_paths_still_bounded_via_boundary():
     )
 
 
-from modex_agent.memory.tags import UrbTag
-
 # ── List elements: governance URB XML ────────────────────────────────────
 # The governance injection assembles <recent_messages> with multiple <entry>
 # wrappers.  truncatable_paths uses recursive iter() so <user> and <you>
 # inside every <entry> are found.
 
+_XML_CONTAINER = "recent_messages"
+_XML_ENTRY = "entry"
+_XML_USER_MSG = "user"
+_XML_YOU_RESPONSE = "you"
 
-def _make_urb_xml(*entries: str) -> str:
-    ct = UrbTag.CONTAINER.value
-    et = UrbTag.ENTRY.value
+
+def _make_xml(*entries: str) -> str:
+    ct = _XML_CONTAINER
+    et = _XML_ENTRY
     lines = [f"<{ct}>"]
     for i, body in enumerate(entries):
         role_attr = ""
@@ -235,8 +238,8 @@ def _make_urb_xml(*entries: str) -> str:
 
 
 def _urb_entry_body(user_content: str, completing: str | None = None) -> str:
-    ut = UrbTag.USER_MSG.value
-    yt = UrbTag.YOU_RESPONSE.value
+    ut = _XML_USER_MSG
+    yt = _XML_YOU_RESPONSE
     body = f"    <{ut}>{user_content}</{ut}>"
     if completing:
         body += f"\n    <{yt}>{completing}</{yt}>"
@@ -245,19 +248,19 @@ def _urb_entry_body(user_content: str, completing: str | None = None) -> str:
 
 def test_urb_xml_finds_nested_fields_across_multiple_entries():
     """<user> inside every <entry> is found via recursive iter."""
-    xml = _make_urb_xml(
+    xml = _make_xml(
         _urb_entry_body("u" * 3000),
         _urb_entry_body("v" * 3000, "a" * 2000),
         _urb_entry_body("w" * 3000),
     )
-    paths = [UrbTag.USER_MSG.value, UrbTag.YOU_RESPONSE.value]
+    paths = [_XML_USER_MSG, _XML_YOU_RESPONSE]
 
     result = truncate_xml_safe(xml, max_chars=600, truncatable_paths=paths)
 
-    ct = UrbTag.CONTAINER.value
-    et = UrbTag.ENTRY.value
-    ut = UrbTag.USER_MSG.value
-    yt = UrbTag.YOU_RESPONSE.value
+    ct = _XML_CONTAINER
+    et = _XML_ENTRY
+    ut = _XML_USER_MSG
+    yt = _XML_YOU_RESPONSE
     assert result.count(f"<{ct}>") == 1
     assert result.count(f"</{ct}>") == 1
     assert result.count(f"<{et}") == 3
@@ -270,30 +273,30 @@ def test_urb_xml_finds_nested_fields_across_multiple_entries():
 
 def test_urb_xml_preserves_entry_role_attributes():
     """Entry attributes like role='agent' survive truncation."""
-    xml = _make_urb_xml(
+    xml = _make_xml(
         _urb_entry_body("a" * 4000),
         _urb_entry_body("b" * 4000, "c" * 4000),
     )
-    paths = [UrbTag.USER_MSG.value, UrbTag.YOU_RESPONSE.value]
+    paths = [_XML_USER_MSG, _XML_YOU_RESPONSE]
 
     result = truncate_xml_safe(xml, max_chars=500, truncatable_paths=paths)
 
     assert 'role="agent"' in result
-    assert result.count(f"<{UrbTag.ENTRY.value}") == 2
+    assert result.count(f"<{_XML_ENTRY}") == 2
 
 
 def test_urb_xml_per_element_independent_truncation():
     """Each truncatable element gets its own max_chars — no budget split."""
-    xml = _make_urb_xml(
+    xml = _make_xml(
         _urb_entry_body("p" * 4000),
         _urb_entry_body("q" * 4000, "r" * 4000),
     )
-    paths = [UrbTag.USER_MSG.value, UrbTag.YOU_RESPONSE.value]
+    paths = [_XML_USER_MSG, _XML_YOU_RESPONSE]
 
     result = truncate_xml_safe(xml, max_chars=800, truncatable_paths=paths)
 
-    ut = UrbTag.USER_MSG.value
-    yt = UrbTag.YOU_RESPONSE.value
+    ut = _XML_USER_MSG
+    yt = _XML_YOU_RESPONSE
     assert len(result) < len(xml)
     assert result.count(f"<{ut}>") == 2
     assert result.count(f"<{yt}>") == 1
@@ -302,18 +305,18 @@ def test_urb_xml_per_element_independent_truncation():
 
 def test_urb_xml_mixed_completed_unfinished():
     """Entries without completing response only contribute user text."""
-    xml = _make_urb_xml(
+    xml = _make_xml(
         _urb_entry_body("long_q" * 500),
         _urb_entry_body("done_q" * 500, "answer" * 500),
     )
-    paths = [UrbTag.USER_MSG.value, UrbTag.YOU_RESPONSE.value]
+    paths = [_XML_USER_MSG, _XML_YOU_RESPONSE]
 
     result = truncate_xml_safe(xml, max_chars=400, truncatable_paths=paths)
 
-    ut = UrbTag.USER_MSG.value
-    yt = UrbTag.YOU_RESPONSE.value
-    et = UrbTag.ENTRY.value
-    ct = UrbTag.CONTAINER.value
+    ut = _XML_USER_MSG
+    yt = _XML_YOU_RESPONSE
+    et = _XML_ENTRY
+    ct = _XML_CONTAINER
     assert result.count(f"<{ut}>") == 2
     assert result.count(f"<{yt}>") == 1
     for tag in [ut, yt, et, ct]:

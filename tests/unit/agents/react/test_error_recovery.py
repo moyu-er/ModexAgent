@@ -8,6 +8,8 @@ Covers:
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from modex_agent.agents.react.error_recovery import (
@@ -16,8 +18,11 @@ from modex_agent.agents.react.error_recovery import (
     attempt_recovery,
     is_context_overflow_error,
 )
+from modex_agent.core.agent import AgentContext
 from modex_agent.core.message import ChatMessage
 from modex_agent.core.types import MessageRole
+
+_CTX: MagicMock = MagicMock(spec=AgentContext)
 
 # ---------------------------------------------------------------------------
 # is_context_overflow_error
@@ -64,7 +69,7 @@ def _make_messages(n: int, system: bool = True) -> list[dict[str, object]]:
 async def test_emergency_compaction_keeps_system_and_tail():
     messages = _make_messages(40)
     governance = EmergencyCompactionGovernance(keep_messages=10)
-    result = await governance.apply(messages)
+    result = await governance.apply(messages, _CTX)
     # system + up to 10 tail messages
     assert result[0]["role"] == "system"
     # The tail should be the last 10 of the non-system messages
@@ -76,7 +81,7 @@ async def test_emergency_compaction_keeps_system_and_tail():
 async def test_emergency_compaction_level2():
     messages = _make_messages(40)
     governance = EmergencyCompactionGovernance(keep_messages=5)
-    result = await governance.apply(messages)
+    result = await governance.apply(messages, _CTX)
     assert result[0]["role"] == "system"
     # tail of 5 non-system messages, but leading non-user messages are dropped
     tail = messages[1:][-5:]
@@ -96,7 +101,7 @@ async def test_emergency_compaction_ensures_user_start():
         else:
             messages.append(_msg("user" if i % 2 == 0 else "assistant", f"m{i}"))
     governance = EmergencyCompactionGovernance(keep_messages=10)
-    result = await governance.apply(messages)
+    result = await governance.apply(messages, _CTX)
     assert result[0]["role"] == "system"
     # First non-system message must be "user"
     assert result[1]["role"] == "user"
@@ -106,7 +111,7 @@ async def test_emergency_compaction_ensures_user_start():
 async def test_emergency_compaction_small_list():
     messages = _make_messages(3)
     governance = EmergencyCompactionGovernance(keep_messages=10)
-    result = await governance.apply(messages)
+    result = await governance.apply(messages, _CTX)
     # Fewer messages than keep_messages + 1 → unchanged (but a copy)
     assert result == messages
     assert result is not messages
@@ -134,7 +139,7 @@ def _make_chat_messages(n: int, system: bool = True) -> list[ChatMessage]:
 async def test_attempt_recovery_level1():
     messages = _make_chat_messages(40)
     error = RuntimeError("413 Payload Too Large")
-    recovery = await attempt_recovery(messages, error, 0, ErrorRecoveryConfig())
+    recovery = await attempt_recovery(messages, error, 0, ErrorRecoveryConfig(), _CTX)
     assert recovery.should_retry is True
     assert recovery.trimmed_messages is not None
     assert "level 1" in recovery.reason
@@ -146,12 +151,12 @@ async def test_attempt_recovery_level1():
 async def test_attempt_recovery_level2():
     messages = _make_chat_messages(40)
     error = RuntimeError("context_length_exceeded")
-    recovery = await attempt_recovery(messages, error, 1, ErrorRecoveryConfig())
+    recovery = await attempt_recovery(messages, error, 1, ErrorRecoveryConfig(), _CTX)
     assert recovery.should_retry is True
     assert recovery.trimmed_messages is not None
     assert "level 2" in recovery.reason
     # Level 2 keeps fewer messages than level 1
-    level1 = await attempt_recovery(messages, error, 0, ErrorRecoveryConfig())
+    level1 = await attempt_recovery(messages, error, 0, ErrorRecoveryConfig(), _CTX)
     assert len(recovery.trimmed_messages) <= len(level1.trimmed_messages or [])
 
 
@@ -160,7 +165,7 @@ async def test_attempt_recovery_max_retries():
     messages = _make_chat_messages(40)
     error = RuntimeError("413")
     # attempt_count == max_context_overflow_retries → no more retries
-    recovery = await attempt_recovery(messages, error, 2, ErrorRecoveryConfig())
+    recovery = await attempt_recovery(messages, error, 2, ErrorRecoveryConfig(), _CTX)
     assert recovery.should_retry is False
     assert "No recovery" in recovery.reason
 
@@ -169,7 +174,7 @@ async def test_attempt_recovery_max_retries():
 async def test_attempt_recovery_non_overflow():
     messages = _make_chat_messages(10)
     error = RuntimeError("connection reset by peer")
-    recovery = await attempt_recovery(messages, error, 0, ErrorRecoveryConfig())
+    recovery = await attempt_recovery(messages, error, 0, ErrorRecoveryConfig(), _CTX)
     assert recovery.should_retry is False
     assert "No recovery" in recovery.reason
 
@@ -201,7 +206,7 @@ async def test_emergency_compaction_no_system_message():
     """No system message at index 0 → all messages are 'rest'."""
     messages = _make_messages(40, system=False)
     governance = EmergencyCompactionGovernance(keep_messages=10)
-    result = await governance.apply(messages)
+    result = await governance.apply(messages, _CTX)
     # No system message → result starts with a user message (or synthetic)
     assert result[0]["role"] in ("user", "system")
     assert len(result) <= 11  # no system + ≤10 tail
@@ -215,7 +220,7 @@ async def test_emergency_compaction_all_assistant_tail():
     for i in range(20):
         messages.append(_msg("assistant", f"a{i}"))
     governance = EmergencyCompactionGovernance(keep_messages=10)
-    result = await governance.apply(messages)
+    result = await governance.apply(messages, _CTX)
     assert result[0]["role"] == "system"
     # Synthetic user message should be prepended
     assert result[1]["role"] == "user"

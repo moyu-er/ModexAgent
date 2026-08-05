@@ -8,7 +8,10 @@ Concrete implementations stay in framework.memory.context_governance.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from modex_agent.core.agent import AgentContext
 
 
 class ContextGovernance(ABC):
@@ -20,6 +23,10 @@ class ContextGovernance(ABC):
     """
 
     @abstractmethod
-    async def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    async def apply(
+        self,
+        messages: list[dict[str, Any]],
+        ctx: AgentContext,
+    ) -> list[dict[str, Any]]:
         """应用治理策略，返回调整后的消息列表副本。"""
         ...

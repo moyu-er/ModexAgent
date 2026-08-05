@@ -11,7 +11,6 @@ from modex_agent.memory.layers.config import (
     CoreMemoryConfig,
     MemoryLayerConfigSet,
     SessionMemoryConfig,
-    UserRetentionBufferConfig,
 )
 from modex_agent.memory.layers.factory import MemoryLayerFactory
 from modex_agent.memory.registry import DefaultMemoryStoreRegistry
@@ -26,7 +25,6 @@ class TestBuildFullConfig:
             session=SessionMemoryConfig(),
             archive=ArchiveMemoryConfig(),
             core=CoreMemoryConfig(),
-            user_retention=UserRetentionBufferConfig(enabled=True),
         )
         layers = MemoryLayerFactory.build(registry=registry, config=config)
 
@@ -34,7 +32,6 @@ class TestBuildFullConfig:
         assert layers.session is not None
         assert layers.archive is not None
         assert layers.core is not None
-        assert layers.user_retention is not None
 
 
 class TestBuildSessionOnly:
@@ -46,7 +43,6 @@ class TestBuildSessionOnly:
             session=SessionMemoryConfig(),
             archive=None,
             core=None,
-            user_retention=UserRetentionBufferConfig(enabled=True),
         )
         layers = MemoryLayerFactory.build(registry=registry, config=config)
 
@@ -54,7 +50,6 @@ class TestBuildSessionOnly:
         assert layers.session is not None
         assert layers.archive is None
         assert layers.core is None
-        assert layers.user_retention is not None
 
 
 class TestBuildSubagentSessionIsolated:
@@ -66,7 +61,6 @@ class TestBuildSubagentSessionIsolated:
             session=SessionMemoryConfig(),
             archive=ArchiveMemoryConfig(scope=SessionScope()),
             core=None,
-            user_retention=UserRetentionBufferConfig(enabled=True),
         )
         layers = MemoryLayerFactory.build(registry=registry, config=config)
 
@@ -74,21 +68,3 @@ class TestBuildSubagentSessionIsolated:
         assert layers.session is not None
         assert layers.archive is not None
         assert layers.core is None
-        assert layers.user_retention is not None
-
-
-class TestBuildDisabledUserRetention:
-    """enabled=False → user_retention None."""
-
-    def test_build_disabled_user_retention_is_none(self, tmp_path: Path) -> None:
-        registry = DefaultMemoryStoreRegistry(tmp_path)
-        config = MemoryLayerConfigSet(
-            session=SessionMemoryConfig(),
-            archive=ArchiveMemoryConfig(),
-            core=CoreMemoryConfig(),
-            user_retention=UserRetentionBufferConfig(enabled=False),
-        )
-        layers = MemoryLayerFactory.build(registry=registry, config=config)
-
-        assert isinstance(layers, MemoryLayerSet)
-        assert layers.user_retention is None

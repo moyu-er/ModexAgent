@@ -20,7 +20,7 @@ Graph node implementations for the ReAct agent execution loop. Each node is a si
 ## For AI Agents
 
 ### Working In This Directory
-- Each node extends `modex_graph.Node[S]` and implements `def execute(ctx: GraphContext[ReActTurnState]) -> NodeResult` (declared as `def`, not `async def`; subclasses may override with `async def`)
+- Each node extends `modex_graph.Node[S]` and implements `async def execute(ctx: GraphContext[ReActTurnState], integrated_input: IntegratedInput) -> None`
 - Nodes access ReAct-specific state via `ctx.state` (a `ReActTurnState` — no longer via `get_react_state(ctx)` helper)
 - Node routing uses `deliver(content, target, ctx)` to select the next node
 - AOP calls go through `ctx.runtime.*` (`ReactGraphRuntime`): `dispatch_hook`, `around`, `apply_governance`, `drain_control`, `capture_snapshot`, `emit`
@@ -37,7 +37,7 @@ Graph node implementations for the ReAct agent execution loop. Each node is a si
 
 ### Internal
 - `modex_agent/agents/react/` — `agent.py` (ReActAgent, ReActEvent), `constants.py` (ReActNode, ReActHookPoint, ReActScope, ReActEvent), `state.py` (ReActTurnState), `runtime.py` (ReactGraphRuntime), `context.py` (ReActGraphContext)
-- `modex_graph` — `Node[S]`, `GraphContext[S]`, `NodeResult`, `GraphInterrupt` (ADR-0033)
+- `modex_graph` — `Node[S]`, `GraphContext[S]`, `IntegratedInput`, `GraphInterrupt` (ADR-0033)
 - `modex_agent/core/` — `AgentContext`, `LLMResponse`, `ToolCall`, emitter types
 - `modex_agent/runtime/` — `TurnPhase`, interceptors, dispatch deadline
 - `modex_agent/hook/` — HookPoint, HookPayload

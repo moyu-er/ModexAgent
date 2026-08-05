@@ -22,8 +22,8 @@ System prompt pipeline — an ordered, versioned collection of `SystemPromptProv
 | `SkillProvider` | skill-set hash | Skills assigned | Active skill summaries |
 | `ExperienceProvider` | experience hash | Experience files exist | Relevant experience entries |
 | `CoreMemoryProvider` | core memory hash | Core Memory files exist | SOUL.md / USER.md / MEMORY.md content (provider renamed from `KnowledgeProvider` per ADR-0035) |
-| `ArchiveProvider` | retrieved content hash | Archive entries exist | Backend-neutral historical summaries; `context.md` paths only when file storage exposes one |
-| `PrunedProvider` | pruned hash | Pruned catalog exists | XML catalog of cleaned-up messages (priority 85) |
+| `ArchiveProvider` | retrieved content hash (TTL 5s) | Archive entries exist | Backend-neutral historical summaries; `context.md` paths only when file storage exposes one. Version check TTL-cached to avoid per-iteration I/O |
+| `PrunedProvider` | pruned hash (TTL 5s) | Pruned catalog exists | XML catalog of cleaned-up messages. Version check TTL-cached to avoid per-iteration I/O |
 | `RuntimeProvider` | hourly | Always | Runtime metadata |
 | `ProviderBlocksProvider` | blocks hash | Provider blocks configured | Custom prompt blocks |
 | `ProviderPrefetchProvider` | prefetch hash | Prefetch configured | Prefetched context |

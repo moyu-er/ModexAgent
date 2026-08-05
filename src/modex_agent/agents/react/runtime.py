@@ -209,7 +209,8 @@ class ReactGraphRuntime(GraphRuntime):
         """
         if self._governance is None:
             return messages
-        return await self._governance.apply(messages)
+        agent_ctx = get_agent_ctx(ctx)
+        return await self._governance.apply(messages, agent_ctx)
 
     async def drain_control(self, ctx: GraphContext[Any]) -> None:
         """Drain the control channel for cancellation / injection signals.

@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import sys
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -19,8 +20,8 @@ from typing import TYPE_CHECKING, Any
 from modex_agent.core.agent import AgentCommKind
 from modex_agent.core.capabilities import Modality, ModelInfo
 from modex_agent.core.constants import (
-    AgentRole,
     _NO_DIR_SENTINEL,
+    AgentRole,
     format_working_directory_line,
 )
 from modex_agent.core.prompt import SystemPromptProvider
@@ -571,7 +572,18 @@ class ProviderPrefetchProvider(SystemPromptProvider):
 
 
 class ArchiveProvider(SystemPromptProvider):
-    """Backend-neutral archive summaries that refresh when retrieved content changes."""
+    """Backend-neutral archive summaries that refresh when retrieved content changes.
+
+    The version check is TTL-cached (``_VERSION_TTL_SECONDS``) to avoid
+    rebuilding the injection section on every LLM iteration. The section is
+    rebuilt only when the TTL expires and the version has actually changed.
+
+    TODO(mid-turn-archive-refresh): if cleanup generates a new archive mid-turn
+    within the TTL window, the agent won't see it until the TTL expires. Accepted
+    trade-off — the 5s window is short relative to typical turn duration.
+    """
+
+    _VERSION_TTL_SECONDS: float = 5.0
 
     def __init__(
         self,
@@ -584,32 +596,57 @@ class ArchiveProvider(SystemPromptProvider):
         self._context = context
         self._config = config or ArchiveInjectionConfig()
         self._section = ArchiveInjectionSection(version="0", content="")
+        self._version_cached_at: float = 0.0
+        self._cached_version: str = ""
 
     async def _fetch_version(self) -> str:
+        now = time.monotonic()
+        if now - self._version_cached_at < self._VERSION_TTL_SECONDS:
+            return self._cached_version
         self._section = await build_archive_injection_section(
             self._memory_system,
             self._context,
             self._config,
         )
-        return self._section.version
+        self._cached_version = self._section.version
+        self._version_cached_at = now
+        return self._cached_version
 
     async def _fetch_content(self) -> str:
         return self._section.content
 
 
 class PrunedProvider(SystemPromptProvider):
-    """Pruned memory catalog. Must refresh on cleanup."""
+    """Pruned memory catalog. Must refresh on cleanup.
+
+    The version check is TTL-cached (``_VERSION_TTL_SECONDS``) to avoid
+    querying the manager on every LLM iteration. The version is rechecked
+    only when the TTL expires.
+
+    TODO(mid-turn-pruned-refresh): if cleanup updates the pruned catalog mid-turn
+    within the TTL window, the agent won't see it until the TTL expires. Accepted
+    trade-off — the 5s window is short relative to typical turn duration.
+    """
+
+    _VERSION_TTL_SECONDS: float = 5.0
 
     def __init__(self, pruned_manager: PrunedManager, session_id: str = "") -> None:
         super().__init__()
         self._manager = pruned_manager
         self._session_id = session_id
+        self._version_cached_at: float = 0.0
+        self._cached_version: str = ""
 
     async def _fetch_version(self) -> str:
+        now = time.monotonic()
+        if now - self._version_cached_at < self._VERSION_TTL_SECONDS:
+            return self._cached_version
         try:
-            return self._manager.get_version(session_id=self._session_id)
+            self._cached_version = self._manager.get_version(session_id=self._session_id)
         except Exception:
-            return ""
+            self._cached_version = ""
+        self._version_cached_at = now
+        return self._cached_version
 
     async def _fetch_content(self) -> str:
         try:

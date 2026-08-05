@@ -81,7 +81,7 @@ class ContextForkBuilder:
                             tool_args_head_chars=lc.tool_args_head_chars,
                         )
                         msg_dicts: list[dict[str, Any]] = [m.model_dump() for m in truncated]
-                        compacted = await governor.apply(msg_dicts)
+                        compacted = governor._compact_messages(msg_dicts)
                         truncated = [ChatMessage(**m) for m in compacted]
                     fork_xml = format_snapshot_xml(truncated, parent_name)
             else:

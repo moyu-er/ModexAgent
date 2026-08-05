@@ -26,7 +26,7 @@ from modex_agent.core.message import ChatMessage
 from modex_agent.core.provider import StreamingLLMProvider
 from modex_agent.core.tool_call_accumulator import ToolCallAccumulator
 from modex_agent.core.types import LLMResponse
-from modex_agent.providers.shared.constants import inject_reasoning_effort
+from modex_agent.providers.shared.constants import inject_cache_control, inject_reasoning_effort
 from modex_agent.providers.shared.delta import StreamDelta
 from modex_agent.providers.shared.errors import classify_openai_error
 from modex_agent.utils.think_tag import ThinkTagExtractor
@@ -390,6 +390,9 @@ class OpenAIProvider(StreamingLLMProvider):
         }
 
         inject_reasoning_effort(params, self._reasoning_effort)
+
+        session_id = kwargs.pop("prompt_cache_key", "")
+        inject_cache_control(params, session_id)
 
         if tools:
             params["tools"] = tools

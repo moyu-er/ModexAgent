@@ -54,26 +54,26 @@ class ScopedMessageHistory(MessageHistory):
         recorder: MemoryAppendRecorder | None = None,
         archive_manager: ArchiveMemoryManager | None = None,
         cleanup_config: dict[str, int | float] | None = None,
-        user_retention: Any | None = None,
         pruned_manager: PrunedManager | None = None,
         archive_agent: ArchiveGenerator | None = None,
         archive_storage: DirArchiveStorage | None = None,
         archive_trigger_callback: Callable[[MemoryContext], Awaitable[None]] | None = None,
         cleanup_listeners: Sequence[MemoryCleanupListener] | None = None,
         token_estimator: TokenEstimator | None = None,
+        compactor: Any | None = None,
     ) -> None:
         self._manager = manager
         self._context = context
         self._recorder = recorder
         self._archive_manager = archive_manager
         self._cleanup_config: dict[str, int | float] = cleanup_config or {}
-        self._user_retention = user_retention
         self._pruned_manager: PrunedManager | None = pruned_manager
         self._archive_agent = archive_agent
         self._archive_storage = archive_storage
         self._archive_trigger_callback = archive_trigger_callback
         self._cleanup_listeners: list[MemoryCleanupListener] = list(cleanup_listeners or [])
         self._token_estimator: TokenEstimator = token_estimator or CharTokenEstimator()
+        self._compactor = compactor
         self._cache: list[ChatMessage] | None = (
             [ChatMessage.coerce(m) for m in initial_messages]
             if initial_messages is not None
@@ -102,7 +102,7 @@ class ScopedMessageHistory(MessageHistory):
             session=self._manager,
             archive=self._archive_manager,
             context=self._context,
-            user_retention=self._user_retention,
+            compactor=self._compactor,
             pruned_manager=self._pruned_manager,
             archive_agent=self._archive_agent,
             archive_storage=self._archive_storage,
@@ -121,20 +121,6 @@ class ScopedMessageHistory(MessageHistory):
                         "cleanup listener on_cleanup_finished failed: session=%s",
                         self._context.session_id,
                     )
-
-    async def _urb_completion_hook(self, message: ChatMessage | dict[str, Any]) -> None:
-        """If message is a plain assistant, mark all URB entries completed."""
-        if self._user_retention is None:
-            return
-        msg_dict = message.to_dict() if hasattr(message, "to_dict") else dict(message)
-        if msg_dict.get("role") != str(MessageRole.ASSISTANT):
-            return
-        if msg_dict.get("tool_calls"):
-            return
-        assistant_content = msg_dict.get("content")
-        if assistant_content is None:
-            return
-        await self._user_retention.mark_all_completed(self._context, assistant_content)
 
     def _stamp_token_count(
         self, messages: Sequence[ChatMessage | dict[str, Any]]
@@ -155,8 +141,6 @@ class ScopedMessageHistory(MessageHistory):
         await self._manager.add_messages(self._context, [stamped])
         if self._recorder is not None:
             await self._recorder.record([stamped], self._context)
-        if self._user_retention is not None:
-            await self._urb_completion_hook(stamped)
         await self._run_cleanup()
         async with self._cache_lock:
             self._cache = None
@@ -168,8 +152,6 @@ class ScopedMessageHistory(MessageHistory):
         await self._manager.add_messages(self._context, stamped)
         if self._recorder is not None:
             await self._recorder.record(stamped, self._context)
-        if self._user_retention is not None and stamped:
-            await self._urb_completion_hook(stamped[-1])
         await self._run_cleanup()
         async with self._cache_lock:
             self._cache = None
@@ -230,6 +212,7 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
         core_memory_consolidator: CoreMemoryConsolidatorBase | None = None,
         archive_trigger_callback: Callable[[MemoryContext], Awaitable[None]] | None = None,
         token_estimator: TokenEstimator | None = None,
+        compactor: Any | None = None,
     ) -> None:
         self._layers = layer_set
         self._registry = store_registry
@@ -243,6 +226,7 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
         self._token_estimator: TokenEstimator = token_estimator or CharTokenEstimator()
         self._cleanup_listeners: list[MemoryCleanupListener] = []
         self._recorder = MemoryAppendRecorder()
+        self._compactor = compactor
         if providers is not None:
             for provider in providers.all():
                 self._recorder.add_provider(provider)
@@ -290,13 +274,13 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
             recorder=self._recorder,
             archive_manager=self._layers.archive,
             cleanup_config=self._cleanup_config,
-            user_retention=self._layers.user_retention,
             pruned_manager=self._pruned_manager,
             archive_agent=self._archive_agent,
             archive_storage=self._archive_storage,
             archive_trigger_callback=self._archive_trigger_callback,
             cleanup_listeners=self._cleanup_listeners,
             token_estimator=self._token_estimator,
+            compactor=self._compactor,
         )
 
     async def add_messages(
@@ -358,8 +342,6 @@ class DefaultMemorySystem(MemorySystem, ContextManagedMemorySystem):
             await self._layers.archive.clear(context)
         if self._layers.core is not None:
             await self._layers.core.clear(context)
-        if self._layers.user_retention is not None:
-            await self._layers.user_retention.clear(context)
 
     # -- Provider management ---------------------------------------------
 

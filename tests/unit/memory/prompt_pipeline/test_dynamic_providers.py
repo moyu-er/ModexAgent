@@ -64,6 +64,7 @@ async def test_archive_provider_detects_new_archive(tmp_path: Path) -> None:
     system = await _archive_system(tmp_path)
     await _append_archive(system, "Initial summary.")
     provider = ArchiveProvider(system, MemoryContext(session_id="test"))
+    provider._VERSION_TTL_SECONDS = 0.0  # disable TTL for immediate detection
     content1 = await provider.get_or_refresh()
     first_version = provider.last_version
     assert first_version not in (None, "0")
@@ -178,6 +179,7 @@ async def test_pruned_provider_version_increments(tmp_path: Path) -> None:
     await manager.write_pruned(msgs1, "Topic 1", now, session_id=session_id)
 
     provider = PrunedProvider(manager, session_id=session_id)
+    provider._VERSION_TTL_SECONDS = 0.0  # disable TTL for immediate detection
     await provider.get_or_refresh()
     assert provider.last_version == "1"
 
@@ -226,6 +228,7 @@ async def test_pruned_provider_detects_new_content(tmp_path: Path) -> None:
     now = datetime.now(tz=UTC)
 
     provider = PrunedProvider(manager, session_id=session_id)
+    provider._VERSION_TTL_SECONDS = 0.0  # disable TTL for immediate detection
 
     # No content initially
     content1 = await provider.get_or_refresh()
@@ -240,3 +243,63 @@ async def test_pruned_provider_detects_new_content(tmp_path: Path) -> None:
     content2 = await provider.get_or_refresh()
     assert content2 != ""
     assert provider.last_version == "1"
+
+
+# ---------------------------------------------------------------------------
+# TTL version caching
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_archive_provider_ttl_caches_version(tmp_path: Path) -> None:
+    """Within TTL, version is cached — new archives are not detected until TTL expires."""
+    system = await _archive_system(tmp_path)
+    await _append_archive(system, "Initial summary.")
+    provider = ArchiveProvider(system, MemoryContext(session_id="test"))
+    # Default TTL is 5s — version is cached after first fetch
+    content1 = await provider.get_or_refresh()
+    first_version = provider.last_version
+    assert first_version not in (None, "0")
+    assert "Initial summary." in content1
+
+    # Write new archive — version should change, but TTL cache prevents detection
+    await _append_archive(system, "Newer conversation.")
+    content2 = await provider.get_or_refresh()
+    assert provider.last_version == first_version  # still cached
+    assert "Newer conversation." not in content2
+
+    # Force TTL expiry — new version should now be detected
+    provider._version_cached_at = 0.0
+    content3 = await provider.get_or_refresh()
+    assert provider.last_version != first_version
+    assert "Newer conversation." in content3
+
+
+@pytest.mark.asyncio
+async def test_pruned_provider_ttl_caches_version(tmp_path: Path) -> None:
+    """Within TTL, version is cached — new content is not detected until TTL expires."""
+    manager = PrunedManager(tmp_path / "pruned")
+    session_id = "test-session"
+    now = datetime.now(tz=UTC)
+
+    msgs1 = [{"role": "user", "content": "First", "created_at": now}]
+    await manager.write_pruned(msgs1, "Topic 1", now, session_id=session_id)
+
+    provider = PrunedProvider(manager, session_id=session_id)
+    # Default TTL is 5s — version is cached after first fetch
+    content1 = await provider.get_or_refresh()
+    assert provider.last_version == "1"
+    assert content1 != ""
+
+    # Write more content — version should be "2", but TTL cache prevents detection
+    msgs2 = [{"role": "user", "content": "Second", "created_at": now}]
+    await manager.write_pruned(msgs2, "Topic 2", now, session_id=session_id)
+    content2 = await provider.get_or_refresh()
+    assert provider.last_version == "1"  # still cached
+    assert content2 == content1  # content not refreshed
+
+    # Force TTL expiry — new version should now be detected
+    provider._version_cached_at = 0.0
+    content3 = await provider.get_or_refresh()
+    assert provider.last_version == "2"
+    assert content3 != content1

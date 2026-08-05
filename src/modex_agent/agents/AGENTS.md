@@ -7,7 +7,7 @@ Agent reasoning pattern implementations. Each sub-package implements a specific 
 
 ## Purpose
 
-The `agents/` module provides concrete agent implementations: the `ReActAgent` (Thought→Action→Observation loop with approval suspension/resume, built on the `modex_graph` engine), `ExternalAgent` (Pi/OpenCode CLI harness), and `ExperienceReviewAgent` (ReAct-based conversation review for experience creation/update). The deprecated `SummarizerAgent` was removed (ADR-0033 D10). New agent strategies go in new subdirectories.
+The `agents/` module provides concrete agent implementations: the `ReActAgent` (Thought→Action→Observation loop with approval suspension/resume, built on the `modex_graph` engine), `ExternalAgent` (Pi/OpenCode CLI harness), `ExperienceReviewAgent` (ReAct-based conversation review for experience creation/update), and `SessionCompactorAgent` (tool-less single-LLM-call compact summary generation). The deprecated `SummarizerAgent` was removed (ADR-0033 D10). New agent strategies go in new subdirectories.
 
 ## Key Files
 
@@ -21,7 +21,7 @@ The `agents/` module provides concrete agent implementations: the `ReActAgent` (
 |-----------|-------|---------|
 | `react/` | 14 py (incl. `nodes/`) | `ReActAgent` — 4-node graph (START→LLM→TOOL→END) built on `modex_graph`, `TieredToolApprovalClassifier`, `ReActTurnState` (GraphState), `ReactGraphRuntime` adapter, approval suspend/resume (see `react/AGENTS.md`) |
 | `external/` | 21 py (incl. `providers/`) | `ExternalAgent` — provider-neutral streaming harness, Pi/OpenCode adapters, session-map ABC, env/prompt/path/OS process seams (see `external/AGENTS.md`, ADR-0022) |
-| `summarizer/` | 6 py | `ArchiveSummarizer` (MD archive generation), `CoreMemoryConsolidator` (ReAct-based core memory consolidation; renamed from `KnowledgeConsolidator` per ADR-0035), `ScopedFileAgent` base class (see `summarizer/AGENTS.md`). The deprecated `SummarizerAgent` was removed (ADR-0033 D10). |
+| `summarizer/` | 7 py | `ArchiveSummarizer` (MD archive generation), `CoreMemoryConsolidator` (ReAct-based core memory consolidation; renamed from `KnowledgeConsolidator` per ADR-0035), `SessionCompactorAgent` (tool-less single-LLM-call compact summary), `ScopedFileAgent` base class (see `summarizer/AGENTS.md`). The deprecated `SummarizerAgent` was removed (ADR-0033 D10). |
 | `experience/` | 2 py | `ExperienceReviewAgent` — ReAct agent that reviews conversations and creates/updates EXPERIENCE.md files using experience tools (see `experience/AGENTS.md`) |
 
 ### react/ Submodule Details
@@ -34,7 +34,7 @@ The ReAct module is the primary agent runtime. Key components:
 | `graph.py` | `build_react_graph()` — builds `Graph[ReActTurnState]` with 4 nodes + 8 edges using `modex_graph.Graph` API |
 | `context.py` | `ReActGraphContext(GraphContext[ReActTurnState])` — type-safe accessors (`agent_ctx`, `tool_manager`, `context_manager`) |
 | `runtime.py` | `ReactGraphRuntime(GraphRuntime)` — AOP bridge: maps ReAct StrEnums to `HookPoint`/`InterceptorScope`/`ReActEvent`, bridges `GraphContext.user_data` → `AgentContext` for all AOP services |
-| `state.py` | `ReActTurnState(GraphState)`, `ReActSnapshotPolicy` (simplified via `state.checkpoint()` per-channel path, ADR-0033 D14), `ReActRuntimeStateCodec` |
+| `state.py` | `ReActTurnState(GraphState)`, `ReActSnapshotPolicy`, `ReActRuntimeStateCodec` |
 | `builder.py` | `ReActAgentBuilder` — `build_agent()` + `build_emitter_factory()` from `AgentDescriptor` |
 | `approval.py` | `ApprovalRuntime` + `TieredToolApprovalClassifier` (NORMAL/DANGEROUS path-based) |
 | `constants.py` | `ReActNode`, `ReActHookPoint`, `ReActScope`, `ReActEvent` StrEnums |
@@ -48,7 +48,7 @@ The ReAct module is the primary agent runtime. Key components:
 | File | Description |
 |------|-------------|
 | `scoped_file_agent.py` | `ScopedFileAgent` — ReAct agent base with scoped file tools, `SummarizerTrajectoryEmitter` for JSONL traces, 2-attempt retry |
-| `archive_agent.py` | `ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator)` — generates `context.md`/`knowledge.md`/`index.md` from pruned messages |
+| `archive_agent.py` | `ArchiveSummarizer(ScopedFileAgent, ArchiveGenerator)` — generates `context.md`/`knowledge.md` from pruned messages (no `index.md`; topic from compact summary's `## Objective`) |
 | `consolidator.py` | `CoreMemoryConsolidator(ScopedFileAgent, CoreMemoryConsolidatorBase)` (renamed from `KnowledgeConsolidator` per ADR-0035) — reads `knowledge.md` from archives, updates `SOUL.md`/`USER.md`/`MEMORY.md` via ReAct |
 | `emitter.py` | `SummarizerTrajectoryEmitter` — JSONL trace file writer for agent observability |
 | `abc.py` | `ArchiveGenerator` ABC, `CoreMemoryConsolidatorBase` ABC (renamed from `KnowledgeConsolidatorBase` per ADR-0035), `ArchiveSummarizerResult`, lazy prompt loader |
@@ -91,6 +91,7 @@ The `ExperienceReviewAgent`:
 Agent[E]
 ├── ReActAgent               (modex_graph-based, 4-node, with approval)
 ├── ExternalAgent      (external CLI harness, provider backend lifecycle)
+├── SessionCompactorAgent     (tool-less, single LLM call → compact summary)
 └── ScopedFileAgent          (ReAct with scoped file tools)
     ├── ArchiveSummarizer    (pruned → archive files)
     ├── CoreMemoryConsolidator (archive → core memory files; renamed from KnowledgeConsolidator per ADR-0035)

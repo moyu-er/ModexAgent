@@ -143,6 +143,7 @@ class ReactLlmClient:
                 max_output_tokens=context.max_output_tokens,
                 on_content_delta=_on_content_delta,
                 on_reasoning_delta=_on_reasoning_delta,
+                prompt_cache_key=str(context.session),
             )
             provider_response = response
             tool_calls_list = list(response.tool_calls or [])
@@ -220,7 +221,7 @@ class ReactLlmClient:
             except Exception as e:
                 if not is_context_overflow_error(e):
                     raise
-                recovery = await attempt_recovery(current_messages, e, attempt, config)
+                recovery = await attempt_recovery(current_messages, e, attempt, config, ctx)
                 if not recovery.should_retry:
                     raise
                 logger.warning("LLM context overflow, retrying: %s", recovery.reason)
@@ -247,7 +248,7 @@ class ReactLlmClient:
             except Exception as e:
                 if not is_context_overflow_error(e):
                     raise
-                recovery = await attempt_recovery(current_messages, e, attempt, config)
+                recovery = await attempt_recovery(current_messages, e, attempt, config, ctx)
                 if not recovery.should_retry:
                     raise
                 logger.warning(
@@ -285,6 +286,7 @@ class ReactLlmClient:
             max_output_tokens=ctx.max_output_tokens,
             on_content_delta=_on_content,
             on_reasoning_delta=_on_reasoning,
+            prompt_cache_key=str(ctx.session),
         )
         if ctx.emitter is not None:
             await ctx.emitter.emit_stream_end(resuming=bool(response.tool_calls))
@@ -305,6 +307,7 @@ class ReactLlmClient:
             tools=ctx.get_tool_descriptions() if ctx.tool_manager else None,
             temperature=ctx.temperature or 0.7,
             max_output_tokens=ctx.max_output_tokens,
+            prompt_cache_key=str(ctx.session),
         )
         if ctx.emitter is not None:
             if response.content:

@@ -16,7 +16,7 @@ approval suspend/resume, and integration points for hooks, interceptors, and con
 | `graph.py` | `build_react_graph()` — builds `Graph[ReActTurnState]` (from `modex_graph`) with 4 nodes + 8 edges. |
 | `context.py` | `ReActGraphContext(GraphContext[ReActTurnState])` — type-safe accessors (`agent_ctx`, `tool_manager`, `context_manager`). |
 | `runtime.py` | `ReactGraphRuntime(GraphRuntime)` — AOP bridge mapping ReAct StrEnums to framework enums, bridging `GraphContext.user_data` → `AgentContext`. |
-| `state.py` | `ReActTurnState(GraphState)` with `Annotated[T, LastValue]` fields, `ReActSnapshotPolicy` (simplified via `state.checkpoint()` per-channel path, ADR-0033 D14), `ReActRuntimeStateCodec`. |
+| `state.py` | `ReActTurnState(GraphState)`, `ReActSnapshotPolicy`, and `ReActRuntimeStateCodec`. |
 | `builder.py` | `ReActAgentBuilder` -- `build_agent()` + `build_emitter_factory()` from `AgentDescriptor`. |
 | `approval.py` | *(removed — migrated to `modex_agent.approval.runtime`)* |
 | `constants.py` | `ReActNode`, `ReActHookPoint`, `ReActScope`, `ReActEvent`, `InterruptReason` (B1) StrEnums. |
@@ -73,8 +73,8 @@ Deny policy: default `TOOL_RESULT_ONLY` (loop continues); override to `CANCEL_TU
   routed through `ReactGraphRuntime` via `ctx.runtime.*`. Iteration-level hooks
   (`BEFORE_ITERATION`/`AFTER_ITERATION`) are dispatched explicitly by nodes, NOT
   engine-auto-invoked (preserves hook timing exactly).
-- Per-turn state lives in `ctx.state` (`ReActTurnState`, a `GraphState(BaseModel)` with
-  `Annotated[T, LastValue]` per-field channels). `ctx.state.result` holds the final
+- Per-turn state lives in `ctx.state` (`ReActTurnState`, a mutable `GraphState`).
+  `ctx.state.result` holds the final
   `AgentResult` (replaces the old `custom[GRAPH_RESULT]` pattern).
 - Approval does NOT go through interceptors; it is handled at the `ToolNode`/pipeline
   layer via `ctx.interrupt(tx)` → `GraphInterrupt` → `TurnSnapshot`.
